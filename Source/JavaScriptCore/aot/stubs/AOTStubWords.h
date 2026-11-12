@@ -54,6 +54,7 @@ struct StubWords {
     const void* slimClosureEntrypoint;
     uint64_t wordsOfCompiledMethodsOfArray[numberOfCompiledMethodsOfArray];
     uint64_t wordOfCompiledSort;
+    const void* arrayPush;
 };
 static_assert(std::is_trivially_default_constructible_v<StubWords>);
 static_assert(std::has_single_bit(StubWords::numberOfBoxedCallEntries));

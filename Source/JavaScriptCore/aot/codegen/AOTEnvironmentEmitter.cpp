@@ -76,7 +76,12 @@ void EnvironmentEmitter::markEnvironmentsThatClosureKeeps(const ValueContext& cl
 {
     if (closure->loan() != LoanOfClosure::None)
         return;
-    for (ValueID capture : closure->capturesOperands()) {
+    markEnvironmentsKept(closure->capturesOperands());
+}
+
+void EnvironmentEmitter::markEnvironmentsKept(std::span<const ValueID> captures)
+{
+    for (ValueID capture : captures) {
         if (!capture || m_code.isConstant(capture))
             continue;
         TypeID type = m_code.at(capture).type;

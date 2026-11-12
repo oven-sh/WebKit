@@ -40,6 +40,10 @@ struct CounterHeldBelowRoomOfViews {
     ValueID relation;
     ValueID bound;
     ValueID viewWhoseLengthIsBound;
+    ValueID boundElement;
+    Reference boundFieldView;
+    VariableID boundVariable;
+    bool isBoundByVariable { false };
     ValueID stepThatMayBeNegative;
     Vector<AccessUnderCounterOfLoop, 4> accesses;
 };
@@ -62,7 +66,7 @@ struct AccessesNearCounter {
 };
 
 AccessesNearCounter findAccessesNearCounter(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront);
-CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<TypeID(Reference)>& typeOfNameInFront, NOESCAPE const ScopedLambda<bool(ValueID)>& isListOnlyReadInLoop, NOESCAPE const ScopedLambda<std::optional<int64_t>(ValueID)>& integerInFront, const Effects& ofTurns);
+CounterHeldBelowRoomOfViews findCounterHeldBelowRoomOfViews(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront, NOESCAPE const ScopedLambda<TypeID(Reference)>& typeOfNameInFront, NOESCAPE const ScopedLambda<bool(ValueID)>& isListOnlyReadInLoop, NOESCAPE const ScopedLambda<std::optional<int64_t>(ValueID)>& integerInFront, const Effects& ofTurns, ValueID relationBoundByVariable);
 struct SteppedKey {
     Reference list;
     uint32_t steppedPosition { 0 };
@@ -90,9 +94,12 @@ struct HoistedVariableCheck {
     bool isOnlyReckonedWith { false };
     Reference scope { };
     FieldReference field { };
+    PropertyKeyID convertedKey { };
 };
 void hoistKeyFields(Walker&, BlockID inputHead);
+void hoistConvertedFields(Walker&, BlockID inputHead);
 void speculateOnKeyTerms(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables);
+void guessTermsOfRemainders(Walker&, BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, bool mayConvertTexts, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables);
 void guessFactorsInVariables(Walker&, BlockID inputHead, const LoopPreview&, Vector<HoistedVariableCheck, 2>& variables);
 void guessViewsInVariables(Walker&, BlockID inputHead, Vector<HoistedVariableCheck, 2>& variables);
 void findNumbersOnlyReckonedWith(Walker&, BlockID inputHead, Vector<HoistedSpeculation, 4>& guesses, Vector<HoistedVariableCheck, 2>& variables);
@@ -107,8 +114,16 @@ struct NumberThatDivisionsBringRound {
 std::optional<NumberThatDivisionsBringRound> findNumberThatDivisionsBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering, WhatEntersHead);
 bool operatorsOnBitsAloneBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering);
 bool searchesNumbersByHalves(Walker&, BlockID inputHead);
+bool addsFieldsToIndexes(Walker&, BlockID inputHead, const LoopPreview&);
 std::optional<Range> findRangeOfMeetingBound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering);
 std::optional<Range> findIterationSteps(Walker&, BlockID inputHead, uint32_t position);
+struct SummedAddends {
+    Range known { Range::one(0) };
+    bool hasUnknown { false };
+};
+std::optional<SummedAddends> findSummedAddends(Walker&, BlockID inputHead, uint32_t position);
+bool isSimpleCountedLoop(Walker&, BlockID inputHead);
+bool isSummedByUnrolledIterations(Walker&, BlockID inputHead, uint32_t position);
 struct InvariantStep {
     ValueID step;
     bool isSubtracted { false };

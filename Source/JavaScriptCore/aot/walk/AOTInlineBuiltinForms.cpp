@@ -102,6 +102,7 @@ static bool takesOperandsAsWritten(const InlineBuiltinQuery& query)
     case InlineBuiltin::OwnPropertyKeys:
     case InlineBuiltin::ObjectValues:
     case InlineBuiltin::ObjectEntries:
+    case InlineBuiltin::ReflectSet:
         return true;
     case InlineBuiltin::ObjectCreate:
         return true;

@@ -58,7 +58,7 @@ JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncJoin);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncKeys);
 static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncEntries);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncPop);
-static JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
+JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncReverse);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncShift);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSlice);
 JSC_DECLARE_HOST_FUNCTION(arrayProtoFuncSort);
@@ -1939,7 +1939,8 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncConcat, (JSGlobalObject* globalObject, Ca
                 JSArray* resultArray = uncheckedDowncast<JSArray>(result);
                 JSArray* otherArray = uncheckedDowncast<JSArray>(object);
                 unsigned startIndex = resultIndex;
-                bool success = resultArray->appendMemcpy(globalObject, vm, resultIndex, otherArray);
+                // A single copy would overwrite elements that the species constructor created with holes.
+                bool success = resultIndex >= resultArray->length() && resultArray->appendMemcpy(globalObject, vm, resultIndex, otherArray);
                 RETURN_IF_EXCEPTION(scope, encodedJSValue());
                 if (!success) {
                     moveArrayElements<ArrayFillMode::Empty>(globalObject, vm, resultArray, startIndex, otherArray, otherArray->length());

@@ -158,6 +158,7 @@ public:
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
     std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
+    bool mayHaveAttributeVariants() const { return mayContainPrefixWithHash(hashOfAnyQuery); }
     bool hasAttributeVariant(StringView publicPath) const;
     Vector<ModuleID, 2> importAttributeVariants(StringView publicPath) const;
     bool containsPathWithPrefix(StringView start) const;
@@ -186,6 +187,8 @@ public:
 private:
     using PiecesOfPath = Vector<StringView, 16>;
 
+    bool mayContainPrefixWithHash(uint32_t) const;
+    bool mayHaveAttributeVariant(StringView publicPath) const;
     size_t checkedIndex(ModuleID) const;
     PiecesOfPath piecesOfPath(ModuleID) const;
     std::strong_ordering comparePath(ModuleID, StringView) const;

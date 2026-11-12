@@ -1,0 +1,50 @@
+# function half(list, i) { return list[i] >>> 1; }
+# The list is known and its kind is not. Its element was made a double and cut to 32 bits at once, with the way out that a cut of any double has: two conversions for an int32.
+# RUN(WORDS): compile ElementBitsReadAsWords mechanisms=all
+# WORDS: statistic ElementBitsReadAsWords {{*}}
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 3 1073741825 2147483647 0 0
+# SHELL: 2 0 2147483644 1000000000
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Integer integer=7
+    v4 = Double number=2147483650.5
+    v5 = Integer integer=-1
+    v6 = Integer
+    v7 = NewArray v3, v4, v5, v6
+    v8 = Integer integer=1
+    v9 = Integer integer=2
+    v10 = Integer integer=3
+    v11 = Integer integer=4
+    v12 = Call v0, -, v7, v6 calleeName="half"
+    v13 = Call v0, -, v7, v8 calleeName="half"
+    v14 = Call v0, -, v7, v9 calleeName="half"
+    v15 = Call v0, -, v7, v10 calleeName="half"
+    v16 = Call v0, -, v7, v11 calleeName="half"
+    v17 = Call v2, -, v12, v13, v14, v15, v16 calleeName="sink"
+    v18 = Integer integer=5
+    v19 = Integer integer=-8
+    v20 = Integer integer=2000000000
+    v21 = NewArray v18, v6, v19, v20
+    v22 = Call v0, -, v21, v6 calleeName="half"
+    v23 = Call v0, -, v21, v8 calleeName="half"
+    v24 = Call v0, -, v21, v9 calleeName="half"
+    v25 = Call v0, -, v21, v10 calleeName="half"
+    v26 = Call v2, -, v22, v23, v24, v25 calleeName="sink"
+    v27 = Undefined
+    Return v27
+}
+function f1 name="half" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    v3 = Integer integer=1
+    v4 = URShift v2, v3
+    Return v4
+}

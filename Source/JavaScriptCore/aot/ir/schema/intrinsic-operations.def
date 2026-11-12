@@ -1,6 +1,7 @@
 enum GeneratorStepCheck { IsUnmodifiedGenerator IsGenerator | engine IsUnmodified None }
 enum GeneratorStepStatus { Yielded Completed NotStepped }
 enum StepGeneratorResult { | engine Value Status }
+enum DelegatedCallResult { | engine Value HasCompleted }
 enum StepArrayIteratorResult { | engine Done Value }
 enum MapNextResult { | engine HasEntry Entry Key Value }
 enum SetNextResult { | engine HasEntry Entry Element }
@@ -17,7 +18,7 @@ operation ResumeGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode
 operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, value: Any/retains, check: GeneratorStepCheck) -> results(StepGeneratorResult: unknown, natural(GeneratorStepStatus)) ; unknownCode ; flow = Copies ; flowRule = Generator ; form = Closed
 operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart ; flow = TableProves ; form = Runtime
 operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; flow = TableProves ; form = Open
-operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects) -> allocation(IteratorResult) ; Allocates ; AsRead..AsRead ; flow = Allocates ; flowRule = Heap
+operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects) -> allocation(IteratorResult) ; AllocatesCells ; AsRead..AsRead ; flow = Allocates ; flowRule = Heap
 operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
 operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
 operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
@@ -38,7 +39,7 @@ operation GetInternalField (object: Object/inspects, index: UInt32) -> unknown ;
 operation PutInternalField (object: Object/inspects+writesContents, index: UInt32, value: Any/retains(object)+returns) -> natural(same(value)) ; writes(InternalFields, PromiseState, CollectionStorage) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap ; interpreted = Store ; holder = object ; slotOfHolder = InternalField ; form = Open
 
 family PromiseIntrinsic AsRead..Placed ; isIntrinsic = true
-operation NewPromise () -> allocation(Promise) ; Allocates ; runtime = NewPromise ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CallBuiltin ; flow = Allocates ; form = Closed
+operation NewPromise () [| engine endsReactionChain] -> allocation(Promise) ; Allocates ; runtime = NewPromise ; interpreted = Allocation ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; replaces = CallBuiltin ; flow = Allocates ; form = Closed
 operation CreatePromise (constructor: Any/inspects+runs(Named(prototype))) -> allocation(Promise) ; Allocates reads(NamedProperties) throws ; runtime = CreatePromise ; allocatesInline = true ; allocatesAfterLastSafepoint = true ; flow = Allocates ; flowRule = Promise ; form = Closed
 operation ResolvePromise (promise: Object/inspects+writesContents, value: Any/retains(promise)+runs(Thenable)) [| engine valueHasFailedTestForNoThen] -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState) ; runtime = ResolvePromise ; replaces = CallBuiltin ; flow = Copies ; flowRule = Promise ; holder = promise ; slotOfHolder = Value ; openUnder = NeedsTest ; runtimeUnder = FailsTest
 operation RejectPromise (promise: Object/inspects+writesContents, value: Any/retains(promise)) -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = RejectPromise ; flow = Copies ; flowRule = Promise ; holder = promise ; slotOfHolder = InternalField ; fieldOfHolder = 1 ; form = Runtime
@@ -57,13 +58,15 @@ operation GetOwnInt32Index (array: Array/inspects+readsContents, position: Integ
 operation PutOwnContiguousIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine storage?: ArrayStoragePointer/inspects) -> none ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; remembersOwner = true ; flow = Copies ; flowRule = Heap ; form = Open
 operation PutOwnDoubleIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Number/inspects, engine storage?: ArrayStoragePointer/inspects) [| engine undoesIterationStore] -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap ; form = Open
 operation PutOwnInt32Index (array: Array/inspects+writesContents, position: Integer/inspects, value: Integer/inspects, engine storage?: ArrayStoragePointer/inspects) [| engine undoesIterationStore] -> none ; reads(ArrayStorage) writes(Elements[Array]) ; flow = Copies ; flowRule = Heap ; form = Open
-operation NewContiguousArray (length: Integer/inspects) -> allocation(Array) ; Allocates throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
+operation NewContiguousArray (length: Integer/inspects) -> allocation(Array) ; AllocatesCells throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
+operation SortKeyArray (length: Integer/inspects) -> allocation(Array) ; AllocatesCells throws ; runtime = SortKeyArray ; flow = Allocates ; form = Closed
 operation NewArrayLike (length: Integer/inspects, source?: Any/inspects, capacity?: Integer/inspects, engine arrayStorage: ArrayStorage) [| engine remembersStorageAtSite takesAnyValueAtFirst] -> allocation(Array) ; Allocates reads(ArrayStorage) throws ; runtime = NewArrayWithHoles ; allocatesInline = true ; flow = Allocates ; form = Closed
 operation TryPutByValDirect (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array), engine length?: Integer/inspects, engine arrayStorage: ArrayStorage) -> natural(boolean) ; reads(ArrayStorage) writes(Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryPutIndex (array: Array/inspects+writesContents, position: Integer/inspects, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage, RuntimeState) writes(ArrayStorage, Elements[Array]) ; runsOwnerBarrier = true ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryCopyFilledElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TryPutElements (array: Array/inspects+writesContents, source: Array/inspects+readsContents+retainsContents, count: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation SortNumbers (array: Array/inspects+readsContents+writesContents, direction: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(Elements[Array]) ; runtime = SortNumbers ; flow = TableProves ; flowRule = Heap ; form = Closed
+operation SortByKeys (array: Array/inspects+readsContents+writesContents, keys: Array/inspects+readsContents, direction: Integer/inspects) -> natural(boolean) ; reads(ArrayStorage, Elements[Array]) writes(Elements[Array]) ; runtime = SortByKeys ; flow = TableProves ; flowRule = Heap ; form = Closed
 operation TryFillNewArray (array: Array/inspects+writesContents, value: Any/retains(array)) -> natural(boolean) ; reads(ArrayStorage, RuntimeState) writes(ArrayStorage, Elements[Array]) ; flow = TableProves ; flowRule = Heap ; form = Open
 operation TruncateNewArray (array: Array/inspects+returns+writesContents, length: Integer/inspects) -> allocation(Array) => natural(same(array)) ; GrowsArray writes(ShapeWords) ; runtime = TruncateNewArray ; flow = Copies ; flowRule = Heap ; form = Open
 

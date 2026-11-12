@@ -1,5 +1,5 @@
 # `counter` is copied into `use`, and the closure that the copy returns is taken by the next call of `use`: it has one user, so it will lie in the frame, and a closure in the frame marks no scope.
-# The release of the scope stands at the copy's Return, in front of that call: it may not release, or the cell waits for its next maker while the closure still reads it. In `counter` itself, on the way that returns the number, the release does release.
+# The release of the scope stands at the copy's Return, in front of that call: it may not release, or the cell waits for its next maker while the closure still reads it. In `counter` itself the scope is born on the way of the closure: the way that returns the number makes none, and has none to release.
 # function counter(keep) { let id = 0; function bump() { id++; } bump(); if (keep) return () => ++id; return id; }  function use(take) { return take(counter(true)) + 1; }  sink(counter, use);
 # RUN: walk f4 mechanisms=all
 # CHECK-LABEL: code f4:Body
@@ -8,7 +8,10 @@
 # CHECK-NOT: ReleasesOperand
 # RUN(ITSELF): walk f1 mechanisms=all
 # ITSELF-LABEL: code f1:Body
-# ITSELF: ReleaseEnvironment {{*}}ReleasesOperand
+# ITSELF-NOT: NewObject
+# ITSELF: Branch
+# ITSELF: = NewObject {{*}}layout=L0
+# ITSELF-NOT: ReleasesOperand
 
 layout L0 kind=Environment module=m0 fields=[{key=@"0" declared={type=anything} variableName="id"}] ownFieldCount=1
 module m0 path="main.js" displayPath="main.js" body=f0

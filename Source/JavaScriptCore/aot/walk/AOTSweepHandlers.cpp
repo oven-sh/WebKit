@@ -249,6 +249,26 @@ static BarrierOfSweptStore describeBarrierOfSweptStore(const Code& code, const T
     return { owner, storesCells && !mayOmitBarrier };
 }
 
+static ValueID objectRequiredBySwept(const Code& code, const Operation& operation)
+{
+    if (operation.opcode != Opcode::RequireObjectCoercible || testsItsOwnGuess(operation) || callsAmongSweptOperations.contains(operation.opcode) || makingSweptConstantsMayExitSidewaysOrCollect(code, operation.operands()))
+        return { };
+    ValueID required = underlyingCellOf(code, operation.operand(OperandIndex::RequireObjectCoercible::value));
+    return code.isConstant(required) ? ValueID() : required;
+}
+
+static bool sweptStoreStoresOnly(const Code& code, const Operation& store, ValueID value)
+{
+    if (store.opcode != Opcode::PutSlot)
+        return false;
+    bool storesOnlyValue = true;
+    store.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (retainedInOf(store.opcode, operandIndex) == RetainedIn::Operand)
+            storesOnlyValue &= underlyingCellOf(code, operand) == value;
+    });
+    return storesOnlyValue;
+}
+
 bool Sweep::beginLookingForCoveredBarriers()
 {
     const Code& code = *m_code;
@@ -259,6 +279,7 @@ bool Sweep::beginLookingForCoveredBarriers()
     m_ownersCovered.clearAll();
     m_ownersCovered.ensureSize(code.numberOfValues());
     m_storeWhoseOwnerIsKnown = { };
+    m_requiredObject = { };
     m_coveredAtHeads.shrink(0);
     m_storesThatAwaitBirth.shrink(0);
     m_birthsAwaited.clearAll();
@@ -281,6 +302,7 @@ void Sweep::strikeCoveredOwners()
     for (ValueID owner : m_coveredOwners)
         m_ownersCovered.quickClear(owner.index());
     m_coveredOwners.shrink(0);
+    m_requiredObject = { };
 }
 
 void Sweep::beginCoverageAtEndOf(BlockID id)
@@ -320,12 +342,18 @@ void Sweep::lookForCoveredBarrier(ValueID id, const Operation& operation)
     if (!isStore && m_coveredOwners.isEmpty())
         return;
     if (sweptOperationMayExitSidewaysOrCollect(code, operation)) {
-        strikeCoveredOwners();
-        return;
+        ValueID required = m_coveredOwners.isEmpty() ? ValueID() : objectRequiredBySwept(code, operation);
+        if (!required || (m_requiredObject && m_requiredObject != required)) {
+            strikeCoveredOwners();
+            return;
+        }
+        m_requiredObject = required;
     }
     strikeCoveredOwner(id);
     if (!isStore)
         return;
+    if (m_requiredObject && !sweptStoreStoresOnly(code, operation, m_requiredObject))
+        strikeCoveredOwners();
 
     BarrierOfSweptStore barrier = describeBarrierOfSweptStore(code, m_inputs->types, operation);
     m_storeWhoseOwnerIsKnown = id;
@@ -397,6 +425,31 @@ static bool sweptOperationMayEndYouthOfOperand(Opcode opcode)
     return false;
 }
 
+static BlockID soleJumpIntoSweptBlock(const Code& code, BlockID id)
+{
+    EdgeID only = code.at(id).firstEdgeIn();
+    if (!only || code.at(only).nextInto() || !code.at(only).arguments().empty() || code.at(id).isHandlerBlock() || code.at(id).isEntry)
+        return { };
+    BlockID from = code.at(only).from;
+    const Block& block = code.at(from);
+    return block.terminator.kind == TerminatorKind::Jump && block.terminator.next() == only && !block.isHandlerBlock() ? from : BlockID();
+}
+
+static bool isSweptBlockReachedOnlyByJumps(const Code& code, BlockID from, BlockID id)
+{
+    static constexpr unsigned mostJumps = 8;
+    for (unsigned jumps = 0; id && id != from && jumps < mostJumps; ++jumps)
+        id = soleJumpIntoSweptBlock(code, id);
+    return id == from;
+}
+
+void Sweep::awaitBirthsAheadOf(BlockID id)
+{
+    m_blockAwaitingAllocations = soleJumpIntoSweptBlock(*m_code, id);
+    if (!m_blockAwaitingAllocations)
+        forgetStoresThatAwaitBirth();
+}
+
 void Sweep::forgetStoresThatAwaitBirth()
 {
     for (const StoreThatAwaitsBirth& waiting : m_storesThatAwaitBirth)
@@ -441,7 +494,7 @@ void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
     if (!owner)
         return;
     const Operation& made = code.at(owner);
-    if (made.blockIndex != operation.blockIndex || !sweptAllocationLeavesYoungCell(m_inputs->plan, made))
+    if (!sweptAllocationLeavesYoungCell(m_inputs->plan, made) || !isSweptBlockReachedOnlyByJumps(code, made.block(), operation.block()))
         return;
     m_birthsAwaited.quickSet(owner.index());
     m_storesThatAwaitBirth.append({ id, owner });
@@ -449,6 +502,8 @@ void Sweep::lookForBirthOfOwner(ValueID id, const Operation& operation)
 
 void Sweep::endCoverageAtHeadOf(BlockID id)
 {
+    if (m_requiredObject)
+        strikeCoveredOwners();
     for (ValueID parameter : m_code->at(id).parameters())
         strikeCoveredOwner(parameter);
     m_firstCoveredAtHead[id.index()] = static_cast<uint32_t>(m_coveredAtHeads.size());
@@ -596,6 +651,8 @@ void Sweep::lookForCoverageAgain()
             else
                 m_laterFenceCovers = false;
         }
+        if (!m_storesThatAwaitBirth.isEmpty() && m_blockAwaitingAllocations != id)
+            forgetStoresThatAwaitBirth();
         std::span<const ValueID> order = code.valuesOf(id);
         for (size_t index = order.size(); index--;) {
             ++m_totals.operationsSwept;
@@ -613,7 +670,7 @@ void Sweep::lookForCoverageAgain()
         if (looksForCoveredBarriers && !m_coveredOwners.isEmpty())
             endCoverageAtHeadOf(id);
         if (!m_storesThatAwaitBirth.isEmpty())
-            forgetStoresThatAwaitBirth();
+            awaitBirthsAheadOf(id);
         if (looksForCoveredFences && m_laterFenceCovers)
             endFenceCoverageAtHeadOf(id);
     }
@@ -689,7 +746,7 @@ private:
             if (operation.opcode == Opcode::LoopHint)
                 m_blocksWithPolls.quickSet(block.index());
 
-            if (!awaited.storesByOwner.isEmpty() && (sweptOperationMayExitSidewaysOrCollect(m_code, operation) || awaited.storesByOwner.contains(id.index())))
+            if (!awaited.storesByOwner.isEmpty() && ((sweptOperationMayExitSidewaysOrCollect(m_code, operation) && !storesOnlyRequiredObject(awaited, operation)) || awaited.storesByOwner.contains(id.index())))
                 return sentenceOfBarrier(firstStoreOf(awaited));
             bool leavesBarrier = marks.contains(SweepMark::LaterBarrierCovers);
             if (leavesBarrier || (!awaited.storesByOwner.isEmpty() && sweptStoresThatRememberOwner.contains(operation.opcode))) {
@@ -733,6 +790,14 @@ private:
         if (!wayEnds)
             return { };
         return awaited.storesByOwner.isEmpty() ? sentenceOfFence(awaited.allocation) : sentenceOfBarrier(firstStoreOf(awaited));
+    }
+
+    bool storesOnlyRequiredObject(const Awaited& awaited, const Operation& operation) const
+    {
+        ValueID required = objectRequiredBySwept(m_code, operation);
+        return required && std::ranges::all_of(awaited.storesByOwner.values(), [&](ValueID store) {
+            return sweptStoreStoresOnly(m_code, m_code.at(store), required);
+        });
     }
 
     static ValueID firstStoreOf(const Awaited& awaited)

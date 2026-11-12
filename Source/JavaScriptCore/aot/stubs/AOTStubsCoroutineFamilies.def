@@ -7,6 +7,8 @@ v(NewPromise, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, 
 v(NewPromiseBeforeBody, CalledByCode, (FirstArgument, SecondArgument, ThirdArgument, FourthArgument, FifthArgument, SixthArgument), FormAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewPromiseBeforeBody)
 v(ReturnFulfilledPromise, CalledByCode, (), NoAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ReturnFulfilledPromise)
 v(PromiseThen, CalledByCode, (OnFulfilled, OnRejected), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PromiseThen)
+v(NewReactionChain, CalledByCode, (), CountAxis | SlowPathRecurs, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, NewReactionChain)
+v(StartReactionChain, CalledByCode, (OfPromise, OfValue), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StartReactionChain)
 v(IsNotThenable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, AsOperation, IsNotThenable)
 v(ResolveReturnedPromise, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ResolveReturnedPromise)
 v(ReturnAsyncResult, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ReturnAsyncResult)
@@ -17,6 +19,7 @@ v(AwaitWithSavedFrame, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice
 v(SuspendGenerator, CalledByCode, (Yield, AsyncAwait, AsyncYield, AsyncYieldAfterAwait), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SuspendGenerator)
 
 v(StepGenerator, CalledByCode, (IsUnmodifiedGenerator, IsGenerator, IsUnmodified, None), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StepGenerator)
+v(ResumeSteppedGenerator, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ResumeSteppedGenerator)
 v(EnterSavedFrame, EnteredByRuntime, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(ResumeNextJob, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)
 v(HandlerOfJobReturn, InternalEntry, (), NoAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, EnterSavedFrame)

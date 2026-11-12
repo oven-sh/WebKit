@@ -66,6 +66,7 @@ public:
     static constexpr uint32_t minUsedToShrink = 32;
     static constexpr bool isMostlyDeleted(uint32_t alive, uint32_t used) { return used >= minUsedToShrink && alive * 4 < used; }
     static constexpr uint32_t maxCapacityEmptiedByClear = 32;
+    static constexpr uint32_t minLargeTableEntries = 512;
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr uint32_t maxCapacityWithLongSlots = 3 << 22;
     static constexpr uint32_t maxCapacity = 3 << 26;
@@ -335,7 +336,7 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
-    QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, JSValue& value) const;
+    QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const;
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const
     {
@@ -624,6 +625,7 @@ private:
     void addToIndex(uint32_t entry, unsigned hash);
     void removeFromIndex(uint32_t entry, unsigned hash);
     void fillIndex(uint32_t count);
+    template<SlotKind kind> void fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);

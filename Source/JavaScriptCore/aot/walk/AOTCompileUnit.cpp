@@ -218,7 +218,7 @@ static bool isReachedPastBlockInCompileUnit(const Code& code, BlockID reached, B
 
 static bool cellIsUsedBehindOperationInCompileUnit(const Code& code, ValueID cell, ValueID behind)
 {
-    static constexpr OpcodeSet operationsThatOnlyLetCellGo { Opcode::EndCellLifetime, Opcode::ReleaseEnvironment };
+    static constexpr OpcodeSet operationsThatOnlyLetCellGo { Opcode::EndCellLifetime, Opcode::ReleaseArray, Opcode::ReleaseList, Opcode::ReleaseEnvironment };
     BlockID whereCellIsBorn = code.blockOf(cell);
     bool isUsed = false;
     auto look = [&](ValueID operand) {
@@ -328,9 +328,15 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
 }
 
 struct ClosuresThatCalledParametersHold {
-    bool run(const Operation& operation) const { return frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())); }
+    bool run(const Operation& operation) const
+    {
+        if (frames.get(operation.origin().inlineFrame) || (operation.opcode == Opcode::CallDirect && functions.contains(operation.function())))
+            return true;
+        return !operation.origin().inlineFrame && builtinCallPositions.contains(operation.origin().position);
+    }
 
     Vector<FunctionID, 4> functions;
+    Vector<uint32_t, 4> builtinCallPositions;
     BitVector frames;
 };
 
@@ -365,9 +371,22 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
             note(operation.testedType());
     }
 
+    const BodyIndex* body = inputs.facts.bodies().find(code.unit().function);
+    for (uint32_t block = 0; body && block < body->numberOfBlocks(); ++block) {
+        for (BodyValue call : body->block(BlockID(block)).values()) {
+            ValueID callee = call.opcode() == Opcode::Call ? body->stripCasts(call.calleeOperand()) : ValueID();
+            if (!callee || !body->isParameter(callee) || body->blockOf(callee) != entryBlock)
+                continue;
+            uint32_t place = callee.index() - body->block(entryBlock).firstParameter().index();
+            if (place < 32 && (parametersCalled >> place & 1))
+                held.builtinCallPositions.append(call.position());
+        }
+    }
+
     std::span<const InlineFrame> copied = code.inlineFrames();
     for (uint32_t frame = 1; frame < copied.size(); ++frame) {
-        if ((!copied[frame].parent && held.functions.contains(copied[frame].callee)) || held.frames.get(copied[frame].parent))
+        bool isOfCalledParameter = !copied[frame].parent && (held.functions.contains(copied[frame].callee) || held.builtinCallPositions.contains(copied[frame].callPosition));
+        if (isOfCalledParameter || held.frames.get(copied[frame].parent))
             held.frames.set(frame);
     }
     return held;
@@ -932,7 +951,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
+    SweepTotals swept = Sweep(*m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
 
     if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
@@ -961,6 +980,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         }
     }
 
+    code.releaseAbandonedBlocks();
     for (const Walker::ArrivalHeld& held : m_walker->arrivalsHeld()) {
         if ((held.kind == Walker::ArrivalHeld::Kind::Anything || held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue) && inputs.facts.linked().entryByValueMayBeClosed(held.callee))
             m_functionsThatUnitMayEnterByValue.append(held.callee);
@@ -1328,6 +1348,13 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     RELEASE_ASSERT(m_walker->arrivalsHeld().empty());
     work.setStep("emit"_s);
     const Code& swept = m_walker->code();
+    uint32_t slices = m_walker->foldedSliceCount();
+    Vector<Walker::CountOfUnit, 4> counts(m_walker->countsOfUnit());
+    static constexpr uint32_t mostValuesWithWalker = 1 << 16;
+    if (swept.numberOfValues() > mostValuesWithWalker) {
+        m_walker = makeWalker(RoomOfFormerWalker::IsLeft);
+        m_roomsOfSweep = makeUniqueWithoutFastMallocCheck<RoomsOfSweep>();
+    }
     CompiledCode code = generateCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, swept, m_totals);
     std::optional<uint64_t> instructionsAfterEncoding = instructionsOfCompileThreadSoFar(m_build);
     if (instructionsAtStart && instructionsAfterSweep && instructionsAfterEncoding) {
@@ -1346,9 +1373,9 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 
     Statistics& statistics = m_build.statistics();
     statistics.count(StatisticID::UnitsCompiled);
-    if (uint32_t slices = m_walker->foldedSliceCount())
+    if (slices)
         statistics.count(StatisticID::SlicesFoldedToArrayLiterals, slices);
-    for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())
+    for (const Walker::CountOfUnit& count : counts)
         statistics.count(count.statistic, count.amount);
     if (uint32_t blocks = swept.numberOfBlocksPlacedOtherwise()) [[unlikely]]
         statistics.count(StatisticID::BlocksPlacedOtherwise, blocks);

@@ -217,6 +217,12 @@ void Encoder::encodeSwap(const Step& step)
     }
     static_assert(scratchFPR == MacroAssembler::fpTempRegister);
     RELEASE_ASSERT(first.fpr() != scratchFPR && second.fpr() != scratchFPR);
+    if (isEncodedMoveOfVector(step.width, first)) {
+        m_jit.moveVector(first.fpr(), scratchFPR);
+        m_jit.moveVector(second.fpr(), first.fpr());
+        m_jit.moveVector(scratchFPR, second.fpr());
+        return;
+    }
     m_jit.swapDouble(first.fpr(), second.fpr());
 }
 

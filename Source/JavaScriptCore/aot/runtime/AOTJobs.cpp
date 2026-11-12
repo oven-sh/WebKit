@@ -15,6 +15,8 @@
 #include "AOTGenerator.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTReactionChain.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTSavedFrame.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTState.h"
@@ -650,6 +652,11 @@ JSValue enterSavedFrame(VM& vm, Instance& instance, SavedFrame* saved, ResumeMod
 
 void settlePromiseOfHandler(VM& vm, JSCell* cell, JSValue returned, JSValue error)
 {
+    if (auto* chain = dynamicDowncast<ReactionChain>(cell)) {
+        chain->advance();
+        chain->settle(vm, error ? error : returned, error ? JSPromise::Status::Rejected : JSPromise::Status::Fulfilled);
+        return;
+    }
     auto* promise = uncheckedDowncast<JSPromise>(cell);
     if (error)
         promise->rejectPromise(vm, error);
@@ -742,6 +749,7 @@ void resumeAsyncFunction(JSGlobalObject* globalObject, VM& vm, JSValue context, 
 {
     auto* saved = uncheckedDowncast<SavedFrame>(context);
     Instance& instance = *saved->realm()->aotInstance();
+    countEvent(vm, RuntimeCounterID::AsyncFunctionsResumedByRuntime);
     isEnteredByJobLoop &= globalObject == saved->realm();
     saved->setIsEnteredByJobLoop(isEnteredByJobLoop);
     instance.coroutines.nextEntryEndsJob = isEnteredByJobLoop;
@@ -830,6 +838,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewPromise, JSCell*, (Instance* in
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewPromise);
     DeferTerminationForAWhile deferTermination(vm);
     RELEASE_AND_RETURN(scope, newCellForCompiledCode(vm, JSPromise::create(vm, globalObject->promiseStructure())));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSettledResult, JSCell*, (Instance* instance, EncodedJSValue value, uint32_t status))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSettledResult);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSValue settled = JSValue::decode(value);
+    bool isRejected = static_cast<JSPromise::Status>(status) == JSPromise::Status::Rejected;
+    RELEASE_AND_RETURN(scope, newCellForCompiledCode(vm, isRejected ? createPromiseAllSettledRejectedResult(globalObject, settled) : createPromiseAllSettledFulfilledResult(globalObject, settled)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCreatePromise, JSCell*, (Instance* instance, EncodedJSValue constructor))
@@ -1086,6 +1103,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPromiseThen, JSCell*, (Instance* instance, 
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTPromiseThen);
     uncheckedDowncast<JSPromise>(promise)->performPromiseThen(vm, globalObject, JSValue::decode(onFulfilled), JSValue::decode(onRejected), derived);
     OPERATION_RETURN(scope, derived);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewReactionChain, JSCell*, (Instance* instance, uint32_t description))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewReactionChain);
+    DeferTerminationForAWhile deferTermination(vm);
+    RELEASE_AND_RETURN(scope, newCellForCompiledCode(vm, ReactionChain::create(vm, instance->state->coroutines->reactionChainStructure(vm), description)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStartReactionChain, void, (Instance* instance, JSCell* promise, JSCell* chain))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStartReactionChain);
+    DeferTerminationForAWhile deferTermination(vm);
+    uncheckedDowncast<ReactionChain>(chain)->startAt(vm, uncheckedDowncast<JSPromise>(promise));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStartReactionChainOfValue, void, (Instance* instance, EncodedJSValue value, JSCell* chain))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStartReactionChainOfValue);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->fulfillPromise(vm, JSValue::decode(value));
+    uncheckedDowncast<ReactionChain>(chain)->startAt(vm, promise);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPromiseCatch, JSCell*, (Instance* instance, JSCell* promise, EncodedJSValue onRejected))

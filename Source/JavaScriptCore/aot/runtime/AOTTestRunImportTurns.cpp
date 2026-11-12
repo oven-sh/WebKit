@@ -72,7 +72,7 @@ bool Modules::hostHasProgramSources() const
 
 bool Modules::hasTextAtHand() const
 {
-    return !m_innermostEagerLoad && m_queuedFetches.isEmpty() && hostHasProgramSources() && (!isTestRun() || m_isDrainingDeferredFetchJobs);
+    return !m_innermostEagerLoad && m_queuedFetches.isEmpty() && hostHasProgramSources() && !isTestRun();
 }
 
 bool Modules::isFetchedBesideFactory(ModuleID module)
@@ -96,7 +96,7 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
             if (status(moduleOrFacade) != ModuleStatus::Unlinked && status(moduleOrFacade) != ModuleStatus::Linked)
                 return false;
         }
-    } else if (!isNotLoaded(module))
+    } else if (!isNotLoaded(module) || (hasInstances(file) && m_linkedInstances.get(file.index())))
         return false;
     if (askedBy == AskedBy::Import) {
         for (ModuleID moduleOrFacade : { module, file }) {
@@ -225,7 +225,7 @@ bool Modules::tryFulfillFirstBatchedFetch()
         return false;
     bool isFollowedInBatch = isTestRun() && !text.hasImportsToFetch && firstBatchNumber() == text.batchNumber;
     m_batchBeingFulfilled = isFollowedInBatch ? std::optional(text.batchNumber) : std::nullopt;
-    m_isDrainingDeferredFetchJobs = !isFollowedInBatch;
+    m_isInJobsAfterArrival = !isFollowedInBatch;
     m_fulfillsBatchTogether = !isTestRun() || text.hasImportsToFetch;
     if ((isTestRun() && !text.hasImportsToFetch) || !text.jobsBehindFirstCall) {
         makeCallAgain(text);

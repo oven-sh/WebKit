@@ -305,9 +305,18 @@ struct PlannedVariable {
     VariableEncoding encoding { VariableEncoding::Plain };
     SlotRepresentation representation { SlotRepresentation::JSValue };
     bool isDescribedToRunTime { false };
+    bool hasViewMirror { false };
+    VariableID firstViewOfBuffer;
+    VariableID firstViewOfElementSize;
+    uint64_t locationsOfViewsOfBuffer { 0 };
     FunctionID function;
     uint64_t initialWord { 0 };
 };
+
+constexpr int32_t viewMirrorVectorOffset = 8;
+constexpr int32_t viewMirrorLengthOffset = 16;
+constexpr int32_t bufferLengthOffsetInViewMirror = 24;
+constexpr unsigned viewMirrorVariableSize = 32;
 
 enum class MemberCreation : uint8_t {
     AtDefinition,
@@ -445,7 +454,7 @@ public:
     JS_EXPORT_PRIVATE FieldAccess fieldAccess(const Program&, PropertyKeyID, LayoutSetID, std::span<const LayoutID> members, bool isStore) const;
     bool storeMayListKey(const FieldAccess& access) const
     {
-        return canLeaveSlot(access.slot.representation) && !access.membersWithField.isEmpty();
+        return mayBeCreatedByStore(access.slot.representation) && !access.membersWithField.isEmpty();
     }
     JS_EXPORT_PRIVATE std::optional<uint32_t> recordOfStoredField(const Program&, PropertyKeyID, std::span<const LayoutID> receivers) const;
     JS_EXPORT_PRIVATE StoredFieldForm formOfStoredField(const Program&, PropertyKeyID, std::span<const LayoutID> receivers) const;

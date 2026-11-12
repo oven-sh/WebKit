@@ -97,10 +97,11 @@ static Reference buildAwaitCallInAwaitedCalls(Walker& walker, const BodyValue& c
     fused.setRole(CodeRole::CoroutineBody);
     fused.setNumberOfBoundArguments(0);
     fused.setPromiseOperand(driver);
+    Vector<Reference, 8> kept = heldForCells(walker, held);
     Vector<Reference, 12> arguments(operands);
-    arguments.append(held);
+    arguments.appendVector(kept);
     fused.setArgumentsOperands(arguments.span());
-    fused.setNumberOfHeld(held.empty() ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(held.size())));
+    fused.setNumberOfHeld(kept.isEmpty() ? std::nullopt : std::optional<uint32_t>(static_cast<uint32_t>(kept.size())));
     fused.inputValueGiven = await;
     Reference given = buildSuspensionInCoroutine(walker, WTF::move(fused));
     if (!walker.hasFailed())

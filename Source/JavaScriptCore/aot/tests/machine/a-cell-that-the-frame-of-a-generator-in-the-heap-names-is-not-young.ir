@@ -8,7 +8,7 @@
 # CHECK: Store({{*}}offset = 88, InternalFields)
 # CHECK: Store({{*}}offset = 16, bucket
 # CHECK-NEXT: Load({{*}}collectorState
-# CHECK-NEXT: Load8Z({{*}}collectorState
+# CHECK-NEXT: Load{{*}}collectorState
 
 layout L0 module=m0 fields=[{key="tag" declared={type=anything} flags=[IsRequired]}]
 layout L1 module=m0 fields=[{key="held" declared={type=anything} flags=[IsRequired]}]

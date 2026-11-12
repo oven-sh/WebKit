@@ -27,6 +27,7 @@
 #include "ScopedArguments.h"
 #include "StructureArrayStorageInlines.h"
 #include "StructureRareDataInlines.h"
+#include "Symbol.h"
 #include <bit>
 
 namespace JSC { namespace AOT {

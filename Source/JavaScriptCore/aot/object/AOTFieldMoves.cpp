@@ -272,7 +272,7 @@ const FieldMovePlan& FieldMovePlanCache::add(FieldMovePlanKey&& key, std::unique
 {
     ASSERT(plan);
     if (!m_sets)
-        m_sets.make();
+        m_sets.makeFromZeros();
     m_lastFound = nullptr;
     Set& set = setFor(key);
     auto way = std::ranges::find_if(set.ways, [](auto& candidate) {

@@ -160,6 +160,17 @@ static bool firstReadIsSeenForGenerators(const Walker& walker, BuiltinID locatio
     return walker.facts().listsKeysOf(table.canonicalID(entry.holder));
 }
 
+bool engineOpensAsyncGenerators(const Walker& walker)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    BuiltinID prototype = table.at(BuiltinClasses::AsyncGenerator).prototype;
+    auto finds = [&](BuiltinName name, BuiltinID expected) {
+        std::optional<BuiltinID> member = findMemberAboveForIteration(walker, prototype, name);
+        return member && *member && table.canonicalID(*member) == table.canonicalID(expected) && !firstReadIsSeenForGenerators(walker, *member);
+    };
+    return finds(BuiltinNames::next, Builtins::AsyncGeneratorPrototypeNext) && finds(table.nameOf(WellKnownSymbol::AsyncIterator), Builtins::AsyncIteratorPrototypeSymbolAsyncIterator);
+}
+
 static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin origin)
 {
     if (walker.isUnreachable())

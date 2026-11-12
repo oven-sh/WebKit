@@ -79,6 +79,7 @@
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCustomGetterFunction.h"
+#include "JSArrayBufferView.h"
 #include "JSFunction.h"
 #include "JSModuleLoader.h"
 #include "JSPromise.h"
@@ -116,6 +117,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/WTFConfig.h>
@@ -196,6 +198,9 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     instance.numberTag = JSValue::NumberTag;
     instance.notCellMask = JSValue::NotCellMask;
     instance.singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
+    static_assert(static_cast<unsigned>(TypeofType::Function) + 1 == InstanceHeader::numberOfTypeStrings);
+    for (unsigned type = 0; type < InstanceHeader::numberOfTypeStrings; ++type)
+        instance.typeStrings[type] = vm.smallStrings.typeString(static_cast<TypeofType>(type));
     instance.collation.ducetLevel1Weights = ducetLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
@@ -349,6 +354,10 @@ static void fillRealmWords(Instance& instance, VM& vm, JSGlobalObject* realm)
     words.intStrings = vm.numericStrings.intCache();
     words.keysOfPairs = StringKeyCache::noKeysOfPairs();
     words.keyOfPairMask = 0;
+    words.stringsOfImmediates[JSValue::ValueNull] = vm.smallStrings.nullString();
+    words.stringsOfImmediates[JSValue::ValueUndefined] = vm.smallStrings.undefinedString();
+    words.stringsOfImmediates[JSValue::ValueTrue] = vm.smallStrings.trueString();
+    words.stringsOfImmediates[JSValue::ValueFalse] = vm.smallStrings.falseString();
 }
 
 static void fillInstanceClassInfos(Instance& instance)
@@ -525,16 +534,23 @@ Instance* Instance::create(JSGlobalObject* realm)
     State::create(*instance);
     instance->state->caches->addClearedEachCollection("growing flat text"_s, asMutableByteSpan(instance->state->growingFlatText));
     instance->state->caches->addClearedEachCollection("wide character strings"_s, asMutableByteSpan(instance->state->wideCharacterStrings));
+    instance->state->caches->addClearedEachCollection("texts of few strings"_s, asMutableByteSpan(instance->state->textsOfFewStrings));
     instance->state->caches->addClearedEachCollection("released heap frames"_s, asMutableByteSpan(instance->coroutines.releasedHeapFrames));
+    instance->state->caches->addClearedEachCollection("released array"_s, asMutableByteSpan(instance->arrays.releasedArray));
+    instance->state->caches->addClearedEachCollection("released copy"_s, asMutableByteSpan(instance->arrays.releasedCopy));
+    instance->state->caches->addClearedEachCollection("sort keys"_s, asMutableByteSpan(instance->arrays.sortKeys));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
+    instance->state->caches->addClearedEachCollection("structures around the first shift"_s, asMutableByteSpan(instance->arrays.structuresAroundFirstShift));
     instance->state->caches->addClearedEachCollection("copies without frame"_s, asWritableBytes(instance->copiesWithoutFrame()));
     const uint8_t* hasRunSinceClear = &instance->propertyCaches.hasRunSinceClear;
     instance->state->caches->addClearedEachCollection("keyed value places"_s, asWritableBytes(instance->keyedValuePlaces()), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("places hold copies of slots"_s, asMutableByteSpan(instance->propertyCaches.hasCachedSlotValues), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("forwarding handlers of proxies"_s, asMutableByteSpan(instance->propertyCaches.forwardingProxyHandlers), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("accepted kinds of values"_s, asWritableBytes(instance->acceptedKindsOfValues()), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("access table"_s, asMutableByteSpan(accessTableOf(*instance, *instance->program)), hasRunSinceClear);
     instance->state->caches->addClearedEachCollection("keys of the access table that depend on chains"_s, asMutableByteSpan(instance->propertyCaches.accessTable.numberOfKeysThatDependOnChains), hasRunSinceClear);
+    instance->state->caches->addClearedEachCollection("replaced members"_s, asMutableByteSpan(instance->propertyCaches.replacedMembers));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance);
 
@@ -544,6 +560,9 @@ Instance* Instance::create(JSGlobalObject* realm)
         Locker locker { vmState.instancesLock };
         vmState.instances.append(instance);
         vmState.didChangeInstances();
+        vmState.lendTablesOfLivingInstances();
+        for (Instance* each : vmState.instances)
+            each->propertyCaches.forgetReplacedMembers();
     }
     vmState.propertyCaches->didCreateInstance(*instance);
     RuntimeHooks::didChangeMicrotaskQueueing(vm);
@@ -562,6 +581,23 @@ void VMState::didChangeInstances()
     if (onlyInstance)
         onlyInstance->propertyCaches.hasRunSinceClear = true;
     instanceOfRecentRun = { };
+}
+
+Instance* VMState::findInstanceThatLendsTables() const
+{
+    for (Instance* instance : instances) {
+        if (instance->state)
+            return instance;
+    }
+    return nullptr;
+}
+
+void VMState::lendTablesOfLivingInstances()
+{
+    for (JSGlobalObject* realm : realmsWithBorrowedTables) {
+        if (!realm->aotInstance() && !instances.contains(realm->aotTableInstance()))
+            realm->setAOTTableInstance(findInstanceThatLendsTables());
+    }
 }
 
 void Instance::destroy(Instance* instance)
@@ -661,7 +697,6 @@ static size_t arenaCapacity(const ProgramTables& tables)
         + sizeOfZeroedTable(tables.firstEnvironmentShape, sizeof(uint32_t))
         + sizeOfZeroedTable(tables.allocations().size() + 1, sizeof(AllocationSiteRecord) + sizeof(int32_t))
         + sizeOfZeroedTable(tables.numberOfClasses(), sizeof(JSCell*))
-        + sizeOfZeroedTable(tables.sizeOfStructuresOfHeirs, sizeof(uint8_t))
         + sizeOfZeroedTable(tables.numberOfClosureCells, sizeOfCellReference)
         + sizeOfZeroedTable(tables.keyCellIdentifiers().size(), sizeOfCellReference)
         + sizeOfZeroedTable(tables.bigIntConstants().size(), sizeof(JSCell*))
@@ -1515,6 +1550,9 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
         at<Slot>(offset) = static_cast<Slot>(initialWordAt(offset / sizeof(uint64_t)) >> (offset % sizeof(uint64_t) * 8));
         offset += sizeof(Slot);
     };
+    auto refreshMirrors = makeScopeExit([&] {
+        refreshViewMirrors();
+    });
     for (uint32_t end = offset + size; offset < end;) {
         uint32_t left = end - offset;
         if (!(offset % sizeof(uint64_t)) && left >= sizeof(uint64_t))
@@ -1525,6 +1563,82 @@ void ProgramStatics::putBack(uint32_t offset, uint32_t size)
             putBackSlot(uint16_t());
         else
             putBackSlot(uint8_t());
+    }
+}
+
+std::span<ProgramStatics::VariableWithViewMirror> ProgramStatics::viewMirrorVariables(const StaticsRange& range)
+{
+    return { reinterpret_cast<VariableWithViewMirror*>(m_instance.statics() + range.offset), range.size / sizeof(VariableWithViewMirror) };
+}
+
+void ProgramStatics::refreshViewMirrors()
+{
+    bool mirrorAlone = true;
+    for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
+        if (!std::exchange(mirrorAlone, false)) {
+            VariableWithViewMirror::refreshViewsOfOneBuffer(views);
+            continue;
+        }
+        for (VariableWithViewMirror& mirrored : views)
+            mirrored.refresh();
+    }
+}
+
+void ProgramStatics::VariableWithViewMirror::refresh()
+{
+    JSValue held = JSValue::decode(variable);
+    auto* view = held && held.isCell() ? dynamicDowncast<JSArrayBufferView>(held.asCell()) : nullptr;
+    bool hasFixedLength = view && isTypedView(typedArrayType(view->type())) && !isResizableOrGrowableShared(view->mode());
+    vector = hasFixedLength ? view->vector() : nullptr;
+    length = hasFixedLength ? std::min<uint64_t>(view->lengthRaw(), (1ull << 31) >> logElementSize(typedArrayType(view->type()))) : 0;
+}
+
+void ProgramStatics::VariableWithViewMirror::refreshViewsOfOneBuffer(std::span<VariableWithViewMirror> views)
+{
+    auto logElementSizeOf = [](const VariableWithViewMirror& mirrored) {
+        return logElementSize(typedArrayType(JSValue::decode(mirrored.variable).asCell()->type()));
+    };
+    uint64_t size = UINT64_MAX;
+    bool haveOneVector = true;
+    for (VariableWithViewMirror& mirrored : views) {
+        mirrored.refresh();
+        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector;
+        if (haveOneVector)
+            size = std::min(size, mirrored.length << logElementSizeOf(mirrored));
+    }
+    for (VariableWithViewMirror& mirrored : views)
+        mirrored.lengthOfBuffer = haveOneVector ? size >> logElementSizeOf(mirrored) : 0;
+}
+
+void ProgramStatics::didWriteVariable(uint32_t offset)
+{
+    std::span<const StaticsRange> ranges = m_tables.variablesWithViewMirror();
+    auto range = std::ranges::find_if(ranges, [&](const StaticsRange& range) {
+        return range.contains(offset);
+    });
+    if (range == ranges.begin() && range != ranges.end())
+        at<VariableWithViewMirror>(offset).refresh();
+    else if (range != ranges.end())
+        VariableWithViewMirror::refreshViewsOfOneBuffer(viewMirrorVariables(*range));
+}
+
+void ProgramStatics::didMoveStorageOf(JSCell* view)
+{
+    bool mirrorAlone = true;
+    for (const StaticsRange& range : m_tables.variablesWithViewMirror()) {
+        std::span<VariableWithViewMirror> views = viewMirrorVariables(range);
+        bool areOfOneBuffer = !std::exchange(mirrorAlone, false);
+        bool holdsView = false;
+        for (VariableWithViewMirror& mirrored : views) {
+            if (mirrored.variable != JSValue::encode(view))
+                continue;
+            holdsView = true;
+            if (!areOfOneBuffer)
+                mirrored.refresh();
+        }
+        if (areOfOneBuffer && holdsView)
+            VariableWithViewMirror::refreshViewsOfOneBuffer(views);
     }
 }
 
@@ -1595,10 +1709,12 @@ void ProgramStatics::write(Instance& instance, SlotData slot, JSValue value)
     if (!value) {
         RELEASE_ASSERT(traitsOf(representation).hasAbsent);
         clearSlot(representation, address);
+        statics.didWriteVariable(slot.offset);
         return;
     }
     bool didWrite = tryWriteSlot(instance, representation, address, value);
     RELEASE_ASSERT(didWrite);
+    statics.didWriteVariable(slot.offset);
     if (traitsOf(representation).holdsCell)
         statics.didStoreRootInStatics(slot.offset);
 }

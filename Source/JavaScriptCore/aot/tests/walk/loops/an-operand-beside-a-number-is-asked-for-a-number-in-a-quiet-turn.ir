@@ -1,5 +1,6 @@
-# `var result = $newArrayLike(length); for (; i < length && $hasContiguousIndex(array, i); i++) if (!$tryPutByValDirect(result, i, tell($getOwnContiguousIndex(array, i)))) break;` with `tell = (crate: Crate) => ({ positive: crate.stock > 0 })`
-# and `interface Crate { stock: number }`. The leaf is copied into the turn. The crates have been in the hands of code that nobody has seen, so nothing is proven of the field: the relation beside the number takes any value, and a
+# `var result = $newArrayLike(length); for (; i < length && $hasContiguousIndex(array, i); i++) if (!$tryPutByValDirect(result, i, tell($getOwnContiguousIndex(array, i)))) break;` with
+# `tell = (crate: Crate) => { const stock = crate.stock; return crate.held ? { positive: stock > 0 } : undefined; }` and `interface Crate { stock: number; held: boolean }`. A relation in the same block as its read is asked by the
+# guess on the crate; here they stand in two blocks. The leaf is copied into the turn. The crates have been in the hands of code that nobody has seen, so nothing is proven of the field: the relation beside the number takes any value, and a
 # value that is an object runs its valueOf. That has no place in a quiet turn: every turn left there, without a test, and the typed copy was thrown away. A NUMBER IS EXPECTED of the field, and the turns store at a position of a
 # list, so source and target are asked once in front of the typed copy: there the operand is asked for a number: where it is one the relation is one of numbers, and where it is none the turn begins again in the other copy, in
 # front of the valueOf. Nothing is asked where nothing or something else is expected (Bun's from-source/walk/guesses/no-copy-of-a-loop-leaves-at-the-first-element-that-is-no-number.ir), nor in other loops: a typed copy is a bet
@@ -21,7 +22,7 @@
 # SHELL-NEXT: exited with 0
 
 layout L0 module=m1 position=10 fields=[{key="positive" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
-layout L1 module=m1 position=11 fields=[{key="stock" declared={type=number} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m1 position=11 fields=[{key="stock" declared={type=number} flags=[IsRequired]}, {key="held" declared={type=boolean} flags=[IsRequired]}] ownFieldCount=2
 module m0 path="main.mjs" displayPath="main.mjs" body=f0
 module m1 path="/$bun/js/engine/Made.ts" displayPath="/$bun/js/engine/Made.ts" flags=[IsLibrary]
 entry module=m0
@@ -87,13 +88,21 @@ function f1 name="tellAll" module=m1 kind=Method role=Library flags=[HasThis, Is
 function f2 name="tell" module=m0 position=20 length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {
   b0(v0: undefined|null|L1):
     v1 = PropGet v0 key="stock" @21
-    v2 = Integer
-    v3 = Greater v1, v2 @22
-    v4 = NewObject -, v3 layout=L0 fields=[0] @23
-    Return v4
+    v2 = PropGet v0 key="held" @24
+    v3 = ToBoolean v2
+    Branch v3 -> taken b1(), notTaken b2()
+  b1():
+    v4 = Integer
+    v5 = Greater v1, v4 @22
+    v6 = NewObject -, v5 layout=L0 fields=[0] @23
+    Return v6
+  b2():
+    v7 = Undefined
+    Return v7
 }
 function f3 name="crate" module=m0 position=30 length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] {
   b0(v0: number):
-    v1 = NewObject -, v0 layout=L1 fields=[0] @31
-    Return v1
+    v1 = Boolean boolean=true
+    v2 = NewObject -, v0, v1 layout=L1 fields=[0, 1] @31
+    Return v2
 }

@@ -20,6 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
+static constexpr int32_t emptyPairBits = static_cast<int32_t>(0xff80ff80);
 static_assert(JSRopeString::offsetOfFiber0() == sizeof(EncodedJSValue) && JSRopeString::offsetOfLength() == 2 * sizeof(EncodedJSValue));
 static_assert(maxSingleCharacterString == 0xff);
 
@@ -69,7 +70,7 @@ AssemblyHelpers::FreeListRefill makeSubstringOfFlatString(StubAssembler& jit, co
         part.branchTest32(CCallHelpers::NonZero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(makesRope, &part);
         part.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
         part.load32(BaseIndex(characters, start, CCallHelpers::TimesTwo), codeUnit);
-        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(static_cast<int32_t>(0xff80ff80))).linkTo(makesRope, &part);
+        part.branchTest32(CCallHelpers::NonZero, codeUnit, TrustedImm32(emptyPairBits)).linkTo(makesRope, &part);
         part.preserving(savedAroundLeaf.span(), [&] {
             part.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
             part.move(codeUnit, leafFunctionGPR);
@@ -194,6 +195,14 @@ void generateSubstring(StubAssembler& jit)
     isAtMostTwoOfRope.link(&jit);
     Jump isNotTwoOfRope = jit.branch64(CCallHelpers::NotEqual, span, TrustedImm32(2));
     jit.branchTestPtr(CCallHelpers::NonZero, fiber, TrustedImm32(JSRopeString::is8BitInPointer)).linkTo(isLongPartOfRope, &jit);
+    fails.append(jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    jit.move(fiber, flags);
+    loadSubstringBaseAndOffset(jit, string, base, start);
+    jit.add64(from, start);
+    jit.loadPtr(Address(base, JSString::offsetOfValue()), fiber);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
+    jit.load32(BaseIndex(fiber, start, CCallHelpers::TimesTwo), span);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isReady, &jit);
     fails.append(jit.jump());
     isNotTwoOfRope.link(&jit);
     Jump isSingleRopeCharacter = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
@@ -205,6 +214,9 @@ void generateSubstring(StubAssembler& jit)
     Jump isOne = jit.branch64(CCallHelpers::Equal, span, TrustedImm32(1));
     jit.branch64(CCallHelpers::LessThan, span, TrustedImm32(1)).linkTo(isEmpty, &jit);
     jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(isLong, &jit);
+    jit.loadPtr(Address(fiber, StringImpl::dataOffset()), base);
+    jit.load32(BaseIndex(base, from, CCallHelpers::TimesTwo), span);
+    jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isLong, &jit);
     fails.append(jit.jump());
 
     isSingleRopeCharacter.link(&jit);

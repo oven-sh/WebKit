@@ -96,8 +96,13 @@ private:
     void replaceElements(const InlineCall&, const InlineSplice&, const ArrayStorageForm&, std::span<const Operand> inserted);
     CellPointer copyRemovedElements(const InlineCall&, const InlineSplice&, const ArrayStorageForm&);
     Boxed spliceByOperation(const InlineCall&, LBasicBlock otherwise, const CallOptions&);
+    Word32 int32OrElse(ValueID, LBasicBlock otherwise);
+    void spliceDiscardingByOperation(const InlineCall&, LBasicBlock otherwise, const CallOptions&);
 
     Integer indexOfNumber(const InlineCall&, CellPointer array);
+    Integer indexOfInt32(const InlineCall&, CellPointer array);
+    Integer indexOfOptionalInt32(const InlineCall&, CellPointer array);
+    Integer indexOfBoxedInt32(const InlineCall&, CellPointer array, Boxed searched, std::optional<Integer> first);
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);

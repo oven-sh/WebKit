@@ -46,6 +46,45 @@ void WriterOfLinkLayouts::noteNamesThatFollowersOfMakersStore()
         if (found != m_pairsNotListed.end() && !std::exchange(m_namesNotListed[found->value].isStoredByFollowerOfMaker, true))
             ++numbersOfLayoutsNotedUnderKey.add(key.bits(), 0).iterator->value;
     };
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> initialNamesNoted;
+    auto bitsOfInitialName = [](PropertyKeyID key) {
+        return key.bits();
+    };
+    auto hashOfInitialNames = [](std::span<const PropertyKeyID> keys, uint64_t seed) {
+        constexpr uint64_t multiplier = 0x9e3779b97f4a7c15u;
+        uint64_t hash = seed;
+        for (PropertyKeyID key : keys)
+            hash = (hash ^ hash >> 32) * multiplier + key.bits();
+        return hash * multiplier >> 1;
+    };
+    auto noteInitialNames = [&](LayoutID layout, std::span<const PropertyKeyID> keys, uint64_t storedTogether) {
+        LinkedInitialNames names { layout, { } };
+        for (size_t index = 0; index < std::min<size_t>(keys.size(), 64); ++index) {
+            if (storedTogether >> index & 1 && m_pairsNotListed.contains(static_cast<uint64_t>(layout.index()) << 32 | keys[index].bits()))
+                names.keys.append(keys[index]);
+        }
+        if (names.keys.isEmpty())
+            return;
+        std::ranges::sort(names.keys, { }, bitsOfInitialName);
+        uint64_t hash = hashOfInitialNames(names.keys, layout.index());
+        if (initialNamesNoted.add(hash).isNewEntry)
+            m_tables.initialNames.append(WTF::move(names));
+    };
+    struct LostInitialNames {
+        std::span<const PropertyKeyID> keys;
+        uint64_t storedTogether { 0 };
+        Vector<PropertyKeyID, 8> keysOfMakers;
+    };
+    Vector<LostInitialNames> lostInitialNames;
+    auto noteLostInitialNames = [&](LostInitialNames&& names) {
+        if (!names.storedTogether || names.keysOfMakers.isEmpty())
+            return;
+        std::ranges::sort(names.keysOfMakers, { }, bitsOfInitialName);
+        names.keysOfMakers.shrink(names.keysOfMakers.size() - std::ranges::unique(names.keysOfMakers).size());
+        uint64_t hash = hashOfInitialNames(names.keysOfMakers, hashOfInitialNames(names.keys, names.storedTogether));
+        if (initialNamesNoted.add(hash).isNewEntry)
+            lostInitialNames.append(WTF::move(names));
+    };
     struct KeysStoredIntoObjectThatLinkHasLost {
         std::span<const PropertyKeyID> keys;
         uint64_t keysOnlyGivenUndefined { 0 };
@@ -59,14 +98,24 @@ void WriterOfLinkLayouts::noteNamesThatFollowersOfMakersStore()
         if (making == noMakingInFrontOfRun)
             continue;
         const LayoutsOfRun& layouts = run.layouts.isEmpty() ? m_runsOfMakers[making - 1].layouts : run.layouts;
+        uint64_t keysStoredTogether = run.keysStoredTogether & ~run.keysOnlyGivenUndefined;
         for (LayoutID layout : layouts) {
             for (size_t index = 0; index < run.keys.size(); ++index) {
                 if (index >= 64 || !(run.keysOnlyGivenUndefined >> index & 1))
                     note(layout, run.keys[index]);
             }
+            noteInitialNames(layout, run.keys.span(), keysStoredTogether);
         }
-        if (layouts.isEmpty() && run.isOnObjectThatLinkHasLost)
+        if (layouts.isEmpty() && run.isOnObjectThatLinkHasLost) {
             runsOnObjectsThatLinkHasLost.append({ run.keys.span(), run.keysOnlyGivenUndefined });
+            LostInitialNames names { run.keys.span(), keysStoredTogether, { } };
+            size_t numberOfMakersLeft = m_runsOfMakers.size();
+            for (const RunOfMaker* maker = &run; !maker->isMadeHere && maker->givenBy && !m_runsOnWhatFunctionsReturn.isEmpty() && m_runsOnWhatFunctionsReturn[maker->givenBy.index()] && numberOfMakersLeft--;) {
+                maker = &m_runsOfMakers[m_runsOnWhatFunctionsReturn[maker->givenBy.index()] - 1];
+                names.keysOfMakers.appendVector(maker->keys);
+            }
+            noteLostInitialNames(WTF::move(names));
+        }
     }
     HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> runsBehindMakerThatFillsField;
     Vector<uint64_t, 8> runsGoneThrough;
@@ -99,12 +148,27 @@ void WriterOfLinkLayouts::noteNamesThatFollowersOfMakersStore()
         for (LayoutID layout : run.layouts) {
             for (PropertyKeyID key : run.keys)
                 note(layout, key);
+            noteInitialNames(layout, run.keys.span(), run.keysStoredTogether);
         }
-        if (run.layouts.isEmpty() && run.isOnObjectThatLinkHasLost)
+        if (run.layouts.isEmpty() && run.isOnObjectThatLinkHasLost) {
             runsOnObjectsThatLinkHasLost.append({ run.keys.span(), 0 });
+            LostInitialNames names { run.keys.span(), run.keysStoredTogether, { } };
+            FunctionID maker = run.givenBy;
+            for (size_t numberOfMakersLeft = m_runsOnObjectsInFields.size(); maker && numberOfMakersLeft--;) {
+                auto found = m_runsOnFieldsOfWhatFunctionsReturn.find(static_cast<uint64_t>(maker.index() + 1) << 32 | run.keyInHolder.bits());
+                if (found == m_runsOnFieldsOfWhatFunctionsReturn.end())
+                    break;
+                const RunOnObjectInField& inFront = m_runsOnObjectsInFields[found->value - 1];
+                names.keysOfMakers.appendVector(inFront.keys);
+                maker = inFront.givenBy;
+            }
+            noteLostInitialNames(WTF::move(names));
+        }
     }
-    if (runsOnObjectsThatLinkHasLost.isEmpty())
+    if (runsOnObjectsThatLinkHasLost.isEmpty()) {
+        m_tables.sortInitialNames();
         return;
+    }
 
     auto bitsOf = [](PropertyKeyID key) {
         return key.bits();
@@ -148,6 +212,24 @@ void WriterOfLinkLayouts::noteNamesThatFollowersOfMakersStore()
             }
         }
     }
+    for (const LostInitialNames& names : lostInitialNames) {
+        const Vector<LayoutID, 2>* candidates = nullptr;
+        for (uint64_t left = names.storedTogether; left; left &= left - 1) {
+            auto stored = layoutsStoredUnderKey.find(names.keys[std::countr_zero(left)].bits());
+            if (stored != layoutsStoredUnderKey.end() && (!candidates || stored->value.size() < candidates->size()))
+                candidates = &stored->value;
+        }
+        if (!candidates)
+            continue;
+        for (LayoutID layout : *candidates) {
+            auto hasName = [&](PropertyKeyID key) {
+                return m_pairsNotListed.contains(static_cast<uint64_t>(layout.index()) << 32 | key.bits()) || findField(m_program, layout, key);
+            };
+            if (std::ranges::all_of(names.keys, hasName) && std::ranges::all_of(names.keysOfMakers, hasName))
+                noteInitialNames(layout, names.keys, names.storedTogether);
+        }
+    }
+    m_tables.sortInitialNames();
 }
 
 } } } // namespace JSC::AOT::Typed

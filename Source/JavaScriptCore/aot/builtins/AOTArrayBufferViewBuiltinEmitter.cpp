@@ -139,8 +139,15 @@ void ArrayBufferViewBuiltinEmitter::generateTypedArrayWithLength(const InlineCal
     RELEASE_ASSERT(constructedClass);
     TypedArrayType type = m_builtins.typedArrayTypeOf(constructedClass);
     RELEASE_ASSERT(isTypedView(type) && m_builtins.typedArrayClassOf(constructedClass) == constructedClass);
-    StubCallResult view = callStub(call.context(), newTypedArray(), { word32(type).value(), numberOperand(call.argument(0)).value() }, { .calledBuiltin = functionOf(call.overload()) });
-    finish(call, CellPointer(view.first));
+    ValueID length = call.argument(0);
+    auto finishWith = [&](StubKey stub, LValue lengthOperand) {
+        StubCallResult view = callStub(call.context(), stub, { word32(type).value(), lengthOperand }, { .calledBuiltin = functionOf(call.overload()) });
+        finish(call, CellPointer(view.first));
+    };
+    if (typeOf(length).isInt32())
+        finishWith(newTypedArray(LengthOfTypedArray::WholeNumber), int32Operand(length).value());
+    else
+        finishWith(newTypedArray(LengthOfTypedArray::Number), numberOperand(length).value());
 }
 
 void ArrayBufferViewBuiltinEmitter::generateByteLiteral(const InlineCall& call)

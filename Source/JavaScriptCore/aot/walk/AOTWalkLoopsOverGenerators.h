@@ -25,10 +25,12 @@ struct LoopOverIterator {
     bool stepStandsInHeadOfLoop { false };
 };
 std::optional<LoopOverIterator> findLoopOverIterator(const BodyIndex&, ValueID open);
+ValueID findSoleLoopHeaderStep(const BodyIndex&, ValueID open);
 void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker&, Origin, bool asksGeneratorForIterator = true);
 void buildFirstReadThatCloseOfGeneratorLeavesOut(Walker&, Origin);
 bool buildLoopOverGenerator(Walker&, const BodyValue&);
 bool engineAnswersForGenerators(Walker&);
+bool engineOpensAsyncGenerators(const Walker&);
 std::optional<BuiltinID> findMemberAboveForIteration(const Walker&, BuiltinID start, BuiltinName, MembersBehindWatch = MembersBehindWatch::AreOpen);
 std::optional<BuiltinID> findMemberUnderKey(const Walker&, BuiltinID start, PropertyKeyID, MembersBehindWatch = MembersBehindWatch::AreOpen);
 GeneratorStepCheck checkLeftToStepOf(Walker&, Reference generator);

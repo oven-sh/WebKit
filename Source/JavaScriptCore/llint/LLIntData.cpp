@@ -70,6 +70,10 @@ extern "C" void SYSV_ABI llint_entry(void*, void*, void*);
 extern "C" void SYSV_ABI llint_bytecode_entry(void*, void*, void*);
 #if ENABLE(AOT)
 extern "C" void SYSV_ABI llint_aot_entry(void*, void*, void*);
+extern "C" {
+extern const EncodedJSValue g_undefinedValues[2];
+alignas(16) const EncodedJSValue g_undefinedValues[2] = { JSValue::ValueUndefined, JSValue::ValueUndefined };
+}
 #endif
 extern "C" void SYSV_ABI llint_webassembly_entry(void*, void*, void*);
 

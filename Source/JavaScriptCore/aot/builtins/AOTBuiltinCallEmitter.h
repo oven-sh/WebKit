@@ -45,9 +45,10 @@ public:
     void generateFormatNumberWithPattern(const ValueContext&);
     void generateNewArgumentList(const ValueContext&);
     void generateNewArrayOfGiven(const ValueContext&);
-    CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal);
+    CellPointer sharedRegExpLiteral(const ValueContext& at, const Operation& literal, uint32_t parameters = 0);
     void generateSharedRegExpLiteral(const ValueContext&);
     bool canShareRegExpLiteral(const Operation& literal) const;
+    bool onlyCountsMatches(ValueID literal) const;
     void generateGetBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValue(const ValueContext&);
     void generateGetWatchedBuiltinValueOrAbsent(const ValueContext&);

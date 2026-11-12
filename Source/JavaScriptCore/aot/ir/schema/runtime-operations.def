@@ -65,6 +65,7 @@ runtime RememberElement : void (JSCell* array, EncodedJSValue element) ; reads(a
 
 runtime NewArray : JSCell* (uint32_t count, const EncodedJSValue* values) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayOfList : JSCell* (JSCell* list, uint32_t capacityAndKind) ; RuntimeAllocates
+runtime NewArrayOfView : JSCell* (JSCell* view, uint32_t roomAndKind) ; RuntimeAllocates
 runtime NewArrayOfHoles : JSCell* (uint32_t lengthAndCapacity, uint32_t flags) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayAtReviewedSite : JSCell* (void* profile, uint32_t seedIndexingType) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NewArrayWithLengthAtReviewedSite : JSCell* (void* profile, uint32_t seedAndLengthAndCapacity) ; reads(all) writes(AllocatorState, RuntimeState) collects
@@ -77,6 +78,9 @@ runtime AppendMembers : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray
 runtime AppendValuesOfMap : void (JSCell* array, JSCell* source) ; RuntimeGrowsArray writes(CollectionStorage)
 runtime AppendHole : JSCell* (JSCell* array) ; RuntimeGrowsArray
 runtime ReserveArrayCapacity : void (JSCell* array, uint64_t capacity) ; reads(all) writes(ArrayCapacity, AllocatorState, RuntimeState) collects
+runtime GrowFilledArray : void (JSCell* array, uint64_t capacity) ; reads(all) writes(Elements, ArrayStorage, ArrayCapacity, AllocatorState, RuntimeState) collects
+runtime CopyElements, CopyElementsDown : size_t (EncodedJSValue target, EncodedJSValue source, uint64_t targetIndex, uint64_t sourceIndex, uint64_t count) ; reads(all) writes(Elements, ArrayStorage, ArrayCapacity, ArrayLengths, TypedArrayElements, ShapeWords, AllocatorState, RuntimeState) collects
+runtime FillElements : size_t (EncodedJSValue target, EncodedJSValue value, uint64_t targetIndex, uint64_t count) ; reads(all) writes(Elements, ArrayStorage, ArrayCapacity, ArrayLengths, TypedArrayElements, ShapeWords, AllocatorState, RuntimeState) collects
 runtime ConvertToDoubleStorage : void (JSCell* array) ; reads(all) writes(Elements, ArrayStorage, ShapeWords, AllocatorState, RuntimeState) collects
 runtime TryFinishBirth : void (JSCell* object) ; reads(all) writes(RuntimeState)
 runtime AreHeldFieldsFilled : size_t (JSCell* object) ; reads(all)
@@ -87,6 +91,7 @@ runtime NewTypedArray : JSCell* (uint32_t type, double length) ; reads(all) writ
 runtime CopyByteLiteral : JSCell* (const uint8_t* bytes, uint32_t size, uint32_t isBuffer) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime TypedArrayPut : void (JSCell* view, uint64_t position, double value) ; reads(all) writes(TypedArrayElements)
 runtime TypedArrayLength : uint64_t (JSCell* view) ; reads(all) ; leaf
+runtime RefreshViewMirror : uint64_t (uint64_t variable, void* instance) ; reads(all) writes(TypedArrayStorage) ; leaf
 runtime ThrowIfTypedArrayIsDetached : void (JSCell* view) ; reads(all) throws
 
 runtime Concat : JSCell* (JSCell* left, JSCell* right) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
@@ -100,6 +105,7 @@ runtime StringHasAt, StringIndexOfFrom : size_t (JSCell* string, JSCell* other, 
 runtime IntToString : JSCell* (uint64_t bits) ; reads(all) writes(StringStorage, AllocatorState, RuntimeState) collects
 runtime DoubleToString : JSCell* (double) ; RuntimeAllocates
 runtime CharToString : JSCell* (uint32_t) ; RuntimeAllocates
+runtime StringOfCodeUnits : JSCell* (uint64_t codeUnits, uint32_t count) ; RuntimeAllocates
 
 runtime ConcatenatePair : JSCell* (uint32_t isLikelyKey, const EncodedJSValue* parts, uint32_t unused) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
 runtime Concatenate : JSCell* (uint32_t count, const EncodedJSValue* parts, uint32_t isLikelyKey) ; reads(all) writes(StringStorage, StringBuilderContents, AllocatorState, RuntimeState) throws collects
@@ -153,6 +159,7 @@ runtime GetPropertyEnumerator : JSCell* (EncodedJSValue object) ; unknownCode
 runtime EnumeratorNext : UGPRPair (JSCell* enumerator, EncodedJSValue object, uint64_t position) ; unknownCode
 runtime EnumeratorGetByVal : EncodedJSValue (EncodedJSValue object, EncodedJSValue property, JSCell* enumerator) ; RuntimeCreatesConstant writes(ObjectFields) throws
 runtime CreateAsyncFromSyncIterator : JSCell* (JSCell* iterator, EncodedJSValue next) ; RuntimeAllocates
+runtime ReserveTableCapacity : void (JSCell* table, EncodedJSValue source) ; reads(all) writes(CollectionStorage, CollectionEntries, AllocatorState, RuntimeState) collects
 runtime NextSetElement : EncodedJSValue (EncodedJSValue iterator) ; reads(all) writes(InternalFields, CollectionStorage, AllocatorState, RuntimeState)
 runtime ThrowNotIterable : void (EncodedJSValue iterable, uint32_t isSpread) ; RuntimeAllocates throws
 runtime ThrowIfTooLongForList : void (JSCell* source) ; RuntimeCreatesString
@@ -175,6 +182,10 @@ runtime AsyncIteratorStep : EncodedJSValue (JSCell* iterator, EncodedJSValue sen
 runtime FinishAsyncIteratorStep : EncodedJSValue (JSCell* generator, EncodedJSValue returned, uint32_t consumerMayContinue) ; unknownCode
 runtime PromiseThen : JSCell* (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived) ; unknownCode
 runtime PromiseCatch : JSCell* (JSCell* promise, EncodedJSValue onRejected) ; unknownCode
+runtime NewSettledResult : JSCell* (EncodedJSValue value, uint32_t status) ; RuntimeAllocates
+runtime NewReactionChain : JSCell* (uint32_t description) ; RuntimeAllocates
+runtime StartReactionChain : void (JSCell* promise, JSCell* chain) ; reads(all) writes(PromiseState, ExternalState, AllocatorState, RuntimeState) collects
+runtime StartReactionChainOfValue : void (EncodedJSValue value, JSCell* chain) ; reads(all) writes(PromiseState, ExternalState, AllocatorState, RuntimeState) collects
 runtime PromiseAll : JSCell* (uint32_t count, const EncodedJSValue* elements, uint32_t directCalls) ; unknownCode
 
 runtime Throw, ThrowToHandlerInFunction : void (EncodedJSValue value) ; reads(all) writes(RuntimeState) throws

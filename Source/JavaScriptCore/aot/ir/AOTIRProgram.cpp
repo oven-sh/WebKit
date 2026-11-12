@@ -844,6 +844,28 @@ VariableID Program::variableBehindExport(ModuleID module, uint32_t index) const
     return { };
 }
 
+VariableID Program::findCompiledExport(ModuleID module, uint32_t index) const
+{
+    constexpr OptionSet<ModuleFlags> excludedModules { ModuleFlags::MayBeReevaluated, ModuleFlags::MayBeMocked, ModuleFlags::MayBeEvicted };
+    constexpr OptionSet<VariableFlags> excludedVariables { VariableFlags::IsReplaceable, VariableFlags::HoldsMock, VariableFlags::OriginalMayRun, VariableFlags::HoldsInstance };
+    for (size_t steps = 0; steps <= modules.size(); ++steps) {
+        const Module& exporter = at(module);
+        if (exporter.kind != ModuleKind::SourceText || exporter.flags.containsAny(excludedModules) || index >= exporter.exports.size())
+            return { };
+        const ModuleExport& entry = exporter.exports[index];
+        if (entry.isHiddenUntilInitialized)
+            return { };
+        if (entry.kind == ModuleExportKind::Variable)
+            return entry.variable && !at(entry.variable).owner && !at(entry.variable).flags.containsAny(excludedVariables) ? entry.variable : VariableID();
+        if (entry.kind != ModuleExportKind::Indirect || !entry.module || !entry.importName)
+            return { };
+        const auto& exportsOfTarget = at(entry.module).exports;
+        index = static_cast<uint32_t>(std::ranges::find(exportsOfTarget, entry.importName, &ModuleExport::name) - exportsOfTarget.begin());
+        module = entry.module;
+    }
+    return { };
+}
+
 LayoutID Program::layoutOfWholeNamespace(ModuleID id) const
 {
     const Module& module = at(id);
@@ -1283,11 +1305,16 @@ BuiltinID hostRequireFunctionFor(const Module& module)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool reachesModuleObjects(const Program& program)
+bool namesModuleObjects(const Program& program)
 {
     return std::ranges::any_of(program.modules, [](const Module& module) {
         return module.flags.contains(ModuleFlags::ReachesModuleObjects);
     });
+}
+
+bool reachesModuleObjects(const Program& program)
+{
+    return namesModuleObjects(program) || std::ranges::any_of(program.modules, &Module::exposesGlobalObject);
 }
 
 bool parsersCouldMakeRecordsOf(const Program& program, LayoutID id)

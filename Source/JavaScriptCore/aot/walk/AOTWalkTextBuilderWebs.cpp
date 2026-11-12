@@ -87,6 +87,7 @@ struct CandidateInTextBuilderWeb {
     bool beginsAnewOnSomeEdge { false };
     Vector<ValueID, 2> parametersThatReadText;
     bool hasCharacterReaders { false };
+    bool takesPrependedStrings { false };
     Vector<LoopID, 4> loopsOfAppends;
     Vector<BlockID, 2> blocksOfStores;
 };
@@ -136,6 +137,7 @@ private:
     bool runsInEveryIteration(BlockID) const;
     bool coverEveryIteration(std::span<const BlockID>, LoopID) const;
     bool isCheaperAsRope(const CandidateInTextBuilderWeb&) const;
+    bool isPrependedInInnerLoop(ValueID) const;
 
     Walker& m_walker;
     const BodyIndex& m_index;
@@ -410,6 +412,8 @@ bool TextBuilderWebScan::coverEveryIteration(std::span<const BlockID> blocks, Lo
 bool TextBuilderWebScan::isCheaperAsRope(const CandidateInTextBuilderWeb& candidate) const
 {
     static constexpr unsigned maxRopesPerStore = 4;
+    if (candidate.takesPrependedStrings && !candidate.hasCharacterReaders)
+        return true;
     return !candidate.hasCharacterReaders && std::ranges::any_of(candidate.blocksOfStores, [&](BlockID block) {
         LoopID loop = m_index.loopOf(block);
         unsigned appends = 0;
@@ -421,6 +425,47 @@ bool TextBuilderWebScan::isCheaperAsRope(const CandidateInTextBuilderWeb& candid
         }
         return appends && appends <= maxRopesPerStore && coverEveryIteration(candidate.blocksOfStores.span(), loop);
     });
+}
+
+bool TextBuilderWebScan::isPrependedInInnerLoop(ValueID string) const
+{
+    static constexpr size_t maxValues = 16;
+    Vector<ValueID, maxValues> values;
+    auto add = [&](ValueID reached) {
+        ValueID root = m_index.stripCasts(reached);
+        if (root.index() >= m_firstValue && !values.contains(root) && values.size() < maxValues)
+            values.append(root);
+    };
+    add(string);
+    for (size_t place = 0; place < values.size(); ++place) {
+        ValueID value = values[place];
+        if (m_index.isParameter(value)) {
+            BlockID block = m_index.blockOf(value);
+            uint32_t parameterIndex = value.index() - m_index.block(block).firstParameter().index();
+            if (block == m_head.id() || !isInLoop(block))
+                continue;
+            for (const BodyIncomingEdge& edge : m_walker.incomingEdgesOf(m_index, block)) {
+                std::span<const ValueID> arguments = edge.target.arguments();
+                if (parameterIndex < arguments.size() && arguments[parameterIndex])
+                    add(arguments[parameterIndex]);
+            }
+            continue;
+        }
+        if (!operationsThatJoinTexts.contains(m_index.opcodeOf(value)))
+            continue;
+        bool isPrepended = false;
+        m_index.value(value).forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+            if (operandIndex == frontOperandInTextBuilderWebs) {
+                add(operand);
+                return;
+            }
+            ValueID root = m_index.stripCasts(operand);
+            isPrepended |= m_index.isParameter(root) && values.contains(root) && m_index.blockOf(root) != m_head.id() && m_index.isLoopHead(m_index.blockOf(root));
+        });
+        if (isPrepended)
+            return true;
+    }
+    return false;
 }
 
 bool TextBuilderWebScan::makesTextThatIsOnlyRead(const BodyValue& join)
@@ -498,6 +543,10 @@ void TextBuilderWebScan::scanOperation(const BodyValue& operation)
     m_textsGrownSinceSomethingMayHaveThrown.append(textInFront);
     candidate.grows = true;
     candidate.loopsOfAppends.append(m_index.loopOf(m_index.blockOf(operation.id())));
+    operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+        if (operandIndex != frontOperandInTextBuilderWebs && !candidate.takesPrependedStrings)
+            candidate.takesPrependedStrings = isPrependedInInnerLoop(operand);
+    });
 }
 
 void TextBuilderWebScan::arriveAt(BlockID block, uint32_t text, uint32_t parameterIndex, bool beginsAnew)

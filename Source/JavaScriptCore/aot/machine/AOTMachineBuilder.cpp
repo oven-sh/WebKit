@@ -1218,7 +1218,7 @@ void Builder::stopIfLoadOfStoredWordStands(const Operation* store)
 
 void Builder::verifyReusedLoad(Operation* load, Operation* baseAsked, int32_t offsetAsked)
 {
-    if (m_isVerifyingReusedLoad || load->has(OperationFlag::ReadsImmutableHeap) || isWrittenByOtherThreads(load->heap()))
+    if (m_isVerifyingReusedLoad || load->has(OperationFlag::ReadsImmutableHeap) || isWrittenByOtherThreads(load->heap()) || load->type() == Vector128)
         return;
     SetForScope<bool> isVerifying(m_isVerifyingReusedLoad, true);
 

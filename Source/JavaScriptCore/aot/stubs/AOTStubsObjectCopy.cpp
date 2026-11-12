@@ -190,7 +190,7 @@ static void generateFrontEndOfObjectCopy(StubAssembler& jit, ObjectIsCopiedBy co
     JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, source);
     callsOperation.append(branchIfCellBearsMark(jit, source));
 
-    static_assert(CompiledStructure::offsetOfHeldKeyOrder() == CompiledStructure::offsetOfFlags() + 1);
+    static_assert(CompiledStructure::offsetOfFurtherFlags() == CompiledStructure::offsetOfFlags() + 1);
     constexpr int32_t keyOrderStaysBehind = 0xff00;
     constexpr int32_t isCopiedByWords = static_cast<uint8_t>(CompiledStructure::Flag::IsCopiedByWords);
     constexpr int32_t hasExtraProperties = static_cast<uint8_t>(CompiledStructure::Flag::HasExtraProperties);
@@ -736,7 +736,7 @@ static void copyByChunksWithStructure(StubAssembler& jit, const ChunkCopy& copy,
     callsOperation.append(jit.branchOr32(CCallHelpers::NonZero, excludedRun, word));
     callsOperation.append(jit.branch32(CCallHelpers::NotEqual, Address(target, offsetOfOrderWord), TrustedImm32(unorderedOrderWord)));
 
-    static_assert(std::endian::native == std::endian::little && CompiledStructure::offsetOfHeldKeyOrder() == CompiledStructure::offsetOfFlags() + 1);
+    static_assert(std::endian::native == std::endian::little && CompiledStructure::offsetOfFurtherFlags() == CompiledStructure::offsetOfFlags() + 1);
     constexpr int32_t hasOnlyPlainSlots = static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyPlainSlots);
     constexpr int32_t hasOutOfLineKeyOrder = static_cast<uint8_t>(CompiledStructure::Flag::HasOutOfLineKeyOrder);
     constexpr int32_t otherFlags = static_cast<uint8_t>(CompiledStructure::Flag::HasExtraProperties) | static_cast<uint8_t>(CompiledStructure::Flag::HasOtherPrototype);

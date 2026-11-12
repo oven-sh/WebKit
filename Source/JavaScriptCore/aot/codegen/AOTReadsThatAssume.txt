@@ -4,12 +4,13 @@ JSString_value | codegen/AOTHeaps.cpp | 1 | makes the heap another name of JSRop
 JSString_value | codegen/AOTHeaps.h | 1 | the declaration of the heap
 JSString_value | codegen/AOTPrimitiveEmitter.h | 1 | isRopeString(): it is the test
 JSString_value | codegen/AOTStringBuiltinEmitter.cpp | 1 | is8Bit() tests the rope bit next to the load: the flat side alone reads through the word, the other side reads the width off the word itself
-JSString_value | codegen/AOTStringEmitter.cpp | 9 | implOfFlatString() takes a FlatStringCell; viewOfFlatString() is listed below; six test the rope bit next to the load; one reads what FlattenString has just made
+JSString_value | codegen/AOTStringEmitter.cpp | 12 | implOfFlatString() takes a FlatStringCell; viewOfFlatString() is listed below; seven test the rope bit next to the load; two read what FlattenString has just made; one reads the base of a substring, which is flat
 JSString_value | codegen/AOTStringEmitterComparisons.cpp | 1 | tests the rope bit next to the load
 JSString_value | codegen/AOTStringSwitch.cpp | 1 | tests the rope bit next to the load
 viewOfFlatString | codegen/AOTStringBuiltinEmitter.cpp | 2 | each behind isRopeString() of the same cell
 viewOfFlatString | codegen/AOTStringEmitter.cpp | 1 | the definition
 viewOfFlatString | codegen/AOTStringEmitter.h | 1 | the declaration
+offsetOfValue untested | runtime/AOTRegExpOperations.cpp | 1 | ropeWordsOf(): the caller has found no flat string. The words of a rope are compared with those of another, and nothing is read through them.
 offsetOfValue untested | runtime/AOTStringOperations.cpp | 1 | A count of uses added to the first word of a substring, which holds flags alone, and nothing is read through it.
 offsetOfValue untested | stubs/AOTStubsArrayReads.cpp | 3 | The base of a substring, which is flat: both makers of substrings (AOTStubsStringSubstrings.cpp) and jsSubstringOfResolved() store a flat base alone. The word of an element whose cell says that it holds an atom is only compared with the address of the atom that is sought: nothing is read through it. The words of a list with a hash table (AOTAtomListTable.h) are atoms, which are flat.
 offsetOfValue untested | stubs/AOTStubsBoxedCalls.cpp | 1 | A lambda: its first call is tested on the next line, its second loads the word of the same string again, and a flat string stays flat.
@@ -19,7 +20,7 @@ offsetOfValue untested | stubs/AOTStubsKeyedAccess.cpp | 2 | A count of visits a
 offsetOfValue untested | stubs/AOTStubsStringConcatenation.cpp | 1 | A constant that a stub loads by its number, which is made flat and stays flat.
 offsetOfValue untested | stubs/AOTStubsStringHelpers.cpp | 2 | The base of a substring, twice.
 offsetOfValue untested | stubs/AOTStubsStringLiterals.cpp | 2 | The first piece of a rope that is no substring, and packPiece() tests each piece. The base of a substring. generateNarrowCharactersOfString() reads through the word behind the substring bit alone, which no flat string has.
-offsetOfValue untested | stubs/AOTStubsStringSubstrings.cpp | 3 | The base of a substring, of which one character is taken. makeSubstringOfFlatString() trusts its caller: generateFinishRegExpExec(), and all four jumps to that stub bring a flat subject: finishMatchAndReturn() behind loadFlatSubject() or flattenSubject(), the three of generateRegExpMatchLiteral() behind the test at its head.
+offsetOfValue untested | stubs/AOTStubsStringSubstrings.cpp | 4 | The base of a substring, of which one character is taken, and where two are looked at. makeSubstringOfFlatString() trusts its caller: generateFinishRegExpExec(), and all four jumps to that stub bring a flat subject: finishMatchAndReturn() behind loadFlatSubject() or flattenSubject(), the three of generateRegExpMatchLiteral() behind the test at its head.
 offsetOfValue untested | stubs/AOTStubsStrings.cpp | 7 | The base of a substring, three times. branchOnOrderOfFlatStrings() loads the words of both strings again: its two callers, generateCompareStrings() and emitStringOrder() (AOTStubsArithmetic.cpp), have tested both right before, and a flat string stays flat. emitStringLocaleComparePrelude() loads the words of both strings again: it has tested both at its head and calls nothing in between.
 offsetOfValue untested | tests/AOTStubBoxedCallsOfLanguageTests.cpp | 2 | The test lays down the word of a string that it makes up, flat and as a rope. Nothing is read through it.
 offsetOfValue untested | tests/AOTStubPropertyReadTests.cpp | 4 | Two tests lay down the word of a string that they make up, flat and as a rope. Nothing is read through it.

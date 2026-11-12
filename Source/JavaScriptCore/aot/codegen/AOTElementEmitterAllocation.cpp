@@ -123,6 +123,36 @@ bool newArrayFencesBeforeHandingCellOn(const Operation& newArray)
         && length > maxArrayElementsInRegisters && length <= std::min<size_t>(maxInlineArrayLiteralLength, maxArrayLengthInStubKey);
 }
 
+std::optional<EmptyArray> ArrayAllocationEmitter::emptyArrayWithPushCapacity(BlockID block, ValueID literal)
+{
+    static constexpr unsigned mostElements = 17;
+    if (m_code.useCountOf(literal) <= capacityOfEmptyArrayLiteral)
+        return std::nullopt;
+    unsigned pushed = 0;
+    for (auto [used, user] : generator().usersOfLiteralInBlock(block, literal))
+        pushed += operationAt(user).opcode == Opcode::AppendElement && operationAt(user).arrayOperand() == literal;
+    while (pushed < mostElements) {
+        const Terminator& push = m_code.at(block).terminator;
+        if (push.kind != TerminatorKind::TryCallInline || push.inlineBuiltin() != InlineBuiltin::ArrayPush || push.receiverOperand() != literal)
+            break;
+        pushed += push.argumentsOperands().size();
+        const Terminator& done = m_code.at(m_code.at(push.edge(0)).to).terminator;
+        if (done.kind != TerminatorKind::Jump)
+            break;
+        block = m_code.at(done.edge(0)).to;
+    }
+    if (pushed <= capacityOfEmptyArrayLiteral)
+        return std::nullopt;
+    build().statistics().count(StatisticID::ArrayLiteralsAllocatedWithCapacity);
+    if (pushed <= 5)
+        return EmptyArray::ContiguousCapacity5;
+    if (pushed <= 7)
+        return EmptyArray::ContiguousCapacity7;
+    if (pushed <= 9)
+        return EmptyArray::ContiguousCapacity9;
+    return pushed <= 13 ? EmptyArray::ContiguousCapacity13 : EmptyArray::ContiguousCapacity17;
+}
+
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 {
     if (value->storage() == AllocationStorage::Frame) {
@@ -152,6 +182,10 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         if (length <= maxArrayElementsInRegisters && !generator().runsRepeatedly(value.block()))
             return emitter<CellAllocationEmitter>().newArrayOfNumbers(value, boxElements<Boxed>(generator(), value, elements).span());
         return newNumberLiteral(value, elements);
+    }
+    if (!length && formAtSite.kind == ArrayStorage::Contiguous) {
+        if (std::optional<EmptyArray> emptyArray = emptyArrayWithPushCapacity(value.block(), value.id()))
+            return callNewEmptyArray(value, *emptyArray);
     }
     return newArrayInForm(value, elements, length ? form : formAtSite, hasPropertyRoom);
 }
@@ -372,10 +406,43 @@ CellPointer ArrayAllocationEmitter::allocateEmptyArrayWithRoom(const OperationCo
 
 static constexpr int64_t mostRoomOfEmptyListLikeSource = 9;
 
-void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>& take, const ArrayStorageForm* inPlaceOfAnyValue)
+std::optional<Pointer> ArrayAllocationEmitter::emptyArraySiteProfile(Origin origin)
+{
+    static constexpr uint32_t markOfEmptyLists = 16;
+    if (!origin.inlineFrame)
+        return std::nullopt;
+    std::optional<Vector<uint32_t, 12>> site = modulesAndPositionsOf(origin);
+    if (!site)
+        return std::nullopt;
+    site->append(markOfEmptyLists);
+    return Pointer(m_out.valueOf(instanceWord(m_heaps.entire(AbstractHeap::RuntimeState), m_mentions.add(NumberSpace::ArrayProfile, site->span()))));
+}
+
+void ArrayAllocationEmitter::countEmptyArrayAtSite(const OperationContext& context, Pointer profile, CellPointer list)
+{
+    auto word = m_out.address(m_heaps.AOTInstance_arrayProfiles, profile.value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word));
+    LBasicBlock isDueForReview = newBlock();
+    LBasicBlock done = newBlock();
+    Word32 counted(m_out.load32(word));
+    m_out.store32(add(counted, word32(-static_cast<int32_t>(ArrayAllocationProfile::oneAllocation))).value(), word);
+    m_out.branch(aboveOrEqual(counted, word32(ArrayAllocationProfile::oneAllocation)).value(), normalEdge(done), rareEdge(isDueForReview));
+
+    m_out.appendTo(isDueForReview);
+    callVoidOperation(context, RuntimeOperation::ReviewArraySite, { profile, list }, { .isOnRarePath = true });
+    m_out.jump(done);
+
+    m_out.appendTo(done);
+}
+
+void ArrayAllocationEmitter::allocateListLike(const OperationContext& context, CellPointer source, Integer length, std::optional<Integer> roomOfEmptyList, std::optional<Pointer> profile, LBasicBlock slowPath, const ScopedLambda<void(CellPointer)>& take, const ArrayStorageForm* inPlaceOfAnyValue)
 {
     if (roomOfEmptyList) {
         Integer most = integer(mostRoomOfEmptyListLikeSource);
+        if (profile) {
+            static_assert(ArrayAllocationProfile::capacityMask == 0xff);
+            Integer learned(m_out.zeroExt(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_arrayProfiles, profile->value(), OBJECT_OFFSETOF(ArrayAllocationProfile, word))), Machine::Int64));
+            most = select(below(learned, most), most, learned);
+        }
         roomOfEmptyList = select(below(*roomOfEmptyList, most), *roomOfEmptyList, most);
     }
     ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();

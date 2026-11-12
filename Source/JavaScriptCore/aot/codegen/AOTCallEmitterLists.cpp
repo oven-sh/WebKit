@@ -55,9 +55,9 @@ Boxed CallEmitter::constructValue(const OperationContext& context, ConstructSynt
     return callByConvention(context, call, { .throwSite = siteThatNamesCallee, .constructs = true });
 }
 
-Boxed CallEmitter::superConstructWithArray(const OperationContext& context, Boxed parent, Boxed newTarget, CellPointer list)
+Boxed CallEmitter::constructWithArray(const OperationContext& context, ConstructSyntax syntax, Boxed callee, Boxed newTarget, CellPointer list)
 {
-    return Boxed(callStub(context, AOT::superConstructWithArray(), { parent.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
+    return Boxed(callStub(context, AOT::constructWithArray(syntax), { callee.value(), newTarget.value(), list.value() }, { .constructs = true }).first);
 }
 
 void CallEmitter::generateConstruct(const ValueContext& value)
@@ -103,8 +103,7 @@ void CallEmitter::generateConstructList(const ValueContext& value)
     RELEASE_ASSERT(!value.returnCall());
     Boxed callee = in<Boxed>(value->calleeOperand());
     Boxed newTarget = inOptional<Boxed>(value->newTargetOperand()).value_or(callee);
-    Boxed list = boxCell(in<CellPointer>(value->listOperand()));
-    defineResultOfCallByValue(value, callOperation<Boxed>(value, RuntimeOperation::ConstructWithArray, { callee, newTarget, list }, { .constructs = true }));
+    defineResultOfCallByValue(value, constructWithArray(value, ConstructSyntax::NewExpression, callee, newTarget, in<CellPointer>(value->listOperand())));
 }
 
 } } } // namespace JSC::AOT::Typed

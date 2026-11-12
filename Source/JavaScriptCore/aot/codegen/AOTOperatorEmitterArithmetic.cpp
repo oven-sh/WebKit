@@ -352,7 +352,7 @@ public:
             addWhole(remainderOfNonNegative(wholeDividend, wholeDivisor));
         }
 
-        Number result = joinedWithLibrary(join, integers, genericPath, dividend, divisor);
+        Number result = joinedWithAnyNumbers(join, integers, genericPath, dividend, divisor, constantWholeDivisor);
         if (isKeyAlone)
             emitter<ConversionEmitter>().noteHeldAsIndex(result);
         return result;
@@ -376,7 +376,7 @@ public:
         integers.add(m_out, remainder, remainder);
         bool isKeyAlone = integers.areIndexes && isOnlyKeyOfRead(value);
         join.add(isKeyAlone ? dividend : toNumber(remainder));
-        Number result = joinedWithLibrary(join, integers, genericPath, dividend, divisor);
+        Number result = joinedWithAnyNumbers(join, integers, genericPath, dividend, divisor, std::nullopt);
         if (isKeyAlone)
             emitter<ConversionEmitter>().noteHeldAsIndex(result);
         return result;
@@ -396,15 +396,29 @@ public:
             return;
 
         m_out.appendTo(isNoInt32);
-        Number left = hasOneBitSet(static_cast<uint32_t>(divisor)) ? remainderByPowerOfTwo(dividend, divisor) : remainder(nullptr, dividend, number(divisor));
+        Number left = hasOneBitSet(static_cast<uint32_t>(divisor)) ? unsignedRemainderByPowerOfTwo(dividend, divisor) : remainder(nullptr, dividend, number(divisor));
         branch(comparedWith ? equal(left, static_cast<double>(*comparedWith)) : isNeitherZeroNorNaN(left), targets);
     }
 
 private:
-    Number remainderByPowerOfTwo(Number dividend, int32_t divisor)
+    Number unsignedRemainderByPowerOfTwo(Number dividend, double divisor)
     {
-        Number quotient = trunc(mul(dividend, number(1.0 / divisor)));
+        Number quotient = trunc(mul(dividend, number(1 / divisor)));
         return sub(dividend, mul(quotient, number(divisor)));
+    }
+
+    bool isInlinePowerOfTwo(std::optional<int64_t> divisor)
+    {
+        constexpr double infinity = std::numeric_limits<double>::infinity();
+        return divisor && hasOneBitSet(static_cast<uint64_t>(*divisor)) && matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, infinity, static_cast<double>(*divisor))) && matchesHardwareNaN(resultAtRunTime(Math::fmodDouble, -infinity, static_cast<double>(*divisor)));
+    }
+
+    Number remainderOfAnyNumbers(Number dividend, Number divisor, std::optional<int64_t> constantWholeDivisor)
+    {
+        if (!isInlinePowerOfTwo(constantWholeDivisor))
+            return callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
+        Number remainder = unsignedRemainderByPowerOfTwo(dividend, static_cast<double>(*constantWholeDivisor));
+        return select(equal(remainder, 0), mul(dividend, 0), remainder);
     }
 
     Condition isCongruentTo(Word32 dividend, int32_t divisor, int32_t remainder)
@@ -536,11 +550,11 @@ private:
         return whole;
     }
 
-    Number joinedWithLibrary(Join<Number>& join, IntegersOfRemainder& integers, LBasicBlock genericPath, Number dividend, Number divisor)
+    Number joinedWithAnyNumbers(Join<Number>& join, IntegersOfRemainder& integers, LBasicBlock genericPath, Number dividend, Number divisor, std::optional<int64_t> constantWholeDivisor)
     {
         m_out.appendTo(genericPath);
         ConversionEmitter& conversions = emitter<ConversionEmitter>();
-        Number ofAnyNumbers = callLeaf<Number>(RuntimeOperation::Fmod, { dividend, divisor });
+        Number ofAnyNumbers = remainderOfAnyNumbers(dividend, divisor, constantWholeDivisor);
         std::optional<Word32> truncation = integers.areTruncated ? std::optional(conversions.toInt32(ofAnyNumbers)) : std::nullopt;
         if (truncation)
             integers.truncations.append(m_out.anchor(truncation->value()));
@@ -1225,7 +1239,26 @@ void OperatorEmitter::generateMod(const ValueContext& value)
         define(value, number(0));
         return;
     }
+    if (isImmediatelyTestedForTruth(value)) {
+        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+        m_truthOfRemainder = Condition(m_out.castToInt32(callStub(value, remainderTruth(), { in<Boxed>(value->leftOperand()).value(), in<Boxed>(value->rightOperand()).value() }).first));
+        m_remainderKnownByTruth = value.id();
+        define(value, undefined());
+        return;
+    }
     defineHeldToItsType(value, arithmeticResult(value, ArithmeticOperator::Mod));
+}
+
+bool OperatorEmitter::isImmediatelyTestedForTruth(const ValueContext& remainder)
+{
+    if (remainder->form() != OperatorForm::Generic || remainder.representation() != Representation::JSValue || m_code.useCountOf(remainder.id()) != 1 || !mayBothBeInt32(remainder) || isArithmeticOnLikelyBigInts(remainder) || generator().isProductLeftToRemainder(remainder->leftOperand()))
+        return false;
+    ValueID test = m_code.onlyUserOf(remainder.id());
+    if (!test || operationAt(test).opcode != Opcode::ToBoolean || operationAt(test).form() != OperatorForm::Generic || m_code.blockOf(test) != remainder.block())
+        return false;
+    std::span<const ValueID> values = m_code.valuesOf(remainder.block());
+    auto found = std::ranges::find(values, remainder.id());
+    return found != values.end() && found + 1 != values.end() && *(found + 1) == test;
 }
 
 bool OperatorEmitter::tryGenerateRemainderTest(const ValueContext& value)

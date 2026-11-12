@@ -47,10 +47,10 @@ static void writeForFactsOfEnforcedFields(FieldFacts& facts, TypeID slotType, bo
     facts.facts.set(FieldFact::SlotHoldsUndefinedAndNull, holdsUndefinedAndNull);
 }
 
-uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, Mechanisms mechanisms, FactTables& tables)
+EnforcedFieldCounts fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, Mechanisms mechanisms, FactTables& tables)
 {
     if (!withoutMechanismsMissingDependencies(mechanisms).contains(Mechanism::TypedSlots))
-        return 0;
+        return { };
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     RELEASE_ASSERT(linked.layouts.size() == numberOfLayouts && tables.firstFieldOfLayout.size() == numberOfLayouts + 1);
     giveRowsToFieldsThatPlanNumbersForFactsOfEnforcedFields(linked, tables);
@@ -88,7 +88,8 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
     };
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
-    uint64_t numberHeldToWhatIsSeen = 0;
+    WrittenTypesOfFamilies writtenInFamilies(program, families, types);
+    EnforcedFieldCounts counts;
     auto isMadeByLibrary = [&](LayoutID id) {
         FunctionID constructor = program.at(id).constructor;
         return constructor && program.at(constructor).role == FunctionRole::Library;
@@ -98,8 +99,9 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
     }, [&](FieldReference field) {
         if (isTakenFromAbove(field))
             return;
-        EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, types, field);
-        numberHeldToWhatIsSeen += answer.type && answer.source == SourceOfSlotType::Seen && !isMadeByLibrary(field.layout);
+        EnforcedField answer = enforcedTypeOfField(program, linked, held, families, familiesOfInstances, writtenInFamilies, types, field);
+        counts.seen += answer.type && answer.source == SourceOfSlotType::Seen && !isMadeByLibrary(field.layout);
+        counts.ofFamily += answer.type && answer.source == SourceOfSlotType::WrittenInFamily && !isLibraryLayout(program, field.layout);
         writeForFactsOfEnforcedFields(rowOf(field), answer.type, answer.holdsUndefinedAndNull);
     });
     forEachFieldWithSlot([&](LayoutID id) {
@@ -114,7 +116,7 @@ uint64_t fillEnforcedFieldsForFacts(Program& program, const LinkTables& linked, 
         const FieldFacts& declaration = rowOf(declarationOf(program, field));
         writeForFactsOfEnforcedFields(rowOf(field), declaration.slotType, declaration.facts.contains(FieldFact::SlotHoldsUndefinedAndNull));
     });
-    return numberHeldToWhatIsSeen;
+    return counts;
 }
 
 } } } // namespace JSC::AOT::Typed

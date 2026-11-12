@@ -28,6 +28,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = NewClosure function=f2
     v7 = Call v6, -, v3 calleeName="ratio"
     v8 = Add v5, v7
+    v9 = Integer integer=2
+    v10 = NewObject -, v9, v1 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
     Return v8
 }
 function f1 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {

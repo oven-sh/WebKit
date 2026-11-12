@@ -70,6 +70,10 @@ Reference finishStringInBuilder(Walker&, StringInBuilder&, Reference name, Origi
 void discardStringInBuilder(Walker&, StringInBuilder&, Reference name, Origin);
 
 bool readsTextWithoutString(Walker&, const BodyValue& reader, StringInBuilder&, Reference name);
+Reference lengthOfStringInBuilder(Walker&, StringInBuilder&, Reference name, Origin);
+bool canCompareBuilderWithLiteral(const Walker&, const StringInBuilder&, StringID);
+Reference buildBuilderIsOnStack(Walker&, Reference name, Origin);
+Reference buildBuilderEqualsLiteral(Walker&, Reference name, StringID, Origin);
 Reference buildTruthinessOfStringInBuilder(Walker&, StringInBuilder&, Reference name, Origin);
 bool canStayInBuilderOnEdge(Walker&, const StringInBuilder&, BlockID to, BodyTarget);
 bool mayKeepTextUnderHandlers(Walker&, BlockID inputHead, const GrowingText&);
@@ -83,6 +87,15 @@ void becomeOperationOfStringBuilderInFrame(Walker&, StringInBuilder&, Reference 
 Reference finishTextInFrame(Walker&, Reference name, Origin);
 bool appendPieceWithoutCutting(Walker&, StringInBuilder&, Reference name, Reference part, Origin);
 bool appendResultOfBuiltinStraight(Walker&, StringInBuilder&, Reference name, Reference part, Origin);
+
+struct HexadecimalText {
+    Reference number;
+    Reference receiver;
+    ValueID conversion;
+    ValueID padding;
+};
+std::optional<HexadecimalText> findHexadecimalText(const Walker&, Reference part);
+Reference buildHexadecimalTextAgain(Walker&, const HexadecimalText&, Origin);
 bool takePartsOfJoinMadeForOneReader(Walker&, ValueID operand, Vector<Reference, 8>& parts, Vector<ValueID, 2>* joinsThatFailWhereReaderFails);
 
 } } } // namespace JSC::AOT::Typed

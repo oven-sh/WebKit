@@ -13,6 +13,7 @@
 #include "AOTSectionLinker.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
+#include "AOTStubsRegExp.h"
 #include "AOTVector.h"
 #include <algorithm>
 #include <limits>
@@ -123,11 +124,16 @@ public:
                     m_bodies.append({ numberUnit(*m_regExps[regExp].code[charSizeIndex], regExp), regExp, charSizeIndex });
             }
         }
+        for (uint32_t regExp = 0; regExp < m_regExps.size(); ++regExp) {
+            if (m_regExps[regExp].matcher)
+                m_matchers.append({ numberUnit(*m_regExps[regExp].matcher, regExp), regExp });
+        }
         if (!compileRoutines())
             return std::nullopt;
 
         addTablesAndRoutines();
         addBodies();
+        addMatchers();
         if (!addFailureRoutine())
             return std::nullopt;
 
@@ -143,10 +149,6 @@ public:
             reportFailure(linked.error());
             return std::nullopt;
         }
-        if (linked->numberOfVeneers) {
-            reportFailure({ SectionLinkError::OutOfPCRelativeReach, 0, 0 });
-            return std::nullopt;
-        }
         return createSection(WTF::move(*linked));
     }
 
@@ -157,6 +159,12 @@ private:
         RegExpUnit unit;
         uint32_t regExp;
         uint8_t charSizeIndex;
+        uint32_t number { 0 };
+    };
+
+    struct Matcher {
+        RegExpUnit unit;
+        uint32_t regExp;
         uint32_t number { 0 };
     };
 
@@ -291,6 +299,15 @@ private:
         }
     }
 
+    void addMatchers()
+    {
+        for (Matcher& matcher : m_matchers) {
+            matcher.number = addUnit(Kind::Matcher, regExpBodyAlignment, matcher.unit.code->body, matcher.regExp);
+            m_unitInfos[matcher.number].targets = targetsOf(matcher.unit);
+            m_sizeOfMatchers += matcher.unit.code->body.bytes.size();
+        }
+    }
+
     [[nodiscard]] bool addFailureRoutine()
     {
         auto withoutCode = std::ranges::find_if(m_regExps, [](const CompiledRegExp& regExp) {
@@ -355,6 +372,9 @@ private:
         section.dataOffset = linked.dataOffset;
         uint32_t entryWithoutCode = m_failureRoutineUnit ? linked.uniqueUnitOffsets[*m_failureRoutineUnit] : 0;
         section.entries.fill({ entryWithoutCode, entryWithoutCode }, m_regExps.size());
+        section.matchers.fill(std::nullopt, m_regExps.size());
+        for (const Matcher& matcher : m_matchers)
+            section.matchers[matcher.regExp] = linked.uniqueUnitOffsets[matcher.number] + sizeOfMatcherHeader;
         uint32_t endOfCode = 0;
         for (uint32_t unit = 0; unit < m_units.size(); ++unit) {
             addItem(m_unitInfos[unit].kind, unit, linked.uniqueUnitOffsets[unit], m_unitInfos[unit].regExp);
@@ -366,6 +386,8 @@ private:
             Statistics& statistics = m_context->statistics();
             statistics.count(StatisticID::RegExpCodeBytesEmitted, endOfCode);
             statistics.count(StatisticID::RegExp16BitCodeBytes, m_sizeOf16BitBodies);
+            statistics.count(StatisticID::RegExpMatchers, m_matchers.size());
+            statistics.count(StatisticID::RegExpMatcherBytes, m_sizeOfMatchers);
             statistics.count(StatisticID::RegExpTableBytesEmitted, section.bytes.size() - section.dataOffset);
             statistics.count(StatisticID::PaddingBytesBetweenCodeParts, section.dataOffset - endOfCode);
         }
@@ -408,8 +430,10 @@ private:
     Vector<SymbolState> m_symbolStates;
     Vector<Routine> m_routines;
     Vector<Body> m_bodies;
+    Vector<Matcher> m_matchers;
     Vector<uint32_t> m_unitOfBody;
     uint64_t m_sizeOf16BitBodies { 0 };
+    uint64_t m_sizeOfMatchers { 0 };
 
     Vector<LinkUnit> m_units;
     Vector<UnitInfo> m_unitInfos;

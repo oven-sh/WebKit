@@ -1,0 +1,69 @@
+# A store by name into an object that stands in front of the loop, or that is a field of such an object under a name that the loop stores nowhere, goes by an address that the preheader finds, whatever is stored.
+# function fill(object, n, value) { for (let i = 0; i < n; i++) object.m = value; }  function count(object, n) { for (let i = 0; i < n; i++) object.inner.m = i; }  function move(object, n) { for (let i = 0; i < n; i++) { object.inner.m = i; object.inner = object; } }  sink(fill); sink(count); sink(move);
+# move() reads inner and stores it: both go by the address in front, and its iterations search the address of m.
+# RUN(FILL): compile KeyedAddressesHoisted mechanisms=all
+# FILL: statistic KeyedAddressesHoisted 4
+# RUN(MOVE): compile AddressesFoundInIterations mechanisms=all
+# MOVE: statistic AddressesFoundInIterations 1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f2
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f3
+    v7 = Call v1, -, v6
+    Return v7
+}
+function f1 name="fill" module=m0 length=3 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    PropSet v0, v2 key="m" @40
+    v8 = Increment v4
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+function f2 name="count" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = PropGet v0 key="inner" @140
+    PropSet v6, v3 key="m" @150
+    v8 = Increment v3
+    Jump -> next b1(v8)
+  b3():
+    Return
+}
+function f3 name="move" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2)
+  b1(v3):
+    LoopHint
+    v5 = Less v3, v1
+    Branch v5 -> taken b2(), notTaken b3()
+  b2():
+    v6 = PropGet v0 key="inner" @240
+    PropSet v6, v3 key="m" @250
+    PropSet v0, v0 key="inner" @260
+    v9 = Increment v3
+    Jump -> next b1(v9)
+  b3():
+    Return
+}

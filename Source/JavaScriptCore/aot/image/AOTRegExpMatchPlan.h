@@ -53,6 +53,7 @@ struct RegExpMatchNode {
     unsigned lastInnerGroup { 0 };
     Latin1Set characters { };
     Vector<Sequence> alternatives { };
+    Vector<Latin1Set> beginnings { };
 };
 
 struct RegExpMatchPlan {
@@ -61,17 +62,19 @@ struct RegExpMatchPlan {
     using Sequence = RegExpMatchNode::Sequence;
 
     Vector<Sequence> alternatives;
+    Vector<Latin1Set> beginnings;
     bool isSearched { false };
     unsigned numberOfGroups { 0 };
     unsigned cost { 0 };
     unsigned minimumLength { 0 };
     std::optional<unsigned> maximumLengthToEnd;
     std::optional<Latin1Set> firstCharacters;
+    bool isPrefix { false };
 };
 
 unsigned minimumLengthOf(std::span<const RegExpMatchNode>);
 
-std::unique_ptr<const RegExpMatchPlan> planRegExpMatch(const Yarr::YarrPattern&);
+std::unique_ptr<const RegExpMatchPlan> planRegExpMatch(const Yarr::YarrPattern&, bool isSticky);
 
 } } // namespace JSC::AOT
 

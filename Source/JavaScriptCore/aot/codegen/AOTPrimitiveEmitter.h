@@ -34,6 +34,7 @@ protected:
         , m_notCellMask(generator.pinned().notCellMask)
         , m_cellCageBase(generator.pinned().cellCageBase)
         , m_wordsOfInt32Elements(generator.pinned().wordsOfInt32Elements)
+        , m_narrowWordsOfIntegers(generator.pinned().narrowWordsOfIntegers)
         , m_owesFenceBehindStores(generator.owesFenceBehindStores())
     {
     }
@@ -187,6 +188,7 @@ protected:
     Condition isCellReference(NarrowReference value) { return Condition(m_out.above(value.value(), undefinedCell32)); }
     Condition isCellReferenceAmongAllWords(NarrowReference value) { return Condition(m_out.aboveOrEqual(value.value(), minCell32)); }
     std::optional<Word32> narrowWordBehind(OptionalInteger);
+    void noteNarrowWord(OptionalInteger widened, Word32 word) { m_narrowWordsOfIntegers.set(widened.value(), word.value()); }
 
     Boxed boxInt32(Word32 value)
     {
@@ -263,6 +265,7 @@ protected:
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
     UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
+    UncheckedKeyHashMap<LValue, LValue>& m_narrowWordsOfIntegers;
     bool& m_owesFenceBehindStores;
 
 private:

@@ -23,6 +23,7 @@ late store | object/AOTObjectBuilder.cpp | ObjectBuilderPlan::createInitialBody 
 late store | object/AOTObjectBuilderInlines.h | ObjectBuilder::tryBuild | 2 | the return between gives the cell up; the way on ends in the fence
 late store | object/AOTObjectModel.cpp | CompiledStructure::initializeForObject | 1 | the constructors call it, in front of finishCreation()
 late store | object/AOTThisAllocation.cpp | ClassTable::keepWordsOfObjectWithoutFields | 1 | out of the new object into an array of the table, no cell
+late store | object/AOTThisAllocation.cpp | ClassTable::tryCreateInstanceBelowObject | 1 | out of the new object into an entry of the table, no cell
 late store | runtime/AOTCompactTable.cpp | CompactTable::copyWithAbsentKey | 1 | the return is a lambda's; the function ends in a fence and the new table's barrier
 late store | runtime/AOTInstance.cpp | State::State | 1 | undefined
 late store | runtime/AOTInstance.cpp | VMState::attachImage | 2 | two structures that are whole, into fields of the VM's state

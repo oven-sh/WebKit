@@ -212,6 +212,16 @@ std::optional<KeyOrderContinuation> KeyOrders::firstContinuationCreating(LayoutI
     return std::nullopt;
 }
 
+std::optional<KeyOrderContinuation> KeyOrders::secondContinuationCreating(LayoutID layout, FieldIndex createdField) const
+{
+    if (!numberOfOrdersOf(layout))
+        return std::nullopt;
+    uint32_t first = m_firstContinuationOfLayout[layout.index()];
+    if (createdField >= m_firstContinuationOfLayout[layout.index() + 1] - first || !m_secondContinuationCreatingField[first + createdField].orderWordAfter)
+        return std::nullopt;
+    return m_secondContinuationCreatingField[first + createdField];
+}
+
 void KeyOrders::indexFirstContinuations()
 {
     size_t numberOfLayouts = m_parts.firstOrderOfLayout.isEmpty() ? 0 : m_parts.firstOrderOfLayout.size() - 1;
@@ -229,13 +239,16 @@ void KeyOrders::indexFirstContinuations()
             while (firstOrderWithBeginning.size() < listed.size())
                 firstOrderWithBeginning.append(number);
             for (size_t place = shared; place < listed.size(); ++place) {
-                while (m_firstContinuationCreatingField.size() <= firstOfLayout + listed[place])
+                while (m_firstContinuationCreatingField.size() <= firstOfLayout + listed[place]) {
                     m_firstContinuationCreatingField.append(KeyOrderContinuation { });
+                    m_secondContinuationCreatingField.append(KeyOrderContinuation { });
+                }
                 KeyOrderContinuation& first = m_firstContinuationCreatingField[firstOfLayout + listed[place]];
-                if (first.orderWordAfter)
+                KeyOrderContinuation& continuation = first.orderWordAfter ? m_secondContinuationCreatingField[firstOfLayout + listed[place]] : first;
+                if (continuation.orderWordAfter)
                     continue;
-                first.orderWordBefore = place ? orderWordOf(firstOrderWithBeginning[place - 1], static_cast<uint32_t>(place)) : unorderedOrderWord;
-                first.orderWordAfter = orderWordOf(firstOrderWithBeginning[place], static_cast<uint32_t>(place + 1));
+                continuation.orderWordBefore = place ? orderWordOf(firstOrderWithBeginning[place - 1], static_cast<uint32_t>(place)) : unorderedOrderWord;
+                continuation.orderWordAfter = orderWordOf(firstOrderWithBeginning[place], static_cast<uint32_t>(place + 1));
             }
         }
     }
@@ -283,7 +296,9 @@ public:
     void addOrdersOfConstructorFunctions(const LinkTables&, const ThinSummaries&, const BodyIndexTable&);
     void addOrdersBehindWhatConstructorFunctionsAlwaysCreate(const LinkTables&, const ThinSummaries&);
     void addOrdersOfAllocations(const LinkTables&, const ThinSummaries&);
+    void addOrdersOfComputedLiterals(const LinkTables&);
     void addOrdersOfCopies(const LinkTables&, const ThinSummaries&, const BodyIndexTable&, BuildContext&);
+    void addOrdersOfLibraryBases();
     KeyOrderParts sortIntoParts(BuildContext&);
 
 private:
@@ -293,6 +308,7 @@ private:
         struct FoundInRange {
             Vector<CandidateForKeyOrders> candidates;
             Vector<FieldIndex> fields;
+            Vector<FunctionID> methodsOfConstructions;
         };
         uint32_t numberOfLayouts = static_cast<uint32_t>(m_program.layouts.size());
         Vector<FoundInRange> found((numberOfLayouts + layoutsInRange - 1) / layoutsInRange);
@@ -301,6 +317,7 @@ private:
             addOrders(collectorOfRange, range * layoutsInRange, std::min(numberOfLayouts, (range + 1) * layoutsInRange));
             found[range].candidates = WTF::move(collectorOfRange.m_candidates);
             found[range].fields = WTF::move(collectorOfRange.m_fields);
+            found[range].methodsOfConstructions = WTF::move(collectorOfRange.m_methodsOfConstructions);
         });
         size_t numberOfCandidates = m_candidates.size();
         size_t numberOfFields = m_fields.size();
@@ -317,6 +334,7 @@ private:
                 m_candidates.append(candidate);
             }
             m_fields.appendVector(inRange.fields);
+            m_methodsOfConstructions.appendVector(inRange.methodsOfConstructions);
         }
     }
 
@@ -339,7 +357,17 @@ private:
         ++m_numbersOfCandidates[layout.index()];
     }
     void listFieldsThatLayoutLists(LayoutID);
-    bool collectThisKeys(const LinkTables&, const ThinSummaries&, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered) const;
+    struct EventOnThis {
+        ValueID site;
+        PropertyKeyID key;
+        FunctionID method;
+        PropertyKeyID nameCalled;
+    };
+    Vector<EventOnThis> listEventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID) const;
+    const Vector<EventOnThis>& eventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID);
+    bool collectThisKeys(const LinkTables&, const ThinSummaries&, LayoutID, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered);
+    HashMap<uint32_t, std::unique_ptr<Vector<EventOnThis>>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_eventsOnThis;
+    void addOrderOfClassConstructor(const LinkTables&, const ThinSummaries&, LayoutID);
     void addDeclaredOrderOf(LayoutID);
     void addOrderOfDataObject(const DataNode::Object&);
     TypeID typeExpectedOfSourceOfCopy(const LinkTables&, FunctionID, const ThinSummary&, const SummaryNode&) const;
@@ -355,6 +383,7 @@ private:
     Vector<CandidateForKeyOrders> m_candidates;
     std::span<uint32_t> m_numbersOfCandidates;
     Vector<FieldIndex> m_fields;
+    Vector<FunctionID> m_methodsOfConstructions;
     BitVector m_isListed;
     Vector<LayoutID, 8> m_declaringLayouts;
     struct OrderOfSourceInTarget {
@@ -395,6 +424,12 @@ void CollectorOfKeyOrders::listFieldsThatLayoutLists(LayoutID id)
     for (size_t index = m_declaringLayouts.size(); index--;) {
         LayoutID declaringLayout = m_declaringLayouts[index];
         const Layout& declaring = m_program.at(declaringLayout);
+        if (declaring.has(LayoutFlags::HasHeritage) && !writtenBaseOf(declaring)) {
+            for (const Field& field : declaring.fields) {
+                if (std::optional<uint32_t> found = field.flags.contains(FieldFlags::IsInherited) ? layout.findField(field.key) : std::nullopt)
+                    list(*found);
+            }
+        }
         auto listDeclaration = [&](uint32_t field) {
             if (field >= declaring.fields.size() || declaring.fields[field].flags.contains(FieldFlags::IsInherited))
                 return;
@@ -632,55 +667,146 @@ static bool isReachableInBody(const BodyIndex& body, BlockID from, BlockID to)
     return false;
 }
 
-bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSummaries& summaries, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered) const
+auto CollectorOfKeyOrders::listEventsOnThis(const LinkTables& link, const ThinSummaries& summaries, FunctionID function) const -> Vector<EventOnThis>
 {
-    std::optional<unsigned> thisParameter = m_program.at(function).thisParameterIndex();
-    if (!thisParameter || entered.contains(function))
-        return false;
-    entered.append(function);
-    struct Event {
-        ValueID site;
-        PropertyKeyID key;
-        FunctionID method;
-    };
+    const Function& record = m_program.at(function);
+    LayoutID constructed = isClassConstructorOf(record.kind) ? record.constructedClass : LayoutID();
+    std::optional<unsigned> thisParameter = record.kind == FunctionKind::Initializer ? std::optional<unsigned>(0) : record.thisParameterIndex();
     const ThinSummary& summary = summaries.at(function);
+    auto isConstructedLayout = [&](LayoutID layout) {
+        size_t stepsLeft = m_program.layouts.size();
+        while (layout && layout != constructed && stepsLeft--)
+            layout = m_program.at(layout).base;
+        return layout == constructed;
+    };
+    auto isSuperCall = [&](const SummaryCall& call) {
+        return call.isConstruction && call.newTarget != noSummaryNode;
+    };
     auto isParameter = [&](uint32_t node) {
-        return summary.nodes[node].kind == SummaryNode::Kind::Parameter && summary.nodes[node].first == *thisParameter;
+        const SummaryNode& origin = summary.nodes[node];
+        if (!constructed)
+            return origin.kind == SummaryNode::Kind::Parameter && origin.first == *thisParameter;
+        if (origin.kind == SummaryNode::Kind::Allocation)
+            return isConstructedLayout(LayoutID(origin.first));
+        return origin.kind == SummaryNode::Kind::ResultOfCall && isSuperCall(summary.calls[origin.first]);
+    };
+    std::optional<BitVector> conversions;
+    auto collectConversions = [&] {
+        conversions.emplace(summary.nodes.size());
+        BitVector otherJoins(summary.nodes.size());
+        for (const SummaryEdge& edge : summary.edges) {
+            if (edge.to < summary.nodes.size() && summary.nodes[edge.to].kind == SummaryNode::Kind::Join)
+                (edge.from < summary.nodes.size() && isParameter(edge.from) ? *conversions : otherJoins).set(edge.to);
+        }
+        conversions->exclude(otherJoins);
     };
     auto isThis = [&](uint32_t node) {
         if (node == noSummaryNode || isParameter(node))
             return node != noSummaryNode;
-        bool isConverted = false;
-        for (const SummaryEdge& edge : summary.edges) {
-            if (edge.to != node)
-                continue;
-            if (!isParameter(edge.from))
-                return false;
-            isConverted = true;
-        }
-        return isConverted && summary.nodes[node].kind == SummaryNode::Kind::Join;
+        if (summary.nodes[node].kind != SummaryNode::Kind::Join)
+            return false;
+        if (!conversions)
+            collectConversions();
+        return conversions->get(node);
     };
-    Vector<Event, 32> events;
+    Vector<EventOnThis> events;
     for (const SummaryAccess& access : summary.accesses) {
         if ((access.kind == SummaryAccess::Kind::Store || access.kind == SummaryAccess::Kind::Define) && !access.isToContents() && isThis(access.subject))
-            events.append({ access.site, access.key ? access.key : link.keyAt(function, access.site), { } });
+            events.append({ access.site, access.key ? access.key : link.keyAt(function, access.site), { }, { } });
     }
     for (const SummaryCall& call : summary.calls) {
+        if (constructed && isSuperCall(call)) {
+            LayoutID parent = m_program.at(constructed).base;
+            if (FunctionID above = parent ? m_program.at(parent).constructor : FunctionID())
+                events.append({ call.site, { }, above, { } });
+            continue;
+        }
+        if (call.callee == SummaryCall::Callee::Binding && call.function && m_program.at(call.function).kind == FunctionKind::Initializer && call.numberOfArguments && isThis(summary.arguments[call.firstArgument])) {
+            events.append({ call.site, { }, call.function, { } });
+            continue;
+        }
         if (call.isConstruction || !isThis(call.receiver))
             continue;
-        if (FunctionID method = call.callee == SummaryCall::Callee::Binding ? call.function : link.calleeAt(function, call.site))
-            events.append({ call.site, { }, method });
+        FunctionID method = call.callee == SummaryCall::Callee::Binding ? call.function : link.calleeAt(function, call.site);
+        PropertyKeyID nameCalled = !method && call.callee == SummaryCall::Callee::Name ? call.key : PropertyKeyID();
+        if (method || nameCalled)
+            events.append({ call.site, { }, method, nameCalled });
     }
-    std::ranges::sort(events, { }, &Event::site);
+    return events;
+}
+
+auto CollectorOfKeyOrders::eventsOnThis(const LinkTables& link, const ThinSummaries& summaries, FunctionID function) -> const Vector<EventOnThis>&
+{
+    return *m_eventsOnThis.ensure(function.index(), [&] {
+        return makeUniqueWithoutFastMallocCheck<Vector<EventOnThis>>(listEventsOnThis(link, summaries, function));
+    }).iterator->value;
+}
+
+bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered)
+{
+    const Function& record = m_program.at(function);
+    bool hasThis = record.kind == FunctionKind::Initializer || record.thisParameterIndex() || (isClassConstructorOf(record.kind) && record.constructedClass);
+    if (!hasThis || entered.contains(function))
+        return false;
+    entered.append(function);
+    Vector<EventOnThis, 32> events;
+    for (const EventOnThis& event : eventsOnThis(link, summaries, function)) {
+        FunctionID method = event.nameCalled ? link.findWrittenMethod(m_program, layoutOfThis, event.nameCalled) : event.method;
+        if (method || !event.nameCalled)
+            events.append({ event.site, event.key, method, { } });
+    }
+    std::ranges::sort(events, { }, &EventOnThis::site);
     bool callsMethods = false;
-    for (const Event& event : events) {
+    for (const EventOnThis& event : events) {
         if (event.method) {
             callsMethods = true;
-            collectThisKeys(link, summaries, event.method, keys, entered);
+            collectThisKeys(link, summaries, layoutOfThis, event.method, keys, entered);
         } else
             keys.append(event.key);
     }
     return callsMethods;
+}
+
+void CollectorOfKeyOrders::addOrderOfClassConstructor(const LinkTables& link, const ThinSummaries& summaries, LayoutID id)
+{
+    Vector<PropertyKeyID, 32> keys;
+    Vector<FunctionID, 8> entered;
+    collectThisKeys(link, summaries, id, m_program.at(id).constructor, keys, entered);
+    for (FunctionID function : entered) {
+        FunctionKind kind = m_program.at(function).kind;
+        if (kind != FunctionKind::Initializer && !isClassConstructorOf(kind))
+            m_methodsOfConstructions.append(function);
+    }
+    const PlannedLayout& planned = m_slots.layout(id);
+    size_t firstField = m_fields.size();
+    m_isListed.clearAll();
+    for (PropertyKeyID key : keys) {
+        std::optional<FieldIndex> field = key ? m_slots.findField(m_program, id, key) : std::nullopt;
+        if (!field || !isListedInOrders(planned, *field))
+            break;
+        if (!m_isListed.set(*field))
+            m_fields.append(*field);
+    }
+    size_t endOfStored = m_fields.size();
+    if (endOfStored == firstField)
+        return;
+    listFieldsThatLayoutLists(id);
+    size_t endOfDeclared = m_fields.size();
+    bool isDeclaredOrder = endOfDeclared - endOfStored >= endOfStored - firstField && std::ranges::equal(m_fields.span().subspan(firstField, endOfStored - firstField), m_fields.span().subspan(endOfStored, endOfStored - firstField));
+    if (isDeclaredOrder) {
+        m_fields.shrink(firstField);
+        return;
+    }
+    m_isListed.clearAll();
+    for (FieldIndex field : m_fields.span().subspan(firstField, endOfStored - firstField))
+        m_isListed.set(field);
+    for (size_t place = endOfStored; place < endOfDeclared; ++place) {
+        FieldIndex field = m_fields[place];
+        if (!m_isListed.set(field))
+            m_fields[endOfStored++] = field;
+    }
+    m_fields.shrink(endOfStored);
+    finishCandidate(id, firstField);
 }
 
 void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& link, const ThinSummaries& summaries, const BodyIndexTable& bodies)
@@ -705,7 +831,11 @@ void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& lin
             continue;
         const Function& function = m_program.at(constructor);
         std::optional<unsigned> thisParameter = function.thisParameterIndex();
-        if (function.constructedClass != id || !function.takesThisFromConstruction() || !thisParameter || !link.function(constructor).isReached)
+        if (function.constructedClass != id || !link.function(constructor).isReached)
+            continue;
+        if (isClassConstructorOf(function.kind))
+            addOrderOfClassConstructor(link, summaries, id);
+        if (!function.takesThisFromConstruction() || !thisParameter)
             continue;
 
         const ThinSummary& summary = summaries.at(constructor);
@@ -733,7 +863,7 @@ void CollectorOfKeyOrders::addOrdersOfConstructorFunctions(const LinkTables& lin
 
         Vector<PropertyKeyID, 32> keys;
         Vector<FunctionID, 8> entered;
-        if (collectThisKeys(link, summaries, constructor, keys, entered) && m_numbersOfCandidates[index] < maxKeyOrdersPerLayout) {
+        if (collectThisKeys(link, summaries, id, constructor, keys, entered) && m_numbersOfCandidates[index] < maxKeyOrdersPerLayout) {
             size_t firstFieldOfMethods = m_fields.size();
             m_isListed.clearAll();
             for (PropertyKeyID key : keys) {
@@ -820,6 +950,33 @@ void CollectorOfKeyOrders::addOrdersOfAllocations(const LinkTables& link, const 
             m_fields.append(fields);
             finishCandidate(id, firstField);
         });
+    }
+}
+
+void CollectorOfKeyOrders::addOrdersOfComputedLiterals(const LinkTables& link)
+{
+    for (size_t index : link.computedLiterals) {
+        LayoutID id(static_cast<uint32_t>(index));
+        if (!hasOrders(id) || m_slots.layout(id).numberOfFields() > maxComputedLiteralNames)
+            continue;
+        const PlannedLayout& planned = m_slots.layout(id);
+        size_t firstField = m_fields.size();
+        listFieldsThatLayoutLists(id);
+        Vector<FieldIndex, maxComputedLiteralNames> written(m_fields.span().subspan(firstField));
+        m_fields.shrink(firstField);
+        for (FieldIndex name = 0; name < planned.numberOfFields(); ++name) {
+            if (!isListedInOrders(planned, name))
+                continue;
+            Vector<FieldIndex, maxComputedLiteralNames> others(written);
+            others.removeFirst(name);
+            for (size_t place = 0; place <= others.size() && m_numbersOfCandidates[index] < maxKeyOrdersPerLayout; ++place) {
+                firstField = m_fields.size();
+                m_fields.append(others.span().first(place));
+                m_fields.append(name);
+                m_fields.append(others.span().subspan(place));
+                finishCandidate(id, firstField);
+            }
+        }
     }
 }
 
@@ -1307,6 +1464,57 @@ void CollectorOfKeyOrders::addOrdersOfData()
     }
 }
 
+void CollectorOfKeyOrders::addOrdersOfLibraryBases()
+{
+    auto isClassOfLibrary = [&](LayoutID id) {
+        FunctionID constructor = m_program.at(id).constructor;
+        return constructor && isLibraryCode(m_program, m_program.at(constructor));
+    };
+    uint32_t numberOfLayouts = static_cast<uint32_t>(m_program.layouts.size());
+    auto baseOfLibrary = [&](LayoutID id) {
+        const Layout& layout = m_program.at(id);
+        LayoutID base = layout.kind == LayoutKind::Instance && layout.constructor && hasOrders(id) && !isClassOfLibrary(id) ? writtenBaseOf(layout) : LayoutID();
+        return base && hasOrders(base) && isClassOfLibrary(base) ? base : LayoutID();
+    };
+    HashMap<uint32_t, Vector<uint32_t, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> candidatesOfBases;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (LayoutID base = baseOfLibrary(LayoutID(index)))
+            candidatesOfBases.add(base.index(), Vector<uint32_t, 8>());
+    }
+    if (candidatesOfBases.isEmpty())
+        return;
+    for (uint32_t place = 0; place < m_candidates.size(); ++place) {
+        auto found = candidatesOfBases.find(m_candidates[place].layout.index());
+        if (found != candidatesOfBases.end() && !m_candidates[place].isDeclaredOrder)
+            found->value.append(place);
+    }
+    Vector<FieldIndex, 32> fieldsOfBase;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        LayoutID id(index);
+        LayoutID base = baseOfLibrary(id);
+        if (!base)
+            continue;
+        const PlannedLayout& planned = m_slots.layout(id);
+        const PlannedLayout& plannedOfBase = m_slots.layout(base);
+        const Layout& layoutOfBase = m_program.at(base);
+        for (uint32_t place : candidatesOfBases.get(base.index())) {
+            if (m_numbersOfCandidates[index] >= maxKeyOrdersPerLayout)
+                break;
+            fieldsOfBase.shrink(0);
+            fieldsOfBase.append(fieldsOf(m_candidates[place]));
+            size_t firstField = m_fields.size();
+            for (FieldIndex field : fieldsOfBase) {
+                PropertyKeyID key = field < layoutOfBase.fields.size() ? layoutOfBase.fields[field].key : plannedOfBase.appendedKeys[field - layoutOfBase.fields.size()];
+                std::optional<FieldIndex> found = key ? m_slots.findField(m_program, id, key) : std::nullopt;
+                if (!found || !isListedInOrders(planned, *found))
+                    break;
+                m_fields.append(*found);
+            }
+            finishCandidate(id, firstField);
+        }
+    }
+}
+
 void CollectorOfKeyOrders::sortCandidates()
 {
     parallelSort(m_loops, m_candidates.mutableSpan(), [&](const CandidateForKeyOrders& a, const CandidateForKeyOrders& b) {
@@ -1377,6 +1585,8 @@ KeyOrderParts CollectorOfKeyOrders::sortIntoParts(BuildContext& build)
             }
         }
     });
+    for (FunctionID method : m_methodsOfConstructions)
+        parts.methodsOfConstructions.set(method.index());
     return parts;
 }
 
@@ -1394,8 +1604,10 @@ KeyOrders computeKeyOrders(const Program& program, const LinkTables& link, const
     collector.addOrdersOfMembersMadeByTag(link, bodies);
     collector.addOrdersOfConstructorFunctions(link, summaries, bodies);
     collector.addOrdersBehindWhatConstructorFunctionsAlwaysCreate(link, summaries);
+    collector.addOrdersOfLibraryBases();
     if (mechanisms.contains(Mechanism::TypedSlots)) {
         collector.addOrdersOfAllocations(link, summaries);
+        collector.addOrdersOfComputedLiterals(link);
         collector.addOrdersOfCopies(link, summaries, bodies, build);
     }
     return KeyOrders(collector.sortIntoParts(build));

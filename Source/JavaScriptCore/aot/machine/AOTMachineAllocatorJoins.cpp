@@ -229,10 +229,7 @@ static bool isRareEdgeIntoHead(const Order& order, const Block* from, const Bloc
 
 static bool isRareEdgeIntoHead(const Order& order, const Block* target, size_t numberOfPredecessor)
 {
-    uint32_t regionOfFrom = order.of(order.of(target).predecessors[numberOfPredecessor]).rareRegion;
-    if (regionOfFrom != noRareRegion && regionOfFrom != order.of(target).rareRegion)
-        return true;
-    return order.edgeFromPredecessor(target, numberOfPredecessor).isRare();
+    return order.isRareEdgeFromPredecessor(target, numberOfPredecessor);
 }
 
 static NEVER_INLINE const Block* findBlockThatFixesHead(const Allocator& allocator, const Block* target, const BlockPlace& place)
@@ -2598,13 +2595,7 @@ bool Allocator::dominates(const Block* above, const Block* below)
 
 bool Allocator::hasBackEdgeOutsideRareRegions(const Loop& loop) const
 {
-    const Block* head = m_order.blocksInOrder()[loop.firstBlock];
-    std::span<Block* const> predecessors = m_order.of(head).predecessors;
-    for (size_t index = predecessors.size(); index-- && m_order.of(predecessors[index]).orderIndex >= loop.firstBlock;) {
-        if (!isRareEdgeIntoHead(m_order, head, index))
-            return true;
-    }
-    return false;
+    return m_order.hasBackEdgeOutsideRareRegions(loop);
 }
 
 static bool isReadOnWayOutOfBranch(const Liveness& liveness, const Operation* value, const WayOutOfBranch& way)

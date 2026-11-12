@@ -27,6 +27,7 @@
 #include "JSTypeInfo.h"
 #include "NumericStrings.h"
 #include "StackAlignment.h"
+#include "TypeofType.h"
 #include <bit>
 #include <initializer_list>
 #include <ranges>
@@ -178,6 +179,52 @@ void generateIsCallableCell(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTIsCallable, call, [&] {
         jit.compareOnFlags32(scratch, TrustedImm32(1));
     });
+}
+
+StubSignature signatureOfTypeOf(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::R0) }); }
+
+void generateTypeOf(StubAssembler& jit)
+{
+    const GPRReg value = jit.clobberOperand(0);
+    RELEASE_ASSERT(value == jit.result());
+    const GPRReg scratch = jit.allocateScratch(StubRegister::T11);
+    auto returnType = [&](TypeofType type) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(typeStrings) + static_cast<ptrdiff_t>(type) * sizeof(JSCell*)), jit.result());
+        jit.returnToCaller();
+    };
+
+    Jump isCell = jit.branchIfCell(value);
+    Jump notNumber = jit.branchTest64(CCallHelpers::Zero, value, numberTag);
+    returnType(TypeofType::Number);
+
+    notNumber.link(&jit);
+    Jump notUndefined = jit.branch64(CCallHelpers::NotEqual, value, TrustedImm32(JSValue::ValueUndefined));
+    returnType(TypeofType::Undefined);
+    notUndefined.link(&jit);
+    Jump isNull = jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueNull));
+    returnType(TypeofType::Boolean);
+
+    isCell.link(&jit);
+    jit.load8(Address(value, JSCell::typeInfoTypeOffset()), scratch);
+    Jump notString = jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(StringType));
+    returnType(TypeofType::String);
+    notString.link(&jit);
+    Jump isObject = jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(ObjectType));
+    Jump isBigInt = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(HeapBigIntType));
+    returnType(TypeofType::Symbol);
+    isBigInt.link(&jit);
+    returnType(TypeofType::BigInt);
+
+    isObject.link(&jit);
+    Jump notFunction = branchIfNotFunctionType(jit, value, scratch);
+    returnType(TypeofType::Function);
+    notFunction.link(&jit);
+    Jump asksItsClass = jit.branchTest8(CCallHelpers::NonZero, Address(value, JSCell::typeInfoFlagsOffset()), TrustedImm32(OverridesGetCallData | MasqueradesAsUndefined));
+    isNull.link(&jit);
+    returnType(TypeofType::Object);
+
+    asksItsClass.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTTypeOf, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = value });
 }
 
 void generateToBoolean(StubAssembler& jit)

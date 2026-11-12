@@ -109,7 +109,7 @@ static Reference buildPiecePosition(Walker& walker, Opcode opcode, Reference lef
     return buildOperatorForStrings(walker, Opcode::BitAnd, result, integerForStrings(walker, std::numeric_limits<int32_t>::max()), origin);
 }
 
-static void noteOrderedPieceBounds(Walker& walker, Reference start, Reference end)
+void noteOrderedPieceBounds(Walker& walker, Reference start, Reference end)
 {
     start = rootForStrings(walker, start);
     end = rootForStrings(walker, end);
@@ -226,7 +226,7 @@ std::optional<PieceOfString> pieceInSight(Walker& walker, Reference text, bool a
         return std::nullopt;
     const Code& code = walker.code();
     const Operation& record = code.at(root.id());
-    bool isMadeOfCodeUnit = record.opcode == Opcode::CallInline && record.inlineBuiltin() == InlineBuiltin::StringFromCharCode;
+    bool isMadeOfCodeUnit = record.opcode == Opcode::CallInline && record.inlineBuiltin() == InlineBuiltin::StringFromCharCode && record.argumentsOperands().size() == 1;
     bool isPlaceThatStands = record.opcode == Opcode::SubstringOrUndefined && (alsoWhereNothingMayStand || isProvenString(walker, walker.typeOf(text)));
     if (record.opcode != Opcode::Substring && !isMadeOfCodeUnit && !isPlaceThatStands)
         return std::nullopt;
@@ -348,6 +348,24 @@ bool buildLengthOfPieceInSight(Walker& walker, const BodyValue& value, const Inp
     Reference length = buildLengthOfPiece(walker, *piece, origin);
     if (length)
         bindForStrings(walker, value.id(), length, origin);
+    return true;
+}
+
+bool buildKnownPieceTruthiness(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
+{
+    if (inputs.areOnlyTypes() || walker.isUnreachable())
+        return false;
+    Reference text = walker.referenceOf(value.operand(0));
+    if (!text || !isProvenString(walker, walker.typeOf(text)))
+        return false;
+    std::optional<PieceOfString> piece = pieceInSight(walker, text);
+    if (!piece || !isRangeOfPieceInOrder(walker, *piece))
+        return false;
+    Origin origin = walker.originOf(value);
+    Reference length = buildLengthOfPiece(walker, *piece, origin);
+    Reference truth = length ? buildOperatorForStrings(walker, Opcode::ToBoolean, length, { }, origin) : Reference();
+    if (truth)
+        bindForStrings(walker, value.id(), truth, origin);
     return true;
 }
 
@@ -592,6 +610,59 @@ static bool someLaterCallGetsUnderKeyForStringPieces(Walker& walker, const BodyI
     return read && someCallStandsBehind((*read)[0], (*read)[1]);
 }
 
+static bool buildKeyTestArmsForStringPieces(Walker& walker, const CallByOneRow& call, Reference place, Reference isFound)
+{
+    if (!isFound)
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID written = call.call.id();
+    BlockID block = index.blockOf(written);
+    uint32_t placeInBlock = placeInBlockForStrings(index, written);
+    walker.count(StatisticID::MapEntryIndicesCached);
+
+    BlockID found = walker.addBlock();
+    BlockID notFound = walker.addBlock();
+    BlockID absent = walker.addBlock();
+    BlockID calling = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isFound, found, notFound);
+    auto endArm = [&](bool isPlaceNegative) {
+        if (walker.hasFailed() || walker.isUnreachable())
+            return;
+        noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits(), true);
+        if (isPlaceNegative)
+            noteKnown(walker, KnownNote::PlaceOfKeyIsNegative, call.receiver, call.arguments[0], 0, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), 1, true);
+        if (!walker.threadBranchAfter(call.call))
+            walker.fail("an answer of a map does not walk the end of its block"_s);
+    };
+    auto endArmWith = [&](bool answer) {
+        Draft constant(Opcode::Boolean, call.origin);
+        constant.setBoolean(answer);
+        constant.representation = Representation::JSValue;
+        walker.bind(written, walker.constant(WTF::move(constant)));
+        endArm(!answer);
+    };
+    walker.continueIn(notFound);
+    Reference isTold = buildOperatorForStrings(walker, Opcode::GreaterEq, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin);
+    if (!isTold)
+        return true;
+    walker.branch(isTold, absent, calling);
+    walker.continueIn(calling);
+    {
+        Walker::ClosedArm closedArm(walker);
+        walker.walkStretch(block, placeInBlock, placeInBlock + 1);
+        endArm(true);
+    }
+    if (walker.hasFailed())
+        return true;
+    walker.continueIn(absent);
+    endArmWith(false);
+    if (walker.hasFailed())
+        return true;
+    walker.continueIn(found);
+    endArmWith(true);
+    return true;
+}
+
 bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
 {
     if (!walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::Folding) || call.isForwarded || !call.receiver || call.arguments.size() != 1 || !call.arguments[0] || call.writtenArguments().size() != 1 || call.call.opcode() != Opcode::Call)
@@ -606,12 +677,14 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
     find.setMapOperand(call.receiver);
     find.setKeyOperand(call.arguments[0]);
     Reference place = walker.build(WTF::move(find));
-    Reference isTold = place ? buildOperatorForStrings(walker, Opcode::GreaterEq, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin) : Reference();
-    if (!isTold)
-        return false;
     auto isFound = [&] {
         return buildOperatorForStrings(walker, Opcode::Greater, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin);
     };
+    if (place && walker.canThreadBranchAfter(call.call))
+        return buildKeyTestArmsForStringPieces(walker, call, place, isFound());
+    Reference isTold = place ? buildOperatorForStrings(walker, Opcode::GreaterEq, place, integerForStrings(walker, placeOfAbsentKeyInMap), call.origin) : Reference();
+    if (!isTold)
+        return false;
     buildArmsAroundCallUnderPieceForStringPieces(walker, call, nullptr, isTold, BlockFrequency::Rare, AnswerWithoutCallForStringPieces(isFound));
     if (!walker.hasFailed() && !walker.isUnreachable()) {
         noteKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }), place.bits() | static_cast<uint64_t>(walker.referenceOf(call.call.id()).bits()) << 32, true);
@@ -696,8 +769,9 @@ static bool buildStoreWhereTestFoundNoKeyForStringPieces(Walker& walker, const C
     if (!walker.opensGuesses() || call.isForwarded || !call.receiver || call.arguments.size() != 2 || !call.arguments[0] || call.writtenArguments().size() != 2)
         return false;
     std::optional<uint64_t> kept = findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten);
-    Reference answerOfTest = kept ? Reference::fromBits(static_cast<uint32_t>(*kept >> 32)) : Reference();
-    if (!answerOfTest || outcomeKnownOf(walker, answerOfTest) != std::optional<bool>(false))
+    Reference answerOfTest = kept && *kept >> 32 ? Reference::fromBits(static_cast<uint32_t>(*kept >> 32)) : Reference();
+    bool isPlaceNegative = kept && (answerOfTest ? outcomeKnownOf(walker, answerOfTest) == std::optional<bool>(false) : !!findKnown(walker, KnownNote::PlaceOfKeyIsNegative, call.receiver, call.arguments[0]));
+    if (!isPlaceNegative)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID written = call.call.id();

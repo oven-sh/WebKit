@@ -520,6 +520,13 @@ public:
     {
     }
 
+    template<typename... Fields>
+    explicit PatchGeneratorOf(std::in_place_t, Fields&&... fields)
+        : PatchGenerator(runFunctor)
+        , m_functor { std::forward<Fields>(fields)... }
+    {
+    }
+
 private:
     static void runFunctor(const PatchGenerator& generator, CCallHelpers& jit, const PatchParameters& parameters)
     {
@@ -633,6 +640,7 @@ public:
     JS_EXPORT_PRIVATE RegisterMask lateClobberedOnSuccessor(unsigned successorIndex) const;
 
     template<typename Functor> inline void setGenerator(const Functor&);
+    template<typename Functor, typename... Fields> inline void makeGenerator(Fields&&...);
     void setGenerator(PatchGenerator* generator) { m_generator = generator; }
     PatchGenerator* generator() const { return m_generator; }
 
@@ -640,6 +648,8 @@ public:
     bool runsWithoutFrame() const { return bit(RunsWithoutFrame); }
     void setShowsRegistersToCollector(bool value) { setBit(ShowsRegistersToCollector, value); }
     bool showsRegistersToCollector() const { return bit(ShowsRegistersToCollector); }
+    void setIsLoopPoll(bool value) { setBit(IsLoopPoll, value); }
+    bool isLoopPoll() const { return bit(IsLoopPoll); }
     void setFollowsFrameSetup(bool value) { setBit(FollowsFrameSetup, value); }
     bool followsFrameSetup() const { return bit(FollowsFrameSetup); }
     void setTestsStackAheadOfFramedPart(bool value) { setBit(TestsStackAheadOfFramedPart, value); }
@@ -648,6 +658,11 @@ public:
     void setLeavesByReturning(bool value) { setBit(LeavesByReturning, value); }
     bool leavesByReturning() const { return bit(LeavesByReturning); }
     void setNeedsFrameRecord(bool value) { setBit(NeedsFrameRecord, value); }
+    void describeNewCall(bool needsFrameRecord, bool runsWithoutFrame)
+    {
+        ASSERT(!m_bits);
+        m_bits = static_cast<uint16_t>(FindsOperandsInFrameWithoutRecord | needsFrameRecord * NeedsFrameRecord | runsWithoutFrame * RunsWithoutFrame);
+    }
     bool needsFrameRecord() const { return bit(NeedsFrameRecord); }
     void setFindsOperandsInFrameWithoutRecord(bool value) { setBit(FindsOperandsInFrameWithoutRecord, value); }
     bool findsOperandsInFrameWithoutRecord() const { return bit(FindsOperandsInFrameWithoutRecord); }
@@ -689,6 +704,7 @@ private:
         FollowsFrameSetup = 1 << 1,
         NeedsFrameRecord = 1 << 2,
         IsSuspension = 1 << 3,
+        IsLoopPoll = 1 << 4,
         SharesLatePath = 1 << 5,
         LeavesByReturning = 1 << 6,
         BringsOperandsToTheirRegisters = 1 << 7,
@@ -848,6 +864,7 @@ public:
 
     unsigned numberOfIncomingEdges() const { return m_numberOfIncomingEdges; }
     Block* singlePredecessor() const { return m_numberOfIncomingEdges == 1 ? std::bit_cast<Block*>(m_sourcesOfIncomingEdgesFolded) : nullptr; }
+    Block* otherPredecessor(const Block* one) const { return m_numberOfIncomingEdges == 2 ? std::bit_cast<Block*>(m_sourcesOfIncomingEdgesFolded ^ std::bit_cast<uintptr_t>(one)) : nullptr; }
     EdgeClass classOfSingleIncomingEdge() const
     {
         ASSERT(m_numberOfIncomingEdges == 1);
@@ -988,6 +1005,11 @@ struct FrameRange {
     MacroAssembler::Label end;
 };
 
+struct ShortLoop {
+    MacroAssembler::Label begin;
+    MacroAssembler::Label end;
+};
+
 struct RangeOfRareCode {
     MacroAssembler::Label begin;
     MacroAssembler::Label end;
@@ -1041,6 +1063,14 @@ public:
     const ProcedureTraits& traits() const { return m_traits; }
     bool checksAllocation() const { return m_traits.checksAllocation || m_orderWasMadeAgain; }
     void noteThatOrderWasMadeAgain() { m_orderWasMadeAgain = true; }
+    void noteVectors() { m_holdsVectors = true; }
+    void noteLoopPoll(PatchOperation* poll)
+    {
+        poll->setIsLoopPoll(true);
+        m_loopPolls.append(m_arena, poll);
+    }
+    std::span<PatchOperation* const> loopPolls() const { return m_loopPolls.span(); }
+    bool holdsVectors() const { return m_holdsVectors; }
 
     JS_EXPORT_PRIVATE Block* addBlock();
     Block* addBlockThatOnlyJumps();
@@ -1093,6 +1123,8 @@ public:
 
     template<typename Functor>
     PatchGenerator* createGenerator(const Functor& functor) { return m_arena.create<PatchGeneratorOf<Functor>>(functor); }
+    template<typename Functor, typename... Fields>
+    PatchGenerator* makeGenerator(Fields&&... fields) { return m_arena.create<PatchGeneratorOf<Functor>>(std::in_place, std::forward<Fields>(fields)...); }
 
     void setStackCheckGenerator(StackCheckGenerator generator, void* context)
     {
@@ -1123,6 +1155,7 @@ public:
     uint32_t numberOfTrapsTakenOver() const { return m_numberOfTrapsTakenOver; }
     MacroAssembler::Label rareCodeStart() const { return m_rareCodeStart; }
     std::span<const RangeOfRareCode> rangesOfRareCodeAmongOtherCode() const { return m_rangesOfRareCodeAmongOtherCode.span(); }
+    std::span<const ShortLoop> shortLoops() const { return m_shortLoops.span(); }
 
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
@@ -1177,11 +1210,13 @@ private:
     const HeapTree& m_heapTree;
     const ProcedureTraits m_traits;
     bool m_orderWasMadeAgain { false };
+    bool m_holdsVectors { false };
     std::array<ListOfHeapsWithItsSet, 4> m_lastListsOfHeaps { };
     MachineCoreListsOfHeapsKept* m_listsOfHeapsKept { nullptr };
     unsigned m_numberOfListsOfHeapsKept { 0 };
     ArenaVector<Block*> m_blocks;
     ArenaVector<Block*> m_blocksBegunBeforeAnythingLedToThem;
+    ArenaVector<PatchOperation*> m_loopPolls;
     ArenaVector<const Operation*> m_storesOverLoadsWhereNoWayLed;
     ArenaVector<Operation*> m_operations;
     ArenaVector<Operation*> m_upsilonsOfWordsBetweenPhis;
@@ -1216,6 +1251,7 @@ private:
     uint32_t m_numberOfTrapsTakenOver { 0 };
     MacroAssembler::Label m_rareCodeStart;
     ArenaVector<RangeOfRareCode> m_rangesOfRareCodeAmongOtherCode;
+    ArenaVector<ShortLoop> m_shortLoops;
     std::optional<Failure> m_failure;
 };
 
@@ -1245,6 +1281,12 @@ template<typename Functor>
 inline void PatchOperation::setGenerator(const Functor& functor)
 {
     m_generator = m_procedure.createGenerator(functor);
+}
+
+template<typename Functor, typename... Fields>
+inline void PatchOperation::makeGenerator(Fields&&... fields)
+{
+    m_generator = m_procedure.makeGenerator<Functor>(std::forward<Fields>(fields)...);
 }
 
 inline PatchOperation::PatchOperation(Procedure& procedure, Opcode opcode, Type type, Origin origin)

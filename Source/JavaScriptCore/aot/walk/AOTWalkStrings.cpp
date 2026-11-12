@@ -35,7 +35,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (opcode == Opcode::PropGet)
         return buildLengthOfPieceInSight(walker, value, inputs);
     if (opcode == Opcode::ElemGet) {
-        return buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
+        return buildFrameMatchElement(walker, value, inputs) || buildReadByPartsOfKey(walker, value, inputs) || buildCharacterByIndex(walker, value, inputs) || buildLookupUnderAnyKeyOnPlainRecords(walker, value, inputs);
     }
     if (inputs.areOnlyTypes())
         return false;
@@ -55,7 +55,7 @@ bool buildTypedOperationOnStringsOfItsOpcodes(Walker& walker, const BodyValue& v
     if (allRelations.contains(opcode))
         return buildRelationOnStrings(walker, value, inputs);
     if (opcode == Opcode::ToBoolean)
-        return buildTruthinessOfLengthOfString(walker, value, inputs);
+        return buildKnownPieceTruthiness(walker, value, inputs) || buildTruthinessOfLengthOfString(walker, value, inputs);
     if (conversionsToNumbersInWalkStrings.contains(opcode))
         return buildNumberOfPiece(walker, value, inputs);
     return false;
@@ -72,6 +72,8 @@ bool buildCallByOneRowForStrings(Walker& walker, const CallByOneRow& call)
         return false;
     if (foldCallByOneRowOnKnownOperands(walker, call) || buildThrowOfNewError(walker, call) || buildFormatterCallByPattern(walker, call) || buildURLCallByScan(walker, call))
         return true;
+    if (call.mode == BuiltinCallMode::Call && walker.program().builtins().canonicalID(call.builtin) == walker.program().builtins().canonicalID(Builtins::StringPrototypeMatchAll))
+        return openMatchIteration(walker, call);
     if (!call.codeInLine || call.mode != BuiltinCallMode::Call)
         return false;
 

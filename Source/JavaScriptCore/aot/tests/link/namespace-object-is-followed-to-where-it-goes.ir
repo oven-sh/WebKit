@@ -2,14 +2,14 @@
 # library.js: export function called() { return 1 } export function read() { return 2 } export function idle() { return 3 }
 # main.js: import * as ns from "./library.js"; ns.called(); const f = ns.read; f()
 # `ns.called()` hands the object to the callee as `this`, which the callee does not take. `ns.read` is a read by name of the variable behind the export. Nothing comes to `idle`.
-# A name that code which runs reads off the object is shown by the object to whoever gets hold of it, so what lies under it has escaped: `read`. `called` is read by its binding, and the object is only its `this`.
+# A read by name off the object in sight shows what lies under the name to nobody else, and `called` does not take its `this`: the callers of both are known.
 # Every name that is not shown stays in: the run time hands its value to nobody.
 # RUN: summary f0
 # CHECK: summary f0
 # CHECK-NOT: hands-out
 # RUN(REACH): link functions mechanisms=all
 # REACH: function f2 callers-known
-# REACH-NOT: function f3 {{*}}callers-known
+# REACH: function f3 callers-known
 # REACH: function f4 unreached
 # RUN(NONE): link functions mechanisms=none
 # NONE: function f4 unreached

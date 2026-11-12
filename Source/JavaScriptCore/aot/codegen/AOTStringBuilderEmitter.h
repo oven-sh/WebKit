@@ -30,6 +30,10 @@ public:
     void generateStackStringBuilderStart(const ValueContext&);
     void generateStackStringBuilderCursor(const ValueContext&);
     void generateStackStringBuilderLength(const ValueContext&);
+    void generateStackStringBuilderIsOnStack(const ValueContext&);
+    void generateStackStringBuilderEqualsLiteral(const ValueContext&);
+    void generateStackStringBuilderParseInt(const ValueContext&);
+    void generateStackStringBuilderToNumber(const ValueContext&);
     void generateStackStringBuilderToString(const ValueContext&);
     void generateStackStringBuilderFinish(const ValueContext&);
     void generateStackStringBuilderDiscard(const ValueContext&);

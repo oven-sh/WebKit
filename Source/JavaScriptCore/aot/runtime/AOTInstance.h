@@ -132,6 +132,9 @@ struct InstanceHeader {
     int64_t notCellMask;
     JSGlobalObject* globalObject;
     uintptr_t cellCageBase;
+    uint64_t barrierHeaderThreshold;
+    static constexpr unsigned numberOfTypeStrings = 8;
+    JSCell* typeStrings[numberOfTypeStrings];
 };
 
 struct ImageWords {
@@ -187,6 +190,7 @@ struct TypedArrayAllocation {
     uint64_t elementSize;
     uint64_t unused;
 };
+void prepareTypedArrayAllocation(Instance*, TypedArrayType);
 
 struct AllocationWords {
     static constexpr unsigned numberOfTypedArrayAllocations = 16;
@@ -253,6 +257,8 @@ struct RealmWords {
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;
+    static constexpr unsigned numberOfImmediates = JSValue::ValueUndefined + 1;
+    JSString* stringsOfImmediates[numberOfImmediates];
 };
 
 struct HeapWords {

@@ -43,7 +43,7 @@ static_assert(maxKeyOrdersPerLayout <= UINT16_MAX);
 static constexpr uint32_t maxOrdersPerLayout = defaultLimitValue(LimitID::KeyOrdersPerLayout, hostArchitecture());
 static_assert(maxOrdersPerLayout <= maxKeyOrdersPerLayout);
 
-static constexpr uint32_t initialTransitionTableSize = 1024;
+static constexpr uint32_t initialTransitionTableSize = 512;
 static_assert(!(initialTransitionTableSize & (initialTransitionTableSize - 1)));
 static constexpr uint64_t maxTransitionLoadNumerator = 1;
 static constexpr uint64_t maxTransitionLoadDenominator = 2;
@@ -489,6 +489,7 @@ KeyOrderTable::KeyOrderTable(State& state)
     state.caches->add(CacheKind::ClearedEachCollection, "key lists by structure"_s, m_keyListsByStructure);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
+    state.caches->addClearedEachCollection("enumerators below compiled objects"_s, asWritableBytes(std::span { m_enumeratorsBelowCompiledObjects }));
 }
 
 KeyOrderTable::~KeyOrderTable() = default;
@@ -544,7 +545,7 @@ JSCellButterfly* KeyOrderTable::tryCreateKeyList(VM& vm, const LayoutData& layou
     RuntimeLayoutTable& layouts = m_state.objects->layouts;
     Vector<uint16_t, 16> listed;
     for (uint16_t index : entries) {
-        if (index >= layout.numberOfFields || layout.fields()[index].attributes())
+        if (index >= layout.numberOfFields || layout.fields()[index].attributes() & PropertyAttribute::DontEnum)
             return nullptr;
         if (kind != KeyListKind::Symbols && layouts.hasStringKey(layout.fields()[index]))
             listed.append(index);

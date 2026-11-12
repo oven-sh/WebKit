@@ -416,6 +416,7 @@ static bool bitOfClassGuardSaysThatItHolds(const LayoutData& classLayout, ClassS
 
 void ClassTable::beginGuardsSlowCase(const LayoutData& classLayout)
 {
+    m_state.instance.propertyCaches.forgetReplacedMembers();
     m_classesWhoseGuardsHaveBegun.set(m_tables.rankOfClass(classLayout.index));
     if (const LayoutData* above = assumedBaseOf(classLayout); above && !guardsHaveBegun(*above)) {
         if (isDefinedByClass(*above) || isClassOfCreatedObjects(*above) || m_beginsGuardsOfFunctionsNotMadeYet)
@@ -511,7 +512,8 @@ static void storeAssignedMember(State& state, const AssignedMemberData& member, 
     if (word == JSValue::encode(found))
         return;
     word = JSValue::encode(found);
-    state.statics->didStoreRootInStatics(offset);
+    if (found.isCell())
+        state.objects->classes.didStoreAssignedMember(offset);
     state.countWriteForEffectsNet(countOfChangeOfClassGuard(!found.isUndefined()));
     if (found.isUndefined())
         countEvent(*state.instance.vm, RuntimeCounterID::ClassGuardBitsInvalidated);
@@ -566,8 +568,10 @@ void endGuardsOfInheritedMembers(State& state, const LayoutData& classLayout, Cl
         };
         auto guards = guardsOfNamesInClassRecord(state.tables, *current, side);
         for (const NamedClassGuardData& guard : guards) {
-            if (isInherited(guard.name))
-                classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            if (!isInherited(guard.name))
+                continue;
+            classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            classes.m_lateMembersOfGuards.remove(guard.numberOfBit());
         }
         storeSideGuards(state, *current, side, false, [&](uint32_t numberOfBit) {
             return classes.m_endedGuardsOfNames.contains(byteOffsetOfClassGuardBit(numberOfBit));
@@ -610,6 +614,8 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
             if (goesOnHolding(guard))
                 continue;
             classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            if (!classes.m_lateMembersOfGuards.isEmpty()) [[unlikely]]
+                classes.m_lateMembersOfGuards.remove(guard.numberOfBit());
             ClassGuardWriter(state, current, side, ClassGuardRows(state, guard.numberOfBit(), guard.numberOfBit())).storeNameGuard(guard.numberOfBit(), false);
         }
     };
@@ -782,9 +788,13 @@ JSValue ClassTable::findAssignedMember(const AssignedMemberData& member) const
     const LayoutData* classLayout = classWithIndex(member.classLayout());
     if (!classLayout || hasNoGuardLeft(*classLayout, member.side()) || (!FunctionID(member.method) && !FunctionID(member.getter) && !FunctionID(member.setter) && !member.holdsValue))
         return jsUndefined();
+    if (!m_namesBelowPrototypes.isEmpty() && m_namesBelowPrototypes.contains(static_cast<uint64_t>(indexOfGuard(*classLayout, member.side())) << 32 | member.name)) [[unlikely]]
+        return jsUndefined();
     UniquedStringImpl* uid = identifiersOf(m_state.instance).uid(member.name);
     JSObject* below = nullptr;
     for (const LayoutData* current = classLayout; current; current = assumedBaseOf(*current)) {
+        if (!m_membersReplacedAgain.isEmpty() && m_membersReplacedAgain.contains(static_cast<uint64_t>(indexOfGuard(*current, member.side())) << 32 | member.name)) [[unlikely]]
+            return jsUndefined();
         JSObject* holder = prototypeHolderIfMade(vm, m_state, *current);
         if (current->evaluation() == EvaluationState::SeenTwice || (below && below->getPrototypeDirect() != (holder ? JSValue(holder) : JSValue())))
             return jsUndefined();
@@ -814,17 +824,23 @@ void ClassTable::updateAssignedMembers(const LayoutData& classLayout, ClassSide 
         updateAssignedMember(member);
 }
 
-void ClassTable::updateAssignedMembers(const LayoutData& classLayout, ClassSide side, uint32_t key)
+bool ClassTable::isAssignedMemberName(uint32_t key)
 {
     std::span<const AssignedMemberData> members = m_tables.assignedMembers();
     if (members.empty())
-        return;
+        return false;
     if (m_assignedMemberNames.isEmpty()) {
         for (const AssignedMemberData& member : members)
             m_assignedMemberNames.add(member.name);
     }
-    if (!m_assignedMemberNames.contains(key))
+    return m_assignedMemberNames.contains(key);
+}
+
+void ClassTable::updateAssignedMembers(const LayoutData& classLayout, ClassSide side, uint32_t key)
+{
+    if (!isAssignedMemberName(key))
         return;
+    std::span<const AssignedMemberData> members = m_tables.assignedMembers();
     Vector<uint32_t, 16> classes { classLayout.index };
     while (!classes.isEmpty()) {
         const LayoutData* current = classWithIndex(classes.takeLast());
@@ -1036,6 +1052,7 @@ const ClassTable::CheckedHolder* ClassTable::findCheckedHolder(const LayoutData&
 
 void ClassTable::addCheckedHolder(const LayoutData& classLayout, ClassSide side, CheckedHolder&& checked)
 {
+    m_state.instance.propertyCaches.forgetReplacedMembersOf(checked.holder);
     m_checkedHolders.set(encodeSideOfClassHolder(classLayout, side), WTF::move(checked));
 }
 
@@ -1238,6 +1255,7 @@ static NameOnPrototypeHolder findNameOnPrototypeHolder(VM& vm, State& state, con
 void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, HolderState holderState)
 {
     ASSERT(holder);
+    m_state.instance.propertyCaches.forgetReplacedMembers();
     removeCheckedHolder(layout, side);
     bool countsBehindArming = side == ClassSide::Prototype && layout.classData().guardsOfNamesAwaitBeginning && !guardsHaveBegun(layout);
     if (countsBehindArming)
@@ -1255,6 +1273,7 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
             m_state.objects->closures.didGivePrototypePropertyTo(vm, holder);
     }
     ASSERT(!isDefinedByClass(layout) || !holder->structure()->hasPolyProto());
+    reportReplacementsOnHolder(vm, layout, side, holder, nullptr);
     auto entry = m_classSidesByHolder.add(holder, encodeSideOfClassHolder(layout, side));
     bool isEnteredForThisSide = entry.iterator->value == encodeSideOfClassHolder(layout, side);
     if (entry.isNewEntry)
@@ -1303,13 +1322,14 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         namesThatDiffer.add(constructorKey);
     addNamesThatLookupsComeToAbove(layout, side, namesThatDifferAbove, namesThatDiffer);
     Vector<uint32_t, 4> lateMembers;
-    for (uint32_t name : namesThatDiffer.numbers) {
-        if (isLateMember(vm, layout, side, holder, name))
-            lateMembers.append(name);
-        endClassGuardsOfName(m_state, layout, side, name);
-    }
+    Vector<uint32_t, 4> namesThatEnd;
+    for (uint32_t name : namesThatDiffer.numbers)
+        (isLateMember(vm, layout, side, holder, name) ? lateMembers : namesThatEnd).append(name);
     for (uint32_t name : lateMembers)
-        m_lateMembers.add(lateMemberKey(layout, name));
+        endClassGuardsOfName(m_state, layout, side, name);
+    addLateMembers(layout, lateMembers.span());
+    for (uint32_t name : namesThatEnd)
+        endClassGuardsOfName(m_state, layout, side, name);
     for (uint32_t name : namesThatDiffer.numbersOfPlainValues)
         endClassGuardsOfName(m_state, layout, side, name, GuardsOfNameToEnd::StoresStillPass);
     if (namesThatDiffer.someHasNoNumber)
@@ -1417,13 +1437,28 @@ bool ClassTable::isLateMember(VM& vm, const LayoutData& layout, ClassSide side, 
     });
 }
 
+void ClassTable::addLateMembers(const LayoutData& layout, std::span<const uint32_t> names)
+{
+    for (uint32_t name : names) {
+        if (!m_lateMembers.add(lateMemberKey(layout, name)).isNewEntry)
+            continue;
+        for (const NamedClassGuardData& guard : guardsOfNameInClassRecord(m_tables, layout, ClassSide::Prototype, name))
+            ++m_lateMembersOfGuards.add(guard.numberOfBit(), 0).iterator->value;
+    }
+}
+
 bool ClassTable::tryArmLateMember(VM& vm, const LayoutData& layout, UniquedStringImpl* uid, uint32_t key)
 {
     JSObject* holder = registeredHolderOf(vm, m_state, layout, ClassSide::Prototype);
     if (!m_lateMembers.remove(lateMemberKey(layout, key)) || !holder || !holdsMemberOfRecordUnder(vm, layout, ClassSide::Prototype, holder, uid))
         return false;
     MethodTableUpdate update(*this);
+    m_state.instance.propertyCaches.forgetReplacedMembers();
     for (const NamedClassGuardData& guard : guardsOfNameInClassRecord(m_tables, layout, ClassSide::Prototype, key)) {
+        auto awaited = m_lateMembersOfGuards.find(guard.numberOfBit());
+        if (awaited == m_lateMembersOfGuards.end() || --awaited->value)
+            continue;
+        m_lateMembersOfGuards.remove(awaited);
         m_endedGuardsOfNames.remove(byteOffsetOfClassGuardBit(guard.numberOfBit()));
         ClassGuardWriter(m_state, layout, ClassSide::Prototype, ClassGuardRows(m_state, guard.numberOfBit(), guard.numberOfBit())).storeNameGuard(guard.numberOfBit(), true);
     }
@@ -1577,6 +1612,42 @@ bool ClassTable::nobodyHearsOfValueUnder(const LayoutData& layout, ClassSide sid
     return true;
 }
 
+bool ClassTable::dependsOnValueUnder(const LayoutData& layout, ClassSide side, UniquedStringImpl* uid) const
+{
+    const CommonIdentifiers& names = *m_state.instance.vm->propertyNames;
+    if (uid->isSymbol() || uid == names.constructor.impl() || uid == names.underscoreProto.impl() || parseIndex(PropertyName(uid)))
+        return true;
+    if (side == ClassSide::Static && (uid == names.prototype.impl() || uid == names.name.impl() || uid == names.length.impl()))
+        return true;
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
+    if (key && m_state.tables.someClassGuardNames(*key) && (!subclassesInClassRecord(m_tables, layout).empty() || !guardsOfNameInClassRecord(m_tables, layout, side, *key).empty()))
+        return true;
+    for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+        if (hasComputedMemberNames(*current) || (key && declaresMember(*current, side, *key)))
+            return true;
+    }
+    return false;
+}
+
+void ClassTable::reportReplacementsOnHolder(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uidOrNull)
+{
+    Object* compiled = compiledObjectOrNull(holder);
+    JSObject* extra = compiled && compiled->mayBePrototype() ? extraPropertiesIfCreated(*compiled) : nullptr;
+    if (!extra || compiled->compiledStructure().reportsReplacements())
+        return;
+    bool isReported = false;
+    if (uidOrNull)
+        isReported = isValidOffset(extra->structure()->get(vm, uidOrNull)) && dependsOnValueUnder(layout, side, uidOrNull);
+    else {
+        extra->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            isReported |= dependsOnValueUnder(layout, side, entry.key());
+            return !isReported;
+        });
+    }
+    if (isReported)
+        startReportingReplacements(vm, holder);
+}
+
 bool ClassTable::addsStaticUnobserved(VM& vm, const Closure& classObject, const LayoutData& layout, Structure* before, UniquedStringImpl* uid) const
 {
     if (!hasNoGuardLeft(layout, ClassSide::Static) || uid->isSymbol() || isImplicitMemberOfClassHolder(vm, ClassSide::Static, uid) || parseIndex(PropertyName(uid)) || !closureAdmitsName(vm, &classObject, uid))
@@ -1631,6 +1702,45 @@ void ClassTable::forEachMethodNamed(const LayoutData& layout, ClassSide side, ui
     }).iterator->value;
     for (uint32_t index : std::ranges::equal_range(indices, key, { }, nameOf))
         functor(methods[index]);
+}
+
+bool ClassTable::memberMayBeOverwritten(const LayoutData& layout, ClassSide side, uint32_t key) const
+{
+    bool mayBeStoredOver = false;
+    for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+        forEachMethodNamed(*current, side, key, [&](const MethodData& method) {
+            mayBeStoredOver |= !!(method.flags & methodMayBeStoredOver);
+        });
+    }
+    return mayBeStoredOver;
+}
+
+void ClassTable::noteReplacedMember(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid)
+{
+    if (side != ClassSide::Prototype || vm.aotState().instances.size() != 1 || isCompiledObject(holder) || uid->isSymbol() || parseIndex(PropertyName(uid)) || isImplicitMemberOfClassHolder(vm, side, uid) || !m_lateMembers.isEmpty())
+        return;
+    if ((!hasNoGuardLeft(layout, side) && !m_sidesWhereNamesEnded.get(indexOfGuard(layout, side))) || m_memberBeingDefined.classLayout || m_classDefinedFromRecord)
+        return;
+    std::optional<uint32_t> key = identifiersOf(m_state.instance).numberOf(uid);
+    if (!key || hasComputedMemberNames(layout) || (layout.classData().isChangedInSightAlone(side) && !memberMayBeOverwritten(layout, side, *key)))
+        return;
+    Structure* structure = holder->structure();
+    if (structure->isDictionary() || structure->isCompiledStructure() || structure->isImmutableProperty(uid) || isWriteJudgedByWriter(structure, uid))
+        return;
+    auto put = structure->classInfoForCells()->methodTable.put;
+    if (put != ClassPrototype::info()->methodTable.put && put != JSObject::info()->methodTable.put)
+        return;
+    unsigned attributes = 0;
+    PropertyOffset offset = structure->get(vm, uid, attributes);
+    if (!isValidOffset(offset) || seesAccesses(vm, uid, attributes))
+        return;
+    uint64_t member = static_cast<uint64_t>(indexOfGuard(layout, side)) << 32 | *key;
+    if (m_membersReplacedOnce.add(member).isNewEntry)
+        return;
+    if (m_membersReplacedAgain.add(member).isNewEntry)
+        updateAssignedMembers(layout, side, *key);
+    ReplacedMember& place = m_state.instance.propertyCaches.replacedMembers[*key & (ReplacedMember::numberOfPlaces - 1)];
+    place = { holder, std::bit_cast<EncodedJSValue*>(holder->locationForOffset(offset)), structure->id().bits(), *key, 0 };
 }
 
 void ClassTable::holdMemberToProof(VM& vm, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid)
@@ -1928,6 +2038,21 @@ bool ClassTable::endGuardsOfShadowedMember(const LayoutData& instanceLayout, Uni
     return everyHolderReportsNewNames;
 }
 
+bool ClassTable::mayNameMemberByIndex(const LayoutData& instanceLayout)
+{
+    if (m_classesWithoutIndexedMembers.contains(instanceLayout.index) || !instanceLayout.isClass())
+        return false;
+    const LayoutData& layout = classOfInstances(instanceLayout);
+    for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+        for (const MethodData& method : methodsInClassRecord(*current, ClassSide::Prototype)) {
+            if (method.flags & methodHasComputedName || parseIndex(PropertyName(identifiersOf(m_state.instance).uid(method.name))))
+                return true;
+        }
+    }
+    m_classesWithoutIndexedMembers.add(instanceLayout.index);
+    return false;
+}
+
 void ClassTable::didShadowMember(const LayoutData& instanceLayout, UniquedStringImpl* uid)
 {
     endGuardsOfShadowedMember(instanceLayout, uid);
@@ -2058,6 +2183,22 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
             return false;
         between.append(object);
     }
+    auto isAssignedMember = [&](uint32_t key) {
+        if (!isAssignedMemberName(key))
+            return false;
+        for (const LayoutData* current = &layout; current; current = assumedBaseOf(*current)) {
+            uint64_t place = static_cast<uint64_t>(encodeSideOfClassHolder(*current, ClassSide::Prototype)) << 32 | key;
+            if (std::ranges::binary_search(m_tables.assignedMembers(), place, { }, &AssignedMemberData::place))
+                return true;
+        }
+        return false;
+    };
+    bool mayHideMembers = std::ranges::all_of(between, [&](JSObject* object) {
+        JSValue constructor = object->getDirect(vm, vm.propertyNames->constructor);
+        auto* classObject = constructor && constructor.isObject() ? dynamicDowncast<Closure>(asObject(constructor)) : nullptr;
+        const LayoutData* evaluated = classObject && Instance::owning(classObject) == &m_state.instance ? classConstructedBy(functionOfOwnClosure(*classObject)) : nullptr;
+        return evaluated && evaluated->hasUntypedBase && evaluated->assumedBase() == LayoutData::noBase;
+    });
     Vector<uint32_t, 16> namesBetween;
     bool hidesMember = false;
     for (JSObject* object : between) {
@@ -2066,6 +2207,8 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
             if (!key)
                 return true;
             namesBetween.append(*key);
+            if (mayHideMembers && !isAssignedMember(*key))
+                return true;
             ChainWalk above = walkChain({ realm, between.last()->structure(), nullptr, ChainWalkMode::MayAllocate, ChainWalkUse::UsedAtOnce }, entry.key());
             hidesMember |= above.result != ChainWalkResult::Absent;
             return !hidesMember;
@@ -2073,8 +2216,10 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
     }
     if (hidesMember)
         return false;
-    for (uint32_t key : namesBetween)
+    for (uint32_t key : namesBetween) {
+        m_namesBelowPrototypes.add(static_cast<uint64_t>(indexOfGuard(layout, ClassSide::Prototype)) << 32 | key);
         endClassGuardsOfName(m_state, layout, ClassSide::Prototype, key);
+    }
     m_state.chainDependents->add(between.span(), ChainDependent { nullptr, layout.index, ownerOfGuardsThatHangOnChains() });
     forgetWhatCreatedFieldsHide();
     return true;

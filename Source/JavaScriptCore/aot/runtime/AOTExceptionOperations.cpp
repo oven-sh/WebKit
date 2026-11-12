@@ -646,6 +646,7 @@ static bool isKnownToSayLessOfSecondDigest(uint32_t operationAndCalleeRows, uint
         { "operation:PropGet"_s, { Lane::Structure, Lane::NamedProperties } },
         { "operation:SuperGet"_s, { Lane::Structure, Lane::NamedProperties } },
         { "runtime:operationAOTReadRunningNoCode"_s, { Lane::Structure } },
+        { "runtime:operationAOTReadBeforeLoop"_s, { Lane::Structure } },
         { "operation:CheckIterationRestart"_s, { Lane::Structure, Lane::NamedProperties } },
         { "operation:CheckInlineeFallback"_s, { Lane::Structure, Lane::NamedProperties } },
     };
@@ -697,7 +698,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopAtFalseEffects, void, (Instanc
         if (part >> 16 == Typed::noOperandInEffectsNet) {
             static constexpr std::array<ASCIILiteral, Typed::heapsOfCountsInEffectsNet.size()> deeds {
                 "guards were invalidated"_s, "guards were armed or started"_s, "an unmodified built-in, or the prototype chain of its instances, was written"_s,
-                "a module variable, a static field or a statically allocated scope variable changed"_s,
+                "a module variable, a static field or a statically allocated scope variable changed"_s, "static fields moved to their class object"_s,
                 "compiled code stored to a module variable"_s, "compiled code stored to a static field"_s, "compiled code stored to a statically allocated scope variable"_s
             };
             CommaPrinter commaOfDeeds;

@@ -60,6 +60,7 @@ public:
     void generateInstanceOf(const ValueContext&);
     bool leaveOperandToInstanceOf(const ValueContext& read, InstanceOfOperand, NumberedImmediate);
     void generateHasInPrototypeChain(const ValueContext&);
+    void branchOnPrototypeAbove(ValueID object, CellPointer prototype, LBasicBlock slowPath, BranchTargets);
     void generateTryFindInPrototypeChain(const ValueContext&);
     void generateHasDefaultHasInstance(const ValueContext&);
     void generateToBoolean(const ValueContext&);
@@ -97,6 +98,9 @@ private:
     };
     std::optional<RemainderTest> findRemainderTest(ValueID test);
     bool tryGenerateRemainderTest(const ValueContext& test);
+    bool isImmediatelyTestedForTruth(const ValueContext& remainder);
+    ValueID m_remainderKnownByTruth;
+    Condition m_truthOfRemainder;
 
     Number asNumericOperand(ValueID, const OperationContext* user = nullptr);
     Number numericOperandAsItComes(ValueID);

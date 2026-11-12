@@ -25,6 +25,7 @@
 #include "AOTTypeRelations.h"
 #include "AOTWalkKnown.h"
 #include "AOTWalkKnownCalls.h"
+#include "AOTWalkSortKeys.h"
 #include "AOTWalkStrings.h"
 #include <algorithm>
 #include <optional>
@@ -147,7 +148,7 @@ bool buildToStringOfPrimitiveByRows(Walker& walker, const BodyValue& call)
     return callee && buildToStringOfPrimitiveForKnownRows(walker, call, callee);
 }
 
-static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& walker, FunctionID comparator)
+static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& walker, FunctionID comparator, bool makesNewList)
 {
     constexpr OptionSet<FunctionFlags> otherForms { FunctionFlags::IsAsync, FunctionFlags::IsGenerator, FunctionFlags::HasRestParameter, FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest };
     const Function& function = walker.program().at(comparator);
@@ -173,9 +174,9 @@ static BuiltinID sortForComparatorThatIsDifferenceForKnownRows(const Walker& wal
     ValueID left = index->stripCasts(index->value(difference).operand(0));
     ValueID right = index->stripCasts(index->value(difference).operand(1));
     if (left == entry.parameter(firstParameter) && right == entry.parameter(firstParameter + 1))
-        return Builtins::CompilerHelpersSortByDifference;
+        return makesNewList ? Builtins::CompilerHelpersToSortedByDifference : Builtins::CompilerHelpersSortByDifference;
     if (left == entry.parameter(firstParameter + 1) && right == entry.parameter(firstParameter))
-        return Builtins::CompilerHelpersSortByReversedDifference;
+        return makesNewList ? Builtins::CompilerHelpersToSortedByReversedDifference : Builtins::CompilerHelpersSortByReversedDifference;
     return { };
 }
 
@@ -183,7 +184,8 @@ static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, cons
 {
     const Program& program = walker.program();
     const BuiltinTable& table = program.builtins();
-    if (callee != table.canonicalID(Builtins::ArrayPrototypeSort) || call.argumentsOperands().size() != 1 || !call.thisValueOperand())
+    bool makesNewList = callee == table.canonicalID(Builtins::ArrayPrototypeToSorted);
+    if ((!makesNewList && callee != table.canonicalID(Builtins::ArrayPrototypeSort)) || call.argumentsOperands().size() != 1 || !call.thisValueOperand())
         return { };
     Reference passed = walker.referenceOf(call.argumentsOperands()[0]);
     TypeID proven = passed ? walker.typeOf(passed) : TypeID();
@@ -191,7 +193,7 @@ static FunctionID findSortThatCallsNoComparatorForKnownRows(Walker& walker, cons
         return { };
     Type type = walker.types().at(proven);
     FunctionID comparator = type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
-    BuiltinID helper = comparator ? sortForComparatorThatIsDifferenceForKnownRows(walker, comparator) : BuiltinID();
+    BuiltinID helper = comparator ? sortForComparatorThatIsDifferenceForKnownRows(walker, comparator, makesNewList) : BuiltinID();
     if (!helper || !table.contains(helper))
         return { };
     for (const BuiltinOverload& row : table.overloadsOf(table.canonicalID(helper))) {
@@ -233,6 +235,23 @@ bool isLeafHandedToMethodOfLists(const Walker& walker, TypeID argumentType)
     return only && walker.facts().linked().function(only).weightAsLeaf != LinkedFunction::notLeaf;
 }
 
+static bool isPureCallbackForKnownRows(const Walker& walker, TypeID argumentType)
+{
+    Type type = argumentType ? walker.types().at(argumentType) : Type();
+    FunctionID only = argumentType && type.isObject() && type.isJavaScriptValue() ? singleFunctionOf(walker.types(), type) : FunctionID();
+    return only && isPureCallback(walker, only);
+}
+
+static bool isReferredToInIterations(const Walker& walker)
+{
+    const LinkTables& linked = walker.facts().linked();
+    const Program& program = walker.program();
+    FunctionID function = walker.unit().function;
+    return std::ranges::any_of(linked.referrersOf(function), [&](FunctionID referrer) {
+        return referrer.index() < program.functions.size() && linked.functionsCalledInLoopsOfOwnFile.get(referrer.index()) && program.at(referrer).module == program.at(function).module;
+    });
+}
+
 static bool passesOwnClosure(Walker& walker, const BodyValue& call)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -270,7 +289,7 @@ static bool loopReadsOffResultFirstForKnownRows(Walker& walker, ValueID value)
         }
         if ((reader.opcode() == Opcode::IteratorOpen && reader.operand(0) == value) || (reader.opcode() == Opcode::AppendSpread && reader.operand(1) == value))
             return true;
-        return walker.isInLoop() && readersOfFirstOperand.contains(reader.opcode()) && reader.operand(0) == value;
+        return (walker.isInLoop() || index.loopOf(index.blockOf(reader.id()))) && readersOfFirstOperand.contains(reader.opcode()) && reader.operand(0) == value;
     }
 }
 
@@ -475,9 +494,20 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             Reference firstArgument = call.argumentsOperands().empty() ? Reference() : walker.referenceOf(call.argumentsOperands()[0]);
             Reference receiver = call.thisValueOperand() ? walker.referenceOf(call.thisValueOperand()) : Reference();
             bool isListAsItWasMade = receiver && (isKnownPristine(walker, receiver) || receiverStaysAsMadeByLink(walker, call));
-            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? isListAsItWasMade || walker.walksOwnBodyOfUnit() : isListAsItWasMade && chainBeginsAtKeptList(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && passesOwnClosure(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
-            if (mayCopy == MayCopyFunctionCalledDirectly::Yes && fuseChainOfCallbacks(walker, call, findBuiltinCalledForKnownRows(walker, call)))
+            bool isOfSubclass = !isListAsItWasMade && receiver && receiver.isValue() && (arraySubclassWithElements(walker, walker.typeOf(receiver)) || viewSubclassWithLength(walker, walker.typeOf(receiver)));
+            bool holdsElements = isListAsItWasMade || isOfSubclass;
+            mayCopy = ((walker.isInLoop() || walker.isCurrentFrameRecursive()) ? holdsElements || walker.walksOwnBodyOfUnit() : isListAsItWasMade && chainBeginsAtKeptList(walker, call.thisValueOperand())) && firstArgument && (isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)) || (walker.isInLoop() && passesOwnClosure(walker, call))) ? MayCopyFunctionCalledDirectly::Yes : MayCopyFunctionCalledDirectly::No;
+            bool isOutsideLoops = !walker.isInLoop() && !walker.isCurrentFrameRecursive();
+            bool passesLeaf = holdsElements && firstArgument && isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument));
+            bool fusesOutsideLoops = isOutsideLoops && (passesLeaf || (holdsElements && firstArgument && isPureCallbackForKnownRows(walker, walker.typeOf(firstArgument))));
+            const BuiltinTable& table = walker.program().builtins();
+            BuiltinID method = findBuiltinCalledForKnownRows(walker, call);
+            bool isForEach = method == table.canonicalID(Builtins::ArrayPrototypeForEach);
+            bool fusesOne = fusesOutsideLoops && (walker.runsInIterations() || isReferredToInIterations(walker));
+            if ((mayCopy == MayCopyFunctionCalledDirectly::Yes || fusesOutsideLoops) && fuseChainOfCallbacks(walker, call, method, fusesOne ? 1 : 2))
                 return true;
+            if (fusesOne && (isForEach || isOfSubclass))
+                mayCopy = MayCopyFunctionCalledDirectly::Yes;
             if (mayCopy == MayCopyFunctionCalledDirectly::Yes && !isLeafHandedToMethodOfLists(walker, walker.typeOf(firstArgument)))
                 walker.count(StatisticID::ArrayCallbacksInlinedWithCalls);
         } else if (!behind.named.isEmpty())
@@ -489,6 +519,8 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     Draft written = walker.draftOf(call);
     if (walker.hasFailed())
         return false;
+    if (isFoundByRowsReached && findBuiltinCalledForKnownRows(walker, call) == walker.program().builtins().canonicalID(Builtins::ArrayPrototypeSort) && sortByKeysOfComparator(walker, call))
+        return true;
     if (FunctionID withoutCalls = isFoundByRowsReached ? findSortThatCallsNoComparatorForKnownRows(walker, call, findBuiltinCalledForKnownRows(walker, call)) : FunctionID()) {
         Reference listAndComparator[] { written.thisValueOperand(), written.argumentsOperands()[0] };
         if (callFunctionDirectly(walker, call, withoutCalls, Reference(), listAndComparator)) {

@@ -291,7 +291,7 @@ Reference buildAwaitOfWhatHasNoThen(Walker& walker, Reference awaited, std::span
     Draft await = draftInCoroutinePromises(walker, Opcode::AwaitBySavingFrame, origin);
     await.setAwaitedOperand(awaited);
     await.setPromiseOperand(driver);
-    await.setHeldOperands(held);
+    await.setHeldOperands(heldForCells(walker, held).span());
 
     bool asksWhetherFrameMayGoOn = *kind == CoroutineKind::AsyncFunction && walker.isInLoop() && walker.has(Mechanism::Guesses) && walker.opensGuesses()
         && !walker.plan().moduleEvaluation().isBodyResumedByJobOfLoader(function);

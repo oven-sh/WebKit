@@ -493,7 +493,8 @@ static std::optional<CodeGenerator::ComparisonWithLiteral> findComparisonWithLit
 std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(BlockID id) const
 {
     static constexpr size_t minComparisons = 3;
-    if (!code().at(id).isInLoop || isLayingOutTurns() || m_keepsValuesInHeapFrame || m_notesForms)
+    const bool isInLoop = code().at(id).isInLoop;
+    if ((!isInLoop && !usesLoopForms(id)) || isLayingOutTurns() || m_keepsValuesInHeapFrame || m_notesForms)
         return std::nullopt;
     const TypeArena& types = inputs().types;
     std::optional<ComparisonWithLiteral> first = findComparisonWithLiteral(code(), types, id, testOfBranch(id));
@@ -501,7 +502,7 @@ std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(Block
         return std::nullopt;
     ValueID subject = valueUnderNames(code(), first->subject);
     Representation representation = code().at(subject).representation;
-    if ((representation != Representation::JSValue && representation != Representation::Cell) || !code().at(code().blockOf(subject)).isInLoop)
+    if ((representation != Representation::JSValue && representation != Representation::Cell) || (isInLoop && !code().at(code().blockOf(subject)).isInLoop))
         return std::nullopt;
 
     LiteralChain chain;
@@ -511,7 +512,7 @@ std::optional<CodeGenerator::LiteralChain> CodeGenerator::findLiteralChain(Block
         while (true) {
             const Edge& edge = code().at(way);
             const Block& block = code().at(edge.to);
-            if (!edge.arguments().empty() || !block.parameters().empty() || block.isLoopHead || !block.isInLoop)
+            if (!edge.arguments().empty() || !block.parameters().empty() || block.isLoopHead || block.isInLoop != isInLoop)
                 return { };
             if (m_singlePredecessors[edge.to.index()] != from || m_blocksWithOtherJumps.get(edge.to.index()) || code().handlerOf(edge.to) != code().handlerOf(id))
                 return { };

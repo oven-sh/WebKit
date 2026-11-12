@@ -52,8 +52,7 @@ Object* Object::create(VM& vm, Structure* structure, const LayoutData& layout, s
     zeroSpan(std::span { reinterpret_cast<uint8_t*>(object) + sizeof(JSCell), size - sizeof(JSCell) });
     bool isBornUnfinished = false;
     for (const FieldData& field : layout.fields()) {
-        SlotTraits traits = traitsOf(field.slot.representation());
-        if (!field.isOutOfLine() && traits.hasAbsent && traits.absentBits)
+        if (!field.isOutOfLine() && bitsBeforeCreation(field.slot.representation()))
             object->clear(field);
         isBornUnfinished |= field.isFilledAtBirth;
     }
@@ -91,7 +90,12 @@ void* Object::slotOf(const FieldData& field) const
 bool Object::isInSlot(const FieldData& field) const
 {
     const void* slot = slotOf(field);
-    return slot && !slotHoldsAbsent(field.slot.representation(), slot);
+    SlotRepresentation representation = field.slot.representation();
+    if (!slot || slotHoldsAbsent(representation, slot))
+        return false;
+    if (isListedOnlyByKeyOrder(representation) && readSlotBits(representation, slot) == bitsBeforeCreation(representation)) [[unlikely]]
+        return isInKeyOrder(state(), field);
+    return true;
 }
 
 bool Object::holdsEveryFieldHeldFilled() const
@@ -110,6 +114,8 @@ JSValue Object::read(const FieldData& field) const
         return isInSlot(field) ? const_cast<Object*>(this)->materializeDeferredClosure(vm(), field) : JSValue();
     const void* slot = slotOf(field);
     State& state = this->state();
+    if (isListedOnlyByKeyOrder(representation) && !isInSlot(field)) [[unlikely]]
+        return { };
     JSValue value = slot ? readSlot(representation, slot, state.instance) : JSValue();
     if (!value && field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field) && !livesInExtraProperties(*state.instance.vm, *this, field))
         return jsUndefined();

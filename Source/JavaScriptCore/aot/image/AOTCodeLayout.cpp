@@ -214,9 +214,15 @@ static UnitPlacement placeBodies(const LinkedFunctions& functions, std::span<con
         }
     });
 
+    Vector<uint64_t> placesInLine(numberOfBodies);
+    forEachRangeOfIndicesInParallel(loops, numberOfBodies, [&](size_t first, size_t end) {
+        for (size_t index = first; index < end; ++index)
+            placesInLine[index] = functions[index].body.placesInLine();
+    });
+
     size_t codeSizeBound = sharedCodeSize + imageStubsAlignment + alignmentOfCodeAfterSharedCode;
-    for (size_t size : unitSizes)
-        codeSizeBound += WTF::roundUpToMultipleOf<imageFunctionAlignment>(size) + imageFunctionAlignment;
+    for (size_t index = 0; index < numberOfBodies; ++index)
+        codeSizeBound += WTF::roundUpToMultipleOf<imageFunctionAlignment>(unitSizes[index]) + imageFunctionAlignment + (placesInLine[index] == UINT64_MAX ? 0 : sizeOfCodeLine);
     bool oneCopyReachesAllCode = static_cast<int64_t>(codeSizeBound) <= reachOfNearCall;
 
     const CopyableUnit sharedCode { sharedCodeSize, imageStubsAlignment };
@@ -224,6 +230,7 @@ static UnitPlacement placeBodies(const LinkedFunctions& functions, std::span<con
         .sizes = unitSizes,
         .alignedOffsets = alignedOffsets,
         .alignments = singleElementSpan(imageFunctionAlignment),
+        .placesInLine = placesInLine.span(),
         .fallsIntoNext = fallsIntoNext,
         .copyables = singleElementSpan(sharedCode),
         .uses = uses.span(),
@@ -354,7 +361,7 @@ static Vector<size_t> computeLatestStartsOfBodies(const CodeLayoutInputs& inputs
             ++numberOfTransfers;
         });
         size_t largestSize = numberOfTransfers ? sizeOfUnitWithVeneers(bodySizes[position], inputs.sizeOfFarInstanceWords(position), numberOfTransfers, inputs.templates) : unitSizes[position];
-        latestStarts[position] = largestSize - unitSizes[position] + imageFunctionAlignment - 1;
+        latestStarts[position] = largestSize - unitSizes[position] + imageFunctionAlignment - 1 + (inputs.functions[position].body.placesInLine() == UINT64_MAX ? 0 : sizeOfCodeLine);
     });
     size_t growthInFront = 0;
     for (size_t position = 0; position < latestStarts.size(); ++position) {

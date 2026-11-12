@@ -183,6 +183,7 @@ LValue operationTestValueOfBits(Output& out, LValue bits, Type type)
         return out.bitCast(out.castToInt32(bits), Float);
     case Double:
         return out.bitCast(bits, Double);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -201,6 +202,7 @@ LValue operationTestConstant(Output& out, uint64_t bits, Type type)
         return out.constFloat(operationTestValueOf<float>(bits));
     case Double:
         return out.constDouble(operationTestValueOf<double>(bits));
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -219,6 +221,7 @@ LValue operationTestBitsOfValue(Output& out, LValue value)
         return out.zeroExtPtr(out.bitCast(value, Int32));
     case Double:
         return out.bitCast(value, Int64);
+    case Vector128:
     case Void:
     case Tuple:
         break;
@@ -1947,6 +1950,37 @@ static void testMachineOperationsThatKeepRestOfDestination()
     AOT_TEST_CHECK(!zeroed(Shape::OperandDies, true));
 }
 
+static void testFloatConversionsInLoops()
+{
+    if (!isX86_64())
+        return;
+    TestProcedure test;
+    Output& out = test.out();
+    LBasicBlock head = out.newBlock();
+    LBasicBlock done = out.newBlock();
+    LValue end = test.argumentGPR(1);
+    ValueFromBlock firstPlace = out.anchor(test.argumentGPR(0));
+    ValueFromBlock firstSum = out.anchor(out.constDouble(0));
+    out.jump(head);
+
+    out.appendTo(head);
+    LValue place = out.phi(Int64, firstPlace);
+    LValue sum = out.phi(Double, firstSum);
+    LValue number = out.floatToDouble(out.loadFloat(out.address(test.heaps().argumentBuffer, place, 0)));
+    LValue nextSum = out.doubleAdd(sum, out.doubleMul(number, number));
+    LValue nextPlace = out.add(place, out.constInt64(sizeof(float)));
+    out.addIncomingToPhi(place, out.anchor(nextPlace));
+    out.addIncomingToPhi(sum, out.anchor(nextSum));
+    out.branch(out.below(nextPlace, end), normalEdge(head), normalEdge(done));
+
+    out.appendTo(done);
+    out.ret(nextSum);
+    compileOrFail(test);
+    std::array<float, 4> numbers { 1.5f, -2, 0.25f, 4 };
+    AOT_TEST_CHECK(test.call<double>(numbers.data(), numbers.data() + numbers.size()) == 22.3125);
+    AOT_TEST_CHECK(operationTestNumberOfRegistersZeroed(test) >= 2);
+}
+
 static std::span<const NativeTest> listOfMachineOperationTests()
 {
     static constexpr NativeTest tests[] = {
@@ -1958,6 +1992,7 @@ static std::span<const NativeTest> listOfMachineOperationTests()
         { "machine/operations/numbers/arithmetic"_s, runOperationTestWhereCodeRuns<testMachineOperationsOfNumberArithmetic> },
         { "machine/operations/numbers/unary"_s, runOperationTestWhereCodeRuns<testMachineOperationsOnOneNumber> },
         { "machine/operations/numbers/what-keeps-the-rest-of-its-destination-does-not-wait-for-an-earlier-block"_s, runOperationTestWhereCodeRuns<testMachineOperationsThatKeepRestOfDestination> },
+        { "machine/operations/numbers/floats-widened-in-loops"_s, runOperationTestWhereCodeRuns<testFloatConversionsInLoops> },
         { "machine/operations/comparisons/int32"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<int32_t>> },
         { "machine/operations/comparisons/constants"_s, runOperationTestWhereCodeRuns<testConstantComparisonOperations> },
         { "machine/operations/comparisons/double"_s, runOperationTestWhereCodeRuns<checkComparisonsOf<double>> },

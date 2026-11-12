@@ -88,6 +88,10 @@ private:
     Condition isCallableByCallData(CellPointer);
     Condition isCallableByStub(CellPointer);
     bool asksStubForCallable();
+public:
+    bool& testsNumbersFirst() { return m_testsNumbersFirst; }
+
+private:
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
 
     TypeTestPlansKeptAcrossUnits& whatIsKeptAcrossUnits();
@@ -98,6 +102,7 @@ private:
     bool m_casesAreBranchedOn { true };
     bool m_nextCaseIsUnlikely { false };
     bool m_isEmittingPerFunctionBranch { false };
+    bool m_testsNumbersFirst { false };
 };
 
 void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)

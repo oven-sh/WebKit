@@ -29,7 +29,7 @@ import {
 import { compareLocations, type ErrorList, type Location } from "./source.ts";
 
 const maxHeaps = 32;
-const maxRecordFields = 22;
+const maxRecordFields = 23;
 const headerRecordName = "Header";
 const abiOnlyScalars: ReadonlySet<ScalarKind> = new Set<ScalarKind>(["UInt8", "UInt64"]);
 const spanOnlyScalars: ReadonlySet<ScalarKind> = new Set<ScalarKind>(["Byte", "Word", "CodeWord"]);

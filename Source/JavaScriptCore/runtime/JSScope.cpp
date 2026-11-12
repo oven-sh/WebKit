@@ -186,7 +186,7 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
 
 #if USE(BUN_JSC_ADDITIONS)
                 if (requiresPutOfSubclass(globalObject, getOrPut)) {
-                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, reinterpret_cast<uintptr_t>(globalObject->variableAt(entry.scopeOffset()).slot()));
                     return true;
                 }
 #endif

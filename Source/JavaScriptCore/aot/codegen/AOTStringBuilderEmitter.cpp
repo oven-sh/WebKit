@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConversionEmitter.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTStringEmitter.h"
 #include "AOTStubsStrings.h"
@@ -137,6 +138,55 @@ void StringBuilderEmitter::generateStackStringBuilderLength(const ValueContext& 
 {
     LValue lengthOrigin = m_out.loadPtr(recordField(recordOf(value), OBJECT_OFFSETOF(StackStringBuilder, lengthOrigin)));
     define(value, Word32(m_out.castToInt32(m_out.sub(in<Pointer>(value->cursorOperand()).value(), lengthOrigin))));
+}
+
+void StringBuilderEmitter::generateStackStringBuilderIsOnStack(const ValueContext& value)
+{
+    Pointer record = recordOf(value);
+    define(value, equal(limitOf(record), limitOnStack(record)));
+}
+
+void StringBuilderEmitter::generateStackStringBuilderEqualsLiteral(const ValueContext& value)
+{
+    StringEmitter& strings = emitter<StringEmitter>();
+    String text = strings.textOf(value->literal());
+    if (text.isEmpty() || !text.containsOnlyLatin1() || text.length() > StackStringBuilder::capacity) {
+        fail(value, InternalErrorKind::OperandTypeMismatch);
+        return;
+    }
+    strings.recordInlined(value->literal());
+    Vector<Latin1Character, StackStringBuilder::capacity> latin1Characters;
+    for (unsigned position = 0; position < text.length(); ++position)
+        latin1Characters.append(static_cast<Latin1Character>(text[position]));
+    std::span<const Latin1Character> characters = latin1Characters.span();
+    Pointer buffer = offsetBy(recordOf(value), OBJECT_OFFSETOF(StackStringBuilder, buffer));
+    std::optional<Integer> difference;
+    size_t width = characters.size() >= 8 ? 8 : characters.size() >= 4 ? 4 : characters.size() >= 2 ? 2 : 1;
+    for (size_t position = 0; position < characters.size(); position += width) {
+        position = std::min(position, characters.size() - width);
+        uint64_t expected = 0;
+        memcpySpan(asMutableByteSpan(expected).first(width), byteCast<uint8_t>(characters.subspan(position, width)));
+        TypedPointer bytes = bytesAt(buffer, position);
+        Integer read = width == 8 ? Integer(m_out.load64(bytes)) : zeroExtended(Word32(width == 4 ? m_out.load32(bytes) : width == 2 ? m_out.load16ZeroExt32(bytes) : m_out.load8ZeroExt32(bytes)));
+        Integer differs(m_out.bitXor(read.value(), m_out.constInt64(static_cast<int64_t>(expected))));
+        difference = difference ? Integer(m_out.bitOr(difference->value(), differs.value())) : differs;
+    }
+    define(value, isZero(*difference));
+}
+
+void StringBuilderEmitter::generateStackStringBuilderToNumber(const ValueContext& value)
+{
+    Pointer buffer = offsetBy(recordOf(value), OBJECT_OFFSETOF(StackStringBuilder, buffer));
+    Number number = callLeaf<Number>(RuntimeOperation::StringToNumber8, { buffer, emitter<StringEmitter>().word32Of(value->lengthOperand()) });
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, number, typeOf(value.id()), value.representation()));
+}
+
+void StringBuilderEmitter::generateStackStringBuilderParseInt(const ValueContext& value)
+{
+    Pointer buffer = offsetBy(recordOf(value), OBJECT_OFFSETOF(StackStringBuilder, buffer));
+    Word32 length = emitter<StringEmitter>().word32Of(value->lengthOperand());
+    Number number = callLeaf<Number>(RuntimeOperation::ParseInt8, { buffer, length, word32(static_cast<int32_t>(value->radix())) });
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, number, typeOf(value.id()), value.representation()));
 }
 
 void StringBuilderEmitter::generateStackStringBuilderToString(const ValueContext& value)

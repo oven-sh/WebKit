@@ -15,6 +15,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
+#include "AOTReactionChain.h"
 #include "AOTSavedFrame.h"
 #include "AOTState.h"
 #include "AOTStubFrames.h"
@@ -62,6 +63,16 @@ CoroutineTable::CoroutineTable(State& state)
     state.caches->add(CacheKind::StrongRoots, "coroutine resume state"_s, *this, RootVolatility::GreyedByExecution);
 }
 
+Structure* CoroutineTable::reactionChainStructure(VM& vm)
+{
+    if (!m_reactionChainStructure) {
+        m_reactionChainStructure = ReactionChain::createStructure(vm, m_instance.globalObject);
+        m_state.immortalCells->add(m_reactionChainStructure);
+        m_instance.coroutines.reactionChainHeader = cellHeaderFor(m_reactionChainStructure);
+    }
+    return m_reactionChainStructure;
+}
+
 uint32_t CoroutineTable::createEmptyPrototypeStructure(VM& vm, JSObject* parent)
 {
     JSObject* probe = constructEmptyObject(m_instance.globalObject, parent);
@@ -92,6 +103,10 @@ void CoroutineTable::initializeCoroutineWords(VM& vm)
     words.reactionJobWords[3] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseReactionJob, JSPromise::Status::Rejected, promiseReactionJobAsyncContextFlag);
     words.performMicrotaskJobWord = jobWord(m_instance.globalObject, InternalMicrotask::BunPerformMicrotaskJob, JSPromise::Status::Pending);
     words.promiseAllResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseRaceResolveJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseRaceResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseAllSettledResolveJobWords[0] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllSettledResolveJob, JSPromise::Status::Fulfilled);
+    words.promiseAllSettledResolveJobWords[1] = jobWord(m_instance.globalObject, InternalMicrotask::PromiseAllSettledResolveJob, JSPromise::Status::Rejected);
+    words.reactionChainStepJobWord = jobWord(m_instance.globalObject, InternalMicrotask::CompiledReactionChainStep, JSPromise::Status::Fulfilled);
     words.resolveThenableJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveThenableJobFast, JSPromise::Status::Pending);
     words.resolveWithoutHandlerJobWord = jobWord(m_instance.globalObject, InternalMicrotask::PromiseResolveWithoutHandlerJob, JSPromise::Status::Fulfilled);
     words.asyncGeneratorAllocator = subspaceFor<JSAsyncGenerator>(vm)->allocatorFor(sizeof(JSAsyncGenerator), AllocatorForMode::EnsureAllocator).localAllocator();
@@ -421,6 +436,20 @@ static bool isGeneratorFunctionOfLibraryAsMade(const Instance& instance, JSObjec
     return closure->structureID().bits() == static_cast<uint32_t>(instance.closures.closureHeaders[closureStructureOfGeneratorFunctions(isAsync)]);
 }
 
+static Structure* structureOfFirstGenerator(VM& vm, const Instance& instance, JSObject* generatorFunction, Structure* base, bool isAsync)
+{
+    auto* closure = dynamicDowncast<Closure>(generatorFunction);
+    if (!closure || base->realm() != instance.globalObject || closure->structureID().bits() != static_cast<uint32_t>(instance.closures.closureHeaders[closureStructureOfGeneratorFunctions(isAsync)]))
+        return nullptr;
+    FunctionRareData* rareData = closure->ensureRareData(vm);
+    if (rareData->internalFunctionAllocationStructure())
+        return nullptr;
+    const CoroutineWords& words = instance.coroutines;
+    auto structureOfPrototype = std::bit_cast<StructureID>(isAsync ? words.emptyAsyncGeneratorPrototypeStructureID : words.emptyGeneratorPrototypeStructureID);
+    JSObject* prototype = constructEmptyObject(vm, structureOfPrototype.decode());
+    return rareData->createInternalFunctionAllocationStructureFromBase(vm, instance.globalObject, prototype, base);
+}
+
 Structure* structureOfGenerator(JSGlobalObject* globalObject, Instance& instance, JSObject* generatorFunction, CoroutineKind kind)
 {
     RELEASE_ASSERT(kind != CoroutineKind::AsyncFunction);
@@ -430,6 +459,8 @@ Structure* structureOfGenerator(JSGlobalObject* globalObject, Instance& instance
             return structure;
     }
     Structure* base = kind == CoroutineKind::Generator ? instance.state->coroutines->generatorStructure() : globalObject->asyncGeneratorStructure();
+    if (Structure* structure = structureOfFirstGenerator(globalObject->vm(), instance, generatorFunction, base, isAsync))
+        return structure;
     return InternalFunction::createSubclassStructure(globalObject, generatorFunction, base);
 }
 

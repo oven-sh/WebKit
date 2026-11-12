@@ -1,0 +1,70 @@
+# function merge(a: number[], b: number[]) { const out: number[] = []; let i = 0, j = 0; while (i < a.length && j < b.length) out.push(a[i] < b[j] ? a[i++] : b[j++]); return out; }  sink(merge([1, 4, 7, 9], [2, 3, 8]).length);
+# The plain walk of the loop counts on writing nothing but its own list. The typed turns hold that list to int32s in front and store into it: they write lists. The version was built, judged kept and dropped with the plain walk beside it; it is built without that walk.
+# RUN: walk f1 mechanisms=all
+# CHECK-LABEL: code f1:Body
+# CHECK: = HasArrayStorage {{*}}arrayStorage=Int32 [isWritable]
+# CHECK: = GetArrayElement {{*}}arrayStorage=Int32
+module m0 path="main.ts" displayPath="main.ts" body=f0
+data d0 root=Array{contents=number elements=[Number{value=1}, Number{value=4}, Number{value=7}, Number{value=9}]} module=m0
+data d1 root=Array{contents=number elements=[Number{value=2}, Number{value=3}, Number{value=8}]} module=m0
+data d2 root=Array{contents=number} module=m0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @194
+    v3 = PropGet v2 key="globalThis" [isFreeName] @194
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @194
+    v5 = PropGet v4 key="sink" @194
+    v6 = Data data=d0 @224
+    v7 = Data data=d1 @238
+    v8 = Call v1, -, v6, v7 calleeName="merge" @218
+    v9 = PropGet v8 key="length" @247
+    v10 = Call v5, v4, v9 calleeKey="sink" calleeName="globalThis.sink" @213
+    v11 = Undefined @193
+    Return v11 @193
+}
+function f1 name="merge" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: undefined|null|Array<number>, v1: undefined|null|Array<number>):
+    v2 = Data data=d2 @75
+    v3 = Convert v2 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @75
+    v4 = Integer @87
+    v5 = Convert v4 declared={type=number} @87
+    v6 = Integer @94
+    v7 = Convert v6 declared={type=number} @94
+    Jump -> next b1(v5, v7) @97
+  b1(v8: number, v9: number):
+    LoopHint @97
+    v11 = PropGet v0 key="length" @108
+    v12 = Less v8, v11 @104
+    Branch v12 -> taken b2(), notTaken b7() @104
+  b2():
+    v13 = PropGet v1 key="length" @124
+    v14 = Less v9, v13 @120
+    Branch v14 -> taken b3(), notTaken b7() @120
+  b3():
+    v15 = PropGet v3 key="push" @134
+    v16 = ElemGet v0, v8 @143
+    v17 = ElemGet v1, v9 @151
+    v18 = Less v16, v17 @143
+    Branch v18 -> taken b4(), notTaken b5() @143
+  b4():
+    v19 = ToNumeric v8 @161
+    v20 = Increment v19 @161
+    v21 = Convert v20 declared={type=number} @161
+    v22 = ElemGet v0, v19 @159
+    Jump -> next b6(v22, v21, v9) @159
+  b5():
+    v23 = ToNumeric v9 @171
+    v24 = Increment v23 @171
+    v25 = Convert v24 declared={type=number} @171
+    v26 = ElemGet v1, v23 @169
+    Jump -> next b6(v26, v8, v25) @169
+  b6(v27, v28: number, v29: number):
+    v30 = Call v15, v3, v27 calleeKey="push" calleeName="out.push" @138
+    v31 = Convert v30 declared={type=number} @134
+    Jump -> next b1(v28, v29) @134
+  b7():
+    Return v3 @186
+}

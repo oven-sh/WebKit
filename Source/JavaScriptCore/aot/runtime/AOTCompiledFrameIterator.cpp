@@ -839,6 +839,12 @@ std::span<const uint8_t> compiledCodeOf(VM& vm)
     return vm.hasCompiledCode() ? vm.aotState().image->code() : std::span<const uint8_t> { };
 }
 
+bool isCallStubReturnSite(VM& vm, const void* returnPC)
+{
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(returnPC);
+    return site && site->isStubReturnSite() && entersCallee(site->stubFrameKind);
+}
+
 bool isTopFrameCompiled(VM& vm)
 {
     return isOperationFrameRecord(vm, vm.topCallFrame);

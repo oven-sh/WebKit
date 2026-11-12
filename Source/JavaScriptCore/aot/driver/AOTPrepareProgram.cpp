@@ -21,6 +21,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramVerifier.h"
+#include "AOTRegExpSummary.h"
 #include "AOTStackTestPlan.h"
 #include "AOTStubCatalog.h"
 #include "AOTTailCallPlan.h"
@@ -89,6 +90,7 @@ static void leaveOutCallsOfBuiltinsThatProgramCannotHold(StubOptions& options, c
         return held.get(builtins.canonicalID(builtin).index());
     };
     options.callsNumberOrStringByValue = isHeld(Builtins::Number) || isHeld(Builtins::String);
+    options.callsArrayByValue = isHeld(Builtins::Array);
     options.boxedCallsOutOfReach.setAll();
     for (const auto& call : builtins.boxedCalls()) {
         if (isHeld(call.builtin))
@@ -135,6 +137,7 @@ static bool planPreparedProgram(PreparedProgram& prepared, BuildContext& build)
     if (build.diagnostics().hasErrors())
         return false;
 
+    build.regExpSummaries().setRecordsMatches(facts.mayReadLegacyRegExpStatics());
     runLanes(build.parallelLoops(), {
         [&] {
             StubOptions options = StubOptions::from(build.recordedOptions(), program, facts.hasOneInstance(), facts.matchesRegExps(), facts.mayReadLegacyRegExpStatics(), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckProofsAtRunTime), AOT::hasFlag(build.options().testing, Wire::TestingSwitch::CheckWalkAtRunTime));

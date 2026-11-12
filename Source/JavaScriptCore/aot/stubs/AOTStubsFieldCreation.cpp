@@ -179,12 +179,14 @@ void appendFieldToKeyOrder(StubAssembler& jit, const KeyOrderRegisters& r, JumpL
 
 enum class KeyOrderRunKind : uint8_t { OfOrder, WithExtraKeys, OfCreation };
 
-static void locateKeyOrderRun(StubAssembler& jit, GPRReg wordsBefore, GPRReg keys, GPRReg run, KeyOrderRunKind kind = KeyOrderRunKind::OfOrder)
+static void locateKeyOrderRun(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg wordsBefore, GPRReg keys, GPRReg run, KeyOrderRunKind kind = KeyOrderRunKind::OfOrder)
 {
     static_assert(indexOfKeyOrderRun(3ull << 32 | 5, 9ull << 32 | 16) == (3 ^ 5 ^ 16) * multiplierOfKeyOrderRun >> (32 - logNumberOfKeyOrderRuns));
     jit.urshift64(wordsBefore, TrustedImm32(32), run);
     jit.xor32(wordsBefore, run);
     jit.xor32(keys, run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(Address(r.object, JSCell::structureIDOffset()), run);
     jit.mul32(TrustedImm32(static_cast<int32_t>(multiplierOfKeyOrderRun)), run, run);
     jit.urshift32(TrustedImm32(32 - logNumberOfKeyOrderRuns - logSizeOfKeyOrderRun), run);
     jit.and32(TrustedImm32((numberOfKeyOrderRuns - 1) << logSizeOfKeyOrderRun), run);
@@ -195,12 +197,14 @@ static void locateKeyOrderRun(StubAssembler& jit, GPRReg wordsBefore, GPRReg key
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.keyOrderRuns)), run);
 }
 
-static void locateLatestRun(StubAssembler& jit, GPRReg shapeWord, GPRReg slotKey, GPRReg run, KeyOrderRunKind kind)
+static void locateLatestRun(StubAssembler& jit, const KeyOrderRegisters& r, GPRReg shapeWord, GPRReg run, KeyOrderRunKind kind)
 {
     if (shapeWord == run)
-        jit.xor32(slotKey, run);
+        jit.xor32(r.slotKey, run);
     else
-        jit.xor32(shapeWord, slotKey, run);
+        jit.xor32(shapeWord, r.slotKey, run);
+    if (kind == KeyOrderRunKind::OfCreation)
+        jit.xor32(Address(r.object, JSCell::structureIDOffset()), run);
     jit.mul32(TrustedImm32(static_cast<int32_t>(multiplierOfKeyOrderRun)), run, run);
     jit.urshift32(TrustedImm32(32 - logNumberOfLatestRuns - logSizeOfKeyOrderRun), run);
     jit.and32(TrustedImm32((numberOfLatestRuns - 1) << logSizeOfKeyOrderRun), run);
@@ -217,7 +221,7 @@ static void branchUnlessLatestRun(StubAssembler& jit, const KeyOrderRegisters& r
     const GPRReg run = r.entry;
     RELEASE_ASSERT(noOverlap(r.object, r.slotKey, run, r.words, r.scratch));
     jit.load32(Address(r.object, offsetOfShapeWord), r.words);
-    locateLatestRun(jit, r.words, r.slotKey, run, kind);
+    locateLatestRun(jit, r, r.words, run, kind);
     jit.load32(Address(r.object, offsetOfOrderWord), r.scratch);
     jit.lshift64(TrustedImm32(32), r.words);
     jit.or64(r.scratch, r.words);
@@ -228,7 +232,7 @@ static void rememberLatestRun(StubAssembler& jit, const KeyOrderRegisters& r, Ke
 {
     const GPRReg run = r.entry;
     jit.urshift64(r.words, TrustedImm32(32), run);
-    locateLatestRun(jit, run, r.slotKey, run, kind);
+    locateLatestRun(jit, r, run, run, kind);
     jit.store64(r.words, memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store32(r.scratch, memberOfLatestRun(run, KeyOrderRun::offsetOfOrderAndCountAfter()));
     if (kind == KeyOrderRunKind::OfOrder)
@@ -251,7 +255,7 @@ void listCreatedField(StubAssembler& jit, const KeyOrderRegisters& r, JumpList& 
 
     isNotLatest.link(&jit);
     JumpList isNotRemembered;
-    locateKeyOrderRun(jit, r.words, r.slotKey, run);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), r.slotKey));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
@@ -284,7 +288,7 @@ static void listFieldNotRemembered(StubAssembler& jit, const KeyOrderRegisters& 
     };
     JumpList isNotRememberedBesideExtraKeys;
     loadKeysBesideExtraKeys(isNotRememberedBesideExtraKeys);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
     isNotRememberedBesideExtraKeys.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
     isNotRememberedBesideExtraKeys.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), keys));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), r.scratch);
@@ -304,7 +308,7 @@ static void listFieldNotRemembered(StubAssembler& jit, const KeyOrderRegisters& 
     });
     hasNoTransition.append(jit.branchTest32(CCallHelpers::Zero, isStepTaken));
     Jump hasFlags = jit.branchTest32(CCallHelpers::NonZero, r.words, TrustedImm32(static_cast<int32_t>(~orderAndCountMask)));
-    locateKeyOrderRun(jit, r.words, r.slotKey, run);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run);
     jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(r.slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(orderWord, r.scratch);
@@ -313,7 +317,7 @@ static void listFieldNotRemembered(StubAssembler& jit, const KeyOrderRegisters& 
 
     hasFlags.link(&jit);
     loadKeysBesideExtraKeys(isListed);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::WithExtraKeys);
     jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(keys, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(orderWord, r.scratch);
@@ -349,7 +353,7 @@ void loadOrderAfterRememberedCreation(StubAssembler& jit, const KeyOrderRegister
     Jump isLatest = jit.jump();
 
     isNotLatest.link(&jit);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), r.words));
     branchUnlessCreationIsRemembered(0, isNotRemembered);
     rememberLatestRun(jit, r, KeyOrderRunKind::OfCreation);
@@ -378,7 +382,7 @@ static void rememberCreation(StubAssembler& jit, const KeyOrderRegisters& r)
     jit.load16(Address(r.scratch, CompiledStructure::offsetOfNumberOfExtraKeys()), r.scratch);
     Jump dependsOnObject = jit.branch32(CCallHelpers::Equal, r.scratch, TrustedImm32(CompiledStructure::unknownNumberOfExtraKeys));
     hasNoExtraProperties.link(&jit);
-    locateKeyOrderRun(jit, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
+    locateKeyOrderRun(jit, r, r.words, r.slotKey, run, KeyOrderRunKind::OfCreation);
     jit.store64(r.words, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     loadCreationRunKeys(jit, r);
     jit.store64(r.scratch, Address(run, KeyOrderRun::offsetOfSlotKeys()));
@@ -477,7 +481,7 @@ void generateDidCreateField(StubAssembler& jit)
     jit.returnToCaller();
 
     isNotLatest.link(&jit);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
     mayHaveFlags.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.load32(Address(run, KeyOrderRun::offsetOfOrderAndCountAfter()), scratch);
@@ -489,7 +493,7 @@ void generateDidCreateField(StubAssembler& jit)
     Jump hasExtraProperties = jit.branchTest32(CCallHelpers::NonZero, wordsBefore, TrustedImm32(orderWordHasExtraProperties));
     jit.move(wordsBefore, scratch);
     jit.and64(TrustedImm64(static_cast<int64_t>(orderCountAndShapeMask)), wordsBefore);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()), wordsBefore));
     isNotRemembered.append(jit.branch64(CCallHelpers::NotEqual, Address(run, KeyOrderRun::offsetOfSlotKeys()), slotKey));
     jit.and32(TrustedImm32(static_cast<int32_t>(~orderAndCountMask)), scratch);
@@ -504,7 +508,7 @@ void generateDidCreateField(StubAssembler& jit)
 
     isNotRemembered.link(&jit);
     appendFieldToKeyOrder(jit, keyOrder, hasNoTransition);
-    locateKeyOrderRun(jit, wordsBefore, slotKey, run);
+    locateKeyOrderRun(jit, before, wordsBefore, slotKey, run);
     jit.store64(wordsBefore, Address(run, KeyOrderRun::offsetOfOrderAndShapeWordsBefore()));
     jit.store64(slotKey, Address(run, KeyOrderRun::offsetOfSlotKeys()));
     jit.load32(Address(object, offsetOfOrderWord), scratch);

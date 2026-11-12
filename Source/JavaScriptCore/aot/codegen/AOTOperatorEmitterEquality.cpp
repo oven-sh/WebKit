@@ -221,7 +221,7 @@ public:
         ConversionEmitter& integers = emitter<ConversionEmitter>();
         std::optional<ConversionEmitter::ComparedInteger> leftInteger = isStrict ? integers.findComparedInteger(get(left)) : std::nullopt;
         std::optional<ConversionEmitter::ComparedInteger> rightInteger = leftInteger ? integers.findComparedInteger(get(right)) : std::nullopt;
-        if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker)) {
+        if (rightInteger && (leftInteger->mayBeMarker || rightInteger->mayBeMarker) && ConversionEmitter::areComparedAsIntegers(*leftInteger, *rightInteger)) {
             Condition areSame = equal(leftInteger->value, rightInteger->value);
             if (leftInteger->mayBeMarker && rightInteger->mayBeMarker && (leftInteger->markerIsNaN || rightInteger->markerIsNaN))
                 areSame = logicalAnd(areSame, logicalNot(integers.isMarker(Operand(Representation::OptionalInt64, leftInteger->value.value()))));
@@ -567,8 +567,13 @@ private:
         Condition haveSameBits = equal(x, y);
         if (isStrict)
             return haveSameBits;
-        Condition isLeftNullish = isUndefinedOrNull(x, typeOf(value->leftOperand()).primitives);
-        Condition isRightNullish = isUndefinedOrNull(y, typeOf(value->rightOperand()).primitives);
+        auto leftPrimitives = typeOf(value->leftOperand()).primitives;
+        auto rightPrimitives = typeOf(value->rightOperand()).primitives;
+        bool mayBeUndefinedAndNull = (leftPrimitives & Primitive::Undefined && rightPrimitives & Primitive::Null) || (leftPrimitives & Primitive::Null && rightPrimitives & Primitive::Undefined);
+        if (!mayBeUndefinedAndNull)
+            return haveSameBits;
+        Condition isLeftNullish = isUndefinedOrNull(x, leftPrimitives);
+        Condition isRightNullish = isUndefinedOrNull(y, rightPrimitives);
         return logicalOr(haveSameBits, logicalAnd(isLeftNullish, isRightNullish));
     }
 

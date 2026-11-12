@@ -10,6 +10,7 @@
 
 #include "AOTBigIntArithmetic.h"
 #include "AOTInstance.h"
+#include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStrings.h"
 #include "DeferTermination.h"
@@ -58,6 +59,21 @@ OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES decrementAnyValue(I
     if (numeric.isBigInt())
         OPERATION_RETURN(scope, JSValue::encode(JSBigInt::dec(globalObject, numeric.asHeapBigInt())));
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() - 1)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSymbolDescription, EncodedJSValue, (Instance* instance, JSCell* symbol))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSymbolDescription);
+    JSString* description = cellArgument<Symbol>(symbol, Entry::operationAOTSymbolDescription)->description(vm);
+    OPERATION_RETURN(scope, JSValue::encode(description ? JSValue(description) : jsUndefined()));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSymbolToString, EncodedJSValue, (Instance* instance, JSCell* symbol))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTSymbolToString);
+    JSString* string = cellArgument<Symbol>(symbol, Entry::operationAOTSymbolToString)->toString(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(string));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTToObject, JSCell*, (Instance* instance, EncodedJSValue encodedValue, uint32_t message))

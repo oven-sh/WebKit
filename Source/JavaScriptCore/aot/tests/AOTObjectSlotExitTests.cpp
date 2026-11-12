@@ -668,7 +668,7 @@ static const KeyOrderTransition* findTransition(LoadedProgram& program, uint64_t
 static void checkTransitionTableGrows(LoadedProgram& program)
 {
     constexpr unsigned numberOfOrders = 4000;
-    constexpr uint32_t initialMask = 1023;
+    constexpr uint32_t initialMask = 511;
     AOT_TEST_CHECK(program.instance().objects.keyOrderTransitionMask == initialMask);
 
     Vector<KeyOrderTransition> seen;

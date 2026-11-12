@@ -170,7 +170,7 @@ export default b.declarations(
           uses: { target: [b.storedByKey(key, b.operand("value"))], value: b.inspected },
           reads: inheritedProperties,
           writes: memberGuards,
-          implementation: b.hostCall,
+          implementation: b.inline("ReflectSet", { otherwise: b.hostCall }),
         },
         {
           ...operandCodeEffects,
@@ -194,7 +194,7 @@ export default b.declarations(
             value: [b.everything],
             receiver: [b.everything, b.definesName(key, b.operand("value"))],
           },
-          implementation: b.hostCall,
+          implementation: b.inline("ReflectSet", { otherwise: b.hostCall }),
         },
       ],
       setPrototypeOf: {

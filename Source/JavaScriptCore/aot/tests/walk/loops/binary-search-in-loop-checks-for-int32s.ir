@@ -1,0 +1,111 @@
+# function find(a: number[], x: number) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
+# function total(c: number) { const a = make(100); let n = 0; for (let k = 0; k < c; k++) n = (n + find(a, (k * 7) % 300)) | 0; return n; }
+# The loop around is asked in front whether the list holds numbers, int32s or doubles. The search in it asks for int32s once more and compares integers, in both versions of the loop around.
+# RUN: walk f3 mechanisms=all
+# CHECK: = GetArrayElement {{*}}arrayStorage=Int32
+# CHECK: = Less {{*}}form=Integers
+# CHECK: = GetArrayElement {{*}}arrayStorage=Int32
+# CHECK: = Less {{*}}form=Integers
+variable g0 name="make" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="find" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable] place=2
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f3 @0
+    v1 = Convert v0 declared={type=f3 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @437
+    v3 = PropGet v2 key="globalThis" [isFreeName] @437
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @437
+    v5 = PropGet v4 key="sink" @437
+    v6 = Call v5, v4, v1 calleeKey="sink" calleeName="globalThis.sink" @456
+    v7 = Undefined @436
+    Return v7 @436
+}
+function f1 name="make" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] {
+  b0(v0: number):
+    v1 = NewArray contents=number @57
+    v2 = Convert v1 declared={type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]} @57
+    v3 = Integer @74
+    v4 = Convert v3 declared={type=number} @74
+    Jump -> next b1(v4) @70
+  b1(v5: number):
+    LoopHint @70
+    v7 = Less v5, v0 @77
+    Branch v7 -> taken b2(), notTaken b3() @77
+  b2():
+    v8 = PropGet v2 key="push" @89
+    v9 = Integer integer=3 @100
+    v10 = Mul v5, v9 @96
+    v11 = Call v8, v2, v10 calleeKey="push" calleeName="a.push" @91
+    v12 = Convert v11 declared={type=number} @89
+    v13 = Increment v5 @84
+    v14 = Convert v13 declared={type=number} @84
+    Jump -> next b1(v14) @84
+  b3():
+    Return v2 @111
+}
+function f2 name="find" module=m0 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] {
+  b0(v0: undefined|null|Array<number>, v1: number):
+    v2 = Integer @173
+    v3 = Convert v2 declared={type=number} @173
+    v4 = PropGet v0 key="length" @181
+    v5 = Convert v4 declared={type=number} @181
+    Jump -> next b1(v3, v5) @191
+  b1(v6: number, v7: number):
+    LoopHint @191
+    v9 = Less v6, v7 @198
+    Branch v9 -> taken b2(), notTaken b6() @198
+  b2():
+    v10 = Add v6, v7 @220
+    v11 = Integer integer=1 @232
+    v12 = RShift v10, v11 @219
+    v13 = ElemGet v0, v12 @239
+    v14 = Less v13, v1 @239
+    Branch v14 -> taken b3(), notTaken b4() @239
+  b3():
+    v15 = Integer integer=1 @259
+    v16 = Add v12, v15 @255
+    v17 = Convert v16 declared={type=number} @250
+    Jump -> next b5(v17, v7) @250
+  b4():
+    v18 = Convert v12 declared={type=number} @267
+    Jump -> next b5(v6, v18) @267
+  b5(v19: number, v20: number):
+    Jump -> next b1(v19, v20) @267
+  b6():
+    v21 = Convert v6 declared={type=number} @284
+    Return v21 @284
+}
+function f3 name="total" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=number}] {
+  b0(v0: number):
+    v1 = GetModuleVariable variable=g0 @336
+    v2 = Integer integer=100 @341
+    v3 = Call v1, -, v2 calleeName="make" @336
+    v4 = Integer @355
+    v5 = Convert v4 declared={type=number} @355
+    v6 = Integer @371
+    v7 = Convert v6 declared={type=number} @371
+    Jump -> next b1(v5, v7) @367
+  b1(v8: number, v9: number):
+    LoopHint @367
+    v11 = Less v9, v0 @374
+    Branch v11 -> taken b2(), notTaken b3() @374
+  b2():
+    v12 = GetModuleVariable variable=g1 @395
+    v13 = Integer integer=7 @408
+    v14 = Mul v9, v13 @404
+    v15 = Integer integer=300 @413
+    v16 = Mod v14, v15 @403
+    v17 = Call v12, -, v3, v16 calleeName="find" @395
+    v18 = Add v8, v17 @391
+    v19 = Integer @421
+    v20 = BitOr v18, v19 @390
+    v21 = Convert v20 declared={type=number} @386
+    v22 = Increment v9 @381
+    v23 = Convert v22 declared={type=number} @381
+    Jump -> next b1(v21, v23) @381
+  b3():
+    v24 = Convert v8 declared={type=number} @431
+    Return v24 @431
+}

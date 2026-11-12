@@ -456,6 +456,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkAscending(tables.functionsWithLargeCounts(), [](const FunctionWithLargeCountsData& entry) -> uint32_t { return entry.function; }, "functionsWithLargeCounts"_s);
     checkAscending(tables.unsharedFunctionRecords(), &UnsharedFunctionRecordData::function, "unsharedFunctionRecords"_s);
     checkAscending(tables.closurePropertyNames(), std::identity { }, "closurePropertyNames"_s);
+    checkAscending(tables.fieldGetters(), &FieldGetterData::function, "fieldGetters"_s);
     auto checkSorted = [&](auto entries, const auto& keyOf, ASCIILiteral table) {
         check.expect(std::ranges::is_sorted(entries, { }, keyOf), "TableNotSorted"_s, { }, table);
     };
@@ -498,7 +499,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     check.expect(std::ranges::all_of(tables.classGuardCounts(), [&](const ClassGuardCountData& count) {
         return byteOffsetOfClassGuardBit(count.guardBit) < sizeOfStatics && !(count.offsetOfCount % sizeof(uint32_t)) && liesInStatics({ count.offsetOfCount, sizeof(uint32_t) });
     }), "TableOutOfBounds"_s, { }, "classGuardCounts"_s);
-    check.expect(std::ranges::all_of(tables.staticsRoots(), liesInStatics) && std::ranges::all_of(tables.staticsNarrowRoots(), liesInStatics) && std::ranges::all_of(tables.staticsClearedEachCollection(), liesInStatics), "TableOutOfBounds"_s, { }, "staticsRoots"_s);
+    check.expect(std::ranges::all_of(tables.staticsRoots(), liesInStatics) && std::ranges::all_of(tables.staticsNarrowRoots(), liesInStatics) && std::ranges::all_of(tables.staticsClearedEachCollection(), liesInStatics) && std::ranges::all_of(tables.variablesWithViewMirror(), liesInStatics), "TableOutOfBounds"_s, { }, "staticsRoots"_s);
     check.expect(std::ranges::all_of(tables.stateOfLibraryModules(), [&](const StateOfLibraryModuleData& state) {
         uint64_t end = static_cast<uint64_t>(state.first) + state.count;
         switch (state.kind()) {
@@ -777,7 +778,7 @@ static void checkClassRecord(const JoinedTables& check, const LayoutData& layout
         if (check.expect(isInPart, "OffsetOutsideItsPart"_s, id)) {
             bool namesFieldsInOrder = properties->builtinClass() == Typed::builtinClassOfInstances(written).index() && properties->isBelowMixin() == !!written.mixedBuiltinBase && properties->numberOfNames == written.fields.size();
             for (size_t field = 0; namesFieldsInOrder && field < written.fields.size(); ++field)
-                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && written.fields[field].flags.contains(Typed::FieldFlags::IsRequired) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
+                namesFieldsInOrder = check.numbers.identifiers().numberOf(written.fields[field].key) == std::optional<uint32_t>(properties->names()[field] & ~PropertiesOfHeirsData::mayBeStoredLate) && Typed::isDecidedByClassStructure(written.fields[field]) == !(properties->names()[field] & PropertiesOfHeirsData::mayBeStoredLate);
             check.expect(namesFieldsInOrder, "PropertiesOfHeirsDifferFromProgram"_s, id);
         }
     }
@@ -884,15 +885,19 @@ static void checkLayoutRecords(const JoinedTables& check)
             checkObjectRecord(check, offset, id, generalShape);
     }
 
-    uint64_t sizeOfStructuresOfHeirs = 0;
-    for (LayoutID heir : check.numbers.heirsLookedAt()) {
-        if (!check.expect(heir.index() < numberOfLayouts && tables.offsetOfClass(heir.index()) && Typed::isKnownByStructureOfClass(check.program.at(heir)), "HeirLookedAtWithoutRecord"_s, heir))
+    uint64_t subclassStructuresEnd = 0;
+    const Vector<uint32_t>& subclassStructuresOffsets = check.numbers.statics().subclassStructuresOffsets;
+    for (uint32_t index = 0; index < subclassStructuresOffsets.size(); ++index) {
+        uint32_t offset = subclassStructuresOffsets[index];
+        if (offset == PlacedStatics::noOffset)
             continue;
-        uint32_t key = heir.index();
-        check.expect(check.numbers.numberOf(NumberSpace::HeirLookedAt, singleElementSpan(key)) == std::optional<uint32_t>(static_cast<uint32_t>(sizeOfStructuresOfHeirs)), "StructuresOfHeirsOverlap"_s, heir);
-        sizeOfStructuresOfHeirs += StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
+        LayoutID heir(index);
+        if (!check.expect(index < numberOfLayouts && tables.offsetOfClass(index) && Typed::isKnownByStructureOfClass(check.program.at(heir)), "HeirLookedAtWithoutRecord"_s, heir))
+            continue;
+        check.expect(offset >= subclassStructuresEnd && !(offset % alignof(StructuresOfHeir)), "StructuresOfHeirsOverlap"_s, heir);
+        subclassStructuresEnd = offset + StructuresOfHeir::sizeWithDisplacementsOfFields(check.program.at(heir).fields.size());
     }
-    check.expect(tables.sizeOfStructuresOfHeirs == sizeOfStructuresOfHeirs && tables.sizeOfStructuresOfHeirs == check.numbers.sizeOfStructuresOfHeirs(), "SizeOfStructuresOfHeirsDiffersFromNumbers"_s);
+    check.expect(subclassStructuresEnd <= tables.instanceSizes.sizeOfStatics, "SubclassStructuresBeyondStatics"_s);
 }
 
 static void checkFieldTable(const JoinedTables& check)

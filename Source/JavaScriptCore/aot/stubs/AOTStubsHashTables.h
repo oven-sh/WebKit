@@ -53,6 +53,8 @@ struct HashTableLookup {
     bool keepsSlot { false };
     bool searchesTablesInImage { false };
     bool asksForPresenceAlone { false };
+    bool findsHashedSubstrings { false };
+    bool keyIsSubstring { false };
 };
 
 struct InsertionPointExits {

@@ -393,6 +393,8 @@ void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, con
     uint64_t layouts = 0;
     switch (access.kind) {
     case SummaryAccess::Kind::Read:
+        if (thenLookupCannotThrow(subject, key))
+            ofLookup.mayThrow = ThrowEffect(false);
         if (key && readMayMakeClosureOfField(subject, key)) {
             ofLookup.writes.add(m_program, MemoryLocation::objectField(key));
             layouts = bitsOfLayoutsAt(subject);
@@ -537,6 +539,19 @@ bool CalleeSummarizerForLinkEffects::judgeCallGivenArguments(FunctionID id, cons
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void addEffectsOfSettledPromiseInKnownEffects(Effects& all, LocationMasks& writesOnReturn)
+{
+    Effects ofPromise = Effects::none();
+    ofPromise.reads = LocationMasks::top();
+    ofPromise.writes.add(AbstractHeap::AllocatorState);
+    ofPromise.writes.add(AbstractHeap::RuntimeState);
+    ofPromise.writes.add(AbstractHeap::PromiseState);
+    ofPromise.writes.add(AbstractHeap::ExternalState);
+    ofPromise.mayCollect = true;
+    all.merge(ofPromise);
+    writesOnReturn.merge(ofPromise.writes);
+}
+
 auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> EffectsOfComponentInKnownEffects
 {
     FunctionID id(function);
@@ -628,6 +643,8 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
 
     if (!isKnown)
         return knownEffectsOfUnknownCode();
+    if (m_program.at(id).isCoroutine())
+        addEffectsOfSettledPromiseInKnownEffects(effects.all, effects.writesOnReturn);
     if (!given.parametersTakenAsExpected && !given.parametersCalled)
         return effects;
     if (!entersOwnComponent && !effects.all.mayCallUnknownCode) {

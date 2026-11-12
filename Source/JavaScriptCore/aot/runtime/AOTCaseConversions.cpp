@@ -12,7 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTState.h"
 #include "JSCInlines.h"
-#include <wtf/text/StringHasherInlines.h>
+#include <wtf/UnalignedAccess.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -35,23 +35,64 @@ void CaseConversions::remember(const JSString* source, LetterCase letterCase, co
         return;
     uint32_t encoded = MarkedBlockCage::encode(cageBase, source);
     size_t way = 0;
-    while (way < ways - 1 && entries[indexOf(encoded, letterCase, way)])
+    while (way < ways && entries[indexOf(encoded, letterCase, way)])
         ++way;
-    for (; way; --way)
-        entries[indexOf(encoded, letterCase, way)] = entries[indexOf(encoded, letterCase, way - 1)];
-    entries[indexOf(encoded, letterCase)] = static_cast<uint64_t>(encoded) << 32 | MarkedBlockCage::encode(cageBase, converted);
+    if (way == ways)
+        way = encoded * multiplier >> (shift - 2) & (ways - 1);
+    entries[indexOf(encoded, letterCase, way)] = static_cast<uint64_t>(encoded) << 32 | MarkedBlockCage::encode(cageBase, converted);
     size_t set = indexOf(encoded, letterCase) >> setShift;
     setsWithEntries[set / 64] |= uint64_t { 1 } << set % 64;
+}
+
+template<typename Functor>
+static ALWAYS_INLINE void forEachWord(const Latin1Character* characters, size_t length, const Functor& functor)
+{
+    if (length >= sizeof(uint64_t)) {
+        for (size_t offset = 0; offset < length - sizeof(uint64_t); offset += sizeof(uint64_t))
+            functor(WTF::unalignedLoad<uint64_t>(characters + offset), offset);
+        functor(WTF::unalignedLoad<uint64_t>(characters + length - sizeof(uint64_t)), length - sizeof(uint64_t));
+        return;
+    }
+    if (length >= sizeof(uint32_t)) {
+        functor(WTF::unalignedLoad<uint32_t>(characters), 0);
+        functor(WTF::unalignedLoad<uint32_t>(characters + length - sizeof(uint32_t)), length - sizeof(uint32_t));
+        return;
+    }
+    functor(WTF::unalignedLoad<uint16_t>(characters), 0);
+    functor(WTF::unalignedLoad<uint16_t>(characters + length - sizeof(uint16_t)), length - sizeof(uint16_t));
+}
+
+static ALWAYS_INLINE uint32_t hashShortString(std::span<const Latin1Character> characters)
+{
+    constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    uint64_t hash = characters.size();
+    forEachWord(characters.data(), characters.size(), [&](auto word, size_t) ALWAYS_INLINE_LAMBDA {
+        hash = (hash ^ word) * multiplier;
+        hash ^= hash >> 32;
+    });
+    return static_cast<uint32_t>(hash);
+}
+
+static ALWAYS_INLINE bool equalShortString(const StringImpl* string, std::span<const Latin1Character> characters)
+{
+    if (!string || !string->is8Bit() || string->length() != characters.size())
+        return false;
+    const Latin1Character* other = string->span8().data();
+    uint64_t difference = 0;
+    forEachWord(characters.data(), characters.size(), [&](auto word, size_t offset) ALWAYS_INLINE_LAMBDA {
+        difference |= word ^ WTF::unalignedLoad<decltype(word)>(other + offset);
+    });
+    return !difference;
 }
 
 JSString* CaseConversions::convertedString(VM& vm, std::span<const Latin1Character> characters)
 {
     ASSERT(characters.size() >= 2);
-    unsigned hash = StringHasher::computeHashAndMaskTop8Bits<Latin1Character>(characters);
+    uint32_t hash = hashShortString(characters);
     uint64_t& entry = convertedStrings[hash % numberOfConvertedStrings];
     if (entry && entry >> 32 == hash) {
         JSString* candidate = uncheckedDowncast<JSString>(MarkedBlockCage::decode(cageBase, static_cast<uint32_t>(entry)));
-        if (equal(candidate->tryGetValueImpl(), characters))
+        if (equalShortString(candidate->tryGetValueImpl(), characters))
             return candidate;
     }
     JSString* made = jsNontrivialString(vm, String(characters));

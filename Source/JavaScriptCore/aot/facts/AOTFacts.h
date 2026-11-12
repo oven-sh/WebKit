@@ -75,6 +75,7 @@ struct ProgramFactTables {
     bool setsMainModulePath { true };
     bool matchesRegExps { true };
     bool mayReadLegacyRegExpStatics { true };
+    bool mayRecompileRegExps { true };
 
     Vector<WorkerEntry> workerEntries;
     Vector<Witness> workerStartsWithoutName;
@@ -329,6 +330,7 @@ public:
     std::span<const FeatureUseRecord> featureUses() const LIFETIME_BOUND { return m_tables.featureUses.span(); }
     std::span<const LocaleUse> localeUses() const LIFETIME_BOUND { return m_tables.localeUses.span(); }
     bool mayReadLegacyRegExpStatics() const { return m_tables.program.mayReadLegacyRegExpStatics; }
+    bool mayRecompileRegExps() const { return m_tables.program.mayRecompileRegExps; }
 
     bool isPathReadByOperation(ModuleID id) const { return !m_tables.modulesWhosePathNoOperationReads.get(id.index()); }
     const FactTables::FunctionGivenToVariable* findFunctionGivenTo(VariableID id) const { return findFactRow(m_tables.functionsGivenToVariables.span(), id.index(), &FactTables::FunctionGivenToVariable::variable); }

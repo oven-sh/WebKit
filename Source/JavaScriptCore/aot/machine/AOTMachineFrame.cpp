@@ -264,7 +264,7 @@ Frame* planFrame(Procedure& proc)
         int32_t* offsetOfSpill = static_cast<int32_t*>(arena.allocate(spills.size() * sizeof(int32_t), alignof(int32_t)));
         for (SpillIndex spill = 0; spill < spills.size(); ++spill) {
             const uint32_t distance = slots.distanceOf(spill);
-            ASSERT(distance && distance <= slots.bytesInAll() && !(distance % bytesForWidth(spills[spill].width)));
+            ASSERT(distance && distance <= slots.bytesInAll() && !(distance % std::min<uint32_t>(bytesForWidth(spills[spill].width), plannedFrameWordSize)));
             const int32_t offset = form.topOfSlots - static_cast<int32_t>(distance);
             RELEASE_ASSERT(!(offset & Frame::deadSlotTag));
             offsetOfSpill[spill] = spills[spill].isDeadSlot ? offset | Frame::deadSlotTag : offset;

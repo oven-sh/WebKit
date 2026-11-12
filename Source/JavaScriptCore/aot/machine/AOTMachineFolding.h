@@ -18,6 +18,7 @@ Operation* foldMachineBitAndOfBoundedValue(Builder&, Type, Operation* left, Oper
 Operation* foldMachineBitOrOfBoundedValue(Builder&, Type, Operation* left, Operation* right);
 Operation* foldMachineShiftOrBitCount(Builder&, Opcode, Type, Operation* left, Operation* rightOrNull);
 Operation* foldMachineRotationOutOfShifts(Builder&, Opcode, Type, Operation* left, Operation* right);
+Operation* foldMachineXorOfRotations(Builder&, Type, Operation* left, Operation* right);
 Operation* foldConversionOtherThanOfWords(Builder&, Opcode, Type result, Operation*);
 Operation* foldLowWord(Builder&, Operation* wide);
 Operation* foldFloatingPoint(Builder&, Opcode, Type, Operation* left, Operation* rightOrNull);
@@ -247,8 +248,15 @@ ALWAYS_INLINE Operation* foldMachineBitXor(Builder& builder, Type type, Operatio
 {
     if (left == right)
         return builder.constantOfType(type, 0);
-    if (!right->hasInt())
-        return mayBeHalfOfRotation(left) || mayBeHalfOfRotation(right) ? foldMachineRotationOutOfShifts(builder, BitXor, type, left, right) : nullptr;
+    if (!right->hasInt()) {
+        if (mayBeHalfOfRotation(left) || mayBeHalfOfRotation(right)) {
+            if (Operation* folded = foldMachineRotationOutOfShifts(builder, BitXor, type, left, right))
+                return folded;
+        }
+        if (isX86_64() && (right->opcode() == RotR || left->opcode() == RotR))
+            return foldMachineXorOfRotations(builder, type, left, right);
+        return nullptr;
+    }
 
     int64_t bits = right->asInt();
     if (left->hasInt())

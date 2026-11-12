@@ -78,6 +78,15 @@ void OperatorEmitter::branchOnChain(ValueID object, NOESCAPE const Invocable<voi
     m_out.jump(loop);
 }
 
+void OperatorEmitter::branchOnPrototypeAbove(ValueID object, CellPointer prototype, LBasicBlock slowPath, BranchTargets targets)
+{
+    Boxed wanted = boxCell(prototype);
+    auto branchOnPrototype = [&](Boxed found, BranchTargets targets) {
+        branch(equal(found, wanted), targets);
+    };
+    branchOnChain(object, branchOnPrototype, slowPath, targets);
+}
+
 void OperatorEmitter::generateHasInPrototypeChain(const ValueContext& value)
 {
     Boxed object = in<Boxed>(value->valueOperand());

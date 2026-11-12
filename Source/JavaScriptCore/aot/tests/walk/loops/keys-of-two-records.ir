@@ -36,7 +36,7 @@ function f1 name="run" module=m0 position=14 flags=[HasExplicitName] length=2 th
     v15 = Undefined
     Jump -> next b4(v15)
   b4(v16):
-    v17 = NewObject -, v7, v6 layout=L0 fields=[0, 1]
+    v17 = NewObject -, v7, v4 layout=L0 fields=[0, 1]
     v18 = FinishObject v17
     v19 = Call v2, v5, v16, v18
     v20 = Undefined

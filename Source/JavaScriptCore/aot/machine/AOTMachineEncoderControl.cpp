@@ -331,6 +331,7 @@ void Encoder::encodeBranchOnOverflow(Block* block, const Step& step)
 
     bool subtracts = test.subtracts();
     MacroAssembler::Label* labelOfFails = labelOf(fails);
+    m_mayEndLoop = true;
     auto goOnToFailingSuccessor = [=](CCallHelpers& jit) {
         AllowMacroScratchRegisterUsage allowScratchOnLatePath(jit);
         auto finish = [&](bool hasWidened) {
@@ -631,6 +632,7 @@ void Encoder::encodeSwitchThroughTable(Block* block, GPRReg value, int64_t first
     uint32_t tableIndex = m_proc.m_jumpTables.size();
     m_proc.m_jumpTables.append(m_arena, JumpTableRecord { m_arena.createSpan<MacroAssembler::Label>(static_cast<size_t>(numberOfEntries)) });
     m_pendingJumpTables.append(m_arena, PendingJumpTable { tableIndex, targets });
+    m_mayEndLoop = true;
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     MacroAssembler::TrustedImm32 endOfTable(static_cast<int32_t>(numberOfEntries));

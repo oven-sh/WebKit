@@ -22,8 +22,8 @@ OpcodeSet StraightEmitter::opcodesOfArrayIntrinsics()
     return {
         Opcode::IsPristineArray, Opcode::ArrayStorageKind,
         Opcode::HasContiguousIndex, Opcode::GetContiguousIndex, Opcode::GetDoubleIndex,
-        Opcode::NewContiguousArray, Opcode::NewArrayLike,
-        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::SortNumbers, Opcode::TryFillNewArray,
+        Opcode::NewContiguousArray, Opcode::SortKeyArray, Opcode::NewArrayLike,
+        Opcode::TryPutByValDirect, Opcode::TryPutIndex, Opcode::TryCopyFilledElements, Opcode::TryPutElements, Opcode::SortNumbers, Opcode::SortByKeys, Opcode::TryFillNewArray,
         Opcode::TruncateNewArray,
     };
 }
@@ -172,6 +172,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
         return;
     }
     case Opcode::NewContiguousArray:
+    case Opcode::SortKeyArray:
         generateNewArrayOfHoles(*this, value, ValueID(), ArrayStorage::Contiguous, NewArrayWithHolesFlag::mustHaveIndexingType);
         return;
     case Opcode::NewArrayLike:
@@ -186,6 +187,7 @@ void StraightEmitter::generateArrayIntrinsic(const BodyValue& value)
     case Opcode::TryPutIndex:
     case Opcode::TryPutElements:
     case Opcode::SortNumbers:
+    case Opcode::SortByKeys:
     case Opcode::TryFillNewArray:
         jit().move(CCallHelpers::TrustedImm32(JSValue::ValueFalse), takeResultRegister());
         define(value);

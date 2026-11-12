@@ -618,6 +618,8 @@ struct HashOfDirectory {
     static constexpr size_t bit(uint32_t hash, size_t numberOfBits) { return (hash ^ hash >> 15) & (numberOfBits - 1); }
 };
 
+static constexpr uint32_t hashOfAnyQuery = HashOfDirectory::with(HashOfDirectory::ofNoText, '?');
+
 class ModuleByHashOfPath {
 public:
     constexpr ModuleByHashOfPath(size_t numberOfModuleRecords, unsigned hashOfPath)

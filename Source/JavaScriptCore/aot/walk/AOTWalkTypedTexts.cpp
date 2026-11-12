@@ -204,6 +204,10 @@ static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID 
             return;
         }
         Type type = part ? walker.types().at(walker.typeOf(part)) : Type();
+        if (part && type.hasObjects() && takePartsOfConvertedList(walker, part, parts)) {
+            joinsTexts = true;
+            return;
+        }
         eachHasText &= part && hasTextByItself(type);
         joinsTexts |= part && type.isAnyString();
         parts.append(part);
@@ -422,6 +426,10 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
     }
     UseOfTextAsKey use = useAsKeyInWalkTexts(walker, index, last.id(), parts.size() == 2);
     hasWalkedOn |= holdsPartsTakenOutOfTexts(walker, last, parts.span());
+    if (!hasWalkedOn && mayMergeKnownParts(walker, parts.span())) {
+        walker.count(StatisticID::KnownPartsMerged);
+        hasWalkedOn = true;
+    }
     bool isAppended = use <= UseOfTextAsKey::None && tryAppendJoinToFinishedString(walker, first, last, parts.span());
     if (!isAppended && !hasWalkedOn && use <= UseOfTextAsKey::None)
         return false;

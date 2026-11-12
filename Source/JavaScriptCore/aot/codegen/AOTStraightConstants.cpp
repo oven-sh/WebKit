@@ -21,6 +21,7 @@
 #include "AOTStringTable.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubsAllocation.h"
+#include "AOTStubsArrays.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsConstants.h"
 #include "AOTTypeArena.h"
@@ -180,6 +181,11 @@ static bool tableOfImageHoldsDataInStraightForm(StraightEmitter& emitter, const 
 static void generateData(StraightEmitter& emitter, const BodyValue& value)
 {
     DataID data = value.data();
+    if (const auto* array = emitter.program().at(data).root.tryAs<DataNode::Array>(); array && array->elements.isEmpty()) {
+        emitter.callStub(value, arrayLiteral(0), { });
+        emitter.define(value);
+        return;
+    }
     if (!tableOfImageHoldsDataInStraightForm(emitter, emitter.program().at(data).root) || !constantListsFieldsHeldFilledInSlots(emitter.program(), emitter.facts().linked(), emitter.plan().slots(), data)) {
         emitter.fail(value);
         return;

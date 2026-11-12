@@ -12,6 +12,7 @@
 #include "AOTMachineTarget.h"
 #include "AOTSort.h"
 #include <algorithm>
+#include <array>
 #include <cstring>
 #include <limits>
 #include <optional>
@@ -161,6 +162,101 @@ void Order::makePhiOfTruncationBehindJoin(Block* join, Operation* truncation)
     upsilon->m_indexInBlock = join->m_upsilons.size();
     procedure.didCreate(upsilon);
     join->m_upsilons.append(arena, upsilon);
+}
+
+void Order::passTestToJoin(Block* from, Block* join, const Operation* phi, bool isInverted)
+{
+    Procedure& procedure = from->procedure();
+    Arena& arena = procedure.arena();
+    std::array<Block*, 2> ways { from->successor(0).block(), from->successor(1).block() };
+    RELEASE_ASSERT(from->last()->opcode() == Branch && from->numSuccessors() == 2 && phi->owner() == join && phi->type() == Int32);
+
+    const Block* way = ways[0] == join ? ways[1] : ways[0];
+    Operation* branch = from->m_operations.takeLast();
+    Operation* test = branch->m_children[0];
+    auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) {
+        Operation* made = arena.create<Operation>(opcode, type, origin);
+        made->m_owner = from;
+        made->m_indexInBlock = list.size();
+        procedure.didCreate(made);
+        list.append(arena, made);
+        return made;
+    };
+    Operation* number = test;
+    if (isInverted) {
+        number = append(from->m_operations, invertedComparison(test->opcode()), Int32, test->origin());
+        number->m_auxiliary = 2;
+        number->m_children[0] = test->m_children[0];
+        number->m_children[1] = test->m_children[1];
+    }
+    append(from->m_operations, Jump, Void, branch->origin());
+
+    Vector<std::pair<Operation*, Operation*>, 4> passed;
+    for (Operation* upsilon : way->upsilons()) {
+        if (Operation* other = upsilon->phi(); other && other->owner() == join)
+            passed.append({ other, other == phi ? number : upsilon->child(0) });
+    }
+    for (auto [other, value] : passed)
+        value->gainUse();
+    test->loseUse();
+    for (Operation* upsilon : from->m_upsilons) {
+        if (Operation* other = upsilon->phi(); other && other->owner() == join)
+            upsilon->child(0)->loseUse();
+    }
+    from->clearSuccessors();
+    dropUpsilonsHandedTo(join, from);
+    for (auto [other, value] : passed) {
+        Operation* upsilon = append(from->m_upsilons, Upsilon, Void, branch->origin());
+        upsilon->m_auxiliary = 1;
+        upsilon->m_children[0] = value;
+        upsilon->m_payload.phi = other;
+        procedure.noteUpperHalfHandedOn(upsilon);
+    }
+    from->setSuccessors(Edge(join));
+    for (Block* left : ways) {
+        if (left != join)
+            letGoOfBlockThatNothingLeadsTo(left);
+    }
+}
+
+void Order::moveTestToLatch(Block* header, Block* latch, Operation* test, unsigned successorInLoop)
+{
+    Operation* phi = header->m_phis[0];
+    RELEASE_ASSERT(header->m_phis.size() == 1 && header->m_upsilons.isEmpty() && header->last()->opcode() == Branch && header->numSuccessors() == 2 && (test->child(0) == phi || test->child(1) == phi));
+    RELEASE_ASSERT(latch->last()->opcode() == Jump && latch->numSuccessors() == 1 && latch->successor(0).block() == header);
+    Operation* next = nullptr;
+    for (Operation* upsilon : latch->m_upsilons) {
+        if (upsilon->phi() == phi)
+            next = upsilon->child(0);
+    }
+    RELEASE_ASSERT(next);
+
+    Arena& arena = header->procedure().arena();
+    const Edge inLoop = header->m_successors[successorInLoop];
+    const Edge leaving = header->m_successors[1 - successorInLoop];
+    Operation* jump = latch->m_operations.takeLast();
+    test->m_children[test->child(0) == phi ? 0 : 1] = next;
+    next->gainUse();
+    phi->loseUse();
+    for (Operation* operation : header->m_operations) {
+        operation->m_owner = latch;
+        operation->m_indexInBlock = latch->m_operations.size();
+        latch->m_operations.append(arena, operation);
+    }
+    header->m_operations.clear();
+    jump->m_owner = header;
+    jump->m_indexInBlock = 0;
+    header->m_operations.append(arena, jump);
+    latch->m_writesMemory |= header->m_writesMemory;
+
+    header->clearSuccessors();
+    latch->clearSuccessors();
+    const Edge back(header, inLoop.edgeClass());
+    if (successorInLoop)
+        latch->setSuccessors(leaving, back);
+    else
+        latch->setSuccessors(back, leaving);
+    header->setSuccessors(Edge(inLoop.block()));
 }
 
 void Order::passJoinBy(Block* from, Block* target, Operation* phi, Operation* value)
@@ -403,6 +499,56 @@ void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, 
 
     second->clearSuccessors();
     first->setSuccessors(Edge(inside.block(), std::max(toSecond.edgeClass(), inside.edgeClass())), Edge(leavingFirst.block(), std::min(leavingFirst.edgeClass(), leavingSecond.edgeClass())));
+    letGoOfBlockThatNothingLeadsTo(second);
+    if (!leavingSecond.block()->numberOfIncomingEdges())
+        letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
+}
+
+void Order::mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value)
+{
+    Procedure& procedure = first->procedure();
+    Arena& arena = procedure.arena();
+    RELEASE_ASSERT(first->last()->opcode() == Branch && first->numSuccessors() == 2 && second->last()->opcode() == Branch && second->numSuccessors() == 2);
+    RELEASE_ASSERT(first->successor(wayOnOfFirst).block() == second && second->numberOfIncomingEdges() == 1);
+    RELEASE_ASSERT(first->upsilons().empty() && second->upsilons().empty());
+
+    const Edge leavingFirst = first->successor(1 - wayOnOfFirst);
+    const Edge leavingSecond = second->successor(1 - wayOnOfSecond);
+    const Edge wayOn = second->successor(wayOnOfSecond);
+
+    Operation* branch = first->m_operations.takeLast();
+    Origin origin = branch->origin();
+    auto constant = [&](uint32_t bits) {
+        Operation* made = arena.create<Operation>(Const32, Int32, origin);
+        made->m_payload.bits = static_cast<int32_t>(bits);
+        procedure.didCreate(made);
+        return made;
+    };
+    auto append = [&](Opcode opcode, Operation* left, Operation* right) {
+        Operation* made = arena.create<Operation>(opcode, Int32, origin);
+        made->m_auxiliary = right ? 2 : 1;
+        made->m_children[0] = left;
+        if (right)
+            made->m_children[1] = right;
+        made->m_owner = first;
+        made->m_indexInBlock = first->m_operations.size();
+        procedure.didCreate(made);
+        first->m_operations.append(arena, made);
+        return made;
+    };
+    Operation* word = append(Load, base, nullptr);
+    base->gainUse();
+    word->m_payload.memory.offset = offsetOfWord;
+    word->m_payload.memory.heap = rootHeapIndex;
+    Operation* test = append(Equal, append(BitAnd, word, constant(mask)), constant(value));
+    branch->m_children[0]->loseUse();
+    branch->m_children[0] = test;
+    test->gainUse();
+    branch->m_indexInBlock = first->m_operations.size();
+    first->m_operations.append(arena, branch);
+
+    second->clearSuccessors();
+    first->setSuccessors(Edge(wayOn.block(), wayOn.edgeClass()), Edge(leavingFirst.block(), leavingFirst.edgeClass()));
     letGoOfBlockThatNothingLeadsTo(second);
     if (!leavingSecond.block()->numberOfIncomingEdges())
         letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
@@ -1626,6 +1772,17 @@ void BlockOrderBuilder::placeBlocks()
     m_end = static_cast<Position>(position);
 }
 
+static bool followsLink(const Block* latch, const Block* header)
+{
+    for (const Operation* upsilon : latch->upsilons()) {
+        const Operation* phi = upsilon->phi();
+        const Operation* next = upsilon->child(0);
+        if (phi && phi->owner() == header && isLoad(next->opcode()) && next->lastChild() == phi)
+            return true;
+    }
+    return false;
+}
+
 void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endOfMovedBlocks)
 {
     enum class ExitPlacement : uint8_t {
@@ -1668,12 +1825,27 @@ void BlockOrderBuilder::rotateLoops(uint32_t& beginOfMovedBlocks, uint32_t& endO
 
         uint32_t begin = places[header].layoutIndex;
         uint32_t end = begin;
+        bool isSearch = false;
         for (const Block* predecessor : places[header].predecessors) {
-            if (isDirectMemberOfLoop(predecessor) && flagsOfPartOf(predecessor) == flagsOfPart && predecessor->last()->isUnconditionalJump())
+            if (isDirectMemberOfLoop(predecessor) && flagsOfPartOf(predecessor) == flagsOfPart && predecessor->last()->isUnconditionalJump()) {
                 end = std::max(end, places[predecessor->index()].layoutIndex + 1);
+                isSearch |= followsLink(predecessor, head);
+            }
         }
         if (end == begin)
             continue;
+        if (isSearch) {
+            uint32_t numberOfExits = 0;
+            for (uint32_t index = begin; index < end && numberOfExits < 2; ++index) {
+                const Block* block = blocksInLayout[index];
+                if (block != head && !isDirectMemberOfLoop(block))
+                    continue;
+                for (const Edge& edge : block->successors())
+                    numberOfExits += !edge.isRare() && !staysInLoop(edge.block());
+            }
+            if (numberOfExits >= 2)
+                continue;
+        }
         ASSERT(begin + 1 < end && blocksInLayout[begin] == head);
 
         const Block* blockAfterLoop = end < numberOfBlocks ? blocksInLayout[end] : nullptr;

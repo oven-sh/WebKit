@@ -97,6 +97,14 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v31 = Builtin builtin=GlobalThis
     v32 = PropGet v31 key="sink" [isFreeName]
     v33 = Call v32, -, v19, v20, v21, v22, v23, v24, v25, v26, v27, v28, v29, v30
+    v34 = NewObject -, v3, v8 layout=L0 fields=[0, 1]
+    v35 = FinishObject v34
+    v36 = NewObject -, v7, v4 layout=L1 fields=[0, 1]
+    v37 = FinishObject v36
+    v38 = NewObject -, v11, v4 layout=L2 fields=[0, 1]
+    v39 = FinishObject v38
+    v40 = NewObject -, v15, v4 layout=L3 fields=[0, 1]
+    v41 = FinishObject v40
     Return v33
 }
 function f1 name="cases" module=m0 flags=[IsChecked] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0|L1|L2|L3 flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] {

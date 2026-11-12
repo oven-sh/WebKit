@@ -21,7 +21,7 @@ static bool loadOrStoreMayFault(const Encoder& encoder, const Operation* access)
 static bool loadOrStoreMovesNumber(const Operation* access)
 {
     Type type = isStore(access->opcode()) ? access->child(0)->type() : access->type();
-    return type.isFloat();
+    return type.isInNumberRegister();
 }
 
 template<typename Functor>
@@ -52,7 +52,7 @@ static ALWAYS_INLINE void emitX86Load(Encoder& encoder, const Operation* load, c
     CCallHelpers& jit = encoder.m_jit;
     ASSERT(isLoad(load->opcode()));
     Type type = load->type();
-    bool isNumber = type.isFloat();
+    bool isNumber = type.isInNumberRegister();
     Width width = accessWidthOf(load->opcode(), type);
     ASSERT(destination.isFPR() == isNumber);
     if (onlyFaultsOnEmptyPointer(encoder, load, form)) {
@@ -88,7 +88,8 @@ static ALWAYS_INLINE void emitX86Load(Encoder& encoder, const Operation* load, c
                 jit.load64(address, destination.gpr());
             return;
         case Width128:
-            break;
+            jit.loadVector(address, destination.fpr());
+            return;
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
@@ -99,7 +100,7 @@ static ALWAYS_INLINE void emitX86StoreOfRegister(Encoder& encoder, const Operati
     CCallHelpers& jit = encoder.m_jit;
     ASSERT(isStore(store->opcode()));
     Type type = inlineChildWithoutCheck(store, 0)->type();
-    bool isNumber = type.isFloat();
+    bool isNumber = type.isInNumberRegister();
     Width width = accessWidthOf(store->opcode(), type);
     ASSERT(source.isFPR() == isNumber);
     withOperandOfLoadOrStore(form, [&](auto address) ALWAYS_INLINE_LAMBDA {
@@ -123,7 +124,8 @@ static ALWAYS_INLINE void emitX86StoreOfRegister(Encoder& encoder, const Operati
                 jit.store64(source.gpr(), address);
             return;
         case Width128:
-            break;
+            jit.storeVector(source.fpr(), address);
+            return;
         }
         RELEASE_ASSERT_NOT_REACHED();
     });
@@ -205,6 +207,15 @@ static bool tryLoadInstanceWordInOneInstruction(Encoder& encoder, const Operatio
     }
     if (load->opcode() == Load8S)
         return false;
+    if (width == Width16) {
+        return encoder.m_relocations.withInstanceWordAsOperand(symbol, instanceGPR, [&](MacroAssembler::Address word) {
+            AddressForm form;
+            form.base = word.base;
+            form.offset = word.offset;
+            emitX86Load(encoder, load, form, destination);
+            return true;
+        });
+    }
     std::optional<InstanceWordWidth> widthOfWord = instanceWordWidthOfLoadOrStore(width);
     if (!widthOfWord)
         return false;
@@ -488,6 +499,7 @@ void Encoder::encodeBranchInMemory(Block* block, const Step& step)
     const Block* fails = block->successor(!update.successorThatStores).block();
     MacroAssembler::Label* labelOfStores = labelOf(stores);
     MacroAssembler::Label* labelOfFails = labelOf(fails);
+    m_mayEndLoop = true;
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
     LeafCursor leaves(step);

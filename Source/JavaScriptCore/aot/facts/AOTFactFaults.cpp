@@ -175,7 +175,8 @@ namespace JSC { namespace AOT { namespace Typed {
     v(ProgramRunsNoUnseenCode, unseenCodeCanRun, false) \
     v(ProgramKeepsMainModulePath, setsMainModulePath, false) \
     v(ProgramMatchesNoRegExps, matchesRegExps, false) \
-    v(LegacyRegExpStaticsUnread, mayReadLegacyRegExpStatics, false)
+    v(LegacyRegExpStaticsUnread, mayReadLegacyRegExpStatics, false) \
+    v(RegExpsNeverRecompiled, mayRecompileRegExps, false)
 
 #define FOR_EACH_FACT_OF_SLOT(v) \
     v(SlotFilledAtAllocation, isFilledAtBirth, true) \

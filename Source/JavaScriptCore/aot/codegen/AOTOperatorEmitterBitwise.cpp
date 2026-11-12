@@ -75,6 +75,8 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
             return low32(Integer(in<OptionalInteger>(id).value()));
         case Representation::Double:
         case Representation::OptionalDouble:
+            if (typeOf(id).isNumberWithinBounds() && typeOf(id).boundsOfNumbers().isSubsetOf(Range::int32()))
+                return emitter<ConversionEmitter>().truncateToWord(asNumericOperandWithAnyNaN(id));
             if (representationOf(id) == Representation::OptionalDouble && !generator().holdsAnyNaN(id))
                 return emitter<ConversionEmitter>().toInt32(asNumber(in<OptionalNumber>(id), typeOf(id), PayloadOfNaN::Stays), bits);
             return emitter<ConversionEmitter>().toInt32(asNumericOperandWithAnyNaN(id), bits);

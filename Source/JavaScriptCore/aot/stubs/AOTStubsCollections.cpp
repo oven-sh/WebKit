@@ -276,8 +276,22 @@ static void emitStoreValueOfCompactTable(StubAssembler& jit, const HashTableRegi
 static void emitStoreInIndex(StubAssembler& jit, const HashTableRegisters& registers, InsertionPoint point)
 {
     if (point == InsertionPoint::AmongTags) {
+        static_assert(CompactTable::maxCapacityWithTags == sizeof(uint64_t));
+        const Address tags(registers.table, CompactTable::offsetOfIndex());
+        const GPRReg shift = registers.cursor;
         jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), registers.hash);
-        jit.store8(registers.hash, BaseIndex(registers.table, registers.entry, CCallHelpers::TimesOne, CompactTable::offsetOfIndex()));
+        jit.zeroExtend8To32(registers.hash, registers.hash);
+        jit.lshift32(registers.entry, TrustedImm32(3), shift);
+#if CPU(X86_64)
+        RELEASE_ASSERT(shift == X86Registers::ecx);
+        jit.lshift64(shift, registers.hash);
+        jit.or64(registers.hash, tags);
+#else
+        jit.lshift64(shift, registers.hash);
+        jit.load64(tags, registers.candidate);
+        jit.or64(registers.hash, registers.candidate);
+        jit.store64(registers.candidate, tags);
+#endif
         return;
     }
     constexpr int32_t index = CompactTable::offsetOfIndex();
@@ -418,7 +432,7 @@ static void emitTestForKey(StubAssembler& jit, const HashTableRegisters& registe
     if (!keepsSlot)
         exits.emitFoundAmongNarrowKeys = &emitFound;
     exits.emitAbsent = &emitAbsent;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .keepsSlot = keepsSlot, .searchesTablesInImage = !keepsSlot, .asksForPresenceAlone = !keepsSlot }, exits);
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .keepsSlot = keepsSlot, .searchesTablesInImage = !keepsSlot, .asksForPresenceAlone = !keepsSlot, .findsHashedSubstrings = !keepsSlot }, exits);
     exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
     exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
@@ -531,7 +545,7 @@ static void emitGet(StubAssembler& jit, const HashTableRegisters& registers)
     const ScopedLambda<void()> emitAbsent(returnUndefined);
     exits.emitFoundAmongNarrowKeys = &emitFound;
     exits.emitAbsent = &emitAbsent;
-    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true }, exits);
+    emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true, .findsHashedSubstrings = true }, exits);
     RELEASE_ASSERT(hasFoundExit(exits) || valueIsWide.empty());
     if (hasFoundExit(exits))
         emitLoadValueOfCompactTable(jit, registers, exits, valueIsWide);

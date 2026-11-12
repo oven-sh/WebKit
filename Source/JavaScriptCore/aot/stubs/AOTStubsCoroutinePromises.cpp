@@ -271,7 +271,7 @@ static void emitLoadReactionCell(StubAssembler& jit, GPRReg packed, GPRReg cell)
     jit.urshift64(TrustedImm32(numberOfFlagBits), cell);
 }
 
-static void emitQueueResolutionWithPromise(StubAssembler& jit, GPRReg promise, GPRReg resolution, GPRReg other, const JobRegisters& job, JumpList& needsEngine)
+void emitQueueResolutionWithPromise(StubAssembler& jit, GPRReg promise, GPRReg resolution, GPRReg other, const JobRegisters& job, JumpList& needsEngine)
 {
     needsEngine.append(jit.branch64(CCallHelpers::Equal, promise, resolution));
     jit.load32(Address(resolution, JSCell::structureIDOffset()), other);
@@ -466,19 +466,40 @@ void emitRunResolveThenableJob(StubAssembler& jit, GPRReg head, const ResolveThe
     emitDequeueJob(jit, job, PrefetchedJobs::ThenableResolutions);
 }
 
-void emitRunResolveWithoutHandlerJob(StubAssembler& jit, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters& job, JumpList& isLeftToJobLoop)
+Label emitRunResolveWithoutHandlerJob(StubAssembler& jit, GPRReg head, GPRReg promise, GPRReg value, const JobRegisters& job, JumpList& isNoPromise, JumpList& isLeftToJobLoop)
 {
     RELEASE_ASSERT(noOverlap(head, promise, value, job.queue, job.slot, job.next, job.scratch, instanceGPR));
     jit.load64(argumentOfJob(head, 0), promise);
     isLeftToJobLoop.append(jit.branchIfNotCell(promise));
+    Label hasPromise = jit.label();
     jit.load32(Address(promise, JSCell::structureIDOffset()), job.scratch);
-    isLeftToJobLoop.append(jit.branch32(CCallHelpers::NotEqual, job.scratch, Address(instanceGPR, offsetOfPromiseHeader)));
+    isNoPromise.append(jit.branch32(CCallHelpers::NotEqual, job.scratch, Address(instanceGPR, offsetOfPromiseHeader)));
     jit.load64(argumentOfJob(head, 1), value);
     emitFulfillPromise(jit, promise, value, head, job, isLeftToJobLoop, isLeftToJobLoop);
     emitDequeueJob(jit, job, PrefetchedJobs::Resolutions);
+    return hasPromise;
 }
 
-void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& head, const PromiseAllJobRegisters& registers, GPRReg scratch, JumpList& isLeftToJobLoop)
+void emitBranchIfRaceIsSettled(StubAssembler& jit, GPRReg head, GPRReg promise, GPRReg scratch, JumpList& isSettled, JumpList& isLeftToJobLoop)
+{
+    RELEASE_ASSERT(noOverlap(head, promise, scratch, instanceGPR));
+    jit.load64(argumentOfJob(head, 0), promise);
+    jit.load64(Address(promise, JSPromise::offsetOfPacked()), scratch);
+    jit.urshift64(TrustedImm32(promiseFlagsShift), scratch);
+    isSettled.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(JSPromise::stateMask)));
+    isLeftToJobLoop.append(jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(JSPromise::isFirstResolvingFunctionCalledFlag)));
+}
+
+void emitNewSettledResult(StubAssembler& jit, GPRReg head, GPRReg word)
+{
+    RELEASE_ASSERT(noOverlap(head, word, operationArgumentGPR(1), operationArgumentGPR(2)));
+    jit.load64(argumentOfJob(head, 1), operationArgumentGPR(1));
+    jit.urshift64(word, TrustedImm32(promiseFlagsShift + 8), operationArgumentGPR(2));
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTNewSettledResult, word);
+}
+
+void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& head, const PromiseAllJobRegisters& registers, GPRReg scratch, JumpList& isLeftToJobLoop, Address element)
 {
     const auto [queue, slot, word] = head;
     const auto [context, values, value, index] = registers;
@@ -488,7 +509,7 @@ void emitRunPromiseAllResolveJob(StubAssembler& jit, const HeadJobRegisters& hea
     auto loadOperands = [&](JumpList* otherwise) {
         jit.load64(argumentOfJob(slot, 0), context);
         jit.load64(Address(context, JSPromiseCombinatorsGlobalContext::offsetOfValues()), values);
-        jit.load64(argumentOfJob(slot, 1), value);
+        jit.load64(element, value);
         jit.load32(argumentOfJob(slot, 2), index);
         if (otherwise) {
             jit.load8(Address(values, JSCell::indexingTypeAndMiscOffset()), word);

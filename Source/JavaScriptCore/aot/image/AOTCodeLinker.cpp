@@ -10,6 +10,7 @@
 
 #include "AOTBuildContext.h"
 #include "AOTImageBuilder.h"
+#include "AOTStubsRegExp.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -286,7 +287,14 @@ struct CodeLinker {
         }
         case SymbolSpace::RegExp: {
             const auto& entries = inputs.regExpSection.entries;
-            if (target.index >= entries.size() || target.entry >= entries[target.index].size())
+            if (target.index >= entries.size())
+                return std::nullopt;
+            if (target.entry == entryOfMatcher) {
+                const auto& matchers = inputs.regExpSection.matchers;
+                std::optional<uint32_t> matcher = target.index < matchers.size() ? matchers[target.index] : std::nullopt;
+                return matcher ? std::optional(static_cast<size_t>(layout.regExpCodeOffset) + *matcher) : std::nullopt;
+            }
+            if (target.entry >= entries[target.index].size())
                 return std::nullopt;
             return static_cast<size_t>(layout.regExpCodeOffset) + entries[target.index][target.entry];
         }

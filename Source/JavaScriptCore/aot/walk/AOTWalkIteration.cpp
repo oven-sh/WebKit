@@ -148,6 +148,8 @@ struct ClassSteppedUnseen {
     bool isGuessedMap { false };
     bool textMayComeInstead { false };
     bool mapMayComeInstead { false };
+    LayoutID subclass;
+    PropertyKeyID opener;
 };
 
 } // namespace
@@ -213,6 +215,30 @@ static std::optional<ClassSteppedUnseen> findClassSteppedUnseen(Walker& walker, 
     return value && value.isValue() ? findClassSteppedUnseen(walker, walker.typeOf(value), aboveInstances) : std::nullopt;
 }
 
+static PropertyKeyID keyOfIterator(const Walker& walker)
+{
+    return walker.program().keyOf(walker.program().builtins().nameOf(WellKnownSymbol::Iterator));
+}
+
+static std::optional<ClassSteppedUnseen> findSubclassStepped(Walker& walker, TypeID iterated, PropertyKeyID opener)
+{
+    TypeArena& types = walker.types();
+    const Program& program = walker.program();
+    TypeID present = iterated && !program.admitsReplacedBuiltins ? types.withoutNullish(iterated) : TypeID();
+    LayoutID subclass = present && !isNeverType(present) ? layoutKnownByStructureOfClass(walker, present) : LayoutID();
+    BuiltinClassID above = subclass ? program.at(subclass).writtenBuiltinBase : BuiltinClassID();
+    if (!above || (above == BuiltinClasses::Array && !arraySubclassWithElements(walker, present)))
+        return std::nullopt;
+    if (program.at(subclass).findField(opener) || walker.facts().hasMemberUnder(subclass, ClassSide::Prototype, opener))
+        return std::nullopt;
+    std::optional<ClassSteppedUnseen> stepped = findClassSteppedUnseen(walker, types.builtinClass(above));
+    if (stepped) {
+        stepped->subclass = subclass;
+        stepped->opener = opener;
+    }
+    return stepped;
+}
+
 static TypeID typeOfInstancesStepped(Walker& walker, BuiltinClassID builtinClass, ContentsStepped contents)
 {
     return contents == ContentsStepped::Text ? TypeID(TypeTable::string) : walker.types().builtinClass(builtinClass);
@@ -226,14 +252,24 @@ static bool isProvenArrayIterable(Walker& walker, Reference value)
 
 static constexpr uint32_t closedOperationsOfProtocol = 3;
 
-static std::optional<ClassSteppedUnseen> findClassToTestFor(Walker& walker, ValueID input, Reference iterable, bool stepsStandInLoop = false)
+static std::optional<ClassSteppedUnseen> findClassToTestFor(Walker& walker, ValueID input, Reference iterable, bool stepsStandInLoop = false, PropertyKeyID openerOfSubclasses = { })
 {
     if (!iterable || !iterable.isValue())
         return std::nullopt;
     TypeArena& types = walker.types();
     bool isDeclared = true;
     MembersBehindWatch aboveInstances = walker.program().admitsReplacedBuiltins ? MembersBehindWatch::AreAsBuilt : MembersBehindWatch::AreOpen;
-    std::optional<ClassSteppedUnseen> stepped = findClassSteppedUnseen(walker, iterable, aboveInstances);
+    std::optional<ClassSteppedUnseen> stepped;
+    if (openerOfSubclasses && walker.program().someClassExtendsIterable) [[unlikely]] {
+        ExpectationOfValue expectation = findExpectation(walker, input);
+        stepped = findSubclassStepped(walker, walker.typeOf(iterable), openerOfSubclasses);
+        if (!stepped)
+            stepped = findSubclassStepped(walker, expectation.type, openerOfSubclasses);
+        if (stepped)
+            isDeclared = expectation.type && expectation.isDeclared;
+    }
+    if (!stepped)
+        stepped = findClassSteppedUnseen(walker, iterable, aboveInstances);
     if (!stepped) {
         ExpectationOfValue expectation = findExpectation(walker, input);
         isDeclared = expectation.type && expectation.isDeclared;
@@ -351,6 +387,18 @@ static WayOfIteration findWayOfIteration(const BodyIndex& index, ValueID open)
         return index.dominates(turn, block);
     });
     return way;
+}
+
+ValueID findSoleLoopHeaderStep(const BodyIndex& index, ValueID open)
+{
+    WayOfIteration way = findWayOfIteration(index, open);
+    if (!way.canBeFollowed || !way.hasSingleStepAtHeader || !way.canSkipDoneChecks)
+        return { };
+    for (const BodyMentionOfIteration& mention : index.mentionsOfIteration(open)) {
+        if (index.isReachable(mention.block) && index.opcodeOf(mention.user) == Opcode::IteratorResume)
+            return mention.user;
+    }
+    return { };
 }
 
 static bool haveOneHandler(BodyBlock first, BodyBlock second)
@@ -688,6 +736,24 @@ static std::optional<ClassSteppedUnseen> findCollectionOfIterator(Walker& walker
 namespace {
 
 enum class WordingOfIteration : uint8_t { Source, Spread, Delegation };
+
+static bool isResultOfDelegatedCall(const Walker& walker, Reference iterable)
+{
+    if (!iterable || !iterable.isValue() || walker.code().isConstant(iterable.id()))
+        return false;
+    const Operation& read = walker.code().at(iterable.id());
+    return read.opcode == Opcode::ResultAt && walker.code().at(read.resultsOperand()).opcode == Opcode::CallDelegate;
+}
+
+static Reference completionOfDelegatedCall(Walker& walker, Reference iterable, Origin origin)
+{
+    if (walker.isUnreachable() || !isResultOfDelegatedCall(walker, iterable))
+        return { };
+    Draft read(Opcode::ResultAt, origin);
+    read.setResultsOperand(Reference::value(walker.code().at(iterable.id()).resultsOperand()));
+    read.setIndex(static_cast<uint32_t>(DelegatedCallResult::HasCompleted));
+    return walker.build(WTF::move(read));
+}
 enum class UseOfSyncIteration : uint8_t { Stepped, WrappedForAsyncIteration };
 enum class ResultOfReturnInIteration : uint8_t { MustBeObject, IsIgnored };
 
@@ -705,6 +771,65 @@ struct JoinOfIteration {
     BlockID block;
     std::array<Reference, 2> results;
 };
+
+struct CopyByArrayFrom {
+    ValueID given;
+    ValueID test;
+    ValueID spread;
+};
+
+std::optional<CopyByArrayFrom> findCopyByArrayFrom(const BodyIndex& index, ValueID call)
+{
+    BodyBlock block = index.block(index.blockOf(call));
+    ValueID given = call;
+    ValueID next(call.index() + 1);
+    while (next.index() < block.endOfValues().index() && opcodesThatStateTypes.contains(index.opcodeOf(next)) && index.onlyUsingValue(given) == next) {
+        given = next;
+        next = ValueID(next.index() + 1);
+    }
+    BodyTerminator end = block.terminator();
+    if (next.index() + 1 != block.endOfValues().index() || index.opcodeOf(next) != Opcode::IsPristineArray || index.value(next).operand(0) != given || end.kind() != TerminatorKind::Branch || end.operand(0) != next || !index.hasOneUse(next))
+        return std::nullopt;
+    BodyBlock spreading = index.block(end.taken().block());
+    BlockID otherwise = end.notTaken().block();
+    auto isEnteredHereAlone = [&](BlockID target) {
+        return index.numberOfIncomingEdges(target) == 1 && !index.block(target).numberOfParameters() && !index.isEnteredByHandlerEdge(target);
+    };
+    static constexpr uint32_t valuesOfSpread = 2;
+    if (!isEnteredHereAlone(spreading.id()) || !isEnteredHereAlone(otherwise) || spreading.numberOfValues() < valuesOfSpread)
+        return std::nullopt;
+    BodyValue array = index.value(spreading.firstValue());
+    ValueID spread(spreading.firstValue().index() + 1);
+    if (array.opcode() != Opcode::NewArray || array.numberOfVariadicOperands() || index.opcodeOf(spread) != Opcode::AppendSpread)
+        return std::nullopt;
+    auto append = index.value(spread).as<Opcode::AppendSpread>();
+    if (append.arrayOperand() != array.id() || append.iterableOperand() != given)
+        return std::nullopt;
+
+    uint32_t knownUses = 2;
+    auto countUse = [&](ValueID operand, uint32_t) {
+        knownUses += operand == given;
+    };
+    for (uint32_t number = otherwise.index(); number < index.numberOfBlocks(); ++number) {
+        BlockID behind(number);
+        if (!index.isReachable(behind) || !index.dominates(otherwise, behind))
+            continue;
+        for (BodyValue operation : index.block(behind).values())
+            operation.forEachOperand(countUse);
+        BodyTerminator terminator = index.terminator(behind);
+        terminator.forEachOperand(countUse);
+        ValueID condition = terminator.kind() == TerminatorKind::Branch ? terminator.operand(0) : ValueID();
+        bool isTested = condition && !index.isParameter(condition) && index.opcodeOf(condition) == Opcode::TypeTest && index.value(condition).operand(0) == given;
+        for (BodyTarget target : terminator.targets()) {
+            for (ValueID argument : target.arguments())
+                knownUses += argument == given;
+            knownUses += isTested ? target.proofs().size() : 0;
+        }
+    }
+    if (index.useCount(given) != knownUses)
+        return std::nullopt;
+    return CopyByArrayFrom { given, next, spread };
+}
 
 class BuilderOfIteration {
     WTF_MAKE_NONCOPYABLE(BuilderOfIteration);
@@ -1027,6 +1152,39 @@ public:
         return iteration;
     }
 
+    bool stepsMatchesOfOpen()
+    {
+        if (!m_site || m_site->opcode() != Opcode::IteratorOpen || m_site->as<Opcode::IteratorOpen>().isDestructuring())
+            return false;
+        const BodyIndex& index = m_walker.currentBodyIndex();
+        const ValueID written = index.stripCasts(m_site->as<Opcode::IteratorOpen>().iterableOperand());
+        return !index.isParameter(written) && isWrittenMatchAll(m_walker.program(), index.value(written)) && findHelper(IterationHelper::WayToStepMatches) && findHelper(IterationHelper::StepMatchesInWay);
+    }
+
+    Reference askWayToStep(const OpenedIteration& opened, bool stepsMatches)
+    {
+        Reference way = callHelper(findHelper(stepsMatches ? IterationHelper::WayToStepMatches : IterationHelper::WayToStepIterator), { opened.iterator, opened.next });
+        if (!m_walker.fileHoldsGenerators() || m_walker.isUnreachable())
+            return way;
+        BlockID told = addBlock();
+        Reference result = m_walker.addParameter(told, { }, Representation::JSValue);
+        BlockID hasNextOfGenerators = addBlock();
+        BlockID hasOtherNext = addBlock();
+        BlockID isGenerator = addBlock();
+        BlockID isNoGenerator = addBlock(BlockFrequency::Rare);
+        branch(testType(way, TypeArena::fromPrimitives(Primitive::False)), hasNextOfGenerators, hasOtherNext);
+        continueIn(hasOtherNext);
+        jumpTo(told, { way });
+        continueIn(hasNextOfGenerators);
+        branch(testType(opened.iterator, m_walker.types().builtinClass(BuiltinClasses::Generator)), isGenerator, isNoGenerator);
+        continueIn(isNoGenerator);
+        jumpTo(told, { undefined() });
+        continueIn(isGenerator);
+        jumpTo(told, { boolean(false) });
+        continueIn(told);
+        return result;
+    }
+
     Walker::IndexedIteration openByIndexOrProtocol(Reference iterable, const ClassSteppedUnseen& stepped, bool keepsStateInMemory, bool canSkipDoneChecks = false, bool opensGenerators = false)
     {
         Walker::IndexedIteration iteration;
@@ -1037,6 +1195,7 @@ public:
         iteration.hasProtocolFallback = true;
         iteration.position = integer(0);
 
+        iteration.subclass = stepped.contents == ContentsStepped::List ? stepped.subclass : LayoutID();
         iteration.isStringOrArray = stepped.textMayComeInstead;
         iteration.isArrayOrMap = stepped.mapMayComeInstead;
 
@@ -1056,6 +1215,7 @@ public:
             byIndex.appendList({ undefined(), undefined() });
             if (iteration.canSkipDoneChecks && laysVerdictOnNext(iterable) && findHelper(IterationHelper::WayToStepIterator) && findHelper(IterationHelper::StepIteratorInWay)) {
                 iteration.wayToStep = m_walker.addParameter(after, { }, Representation::JSValue);
+                iteration.stepsMatches = stepsMatchesOfOpen();
                 byIndex.append(undefined());
             }
         }
@@ -1080,7 +1240,10 @@ public:
             continueIn(neitherListNorMap);
         }
         if (m_iteratorCallResult) {
-            m_walker.walkStretch(m_iteratorCallBlock, m_iteratorCallBegin, m_iteratorCallEnd);
+            if (m_placeWalkedBeforeCall)
+                m_walker.walkStretch(m_iteratorCallBlock, m_iteratorCallBegin, *m_placeWalkedBeforeCall);
+            if (!m_walker.isUnreachable())
+                m_walker.walkStretch(m_iteratorCallBlock, m_placeWalkedBeforeCall ? *m_placeWalkedBeforeCall + 1 : m_iteratorCallBegin, m_iteratorCallEnd);
             if (m_walker.isUnreachable()) {
                 continueIn(after);
                 return iteration;
@@ -1107,7 +1270,7 @@ public:
         } else {
             openedByProtocol.appendList({ opened.iterator, opened.next });
             if (iteration.wayToStep)
-                openedByProtocol.append(callHelper(findHelper(IterationHelper::WayToStepIterator), { opened.iterator, opened.next }));
+                openedByProtocol.append(askWayToStep(opened, iteration.stepsMatches));
         }
         if (iteration.table)
             openedByProtocol.append(undefined());
@@ -1129,8 +1292,10 @@ public:
         iteration.iterator = opened.iterator;
         iteration.next = opened.next;
         iteration.goesByDriver = opened.goesByDriver;
-        if (asksWay)
-            iteration.wayToStep = callHelper(findHelper(IterationHelper::WayToStepIterator), { opened.iterator, opened.next });
+        if (asksWay) {
+            iteration.stepsMatches = stepsMatchesOfOpen();
+            iteration.wayToStep = askWayToStep(opened, iteration.stepsMatches);
+        }
         return iteration;
     }
 
@@ -1357,6 +1522,26 @@ public:
         return iteration;
     }
 
+    Walker::IndexedIteration takeSubclassElementsAtOpen(Reference iterable, uint32_t numberOfSteps, const ClassSteppedUnseen& stepped)
+    {
+        BlockID outOfLine = addBlock(BlockFrequency::Unlikely);
+        Reference list = continueIfPristine(iterable, stepped, outOfLine);
+        Vector<Reference, 4> taken;
+        for (uint32_t step = 0; step < numberOfSteps; ++step)
+            taken.append(elementAt(list, integer(step), false));
+        Walker::IndexedIteration iteration;
+        iteration.hasPrecomputedSteps = true;
+        BlockID after = addBlock();
+        for (uint32_t step = 0; step < numberOfSteps; ++step)
+            iteration.precomputedSteps.append(m_walker.addParameter(after, { }, Representation::JSValue));
+        jumpTo(after, taken.span());
+        continueIn(outOfLine);
+        taken.shrink(0);
+        takeStepsOutOfLine(iterable, numberOfSteps, taken);
+        jumpTo(after, taken.span());
+        return iteration;
+    }
+
     template<typename TakeAsWritten>
     Vector<Reference, 4> takeStepsOffCollection(Reference receiver, uint32_t numberOfSteps, const ClassSteppedUnseen& stepped, const LinkedContentsAtOperation* contents, const TakeAsWritten& takeAsWritten)
     {
@@ -1474,7 +1659,9 @@ public:
     {
         Reference list = iteration.list;
         if (iteration.hasProtocolFallback) {
-            BlockID byProtocol = addBlock(iteration.isStringOrArray && iteration.contents == ContentsStepped::Text ? BlockFrequency::Normal : BlockFrequency::Unlikely);
+            const bool passesGeneratorsOn = iteration.wayToStep && m_walker.fileHoldsGenerators() && m_walker.program().at(m_walker.unit().function).isCoroutine();
+            const BlockFrequency frequencyOfProtocol = passesGeneratorsOn ? BlockFrequency::Normal : BlockFrequency::Unlikely;
+            BlockID byProtocol = addBlock(iteration.isStringOrArray && iteration.contents == ContentsStepped::Text ? BlockFrequency::Normal : frequencyOfProtocol);
             if (iteration.isStringOrArray && !m_walker.opensGuesses()) {
                 m_whereNeitherTextNorListIsStepped = addBlock();
                 BlockID holdsOneOfThem = addBlock(BlockFrequency::Unlikely);
@@ -1485,13 +1672,25 @@ public:
             BlockID byIndex = m_walker.isUnreachable() ? BlockID() : m_walker.currentBlock();
             continueIn(byProtocol);
             {
-                SetForScope unlikely(m_frequencyOfBlocksAdded, BlockFrequency::Unlikely);
+                SetForScope frequency(m_frequencyOfBlocksAdded, frequencyOfProtocol);
                 stepByProtocolBesideIndex(iteration, after);
             }
             if (byIndex)
                 continueIn(byIndex);
         }
-        if (stepsThroughTable(iteration.contents))
+        if (iteration.otherForm == Walker::IndexedIteration::OtherForm::PiecesOfSplit) {
+            stepOverPiecesOfString(m_walker, list, iteration.subject, iteration.position, m_origin, scopedLambda<void()>([&] {
+                endStepByProtocol(iteration, after, boolean(true), undefined(), integer(Walker::doneIterationPosition));
+            }), scopedLambda<void(Reference, Reference)>([&](Reference piece, Reference next) {
+                endStepByProtocol(iteration, after, boolean(false), piece, next);
+            }));
+        } else if (iteration.otherForm == Walker::IndexedIteration::OtherForm::MatchesOfRegExp) {
+            stepOverMatchesOfString(m_walker, list, iteration.subject, m_origin, scopedLambda<void()>([&] {
+                endStepByProtocol(iteration, after, boolean(true), undefined(), integer(Walker::doneIterationPosition));
+            }), scopedLambda<void(Reference)>([&](Reference match) {
+                endStepByProtocol(iteration, after, boolean(false), match, integer(0));
+            }));
+        } else if (stepsThroughTable(iteration.contents))
             stepThroughTable(iteration, list, after);
         else {
             std::optional<uint32_t> length = lengthKnownOf(iteration);
@@ -1752,16 +1951,17 @@ public:
         Walker::IndexedIteration entered = record;
         if (!isFollowedByDoneBranch(resume) || entered.otherForm != Walker::IndexedIteration::OtherForm::None || !m_walker.canThreadBranchAfter(resume))
             return false;
-        Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
-        isClosed.setTableOperand(entered.table);
-        Reference wasClosed = build(WTF::move(isClosed));
-        if (m_walker.isUnreachable())
-            return true;
         BlockID finished = addBlock();
-        BlockID stepping = addBlock();
-        branch(wasClosed, finished, stepping);
-
-        continueIn(stepping);
+        if (!entered.canSkipDoneChecks) {
+            Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
+            isClosed.setTableOperand(entered.table);
+            Reference wasClosed = build(WTF::move(isClosed));
+            if (m_walker.isUnreachable())
+                return true;
+            BlockID stepping = addBlock();
+            branch(wasClosed, finished, stepping);
+            continueIn(stepping);
+        }
         bool isMap = entered.contents == ContentsStepped::Map;
         Draft next = draft(isMap ? Opcode::MapNext : Opcode::SetNext);
         next.setOperand(0, entered.list);
@@ -1772,7 +1972,7 @@ public:
         branch(resultAt(found, MapNextResult::HasEntry), giving, finished);
 
         continueIn(finished);
-        m_walker.indexedIteration(state).table = build(draft(Opcode::CollectionIteratorClosedMark));
+        m_walker.indexedIteration(state).table = entered.canSkipDoneChecks ? undefined() : build(draft(Opcode::CollectionIteratorClosedMark));
         m_walker.bind(resume.id(), resultsOf(boolean(true), undefined()));
         if (!m_walker.threadBranchAfter(resume)) {
             m_walker.fail("a path of a threaded step did not visit the end of its block"_s);
@@ -1890,6 +2090,21 @@ public:
         jumpTo(after);
     }
 
+    void appendElementsOfSubclass(Reference array, Reference iterable, const ClassSteppedUnseen& stepped, NOESCAPE const Invocable<bool()> auto& isTakenByCallsAlone)
+    {
+        BlockID outOfLine = addBlock(BlockFrequency::Unlikely);
+        BlockID after = addBlock();
+        Reference list = continueIfPristine(iterable, stepped, outOfLine);
+        if (list && !m_walker.isUnreachable()) {
+            appendElementsOf(array, list, isTakenByCallsAlone);
+            jumpTo(after);
+        }
+        continueIn(outOfLine);
+        appendAllOutOfLine(array, iterable);
+        jumpTo(after);
+        continueIn(after);
+    }
+
     bool walkCallApartFromWhatIsNoList(const BodyValue& spread, Reference iterable, const ClassSteppedUnseen& stepped)
     {
         const BodyIndex& index = m_walker.currentBodyIndex();
@@ -1974,6 +2189,75 @@ public:
             if (!m_walker.isUnreachable())
                 m_walker.walkStretch(inputBlock, begin, end);
         }
+        jumpTo(after);
+    }
+
+    void takeCollectionOrWalkGeneric(Reference collection, const ClassSteppedUnseen& stepped, const CopyByArrayFrom& copy, BlockID inputBlock, uint32_t begin, uint32_t end)
+    {
+        BlockID asWritten = addBlock(BlockFrequency::Unlikely);
+        BlockID after = addBlock();
+        Reference given = m_walker.addParameter(after, { }, Representation::JSValue);
+        Reference isCopied = m_walker.addParameter(after, TypeTable::boolean, Representation::Boolean);
+        Reference taken = continueIfPristine(collection, stepped, asWritten);
+        jumpTo(after, { taken, boolean(true) });
+        continueIn(asWritten);
+        {
+            Walker::ClosedArm closedArm(m_walker, true);
+            if (!m_walker.isUnreachable())
+                m_walker.walkStretch(inputBlock, begin, end);
+            if (!m_walker.isUnreachable() && !m_walker.hasFailed())
+                jumpTo(after, { m_walker.referenceOf(copy.given), m_walker.referenceOf(copy.test) });
+        }
+        continueIn(after);
+        if (m_walker.isUnreachable() || m_walker.hasFailed())
+            return;
+        m_walker.bind(copy.given, given);
+        m_walker.bind(copy.test, isCopied);
+    }
+
+    void takePermanentlyUnmodifiedCollection(Reference collection, const CopyByArrayFrom& copy)
+    {
+        m_walker.bind(copy.given, collection);
+        m_walker.bind(copy.test, boolean(true));
+    }
+
+    void testForUnmodifiedSet(const BodyValue& test, Reference copied, const ClassSteppedUnseen& sets)
+    {
+        BlockID isOther = addBlock(BlockFrequency::Unlikely);
+        BlockID after = addBlock();
+        Reference isCopied = m_walker.addParameter(after, TypeTable::boolean, Representation::Boolean);
+        continueIfPristine(copied, sets, isOther);
+        jumpTo(after, { boolean(true) });
+        continueIn(isOther);
+        if (!m_walker.isUnreachable()) {
+            Draft asks = draft(Opcode::IsPristineArray);
+            asks.setValueOperand(copied);
+            Reference isArray = build(WTF::move(asks));
+            jumpTo(after, { isArray });
+        }
+        continueIn(after);
+        if (!m_walker.isUnreachable())
+            m_walker.bind(test.id(), isCopied);
+    }
+
+    void appendCopiedCollection(Reference array, Reference given, std::span<const ClassSteppedUnseen> collections)
+    {
+        BlockID after = addBlock();
+        for (const ClassSteppedUnseen& stepped : collections) {
+            TypeID instances = typeOfInstancesStepped(m_walker, stepped.builtinClass, stepped.contents);
+            if (m_walker.types().isSubset(m_walker.typeOf(given), instances)) {
+                appendMembersOf(array, given, stepped);
+                jumpTo(after);
+                return;
+            }
+            if (!m_walker.types().overlap(m_walker.typeOf(given), instances))
+                continue;
+            BlockID isOther = addBlock(BlockFrequency::Unlikely);
+            appendMembersOf(array, continueIfTypeMatches(given, instances, isOther), stepped);
+            jumpTo(after);
+            continueIn(isOther);
+        }
+        appendAllOutOfLine(array, given);
         jumpTo(after);
     }
 
@@ -2083,8 +2367,9 @@ public:
     void expectNoGenerator() { m_mayStepGenerator = false; }
     void expectNoStepByProtocol() { m_protocolIsForTheOddOne = true; }
     void takeInstanceForAsMade(Reference instance) { m_instanceAsMadeForGood = instance; }
-    void setIteratorCall(BlockID inputBlock, uint32_t begin, uint32_t end, ValueID given)
+    void setIteratorCall(BlockID inputBlock, uint32_t begin, uint32_t end, ValueID given, std::optional<uint32_t> placeWalkedBefore = std::nullopt)
     {
+        m_placeWalkedBeforeCall = placeWalkedBefore;
         m_iteratorCallBlock = inputBlock;
         m_iteratorCallBegin = begin;
         m_iteratorCallEnd = end;
@@ -2374,8 +2659,40 @@ private:
         return own && *own && ofBelow && *ofBelow && table.canonicalID(*own) == table.canonicalID(*ofBelow);
     }
 
+    Reference continueIfInstanceOfSubclass(Reference iterable, const ClassSteppedUnseen& stepped, BlockID otherwise)
+    {
+        Draft look(Opcode::HasStructureOfClass, m_origin);
+        if (stepped.builtinClass == BuiltinClasses::Array)
+            look = draftSubclassElementsTest(iterable, stepped.subclass, m_origin);
+        else {
+            look.setValueOperand(iterable);
+            look.setLayout(stepped.subclass);
+        }
+        BlockID isInstance = addBlock();
+        branch(build(WTF::move(look)), isInstance, otherwise);
+        continueIn(isInstance);
+        MemberConditionRecord opensAsBuilt { MemberConditionKind::MemberUnchanged, stepped.subclass, ClassSide::Prototype, stepped.opener };
+        Draft test = draft(Opcode::AreMembersUnchanged);
+        test.setConditions(singleElementSpan(opensAsBuilt));
+        BlockID passed = addBlock();
+        branch(build(WTF::move(test)), passed, otherwise);
+        continueIn(passed);
+        m_walker.count(StatisticID::BuiltinSubclassesCheckedByStructure);
+        if (m_walker.isUnreachable() || m_walker.hasFailed())
+            return { };
+        TypeID instances = m_walker.types().builtinClass(stepped.builtinClass);
+        if (layoutKnownByStructureOfClass(m_walker, m_walker.typeOf(iterable))) {
+            Reference name = stepped.builtinClass == BuiltinClasses::Array ? arrayNameOfInstance(m_walker, iterable, m_origin) : iterable;
+            if (name)
+                return name;
+        }
+        return continueIfTypeMatches(iterable, instances, otherwise);
+    }
+
     Reference continueIfPristine(Reference iterable, const ClassSteppedUnseen& stepped, BlockID otherwise)
     {
+        if (stepped.subclass)
+            return continueIfInstanceOfSubclass(iterable, stepped, otherwise);
         TypeID instances = typeOfInstancesStepped(m_walker, stepped.builtinClass, stepped.contents);
         Reference instance = m_walker.types().isSubset(m_walker.typeOf(iterable), instances) ? iterable : continueIfTypeMatches(iterable, instances, otherwise);
         if (stepped.contents == ContentsStepped::Text || (instance == iterable && iterable == m_instanceAsMadeForGood && !stepped.restsOnWatchAboveInstances))
@@ -2998,30 +3315,36 @@ private:
         endStepByProtocolOnTwoWays(iteration, after, stepped.results[0], [&] { return stepped.results[1]; });
     }
 
-    void stepGeneratorInWay(const Walker::IndexedIteration& iteration, BlockID after)
+    void stepGeneratorInWay(const Walker::IndexedIteration& iteration, BlockID after, BlockID byHelper)
     {
         if (m_walker.isUnreachable())
             return;
         BlockID isGenerator = addBlock();
-        BlockID byHelper = addBlock();
-        branch(testType(iteration.wayToStep, TypeArena::fromPrimitives(Primitive::False)), isGenerator, byHelper);
+        BlockID isNoGenerator = addBlock(BlockFrequency::Unlikely);
+        branch(testType(iteration.wayToStep, TypeArena::fromPrimitives(Primitive::False)), isGenerator, isNoGenerator);
         continueIn(isGenerator);
         Draft step = draft(Opcode::StepGenerator);
         step.setGeneratorOperand(iteration.iterator);
         step.setResumeMode(ResumeMode::Next);
         step.setValueOperand(undefined());
-        step.setCheck(GeneratorStepCheck::IsGenerator);
+        step.setCheck(GeneratorStepCheck::None);
         Reference steppedGenerator = build(WTF::move(step));
         Reference value = resultOfGeneratorStep(steppedGenerator, StepGeneratorResult::Value);
         Reference status = resultOfGeneratorStep(steppedGenerator, StepGeneratorResult::Status);
-        BlockID isStepped = addBlock();
+        BlockID hasYielded = addBlock();
+        BlockID hasNotYielded = addBlock(BlockFrequency::Unlikely);
+        BlockID isLast = addBlock();
         BlockID isNotStepped = addBlock(BlockFrequency::Rare);
-        branch(hasStatus(status, GeneratorStepStatus::NotStepped), isNotStepped, isStepped);
+        branch(hasStatus(status, GeneratorStepStatus::Yielded), hasYielded, hasNotYielded);
+        continueIn(hasNotYielded);
+        branch(hasStatus(status, GeneratorStepStatus::NotStepped), isNotStepped, isLast);
         continueIn(isNotStepped);
         jumpTo(byHelper);
-        continueIn(isStepped);
-        endStepByProtocolOnTwoWays(iteration, after, hasStatus(status, GeneratorStepStatus::Completed), [&] { return value; });
-        continueIn(byHelper);
+        continueIn(isLast);
+        endStepByProtocol(iteration, after, boolean(true), undefined(), integer(Walker::doneIterationPosition));
+        continueIn(hasYielded);
+        endStepByProtocol(iteration, after, boolean(false), value, integer(0));
+        continueIn(isNoGenerator);
     }
 
     void stepInWayBesideIndex(const Walker::IndexedIteration& iteration, BlockID after)
@@ -3034,6 +3357,11 @@ private:
         Reference stepValue = m_walker.addParameter(stepped, { }, Representation::JSValue);
         m_walker.recordSpeculation();
         m_walker.count(StatisticID::IteratorsSteppedWithoutCall);
+        SetForScope<BlockFrequency> frequency(m_frequencyOfBlocksAdded, m_frequencyOfBlocksAdded);
+        if (m_walker.fileHoldsGenerators()) {
+            stepGeneratorInWay(iteration, after, byHelper);
+            m_frequencyOfBlocksAdded = BlockFrequency::Unlikely;
+        }
         branch(testType(iteration.wayToStep, TypeArena::fromPrimitives(Primitive::True)), throughTable, notThroughTable);
         continueIn(notThroughTable);
         branch(testType(iteration.wayToStep, TypeTable::undefined), byCall, byHelper);
@@ -3042,9 +3370,9 @@ private:
         next.setIteratorOperand(iteration.iterator);
         jumpTo(stepped, { build(WTF::move(next)) });
         continueIn(byHelper);
-        if (m_walker.fileHoldsGenerators())
-            stepGeneratorInWay(iteration, after);
-        jumpTo(stepped, { callHelper(findHelper(IterationHelper::StepIteratorInWay), { iteration.iterator, iteration.wayToStep }) });
+        if (iteration.stepsMatches)
+            m_walker.count(StatisticID::MatchIterationsStepped);
+        jumpTo(stepped, { callHelper(findHelper(iteration.stepsMatches ? IterationHelper::StepMatchesInWay : IterationHelper::StepIteratorInWay), { iteration.iterator, iteration.wayToStep }) });
         continueIn(stepped);
         Draft isClosed = draft(Opcode::IsCollectionIteratorClosedMark);
         isClosed.setTableOperand(stepValue);
@@ -3303,6 +3631,32 @@ private:
         return withNextMethod(iterator);
     }
 
+    bool mayOpenUnmodifiedAsyncGenerator(Reference iterable)
+    {
+        TypeArena& types = m_walker.types();
+        const BuiltinTable& table = m_walker.program().builtins();
+        const Function& function = m_walker.program().at(m_walker.unit().function);
+        bool isRunOften = m_walker.isInLoop() || (m_walker.unit().role == CodeRole::CoroutineBody && function.has(FunctionFlags::IsGenerator));
+        return isRunOften && !m_walker.isUnreachable() && m_walker.has(Mechanism::Guesses) && m_walker.has(Mechanism::BuiltinCalls) && m_walker.opensGuesses() && hasInstanceTest(table, BuiltinClasses::AsyncGenerator)
+            && types.overlap(m_walker.typeOf(iterable), types.builtinClass(BuiltinClasses::AsyncGenerator)) && engineOpensAsyncGenerators(m_walker);
+    }
+
+    void openUnmodifiedAsyncGenerator(Reference iterable, BlockID opened)
+    {
+        BlockID isOther = addBlock();
+        Reference generator = continueIfTypeMatches(iterable, m_walker.types().builtinClass(BuiltinClasses::AsyncGenerator), isOther);
+        Draft test = draft(Opcode::IsUnmodifiedAsyncGenerator);
+        test.setGeneratorOperand(generator);
+        BlockID isAsMade = addBlock();
+        branch(build(WTF::move(test)), isAsMade, isOther);
+        continueIn(isAsMade);
+        Draft next = draft(Opcode::Builtin);
+        next.setBuiltin(m_walker.program().builtins().canonicalID(Builtins::AsyncGeneratorPrototypeNext));
+        next.setIsNotReadFromHolder(true);
+        jumpTo(opened, { generator, build(WTF::move(next)), boolean(true) });
+        continueIn(isOther);
+    }
+
     OpenedIteration openAsync(Reference iterable)
     {
         if (Reference method = canSeeMethods() ? readMethodInSightOfProvenObject(m_walker, iterable, m_walker.types().wellKnownSymbolKey(WellKnownSymbol::AsyncIterator), m_origin) : Reference()) {
@@ -3310,13 +3664,26 @@ private:
             OpenedIteration opened = withNextMethod(requireObject(call(method, iterable), RuntimeErrorKind::IteratorNotObject));
             return { opened.iterator, opened.next, boolean(false) };
         }
+        BlockID opened;
+        Reference iterator;
+        Reference next;
+        Reference goesByDriver;
+        auto addOpenedBlock = [&] {
+            opened = addBlock();
+            iterator = m_walker.addParameter(opened, TypeTable::anything, Representation::JSValue);
+            next = m_walker.addParameter(opened, TypeTable::anything, Representation::JSValue);
+            goesByDriver = m_walker.addParameter(opened, TypeTable::boolean, Representation::Boolean);
+        };
+        bool opensAsMade = mayOpenUnmodifiedAsyncGenerator(iterable);
+        if (opensAsMade) {
+            addOpenedBlock();
+            openUnmodifiedAsyncGenerator(iterable, opened);
+        }
         Reference method = read(iterable, WellKnownSymbol::AsyncIterator);
         BlockID absent = addBlock();
         BlockID present = addBlock();
-        BlockID opened = addBlock();
-        Reference iterator = m_walker.addParameter(opened, TypeTable::anything, Representation::JSValue);
-        Reference next = m_walker.addParameter(opened, TypeTable::anything, Representation::JSValue);
-        Reference goesByDriver = m_walker.addParameter(opened, TypeTable::boolean, Representation::Boolean);
+        if (!opensAsMade)
+            addOpenedBlock();
         branch(testType(method, TypeTable::nullish), absent, present);
 
         continueIn(absent);
@@ -3690,6 +4057,7 @@ private:
     BlockID m_iteratorCallBlock;
     uint32_t m_iteratorCallBegin { 0 };
     uint32_t m_iteratorCallEnd { 0 };
+    std::optional<uint32_t> m_placeWalkedBeforeCall;
     ValueID m_iteratorCallResult;
     Reference m_iteratorReturned;
 };
@@ -4110,7 +4478,7 @@ static bool openDelegatedIteration(Walker& walker, const BodyValue& open)
         return false;
     WayOfIteration way = findWayOfIteration(walker.currentBodyIndex(), open.id());
     Reference iterable = walker.referenceOf(written.iterableOperand());
-    if (!way.canBeFollowed || !way.hasSingleStepAtHeader || !iterable || !iterable.isRecord() || !nobodyThrowsIntoIterators(walker))
+    if (!way.canBeFollowed || !way.hasSingleStepAtHeader || !iterable || !iterable.isRecord() || !nobodyThrowsIntoIterators(walker) || isResultOfDelegatedCall(walker, iterable))
         return false;
 
     BuilderOfIteration builder(walker, walker.originOf(open), IteratorKind::Sync, WordingOfIteration::Delegation);
@@ -4148,6 +4516,57 @@ static bool openDelegatedIteration(Walker& walker, const BodyValue& open)
     return true;
 }
 
+static ValueID stepAtDelegationHeader(const BodyIndex& index, BlockID inputHead, ValueID open)
+{
+    ValueID step;
+    for (BodyValue operation : index.block(inputHead).values()) {
+        if (operation.opcode() == Opcode::IteratorResume && operation.operand(0) == open)
+            step = operation.id();
+        else if (step ? operation.opcode() != Opcode::ResultAt || operation.as<Opcode::ResultAt>().resultsOperand() != step : operation.opcode() != Opcode::LoopHint)
+            return { };
+    }
+    return step;
+}
+
+bool callDelegate(Walker& walker, const BodyValue& call)
+{
+    auto written = call.as<Opcode::Call>();
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID open = index.onlyUsingValue(call.id());
+    if (!open || index.isParameter(open) || index.opcodeOf(open) != Opcode::IteratorOpen || !walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::BuiltinCalls))
+        return false;
+    auto opened = index.value(open).as<Opcode::IteratorOpen>();
+    Reference callee = walker.referenceOf(written.calleeOperand());
+    if (opened.iteratorKind() != IteratorKind::Sync || !opened.isDelegating() || index.blockOf(open) != index.blockOf(call.id()) || !callee || !callee.isValue() || !engineAnswersForGenerators(walker))
+        return false;
+    if (open.index() - index.block(index.blockOf(open)).firstValue().index() >= walker.endOfStretchBeingWalked())
+        return false;
+    WayOfIteration way = findWayOfIteration(index, open);
+    if (!way.canBeFollowed || !way.hasSingleStepAtHeader || !stepAtDelegationHeader(index, way.headOfLoopThatSteps, open))
+        return false;
+    Draft draft = walker.draftOf(call);
+    Draft delegated(Opcode::CallDelegate, draft.origin());
+    delegated.setCalleeOperand(callee);
+    if (written.thisValueOperand())
+        delegated.setThisValueOperand(walker.referenceOf(written.thisValueOperand()));
+    Vector<Reference, 8> arguments;
+    for (ValueID argument : written.argumentsOperands())
+        arguments.append(walker.referenceOf(argument));
+    delegated.setArgumentsOperands(arguments.span());
+    if (written.calleeName())
+        delegated.setCalleeName(written.calleeName());
+    walker.chooseConservativeFields(delegated);
+    Reference results = walker.build(WTF::move(delegated));
+    if (walker.isUnreachable() || !results)
+        return true;
+    walker.state().invalidateHeap();
+    Draft value(Opcode::ResultAt, draft.origin());
+    value.setResultsOperand(results);
+    value.setIndex(static_cast<uint32_t>(DelegatedCallResult::Value));
+    walker.bind(call.id(), walker.build(WTF::move(value)));
+    return true;
+}
+
 static bool openDelegationInValues(Walker& walker, const BodyValue& open)
 {
     auto written = open.as<Opcode::IteratorOpen>();
@@ -4157,6 +4576,8 @@ static bool openDelegationInValues(Walker& walker, const BodyValue& open)
     WayOfIteration way = findWayOfIteration(walker.currentBodyIndex(), open.id());
     if (!way.canBeFollowed || !way.hasSingleStepAtHeader)
         return false;
+    if (Reference hasCompleted = completionOfDelegatedCall(walker, iterable, walker.originOf(open)))
+        walker.leaveCompletedDelegation(way.headOfLoopThatSteps, stepAtDelegationHeader(walker.currentBodyIndex(), way.headOfLoopThatSteps, open.id()), hasCompleted, iterable);
     BuilderOfIteration builder(walker, walker.originOf(open), IteratorKind::Sync, WordingOfIteration::Delegation);
     builder.standFor(open);
     Walker::IndexedIteration iteration = builder.openDelegation(iterable);
@@ -4166,6 +4587,71 @@ static bool openDelegationInValues(Walker& walker, const BodyValue& open)
     if (!walker.isUnreachable())
         walker.bind(open.id(), walker.addIndexedIteration(WTF::move(iteration)));
     return true;
+}
+
+static bool returnsNewTable(const Walker& walker, FunctionID function)
+{
+    const BodyIndex* body = walker.facts().bodies().find(function);
+    if (!body || walker.program().at(function).isCoroutine())
+        return false;
+    ValueID returned;
+    for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
+        BodyTerminator end = body->terminator(BlockID(number));
+        if (!body->isReachable(BlockID(number)) || (end.kind() != TerminatorKind::Return && end.kind() != TerminatorKind::ReturnCall))
+            continue;
+        ValueID result = end.operand(0) ? body->stripCasts(end.operand(0)) : ValueID();
+        if (!result || (returned && returned != result))
+            return false;
+        returned = result;
+    }
+    if (!returned || body->isParameter(returned) || body->opcodeOf(returned) != Opcode::Construct)
+        return false;
+    ValueID callee = body->stripCasts(body->value(returned).calleeOperand());
+    if (!callee || body->isParameter(callee) || body->opcodeOf(callee) != Opcode::Builtin)
+        return false;
+    BuiltinID constructor = body->value(callee).as<Opcode::Builtin>().builtin();
+    return constructor == Builtins::Map || constructor == Builtins::Set;
+}
+
+static void reserveTablesFilledByIteration(Walker& walker, const BodyIndex& index, const BodyValue& open, BlockID head, Reference iterable)
+{
+    if (!iterable || !walker.types().overlap(walker.typeOf(iterable), walker.types().builtinClass(BuiltinClasses::Array)))
+        return;
+    LoopID loop = index.loopOf(head);
+    uint32_t firstValueOfLoop = index.block(head).firstParameter().index();
+    Vector<Reference, 2> tables;
+    for (uint32_t number : additionsToTables(walker)) {
+        ValueID call(number);
+        BlockID block = index.blockOf(call);
+        ValueID receiver = index.stripCasts(index.value(call).as<Opcode::Call>().thisValueOperand());
+        if (index.loopOf(block) != loop || receiver.index() >= firstValueOfLoop)
+            continue;
+        Reference table = walker.referenceOf(receiver);
+        auto isNew = [&] {
+            if (walker.state().isFresh(Reference::value(underlyingCellOf(walker.code(), table.id()))))
+                return true;
+            FunctionID maker = !index.isParameter(receiver) && index.opcodeOf(receiver) == Opcode::Call ? walker.facts().linked().calleeAt(walker.currentFunction(), receiver) : FunctionID();
+            return maker && returnsNewTable(walker, maker);
+        };
+        if (!table || !table.isValue() || tables.contains(table) || !isNew())
+            continue;
+        TypeID type = walker.typeOf(table);
+        if (!walker.types().isSubset(type, walker.types().builtinClass(BuiltinClasses::Map)) && !walker.types().isSubset(type, walker.types().builtinClass(BuiltinClasses::Set)))
+            continue;
+        bool growsInEveryIteration = std::ranges::all_of(walker.incomingEdgesOf(index, head), [&](const BodyIncomingEdge& edge) {
+            return !index.isInLoop(edge.from, loop) || index.dominates(block, edge.from);
+        });
+        if (growsInEveryIteration)
+            tables.append(table);
+    }
+    for (Reference table : tables) {
+        Draft reserve(Opcode::ReserveTableCapacity, walker.originOf(open));
+        walker.chooseConservativeFields(reserve);
+        reserve.setTableOperand(table);
+        reserve.setSourceOperand(iterable);
+        walker.build(WTF::move(reserve));
+        walker.count(StatisticID::TableCapacitiesReserved);
+    }
 }
 
 static bool openTypedIteration(Walker& walker, const BodyValue& open)
@@ -4247,7 +4733,17 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
     if (iterable && !isSurelyAsMade && stepsOfPatternStandInRow(index, open)) {
         uint32_t numberOfSteps = *open.as<Opcode::IteratorOpen>().elementCount();
         bool standsInLoop = iterable.isValue() && walker.isInLoop();
-        std::optional<ClassSteppedUnseen> table = standsInLoop ? findClassToTestFor(walker, iterated, iterable, true) : std::nullopt;
+        bool mayBeOfSubclass = iterable.isValue() && walker.program().someClassExtendsArray;
+        std::optional<ClassSteppedUnseen> table = standsInLoop || mayBeOfSubclass ? findClassToTestFor(walker, iterated, iterable, true, keyOfIterator(walker)) : std::nullopt;
+        if (table && table->subclass && table->contents == ContentsStepped::List) {
+            Walker::IndexedIteration iteration = builder.takeSubclassElementsAtOpen(iterable, numberOfSteps, *table);
+            walker.recordSpeculation();
+            if (!walker.isUnreachable())
+                walker.bind(open.id(), walker.addIndexedIteration(WTF::move(iteration)));
+            return true;
+        }
+        if (!standsInLoop)
+            table = std::nullopt;
         if (std::optional<Walker::IndexedIteration> held = table ? builder.tryOpenWithIterationGuard(open, iterable, *table) : std::nullopt) {
             if (!walker.isUnreachable())
                 walker.bind(open.id(), walker.addIndexedIteration(WTF::move(*held)));
@@ -4284,9 +4780,11 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
     WayOfIteration way = findWayOfIteration(index, open.id());
     if (!way.canBeFollowed)
         return false;
-    std::optional<ClassSteppedUnseen> tested = isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, open.as<Opcode::IteratorOpen>().iterableOperand(), iterable, !!way.headOfLoopThatSteps);
+    std::optional<ClassSteppedUnseen> tested = isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, open.as<Opcode::IteratorOpen>().iterableOperand(), iterable, !!way.headOfLoopThatSteps, keyOfIterator(walker));
     if (!isSurelyAsMade && !tested && (!way.canSkipDoneChecks || !iterable || !iterable.isValue()))
         return false;
+    if (way.hasSingleStepAtHeader)
+        reserveTablesFilledByIteration(walker, index, open, way.headOfLoopThatSteps, iterable);
     if (tested && tested->contents == ContentsStepped::List && way.hasSingleStepAtHeader && !walker.program().admitsReplacedBuiltins && walker.types().overlap(walker.typeOf(iterable), TypeTable::string) && (tested->isListForWantOfWord || writtenWordOfParameterNamesTextBesideList(walker, iterated))) {
         std::optional<ClassSteppedUnseen> texts = findClassSteppedUnseen(walker, TypeID(TypeTable::string));
         LoopID loop = index.loopOf(way.headOfLoopThatSteps);
@@ -4339,6 +4837,104 @@ static bool openTypedIteration(Walker& walker, const BodyValue& open)
     return true;
 }
 
+static bool nameIterationUnder(Walker&, ClassSteppedUnseen& tested, BuiltinName, bool isAsMadeForGood);
+
+static std::optional<ClassSteppedUnseen> findCollectionOfSpreadIterator(Walker& walker, const BodyValue& read, const BodyValue& call, Reference receiver, bool& isAsMadeForGood)
+{
+    BuiltinName name = walker.program().builtinNameOf(read.key());
+    if (!name || !receiver)
+        return std::nullopt;
+    std::optional<ClassSteppedUnseen> proven = findClassSteppedUnseen(walker, receiver);
+    isAsMadeForGood = proven && receiverStaysAsMadeByLink(walker, call);
+    std::optional<ClassSteppedUnseen> tested = isAsMadeForGood ? proven : findClassToTestFor(walker, read.objectOperand(), receiver);
+    if (!tested || (tested->contents != ContentsStepped::Map && tested->contents != ContentsStepped::Set))
+        return std::nullopt;
+    if (!nameIterationUnder(walker, *tested, name, isAsMadeForGood) || tested->kind == JSC::IterationKind::Entries)
+        return std::nullopt;
+    return tested;
+}
+
+static bool takeCollectionCopiedByArrayFrom(Walker& walker, const BodyValue& read, ValueID callID)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    std::optional<CopyByArrayFrom> copy = findCopyByArrayFrom(index, callID);
+    if (!copy)
+        return false;
+    BodyBlock block = index.block(walker.inputBlockOf(read.id()));
+    uint32_t place = read.id().index() - block.firstValue().index();
+    uint32_t placeAfterTest = block.numberOfValues();
+    BodyValue call = index.value(callID);
+    if (placeAfterTest > walker.endOfStretchBeingWalked() || call.calleeOperand() != read.id() || call.thisValueOperand() != read.objectOperand() || !call.as<Opcode::Call>().argumentsOperands().empty())
+        return false;
+    Reference receiver = walker.referenceOf(read.objectOperand());
+    bool isAsMadeForGood = false;
+    std::optional<ClassSteppedUnseen> tested = findCollectionOfSpreadIterator(walker, read, call, receiver, isAsMadeForGood);
+    if (!tested)
+        return false;
+
+    walker.count(StatisticID::IteratorAllocationsElidedInSpreads);
+    walker.addCopiedCollection({ walker.inlineFrameAtWork(), callID, tested->builtinClass, tested->contents, tested->kind });
+    BuilderOfIteration builder(walker, walker.originOf(call), IteratorKind::Sync, WordingOfIteration::Spread);
+    if (isAsMadeForGood) {
+        holdLinksWordAgainstObjectAsMade(walker, receiver, walker.originOf(call));
+        builder.takePermanentlyUnmodifiedCollection(receiver, *copy);
+    } else {
+        builder.takeCollectionOrWalkGeneric(receiver, *tested, *copy, block.id(), place, placeAfterTest);
+        walker.recordSpeculation();
+    }
+    walker.walkStretch(block.id(), placeAfterTest, placeAfterTest);
+    return true;
+}
+
+bool copySetByArrayFromOfItsOpcodes(Walker& walker, const BodyValue& test)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID copied = test.operand(0);
+    Reference given = walker.isUnreachable() || walker.hasStringsInBuilders() ? Reference() : walker.referenceOf(copied);
+    std::optional<ClassSteppedUnseen> sets = given ? findClassSteppedUnseen(walker, given) : std::nullopt;
+    if (given && !sets)
+        sets = findClassToTestFor(walker, copied, given);
+    if (!sets || sets->contents != ContentsStepped::Set || sets->kind != JSC::IterationKind::Values)
+        return false;
+    BodyBlock block = index.block(walker.inputBlockOf(test.id()));
+    BodyTerminator end = block.terminator();
+    if (end.kind() != TerminatorKind::Branch || end.operand(0) != test.id() || !index.hasOneUse(test.id()))
+        return false;
+    BodyBlock spreading = index.block(end.taken().block());
+    static constexpr uint32_t valuesOfSpread = 2;
+    if (index.numberOfIncomingEdges(spreading.id()) != 1 || spreading.numberOfParameters() || spreading.numberOfValues() < valuesOfSpread)
+        return false;
+    BodyValue array = index.value(spreading.firstValue());
+    ValueID spread(spreading.firstValue().index() + 1);
+    if (array.opcode() != Opcode::NewArray || array.numberOfVariadicOperands() || index.opcodeOf(spread) != Opcode::AppendSpread || index.value(spread).as<Opcode::AppendSpread>().iterableOperand() != copied)
+        return false;
+    BuilderOfIteration builder(walker, walker.originOf(test), IteratorKind::Sync, WordingOfIteration::Spread);
+    builder.testForUnmodifiedSet(test, given, *sets);
+    walker.recordSpeculation();
+    return true;
+}
+
+static bool replaceSpreadWithCopiedCollection(Walker& walker, const BodyValue& spread, Reference array, Reference given)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID call = index.stripCasts(spread.as<Opcode::AppendSpread>().iterableOperand());
+    Vector<ClassSteppedUnseen, 2> collections;
+    for (const Walker::CopiedCollection& copied : walker.copiedCollections()) {
+        if (copied.call != call || copied.inlineFrame != walker.inlineFrameAtWork())
+            continue;
+        ClassSteppedUnseen stepped { copied.builtinClass };
+        stepped.contents = copied.contents;
+        stepped.kind = copied.kind;
+        collections.append(stepped);
+    }
+    std::optional<CopyByArrayFrom> copy = collections.isEmpty() ? std::nullopt : findCopyByArrayFrom(index, call);
+    if (!copy || copy->spread != spread.id())
+        return false;
+    BuilderOfIteration builder(walker, walker.originOf(spread), IteratorKind::Sync, WordingOfIteration::Spread);
+    builder.appendCopiedCollection(array, given, collections.span());
+    return true;
+}
+
 bool appendMembersInPlaceOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     if (read.isFreeName() || walker.hasStringsInBuilders() || walker.isUnreachable())
@@ -4349,7 +4945,9 @@ bool appendMembersInPlaceOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, c
     if (callID.index() >= block.endOfValues().index() || index.opcodeOf(callID) != Opcode::Call || index.onlyUsingValue(read.id()) != callID)
         return false;
     ValueID spreadID = onlyTakerBehindCasts(index, callID);
-    if (!spreadID || index.isParameter(spreadID) || index.blockOf(spreadID) != block.id() || index.opcodeOf(spreadID) != Opcode::AppendSpread)
+    if (!spreadID)
+        return takeCollectionCopiedByArrayFrom(walker, read, callID);
+    if (index.isParameter(spreadID) || index.blockOf(spreadID) != block.id() || index.opcodeOf(spreadID) != Opcode::AppendSpread)
         return false;
     for (uint32_t number = callID.index() + 1; number < spreadID.index(); ++number) {
         if (!opcodesThatStateTypes.contains(index.opcodeOf(ValueID(number))))
@@ -4362,28 +4960,14 @@ bool appendMembersInPlaceOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, c
     ValueID receiverID = read.objectOperand();
     if (placeBehindSpread > walker.endOfStretchBeingWalked() || call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID || !call.as<Opcode::Call>().argumentsOperands().empty())
         return false;
-    if (index.stripCasts(spread.iterableOperand()) != callID)
-        return false;
-    BuiltinName name = walker.program().builtinNameOf(read.key());
     Reference array = walker.referenceOf(spread.arrayOperand());
+    if (!array || index.stripCasts(spread.iterableOperand()) != callID)
+        return false;
     Reference receiver = walker.referenceOf(receiverID);
-    if (!name || !array || !receiver)
+    bool isAsMadeForGood = false;
+    std::optional<ClassSteppedUnseen> tested = findCollectionOfSpreadIterator(walker, read, call, receiver, isAsMadeForGood);
+    if (!tested)
         return false;
-
-    std::optional<ClassSteppedUnseen> proven = findClassSteppedUnseen(walker, receiver);
-    bool isAsMadeForGood = proven && receiverStaysAsMadeByLink(walker, call);
-    std::optional<ClassSteppedUnseen> tested = isAsMadeForGood ? proven : findClassToTestFor(walker, receiverID, receiver);
-    if (!tested || (tested->contents != ContentsStepped::Map && tested->contents != ContentsStepped::Set))
-        return false;
-    std::optional<JSC::IterationKind> kind = kindOfIterationThatNobodySees(walker, tested->builtinClass, false, name);
-    if (!kind && !isAsMadeForGood && walker.program().admitsReplacedBuiltins) {
-        BuiltinID methodThatOpens;
-        kind = kindOfIterationThatNobodySees(walker, tested->builtinClass, false, name, MembersBehindWatch::AreAsBuilt, &methodThatOpens);
-        restOnWatchAboveInstances(walker, *tested, methodThatOpens, name);
-    }
-    if (!kind || *kind == JSC::IterationKind::Entries)
-        return false;
-    tested->kind = *kind;
 
     walker.count(StatisticID::IteratorAllocationsElidedInSpreads);
     BuilderOfIteration builder(walker, walker.originOf(index.value(spreadID)), IteratorKind::Sync, WordingOfIteration::Spread);
@@ -4593,6 +5177,9 @@ bool startsFirstStepOfIterator(Walker& walker, const BodyValue& read)
 bool takeFirstStepOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     const BodyIndex& index = walker.currentBodyIndex();
+    ValueID behind(read.id().index() + 1);
+    if (read.isFreeName() || behind.index() >= index.numberOfValues() || index.opcodeOf(behind) != Opcode::Call)
+        return false;
     BodyBlock block = index.block(walker.inputBlockOf(read.id()));
     std::optional<FirstStepOfIterator> step = findFirstStepOfIterator(walker, read, std::min(block.endOfValues().index(), block.firstValue().index() + walker.endOfStretchBeingWalked()));
     if (!step)
@@ -4619,10 +5206,128 @@ bool takeFirstStepOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const Bo
     return true;
 }
 
+static ValueID findStepAtHead(const BodyIndex& index, ValueID open, BlockID head)
+{
+    for (BodyValue operation : index.block(head).values()) {
+        if (operation.opcode() == Opcode::IteratorResume && operation.operand(0) == open)
+            return operation.id();
+    }
+    return { };
+}
+
+static bool loopOnlyReadsSteps(const BodyIndex& index, ValueID open, BlockID head)
+{
+    static constexpr OpcodeSet looks = allRelations | allEqualities | OpcodeSet { Opcode::ToBoolean, Opcode::PropGet };
+    ValueID step = findStepAtHead(index, open, head);
+    ValueID piece;
+    for (BodyValue operation : index.block(head).values()) {
+        if (step && operation.opcode() == Opcode::ResultAt && operation.as<Opcode::ResultAt>().resultsOperand() == step && operation.as<Opcode::ResultAt>().index() == static_cast<uint32_t>(IteratorResumeResult::Value))
+            piece = operation.id();
+    }
+    return piece && std::ranges::all_of(index.membersOf(index.loopOf(head)), [&](BlockID member) {
+        return std::ranges::all_of(index.block(member).values(), [&](BodyValue operation) {
+            if (opcodesThatStateTypes.contains(operation.opcode()) || looks.contains(operation.opcode()))
+                return true;
+            bool isKept = false;
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                isKept |= operand && index.stripCasts(operand) == piece && !(operation.opcode() == Opcode::Call && operand == operation.thisValueOperand());
+            });
+            return !isKept;
+        });
+    });
+}
+
+static bool openLoopOverSpeculatedStringParts(Walker& walker, const BodyValue& read)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(walker.inputBlockOf(read.id()));
+    ValueID callID = index.onlyUsingValue(read.id());
+    if (!callID || index.opcodeOf(callID) != Opcode::Call || index.blockOf(callID) != block.id())
+        return false;
+    BodyValue call = index.value(callID);
+    std::span<const ValueID> arguments = call.as<Opcode::Call>().argumentsOperands();
+    ValueID receiverID = read.objectOperand();
+    if (call.calleeOperand() != read.id() || call.thisValueOperand() != receiverID || arguments.size() != 1 || index.isParameter(arguments[0]))
+        return false;
+    const bool takesMatches = index.opcodeOf(arguments[0]) == Opcode::NewRegExp;
+    if (!takesMatches && (index.opcodeOf(arguments[0]) != Opcode::String || walker.program().builtinNameOf(read.key()) != BuiltinNames::split))
+        return false;
+    ValueID openID = onlyTakerBehindCasts(index, callID);
+    if (!openID || index.isParameter(openID) || index.blockOf(openID) != block.id() || index.opcodeOf(openID) != Opcode::IteratorOpen)
+        return false;
+    for (uint32_t number = read.id().index() + 1; number < openID.index(); ++number) {
+        ValueID between(number);
+        bool isOnlyArgument = between == arguments[0] && index.onlyUsingValue(between) == callID;
+        if (between != callID && !isOnlyArgument && !opcodesThatStateTypes.contains(index.opcodeOf(between)))
+            return false;
+    }
+    if ((takesMatches && !namesMatchAll(walker, read.key())) || walker.program().admitsReplacedBuiltins || !walker.has(Mechanism::BuiltinCalls) || !isArrayIteratorProtocolIntact(walker) || !isArrayPrototypeChainSane(walker))
+        return false;
+    BodyValue open = index.value(openID);
+    auto opened = open.as<Opcode::IteratorOpen>();
+    if (opened.isDestructuring() || opened.isDelegating() || opened.iteratorKind() != IteratorKind::Sync || index.stripCasts(opened.iterableOperand()) != callID)
+        return false;
+    StringID separator = takesMatches ? StringID() : index.value(arguments[0]).as<Opcode::String>().string();
+    if (takesMatches) {
+        auto written = index.value(arguments[0]).as<Opcode::NewRegExp>();
+        if (arguments[0].index() < read.id().index() || walker.program().at(walker.unit().function).isCoroutine() || !matchesAreSteppedByExec(walker, written.pattern(), written.regExpFlags()))
+            return false;
+    } else if (separator == walker.program().strings.emptyString())
+        return false;
+
+    Reference receiver = walker.referenceOf(receiverID);
+    TypeArena& types = walker.types();
+    if (!receiver || !receiver.isValue() || types.isSubset(walker.typeOf(receiver), TypeTable::string) || !types.overlap(walker.typeOf(receiver), TypeTable::string))
+        return false;
+    TypeID expected = findExpectation(walker, receiverID).type;
+    expected = expected ? types.withoutNullish(expected) : TypeID();
+    if (expected && !isNeverType(expected) && !types.isSubset(expected, TypeTable::string))
+        return false;
+    WayOfIteration way = findWayOfIteration(index, openID);
+    if (!way.canBeFollowed || !way.headOfLoopThatSteps || !way.hasSingleStepAtHeader || !way.canSkipDoneChecks || way.stepsStandUnderOwnCleanup || !way.closesStandBelowOnlyStep)
+        return false;
+
+    uint32_t place = read.id().index() - block.firstValue().index();
+    uint32_t placeOfOpen = openID.index() - block.firstValue().index();
+    Reference subject;
+    std::optional<uint32_t> placeOfPattern;
+    if (takesMatches) {
+        placeOfPattern = arguments[0].index() - block.firstValue().index();
+        walker.walkStretch(block.id(), *placeOfPattern, *placeOfPattern + 1);
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+        std::optional<RegExpWrittenForCall> regExp = findRegExpWrittenForCall(walker, call, arguments[0]);
+        if (!regExp) {
+            walker.walkStretch(block.id(), place, placeOfOpen + 1);
+            return true;
+        }
+        subject = regExp->object;
+    } else {
+        Draft literal(Opcode::String);
+        literal.setString(separator);
+        subject = walker.constant(WTF::move(literal));
+    }
+    BuilderOfIteration builder(walker, walker.originOf(open), IteratorKind::Sync, WordingOfIteration::Source);
+    builder.setIteratorCall(block.id(), place, placeOfOpen, opened.iterableOperand(), placeOfPattern);
+    Walker::IndexedIteration iteration = builder.openByIndexOrProtocol(receiver, ClassSteppedUnseen { BuiltinClasses::String, ContentsStepped::Text }, false, true);
+    iteration.subject = subject;
+    iteration.otherForm = takesMatches ? Walker::IndexedIteration::OtherForm::MatchesOfRegExp : Walker::IndexedIteration::OtherForm::PiecesOfSplit;
+    iteration.inputHead = way.headOfLoopThatSteps;
+    iteration.isDeadAfterLoop = takesMatches ? loopTakesMatchesApart(walker, findStepAtHead(index, openID, way.headOfLoopThatSteps)) : loopOnlyReadsSteps(index, openID, way.headOfLoopThatSteps);
+    walker.recordSpeculation();
+    walker.count(takesMatches ? StatisticID::MatchIterationsInlined : StatisticID::SplitIterationsInlined);
+    if (!walker.isUnreachable())
+        walker.bind(openID, walker.addIndexedIteration(WTF::move(iteration)));
+    walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
+    return true;
+}
+
 bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     if (read.isFreeName() || walker.walksStretchInsideAnother() || walker.isUnreachable())
         return false;
+    if (openLoopOverSpeculatedStringParts(walker, read))
+        return true;
     const BodyIndex& index = walker.currentBodyIndex();
     BodyBlock block = index.block(walker.inputBlockOf(read.id()));
     ValueID callID(read.id().index() + 1);
@@ -4654,8 +5359,8 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
     Reference receiver = walker.referenceOf(receiverID);
     std::optional<ClassSteppedUnseen> proven = findClassSteppedUnseen(walker, receiver);
     bool isAsMadeForGood = proven && receiverStaysAsMadeByLink(walker, call);
-    std::optional<ClassSteppedUnseen> tested = isAsMadeForGood ? proven : findClassToTestFor(walker, receiverID, receiver, !!way.headOfLoopThatSteps);
-    if (!isAsMadeForGood && way.headOfLoopThatSteps && (name == BuiltinNames::values || name == BuiltinNames::keys) && !isReadUnderIndexesInLoop(index, way.headOfLoopThatSteps, receiverID)) {
+    std::optional<ClassSteppedUnseen> tested = isAsMadeForGood ? proven : findClassToTestFor(walker, receiverID, receiver, !!way.headOfLoopThatSteps, read.key());
+    if (!isAsMadeForGood && way.headOfLoopThatSteps && !(tested && tested->subclass) && (name == BuiltinNames::values || name == BuiltinNames::keys) && !isReadUnderIndexesInLoop(index, way.headOfLoopThatSteps, receiverID)) {
         std::optional<ClassSteppedUnseen> maps = orMapToTestFor(walker, receiverID, receiver, tested);
         bool bothMayCome = tested && maps && tested->contents == ContentsStepped::List && maps->contents == ContentsStepped::Map && !walker.program().admitsReplacedBuiltins;
         if (bothMayCome && !delegates)
@@ -4802,6 +5507,8 @@ static bool appendSpreadOfList(Walker& walker, const BodyValue& spread)
 {
     Reference array = walker.referenceOf(spread.as<Opcode::AppendSpread>().arrayOperand());
     Reference iterable = walker.referenceOf(spread.as<Opcode::AppendSpread>().iterableOperand());
+    if (array && iterable && !walker.copiedCollections().empty() && replaceSpreadWithCopiedCollection(walker, spread, array, iterable))
+        return true;
     if (array && isArrayIteratorProtocolIntact(walker)) {
         if (Reference list = listStandingForFreshArguments(walker, iterable))
             iterable = list;
@@ -4815,7 +5522,7 @@ static bool appendSpreadOfList(Walker& walker, const BodyValue& spread)
     BuiltinClassID classAsMadeForGood = linksWordCanBeHeldAgainst(walker, iterable) ? classOfIterableThatStaysAsMadeByLink(walker, spread, spread.as<Opcode::AppendSpread>().iterableOperand()) : BuiltinClassID();
     bool isListAsMadeForGood = classAsMadeForGood == BuiltinClasses::Array && isArrayPrototypeChainSane(walker);
     bool isSurelyAsMade = isProvenArrayIterable(walker, iterable) && (isListAsMadeForGood || isKnownPristine(walker, iterable));
-    std::optional<ClassSteppedUnseen> tested = !array || isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, spread.as<Opcode::AppendSpread>().iterableOperand(), iterable);
+    std::optional<ClassSteppedUnseen> tested = !array || isSurelyAsMade ? std::nullopt : findClassToTestFor(walker, spread.as<Opcode::AppendSpread>().iterableOperand(), iterable, false, keyOfIterator(walker));
     if (!array || !iterable)
         return false;
     if (std::optional<ClassSteppedUnseen> proven = !tested && !isSurelyAsMade && classAsMadeForGood ? findClassSteppedUnseen(walker, iterable) : std::nullopt; proven && proven->builtinClass == classAsMadeForGood)
@@ -4836,14 +5543,19 @@ static bool appendSpreadOfList(Walker& walker, const BodyValue& spread)
         }
         builder.appendMembersOrAllOutOfLine(array, iterable, *tested);
         walker.recordSpeculation();
-    } else if (tested && tested->builtinClass == BuiltinClasses::Array && tested->contents == ContentsStepped::List && builder.walkCallApartFromWhatIsNoList(spread, iterable, *tested))
+    } else if (tested && tested->subclass && tested->contents == ContentsStepped::List) {
+        builder.appendElementsOfSubclass(array, iterable, *tested, [&] {
+            return walker.listsThatCallsAloneTakeInCurrentBody().quickGet(spread.as<Opcode::AppendSpread>().arrayOperand().index());
+        });
+        walker.recordSpeculation();
+    } else if (tested && !tested->subclass && tested->builtinClass == BuiltinClasses::Array && tested->contents == ContentsStepped::List && builder.walkCallApartFromWhatIsNoList(spread, iterable, *tested))
         walker.recordSpeculation();
     else
     {
         TypeArena& types = walker.types();
         TypeID proven = iterable.isValue() ? walker.typeOf(iterable) : TypeID();
         bool isGenerator = proven && types.isSubset(proven, types.builtinClass(BuiltinClasses::Generator));
-        bool isOfProgram = proven && types.at(proven).hasOnlyLayouts();
+        bool isOfProgram = proven && types.at(proven).hasOnlyLayouts() && !builtinClassBelowType(walker, proven);
         bool isInLibrary = (isGenerator && builder.tryAppendGeneratorInLibrary(array, iterable)) || (isOfProgram && builder.tryAppendObjectOfProgramInLibrary(array, iterable));
         if (!isInLibrary)
             builder.appendAllOutOfLine(array, iterable);
@@ -4964,6 +5676,33 @@ const Walker::IndexedIteration* findDestructuredEntriesIteration(Walker& walker,
         return nullptr;
     const Walker::IndexedIteration* stepped = findIndexedArrayIteration(walker, index, index.value(step), true);
     return stepped && stepped->isEntryPairElided ? stepped : nullptr;
+}
+
+ValueID findIterableOfPosition(Walker& walker, const BodyIndex& index, ValueID key)
+{
+    ValueID given = key ? index.stripCasts(key) : ValueID();
+    if (!given || index.isParameter(given) || index.opcodeOf(given) != Opcode::ResultAt || index.value(given).as<Opcode::ResultAt>().index() != static_cast<uint32_t>(IteratorResumeResult::Value))
+        return { };
+    auto stepOf = [&](ValueID result) -> ValueID {
+        ValueID stepped = index.value(result).as<Opcode::ResultAt>().resultsOperand();
+        return stepped && !index.isParameter(stepped) && index.opcodeOf(stepped) == Opcode::IteratorResume ? stepped : ValueID();
+    };
+    auto iterableOf = [&](ValueID step) -> ValueID {
+        ValueID opened = index.value(step).as<Opcode::IteratorResume>().iteratorOperand();
+        return opened && !index.isParameter(opened) && index.opcodeOf(opened) == Opcode::IteratorOpen ? index.stripCasts(index.value(opened).as<Opcode::IteratorOpen>().iterableOperand()) : ValueID();
+    };
+    ValueID step = stepOf(given);
+    if (!step)
+        return { };
+    if (const Walker::IndexedIteration* iteration = findIndexedArrayIteration(walker, index, index.value(step), true))
+        return iteration->kind == JSC::IterationKind::Keys ? iterableOf(step) : ValueID();
+    auto first = index.value(step).as<Opcode::IteratorResume>();
+    ValueID opened = first.iteratorOperand();
+    if (!first.stepIndex() || *first.stepIndex() || !opened || index.isParameter(opened) || !findDestructuredEntriesIteration(walker, index, index.value(opened)))
+        return { };
+    ValueID pair = iterableOf(step);
+    ValueID stepOfPair = pair ? stepOf(pair) : ValueID();
+    return stepOfPair ? iterableOf(stepOfPair) : ValueID();
 }
 
 constinit const OpcodeSet opcodesThatBuildTypedIterationTakes = opcodesOfTypedIteration;

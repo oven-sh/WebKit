@@ -1,0 +1,93 @@
+# var total = 3, view = new Int32Array(64); function step(p) { var a = p >> 2, b = view[a]; b = b * total + 1 .. ; return b; } function evaluate(text) { return eval(text); } step(8); evaluate("1");
+# A function that leads to no direct eval has a slow body and a guard that asks the mark of evals anyway. The guard asks the numbers among the parameters too, though the body reads them seldom.
+# LIBRARY: own
+# RUN: plan units mechanisms=all
+# CHECK: unit f2:Body (Int32)
+# CHECK: unit f2:ParameterGuard (JSValue) -> (JSValue) tests (i32)
+
+module m0 path="main.js" displayPath="main.js" body=f0
+variable g0 name="total" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="view" module=m0 declared={type=anything} initialization=Undefined
+variable g2 name="step" module=m0 declared={type=anything} initialization=Function function=f2
+variable g3 module=m0 declared={type=anything} initialization=Undefined flags=[MarksEvaluation]
+evalscope e0 flags=[IsInFunction, AllowsNewTarget] bindings=[{name="total" depth=1 variable=g0}, {name="view" depth=1 variable=g1}, {name="step" depth=1 variable=g2}]
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=3
+    PutModuleVariable v0 variable=g0
+    v2 = Builtin builtin=Int32Array
+    v3 = Integer integer=64
+    v4 = Construct v2, -, v3
+    PutModuleVariable v4 variable=g1
+    v6 = GetModuleVariable variable=g2
+    v7 = Integer integer=8
+    v8 = Call v6, -, v7
+    v9 = NewClosure function=f1
+    v10 = String string="1"
+    v11 = Call v9, -, v10
+    Return v11
+}
+function f1 name="evaluate" module=m0 flags=[HasThis, HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Boolean boolean=true
+    PutModuleVariable v3 variable=g3
+    v5 = DirectEval v2, v0, v1 evalScope=e0
+    Return v5
+}
+function f2 name="step" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    v2 = RShift v0, v1
+    v3 = GetModuleVariable variable=g1
+    v4 = ElemGet v3, v2
+    v5 = GetModuleVariable variable=g0
+    v6 = Mul v4, v5
+    v7 = GetModuleVariable variable=g0
+    v8 = Mul v6, v7
+    v9 = GetModuleVariable variable=g0
+    v10 = Mul v8, v9
+    v11 = GetModuleVariable variable=g0
+    v12 = Mul v10, v11
+    v13 = GetModuleVariable variable=g0
+    v14 = Mul v12, v13
+    v15 = GetModuleVariable variable=g0
+    v16 = Mul v14, v15
+    v17 = GetModuleVariable variable=g0
+    v18 = Mul v16, v17
+    v19 = GetModuleVariable variable=g0
+    v20 = Mul v18, v19
+    v21 = GetModuleVariable variable=g0
+    v22 = Mul v20, v21
+    v23 = GetModuleVariable variable=g0
+    v24 = Mul v22, v23
+    v25 = GetModuleVariable variable=g0
+    v26 = Mul v24, v25
+    v27 = GetModuleVariable variable=g0
+    v28 = Mul v26, v27
+    v29 = GetModuleVariable variable=g0
+    v30 = Mul v28, v29
+    v31 = GetModuleVariable variable=g0
+    v32 = Mul v30, v31
+    v33 = GetModuleVariable variable=g0
+    v34 = Mul v32, v33
+    v35 = GetModuleVariable variable=g0
+    v36 = Mul v34, v35
+    v37 = GetModuleVariable variable=g0
+    v38 = Mul v36, v37
+    v39 = GetModuleVariable variable=g0
+    v40 = Mul v38, v39
+    v41 = GetModuleVariable variable=g0
+    v42 = Mul v40, v41
+    v43 = GetModuleVariable variable=g0
+    v44 = Mul v42, v43
+    v45 = GetModuleVariable variable=g0
+    v46 = Mul v44, v45
+    v47 = GetModuleVariable variable=g0
+    v48 = Mul v46, v47
+    v49 = GetModuleVariable variable=g0
+    v50 = Mul v48, v49
+    v51 = GetModuleVariable variable=g0
+    v52 = Mul v50, v51
+    Return v52
+}

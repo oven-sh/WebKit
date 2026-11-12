@@ -466,8 +466,32 @@ std::optional<ModuleID> ModuleTable::findByPath(StringView publicPath, unsigned 
     return std::nullopt;
 }
 
+static uint32_t hashOfPathPrefix(StringView prefix)
+{
+    uint32_t hash = HashOfDirectory::ofNoText;
+    for (char16_t character : prefix.codeUnits())
+        hash = HashOfDirectory::with(hash, character);
+    return hash;
+}
+
+bool ModuleTable::mayContainPrefixWithHash(uint32_t hash) const
+{
+    std::span<const uint32_t> bits = m_tables->directoriesOfModulesByPath();
+    if (bits.empty())
+        return false;
+    size_t bit = HashOfDirectory::bit(hash, bits.size() * 32);
+    return bits[bit / 32] >> (bit % 32) & 1;
+}
+
+bool ModuleTable::mayHaveAttributeVariant(StringView publicPath) const
+{
+    return mayHaveAttributeVariants() && mayContainPrefixWithHash(HashOfDirectory::with(hashOfPathPrefix(publicPath), '?'));
+}
+
 bool ModuleTable::hasAttributeVariant(StringView publicPath) const
 {
+    if (!mayHaveAttributeVariant(publicPath))
+        return false;
     String start = makeString(publicPath, '?');
     ModuleNumbers byPath = modulesByPath();
     auto places = std::views::iota(size_t(0), byPath.size());
@@ -479,6 +503,8 @@ bool ModuleTable::hasAttributeVariant(StringView publicPath) const
 
 Vector<ModuleID, 2> ModuleTable::importAttributeVariants(StringView publicPath) const
 {
+    if (!mayHaveAttributeVariant(publicPath))
+        return { };
     String start = makeString(publicPath, '?');
     ModuleNumbers byPath = modulesByPath();
     auto places = std::views::iota(size_t(0), byPath.size());
@@ -507,11 +533,7 @@ bool ModuleTable::mayContainPathWithPrefix(StringView start) const
     size_t slash = start.reverseFind('/');
     if (bits.empty() || slash == notFound)
         return true;
-    uint32_t hash = HashOfDirectory::ofNoText;
-    for (char16_t character : start.left(slash + 1).codeUnits())
-        hash = HashOfDirectory::with(hash, character);
-    size_t bit = HashOfDirectory::bit(hash, bits.size() * 32);
-    return bits[bit / 32] >> (bit % 32) & 1;
+    return mayContainPrefixWithHash(hashOfPathPrefix(start.left(slash + 1)));
 }
 
 bool Image::mayContainModulePathWithPrefix(StringView start) const

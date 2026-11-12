@@ -77,6 +77,8 @@ Reference codePointOfCharacterInSight(Walker&, Reference character);
 Reference buildOnlyCharacter(Walker&, Reference string, Origin);
 void noteCodePointBesideCharacter(Walker&, Reference character, Reference codePoint);
 Reference buildLengthOfCharacterInSight(Walker&, Reference character, Origin);
+Reference buildLengthOnlyJoin(Walker&, ValueID text, Origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails);
+Reference buildLengthOfIntegerString(Walker&, Reference string, Origin);
 Reference codeUnitOfCharCodeInSight(Walker&, Reference number);
 Reference stringBehindFlatString(const Walker&, Reference);
 Reference flatLiteralBeforeLoop(Walker&, Reference literal, Origin);
@@ -92,7 +94,9 @@ bool buildEqualityOnStrings(Walker&, const BodyValue&, const InputsOfTypedOperat
 bool buildRelationOnStrings(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildTruthinessOfLengthOfString(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildNumberOfPiece(Walker&, const BodyValue&, const InputsOfTypedOperation&);
+void noteOrderedPieceBounds(Walker&, Reference start, Reference end);
 bool buildLengthOfPieceInSight(Walker&, const BodyValue&, const InputsOfTypedOperation&);
+bool buildKnownPieceTruthiness(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool buildCharacterReadByMethod(Walker&, const CallByOneRow&);
 bool buildPieceByMethod(Walker&, const CallByOneRow&);
 bool buildNumberOfPieceByCall(Walker&, const CallByOneRow&);
@@ -107,7 +111,7 @@ Reference buildTestOfCodeUnitBesidePartOfJoin(Walker&, Reference string, Referen
 ValueID findTestOfEndThatTakesJoinApart(Walker&, const BodyValue& join, Reference takenToHaveText);
 bool goesByOneRowOnOperandAsMade(Walker&, const BodyValue& call, BuiltinID, Reference value, TypeID behindTest, BuiltinOverloadID* onlyRow = nullptr);
 ValueID findLastCallInMethodChain(Walker&, const BodyValue& firstCall, uint32_t behindStretch);
-void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt, std::span<const ValueID> readsOffHolders = { });
+void openGuessAtOperandTakenAsMade(Walker&, const BodyValue& call, Reference value, TypeID tested, std::optional<uint32_t> firstPlace = std::nullopt, std::span<const ValueID> readsOffHolders = { }, ValueID last = { });
 
 struct NotesOfStrings final : Walker::KeptForBuild {
     template<typename Noted> using ByRecord = HashMap<uint32_t, Noted, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
@@ -157,6 +161,7 @@ Reference clampedPositionForStrings(Walker&, Reference position, Reference limit
 bool nameProvesPositionBelowLengthForStrings(const Walker&, Reference position, Reference string);
 bool readsCharacterBeforeTestedNumber(Walker&, const BodyValue& read);
 bool readsCharacterUnderLoweredCounter(Walker&, const BodyValue& read);
+bool readsCharacterAtOuterCounter(Walker&, const BodyValue& read);
 
 
 Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin, bool readsCodeUnitsAlone = false);

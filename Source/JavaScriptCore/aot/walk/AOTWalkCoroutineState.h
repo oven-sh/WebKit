@@ -18,6 +18,7 @@ struct KeptForUnitOfCoroutines {
 struct CoroutineStateOfUnit {
     std::unique_ptr<KeptForUnitOfCoroutines> keptByPromises;
     std::unique_ptr<KeptForUnitOfCoroutines> keptByCalls;
+    std::unique_ptr<KeptForUnitOfCoroutines> keptByReactionChains;
 };
 
 } } } // namespace JSC::AOT::Typed

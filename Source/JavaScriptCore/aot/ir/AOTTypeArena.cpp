@@ -328,8 +328,10 @@ void TypeArena::reset()
     m_stringSets.reset();
     m_keySets.reset();
 
-    m_types.shrink(0);
-    emptyTypeArenaIndex(m_typeIndex);
+    if (!m_types.isEmpty()) {
+        m_types.shrink(0);
+        emptyTypeArenaIndex(m_typeIndex);
+    }
     if (m_someAnythingOfSeedLiesInThread) {
         for (TypeID& known : m_anythingOfSeed) {
             if (liesInThread(known))
@@ -338,21 +340,28 @@ void TypeArena::reset()
         m_someAnythingOfSeedLiesInThread = false;
     }
 
-    m_classPartWords.shrink(0);
-    m_firstWordOfClassParts.shrink(0);
-    emptyTypeArenaIndex(m_classPartsIndex);
-    m_outgrownClassPartWords.shrink(0);
+    if (!m_firstWordOfClassParts.isEmpty()) {
+        m_classPartWords.shrink(0);
+        m_firstWordOfClassParts.shrink(0);
+        emptyTypeArenaIndex(m_classPartsIndex);
+        m_outgrownClassPartWords.shrink(0);
+    }
 
-    m_propertyKeys.shrink(0);
-    emptyTypeArenaIndex(m_propertyKeyIndex);
-    m_outgrownPropertyKeys.shrink(0);
+    if (!m_propertyKeys.isEmpty()) {
+        m_propertyKeys.shrink(0);
+        emptyTypeArenaIndex(m_propertyKeyIndex);
+        m_outgrownPropertyKeys.shrink(0);
+    }
 
-    m_bytesOfTexts.shrink(0);
-    m_roomBehindTexts.clear();
-    m_madeTexts.shrink(0);
     m_joinedTexts.clear();
-    emptyTypeArenaIndex(m_textIndex);
-    m_outgrownBytesOfTexts.shrink(0);
+    m_numbersOfOperandListsUntilReset.clear();
+    if (!m_madeTexts.isEmpty()) {
+        m_bytesOfTexts.shrink(0);
+        m_roomBehindTexts.clear();
+        m_madeTexts.shrink(0);
+        emptyTypeArenaIndex(m_textIndex);
+        m_outgrownBytesOfTexts.shrink(0);
+    }
 
     if (m_epoch == largestEpochOfTypeMemo) {
         m_memoUntilReset.fill(MemoEntry { });
@@ -373,6 +382,7 @@ void TypeArena::forgetUnionsOfMany()
 size_t TypeArena::sizeOfMemosInBytes() const
 {
     size_t size = m_lastingMemo.sizeInBytes() + m_unionsOfMany.sizeInBytes() + (m_memoUntilReset.capacity() + m_typesMade.capacity()) * sizeof(MemoEntry);
+    size += (m_numbersOfOperandLists.capacity() + m_numbersOfOperandListsUntilReset.capacity()) * sizeof(NumbersOfOperandLists::KeyValuePairType);
     for (const IDSetArena* sets : { &m_layoutSets.untyped(), &m_objectSets.untyped(), &m_stringSets.untyped(), &m_keySets.untyped() })
         size += sets->sizeOfMemosInBytes() + sets->sizeOfScratchInBytes();
     return size;
@@ -811,6 +821,18 @@ NEVER_INLINE bool TypeArena::makeRoomForTypesMade()
         return false;
     m_typesMade.fill(MemoEntry { }, slotsOfTypesMade);
     return true;
+}
+
+uint32_t TypeArena::numberOfOperandList(uint32_t list, TypeID lastOperand)
+{
+    static constexpr uint32_t largestNumber = (1u << 29) - 1;
+    bool liesInThread = wordOfTypeMemoLiesInThread(list) || wordOfTypeMemoLiesInThread(lastOperand.bits());
+    auto added = (liesInThread ? m_numbersOfOperandListsUntilReset : m_numbersOfOperandLists).add(static_cast<uint64_t>(list) << 32 | lastOperand.bits(), 0);
+    if (added.isNewEntry) {
+        RELEASE_ASSERT(m_numberOfOperandLists < largestNumber);
+        added.iterator->value = ++m_numberOfOperandLists | (liesInThread ? static_cast<uint32_t>(IDHome::Thread) << idHomeShift : 0);
+    }
+    return added.iterator->value;
 }
 
 void TypeArena::rememberAnswer(uint8_t question, uint32_t first, uint32_t second, uint32_t answer)

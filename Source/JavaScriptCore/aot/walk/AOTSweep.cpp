@@ -26,9 +26,10 @@ static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(Sweep
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
 static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
-static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndCellLifetime, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
+static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndCellLifetime, Opcode::ReleaseList, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
 
-static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment };
+static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment, Opcode::ReleaseArray };
+static_assert(OperandIndex::ReleaseArray::array == OperandIndex::ReleaseEnvironment::environment);
 static_assert(OperandIndex::MarkEnvironmentEscaped::environment == OperandIndex::ReleaseEnvironment::environment);
 
 static constexpr uint8_t isKeptForOperandInRowOfSweep = 1 << 0;
@@ -627,6 +628,11 @@ void Sweep::dropTakenEdge()
     }
 }
 
+static bool storesSameField(const Operation& store, const Operation& later)
+{
+    return store.environmentOperand() == later.environmentOperand() && store.layout() == later.layout() && store.field() == later.field();
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
 {
     Code& code = *m_code;
@@ -649,6 +655,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
 
     const bool looksForCoveredBarriers = m_looksForCoveredBarriers;
     const bool looksForCoveredFences = m_looksForCoveredFences;
+    if (!m_storesThatAwaitBirth.isEmpty() && m_blockAwaitingAllocations != id)
+        forgetStoresThatAwaitBirth();
     if (looksForCoveredBarriers && !m_coveredAtHeads.isEmpty() && block.terminator.numberOfEdges && m_numberCoveredAtHead[code.at(block.terminator.edge(0)).to.index()])
         beginCoverageAtEndOf(id);
     if (looksForCoveredFences) {
@@ -658,6 +666,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
             m_laterFenceCovers = false;
     }
     uint32_t numberOfOperationsVisited = 0;
+    const Operation* laterStore = nullptr;
     ValueID previous;
     for (ValueID value = block.m_last; value; value = previous) {
         const Operation& operation = code.at(value);
@@ -666,6 +675,9 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
         if (opcode == Opcode::Parameter)
             continue;
         ++numberOfOperationsVisited;
+        const Operation* overwritingStore = laterStore;
+        if (laterStore && !operation.traits().isPure())
+            laterStore = nullptr;
 
         uint8_t row = rowOfOpcodeInSweep(opcode);
         uint8_t& marks = arrays.marks[value.index()];
@@ -678,6 +690,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
             } else {
                 if ((marks & pollsForNothingMarkOfSweep) || !staysInSweptCodeByItselfByRow(operation, row))
                     continue;
+                if (opcode == Opcode::PutEnvironmentField) {
+                    if (overwritingStore && storesSameField(operation, *overwritingStore)) {
+                        if (!m_sweepsAgainBehindMovedBirths)
+                            m_overwrittenStores.append(value);
+                        laterStore = overwritingStore;
+                        continue;
+                    }
+                    if (m_sweepsAgainBehindMovedBirths && std::ranges::binary_search(m_overwrittenStores, value.index(), { }, &ValueID::index))
+                        continue;
+                    laterStore = &operation;
+                }
                 if (opcode == Opcode::CheckProof && operation.goesWithItsValue()) {
                     ValueID asked = operation.valueOperand();
                     const Operation& made = code.at(asked);
@@ -717,7 +740,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
     if (looksForCoveredBarriers && !m_coveredOwners.isEmpty())
         endCoverageAtHeadOf(id);
     if (!m_storesThatAwaitBirth.isEmpty())
-        forgetStoresThatAwaitBirth();
+        awaitBirthsAheadOf(id);
     if (looksForCoveredFences && m_laterFenceCovers)
         endFenceCoverageAtHeadOf(id);
     uint32_t numberInOrder = endInOrder - firstInOrder;
@@ -841,7 +864,7 @@ bool Sweep::mayBeKeptForItsOperand(const Operation& operation) const
     if (!operationsThatSweepKeepsForTheirOperand.contains(operation.opcode))
         return false;
     ValueID operand = operation.operand(OperandIndex::ReleaseEnvironment::environment);
-    return !m_code->isConstant(operand) && holdsCells(m_code->at(operand).representation);
+    return !m_code->isConstant(operand) && (holdsCells(m_code->at(operand).representation) || operation.opcode == Opcode::ReleaseArray);
 }
 
 bool Sweep::noteOperationKeptForItsOperand(BlockID block, ValueID id, const Operation& operation)

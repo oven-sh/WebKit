@@ -12,6 +12,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 bool joinOfWhatIsInSight(Walker&, const BodyValue& call, BuiltinID called);
+bool takePartsOfConvertedList(Walker&, Reference list, Vector<Reference, 8>& parts);
 
 bool holdsPartsTakenOutOfTexts(const Walker&, const BodyValue& join, std::span<const Reference> parts);
 inline constexpr OpcodeSet opcodesThatGuessThatOperandBesideStringHasTextTakes { Opcode::Add };

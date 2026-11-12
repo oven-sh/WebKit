@@ -128,29 +128,66 @@ std::optional<RegExpWrittenForCall> findRegExpWrittenForCall(Walker& walker, con
     return RegExpWrittenForCall { built, made.pattern(), made.regExpFlags(), made.origin() };
 }
 
-std::optional<HeldRegExp> findHeldRegExp(Walker& walker, ValueID operand)
+static std::optional<HeldRegExp> findRegExpInBody(const Walker& walker, FunctionID function, const BodyIndex& index, ValueID operand, size_t framesOutward)
 {
     if (!operand)
         return std::nullopt;
-    const BodyIndex& index = walker.currentBodyIndex();
     while (!index.isParameter(operand) && inputPassThroughOpcodes.contains(index.opcodeOf(operand)))
         operand = index.value(operand).operand(0);
     if (index.isParameter(operand)) {
-        FunctionID function = walker.currentFunction();
-        std::optional<uint32_t> capture = index.block(entryBlock).indexOfParameter(operand);
-        if (!capture || *capture >= walker.program().at(function).captures.size())
+        const Function& holder = walker.program().at(function);
+        std::optional<uint32_t> position = index.blockOf(operand) == entryBlock ? index.block(entryBlock).indexOfParameter(operand) : std::nullopt;
+        if (!position)
             return std::nullopt;
-        const HeldRegExp* held = walker.plan().heldRegExps().find(function, *capture);
+        if (*position < holder.captures.size()) {
+            const HeldRegExp* held = walker.plan().heldRegExps().find(function, *position);
+            return held ? std::optional<HeldRegExp>(*held) : std::nullopt;
+        }
+        std::optional<Walker::CallOfCopy> copied = walker.callOfCopy(framesOutward);
+        return copied ? findRegExpInBody(walker, copied->caller, *copied->index, findWrittenArgument(copied->index->value(copied->call), holder, *position), framesOutward + 1) : std::nullopt;
+    }
+    if (framesOutward && index.opcodeOf(operand) == Opcode::NewRegExp) {
+        auto made = index.value(operand).as<Opcode::NewRegExp>();
+        return HeldRegExp { made.pattern(), made.regExpFlags() };
+    }
+    if (index.opcodeOf(operand) == Opcode::GetEnvironmentField) {
+        auto read = index.value(operand).as<Opcode::GetEnvironmentField>();
+        const HeldRegExp* held = walker.plan().heldRegExps().find(FieldReference { read.layout(), read.field() });
+        return held ? std::optional<HeldRegExp>(*held) : std::nullopt;
+    }
+    if (index.opcodeOf(operand) == Opcode::PrivateGet) {
+        auto read = index.value(operand).as<Opcode::PrivateGet>();
+        const HeldRegExp* held = walker.plan().heldRegExps().find(FieldReference { read.layout(), read.field() });
         return held ? std::optional<HeldRegExp>(*held) : std::nullopt;
     }
     if (index.opcodeOf(operand) != Opcode::GetModuleVariable)
         return std::nullopt;
-    const DeferredVariable* deferred = walker.plan().deferredDefinitions().findDeferred(index.value(operand).as<Opcode::GetModuleVariable>().variable());
+    const VariableID variable = index.value(operand).as<Opcode::GetModuleVariable>().variable();
+    if (const HeldRegExp* held = walker.plan().heldRegExps().find(variable))
+        return *held;
+    const DeferredVariable* deferred = walker.plan().deferredDefinitions().findDeferred(variable);
     if (!deferred || deferred->opcode != Opcode::NewRegExp)
         return std::nullopt;
     const BodyIndex* definition = walker.facts().bodies().find(deferred->body);
     RELEASE_ASSERT(definition);
     auto made = definition->value(deferred->made).as<Opcode::NewRegExp>();
+    return HeldRegExp { made.pattern(), made.regExpFlags() };
+}
+
+std::optional<HeldRegExp> findHeldRegExp(const Walker& walker, ValueID operand)
+{
+    return findRegExpInBody(walker, walker.currentFunction(), walker.currentBodyIndex(), operand, 0);
+}
+
+std::optional<HeldRegExp> findRegExpPassed(const Walker& walker, ValueID operand)
+{
+    if (!operand)
+        return std::nullopt;
+    const BodyIndex& index = walker.currentBodyIndex();
+    const ValueID written = index.stripCasts(operand);
+    if (index.isParameter(written) || index.opcodeOf(written) != Opcode::NewRegExp)
+        return findHeldRegExp(walker, operand);
+    auto made = index.value(written).as<Opcode::NewRegExp>();
     return HeldRegExp { made.pattern(), made.regExpFlags() };
 }
 

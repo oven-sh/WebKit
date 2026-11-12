@@ -8,7 +8,7 @@
 # ACCESS-NOT: access
 # RUN(LINK): link fields mechanisms=all
 # LINK: field L0.0 "name" proven=string writers-known written-at-construction-alone filled
-# LINK: field L0.1 "late" proven=int[0, 2147483647]
+# LINK: field L0.1 "late" proven=1
 
 layout L0 module=m0 fields=[{key="name" declared={type=anything}}, {key="late" declared={type=anything}}, {key="last" declared={type=anything}}]
 module m0 path="/a.test.js" displayPath="a.test.js" body=f0

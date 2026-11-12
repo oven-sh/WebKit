@@ -5,8 +5,8 @@
 # and its claim is checked against the array: the process crashes with a named error.
 # The check used to be a branch: a false result took the path of an absent element, which gives the right result, so a false claim was never noticed.
 # RUN(EVENT): walk f1 mechanisms=all testing=CheckBoundsAtRunTime,AssumeIndexesInBounds
+# EVENT: int[0, 2147483647] @Int32) isInLoop=true isLoopHead=true
 # EVENT: [[storage]]: {{*}} = GetArrayStorage
-# EVENT: isLoopHead=true
 # EVENT: = HasContiguousIndex {{*}} storage=[[storage]] [isInBounds]
 # RUN(RIGHT): run-in-shell mechanisms=all globalThis.after = () => print(each.call(["a", "b", "c"], null, 1000));
 # RIGHT: 3

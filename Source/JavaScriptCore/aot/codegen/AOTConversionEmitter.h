@@ -76,6 +76,7 @@ public:
     void noteDoubleElement(LValue number) { m_doubleElements.add(number); }
     Integer widen(Word32, Range);
     void noteSignExtended(Word32 word, Integer extended) { m_signExtendedWords.add(word.value(), extended.value()); }
+    void forgetSignExtended(Word32 word) { m_signExtendedWords.remove(word.value()); }
     std::optional<Integer> signExtendedIntegerOf(Word32 word) const
     {
         LValue extended = m_signExtendedWords.get(word.value());
@@ -92,6 +93,8 @@ public:
     Word32 toInt32OfBoxedNumber(Boxed);
     Number purified(Number);
     Number withoutPayload(Number);
+    Number quietNaN(Number);
+    void noteNumberWithoutPayload(Operand optional, Number number) { m_numbersWithoutPayload.add(optional.value, number.value()); }
 
     Operand decode(NarrowReference, const Type&, Representation);
     NarrowReference compress(Operand, const Type&);
@@ -105,7 +108,17 @@ public:
         Integer value;
         bool mayBeMarker;
         bool markerIsNaN { false };
+        Range range { Range::full() };
+        bool isRounded { false };
     };
+    static bool areComparedAsIntegers(const ComparedInteger& left, const ComparedInteger& right)
+    {
+        static constexpr Range unrounded { -maxExactInteger + 1, maxExactInteger - 1 };
+        auto mayBeRoundedTo = [](const ComparedInteger& other) {
+            return other.isRounded || !other.range.isSubsetOf(unrounded);
+        };
+        return !(left.isRounded && mayBeRoundedTo(right)) && !(right.isRounded && mayBeRoundedTo(left));
+    }
     std::optional<ComparedInteger> findComparedInteger(Operand);
     Condition isMarker(Operand operand, uint64_t marker)
     {
@@ -180,6 +193,7 @@ private:
     TruncatedNumber m_lastTruncation;
     UncheckedKeyHashSet<LValue> m_numbersOfInt32Elements;
     UncheckedKeyHashSet<LValue> m_doubleElements;
+    UncheckedKeyHashMap<LValue, LValue> m_numbersWithoutPayload;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
     UncheckedKeyHashMap<LValue, bool> m_holdsIntegerThatComesRound;
     LValue m_integerThatComesRound { nullptr };

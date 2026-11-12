@@ -350,6 +350,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSetNext, UGPRPair, (Instance* inst
     OPERATION_RETURN(scope, nextEntry(globalObject, cellArgument<JSSet>(collection, Entry::operationAOTSetNext), JSValue::decode(table), entry, results));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReserveTableCapacity, void, (Instance* instance, JSCell* table, EncodedJSValue encodedSource))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTReserveTableCapacity);
+    JSValue source = JSValue::decode(encodedSource);
+    if ((table->type() != JSMapType && table->type() != JSSetType) || !isJSArray(source))
+        return;
+    if (unsigned length = asArray(source)->length(); length > CompactTable::initialCapacity)
+        CompactTable::reserveForAdditions(globalObject, asObject(table), length, 0, 0);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNextSetElement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedIterator))
 {
     constexpr Entry entry = Entry::operationAOTNextSetElement;
@@ -512,6 +522,7 @@ bool tryAppendPairsOfMap(JSGlobalObject* globalObject, JSArray* target, JSMap* s
         if (globalObject->isHavingABadTime() || !source->size() || !target->tryMakeWritableContiguous(vm).data() || target->indexingMode() != ArrayWithContiguous)
             return false;
     }
+    moveWalkedTableToHeap(globalObject, source, source->storage());
     JSCell* storage = source->storage();
     unsigned size = source->size();
     if (!storage || !size)

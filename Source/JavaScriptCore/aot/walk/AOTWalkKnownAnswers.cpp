@@ -248,6 +248,23 @@ void AnswersOfWalk::clear()
     m_answersOfHolders.shrink(0);
 }
 
+void AnswersOfWalk::releaseRoom()
+{
+    static constexpr size_t mostAnswersKept = 1 << 15;
+    if (m_answers.capacity() <= mostAnswersKept && m_answersOfHolders.capacity() <= mostAnswersKept)
+        return;
+    clear();
+    m_conversions = { };
+    m_answers = { };
+    m_masks = { };
+    m_keys = { };
+    m_wordsOfKeys = { };
+    m_placesOfKeys = { };
+    m_newestOfFirstAnswers = { };
+    m_placesOfNotes = { };
+    m_answersOfHolders = { };
+}
+
 uint32_t AnswersOfWalk::hashOf(std::span<const uint32_t> words)
 {
     uint32_t hash = 0x811c9dc5u;
@@ -827,7 +844,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 }
 
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
-static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::CallInline };
+static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::GetDataViewLimit, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::CallInline };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
@@ -873,6 +890,7 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.field());
         break;
     case Opcode::GetTypedArrayLength:
+    case Opcode::GetDataViewLimit:
         words.append(static_cast<uint32_t>(draft.typedArrayType()));
         break;
     case Opcode::GetGlobalPropertyAddress:
@@ -883,7 +901,7 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.key().bits());
         break;
     case Opcode::GetKeyedPropertyAddress:
-        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes());
+        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes() + 4 * draft.takesFunctions());
         break;
     case Opcode::CallInline:
         words.append(static_cast<uint32_t>(draft.inlineBuiltin()));

@@ -44,6 +44,8 @@ enum class AnswerKeptInArena : uint8_t {
     LayoutsThatStayWithCompiledCode,
     FieldOfLayoutsIsStable,
     DeclaredFieldOfLayoutsIsStable,
+    ResultOfBuiltinCall,
+    FitInBuiltinType,
     NumberOfAnswers,
 };
 
@@ -186,6 +188,7 @@ public:
 
     std::optional<uint32_t> rememberedAnswer(uint8_t question, uint32_t first, uint32_t second);
     void rememberAnswer(uint8_t question, uint32_t first, uint32_t second, uint32_t answer);
+    uint32_t numberOfOperandList(uint32_t list, TypeID lastOperand);
     static constexpr size_t mostWordsOfRound = 4;
     using WordsOfRound = std::array<uint32_t, mostWordsOfRound>;
     struct SetOfRound {
@@ -314,6 +317,10 @@ private:
     mutable Vector<Vector<uint8_t>> m_outgrownBytesOfTexts;
     std::array<TypeID, 16> m_anythingOfSeed { };
     IDPairMemo m_lastingMemo;
+    using NumbersOfOperandLists = HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    uint32_t m_numberOfOperandLists { 0 };
+    NumbersOfOperandLists m_numbersOfOperandLists;
+    NumbersOfOperandLists m_numbersOfOperandListsUntilReset;
     IDListMemo m_unionsOfMany;
     Vector<MemoEntry> m_memoUntilReset;
     Vector<MemoEntry> m_typesMade;

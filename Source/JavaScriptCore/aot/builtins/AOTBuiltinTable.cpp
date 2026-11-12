@@ -424,7 +424,8 @@ bool BuiltinTable::ignoresArgument(BuiltinID builtin, unsigned argument) const
         return !row.isUndeclared() && !parameterFor(row, BuiltinOperand::argument(argument));
     });
     return noRowSpeaksOfIt && std::ranges::all_of(overloadSummariesOf(canonical), [](const BuiltinOverloadSummary& overload) {
-        return overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
+        bool isCodeInLineAlone = overload.kind == BuiltinImplementationKind::Inline && !overload.hasOtherwise;
+        return isCodeInLineAlone || overload.callee == BuiltinCallee::HostFunction || overload.callee == BuiltinCallee::InternalFunction;
     });
 }
 

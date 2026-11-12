@@ -23,6 +23,7 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTElementEmitterAllocation.h"
 #include "AOTEntryEmitter.h"
+#include "AOTGuessedAccessEmitter.h"
 #include "AOTHintEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTInliningAcrossFiles.h"
@@ -32,12 +33,16 @@
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTSavedFrameEmitter.h"
 #include "AOTSchemaInlineBuiltins.h"
+#include "AOTSlotAccessEmitter.h"
+#include "AOTSlotEmitter.h"
 #include "AOTStringEmitter.h"
 #include "AOTSweep.h"
 #include "AOTThrowEmitter.h"
+#include "AOTTruthinessEmitter.h"
 #include "AOTTypeIDs.h"
 #include <algorithm>
 #include <bit>
+#include <ranges>
 #include <type_traits>
 #include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
@@ -115,19 +120,30 @@ GenerationResult CodeGenerator::run()
     orderBlocks();
     createBlocks();
     followNumbersOutOfBytes();
+    lookForCarriedSums();
     createPhis();
     if (unit().role == CodeRole::CoroutineBody && code().hasSuspensions()) {
         m_keepsValuesInHeapFrame = emitter<SavedFrameEmitter>().layOutHeapFrame();
         m_looksBehindEachOperation |= m_keepsValuesInHeapFrame;
     }
 
+    if (code().hasLoops() && code().opcodesOfValues().contains(Opcode::IsElementPresent) && code().opcodesOfValues().contains(Opcode::IsPristine))
+        findRowGuards();
+    if (code().hasLoops() && code().opcodesOfValues().contains(Opcode::HasArrayStorage))
+        findKindsTried();
     findRopeTolerantStrings();
     findLoopCarriedNumbers();
+    findLoopCarriedTables();
+    findCarriedSubstrings();
     findKeysCheckedTwice();
+    m_notesHeadsOfBlocks = m_hasKeysAskedTwice || m_rows || m_kindsTried;
+    m_watchesTerminators = m_checksAllocation || m_checksEffects || m_rows || m_kindsTried;
+    m_watchesCalls = m_understatedEffects || m_rows;
     m_leavesBoxesToHandlers = false;
     if (code().hasBoxesForHandlers() && !m_keepsValuesInHeapFrame) [[unlikely]]
         findBoxesLeftToHandlers();
 
+    m_generatesWatched = m_watchesOperations || m_looksBehindEachOperation;
     definePinnedValues(m_out, m_pinned);
     emitter<EntryEmitter>().generateEntries();
     for (size_t position = 0; position < m_order.size(); ++position) {
@@ -143,9 +159,35 @@ GenerationResult CodeGenerator::run()
             enterScopeOfLoopExit(id);
         const Block& block = code().at(id);
         if (block.isLoopHead && (!m_keepsValuesInHeapFrame || emitter<SavedFrameEmitter>().liesInLoopInsideStretch(id))) {
+            if (std::optional<LoopDistribution> distribution = code().opcodesOfValues().contains(Opcode::PutTypedArrayElement) ? findLoopDistribution(position) : std::nullopt) [[unlikely]] {
+                distributeLoop(*distribution);
+                if (m_hasFailed)
+                    return GenerationResult::Failed;
+            }
+            if (code().opcodesOfValues().contains(Opcode::PutDoubleIndex)) {
+                tryEmitRowLoop(id);
+                if (m_hasFailed)
+                    return GenerationResult::Failed;
+            }
+            bool mayHoldSteppedStore = code().opcodesOfValues().contains(Opcode::PutArrayElement) || code().opcodesOfValues().contains(Opcode::PutTypedArrayElement);
+            if (std::optional<SteppedStore> stepped = mayHoldSteppedStore ? findSteppedStore(position) : std::nullopt) [[unlikely]]
+                layOutSteppedStore(*stepped);
             std::optional<CountedLoop> loop = findCountedLoopAt(position);
+            if (loop && loop->mayComeBack && isShortRecursiveLoop(*loop)) {
+                build().statistics().count(StatisticID::RecursiveLoopsNotUnrolled);
+                loop = std::nullopt;
+            }
             if (loop && !findSharedViewKinds(*loop))
                 loop = std::nullopt;
+            if (std::optional<WideLoop> wide = loop && !loop->rowCountsAsked ? findWideLoop(*loop) : std::nullopt) {
+                layOutWide(*loop, *wide);
+                if (loop->isTooLongToUnroll)
+                    loop = std::nullopt;
+            }
+            if (std::optional<LanePlan> lanes = loop && !loop->rowCountsAsked ? findLanes(*loop) : std::nullopt) {
+                layOutLanes(*loop, *lanes);
+                loop = std::nullopt;
+            }
             if (loop && m_keepsValuesInHeapFrame) {
                 for (BlockID inTurn : loop->turn) {
                     if (!emitter<SavedFrameEmitter>().liesInLoopInsideStretch(inTurn)) {
@@ -154,11 +196,17 @@ GenerationResult CodeGenerator::run()
                     }
                 }
             }
+            if (std::optional<Interleaving> nest = loop && !loop->rowCountsAsked ? findInterleaving(*loop) : std::nullopt) {
+                layOutInterleaved(*loop, *nest);
+                if (m_hasFailed)
+                    return GenerationResult::Failed;
+            }
             if (loop && loop->storesIntoSlots)
                 build().statistics().count(StatisticID::UnrolledLoopsWithSlotStores);
             if (loop) {
                 findLoopExits(*loop);
                 emitFirstConditions(*loop);
+                startFromConstant(*loop);
             }
             if (loop && !loop->viewsAskedForKind.isEmpty())
                 layOutTurnsForEachKindOfView(*loop);
@@ -247,6 +295,7 @@ GenerationResult CodeGenerator::run()
     for (LBasicBlock leftOut : m_blocksLeftOut)
         RELEASE_ASSERT(m_hasFailed || !leftOut->numberOfIncomingEdges());
     RELEASE_ASSERT(m_hasFailed || !m_limitOfWrittenLoop);
+    RELEASE_ASSERT(m_hasFailed || !emitter<TruthinessEmitter>().hasDeferredTruthTests());
     return m_hasFailed ? GenerationResult::Failed : GenerationResult::Generated;
 }
 
@@ -691,6 +740,142 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::dominates(BlockID home, Block
     return m_subtreesByPlace[placeOfUser].first - subtreeOfHome.first < subtreeOfHome.size;
 }
 
+std::optional<CodeGenerator::PushesInLoop> CodeGenerator::findPushesInLoop(BlockID block, ValueID array)
+{
+    if (m_keepsValuesInHeapFrame || !usesLoopForms(block))
+        return std::nullopt;
+    if (m_dominatorsByPlace.empty())
+        findDominators();
+    uint32_t placeOfBlock = m_places[block.index()];
+    BlockID head;
+    Vector<BlockID, 4> ends;
+    for (uint32_t place = placeOfBlock; place && !head; place = m_dominatorsByPlace[place]) {
+        BlockID above = m_order[place - 1];
+        if (!code().at(above).isLoopHead)
+            continue;
+        bool isInLoop = false;
+        code().forEachIncomingEdgeUnsealed(above, [&](const Edge& edge) {
+            if (edge.to != above || !code().isReached(edge.from) || !dominates(above, edge.from))
+                return;
+            ends.append(edge.from);
+            isInLoop |= m_places[edge.from.index()] >= placeOfBlock;
+        });
+        if (isInLoop)
+            head = above;
+        else
+            ends.shrink(0);
+    }
+    if (!head || !std::ranges::all_of(ends, [&](BlockID end) { return dominates(block, end); }))
+        return std::nullopt;
+
+    static constexpr OpcodeSet tests { Opcode::Less, Opcode::LessEq };
+    auto withoutNarrowing = [&](ValueID value) {
+        while (!code().isConstant(value) && (operationsThatStandAmongNarrowedValues.contains(opcodeOf(value)) || valuePreservingOpcodes.contains(opcodeOf(value))))
+            value = code().at(value).operand(0);
+        return value;
+    };
+    auto isIncremented = [&](ValueID parameter) {
+        size_t place = std::ranges::find(code().at(head).parameters(), parameter) - code().at(head).parameters().begin();
+        bool isIncrementedOnEveryEdge = true;
+        code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+            if (edge.to != head || !std::ranges::contains(ends, edge.from))
+                return;
+            ValueID next = place < edge.arguments().size() ? withoutNarrowing(edge.arguments()[place]) : ValueID();
+            isIncrementedOnEveryEdge &= next && !code().isConstant(next) && opcodeOf(next) == Opcode::Increment && withoutNarrowing(code().at(next).operand(0)) == parameter;
+        });
+        return isIncrementedOnEveryEdge;
+    };
+    std::optional<PushesInLoop> found;
+    BlockID testBlock;
+    for (uint32_t place = m_dominatorsByPlace[placeOfBlock]; place >= m_places[head.index()]; place = m_dominatorsByPlace[place]) {
+        const Terminator& terminator = code().at(m_order[place - 1]).terminator;
+        if (terminator.kind != TerminatorKind::Branch || !tests.contains(opcodeOf(terminator.conditionOperand())))
+            continue;
+        const Operation& test = code().at(terminator.conditionOperand());
+        ValueID counter = withoutNarrowing(test.leftOperand());
+        if (!std::ranges::contains(code().at(head).parameters(), counter) || !isIncremented(counter))
+            continue;
+        found = PushesInLoop { counter, test.rightOperand(), test.opcode == Opcode::LessEq };
+        testBlock = m_order[place - 1];
+    }
+    static constexpr RepresentationSet readableForms { Representation::Int32, Representation::Int64, Representation::Double, Representation::JSValue };
+    auto isAvailable = [&](ValueID value) {
+        return code().isConstant(value) || (isGenerated(value) && readableForms.contains(representationOf(value)) && !findBoxed(value));
+    };
+    if (!found || !isAvailable(found->counter) || !isAvailable(found->bound))
+        return std::nullopt;
+
+    Vector<BlockID, 16> blocks { head };
+    BitVector isInLoop(code().numberOfBlocks());
+    isInLoop.quickSet(head.index());
+    auto add = [&](BlockID member) {
+        if (code().isReached(member) && !isInLoop.quickSet(member.index()))
+            blocks.append(member);
+    };
+    for (BlockID end : ends)
+        add(end);
+    for (size_t place = 1; place < blocks.size(); ++place) {
+        code().forEachIncomingEdgeUnsealed(blocks[place], [&](const Edge& edge) {
+            add(edge.from);
+        });
+    }
+    static constexpr OpcodeSet reads {
+        Opcode::PropGet, Opcode::PrivateGet, Opcode::ElemGet, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetArrayElement, Opcode::GetValueAtSiteOrAbsent,
+        Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetGlobalProperty, Opcode::GetGlobalPropertyAddress, Opcode::CheckInitialized
+    };
+    auto isSameInEveryIteration = [&](auto& self, ValueID value, unsigned depth) -> bool {
+        BlockID home = !value || code().isConstant(value) ? BlockID() : code().blockOf(value);
+        if (!home || !isInLoop.quickGet(home.index()))
+            return true;
+        if (!depth)
+            return false;
+        const Operation& operation = code().at(value);
+        if (operation.opcode != Opcode::Parameter)
+            return (reads.contains(operation.opcode) || valuePreservingOpcodes.contains(operation.opcode) || operationsThatStandAmongNarrowedValues.contains(operation.opcode)) && std::ranges::all_of(operation.operands(), [&](ValueID operand) { return self(self, operand, depth - 1); });
+        if (home == head)
+            return false;
+        size_t place = std::ranges::find(code().at(home).parameters(), value) - code().at(home).parameters().begin();
+        ValueID joined;
+        bool isJoined = true;
+        code().forEachIncomingEdgeUnsealed(home, [&](const Edge& edge) {
+            if (edge.to != home || !code().isReached(edge.from) || code().at(edge.from).frequency == BlockFrequency::Rare)
+                return;
+            ValueID argument = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            isJoined &= argument && (!joined || joined == argument);
+            joined = argument;
+        });
+        return isJoined && joined && self(self, joined, depth - 1);
+    };
+    constexpr unsigned longestWayToVariable = 8;
+    if (!isSameInEveryIteration(isSameInEveryIteration, array, longestWayToVariable))
+        return std::nullopt;
+    if (BlockID home = code().isConstant(array) ? BlockID() : code().blockOf(array); home && isInLoop.quickGet(home.index())) {
+        size_t place = std::ranges::find(code().at(head).parameters(), found->counter) - code().at(head).parameters().begin();
+        bool startsAlike = true;
+        code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+            if (edge.to != head || !code().isReached(edge.from) || std::ranges::contains(ends, edge.from))
+                return;
+            ValueID start = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            startsAlike &= start && (!found->startOfCounter || found->startOfCounter == start);
+            found->startOfCounter = start;
+        });
+        if (!startsAlike || !found->startOfCounter || !isAvailable(found->startOfCounter))
+            return std::nullopt;
+    }
+    for (BlockID member : blocks) {
+        const Terminator& terminator = code().at(member).terminator;
+        for (uint32_t edge = 0; member != testBlock && edge < terminator.numberOfEdges; ++edge) {
+            BlockID target = code().at(terminator.edge(edge)).to;
+            if (!isInLoop.quickGet(target.index()) && code().at(target).frequency != BlockFrequency::Rare)
+                return std::nullopt;
+        }
+        bool pushesOntoArray = terminator.kind == TerminatorKind::TryCallInline && terminator.inlineBuiltin() == InlineBuiltin::ArrayPush && terminator.receiverOperand() == array;
+        if (pushesOntoArray && std::ranges::all_of(ends, [&](BlockID end) { return dominates(member, end); }))
+            found->valuesPerIteration += terminator.argumentsOperands().size();
+    }
+    return found->valuesPerIteration ? found : std::nullopt;
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES bool CodeGenerator::goesOnBehindJump(size_t positionInOrder) const
 {
     if (!positionInOrder)
@@ -763,7 +948,7 @@ bool CodeGenerator::isFunctionCalledRepeatedly() const
         }
         return false;
     };
-    m_isFunctionCalledRepeatedly = id && (facts().linked().function(id).isIterationCallback || code().callsItself() || readsOwnName());
+    m_isFunctionCalledRepeatedly = id && (facts().linked().function(id).isIterationCallback || m_isTrapOfProxy || code().callsItself() || readsOwnName());
     return *m_isFunctionCalledRepeatedly;
 }
 
@@ -836,6 +1021,703 @@ void CodeGenerator::findKeysCheckedTwice()
             }
             m_keysAskedTwice.quickSet(key.index());
         }
+    }
+}
+
+std::optional<BitVector> CodeGenerator::blocksOfLoop(BlockID head)
+{
+    BitVector found(code().numberOfBlocks());
+    Vector<BlockID, 16> pending;
+    auto add = [&](BlockID block) {
+        if (code().isReached(block) && !found.quickSet(block.index()))
+            pending.append(block);
+    };
+    found.quickSet(head.index());
+    code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+        if (code().isReached(edge.from) && blockDominates(head, edge.from))
+            add(edge.from);
+    });
+    if (pending.isEmpty())
+        return std::nullopt;
+    while (!pending.isEmpty()) {
+        code().forEachIncomingEdgeUnsealed(pending.takeLast(), [&](const Edge& edge) {
+            add(edge.from);
+        });
+    }
+    return found;
+}
+
+std::optional<CodeGenerator::RowGuard> CodeGenerator::findRowGuardAt(BlockID id, RowKind kind)
+{
+    const Block& block = code().at(id);
+    ValueID present = block.isInLoop && block.frequency == BlockFrequency::Normal ? testReadByBranchAlone(id, block.terminator) : ValueID();
+    if (!present || opcodeOf(present) != Opcode::IsElementPresent)
+        return std::nullopt;
+    const Operation& presence = code().at(present);
+    RowGuard guard;
+    guard.presenceBlock = id;
+    guard.array = presence.arrayOperand();
+    guard.position = presence.positionOperand();
+    if (presence.arrayStorage() != ArrayStorage::Contiguous || code().isConstant(guard.array) || code().isConstant(guard.position) || representationOf(guard.array) != Representation::Cell)
+        return std::nullopt;
+    if (representationOf(guard.position) != Representation::Int32 && (representationOf(guard.position) != Representation::Int64 || typeOf(guard.position).integers.minimum < 0))
+        return std::nullopt;
+
+    static constexpr unsigned mostChecks = 5;
+    bool isArray = false;
+    bool isPristine = false;
+    bool isNumeric = false;
+    RowCount& asked = guard.asked;
+    constexpr unsigned shiftOfType = 8 * (JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset());
+    constexpr unsigned shiftOfFlags = 8 * (JSCell::typeInfoFlagsOffset() - JSCell::indexingTypeAndMiscOffset());
+    asked.mask = 0xffu << shiftOfType | static_cast<uint32_t>(JSC::IsPristine) << shiftOfFlags;
+    asked.header = static_cast<uint32_t>(ArrayType) << shiftOfType | static_cast<uint32_t>(JSC::IsPristine) << shiftOfFlags;
+    auto isRow = [&](ValueID value) {
+        return guard.names.contains(value);
+    };
+    for (BlockID from = id; kind == RowKind::Any ? !isPristine : !isNumeric;) {
+        BlockID to = code().at(code().at(from).terminator.taken()).to;
+        const Block& next = code().at(to);
+        if (guard.checkBlocks.size() == mostChecks || m_singlePredecessors[to.index()] != from || !next.parameters().empty() || next.isLoopHead || next.isEntry || next.isHandlerBlock() || next.frequency != BlockFrequency::Normal)
+            return std::nullopt;
+        ValueID test = testReadByBranchAlone(to, next.terminator);
+        if (!test)
+            return std::nullopt;
+        for (ValueID value : code().valuesOf(next)) {
+            const Operation& operation = code().at(value);
+            switch (operation.opcode) {
+            case Opcode::GetArrayElement:
+                if (guard.row || operation.arrayOperand() != guard.array || operation.positionOperand() != guard.position || operation.arrayStorage() != ArrayStorage::Contiguous || !operation.isPresent() || operation.representation != Representation::JSValue)
+                    return std::nullopt;
+                guard.row = value;
+                guard.names.append(value);
+                break;
+            case Opcode::Narrowed:
+            case Opcode::Unbox:
+                if (!isRow(operation.valueOperand()) || (operation.representation != Representation::JSValue && operation.representation != Representation::Cell))
+                    return std::nullopt;
+                guard.names.append(value);
+                break;
+            case Opcode::CheckProof:
+                if (!isRow(operation.valueOperand()))
+                    return std::nullopt;
+                break;
+            case Opcode::TypeTest:
+                if (value != test || !isRow(operation.valueOperand()) || !hasKind(inputs().types, operation.testedType(), OperandKind::Array))
+                    return std::nullopt;
+                isArray = true;
+                break;
+            case Opcode::IsPristine: {
+                OptionSet<PristineAspects> aspects = operation.aspects();
+                aspects.remove({ PristineAspects::Storage, PristineAspects::Names });
+                if (value != test || !isRow(operation.valueOperand()) || operation.builtinClass() != BuiltinClasses::Array || !aspects.isEmpty() || !isArray)
+                    return std::nullopt;
+                isPristine = true;
+                break;
+            }
+            case Opcode::HasArrayStorage: {
+                if (value != test || !isRow(operation.arrayOperand()) || operation.arrayStorage() != ArrayStorage::Double || operation.admitsInt32Storage() != (kind == RowKind::Numbers) || operation.data() || !isPristine)
+                    return std::nullopt;
+                static constexpr uint32_t bitOfDoubles = DoubleShape & ~Int32Shape;
+                uint32_t ignored = kind == RowKind::Numbers ? bitOfDoubles : 0;
+                asked.mask |= (operation.isWritable() ? 0xff : IndexingShapeMask) & ~ignored;
+                asked.header |= (operation.isWritable() ? ArrayWithDouble : DoubleShape) & ~ignored;
+                isNumeric = true;
+                break;
+            }
+            default:
+                return std::nullopt;
+            }
+        }
+        if (!guard.row)
+            return std::nullopt;
+        guard.checkBlocks.append(to);
+        from = to;
+    }
+    guard.continuation = code().at(code().at(guard.checkBlocks.last()).terminator.taken()).to;
+    const Block& continuation = code().at(guard.continuation);
+    if (m_singlePredecessors[guard.continuation.index()] != guard.checkBlocks.last() || !continuation.parameters().empty() || continuation.isLoopHead || continuation.isEntry || continuation.isHandlerBlock())
+        return std::nullopt;
+    if (!findLoopOfRows(guard))
+        return std::nullopt;
+
+    asked.array = withoutNames(guard.array);
+    return guard;
+}
+
+bool CodeGenerator::findLoopOfRows(RowGuard& guard)
+{
+    static constexpr OpcodeSet conversions { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::NumberToInteger };
+    auto withoutConversions = [&](ValueID value) {
+        while (!code().isConstant(value) && conversions.contains(opcodeOf(value)))
+            value = code().at(value).valueOperand();
+        return value;
+    };
+    ValueID counter = withoutConversions(guard.position);
+    if (code().isConstant(counter) || opcodeOf(counter) != Opcode::Parameter)
+        return false;
+    BlockID head = code().blockOf(counter);
+    if (!head || !code().at(head).isLoopHead)
+        return false;
+    std::span<const ValueID> parameters = code().at(head).parameters();
+    size_t place = std::ranges::find(parameters, counter) - parameters.begin();
+    bool isCounted = place < parameters.size();
+    code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+        ValueID passed = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+        if (!isCounted || !passed || !code().isReached(edge.from)) {
+            isCounted = false;
+            return;
+        }
+        const Operation& operation = code().at(withoutConversions(passed));
+        if (operation.opcode == Opcode::Integer) {
+            isCounted = !operation.integer() && !guard.preheader && code().at(edge.from).terminator.kind == TerminatorKind::Jump && code().at(edge.from).isInLoop;
+            guard.preheader = edge.from;
+            return;
+        }
+        if (operation.opcode == Opcode::Increment)
+            isCounted = (operation.form() == OperatorForm::Integers || operation.form() == OperatorForm::CheckedIntegers) && withoutConversions(operation.valueOperand()) == counter;
+        else
+            isCounted = operation.opcode == Opcode::Add && operation.form() == OperatorForm::Integers && withoutConversions(operation.leftOperand()) == counter && opcodeOf(operation.rightOperand()) == Opcode::Integer && code().at(operation.rightOperand()).integer() == 1;
+    });
+    if (!isCounted || !guard.preheader)
+        return false;
+    const Terminator* end = &code().at(head).terminator;
+    if (end->kind == TerminatorKind::Jump)
+        end = &code().at(code().at(end->next()).to).terminator;
+    if (end->kind != TerminatorKind::Branch)
+        return false;
+    const Operation& relation = code().at(end->conditionOperand());
+    if (relation.opcode != Opcode::Less || relation.form() != OperatorForm::Integers || withoutConversions(relation.leftOperand()) != counter)
+        return false;
+    guard.bound = relation.rightOperand();
+    auto standsInFront = [&](ValueID value) {
+        return code().isConstant(value) || (code().blockOf(value) && code().blockOf(value) != head && blockDominates(code().blockOf(value), guard.preheader));
+    };
+    return representationOf(guard.bound) == representationOf(counter) && standsInFront(guard.bound) && standsInFront(guard.array);
+}
+
+bool CodeGenerator::isReadAfterFailure(const KindTried& tried)
+{
+    BlockID passed = code().at(code().at(tried.start).terminator.taken()).to;
+    std::span<const ValueID> tests = code().valuesOf(tried.start);
+    auto isOfStart = [&](ValueID value) {
+        return std::ranges::contains(tests, value);
+    };
+    for (BlockID id : m_order) {
+        if (id == tried.start || !blockDominates(tried.start, id) || blockDominates(passed, id))
+            continue;
+        bool isRead = std::ranges::any_of(code().at(id).terminator.operands(), isOfStart);
+        for (ValueID value : code().valuesOf(id))
+            isRead |= std::ranges::any_of(code().at(value).operands(), isOfStart);
+        code().forEachEdgeOf(id, [&](EdgeID, const Edge& edge) {
+            isRead |= std::ranges::any_of(edge.arguments(), isOfStart);
+        });
+        if (isRead)
+            return true;
+    }
+    return false;
+}
+
+std::optional<CodeGenerator::KindTried> CodeGenerator::findKindTriedAt(BlockID test)
+{
+    static constexpr OpcodeSet looks {
+        Opcode::HasStructureOfClass, Opcode::ShapeTest, Opcode::HasLayoutPrototype, Opcode::AreMembersUnchanged, Opcode::GetPropertyOfHeir, Opcode::TypeTest, Opcode::IsPristine, Opcode::HasArrayStorage, Opcode::GetArrayStorage,
+        Opcode::GetArrayLength, Opcode::IsElementPresent, Opcode::Narrowed, Opcode::Unbox, Opcode::Box, Opcode::NarrowInteger, Opcode::WidenInteger, Opcode::NumberToInteger, Opcode::Less,
+    };
+    KindTried tried;
+    tried.other = code().at(code().at(test).terminator.notTaken()).to;
+    tried.start = test;
+    for (BlockID before = test; before;) {
+        const Block& block = code().at(before);
+        if (block.terminator.kind != TerminatorKind::Branch || code().at(block.terminator.notTaken()).to != tried.other || (before != test && code().at(block.terminator.taken()).to != tried.start))
+            break;
+        bool onlyLooks = std::ranges::all_of(code().valuesOf(before), [&](ValueID value) {
+            const Operation& operation = code().at(value);
+            return looks.contains(operation.opcode) || (operation.opcode == Opcode::GetArrayElement && operation.level() == KnowledgeLevel::Proven && operation.isPresent());
+        });
+        if (!onlyLooks || !block.parameters().empty())
+            break;
+        tried.start = before;
+        before = m_singlePredecessors[before.index()];
+    }
+    const Block& other = code().at(tried.other);
+    if (tried.start == test || !other.parameters().empty() || other.isLoopHead || other.isEntry || other.isHandlerBlock() || m_singlePredecessors[tried.other.index()] || isReadAfterFailure(tried))
+        return std::nullopt;
+
+    BlockID headAround;
+    std::optional<BitVector> loopAround;
+    for (BlockID head : m_order) {
+        if (!code().at(head).isLoopHead || !blockDominates(head, tried.start) || (headAround && !blockDominates(headAround, head)))
+            continue;
+        std::optional<BitVector> blocks = blocksOfLoop(head);
+        if (!blocks || !blocks->quickGet(tried.start.index()))
+            continue;
+        headAround = head;
+        loopAround = WTF::move(blocks);
+    }
+    if (!headAround)
+        return std::nullopt;
+    code().forEachIncomingEdgeUnsealed(headAround, [&](const Edge& edge) {
+        if (code().isReached(edge.from) && !loopAround->quickGet(edge.from.index()) && !tried.preheaders.contains(edge.from))
+            tried.preheaders.append(edge.from);
+    });
+    Vector<BlockID, 4> testsForDoubles;
+    for (BlockID id : m_order) {
+        const Block& block = code().at(id);
+        if (block.terminator.kind != TerminatorKind::Branch || !loopAround->quickGet(id.index()) || !blockDominates(tried.other, id))
+            continue;
+        ValueID condition = testReadByBranchAlone(id, block.terminator);
+        if (condition && opcodeOf(condition) == Opcode::HasArrayStorage && code().at(condition).arrayStorage() == ArrayStorage::Double)
+            testsForDoubles.append(id);
+    }
+    for (BlockID id : testsForDoubles) {
+        BlockID failure = code().at(code().at(id).terminator.notTaken()).to;
+        const Block& block = code().at(failure);
+        bool leadsToOther = std::ranges::any_of(testsForDoubles, [&](BlockID other) { return blockDominates(failure, other); });
+        if (!leadsToOther && !block.isLoopHead && !block.isEntry && !block.isHandlerBlock() && !tried.failures.contains(failure))
+            tried.failures.append(failure);
+    }
+    if (tried.preheaders.isEmpty() || tried.failures.isEmpty())
+        return std::nullopt;
+    return tried;
+}
+
+void CodeGenerator::findKindsTried()
+{
+    if (m_keepsValuesInHeapFrame || code().hasSuspensions())
+        return;
+    for (BlockID id : m_order) {
+        const Block& block = code().at(id);
+        if (!block.isInLoop || block.frequency != BlockFrequency::Normal || block.terminator.kind != TerminatorKind::Branch)
+            continue;
+        ValueID test = block.terminator.conditionOperand();
+        if (code().isConstant(test) || opcodeOf(test) != Opcode::HasArrayStorage || code().at(test).arrayStorage() != ArrayStorage::Int32 || !testReadByBranchAlone(id, block.terminator))
+            continue;
+        BlockID other = code().at(block.terminator.notTaken()).to;
+        size_t known = m_kindsTried ? m_kindsTried->kinds.findIf([&](const KindTried& tried) { return tried.other == other; }) : notFound;
+        if (known != notFound) {
+            m_kindsTried->kinds[known].tests.append(id);
+            continue;
+        }
+        std::optional<KindTried> tried = findKindTriedAt(id);
+        if (!tried)
+            continue;
+        if (!m_kindsTried)
+            m_kindsTried = std::make_unique<KindsTried>();
+        tried->tests.append(id);
+        expectOtherJumps(tried->other);
+        build().statistics().count(StatisticID::KindsTriedFirstByIterations);
+        m_kindsTried->kinds.append(WTF::move(*tried));
+    }
+    if (m_kindsTried)
+        m_kindsTried->slot = m_proc.addStackSlot(safeCast<unsigned>(m_kindsTried->kinds.size() * sizeof(uint64_t)));
+}
+
+TypedPointer CodeGenerator::kindTriedAddress(size_t place)
+{
+    return m_out.address(heaps().frameSlots, m_out.slotBase(m_kindsTried->slot), place * sizeof(uint64_t));
+}
+
+void CodeGenerator::enterBlockWithKindsTried(BlockID id)
+{
+    if (m_headOfTurnsLaidOut || m_interleaving)
+        return;
+    for (size_t place = 0; place < m_kindsTried->kinds.size(); ++place) {
+        const KindTried& tried = m_kindsTried->kinds[place];
+        if (tried.failures.contains(id))
+            m_out.store32(m_out.constInt32(static_cast<int32_t>(TriedFirst::Int32sAlways)), kindTriedAddress(place));
+        if (tried.start != id)
+            continue;
+        LBasicBlock begins = m_out.newBlock();
+        m_out.branch(m_out.equal(m_out.load32(kindTriedAddress(place)), m_out.constInt32(static_cast<int32_t>(TriedFirst::Doubles))), normalEdge(blockFor(tried.other)), normalEdge(begins));
+        m_out.appendTo(begins);
+    }
+}
+
+void CodeGenerator::beginKindsTried(const TerminatorContext& terminator)
+{
+    BlockID id = terminator.block();
+    for (size_t place = 0; place < m_kindsTried->kinds.size(); ++place) {
+        KindTried& tried = m_kindsTried->kinds[place];
+        if (tried.preheaders.contains(id))
+            m_out.store32(m_out.int32Zero, kindTriedAddress(place));
+        if (!tried.tests.contains(id) || m_headOfTurnsLaidOut || m_interleaving)
+            continue;
+        tried.failed = m_out.newBlock();
+        tried.blockOfOther = blockFor(tried.other);
+        m_blocks[tried.other.index()] = tried.failed;
+        m_kindsTried->testing = place;
+    }
+}
+
+void CodeGenerator::endKindTried()
+{
+    size_t place = std::exchange(m_kindsTried->testing, notFound);
+    KindTried& tried = m_kindsTried->kinds[place];
+    m_blocks[tried.other.index()] = tried.blockOfOther;
+    m_out.appendTo(tried.failed);
+    m_out.store32(m_out.bitOr(m_out.load32(kindTriedAddress(place)), m_out.constInt32(static_cast<int32_t>(TriedFirst::Doubles))), kindTriedAddress(place));
+    m_out.jump(normalEdge(tried.blockOfOther));
+}
+
+bool CodeGenerator::isReadAfterRejoin(const RowGuard& guard)
+{
+    BitVector isReached(code().numberOfBlocks());
+    Vector<BlockID, 16> pending { guard.continuation };
+    isReached.quickSet(guard.continuation.index());
+    while (!pending.isEmpty()) {
+        code().forEachEdgeOf(pending.takeLast(), [&](EdgeID, const Edge& edge) {
+            if (edge.to != guard.checkBlocks[0] && code().isReached(edge.to) && !isReached.quickSet(edge.to.index()))
+                pending.append(edge.to);
+        });
+    }
+    bool isRead = false;
+    auto read = [&](ValueID value) {
+        isRead |= guard.names.contains(value);
+    };
+    for (BlockID id : m_order) {
+        if (!isReached.quickGet(id.index()) || blockDominates(guard.continuation, id))
+            continue;
+        for (ValueID value : code().valuesOf(id)) {
+            for (ValueID operand : code().at(value).operands())
+                read(operand);
+        }
+        for (ValueID operand : code().at(id).terminator.operands())
+            read(operand);
+        code().forEachEdgeOf(id, [&](EdgeID, const Edge& edge) {
+            for (ValueID argument : edge.arguments())
+                read(argument);
+        });
+        if (isRead)
+            return true;
+    }
+    return false;
+}
+
+void CodeGenerator::findRowGuards()
+{
+    RELEASE_ASSERT(!m_rows);
+    if (m_keepsValuesInHeapFrame || code().hasSuspensions() || program().admitsReplacedBuiltins)
+        return;
+    static constexpr unsigned mostCounts = 4;
+    for (BlockID id : m_order) {
+        const Block& block = code().at(id);
+        if (!block.isInLoop || block.terminator.kind != TerminatorKind::Branch || opcodeOf(block.terminator.conditionOperand()) != Opcode::IsElementPresent)
+            continue;
+        for (RowKind kind : { RowKind::Numbers, RowKind::Doubles, RowKind::Any }) {
+            std::optional<RowGuard> guard = findRowGuardAt(id, kind);
+            if (!guard || isReadAfterRejoin(*guard))
+                continue;
+            if (!m_rows)
+                m_rows = std::make_unique<CheckedRows>();
+            size_t count = m_rows->counts.findIf([&](const RowCount& other) {
+                return other.array == guard->asked.array && other.mask == guard->asked.mask && other.header == guard->asked.header;
+            });
+            if (count == notFound) {
+                if (m_rows->counts.size() == mostCounts)
+                    break;
+                count = m_rows->counts.size();
+                m_rows->counts.append(guard->asked);
+            }
+            guard->count = count;
+            if (kind == RowKind::Any && !m_rows->guards.isEmpty() && m_rows->guards.last().presenceBlock == id) {
+                m_rows->guards.last().precedesOther = true;
+                m_rows->guards.last().numberOfSharedNames = guard->names.size();
+            }
+            m_rows->guards.append(WTF::move(*guard));
+            if (kind != RowKind::Doubles)
+                break;
+        }
+    }
+    if (!m_rows)
+        return;
+
+    m_rows->slotOfCounts = m_proc.addStackSlot(safeCast<unsigned>(m_rows->counts.size() * RowCount::size));
+    BitVector isBeforeGuards(code().numberOfBlocks());
+    m_rows->changingBlocks = BitVector(code().numberOfBlocks());
+    m_rows->blocksBeforeChangingLoops = BitVector(code().numberOfBlocks());
+    Vector<BlockID, 16> pending;
+    auto add = [&](BlockID block) {
+        if (code().isReached(block) && !isBeforeGuards.quickSet(block.index()))
+            pending.append(block);
+    };
+    for (const RowGuard& guard : m_rows->guards) {
+        add(guard.presenceBlock);
+        add(guard.preheader);
+        expectOtherJumps(guard.continuation);
+        build().statistics().count(StatisticID::RowsCountedByChecks);
+    }
+    while (!pending.isEmpty()) {
+        code().forEachIncomingEdgeUnsealed(pending.takeLast(), [&](const Edge& edge) {
+            add(edge.from);
+        });
+    }
+    for (BlockID id : m_order) {
+        if (id == m_order[0] || code().at(id).isEntry || (isBeforeGuards.quickGet(id.index()) && mayChangeRows(id)))
+            m_rows->changingBlocks.quickSet(id.index());
+    }
+    Vector<std::pair<BlockID, BitVector>, 8> loops;
+    for (BlockID head : m_order) {
+        std::optional<BitVector> blocks = code().at(head).isLoopHead && isBeforeGuards.quickGet(head.index()) ? blocksOfLoop(head) : std::nullopt;
+        if (blocks)
+            loops.append({ head, WTF::move(*blocks) });
+    }
+    auto changesRowsInPlace = [&](const std::pair<BlockID, BitVector>& loop) {
+        return std::ranges::any_of(m_order, [&](BlockID member) {
+            return loop.second.quickGet(member.index()) && code().at(member).frequency == code().at(loop.first).frequency && m_rows->changingBlocks.quickGet(member.index()) && std::ranges::none_of(code().valuesOf(member), [&](ValueID value) { return code().at(value).traits().mayRunOtherCode(); });
+        });
+    };
+    for (const auto& loop : loops) {
+        bool changesRows = changesRowsInPlace(loop);
+        code().forEachIncomingEdgeUnsealed(loop.first, [&](const Edge& edge) {
+            if (loop.second.quickGet(edge.from.index()))
+                return;
+            size_t around = loops.size();
+            for (size_t place = 0; place < loops.size(); ++place) {
+                if (loops[place].second.quickGet(edge.from.index()))
+                    around = place;
+            }
+            if (changesRows || (around < loops.size() && changesRowsInPlace(loops[around])))
+                m_rows->blocksBeforeChangingLoops.quickSet(edge.from.index());
+        });
+    }
+}
+
+ValueID CodeGenerator::withoutNames(ValueID cell) const
+{
+    static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Unbox, Opcode::Box };
+    while (!code().isConstant(cell) && names.contains(opcodeOf(cell)))
+        cell = code().at(cell).operand(0);
+    return cell;
+}
+
+bool CodeGenerator::isArrayWithoutRows(ValueID array)
+{
+    static constexpr OpcodeSet allocations { Opcode::NewArray, Opcode::NewArrayOfGiven, Opcode::NewArrayLike };
+    static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Unbox, Opcode::Box };
+    static constexpr OpcodeSet accesses {
+        Opcode::GetArrayElement, Opcode::PutArrayElement, Opcode::PutContiguousIndex, Opcode::PutDoubleIndex, Opcode::HasArrayStorage, Opcode::IsPristine, Opcode::IsElementPresent,
+        Opcode::GetArrayLength, Opcode::GetArrayStorage, Opcode::GetArrayCapacity, Opcode::ConvertToDoubleStorage, Opcode::ReserveArrayCapacity, Opcode::TypeTest,
+    };
+    array = withoutNames(array);
+    if (code().isConstant(array) || !allocations.contains(opcodeOf(array)) || std::ranges::any_of(m_rows->counts, [&](const RowCount& count) { return count.array == array; }))
+        return false;
+    for (const auto& [known, isUnescaped] : m_rows->unescapedArrays) {
+        if (known == array)
+            return isUnescaped;
+    }
+    bool isUnescaped = true;
+    auto isOfArray = [&](ValueID value) {
+        return value && withoutNames(value) == array;
+    };
+    for (BlockID id : m_order) {
+        for (ValueID value : code().valuesOf(id)) {
+            const Operation& operation = code().at(value);
+            std::span<const ValueID> operands = operation.operands();
+            for (size_t place = 0; place < operands.size(); ++place) {
+                if (isOfArray(operands[place]))
+                    isUnescaped &= !place && (names.contains(operation.opcode) || accesses.contains(operation.opcode));
+            }
+        }
+        for (ValueID operand : code().at(id).terminator.operands())
+            isUnescaped &= !isOfArray(operand);
+        code().forEachEdgeOf(id, [&](EdgeID, const Edge& edge) {
+            for (ValueID argument : edge.arguments())
+                isUnescaped &= !isOfArray(argument);
+        });
+        if (!isUnescaped)
+            break;
+    }
+    m_rows->unescapedArrays.append({ array, isUnescaped });
+    return isUnescaped;
+}
+
+bool CodeGenerator::mayChangeRows(BlockID block, ValueID id, const Operation& operation)
+{
+    if (operation.traits().isPure() || operation.opcode == Opcode::PutDoubleIndex || operation.opcode == Opcode::ConvertToDoubleStorage || (operation.opcode == Opcode::PutContiguousIndex && operation.hasNumericStorage()))
+        return false;
+    if (operation.opcode == Opcode::PutContiguousIndex && isArrayWithoutRows(operation.arrayOperand()))
+        return false;
+    ValueContext context(block, id, operation, handlerOf(block));
+    return !changesRowsByCalls(context) && mayChangeRows(context);
+}
+
+bool CodeGenerator::storesNumberInPlace(const OperationContext& context) const
+{
+    if (!context.valueID() || opcodeOf(context.valueID()) != Opcode::PutArrayElement)
+        return false;
+    const auto& value = static_cast<const ValueContext&>(context);
+    return !value->isInBounds() && typeOf(value->valueOperand()).isNumber() && GuessedAccessEmitter::testsForItself(value) && storeTakesIndexOfProvenList(inputs().types, typeIDOf(value->arrayOperand()), typeIDOf(value->positionOperand()));
+}
+
+bool CodeGenerator::changesRowsByCalls(const OperationContext& context)
+{
+    static constexpr OpcodeSet reads { Opcode::GetArrayElement, Opcode::PropGet, Opcode::ElemGet, Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Less, Opcode::LessEq, Opcode::Greater, Opcode::GreaterEq, Opcode::Increment, Opcode::Decrement, Opcode::ToNumber };
+    if (!context.valueID())
+        return false;
+    const Operation& operation = code().at(context.valueID());
+    return reads.contains(operation.opcode) || (operation.opcode == Opcode::PutArrayElement && (storesNumberInPlace(context) || isArrayWithoutRows(operation.arrayOperand())));
+}
+
+void CodeGenerator::zeroCountsAtCallSlow(const Effects& effects)
+{
+    if (m_operation && mayChangeRows(effects) && changesRowsByCalls(*m_operation))
+        zeroRowCounts();
+}
+
+bool CodeGenerator::mayChangeRows(const Effects& effects)
+{
+    static constexpr AbstractHeapSet heapsUnderRows { AbstractHeap::ArrayStorage, AbstractHeap::ArrayLengths, AbstractHeap::Elements, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
+    return effects.mayRunOtherCode() || effects.writes.containsAny(heapsUnderRows);
+}
+
+bool CodeGenerator::mayChangeRows(const OperationContext& context) const
+{
+    return mayChangeRows(effectsOf(context));
+}
+
+bool CodeGenerator::mayChangeRows(BlockID id)
+{
+    static constexpr std::array terminatorsWithoutEffects { TerminatorKind::Jump, TerminatorKind::Branch, TerminatorKind::Switch, TerminatorKind::Unreachable };
+    const Terminator& terminator = code().at(id).terminator;
+    if (!std::ranges::contains(terminatorsWithoutEffects, terminator.kind) && mayChangeRows(TerminatorContext(id, terminator, handlerOf(id))))
+        return true;
+    return std::ranges::any_of(code().valuesOf(id), [&](ValueID value) { return mayChangeRows(id, value, code().at(value)); });
+}
+
+TypedPointer CodeGenerator::rowCountAddress(unsigned count, ptrdiff_t offset)
+{
+    return m_out.address(heaps().frameSlots, m_out.slotBase(m_rows->slotOfCounts), count * RowCount::size + offset);
+}
+
+void CodeGenerator::zeroRowCounts()
+{
+    for (unsigned count = 0; count < m_rows->counts.size(); ++count)
+        m_out.store32(m_out.int32Zero, rowCountAddress(count));
+}
+
+const CodeGenerator::RowGuard* CodeGenerator::findCheckingGuardSlow(BlockID id) const
+{
+    for (const RowGuard& guard : m_rows->guards) {
+        if (guard.checkBlocks.contains(id))
+            return &guard;
+    }
+    return nullptr;
+}
+
+CodeGenerator::RowGuard* CodeGenerator::findGuardContinuingIn(BlockID id)
+{
+    if (!m_rows)
+        return nullptr;
+    for (RowGuard& guard : m_rows->guards) {
+        if (guard.continuation == id && guard.joinedRow)
+            return &guard;
+    }
+    return nullptr;
+}
+
+void CodeGenerator::enterBlockWithRows(BlockID id)
+{
+    if (m_rows->changingBlocks.quickGet(id.index()))
+        zeroRowCounts();
+    for (RowGuard& guard : m_rows->guards | std::views::reverse) {
+        if (guard.checkedNames.isEmpty())
+            continue;
+        bool isBehind = blockDominates(guard.continuation, id);
+        for (size_t place = isBehind ? 0 : guard.numberOfSharedNames; place < guard.names.size(); ++place)
+            m_values[guard.names[place].index()] = isBehind ? guard.joinedRow : guard.checkedNames[place];
+    }
+}
+
+void CodeGenerator::joinAfterChecks(RowGuard& guard)
+{
+    m_blocks[guard.continuation.index()] = guard.joinBlock;
+    for (ValueID name : guard.names)
+        guard.checkedNames.append(m_values[name.index()]);
+    LBasicBlock isNext = m_out.newBlock();
+    LBasicBlock hasPassed = m_out.newBlock();
+    m_out.appendTo(guard.checked);
+    LValue position = get(guard.position).value;
+    if (position->type() == Machine::Int64)
+        position = m_out.castToInt32(position);
+    m_out.branch(m_out.equal(position, m_out.load32(rowCountAddress(guard.count))), normalEdge(isNext), normalEdge(hasPassed));
+    m_out.appendTo(isNext);
+    m_out.store32(m_out.add(position, m_out.int32One), rowCountAddress(guard.count));
+    m_out.jump(normalEdge(hasPassed));
+    m_out.appendTo(hasPassed);
+    m_out.upsilon(m_values[guard.row.index()], guard.joinedRow);
+    m_out.jump(normalEdge(guard.joinBlock));
+}
+
+void CodeGenerator::beginTerminatorWatched(const TerminatorContext& terminator)
+{
+    if (m_kindsTried)
+        beginKindsTried(terminator);
+    if (m_rows)
+        beginRowGuards(terminator);
+    if (m_checksEffects && terminator.handler())
+        emitter<RuntimeCallEmitter>().saveDeedsForHandler({ });
+}
+
+void CodeGenerator::endTerminatorWatched()
+{
+    if (RowGuard* guard = std::exchange(m_guardChecked, nullptr))
+        joinAfterChecks(*guard);
+    if (m_kindsTried && m_kindsTried->testing != notFound)
+        endKindTried();
+    if (m_checksAllocation)
+        m_out.clearDeclaredAccesses();
+}
+
+void CodeGenerator::beginRowGuards(const TerminatorContext& terminator)
+{
+    BlockID id = terminator.block();
+    if (m_rows->blocksBeforeChangingLoops.quickGet(id.index()))
+        zeroRowCounts();
+    if (m_headOfTurnsLaidOut || m_interleaving)
+        return;
+    for (size_t index = 0; index < m_rows->guards.size(); ++index) {
+        RowGuard& guard = m_rows->guards[index];
+        bool isEnsured = std::ranges::any_of(m_rows->guards.span().first(index), [&](const RowGuard& earlier) {
+            return earlier.preheader == id && earlier.count == guard.count;
+        });
+        if (guard.preheader != id || isEnsured)
+            continue;
+        LValue array = get(guard.array).value;
+        LBasicBlock isOtherArray = m_out.newBlock();
+        LBasicBlock isSameArray = m_out.newBlock();
+        m_out.branch(m_out.equal(m_out.load64(rowCountAddress(guard.count, RowCount::offsetOfArray)), array), normalEdge(isSameArray), rareEdge(isOtherArray));
+        m_out.appendTo(isOtherArray);
+        m_out.store64(array, rowCountAddress(guard.count, RowCount::offsetOfArray));
+        m_out.store32(m_out.int32Zero, rowCountAddress(guard.count));
+        m_out.jump(normalEdge(isSameArray));
+        m_out.appendTo(isSameArray);
+    }
+    for (RowGuard& guard : m_rows->guards) {
+        if (guard.presenceBlock != id)
+            continue;
+        guard.scope = m_out.forkScope();
+        guard.joinedRow = m_out.phiIn(blockFor(guard.continuation), machineTypeOf(Representation::JSValue));
+        LBasicBlock hasPassed = m_out.newBlock();
+        LBasicBlock isUncounted = m_out.newBlock();
+        LValue passed = m_out.load32(rowCountAddress(guard.count));
+        LValue position = get(guard.position).value;
+        m_out.branch(m_out.below(position, position->type() == Machine::Int64 ? m_out.zeroExt(passed, Machine::Int64) : passed), normalEdge(hasPassed), guard.precedesOther ? normalEdge(isUncounted) : rareEdge(isUncounted));
+        m_out.appendTo(hasPassed);
+        generate(ValueContext(id, guard.row, code().at(guard.row), handlerOf(id)));
+        LValue row = std::exchange(m_values[guard.row.index()], nullptr);
+        m_out.upsilon(row, guard.joinedRow);
+        m_out.jump(normalEdge(blockFor(guard.continuation)));
+        m_out.appendTo(isUncounted);
+    }
+    for (RowGuard& guard : m_rows->guards) {
+        if (guard.checkBlocks.last() != id || !guard.joinedRow)
+            continue;
+        guard.joinBlock = blockFor(guard.continuation);
+        guard.checked = m_out.newBlock();
+        m_blocks[guard.continuation.index()] = guard.checked;
+        m_guardChecked = &guard;
+        return;
     }
 }
 
@@ -1009,9 +1891,418 @@ void CodeGenerator::findLoopCarriedNumbers()
     }
 }
 
+static constexpr OpcodeSet stepsOverTables { Opcode::MapNext, Opcode::SetNext };
+
+void CodeGenerator::findLoopCarriedTables()
+{
+    m_loopCarriedTables.shrink(0);
+    m_keysOfCheckedTables.shrink(0);
+    if (m_keepsValuesInHeapFrame || !code().hasLoops() || code().hasSuspensions() || !code().opcodesOfValues().intersects(stepsOverTables))
+        return;
+    for (BlockID id : m_order) {
+        for (ValueID step : code().valuesOf(id)) {
+            const Operation& operation = code().at(step);
+            if (!stepsOverTables.contains(operation.opcode) || !usesLoopForms(id))
+                continue;
+            const ValueID table = operation.tableOperand();
+            const Operation& carried = code().at(table);
+            if (carried.opcode != Opcode::Parameter || !m_values[table.index()] || !code().at(carried.block()).isLoopHead || keysOfCarriedTable(table))
+                continue;
+            const BlockID head = carried.block();
+            auto placeOf = [&](ValueID parameter) {
+                std::span<const ValueID> parameters = code().at(code().at(parameter).block()).parameters();
+                return static_cast<size_t>(std::ranges::find(parameters, parameter) - parameters.begin());
+            };
+            Vector<ValueID, 4> tables { table };
+            bool isReadAfterStep = false;
+            for (size_t next = 0; next < tables.size(); ++next) {
+                const size_t place = placeOf(tables[next]);
+                code().forEachIncomingEdgeUnsealed(code().at(tables[next]).block(), [&](const Edge& edge) {
+                    if (!code().isReached(edge.from) || !dominates(head, edge.from) || place >= edge.arguments().size())
+                        return;
+                    const ValueID passed = edge.arguments()[place];
+                    if (!passed || code().isConstant(passed))
+                        return;
+                    const Operation& operation = code().at(passed);
+                    isReadAfterStep |= operation.opcode == Opcode::CollectionTable;
+                    if (operation.opcode == Opcode::Parameter && m_values[passed.index()] && !code().at(operation.block()).isLoopHead && !code().at(operation.block()).isHandlerBlock() && !tables.contains(passed))
+                        tables.append(passed);
+                });
+            }
+            const size_t position = std::ranges::find(m_order, head) - m_order.begin();
+            if (!isReadAfterStep || findCountedLoopAt(position))
+                continue;
+            build().statistics().count(StatisticID::CollectionTablesCheckedPerLoop);
+            for (ValueID parameter : tables) {
+                if (!keysOfCarriedTable(parameter))
+                    m_loopCarriedTables.append({ parameter, code().at(parameter).block(), placeOf(parameter), m_out.phiIn(blockFor(code().at(parameter).block()), Machine::Int64) });
+            }
+        }
+    }
+}
+
+static constexpr OpcodeSet looksAtCarriedSubstrings { Opcode::RegExpMatchLiteral, Opcode::RegExpMatchLiteralInParts, Opcode::GetStringCodeUnit, Opcode::StringStartsWithLiteral };
+static constexpr OpcodeSet readsOfCarriedSubstrings = looksAtCarriedSubstrings | OpcodeSet { Opcode::GetStringLength, Opcode::ToBoolean, Opcode::Substring, Opcode::StringRangeEqualsLiteral, Opcode::StringRangeToNumber, Opcode::StringRangeParseInt };
+
+bool CodeGenerator::isLeftOfCarriedSubstring(ValueID value, BlockID head, Vector<CarriedSubstring, 4>& strings)
+{
+    if (strings.containsIf([&](const CarriedSubstring& string) { return string.string == value; }))
+        return true;
+    if (!value || code().isConstant(value) || representationOf(value) != Representation::Cell)
+        return false;
+    const BlockID block = code().blockOf(value);
+    if (!dominates(head, block))
+        return false;
+    const Operation& operation = code().at(value);
+    if (operation.opcode == Opcode::Substring) {
+        const ValueID end = operation.endOperand();
+        if (opcodeOf(end) != Opcode::GetStringLength || code().at(end).stringOperand() != operation.stringOperand() || !isLeftOfCarriedSubstring(operation.stringOperand(), head, strings))
+            return false;
+        strings.append({ value, head });
+        strings.first().cut = value;
+        return true;
+    }
+    const Block& join = code().at(block);
+    if (operation.opcode != Opcode::Parameter || !m_values[value.index()] || block == head || join.isLoopHead || join.isEntry || join.isHandlerBlock())
+        return false;
+    const size_t place = join.placeOfParameter(value);
+    bool isLeft = true;
+    code().forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+        if (code().isReached(edge.from))
+            isLeft = isLeft && place < edge.arguments().size() && dominates(head, edge.from) && isLeftOfCarriedSubstring(edge.arguments()[place], head, strings);
+    });
+    strings.append({ value, head, block, place });
+    return isLeft;
+}
+
+bool CodeGenerator::canCarrySubstring(BlockID head, size_t place, Vector<CarriedSubstring, 4>& strings)
+{
+    strings.append({ code().at(head).parameters()[place], head, head, place });
+    bool isCarriedAround = true;
+    code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+        if (!code().isReached(edge.from))
+            return;
+        if (place >= edge.arguments().size()) {
+            isCarriedAround = false;
+            return;
+        }
+        if (dominates(head, edge.from))
+            isCarriedAround = isCarriedAround && isLeftOfCarriedSubstring(edge.arguments()[place], head, strings);
+    });
+    if (!strings.first().cut || !isCarriedAround)
+        return false;
+
+    auto isCarried = [&](ValueID value) {
+        return strings.containsIf([&](const CarriedSubstring& string) { return string.string == value; });
+    };
+    bool isLookedAt = false;
+    for (BlockID id : m_order) {
+        const Block& block = code().at(id);
+        if (!dominates(head, id))
+            continue;
+        if (block.subject && isCarried(block.subject))
+            return false;
+        for (ValueID user : code().valuesOf(id)) {
+            const Operation& operation = code().at(user);
+            unsigned count = 0;
+            operation.forEachChild([&](ValueID child) {
+                count += isCarried(child);
+            });
+            if (!count)
+                continue;
+            if (count > 1 || !readsOfCarriedSubstrings.contains(operation.opcode) || !isCarried(operation.opcode == Opcode::ToBoolean ? operation.valueOperand() : operation.stringOperand()))
+                return false;
+            isLookedAt |= looksAtCarriedSubstrings.contains(operation.opcode);
+        }
+        bool isReadByTerminator = false;
+        block.terminator.forEachChild([&](ValueID child) {
+            isReadByTerminator |= isCarried(child);
+        });
+        if (isReadByTerminator)
+            return false;
+        EdgeID handler = code().handlerOf(id);
+        if (handler && std::ranges::any_of(code().at(handler).arguments(), isCarried))
+            return false;
+        for (uint32_t number = 0; number < block.terminator.numberOfEdges; ++number) {
+            const Edge& edge = code().at(block.terminator.edge(number));
+            std::span<const ValueID> parameters = code().at(edge.to).parameters();
+            for (size_t index = 0; index < edge.arguments().size(); ++index) {
+                if (!isCarried(edge.arguments()[index]) || !m_values[parameters[index].index()] || isCarried(parameters[index]))
+                    continue;
+                Representation wanted = representationOf(parameters[index]);
+                if (edge.to == head || handler || usesLoopForms(edge.to) || (wanted != Representation::Cell && wanted != Representation::JSValue))
+                    return false;
+            }
+        }
+    }
+    return isLookedAt;
+}
+
+void CodeGenerator::findCarriedSubstrings()
+{
+    m_carriedSubstrings.shrink(0);
+    if (m_keepsValuesInHeapFrame || !code().hasLoops() || code().hasSuspensions() || !code().opcodesOfValues().contains(Opcode::Substring) || !code().opcodesOfValues().intersects(looksAtCarriedSubstrings))
+        return;
+    for (BlockID head : m_order) {
+        const Block& block = code().at(head);
+        if (!block.isLoopHead || block.isEntry || !usesLoopForms(head))
+            continue;
+        std::span<const ValueID> parameters = block.parameters();
+        for (size_t place = 0; place < parameters.size(); ++place) {
+            const ValueID parameter = parameters[place];
+            Vector<CarriedSubstring, 4> strings;
+            if (!m_values[parameter.index()] || representationOf(parameter) != Representation::Cell || findCarriedSubstring(parameter) || !canCarrySubstring(head, place, strings))
+                continue;
+            build().statistics().count(StatisticID::SubstringsCarriedByPosition);
+            for (CarriedSubstring& string : strings) {
+                string.cut = strings.first().cut;
+                if (string.block) {
+                    string.start = m_out.phiIn(blockFor(string.block), Machine::Int32);
+                    string.length = m_out.phiIn(blockFor(string.block), Machine::Int32);
+                }
+                m_carriedSubstrings.append(string);
+            }
+        }
+    }
+}
+
+bool CodeGenerator::mayCarryNarrowInteger(BlockID home, ValueID parameter)
+{
+    const Block& block = code().at(home);
+    if (block.isLoopHead || !SlotEmitter::isNarrowIntegerOrOneMarker(typeOf(parameter)) || (unit().role == CodeRole::CoroutineBody && code().hasSuspensions()))
+        return false;
+    size_t place = std::ranges::find(block.parameters(), parameter) - block.parameters().begin();
+    bool readsNarrowInteger = false;
+    for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
+        std::span<const ValueID> arguments = code().at(id).arguments();
+        if (place >= arguments.size() || !arguments[place])
+            return false;
+        if (code().isConstant(arguments[place]))
+            continue;
+        if (!emitter<SlotAccessEmitter>().readsNarrowInteger(code().at(arguments[place])))
+            return false;
+        readsNarrowInteger = true;
+    }
+    return readsNarrowInteger;
+}
+
+bool CodeGenerator::isReadByUnboxAlone(BlockID home, ValueID parameter) const
+{
+    const Block& block = code().at(home);
+    ValueID reader = code().onlyUserOf(parameter);
+    if (block.isLoopHead || block.isEntry || block.isHandlerBlock() || m_keepsValuesInHeapFrame || (unit().role == CodeRole::CoroutineBody && code().hasSuspensions()))
+        return false;
+    static constexpr RepresentationSet unboxedNumbers { Representation::Int32, Representation::Int64, Representation::Double, Representation::OptionalInt64, Representation::OptionalDouble };
+    Representation form = representationOf(reader);
+    if (!unboxedNumbers.contains(form))
+        return false;
+    static constexpr OpcodeSet constantsCarried { Opcode::Integer, Opcode::Double, Opcode::Undefined, Opcode::Null };
+    size_t place = std::ranges::find(block.parameters(), parameter) - block.parameters().begin();
+    bool isPassed = false;
+    for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
+        std::span<const ValueID> arguments = code().at(id).arguments();
+        if (place >= arguments.size() || !arguments[place] || !code().isConstant(arguments[place]) || !constantsCarried.contains(opcodeOf(arguments[place])) || !isLegalRepresentation(typeOf(arguments[place]), form))
+            return false;
+        isPassed = true;
+    }
+    return isPassed;
+}
+
+void CodeGenerator::widenCarriedIntegers(const Block& block)
+{
+    for (ValueID parameter : block.parameters()) {
+        LValue& lowered = m_values[parameter.index()];
+        if (isCarriedNarrow(representationOf(parameter), lowered))
+            lowered = emitter<SlotEmitter>().widenBySelect(Word32(lowered), typeOf(parameter)).value();
+    }
+}
+
+struct CodeGenerator::CarriedSum {
+    static constexpr size_t mostNames = 24;
+
+    Vector<ValueID, 8> names;
+    Vector<BlockID, 4> heads;
+    Vector<std::pair<ValueID, double>, 4> addends;
+    double greatestStart { 0 };
+};
+
+static std::optional<double> greatestOfIntegers(const Type& type, uint16_t alsoZero)
+{
+    if (!type.hasOnlyPrimitives(Primitive::Integer | alsoZero) || type.integers.isEmpty())
+        return std::nullopt;
+    return std::max(std::abs(static_cast<double>(type.integers.minimum)), std::abs(static_cast<double>(type.integers.maximum)));
+}
+
+bool CodeGenerator::followCarriedSum(CarriedSum& sum) const
+{
+    auto isName = [&](ValueID value) {
+        if (code().isConstant(value) || representationOf(value) != Representation::Double || !typeOf(value).isNumberWithoutFraction())
+            return false;
+        const Operation& operation = code().at(value);
+        return operation.opcode == Opcode::Parameter || ((operation.opcode == Opcode::Add || operation.opcode == Opcode::Sub) && operation.form() == OperatorForm::Numbers);
+    };
+    auto follow = [&](ValueID name) {
+        if (!sum.names.contains(name))
+            sum.names.append(name);
+    };
+    for (size_t index = 0; index < sum.names.size(); ++index) {
+        if (sum.names.size() > CarriedSum::mostNames)
+            return false;
+        ValueID name = sum.names[index];
+        const Operation& operation = code().at(name);
+        if (operation.opcode != Opcode::Parameter) {
+            bool leftIsName = isName(operation.operand(0));
+            bool rightIsName = isName(operation.operand(1));
+            if (leftIsName == rightIsName || (rightIsName && operation.opcode == Opcode::Sub))
+                return false;
+            std::optional<double> greatest = greatestOfIntegers(typeOf(operation.operand(leftIsName ? 1 : 0)), Primitive::Null);
+            if (!greatest)
+                return false;
+            sum.addends.append({ name, *greatest });
+            follow(operation.operand(leftIsName ? 0 : 1));
+            continue;
+        }
+        BlockID home = operation.block();
+        const Block& block = code().at(home);
+        if (!code().isNeeded(name) || block.isEntry || block.isHandlerBlock() || block.subject)
+            return false;
+        if (block.isLoopHead && !sum.heads.contains(home))
+            sum.heads.append(home);
+        size_t place = block.placeOfParameter(name);
+        bool isFollowed = true;
+        code().forEachIncomingEdgeUnsealed(home, [&](const Edge& edge) {
+            if (!code().isReached(edge.from))
+                return;
+            ValueID argument = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            std::optional<double> greatest;
+            if (!argument)
+                isFollowed = false;
+            else if (isName(argument))
+                follow(argument);
+            else if (greatest = greatestOfIntegers(typeOf(argument), 0); greatest)
+                sum.greatestStart = std::max(sum.greatestStart, *greatest);
+            else
+                isFollowed = false;
+        });
+        if (!isFollowed)
+            return false;
+    }
+    return !sum.heads.isEmpty() && !sum.addends.isEmpty();
+}
+
+std::optional<double> CodeGenerator::greatestNumberOfTurns(BlockID head)
+{
+    const Block& block = code().at(head);
+    for (ValueID counter : block.parameters()) {
+        const Type& type = typeOf(counter);
+        if (!type.isInteger() || type.integers.isEmpty())
+            continue;
+        size_t place = block.placeOfParameter(counter);
+        bool isStepped = true;
+        code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+            if (!code().isReached(edge.from) || !dominates(head, edge.from))
+                return;
+            ValueID next = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            isStepped &= next && !code().isConstant(next) && opcodeOf(next) == Opcode::Increment && code().at(next).form() == OperatorForm::Integers && code().valueBehindNames<valuePreservingOpcodes>(code().at(next).operand(0)) == counter;
+        });
+        if (isStepped)
+            return static_cast<double>(type.integers.maximum) - static_cast<double>(type.integers.minimum) + 1;
+    }
+    return std::nullopt;
+}
+
+bool CodeGenerator::callsOrLoopsWithin(BlockID head)
+{
+    static constexpr OpcodeSet calls { Opcode::CallDirect, Opcode::Call, Opcode::Construct };
+    uint32_t last = m_positionsInOrder[head.index()];
+    code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+        if (code().isReached(edge.from) && dominates(head, edge.from))
+            last = std::max(last, m_positionsInOrder[edge.from.index()]);
+    });
+    for (uint32_t position = m_positionsInOrder[head.index()]; position <= last; ++position) {
+        const Block& block = code().at(m_order[position]);
+        if (block.isLoopHead && m_order[position] != head)
+            return true;
+        if (block.frequency != BlockFrequency::Rare && std::ranges::any_of(code().valuesOf(block), [&](ValueID value) { return calls.contains(opcodeOf(value)); }))
+            return true;
+    }
+    return false;
+}
+
+void CodeGenerator::lookForCarriedSums()
+{
+    if (std::exchange(m_carriesSums, false))
+        m_carriedSums.clearAll();
+    m_integersOfCarriedSums.clear();
+    m_positionsInOrder.shrink(0);
+    m_looksForCarriedSums = code().hasLoops() && !code().hasSuspensions() && !code().readsNumbersOutOfBytes() && code().opcodesOfValues().contains(Opcode::Add);
+}
+
+void CodeGenerator::tryCarrySum(ValueID parameter)
+{
+    static constexpr double mostSum = 0x1p52;
+    CarriedSum sum;
+    sum.names.append(parameter);
+    if (!followCarriedSum(sum))
+        return;
+    if (m_positionsInOrder.isEmpty()) {
+        m_positionsInOrder.fill(0, code().numberOfBlocks());
+        for (uint32_t position = 0; position < m_order.size(); ++position)
+            m_positionsInOrder[m_order[position].index()] = position;
+    }
+    Vector<double, 4> turns;
+    for (BlockID head : sum.heads) {
+        std::optional<double> greatest = callsOrLoopsWithin(head) && !findCountedLoopAt(m_positionsInOrder[head.index()]) ? greatestNumberOfTurns(head) : std::nullopt;
+        if (!greatest)
+            return;
+        turns.append(*greatest);
+    }
+    double greatest = sum.greatestStart;
+    for (auto [name, addend] : sum.addends) {
+        for (size_t index = 0; index < turns.size(); ++index)
+            addend *= dominates(sum.heads[index], code().blockOf(name)) ? turns[index] : 1;
+        greatest += addend;
+    }
+    if (greatest > mostSum)
+        return;
+    m_carriesSums = true;
+    m_carriedSums.ensureSize(code().numberOfValues());
+    for (ValueID name : sum.names) {
+        if (!m_values[name.index()])
+            m_carriedSums.set(name.index());
+    }
+    build().statistics().count(StatisticID::SumsCarriedAsIntegers);
+}
+
+LValue CodeGenerator::integerOfCarriedSum(LValue number, bool isNotNegative)
+{
+    if (number->opcode() == Machine::IToD) {
+        LValue integer = number->child(0);
+        if (integer->type() != Machine::Int32)
+            return integer;
+        return isNotNegative ? m_out.extendWordThatIsNotNegative(integer) : m_out.signExt32To64(integer);
+    }
+    if (number->hasDouble())
+        return m_out.constInt64(static_cast<int64_t>(number->asDouble()));
+    return emitter<ConversionEmitter>().truncateUnchecked(Number(number)).value();
+}
+
+void CodeGenerator::takeIntegersOfCarriedSums(const Block& block)
+{
+    for (ValueID parameter : block.parameters()) {
+        LValue& lowered = m_values[parameter.index()];
+        if (!lowered || lowered->opcode() != Machine::Phi || !isCarriedSum(parameter))
+            continue;
+        m_integersOfCarriedSums.set(parameter.index(), lowered);
+        lowered = m_out.intToDouble(lowered);
+    }
+}
+
 void CodeGenerator::createPhis()
 {
+    m_carriesNarrowIntegers = false;
     constexpr unsigned mostBlocksThatHandParameterOn = 4;
+    const bool mayUnboxParameters = code().opcodesOfValues().contains(Opcode::Unbox);
     for (BlockID block : m_order) {
         if (goesOnInBlockOfEntry(block))
             continue;
@@ -1020,6 +2311,13 @@ void CodeGenerator::createPhis()
             RELEASE_ASSERT(representation != Representation::Unchosen);
             if (!code().isNeeded(parameter) || !hasRegister(representation))
                 continue;
+            if (representation == Representation::Double && m_looksForCarriedSums) [[unlikely]] {
+                const Block& home = code().at(block);
+                if (home.isLoopHead && home.frequency != BlockFrequency::Rare && !isCarriedSum(parameter) && typeOf(parameter).isNumberWithoutFraction())
+                    tryCarrySum(parameter);
+                if (isCarriedSum(parameter))
+                    representation = Representation::Int64;
+            }
             if (representation == Representation::Double && !m_followsNumbersOutOfBytes && isReadByBoxAlone(block, parameter, mostBlocksThatHandParameterOn)) [[unlikely]] {
                 if (!m_carriesParametersBoxed) {
                     m_carriesParametersBoxed = true;
@@ -1027,6 +2325,19 @@ void CodeGenerator::createPhis()
                 }
                 m_parametersCarriedBoxed.quickSet(parameter.index());
                 representation = Representation::JSValue;
+            }
+            if (representation == Representation::JSValue && mayUnboxParameters && code().useCountOf(parameter) == 1 && code().onlyUserOf(parameter) && opcodeOf(code().onlyUserOf(parameter)) == Opcode::Unbox && isReadByUnboxAlone(block, parameter)) [[unlikely]] {
+                if (!m_carriesParametersUnboxed) {
+                    m_carriesParametersUnboxed = true;
+                    m_parametersCarriedUnboxed.ensureSize(code().numberOfValues());
+                }
+                m_parametersCarriedUnboxed.quickSet(parameter.index());
+                representation = carriedRepresentationOf(parameter);
+                build().statistics().count(StatisticID::JoinsCarriedUnboxed);
+            }
+            if (representation == Representation::OptionalInt64 && mayCarryNarrowInteger(block, parameter)) [[unlikely]] {
+                m_carriesNarrowIntegers = true;
+                representation = Representation::Int32;
             }
             m_out.setOrigin(machineOriginOf(parameter));
             defineValue(parameter, representation, Operand(representation, m_out.phiIn(blockFor(block), machineTypeOf(representation))));
@@ -1060,9 +2371,13 @@ void CodeGenerator::followNumbersOutOfBytes()
     for (size_t position = m_order.size(); position--;) {
         BlockID id = m_order[position];
         const Block& block = code().at(id);
-        block.terminator.forEachChild([&](ValueID operand) {
-            m_valuesReadForBitsOfNaN.quickSet(operand.index());
-        });
+        auto noteReadForBits = [&](ValueID operand) {
+            const Operation& definition = code().at(operand);
+            bool isPurifiedByReader = block.frequency == BlockFrequency::Rare && readsNumberOutOfBytes(definition) && code().at(definition.block()).frequency != BlockFrequency::Rare;
+            if (!isPurifiedByReader)
+                m_valuesReadForBitsOfNaN.quickSet(operand.index());
+        };
+        block.terminator.forEachChild(noteReadForBits);
         if (block.subject)
             m_valuesReadForBitsOfNaN.quickSet(block.subject.index());
         EdgeID handler = code().handlerOf(id);
@@ -1076,7 +2391,7 @@ void CodeGenerator::followNumbersOutOfBytes()
                 if (!argument || !code().isNeeded(parameter))
                     continue;
                 if (edgeID == handler || representationOf(parameter) != Representation::Double) {
-                    m_valuesReadForBitsOfNaN.quickSet(argument.index());
+                    noteReadForBits(argument);
                     continue;
                 }
                 if (code().at(edge.to).isLoopHead && parameter < argument) {
@@ -1096,7 +2411,7 @@ void CodeGenerator::followNumbersOutOfBytes()
             const Operation& operation = code().at(value);
             operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                 if (!takesAnyNaN(operation, operandIndex))
-                    m_valuesReadForBitsOfNaN.quickSet(operand.index());
+                    noteReadForBits(operand);
             });
             ValueID head = headsFed[value.index()];
             if (!head || isReadForBitsOfNaN(value))
@@ -1169,7 +2484,7 @@ ValueID CodeGenerator::sumBoxedBySlow(const Operation& box) const
             return false;
         if (term.opcode == Opcode::IntegerToNumber)
             return term.representation == Representation::Double && representationOf(term.valueOperand()) == Representation::Int32;
-        if (term.opcode != Opcode::Unbox || representationOf(term.valueOperand()) != Representation::JSValue)
+        if (term.opcode != Opcode::Unbox || representationOf(term.valueOperand()) != Representation::JSValue || isCarriedUnboxed(term.valueOperand()))
             return false;
         const Type& boxed = typeOf(term.valueOperand());
         if (!(term.representation == Representation::Double && boxed.isNumber()) && !(term.representation == Representation::OptionalDouble && boxed.isNumberOrNullish()))
@@ -1251,7 +2566,18 @@ NEVER_INLINE void CodeGenerator::dispatchWatched(const ValueContext& context)
         m_records.formsSaid.leave(siteOfUser, m_proc.numberOfOperations());
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& context)
+NEVER_INLINE void CodeGenerator::endScheduledLifetimes(const ValueContext& context)
+{
+    m_scheduledLifetimeEnds.removeAllMatching([&](const std::pair<ValueID, ValueID>& lent) {
+        if (lent.second != context.id())
+            return false;
+        if (!m_hasFailed && currentBlockIsOpen())
+            emitter<HintEmitter>().emitLifetimeEnd(context, lent.first);
+        return true;
+    });
+}
+
+NEVER_INLINE void CodeGenerator::generateWatched(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
     Machine::Origin originOfUser = m_out.origin();
@@ -1266,15 +2592,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& 
     if (m_owesFenceBehindStores) [[unlikely]]
         fail(context, InternalErrorKind::MissingFenceAfterLateStores);
     m_owesFenceBehindStores = userOwesFenceBehindStores;
-    if (!m_scheduledLifetimeEnds.isEmpty()) [[unlikely]] {
-        m_scheduledLifetimeEnds.removeAllMatching([&](const std::pair<ValueID, ValueID>& lent) {
-            if (lent.second != context.id())
-                return false;
-            if (!m_hasFailed && currentBlockIsOpen())
-                emitter<HintEmitter>().emitLifetimeEnd(context, lent.first);
-            return true;
-        });
-    }
+    if (!m_scheduledLifetimeEnds.isEmpty()) [[unlikely]]
+        endScheduledLifetimes(context);
     m_out.setOrigin(originOfUser);
     m_operation = user;
     if (m_looksBehindEachOperation) [[unlikely]] {
@@ -1300,46 +2619,84 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& 
     RELEASE_ASSERT(hasResults(index));
 }
 
+ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generate(const ValueContext& context)
+{
+    if (m_generatesWatched) [[unlikely]] {
+        generateWatched(context);
+        return;
+    }
+    const OperationContext* user = std::exchange(m_operation, &context);
+    Machine::Origin originOfUser = m_out.origin();
+    m_out.setOrigin(machineOriginOf(context.id()));
+    bool userOwesFenceBehindStores = std::exchange(m_owesFenceBehindStores, false);
+    dispatch(context);
+    if (m_owesFenceBehindStores) [[unlikely]]
+        fail(context, InternalErrorKind::MissingFenceAfterLateStores);
+    m_owesFenceBehindStores = userOwesFenceBehindStores;
+    if (!m_scheduledLifetimeEnds.isEmpty()) [[unlikely]]
+        endScheduledLifetimes(context);
+    m_out.setOrigin(originOfUser);
+    m_operation = user;
+    size_t index = context.id().index();
+    if (m_values[index] || !hasRegister(context.representation())) [[likely]]
+        return;
+    if (m_hasFailed || m_definitionTaken || context.isBranchCondition() || context.returnCall() || isNeverType(context->type))
+        return;
+    RELEASE_ASSERT(hasResults(index));
+}
+
+static constexpr OpcodeSet opcodesOfOtherValues = sumsThatMayStayBoxed | OpcodeSet {
+    Opcode::HasArrayStorage, Opcode::NewClosure, Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::IntegerToNumber, Opcode::GetDeferredClosureSlot, Opcode::NewArray,
+};
+static constexpr OpcodeSet opcodesMadeElsewhere = opcodesOfOtherValues | OpcodeSet { Opcode::ToString, Opcode::Mul };
+
 ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, ValueID id, const Operation& operation, bool isAwaitedAtOnce, std::span<const ValueID> operationsBehind)
 {
     if (!m_sumsOfIntegers.isEmpty() && addToSumOfIntegers(id)) [[unlikely]]
         return;
-    if (!m_valuesLeftOutOfTurnsLaidOut.isEmpty() && m_valuesLeftOutOfTurnsLaidOut.contains(id)) [[unlikely]]
+    if (!m_valuesLeftOutOfTurnsLaidOut.isEmpty() && isLeftOutOfTurn(block, id, operation)) [[unlikely]]
         return;
-    if (operation.opcode == Opcode::HasArrayStorage && leavesKindToTurnsLaidOut(block, id, operation)) [[unlikely]]
-        return;
-    if (isDeferredClosure(operation))
-        return;
-    if (sumsThatMayStayBoxed.contains(operation.opcode) && isLeftToBackEdge(id, operation)) [[unlikely]] {
-        m_stepsLeftToBackEdge.append(id);
-        return;
-    }
-    if (operation.opcode == Opcode::Box && isLeftToHandlers(id)) [[unlikely]]
-        return;
-    if ((operation.representation == Representation::Double || operation.representation == Representation::OptionalDouble) && waitsForBoxOfSum(id, operation)) [[unlikely]]
-        return;
-    if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
-        m_closureReadForItsScope = id;
-        m_slotOfScopeOfClosureRead = scope;
-        return;
-    }
-    if (operation.opcode == Opcode::NewArray && !operationsBehind.empty() && !m_keepsValuesInHeapFrame && ArrayAllocationEmitter(*this).isLeftToSpreadRightBehind(block, id, operation, operationsBehind)) [[unlikely]] {
-        m_literalLeftToSpreadRightBehind = id;
-        return;
+    const bool mayBeMadeElsewhere = opcodesMadeElsewhere.contains(operation.opcode);
+    const bool isMadeByOperator = operation.opcode == Opcode::ToString || operation.opcode == Opcode::Mul;
+    if (mayBeMadeElsewhere && !isMadeByOperator) {
+        if (operation.opcode == Opcode::HasArrayStorage && leavesKindToTurnsLaidOut(block, id, operation)) [[unlikely]]
+            return;
+        if (isDeferredClosure(operation))
+            return;
+        if (sumsThatMayStayBoxed.contains(operation.opcode) && isLeftToBackEdge(id, operation)) [[unlikely]] {
+            m_stepsLeftToBackEdge.append(id);
+            return;
+        }
+        if (operation.opcode == Opcode::Box && isLeftToHandlers(id)) [[unlikely]]
+            return;
+        if ((operation.representation == Representation::Double || operation.representation == Representation::OptionalDouble) && waitsForBoxOfSum(id, operation)) [[unlikely]]
+            return;
+        if (const PlacedSlot* scope = slotOfScopeReadInPlaceOfClosure(id, operation); scope && !operationsBehind.empty() && operationsBehind.front() == code().onlyUserOf(id)) {
+            m_closureReadForItsScope = id;
+            m_slotOfScopeOfClosureRead = scope;
+            return;
+        }
+        if (operation.opcode == Opcode::NewArray && !operationsBehind.empty() && !m_keepsValuesInHeapFrame && ArrayAllocationEmitter(*this).isLeftToSpreadRightBehind(block, id, operation, operationsBehind)) [[unlikely]] {
+            m_literalLeftToSpreadRightBehind = id;
+            return;
+        }
     }
     if (operation.traits().mayThrow())
         m_isAheadOfWhatMayThrow = false;
-    if (operation.opcode == Opcode::ToString && !m_keepsValuesInHeapFrame && !m_checksEffects && emitter<OperatorEmitter>().leavesConversionToConcatenation(block, id, operation, operationsBehind)) {
-        m_conversionLeftToConcatenation = id;
-        return;
-    }
-    if (operation.opcode == Opcode::Mul && !m_keepsValuesInHeapFrame && !m_checksEffects) {
-        Vector<BlockID, 2> rareBlocksWithProduct;
-        if (emitter<OperatorEmitter>().leavesProductToRemainder(block, id, operation, rareBlocksWithProduct)) [[unlikely]] {
-            m_productsLeftToRemainders.append(id);
-            for (BlockID rare : rareBlocksWithProduct)
-                m_productsMadeInRareBlocks.append({ rare, id });
+    if (mayBeMadeElsewhere && isMadeByOperator) [[unlikely]] {
+        if (operation.opcode == Opcode::ToString && !m_keepsValuesInHeapFrame && !m_checksEffects && emitter<OperatorEmitter>().leavesConversionToConcatenation(block, id, operation, operationsBehind)) {
+            m_conversionLeftToConcatenation = id;
             return;
+        }
+        if (operation.opcode == Opcode::Mul && !m_keepsValuesInHeapFrame && !m_checksEffects) {
+            Vector<BlockID, 2> rareBlocksWithProduct;
+            if (emitter<OperatorEmitter>().leavesProductToRemainder(block, id, operation, rareBlocksWithProduct)) [[unlikely]] {
+                m_productsLeftToRemainders.set(id.index());
+                for (BlockID rare : rareBlocksWithProduct)
+                    m_productsMadeInRareBlocks.add(rare.index(), Vector<ValueID, 2>()).iterator->value.append(id);
+                m_remakesValuesInRareBlocks = true;
+                return;
+            }
         }
     }
     ValueContext context(block, id, operation, handlerOf(block));
@@ -1348,15 +2705,36 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, 
     generate(context);
 }
 
-void CodeGenerator::copyBigIntsToHeap(BlockID block)
+size_t CodeGenerator::remakeValuesInRareBlock(BlockID block)
 {
+    if (auto products = m_productsMadeInRareBlocks.find(block.index()); products != m_productsMadeInRareBlocks.end()) {
+        for (ValueID product : products->value)
+            m_values[product.index()] = generateProductHere(block, product).value;
+    }
+    size_t numberOfBigIntsInFrame = m_bigIntsInFrame.size();
+    if (!m_copiesBigIntsInRareBlocks)
+        return numberOfBigIntsInFrame;
     OperatorEmitter& operators = emitter<OperatorEmitter>();
-    for (const BigIntValues::CopyInUnlikelyBlock& copy : operators.bigIntValues().copiesInUnlikelyBlocks()) {
-        if (copy.block != block || !m_values[copy.value.index()])
+    for (const BigIntValues::CopyInUnlikelyBlock& copy : operators.bigIntValues().copiesInUnlikelyBlock(block)) {
+        if (!m_values[copy.value.index()])
             continue;
         m_bigIntsInFrame.append({ copy.value, m_values[copy.value.index()] });
         ValueContext context(block, copy.producer, code().at(copy.producer), handlerOf(block));
         m_values[copy.value.index()] = operators.copyToHeap(context, get(copy.value)).value;
+    }
+    return numberOfBigIntsInFrame;
+}
+
+void CodeGenerator::forgetRemadeValues(BlockID block, size_t numberOfBigIntsInFrame)
+{
+    while (m_bigIntsInFrame.size() > numberOfBigIntsInFrame) {
+        auto [value, inFrame] = m_bigIntsInFrame.takeLast();
+        if (m_values[value.index()])
+            m_values[value.index()] = inFrame;
+    }
+    if (auto products = m_productsMadeInRareBlocks.find(block.index()); products != m_productsMadeInRareBlocks.end()) {
+        for (ValueID product : products->value)
+            m_values[product.index()] = nullptr;
     }
 }
 
@@ -1368,6 +2746,15 @@ Operand CodeGenerator::generateProductHere(BlockID block, ValueID product)
     generate(context);
     LValue made = std::exchange(m_values[product.index()], nullptr);
     return made ? Operand(operation.representation, made) : zeroInPlaceOfValueOfFailedCode(operation.representation);
+}
+
+NEVER_INLINE bool CodeGenerator::isLeftOutOfTurn(BlockID block, ValueID id, const Operation& operation)
+{
+    if (m_lanes && emitLanes(block, id))
+        return true;
+    if (m_interleaving && beginInterleavedOperation(id, operation))
+        return true;
+    return m_valuesLeftOutOfTurnsLaidOut.contains(id);
 }
 
 static uint32_t indexOfLiteralUsed(const std::pair<ValueID, ValueID>& use)
@@ -1434,17 +2821,17 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateTerminator(BlockID id
 
     m_operation = &context;
     declareAccessesOf(context);
-    if (m_checksEffects && context.handler()) [[unlikely]]
-        emitter<RuntimeCallEmitter>().saveDeedsForHandler({ });
+    if (m_watchesTerminators) [[unlikely]]
+        beginTerminatorWatched(context);
     if (m_limitOfWrittenLoop && m_limitOfWrittenLoop->asking == id) [[unlikely]]
         askLimitOfWrittenLoop(context);
     else
         dispatch(context);
     if (std::exchange(m_owesFenceBehindStores, false)) [[unlikely]]
         fail(context, InternalErrorKind::MissingFenceAfterLateStores);
+    if (m_watchesTerminators) [[unlikely]]
+        endTerminatorWatched();
     m_operation = nullptr;
-    if (m_checksAllocation) [[unlikely]]
-        m_out.clearDeclaredAccesses();
     RELEASE_ASSERT(m_hasFailed || currentBlockIsOpen() == m_nextBlockGoesOnHere);
 }
 
@@ -1833,15 +3220,25 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         m_blocksBegun.quickSet(id.index());
     if (std::exchange(m_nextBlockGoesOnHere, false))
         RELEASE_ASSERT(blockFor(id) == m_out.m_block && currentBlockIsOpen());
-    else if (BlockID predecessor = m_singlePredecessors[id.index()]; predecessor && !m_blocksWithOtherJumps.get(id.index()))
+    else if (BlockID predecessor = m_singlePredecessors[id.index()]; !predecessor)
+        m_out.appendTo(blockFor(id));
+    else if (!m_blocksWithOtherJumps.get(id.index())) [[likely]]
         m_out.appendToSuccessor(blockFor(id), m_scopeAtEndOfBlock[predecessor.index()]);
+    else if (RowGuard* guard = findGuardContinuingIn(id); guard && m_out.canRestoreScope(guard->scope))
+        m_out.appendToJoin(blockFor(id), guard->scope);
     else
         m_out.appendTo(blockFor(id));
     m_out.setOrigin(Machine::Origin());
     m_isAheadOfWhatMayThrow = true;
-    if (m_hasKeysAskedTwice) [[unlikely]] {
-        for (ValueID parameter : block.parameters())
-            noteIndexOfKey(parameter);
+    if (m_notesHeadsOfBlocks) [[unlikely]] {
+        if (m_rows)
+            enterBlockWithRows(id);
+        if (m_kindsTried)
+            enterBlockWithKindsTried(id);
+        for (ValueID parameter : block.parameters()) {
+            if (m_hasKeysAskedTwice)
+                noteIndexOfKey(parameter);
+        }
     }
     if (!m_elementsMadePresentAtHeadsOfBlocks.isEmpty()) [[unlikely]] {
         if (auto made = m_elementsMadePresentAtHeadsOfBlocks.find(id.index()); made != m_elementsMadePresentAtHeadsOfBlocks.end()) {
@@ -1852,47 +3249,42 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     }
     if (m_keepsValuesInHeapFrame) [[unlikely]]
         enterBlockOfBodyWithHeapFrame(id, block);
-    auto forgetProducts = makeScopeExit([&] {
-        for (auto [rare, product] : m_productsMadeInRareBlocks) {
-            if (rare == id)
-                m_values[product.index()] = nullptr;
-        }
+    if (m_carriesNarrowIntegers) [[unlikely]]
+        widenCarriedIntegers(block);
+    if (m_carriesSums) [[unlikely]]
+        takeIntegersOfCarriedSums(block);
+    const bool remakesValues = m_remakesValuesInRareBlocks && block.frequency == BlockFrequency::Rare;
+    const size_t numberOfBigIntsInFrame = remakesValues ? remakeValuesInRareBlock(id) : 0;
+    auto forgetValues = makeScopeExit([&] {
+        if (remakesValues) [[unlikely]]
+            forgetRemadeValues(id, numberOfBigIntsInFrame);
     });
-    for (auto [rare, product] : m_productsMadeInRareBlocks) {
-        if (rare == id) [[unlikely]]
-            m_values[product.index()] = generateProductHere(id, product).value;
-    }
-    const size_t numberOfBigIntsInFrame = m_bigIntsInFrame.size();
-    auto forgetCopies = makeScopeExit([&] {
-        while (m_bigIntsInFrame.size() > numberOfBigIntsInFrame) [[unlikely]] {
-            auto [value, inFrame] = m_bigIntsInFrame.takeLast();
-            if (m_values[value.index()])
-                m_values[value.index()] = inFrame;
-        }
-    });
-    if (m_copiesBigIntsInRareBlocks) [[unlikely]]
-        copyBigIntsToHeap(id);
 
+    static constexpr OpcodeSet resultsReturnedByStubs { Opcode::ReturnAsyncResult, Opcode::NewPromise };
     ValueID owned = valueOwnedByTerminator(block.terminator);
-    if (!owned)
-        owned = asyncResultReturnedByStub(block);
     size_t numberOwned = 1;
-    if (!owned) {
-        owned = bodyEnteredAfterNewPromise(block);
-        numberOwned = numberOfOperationsThatEnterBody;
-    }
-    if (!owned) {
-        owned = fulfilledPromiseReturnedByStub(block);
-        numberOwned = numberOfOperationsThatFulfillPromise;
+    if (!owned && block.terminator.kind == TerminatorKind::Return && code().opcodesOfValues().intersects(resultsReturnedByStubs)) {
+        owned = asyncResultReturnedByStub(block);
+        if (!owned) {
+            owned = bodyEnteredAfterNewPromise(block);
+            numberOwned = numberOfOperationsThatEnterBody;
+        }
+        if (!owned) {
+            owned = fulfilledPromiseReturnedByStub(block);
+            numberOwned = numberOfOperationsThatFulfillPromise;
+        }
     }
     if (owned) {
         RELEASE_ASSERT(values.size() >= numberOwned && values.back() == owned);
         values = values.first(values.size() - numberOwned);
     }
     Vector<ValueID> inOrderOfUses;
-    if (block.isInLoop)
+    if (block.isInLoop) {
         values = valuesWithBitsAtFirstUses(id, values, inOrderOfUses);
-    if (code().opcodesOfValues().contains(Opcode::Mod) && block.terminator.kind == TerminatorKind::Branch && inOrderOfUses.isEmpty()) [[unlikely]]
+        if (!m_valuesOfEarlierPasses.isEmpty() && !m_headOfTurnsLaidOut) [[unlikely]]
+            values = valuesOfLastPass(values, inOrderOfUses);
+    }
+    if (block.terminator.kind == TerminatorKind::Branch && code().opcodesOfValues().contains(Opcode::Mod) && inOrderOfUses.isEmpty()) [[unlikely]]
         values = emitter<OperatorEmitter>().valuesWithZerosAhead(id, values, inOrderOfUses);
     ValueID test = block.terminator.kind == TerminatorKind::Branch ? testReadByBranchAlone(id, block.terminator) : ValueID();
     bool testWaitsForBranch = false;
@@ -1937,6 +3329,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         emitter<ThrowEmitter>().crashOnFalseProof(context, std::nullopt, ProofSource::OtherOperation);
         return;
     }
+    if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
+        beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);
 }
 
@@ -1979,6 +3373,7 @@ static constexpr unsigned mostBlocksInTurnLaidOut = 4;
 static constexpr unsigned placesLookedAtBehindHead = 32;
 static constexpr unsigned placesLookedAtFirst = 8;
 static constexpr unsigned mostBlocksInTurnFoundWide = 8;
+static constexpr unsigned maxBlocksStoringBeforeTests = 16;
 static constexpr int64_t fewestTurnsOfLoopComeBackTo = 64;
 static constexpr int64_t turnsThatPayForComingBack = 12;
 static constexpr int64_t turnsWrittenForEachTurnOwed = 2;
@@ -1986,6 +3381,7 @@ static constexpr int64_t mostTurnsOwed = 64;
 static constexpr int64_t largestStepOfCounter = 16;
 static constexpr unsigned mostOperationsInTurnLaidOut = 16;
 static constexpr unsigned maxOperationsInWideIteration = 32;
+static constexpr unsigned mostOperationsInLanes = 128;
 static constexpr unsigned wideIterationsUnrolled = 4;
 static constexpr unsigned mostOperationsInRotatingIteration = 96;
 static constexpr unsigned rotatingIterationsInRow = 2;
@@ -2024,7 +3420,7 @@ bool CodeGenerator::leavesKindToTurnsLaidOut(BlockID block, ValueID id, const Op
         m_cachedCountedLoop = findCountedLoopAt(next);
     }
     const std::optional<CountedLoop>& loop = m_cachedCountedLoop;
-    if (!loop)
+    if (!loop || loop->isTooLongToUnroll)
         return false;
     auto told = std::ranges::find(loop->kindsToldToReads, id, &KindToldToReads::holdsDoubles);
     if (told == loop->kindsToldToReads.end() || told->numberOfReads != code().useCountOf(id))
@@ -2108,7 +3504,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         }
     });
     const Edge& intoTurn = code().at(loop.testsAtEnd ? blockOfHead.terminator.next() : blockThatAsks.terminator.taken());
-    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking || code().valuesOf(intoTurn.to).size() > (rotatesNumbers ? mostOperationsInRotatingIteration : maxOperationsInWideIteration) + 1)
+    if (!intoTurn.arguments().empty() || positionOfAsking + 1 == m_order.size() || m_order[positionOfAsking + 1] != intoTurn.to || m_singlePredecessors[intoTurn.to.index()] != asking || code().valuesOf(intoTurn.to).size() > mostOperationsInLanes + 1)
         return std::nullopt;
 
     unsigned numberOfPlaces = 0;
@@ -2125,7 +3521,8 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     };
     auto forEachPlaceLedTo = [&](unsigned place, auto&& function) {
         const Terminator& terminator = code().at(blockAt(place)).terminator;
-        for (uint32_t edge = 0; edge < terminator.numberOfEdges; ++edge) {
+        uint32_t numberOfEdges = findCheckingGuard(blockAt(place)) ? 1 : terminator.numberOfEdges;
+        for (uint32_t edge = 0; edge < numberOfEdges; ++edge) {
             if (std::optional<unsigned> target = placeOf(code().at(terminator.edge(edge)).to); target && *target > place)
                 function(*target);
         }
@@ -2156,8 +3553,12 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
     auto endsIteration = [&](const Block& block) {
         return leadsBack(block) || endsInTest(block);
     };
-    auto storesBeforeStepping = [&](const Block& block) {
-        return endsIteration(block) || (block.terminator.kind == TerminatorKind::Jump && endsIteration(code().at(code().at(block.terminator.next()).to)));
+    auto goesStraightToEnd = [&](const Block& block) {
+        static constexpr unsigned mostJumps = 6;
+        const Block* passed = &block;
+        for (unsigned jumps = 0; jumps < mostJumps && passed->terminator.kind == TerminatorKind::Jump && !endsIteration(*passed); ++jumps)
+            passed = &code().at(code().at(passed->terminator.next()).to);
+        return endsIteration(*passed);
     };
     bool admitsStoresIntoSlots = true;
     auto mayBelongToTurn = [&](BlockID id) {
@@ -2166,8 +3567,12 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
             return false;
         if (std::ranges::any_of(block.parameters(), [&](ValueID parameter) { return isCarriedBoxed(parameter); }) || findLiteralChain(id))
             return false;
+        const RowGuard* checkingGuard = findCheckingGuard(id);
         for (ValueID value : code().valuesOf(id)) {
             const Operation& operation = code().at(value);
+            static constexpr OpcodeSet checksOfRow { Opcode::IsPristine, Opcode::HasArrayStorage, Opcode::CheckProof };
+            if (checkingGuard && checksOfRow.contains(operation.opcode)) [[unlikely]]
+                continue;
             if (operation.opcode == Opcode::LoopHint && !operation.throwsOwedError() && (!loop.poll || loop.poll == value)) {
                 loop.poll = value;
                 continue;
@@ -2179,12 +3584,15 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 return false;
             if (operation.opcode == Opcode::PutTypedArrayElement) {
                 const Type& stored = typeOf(operation.valueOperand());
-                if (!endsIteration(block) || stored.hasObjects() || stored.primitives & cellPrimitives)
+                if (!goesStraightToEnd(block) || stored.hasObjects() || stored.primitives & cellPrimitives)
                     return false;
                 continue;
             }
+            if (loop.storesAheadOfTests && operation.opcode == Opcode::GetOwnDoubleIndex)
+                continue;
             if (operation.opcode == Opcode::PutContiguousIndex || operation.opcode == Opcode::PutDoubleIndex) {
-                if (!storesBeforeStepping(block) || !typeOf(operation.valueOperand()).isNumber())
+                bool mayStore = goesStraightToEnd(block) || (loop.storesAheadOfTests && operation.opcode == Opcode::PutDoubleIndex);
+                if (!mayStore || !typeOf(operation.valueOperand()).isNumber())
                     return false;
                 continue;
             }
@@ -2279,6 +3687,7 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         if (!isInTurn[0])
             return false;
         loop.numberOfOperations = 0;
+        loop.holdsProductSum = false;
         loop.holesLeaveTurns = true;
         bool hasStoredIntoList = false;
         loop.storesIntoLists = false;
@@ -2289,8 +3698,9 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         for (unsigned place = 0; place <= *placeOfLast; ++place) {
             if (!isInTurn[place])
                 continue;
-            numberOfBlocksThatHoldOperations += !code().valuesOf(blockAt(place)).empty();
-            if (numberOfBlocksThatHoldOperations > (switches ? mostBlocksInTurnFoundWide : mostBlocksInTurnLaidOut))
+            const bool checksRow = findCheckingGuard(blockAt(place));
+            numberOfBlocksThatHoldOperations += !code().valuesOf(blockAt(place)).empty() && !checksRow;
+            if (numberOfBlocksThatHoldOperations > (loop.storesAheadOfTests ? maxBlocksStoringBeforeTests : switches ? mostBlocksInTurnFoundWide : mostBlocksInTurnLaidOut))
                 return false;
             loop.turn.append(blockAt(place));
             loop.positionsOfTurn.append(positionOfAsking + 1 + place);
@@ -2298,8 +3708,11 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
                 const Operation& operation = code().at(value);
                 if (operation.opcode == Opcode::LoopHint)
                     continue;
+                if (checksRow && operation.opcode != Opcode::GetArrayElement) [[unlikely]]
+                    continue;
                 loop.numberOfOperations += operation.opcode != Opcode::Narrowed;
-                if (loop.numberOfOperations > (rotatesNumbers ? mostOperationsInRotatingIteration : maxOperationsInWideIteration))
+                loop.holdsProductSum |= operation.opcode == Opcode::MultiplyAddIntegers;
+                if (loop.numberOfOperations > mostOperationsInLanes)
                     return false;
                 if (operation.opcode == Opcode::GetStringCodeUnit && opcodeOf(operation.stringOperand()) == Opcode::FlattenString && !loop.flatStrings.contains(operation.stringOperand()))
                     loop.flatStrings.append(operation.stringOperand());
@@ -2372,8 +3785,12 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         return std::nullopt;
     if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true)) {
         admitsStoresIntoSlots = false;
-        if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true))
-            return std::nullopt;
+        if (!findTurn(placesLookedAtFirst, false) && !findTurn(placesLookedAtBehindHead, true)) {
+            loop.storesAheadOfTests = code().opcodesOfValues().contains(Opcode::GetOwnDoubleIndex);
+            loop.numberOfOperations = 0;
+            if (!loop.storesAheadOfTests || !findTurn(placesLookedAtBehindHead, false))
+                return std::nullopt;
+        }
     }
     auto isAmong = [&](ValueID list, const auto& lists) {
         return std::ranges::any_of(lists, [&](ValueID other) { return other == list || (wordOf(list) && wordOf(other) == wordOf(list)); });
@@ -2424,6 +3841,10 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
         return isMadeInLoop(told.holdsDoubles);
     });
 
+    for (ListAskedForKind& asked : loop.listsAskedForKind) {
+        if (loop.holdsProductSum && !asked.isStoredInto && !asked.hasOneKind && asked.kind == ArrayStorage::Double)
+            asked.kind = ArrayStorage::Int32;
+    }
     loop.asksListsReadAndListsStoredInto = std::ranges::any_of(loop.listsAskedForKind, &ListAskedForKind::isStoredInto) && std::ranges::any_of(loop.listsAskedForKind, [](const ListAskedForKind& asked) { return !asked.isStoredInto && !asked.hasOneKind; });
     const Edge& back = code().at(code().at(loop.turn.last()).terminator.next());
     auto integerHandedOnBy = [&](ValueID value) {
@@ -2591,21 +4012,42 @@ std::optional<CodeGenerator::CountedLoop> CodeGenerator::findCountedLoopAt(size_
             loop.relationsOfCounterBelowBound.append(end.conditionOperand());
         }
     }
+    for (const RowGuard& guard : m_rows ? m_rows->guards.span() : std::span<const RowGuard>()) {
+        if (!loop.turn.contains(guard.presenceBlock) && !std::ranges::any_of(guard.checkBlocks, [&](BlockID block) { return loop.turn.contains(block); }))
+            continue;
+        bool isUnderCounter = isCounterBelowBound && loop.bound && !loop.testsAtEnd && guard.bound == loop.bound && integerHandedOnBy(guard.position) == loop.counter && !isMadeInLoop(guard.array);
+        if (!isUnderCounter || !loop.turn.contains(guard.presenceBlock) || !loop.turn.contains(guard.continuation) || !std::ranges::all_of(guard.checkBlocks, [&](BlockID block) { return loop.turn.contains(block); }))
+            return std::nullopt;
+        if (std::ranges::any_of(loop.turn, [&](BlockID block) { return m_rows->changingBlocks.quickGet(block.index()); }))
+            return std::nullopt;
+        loop.relationsOfCounterBelowBound.append(code().at(guard.presenceBlock).terminator.conditionOperand());
+        for (BlockID block : guard.checkBlocks) {
+            loop.relationsOfCounterBelowBound.append(code().at(block).terminator.conditionOperand());
+        }
+        bool isAskedByOther = std::ranges::any_of(m_rows->guards, [&](const RowGuard& other) { return other.precedesOther && !guard.precedesOther && other.presenceBlock == guard.presenceBlock; });
+        if (!isAskedByOther)
+            loop.rowCountsAsked |= 1 << guard.count;
+    }
     if (loop.numberOfOperations > maxOperationsInWideIteration || (loop.numberOfOperations > mostOperationsInTurnLaidOut && loop.steppedIndexes.isEmpty())) {
-        loop.rotatesNumbers = rotatesNumbers && !loop.testsAtEnd && loop.viewsAskedForKind.isEmpty() && loop.listsAskedForKind.isEmpty() && loop.listsWhoseKindIsRead.isEmpty() && std::ranges::all_of(loop.turn, [&](BlockID block) {
+        loop.rotatesNumbers = rotatesNumbers && loop.numberOfOperations <= mostOperationsInRotatingIteration && !loop.testsAtEnd && loop.viewsAskedForKind.isEmpty() && loop.listsAskedForKind.isEmpty() && loop.listsWhoseKindIsRead.isEmpty() && std::ranges::all_of(loop.turn, [&](BlockID block) {
             return code().at(block).terminator.kind == TerminatorKind::Jump;
         });
-        if (!loop.rotatesNumbers)
-            return std::nullopt;
+        loop.isTooLongToUnroll = !loop.rotatesNumbers;
     }
+    if (loop.storesAheadOfTests) {
+        loop.rotatesNumbers = false;
+        loop.isTooLongToUnroll = true;
+    }
+    loop.asking = asking;
     if (!findStoresOfWhatComesRound(loop, back))
         return std::nullopt;
-    loop.asking = asking;
+    if (loop.isTooLongToUnroll && (loop.rowCountsAsked || (!findLanes(loop) && !findWideLoop(loop))))
+        return std::nullopt;
     loop.carriesJoinedValue = std::ranges::any_of(back.arguments(), [&](ValueID handedOn) {
         return std::ranges::any_of(loop.turn, [&](BlockID block) { return block != head && std::ranges::contains(code().at(block).parameters(), handedOn); });
     });
     loop.mayComeBack = loop.bound && !loop.testsAtEnd && !m_keepsValuesInHeapFrame && loop.loopCarriedValueStores.isEmpty() && loop.mostTurns >= fewestTurnsOfLoopComeBackTo && (someUnusualTurnComesRound(loop) || someHoleLeavesTurn(loop)) && loop.viewsAskedForKind.isEmpty();
-    loop.mayComeBack &= !loop.storesIntoLists;
+    loop.mayComeBack &= !loop.storesIntoLists && !loop.rowCountsAsked;
     if (loop.mayComeBack && loop.listsAskedForKind.isEmpty() && loop.listsWhoseKindIsRead.isEmpty()) {
         BlockID head = m_order[positionOfHead];
         code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
@@ -2643,23 +4085,69 @@ bool CodeGenerator::carriesOnlyCounter(const CountedLoop& loop, ValueID value, V
 
 void CodeGenerator::versionIterationsByKind(CountedLoop& loop) const
 {
-    if (!loop.listsAskedForKind.isEmpty() || loop.listsWhoseKindIsRead.isEmpty())
+    if (loop.listsWhoseKindIsRead.isEmpty())
         return;
     auto onlyTestsIndexingType = [&](ValueID value) {
         const Operation& read = code().at(value);
         return read.opcode != Opcode::GetArrayElement || !loop.listsWhoseKindIsRead.contains(read.arrayOperand()) || loop.accessesUnderCounterBelowBound.contains(value);
     };
-    bool areReadsBelowBound = loop.storesIntoLists && loop.viewsAskedForKind.isEmpty() && std::ranges::all_of(loop.turn, [&](BlockID block) {
+    bool areReadsBelowBound = loop.viewsAskedForKind.isEmpty() && std::ranges::all_of(loop.turn, [&](BlockID block) {
         return std::ranges::all_of(code().valuesOf(block), onlyTestsIndexingType);
     });
+    if (!loop.listsAskedForKind.isEmpty()) {
+        bool areReadAsDoubles = std::ranges::all_of(loop.listsAskedForKind, [](const ListAskedForKind& asked) { return asked.kind == ArrayStorage::Double && !asked.isStoredInto && !asked.hasOneKind && !asked.otherKindsAreNotAsked; });
+        if (!areReadsBelowBound || !areReadAsDoubles || loop.storesIntoLists)
+            return;
+    }
     if (!loop.mayComeBack && !areReadsBelowBound && loop.storesIntoLists)
         return;
-    loop.secondTurnsGoByKindsRead = loop.listsWhoseKindIsRead.size() > 1;
+    loop.secondTurnsGoByKindsRead = loop.listsAskedForKind.size() + loop.listsWhoseKindIsRead.size() > 1;
     for (ValueID list : std::exchange(loop.listsWhoseKindIsRead, { }))
         loop.listsAskedForKind.append({ list, ArrayStorage::Double });
 }
 
 static_assert(!operationsOfTurnsLaidOut.contains(Opcode::GetModuleVariable) && !operationsOfTurnsLaidOut.contains(Opcode::GetEnvironmentField));
+
+bool CodeGenerator::isOnlySlotAccess(const CountedLoop& loop, ValueID store) const
+{
+    static constexpr OpcodeSet slotAccesses { Opcode::GetSlot, Opcode::PutSlot, Opcode::IsSlotFilled };
+    const Operation& put = code().at(store);
+    BlockID home = code().isConstant(put.objectOperand()) ? BlockID() : code().blockOf(put.objectOperand());
+    if (home && (home == m_order[loop.positionOfHead] || loop.turn.contains(home)))
+        return false;
+    return std::ranges::none_of(loop.turn, [&](BlockID block) {
+        return std::ranges::any_of(code().valuesOf(block), [&](ValueID value) {
+            const Operation& access = code().at(value);
+            return value != store && slotAccesses.contains(access.opcode) && access.key() == put.key();
+        });
+    });
+}
+
+bool CodeGenerator::mayIterationThrow(const CountedLoop& loop) const
+{
+    auto mayLeaveByThrow = [&](const Operation& operation) {
+        if (!operation.traits().mayThrow())
+            return false;
+        if (operation.opcode != Opcode::GetArrayElement || operation.asksCellWhereNothingIsFound() || !hasArrayStorageForm(operation.arrayStorage()))
+            return true;
+        const Type& position = typeOf(operation.positionOperand());
+        return !position.isInteger() || !position.integers.isSubsetOf(Range { 0, std::numeric_limits<uint32_t>::max() - 1 });
+    };
+    return std::ranges::any_of(loop.turn, [&](BlockID block) {
+        return std::ranges::any_of(code().valuesOf(block), [&](ValueID value) {
+            return mayLeaveByThrow(code().at(value));
+        });
+    });
+}
+
+bool CodeGenerator::addsIntegerToParameter(ValueID sum, ValueID parameter) const
+{
+    const Operation& addition = code().at(sum);
+    if (addition.opcode != Opcode::Add || addition.form() != OperatorForm::Numbers || (addition.leftOperand() != parameter && addition.rightOperand() != parameter))
+        return false;
+    const Operation& term = code().at(addition.leftOperand() == parameter ? addition.rightOperand() : addition.leftOperand());
+    return term.opcode == Opcode::IntegerToNumber && representationOf(term.valueOperand()) == Representation::Int32;
+}
 
 bool CodeGenerator::findStoresOfWhatComesRound(CountedLoop& loop, const Edge& back) const
 {
@@ -2667,6 +4155,18 @@ bool CodeGenerator::findStoresOfWhatComesRound(CountedLoop& loop, const Edge& ba
     std::span<const ValueID> parameters = code().at(m_order[loop.positionOfHead]).parameters();
     for (ValueID value : code().valuesOf(last)) {
         const Operation& store = code().at(value);
+        if (store.opcode == Opcode::PutSlot) {
+            ValueID box = opcodeOf(store.valueOperand()) == Opcode::Box ? store.valueOperand() : ValueID();
+            ValueID sum = box ? code().at(box).valueOperand() : store.valueOperand();
+            size_t index = std::ranges::find(back.arguments(), sum) - back.arguments().begin();
+            bool isCarried = index < parameters.size() && !code().isConstant(sum) && m_values[parameters[index].index()] && representationOf(parameters[index]) == Representation::Double && representationOf(sum) == Representation::Double;
+            if (!isCarried || !addsIntegerToParameter(sum, parameters[index]) || code().barrierIsCountedOn(value) || !isOnlySlotAccess(loop, value) || !loop.turn.contains(code().blockOf(sum)))
+                continue;
+            if ((box && (code().blockOf(box) != last || code().useCountOf(box) != 1)) || someUnusualTurnComesRound(loop) || mayIterationThrow(loop))
+                continue;
+            loop.loopCarriedValueStores.append({ index, sum, box, value });
+            continue;
+        }
         if (store.opcode != Opcode::PutModuleVariable && store.opcode != Opcode::PutEnvironmentField)
             continue;
         if (code().barrierIsCountedOn(value))
@@ -2699,19 +4199,7 @@ bool CodeGenerator::findStoresOfWhatComesRound(CountedLoop& loop, const Edge& ba
     }
     if (loop.loopCarriedValueStores.isEmpty())
         return true;
-    auto mayLeaveByThrow = [&](const Operation& operation) {
-        if (!operation.traits().mayThrow())
-            return false;
-        if (operation.opcode != Opcode::GetArrayElement || operation.asksCellWhereNothingIsFound() || !hasArrayStorageForm(operation.arrayStorage()))
-            return true;
-        const Type& position = typeOf(operation.positionOperand());
-        return !position.isInteger() || !position.integers.isSubsetOf(Range { 0, std::numeric_limits<uint32_t>::max() - 1 });
-    };
-    return std::ranges::none_of(loop.turn, [&](BlockID block) {
-        return std::ranges::any_of(code().valuesOf(block), [&](ValueID value) {
-            return mayLeaveByThrow(code().at(value));
-        });
-    });
+    return !mayIterationThrow(loop);
 }
 
 void CodeGenerator::storeLoopCarriedValue(const CountedLoop& loop, const LoopCarriedValueStore& store, LValue value)
@@ -2719,11 +4207,13 @@ void CodeGenerator::storeLoopCarriedValue(const CountedLoop& loop, const LoopCar
     Vector<ValueID, 4> leftOut = std::exchange(m_valuesLeftOutOfTurnsLaidOut, { });
     Vector<SumOfIntegers, 2> sums = std::exchange(m_sumsOfIntegers, { });
     LValue loopCarriedValue = std::exchange(m_values[store.loopCarriedValue.index()], emitter<ConversionEmitter>().purified(Number(value)).value());
-    LValue box = std::exchange(m_values[store.box.index()], nullptr);
-    generateValue(loop.turn.last(), store.box, code().at(store.box), false, { });
+    LValue box = store.box ? std::exchange(m_values[store.box.index()], nullptr) : nullptr;
+    if (store.box)
+        generateValue(loop.turn.last(), store.box, code().at(store.box), false, { });
     generateValue(loop.turn.last(), store.store, code().at(store.store), false, { });
     m_values[store.loopCarriedValue.index()] = loopCarriedValue;
-    m_values[store.box.index()] = box;
+    if (store.box)
+        m_values[store.box.index()] = box;
     m_sumsOfIntegers = WTF::move(sums);
     m_valuesLeftOutOfTurnsLaidOut = WTF::move(leftOut);
 }
@@ -2921,7 +4411,7 @@ void CodeGenerator::keepArgumentsForNextTurn(const Edge& edge)
     m_argumentsForNextTurn.shrink(0);
     for (size_t index = 0; index < parameters.size(); ++index) {
         ValueID parameter = parameters[index];
-        if (!m_values[parameter.index()])
+        if (!m_values[parameter.index()] || (m_lanes && m_lanes->pairWith(parameter)))
             m_argumentsForNextTurn.append(Operand());
         else if (holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
             m_argumentsForNextTurn.append(getWithAnyNaN(arguments[index]));
@@ -3302,7 +4792,43 @@ uint32_t CodeGenerator::findLoopExitThatRenames(std::span<const ValueID> values)
     return noLoopExit;
 }
 
-void CodeGenerator::emitFirstConditions(const CountedLoop& loop)
+static LValue constantForwardedTo(LValue phi)
+{
+    Machine::Block* entering = phi->opcode() == Machine::Phi ? phi->owner()->singlePredecessor() : nullptr;
+    if (!entering)
+        return phi;
+    for (LValue upsilon : entering->upsilons()) {
+        if (upsilon->phi() == phi && upsilon->child(0)->isConstant())
+            return upsilon->child(0);
+    }
+    return phi;
+}
+
+void CodeGenerator::startFromConstant(const CountedLoop& loop)
+{
+    if (!loop.bound || code().isConstant(loop.bound))
+        return;
+    LValue& counter = m_values[loop.counter.index()];
+    LValue start = constantForwardedTo(counter);
+    if (start == counter)
+        return;
+    build().statistics().count(StatisticID::UnrolledLoopsFromConstants);
+    counter = start;
+}
+
+Range CodeGenerator::boundsOnEntry(const CountedLoop& loop, Range bounds, Range counters)
+{
+    if (!loop.conditionIsTestedOnEntry)
+        return bounds;
+    bool differs = loop.relation == Opcode::Less || loop.relation == Opcode::Greater;
+    if (loop.step > 0)
+        bounds.minimum = std::max(bounds.minimum, counters.minimum + differs);
+    else
+        bounds.maximum = std::min(bounds.maximum, counters.maximum - differs);
+    return bounds;
+}
+
+void CodeGenerator::emitFirstConditions(CountedLoop& loop)
 {
     BlockID head = m_order[loop.positionOfHead];
     const Terminator& end = code().at(loop.asking).terminator;
@@ -3334,14 +4860,23 @@ void CodeGenerator::emitFirstConditions(const CountedLoop& loop)
     }
     if (!numberOfBlocks && std::ranges::any_of(loop.turn, hasDirectExit))
         return;
-    std::span<const BlockID> blocks = loop.turn.span().first(numberOfBlocks);
-
-    build().statistics().count(StatisticID::UnrolledLoopConditionsCopied);
     std::span<const ValueID> parameters = code().at(head).parameters();
+    bool peelsIteration = numberOfBlocks && loop.loopCarriedValueStores.isEmpty() && !m_carriesNarrowIntegers && std::ranges::all_of(parameters, [&](ValueID parameter) {
+        LValue phi = m_values[parameter.index()];
+        return !phi || phi->opcode() == Machine::Phi;
+    });
+    std::span<const BlockID> blocks = peelsIteration ? loop.turn.span() : loop.turn.span().first(numberOfBlocks);
+
+    build().statistics().count(peelsIteration ? StatisticID::UnrolledLoopsPeeled : StatisticID::UnrolledLoopConditionsCopied);
     LBasicBlock front = m_out.newBlock();
     Vector<LValue, 8> phisOfHead;
-    for (ValueID parameter : parameters)
-        phisOfHead.append(m_values[parameter.index()]);
+    Vector<LValue, 8> phisOfFront;
+    for (ValueID parameter : parameters) {
+        LValue phi = m_values[parameter.index()];
+        phisOfHead.append(phi);
+        if (peelsIteration)
+            phisOfFront.append(phi ? m_out.phiIn(front, phi->type()) : nullptr);
+    }
     m_out.appendTo(blockFor(head));
     m_out.setOrigin(Machine::Origin());
     {
@@ -3349,9 +4884,12 @@ void CodeGenerator::emitFirstConditions(const CountedLoop& loop)
         SetForScope<const OperationContext*> whileTesting(m_operation, &context);
         LBasicBlock begins = blocks.empty() ? front : m_out.newBlock();
         BlockEdge exit = edgeTo(context, 1);
-        m_out.branch(askCounter(loop.relation, get(loop.counter).value, get(loop.bound).value), normalEdge(begins), exit);
+        LValue counter = get(loop.counter).value;
+        LValue bound = get(loop.bound).value;
+        m_out.branch(askCounter(loop.relation, bound->isConstant() ? counter : constantForwardedTo(counter), bound), normalEdge(begins), exit);
         if (!blocks.empty())
             m_out.appendTo(begins);
+        loop.conditionIsTestedOnEntry = true;
     }
     if (!blocks.empty()) {
         Vector<LBasicBlock, mostBlocksInTurnLaidOut> blocksOfWrittenTurn;
@@ -3363,9 +4901,25 @@ void CodeGenerator::emitFirstConditions(const CountedLoop& loop)
         }
         m_headOfTurnsLaidOut = head;
         m_turnLaidOut = blocks;
+        LBasicBlock restart = nullptr;
         m_blockLeavingTurnLaidOut = [&] {
-            return front;
+            if (!peelsIteration)
+                return front;
+            if (!restart) {
+                LBasicBlock here = m_out.m_block;
+                restart = m_out.newBlock();
+                m_out.appendTo(restart);
+                for (size_t index = 0; index < parameters.size(); ++index) {
+                    if (phisOfFront[index])
+                        m_out.upsilon(phisOfHead[index], phisOfFront[index]);
+                }
+                m_out.jump(normalEdge(front));
+                m_out.appendTo(here);
+            }
+            return restart;
         };
+        if (LValue& counter = m_values[loop.counter.index()]; peelsIteration && !code().isConstant(loop.bound))
+            counter = constantForwardedTo(counter);
         m_blockLeavingLoop = [&](const Edge& edge) {
             LBasicBlock here = m_out.m_block;
             LBasicBlock blockOnEdge = m_out.newBlock();
@@ -3395,6 +4949,17 @@ void CodeGenerator::emitFirstConditions(const CountedLoop& loop)
             m_scopeAtEndOfBlock[block.index()] = m_out.forkScope();
         }
         m_valuesLeftOutOfTurnsLaidOut.shrink(0);
+        if (peelsIteration) {
+            RELEASE_ASSERT(m_nextBlockGoesOnHere && currentBlockIsOpen() && m_argumentsForNextTurn.size() == parameters.size());
+            m_nextBlockGoesOnHere = false;
+            for (size_t index = 0; index < parameters.size(); ++index) {
+                if (phisOfFront[index])
+                    m_out.upsilon(m_argumentsForNextTurn[index].value, phisOfFront[index]);
+            }
+            m_out.jump(normalEdge(front));
+            for (size_t index = 0; index < parameters.size(); ++index)
+                m_values[parameters[index].index()] = phisOfFront[index];
+        }
         RELEASE_ASSERT(!m_nextBlockGoesOnHere && !currentBlockIsOpen());
         m_headOfTurnsLaidOut = BlockID();
         m_turnLaidOut = { };
@@ -3425,7 +4990,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     const Block& blockOfHead = code().at(head);
     std::span<const ValueID> parameters = blockOfHead.parameters();
     std::span<const BlockID> turn = loop.turn.span();
-    unsigned turnsInRow = loop.rotatesNumbers ? rotatingIterationsInRow : !loop.viewsAskedForKind.isEmpty() || loop.asksListsReadAndListsStoredInto ? turnsLaidOutForEachKindOfView : loop.numberOfOperations > mostOperationsInTurnLaidOut ? wideIterationsUnrolled : turnsLaidOut;
+    unsigned turnsInRow = loop.rotatesNumbers ? rotatingIterationsInRow : !loop.viewsAskedForKind.isEmpty() || loop.asksListsReadAndListsStoredInto ? turnsLaidOutForEachKindOfView : loop.numberOfOperations > mostOperationsInTurnLaidOut || loop.holdsProductSum ? wideIterationsUnrolled : turnsLaidOut;
     if (!loop.viewsAskedForKind.isEmpty())
         build().statistics().count(StatisticID::UnrolledIterationsForTypedArrays, turnsInRow);
 
@@ -3510,10 +5075,28 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         phisOfTurns[sum.indexOfParameter] = sum.added;
         sum.base = loop.sumsAreTakenOverBehindStretches ? m_out.phiIn(turns, Machine::Double) : phisOfEntry[sum.indexOfParameter];
     }
+    auto comesRoundWide = [&](size_t index) {
+        const Type& type = typeOf(parameters[index]);
+        ValueID next = code().at(code().at(loop.turn.last()).terminator.next()).arguments()[index];
+        if (parameters[index] == loop.counter || representationOf(parameters[index]) != Representation::Int32 || !type.isInteger() || type.integers.isEmpty() || type.integers.minimum < 0 || code().isConstant(next) || opcodeOf(next) != Opcode::DivideIntegers)
+            return false;
+        const Type& carried = typeOf(next);
+        return representationOf(next) == Representation::Int32 && carried.isInteger() && !carried.integers.isEmpty() && carried.integers.minimum >= 0 && representationOf(code().at(next).operand(0)) == Representation::Int64;
+    };
+    Vector<size_t, 2> indexesOfWide;
     for (size_t index = 0; index < parameters.size(); ++index) {
-        if (phisOfEntry[index] && !phisOfTurns[index])
-            phisOfTurns[index] = m_out.phiIn(turns, phisOfEntry[index]->type());
+        if (!phisOfEntry[index] || phisOfTurns[index])
+            continue;
+        bool isWide = isX86_64() && single && phisOfEntry[index]->type() == Machine::Int32 && code().at(loop.turn.last()).terminator.kind == TerminatorKind::Jump && comesRoundWide(index);
+        if (isWide)
+            indexesOfWide.append(index);
+        phisOfTurns[index] = m_out.phiIn(turns, isWide ? Machine::Int64 : phisOfEntry[index]->type());
     }
+    auto asCarriedByLoop = [&](size_t index, LValue value) -> LValue {
+        if (!indexesOfWide.contains(index) || value->type() != Machine::Int32)
+            return value;
+        return value->opcode() == Machine::Trunc && value->child(0)->type() == Machine::Int64 ? value->child(0) : m_out.zeroExt(value, Machine::Int64);
+    };
     if (loop.rotatesNumbers)
         build().statistics().count(StatisticID::UnrolledLoopsThatRotateNumbers);
     Vector<std::pair<size_t, LValue>, 4> numbersOfTurns;
@@ -3565,6 +5148,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.upsilon(numberOfInteger(values[index]), phi);
     };
     bool leavesTurnsLaidOut = false;
+    Vector<LValue, 2> wordsWidenedBeforeIterations;
     auto blockHandingOver = [&](const Values& phis, LBasicBlock target, auto&& valueAt) {
         LBasicBlock here = m_out.m_block;
         LBasicBlock blockOnEdge = m_out.newBlock();
@@ -3627,6 +5211,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
 
     m_out.appendTo(ring ? ring->otherKind : comesBack ? blockFor(head) : entry);
     m_out.setOrigin(Machine::Origin());
+    bool comparesLastStartLate = single;
     LValue lastStart = nullptr;
     {
         TerminatorContext context(head, blockOfHead.terminator, nullptr);
@@ -3635,7 +5220,11 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         bound = ring ? ring->bound : loop.bound ? get(loop.bound).value : m_out.constantOfType(counter->type(), 0);
         RELEASE_ASSERT(bound && counter && bound->type() == counter->type());
         int64_t reach = (turnsInRow - 1) * loop.step + loop.addedBeforeTest;
-        lastStart = ring ? ring->lastStart : m_out.sub(bound, m_out.constantOfType(bound->type(), reach));
+        auto findLastStart = [&] {
+            return m_out.sub(bound, m_out.constantOfType(bound->type(), reach));
+        };
+        if (!comparesLastStartLate)
+            lastStart = ring && ring->lastStart ? ring->lastStart : findLastStart();
         auto handToWritten = [&](const Values& phis) {
             return blockHandingOver(phisIntoWritten, intoWritten, [&](size_t index) {
                 return phis[index];
@@ -3647,11 +5236,11 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                     m_out.upsilon(endOfStretchFrom(counter, lastStart), endOfStretch);
                 if (const SumOfIntegers* sum = sumAt(index); sum && loop.sumsAreTakenOverBehindStretches)
                     m_out.upsilon(phisOfEntry[index], sum->base);
-                return sumAt(index) ? m_out.constInt64(0) : phisOfEntry[index];
+                return sumAt(index) ? m_out.constInt64(0) : asCarriedByLoop(index, phisOfEntry[index]);
             });
         };
         LBasicBlock written = comesBack ? nullptr : handToWritten(phisOfHead);
-        LBasicBlock laidOut = comesBack ? nullptr : handToTurns();
+        LBasicBlock laidOut = comesBack || comparesLastStartLate ? nullptr : handToTurns();
         bool shouldSkipEntryChecks = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::SkipUnrollEntryChecks);
         auto answerTo = [&](LValue answer) {
             return shouldSkipEntryChecks ? m_out.opaque(m_out.booleanTrue) : answer;
@@ -3661,8 +5250,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 return phisOfHead[index];
             });
         };
+        Range bounds = boundsOnEntry(loop, loop.bound ? typeOf(loop.bound).integers : Range { 0, 0 }, typeOf(loop.counter).integers);
         if (bound->type() == Machine::Int32 && !ring && !countIsAsked) {
-            Range bounds = loop.bound ? typeOf(loop.bound).integers : Range { 0, 0 };
             int64_t nearest = (countsUp ? std::numeric_limits<int32_t>::min() : std::numeric_limits<int32_t>::max()) + reach;
             if (countsUp ? bounds.minimum < nearest : bounds.maximum > nearest) {
                 if (comesBack)
@@ -3685,7 +5274,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             }
             paidOfWay = paidUpTo;
             written = handToWritten(phisOfEntry);
-            laidOut = handToTurns();
+            if (!comparesLastStartLate)
+                laidOut = handToTurns();
         }
         auto branchOnTripCount = [&](LBasicBlock tooFewAreLeft) {
             LBasicBlock enoughAreLeft = m_out.newBlock();
@@ -3725,10 +5315,20 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             if (ring || countIsAsked)
                 break;
             LBasicBlock holds = m_out.newBlock();
-            LValue fallsShort = m_out.lessThan(m_out.zeroExt(get(asked).value, Machine::Int64), bound->type() == Machine::Int32 ? m_out.signExt32To64(bound) : bound);
+            LValue length = get(asked).value;
+            LValue fallsShort = bound->type() == Machine::Int32 && length->type() == Machine::Int32 && bounds.minimum >= 0 ? m_out.below(length, bound) : m_out.lessThan(m_out.zeroExt(length, Machine::Int64), bound->type() == Machine::Int64 ? bound : bounds.minimum >= 0 ? m_out.zeroExt(bound, Machine::Int64) : m_out.signExt32To64(bound));
             m_out.branch(shouldSkipEntryChecks ? m_out.opaque(m_out.booleanFalse) : fallsShort, normalEdge(tooFewForAnyLayout()), normalEdge(holds));
             m_out.appendTo(holds);
             build().statistics().count(StatisticID::UnrolledLoopLengthChecksHoisted);
+        }
+        for (unsigned count = 0; count < (loop.rowCountsAsked ? m_rows->counts.size() : 0); ++count) {
+            if (!(loop.rowCountsAsked >> count & 1))
+                continue;
+            LBasicBlock holds = m_out.newBlock();
+            LValue passed = m_out.load32(rowCountAddress(count));
+            m_out.branch(answerTo(m_out.belowOrEqual(bound, bound->type() == Machine::Int64 ? m_out.zeroExt(passed, Machine::Int64) : passed)), normalEdge(holds), normalEdge(written));
+            m_out.appendTo(holds);
+            build().statistics().count(StatisticID::UnrolledLoopsOverCountedRows);
         }
         for (const SteppedIndex& held : loop.steppedIndexes) {
             if (ring || countIsAsked)
@@ -3757,7 +5357,16 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         }
         for (const ListAskedForKind& asked : loop.listsAskedForKind) {
             LBasicBlock holds = m_out.newBlock();
-            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind);
+            auto known = std::ranges::find_if(loop.kindsToldToReads, [&](const KindToldToReads& told) {
+                return told.list == asked.list && asked.kind == ArrayStorage::Double && !asked.isStoredInto && m_values[told.holdsDoubles.index()];
+            });
+            if (known != loop.kindsToldToReads.end()) {
+                m_out.branch(answerTo(get(known->holdsDoubles).value), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
+                m_out.appendTo(holds);
+                build().statistics().count(StatisticID::KnownKindsCheckedAtLoopEntry);
+                continue;
+            }
+            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
             m_out.branch(answerTo(hasKind.value()), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
             m_out.appendTo(holds);
         }
@@ -3767,11 +5376,15 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             m_out.appendTo(holds);
         }
         for (ValueID list : loop.listsWhoseKindIsRead) {
-            LValue holdsDoubles = emitter<ElementAccessEmitter>().listHasArrayStorage(list, ArrayStorage::Double).value();
+            LValue holdsDoubles = (loop.viewsAskedForKind.isEmpty() ? emitter<ElementAccessEmitter>().numericListHasArrayStorage(list, ArrayStorage::Double) : emitter<ElementAccessEmitter>().listHasArrayStorage(list, ArrayStorage::Double)).value();
             m_kindsReadInFrontOfTurnsLaidOut.append({ list, shouldSkipEntryChecks ? m_out.bitXor(holdsDoubles, m_out.booleanTrue) : holdsDoubles });
             build().statistics().count(StatisticID::UnrolledLoopStorageChecksHoisted);
         }
+        if (loop.holdsProductSum)
+            widenFactorsBeforeIterations(loop, wordsWidenedBeforeIterations);
         if (single) {
+            if (comparesLastStartLate)
+                lastStart = findLastStart();
             branchOnTripCount(blockHandingOver(phisOfSingle, single, [&](size_t index) {
                 return phisOfEntry[index];
             }));
@@ -3791,18 +5404,9 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.branch(m_out.equal(m_out.bitCast(phisOfEntry[sum.indexOfParameter], Machine::Int64), m_out.constInt64(std::numeric_limits<int64_t>::min())), unlikelyEdge(written), normalEdge(isNotMinusZero));
                 m_out.appendTo(isNotMinusZero);
             }
-            LValue size = m_out.doubleAbs(phisOfEntry[sum.indexOfParameter]);
-            LValue limit = m_out.constDouble(0x1p52);
-            LBasicBlock isSmall = m_out.newBlock();
-            m_out.branch(m_out.doubleLessThanOrEqual(size, limit), normalEdge(isSmall), unlikelyEdge(written));
-            m_out.appendTo(isSmall);
-            if (typeOf(parameters[sum.indexOfParameter]).isNumberWithoutFraction())
-                continue;
-            LBasicBlock isWhole = m_out.newBlock();
-            m_out.branch(m_out.doubleEqual(m_out.doubleSub(m_out.doubleAdd(size, limit), limit), size), normalEdge(isWhole), unlikelyEdge(written));
-            m_out.appendTo(isWhole);
+            requireWholeNumber(phisOfEntry[sum.indexOfParameter], parameters[sum.indexOfParameter], written);
         }
-        m_out.jump(normalEdge(laidOut));
+        m_out.jump(normalEdge(laidOut ? laidOut : handToTurns()));
     }
 
     m_out.appendTo(turns);
@@ -3816,7 +5420,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     if (loop.poll && code().blockOf(loop.poll) != head)
         m_valuesLeftOutOfTurnsLaidOut.append(loop.poll);
     for (const LoopCarriedValueStore& store : loop.loopCarriedValueStores) {
-        m_valuesLeftOutOfTurnsLaidOut.append(store.box);
+        if (store.box)
+            m_valuesLeftOutOfTurnsLaidOut.append(store.box);
         m_valuesLeftOutOfTurnsLaidOut.append(store.store);
     }
     Vector<size_t, 4> takingAnyNaNInTurnsAlone;
@@ -3834,6 +5439,11 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     };
     for (size_t index = 0; index < parameters.size(); ++index)
         m_values[parameters[index].index()] = sumAt(index) ? nullptr : phisOfTurns[index];
+    for (size_t index : indexesOfWide) {
+        LValue word = m_out.castToInt32(phisOfTurns[index]);
+        emitter<ConversionEmitter>().noteSignExtended(Word32(word), Integer(phisOfTurns[index]));
+        m_values[parameters[index].index()] = word;
+    }
     unsigned numberOfExtendedIterations = turnsInRow;
     LValue firstCounter = phisOfTurns[indexOfCounter];
     bool counterIsExtended = firstCounter->type() == Machine::Int32 && typeOf(loop.counter).integers.minimum >= 0 && countsUp;
@@ -3842,6 +5452,17 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         if (counterIsExtended && numberOfTurns < numberOfExtendedIterations)
             return m_out.castToInt32(m_out.add(extensionForAllTurns ? extensionForAllTurns : m_out.extendWordThatIsNotNegative(firstCounter), m_out.constInt64(numberOfTurns * loop.step)));
         return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), numberOfTurns * loop.step));
+    };
+    auto wordCutAtExit = [&](LValue value) -> LValue {
+        return value->opcode() == Machine::Trunc && value->child(0)->type() == Machine::Int64 ? m_out.castToInt32(value->child(0)) : value;
+    };
+    auto recomputedAtExit = [&](size_t index, LValue ahead) -> LValue {
+        bool isStepped = ahead && ahead->opcode() == Machine::Add && ahead->child(0) == phisOfTurns[index] && ahead->child(1)->hasInt();
+        return isStepped ? m_out.add(ahead->child(0), ahead->child(1)) : ahead ? wordCutAtExit(ahead) : nullptr;
+    };
+    auto recomputedAfterIterations = [&](LValue behind, LValue first) -> LValue {
+        bool isStepped = behind->opcode() == Machine::Add && behind->child(0) == first && behind->child(1)->hasInt();
+        return isStepped ? m_out.add(behind->child(0), behind->child(1)) : wordCutAtExit(behind);
     };
     m_turnLaidOut = turn;
     Values valuesAheadOfTurn;
@@ -3859,7 +5480,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                     return m_out.doubleAdd(sum->base, m_out.intToDouble(ahead));
                 if (index == indexOfCounter && iteration)
                     return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), iteration * loop.step));
-                return forWrittenLoop(index, ahead);
+                return forWrittenLoop(index, recomputedAtExit(index, ahead));
             };
             Values values;
             for (size_t index = 0; index < parameters.size(); ++index) {
@@ -3890,6 +5511,14 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     m_boundsAskedInFrontOfTurnsLaidOut = loop.boundsAskedInFront.span();
     m_relationsAskedInFrontOfTurnsLaidOut = loop.relationsAskedInFront;
     m_relationsAskedInFrontOfTurnsLaidOut.appendVector(loop.relationsOfCounterBelowBound);
+    for (const RowGuard& guard : loop.rowCountsAsked ? m_rows->guards.span() : std::span<const RowGuard>()) {
+        for (BlockID block : guard.checkBlocks) {
+            for (ValueID value : loop.turn.contains(block) ? code().valuesOf(block) : std::span<const ValueID>()) {
+                if (opcodeOf(value) == Opcode::CheckProof)
+                    m_valuesLeftOutOfTurnsLaidOut.append(value);
+            }
+        }
+    }
     m_accessesUnderCounterBelowBoundOfTurnsLaidOut = loop.accessesUnderCounterBelowBound.span();
     m_viewsAskedForKindInFrontOfTurnsLaidOut = loop.viewsAskedForKind.span();
     m_kindOfViewFoundInFrontOfTurnsLaidOut = loop.kindAskedOfView;
@@ -3916,6 +5545,10 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     if (!loop.listsAskedForKind.isEmpty())
         build().statistics().count(StatisticID::UnrolledLoopsForIndexingType);
     build().statistics().count(StatisticID::UnrolledLoopIntegerElementSums, std::ranges::count_if(m_sumsOfIntegers, [](const SumOfIntegers& sum) { return sum.termIsElementOfList; }));
+    auto forgetWidenedWords = makeScopeExit([&] {
+        for (LValue word : wordsWidenedBeforeIterations)
+            emitter<ConversionEmitter>().forgetSignExtended(Word32(word));
+    });
     auto emitIterations = [&](unsigned numberOfIterations) -> bool {
         for (unsigned turnLaidOut = 0; turnLaidOut < numberOfIterations; ++turnLaidOut) {
             forgetTurn();
@@ -3934,7 +5567,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                             return comesBack && !single ? valuesAheadOfTurn[index] : m_out.doubleAdd(sum->base, m_out.intToDouble(valuesAheadOfTurn[index]));
                         if (index == indexOfCounter && turnLaidOut)
                             return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), turnLaidOut * loop.step));
-                        return comesBack ? valuesAheadOfTurn[index] : forWrittenLoop(index, valuesAheadOfTurn[index]);
+                        LValue ahead = recomputedAtExit(index, valuesAheadOfTurn[index]);
+                        return comesBack ? ahead : forWrittenLoop(index, ahead);
                     });
                 }
                 return blockLeavingTurn;
@@ -3947,7 +5581,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                             return m_out.doubleAdd(sum->base, m_out.intToDouble(valuesAheadOfTurn[index]));
                         if (index == indexOfCounter && turnLaidOut)
                             return m_out.add(firstCounter, m_out.constantOfType(firstCounter->type(), turnLaidOut * loop.step));
-                        return forWrittenLoop(index, valuesAheadOfTurn[index]);
+                        return forWrittenLoop(index, recomputedAtExit(index, valuesAheadOfTurn[index]));
                     });
                 }
                 return blockEndingLoop;
@@ -3987,15 +5621,21 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             const SumOfIntegers* sum = sumAt(index);
             if (sum && !(comesBack && !single))
                 return m_out.doubleAdd(sum->base, m_out.intToDouble(phisOfTurns[index]));
-            return comesBack ? phisOfTurns[index] : forWrittenLoop(index, phisOfTurns[index]);
+            LValue left = indexesOfWide.contains(index) ? m_out.castToInt32(phisOfTurns[index]) : phisOfTurns[index];
+            return comesBack ? left : forWrittenLoop(index, left);
         });
         LBasicBlock everyOneIsThere = m_out.newBlock();
         m_out.branch(emitter<ElementAccessEmitter>().areInt32Elements(words).value(), normalEdge(everyOneIsThere), rareEdge(someIsAbsent));
         m_out.appendTo(everyOneIsThere);
     }
+    LBasicBlock endsIterations = m_out.newBlock();
+    m_out.jump(normalEdge(endsIterations));
+    m_out.appendTo(endsIterations);
     Values valuesBehindTurns;
-    for (ValueID parameter : parameters)
-        valuesBehindTurns.append(m_values[parameter.index()]);
+    for (size_t index = 0; index < parameters.size(); ++index) {
+        LValue behind = m_values[parameters[index].index()];
+        valuesBehindTurns.append(behind && phisOfTurns[index] && !sumAt(index) ? recomputedAfterIterations(behind, phisOfTurns[index]) : behind);
+    }
     if (single) {
         LBasicBlock endOfTurns = m_out.m_block;
         Vector<SumOfIntegers, 2> sumsOfTurns = std::exchange(m_sumsOfIntegers, { });
@@ -4024,7 +5664,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         if (!emitIterations(1))
             return;
         m_out.jump(normalEdge(blockHandingOver(phisOfSingle, single, [&](size_t index) {
-            return m_values[parameters[index].index()];
+            return recomputedAfterIterations(m_values[parameters[index].index()], phisOfSingle[index]);
         })));
         m_sumsOfIntegers = WTF::move(sumsOfTurns);
         m_out.appendTo(endOfTurns);
@@ -4061,7 +5701,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 if (!nextEndOfStretch)
                     return m_out.constInt64(0);
             }
-            return sum ? sum->added : valuesBehindTurns[index];
+            return sum ? sum->added : asCarriedByLoop(index, valuesBehindTurns[index]);
         });
     };
     if (pollsBetweenStretches) {
@@ -4087,7 +5727,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         const SumOfIntegers* sum = sumAt(index);
         if (sum)
             return sum->takenOver ? sum->takenOver : m_out.doubleAdd(sum->base, m_out.intToDouble(sum->added));
-        return single ? valuesBehindTurns[index] : forWrittenLoop(index, valuesBehindTurns[index]);
+        LValue behind = wordCutAtExit(valuesBehindTurns[index]);
+        return single ? behind : forWrittenLoop(index, behind);
     });
     m_rotatesUnrolledIterationNumbers = false;
     m_numbersOfIntegers.shrink(0);
@@ -4162,7 +5803,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_limitOfWrittenLoop = LimitOfWrittenLoop { loop.asking, loop.relation, loop.step, indexOfCounter, bound, limit, paidIntoWritten, paidUpTo, entry, phisOfEntry, phisOfWrittenHead };
     }
     if (otherKind)
-        m_ringOfLoopLaidOut = RingOfLoopLaidOut { entry, otherKind, intoWritten, writtenHead, bound, lastStart, limit, paidIntoWritten, paidUpTo, phisOfHead, phisOfEntry, phisIntoWritten, phisOfWrittenHead, loop.layoutWithoutQuestionFollows, tripCountIsChecked || !single };
+        m_ringOfLoopLaidOut = RingOfLoopLaidOut { entry, otherKind, intoWritten, writtenHead, bound, comparesLastStartLate ? nullptr : lastStart, limit, paidIntoWritten, paidUpTo, phisOfHead, phisOfEntry, phisIntoWritten, phisOfWrittenHead, loop.layoutWithoutQuestionFollows, tripCountIsChecked || !single };
 }
 
 void CodeGenerator::declareAccessesSlow(const OperationContext& context)
@@ -4269,6 +5910,35 @@ bool CodeGenerator::isInEqualityChain(ValueID test, bool isNegated) const
     return above && comparesSameValue(above);
 }
 
+bool CodeGenerator::isReadOffLinkedEntry(ValueID compared) const
+{
+    auto entryOf = [&](ValueID value) -> ValueID {
+        ValueID read = underlyingCellOf(code(), value);
+        return opcodeOf(read) == Opcode::GetSlot ? underlyingCellOf(code(), code().at(read).operand(0)) : ValueID();
+    };
+    ValueID entry = entryOf(compared);
+    if (!entry || opcodeOf(entry) != Opcode::Parameter)
+        return false;
+    BlockID head = code().at(entry).block();
+    if (!head || !code().at(head).isLoopHead)
+        return false;
+    size_t place = code().at(head).placeOfParameter(entry);
+    for (EdgeID edge = code().at(head).firstEdgeIn(); edge; edge = code().at(edge).nextInto()) {
+        std::span<const ValueID> arguments = code().at(edge).arguments();
+        if (place < arguments.size() && entryOf(arguments[place]) == entry)
+            return true;
+    }
+    return false;
+}
+
+bool CodeGenerator::comparesLinkedEntry(ValueID test) const
+{
+    while (opcodeOf(test) == Opcode::LogicalNot)
+        test = code().at(test).operand(0);
+    const Operation& asked = code().at(test);
+    return (asked.opcode == Opcode::StrictEq || asked.opcode == Opcode::Eq) && (isReadOffLinkedEntry(asked.operand(0)) || isReadOffLinkedEntry(asked.operand(1)));
+}
+
 std::optional<bool> CodeGenerator::unlikelyAnswer(ValueID test, LooksBehindJoins looksBehindJoins) const
 {
     bool isNegated = false;
@@ -4363,6 +6033,8 @@ void CodeGenerator::markUnlikelySide(const TerminatorContext& terminator, Branch
     if (!unlikely)
         return;
     const Block& asking = code().at(terminator.block());
+    if (asking.isInLoop && code().at(code().at(*unlikely ? terminator->taken() : terminator->notTaken()).to).isInLoop && comparesLinkedEntry(terminator->conditionOperand()))
+        unlikely = !*unlikely;
     const Block& unusual = code().at(code().at(*unlikely ? terminator->taken() : terminator->notTaken()).to);
     const Block& usual = code().at(code().at(*unlikely ? terminator->notTaken() : terminator->taken()).to);
     if (&unusual == &usual)
@@ -4389,10 +6061,14 @@ void CodeGenerator::findStepsReadElsewhere()
 {
     BitVector& found = m_stepsReadElsewhere.emplace(code().numberOfBlocks());
     BitVector branchesOnStep(code().numberOfBlocks());
+    BitVector stepsTestingForEntry(code().numberOfBlocks());
     for (BlockID id : order()) {
         const Terminator& terminator = code().at(id).terminator;
-        if (terminator.kind == TerminatorKind::Branch && opcodeOf(terminator.conditionOperand()) == Opcode::ResultAt)
-            branchesOnStep.quickSet(id.index());
+        if (terminator.kind != TerminatorKind::Branch || opcodeOf(terminator.conditionOperand()) != Opcode::ResultAt)
+            continue;
+        branchesOnStep.quickSet(id.index());
+        if (stepsOverTables.contains(opcodeOf(code().at(terminator.conditionOperand()).resultsOperand())))
+            stepsTestingForEntry.quickSet(id.index());
     }
     for (BlockID user : order()) {
         auto noteRead = [&](ValueID value) {
@@ -4402,7 +6078,8 @@ void CodeGenerator::findStepsReadElsewhere()
             BlockID home = read.block();
             if (!home || !branchesOnStep.quickGet(home.index()) || found.quickGet(home.index()) || home == user)
                 return;
-            if ((opcodesBehindStep.contains(read.opcode) || read.opcode == Opcode::ForInStep) && !dominates(code().at(code().at(home).terminator.notTaken()).to, user))
+            const Terminator& branch = code().at(home).terminator;
+            if ((opcodesBehindStep.contains(read.opcode) || read.opcode == Opcode::ForInStep || stepsOverTables.contains(read.opcode)) && !dominates(code().at(stepsTestingForEntry.quickGet(home.index()) ? branch.taken() : branch.notTaken()).to, user))
                 found.quickSet(home.index());
         };
         const Block& block = code().at(user);
@@ -4422,7 +6099,7 @@ void CodeGenerator::findStepsReadElsewhere()
     }
 }
 
-std::optional<BlockEdge> CodeGenerator::edgeAfterLastStep(const ValueContext& step, uint32_t indexOfDone)
+std::optional<BlockEdge> CodeGenerator::edgeAfterLastStep(const ValueContext& step, uint32_t indexOfTest, StepTest tests)
 {
     BlockID id = step.block();
     const Block& block = code().at(id);
@@ -4430,12 +6107,12 @@ std::optional<BlockEdge> CodeGenerator::edgeAfterLastStep(const ValueContext& st
         return std::nullopt;
     ValueID done = block.terminator.conditionOperand();
     const Operation& test = code().at(done);
-    if (test.opcode != Opcode::ResultAt || test.block() != id || code().useCountOf(done) != 1 || test.resultsOperand() != step.id() || test.index() != indexOfDone)
+    if (test.opcode != Opcode::ResultAt || test.block() != id || code().useCountOf(done) != 1 || test.resultsOperand() != step.id() || test.index() != indexOfTest)
         return std::nullopt;
 
-    const Edge& end = code().at(block.terminator.taken());
+    const Edge& end = code().at(tests == StepTest::IsDone ? block.terminator.taken() : block.terminator.notTaken());
     const Block& blockAtEnd = code().at(end.to);
-    BlockID others = code().at(block.terminator.notTaken()).to;
+    BlockID others = code().at(tests == StepTest::IsDone ? block.terminator.notTaken() : block.terminator.taken()).to;
     if (!end.arguments().empty() || !blockAtEnd.parameters().empty() || blockAtEnd.isLoopHead || findLoopExit(end.to) || m_singlePredecessors[others.index()] != id)
         return std::nullopt;
 
@@ -4485,6 +6162,49 @@ Vector<BlockID, 16> CodeGenerator::collectLoopBlocks(const CountedLoop& loop) co
     return found;
 }
 
+bool CodeGenerator::isShortRecursiveLoop(const CountedLoop& loop) const
+{
+    if (!code().opcodesOfValues().contains(Opcode::CallDirect))
+        return false;
+    bool readsMemory = std::ranges::any_of(loop.turn, [&](BlockID block) {
+        return std::ranges::any_of(code().valuesOf(block), [&](ValueID value) {
+            return value != loop.poll && code().at(value).traits().mayTouchMemory();
+        });
+    });
+    if (readsMemory)
+        return false;
+    return std::ranges::any_of(collectLoopBlocks(loop), [&](BlockID block) {
+        return std::ranges::any_of(code().valuesOf(block), [&](ValueID value) {
+            return opcodeOf(value) == Opcode::CallDirect && code().at(value).function() == unit().function;
+        });
+    });
+}
+
+void CodeGenerator::widenFactorsBeforeIterations(const CountedLoop& loop, Vector<LValue, 2>& words)
+{
+    ConversionEmitter& conversions = emitter<ConversionEmitter>();
+    if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckProofsAtRunTime) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly))
+        return;
+    BlockID head = m_order[loop.positionOfHead];
+    for (BlockID block : loop.turn) {
+        for (ValueID id : code().valuesOf(block)) {
+            const Operation& product = code().at(id);
+            if (product.opcode != Opcode::MultiplyAddIntegers)
+                continue;
+            for (ValueID factor : { product.multiplicandOperand(), product.multiplierOperand() }) {
+                bool isOfIteration = code().isConstant(factor) || code().blockOf(factor) == head || loop.turn.contains(code().blockOf(factor));
+                if (isOfIteration || representationOf(factor) != Representation::Int32 || typeOf(factor).integers.minimum < 0)
+                    continue;
+                Word32 word = get(factor).as<Word32>();
+                if (conversions.signExtendedIntegerOf(word))
+                    continue;
+                conversions.noteSignExtended(word, Integer(m_out.extendWordThatIsNotNegative(word.value())));
+                words.append(word.value());
+            }
+        }
+    }
+}
+
 LBasicBlock CodeGenerator::exitEdgeBlock(const Edge& edge)
 {
     if (m_blockLeavingLoop && m_exitsOfUnrolledLoop.contains(edge.to))
@@ -4494,7 +6214,8 @@ LBasicBlock CodeGenerator::exitEdgeBlock(const Edge& edge)
 
 NEVER_INLINE BlockEdge CodeGenerator::edgeLeavingTurnLaidOut(const Edge& edge)
 {
-    return BlockEdge(exitEdgeBlock(edge), edgeClassLeadingTo(code().at(edge.to).frequency));
+    bool isUsual = code().at(edge.to).frequency == BlockFrequency::Normal;
+    return BlockEdge(exitEdgeBlock(edge), isUsual ? Machine::EdgeClass::Normal : Machine::EdgeClass::Rare);
 }
 
 NEVER_INLINE BlockEdge CodeGenerator::edgeThatPassesArguments(const TerminatorContext& terminator, const Edge& edge, std::span<const Operand> declaredResults)
@@ -4540,6 +6261,27 @@ void CodeGenerator::jumpTo(const TerminatorContext& terminator, uint32_t targetI
     passArguments(edge, blockAtEnd.parameters(), declaredResults);
     passValuesToLoopExit(edge.to);
     m_out.jump(BlockEdge(machineBlock, edgeClassLeadingTo(blockAtEnd.frequency)));
+}
+
+bool CodeGenerator::canBeValueTableJoin(BlockID block) const
+{
+    if (!m_blocks[block.index()] || findLoopExit(block) || code().at(block).isHandlerBlock() || !m_stepsLeftToBackEdge.isEmpty())
+        return false;
+    return std::ranges::none_of(m_carriedSubstrings, [&](const CarriedSubstring& carried) {
+        return carried.block == block;
+    });
+}
+
+void CodeGenerator::jumpToJoin(BlockID join, std::span<const Operand> passed)
+{
+    const Block& blockAtJoin = code().at(join);
+    std::span<const ValueID> parameters = blockAtJoin.parameters();
+    RELEASE_ASSERT(passed.size() == parameters.size());
+    for (size_t place = 0; place < parameters.size(); ++place) {
+        if (m_values[parameters[place].index()])
+            passArgument(parameters[place], passed[place]);
+    }
+    m_out.jump(BlockEdge(blockFor(join), edgeClassLeadingTo(blockAtJoin.frequency)));
 }
 
 void CodeGenerator::findBoxesLeftToHandlers()
@@ -4595,15 +6337,21 @@ NEVER_INLINE void CodeGenerator::failToPassArgument(ValueID parameter, Represent
 
 ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::passArgument(ValueID parameter, Operand argument)
 {
-    Representation representationOfParameter = isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(parameter);
+    Representation representationOfParameter = carriedRepresentationOf(parameter);
     if (!isSameWord(argument.representation, representationOfParameter)) [[unlikely]] {
         failToPassArgument(parameter, argument.representation, representationOfParameter);
         return;
     }
     LValue phi = m_values[parameter.index()];
     if (phi && phi->opcode() != Machine::Phi) [[unlikely]]
-        phi = m_keepsValuesInHeapFrame ? emitter<SavedFrameEmitter>().phiOfKeptParameter(parameter) : nullptr;
-    RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value && argument.value->type() == phi->type());
+        phi = m_keepsValuesInHeapFrame ? emitter<SavedFrameEmitter>().phiOfKeptParameter(parameter) : isCarriedSum(parameter) ? m_integersOfCarriedSums.get(parameter.index()) : nullptr;
+    if (m_carriesNarrowIntegers && isCarriedNarrow(representationOfParameter, phi)) [[unlikely]]
+        argument = emitter<SlotEmitter>().narrowOptionalInt32(argument.as<OptionalInteger>(), typeOf(parameter).primitives);
+    RELEASE_ASSERT(phi && phi->opcode() == Machine::Phi && argument.value);
+    if (argument.value->type() != phi->type()) [[unlikely]] {
+        RELEASE_ASSERT(isCarriedSum(parameter));
+        argument.value = integerOfCarriedSum(argument.value);
+    }
     m_out.upsilon(argument.value, phi);
 }
 
@@ -4635,16 +6383,42 @@ void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> par
             bool isArgument = index < arguments.size();
             Operand operand = isArgument ? get(arguments[index]) : declaredResults[index - arguments.size()];
             passed.append(emitter<ConversionEmitter>().box(*m_operation, operand, typeOf(isArgument ? arguments[index] : parameter)));
-        } else if (index < arguments.size() && holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
+        } else if (const CarriedSubstring* carried = index < arguments.size() ? findCarriedSubstring(arguments[index]) : nullptr; carried && !findCarriedSubstring(parameter)) [[unlikely]]
+            passed.append(Operand(representationOf(parameter), emitter<StringEmitter>().makeCarriedSubstring(contextOf(edge.from, carried->cut), *carried).value()));
+        else if (index < arguments.size() && holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
             passed.append(getWithAnyNaN(arguments[index]));
         else if (index < arguments.size())
-            passed.append(getIn(arguments[index], representationOf(parameter)));
+            passed.append(getIn(arguments[index], carriedRepresentationOf(parameter)));
         else
             passed.append(declaredResults[index - arguments.size()]);
+    }
+    Vector<LValue, 4> lengthsOfSubstrings;
+    for (const CarriedSubstring& carried : m_carriedSubstrings) {
+        if (carried.block != edge.to)
+            continue;
+        Machine::DeclaredAccessesSuspension suspension(m_out);
+        const CarriedSubstring* handedOn = findCarriedSubstring(arguments[carried.place]);
+        lengthsOfSubstrings.append(handedOn ? handedOn->length : emitter<StringEmitter>().lengthOf(passed[carried.place].as<CellPointer>()).value());
+    }
+    size_t numberOfSubstring = 0;
+    for (const CarriedSubstring& carried : m_carriedSubstrings) {
+        if (carried.block != edge.to)
+            continue;
+        const CarriedSubstring* handedOn = findCarriedSubstring(arguments[carried.place]);
+        m_out.upsilon(handedOn ? handedOn->start : m_out.constInt32(0), carried.start);
+        m_out.upsilon(lengthsOfSubstrings[numberOfSubstring++], carried.length);
     }
     for (size_t index = 0; index < parameters.size(); ++index) {
         if (m_values[parameters[index].index()])
             passArgument(parameters[index], passed[index]);
+    }
+    for (const LoopCarriedTable& carried : m_loopCarriedTables) {
+        if (carried.block != edge.to)
+            continue;
+        const ValueID table = carried.place < arguments.size() ? arguments[carried.place] : ValueID();
+        auto checked = std::ranges::find(m_keysOfCheckedTables, table, &std::pair<ValueID, LValue>::first);
+        LValue keys = checked != m_keysOfCheckedTables.end() ? checked->second : keysOfCarriedTable(table);
+        m_out.upsilon(keys ? keys : m_out.constInt64(0), carried.keys);
     }
     for (const LoopCarriedString& carried : m_loopCarriedStrings) {
         if (carried.head == edge.to)

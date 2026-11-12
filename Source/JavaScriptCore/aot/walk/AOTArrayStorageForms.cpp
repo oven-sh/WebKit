@@ -88,7 +88,10 @@ static bool isArrayOrHeir(TypeReader types, const Type& type)
 
 bool isProvenToBeList(TypeReader types, TypeID array)
 {
-    return array && types.at(array).isObject() && isArrayOrHeir(types, types.at(array));
+    if (!array || holdsOnlyPrimitives(array))
+        return false;
+    const Type& type = types.recordOf(array);
+    return type.isObject() && isArrayOrHeir(types, type);
 }
 
 bool readTakesIndexOfProvenList(TypeReader types, TypeID array, TypeID position)

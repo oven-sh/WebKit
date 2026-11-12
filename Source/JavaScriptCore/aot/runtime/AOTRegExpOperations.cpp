@@ -10,6 +10,7 @@
 
 #include "AOTBuiltinOperationSupport.h"
 #include "AOTCheckedSpan.h"
+#include "AOTCompiledCall.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTImageText.h"
@@ -17,6 +18,7 @@
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramStatics.h"
+#include "AOTRegExpFlags.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTState.h"
@@ -237,6 +239,40 @@ static JSValue matchEveryPlaceInOnePass(JSGlobalObject* globalObject, VM& vm, Re
     return array;
 }
 
+static JSValue createArrayOfLength(JSGlobalObject* globalObject, VM& vm, size_t length)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!length)
+        return jsNull();
+    JSArray* array = length > MAX_STORAGE_VECTOR_LENGTH ? nullptr : JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithArrayStorage), static_cast<unsigned>(length));
+    if (!array) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
+    return array;
+}
+
+static JSValue countMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject, MatchResult match)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RegExp* regExp = object->regExp();
+    object->setLastIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto source = subject->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, subject, match, false);
+    size_t count = 0;
+    {
+        RunOfMatches run(globalObject, vm, regExp, subject, source);
+        do {
+            ++count;
+            run.findNext(match);
+            RETURN_IF_EXCEPTION(scope, { });
+        } while (match);
+    }
+    RELEASE_AND_RETURN(scope, createArrayOfLength(globalObject, vm, count));
+}
+
 static JSValue collectMatchesFrom(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject, MatchResult match)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -273,7 +309,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteral, EncodedJSValue, (Instan
 
     auto matchForm = static_cast<RegExpMatchForm>(form);
     if (matchForm == RegExpMatchForm::Match && cell->global())
-        OPERATION_RETURN(scope, JSValue::encode(collectMatchesFrom(globalObject, vm, object, subject, result)));
+        OPERATION_RETURN(scope, JSValue::encode(object->isSharedLiteral() ? countMatchesFrom(globalObject, vm, object, subject, result) : collectMatchesFrom(globalObject, vm, object, subject, result)));
 
     JSValue value = createMatchValue(instance, matchForm, cell, subject, result, offsets);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -357,6 +393,36 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchLiteralWithoutObject, EncodedJSV
     OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, static_cast<RegExpMatchForm>(form), regExp, subject, result, offsets)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchArray, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string, void* record))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchArray);
+    RegExp* cell = cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpMatchArray)->regExp();
+    auto* subject = cellArgument<JSString>(string, Entry::operationAOTRegExpMatchArray);
+    std::span<int> offsets = matchOutput(vm, cell);
+    const auto* words = static_cast<const uint64_t*>(record);
+    RELEASE_ASSERT(words[0] == cell->numSubpatterns() + 1u);
+    std::span<const int> bounds = unsafeMakeSpan(reinterpret_cast<const int*>(words + 1), 2 * static_cast<size_t>(words[0]));
+    memcpySpan(offsets.first(bounds.size()), bounds);
+    RELEASE_ASSERT(offsets[0] >= 0 && offsets[0] <= offsets[1] && static_cast<unsigned>(offsets[1]) <= subject->length());
+    OPERATION_RETURN(scope, JSValue::encode(createMatchValue(instance, RegExpMatchForm::Exec, cell, subject, MatchResult(offsets[0], offsets[1]), offsets)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCopyRegExpMatch, void*, (Instance* instance, uint32_t count))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyRegExpMatch);
+    size_t bytes = sizeof(uint64_t) * (1 + static_cast<size_t>(count));
+    RELEASE_ASSERT(bytes - sizeof(uint64_t) <= vm.aotState().sizeOfRegExpMatchOutput * sizeof(int));
+    auto* record = static_cast<uint64_t*>(vm.auxiliarySpace().allocate(vm, bytes, nullptr, AllocationFailureMode::ReturnNull));
+    if (!record) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        OPERATION_RETURN(scope, nullptr);
+    }
+    record[0] = count;
+    memcpy(record + 1, vm.aotState().regExpMatchOutput.get(), bytes - sizeof(uint64_t));
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, record);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchInParts, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* string))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpMatchInParts);
@@ -395,7 +461,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpMatchInParts, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(true)));
 }
 
-static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint32_t staticsOffset, RegExp* regExp)
+static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint32_t staticsOffset, RegExp* regExp, bool countsMatches = false)
 {
     ProgramStatics& statics = *instance->state->statics;
     if (JSCell* cell = statics.at<JSCell*>(staticsOffset)) {
@@ -403,7 +469,8 @@ static RegExpObject* ensureSharedRegExpLiteral(VM& vm, Instance* instance, uint3
         RELEASE_ASSERT(shared && shared->regExp() == regExp);
         return shared;
     }
-    RegExpObject* shared = RegExpObject::create(vm, WTF::opaque(instance->globalObject->regExpStructure()), regExp);
+    Structure* structure = WTF::opaque(instance->globalObject->regExpStructure());
+    RegExpObject* shared = countsMatches ? RegExpObject::createSharedLiteral(vm, structure, regExp) : RegExpObject::create(vm, structure, regExp);
     vm.mutatorFence();
     statics.setCell(staticsOffset, shared);
     return shared;
@@ -428,9 +495,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSharedRegExpLiteral, JSCell*, (Ins
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTSharedRegExpLiteral);
     DeferTerminationForAWhile deferTermination(vm);
-    RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags));
+    RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, RegExpRecordID(regExpRecord), OptionSet<Yarr::Flags>::fromRaw(flags & ~Typed::countedMatchesParameter));
     ASSERT(regExp->isValid());
-    OPERATION_RETURN(scope, ensureSharedRegExpLiteral(vm, instance, staticsOffset, regExp));
+    OPERATION_RETURN(scope, ensureSharedRegExpLiteral(vm, instance, staticsOffset, regExp, flags & Typed::countedMatchesParameter));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyOfSharedRegExpLiteral, JSCell*, (Instance* instance, JSCell* shared))
@@ -440,7 +507,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyOfSharedRegExpLiteral, JSCell*, (Instan
     OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), regExp));
 }
 
-static const ImageRegExp* findRegExpRecordWithoutCounting(VM& vm, StringView pattern, unsigned hash, OptionSet<Yarr::Flags> flags)
+static std::optional<RegExpRecordID> findRegExpRecordID(VM& vm, StringView pattern, unsigned hash, OptionSet<Yarr::Flags> flags)
 {
     uint16_t rawFlags = ImageRegExp::significantFlags(flags).toRaw();
     const Image& image = *vm.aotState().image;
@@ -448,28 +515,43 @@ static const ImageRegExp* findRegExpRecordWithoutCounting(VM& vm, StringView pat
     for (const ImageRegExpHash& entry : std::ranges::equal_range(image.section<ImageRegExpHash>(ImageSection::RegExpHashes), ImageRegExp::hashOf(hash, flags), { }, &ImageRegExpHash::hash)) {
         const ImageRegExp& record = records.at(RegExpRecordID(entry.record));
         if (record.rawFlags == rawFlags && image.text().equals(StringID(record.pattern), pattern))
-            return &record;
+            return RegExpRecordID(entry.record);
     }
-    return nullptr;
+    return std::nullopt;
 }
 
-static String textOfImageForPattern(VM& vm, JSString& text, OptionSet<Yarr::Flags> flags)
+static RegExpLiterals::RopeWords ropeWordsOf(const JSString& rope)
 {
-    auto find = [&](StringView pattern, unsigned hash) -> String {
-        const ImageRegExp* record = findRegExpRecordWithoutCounting(vm, pattern, hash, flags);
-        if (!record)
-            return { };
-        countEvent(vm, RuntimeCounterID::RegExpPatternsFoundInImage);
-        return vm.aotState().image->text().createString(StringID(record->pattern));
+    ASSERT(rope.isRope());
+    static_assert(sizeof(JSRopeString) == JSString::offsetOfValue() + sizeof(RegExpLiterals::RopeWords));
+    return WTF::unalignedLoad<RegExpLiterals::RopeWords>(std::bit_cast<const uint8_t*>(&rope) + JSString::offsetOfValue());
+}
+
+static std::optional<RegExpRecordID> findRegExpRecordForPattern(VM& vm, JSString& text, OptionSet<Yarr::Flags> flags)
+{
+    auto find = [&](StringView pattern, unsigned hash) {
+        std::optional<RegExpRecordID> record = findRegExpRecordID(vm, pattern, hash, flags);
+        if (record)
+            countEvent(vm, RuntimeCounterID::RegExpPatternsFoundInImage);
+        return record;
     };
     if (StringImpl* flat = text.tryGetValueImpl())
         return find(StringView(*flat), flat->hash());
-    auto resolveAndFind = [&](auto& buffer) -> String {
+    const RegExpLiterals::RopeWords words = ropeWordsOf(text);
+    RegExpLiterals::RopePattern& known = vm.aotState().regExpLiterals->ropePattern(words);
+    if (known.recordNumber && known.words == words && known.flags == flags.toRaw()) {
+        countEvent(vm, RuntimeCounterID::RegExpPatternsFoundInImage);
+        return RegExpRecordID(known.recordNumber - 1);
+    }
+    auto resolveAndFind = [&](auto& buffer) -> std::optional<RegExpRecordID> {
         if (!buffer.tryGrow(text.length()))
-            return { };
+            return std::nullopt;
         text.resolveToBuffer(buffer.mutableSpan());
         StringView resolved(buffer.span());
-        return find(resolved, resolved.hash());
+        std::optional<RegExpRecordID> record = find(resolved, resolved.hash());
+        if (record)
+            known = { words, flags.toRaw(), record->index() + 1 };
+        return record;
     };
     if (text.is8Bit()) {
         Vector<Latin1Character, 2048> buffer;
@@ -483,8 +565,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSCell*, (Instance* instance, JS
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewRegExp);
     auto* text = cellArgument<JSString>(patternCell, Entry::operationAOTNewRegExp);
-    if (String foreseen = textOfImageForPattern(vm, *text, OptionSet<Yarr::Flags>::fromRaw(flags)); !foreseen.isNull())
-        OPERATION_RETURN(scope, regExpCreate(globalObject, JSValue(), foreseen, OptionSet<Yarr::Flags>::fromRaw(flags)));
+    if (std::optional<RegExpRecordID> record = findRegExpRecordForPattern(vm, *text, OptionSet<Yarr::Flags>::fromRaw(flags))) {
+        if (RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, *record, OptionSet<Yarr::Flags>::fromRaw(flags)); regExp->isValid()) [[likely]]
+            OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), regExp));
+    }
     auto pattern = text->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, regExpCreate(globalObject, JSValue(), pattern, OptionSet<Yarr::Flags>::fromRaw(flags)));
@@ -543,6 +627,62 @@ static JSString* replaceInOnePass(JSGlobalObject* globalObject, VM& vm, JSString
     RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparator(globalObject, string, source, kept.span().data(), kept.size(), replacement, replacementText, matches.size() / 2));
 }
 
+static constexpr unsigned mostOperandsOfReplacer = 6;
+static constexpr unsigned replacerOperandsWithoutGroups = 3;
+
+static JSString* replaceByCompiledCode(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* object, JSObject* replacer, const CallData& callData)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RegExp* regExp = object->regExp();
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    unsigned length = source->length();
+    unsigned numberOfGroups = regExp->numSubpatterns() + 1;
+    object->setLastIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    Vector<Range<int32_t>, 16> kept;
+    Vector<String, 16> replacements;
+    size_t endOfLastMatch = 0;
+    uint64_t start = 0;
+    while (start <= length) {
+        int* groups;
+        MatchResult match = globalObject->regExpGlobalData().performMatch(globalObject, regExp, string, source, static_cast<unsigned>(start), &groups);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!match)
+            break;
+        if (!kept.tryConstructAndAppend(endOfLastMatch, match.start)) [[unlikely]]
+            OUT_OF_MEMORY(globalObject, scope);
+
+        std::array<EncodedJSValue, mostOperandsOfReplacer> operands;
+        unsigned numberOfOperands = 0;
+        for (unsigned group = 0; group < numberOfGroups; ++group) {
+            int first = groups[group * 2];
+            int end = groups[group * 2 + 1];
+            JSValue text = jsUndefined();
+            if (first >= 0 && end >= first) {
+                text = jsSubstring(globalObject, vm, string, first, end - first);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+            operands[numberOfOperands++] = JSValue::encode(text);
+        }
+        operands[numberOfOperands++] = JSValue::encode(jsNumber(match.start));
+        operands[numberOfOperands++] = JSValue::encode(string);
+        JSValue answer = callCompiledCode(vm, replacer, callData, jsUndefined(), nullptr, ArgList { operands.data(), numberOfOperands });
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        replacements.append(answer.toWTFString(globalObject));
+        RETURN_IF_EXCEPTION(scope, nullptr);
+
+        endOfLastMatch = match.end;
+        start = match.empty() ? advanceStringIndex(source, length, match.end, regExp->eitherUnicode()) : match.end;
+    }
+    if (replacements.isEmpty())
+        return string;
+    if (endOfLastMatch < length && !kept.tryConstructAndAppend(endOfLastMatch, length)) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
+    RELEASE_AND_RETURN(scope, jsSpliceSubstringsWithSeparators(globalObject, string, source, kept.span().data(), kept.size(), replacements.span().data(), replacements.size()));
+}
+
 static JSString* replaceMatches(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSValue replacement)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -555,6 +695,10 @@ static JSString* replaceMatches(JSGlobalObject* globalObject, VM& vm, JSString* 
             RETURN_IF_EXCEPTION(scope, nullptr);
             if (hasReplaced)
                 return result;
+        }
+        if (RegExp* regExp = regExpObject->regExp(); replacement.isCell() && regExp->global() && !regExp->hasNamedCaptures() && regExp->numSubpatterns() + replacerOperandsWithoutGroups <= mostOperandsOfReplacer && string->length() < Options::thresholdForStringReplaceCache()) {
+            if (CallData callData = compiledCallDataOf(replacement.asCell()); callData.type == CallData::Type::Compiled)
+                RELEASE_AND_RETURN(scope, replaceByCompiledCode(globalObject, vm, string, regExpObject, asObject(replacement), callData));
         }
         RELEASE_AND_RETURN(scope, replaceUsingRegExpSearch(vm, globalObject, string, regExpObject, replacement));
     }
@@ -636,8 +780,22 @@ static constexpr ASCIILiteral patternOfSurroundingSpaces = "^\\s+|\\s+$"_s;
 static bool matchesSurroundingSpaces(RegExp* regExp)
 {
     const String& pattern = regExp->pattern();
-    return pattern.length() == patternOfSurroundingSpaces.length() && regExp->flags() == OptionSet<Yarr::Flags> { Yarr::Flags::Global }
-        && (pattern == patternOfSurroundingSpaces || pattern == patternOfAnySurroundingSpaces);
+    return pattern.length() == patternOfSurroundingSpaces.length() && pattern.is8Bit() && regExp->flags() == OptionSet<Yarr::Flags> { Yarr::Flags::Global }
+        && (equalSpans(pattern.span8(), patternOfSurroundingSpaces.span8()) || equalSpans(pattern.span8(), patternOfAnySurroundingSpaces.span8()));
+}
+
+static ALWAYS_INLINE Range<unsigned> rangeInsideSurroundingSpaces(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp)
+{
+    const unsigned length = source.length();
+    unsigned start = 0;
+    unsigned end = length;
+    while (start < length && isStrWhiteSpace(source[start]))
+        ++start;
+    while (end > start && isStrWhiteSpace(source[end - 1]))
+        --end;
+    MatchResult last = equalSpans(regExp->pattern().span8(), patternOfAnySurroundingSpaces.span8()) ? MatchResult(length, length) : end < length ? MatchResult(end, length) : MatchResult(0, start);
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, last, false);
+    return { start, end };
 }
 
 static JSString* removeSurroundingSpaces(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp)
@@ -645,18 +803,10 @@ static JSString* removeSurroundingSpaces(JSGlobalObject* globalObject, VM& vm, J
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto source = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    const unsigned length = source->length();
-    unsigned start = 0;
-    unsigned end = length;
-    while (start < length && isStrWhiteSpace(source[start]))
-        ++start;
-    while (end > start && isStrWhiteSpace(source[end - 1]))
-        --end;
-    MatchResult last = regExp->pattern() == patternOfAnySurroundingSpaces ? MatchResult(length, length) : end < length ? MatchResult(end, length) : MatchResult(0, start);
-    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, last, false);
-    if (!start && end == length)
+    Range<unsigned> inside = rangeInsideSurroundingSpaces(globalObject, vm, string, source, regExp);
+    if (!inside.begin() && inside.end() == source->length())
         return string;
-    RELEASE_AND_RETURN(scope, jsSubstringOfResolved(vm, string, start, end - start));
+    RELEASE_AND_RETURN(scope, jsSubstringOfResolved(vm, string, inside.begin(), inside.distance()));
 }
 
 static JSString* replaceEveryMatchWithPlainText(JSGlobalObject* globalObject, VM& vm, JSString* string, StringView source, RegExp* regExp, JSString* replacement, const String& replacementText, MatchResult match)
@@ -773,6 +923,189 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpString, JSCell*, (Instan
     OPERATION_RETURN(scope, replaceFromFirstMatch(globalObject, vm, subject, pattern, replacement, replacementText, offsets.data()));
 }
 
+static bool cannotOverlapItself(std::span<const Latin1Character> text)
+{
+    for (size_t length = 1; length < text.size(); ++length) {
+        if (equalSpans(text.first(length), text.last(length)))
+            return false;
+    }
+    return true;
+}
+
+static size_t countOccurrences(std::span<const Latin1Character> source, std::span<const Latin1Character> text)
+{
+    if (source.size() < text.size())
+        return 0;
+    if (text.size() == 1)
+        return countCharacter(source, text[0]);
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    constexpr size_t maxStridesSummed = 255;
+    const size_t numberOfStarts = source.size() - text.size() + 1;
+    const uint8_t* firsts = byteCast<uint8_t>(source.data());
+    const uint8_t* lasts = firsts + text.size() - 1;
+    const auto first = SIMD::splat<uint8_t>(text.front());
+    const auto last = SIMD::splat<uint8_t>(text.back());
+    const auto inside = text.subspan(1, text.size() - 2);
+    const auto isAt = [&](size_t start) {
+        return equalSpans(source.subspan(start + 1, inside.size()), inside);
+    };
+    size_t count = 0;
+    size_t start = 0;
+    while (start + stride <= numberOfStarts) {
+        auto sums = SIMD::splat<uint8_t>(0);
+        for (size_t strides = 0; strides < maxStridesSummed && start + stride <= numberOfStarts; ++strides, start += stride) {
+            auto matches = SIMD::bitAnd(SIMD::equal(SIMD::load(firsts + start), first), SIMD::equal(SIMD::load(lasts + start), last));
+            if (inside.empty()) {
+                sums = SIMD::sub(sums, matches);
+                continue;
+            }
+            if (!SIMD::isNonZero(matches)) [[likely]]
+                continue;
+            for (size_t index = 0; index < stride; ++index) {
+                size_t candidate = start + index;
+                count += source[candidate] == text.front() && source[candidate + text.size() - 1] == text.back() && isAt(candidate);
+            }
+        }
+        count += SIMD::sum(sums);
+    }
+    for (; start < numberOfStarts; ++start)
+        count += source[start] == text.front() && source[start + text.size() - 1] == text.back() && isAt(start);
+    return count;
+}
+
+static size_t lengthOfEveryOccurrence(VM& vm, StringView source, StringView text, size_t start, size_t& startOfLast)
+{
+    startOfLast = start;
+    if (source.is8Bit() && text.is8Bit() && cannotOverlapItself(text.span8())) {
+        startOfLast = source.reverseFind(text);
+        return countOccurrences(source.span8().subspan(start), text.span8()) * text.length();
+    }
+    size_t length = 0;
+    for (; start != notFound; start = source.find(vm.adaptiveStringSearcherTables(), text, start + text.length())) {
+        startOfLast = start;
+        length += text.length();
+    }
+    return length;
+}
+
+static size_t countCharacterInSubstring(RegExpLiterals::SubstringCount& last, JSString* base, unsigned offset, RegExp* regExp, std::span<const Latin1Character> characters, size_t& startOfLast)
+{
+    const Latin1Character character = regExp->atom()[0];
+    const auto findLast = [&](size_t start) {
+        size_t found = characters.size();
+        while (found > start && characters[found - 1] != character)
+            --found;
+        return found - 1;
+    };
+    const size_t length = characters.size();
+    size_t count = 0;
+    const bool isOfSameString = last.base == base && last.regExp == regExp && last.offset == offset;
+    if (isOfSameString && length >= last.length) {
+        const size_t added = countCharacter(characters.subspan(last.length), character);
+        count = last.count + added;
+        startOfLast = added ? findLast(last.length) : last.startOfLast;
+    } else if (isOfSameString && last.length - length < length) {
+        auto whole = base->tryGetValueImpl()->span8();
+        const size_t removed = countCharacter(whole.subspan(offset + length, last.length - length), character);
+        count = last.count - removed;
+        startOfLast = removed && count ? findLast(0) : last.startOfLast;
+    } else {
+        count = countCharacter(characters, character);
+        startOfLast = count ? findLast(0) : 0;
+    }
+    last = { base, regExp, offset, static_cast<uint32_t>(length), static_cast<uint32_t>(count), static_cast<uint32_t>(startOfLast) };
+    ensureStillAliveHere(base);
+    return count;
+}
+
+static JSValue countMatches(JSGlobalObject* globalObject, VM& vm, RegExpObject* object, JSString* subject)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RegExp* regExp = object->regExp();
+    const bool hasAtom = regExp->hasValidAtom() && !regExp->atom().isEmpty();
+    JSString* substringBase = nullptr;
+    unsigned substringOffset = 0;
+    if (hasAtom && subject->isSubstring()) {
+        if (regExp->atom().length() != 1 || !regExp->atom().is8Bit())
+            RELEASE_AND_RETURN(scope, regExpMatchFast(globalObject, object, subject));
+        auto* substring = static_cast<JSRopeString*>(subject);
+        substringBase = substring->substringBase();
+        substringOffset = substring->substringOffset();
+    }
+    auto source = subject->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    object->setLastIndex(globalObject, 0);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (hasAtom) {
+        const String& atom = regExp->atom();
+        size_t startOfLast = 0;
+        size_t count = 0;
+        if (substringBase && source->is8Bit())
+            count = countCharacterInSubstring(vm.aotState().regExpLiterals->lastSubstringCount(), substringBase, substringOffset, regExp, source->span8(), startOfLast);
+        else if (size_t startOfFirst = source->find(vm.adaptiveStringSearcherTables(), atom, 0); startOfFirst != notFound)
+            count = lengthOfEveryOccurrence(vm, source, atom, startOfFirst, startOfLast) / atom.length();
+        if (!count)
+            return jsNull();
+        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, subject, MatchResult(startOfLast, startOfLast + atom.length()), false);
+        RELEASE_AND_RETURN(scope, createArrayOfLength(globalObject, vm, count));
+    }
+    Vector<unsigned, 128> matches;
+    if (regExp->collectMatchesOfOneSetOrRun(vm, source, matches)) {
+        if (!matches.isEmpty())
+            recordLastMatch(globalObject, vm, regExp, subject, matches);
+        RELEASE_AND_RETURN(scope, createArrayOfLength(globalObject, vm, matches.size() / 2));
+    }
+    int* offsets;
+    MatchResult first = globalObject->regExpGlobalData().performMatch(globalObject, regExp, subject, source, 0, &offsets);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!first)
+        return jsNull();
+    RELEASE_AND_RETURN(scope, countMatchesFrom(globalObject, vm, object, subject, first));
+}
+
+static size_t lengthWithoutMatches(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExp* regExp, size_t startOfFirstMatch, const int* offsets)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto source = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, 0);
+    if (matchesSurroundingSpaces(regExp))
+        return rangeInsideSurroundingSpaces(globalObject, vm, string, source, regExp).distance();
+    if (regExp->hasValidAtom()) {
+        const String& atom = regExp->atom();
+        size_t startOfLast = startOfFirstMatch;
+        size_t removed = regExp->global() ? lengthOfEveryOccurrence(vm, source, atom, startOfFirstMatch, startOfLast) : atom.length();
+        globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, MatchResult(startOfLast, startOfLast + atom.length()), false);
+        return source->length() - removed;
+    }
+    MatchResult match(offsets[0], offsets[1]);
+    RELEASE_ASSERT(match.start <= match.end && match.end <= source->length());
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, match, false);
+    size_t removed = match.end - match.start;
+    if (regExp->global()) {
+        RunOfMatches run(globalObject, vm, regExp, string, source);
+        while (true) {
+            run.findNext(match);
+            RETURN_IF_EXCEPTION(scope, 0);
+            if (!match)
+                break;
+            removed += match.end - match.start;
+        }
+    }
+    return source->length() - removed;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStringLengthWithoutMatches, size_t, (Instance* instance, JSCell* string, JSCell* regExp, uint32_t startOfFirstMatchPlusOne))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringLengthWithoutMatches);
+    auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringLengthWithoutMatches);
+    auto* regExpObject = cellArgument<RegExpObject>(regExp, Entry::operationAOTStringLengthWithoutMatches);
+    if (startOfFirstMatchPlusOne && regExpObject->isSymbolReplaceFastAndNonObservable(globalObject)) [[likely]]
+        OPERATION_RETURN(scope, lengthWithoutMatches(globalObject, vm, subject, regExpObject->regExp(), startOfFirstMatchPlusOne - 1, vm.aotState().regExpMatchOutput.get()));
+    JSString* replaced = replaceMatches(globalObject, vm, subject, regExpObject, jsEmptyString(vm));
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    OPERATION_RETURN(scope, replaced->length());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTStringReplaceRegExpWithFunction, JSCell*, (Instance* instance, JSCell* string, JSCell* regExp, JSCell* replacement))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTStringReplaceRegExpWithFunction);
@@ -802,6 +1135,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringMatchRegExp, EncodedJSValue, (Instanc
     auto* subject = cellArgument<JSString>(string, Entry::operationAOTStringMatchRegExp);
     auto* regExpObject = cellArgument<RegExpObject>(regExp, Entry::operationAOTStringMatchRegExp);
     if (regExpObject->isSymbolMatchFastAndNonObservable(globalObject)) [[likely]] {
+        if (regExpObject->isSharedLiteral() && regExpObject->regExp()->global())
+            OPERATION_RETURN(scope, JSValue::encode(countMatches(globalObject, vm, regExpObject, subject)));
         JSValue value = matchEveryPlaceInOnePass(globalObject, vm, regExpObject, subject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (value)
@@ -839,8 +1174,8 @@ const ImageRegExp* findRegExpRecord(VM& vm, const String& pattern, OptionSet<Yar
     if (!vm.hasCompiledCode())
         return nullptr;
 
-    if (const ImageRegExp* record = findRegExpRecordWithoutCounting(vm, pattern, pattern.hash(), flags))
-        return record;
+    if (std::optional<RegExpRecordID> record = findRegExpRecordID(vm, pattern, pattern.hash(), flags))
+        return &RegExpRecords(*vm.aotState().image).at(*record);
     countEvent(vm, RuntimeCounterID::RegExpsCreatedWithoutRecord);
     return nullptr;
 }
@@ -918,6 +1253,14 @@ void RegExpLiterals::visitRoots(Visitor& visitor)
 RegExpLiterals::RegExpLiterals(CacheRegistry& registry)
 {
     registry.add(CacheKind::StrongRoots, "regexp literals"_s, *this, RootVolatility::GreyedByExecution);
+    registry.addClearedEachCollection("patterns of ropes"_s, asMutableByteSpan(std::span { m_ropePatterns }));
+    registry.addClearedEachCollection("counts in substrings"_s, asMutableByteSpan(std::span { m_lastSubstringCounts }));
+}
+
+RegExpLiterals::RopePattern& RegExpLiterals::ropePattern(const RopeWords& words)
+{
+    uint64_t mixed = (words[0] ^ std::rotl(words[1], 21) ^ std::rotl(words[2], 42)) * 0x9e3779b97f4a7c15ull;
+    return m_ropePatterns[mixed >> (64 - ropePatternsShift)];
 }
 
 uint64_t RegExpLiterals::keyOf(RegExpRecordID id, OptionSet<Yarr::Flags> flags)

@@ -318,6 +318,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewTemplateObject, JSCell*, (Instance* inst
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     cooked->putDirect(vm, vm.propertyNames->raw, raw, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     objectConstructorFreeze(globalObject, cooked);
+    RELEASE_ASSERT(cooked->getDirect(firstOutOfLineOffset) == raw);
     instance->state->modules->didMakeTemplateObject(ModuleID(module), offsetOfCell);
     OPERATION_RETURN(scope, cooked);
 }

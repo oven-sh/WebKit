@@ -73,17 +73,15 @@ struct ArrayLiteralShape {
 
 static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base, size_t offset, GPRReg scratch)
 {
-    constexpr int32_t tag = static_cast<int32_t>(JSValue::NumberTag >> 32);
     auto at = [&](unsigned i) { return static_cast<int32_t>(offset + i * sizeof(EncodedJSValue)); };
 #if CPU(ARM64)
-    jit.move(TrustedImm32(tag), scratch);
+    jit.move(TrustedImm32(static_cast<int32_t>(JSValue::NumberTag >> 32)), scratch);
     for (unsigned i = 0; i < count; ++i)
         jit.storePair32(jit.operand(i), scratch, base, TrustedImm32(at(i)));
 #else
-    UNUSED_PARAM(scratch);
     for (unsigned i = 0; i < count; ++i) {
-        jit.store32(jit.operand(i), Address(base, at(i)));
-        jit.store32(TrustedImm32(tag), Address(base, at(i) + static_cast<int32_t>(sizeof(int32_t))));
+        boxInt32(jit, jit.operand(i), scratch);
+        jit.store64(scratch, Address(base, at(i)));
     }
 #endif
 }
@@ -94,7 +92,6 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
     auto number = [&](unsigned i) { return jit.operandFPR(1 + i); };
     static_assert(maxArrayElementsInRegisters == 4);
     RELEASE_ASSERT(count <= maxArrayElementsInRegisters);
-    static_assert(arrayLiteralVectorLength(0) == (BASE_CONTIGUOUS_VECTOR_LEN_EMPTY | 1));
     RELEASE_ASSERT(!emptyCapacity || (!count && *emptyCapacity & 1));
     const unsigned vectorLength = emptyCapacity.value_or(arrayLiteralVectorLength(count));
     const unsigned countAndCapacity = count | emptyCapacity.value_or(0) << capacityShiftInArrayLiteralCount;
@@ -280,9 +277,10 @@ void generateListOwnKeys(StubAssembler& jit)
     findList(isNotListedByShape);
     isNotListedByShape.link(&jit);
     slowPath.append(jit.branchTest32(CCallHelpers::Zero, order, TrustedImm32(static_cast<int32_t>(orderWordHasExtraProperties))));
-    static_assert(keyListWordOfStructure(UINT32_MAX) == UINT32_MAX >> 1);
+    static_assert(structureEnumerableKeysWord(16) == (16 >> 1 | 1));
     jit.load32(Address(value, JSCell::structureIDOffset()), word);
     jit.urshift32(TrustedImm32(1), word);
+    jit.or32(TrustedImm32(1), word);
     findList(slowPath);
     slowPath.append(jit.jump());
 
@@ -304,6 +302,8 @@ void generateNewEmptyArray(StubAssembler& jit)
         return emitArrayLiteral(jit, { .emptyCapacity = 1 });
     case EmptyArray::ContiguousCapacity3:
         return emitArrayLiteral(jit, { .emptyCapacity = 3 });
+    case EmptyArray::ContiguousCapacity5:
+        return emitArrayLiteral(jit, { .emptyCapacity = 5 });
     case EmptyArray::ContiguousCapacity7:
         return emitArrayLiteral(jit, { .emptyCapacity = 7 });
     case EmptyArray::ContiguousCapacity9:

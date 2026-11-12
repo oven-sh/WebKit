@@ -151,7 +151,7 @@ static LinkType::Counts countsThatOperatorGivesInLinkOperators(const SummaryOper
 
 static bool makesEqualityConvertObjects(const LinkType& type)
 {
-    constexpr uint16_t primitives = LinkType::closed(Primitive::All) | Primitive::LiteralString | Primitive::LiteralSymbol;
+    constexpr uint16_t primitives = LinkType::closed(Primitive::All) | Primitive::LiteralSymbol;
     return type.primitives & primitives & ~Primitive::UndefinedOrNull;
 }
 
@@ -165,7 +165,11 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             addEdge(nodeOf(observer.function, edge.from), nodeOf(observer.function, edge.to), edge.passes);
         return;
     }
-    if (!typeObservedBefore().isNever() && typeObservedBefore().primitives == now.primitives && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
+    bool isKeyConversion = flowRuleOf(summaries.at(observer.function).operators[observer.record].opcode) == FlowRule::ToPropertyKey;
+    auto widenLiterals = [&](uint16_t primitives) -> uint16_t {
+        return primitives & LinkType::literalString && !isKeyConversion ? primitives | Primitive::String : primitives;
+    };
+    if (!typeObservedBefore().isNever() && widenLiterals(typeObservedBefore().primitives) == widenLiterals(now.primitives) && holdsObjectsForLinkOperators(typeObservedBefore()) == holdsObjectsForLinkOperators(now) && typeObservedBefore().hasSameShadowsAs(now))
         return;
 
     const SummaryOperator& operation = summaries.at(observer.function).operators[observer.record];
@@ -189,7 +193,7 @@ void LinkFlow::operatorObserved(const FlowObserver& observer, const LinkType& no
             LinkType key;
             key.primitives = primitives & handedOn;
             if (primitives & LinkType::closed(Primitive::All) & ~handedOn)
-                key.primitives |= Primitive::String;
+                key.primitives |= LinkType::literalString;
             return key;
         }
         if (operation.opcode == Opcode::ToThis || operation.opcode == Opcode::ToObject) {

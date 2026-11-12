@@ -80,8 +80,13 @@ private:
         UniquedStringImpl* name;
         const FieldData* field;
     };
-    static constexpr unsigned numberOfCachedFields = 4096;
+    static constexpr unsigned maxCachedFields = 4096;
+    static constexpr unsigned initialCachedFields = 256;
+    static_assert(hasOneBitSet(maxCachedFields) && hasOneBitSet(initialCachedFields) && initialCachedFields < maxCachedFields);
 
+    CachedField& placeOfCachedField(uint32_t shape, const UniquedStringImpl* name) { return m_cachedFields[(shape * 0x9e3779b1u ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(name) >> 4)) & m_maskOfCachedFields]; }
+    std::span<CachedField> cachedFields() { return { m_cachedFields, static_cast<size_t>(m_maskOfCachedFields) + 1 }; }
+    void growCachedFields();
     const FieldData* findField(VM&, const LayoutData&, UniquedStringImpl*);
     const FieldData* findFieldWithoutColumn(const LayoutData&, uint32_t identifierNumber);
     static constexpr size_t minRecordsToIndex = 12;
@@ -103,6 +108,8 @@ private:
     State& m_state;
     const ProgramTables& m_tables;
     CachedField* m_cachedFields { nullptr };
+    uint32_t m_maskOfCachedFields { initialCachedFields - 1 };
+    uint32_t m_fieldsCachedSinceGrowth { 0 };
     UncheckedKeyHashMap<uint32_t, Vector<uint32_t>> m_recordsByName;
 };
 
@@ -118,9 +125,11 @@ public:
 
     CompiledStructure* withPrototype(VM&, const CompiledStructure&, JSValue prototype);
     CompiledStructure* asPrototype(VM&, const CompiledStructure&);
+    CompiledStructure* withReportedReplacements(VM&, const CompiledStructure&);
     CompiledStructure* withExtraProperties(VM&, const CompiledStructure&, Structure* extraPropertiesStructureOrNull);
     CompiledStructure* existingWithExtraProperties(const CompiledStructure&, Structure& extraPropertiesStructure);
     CompiledStructure* holdingExtraProperties(VM&, const CompiledStructure&, JSObject* extraProperties);
+    CompiledStructure* withoutHeldStructure(VM&, const CompiledStructure&);
     void growFutureCells(const LayoutData&);
     enum class HeldKeyOrder : bool { IsFoundByOthers, IsFoundByNobody };
     CompiledStructure* withOutOfLineKeyOrder(VM&, const CompiledStructure&, std::span<const uint16_t> entries, HeldKeyOrder = HeldKeyOrder::IsFoundByOthers);
@@ -208,9 +217,14 @@ private:
     AllocatorWithoutRoom m_allocatorWithoutRoom { };
     std::array<CompiledStructure*, 2> m_templateStructures { };
     std::unique_ptr<VariantMaps> m_variants;
-    static constexpr size_t numberOfStepsRemembered = 4096;
-    static size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> 20 & ~static_cast<size_t>(1); }
+    static constexpr unsigned logMaxSteps = 12;
+    static constexpr unsigned logInitialSteps = 8;
+    size_t placeOfStep(StructureID before, uint32_t orderAndCountBefore, uint32_t fieldAndKind) const { return ((before.bits() >> 4 ^ orderAndCountBefore * 0x9e3779b1u ^ fieldAndKind * 0x85ebca6bu) * 0x9e3779b1u) >> (32 - m_logNumberOfSteps) & ~static_cast<size_t>(1); }
+    void putKeyOrderStep(const StepOfKeyOrder&);
+    void growKeyOrderSteps();
     StepOfKeyOrder* m_stepsOfKeyOrders { nullptr };
+    unsigned m_logNumberOfSteps { logInitialSteps };
+    uint32_t m_stepsPutSinceGrowth { 0 };
     struct KeysOfOrderWithoutNumber {
         StructureID structure;
         uint32_t countAndKind;

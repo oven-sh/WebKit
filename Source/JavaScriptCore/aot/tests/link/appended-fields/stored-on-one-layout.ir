@@ -7,16 +7,17 @@
 # CHECK-NEXT: parameter 1 {{*}}proven=undefined
 # CHECK: field L0.0 "a"
 # CHECK-NEXT: field L0.1 "b" appended proven=null|string writers-known
-# CHECK-NEXT: field L0.2 "c" appended proven=i32 writers-known
+# CHECK-NEXT: field L0.2 "c" appended proven=int[0, 2147483647] writers-known
 # CHECK-NEXT: field L1.0 "a"
 # CHECK-NOT: field L1.1
 # CHECK: layout L0 {{*}}changes=[]
 # CHECK: layout L1 {{*}}changes=[]
-# Both lie in the cell, which grows by one size class.
+# All three lie in the cell in four bytes each, the first beside the hidden word: the cell stays as large as that of the other layout.
 # RUN(PLAN): plan layouts mechanisms=all
-# PLAN: layout L0 CompiledObject size=48
-# PLAN: slot 1 "b" appended JSValue Inline offset=32 record=1
-# PLAN-NEXT: slot 2 "c" appended OptionalInt64 Inline offset=40 record=2
+# PLAN: layout L0 CompiledObject size=32
+# PLAN: slot 0 "a" Int32 Inline offset=20 record=0
+# PLAN-NEXT: slot 1 "b" appended OptionalCell32 Inline offset=24 record=1
+# PLAN-NEXT: slot 2 "c" appended OptionalInt32 Inline offset=28 record=2
 # PLAN-NEXT: extra-properties Cell32 Inline offset=16
 # PLAN-NEXT: layout L1 CompiledObject size=32 shapes
 # PLAN-NEXT: slot 0 "a"

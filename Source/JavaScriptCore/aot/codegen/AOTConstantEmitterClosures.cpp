@@ -15,6 +15,7 @@
 #include "AOTClosureTestEmitter.h"
 #include "AOTClosuresLent.h"
 #include "AOTConvention.h"
+#include "AOTConversionEmitter.h"
 #include "AOTEnvironmentEmitter.h"
 #include "AOTFunctionKinds.h"
 #include "AOTFunctionTables.h"
@@ -387,6 +388,12 @@ Operand ConstantEmitter::broughtToHeap(const ValueContext& value, ValueID captur
     }, [&] {
         return boxed;
     });
+}
+
+LValue ConstantEmitter::wordKeptOnHeap(const ValueContext& value, ValueID kept)
+{
+    Boxed word = emitter<ConversionEmitter>().box(value, get(kept), typeOf(kept));
+    return mayBeClosureOfFrame(kept) ? broughtToHeap(value, kept, word).value : word.value();
 }
 
 Vector<LValue, 4> ConstantEmitter::captureWordsBySlot(const ValueContext& value, const NewClosureRequest& request)

@@ -34,6 +34,8 @@ T RegExpBuiltinEmitter::matchInPlace(const InlineCall& call, RegExpMatch match, 
     match.pattern = StringID::fromBits(call.parameterWord(0));
     match.flags = OptionSet<RegExpFlags>::fromRaw(static_cast<uint8_t>(call.parameterWord(1)));
     match.isHeld = true;
+    match.calledBuiltin = functionOf(call.overload());
+    match.isPrivate = call.parameterWord(1) & privateRegExpParameter;
     ResolvedCallEmitter& resolved = emitter<ResolvedCallEmitter>();
     const RegExpMatchPlan* plan = resolved.matchPlanOf(call.context().block(), match);
     return plan ? resolved.matchInPlace<T>(call.context(), *plan, match, answer, miss, matchByCall) : matchByCall();

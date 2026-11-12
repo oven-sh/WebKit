@@ -220,14 +220,9 @@ static_assert(absentCell32 < undefinedCell32 && nullCell32 < undefinedCell32 && 
 
 std::optional<Word32> PrimitiveEmitter::narrowWordBehind(OptionalInteger widened)
 {
-    LValue value = widened.value();
-    if (value->opcode() != Machine::Select || value->child(2)->opcode() != Machine::SExt32)
-        return std::nullopt;
-    LValue narrow = value->child(2)->child(0);
-    LValue isMarker = value->child(0);
-    if (isMarker->opcode() != Machine::LessThan || isMarker->child(0) != narrow || !isMarker->child(1)->isInt32(minInlineInt32))
-        return std::nullopt;
-    return Word32(narrow);
+    if (LValue narrow = m_narrowWordsOfIntegers.get(widened.value()))
+        return Word32(narrow);
+    return std::nullopt;
 }
 
 } } } // namespace JSC::AOT::Typed

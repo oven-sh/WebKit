@@ -134,13 +134,14 @@ const compiledTraversal = (name: string, returns: b.TableType, result: b.Callbac
 
 type SpeciesLookup = "BeforeCallbacks" | "AfterCallbacks";
 
-const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLookup): b.FunctionField[] => {
+const copyingTraversal = (result: b.CallbackResultUse, speciesLookup: SpeciesLookup, textOfDefaultSpecies?: string): b.FunctionField[] => {
   const intoSpeciesResult = {
     ...traversal(typedArray.freshUnlessSpecies, result, b.runs("Species")),
     writes: [elements],
   };
   if (speciesLookup === "AfterCallbacks") return [intoSpeciesResult];
-  return [{ ...traversal(b.sameClass.fresh, result), this: typedArrayWithDefaultSpecies }, intoSpeciesResult];
+  const withDefaultSpecies = { ...traversal(b.sameClass.fresh, result), this: typedArrayWithDefaultSpecies };
+  return [textOfDefaultSpecies ? { ...withDefaultSpecies, implementation: b.compiled("TypedArrayPrototype", textOfDefaultSpecies) } : withDefaultSpecies, intoSpeciesResult];
 };
 
 const foldCall = (times: b.CallbackTimes, accumulator: b.PlaceLike) =>
@@ -372,7 +373,7 @@ export default b.declarations(
         uses: { this: [readsElements], separator: b.inspected },
         implementation: b.hostCall,
       },
-      map: copyingTraversal(convertedByNativeCode, "BeforeCallbacks"),
+      map: copyingTraversal(convertedByNativeCode, "BeforeCallbacks", "mapOfView"),
       reduce: fold("reduce"),
       reduceRight: fold("reduceRight"),
       reverse: {

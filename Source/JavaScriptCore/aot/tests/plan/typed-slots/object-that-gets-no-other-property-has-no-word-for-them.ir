@@ -1,6 +1,6 @@
 # class Point { a = 1; b = 2 }  const pair = { x: 1.5, y: "two" };  const handedOut = { p: 2.5, q: "three" };  sink(handedOut);  const keyed = { m: 1, n: 2 };  keyed[String(pair.y)] = 3;  new Point
 # Link proves that a pair and a point get no property beside their two fields, so their cells have no word for such properties: 32 bytes in place of 48.
-# An object that unknown code gets hold of keeps the word, and so does one that is stored into under a key that nobody knows.
+# An object that unknown code gets hold of keeps the word, and so does one that is stored into under a key that nobody knows. Its two int32s take four bytes each beside the word: 32 bytes in place of 48.
 # The word is a matter of cost alone: an object without it that gets such a property after all pays with a Structure of its own (StructureTable::holdingExtraProperties()).
 # RUN: plan layouts mechanisms=all
 # CHECK: layout L0 CompiledObject size=32
@@ -13,9 +13,9 @@
 # CHECK-NEXT: slot 0 "p" {{*}}offset=24
 # CHECK-NEXT: slot 1 "q" {{*}}offset=32
 # CHECK-NEXT: extra-properties {{*}}offset=16
-# CHECK-NEXT: layout L3 CompiledObject size=48
-# CHECK-NEXT: slot 0 "m" {{*}}offset=24
-# CHECK-NEXT: slot 1 "n" {{*}}offset=32
+# CHECK-NEXT: layout L3 CompiledObject size=32
+# CHECK-NEXT: slot 0 "m" Int32 {{*}}offset=20
+# CHECK-NEXT: slot 1 "n" Int32 {{*}}offset=24
 # CHECK-NEXT: extra-properties {{*}}offset=16
 # RUN(LINK): link layouts mechanisms=all
 # LINK: layout L0 changes=[]

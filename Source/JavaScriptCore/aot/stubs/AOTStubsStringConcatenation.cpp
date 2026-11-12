@@ -98,7 +98,93 @@ static void emitDeferredRopeLength(StubAssembler& jit, const DeferredRopeLength&
     return refill;
 }
 
-[[nodiscard]] static AssemblyHelpers::FreeListRefill appendInBufferAndReturn(StubAssembler& jit, const RopeRegisters& registers, JumpList& other)
+static void copyCharactersOfPiece(StubAssembler& jit, GPRReg source, GPRReg destination, GPRReg count, GPRReg scratch)
+{
+    ASSERT(noOverlap(source, destination, count, scratch));
+    JumpList isCopied;
+    auto copyWord = [&](auto from, auto to, bool isWide) {
+        if (isWide) {
+            jit.load64(from, scratch);
+            jit.store64(scratch, to);
+        } else {
+            jit.load32(from, scratch);
+            jit.store32(scratch, to);
+        }
+    };
+    constexpr int32_t wide = sizeof(uint64_t);
+    constexpr int32_t narrow = sizeof(uint32_t);
+    Jump isShort = jit.branch32(CCallHelpers::Below, count, TrustedImm32(wide));
+    Label nextWord = jit.label();
+    copyWord(BaseIndex(source, count, CCallHelpers::TimesOne, -wide), BaseIndex(destination, count, CCallHelpers::TimesOne, -wide), true);
+    jit.sub32(TrustedImm32(wide), count);
+    jit.branch32(CCallHelpers::Above, count, TrustedImm32(wide)).linkTo(nextWord, &jit);
+    copyWord(Address(source), Address(destination), true);
+    isCopied.append(jit.jump());
+
+    isShort.link(&jit);
+    Jump isTiny = jit.branch32(CCallHelpers::Below, count, TrustedImm32(narrow));
+    copyWord(BaseIndex(source, count, CCallHelpers::TimesOne, -narrow), BaseIndex(destination, count, CCallHelpers::TimesOne, -narrow), false);
+    copyWord(Address(source), Address(destination), false);
+    isCopied.append(jit.jump());
+
+    isTiny.link(&jit);
+    isCopied.append(jit.branchTest32(CCallHelpers::Zero, count));
+    Label nextCharacter = jit.label();
+    jit.sub32(TrustedImm32(1), count);
+    jit.load8(BaseIndex(source, count, CCallHelpers::TimesOne), scratch);
+    jit.store8(scratch, BaseIndex(destination, count, CCallHelpers::TimesOne));
+    jit.branchTest32(CCallHelpers::NonZero, count).linkTo(nextCharacter, &jit);
+    isCopied.link(&jit);
+}
+
+static void copyPieceIntoRoom(StubAssembler& jit, GPRReg source, GPRReg destination, GPRReg count, GPRReg scratch)
+{
+    constexpr int32_t pageSize = 4096;
+    static_assert(lengthWrittenAtOnce == 2 * sizeof(uint64_t));
+    JumpList copiesExactly;
+    copiesExactly.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(lengthWrittenAtOnce)));
+    jit.and32(TrustedImm32(pageSize - 1), source, scratch);
+    copiesExactly.append(jit.branch32(CCallHelpers::Above, scratch, TrustedImm32(pageSize - lengthWrittenAtOnce)));
+    jit.load64(Address(source), scratch);
+    jit.store64(scratch, Address(destination));
+    jit.load64(Address(source, sizeof(uint64_t)), scratch);
+    jit.store64(scratch, Address(destination, sizeof(uint64_t)));
+    Label isCopied = jit.label();
+    jit.addOutOfLinePart([=](StubAssembler& jit) {
+        JumpList jumps = copiesExactly;
+        jumps.link(&jit);
+        copyCharactersOfPiece(jit, source, destination, count, scratch);
+        jit.jump().linkTo(isCopied, &jit);
+    });
+}
+
+static void loadFiberOfRope(StubAssembler& jit, GPRReg string, unsigned fiber, GPRReg result, GPRReg scratch)
+{
+    ASSERT(noOverlap(string, result, scratch));
+    static_assert(JSRopeString::s_maxInternalRopeLength == 3 && JSRopeString::offsetOfFiber1Lower() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == JSRopeString::offsetOfFiber2());
+    constexpr int32_t maskOfPointer = ~static_cast<int32_t>(JSString::isRopeInPointer | JSRopeString::is8BitInPointer | JSRopeString::isSubstringInPointer);
+    switch (fiber) {
+    case 0:
+        jit.loadPtr(Address(string, JSRopeString::offsetOfFiber0()), result);
+        jit.and64(TrustedImm32(maskOfPointer), result);
+        return;
+    case 1:
+        jit.load16(Address(string, JSRopeString::offsetOfFiber2()), result);
+        jit.load32(Address(string, JSRopeString::offsetOfFiber1Lower()), scratch);
+        jit.lshift64(TrustedImm32(32), result);
+        jit.or64(scratch, result);
+        return;
+    case 2:
+        jit.load32(Address(string, JSRopeString::offsetOfFiber2Lower() + static_cast<ptrdiff_t>(sizeof(uint16_t))), result);
+        jit.load16(Address(string, JSRopeString::offsetOfFiber2Lower()), scratch);
+        jit.lshift64(TrustedImm32(16), result);
+        jit.or64(scratch, result);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+[[nodiscard]] static Vector<AssemblyHelpers::FreeListRefill, 2> appendInBufferAndReturn(StubAssembler& jit, const RopeRegisters& registers, JumpList& other, JumpList& slow)
 {
     const auto [text, second, third, flags, length, scratch, rope, allocator] = registers;
     ASSERT(noOverlap(text, second, third.value_or(InvalidGPRReg), flags, length, scratch, rope, allocator));
@@ -123,59 +209,107 @@ static void emitDeferredRopeLength(StubAssembler& jit, const DeferredRopeLength&
         other.append(jit.branch32(CCallHelpers::NotEqual, end, Address(characters, offsetOfEndOfTextInCharactersOfBuffer)));
         jit.load32(Address(buffer, StringImpl::lengthMemoryOffset()), room);
         jit.sub32(end, room);
+        jit.sub32(TrustedImm32(lengthWrittenAtOnce), room);
     }
     const GPRReg lengthOfPieces = length;
+    Jump lastPieceIsRope;
     for (size_t index = 0; index < pieces.size(); ++index) {
         const GPRReg impl = rope;
         const GPRReg lengthOfPiece = index ? allocator : lengthOfPieces;
         jit.loadPtr(Address(pieces[index], JSString::offsetOfValue()), impl);
-        other.append(jit.branchIfRopeStringImpl(impl));
+        Jump isRope = jit.branchIfRopeStringImpl(impl);
+        if (index + 1 == pieces.size())
+            lastPieceIsRope = isRope;
+        else
+            other.append(isRope);
         other.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
         jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), lengthOfPiece);
         other.append(jit.branch32(CCallHelpers::Above, lengthOfPiece, TrustedImm32(maxLengthOfPieceWrittenByStub)));
         if (index)
             jit.add32(lengthOfPiece, lengthOfPieces);
     }
-    other.append(jit.branch32(CCallHelpers::Above, lengthOfPieces, room));
-    AssemblyHelpers::FreeListRefill refill = allocateRope(jit, rope, allocator, scratch, other);
+    other.append(jit.branch32(CCallHelpers::GreaterThan, lengthOfPieces, room));
+    Vector<AssemblyHelpers::FreeListRefill, 2> refills;
+    refills.append(allocateRope(jit, rope, allocator, scratch, other));
 
-    jit.load32(Address(characters, offsetOfEndOfTextInCharactersOfBuffer), scratch);
-    jit.add32(lengthOfPieces, scratch);
-    jit.store32(scratch, Address(characters, offsetOfEndOfTextInCharactersOfBuffer));
     const GPRReg destination = characters;
-    jit.addPtr(scratch, destination);
+    auto makeLongerSubstring = [&] {
+        jit.load32(Address(characters, offsetOfEndOfTextInCharactersOfBuffer), scratch);
+        jit.add32(lengthOfPieces, scratch);
+        jit.store32(scratch, Address(characters, offsetOfEndOfTextInCharactersOfBuffer));
+        jit.addPtr(scratch, destination);
 
-    jit.load64(Address(text, JSRopeString::offsetOfLength()), scratch);
-    jit.add64(lengthOfPieces, scratch);
-    jit.load64(Address(text, JSRopeString::offsetOfFiber2()), allocator);
-    jit.storePair64(scratch, allocator, rope, TrustedImm32(2 * sizeof(EncodedJSValue)));
-    jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(stringHeader)), scratch);
-    jit.move(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer), allocator);
-    jit.storePair64(scratch, allocator, rope, TrustedImm32(0));
-
-    JumpList pieceHasBecomeRope;
-    for (size_t index = pieces.size(); index--;) {
-        const GPRReg source = length;
+        jit.load64(Address(text, JSRopeString::offsetOfLength()), scratch);
+        jit.add64(lengthOfPieces, scratch);
+        jit.load64(Address(text, JSRopeString::offsetOfFiber2()), allocator);
+        jit.storePair64(scratch, allocator, rope, TrustedImm32(2 * sizeof(EncodedJSValue)));
+        jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(stringHeader)), scratch);
+        jit.move(TrustedImm32(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer), allocator);
+        jit.storePair64(scratch, allocator, rope, TrustedImm32(0));
+    };
+    JumpList hasBecomeRope;
+    const GPRReg source = length;
+    auto copyString = [&](GPRReg string, bool isLast) {
         const GPRReg count = allocator;
-        jit.loadPtr(Address(pieces[index], JSString::offsetOfValue()), source);
-        pieceHasBecomeRope.append(jit.branchIfRopeStringImpl(source));
+        jit.loadPtr(Address(string, JSString::offsetOfValue()), source);
+        hasBecomeRope.append(jit.branchIfRopeStringImpl(source));
         jit.load32(Address(source, StringImpl::lengthMemoryOffset()), count);
         jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
-        Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
         jit.subPtr(count, destination);
-        Label next = jit.label();
-        jit.sub32(TrustedImm32(1), count);
-        jit.load8(BaseIndex(source, count, CCallHelpers::TimesOne), scratch);
-        jit.store8(scratch, BaseIndex(destination, count, CCallHelpers::TimesOne));
-        jit.branchTest32(CCallHelpers::NonZero, count).linkTo(next, &jit);
-        isEmpty.link(&jit);
-    }
+        if (isLast)
+            copyPieceIntoRoom(jit, source, destination, count, scratch);
+        else
+            copyCharactersOfPiece(jit, source, destination, count, scratch);
+    };
+    makeLongerSubstring();
+    for (size_t index = pieces.size(); index--;)
+        copyString(pieces[index], index + 1 == pieces.size());
     fenceAfterAllocation(jit);
     returnResult(jit, rope);
 
-    pieceHasBecomeRope.link(&jit);
+    lastPieceIsRope.link(&jit);
+    const GPRReg lastPiece = pieces.last();
+    const GPRReg valueOfRope = rope;
+    const GPRReg lengthOfRope = pieces.size() > 1 ? allocator : lengthOfPieces;
+    other.append(jit.branchTestPtr(CCallHelpers::Zero, valueOfRope, TrustedImm32(JSRopeString::is8BitInPointer)));
+    jit.load32(Address(lastPiece, JSRopeString::offsetOfLength()), lengthOfRope);
+    other.append(jit.branch32(CCallHelpers::Above, lengthOfRope, TrustedImm32(maxLengthOfPieceWrittenByStub)));
+    if (pieces.size() > 1)
+        jit.add32(lengthOfRope, lengthOfPieces);
+    other.append(jit.branch32(CCallHelpers::GreaterThan, lengthOfPieces, room));
+    slow.append(jit.branchTestPtr(CCallHelpers::NonZero, valueOfRope, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    slow.append(jit.branch8(CCallHelpers::NotEqual, Address(lastPiece, JSCell::cellStateOffset()), TrustedImm32(static_cast<int32_t>(CellState::DefinitelyWhite))));
+    for (unsigned fiber = 0; fiber < JSRopeString::s_maxInternalRopeLength; ++fiber) {
+        const GPRReg impl = rope;
+        Jump isAbsent;
+        loadFiberOfRope(jit, lastPiece, fiber, impl, allocator);
+        if (fiber == 2)
+            isAbsent = jit.branchTestPtr(CCallHelpers::Zero, impl);
+        jit.loadPtr(Address(impl, JSString::offsetOfValue()), impl);
+        slow.append(jit.branchIfRopeStringImpl(impl));
+        slow.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+        if (fiber == 2)
+            isAbsent.link(&jit);
+    }
+    refills.append(allocateRope(jit, rope, allocator, scratch, other));
+    makeLongerSubstring();
+    for (unsigned fiber = JSRopeString::s_maxInternalRopeLength; fiber--;) {
+        Jump isAbsent;
+        loadFiberOfRope(jit, lastPiece, fiber, source, scratch);
+        if (fiber == 2)
+            isAbsent = jit.branchTestPtr(CCallHelpers::Zero, source);
+        copyString(source, fiber == 2);
+        if (fiber == 2)
+            isAbsent.link(&jit);
+    }
+    for (size_t index = pieces.size() - 1; index--;)
+        copyString(pieces[index], false);
+    fenceAfterAllocation(jit);
+    returnResult(jit, rope);
+
+    hasBecomeRope.link(&jit);
     jit.breakpoint();
-    return refill;
+    return refills;
 }
 
 static void jumpToRopeOfSubstring(StubAssembler& jit, const DeferredRopeLength& late)
@@ -226,12 +360,13 @@ void makeRopeOfTwoValuesAndReturn(StubAssembler& jit, GPRReg first, GPRReg secon
 
     mayGrow.link(&jit);
     JumpList doesNotGrowHere;
-    AssemblyHelpers::FreeListRefill refillForSubstring = appendInBufferAndReturn(jit, registers, doesNotGrowHere);
+    Vector<AssemblyHelpers::FreeListRefill, 2> refillsForSubstrings = appendInBufferAndReturn(jit, registers, doesNotGrowHere, slow);
     doesNotGrowHere.link(&jit);
     jumpToRopeOfSubstring(jit, firstLateLength);
 
     emitLateRefill(jit, refill, slow);
-    emitLateRefill(jit, refillForSubstring, slow);
+    for (const AssemblyHelpers::FreeListRefill& refillForSubstring : refillsForSubstrings)
+        emitLateRefill(jit, refillForSubstring, slow);
 }
 
 StubSignature signatureOfConcatenate(StubKey key)
@@ -305,10 +440,21 @@ void generateConcatenate(StubAssembler& jit)
 
         firstIsEmpty.link(&jit);
         joinTwoAndReturn(second, *third);
+
+        auto joinReadAndReturn = [&](GPRReg latter) {
+            RopeRegisters both = registers;
+            both.second = latter;
+            both.third = std::nullopt;
+            refills.append(allocateAndFillRope(jit, both, slow));
+            returnResult(jit, rope);
+        };
         secondIsEmpty.link(&jit);
-        joinTwoAndReturn(first, *third);
+        JumpList othersAreEmpty = addLengthOf(*third);
+        joinReadAndReturn(*third);
+        othersAreEmpty.link(&jit);
+        returnResult(jit, first);
         thirdIsEmpty.link(&jit);
-        joinTwoAndReturn(first, second);
+        joinReadAndReturn(second);
     } else
         joinTwoAndReturn(first, second);
 
@@ -320,7 +466,7 @@ void generateConcatenate(StubAssembler& jit)
 
     mayGrow.link(&jit);
     JumpList doesNotGrowHere;
-    refills.append(appendInBufferAndReturn(jit, registers, doesNotGrowHere));
+    refills.appendVector(appendInBufferAndReturn(jit, registers, doesNotGrowHere, slow));
     doesNotGrowHere.link(&jit);
     jumpToRopeOfSubstring(jit, firstLateLength);
 

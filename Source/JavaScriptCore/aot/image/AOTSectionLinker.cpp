@@ -185,6 +185,7 @@ static SectionLayout layOutSection(const SectionUnitGraph& graph, const CodeTemp
             .sizes = sizes.span(),
             .alignedOffsets = alignedOffsets.span(),
             .alignments = alignments.span(),
+            .placesInLine = { },
             .fallsIntoNext = fallsIntoNext,
             .copyables = { },
             .uses = { },

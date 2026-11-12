@@ -111,6 +111,7 @@ static_assert(exists(concatenate(2)) && exists(concatenate(3)));
 static_assert(exists(concatenateWithConstants(ConstantsOfConcatenation::FirstAndThirdOfThree)) && !exists(concatenateWithConstants(static_cast<ConstantsOfConcatenation>(6))));
 static_assert(!exists(concatenate(2).withCount(1)) && !exists(concatenate(3).withCount(4)));
 
+inline constexpr int32_t maxLengthSearchedByBytes = 15;
 void returnResult(StubAssembler& jit, auto value)
 {
     jit.move(value, jit.result());

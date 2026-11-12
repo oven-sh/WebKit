@@ -14,6 +14,7 @@
 #include "AOTType.h"
 #include "AOTTypeArena.h"
 #include "TypedArrayType.h"
+#include <array>
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
@@ -82,29 +83,39 @@ struct OperandTypes {
     TypeID operator[](uint32_t operandIndex) const { return operandIndex < types.size() ? types[operandIndex] : TypeID(); }
 };
 
-constexpr std::optional<Opcode> genericOperationOf(Opcode access)
-{
-    switch (access) {
-    case Opcode::GetSlot:
-    case Opcode::GetSlotOrUndefined:
-    case Opcode::GetDeferredClosureSlot:
-    case Opcode::GetDeferredClosureSlotOrUndefined:
-        return Opcode::PropGet;
-    case Opcode::PutSlot:
-    case Opcode::PutSlotOrAdd:
-        return Opcode::PropSet;
-    case Opcode::GetArrayElement:
-    case Opcode::GetTypedArrayElement:
-        return Opcode::ElemGet;
-    case Opcode::PutArrayElement:
-    case Opcode::PutTypedArrayElement:
-        return Opcode::ElemSet;
-    case Opcode::HasArrayElement:
-        return Opcode::ElemHas;
-    default:
-        return std::nullopt;
+inline constexpr std::array<std::optional<Opcode>, numberOfEnumerators<Opcode>> genericOperationsOfAccesses = []() consteval {
+    std::array<std::optional<Opcode>, numberOfEnumerators<Opcode>> generic;
+    for (unsigned index = 0; index < generic.size(); ++index) {
+        switch (static_cast<Opcode>(index)) {
+        case Opcode::GetSlot:
+        case Opcode::GetSlotOrUndefined:
+        case Opcode::GetDeferredClosureSlot:
+        case Opcode::GetDeferredClosureSlotOrUndefined:
+            generic[index] = Opcode::PropGet;
+            break;
+        case Opcode::PutSlot:
+        case Opcode::PutSlotOrAdd:
+            generic[index] = Opcode::PropSet;
+            break;
+        case Opcode::GetArrayElement:
+        case Opcode::GetTypedArrayElement:
+            generic[index] = Opcode::ElemGet;
+            break;
+        case Opcode::PutArrayElement:
+        case Opcode::PutTypedArrayElement:
+            generic[index] = Opcode::ElemSet;
+            break;
+        case Opcode::HasArrayElement:
+            generic[index] = Opcode::ElemHas;
+            break;
+        default:
+            break;
+        }
     }
-}
+    return generic;
+}();
+
+ALWAYS_INLINE constexpr std::optional<Opcode> genericOperationOf(Opcode access) { return genericOperationsOfAccesses[static_cast<unsigned>(access)]; }
 
 template<HoldsOpcode Operation>
 bool testsItsOwnGuess(const Operation& operation)

@@ -342,6 +342,13 @@ static bool memberRunsNoCodeOfProgramInStringKeys(const BuiltinTable& table, Bui
     return hasRowOfCalls;
 }
 
+bool recordFindsNothingAbove(const Walker& walker, LayoutID layout, PropertyKeyID key)
+{
+    const Program& program = walker.program();
+    BuiltinID objectPrototype = lockedObjectPrototypeInStringKeys(program);
+    return isRecordBelowObjectPrototypeInStringKeys(program, layout) && objectPrototype && !findOwnMember(program, objectPrototype, key) && listsEveryMemberUnder(program, objectPrototype, key);
+}
+
 static bool nameIsFoundNowhereFromObjectsOfInStringKeys(const Walker& walker, LayoutID id, const LinkedLayout& known, PropertyKeyID key)
 {
     const Program& program = walker.program();

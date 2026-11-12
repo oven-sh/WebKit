@@ -28,6 +28,7 @@ public:
     Integer findPlace(const OperationContext&, ValueID map, ValueID key);
 
 private:
+    bool isSoughtAtItsPlace(const OperationContext&, ValueID key);
     Boxed normalizedNumber(Number);
     void lookUp(const InlineCall&, HashTableOwner, LookupAnswer);
     Operand search(const OperationContext&, ValueID collection, ValueID key, HashTableOwner, LookupAnswer);

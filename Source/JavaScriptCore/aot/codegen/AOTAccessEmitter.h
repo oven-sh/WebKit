@@ -42,6 +42,7 @@ public:
     void generateElemGetOrOwnAccessor(const ValueContext&);
     void generateGetGetterOfAccessorOrUndefined(const ValueContext&);
     void generateGetValueAtSiteOrAbsent(const ValueContext&);
+    void generateHasPropertyOrAbsent(const ValueContext&);
     void generateGetOwnValueUnderKeyOrAbsent(const ValueContext&);
     void generateGetGlobalPropertyAddress(const ValueContext&);
     void generateIsPropertyFiled(const ValueContext&);
@@ -49,6 +50,8 @@ public:
     void generateGetKeyedProperty(const ValueContext&);
     void generatePutKeyedProperty(const ValueContext&);
     void generateGetKeyedValueOrAbsent(const ValueContext&);
+    void generateGetTemplateObjectRaw(const ValueContext&);
+    void generateFinishAccessThroughProxy(const ValueContext&);
     std::array<const Machine::AbstractHeap*, 2> heapsOfKeyedProperty() const;
     void generateGetGlobalProperty(const ValueContext&);
     void generatePutGlobalBinding(const ValueContext&);
@@ -99,6 +102,11 @@ public:
     std::optional<NumberedImmediate> answersOfReadOutOfRow(BlockID, const Operation&);
     void readGroupOffOneValue(const ValueContext&, Boxed receiver, bool mayBeNoCell, NumberedImmediate answersOfFirst);
     StubKey stubThatReadsAtSite(PropertyKeyID, ValueID receiver);
+    ValueID readAfterStore(const ValueContext& store);
+    LValue newestAnswerOfSite(Boxed receiver, ValueID receiverID, NumberedImmediate answers, LBasicBlock asksStub, LBasicBlock hasOtherKey = nullptr);
+    std::optional<NumberedImmediate> inlineReadAnswers(const ValueContext&);
+    Boxed readWithInlineSiteCheck(const ValueContext&, Boxed receiver, ValueID receiverID, NumberedImmediate answers);
+    StubKey stubOfEffectFreeRead(const Operation&);
     Condition hasById(const OperationContext&, Boxed receiver, PropertyKeyID);
     Condition findsName(const OperationContext&, Boxed receiver, PropertyKeyID, PresenceQuestion);
     Boxed getByVal(const OperationContext&, Boxed receiver, Boxed key);
@@ -119,6 +127,7 @@ public:
 
 private:
     HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesReadInFront;
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_valuesStoredBeforeLoop;
     template<typename T> static T forMode(ECMAMode mode, T whenStrict, T whenSloppy)
     {
         switch (mode) {
@@ -131,6 +140,7 @@ private:
     }
 
     bool comesAgain(const OperationContext&) const;
+    bool keepsSite(const OperationContext&) const;
     std::optional<NumberedImmediate> answersOfKeyThatIsNoSymbolOfRealm(const OperationContext&, PropertyKeyID, SiteUse);
     struct StoreOfKnownField {
         StubKey stub;
@@ -149,6 +159,13 @@ private:
     Boxed getMemberAboveLayouts(const ValueContext&, Boxed receiver, Pointer site);
     Boxed getMemberInSlotOrByName(const ValueContext&, Boxed receiver, const PlacedSlot&);
     bool storeLastIndexInLine(const ValueContext&, Boxed object, PutMode);
+    struct ShapesOfStoreAtSite {
+        Type known;
+        bool asksTableOfFields { false };
+        LBasicBlock hasOtherStructure { nullptr };
+        LBasicBlock asksStub { nullptr };
+    };
+    template<typename UsePlace> void checkStoreSiteInline(Boxed receiver, Pointer site, const ShapesOfStoreAtSite&, const UsePlace&);
     bool storeAskingSiteInLine(const ValueContext&, Boxed receiver, Boxed stored, PutMode, Pointer site);
     std::optional<PlacedSlot> findSlotInCellOfEveryReceiver(const Type& receiver, PropertyKeyID);
     Boxed getFreeName(const ValueContext&);
@@ -167,6 +184,7 @@ private:
     std::optional<ElementKey> elementKeyOf(const ValueContext&);
     bool readsElementsRepeatedly(const ValueContext&, ValueID object);
     Boxed presentElementOrElse(const ValueContext&, ValueID objectOperand, const ElementKey&, LBasicBlock outOfLine);
+    void overwriteElementOrElse(const ValueContext&, StubKey, Boxed object, const ElementKey&, Boxed stored);
     Boxed keyOperand(const OperationContext&, PropertyKeyID key, ValueID computedKey);
     struct ExcludedKeys {
         Word32 run;

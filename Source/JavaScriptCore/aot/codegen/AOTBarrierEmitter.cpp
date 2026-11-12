@@ -157,6 +157,11 @@ void BarrierEmitter::markCard(uint32_t cardMention)
 
 Condition BarrierEmitter::isBeyondBarrierThreshold(CellPointer owner)
 {
+    if (isARM64()) {
+        LValue leastHeader = m_out.load64(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(barrierHeaderThreshold)));
+        LValue header = m_out.load64(m_out.address(m_heaps.collectorState, owner.value(), 0));
+        return Condition(m_out.aboveOrEqual(header, leastHeader));
+    }
     LValue threshold = m_out.load32(instanceField(m_heaps.collectorState, AOT_INSTANCE_OFFSET(barrierThreshold)));
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.collectorState, owner.value(), JSCell::cellStateOffset()));
     return Condition(m_out.above(state, threshold));

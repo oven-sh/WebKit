@@ -341,6 +341,66 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     matchLiteralOutOfLineAndReturn(jit, form, regExpObject, string);
 }
 
+StubSignature signatureOfRegExpTest(StubKey key)
+{
+    StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::A1) });
+    if (testTakesRegExp(key))
+        signature.addOperand(gprOf(StubRegister::A2));
+    signature.addOperand(gprOf(StubRegister::T9));
+    return signature;
+}
+
+void generateRegExpTest(StubAssembler& jit)
+{
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::T9, StubRegister::T10, StubRegister::T11, StubRegister::T13));
+    const bool takesRegExp = testTakesRegExp(jit.key());
+    const bool recordsMatch = recordsMatchOfTest(jit.key());
+    const GPRReg string = jit.clobberOperand(takesRegExp ? 1 : 0);
+    const GPRReg matcher = jit.clobberOperand(takesRegExp ? 2 : 1);
+    const GPRReg characters = jit.allocateScratch(registerOfMatcherCharacters);
+    const GPRReg impl = jit.allocateScratch(StubRegister::T10);
+    const GPRReg length = jit.allocateScratch(StubRegister::T11);
+    JumpList outOfLine;
+
+    if (checksRegExpOfTest(jit.key())) {
+        outOfLine.append(jit.branchTest8(CCallHelpers::NonZero, Address(instanceGPR, AOT_INSTANCE_OFFSET(regExpsAreRecompiled))));
+        jit.load64(Address(jit.operand(0), RegExpObject::offsetOfLastIndex()), impl);
+        outOfLine.append(jit.branchIfNotNumber(impl));
+    }
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
+    jit.loadPtr(Address(impl, StringImpl::dataOffset()), characters);
+    jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), length);
+    Label hasCharacters = jit.label();
+    outOfLine.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    outOfLine.append(jit.branch32(CCallHelpers::Above, length, Address(matcher, matcherMaxLengthOffset)));
+    const GPRReg end = takesRegExp ? string : jit.allocateScratch(registerOfMatcherEnd);
+    RELEASE_ASSERT(end == gprOf(registerOfMatcherEnd));
+    for (StubRegister clobbered : { StubRegister::R0, StubRegister::A1, StubRegister::A3, StubRegister::A4, StubRegister::A5, StubRegister::T9, StubRegister::T13, StubRegister::Operation })
+        jit.recordClobbers(RegisterSet(gprOf(clobbered)));
+    if (recordsMatch)
+        jit.move(string, gprOf(registerOfMatcherString));
+    jit.add64(characters, length, end);
+    if (recordsMatch)
+        jit.loadStubAddress(regExpMatch(RegExpMatchResult::Record), gprOf(registerOfMatcherRecorder));
+    jit.farJump(matcher, NoPtrTag);
+
+    isRope.link(&jit);
+    loadSubstringCharacters(jit, string, impl, characters, length, outOfLine);
+    jit.jump().linkTo(hasCharacters, &jit);
+
+    outOfLine.link(&jit);
+    if (takesRegExp) {
+        checkStubOperands(regExpMatch(RegExpMatchResult::BoxedBoolean), { jit.operand(0), string });
+        jit.jumpToStub(regExpMatch(RegExpMatchResult::BoxedBoolean));
+        return;
+    }
+    static_assert(stubImmediateRegister == StubRegister::T9);
+    jit.load32(Address(matcher, offsetOfRecordOfMatcher), matcher);
+    checkStubOperands(regExpMatchLiteralWithoutObject(RegExpMatchForm::Test), { string });
+    jit.jumpToStub(regExpMatchLiteralWithoutObject(RegExpMatchForm::Test));
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

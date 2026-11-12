@@ -36,7 +36,10 @@ public:
     void generateIsNotThenable(const ValueContext&);
     void generateAreMembersUnchanged(const ValueContext&);
     void generateIsMemberAsBuilt(const ValueContext&);
+    void generateBindsNoTrapAnswer(const ValueContext&);
     void generateHasNumberOfBoundArguments(const ValueContext&);
+    void generateMakesPlainGenerators(const ValueContext&);
+    void generateIsUnmodifiedAsyncGenerator(const ValueContext&);
     void generateGetWordOfBoundFunction(const ValueContext&);
     void generateGetAssignedMember(const ValueContext&);
     void generateIsHolderWithoutAddedNames(const ValueContext&);
@@ -60,11 +63,10 @@ public:
     Condition isClosureAsCreated(CellPointer, BuiltinClassID, OptionSet<PristineAspects>);
     Condition isNotThenable(const OperationContext&, Boxed, const Type&);
     Condition realmWatchesSpeciesOfLists();
-    Pointer structuresOfHeir(LayoutID classLayout);
+    TypedPointer subclassStructuresWord(const Machine::AbstractHeap&, LayoutID classLayout, ptrdiff_t offset);
 
 private:
     Boxed assignedMember(const MemberConditionRecord&);
-    Word32 offsetOfStructuresOfHeir(LayoutID classLayout);
     void failAndDefineFalse(const ValueContext&, InternalErrorKind);
     Condition guardInByteHolds(LayoutID classLayout, ClassSide, TypedPointer byteOfGuard);
     Condition isMemberAssigned(const MemberConditionRecord&);

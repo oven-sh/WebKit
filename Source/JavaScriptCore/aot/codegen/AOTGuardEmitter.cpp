@@ -31,6 +31,7 @@
 #include "AOTStaticsEmitter.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTStubsPropertyKeys.h"
+#include "AOTTruthinessEmitter.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
 #include "JSArrayBufferView.h"
@@ -122,7 +123,8 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
         return;
     }
     ValueID object = value->objectOperand();
-    const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(object);
+    std::optional<TruthinessEmitter::DeferredTruthTest> deferred = emitter<TruthinessEmitter>().takeTruthTestOf(value.id());
+    const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(deferred ? deferred->source : object);
     bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known);
     MarkedObjects marked = value->rejectsMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
@@ -132,8 +134,11 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
             hasShape = newBlock();
             targetsOfShape = { normalEdge(hasShape), targets.notTaken };
         }
-        CellPointer cell = cellOrElse(value, object, known, targets.notTaken);
-        emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), known, targetsOfShape, marked);
+        CellPointer cell = deferred ? unboxCell(deferred->value) : cellOrElse(value, object, known, targets.notTaken);
+        if (deferred)
+            emitter<TruthinessEmitter>().branchOnShapeOrTruth(value, *deferred, targetsOfShape, targets.notTaken, marked);
+        else
+            emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->layouts(), known, targetsOfShape, marked);
         if (!asksForInstance)
             return;
         m_out.appendTo(hasShape);
@@ -184,7 +189,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
         SlotEmitter& slots = emitter<SlotEmitter>();
         MemoryLocation location = MemoryLocation::objectField(value->key());
         CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(object, access, value->receivers());
-        if (value->holdsDeclaredType())
+        if (value->holdsDeclaredType() && !isListedOnlyByKeyOrder(access.slot.representation))
             return slots.holdsDeclaredType(base, access.slot, location, &access.extensionWord);
         return slots.isFilled(base, access.slot, location, &access.extensionWord);
     };
@@ -377,13 +382,21 @@ void GuardEmitter::generateHasStructureOfClass(const ValueContext& value)
         return;
     }
     static_assert(sizeof(StructureID) == sizeof(uint32_t));
-    defineTestByBranching(value, [&](BranchTargets targets) {
-        CellPointer cell = cellOrElse(value, value->valueOperand(), targets.notTaken);
+    defineTestByBranching(value, [&](BranchTargets end) {
+        CellPointer cell = cellOrElse(value, value->valueOperand(), end.notTaken);
         Word32 structureID = loadStructureID(cell);
-        Pointer structures = structuresOfHeir(classLayout);
+        auto askRunTime = [&] {
+            branch(callWithoutSite<Condition>(RuntimeOperation::RememberStructureOfClass, { cell, word32(classLayout.index()), numberOf(m_mentions.add(NumberSpace::HeirLookedAt, classLayout, value->asksElements() ? StructuresOfHeir::asksElements : 0)) }, { .isOnRarePath = true, .accessesCollectorState = true }), end);
+        };
+        BranchTargets targets = end;
+        std::optional<LBasicBlock> isInstance;
+        if (value->asksElements()) {
+            isInstance = newBlock();
+            targets = { normalEdge(*isInstance), end.notTaken };
+        }
         auto goOnUnlessItIsTheOneAt = [&](ptrdiff_t offsetOfWord, BlockEdge whereItIs, BlockEdge (*edgeToRest)(LBasicBlock)) {
             LBasicBlock isAnother = newBlock();
-            Word32 remembered(m_out.load32(m_out.address(m_heaps.collectorState, structures.value(), offsetOfWord)));
+            Word32 remembered(m_out.load32(subclassStructuresWord(m_heaps.collectorState, classLayout, offsetOfWord)));
             branch(equal(structureID, remembered), { whereItIs, edgeToRest(isAnother) });
             m_out.appendTo(isAnother);
         };
@@ -393,18 +406,22 @@ void GuardEmitter::generateHasStructureOfClass(const ValueContext& value)
             goOnUnlessItIsTheOneAt(StructuresOfHeir::offsetOfOneThatPasses(index), targets.taken, normalEdge);
         for (unsigned index = 1; index < StructuresOfHeir::numberRefused; ++index)
             goOnUnlessItIsTheOneAt(StructuresOfHeir::offsetOfOneRefused(index), targets.notTaken, index + 1 < StructuresOfHeir::numberRefused ? normalEdge : rareEdge);
-        branch(callWithoutSite<Condition>(RuntimeOperation::RememberStructureOfClass, { cell, word32(classLayout.index()), offsetOfStructuresOfHeir(classLayout) }, { .isOnRarePath = true, .accessesCollectorState = true }), targets);
+        askRunTime();
+        if (!isInstance)
+            return;
+        m_out.appendTo(*isInstance);
+        CellPointer prototype = unboxCell(loadField<Boxed>(loadStructure(cell), m_heaps.Structure_prototype));
+        Word32 withoutElements(m_out.load32(subclassStructuresWord(m_heaps.collectorState, classLayout, StructuresOfHeir::offsetOfPrototypeWithoutElements())));
+        LBasicBlock mayHoldElements = newBlock();
+        branch(equal(loadStructureID(prototype), withoutElements), { end.taken, rareEdge(mayHoldElements) });
+        m_out.appendTo(mayHoldElements);
+        askRunTime();
     });
 }
 
-Word32 GuardEmitter::offsetOfStructuresOfHeir(LayoutID classLayout)
+TypedPointer GuardEmitter::subclassStructuresWord(const Machine::AbstractHeap& heap, LayoutID classLayout, ptrdiff_t offset)
 {
-    return numberOf(m_mentions.add(NumberSpace::HeirLookedAt, classLayout));
-}
-
-Pointer GuardEmitter::structuresOfHeir(LayoutID classLayout)
-{
-    return offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.structuresOfHeirs)), zeroExtended(offsetOfStructuresOfHeir(classLayout)), 0);
+    return instanceWord(heap, m_mentions.add(NumberSpace::HeirLookedAt, classLayout, static_cast<int32_t>(offset)));
 }
 
 void GuardEmitter::generateIsNotThenable(const ValueContext& value)
@@ -421,10 +438,34 @@ void GuardEmitter::generateIsNotThenable(const ValueContext& value)
     });
 }
 
+void GuardEmitter::generateBindsNoTrapAnswer(const ValueContext& value)
+{
+    Word32 bitField = loadField<Word32>(loadStructure(in<CellPointer>(value->targetOperand())), m_heaps.Structure_bitField);
+    defineTest(value, hasNoBits(bitField, Structure::s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits));
+}
+
 void GuardEmitter::generateHasNumberOfBoundArguments(const ValueContext& value)
 {
     CellPointer function = in<CellPointer>(value->functionOperand());
     defineTest(value, equal(loadField<Word32>(function, m_heaps.JSBoundFunction_boundArgsLength), word32(value->count())));
+}
+
+void GuardEmitter::generateIsUnmodifiedAsyncGenerator(const ValueContext& value)
+{
+    CellPointer generator = in<CellPointer>(value->generatorOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        emitter<SavedFrameEmitter>().branchUnlessUnmodifiedAsyncGenerator(generator, targets.notTaken.block());
+        m_out.jump(targets.taken);
+    });
+}
+
+void GuardEmitter::generateMakesPlainGenerators(const ValueContext& value)
+{
+    CellPointer function = in<CellPointer>(value->functionOperand());
+    defineTestByBranching(value, [&](BranchTargets targets) {
+        emitter<SavedFrameEmitter>().branchUnlessGeneratorsPlain(function, targets.notTaken.block());
+        m_out.jump(targets.taken);
+    });
 }
 
 void GuardEmitter::generateGetWordOfBoundFunction(const ValueContext& value)

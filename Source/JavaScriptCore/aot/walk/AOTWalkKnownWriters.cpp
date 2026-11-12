@@ -38,7 +38,7 @@ static constexpr OptionSet<CellFact> handledCellFacts {
 
 static_assert(handledCellFacts.toRaw() == (1u << numberOfCellFacts) - 1);
 
-void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
+void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject, const FreshCellWriter* freshCellWriter)
 {
     if (effects.mayRunOtherCode()) {
         invalidate(effects);
@@ -51,12 +51,12 @@ void WalkState::invalidate(const Effects& effects, NOESCAPE const ScopedLambda<b
     };
     m_answers.endWhatIsWritten(effects, endsAnswer);
     if (!holdsNoRecord() && !effects.writes.isEmpty()) {
-        heldToWrite().endWhatIsWritten(m_program, effects, mayBeWritten, mayEndGuard, writtenAlone, writerOfOneObject);
+        heldToWrite().endWhatIsWritten(m_program, effects, mayBeWritten, mayEndGuard, writtenAlone, writerOfOneObject, freshCellWriter);
         noteKindsOfRecordsLeft();
     }
 }
 
-void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject)
+void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effects& effects, NOESCAPE const ScopedLambda<bool(Reference holder)>& mayBeWritten, NOESCAPE const ScopedLambda<bool(LayoutID classOfGuard, PropertyKeyID nameOfGuard)>& mayEndGuard, const MemoryLocation* writtenAlone, const WriterOfOneObject* writerOfOneObject, const FreshCellWriter* freshCellWriter)
 {
     const LocationMasks& writes = effects.writes;
     if (!writes.containsOnly(heapsJudgedInKnownWriters)) {
@@ -123,7 +123,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
     }
     if (goesByLists()) [[unlikely]] {
         endByLists({ .shapes = endsShapes, .elements = endsElements, .facts = factsEnded, .slots = slotsWritten, .environmentFields = environmentFieldsWritten, .guards = guardsWritten,
-            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .program = &program, .writtenAlone = writtenAlone });
+            .mayBeWritten = &mayBeWritten, .mayEndGuard = &mayEndGuard, .writerOfOneObject = writerOfOneObject, .freshCellWriter = freshCellWriter, .program = &program, .writtenAlone = writtenAlone });
         dropEndedRecordsIfMany();
         return;
     }
@@ -348,6 +348,8 @@ static ALWAYS_INLINE std::optional<ElementStoreInKnownWriters> findElementStoreW
 
 static std::optional<ObjectsWrittenAloneInKnownWriters> objectsWrittenAloneByInKnownWriters(Walker& walker, const Draft& writer, const Effects& effects, const std::optional<ElementStoreInKnownWriters>& elementStore)
 {
+    if (writesReceiverArrayAlone(walker, writer, effects) && walker.state().isFresh(rootInKnownWriters(walker.code(), writer.receiverOperand())))
+        return ObjectsWrittenAloneInKnownWriters { writer.receiverOperand() };
     if (testsItsOwnGuess(writer) || effectRuleOf(writer.opcode) == EffectRule::Call)
         return std::nullopt;
     if (writer.opcode == Opcode::SetLiteralPrototype)
@@ -451,6 +453,8 @@ static GuardsEndedInKnownWriters guardsEndedByInKnownWriters(const Walker& walke
             return { Which::OfClassesInRowOf, classLayout, { } };
         return { Which::None, { }, { } };
     }
+    if (writer.opcode == Opcode::PropGet && !writer.isFreeName() && readsStaticMethod(walker, writer))
+        return { Which::None, { }, { } };
     if (writer.opcode == Opcode::BeginMemberGuards && walker.state().guardsHaveBegun(declaredLayoutOf(program, writer.layout())))
         return { Which::None, { }, { } };
     if (writer.opcode == Opcode::NewClass || writer.opcode == Opcode::DefineMethod || writer.opcode == Opcode::BeginMemberGuards)
@@ -522,12 +526,44 @@ static std::optional<Vector<uint32_t, 2>> listMadeHereThatLoopOnlyFillsInKnownWr
     return made;
 }
 
-std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& walker, const TerminatorDraft& tried, const Effects& effects)
+bool writesReceiverArrayAlone(const TerminatorDraft& tried, const Effects& effects)
 {
     static constexpr std::array methods { InlineBuiltin::ArrayPush, InlineBuiltin::ArrayPop, InlineBuiltin::ArrayShift, InlineBuiltin::ArrayUnshift };
-    if (tried.kind != TerminatorKind::TryCallInline || effects.mayRunOtherCode() || !effects.writes.containsAny(perObjectHeaps) || !std::ranges::contains(methods, tried.inlineBuiltin()) || !tried.numberOfOperands() || !tried.operand(0))
+    return tried.kind == TerminatorKind::TryCallInline && !effects.mayRunOtherCode() && effects.writes.containsAny(perObjectHeaps) && std::ranges::contains(methods, tried.inlineBuiltin()) && tried.numberOfOperands() && tried.operand(0);
+}
+
+std::optional<Vector<uint32_t, 2>> receiverMadeHereThatAloneIsWritten(Walker& walker, const TerminatorDraft& tried, const Effects& effects)
+{
+    if (!writesReceiverArrayAlone(tried, effects))
         return std::nullopt;
     return listMadeHereThatLoopOnlyFillsInKnownWriters(walker, tried.operand(0));
+}
+
+void endFreshArrayWrites(Walker& walker, Reference array, const Effects& effects)
+{
+    WalkState& state = walker.state();
+    Reference written = rootInKnownWriters(walker.code(), array);
+    auto mayBeWritten = [&](Reference holder) {
+        return rootInKnownWriters(walker.code(), holder) == written;
+    };
+    auto mayEndGuard = [](LayoutID, PropertyKeyID) {
+        return true;
+    };
+    auto findRoot = [&](Reference holder) {
+        return rootInKnownWriters(walker.code(), holder);
+    };
+    auto rootOf = scopedLambda<Reference(Reference)>(findRoot);
+    WalkState::FreshCellWriter writer { singleElementSpan(written), rootOf };
+    state.markEscaped(written);
+    state.invalidate(effects, mayBeWritten, mayEndGuard, nullptr, nullptr, &writer);
+    state.noteFresh(written);
+}
+
+static bool isMethodOfListThatWritesItsReceiverAloneInKnownWriters(const Walker&, const Draft&);
+
+bool writesReceiverArrayAlone(const Walker& walker, const Draft& call, const Effects& effects)
+{
+    return call.opcode == Opcode::CallBuiltin && !testsItsOwnGuess(call) && !effects.mayRunOtherCode() && call.receiverOperand() && isMethodOfListThatWritesItsReceiverAloneInKnownWriters(walker, call);
 }
 
 static bool isMethodOfListThatWritesItsReceiverAloneInKnownWriters(const Walker& walker, const Draft& call)
@@ -704,8 +740,21 @@ bool writerEndsNoGuard(const Walker& walker, const Draft& writer)
     return guardsEndedByInKnownWriters(walker, writer).which == GuardsEndedInKnownWriters::Which::None;
 }
 
+static bool makesConstantOnce(const Walker& walker, const Draft& draft)
+{
+    return draft.opcode == Opcode::InitializeBuiltin || (draft.opcode == Opcode::PutModuleVariable && walker.plan().deferredDefinitions().findDeferred(draft.variable()));
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker, const Draft& draft, const Effects& effects)
 {
+    if (walker.state().restartMark() && makesConstantOnce(walker, draft)) [[unlikely]] {
+        uint32_t restartMark = walker.state().restartMark();
+        walker.state().invalidate(effects);
+        walker.state().restoreRestartMark(restartMark);
+        if (walker.netOfEffectsWatchesTurns()) [[unlikely]]
+            walker.noteWhetherOperationWritesWhatTurnHasMade(true);
+        return;
+    }
     bool isUndoableVariableStore = draft.opcode == Opcode::PutModuleVariable && walker.isVariableStoreUndoable(draft.variable());
     uint32_t newestUndoableStoreBefore = isUndoableVariableStore ? walker.state().newestUndoableStore() : 0;
     bool writesWhatTurnHasMade = walker.netOfEffectsWatchesTurns() ? endWhatOperationWritesOrRunsWhereNetOfEffectsWatchesTurns(walker, draft, effects) : endWhatOperationWritesOrRunsInKnownWriters<false>(walker, draft, effects);
@@ -719,7 +768,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void endWhatOperationWritesOrRuns(Walker& walker,
         noteThatGuardsOfRowHaveBegunInKnownWriters(walker, declaredLayoutOf(walker.program(), draft.layout()));
     }
     static_assert(!declaredBoundOf(Opcode::PutSlot).writes.contains(AbstractHeap::NamedProperties) && !declaredBoundOf(Opcode::PutSlotOrAdd).writes.contains(AbstractHeap::NamedProperties));
-    if (draft.opcode == Opcode::PutEnvironmentField || (draft.opcode == Opcode::PutModuleVariable && !isUndoableVariableStore)) {
+    if (draft.opcode == Opcode::PutEnvironmentField || draft.opcode == Opcode::PutStaticField || (draft.opcode == Opcode::PutModuleVariable && !isUndoableVariableStore)) {
         uint32_t undoableStore = walker.takePendingUndoableStore();
         if (undoableStore && !writesWhatTurnHasMade) {
             walker.state().recordUndoableStore(walker.iterationRestartPoint(), undoableStore);

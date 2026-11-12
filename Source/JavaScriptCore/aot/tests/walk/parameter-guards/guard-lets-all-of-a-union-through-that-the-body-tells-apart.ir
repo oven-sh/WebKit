@@ -11,7 +11,8 @@
 # RUN(WALK): walk f1:Body mechanisms=all
 # WALK-LABEL: code f1:Body
 # WALK: ([[value]]: undefined|null|string|Array<number>{{*}}entry=0
-# WALK: ([[total]]: int|whole @Double, {{*}}isInLoop=true isLoopHead=true
+# The walk of the loop starts at what its rows say comes round: a sum of numbers.
+# WALK: ([[total]]: number @Double, {{*}}isInLoop=true isLoopHead=true
 # RUN(LENGTHS): walk f1:Body mechanisms=all
 # LENGTHS: = GetStringLength
 # LENGTHS: = GetArrayLength
