@@ -3412,7 +3412,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CodeGenerator::generateValue(BlockID block, 
             if (emitter<OperatorEmitter>().leavesProductToRemainder(block, id, operation, rareBlocksWithProduct)) [[unlikely]] {
                 m_productsLeftToRemainders.set(id.index());
                 for (BlockID rare : rareBlocksWithProduct)
-                    m_productsMadeInRareBlocks.add(rare.index(), Vector<ValueID, 2>()).iterator->value.append(id);
+                    m_productsMadeInRareBlocks.add(rare.index(), Vector<ValueID, 2>()).iterator->value.appendIfNotContains(id);
                 m_remakesValuesInRareBlocks = true;
                 return;
             }

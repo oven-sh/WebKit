@@ -1381,6 +1381,8 @@ ValueID LinkFlow::findCallbackListSlow(FunctionID callback, FunctionID& maker) c
             return { };
         closure = value;
     }
+    if (std::ranges::any_of(summaries.at(maker).calls, [&](const SummaryCall& call) { return call.callee == SummaryCall::Callee::Binding && call.function == callback; }))
+        return { };
     std::optional<BodyUser> user = closure ? made->onlyUser(closure) : std::nullopt;
     while (user && user->kind == BodyUseKind::Operand && opcodesThatStateTypes.contains(made->opcodeOf(user->value))) {
         closure = user->value;

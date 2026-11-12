@@ -1409,6 +1409,8 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     record->header = cellHeaderFor(structure);
     record->orderAndShapeWords = orderAndShapeWordsFor(allocation, marksInstances(m_tables, allocation.shape, structure));
     record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
+    if (auto grown = m_grownCells.find(record); grown != m_grownCells.end())
+        grown->value->allocatorAndMark = 0;
     m_writtenRecords.record(record);
     if (noteWhetherLivesWhilePrototypeLives(structure->layout()))
         didNameStructureThatLivesWhilePrototypeLives(*record);

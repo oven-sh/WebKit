@@ -1523,9 +1523,9 @@ LValue RowLoopEmitter::emitElement(const ElementRead& read, ArrayStorage kind, c
 
 LValue RowLoopEmitter::emitTerm(ValueID value, LValue sum, std::span<const LValue> elements, bool isVector)
 {
+    value = m_body->numberOf(m_code, value);
     if (value == m_loop.sum)
         return sum;
-    value = m_body->numberOf(m_code, value);
     VectorOutput vectors(m_out);
     for (size_t place = 0; place < m_body->reads.size(); ++place) {
         if (m_body->reads[place].access == value)
@@ -1750,9 +1750,9 @@ void RowLoopEmitter::emitStores(std::span<const LValue> numbers, std::span<const
 
 void RowLoopEmitter::addSplats(ValueID value)
 {
+    value = m_body->numberOf(m_code, value);
     if (value == m_loop.sum)
         return;
-    value = m_body->numberOf(m_code, value);
     BlockID home = m_code.isConstant(value) ? BlockID() : m_code.blockOf(value);
     if (home && isInnerBlock(home)) {
         if (std::ranges::contains(m_body->reads, value, &ElementRead::access))

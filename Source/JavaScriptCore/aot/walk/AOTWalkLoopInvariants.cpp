@@ -157,7 +157,7 @@ std::optional<Effects> effectsOfTypedFormAhead(Walker& walker, const BodyValue& 
     store.setKey(operation.key());
     static_assert(declaredBoundOf(Opcode::PutSlot).writes.isSubsetOf(declaredBoundOf(Opcode::PutSlotOrAdd).writes));
     Effects effects = declaredEffectsOfOperation(walker.program(), Opcode::PutSlotOrAdd, store);
-    if (typedStoreAheadMaySetMarkOfCell(walker, types(operation.objectOperand()), operation.key(), types(operation.valueOperand())))
+    if (typedStoreAheadMayEndWrittenType(walker, types(operation.objectOperand()), operation.key(), types(operation.valueOperand())))
         effects.writes.add(AbstractHeap::NamedProperties);
     return effects;
 }
@@ -1685,7 +1685,7 @@ bool Walker::canTestStoredSlotBeforeLoop(Reference object, PropertyKeyID key, It
     static constexpr AbstractHeapSet ownKeysHeaps { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
     PropertyKeyKind kind = program().at(key).kind;
     bool isPrivate = kind == PropertyKeyKind::PrivateName || kind == PropertyKeyKind::ModulePrivateName;
-    if (!isPrivate && ofIterations.writes.overlaps(LocationMasks(ownKeysHeaps))) {
+    if ((!isPrivate || looksAskForValueOfWrittenType(*this, typeOf(object), key)) && ofIterations.writes.overlaps(LocationMasks(ownKeysHeaps))) {
         const OpenLoop& loop = m_openLoops[*place];
         if (const TrialVisit* visit = m_trialVisits.isEmpty() ? nullptr : &m_trialVisits.last(); visit && visit->frameIndex == loop.frame && visit->inputHead == m_frames[loop.frame].index->loop(loop.loop).head)
             m_loopSummaries[visit->summaryIndex].whatTurnsShowed |= someStoredSlotWasRefused;

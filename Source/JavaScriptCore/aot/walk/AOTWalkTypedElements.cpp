@@ -1939,7 +1939,8 @@ static bool buildCarriedRead(const AccessOfTypedElements& access, const HoistedA
         conversion.setOperand(0, element);
         return walker.build(WTF::move(conversion));
     };
-    bool mayBeInt32 = takesBitsAlone || (tested.storage == ArrayStorage::Int32 && !tested.admitsInt32Storage);
+    bool holdsInt32s = tested.storage == ArrayStorage::Int32 && !tested.admitsInt32Storage;
+    bool mayBeInt32 = takesBitsAlone || holdsInt32s;
     Reference carried = walker.buildCarriedElement(access.value, access.base, purity, mayBeInt32, scopedLambda<Reference(Reference, bool, bool)>([&](Reference position, bool isInt32, bool isGuardedAtHeader) -> Reference {
         if (!isGuardedAtHeader) {
             Reference hasStorage;
@@ -1989,7 +1990,8 @@ static bool buildCarriedRead(const AccessOfTypedElements& access, const HoistedA
         walker.checkThatMemoryAnswersAsBelieved(carried, WTF::move(read));
         walker.state() = WTF::move(believed);
     }
-    if (access.key.isConstant())
+    bool isElementItself = !takesBitsAlone || holdsInt32s || walker.representationOf(carried) != Representation::Int32;
+    if (access.key.isConstant() && isElementItself)
         noteStoredElementInTypedElements(walker, access.base, access.key, carried);
     walker.bind(access.value.id(), carried);
     return true;

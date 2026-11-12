@@ -4759,7 +4759,7 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         switch (draft.opcode) {
         case Opcode::PutSlot:
         case Opcode::PutSlotOrAdd:
-            if (!testsItsOwnGuess(draft) && storeMaySetMarkOfCell(*this, membersOf(m_types, draft.receivers()), draft.key(), typeOf(draft.valueOperand())))
+            if (!testsItsOwnGuess(draft) && storeMayEndWrittenType(*this, membersOf(m_types, draft.receivers()), draft.key(), typeOf(draft.valueOperand())))
                 effects.writes.add(AbstractHeap::NamedProperties);
             break;
         case Opcode::GetPropertyOfHeir:

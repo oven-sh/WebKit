@@ -602,6 +602,14 @@ static bool isRequiredByParentForTypedAccess(const Program& program, LayoutID me
     return false;
 }
 
+static bool isWrittenWithoutUndefinedAndNull(TypeArena& types, const auto& declared)
+{
+    TypeID written = declared.written();
+    if (!written || types.at(written).isAnything())
+        return false;
+    return !(types.at(written).primitives & Primitive::UndefinedOrNull & ~(declared.has(PositionFlags::OmitsUndefined) ? Primitive::Undefined : 0) & ~(declared.has(PositionFlags::OmitsNull) ? Primitive::Null : 0));
+}
+
 static FieldOfTypedAccess describeFieldAnewForTypedAccess(Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key, TypeID stored, bool goesByKeyOrder)
 {
     const Program& program = walker.program();
@@ -687,8 +695,7 @@ static FieldOfTypedAccess describeFieldAnewForTypedAccess(Walker& walker, const 
         bool isRequiredByWrittenType = record.originLayout && record.originField && fieldAt(program, { record.originLayout, *record.originField }).flags.contains(FieldFlags::IsRequired);
         const auto& declared = (record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record).declared;
         TypeID written = declared.written();
-        uint16_t nullishAsWritten = written ? types.at(written).primitives & Primitive::UndefinedOrNull & ~(declared.has(PositionFlags::OmitsUndefined) ? Primitive::Undefined : 0) & ~(declared.has(PositionFlags::OmitsNull) ? Primitive::Null : 0) : 0;
-        field.isWrittenWithoutUndefinedAndNull &= written && !types.at(written).isAnything() && !nullishAsWritten;
+        field.isWrittenWithoutUndefinedAndNull &= isWrittenWithoutUndefinedAndNull(types, declared);
         field.isFilledByInitializer = field.isFilledByInitializer && !cell.isOfBirth && layout.kind == LayoutKind::Instance && walker.facts().linked().fieldsFilledByInitializers.names(program, member, key) && isBornWithoutFields(walker, member);
         field.isDeclaredByStores &= layout.kind == LayoutKind::Instance && (!written || types.at(written).isAnything() || !declared.isGuarded());
         bool isRequired = record.flags.contains(FieldFlags::IsRequired) || isRequiredByWrittenType || layout.kind == LayoutKind::Container;
@@ -1507,20 +1514,38 @@ static ALWAYS_INLINE bool markOfCellAnswersForFieldInTypedAccess(const Walker& w
         && !possibleChangesForbid(receivers.possibleChanges, TypedAccess::ReadsFilledSlot) && !isBeingMadeByBodyBeingReadInTypedAccess(walker, object);
 }
 
-bool storeMaySetMarkOfCell(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key, TypeID typeOfStored)
+static bool slotMayBeAskedForWrittenType(const Walker& walker, LayoutID member, FieldIndex index, PropertyKeyID key)
+{
+    const Program& program = walker.program();
+    const PlacedSlot& slot = walker.plan().slots().slot(member, index);
+    bool holdsBoxedNumbers = slot.representation == SlotRepresentation::JSValue && slot.type && walker.types().at(slot.type).isNumberOrNullish();
+    if (!holdsBoxedNumbers && (slot.representation == SlotRepresentation::JSValue || slot.representation == SlotRepresentation::DeferredClosure || !canLeaveSlot(slot.representation)))
+        return false;
+    bool holdsNumbersOrBooleans = holdsBoxedNumbers || !traitsOf(slot.representation).holdsCell;
+    const Layout& layout = program.at(member);
+    if (index >= layout.fields.size())
+        return holdsNumbersOrBooleans && linkTablesForTypedAccesses(walker).isAppendedFieldRequiredBySomeWrittenType(FieldReference { member, index });
+    const Field& record = layout.fields[index];
+    const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
+    if (!holdsNumbersOrBooleans && !isWrittenWithoutUndefinedAndNull(walker.types(), origin.declared))
+        return false;
+    return origin.flags.contains(FieldFlags::IsRequired) || record.flags.contains(FieldFlags::IsRequired) || layout.kind == LayoutKind::Container || (layout.kind == LayoutKind::Instance && isRequiredByParentForTypedAccess(program, member, key));
+}
+
+bool storeMayEndWrittenType(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key, TypeID typeOfStored)
 {
     if (typeOfStored && !walker.types().at(typeOfStored).mayBeUndefinedOrNull())
         return false;
     return std::ranges::any_of(receivers, [&](LayoutID member) {
         std::optional<FieldIndex> field = walker.plan().slots().findField(walker.program(), member, key);
-        return field && walker.plan().layout(member).holdsRawValueFromBirth(*field);
+        return field && (walker.plan().layout(member).holdsRawValueFromBirth(*field) || slotMayBeAskedForWrittenType(walker, member, *field, key));
     });
 }
 
-bool typedStoreAheadMaySetMarkOfCell(Walker& walker, TypeID typeOfObject, PropertyKeyID key, TypeID typeOfStored)
+bool typedStoreAheadMayEndWrittenType(Walker& walker, TypeID typeOfObject, PropertyKeyID key, TypeID typeOfStored)
 {
     std::optional<ReceiversOfTypedAccess> receivers = typeOfObject ? findReceiversOfTypedAccess(walker, typeOfObject) : std::nullopt;
-    return !receivers || storeMaySetMarkOfCell(walker, receivers->members.span(), key, typeOfStored);
+    return !receivers || storeMayEndWrittenType(walker, receivers->members.span(), key, typeOfStored);
 }
 
 bool markOfCellAnswersForRead(Walker& walker, const BodyValue& read, TypeID typeOfObject)
@@ -5833,6 +5858,12 @@ static bool lookAsksForValueOfWrittenType(Walker& walker, const ReceiversOfTyped
 {
     FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, receivers, key, { });
     return field.coverage == CoverageOfTypedAccess::EveryReceiver && field.liesInOneSlot && lookAsksForValueOfWrittenTypeInTypedAccess(field);
+}
+
+bool looksAskForValueOfWrittenType(Walker& walker, TypeID typeOfObject, PropertyKeyID key)
+{
+    std::optional<ReceiversOfTypedAccess> receivers = typeOfObject ? findReceiversOfTypedAccess(walker, typeOfObject) : std::nullopt;
+    return receivers && lookAsksForValueOfWrittenType(walker, *receivers, key);
 }
 
 Reference buildTestOfSlot(Walker& walker, const BodyValue& access, Reference object)

@@ -3809,7 +3809,8 @@ bool ScanOfBody::keepsVariableObjectsHidden(const BodyValue& value)
     else if (value.opcode() == Opcode::PropGet && !value.isFreeName())
         object = value.as<Opcode::PropGet>().objectOperand();
     uint32_t root = object ? m_roots[object.index()] : 0;
-    return object && (m_uses[root] & isFollowedWhileMade) && objectBeingMade(root).kind == ObjectBeingMadeKindInScan::OfOneLayout && !objectBeingMade(root).hasLeft && !objectBeingMade(root).isGivenUp;
+    bool mayRunAccessor = object && (m_uses[root] & isLaidAccessorsUnderNames);
+    return object && !mayRunAccessor && (m_uses[root] & isFollowedWhileMade) && objectBeingMade(root).kind == ObjectBeingMadeKindInScan::OfOneLayout && !objectBeingMade(root).hasLeft && !objectBeingMade(root).isGivenUp;
 }
 
 void ScanOfBody::noteEscapingVariableObjects()

@@ -24,6 +24,7 @@
 #include "AOTSort.h"
 #include "AOTTypedArrayKinds.h"
 #include "AOTUnionTaggedMakers.h"
+#include "JSObject.h"
 #include <algorithm>
 #include <array>
 #include <optional>

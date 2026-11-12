@@ -796,11 +796,13 @@ ALWAYS_INLINE bool JSONValueParser::isLearnedString(const LearnedString& string,
     if (!string.matchesHead(value))
         return false;
     uint32_t length = string.textLength;
+    if (m_sourceEnd - value <= static_cast<ptrdiff_t>(length))
+        return false;
     if (length > LearnedString::headLength) {
         if (string.sourceNumber != m_sourceNumber || !isSameText(value + LearnedString::headLength, string.quote + LearnedString::headLength, length - LearnedString::headLength))
             return false;
     }
-    return value + length < m_sourceEnd;
+    return true;
 }
 
 ALWAYS_INLINE void JSONValueParser::LearnedStrings::set(LearnedString& learned, Cursor quote, size_t textLength, JSString* string)
@@ -1136,7 +1138,7 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseOrCopy(Cursor bracket, uint16
     uint32_t epoch = m_learnedNames.epoch();
     RepeatedValue& repeated = m_repeatedValues.at(bracket);
     size_t length = repeated.textLength;
-    if (repeated.sourceNumber == m_sourceNumber && isSameLongText(bracket, repeated.start, length) && bracket + length < m_sourceEnd) {
+    if (repeated.sourceNumber == m_sourceNumber && m_sourceEnd - bracket > static_cast<ptrdiff_t>(length) && isSameLongText(bracket, repeated.start, length)) {
         if (JSObject* copy = copyOf(repeated.object)) [[likely]] {
             missedRepeats = 0;
             if (m_learnedNames.epoch() == epoch) [[likely]] {

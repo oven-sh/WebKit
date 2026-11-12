@@ -1593,7 +1593,7 @@ static constexpr uint64_t mostElementsConcatenated = 4 * maxLengthForElementwise
 
 static bool isConcatenatedAsElement(VM& vm, JSGlobalObject* globalObject, JSObject* object)
 {
-    if (isJSArray(object) || object->type() == ProxyObjectType)
+    if (object->type() == ArrayType || object->type() == DerivedArrayType || object->type() == ProxyObjectType)
         return false;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
