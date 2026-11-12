@@ -110,11 +110,13 @@ std::optional<TypedArrayElements> ElementAccessEmitter::typedArrayElementsNamedB
     return named;
 }
 
-void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork& fork, const ValueContext& access, CellPointer view, LBasicBlock outside, LBasicBlock otherwise)
+void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork& fork, const ValueContext& access, CellPointer view, Integer index, LBasicBlock outside, LBasicBlock otherwise)
 {
     m_out.appendToJoin(isNotBelow, fork);
     CellPointer viewAskedAnew = access->isMirroredView() ? viewOnSlowPath(access, view) : CellPointer(m_out.opaque(view.value()));
     branchUnless(hasNoBits(loadByte(viewAskedAnew, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask), otherwise);
+    if (access->isMirroredView())
+        branchUnless(aboveOrEqual(index, loadField<Integer>(viewAskedAnew, m_heaps.JSArrayBufferView_length)), otherwise);
     m_out.jump(outside);
 }
 
@@ -459,7 +461,7 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
     }
 
     if (named)
-        askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, value, view, outside, otherwise);
+        askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, value, view, index, outside, otherwise);
     m_out.appendToJoin(outside, fork);
     join.add(nothingIsNaN ? Operand(number(PNaN)) : absentElement(value, representation));
 
@@ -547,7 +549,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
         storeElement(elements, indexFoundBelowLength(index, type));
         m_out.jump(done);
         if (named)
-            askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, value, view, done, otherwise);
+            askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, value, view, index, done, otherwise);
     } else
         m_out.jump(otherwise);
 

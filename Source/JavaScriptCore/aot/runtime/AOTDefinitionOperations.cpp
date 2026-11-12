@@ -496,8 +496,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineOwnProperty, void, (Instance* instanc
     }
     JSObject* literal = constructObjectFromPropertyDescriptor(globalObject, descriptorFromBits(valueOrGetter, setter, bits));
     if (bits.isOfPropertyMap) {
+        auto name = JSValue::decode(key).toPropertyKey(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
         JSObject* map = constructEmptyObject(globalObject);
-        map->putDirect(globalObject->vm(), asString(JSValue::decode(key))->toIdentifier(globalObject), literal);
+        map->putDirectMayBeIndex(globalObject, name, literal);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
         callInEngine(instance, Builtins::ObjectDefineProperties, object, map);
     } else
         callInEngine(instance, Builtins::ObjectDefineProperty, object, JSValue::decode(key), literal);

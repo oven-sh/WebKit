@@ -568,8 +568,10 @@ void endGuardsOfInheritedMembers(State& state, const LayoutData& classLayout, Cl
         };
         auto guards = guardsOfNamesInClassRecord(state.tables, *current, side);
         for (const NamedClassGuardData& guard : guards) {
-            if (isInherited(guard.name))
-                classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            if (!isInherited(guard.name))
+                continue;
+            classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            classes.m_lateMembersOfGuards.remove(guard.numberOfBit());
         }
         storeSideGuards(state, *current, side, false, [&](uint32_t numberOfBit) {
             return classes.m_endedGuardsOfNames.contains(byteOffsetOfClassGuardBit(numberOfBit));
@@ -612,6 +614,8 @@ void endClassGuardsOfName(State& state, const LayoutData& classLayout, ClassSide
             if (goesOnHolding(guard))
                 continue;
             classes.m_endedGuardsOfNames.add(byteOffsetOfClassGuardBit(guard.numberOfBit()));
+            if (!classes.m_lateMembersOfGuards.isEmpty()) [[unlikely]]
+                classes.m_lateMembersOfGuards.remove(guard.numberOfBit());
             ClassGuardWriter(state, current, side, ClassGuardRows(state, guard.numberOfBit(), guard.numberOfBit())).storeNameGuard(guard.numberOfBit(), false);
         }
     };
@@ -1318,13 +1322,14 @@ void ClassTable::armMemberGuards(VM& vm, const LayoutData& layout, ClassSide sid
         namesThatDiffer.add(constructorKey);
     addNamesThatLookupsComeToAbove(layout, side, namesThatDifferAbove, namesThatDiffer);
     Vector<uint32_t, 4> lateMembers;
-    for (uint32_t name : namesThatDiffer.numbers) {
-        if (isLateMember(vm, layout, side, holder, name))
-            lateMembers.append(name);
-        endClassGuardsOfName(m_state, layout, side, name);
-    }
+    Vector<uint32_t, 4> namesThatEnd;
+    for (uint32_t name : namesThatDiffer.numbers)
+        (isLateMember(vm, layout, side, holder, name) ? lateMembers : namesThatEnd).append(name);
     for (uint32_t name : lateMembers)
-        m_lateMembers.add(lateMemberKey(layout, name));
+        endClassGuardsOfName(m_state, layout, side, name);
+    addLateMembers(layout, lateMembers.span());
+    for (uint32_t name : namesThatEnd)
+        endClassGuardsOfName(m_state, layout, side, name);
     for (uint32_t name : namesThatDiffer.numbersOfPlainValues)
         endClassGuardsOfName(m_state, layout, side, name, GuardsOfNameToEnd::StoresStillPass);
     if (namesThatDiffer.someHasNoNumber)
@@ -1432,6 +1437,16 @@ bool ClassTable::isLateMember(VM& vm, const LayoutData& layout, ClassSide side, 
     });
 }
 
+void ClassTable::addLateMembers(const LayoutData& layout, std::span<const uint32_t> names)
+{
+    for (uint32_t name : names) {
+        if (!m_lateMembers.add(lateMemberKey(layout, name)).isNewEntry)
+            continue;
+        for (const NamedClassGuardData& guard : guardsOfNameInClassRecord(m_tables, layout, ClassSide::Prototype, name))
+            ++m_lateMembersOfGuards.add(guard.numberOfBit(), 0).iterator->value;
+    }
+}
+
 bool ClassTable::tryArmLateMember(VM& vm, const LayoutData& layout, UniquedStringImpl* uid, uint32_t key)
 {
     JSObject* holder = registeredHolderOf(vm, m_state, layout, ClassSide::Prototype);
@@ -1440,6 +1455,10 @@ bool ClassTable::tryArmLateMember(VM& vm, const LayoutData& layout, UniquedStrin
     MethodTableUpdate update(*this);
     m_state.instance.propertyCaches.forgetReplacedMembers();
     for (const NamedClassGuardData& guard : guardsOfNameInClassRecord(m_tables, layout, ClassSide::Prototype, key)) {
+        auto awaited = m_lateMembersOfGuards.find(guard.numberOfBit());
+        if (awaited == m_lateMembersOfGuards.end() || --awaited->value)
+            continue;
+        m_lateMembersOfGuards.remove(awaited);
         m_endedGuardsOfNames.remove(byteOffsetOfClassGuardBit(guard.numberOfBit()));
         ClassGuardWriter(m_state, layout, ClassSide::Prototype, ClassGuardRows(m_state, guard.numberOfBit(), guard.numberOfBit())).storeNameGuard(guard.numberOfBit(), true);
     }

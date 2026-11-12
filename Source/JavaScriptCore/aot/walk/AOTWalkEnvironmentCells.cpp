@@ -1769,7 +1769,8 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
                 value = field.parameter;
         }
         if (!value && !field.isHeld && !field.element) {
-            Draft read = draftReadBeforeHeader(field, ReadBeforeHeaderUse::LoopCarriedValue);
+            bool isInitialized = field.variable && !field.anticipatedRead && field.type && !(m_types.at(field.type).primitives & Primitive::Absent) && leavesDeadZoneForGood(program(), field.variable);
+            Draft read = isInitialized ? draftVariableRead(field) : draftReadBeforeHeader(field, ReadBeforeHeaderUse::LoopCarriedValue);
             if (field.positionOfHolder)
                 read.setObjectOperand(arguments[*field.positionOfHolder]);
             value = build(WTF::move(read));

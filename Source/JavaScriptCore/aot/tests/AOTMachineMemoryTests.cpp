@@ -97,6 +97,7 @@ static LValue memoryTestValueOfType(TestProcedure& test, unsigned argument, Type
         return out.bitCast(out.castToInt32(bits), Float);
     case Double:
         return out.bitCast(bits, Double);
+    case Vector128:
     case Void:
     case Tuple:
         break;

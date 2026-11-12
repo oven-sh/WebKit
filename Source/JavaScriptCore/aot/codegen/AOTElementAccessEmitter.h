@@ -251,7 +251,7 @@ public:
     TypedPointer elementBelowNamedLength(const ValueContext& access);
 private:
     std::optional<TypedArrayElements> typedArrayElementsNamedBy(const ValueContext&, CellPointer view);
-    void askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork&, const ValueContext& access, CellPointer view, LBasicBlock outside, LBasicBlock otherwise);
+    void askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork&, const ValueContext& access, CellPointer view, Integer index, LBasicBlock outside, LBasicBlock otherwise);
     CellPointer viewOnSlowPath(const ValueContext& access, CellPointer view);
     bool becomesIndexWithoutTest(const ValueContext& access);
     Operand loadBytesOfTypedArrayElement(const TypedArrayElements&, Integer index, TypedArrayType);

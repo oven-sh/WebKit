@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTGrowingText.h"
 #include "AOTImage.h"
 #include "AOTInliningAcrossFiles.h"
@@ -1875,7 +1876,7 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
         unsigned hash = rope->hashOfSubstring();
         if (!hash) {
             hash = StringHasher::computeHashAndMaskTop8Bits(text);
-            if (keepsHash)
+            if (keepsHash && !canPassShapeTest(hash))
                 rope->setHashOfSubstring(hash);
         }
         if (table->isInImage())

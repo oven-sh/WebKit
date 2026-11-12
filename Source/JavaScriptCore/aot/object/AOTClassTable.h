@@ -388,6 +388,7 @@ private:
     void forgetWhatCreatedFieldsHide() { m_fieldsWhoseCreationEndsNoGuard.clear(); }
     static uint64_t lateMemberKey(const LayoutData& layout, uint32_t key) { return static_cast<uint64_t>(layout.index) << 32 | key; }
     bool isLateMember(VM&, const LayoutData&, ClassSide, JSObject* holder, uint32_t key) const;
+    void addLateMembers(const LayoutData&, std::span<const uint32_t> names);
     bool tryArmLateMember(VM&, const LayoutData&, UniquedStringImpl*, uint32_t key);
     uint32_t numberOfFieldRecord(const FieldData& field) const { return m_tables.offsetOf(&field) / static_cast<uint32_t>(sizeof(FieldData)); }
 
@@ -506,6 +507,7 @@ private:
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_endedNames;
     PagedNumberSet m_endedGuardsOfNames;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_lateMembers;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lateMembersOfGuards;
     UncheckedKeyHashMap<uint32_t, CheckedHolder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_checkedHolders;
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesWithInstanceBelowOtherPrototype;
     mutable UncheckedKeyHashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsByName;

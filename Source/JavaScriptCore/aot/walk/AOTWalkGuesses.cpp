@@ -18361,10 +18361,12 @@ bool copyElementsBeforeLoop(Walker& walker, BlockID inputHead, Vector<Reference,
 
     BlockID skips = walker.addBlock();
     auto isStuck = [&] { return walker.hasFailed() || walker.isUnreachable(); };
-    auto toInteger = [&](Reference value) -> Reference {
+    enum class Wanted : uint8_t { Integer, Int32 };
+    auto toInteger = [&](Reference value, Wanted wanted = Wanted::Integer) -> Reference {
         if (!value || !value.isRecord() || isStuck())
             return { };
-        if (types.at(walker.typeOf(value)).isInteger())
+        const Type known = types.at(walker.typeOf(value));
+        if (wanted == Wanted::Int32 ? known.isInt32() : known.isInteger())
             return value;
         Reference test = value.isValue() ? buildTestOfNumber(walker, value, TypeTable::int32, origin) : Reference();
         if (!test || !test.isValue() || isStuck())
@@ -18406,7 +18408,7 @@ bool copyElementsBeforeLoop(Walker& walker, BlockID inputHead, Vector<Reference,
             return std::nullopt;
         Vector<Reference, 4> counters;
         for (Reference stepped : entering) {
-            Reference counter = toInteger(stepped);
+            Reference counter = toInteger(stepped, Wanted::Int32);
             if (!counter || isStuck())
                 return std::nullopt;
             counters.append(counter);
@@ -18414,7 +18416,7 @@ bool copyElementsBeforeLoop(Walker& walker, BlockID inputHead, Vector<Reference,
         for (VariableID variable : copy->variables) {
             Draft lookup(Opcode::GetModuleVariable, origin);
             lookup.setVariable(variable);
-            Reference counter = toInteger(walker.build(WTF::move(lookup)));
+            Reference counter = toInteger(walker.build(WTF::move(lookup)), Wanted::Int32);
             if (!counter || isStuck())
                 return std::nullopt;
             counters.append(counter);
@@ -18460,9 +18462,14 @@ bool copyElementsBeforeLoop(Walker& walker, BlockID inputHead, Vector<Reference,
             if (isStuck())
                 return std::nullopt;
         }
+        for (Reference counter : counters) {
+            Reference end = buildIntegerOperator(walker, copy->countsDown ? Opcode::Sub : Opcode::Add, counter, count, origin);
+            if (!toInteger(end, Wanted::Int32) || isStuck())
+                return std::nullopt;
+        }
         auto indexOf = [&](const CopiedElementKey& key) -> Reference {
             Reference place = counters[key.parameter];
-            Reference addend = key.addend ? toInteger(walker.referenceOf(key.addend)) : key.constant ? integerConstant(walker, key.constant, origin) : Reference();
+            Reference addend = key.addend ? toInteger(walker.referenceOf(key.addend), Wanted::Int32) : key.constant ? integerConstant(walker, key.constant, origin) : Reference();
             if (key.addend && (!addend || isStuck()))
                 return { };
             return addend ? buildIntegerOperator(walker, key.isSubtracted ? Opcode::Sub : Opcode::Add, place, addend, origin) : place;
