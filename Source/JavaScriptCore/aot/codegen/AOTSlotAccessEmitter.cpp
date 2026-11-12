@@ -367,8 +367,6 @@ Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPo
         build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
         return loadSlot(cell, access);
     }
-    if (representation == SlotRepresentation::OptionalCell32 && value.representation() == Representation::JSValue && !access.slot.isOutOfLine() && !checksWhatSlotsHold)
-        return emitter<ConversionEmitter>().decodeEmptyAsUndefined(loadSlot(cell, access).as<NarrowReference>());
     if (traits.hasUndefined)
         return inResultRepresentation(value, slots.loadSlotOrUndefined(cell, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)));
 

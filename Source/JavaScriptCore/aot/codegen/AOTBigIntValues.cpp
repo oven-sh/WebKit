@@ -491,8 +491,10 @@ void BigIntValues::findCarriedValues(std::span<const Flow> flows, const BitVecto
     BitVector carriedClasses(numberOfValues);
     bool hasCarriedValues = false;
     for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
+        if (!m_code.isReached(BlockID(number)))
+            continue;
         const Block& block = m_code.at(BlockID(number));
-        if (!block.isLoopHead || !m_code.isReached(BlockID(number)))
+        if (!block.isLoopHead)
             continue;
         for (ValueID parameter : block.parameters()) {
             if (m_mayBeInFrame.quickGet(parameter.index())) {

@@ -230,6 +230,14 @@ void ArrayStorageBuiltinEmitter::reserveForRemainingIterations(const InlineCall&
     if (loop.valuesPerIteration > 1)
         remaining = mul(remaining, number(loop.valuesPerIteration));
     Number held = toNumber(zeroExtended(length));
+    if (loop.startOfCounter) {
+        std::optional<Number> start = numberOf(loop.startOfCounter);
+        if (!start) {
+            m_out.jump(done);
+            return;
+        }
+        branchUnless(greaterThanOrEqual(held, mul(sub(*counter, *start), number(loop.valuesPerIteration))), done);
+    }
     Number mostCapacity = add(mul(held, number(growthFactor)), number(smallestGrowth));
     callStub(call.context(), reserveArrayCapacity(), { array.value(), min(add(held, remaining), mostCapacity).value() });
     m_out.jump(done);

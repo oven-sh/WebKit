@@ -166,6 +166,8 @@ void BuiltinCallEmitter::findDivisions()
     m_hasFoundDivisions = true;
     const Code& code = generator().code();
     for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        if (!code.isReached(BlockID(block)))
+            continue;
         uint32_t place = 0;
         for (ValueID id : code.valuesOf(BlockID(block))) {
             ++place;

@@ -951,7 +951,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
     }
 
     work.setStep("sweep"_s);
-    SweepTotals swept = Sweep(m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
+    SweepTotals swept = Sweep(*m_roomsOfSweep).run(SweepInputs { inputs.program, inputs.facts, inputs.plan, m_types, inputs.options.shouldMisfoldBranchInSweep, inputs.options.shouldDropEdgeInSweep }, code);
 
     if (inputs.options.verifiesCode) {
         work.setStep("verify"_s);
@@ -980,6 +980,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         }
     }
 
+    code.releaseAbandonedBlocks();
     for (const Walker::ArrivalHeld& held : m_walker->arrivalsHeld()) {
         if ((held.kind == Walker::ArrivalHeld::Kind::Anything || held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue) && inputs.facts.linked().entryByValueMayBeClosed(held.callee))
             m_functionsThatUnitMayEnterByValue.append(held.callee);
@@ -1345,9 +1346,15 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     std::optional<uint64_t> instructionsAfterSweep = instructionsOfCompileThreadSoFar(m_build);
 
     RELEASE_ASSERT(m_walker->arrivalsHeld().empty());
-    m_walker->releaseAnswers();
     work.setStep("emit"_s);
     const Code& swept = m_walker->code();
+    uint32_t slices = m_walker->foldedSliceCount();
+    Vector<Walker::CountOfUnit, 4> counts(m_walker->countsOfUnit());
+    static constexpr uint32_t mostValuesWithWalker = 1 << 16;
+    if (swept.numberOfValues() > mostValuesWithWalker) {
+        m_walker = makeWalker(RoomOfFormerWalker::IsLeft);
+        m_roomsOfSweep = makeUniqueWithoutFastMallocCheck<RoomsOfSweep>();
+    }
     CompiledCode code = generateCode(CodeGenerationWorker { m_build, m_types, *m_arena }, m_inputs.generation, swept, m_totals);
     std::optional<uint64_t> instructionsAfterEncoding = instructionsOfCompileThreadSoFar(m_build);
     if (instructionsAtStart && instructionsAfterSweep && instructionsAfterEncoding) {
@@ -1366,9 +1373,9 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
 
     Statistics& statistics = m_build.statistics();
     statistics.count(StatisticID::UnitsCompiled);
-    if (uint32_t slices = m_walker->foldedSliceCount())
+    if (slices)
         statistics.count(StatisticID::SlicesFoldedToArrayLiterals, slices);
-    for (const Walker::CountOfUnit& count : m_walker->countsOfUnit())
+    for (const Walker::CountOfUnit& count : counts)
         statistics.count(count.statistic, count.amount);
     if (uint32_t blocks = swept.numberOfBlocksPlacedOtherwise()) [[unlikely]]
         statistics.count(StatisticID::BlocksPlacedOtherwise, blocks);

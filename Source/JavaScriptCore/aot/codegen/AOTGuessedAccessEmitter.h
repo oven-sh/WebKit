@@ -29,8 +29,7 @@ public:
     bool tryReadNumberOfProvenList(const ValueContext&);
 
 private:
-    CellPointer receiverOrElse(const ValueContext&, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest = nullptr, std::optional<CellPointer>* baseOfSlot = nullptr, bool isKnownCell = false);
-    bool isUsedOnlyByNextRead(const ValueContext& read);
+    CellPointer receiverOrElse(const ValueContext&, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest = nullptr, std::optional<CellPointer>* baseOfSlot = nullptr);
     CellPointer elementsOwnerOrElse(const ValueContext&, Boxed object, LBasicBlock failure);
     Word32 indexOrElse(Boxed position, LBasicBlock failure);
     bool isTestedForPresence(const ValueContext& read);
@@ -40,8 +39,6 @@ private:
     void storeInProvenListUnderAnyKey(const ValueContext&);
     bool unitReckonsWithElement(const ValueContext& read);
 
-    ValueID m_readContinuedByNext;
-    std::optional<Join<Boxed>> m_otherAnswersOfRead;
     bool m_reckonersAreKnown { false };
     BitVector m_isReckonedWith;
 };

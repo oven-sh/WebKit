@@ -1201,6 +1201,26 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     m_callsItself = mark.callsItself;
 }
 
+void Code::releaseAbandonedBlocks()
+{
+    RELEASE_ASSERT(m_isSwept);
+    uint32_t numberOfBlocks = 0;
+    for (const PartsAbandoned& parts : m_partsAbandoned)
+        numberOfBlocks += parts.blocks.second - parts.blocks.first;
+    static constexpr uint32_t mostBlocksKept = ASSERT_ENABLED ? 0 : 1 << 13;
+    if (numberOfBlocks <= mostBlocksKept)
+        return;
+    for (const PartsAbandoned& parts : m_partsAbandoned) {
+        uint32_t first = parts.blocks.first;
+        if (m_graveyard && first <= m_graveyard.index() && m_graveyard.index() < parts.blocks.second) {
+            m_blocks.releasePages(first, m_graveyard.index());
+            first = m_graveyard.index() + 1;
+        }
+        m_blocks.releasePages(first, parts.blocks.second);
+        m_edges.releasePages(parts.edges.first, parts.edges.second);
+    }
+}
+
 uint32_t Code::addInlineFrame(const InlineFrame& frame)
 {
     RELEASE_ASSERT(!m_isSwept);

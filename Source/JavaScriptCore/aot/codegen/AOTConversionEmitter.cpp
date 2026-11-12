@@ -1108,45 +1108,6 @@ Number ConversionEmitter::quietNaN(Number value)
     return Number(m_out.bitCast(quietNaNWithSignOf(bitsOf(value)).value(), Machine::Double));
 }
 
-static LValue wordOrUndefinedIfEmpty(NarrowReference word)
-{
-    LValue select = word.value();
-    if (select->opcode() != Machine::Select)
-        return nullptr;
-    LValue predicate = select->child(0);
-    for (unsigned index : { 1u, 2u }) {
-        LValue loaded = select->child(index);
-        bool isTestedForZero = index == 1 ? predicate == loaded : predicate->opcode() == Machine::Equal && predicate->child(0) == loaded && predicate->child(1)->isInt(0);
-        if (isTestedForZero && select->child(3 - index)->isInt(undefinedCell32))
-            return loaded;
-    }
-    return nullptr;
-}
-
-Boxed ConversionEmitter::decodeEmptyAsUndefined(NarrowReference loaded)
-{
-    auto isMarkerOrEmpty = [&](Boxed word) {
-        return select(isEmpty(word), undefined(), word);
-    };
-    const OperationContext* context = generator().contextBeingGenerated();
-    Condition isReference = isCellReference(loaded);
-    if (!context || !context->block() || !generator().usesLoopForms(context->block()) || generator().isLayingOutTurns())
-        return isMarkerOrEmpty(select(isReference, boxCell(decode(loaded)), Boxed(m_out.zeroExt(loaded.value(), Machine::Int64))));
-
-    build().statistics().count(StatisticID::ReferencesTestedBeforeDecoding);
-    LBasicBlock holdsReference = newBlock();
-    LBasicBlock holdsNone = newBlock();
-    Join<Boxed> join(m_out);
-    ScopeFork fork = m_out.forkScope();
-    m_out.branch(isReference.value(), normalEdge(holdsReference), unlikelyEdge(holdsNone));
-    m_out.appendToArm(holdsReference, fork);
-    join.add(boxCell(decode(loaded)));
-
-    m_out.appendToArm(holdsNone, fork);
-    join.add(isMarkerOrEmpty(Boxed(m_out.zeroExt(loaded.value(), Machine::Int64))));
-    return join.finishBehind(fork);
-}
-
 Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Representation to)
 {
     switch (to) {
@@ -1160,8 +1121,6 @@ Operand ConversionEmitter::decode(NarrowReference word, const Type& type, Repres
         Boxed marker(m_out.zeroExt(word.value(), Machine::Int64));
         if (!type.hasCells())
             return marker;
-        if (LValue loaded = emittersCheckProofs() ? nullptr : wordOrUndefinedIfEmpty(word))
-            return decodeEmptyAsUndefined(NarrowReference(loaded));
         Condition isCell = isCellReference(word);
         return select(isCell, boxCell(decode(word)), marker);
     }

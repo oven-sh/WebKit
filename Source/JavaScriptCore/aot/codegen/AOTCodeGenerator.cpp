@@ -819,6 +819,49 @@ std::optional<CodeGenerator::PushesInLoop> CodeGenerator::findPushesInLoop(Block
             add(edge.from);
         });
     }
+    static constexpr OpcodeSet reads {
+        Opcode::PropGet, Opcode::PrivateGet, Opcode::ElemGet, Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::GetArrayElement, Opcode::GetValueAtSiteOrAbsent,
+        Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::GetGlobalBinding, Opcode::GetGlobalProperty, Opcode::GetGlobalPropertyAddress, Opcode::CheckInitialized
+    };
+    auto isSameInEveryIteration = [&](auto& self, ValueID value, unsigned depth) -> bool {
+        BlockID home = !value || code().isConstant(value) ? BlockID() : code().blockOf(value);
+        if (!home || !isInLoop.quickGet(home.index()))
+            return true;
+        if (!depth)
+            return false;
+        const Operation& operation = code().at(value);
+        if (operation.opcode != Opcode::Parameter)
+            return (reads.contains(operation.opcode) || valuePreservingOpcodes.contains(operation.opcode) || operationsThatStandAmongNarrowedValues.contains(operation.opcode)) && std::ranges::all_of(operation.operands(), [&](ValueID operand) { return self(self, operand, depth - 1); });
+        if (home == head)
+            return false;
+        size_t place = std::ranges::find(code().at(home).parameters(), value) - code().at(home).parameters().begin();
+        ValueID joined;
+        bool isJoined = true;
+        code().forEachIncomingEdgeUnsealed(home, [&](const Edge& edge) {
+            if (edge.to != home || !code().isReached(edge.from) || code().at(edge.from).frequency == BlockFrequency::Rare)
+                return;
+            ValueID argument = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            isJoined &= argument && (!joined || joined == argument);
+            joined = argument;
+        });
+        return isJoined && joined && self(self, joined, depth - 1);
+    };
+    constexpr unsigned longestWayToVariable = 8;
+    if (!isSameInEveryIteration(isSameInEveryIteration, array, longestWayToVariable))
+        return std::nullopt;
+    if (BlockID home = code().isConstant(array) ? BlockID() : code().blockOf(array); home && isInLoop.quickGet(home.index())) {
+        size_t place = std::ranges::find(code().at(head).parameters(), found->counter) - code().at(head).parameters().begin();
+        bool startsAlike = true;
+        code().forEachIncomingEdgeUnsealed(head, [&](const Edge& edge) {
+            if (edge.to != head || !code().isReached(edge.from) || std::ranges::contains(ends, edge.from))
+                return;
+            ValueID start = place < edge.arguments().size() ? edge.arguments()[place] : ValueID();
+            startsAlike &= start && (!found->startOfCounter || found->startOfCounter == start);
+            found->startOfCounter = start;
+        });
+        if (!startsAlike || !found->startOfCounter || !isAvailable(found->startOfCounter))
+            return std::nullopt;
+    }
     for (BlockID member : blocks) {
         const Terminator& terminator = code().at(member).terminator;
         for (uint32_t edge = 0; member != testBlock && edge < terminator.numberOfEdges; ++edge) {

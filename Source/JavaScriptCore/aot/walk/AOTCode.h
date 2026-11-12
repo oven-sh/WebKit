@@ -169,6 +169,19 @@ public:
         m_size = newSize;
     }
     void clear() { m_size = 0; }
+    void releasePages(uint32_t first, uint32_t end)
+    {
+#if ASSERT_ENABLED
+        memset(static_cast<void*>(m_records + first), byteOfRoomThatIsTaken, sizeof(T) * (end - first));
+#else
+        uintptr_t begin = roundUpToMultipleOf(pageSize(), std::bit_cast<uintptr_t>(m_records + first));
+        uintptr_t behind = std::bit_cast<uintptr_t>(m_records + end) & ~(static_cast<uintptr_t>(pageSize()) - 1);
+        if (begin < behind) {
+            OSAllocator::decommit(std::bit_cast<void*>(begin), behind - begin);
+            OSAllocator::commit(std::bit_cast<void*>(begin), behind - begin, true, false);
+        }
+#endif
+    }
     void forgetUnit()
     {
 #if ASSERT_ENABLED
@@ -1290,6 +1303,7 @@ public:
         auto behind = std::ranges::upper_bound(m_recordsAbandoned, record.index(), { }, &std::pair<uint32_t, uint32_t>::first);
         return record.index() < (behind - 1)->second;
     }
+    void releaseAbandonedBlocks();
     void keepChangesToOlderParts(bool keeps)
     {
         m_keepsChangesToOlderParts = keeps;

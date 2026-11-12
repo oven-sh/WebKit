@@ -108,7 +108,7 @@ static Operand ownElementOfGuessedArrayOrElse(ElementAccessEmitter& elements, Ou
     return element;
 }
 
-CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest, std::optional<CellPointer>* baseOfSlot, bool isKnownCell)
+CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxed object, LayoutSetID receivers, LBasicBlock failure, const FieldAccess* readBehindTest, std::optional<CellPointer>* baseOfSlot)
 {
     Type known = typeOf(value->objectOperand());
     CellPointer cell = unboxCell(object);
@@ -116,7 +116,7 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
     static constexpr OpcodeSet accessesOfUnfinishedObjects { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::PutSlotOrAdd };
     if (accessesOfUnfinishedObjects.contains(value.opcode()) && value->receiverMayBeInBirth())
         marked = MarkedObjects::Pass;
-    if (!isKnownCell && known.primitives & ~cellPrimitives) {
+    if (known.primitives & ~cellPrimitives) {
         // The empty value has no tag bits, so it passes isCell.
         Condition isPresentCell = isCell(object);
         if (known.primitives & Primitive::Absent)
@@ -168,23 +168,6 @@ Word32 GuessedAccessEmitter::indexOrElse(Boxed position, LBasicBlock failure)
 {
     branchUnless(isInt32(position), failure);
     return unboxInt32(position);
-}
-
-bool GuessedAccessEmitter::isUsedOnlyByNextRead(const ValueContext& read)
-{
-    if (generator().isLayingOutTurns() || generator().keepsValuesInHeapFrame() || generator().checksEffects() || emittersCheckProofs())
-        return false;
-    ValueID next = read.operationsBehind().empty() ? ValueID() : read.operationsBehind().front();
-    if (!next || m_code.useCountOf(read.id()) != 1 || m_code.onlyUserOf(read.id()) != next)
-        return false;
-    const Operation& operation = m_code.at(next);
-    static constexpr OpcodeSet readsOfSlots { Opcode::GetSlot, Opcode::GetSlotOrUndefined };
-    if (!readsOfSlots.contains(operation.opcode) || !testsItsOwnGuess(operation) || operation.representation != Representation::JSValue || operation.objectOperand() != read.id())
-        return false;
-    if (operation.opcode == Opcode::GetSlotOrUndefined && operation.looksAboveEmptySlot())
-        return false;
-    FieldAccess access = fieldAccessFor(operation.key(), operation.receivers(), false);
-    return guessedAccessFindsSlot(access) && access.slot.representation != SlotRepresentation::DeferredClosure;
 }
 
 void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
@@ -255,24 +238,9 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         return askedAgainOfObject(found);
     };
 
-    bool holdsNarrowReference = slot.representation == SlotRepresentation::OptionalCell32 && !slot.isOutOfLine();
-    bool isContinuedByNext = !ways && holdsNarrowReference && !asksWhatSlotsHold && !asksObjectAgain && isUsedOnlyByNextRead(value);
-    LBasicBlock blockOfCell = nullptr;
-    CellPointer cellRead;
-    auto addCell = [&](CellPointer read) {
-        if (!isContinuedByNext) {
-            join->add(foundInSlot(boxCell(read)));
-            return;
-        }
-        blockOfCell = m_out.forkScope().block;
-        cellRead = read;
-    };
-
     LayoutSetID holders = membersWithFieldAmong(access, value->receivers());
     std::optional<CellPointer> baseByOneTable;
-    bool continuesRead = !!m_readContinuedByNext;
-    RELEASE_ASSERT(!continuesRead || m_readContinuedByNext == value->objectOperand());
-    CellPointer cell = receiverOrElse(value, object, holders, failure, &access, &baseByOneTable, continuesRead);
+    CellPointer cell = receiverOrElse(value, object, holders, failure, &access, &baseByOneTable);
     if (baseByOneTable || emitter<ShapeTestEmitter>().lastTestIsHeldAgainstEveryShape())
         access.layoutsThatTestInCodeLetThrough = holders;
     bool letsMarkedObjectsPass = (value.opcode() == Opcode::GetSlot || value.opcode() == Opcode::GetSlotOrUndefined) && value->receiverMayBeInBirth();
@@ -292,39 +260,19 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
         if (ways) {
             held.primitives &= ~Primitive::UndefinedOrNull;
             branch(emitter<TruthinessEmitter>().isTruthy(value, slots.loadSlot(base, slot, location, extensionWord, loaded), held), ways->targets);
-        } else if (isContinuedByNext)
-            addCell(decode(slots.loadSlot(base, slot, location, extensionWord, loaded).as<NarrowReference>()));
-        else
+        } else
             join->add(foundInSlot(conversions.box(value, slots.loadSlot(base, slot, location, extensionWord, loaded), loaded)));
     } else {
         LBasicBlock slotIsEmpty = readsEmptySlotAsUndefined ? newBlock() : nullptr;
         bool asksWhetherSlotIsFilled = value.opcode() != Opcode::GetSlot || !value->isFilledWhereShapeFits() || !receiverBearsNoMark;
         LBasicBlock slotIsEmptyWhereItIsToldFilled = !asksWhetherSlotIsFilled && asksWhatSlotsHold ? newBlock() : nullptr;
-        bool requestsReference = isContinuedByNext || (!ways && holdsNarrowReference && !asksWhatSlotsHold && asksWhetherSlotIsFilled && !generator().isLayingOutTurns());
-        if (requestsReference) {
-            build().statistics().count(StatisticID::ReferencesTestedBeforeDecoding);
-            NarrowReference word(m_out.load32(slots.addressOf(base, slot, location, extensionWord)));
-            LBasicBlock isReference = newBlock();
-            LBasicBlock isNoReference = newBlock();
-            m_out.branch(isCellReference(word).value(), normalEdge(isReference), unlikelyEdge(isNoReference));
-            m_out.appendToContinuation(isReference);
-            addCell(decode(word));
-
-            m_out.appendTo(isNoReference);
-            if (asksWhetherSlotIsFilled) {
-                LBasicBlock isMarker = newBlock();
-                m_out.branch(isZero(Word32(word.value())).value(), slotIsEmpty ? normalEdge(slotIsEmpty) : rareEdge(failure), normalEdge(isMarker));
-                m_out.appendTo(isMarker);
-            }
-            join->add(foundInSlot(Boxed(m_out.zeroExt(word.value(), Machine::Int64))));
-        }
-        Operand loaded = requestsReference ? Operand() : asksWhetherSlotIsFilled
+        Operand loaded = asksWhetherSlotIsFilled
             ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, slotIsEmpty ? unlikelyEdge(slotIsEmpty) : rareEdge(failure))
             : slotIsEmptyWhereItIsToldFilled ? slots.loadSlotOrLeaveIfEmpty(base, slot, location, extensionWord, rareEdge(slotIsEmptyWhereItIsToldFilled))
             : slots.loadSlotThatHoldsValue(base, slot, location, extensionWord);
         if (ways)
             branch(emitter<TruthinessEmitter>().isTruthy(value, loaded, held), ways->targets);
-        else if (!requestsReference)
+        else
             join->add(foundInSlot(conversions.box(value, loaded, types().at(widestTypeOf(loaded.representation)))));
 
         if (slotIsEmptyWhereItIsToldFilled) {
@@ -346,25 +294,11 @@ void GuessedAccessEmitter::generateSlotRead(const ValueContext& value)
     }
 
     m_out.appendTo(failure);
-    if (continuesRead) {
-        m_otherAnswersOfRead->add(object);
-        object = m_otherAnswersOfRead->finish();
-        m_readContinuedByNext = { };
-        m_otherAnswersOfRead.reset();
-    }
     if (ways) {
         define(value, accesses.getById(value, object, key));
         return;
     }
     join->add(accesses.getById(value, object, key));
-    if (blockOfCell) {
-        build().statistics().count(StatisticID::ReadsContinuedByNextRead);
-        m_out.appendTo(blockOfCell);
-        m_readContinuedByNext = value.id();
-        m_otherAnswersOfRead.emplace(WTF::move(*join));
-        define(value, boxCell(cellRead));
-        return;
-    }
     define(value, join->finish());
 }
 
@@ -541,6 +475,8 @@ bool GuessedAccessEmitter::unitReckonsWithElement(const ValueContext& read)
         m_reckonersAreKnown = true;
         const Code& code = generator().code();
         for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+            if (!code.isReached(BlockID(block)))
+                continue;
             for (ValueID id : code.valuesOf(BlockID(block))) {
                 const Operation& user = code.at(id);
                 if (user.opcode == Opcode::PutArrayElement) {

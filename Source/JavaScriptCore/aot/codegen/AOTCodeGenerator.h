@@ -256,6 +256,7 @@ public:
         ValueID bound;
         bool includesBound { false };
         uint32_t valuesPerIteration { 0 };
+        ValueID startOfCounter;
     };
     std::optional<PushesInLoop> findPushesInLoop(BlockID, ValueID array);
     LBasicBlock blockThatHoleLeavesTurnLaidOutBy();

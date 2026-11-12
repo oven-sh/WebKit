@@ -1157,6 +1157,8 @@ static bool someStoreIntoFieldWasCounted(const Code& code, const Operation& undo
 {
     ValueID cell = underlyingCellOf(code, undoStore.operand(0));
     for (uint32_t block = 0; block < code.numberOfBlocks(); ++block) {
+        if (!code.isReached(BlockID(block)))
+            continue;
         for (ValueID each : code.valuesOf(BlockID(block))) {
             const Operation& store = code.at(each);
             if ((store.opcode != Opcode::PutSlot && store.opcode != Opcode::PutSlotOrAdd) || (store.opcode == Opcode::PutSlot && store.undoesIterationStore()) || store.key() != undoStore.key())

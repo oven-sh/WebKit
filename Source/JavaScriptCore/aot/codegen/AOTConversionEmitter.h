@@ -97,7 +97,6 @@ public:
     void noteNumberWithoutPayload(Operand optional, Number number) { m_numbersWithoutPayload.add(optional.value, number.value()); }
 
     Operand decode(NarrowReference, const Type&, Representation);
-    Boxed decodeEmptyAsUndefined(NarrowReference loaded);
     NarrowReference compress(Operand, const Type&);
 
     Integer bitsOf(Operand);
