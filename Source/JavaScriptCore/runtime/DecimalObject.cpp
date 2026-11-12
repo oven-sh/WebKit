@@ -21,7 +21,7 @@ Structure* DecimalObject::createStructure(VM& vm, JSGlobalObject* globalObject, 
 // https://tc39.es/proposal-decimal/#sec-number-constructor-number-value
 double DecimalObject::toNumberValue() const
 {
-    return jsToNumber(m_value.toExponentialString());
+    return m_value.toDouble();
 }
 
 // https://tc39.es/proposal-decimal/#sec-numbertobigint

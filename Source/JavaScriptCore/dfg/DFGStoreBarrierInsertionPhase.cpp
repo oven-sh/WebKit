@@ -439,6 +439,7 @@ private:
             case NewArrayWithSizeAndStructure:
             case NewArrayBuffer:
             case NewInternalFieldObject:
+            case NewDecimal:
             case NewPromise:
             case NewTypedArray:
             case NewTypedArrayBuffer:

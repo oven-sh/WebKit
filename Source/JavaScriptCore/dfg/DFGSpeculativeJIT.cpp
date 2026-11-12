@@ -10895,9 +10895,6 @@ void SpeculativeJIT::compileCallDOM(Node* node)
             case SpecBoolean:
                 appendBoolean(edge);
                 break;
-            case SpecObjectOther:
-                appendCell(edge);
-                break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
                 break;

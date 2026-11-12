@@ -189,6 +189,7 @@ public:
     LValue logicalNot(LValue);
 
     LValue ctlz32(LValue);
+    LValue ctlz64(LValue value) { return ctlz32(value); }
     LValue doubleAbs(LValue);
     LValue doubleCeil(LValue);
     LValue doubleFloor(LValue);

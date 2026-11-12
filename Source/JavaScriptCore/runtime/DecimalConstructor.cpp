@@ -50,36 +50,50 @@ JSC_DEFINE_HOST_FUNCTION(callDecimal, (JSGlobalObject* globalObject, CallFrame*)
     return JSValue::encode(throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Decimal"_s));
 }
 
+static ALWAYS_INLINE std::optional<Decimal128> tryToDecimal128Inline(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (value.isString()) {
+        auto view = asString(value)->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return Decimal128::parse(view);
+    }
+    if (value.isInt32())
+        return Decimal128::fromInteger(value.asInt32());
+    // Number.prototype.toExponential gives the same digits as this, and like this it drops the sign of -0.
+    if (value.isNumber())
+        return Decimal128::fromDouble(value.asNumber());
+    if (value.isBigInt()) {
+        String text = value.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        return Decimal128::parse(text);
+    }
+    return std::nullopt;
+}
+
+std::optional<Decimal128> tryToDecimal128(JSGlobalObject* globalObject, JSValue value)
+{
+    return tryToDecimal128Inline(globalObject, value);
+}
+
 // https://tc39.es/proposal-decimal/#sec-the-decimal-constructor-value
 JSC_DEFINE_HOST_FUNCTION(constructDecimal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // The prototype is read from newTarget behind the check of the type, and before the text is parsed.
     JSValue argument = callFrame->argument(0);
-    String text;
-    std::optional<Decimal128> value;
-    if (argument.isBigInt()) {
-        text = argument.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-    } else if (argument.isInt32())
-        value = Decimal128::fromInteger(argument.asInt32());
-    else if (argument.isNumber()) {
-        // Number.prototype.toExponential gives the same digits as this, and like this it drops the sign of -0.
-        value = Decimal128::fromDouble(argument.asNumber());
-    } else if (argument.isString()) {
-        text = asString(argument)->value(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-    } else
+    if (!argument.isString() && !argument.isNumber() && !argument.isBigInt()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "Decimal requires a string, a number or a BigInt"_s);
-
-    // The prototype is read from newTarget before the text is parsed.
     JSObject* newTarget = asObject(callFrame->newTarget());
     Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, decimalStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (!value)
-        value = Decimal128::parse(text);
+    auto value = tryToDecimal128Inline(globalObject, argument);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!value) [[unlikely]] {
         throwSyntaxError(globalObject, scope, "Failed to parse String to Decimal"_s);
         return { };

@@ -46,3 +46,17 @@ for (const sites of [1, 3, 10]) {
             throw new Error(`${methods} of two realms: compiled ${compiles} times`);
     }
 }
+
+// What fails a check at each call is left to the function from then on.
+for (const [source, argument] of [["try { return x.add(y); } catch { }", 1], ["try { return x.add(y); } catch { }", { }], ["const o = { digits: 2 }; y(o); return x.toFixed(o);", o => o.other = 1],
+    ["try { return new Decimal(y === x ? x.toString() : y); } catch { }", "x"], ["try { return x.round(y === x ? 1e10 : y); } catch { }", 0.5], ["try { return x.toFixed({ digits: y === x ? 1 : y }); } catch { }", -1]]) {
+    const run = Function("x", "y", `${source} // ${typeof argument}`);
+    noInline(run);
+    if (typeof argument === "function")
+        noInline(argument);
+    for (let i = 0; i < 60000; ++i)
+        run(x, i < 6000 && typeof argument !== "function" ? x : argument);
+    const compiles = numberOfDFGCompiles(run);
+    if (compiles > 3 && compiles < 1000)
+        throw new Error(`${source}: compiled ${compiles} times`);
+}

@@ -205,10 +205,11 @@ RegisterID* DecimalNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
         return nullptr;
 
     RefPtr<RegisterID> result = generator.finalDestination(dst);
-    RefPtr<RegisterID> constructor = generator.moveLinkTimeConstant(generator.newTemporary(), LinkTimeConstant::Decimal);
+    RefPtr<RegisterID> function = generator.moveLinkTimeConstant(generator.newTemporary(), LinkTimeConstant::decimalLiteral);
     CallArguments arguments(generator, nullptr, 1);
-    generator.emitLoad(arguments.argumentRegister(0), m_value);
-    return generator.emitConstruct(result.get(), constructor.get(), constructor.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd());
+    generator.emitLoad(arguments.thisRegister(), jsUndefined());
+    generator.emitLoad(arguments.argumentRegister(0), m_isNegative ? generator.parserArena().identifierArena().makeIdentifier(generator.vm(), makeString('-', m_value.string()).span8()) : m_value);
+    return generator.emitCall(result.get(), function.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 
 // ------------------------------ ThisNode -------------------------------------

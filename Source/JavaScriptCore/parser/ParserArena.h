@@ -56,8 +56,6 @@ namespace JSC {
         ALWAYS_INLINE const Identifier& makeIdentifier(VM&, SymbolImpl*);
 
         const Identifier* makeBigIntDecimalIdentifier(VM&, const Identifier&, uint8_t radix);
-        // The name of the property { 1.50m: x }, which is that of object[1.50m].
-        const Identifier& makeDecimalIdentifier(VM&, const Identifier&);
         const Identifier& makeNumericIdentifier(VM&, double number);
         const Identifier& makePrivateIdentifier(VM&, ASCIILiteral, unsigned);
 

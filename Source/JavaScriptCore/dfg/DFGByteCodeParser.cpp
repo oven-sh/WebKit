@@ -40,7 +40,6 @@
 #include "CallVariantInlines.h"
 #include "CheckPrivateBrandStatus.h"
 #include "CodeBlock.h"
-#include "DecimalObject.h"
 #include "CodeBlockInlines.h"
 #include "CodeBlockWithJITType.h"
 #include "CommonSlowPaths.h"
@@ -56,6 +55,11 @@
 #include "DFGLiveCatchVariablePreservationPhase.h"
 #include "DFGOperations.h"
 #include "DOMJITGetterSetter.h"
+#include "DecimalConstructor.h"
+#include "DecimalObject.h"
+#include "DecimalOperations.h"
+#include "DecimalOperator.h"
+#include "DecimalPrototype.h"
 #include "DeleteByStatus.h"
 #include "FunctionCodeBlock.h"
 #include "GetByStatus.h"
@@ -527,6 +531,22 @@ private:
     bool handleIntrinsicGetter(Operand result, SpeculatedType prediction, const GetByVariant& intrinsicVariant, Node* thisNode, Node* unwrapped, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
     bool handleTypedArrayConstructor(Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, TypedArrayType, NOESCAPE const ChecksFunctor& insertChecks, CodeSpecializationKind);
+    using DecimalWords = std::array<Node*, 2>;
+    DecimalWords decimalConstant(Decimal128);
+    static std::optional<Decimal128> constantOf(DecimalWords);
+    DecimalWords decimalWordsOfTuple(Node*);
+    DecimalWords checkDecimal(Node*);
+    Node* addDecimalNode(NodeType, OpInfo, OpInfo, std::initializer_list<DecimalWords>);
+    // Of the realm of the code, which is that of the callee. Without useDecimal, where cached bytecode can have literals, null until one ran.
+    Structure* decimalStructure() { return m_inlineStackTop->m_codeBlock->globalObject()->decimalStructureConcurrently(); }
+    Node* newDecimal(DecimalWords);
+    Node* emitDecimalOperation(DecimalOperation, DecimalWords, std::optional<DecimalWords>, SpeculatedType prediction);
+    template<typename ChecksFunctor>
+    Node* handleDecimalMethod(DecimalOperation, int registerOffset, int argumentCountIncludingThis, SpeculatedType, NOESCAPE const ChecksFunctor& insertChecks);
+    template<typename ChecksFunctor>
+    Node* handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks);
+    template<typename ChecksFunctor>
+    Node* handleDecimalOperator(int registerOffset, SpeculatedType, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
     bool handleConstantFunction(Node* callTargetNode, Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, CodeSpecializationKind, SpeculatedType, Node* newTarget, NOESCAPE const ChecksFunctor& insertChecks);
     Node* handlePutByOffset(Node* base, unsigned identifier, PropertyOffset, Node* value);
@@ -4102,58 +4122,22 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             return CallOptimizationResult::Inlined;
         }
 
-        case DecimalPrototypeIntrinsic: {
+        case DecimalIntrinsic: {
             // Not where only the executable is known: code that sees Decimals of two realms would fail the check of the realm at one call after
             // the other.
-            if (realmToCheck)
+            if (realmToCheck || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadDecimalArgument))
                 return CallOptimizationResult::DidNothing;
-            if (!Options::useDOMJIT() || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            auto function = variant.nativeExecutable()->function();
+            Node* result = nullptr;
+            if (function == toTagged(decimalLiteral))
+                result = handleDecimalLiteral(registerOffset, insertChecks);
+            else if (function == toTagged(decimalOperator))
+                result = handleDecimalOperator(registerOffset, prediction, insertChecks);
+            else if (auto operation = decimalOperationOf(function))
+                result = handleDecimalMethod(*operation, registerOffset, argumentCountIncludingThis, prediction, insertChecks);
+            if (!result)
                 return CallOptimizationResult::DidNothing;
-
-            TaggedNativeFunction function = variant.nativeExecutable()->function();
-            if (const auto* signature = DecimalObject::directMethod(function)) {
-                // Here and not as the signature of the function: it makes its result in the realm of the caller, and only an intrinsic is checked for being of it.
-                if (argumentCountIncludingThis != static_cast<int>(1 + signature->argumentCount))
-                    return CallOptimizationResult::DidNothing;
-
-                // As in round(2). A check of other counts would fail at each place where one is a double, and the function throws for what is no integer.
-                for (unsigned i = 0; i < signature->argumentCount; ++i) {
-                    if (signature->arguments[i] == SpecInt32Only && !get(virtualRegisterForArgumentIncludingThis(i + 1, registerOffset))->isInt32Constant())
-                        return CallOptimizationResult::DidNothing;
-                }
-
-                insertChecks();
-                ASSERT(argumentCountIncludingThis <= JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS);
-                std::array<Node*, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands { };
-                for (int i = 0; i < argumentCountIncludingThis; ++i) {
-                    operands[i] = get(virtualRegisterForArgumentIncludingThis(i, registerOffset));
-                    if (!i || signature->arguments[i - 1] == SpecObjectOther)
-                        addToGraph(CheckJSCast, OpInfo(signature->classInfo), operands[i]);
-                }
-                Node* node = addToGraph(CallDOM, OpInfo(signature), OpInfo(prediction), operands[0], operands[1], operands[2]);
-                if (!signature->effect.mustGenerate())
-                    node->clearFlags(NodeMustGenerate);
-                setResult(node);
-                return CallOptimizationResult::Inlined;
-            }
-            const auto* method = DecimalObject::inlinedMethod(function);
-            if (!method)
-                return CallOptimizationResult::DidNothing;
-
-            insertChecks();
-            Node* base = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
-            addToGraph(CheckJSCast, OpInfo(DecimalObject::info()), base);
-
-            CallDOMGetterData* data = m_graph.m_callDOMGetterData.add();
-            data->domJIT = method;
-            data->requiredClassInfo = DecimalObject::info();
-            Ref<DOMJIT::CallDOMGetterSnippet> snippet = method->compiler()();
-            ASSERT(!snippet->requireGlobalObject && !snippet->effect.mustGenerate());
-            data->snippet = snippet.ptr();
-            m_graph.m_domJITSnippets.append(WTF::move(snippet));
-            Node* node = addToGraph(CallDOMGetter, OpInfo(data), OpInfo(prediction), base);
-            node->clearFlags(NodeMustGenerate);
-            setResult(node);
+            setResult(result);
             return CallOptimizationResult::Inlined;
         }
 
@@ -6894,6 +6878,236 @@ bool ByteCodeParser::handleTypedArrayConstructor(
     return true;
 }
 
+auto ByteCodeParser::decimalConstant(Decimal128 value) -> DecimalWords
+{
+    auto [low, upper] = value.words();
+    return { addToGraph(DecimalWordConstant, OpInfo(low)), addToGraph(DecimalWordConstant, OpInfo(upper)) };
+}
+
+std::optional<Decimal128> ByteCodeParser::constantOf(DecimalWords words)
+{
+    if (words[0]->op() != DecimalWordConstant || words[1]->op() != DecimalWordConstant)
+        return std::nullopt;
+    return Decimal128::fromWords(words[0]->decimalWord(), words[1]->decimalWord());
+}
+
+auto ByteCodeParser::decimalWordsOfTuple(Node* tuple) -> DecimalWords
+{
+    DecimalWords words;
+    for (unsigned i = 0; i < words.size(); ++i) {
+        words[i] = addToGraph(ExtractFromTuple, OpInfo(i), tuple);
+        words[i]->setResult(NodeResultStorage);
+    }
+    return words;
+}
+
+auto ByteCodeParser::checkDecimal(Node* value) -> DecimalWords
+{
+    if (value->op() == NewDecimal)
+        return { value->child1().node(), value->child2().node() };
+    addToGraph(CheckJSCast, OpInfo(DecimalObject::info()), value);
+    return { addToGraph(GetDecimalWord, OpInfo(0), value), addToGraph(GetDecimalWord, OpInfo(1), value) };
+}
+
+Node* ByteCodeParser::addDecimalNode(NodeType op, OpInfo info1, OpInfo info2, std::initializer_list<DecimalWords> operands)
+{
+    for (auto& operand : operands) {
+        for (Node* word : operand)
+            addVarArgChild(Edge(word, KnownStorageUse));
+    }
+    return addToGraph(Node::VarArg, op, info1, info2);
+}
+
+Node* ByteCodeParser::newDecimal(DecimalWords words)
+{
+    Structure* structure = decimalStructure();
+    RELEASE_ASSERT(structure && Decimal128::hasLayoutOfGeneratedCode());
+    return addToGraph(NewDecimal, OpInfo(m_graph.registerStructure(structure)), Edge(words[0], KnownStorageUse), Edge(words[1], KnownStorageUse));
+}
+
+Node* ByteCodeParser::emitDecimalOperation(DecimalOperation operation, DecimalWords x, std::optional<DecimalWords> y, SpeculatedType prediction)
+{
+    auto add = [&](NodeType op, OpInfo info2) {
+        return y ? addDecimalNode(op, OpInfo(operation), info2, { x, *y }) : addDecimalNode(op, OpInfo(operation), info2, { x });
+    };
+    if (operation <= DecimalOperation::Mantissa) {
+        if (auto left = constantOf(x), right = constantOf(y.value_or(x)); left && right)
+            return newDecimal(decimalConstant(evaluate(operation, *left, *right)));
+        return newDecimal(decimalWordsOfTuple(add(DecimalArith, OpInfo())));
+    }
+    ASSERT(operation > DecimalOperation::Scale10);
+    if (operation <= DecimalOperation::IsFinite)
+        return add(DecimalTest, OpInfo());
+    if (operation <= DecimalOperation::Exponent)
+        return add(DecimalToNumber, OpInfo(prediction));
+    ASSERT(operation <= DecimalOperation::ToExponential);
+    return addToGraph(DecimalToString, OpInfo(operation), Edge(x[0], KnownStorageUse), Edge(x[1], KnownStorageUse));
+}
+
+// Null, and nothing is emitted, for arguments that the function deals with.
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalMethod(DecimalOperation operation, int registerOffset, int argumentCountIncludingThis, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    auto argument = [&](int indexIncludingThis) -> Node* {
+        return indexIncludingThis < argumentCountIncludingThis ? get(virtualRegisterForArgumentIncludingThis(indexIncludingThis, registerOffset)) : nullptr;
+    };
+    auto isUndefined = [](Node* node) {
+        return !node || (node->hasConstant() && node->asJSValue().isUndefined());
+    };
+
+    switch (operation) {
+    case DecimalOperation::Abs:
+    case DecimalOperation::Negate:
+    case DecimalOperation::Mantissa:
+    case DecimalOperation::IsNaN:
+    case DecimalOperation::IsFinite:
+    case DecimalOperation::Exponent:
+        insertChecks();
+        return emitDecimalOperation(operation, checkDecimal(argument(0)), std::nullopt, prediction);
+
+    case DecimalOperation::ToString:
+    case DecimalOperation::ToExponential:
+        if (!isUndefined(argument(1)))
+            return nullptr;
+        insertChecks();
+        return emitDecimalOperation(operation, checkDecimal(argument(0)), std::nullopt, prediction);
+
+    case DecimalOperation::Round:
+    case DecimalOperation::Scale10: {
+        Node* count = argument(1);
+        if (!count)
+            return nullptr;
+        std::optional mode = Decimal128::RoundingMode::HalfEven;
+        if (Node* name = argument(2); operation == DecimalOperation::Round && !isUndefined(name))
+            mode = Decimal128::roundingModeNamed(name->tryGetString(m_graph));
+        if (!mode)
+            return nullptr;
+        insertChecks();
+        auto x = checkDecimal(argument(0));
+        if (auto value = constantOf(x); value && count->isInt32Constant())
+            return newDecimal(decimalConstant(operation == DecimalOperation::Round ? value->round(count->asInt32(), *mode) : value->scale10(count->asInt32())));
+        return newDecimal(decimalWordsOfTuple(addToGraph(DecimalScale, OpInfo(operation), OpInfo(static_cast<unsigned>(*mode)), Edge(x[0], KnownStorageUse), Edge(x[1], KnownStorageUse), Edge(count))));
+    }
+
+    case DecimalOperation::ToFixed: {
+        Node* options = argument(1);
+        std::array names { m_vm->propertyNames->digits.impl(), m_vm->propertyNames->roundingMode.impl() };
+        std::array offsets { invalidOffset, invalidOffset };
+        Structure* structure = nullptr;
+        if (!isUndefined(options)) {
+            // As in toFixed({ digits: 2 }), where the object is not made then.
+            if (options->op() != NewObject || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache))
+                return nullptr;
+            unsigned index = m_currentBlock->size();
+            Node* last;
+            do {
+                last = m_currentBlock->at(--index);
+            } while (last != options && (last->op() != PutStructure || last->child1().node() != options));
+            structure = last == options ? options->structure().get() : last->transition()->next.get();
+            if (structure->isDictionary())
+                return nullptr;
+            for (unsigned i = 0; i < names.size(); ++i) {
+                unsigned attributes;
+                offsets[i] = structure->getConcurrently(names[i], attributes);
+                if (isValidOffset(offsets[i])) {
+                    if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+                        return nullptr;
+                } else if (!m_graph.watchConditions(m_graph.tryEnsureAbsence(structure->realm(), structure, CacheableIdentifier::createFromImmortalIdentifier(names[i]))))
+                    return nullptr;
+            }
+        }
+        insertChecks();
+        auto words = checkDecimal(argument(0));
+        if (structure)
+            addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(structure)), options);
+        auto read = [&](unsigned i) {
+            return isValidOffset(offsets[i]) ? handleGetByOffset(SpecBytecodeTop, options, m_graph.identifiers().ensure(names[i]), offsets[i]) : jsConstant(jsUndefined());
+        };
+        Node* digits = structure ? read(0) : jsConstant(jsNumber(0));
+        Node* roundingMode = read(1);
+        addVarArgChild(Edge(words[0], KnownStorageUse));
+        addVarArgChild(Edge(words[1], KnownStorageUse));
+        addVarArgChild(digits);
+        addVarArgChild(roundingMode);
+        return addToGraph(Node::VarArg, DecimalToFixed, OpInfo(), OpInfo());
+    }
+
+    default: {
+        if (!argument(1))
+            return nullptr;
+        insertChecks();
+        auto x = checkDecimal(argument(0));
+        return emitDecimalOperation(operation, x, checkDecimal(argument(1)), prediction);
+    }
+    }
+}
+
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    // Null if it is very long.
+    String text = get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->tryGetString(m_graph);
+    if (text.isNull() || !decimalStructure())
+        return nullptr;
+
+    insertChecks();
+    return newDecimal(decimalConstant(Decimal128::parse(text).value()));
+}
+
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalOperator(int registerOffset, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    // The result is undefined where the operands are not Decimals.
+    if ((prediction & SpecOther) && (prediction & ~SpecOther))
+        return nullptr;
+
+    insertChecks();
+    Node* left = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+    Node* right = get(virtualRegisterForArgumentIncludingThis(3, registerOffset));
+    if (prediction & SpecOther) {
+        addToGraph(CheckNotJSCast, OpInfo(DecimalObject::info()), left);
+        return jsConstant(jsUndefined());
+    }
+
+    auto x = checkDecimal(left);
+    auto binary = [&](DecimalOperation operation) {
+        return emitDecimalOperation(operation, x, checkDecimal(right), prediction);
+    };
+    switch (static_cast<DecimalOperator>(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->asInt32())) {
+    case DecimalOperator::Add:
+        return binary(DecimalOperation::Add);
+    case DecimalOperator::Subtract:
+        return binary(DecimalOperation::Subtract);
+    case DecimalOperator::Multiply:
+        return binary(DecimalOperation::Multiply);
+    case DecimalOperator::Divide:
+        return binary(DecimalOperation::Divide);
+    case DecimalOperator::Remainder:
+        return binary(DecimalOperation::Remainder);
+    case DecimalOperator::Equal:
+        return binary(DecimalOperation::Equals);
+    case DecimalOperator::NotEqual:
+        return addToGraph(LogicalNot, binary(DecimalOperation::Equals));
+    case DecimalOperator::Less:
+        return binary(DecimalOperation::LessThan);
+    case DecimalOperator::LessOrEqual:
+        return binary(DecimalOperation::LessThanOrEqual);
+    case DecimalOperator::Greater:
+        return binary(DecimalOperation::GreaterThan);
+    case DecimalOperator::GreaterOrEqual:
+        return binary(DecimalOperation::GreaterThanOrEqual);
+    case DecimalOperator::Negate:
+        return emitDecimalOperation(DecimalOperation::Negate, x, std::nullopt, prediction);
+    case DecimalOperator::Increment:
+        return emitDecimalOperation(DecimalOperation::Add, x, decimalConstant(Decimal128::one()), prediction);
+    case DecimalOperator::Decrement:
+        return emitDecimalOperation(DecimalOperation::Subtract, x, decimalConstant(Decimal128::one()), prediction);
+    case DecimalOperator::ToNumeric:
+        return left;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 template<typename ChecksFunctor>
 bool ByteCodeParser::handleConstantFunction(
     Node* callTargetNode, Operand result, JSObject* function, int registerOffset,
@@ -6942,6 +7156,23 @@ bool ByteCodeParser::handleConstantFunction(
         else
             set(result, addToGraph(CallNumberConstructor, OpInfo(0), OpInfo(prediction), get(virtualRegisterForArgumentIncludingThis(1, registerOffset))));
 
+        return true;
+    }
+
+    if (function->classInfo() == DecimalConstructor::info()) {
+        if (kind != CodeSpecializationKind::CodeForConstruct || argumentCountIncludingThis < 2 || get(virtualRegisterForArgumentIncludingThis(0, registerOffset)) != callTargetNode)
+            return false;
+        if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadDecimalArgument))
+            return false;
+
+        insertChecks();
+        Node* argument = get(virtualRegisterForArgumentIncludingThis(1, registerOffset));
+        std::optional<Decimal128> constant;
+        if (argument->isNumberConstant())
+            constant = Decimal128::fromDouble(argument->asNumber());
+        else if (String text = argument->tryGetString(m_graph); !text.isNull())
+            constant = Decimal128::parse(text);
+        set(result, newDecimal(constant ? decimalConstant(*constant) : decimalWordsOfTuple(addToGraph(ToDecimal, argument))));
         return true;
     }
 

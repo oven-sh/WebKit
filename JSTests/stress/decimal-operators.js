@@ -341,3 +341,45 @@ for (let source of ["a ** b", "a & b", "a | b", "a ^ b", "a << b", "a >> b", "a 
     shouldBe("object" != typeof o, false);
     shouldBe(typeof o !== "object", false);
 }
+
+// Code that has seen one kind of operands meets another, and a realm that has only seen the Decimals of another.
+for (const [operator, method] of [["+", "add"], ["-", "subtract"], ["*", "multiply"], ["/", "divide"], ["%", "remainder"], ["==", "equals"], ["<", "lessThan"], ["<=", "lessThanOrEqual"], [">", "greaterThan"], [">=", "greaterThanOrEqual"]]) {
+    const object = { valueOf() { return 7; } }, number = { valueOf() { return 2; } };
+    const ordinary = operator === "==" ? false : eval(`7 ${operator} 2`);
+    for (const order of [0, 1]) {
+        const f = new Function("a", "b", `return a ${operator} b; // ${order}`);
+        noInline(f);
+        for (let turn = 0; turn < 2; ++turn) {
+            for (let i = 0; i < testLoopCount; ++i) {
+                if (turn === order)
+                    shouldBe(String(f(7m, 2m)), String(7m[method](2m)), operator);
+                else
+                    shouldBe(f(object, number), ordinary, operator);
+            }
+        }
+        for (const [a, b] of [[7m, number], [object, 2m]]) {
+            let error;
+            try {
+                shouldBe(f(a, b), false, operator);
+            } catch (e) {
+                error = e;
+            }
+            shouldBe(error instanceof TypeError, operator !== "==", operator);
+        }
+    }
+
+    const other = createGlobalObject();
+    const g = other.eval(`(function (a, b, rarely) { if (rarely) return -a; return a ${operator} b; })`);
+    for (let i = 0; i < testLoopCount; ++i)
+        shouldBe(String(g(7m, 2m)), String(7m[method](2m)), operator);
+    shouldBe(Object.getPrototypeOf(g(7m, 2m, true)), other.Decimal.prototype, operator);
+}
+{
+    function notEqual(a, b) { return a != b; }
+    noInline(notEqual);
+    const nan = new Decimal(NaN);
+    for (let i = 0; i < testLoopCount; ++i) {
+        shouldBe(notEqual(nan, nan), true);
+        shouldBe(notEqual(0m, -0m), false);
+    }
+}

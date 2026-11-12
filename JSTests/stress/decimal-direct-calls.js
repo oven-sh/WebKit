@@ -274,3 +274,18 @@ for (const [count, expected] of [["2", "19.99"], ["0", "20"], ["-1", "20"], ["21
     for (let i = 0; i < testLoopCount / 10; ++i)
         shouldBe(round(values[7]).toString(), expected, "round(" + count + ")");
 }
+
+// The same for each function whose arguments optimized code looks at itself.
+for (const [source, good, bad] of [["new Decimal(n)", ["1", 2n], ["x", { }, undefined]], ["x.round(n)", [1, 1e10], [0.5, "1"]], ["x.scale10(n)", [1, Infinity], [0.5, "1"]],
+    ["x.toFixed({ digits: n })", [1, 2], [-1, 0.5, "1", undefined, 1e300]], ["x.toFixed({ digits: 1, roundingMode: n })", ["ceil", undefined], ["up", 1]]]) {
+    for (const value of bad) {
+        const f = Function("x", "n", `try { ${source}; return "none"; } catch (e) { return e.name + e.message + e.stack.split("\\n")[0]; } // ${String(value)}`);
+        noInline(f);
+        const expected = f(values[7], value);
+        shouldBe(expected.endsWith("@[native code]"), true, source);
+        for (let i = 0; i < testLoopCount; ++i)
+            shouldBe(f(values[7], good[i & 1]), "none", source);
+        for (let i = 0; i < 3; ++i)
+            shouldBe(f(values[7], value), expected, source);
+    }
+}

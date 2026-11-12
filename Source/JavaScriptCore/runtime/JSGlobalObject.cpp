@@ -1870,7 +1870,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             init.setConstructor(DecimalConstructor::create(init.vm, DecimalConstructor::createStructure(init.vm, init.global, init.global->functionPrototype()), prototype));
         });
     if (Options::useDecimal())
-        putDirectWithoutTransition(vm, vm.propertyNames->builtinNames().DecimalPublicName(), m_decimalStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
+        putDirectWithoutTransition(vm, Identifier::fromString(vm, "Decimal"_s), m_decimalStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useTemporal()) {
         m_durationStructure.initLater(
@@ -2166,12 +2166,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         JSGlobalObject* globalObject = init.owner;
         init.set(globalObject->m_suppressedErrorStructure.constructor(globalObject));
     });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Decimal)].initLater([] (const Initializer<JSCell>& init) {
-        JSGlobalObject* globalObject = init.owner;
-        init.set(globalObject->m_decimalStructure.constructor(globalObject));
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalLiteral)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(JSFunction::create(init.vm, init.owner, 1, "decimalLiteral"_s, decimalLiteral, ImplementationVisibility::Private, DecimalIntrinsic));
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalOperator)].initLater([] (const Initializer<JSCell>& init) {
-        init.set(JSFunction::create(init.vm, init.owner, 3, "decimalOperator"_s, decimalOperator, ImplementationVisibility::Private));
+        init.set(JSFunction::create(init.vm, init.owner, 3, "decimalOperator"_s, decimalOperator, ImplementationVisibility::Private, DecimalIntrinsic));
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::DisposableStack)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;

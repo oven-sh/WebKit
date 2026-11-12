@@ -9,7 +9,11 @@
 
 namespace JSC {
 
+class Decimal128;
 class DecimalPrototype;
+
+// The value of new Decimal(value), or null where that throws. This throws only for want of memory.
+std::optional<Decimal128> tryToDecimal128(JSGlobalObject*, JSValue);
 
 class DecimalConstructor final : public InternalFunction {
 public:

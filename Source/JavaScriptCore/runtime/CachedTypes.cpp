@@ -5329,7 +5329,7 @@ protected:
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
     // 15: upstream's op_call_varargs_with_spread (325231@main; opcode numbering).
-    // 16: LinkTimeConstant::Decimal and decimalOperator.
+    // 16: LinkTimeConstant::decimalLiteral and decimalOperator.
     static constexpr uint32_t cachedTypesFormatRevision = 16;
     static uint32_t currentCacheVersion()
     {

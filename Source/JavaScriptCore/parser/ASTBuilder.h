@@ -248,7 +248,7 @@ public:
 
     ExpressionNode* createDecimal(const JSTokenLocation& location, const Identifier& value, const JSTextPosition& start, const JSTextPosition& end)
     {
-        auto* node = new (m_parserArena) DecimalNode(location, value);
+        auto* node = new (m_parserArena) DecimalNode(location, value, false);
         setExceptionLocation(node, start, end, end);
         return node;
     }
@@ -1274,6 +1274,14 @@ ExpressionNode* ASTBuilder::makeNegateNode(const JSTokenLocation& location, Expr
     if (n->isBigInt()) {
         const BigIntNode& bigIntNode = static_cast<const BigIntNode&>(*n);
         return createBigIntFromUnaryOperation(location, !bigIntNode.sign(), bigIntNode);
+    }
+
+    // With or without useDecimalOperators.
+    if (n->isDecimal()) [[unlikely]] {
+        auto& literal = static_cast<DecimalNode&>(*n);
+        auto* node = new (m_parserArena) DecimalNode(location, literal.value(), !literal.isNegative());
+        setExceptionLocation(node, literal.divotStart(), literal.divot(), literal.divotEnd());
+        return node;
     }
 
     return new (m_parserArena) NegateNode(location, n);

@@ -31,6 +31,7 @@
 #include "BytecodeStructs.h"
 #include "ClonedArguments.h"
 #include "CommonSlowPaths.h"
+#include "DecimalObject.h"
 #include "DirectArguments.h"
 #include "FTLJITCode.h"
 #include "FTLLazySlowPath.h"
@@ -181,6 +182,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalO
     case PhantomSpread:
     case PhantomNewArrayWithSpread:
     case PhantomNewArrayBuffer:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
         // Those are completely handled by operationMaterializeObjectInOSR
         break;
@@ -557,6 +559,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeObjectInOSR, HeapCell*, (J
             RELEASE_ASSERT_NOT_REACHED();
             return nullptr;
         }
+    }
+
+    case PhantomNewDecimal: {
+        Structure* structure = nullptr;
+        std::array<uint64_t, 2> words { };
+        for (unsigned i = materialization->properties().size(); i--;) {
+            auto location = materialization->properties()[i].location();
+            if (location.kind() == DecimalWordPLoc)
+                words[location.info()] = values[i];
+            else if (location == PromotedLocationDescriptor(StructurePLoc))
+                structure = uncheckedDowncast<Structure>(JSValue::decode(values[i]));
+        }
+        RELEASE_ASSERT(structure);
+        return DecimalObject::create(vm, structure, Decimal128::fromWords(words[0], words[1]));
     }
 
     case PhantomNewPromise: {

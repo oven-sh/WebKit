@@ -1669,7 +1669,7 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
         if (effect.def != DOMJIT::HeapRange::top()) {
             DOMJIT::HeapRange range = effect.def;
             if (range == DOMJIT::HeapRange::none())
-                def(PureValue(node, node->callDOMGetterData()->identityForCSE()));
+                def(PureValue(node, std::bit_cast<uintptr_t>(node->callDOMGetterData()->customAccessorGetter)));
             else {
                 // Def with heap location. We do not include "GlobalObject" for that since this information is included in the base node.
                 // We only see the DOMJIT getter here. So just including "base" is ok.
@@ -2331,6 +2331,7 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
 
     case NewObject:
     case NewInternalFieldObject:
+    case NewDecimal:
     case NewPromise:
     case NewRegExp:
     case NewStringObject:
@@ -2347,6 +2348,7 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewInternalFieldObject:
     case MaterializeNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomCreateActivation:
     case MaterializeCreateActivation:
@@ -2445,6 +2447,32 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
         // GetInternalField/PutInternalField pair around it stays visible to
         // ObjectAllocationSinking. Unlike other pure nodes we do not def(PureValue) here: this is
         // a tuple node and CSE's value-replacement would corrupt ExtractFromTuple references.
+        return;
+
+    case DecimalWordConstant:
+        def(PureValue(node, node->decimalWord()));
+        return;
+
+    case GetDecimalWord:
+        def(PureValue(node, node->decimalWordIndex()));
+        return;
+
+    case ToDecimal:
+    case DecimalArith:
+    case DecimalScale:
+        return; // A tuple, see above.
+
+    case DecimalToFixed:
+        def(PureValue(graph, node));
+        return;
+
+    case DecimalTest:
+    case DecimalToNumber:
+        def(PureValue(graph, node, static_cast<uintptr_t>(node->decimalOperation())));
+        return;
+
+    case DecimalToString:
+        def(PureValue(node, static_cast<uintptr_t>(node->decimalOperation())));
         return;
 
     case CompareBelow:

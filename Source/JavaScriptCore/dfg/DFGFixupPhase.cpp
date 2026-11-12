@@ -2798,6 +2798,7 @@ private:
         case PhantomNewAsyncGeneratorFunction:
         case PhantomNewAsyncFunction:
         case PhantomNewInternalFieldObject:
+        case PhantomNewDecimal:
         case PhantomNewPromise:
         case PhantomCreateActivation:
         case PhantomDirectArguments:
@@ -2938,6 +2939,29 @@ private:
             fixEdge<Int32Use>(node->child2());
             m_graph.m_tupleData.at(node->tupleOffset()).resultFlags = NodeResultJS;
             m_graph.m_tupleData.at(node->tupleOffset() + 1).resultFlags = NodeResultInt32;
+            break;
+        }
+
+        case GetDecimalWord: {
+            fixEdge<KnownCellUse>(node->child1());
+            break;
+        }
+
+        case ToDecimal:
+        case DecimalScale: {
+            Edge& argument = node->argumentOfDecimalNode();
+            if (argument->shouldSpeculateInt32()) {
+                fixEdge<Int32Use>(argument);
+                node->clearFlags(NodeMustGenerate);
+            } else if (node->op() == ToDecimal && argument->shouldSpeculateNumber()) {
+                fixEdge<DoubleRepUse>(argument);
+                node->clearFlags(NodeMustGenerate);
+            }
+            [[fallthrough]];
+        }
+        case DecimalArith: {
+            m_graph.m_tupleData.at(node->tupleOffset()).resultFlags = NodeResultStorage;
+            m_graph.m_tupleData.at(node->tupleOffset() + 1).resultFlags = NodeResultStorage;
             break;
         }
 
@@ -3791,6 +3815,12 @@ private:
         case ProfileControlFlow:
         case NewObject:
         case NewInternalFieldObject:
+        case DecimalWordConstant:
+        case DecimalTest:
+        case DecimalToNumber:
+        case DecimalToString:
+        case DecimalToFixed:
+        case NewDecimal:
         case NewPromise:
         case NewRegExp:
         case NewMap:
@@ -5286,12 +5316,6 @@ private:
         if (!signature)
             return false;
 
-        // Those are made by DFGByteCodeParser, with the checks of their arguments.
-        for (unsigned i = 0; i < signature->argumentCount; ++i) {
-            if (signature->arguments[i] == SpecObjectOther)
-                return false;
-        }
-
         {
             unsigned index = 0;
             bool shouldConvertToCallDOM = true;
@@ -5462,8 +5486,7 @@ private:
             case SpecUint16Array: 
             case SpecUint32Array: 
             case SpecFloat32Array: 
-            case SpecFloat64Array:
-            case SpecObjectOther: { // Of the class of the receiver, and a CheckJSCast is in front of the node.
+            case SpecFloat64Array: {
                 fixEdge<CellUse>(edge);
                 break;
             }

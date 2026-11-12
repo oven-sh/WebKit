@@ -7,6 +7,7 @@
 #include "Decimal128.h"
 
 #include <wtf/ASCIICType.h>
+#include <wtf/FastFloat.h>
 #include <wtf/Int128.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
@@ -183,12 +184,26 @@ struct DecimalDivision128 {
     uint64_t remainder;
 };
 
+// 10^i is 2^i * 5^i. The reciprocal of 5^i is too large by less than 2^-(64 + shift), which a dividend below 2^63 makes less than 5^-i.
+alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = [] {
+    std::array<Decimal128::Divisor, Decimal128::greatestPowerOfDivisors + 1> result { };
+    for (unsigned i = 1; i < result.size(); ++i) {
+        uint64_t powerOf5 = powersOf10In64Bits[i] >> i;
+        unsigned shift = 63 - std::countl_zero(powerOf5);
+        result[i] = { powersOf10In64Bits[i], powersOf10In64Bits[i] / 2, lowOf((makeUInt128(1, 0) << shift) / powerOf5) + 1, shift };
+    }
+    return result;
+}();
+
 static ALWAYS_INLINE DecimalDivision128 divideByShortPowerOf10(UInt128 value, unsigned power)
 {
+    ASSERT(power);
     uint64_t divisor = powersOf10In64Bits[power];
     uint64_t high = highOf(value);
-    if (!high)
-        return { lowOf(value) / divisor, lowOf(value) % divisor };
+    if (!high) {
+        uint64_t quotient = highOf(multiply64(lowOf(value) >> power, divisorsOf64Bits[power].reciprocal)) >> divisorsOf64Bits[power].shift;
+        return { quotient, lowOf(value) - quotient * divisor };
+    }
     uint64_t quotientHigh = 0;
     if (high >= divisor) {
         quotientHigh = high / divisor;
@@ -851,6 +866,26 @@ std::optional<Decimal128> Decimal128::parse(StringView text)
     return std::nullopt;
 }
 
+auto Decimal128::alignmentsByDistance() -> const Alignment*
+{
+    alignas(sizeof(Alignment)) static constexpr auto alignments = [] {
+        constexpr uint64_t greatest = (1ull << 62) - 1;
+        std::array<Alignment, 2 * reachOfAlignments + 1> result { };
+        for (int i = -reachOfAlignments; i <= reachOfAlignments; ++i) {
+            uint64_t factor = powersOf10In64Bits[std::max(i, 0)];
+            uint64_t otherFactor = powersOf10In64Bits[std::max(-i, 0)];
+            result[i + reachOfAlignments] = { factor, otherFactor, greatest / factor, greatest / otherFactor };
+        }
+        return result;
+    }();
+    return &alignments[reachOfAlignments];
+}
+
+auto Decimal128::divisorsByPower() -> const Divisor*
+{
+    return divisorsOf64Bits.data();
+}
+
 const uint64_t* Decimal128::powersOf10()
 {
     return powersOf10In64Bits.data();
@@ -869,11 +904,67 @@ Decimal128 Decimal128::fromDouble(double value)
     // Above 2^53 the digits of the double are not those of the integer.
     if (int64_t integer = static_cast<int64_t>(std::abs(value) <= 9007199254740992.0 ? value : 0); integer == value)
         return fromInteger(integer);
-    NumberToStringBuffer buffer;
-    auto digits = WTF::numberToStringAndSize(value, buffer);
-    if (auto result = parse(byteCast<Latin1Character>(digits))) [[likely]]
-        return *result;
-    return std::isnan(value) ? nan() : infinity(value < 0);
+    if (!std::isfinite(value)) [[unlikely]]
+        return std::isnan(value) ? nan() : infinity(value < 0);
+    auto shortest = WTF::numberToShortestDecimal(value);
+    return fromExact(value < 0, 0, shortest.significand, shortest.exponent);
+}
+
+double Decimal128::toDouble() const
+{
+    double magnitude;
+    if (!m_high && m_low && m_low < powersOf10In64Bits[19]) [[likely]]
+        magnitude = WTF::parseJSONDoubleFromDigits(m_low, m_exponent, m_low < powersOf10In64Bits[15] ? 15 : 19);
+    else if (isNaN())
+        return std::numeric_limits<double>::quiet_NaN();
+    else if (isInfinity())
+        magnitude = std::numeric_limits<double>::infinity();
+    else if (isZero())
+        magnitude = 0;
+    else {
+        size_t parsedLength;
+        return parseDouble(toExponentialString(), parsedLength);
+    }
+    return m_isNegative ? -magnitude : magnitude;
+}
+
+auto Decimal128::roundingModeNamed(StringView name) -> std::optional<RoundingMode>
+{
+    if (name == "floor"_s)
+        return RoundingMode::Floor;
+    if (name == "halfExpand"_s)
+        return RoundingMode::HalfExpand;
+    if (name == "ceil"_s)
+        return RoundingMode::Ceil;
+    if (name == "trunc"_s)
+        return RoundingMode::Trunc;
+    if (name == "halfEven"_s)
+        return RoundingMode::HalfEven;
+    return std::nullopt;
+}
+
+// https://tc39.es/proposal-decimal/#sec-decimal.prototype.exponent
+double Decimal128::exponent() const
+{
+    if (isNaN())
+        return std::numeric_limits<double>::quiet_NaN();
+    if (isInfinity())
+        return std::numeric_limits<double>::infinity();
+    if (isZero())
+        return -std::numeric_limits<double>::infinity();
+    return scientificExponent();
+}
+
+// https://tc39.es/proposal-decimal/#sec-decimal.prototype.mantissa
+//
+// The steps have the Numbers NaN and Infinity in place of the Decimal values, and do not say what e is. It is the exponent.
+Decimal128 Decimal128::mantissa() const
+{
+    if (isInfinity())
+        return infinity(false);
+    if (isNaN() || isZero())
+        return *this;
+    return significand();
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-abs
@@ -893,7 +984,7 @@ Decimal128 Decimal128::negate() const
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.add
-Decimal128 Decimal128::add(const Decimal128& x, const Decimal128& y)
+Decimal128 Decimal128::add(Decimal128 x, Decimal128 y)
 {
     // Both in 64 bits and not 0, and the sum too. NaN and infinity have a coefficient of 0.
     if (!(x.m_high | y.m_high) && x.m_low && y.m_low) [[likely]] {
@@ -926,7 +1017,11 @@ Decimal128 Decimal128::add(const Decimal128& x, const Decimal128& y)
             return fromExact(isNegative, 0, sum, exponent);
         }
     }
+    return addSlow(x, y);
+}
 
+NEVER_INLINE Decimal128 Decimal128::addSlow(Decimal128 x, Decimal128 y)
+{
     if (!x.isFinite() || !y.isFinite()) [[unlikely]] {
         if (x.isNaN() || y.isNaN())
             return nan();
@@ -983,16 +1078,25 @@ Decimal128 Decimal128::add(const Decimal128& x, const Decimal128& y)
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.subtract
-Decimal128 Decimal128::subtract(const Decimal128& x, const Decimal128& y)
+Decimal128 Decimal128::subtract(Decimal128 x, Decimal128 y)
 {
     return add(x, y.negate());
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.multiply
-Decimal128 Decimal128::multiply(const Decimal128& x, const Decimal128& y)
+Decimal128 Decimal128::multiply(Decimal128 x, Decimal128 y)
+{
+    // All in 64 bits and not 0. NaN and infinity have a coefficient of 0.
+    uint64_t product;
+    int exponent = static_cast<int>(x.m_exponent) + static_cast<int>(y.m_exponent);
+    if (!(x.m_high | y.m_high) && !__builtin_mul_overflow(x.m_low, y.m_low, &product) && product && static_cast<unsigned>(exponent - minimumQuantumExponent) <= static_cast<unsigned>(maximumQuantumExponent - minimumQuantumExponent)) [[likely]]
+        return fromExact(x.m_isNegative != y.m_isNegative, 0, product, exponent);
+    return multiplySlow(x, y);
+}
+
+NEVER_INLINE Decimal128 Decimal128::multiplySlow(Decimal128 x, Decimal128 y)
 {
     bool isNegative = x.m_isNegative != y.m_isNegative;
-    // NaN, infinity and 0 have a coefficient of 0.
     if (!(x.m_low | x.m_high) || !(y.m_low | y.m_high)) [[unlikely]] {
         if (x.isNaN() || y.isNaN())
             return nan();
@@ -1001,10 +1105,6 @@ Decimal128 Decimal128::multiply(const Decimal128& x, const Decimal128& y)
         return zero(isNegative);
     }
     if (!(x.m_high | y.m_high)) {
-        uint64_t shortProduct;
-        int exponent = static_cast<int>(x.m_exponent) + static_cast<int>(y.m_exponent);
-        if (!__builtin_mul_overflow(x.m_low, y.m_low, &shortProduct) && static_cast<unsigned>(exponent - minimumQuantumExponent) <= static_cast<unsigned>(maximumQuantumExponent - minimumQuantumExponent)) [[likely]]
-            return fromExact(isNegative, 0, shortProduct, exponent);
         UInt128 product = multiply64(x.m_low, y.m_low);
         return roundToDomain(isNegative, highOf(product), lowOf(product), x.m_exponent + y.m_exponent, false);
     }
@@ -1012,7 +1112,7 @@ Decimal128 Decimal128::multiply(const Decimal128& x, const Decimal128& y)
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.divide
-Decimal128 Decimal128::divide(const Decimal128& x, const Decimal128& y)
+Decimal128 Decimal128::divide(Decimal128 x, Decimal128 y)
 {
     if (x.isNaN() || y.isNaN())
         return nan();
@@ -1056,7 +1156,7 @@ Decimal128 Decimal128::divide(const Decimal128& x, const Decimal128& y)
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.remainder
-Decimal128 Decimal128::remainder(const Decimal128& x, const Decimal128& y)
+Decimal128 Decimal128::remainder(Decimal128 x, Decimal128 y)
 {
     if (x.isNaN() || y.isNaN() || x.isInfinity() || y.isZero())
         return nan();
@@ -1107,7 +1207,7 @@ Decimal128 Decimal128::remainder(const Decimal128& x, const Decimal128& y)
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.compare
-std::partial_ordering Decimal128::compare(const Decimal128& x, const Decimal128& y)
+std::partial_ordering Decimal128::compare(Decimal128 x, Decimal128 y)
 {
     auto order = [](UInt128 a, UInt128 b, bool isReversed) -> std::partial_ordering {
         int result = (a > b) - (a < b);
@@ -1121,6 +1221,11 @@ std::partial_ordering Decimal128::compare(const Decimal128& x, const Decimal128&
         uint64_t yFactor = powersOf10In64Bits[std::max(-distance, 0)];
         return order(multiply64(x.m_low, xFactor), multiply64(y.m_low, yFactor), x.isNegative());
     }
+    return compareSlow(x, y);
+}
+
+NEVER_INLINE std::partial_ordering Decimal128::compareSlow(Decimal128 x, Decimal128 y)
+{
     if (x.isNaN() || y.isNaN())
         return std::partial_ordering::unordered;
     auto signum = [](const Decimal128& value) {

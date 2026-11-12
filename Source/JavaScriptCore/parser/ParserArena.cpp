@@ -26,7 +26,6 @@
 #include "config.h"
 #include "ParserArena.h"
 
-#include "Decimal128.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "Nodes.h"
@@ -81,11 +80,6 @@ void ParserArena::allocateFreeablePool()
     m_freeableMemory = pool;
     m_freeablePoolEnd = pool + freeablePoolSize;
     ASSERT(freeablePool() == pool);
-}
-
-const Identifier& IdentifierArena::makeDecimalIdentifier(VM& vm, const Identifier& identifier)
-{
-    return makeIdentifier(vm, Decimal128::parse(identifier.string())->toString().span8());
 }
 
 const Identifier* IdentifierArena::makeBigIntDecimalIdentifier(VM& vm, const Identifier& identifier, uint8_t radix)

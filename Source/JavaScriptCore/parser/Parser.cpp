@@ -1413,9 +1413,6 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                     propertyName = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
                     failIfFalse(propertyName, "Cannot parse big int property name");
                     break;
-                case DECIMALLITERAL:
-                    propertyName = &m_parserArena.identifierArena().makeDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.ident);
-                    break;
                 case OPENBRACKET:
                     next();
                     propertyExpression = parseAssignmentExpression(context);
@@ -3227,10 +3224,6 @@ parseMethod:
             failIfFalse(ident, "Cannot parse big int property name");
             next();
             break;
-        case DECIMALLITERAL:
-            ident = &m_parserArena.identifierArena().makeDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.ident);
-            next();
-            break;
         case ESCAPED_KEYWORD:
         case IDENT:
             if (*m_token.m_data.ident == m_vm.propertyNames->async && !m_token.m_data.escaped) [[unlikely]] {
@@ -3254,7 +3247,7 @@ parseMethod:
             bool escaped = m_token.m_data.escaped;
             ASSERT(ident);
             next();
-            if (parseMode == SourceParseMode::MethodMode && !escaped && (matchIdentifierOrKeyword() || match(STRING) || match(DOUBLE) || match(INTEGER) || match(BIGINT) || match(DECIMALLITERAL) || match(OPENBRACKET) || match(PRIVATENAME))) {
+            if (parseMode == SourceParseMode::MethodMode && !escaped && (matchIdentifierOrKeyword() || match(STRING) || match(DOUBLE) || match(INTEGER) || match(BIGINT) || match(OPENBRACKET) || match(PRIVATENAME))) {
                 isGetter = *ident == propertyNames.get;
                 isSetter = *ident == propertyNames.set;
             }
@@ -4775,11 +4768,8 @@ namedProperty:
         context.setEndOffset(node, m_lexer->currentOffset());
         return context.createProperty(&ident, node, PropertyNode::Constant, SuperBinding::NotNeeded, InferName::Allowed, ClassElementTag::No);
     }
-    case DECIMALLITERAL:
     case BIGINT: {
-        const Identifier* ident = match(DECIMALLITERAL)
-            ? &m_parserArena.identifierArena().makeDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.ident)
-            : m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
+        const Identifier* ident = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
         failIfFalse(ident, "Cannot parse big int property name");
         unsigned functionStart = timesPosition.value_or(asyncPosition.value_or(m_token.m_startPosition));
         next();
@@ -4875,9 +4865,6 @@ template <class TreeBuilder> TreeProperty Parser<LexerType>::parseGetterSetter(T
     } else if (match(BIGINT)) {
         stringPropertyName = m_parserArena.identifierArena().makeBigIntDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.bigIntString, m_token.m_data.radix);
         failIfFalse(stringPropertyName, "Cannot parse big int property name");
-        next();
-    } else if (match(DECIMALLITERAL)) {
-        stringPropertyName = &m_parserArena.identifierArena().makeDecimalIdentifier(const_cast<VM&>(m_vm), *m_token.m_data.ident);
         next();
     } else if (consume(OPENBRACKET)) [[likely]] {
         computedPropertyName = parseAssignmentExpression(context);
@@ -5346,13 +5333,6 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
 
         return createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
     }
-    case BIGINT: {
-        const Identifier* ident = m_token.m_data.bigIntString;
-        uint8_t radix = m_token.m_data.radix;
-        JSTokenLocation location(tokenLocation());
-        next();
-        return context.createBigInt(location, ident, radix);
-    }
     case DECIMALLITERAL: {
         const Identifier* ident = m_token.m_data.ident;
         JSTokenLocation location(tokenLocation());
@@ -5360,6 +5340,13 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         JSTextPosition end = tokenEndPosition();
         next();
         return context.createDecimal(location, *ident, start, end);
+    }
+    case BIGINT: {
+        const Identifier* ident = m_token.m_data.bigIntString;
+        uint8_t radix = m_token.m_data.radix;
+        JSTokenLocation location(tokenLocation());
+        next();
+        return context.createBigInt(location, ident, radix);
     }
     case STRING: {
         const Identifier* ident = m_token.m_data.ident;

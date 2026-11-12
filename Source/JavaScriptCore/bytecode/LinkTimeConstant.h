@@ -161,7 +161,7 @@ class JSGlobalObject;
     v(DisposableStack, nullptr) \
     v(AsyncDisposableStack, nullptr) \
     v(enqueueJob, nullptr) \
-    v(Decimal, nullptr) \
+    v(decimalLiteral, nullptr) \
     v(decimalOperator, nullptr) \
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
