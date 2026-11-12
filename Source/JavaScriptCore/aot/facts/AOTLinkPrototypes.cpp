@@ -2459,6 +2459,10 @@ void LinkFlow::followPrototypeHelperCall(uint32_t call, FunctionID helper, Vecto
 void LinkFlow::abandonHelperCall(PrototypeHelperCall& call)
 {
     call.state = PrototypeHelperCall::State::IsGivenUp;
+    if (const PrototypeHelper* helper = knownPrototypeHelper(call.function)) {
+        for (FunctionID surrogate : helper->surrogates)
+            deferEscape(surrogate);
+    }
     for (uint32_t parameter = 0; parameter < call.arguments.size(); ++parameter) {
         if (call.arguments[parameter] != unseen())
             addEdge(call.arguments[parameter], this->parameter(call.function, parameter));
