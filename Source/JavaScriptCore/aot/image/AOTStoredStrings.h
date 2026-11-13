@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostFunctionSources.h"
 #include "JSExportMacros.h"
 #include <span>
 #include <wtf/Vector.h>
@@ -28,7 +27,7 @@ struct StoredStrings {
     Vector<uint8_t> report;
 };
 
-JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, DecompressSourceFunction = nullptr, StoredStringsForm = StoredStringsForm::ZeroTerminated);
+JS_EXPORT_PRIVATE StoredStrings readStoredStrings(std::span<const uint8_t> file, StoredStringsForm = StoredStringsForm::ZeroTerminated);
 
 } } // namespace JSC::AOT
 

@@ -517,8 +517,6 @@ Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
-    if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setDecompressSource(host->decompressSource);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);

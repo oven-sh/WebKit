@@ -474,7 +474,7 @@ static void testStoredStringsOfAnotherFormatAreRefusedByName()
 static void testStoredStringsAsJSONLines()
 {
     Vector<uint8_t> file = fileThatHoldsTextImage(1);
-    StoredStrings stored = readStoredStrings(file.span(), nullptr, StoredStringsForm::JSONLines);
+    StoredStrings stored = readStoredStrings(file.span(), StoredStringsForm::JSONLines);
     AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::NothingLiesBesideStrings);
 
     enum class Coverage : uint8_t { None, Strings, UncoveredRun };

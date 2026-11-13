@@ -104,7 +104,7 @@ public:
     CodeUnit genericEntrypointOf(uint32_t function) const;
 
     Vector<uint8_t> encodeTables();
-    TestImage build(Vector<CompiledCode>&&, std::unique_ptr<PreparedFunctionSources> = nullptr);
+    TestImage build(Vector<CompiledCode>&&);
 
     unsigned count(InternalErrorKind);
     unsigned count(UserDiagnosticKind, LimitID = LimitID::None);

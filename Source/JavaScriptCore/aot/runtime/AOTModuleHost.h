@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTHostFunctionSources.h"
 #include "AOTVector.h"
 #include <JavaScriptCore/AOTRecordTypes.h>
 #include <JavaScriptCore/ArgList.h>
@@ -108,7 +107,6 @@ struct ModuleHost {
     bool (*isRequestedByPendingFactory)(JSGlobalObject*, ModuleID);
     bool (*hasSourceCache)(JSGlobalObject*);
     void (*crashWithReason)(std::span<const char> reason);
-    DecompressSourceFunction decompressSource;
     uint64_t (*pendingFactoryCallID)(JSGlobalObject*, ModuleID, bool& shouldRejectEveryRequire);
     JSPromise* (*evaluateOriginalBeforeFactory)(JSGlobalObject*, ModuleID, bool& hasFactory);
     bool (*isLoadingUnderVitest)(JSGlobalObject*);
