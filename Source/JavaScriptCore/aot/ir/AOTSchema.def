@@ -111,6 +111,7 @@ heap ArrayLengths observable ordered perObject
 heap ArrayCapacity ordered perObject
 heap LoweredArrayLengths ordered perObject
 heap ClassObjects ordered
+heap WrittenTypes observable ordered perObject
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState, ClassObjects) collects

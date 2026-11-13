@@ -3999,7 +3999,7 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
         static constexpr uint8_t someStoredSlotWasRefused = 1 << 3;
         static constexpr AbstractHeapSet ownKeysHeaps { AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::NamedProperties };
         if (effectsFit && (summary.whatTurnsShowed & someStoredSlotWasRefused) && !trialVisit.misfits && !isCutShort && !assumed.mayRunOtherCode() && !trialVisit.done.mayRunOtherCode() && !summary.isPessimistic && !summary.didNarrowAssumedEffects
-            && !trialVisit.done.writes.overlaps(LocationMasks(ownKeysHeaps))) {
+            && !trialVisit.done.writes.overlaps(LocationMasks(ownKeysHeaps)) && !trialVisit.done.writes.contains(AbstractHeap::WrittenTypes)) {
             summary.didNarrowAssumedEffects = true;
             summary.effects = trialVisit.done;
             if (defersPurchase())

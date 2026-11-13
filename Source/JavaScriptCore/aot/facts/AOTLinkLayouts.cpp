@@ -3412,6 +3412,19 @@ FlowNodeID LinkFlow::instanceLockNode(LayoutID classLayout)
     });
 }
 
+FlowNodeID LinkFlow::lostNameNode(LayoutID layout)
+{
+    return nodeAskedOnceByLane(MadeOnDemand::LostName, layout.index(), [&]() -> FlowNodeID {
+        if (auto known = m_lostNameNodes.find(layout.index()); known != m_lostNameNodes.end())
+            return FlowNodeID(known->value);
+        FlowNodeID node = makeNode();
+        m_lostNameNodes.add(layout.index(), node.index());
+        if (possibleChanges[layout.index()].contains(LayoutChange::LosesProperty))
+            arrive(node, fromTypeID(TypeTable::undefined));
+        return node;
+    });
+}
+
 FlowNodeID LinkFlow::foundWhereFieldIsEmpty(FieldReference reference)
 {
     uint32_t cell = m_firstFieldOfLayout[reference.layout.index()] + reference.field;

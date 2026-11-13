@@ -27,9 +27,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v3 = Undefined @0
     v4 = NewClosure function=f2 @0
     v5 = Convert v4 declared={type=f2 flags=[IsFromCompiler]} @0
-    v6 = Builtin builtin=Process @25
-    v7 = PropGet v6 key="argv" @25
-    v8 = Convert v7 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @25
+    v6 = Builtin builtin=GlobalThis @25
+    v7 = PropGet v6 key="globalThis" [isFreeName] @25
+    v8 = Convert v7 declared={type=builtin(GlobalThis) flags=[IsExpected]} @25
     v9 = Integer integer=5 @25
     v10 = ElemGet v8, v9 @33
     v11 = ToBoolean v10 @25

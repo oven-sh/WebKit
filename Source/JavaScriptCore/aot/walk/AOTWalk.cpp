@@ -4759,8 +4759,8 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
         switch (draft.opcode) {
         case Opcode::PutSlot:
         case Opcode::PutSlotOrAdd:
-            if (!testsItsOwnGuess(draft) && storeMayEndWrittenType(*this, membersOf(m_types, draft.receivers()), draft.key(), typeOf(draft.valueOperand())))
-                effects.writes.add(AbstractHeap::NamedProperties);
+            if (!testsItsOwnGuess(draft))
+                addEffectsOfStoringNothing(*this, membersOf(m_types, draft.receivers()), draft.key(), typeOf(draft.valueOperand()), effects);
             break;
         case Opcode::GetPropertyOfHeir:
         case Opcode::PutPropertyOfHeir:

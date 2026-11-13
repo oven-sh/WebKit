@@ -40,9 +40,9 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v20 = FinishClass v14 layout=L1 @62
     v21 = Convert v20 declared={type=f3 flags=[IsFromCompiler]} @62
     v22 = Convert v20 declared={type=f3 flags=[IsFromCompiler]} @62
-    v23 = Builtin builtin=Process @436
-    v24 = PropGet v23 key="argv" @436
-    v25 = Convert v24 declared={type=builtin(ProcessArgv) flags=[IsExpected]} @436
+    v23 = Builtin builtin=GlobalThis @436
+    v24 = PropGet v23 key="globalThis" [isFreeName] @436
+    v25 = Convert v24 declared={type=builtin(GlobalThis) flags=[IsExpected]} @436
     v26 = Integer integer=5 @436
     v27 = ElemGet v25, v26 @444
     v28 = ToBoolean v27 @436

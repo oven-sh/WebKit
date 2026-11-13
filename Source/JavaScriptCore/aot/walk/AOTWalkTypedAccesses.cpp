@@ -1532,20 +1532,25 @@ static bool slotMayBeAskedForWrittenType(const Walker& walker, LayoutID member, 
     return origin.flags.contains(FieldFlags::IsRequired) || record.flags.contains(FieldFlags::IsRequired) || layout.kind == LayoutKind::Container || (layout.kind == LayoutKind::Instance && isRequiredByParentForTypedAccess(program, member, key));
 }
 
-bool storeMayEndWrittenType(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key, TypeID typeOfStored)
+void addEffectsOfStoringNothing(const Walker& walker, std::span<const LayoutID> receivers, PropertyKeyID key, TypeID typeOfStored, Effects& effects)
 {
     if (typeOfStored && !walker.types().at(typeOfStored).mayBeUndefinedOrNull())
-        return false;
-    return std::ranges::any_of(receivers, [&](LayoutID member) {
+        return;
+    for (LayoutID member : receivers) {
         std::optional<FieldIndex> field = walker.plan().slots().findField(walker.program(), member, key);
-        return field && (walker.plan().layout(member).holdsRawValueFromBirth(*field) || slotMayBeAskedForWrittenType(walker, member, *field, key));
-    });
+        if (field && walker.plan().layout(member).holdsRawValueFromBirth(*field))
+            effects.writes.add(AbstractHeap::NamedProperties);
+        else if (field && slotMayBeAskedForWrittenType(walker, member, *field, key))
+            effects.writes.add(AbstractHeap::WrittenTypes);
+    }
 }
 
-bool typedStoreAheadMayEndWrittenType(Walker& walker, TypeID typeOfObject, PropertyKeyID key, TypeID typeOfStored)
+void addEffectsOfStoringNothingAhead(Walker& walker, TypeID typeOfObject, PropertyKeyID key, TypeID typeOfStored, Effects& effects)
 {
-    std::optional<ReceiversOfTypedAccess> receivers = typeOfObject ? findReceiversOfTypedAccess(walker, typeOfObject) : std::nullopt;
-    return !receivers || storeMayEndWrittenType(walker, receivers->members.span(), key, typeOfStored);
+    if (std::optional<ReceiversOfTypedAccess> receivers = typeOfObject ? findReceiversOfTypedAccess(walker, typeOfObject) : std::nullopt)
+        addEffectsOfStoringNothing(walker, receivers->members.span(), key, typeOfStored, effects);
+    else
+        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::WrittenTypes });
 }
 
 bool markOfCellAnswersForRead(Walker& walker, const BodyValue& read, TypeID typeOfObject)

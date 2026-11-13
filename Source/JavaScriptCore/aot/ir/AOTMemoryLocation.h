@@ -379,6 +379,7 @@ ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, co
     case AbstractHeap::ArrayCapacity:
     case AbstractHeap::LoweredArrayLengths:
     case AbstractHeap::ClassObjects:
+    case AbstractHeap::WrittenTypes:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

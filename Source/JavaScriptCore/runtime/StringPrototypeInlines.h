@@ -916,9 +916,10 @@ public:
         , m_function(function)
         , m_callData(callData)
         , m_lookup(lookup)
-        , m_recent(FillWith { }, numberOfRecentReplacements, RecentReplacement { })
     {
     }
+
+    ~ReplacerByKeyedLookup() { forgetRecentReplacements(); }
 
     NEVER_INLINE JSString* replace(VM& vm, JSCellButterfly* matches)
     {
@@ -926,6 +927,7 @@ public:
         EnsureStillAliveScope keepMatches(matches);
         unsigned endOfLastMatch = 0;
         unsigned length = matches->length();
+        m_numberOfMatches = length / 2;
         // Reading maxShortLength characters at any offset below this stays inside the source.
         const Latin1Character* source = m_source.is8Bit() ? m_source.span8().data() : nullptr;
         unsigned endOfFullReads = source && m_source.length() > maxShortLength ? m_source.length() - maxShortLength : 0;
@@ -946,7 +948,7 @@ public:
             JSString* replacement = nullptr;
             StringImpl* text = nullptr;
             if (key && recent.key == key && recent.length > maxShortLength)
-                memcpy(&text, recent.characters.data(), sizeof(text));
+                text = recent.longText();
             else {
                 replacement = findReplacement(vm, matched, start);
                 RETURN_IF_EXCEPTION(scope, nullptr);
@@ -976,25 +978,82 @@ private:
         const StringImpl* key { nullptr };
         unsigned keyLength { 0 };
         unsigned length { 0 };
-        // The characters, or the address of a longer string.
+        // The characters, or the address of a longer string, which is referenced.
         std::array<Latin1Character, maxShortLength> characters { };
-    };
-    static constexpr unsigned numberOfRecentReplacements = 2048;
-    static_assert(hasOneBitSet(numberOfRecentReplacements));
 
-    ALWAYS_INLINE RecentReplacement& recentReplacement(const StringImpl* key)
+        StringImpl* longText() const
+        {
+            StringImpl* text;
+            memcpy(&text, characters.data(), sizeof(text));
+            return text;
+        }
+
+        void clear()
+        {
+            if (length > maxShortLength)
+                longText()->deref();
+            key = nullptr;
+            length = 0;
+        }
+    };
+    static constexpr unsigned maxNumberOfRecentReplacements = 2048;
+    static_assert(hasOneBitSet(maxNumberOfRecentReplacements));
+
+    ALWAYS_INLINE size_t placeOf(const StringImpl* key) const
     {
         uintptr_t address = std::bit_cast<uintptr_t>(key) >> 4;
-        return m_recent[(address ^ address >> 11) & (numberOfRecentReplacements - 1)];
+        return (address ^ address >> 11) & (m_recent.size() - 1);
+    }
+
+    ALWAYS_INLINE const RecentReplacement& recentReplacement(const StringImpl* key) const { return m_recent[placeOf(key)]; }
+
+    void remember(const StringImpl& key, StringImpl& text)
+    {
+        if (m_memoryOfRecent.isEmpty()) {
+            m_memoryOfRecent.grow(std::min(maxNumberOfRecentReplacements, roundUpToPowerOfTwo(m_numberOfMatches)));
+            m_recent = m_memoryOfRecent.mutableSpan();
+        }
+        size_t place = placeOf(&key);
+        RecentReplacement& recent = m_recent[place];
+        if (recent.key)
+            recent.clear();
+        else
+            m_usedPlaces.append(static_cast<uint16_t>(place));
+        recent.key = &key;
+        recent.keyLength = key.length();
+        recent.length = text.length();
+        if (recent.length <= maxShortLength) {
+            memcpy(recent.characters.data(), text.span8().data(), recent.length);
+            return;
+        }
+        text.ref();
+        StringImpl* address = &text;
+        memcpy(recent.characters.data(), &address, sizeof(address));
+    }
+
+    void forgetRecentReplacements()
+    {
+        for (uint16_t place : m_usedPlaces)
+            m_recent[place].clear();
+        m_usedPlaces.shrink(0);
     }
 
     NEVER_INLINE JSString* findReplacement(VM& vm, JSString* matched, unsigned start)
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSValue answer = m_lookup.tryGet(m_globalObject, matched);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSValue answer;
+        // While most matches need a call, looking first is tried ever less often.
+        if (m_balanceOfLookups >= 0 || hasOneBitSet(m_numberOfCalls)) {
+            if (std::exchange(m_wasCalled, false))
+                m_lookup.didCall();
+            answer = m_lookup.tryGet(m_globalObject, matched);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            m_balanceOfLookups = answer ? std::max<int64_t>(m_balanceOfLookups, 0) + 1 : m_balanceOfLookups - 1;
+        }
         bool isCalled = !answer;
         if (isCalled) {
+            ++m_numberOfCalls;
+            m_wasCalled = true;
             if (!m_cachedCall) {
                 CachedCall::tryEmplace(m_cachedCall, m_globalObject, m_function, m_callData, 3);
                 RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1007,21 +1066,11 @@ private:
         RETURN_IF_EXCEPTION(scope, nullptr);
         replacement->value(m_globalObject);
         RETURN_IF_EXCEPTION(scope, nullptr);
-        if (isCalled) {
-            m_lookup.didCall();
-            m_recent.fill(RecentReplacement { });
-        } else if (StringImpl* key = matched->tryGetValueImpl(); isString && key && key->isAtom()) {
-            StringImpl* text = replacement->getValueImpl();
-            if (text->is8Bit()) {
-                RecentReplacement& recent = recentReplacement(key);
-                recent.key = key;
-                recent.keyLength = key->length();
-                recent.length = text->length();
-                if (recent.length <= maxShortLength)
-                    memcpy(recent.characters.data(), text->span8().data(), recent.length);
-                else
-                    memcpy(recent.characters.data(), &text, sizeof(text));
-            }
+        if (isCalled)
+            forgetRecentReplacements();
+        else if (StringImpl* key = matched->tryGetValueImpl(); isString && key && key->isAtom()) {
+            if (StringImpl* text = replacement->getValueImpl(); text->is8Bit())
+                remember(*key, *text);
         }
         return replacement;
     }
@@ -1073,7 +1122,15 @@ private:
     const CallData& m_callData;
     AOT::KeyedLookup& m_lookup;
     std::optional<CachedCall> m_cachedCall;
-    Vector<RecentReplacement> m_recent;
+    unsigned m_numberOfMatches { 0 };
+    unsigned m_numberOfCalls { 0 };
+    bool m_wasCalled { false };
+    int64_t m_balanceOfLookups { 0 };
+    // One entry that holds nothing until a replacement is remembered.
+    RecentReplacement m_emptyReplacement;
+    std::span<RecentReplacement> m_recent { singleElementSpan(m_emptyReplacement) };
+    Vector<RecentReplacement> m_memoryOfRecent;
+    Vector<uint16_t> m_usedPlaces;
     Vector<Latin1Character> m_characters;
     size_t m_used { 0 };
     std::optional<StringBuilder> m_builder;
@@ -1093,7 +1150,7 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
 
 #if ENABLE(AOT)
     if (callData.type == CallData::Type::Compiled) {
-        if (AOT::KeyedLookup lookup(replaceFunction, callData.compiled.realm); lookup)
+        if (AOT::KeyedLookup lookup(replaceFunction, callData.compiled.realm); lookup.hasObject())
             RELEASE_AND_RETURN(scope, ReplacerByKeyedLookup(globalObject, string, source, replaceFunction, callData, lookup).replace(vm, result));
     }
 #endif

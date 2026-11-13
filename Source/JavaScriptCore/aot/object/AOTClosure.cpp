@@ -850,6 +850,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     }
     if (slot.thisValue() == JSValue(closure) && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
+    Structure* structureBefore = closure->structure();
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
@@ -866,6 +867,8 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
         }
     }
+    if (slot.type() == PutPropertySlot::ExistingProperty && closure->structure() != structureBefore)
+        slot.disableCaching();
     if (name == vm.propertyNames->prototype) [[unlikely]] {
         slot.disableCaching();
         didChangePrototypeProperty(closure);

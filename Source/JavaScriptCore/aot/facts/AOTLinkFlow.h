@@ -1413,7 +1413,7 @@ public:
     private:
         const LinkFlow* m_flow;
     };
-    enum class MadeOnDemand : uint8_t { InstanceLocks, Contents, ContentsOfFamily, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundWhereFieldIsEmpty, AppendedField, AppendedStoreNode, FoundOnClosuresOf, FoundOnClassObjectsFrom, LaidOnClosuresOf, WrittenAtMember, WhereLossIsTold, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, LaidOnLostClosures, MadeByLostFunctions, NameAddedByTests, FunctionOnObjectPrototype, AnyFieldDefinedOn, AnyFieldReadThrough, AnyFieldStoredThrough, LiteralKeyRead, ResultOfOperator };
+    enum class MadeOnDemand : uint8_t { InstanceLocks, LostName, Contents, ContentsOfFamily, TakenForConstant, FieldReadThroughLost, FieldStoredThroughLost, FieldReadThrough, FieldStoredThrough, FoundOnPrototypesAbove, FoundBesideFieldsUnder, FoundWhereFieldIsEmpty, AppendedField, AppendedStoreNode, FoundOnClosuresOf, FoundOnClassObjectsFrom, LaidOnClosuresOf, WrittenAtMember, WhereLossIsTold, ParameterOfLostFunctions, ReceiverOfLostFunctions, ResultOfLostFunctions, LaidOnLostClosures, MadeByLostFunctions, NameAddedByTests, FunctionOnObjectPrototype, AnyFieldDefinedOn, AnyFieldReadThrough, AnyFieldStoredThrough, LiteralKeyRead, ResultOfOperator };
     static constexpr size_t numberOfKindsMadeOnDemand = static_cast<size_t>(MadeOnDemand::ResultOfOperator) + 1;
     uint32_t askedOnceByLane(MadeOnDemand kind, uint64_t words, const Invocable<uint32_t()> auto& make) const
     {
@@ -2037,6 +2037,7 @@ public:
     bool hasLockableInstances(LayoutID classLayout) const { return m_classesWithLockableInstances.get(classLayout.index()); }
     void noteLockableInstances(LayoutID);
     FlowNodeID instanceLockNode(LayoutID classLayout);
+    FlowNodeID lostNameNode(LayoutID);
     bool mayReadInFrontOfDefinition(FunctionID reader, const SummaryAccess&, LayoutID) const;
     struct InstanceOfGuardedRead {
         ValueID site;
@@ -2380,6 +2381,7 @@ private:
     Vector<uint32_t> m_nodesFoundWhereFieldsAreEmpty;
     BitVector m_classesWithLockableInstances;
     HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_instanceLockNodes;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lostNameNodes;
 
     void indexConstructorFunctions();
     void findFunctionsListingReturns();

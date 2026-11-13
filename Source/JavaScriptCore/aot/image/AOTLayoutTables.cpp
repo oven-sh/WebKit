@@ -340,7 +340,8 @@ static FieldsOfLayoutRecord collectFieldsOfLayoutRecord(const TableEncoder& enco
         data.isHeldFilled = isHeldFilled.get(index);
         data.isWrittenPrivateName = field.flags.contains(Typed::FieldFlags::IsPrivate) && !field.flags.contains(Typed::FieldFlags::IsHidden) && field.key && program.at(field.key).owner == id;
         data.isKeptFromComparisons = data.isWrittenPrivateName && encoder.facts.linked().field(reference).isKeptFromComparisons;
-        data.slotHoldsUndefinedAndNull = facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) && !slot.provenType;
+        bool rawSlotTakesUndefinedAndNull = slot.typeOfRawValue && slot.type && !(Typed::Primitive::UndefinedOrNull & ~program.at(slot.type).primitives);
+        data.slotHoldsUndefinedAndNull = (facts.facts.contains(Typed::FieldFact::SlotHoldsUndefinedAndNull) || rawSlotTakesUndefinedAndNull) && !slot.provenType;
         data.flags = flagsOfFieldInLayoutRecord(field, facts, slot);
         if (slot.holdsAccessor && field.key && Typed::takesAccessorsOfLibraryAlone(program, encoder.plan.slots(), id, field.key))
             data.flags |= fieldTakesAccessorsOfLibraryAlone;

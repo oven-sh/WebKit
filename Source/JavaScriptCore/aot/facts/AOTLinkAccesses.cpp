@@ -197,7 +197,8 @@ private:
     using PrototypeNames = LinkFlow::PrototypeNames;
     bool appendNamesOfRecords(FlowNodeID, PrototypeNames, Vector<PropertyKeyID, 16>& names);
     PrototypeNames prototypeNamesAt(const BodyIndex&, ValueID object, ValueID name, const LinkType& objects);
-    bool storeEachListedValue(const LinkType& listed, PrototypeNames);
+    enum class ListedNames : bool { AreThere, MayBeGone };
+    bool storeEachListedValue(const LinkType& listed, PrototypeNames, ListedNames);
     void resolveUnderNames(std::span<const PropertyKeyID>);
     bool storesUnderCallbackKeys(const LinkType& subject);
     bool accessesListedNames(const LinkType& subject);
@@ -2542,7 +2543,7 @@ bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
     Vector<PropertyKeyID, 16> names;
     if (!appendNamesOfRecords(node, prototypeNames, names))
         return false;
-    if (!holdsValueUnderKey(*index, store, *listed) || !storeEachListedValue(records, prototypeNames))
+    if (!holdsValueUnderKey(*index, store, *listed) || !storeEachListedValue(records, prototypeNames, listed->givesPairs ? ListedNames::AreThere : ListedNames::MayBeGone))
         resolveUnderNames(names.span());
     return true;
 }
@@ -2671,15 +2672,22 @@ auto AccessInLinkAccesses::prototypeNamesAt(const BodyIndex& index, ValueID obje
     return PrototypeNames::Excluded;
 }
 
-bool AccessInLinkAccesses::storeEachListedValue(const LinkType& listed, PrototypeNames prototypeNames)
+bool AccessInLinkAccesses::storeEachListedValue(const LinkType& listed, PrototypeNames prototypeNames, ListedNames listedNames)
 {
     Vector<LinkFlow::OwnValue, 16> stored;
+    FlowNodeID undefinedIfGone;
     bool holdsValuesInSight = true;
     m_flow.forEachLayoutOf(listed, [&](LayoutID layout) {
         Vector<LinkFlow::OwnValue, 16> values(m_flow.ownValuesOf(layout));
         holdsValuesInSight = holdsValuesInSight && !values.isEmpty() && !m_flow.possibleChanges[layout.index()].containsAny({ LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor });
         if (!holdsValuesInSight)
             return;
+        if (listedNames == ListedNames::MayBeGone) {
+            FlowNodeID lostName = m_flow.lostNameNode(layout);
+            tellAgainOnceClimbsWhoeverTells(lostName);
+            if (!m_flow.typeAt(lostName).isNever())
+                undefinedIfGone = lostName;
+        }
         size_t numberOfListedValues = values.size();
         m_flow.appendAppendedNames(layout, values);
         bool isInstance = m_program.at(layout).kind == LayoutKind::Instance;
@@ -2712,6 +2720,10 @@ bool AccessInLinkAccesses::storeEachListedValue(const LinkType& listed, Prototyp
     for (const LinkFlow::OwnValue& value : stored) {
         m_value = value.node;
         resolveUnderNames(std::span<const PropertyKeyID>(&value.key, 1));
+        if (undefinedIfGone) {
+            m_value = undefinedIfGone;
+            resolveUnderNames(std::span<const PropertyKeyID>(&value.key, 1));
+        }
     }
     m_value = storedUnderAnyName;
     m_flow.build.statistics().count(StatisticID::ListedValuesStoredByName);
@@ -2753,7 +2765,7 @@ bool AccessInLinkAccesses::accessesNamesFromLoop()
     Vector<PropertyKeyID, 16> names;
     if (!appendNamesOfRecords(node, prototypeNames, names))
         return false;
-    if (!stores || !m_access.isCopySpelledByLoop || !storeEachListedValue(listed, prototypeNames))
+    if (!stores || !m_access.isCopySpelledByLoop || !storeEachListedValue(listed, prototypeNames, ListedNames::AreThere))
         resolveUnderNames(names.span());
     return true;
 }

@@ -29,6 +29,7 @@ public:
     KeyedLookup(const JSCell* callee, JSGlobalObject* realmOfCallee);
 
     explicit operator bool() const { return m_row; }
+    bool hasObject() const { return m_object; }
     JSValue tryGet(JSGlobalObject*, JSString* key);
     void didCall() { m_object = objectInVariable(); }
 

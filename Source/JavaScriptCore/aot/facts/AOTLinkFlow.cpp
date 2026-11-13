@@ -3582,6 +3582,10 @@ void LinkFlow::applyNote(Note note, uint32_t number, uint32_t more)
         OptionSet<LayoutChange> changes = OptionSet<LayoutChange>::fromRaw(static_cast<uint8_t>(more));
         OptionSet<LayoutChange> added = changes - possibleChanges[number];
         possibleChanges[number].add(changes);
+        if (changes.contains(LayoutChange::LosesProperty)) {
+            if (auto node = m_lostNameNodes.find(number); node != m_lostNameNodes.end())
+                arrive(FlowNodeID(node->value), fromTypeID(TypeTable::undefined));
+        }
         if (!(more & changeIsByStoreInSight)) {
             added.add(changes - changesByMoreThanStoresInSight[number]);
             changesByMoreThanStoresInSight[number].add(changes);

@@ -25,7 +25,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 static constexpr AbstractHeapSet heapsOfObjectsJudgedInKnownWriters {
-    AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::Elements, AbstractHeap::ArrayStorage
+    AbstractHeap::ObjectFields, AbstractHeap::EnvironmentFields, AbstractHeap::ShapeWords, AbstractHeap::NamedProperties, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::Elements, AbstractHeap::ArrayStorage, AbstractHeap::WrittenTypes
 };
 static constexpr AbstractHeapSet heapsJudgedInKnownWriters = heapsOfObjectsJudgedInKnownWriters | AbstractHeapSet { AbstractHeap::MemberGuards };
 static constexpr AbstractHeapSet heapsUnderElementsOfObjectsInKnownWriters { AbstractHeap::Elements, AbstractHeap::ArrayStorage };

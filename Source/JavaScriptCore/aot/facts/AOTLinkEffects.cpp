@@ -1168,6 +1168,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfLookupItself(SummaryAccess::Kin
     case SummaryAccess::Kind::Define:
         break;
     }
+    effects.writes.add(AbstractHeap::WrittenTypes);
     if (!key) {
         effects.writes.merge(ofDefinition.writes);
         return effects;
@@ -1249,7 +1250,7 @@ bool CalleeSummarizerForLinkEffects::addEffectsOnOperand(const BuiltinOverload& 
     if (parameter->uses.containsAny(usesThatChangeShape))
         effects.writes.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards, AbstractHeap::ShapeWords, AbstractHeap::OrderWords });
     if (parameter->uses.contains(OperandUse::DefinesName))
-        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties });
+        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::WrittenTypes });
     return true;
 }
 
