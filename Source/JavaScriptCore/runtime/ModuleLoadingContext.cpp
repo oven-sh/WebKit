@@ -63,10 +63,11 @@ ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loade
     return context;
 }
 
-ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
+ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModuleLoader* loader, AbstractModuleRecord::ModuleRequest&& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, ModuleRegistryEntry* entryOfLoad)
     : Base(vm, structure)
     , m_moduleRequest(WTF::move(moduleRequest))
     , m_scriptFetcher(WTF::move(scriptFetcher))
+    , m_entry(entryOfLoad, WriteBarrierEarlyInit)
     , m_loader(loader, WriteBarrierEarlyInit)
 #if USE(BUN_JSC_ADDITIONS)
     , m_referrerAsyncOrder(referrerAsyncOrder)
@@ -78,10 +79,16 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
 #endif
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder, ModuleRegistryEntry* entryOfLoad)
+{
+#else
 ModuleLoadingContext* ModuleLoadingContext::create(VM& vm, JSModuleLoader* loader, const AbstractModuleRecord::ModuleRequest& moduleRequest, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, int64_t referrerAsyncOrder)
 {
+    ModuleRegistryEntry* entryOfLoad = nullptr;
+#endif
     AbstractModuleRecord::ModuleRequest requestCopy { moduleRequest };
-    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+    auto* context = new (NotNull, allocateCell<ModuleLoadingContext>(vm)) ModuleLoadingContext(vm, vm.moduleLoadingContextStructure.get(), loader, WTF::move(requestCopy), WTF::move(scriptFetcher), flags, referrerAsyncOrder, entryOfLoad);
     context->finishCreation(vm);
     return context;
 }

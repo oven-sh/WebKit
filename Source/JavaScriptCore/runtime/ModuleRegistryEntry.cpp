@@ -295,6 +295,26 @@ void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractMo
     modulePromise->fulfill(vm, record);
     m_modulePromise.set(vm, this, modulePromise);
 }
+
+bool ModuleRegistryEntry::isAwaitingFetchOfLoad() const
+{
+    return m_status <= Status::Fetching && !m_record && (!m_fetchPromise || m_fetchPromise->status() == JSPromise::Status::Pending);
+}
+
+void ModuleRegistryEntry::provideFetchOfLoad(JSGlobalObject* globalObject, JSValue moduleData)
+{
+    ASSERT(isAwaitingFetchOfLoad());
+    m_status = Status::Fetching;
+    // Whoever goes on with the entry asks for the module promise, which makes the module. Nobody does where the entry has
+    // left the registry at its fetch and another has taken its key.
+    ensureFetchPromise(globalObject)->fulfill(globalObject->vm(), moduleData);
+}
+
+void ModuleRegistryEntry::rejectFetchOfLoad(VM& vm, JSValue error)
+{
+    if (m_fetchPromise && m_fetchPromise->status() == JSPromise::Status::Pending)
+        m_fetchPromise->reject(vm, error);
+}
 #endif
 
 void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractModuleRecord* record)

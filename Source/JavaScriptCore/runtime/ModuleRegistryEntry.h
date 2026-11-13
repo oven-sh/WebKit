@@ -105,6 +105,20 @@ public:
     void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
     // loadPromise() is of a load that JSModuleLoader::loadModuleSync() ran.
     bool wasLoadStartedSynchronously() const { return m_wasLoadStartedSynchronously; }
+    // JSModuleLoader::loadModule() registers the entry of a load by name ahead of the fetch and pipes no promise into it:
+    // that load hands over what the host fetched, or rejects the loads that joined the entry meanwhile.
+    // True until it has, unless another load has fetched the module first (JSModuleLoader::fetchSynchronously(), provideModule()).
+    bool isAwaitingFetchOfLoad() const;
+    void provideFetchOfLoad(JSGlobalObject*, JSValue moduleData);
+    void rejectFetchOfLoad(VM&, JSValue error);
+    // True for the entry that such a load registered, until that load has fetched or a module has asked for the entry. Until then
+    // nothing else holds the entry, and that load does not need it in the registry: the embedder may provide its module during
+    // the fetch, and may take it out of the registry without waiting for the load.
+    bool isAtFetchOfLoadByName() const { return m_wasRegisteredByLoadByName && !m_record && !m_loadPromise && m_status <= Status::Fetching; }
+    void setWasRegisteredByLoadByName() { m_wasRegisteredByLoadByName = true; }
+    // JSModuleLoader::removeEntry() or clearAll() took the entry out of the registry while it was at the fetch of such a load.
+    bool leftRegistryAtFetchOfLoad() const { return m_leftRegistryAtFetchOfLoad; }
+    void setLeftRegistryAtFetchOfLoad() { m_leftRegistryAtFetchOfLoad = true; }
 #endif
 
 private:
@@ -127,6 +141,8 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
     bool m_wasLoadStartedSynchronously { false };
+    bool m_wasRegisteredByLoadByName { false };
+    bool m_leftRegistryAtFetchOfLoad { false };
 #endif
 };
 

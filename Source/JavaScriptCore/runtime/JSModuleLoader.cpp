@@ -359,6 +359,11 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
     if (entry->status() == ModuleRegistryEntry::Status::New)
         entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
+#if USE(BUN_JSC_ADDITIONS)
+    // A load by name registered the entry and is at its fetch. It finds the module fetched when its own fetch settles.
+    else if (entry->isAtFetchOfLoadByName() && entry->isAwaitingFetchOfLoad())
+        entry->provideFetchOfLoad(globalObject, JSSourceCode::create(globalObject->vm(), WTF::move(sourceCode)));
+#endif
 }
 
 void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSValue moduleData)
@@ -366,13 +371,19 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
     if (entry->status() == ModuleRegistryEntry::Status::New)
         entry->provideFetch(globalObject, moduleData); // can throw
+#if USE(BUN_JSC_ADDITIONS)
+    else if (entry->isAtFetchOfLoadByName() && entry->isAwaitingFetchOfLoad())
+        entry->provideFetchOfLoad(globalObject, moduleData);
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
 // Settles the fetch promise of an entry whose asynchronous fetch is still in flight by running the embedder's fetch
-// again while a synchronous load is active. fetchPromise was already pipeFrom()'d by the asynchronous path, which set
-// isFirstResolvingFunctionCalledFlag, so this uses the unguarded fulfill/reject. The ModuleRegistryFetchSettled
-// reaction on fetchPromise lands on the synchronous queue and drives the rest of the chain.
+// again while a synchronous load is active. For an entry that a module's request registered, fetchPromise was already
+// pipeFrom()'d by the asynchronous path, which set isFirstResolvingFunctionCalledFlag, so this uses the unguarded
+// fulfill/reject. For an entry that a load by name registered nothing is piped: that load finds the entry fetched when
+// its own fetch settles (ModuleRegistryEntry::isAwaitingFetchOfLoad()). The ModuleRegistryFetchSettled reaction on
+// fetchPromise lands on the synchronous queue and drives the rest of the chain.
 void JSModuleLoader::fetchSynchronously(JSGlobalObject* globalObject, JSPromise* fetchPromise, const Identifier& key, const String& referrer, RefPtr<ScriptFetchParameters>&& parameters, RefPtr<ScriptFetcher>&& scriptFetcher)
 {
     VM& vm = globalObject->vm();
@@ -410,6 +421,16 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
     // Preserve the caller's ScriptFetchParameters (HostDefined data) into the loading context
     // before `parameters` is moved into fetch() below.
     RefPtr<ScriptFetchParameters> contextParameters = parameters ? parameters : ScriptFetchParameters::create(type);
+    // A load by name has its entry from here on: the registered one, or one that this call registers ahead of the fetch.
+    // removeEntry() and clearAll() therefore find a load that is at its fetch, and the loads of one key that are at their
+    // fetch together share one fetch. The load hands what it fetched, and why it failed, to that entry and never to a key.
+    // A load whose entry has left the registry does not put it back. It ends on that entry, with one exception: if the
+    // entry left while the load was at its fetch, the load goes on with the entry that is registered under the key when
+    // the fetch lands, if there is one, and drops what it fetched (runModuleLoadTopSettled()).
+    // The AOT runtime keeps its own books on the loads that have no entry yet, so with compiled code a load by name gets
+    // its entry when the fetch settles, as before.
+    ModuleRegistryEntry* entryOfLoad = nullptr;
+    bool hasEntryFromHereOn = !vm.hasCompiledCode();
 #endif
 
     if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
@@ -421,6 +442,10 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
             if (error)
                 return JSPromise::rejectedPromise(globalObject, error);
 
+#if USE(BUN_JSC_ADDITIONS)
+            if (hasEntryFromHereOn)
+                entryOfLoad = entry;
+#endif
             if (entry->status() != ModuleRegistryEntry::Status::New) {
 #if ENABLE(AOT)
                 // A registry hit never reaches the host, so the AOT runtime checks access here.
@@ -445,17 +470,39 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->fulfill(vm, providedRecord);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    bool registeredEntry = hasEntryFromHereOn && !entryOfLoad;
+    if (registeredEntry) {
+        entryOfLoad = ensureRegistered(globalObject, specifier, type);
+        entryOfLoad->setWasRegisteredByLoadByName();
+    }
+#endif
     if (!promise) {
         promise = fetch(globalObject, identifierToJSValue(vm, specifier), referrer, WTF::move(parameters), scriptFetcher);
+#if USE(BUN_JSC_ADDITIONS)
+        if (entryOfLoad) {
+            if (scope.exception()) [[unlikely]] {
+                // Nothing fetches the entry that this call registered, unless script that fetch() ran has loaded the module. The host may have recorded the failure on it.
+                if (registeredEntry && (entryOfLoad->status() == ModuleRegistryEntry::Status::New || entryOfLoad->fetchError()))
+                    removeEntryIfRegistered(entryOfLoad);
+                return nullptr;
+            }
+            if (entryOfLoad->status() == ModuleRegistryEntry::Status::New)
+                entryOfLoad->setStatus(ModuleRegistryEntry::Status::Fetching);
+            else if (promise->status() == JSPromise::Status::Pending)
+                promise = entryOfLoad->ensureFetchPromise(globalObject); // fetch() ran script that fetched the module, and the host's promise may never settle.
+        }
+#endif
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
 
 #if USE(BUN_JSC_ADDITIONS)
     AbstractModuleRecord::ModuleRequest request { specifier, WTF::move(contextParameters) };
+    auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder, entryOfLoad);
 #else
     AbstractModuleRecord::ModuleRequest request { specifier, ScriptFetchParameters::create(type) };
-#endif
     auto* context = ModuleLoadingContext::create(vm, this, request, WTF::move(scriptFetcher), flags, referrerAsyncOrder);
+#endif
 
     JSPromise* intermediatePromise = JSPromise::create(vm, globalObject->promiseStructure());
     intermediatePromise->markAsHandled();
@@ -745,7 +792,11 @@ AbstractModuleRecord* JSModuleLoader::getImportedModule(AbstractModuleRecord* re
     return iter->value.m_module.get();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap, JSPromise* deferredPromise, ModuleRegistryEntry* entryOfLoad)
+#else
 JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, bool useImportMap, JSPromise* deferredPromise)
+#endif
 {
     // HostLoadImportedModule(referrer, moduleRequest, loadState, payload)
     // https://html.spec.whatwg.org/multipage/webappapis.html#hostloadimportedmodule
@@ -798,6 +849,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     bool isReloadingRoot = m_rootBeingReloaded && m_rootBeingReloaded == specifier.impl() && referrer.isRealm() && payload->inherits<ModuleGraphLoadingState>();
     if (isReloadingRoot)
         m_rootBeingReloaded = nullptr;
+    ASSERT(!entryOfLoad || (referrer.isRealm() && entryOfLoad->key() == specifier && entryOfLoad->moduleType() == type));
 #endif
 
     // HostLoadImportedModule is required to be idempotent for the same
@@ -817,6 +869,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             ASSERT(loadedEntry);
 #if USE(BUN_JSC_ADDITIONS)
             ASSERT(loadedEntry->record());
+            // removeEntry() or clearAll() took the entry of this load by name out of the registry, and the key has been
+            // loaded again since. The load ends on its own entry, below: what this table and the registry hold is for the
+            // loads that asked later.
+            if (!entryOfLoad || loadedEntry == entryOfLoad || loaded->moduleKey() != entryOfLoad->key()) {
 #else
             ASSERT(loadedEntry->record() == loaded);
 #endif
@@ -829,6 +885,9 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
             RETURN_IF_EXCEPTION(scope, nullptr);
             return loadedPromise;
+#if USE(BUN_JSC_ADDITIONS)
+            }
+#endif
         }
     }
 
@@ -899,6 +958,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
         if (auto iter = m_moduleMap.find(moduleMapKey); iter != m_moduleMap.end())
             mapEntry = iter->value.get();
+#if USE(BUN_JSC_ADDITIONS)
+        // The same, where the key has not been loaded again since, or that load has yet to end.
+        if (entryOfLoad && mapEntry != entryOfLoad && resolved == entryOfLoad->key())
+            mapEntry = entryOfLoad;
+#endif
     } else
         resolved = specifier;
 
@@ -1085,7 +1149,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     return loadPromise;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags, ModuleRegistryEntry* entryOfLoad)
+#else
 JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const ModuleReferrer& referrer, const ModuleRequest& moduleRequest, JSCell* payload, RefPtr<ScriptFetcher> scriptFetcher, OptionSet<ModuleLoadFlag> flags)
+#endif
 {
     ASSERT(isModuleLoaderHostDefinedPayload(payload));
     ASSERT(!flags.contains(ModuleLoadFlag::Dynamic));
@@ -1093,10 +1161,17 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    JSPromise* promise = hostLoadImportedModule(globalObject, referrer, moduleRequest, payload, scriptFetcher, flags.contains(ModuleLoadFlag::UseImportMap), nullptr, entryOfLoad);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags, -1, entryOfLoad);
+#else
     JSPromise* promise = hostLoadImportedModule(globalObject, referrer, moduleRequest, payload, scriptFetcher, flags.contains(ModuleLoadFlag::UseImportMap));
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
+#endif
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 
@@ -1592,6 +1667,17 @@ void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
 {
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     ASSERT(entry->status() == ModuleRegistryEntry::Status::FetchFailed);
+    removeEntryIfRegistered(entry);
+}
+
+void JSModuleLoader::willRemoveModuleMapEntry(const WriteBarrier<ModuleRegistryEntry>& entry)
+{
+    if (entry->isAtFetchOfLoadByName())
+        entry->setLeftRegistryAtFetchOfLoad();
+}
+
+void JSModuleLoader::removeEntryIfRegistered(ModuleRegistryEntry* entry)
+{
     ModuleMapKey moduleMapKey { entry->key().impl(), entry->moduleType() };
     auto iter = m_moduleMap.find(moduleMapKey);
     if (iter == m_moduleMap.end() || iter->value.get() != entry)

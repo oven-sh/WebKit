@@ -170,8 +170,14 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // entryOfLoad: the entry of the load by name that this is a step of. See the loadModule() that takes a name.
+    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, JSPromise* deferredPromise = nullptr, ModuleRegistryEntry* entryOfLoad = nullptr);
+    JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, ModuleRegistryEntry* entryOfLoad = nullptr);
+#else
     JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, JSPromise* deferredPromise = nullptr);
     JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
+#endif
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>, ModuleGraphLoadingState* parentState = nullptr);
@@ -229,6 +235,7 @@ public:
         return m_moduleMap.removeIf([&](auto& entry) {
             if (entry.key.first != impl)
                 return false;
+            willRemoveModuleMapEntry(entry.value);
             didRemoveModuleMapEntry(entry.key.second);
             return true;
         });
@@ -238,6 +245,8 @@ public:
         Locker locker { cellLock() };
         forgetPrelinkedRecordsWithKey(nullptr);
         m_loadedModules.clear();
+        for (auto& entry : m_moduleMap.values())
+            willRemoveModuleMapEntry(entry);
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
@@ -274,6 +283,8 @@ public:
 
     // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     void removeFailedFetchEntry(ModuleRegistryEntry*);
+    // Takes the entry out unless another one is registered under its key by now.
+    void removeEntryIfRegistered(ModuleRegistryEntry*);
 #if ENABLE(AOT)
     void removeEntriesForRecord(AbstractModuleRecord*);
 #endif
@@ -288,6 +299,8 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     void forgetPrelinkedRecordsWithKey(UniquedStringImpl* keyOrNullForAll);
+    // For removeEntry() and clearAll(): tells the entry of a load by name that it leaves the registry at its fetch. See the loadModule() that takes a name.
+    void willRemoveModuleMapEntry(const WriteBarrier<ModuleRegistryEntry>&);
     void pinPrelinkedEdgesOf(AbstractModuleRecord* importer, uint32_t onlyTarget);
 
     RefPtr<PrelinkedModuleGraph> m_prelinkedGraph;

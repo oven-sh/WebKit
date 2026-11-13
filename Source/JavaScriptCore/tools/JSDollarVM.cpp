@@ -2296,6 +2296,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionModuleLoaderImport);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionRemoveModuleRegistryEntry);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectForObject);
 static JSC_DECLARE_HOST_FUNCTION(functionGetGetterSetter);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadGetterFromGetterSetter);
@@ -4515,6 +4518,26 @@ JSC_DEFINE_HOST_FUNCTION(functionModuleLoaderImport, (JSGlobalObject* globalObje
     RELEASE_AND_RETURN(scope, JSValue::encode(loader->importModule(globalObject, specifier, jsUndefined(), callFrame->callerSourceOrigin(vm), false)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// $vm.removeModuleRegistryEntry(specifier): takes the module that import(specifier) names in the caller out of the
+// registry of the global object's loader, as an embedder does to evict a module. Returns whether it had an entry.
+JSC_DEFINE_HOST_FUNCTION(functionRemoveModuleRegistryEntry, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* specifier = callFrame->argument(0).toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto specifierString = specifier->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSModuleLoader* loader = globalObject->moduleLoader();
+    Identifier referrer = Identifier::fromString(vm, callFrame->callerSourceOrigin(vm).url().string());
+    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifierString), referrer, nullptr, /* useImportMap */ true);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsBoolean(loader->removeEntry(key)));
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionGlobalObjectForObject, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -6356,6 +6379,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);
     addFunction(vm, allowIfNotFuzz, "createModuleLoader"_s, functionCreateModuleLoader, 2);
     addFunction(vm, allowIfNotFuzz, "moduleLoaderImport"_s, functionModuleLoaderImport, 2);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, allowIfNotFuzz, "removeModuleRegistryEntry"_s, functionRemoveModuleRegistryEntry, 1);
+#endif
     addFunction(vm, allowIfNotFuzz, "globalObjectForObject"_s, functionGlobalObjectForObject, 1);
 
     addFunction(vm, allowIfNotFuzz, "getGetterSetter"_s, functionGetGetterSetter, 2);
