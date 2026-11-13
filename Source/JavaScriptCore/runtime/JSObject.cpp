@@ -873,7 +873,9 @@ static NEVER_INLINE bool definePropertyOnReceiverSlow(JSGlobalObject* globalObje
 
         // A custom setter stands in for [[Set]] on the receiver itself. Through a proxy, the property is
         // reached by [[DefineOwnProperty]] instead, which replaces the custom value.
-        if (originalReceiver->type() != ProxyObjectType && (slot.attributes() & PropertyAttribute::CustomValue)) {
+        // Bun: so is a property that another object holds, where the receiver answers [[GetOwnProperty]] with that object's
+        // slot. The setter belongs to slot.slotBase(). Upstream calls it with the receiver.
+        if (originalReceiver->type() != ProxyObjectType && (slot.attributes() & PropertyAttribute::CustomValue) && slot.slotBase() == receiver) {
             // (Not for a receiver with immutable properties: a native setter does not ask, and [[DefineOwnProperty]] below does.)
             PutValueFunc customSetter = slot.customSetter();
             if (customSetter && !receiver->structure()->isImmutableProperty(propertyName.uid()))

@@ -138,6 +138,11 @@ Rules for an edit to an upstream test:
 - The rule stands in two more places. `canPutDirectFast` (`runtime/CommonSlowPaths.h`) sends a class field on a returned
   object to the definition where the name is a custom value: `putDirect()` would put the value in its place. The extra
   properties of a compiled object have it in `tryHandValueToSetterOfExtraProperty` (`aot/object/AOTObjectMethodTable.cpp`).
+- One more store ends in the definition: a store whose receiver is no proxy and answers `[[GetOwnProperty]]` with the custom
+  value of another object (the global object of a node:vm context in Bun, `$vm.createImpureGetter()` here).
+  `definePropertyOnReceiverSlow` calls the setter only where `slot.slotBase()` is the receiver. Upstream calls it for such
+  a slot too, with the receiver, which does not hold the property. That operand is no part of this rule and stays when the
+  rule goes: without it `stress/reflect-set-receiver-custom-value-of-another-object.js` aborts in a test setter.
 - What replaces the property as upstream has it: a definition that changes an attribute, a definition of an accessor,
   `delete`. `Object.seal()` and `Object.freeze()` are of the first kind for most objects: `setIntegrityLevel`
   (`runtime/ObjectConstructor.cpp`) defines each property again with `configurable: false`, so the custom value becomes a
@@ -230,6 +235,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/sort-scratch-double-pivot.js` | double arithmetic in the comparator of an inlined sort stores no double into an Int32 array |
 | `stress/array-sort-inline-int32-double-comparator.js` | an earlier, smaller test for the sort fix |
 | `stress/bun-definition-of-a-value-reaches-the-setter-of-a-custom-value.js` | a definition that gives a value and changes no attribute, and every store through a proxy that ends in one, calls the setter of a custom value with the holder and in the holder's realm, and leaves the property a custom value; a definition that changes an attribute, an accessor definition and `delete` replace it (A11) |
+| `stress/reflect-set-receiver-custom-value-of-another-object.js` | a store whose receiver is no proxy and answers `[[GetOwnProperty]]` with the custom value of another object calls no setter: it ends in `[[DefineOwnProperty]]` on the receiver, as it does where the other object has a plain value; a receiver that holds the custom value itself reaches its setter |
 | `stress/bun-json-parse-long-string-has-the-width-of-its-text.js` | a long string value of `JSON.parse` has the width of the text it is parsed from, also where the same value was parsed from text of the other width before (`JSONCache::longStringMatches`) |
 | `stress/bun-object-assign-calls-indexed-setters-on-the-chain.js` | `Object.assign()` stores with `[[Set]]` on its fast path too: an indexed setter on the target's prototype chain is called, and a read-only element there refuses the store |
 | `stress/bun-arrays-become-prototypes-below-immutable-prototypes.js` | with `Object.prototype` and `Array.prototype` immutable and a setter under an index on a class prototype, an array or an object with elements that becomes a prototype keeps the storage it has; reads, stores and changes of length on it and through its heirs answer as the language says |
