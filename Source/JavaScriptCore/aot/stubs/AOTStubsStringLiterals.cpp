@@ -16,6 +16,7 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTStringSwitchTable.h"
 #include "AOTStubsStrings.h"
 #include "JSString.h"
 #include <wtf/text/StringImpl.h>
@@ -54,6 +55,9 @@ StubSignature signatureOfStringEqualsCharacters(StubKey) { return charactersComp
 StubSignature signatureOfValueEqualsCharacters(StubKey) { return charactersComparisonSignature().fillingOperandInFront(0); }
 StubSignature signatureOfStringEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().standingBehindEntryThatFillsOperandInFront(0); }
 StubSignature signatureOfValueEqualsLiteralOfLength(StubKey) { return registerComparisonSignature().fillingOperandInFront(0); }
+static StubSignature switchCaseSignature() { return StubSignature::withGPRResult({ gprOf(comparedSubjectRegister), gprOf(comparedTextRegister) }); }
+StubSignature signatureOfStringSwitchCase(StubKey) { return switchCaseSignature().standingBehindEntryThatFillsOperandInFront(0); }
+StubSignature signatureOfValueSwitchCase(StubKey) { return switchCaseSignature().fillingOperandInFront(0); }
 StubSignature signatureOfNarrowCharactersOfString(StubKey)
 {
     StubSignature signature = StubSignature::withGPRResult({ gprOf(StubRegister::T11) });
@@ -388,6 +392,119 @@ void generateStringEqualsLiteralOfLength(StubAssembler& jit)
     jit.callOperationAndReturn(Entry::operationAOTStringEqualsLiteralInRegister, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = subject, .thirdArgumentIn = text, .valueDestination = isEqual }, [&] {
         jit.compareOnFlags32(isEqual, TrustedImm32(1));
     });
+}
+
+void generateStringSwitchCase(StubAssembler& jit)
+{
+    using Table = StringSwitchTable;
+    const GPRReg subject = jit.operand(0);
+    const GPRReg table = jit.operand(1);
+    const GPRReg result = jit.result();
+    const GPRReg characters = jit.allocateScratch(StubRegister::T12);
+    const GPRReg length = jit.allocateScratch(StubRegister::T13);
+    const GPRReg word = jit.allocateScratch(StubRegister::A1);
+    const GPRReg expected = jit.allocateScratch(StubRegister::A2);
+    const GPRReg string = jit.allocateScratch(StubRegister::T10);
+    const GPRReg hash = string;
+    RELEASE_ASSERT(noOverlap(subject, table, result, characters, length, word, expected, string));
+    JumpList hasNoCase;
+    JumpList needsOperation;
+    JumpList hasOtherCharacters;
+
+    jit.bindEntry(stringSwitchCase(ComparedOperand::Value));
+    hasNoCase.append(jit.branchIfNotCell(subject));
+    hasNoCase.append(jit.branchIfNotType(subject, StringType));
+    jit.bindEntry(jit.key());
+    jit.loadPtr(Address(subject, JSString::offsetOfValue()), characters);
+    Jump isRope = jit.branchIfRopeStringImpl(characters);
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.load32(Address(characters, StringImpl::lengthMemoryOffset()), length);
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+
+    Label hasCharacters = jit.label();
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, length));
+    jit.load8(Address(characters), hash);
+    jit.load8(CCallHelpers::BaseIndex(characters, length, CCallHelpers::TimesOne, -1), word);
+    jit.lshift32(TrustedImm32(Table::shiftOfFirstCharacter), hash);
+    jit.xor32(word, hash);
+    jit.add32(length, hash);
+    jit.load8(Address(table, Table::offsetOfLastBucket), word);
+    jit.and32(word, hash);
+    jit.load16Unaligned(CCallHelpers::BaseIndex(table, hash, CCallHelpers::TimesTwo, Table::offsetOfBuckets), string);
+    hasNoCase.append(jit.branchTest32(CCallHelpers::Zero, string));
+    jit.addPtr(table, string);
+
+    auto charactersAt = [](int32_t offset) { return offset + static_cast<int32_t>(Table::offsetOfCharacters); };
+    auto compareWords = [&](unsigned width, auto subjectAddress, auto expectedAddress) {
+        if (width == sizeof(uint64_t)) {
+            jit.load64(subjectAddress, word);
+            jit.load64(expectedAddress, expected);
+            return jit.branch64(CCallHelpers::NotEqual, word, expected);
+        }
+        if (width == sizeof(uint32_t)) {
+            jit.load32(subjectAddress, word);
+            jit.load32(expectedAddress, expected);
+        } else {
+            jit.load8(subjectAddress, word);
+            jit.load8(expectedAddress, expected);
+        }
+        return jit.branch32(CCallHelpers::NotEqual, word, expected);
+    };
+    auto compareEnds = [&](int32_t width) {
+        hasOtherCharacters.append(compareWords(width, Address(characters), Address(string, charactersAt(0))));
+        hasOtherCharacters.append(compareWords(width, CCallHelpers::BaseIndex(characters, length, CCallHelpers::TimesOne, -width), CCallHelpers::BaseIndex(string, length, CCallHelpers::TimesOne, charactersAt(-width))));
+    };
+
+    Label next = jit.label();
+    jit.load8(Address(string), expected);
+    Jump hasOtherLength = jit.branch32(CCallHelpers::NotEqual, expected, length);
+    Jump isShort = jit.branch32(CCallHelpers::Below, length, TrustedImm32(sizeof(uint64_t)));
+    compareEnds(sizeof(uint64_t));
+    Jump isLong = jit.branch32(CCallHelpers::Above, length, TrustedImm32(2 * sizeof(uint64_t)));
+    Label isFound = jit.label();
+    jit.load8(Address(string, Table::offsetOfIndex), result);
+    jit.returnToCaller();
+
+    isShort.link(&jit);
+    Jump isShortest = jit.branch32(CCallHelpers::Below, length, TrustedImm32(sizeof(uint32_t)));
+    compareEnds(sizeof(uint32_t));
+    jit.jump().linkTo(isFound, &jit);
+
+    isShortest.link(&jit);
+    compareEnds(1);
+    jit.branch32(CCallHelpers::NotEqual, length, TrustedImm32(3)).linkTo(isFound, &jit);
+    hasOtherCharacters.append(compareWords(1, Address(characters, 1), Address(string, charactersAt(1))));
+    jit.jump().linkTo(isFound, &jit);
+
+    isLong.link(&jit);
+    const GPRReg offset = result;
+    jit.move(length, offset);
+    jit.sub64(TrustedImm32(2 * sizeof(uint64_t)), offset);
+    Label nextWord = jit.label();
+    hasOtherCharacters.append(compareWords(sizeof(uint64_t), CCallHelpers::BaseIndex(characters, offset, CCallHelpers::TimesOne), CCallHelpers::BaseIndex(string, offset, CCallHelpers::TimesOne, charactersAt(0))));
+    jit.sub64(TrustedImm32(sizeof(uint64_t)), offset);
+    jit.branch64(CCallHelpers::GreaterThan, offset, TrustedImm32(0)).linkTo(nextWord, &jit);
+    jit.jump().linkTo(isFound, &jit);
+
+    hasOtherCharacters.link(&jit);
+    jit.move(length, expected);
+    hasOtherLength.link(&jit);
+    hasNoCase.append(jit.branchTest32(CCallHelpers::Zero, expected));
+    jit.addPtr(expected, string);
+    jit.addPtr(TrustedImm32(Table::offsetOfCharacters), string);
+    jit.jump().linkTo(next, &jit);
+
+    hasNoCase.link(&jit);
+    jit.load8(Address(table), result);
+    jit.returnToCaller();
+
+    isRope.link(&jit);
+    load8BitCharactersOfSubstring(jit, subject, characters, length, needsOperation);
+    jit.load32(Address(subject, JSRopeString::offsetOfLength()), length);
+    jit.jump().linkTo(hasCharacters, &jit);
+
+    needsOperation.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTStringSwitchCase, { .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = subject, .thirdArgumentIn = table });
 }
 
 void generateNarrowCharactersOfString(StubAssembler& jit)

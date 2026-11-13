@@ -71,7 +71,7 @@ void TypeTestEmitter::forEachNonCellCase(Boxed value, const TypeTestPlan& plan, 
         return isBoolean(value);
     });
     visitPair(Primitive::Undefined, jsUndefined(), Primitive::Null, jsNull(), [&] {
-        return plan.occurringPrimitives() & ~(cellPrimitives | Primitive::UndefinedOrNull) ? isUndefinedOrNull(value, plan.occurringPrimitives()) : isNotCell(value);
+        return plan.occurringPrimitives() & ~(cellPrimitives | Primitive::UndefinedOrNull) ? isUndefinedOrNull(value, plan.occurringPrimitives()) : belowOrEqual(value, undefined());
     });
 }
 
@@ -237,6 +237,11 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Operand operand,
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+Condition TypeTestEmitter::isCellAmongOccurring(Boxed value, uint16_t primitives)
+{
+    return !(primitives & Primitive::Absent) && generator().isWordAskedByMask(value.value()) ? isCell(value) : isCellAmong(value, primitives);
+}
+
 std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Boxed value, const TypeTestPlan& plan)
 {
     uint16_t others = plan.occurringPrimitives() & ~cellPrimitives;
@@ -252,7 +257,7 @@ std::optional<Condition> TypeTestEmitter::tryGetSingleCondition(Boxed value, con
         return tryGetSingleCondition(unboxCell(value), plan);
     }
     if (!(others & plan.passingPrimitives))
-        return isCell(value);
+        return isCellAmongOccurring(value, others);
 
     uint16_t failingOthers = others & plan.failingPrimitives;
     if (failingOthers && !(failingOthers & ~Primitive::UndefinedOrNull) && !plan.integers) {
@@ -382,7 +387,7 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
     CellPointer cell = unboxCell(value);
     if (!(plan.passingPrimitives & ~cellPrimitives)) {
         if (plan.occurringPrimitives() & ~cellPrimitives)
-            leaveUnless(isCell(value), failure);
+            leaveUnless(isCellAmongOccurring(value, plan.occurringPrimitives()), failure);
         testCell(cell, plan, failure);
         return;
     }
@@ -400,7 +405,7 @@ void TypeTestEmitter::testBoxed(Boxed value, const TypeTestPlan& plan, BlockEdge
         m_out.appendToJoin(continuation, fork);
         return;
     }
-    Condition holdsCell = isCell(value);
+    Condition holdsCell = isCellAmongOccurring(value, plan.occurringPrimitives());
     LBasicBlock cellCase = newBlock();
     LBasicBlock otherCase = everyOtherPasses ? continuation : newBlock();
     ScopeFork fork = m_out.forkScope();

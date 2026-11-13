@@ -39,6 +39,105 @@ enum class UseOfJoinedText : uint8_t {
     LikelyName,
 };
 
+struct SharedPart {
+    static constexpr uint32_t minLength = 2;
+    static constexpr uint32_t maxLength = 16;
+    static constexpr uint32_t unitsOfWord = sizeof(uint64_t) / sizeof(char16_t);
+    static constexpr unsigned numberOfParts = 1024;
+    static constexpr unsigned sizeShift = 6;
+    static constexpr unsigned indexShift = 64 - WTF::fastLog2(numberOfParts);
+    static constexpr unsigned tagShift = 22;
+    static constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
+    static constexpr uint64_t bitsOfWideUnits = 0xff00ff00ff00ff00ull;
+
+    SharedPart() = default;
+    SharedPart(std::span<const char16_t> units)
+        : length(units.size())
+    {
+        static_assert(std::endian::native == std::endian::little);
+        ASSERT(length >= minLength && length <= maxLength);
+        const char16_t* end = units.data() + length;
+        if (length < unitsOfWord) {
+            first = WTF::unalignedLoad<uint32_t>(units.data());
+            last = WTF::unalignedLoad<uint32_t>(end - 2);
+            return;
+        }
+        first = WTF::unalignedLoad<uint64_t>(units.data());
+        last = WTF::unalignedLoad<uint64_t>(end - unitsOfWord);
+        if (length <= 2 * unitsOfWord)
+            return;
+        second = WTF::unalignedLoad<uint64_t>(units.data() + unitsOfWord);
+        third = WTF::unalignedLoad<uint64_t>(end - 2 * unitsOfWord);
+    }
+    bool isLatin1() const { return !((first | second | third | last) & bitsOfWideUnits); }
+    static uint32_t narrow(uint64_t units)
+    {
+        units |= units >> 8;
+        units &= 0x0000ffff0000ffffull;
+        return static_cast<uint32_t>(units | units >> 16);
+    }
+    void copyLatin1Characters(std::span<Latin1Character> characters) const
+    {
+        ASSERT(isLatin1() && characters.size() == length);
+        Latin1Character* begin = characters.data();
+        Latin1Character* end = begin + length;
+        if (length < unitsOfWord) {
+            WTF::unalignedStore<uint16_t>(begin, narrow(first));
+            WTF::unalignedStore<uint16_t>(end - 2, narrow(last));
+            return;
+        }
+        if (length > 2 * unitsOfWord) {
+            WTF::unalignedStore<uint32_t>(begin + unitsOfWord, narrow(second));
+            WTF::unalignedStore<uint32_t>(end - 2 * unitsOfWord, narrow(third));
+        }
+        WTF::unalignedStore<uint32_t>(begin, narrow(first));
+        WTF::unalignedStore<uint32_t>(end - unitsOfWord, narrow(last));
+    }
+    uint64_t hash() const { return (first + 2 * last + length) * multiplier; }
+    unsigned index() const { return static_cast<unsigned>(hash() >> indexShift); }
+    uint32_t tag() const { return static_cast<uint32_t>(hash() >> tagShift); }
+    bool hasSameUnits(const SharedPart& other) const { return first == other.first && second == other.second && third == other.third && last == other.last && length == other.length; }
+
+    uint64_t first { 0 };
+    uint64_t second { 0 };
+    uint64_t third { 0 };
+    uint64_t last { 0 };
+    uint64_t length { 0 };
+    const JSString* string { nullptr };
+    uint64_t unused[2] { };
+};
+static_assert(sizeof(SharedPart) == 1 << SharedPart::sizeShift);
+
+struct SharedParts {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(SharedParts);
+
+    std::array<uint32_t, SharedPart::numberOfParts> tags { };
+    std::array<SharedPart, SharedPart::numberOfParts> parts { };
+};
+
+ALWAYS_INLINE std::optional<std::span<const Latin1Character>> latin1CharactersOf(StringView string, std::span<Latin1Character> buffer)
+{
+    if (string.is8Bit())
+        return string.span8();
+    std::span<const char16_t> units = string.span16();
+    if (units.size() < SharedPart::minLength || units.size() > buffer.size() || !WTF::isLatin1(units[0]))
+        return std::nullopt;
+    std::span<Latin1Character> characters = buffer.first(units.size());
+    if (units.size() > SharedPart::maxLength) {
+        if (!WTF::charactersAreAllLatin1(units))
+            return std::nullopt;
+        StringImpl::copyCharacters(characters, units);
+        return characters;
+    }
+    SharedPart part { units };
+    if (!part.isLatin1())
+        return std::nullopt;
+    part.copyLatin1Characters(characters);
+    return characters;
+}
+
+RefPtr<StringImpl> makeCharactersOfShortPart(Instance&, const JSRopeString&, std::span<const char16_t> units);
+
 class StringKeyCache {
     WTF_MAKE_NONCOPYABLE(StringKeyCache);
     WTF_MAKE_TZONE_ALLOCATED(StringKeyCache);
@@ -337,6 +436,7 @@ public:
     }
 
     JSString* findOrAdd(VM&, std::span<const Latin1Character>);
+    RefPtr<StringImpl> makeCharactersOfShortPart(const JSRopeString&, std::span<const char16_t> units);
     ALWAYS_INLINE JSString* tryFindCachedKey(std::span<const Latin1Character> characters, unsigned hash) const
     {
         size_t tableSize = m_cachedKeys.size();
@@ -489,6 +589,7 @@ private:
     size_t m_cageSize;
     Vector<uint64_t> m_cachedKeys;
     size_t m_cachedKeyEvictionCount { 0 };
+    std::unique_ptr<SharedParts> m_sharedParts;
     Vector<uint64_t> m_integerKeys;
     size_t m_integerKeyEvictionCount { 0 };
     size_t m_integerKeysEnteredSinceSweep { 0 };

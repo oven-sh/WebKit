@@ -56,6 +56,7 @@ enum class PropertyAnswerKind : uint8_t {
     StringLength,
     ClosureLength,
     ClosureName,
+    ClosureAddition,
     Constant,
 };
 
@@ -129,6 +130,7 @@ struct DeletionQuery {
 
 PropertyAnswer classifyRead(const ReadQuery&);
 PropertyAnswer classifyStore(const StoreQuery&);
+PropertyAnswer classifyClosureAddition(JSGlobalObject*, JSObject* closure, UniquedStringImpl*);
 PropertyAnswer classifyDeletion(const DeletionQuery&);
 PropertyAnswer classifyCompiledObjectStore(const StoreQuery&, Object&);
 PropertyAnswer classifyNamespaceRead(const ReadQuery&);

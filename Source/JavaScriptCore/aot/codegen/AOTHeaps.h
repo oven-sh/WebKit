@@ -50,6 +50,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
 // Both stay below AllocatorState and change: code fills some of these words itself, and a zero that was read ahead of the store must not be found again behind it.
 #define FOR_EACH_AOT_FIELD_HEAP_UNDER_IR_HEAP(v) \
     v(AOTInstance_mutableFields, 0, Mutable, RuntimeState) \
+    v(AOTCompiledStructure_furtherFlags, CompiledStructure::offsetOfFurtherFlags(), Mutable, RuntimeState) \
     v(AOTInstance_stringCells, 0, PermanentCellOutsideDeclaredEffects, AllocatorState) \
     v(AOTImage_offsetsOfHeaders, 0, OutsideDeclaredEffects, AllocatorState) \
     v(AOTInstance_constantCells, 0, PermanentCellOutsideDeclaredEffects, AllocatorState) \
@@ -67,6 +68,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTStringBuilderStorage_fields, 0, Mutable, StringBuilderContents) \
     v(AOTStackStringBuilder_fields, 0, Mutable, StringBuilderContents) \
     v(stringBuilderBytes, 0, Mutable, StringBuilderContents) \
+    v(wordOfText, 0, OutsideDeclaredEffects, StringStorage) \
     v(AOTObject_orderWord, offsetOfOrderWord, Mutable, OrderWords) \
     v(AOTObject_shapeWord, offsetOfShapeWord, Mutable, ShapeWords) \
     v(AOTSlimClosure_word, offsetOfSlimClosureWord, Mutable, ShapeWords) \
@@ -185,6 +187,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(WeakMapBucket_key, WeakMapBucket<WeakMapBucketDataKeyValue>::offsetOfKey(), Mutable, weakTableEntries) \
     v(JSString_word, JSRopeString::offsetOfFiber0(), OutsideDeclaredEffects, JSRopeString_fiber0) \
     v(JSRopeString_flags, JSRopeString::offsetOfFlags(), Mutable, JSRopeString_fiber0) \
+    v(StringImpl_width, StringImpl::flagsOffset(), OutsideDeclaredEffects, StringImpl_hashAndFlags) \
+    v(JSString_flags, JSCell::typeInfoFlagsOffset(), OutsideDeclaredEffects, JSCell_typeInfoFlags) \
     v(VM_heap_barrierThreshold, VM::offsetOfHeapBarrierThreshold(), OutsideDeclaredEffects, VM_heapState) \
     v(VM_heap_mutatorShouldBeFenced, VM::offsetOfHeapMutatorShouldBeFenced(), OutsideDeclaredEffects, VM_heapState)
 

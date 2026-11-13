@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTMachine.h"
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Machine {
 
@@ -127,6 +128,10 @@ public:
     static void makePhiOfTruncationBehindJoin(Block* join, Operation* truncation);
     static void passJoinBy(Block* from, Block* target, Operation* phi, Operation* value);
     static void passTestToJoin(Block* from, Block* join, const Operation* phi, bool isInverted);
+    static void passDifferenceToJoin(Block* from, Block* join, const Operation* phi, const Operation* difference, Operation* zero, bool isZeroWhenTrue);
+    static void passChosenNumberToJoin(Block* from, Block* join, const Operation* phi, Opcode relation, Operation* whenTrue, Operation* whenFalse);
+    static void passNumberToJoin(Block* from, Block* join, const Operation* phi, NOESCAPE const ScopedLambda<Operation*(Operation* test)>& makeNumber);
+    static Operation* appendTo(Block*, ArenaVector<Operation*>& list, Opcode, Type, Origin);
     static void moveTestToLatch(Block* header, Block* latch, Operation* test, unsigned successorInLoop);
     static bool isUnsplit(const Block* from, const BlockPlace& placeOfTarget)
     {

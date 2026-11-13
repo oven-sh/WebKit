@@ -584,22 +584,26 @@ handleSpread:
         generator.emitDirectPutByVal(array.get(), index.get(), value);
         generator.emitInc(index.get());
     };
+    bool mayEndInHole = m_elision;
     for (; n; n = n->next()) {
         if (n->elision())
             generator.emitBinaryOp<OpAdd>(index.get(), index.get(), generator.emitLoad(nullptr, jsNumber(n->elision())), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberTypeIsInt32()));
         if (n->value()->isSpreadExpression()) {
             SpreadExpressionNode* spread = static_cast<SpreadExpressionNode*>(n->value());
             generator.emitEnumeration(spread, spread->expression(), spreader);
+            // The spread may be empty.
+            mayEndInHole |= !!n->elision();
         } else {
             generator.emitDirectPutByVal(array.get(), index.get(), generator.emitNode(n->value()));
             generator.emitInc(index.get());
+            mayEndInHole = m_elision;
         }
     }
     
-    if (m_elision) {
+    if (m_elision)
         generator.emitBinaryOp<OpAdd>(index.get(), index.get(), generator.emitLoad(nullptr, jsNumber(m_elision)), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberTypeIsInt32()));
+    if (mayEndInHole)
         generator.emitPutById(array.get(), generator.propertyNames().length, index.get());
-    }
     return generator.move(dst, array.get());
 }
 

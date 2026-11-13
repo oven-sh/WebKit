@@ -841,6 +841,8 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
         noteStartOfRareCode(m_jit);
     }
 
+    if (isARM64() && m_allocation.baseOfFarWords()) [[unlikely]]
+        settleBaseOfFarWordsAtHead(block, place);
     const FrameAtBlock frame = frameAtBlockUnder<coverage>(block, place);
     m_blockIsLeftInFrame = frame.isLeftInFrame();
     noteOrigin(Origin());
@@ -1286,6 +1288,115 @@ void Encoder::reportDeadSlotRead() const
     m_proc.fail(FailureKind::WrongValueInSpillSlot, valueOfSlot);
 }
 
+MacroAssembler::Address Encoder::addressOffBaseOfFarWords(MacroAssembler::Address address, Width width)
+{
+    static constexpr int32_t endOfBases = 1 << 24;
+    static constexpr int32_t endOfReach = 1 << 12;
+    const int32_t bytes = static_cast<int32_t>(bytesForWidth(width));
+    auto isWithinReach = [&](int32_t offset) {
+        return offset >= 0 && offset / bytes < endOfReach;
+    };
+    if (m_coverage != FrameCoverage::WholeFunction || !m_frameIsSetUp || address.base != MacroAssembler::stackPointerRegister || address.offset < 0 || address.offset >= endOfBases || address.offset % bytes || isWithinReach(address.offset))
+        return address;
+    GPRReg base = m_allocation.baseOfFarWords().gpr();
+    if (m_offsetOfBaseOfFarWords == noBaseOfFarWords || !isWithinReach(address.offset - m_offsetOfBaseOfFarWords)) {
+        if (!m_blockMovesBaseOfFarWords)
+            return address;
+        const int32_t bytesBetweenBases = std::min(bytes, static_cast<int32_t>(sizeof(CPURegister))) * endOfReach;
+        m_offsetOfBaseOfFarWords = address.offset & ~(bytesBetweenBases - 1);
+        m_jit.add64(CCallHelpers::TrustedImm32(m_offsetOfBaseOfFarWords), MacroAssembler::stackPointerRegister, base);
+    }
+    return MacroAssembler::Address(base, address.offset - m_offsetOfBaseOfFarWords);
+}
+
+bool Encoder::liesOutOfReach(SpillIndex spill) const
+{
+    static constexpr int32_t endOfReach = 1 << 12;
+    MacroAssembler::Address address = m_frame.addressInFrame(m_frame.taggedOffsetOf(spill) & ~Frame::deadSlotTag);
+    return address.offset / static_cast<int32_t>(bytesForWidth(m_allocation.spills()[spill].width)) >= endOfReach;
+}
+
+bool Encoder::accessesWordsOutOfReach(uint32_t beginOfSteps, uint32_t endOfSteps) const
+{
+    for (uint32_t index = beginOfSteps; index < endOfSteps; ++index) {
+        const Step& step = m_allocation.step(index);
+        SpillIndex spill = noSpill;
+        if (step.kind == StepKind::Save && step.destination.isSpill())
+            spill = step.destination.spillIndex();
+        else if (step.kind == StepKind::Reload && step.sources[0].isSpill())
+            spill = step.sources[0].spillIndex();
+        else if (step.kind == StepKind::Execute)
+            spill = m_allocation.spillOf(step.operation);
+        if (spill != noSpill && liesOutOfReach(spill))
+            return true;
+    }
+    return false;
+}
+
+void Encoder::findRareRegionsThatKeepBaseOfFarWords()
+{
+    m_basesOfFarWordsAtEnds.fill(m_arena, m_proc.numberOfBlocks(), noBaseOfFarWords);
+    m_rareRegionKeepsBaseOfFarWords.fill(m_arena, m_order.rareRegions().size(), true);
+    for (const Block* block : m_order.blocksInOrder()) {
+        const BlockPlace& place = placeOf(block);
+        if (!place.isRare())
+            continue;
+        const BlockSteps& steps = stepsOf(block);
+        bool& keeps = m_rareRegionKeepsBaseOfFarWords[place.rareRegion];
+        keeps = keeps && m_order.rareRegions()[place.rareRegion].onlyEntry && !block->isLandingPad() && std::ranges::none_of(block->operations(), [&](const Operation* operation) {
+            const PatchOperation* patch = operation->as<PatchOperation>();
+            return patch && writesBaseOfFarWords(patch);
+        }) && !accessesWordsOutOfReach(steps.begin, steps.end) && !accessesWordsOutOfReach(steps.beginOfEdgeMoves, steps.endOfEdgeMoves);
+    }
+}
+
+int32_t Encoder::baseOfFarWordsThatEnters(const BlockPlace& place, uint32_t rareRegion) const
+{
+    std::optional<int32_t> entering;
+    for (const Block* predecessor : place.predecessors) {
+        const BlockPlace& from = placeOf(predecessor);
+        if (rareRegion != noRareRegion && from.rareRegion == rareRegion)
+            continue;
+        int32_t base = m_basesOfFarWordsAtEnds[predecessor->index()];
+        if (from.isRare() && m_rareRegionKeepsBaseOfFarWords[from.rareRegion])
+            base = rareRegion == noRareRegion ? baseOfFarWordsThatEnters(placeOf(m_order.rareRegions()[from.rareRegion].onlyEntry), from.rareRegion) : noBaseOfFarWords;
+        if (base == noBaseOfFarWords || (entering && *entering != base))
+            return noBaseOfFarWords;
+        entering = base;
+    }
+    return entering.value_or(noBaseOfFarWords);
+}
+
+void Encoder::settleBaseOfFarWordsAtHead(const Block* block, const BlockPlace& place)
+{
+    if (m_basesOfFarWordsAtEnds.isEmpty())
+        findRareRegionsThatKeepBaseOfFarWords();
+    if (const Block* encodedLast = std::exchange(m_blockEncodedLast, block))
+        m_basesOfFarWordsAtEnds[encodedLast->index()] = m_offsetOfBaseOfFarWords;
+    auto leavesBaseAsIs = [&](const BlockPlace& placeOfBlock) {
+        return placeOfBlock.isRare() && m_rareRegionKeepsBaseOfFarWords[placeOfBlock.rareRegion];
+    };
+    std::span<Block* const> layout = m_order.blocksInLayout();
+    for (; m_numberOfBlocksPassedByBaseOfFarWords < place.layoutIndex; ++m_numberOfBlocksPassedByBaseOfFarWords) {
+        const Block* passed = layout[m_numberOfBlocksPassedByBaseOfFarWords];
+        const BlockPlace& placeOfPassed = placeOf(passed);
+        if (!hasCode(passed) && !passed->isLandingPad() && !leavesBaseAsIs(placeOfPassed))
+            m_basesOfFarWordsAtEnds[passed->index()] = baseOfFarWordsThatEnters(placeOfPassed, noRareRegion);
+    }
+    m_blockMovesBaseOfFarWords = !leavesBaseAsIs(place);
+    if (block->isLandingPad())
+        m_offsetOfBaseOfFarWords = noBaseOfFarWords;
+    else if (m_blockMovesBaseOfFarWords)
+        m_offsetOfBaseOfFarWords = baseOfFarWordsThatEnters(place, noRareRegion);
+    else
+        m_offsetOfBaseOfFarWords = baseOfFarWordsThatEnters(placeOf(m_order.rareRegions()[place.rareRegion].onlyEntry), place.rareRegion);
+}
+
+bool Encoder::writesBaseOfFarWords(const PatchOperation* patch) const
+{
+    return (patch->earlyClobberedMask() | patch->lateClobberedMask()) & maskOf(m_allocation.baseOfFarWords());
+}
+
 void Encoder::storeToSpill(const Operation* value)
 {
     SpillIndex spill = m_allocation.spillOf(value);
@@ -1299,8 +1410,8 @@ void Encoder::storeToSpill(const Operation* value)
     RELEASE_ASSERT(m_frameIsSetUp);
     ASSERT(m_allocation.spills()[spill].width == widthOf(value->type()));
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::StoreBehindDefinition));
-    MacroAssembler::Address address = addressOf(Location::spill(spill), MemoryOfEncodedMove::IsWritten);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    MacroAssembler::Address address = addressWithinReach(addressOf(Location::spill(spill), MemoryOfEncodedMove::IsWritten), widthOf(value->type()));
     switch (value->type().kind()) {
     case Int32:
         m_jit.store32(source.gpr(), address);

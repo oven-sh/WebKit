@@ -145,7 +145,7 @@ private:
     bool onlyTakesApart(const BodyValue& user, uint32_t operandIndex)
     {
         Opcode opcode = user.opcode();
-        if (inputPassThroughOpcodes.contains(opcode)) {
+        if (inputPassThroughOpcodes.contains(opcode) || opcode == Opcode::ToThis) {
             m_rootsOfValues[user.id().index()] = rootOf(user.operand(operandIndex));
             return !operandIndex;
         }

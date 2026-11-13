@@ -65,6 +65,7 @@ public:
     static bool isExtensible(JSObject*, JSGlobalObject*) { return true; }
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
 
+    uint32_t upperHalfOfWord() const { return static_cast<uint32_t>(m_word >> 32); }
     uint32_t closureNumber() const { return ClosureWord::closureNumberOf(m_word); }
     FunctionID function() const { return functionOfClosureWord(m_word); }
     FunctionKindData kind() const { return kindOfClosureNumber(closureNumber()); }

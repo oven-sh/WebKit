@@ -373,6 +373,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
             declared.slot = SlotData::create(variables[field.variable.index()].offset, SlotRepresentation::JSValue);
         else
             encoder.fail("StaticFieldWithoutBoxedVariable"_s, classLayout);
+        declared.typeNumber = encoder.facts.linked().primitivesOfStaticField(field.variable);
         parts.staticFields.append(declared);
     }
 
@@ -383,6 +384,7 @@ ClassRecordParts collectClassRecordParts(const TableEncoder& encoder, LayoutID c
         parts.parentThatListsClass = parent.layout;
     data.base = (parent.isProven ? parent.layout : LayoutID()).index();
     data.expectedBase = (parent.isProven ? LayoutID() : parent.layout).index();
+    data.logOfAccesses = encoder.facts.classOf(classLayout).logOfAccesses;
     data.classConstructor = classConstructor.value_or(FunctionID()).index();
     data.environment = environment.index();
     data.numberOfStaticFields = static_cast<uint32_t>(parts.staticFields.size());

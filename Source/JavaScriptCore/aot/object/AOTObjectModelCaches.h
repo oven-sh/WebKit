@@ -52,6 +52,11 @@ struct AccessorDefinitionPlan {
     Vector<FilledSlot> slots;
 };
 
+struct UnfinishedBirth {
+    uint32_t structureID { 0 };
+    uint32_t orderWord { 0 };
+};
+
 struct DescriptorFields {
     const LayoutData* layout { nullptr };
     std::array<const FieldData*, 6> fields { };
@@ -109,7 +114,11 @@ struct ObjectModelCaches {
     ~ObjectModelCaches();
 
     static constexpr unsigned numberOfDescriptorFields = 16;
+    static constexpr unsigned numberOfUnfinishedBirths = 64;
 
+    UnfinishedBirth& unfinishedBirthAt(StructureID structure, uint32_t orderWord) { return unfinishedBirths[(structure.bits() >> 4 ^ orderWord >> 15 ^ orderWord) % numberOfUnfinishedBirths]; }
+
+    std::array<UnfinishedBirth, numberOfUnfinishedBirths> unfinishedBirths;
     FieldMovePlanCache movePlans;
     std::array<DescriptorFields, numberOfDescriptorFields> descriptorFields;
     AssignmentPlanCache assignmentPlans;

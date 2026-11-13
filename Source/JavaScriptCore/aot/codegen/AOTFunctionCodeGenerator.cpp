@@ -306,8 +306,10 @@ CompiledCode FunctionCodeGenerator::emitCode()
     m_statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
     m_statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
     m_statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
+    m_statistics.count(StatisticID::NumbersChosenWithoutBranches, m_procedure.numberOfNumbersChosen());
     m_statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
     m_statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
+    m_statistics.count(StatisticID::SpilledFirstOperandsRead, allocation.numberOfSpilledFirstOperands());
     m_statistics.count(StatisticID::LaterUsesScannedForLiveness, allocation.laterUsesScanned());
     m_statistics.count(StatisticID::BlocksVisitedByLivenessSearches, allocation.livenessSearchBlocksVisited());
     m_statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
@@ -318,6 +320,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     CCallHelpers::Label bodyStart = m_jit.label();
     m_relocations.reserveRoomFor(allocation.numberOfOperationsAllocated());
     Machine::generate(m_procedure, m_jit, m_relocations);
+    m_statistics.count(StatisticID::LoopsEnteredByTest, m_procedure.numberOfLoopsEnteredByTest());
     if (m_straightEmitter && m_straightEmitter->hasFailed())
         return { };
     if (m_procedure.failure()) {

@@ -1,0 +1,70 @@
+# const defaults = { a: 1, b: null };  unknown(defaults);  function fill(given) { const o = {}; for (const k in defaults) o[k] = given[k]; return o; }  function copy(other) { const o = {}; for (const k in other) o[k] = other[k]; return o; }  unknown(fill, copy);
+# Unseen code has the record in the variable, so the keys of the loop may be any. The literal of `fill` has slots for the names of that record all the same. What `copy` lists comes from anywhere: its literal has none.
+# RUN: link fields layouts mechanisms=all
+# CHECK: field L1.0 "a" appended
+# CHECK: field L1.1 "b" appended
+# CHECK-NOT: field L1.2
+# CHECK-NOT: field L2.0
+
+layout L0 module=m0 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}]
+layout L1 module=m0
+layout L2 module=m0
+variable g0 name="defaults" module=m0 declared={type=anything} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Integer integer=1
+    v1 = Null
+    v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
+    v3 = FinishObject v2
+    PutModuleVariable v3 variable=g0
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="unknown" [isFreeName]
+    v7 = Call v6, -, v3 calleeName="unknown"
+    v8 = NewClosure function=f1
+    v9 = NewClosure function=f2
+    v10 = PropGet v5 key="unknown" [isFreeName]
+    v11 = Call v10, -, v8, v9 calleeName="unknown"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="fill" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L1
+    v2 = FinishObject v1
+    v3 = GetModuleVariable variable=g0
+    v4 = ForInOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = ForInStep v4, v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3():
+    v9 = ElemGet v0, v8
+    ElemSet v2, v8, v9
+    Jump -> next b1()
+}
+function f2 name="copy" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = NewObject layout=L2
+    v2 = FinishObject v1
+    v3 = ForInOpen v0
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v5 = ForInStep v3, v0
+    v6 = ResultAt v5
+    v7 = ResultAt v5 index=1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    Return v2
+  b3():
+    v8 = ElemGet v0, v7
+    ElemSet v2, v7, v8
+    Jump -> next b1()
+}

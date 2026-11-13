@@ -41,8 +41,6 @@ public:
         if (!m_records.isEmpty())
             findMakers();
         if (!m_records.isEmpty())
-            checkHolderUses();
-        if (!m_records.isEmpty())
             lookAtSummaries();
         if (!m_records.isEmpty())
             lookAtBodies();
@@ -50,6 +48,8 @@ public:
             lookAtStores();
         if (!m_records.isEmpty())
             lookAtNodes();
+        if (!m_records.isEmpty())
+            checkHolderUses();
         Vector<LinkedReceiverAsMade> stores;
         for (const Record& record : m_records)
             stores.appendVector(record.stores);
@@ -238,8 +238,7 @@ private:
             return false;
         if (type.objects == LinkType::Objects::Layout)
             return m_holders.quickGet(type.layout.index());
-        uint32_t number = type.objects == LinkType::Objects::Family ? type.family.index() : type.layout.bits();
-        auto added = m_holderTypes.add(static_cast<uint64_t>(type.objects) << 32 | number, false);
+        auto added = m_holderTypes.add(keyOfType(type), false);
         if (added.isNewEntry) {
             bool names = false;
             m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
@@ -250,8 +249,16 @@ private:
         return added.iterator->value;
     }
 
+    static uint64_t keyOfType(const LinkType& type)
+    {
+        uint32_t number = type.objects == LinkType::Objects::Family ? type.family.index() : type.layout.bits();
+        return static_cast<uint64_t>(type.objects) << 32 | number;
+    }
+
     void dropListsOfHolders(const LinkType& type)
     {
+        if (!m_typesNamedElsewhere.add(keyOfType(type)).isNewEntry)
+            return;
         m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
             if (!m_holders.quickGet(layout.index()))
                 return;
@@ -275,12 +282,12 @@ private:
                 continue;
             FunctionID function(number);
             const ThinSummary& summary = m_flow.summaries.at(function);
+            auto holdsHolder = [&](uint32_t node) {
+                return node != noSummaryNode && mayBeHolder(m_flow.typeAt(m_flow.nodeOf(function, node)));
+            };
             auto nameAt = [&](uint32_t node) {
-                if (node == noSummaryNode)
-                    return;
-                const LinkType& type = m_flow.typeAt(m_flow.nodeOf(function, node));
-                if (mayBeHolder(type))
-                    dropListsOfHolders(type);
+                if (holdsHolder(node))
+                    dropListsOfHolders(m_flow.typeAt(m_flow.nodeOf(function, node)));
             };
             for (const SummaryAccess& access : summary.accesses) {
                 nameAt(access.receiver);
@@ -299,12 +306,12 @@ private:
             }
             for (uint32_t place = 0; place < summary.calls.size(); ++place) {
                 const SummaryCall& call = summary.calls[place];
-                if (!mayUseHolders(function, place))
+                std::span<const uint32_t> arguments = summary.arguments.span().subspan(call.firstArgument, call.numberOfArguments);
+                if ((!holdsHolder(call.subject) && !holdsHolder(call.receiver) && std::ranges::none_of(arguments, holdsHolder)) || !mayUseHolders(function, place))
                     continue;
                 nameAt(call.subject);
                 nameAt(call.receiver);
-                for (uint32_t argument = 0; argument < call.numberOfArguments; ++argument)
-                    nameAt(summary.arguments.span()[call.firstArgument + argument]);
+                std::ranges::for_each(arguments, nameAt);
             }
         }
         dropRecordsNamedElsewhere();
@@ -718,6 +725,7 @@ private:
     BitVector m_familiesNamedElsewhere;
     BitVector m_holders;
     HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_holderTypes;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_typesNamedElsewhere;
     HashMap<uint32_t, Vector<ValueID, 8>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_indirectCallSites;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_possibleHolderNodes;
     Vector<Record> m_records;

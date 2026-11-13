@@ -165,6 +165,8 @@ PropertyKeyID keyOfKnownTextThatAccessGoesBy(const Walker& walker, const BodyVal
     return nameThatAccessGoesByInStringKeys(walker, access.id(), access.propertyOperand(), access.objectOperand());
 }
 
+bool isJoinFailureMovable(const Walker&, ValueID join);
+
 static ValueID findReadThatAloneTakesTextAsKeyInStringKeys(const BodyIndex& index, ValueID text)
 {
     BlockID block = index.blockOf(text);
@@ -212,6 +214,7 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
             return false;
     }
 
+    bool failsWhereJoinDoes = joined.traits().mayThrowByRule() && joined.traits().withoutThrowByRule().isRemovableWhenUnused() && isJoinFailureMovable(walker, root.id());
     Draft written = walker.draftOf(read);
     Draft byParts(Opcode::ElemGetByKeyParts, written.origin());
     walker.chooseConservativeFields(byParts);
@@ -221,8 +224,13 @@ bool buildReadByPartsOfKey(Walker& walker, const BodyValue& read, const InputsOf
     byParts.expected = written.expected;
     byParts.resultIsReturnedAtOnce = written.resultIsReturnedAtOnce;
     byParts.inputValueGiven = read.id();
-    if (Reference found = walker.build(WTF::move(byParts)))
+    if (Reference found = walker.build(WTF::move(byParts))) {
         walker.bind(read.id(), found);
+        if (failsWhereJoinDoes) {
+            walker.code().letJoinFailWhereItsReaderFails(root.id());
+            walker.count(StatisticID::KeyJoinsLeftToReads);
+        }
+    }
     return true;
 }
 

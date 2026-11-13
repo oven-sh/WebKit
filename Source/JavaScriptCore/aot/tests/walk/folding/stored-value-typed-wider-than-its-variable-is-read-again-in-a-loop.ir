@@ -1,18 +1,20 @@
 # the row of a read of a variable answers with what Link has proven of the variable: Link follows the read that is stored into the getter, which answers an integer. The value that was stored is typed by the row of a read by name off a parameter, of which nothing is known here: anything.
-# The state answers the read of the variable with the value that was stored, in a loop as outside one: no read is made, and the head holds the type of that value, which every back edge is held against. What Link has proven of the variable is not leaned on
+# The store has checked what the variable holds. A read of it says so and the stored value does not, so the read behind the store is made, in a loop as outside one, and the head holds its type.
 # var held = 0;  function run(n, meter) { let last = 0; for (let i = 0; i < n; i++) { held = meter.value; last = held; } return last; }  function once(meter) { held = meter.value; return held; }  run(3, new Meter());  once(new Meter());
 # RUN: walk f1 mechanisms=none+TypedOperations+Folding
 # CHECK-LABEL: code f1:Body
-# CHECK: ([[last]]: anything{{*}}isLoopHead=true
+# CHECK: ([[last]]: undefined|int{{*}}isLoopHead=true
 # CHECK: [[stored]]: anything{{*}} = PropGet {{*}}key="value"
-# CHECK: PutModuleVariable [[stored]]
-# CHECK-NOT: GetModuleVariable
-# CHECK: Jump -> next {{*}}([[stored]],
+# CHECK-NEXT: CheckProof [[stored]] checkedType=undefined|int{{*}}source=Variable
+# CHECK-NEXT: PutModuleVariable [[stored]]
+# CHECK-NEXT: [[again]]: undefined|int{{*}} = GetModuleVariable
+# CHECK: Jump -> next {{*}}([[again]],
 # RUN(ONCE): walk f2 mechanisms=none+TypedOperations+Folding
 # ONCE-LABEL: code f2:Body
-# ONCE: [[answer]]: anything{{*}} = PropGet {{*}}key="value"
-# ONCE: PutModuleVariable [[answer]]
-# ONCE-NOT: GetModuleVariable
+# ONCE: [[stored]]: anything{{*}} = PropGet {{*}}key="value"
+# ONCE-NEXT: CheckProof [[stored]] checkedType=undefined|int{{*}}source=Variable
+# ONCE-NEXT: PutModuleVariable [[stored]]
+# ONCE-NEXT: [[answer]]: undefined|int{{*}} = GetModuleVariable
 # ONCE: Return [[answer]]
 
 module m0 path="main.js" displayPath="main.js" body=f0

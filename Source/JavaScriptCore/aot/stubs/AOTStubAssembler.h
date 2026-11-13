@@ -65,7 +65,7 @@ struct OperationCall {
     std::optional<SpilledArguments> spilledArguments { };
 };
 
-constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
+constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument, const Typed::Effects& effects)
 {
     switch (entry) {
     case Entry::operationAOTCatch:
@@ -73,8 +73,13 @@ constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument first
     case Entry::operationAOTCatchValueAndException:
         return false;
     default:
-        return firstArgument == OperationCall::FirstArgument::Instance && effectsOf(entry).mayCollect;
+        return firstArgument == OperationCall::FirstArgument::Instance && effects.mayCollect;
     }
+}
+
+constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument)
+{
+    return mayFailToAllocate(entry, firstArgument, effectsOf(entry));
 }
 
 struct PreservingCall {

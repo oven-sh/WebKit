@@ -1,0 +1,53 @@
+# function gets(table, operand) { "use strict"; return table.get(operand()); }      sink(gets, { get: key => "own" + key });
+# Nothing is known of the receiver, and a literal of the program has a member under the name: the method is read. The call leaves by the stub of the built-in class all the same: a compiled function is called at once,
+# and where the receiver finds the built-in the stub does its work instead of calling a host function by value.
+# RUN(GETS): bytes f1:Body mechanisms=all
+# GETS-LABEL: unit f1:Body
+# GETS-NOT: ReadMethodAtSiteUnlessReceiverFindsIt
+# GETS: Jump Stub CallMethodThatMayBeUnreadInTailPosition.MapGet count 1
+# GETS-NOT: CallValueCell.InTailPosition
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; globalThis.sink = (gets, literal) => { const back = { get(left) { "use strict"; return left > 0 ? gets(back, () => left - 1) : "back"; } }; for (let turn = 0; turn < 2; turn++) { says(() => gets(new Map([[1, 2]]), () => 1)); says(() => gets(new Map(), () => 1)); const weak = {}; says(() => gets(new WeakMap([[weak, 6]]), () => weak)); says(() => gets(literal, () => 3)); says(() => gets(back, () => 100000)); says(() => gets(new (class extends Map { get(key) { return "heir" + key; } })(), () => 4)); const changed = new Map([[5, 5]]); says(() => gets(changed, () => { changed.get = () => "mine"; return 5; })); says(() => gets(changed, () => 5)); says(() => gets({ get: Map.prototype.get }, () => 1)); says(() => gets({ get: Math.abs }, () => -7)); says(() => gets(8, () => 1)); says(() => gets(null, () => 1)); says(() => gets({ get: 5 }, () => { print("operand"); return 1; })); } };
+# SHELL: 2
+# SHELL-NEXT: undefined
+# SHELL-NEXT: 6
+# SHELL-NEXT: own3
+# SHELL-NEXT: back
+# SHELL-NEXT: heir4
+# SHELL-NEXT: 5
+# SHELL-NEXT: mine
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: 7
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: operand
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: 2
+
+layout L0 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewObject layout=L0
+    PropDefine v2, v1 key="get"
+    v4 = FinishObject v2
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="sink" [isFreeName]
+    v7 = Call v6, -, v0, v4
+    Return v7
+}
+function f1 name="gets" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="get" @110
+    v3 = Call v1, - @120
+    v4 = Call v2, v0, v3 calleeKey="get" calleeName="table.get" @130
+    ReturnCall v4
+}
+function f2 name="get" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="own"
+    v2 = Add v1, v0
+    Return v2
+}

@@ -189,7 +189,7 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
 #endif
 }
 
-[[nodiscard]] static EntryCall emitLoadArgumentsAndCallEntry(StubAssembler& jit, GPRReg word, Address arguments, StubFrameKind kind)
+[[nodiscard]] static EntryCall emitLoadArgumentsAndCallEntry(StubAssembler& jit, GPRReg word, Address arguments, StubFrameKind kind, std::optional<StubKey> entryWithLoadedArguments = std::nullopt)
 {
     EntryCall call(arguments, kind);
     call.passesMore.append(jit.branch32(CCallHelpers::Above, countGPR, TrustedImm32(numberOfArgumentGPRs)));
@@ -200,6 +200,8 @@ static void emitLoadArgumentRegisters(StubAssembler& jit, Address arguments)
     call.passesFewer.append(jit.branch32(CCallHelpers::Below, countGPR, numberOfParameters));
     emitLoadArgumentRegisters(jit, arguments);
 
+    if (entryWithLoadedArguments)
+        jit.bindEntry(*entryWithLoadedArguments);
     call.ready = jit.label();
     call.stackMayNotFit = jit.branchPtr(CCallHelpers::Below, sp, trapAwareSoftStackLimit());
     call.readyWithTestedStack = jit.label();
@@ -349,6 +351,7 @@ static void emitStackOverflowPath(StubAssembler& jit, const EntryCall& entryCall
 StubSignature signatureOfEnterClosure(StubKey) { return { }; }
 StubSignature signatureOfEnterSlimClosure(StubKey) { return { }; }
 StubSignature signatureOfEnterModuleBody(StubKey) { return { }; }
+StubSignature signatureOfEnterClosureWithLoadedArguments(StubKey) { return { }; }
 StubSignature signatureOfEnterClosureForConstruct(StubKey) { return { }; }
 
 void generateEnterClosure(StubAssembler& jit)
@@ -373,7 +376,7 @@ void generateEnterClosure(StubAssembler& jit)
 
     hasWord.link(&jit);
     emitLoadThisAndCount(jit);
-    EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(fp, offsetOfFirstArgument), StubFrameKind::Adapter);
+    EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(fp, offsetOfFirstArgument), StubFrameKind::Adapter, enterClosureWithLoadedArguments());
     emitAdapterEpilogue(jit);
 
     emitRareArgumentPaths(jit, entryCall);

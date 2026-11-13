@@ -814,6 +814,41 @@ static ALWAYS_INLINE void forEachSpillNamedIn(const Allocation& allocation, cons
     pass(steps[stepsOfBlock.terminator]);
 }
 
+void Allocator::findGapsAheadOfRarePhis()
+{
+    for (SpillFacts& spill : m_allocation.m_spills) {
+        const Operation* phi = spill.value;
+        if (!phi || phi->opcode() != Phi || spill.hasGap() || spill.isSharedByPhis || spill.isSaveInRareRegion || spill.isPointerBesideNarrowReference || spill.isStoredAtHeadOfFramedPart || spill.livesAcrossSuspension)
+            continue;
+        const BlockPlace& place = m_order.of(phi->owner());
+        const ValueFacts& facts = m_valueFacts[phi->index()];
+        if (!place.isRare() || facts.definition == noPosition || spill.begin >= facts.definition || facts.has(ValueFlag::IsKeptForCollector) || phi->owner()->isLandingPad())
+            continue;
+        Position first = facts.definition;
+        Position second = 0;
+        Position latest = 0;
+        for (const Block* predecessor : place.predecessors) {
+            Position behindMoves = m_order.endOf(predecessor);
+            first = std::min(first, behindMoves - 2);
+            if (behindMoves > facts.definition || behindMoves == latest)
+                continue;
+            if (behindMoves > latest)
+                second = std::exchange(latest, behindMoves);
+            else
+                second = std::max(second, behindMoves);
+        }
+        if (first != spill.begin || !latest)
+            continue;
+        bool isAheadOfLatest = second && latest - second > facts.definition - latest + 2;
+        Position begin = isAheadOfLatest ? second : latest;
+        Position end = isAheadOfLatest ? latest - 2 : facts.definition;
+        if (begin >= end || end > spill.end)
+            continue;
+        spill.beginOfGap = begin;
+        spill.endOfGap = end - 1;
+    }
+}
+
 void Allocator::findGapsAheadOfLandingPads()
 {
     constexpr uint32_t none = UINT32_MAX;

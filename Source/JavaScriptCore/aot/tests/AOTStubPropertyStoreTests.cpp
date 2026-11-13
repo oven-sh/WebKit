@@ -894,14 +894,48 @@ static void testAdditionsToExtraProperties()
         checkUncached(stores, storeCase, notExtensibleObject.address(), value);
         AOT_TEST_CHECK(isUnchanged(notExtensibleObject));
 
+        auto setCellState = [](FakeTypedObject& object, CellState state) {
+            object.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(state);
+        };
+        auto checkAdded = [&](FakeTypedObject& object) {
+            AOT_TEST_CHECK(storage.property(1) == value && storage.property(0) == untouched && storage.property(2) == untouched);
+            AOT_TEST_CHECK(object.at<uint32_t>(JSCell::structureIDOffset()) == PropertyStores::structureIDAfterAddition && extraProperties.structureID() == structureIDOfExtraPropertiesAfterAddition);
+            storage.property(1) = untouched;
+            extraProperties.at<uint32_t>(JSCell::structureIDOffset()) = structureIDOfExtraProperties;
+        };
+
+        extraProperties.setCellState(CellState::PossiblyBlack);
+        FakeTypedObject objectWithMarkedExtraProperties(extraPropertiesWord, orderWordHasExtraProperties);
+        checkLeftToAdditionBySlot(fitting, objectWithMarkedExtraProperties);
+        extraProperties.setCellState(CellState::DefinitelyWhite);
+
         FakeTypedObject markedObject(extraPropertiesWord, orderWordHasExtraProperties);
-        markedObject.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::PossiblyBlack);
-        checkLeftToAdditionBySlot(fitting, markedObject);
+        setCellState(markedObject, CellState::PossiblyBlack);
+        stores.runner.recordCallsOf(Entry::operationAOTBarrierSlow);
+        StubRun run = stores.store(storeCase, markedObject.address(), value);
+        stores.runner.countCallsOf(Entry::operationAOTBarrierSlow);
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == markedObject.address());
+        checkAdded(markedObject);
 
         FakeTypedObject object(extraPropertiesWord, orderWordHasExtraProperties);
-        StubRun run = stores.store(storeCase, object.address(), value);
-        AOT_TEST_CHECK(!run.calledOperation && storage.property(1) == value && storage.property(0) == untouched && storage.property(2) == untouched);
-        AOT_TEST_CHECK(object.at<uint32_t>(JSCell::structureIDOffset()) == PropertyStores::structureIDAfterAddition && extraProperties.structureID() == structureIDOfExtraPropertiesAfterAddition);
+        AOT_TEST_CHECK(!stores.store(storeCase, object.address(), value).calledOperation);
+        checkAdded(object);
+
+        setBarrierThreshold(instance, tautologicalThreshold);
+        instance.mutatorShouldBeFenced = true;
+        FakeTypedObject objectInCollection(extraPropertiesWord, orderWordHasExtraProperties);
+        AOT_TEST_CHECK(!stores.store(storeCase, objectInCollection.address(), value).calledOperation);
+        checkAdded(objectInCollection);
+
+        FakeTypedObject markedObjectInCollection(extraPropertiesWord, orderWordHasExtraProperties);
+        setCellState(markedObjectInCollection, CellState::PossiblyBlack);
+        stores.runner.recordCallsOf(Entry::operationAOTRememberObjects);
+        run = stores.store(storeCase, markedObjectInCollection.address(), value);
+        stores.runner.countCallsOf(Entry::operationAOTRememberObjects);
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.recordedArguments[0] == extraProperties.address() && run.recordedArguments[1] == markedObjectInCollection.address());
+        checkAdded(markedObjectInCollection);
+        instance.mutatorShouldBeFenced = false;
+        setBarrierThreshold(instance, blackThreshold);
     }
 }
 
@@ -1535,7 +1569,7 @@ static void testFieldsFoundInFieldTable()
 static void testInstructionsOfStoreUnderNameThatLayoutLacks()
 {
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
-    constexpr uint32_t budget = 139;
+    constexpr uint32_t budget = 143;
     PropertyStores stores;
     FieldTable table(stores);
     stores.clearCaches();

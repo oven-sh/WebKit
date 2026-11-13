@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTKeyedLookup.h"
 #include "CachedCallInlines.h"
 #include "ExceptionHelpers.h"
 #include "JSCellButterfly.h"
@@ -881,6 +882,261 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
     RELEASE_AND_RETURN(scope, result);
 }
 
+#if ENABLE(AOT)
+// Pieces are short: a call of memcpy() would cost more than the copy.
+static ALWAYS_INLINE void copyShortPiece(Latin1Character* to, const Latin1Character* from, size_t length)
+{
+    auto copyBothEnds = [&]<typename Word>(Word) {
+        Word first = WTF::unalignedLoad<Word>(from);
+        Word last = WTF::unalignedLoad<Word>(from + length - sizeof(Word));
+        WTF::unalignedStore<Word>(to, first);
+        WTF::unalignedStore<Word>(to + length - sizeof(Word), last);
+    };
+    if (length > 2 * sizeof(uint64_t))
+        memcpy(to, from, length);
+    else if (length >= sizeof(uint64_t))
+        copyBothEnds(uint64_t { });
+    else if (length >= sizeof(uint32_t))
+        copyBothEnds(uint32_t { });
+    else if (length >= sizeof(uint16_t))
+        copyBothEnds(uint16_t { });
+    else if (length)
+        *to = *from;
+}
+
+// Replaces each match with the result of a function that only looks the match up in a table, usually without a call.
+class ReplacerByKeyedLookup {
+    WTF_MAKE_NONCOPYABLE(ReplacerByKeyedLookup);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ReplacerByKeyedLookup(JSGlobalObject* globalObject, JSString* string, const String& source, JSObject* function, const CallData& callData, AOT::KeyedLookup& lookup)
+        : m_globalObject(globalObject)
+        , m_string(string)
+        , m_source(source)
+        , m_function(function)
+        , m_callData(callData)
+        , m_lookup(lookup)
+    {
+    }
+
+    ~ReplacerByKeyedLookup() { forgetRecentReplacements(); }
+
+    NEVER_INLINE JSString* replace(VM& vm, JSCellButterfly* matches)
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        EnsureStillAliveScope keepMatches(matches);
+        unsigned endOfLastMatch = 0;
+        unsigned length = matches->length();
+        m_numberOfMatches = length / 2;
+        // Reading maxShortLength characters at any offset below this stays inside the source.
+        const Latin1Character* source = m_source.is8Bit() ? m_source.span8().data() : nullptr;
+        unsigned endOfFullReads = source && m_source.length() > maxShortLength ? m_source.length() - maxShortLength : 0;
+        for (unsigned index = 0; index < length; index += 2) {
+            JSString* matched = asString(matches->get(index));
+            unsigned start = matches->get(index + 1).asInt32();
+            const StringImpl* key = matched->tryGetValueImpl();
+            const RecentReplacement& recent = recentReplacement(key);
+            unsigned between = start - endOfLastMatch;
+            if (key && recent.key == key && recent.length <= maxShortLength && between <= maxShortLength && endOfLastMatch < endOfFullReads && m_characters.size() - m_used >= 3 * maxShortLength && !m_builder) [[likely]] {
+                Latin1Character* to = m_characters.mutableSpan().data() + m_used;
+                memcpy(to, source + endOfLastMatch, maxShortLength);
+                memcpy(to + between, recent.characters.data(), maxShortLength);
+                m_used += between + recent.length;
+                endOfLastMatch = start + recent.keyLength;
+                continue;
+            }
+            JSString* replacement = nullptr;
+            StringImpl* text = nullptr;
+            if (key && recent.key == key && recent.length > maxShortLength)
+                text = recent.longText();
+            else {
+                replacement = findReplacement(vm, matched, start);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                text = replacement->getValueImpl();
+            }
+            bool isWritten = append(m_source, endOfLastMatch, between) && append(text, 0, text->length());
+            EnsureStillAliveScope keepReplacement(replacement);
+            if (!isWritten) [[unlikely]] {
+                throwOutOfMemoryError(m_globalObject, scope);
+                return nullptr;
+            }
+            endOfLastMatch = start + matched->length();
+        }
+        if (!append(m_source, endOfLastMatch, m_source.length() - endOfLastMatch)) [[unlikely]] {
+            throwOutOfMemoryError(m_globalObject, scope);
+            return nullptr;
+        }
+        if (m_builder)
+            RELEASE_AND_RETURN(scope, jsString(vm, m_builder->toString()));
+        RELEASE_AND_RETURN(scope, jsString(vm, String(m_characters.span().first(m_used))));
+    }
+
+private:
+    // By the atom of the match, which the array of matches keeps. No code runs while these are read.
+    static constexpr unsigned maxShortLength = 16;
+    struct RecentReplacement {
+        const StringImpl* key { nullptr };
+        unsigned keyLength { 0 };
+        unsigned length { 0 };
+        // The characters, or the address of a longer string, which is referenced.
+        std::array<Latin1Character, maxShortLength> characters { };
+
+        StringImpl* longText() const
+        {
+            StringImpl* text;
+            memcpy(&text, characters.data(), sizeof(text));
+            return text;
+        }
+
+        void clear()
+        {
+            if (length > maxShortLength)
+                longText()->deref();
+            key = nullptr;
+            length = 0;
+        }
+    };
+    static constexpr unsigned maxNumberOfRecentReplacements = 2048;
+    static_assert(hasOneBitSet(maxNumberOfRecentReplacements));
+
+    ALWAYS_INLINE size_t placeOf(const StringImpl* key) const
+    {
+        uintptr_t address = std::bit_cast<uintptr_t>(key) >> 4;
+        return (address ^ address >> 11) & (m_recent.size() - 1);
+    }
+
+    ALWAYS_INLINE const RecentReplacement& recentReplacement(const StringImpl* key) const { return m_recent[placeOf(key)]; }
+
+    void remember(const StringImpl& key, StringImpl& text)
+    {
+        if (m_memoryOfRecent.isEmpty()) {
+            m_memoryOfRecent.grow(std::min(maxNumberOfRecentReplacements, roundUpToPowerOfTwo(m_numberOfMatches)));
+            m_recent = m_memoryOfRecent.mutableSpan();
+        }
+        size_t place = placeOf(&key);
+        RecentReplacement& recent = m_recent[place];
+        if (recent.key)
+            recent.clear();
+        else
+            m_usedPlaces.append(static_cast<uint16_t>(place));
+        recent.key = &key;
+        recent.keyLength = key.length();
+        recent.length = text.length();
+        if (recent.length <= maxShortLength) {
+            memcpy(recent.characters.data(), text.span8().data(), recent.length);
+            return;
+        }
+        text.ref();
+        StringImpl* address = &text;
+        memcpy(recent.characters.data(), &address, sizeof(address));
+    }
+
+    void forgetRecentReplacements()
+    {
+        for (uint16_t place : m_usedPlaces)
+            m_recent[place].clear();
+        m_usedPlaces.shrink(0);
+    }
+
+    NEVER_INLINE JSString* findReplacement(VM& vm, JSString* matched, unsigned start)
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue answer;
+        // While most matches need a call, looking first is tried ever less often.
+        if (m_balanceOfLookups >= 0 || hasOneBitSet(m_numberOfCalls)) {
+            if (std::exchange(m_wasCalled, false))
+                m_lookup.didCall();
+            answer = m_lookup.tryGet(m_globalObject, matched);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            m_balanceOfLookups = answer ? std::max<int64_t>(m_balanceOfLookups, 0) + 1 : m_balanceOfLookups - 1;
+        }
+        bool isCalled = !answer;
+        if (isCalled) {
+            ++m_numberOfCalls;
+            m_wasCalled = true;
+            if (!m_cachedCall) {
+                CachedCall::tryEmplace(m_cachedCall, m_globalObject, m_function, m_callData, 3);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+            }
+            answer = m_cachedCall->callWithArguments(m_globalObject, jsUndefined(), matched, jsNumber(start), m_string);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+        }
+        bool isString = answer.isString();
+        JSString* replacement = answer.toString(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        replacement->value(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isCalled)
+            forgetRecentReplacements();
+        else if (StringImpl* key = matched->tryGetValueImpl(); isString && key && key->isAtom()) {
+            if (StringImpl* text = replacement->getValueImpl(); text->is8Bit())
+                remember(*key, *text);
+        }
+        return replacement;
+    }
+
+    template<typename Text>
+    ALWAYS_INLINE bool append(const Text& text, unsigned start, unsigned length)
+    {
+        auto* impl = [&] {
+            if constexpr (std::is_pointer_v<Text>)
+                return text;
+            else
+                return text.impl();
+        }();
+        if (!length)
+            return true;
+        if (m_builder || !impl->is8Bit()) [[unlikely]]
+            return appendToBuilder(StringView(*impl).substring(start, length));
+        if (m_characters.size() - m_used < length) [[unlikely]] {
+            if (!grow(length))
+                return false;
+        }
+        copyShortPiece(m_characters.mutableSpan().data() + m_used, impl->span8().data() + start, length);
+        m_used += length;
+        return true;
+    }
+
+    NEVER_INLINE bool grow(size_t length)
+    {
+        size_t needed = m_used + length;
+        if (needed > String::MaxLength)
+            return false;
+        return m_characters.tryGrow(std::min<size_t>(String::MaxLength, std::max<size_t>(needed, m_characters.size() + m_characters.size() / 2 + m_source.length())));
+    }
+
+    NEVER_INLINE bool appendToBuilder(StringView piece)
+    {
+        if (!m_builder) {
+            m_builder.emplace(OverflowPolicy::RecordOverflow);
+            m_builder->append(m_characters.span().first(m_used));
+        }
+        m_builder->append(piece);
+        return !m_builder->hasOverflowed();
+    }
+
+    JSGlobalObject* m_globalObject;
+    JSString* m_string;
+    const String& m_source;
+    JSObject* m_function;
+    const CallData& m_callData;
+    AOT::KeyedLookup& m_lookup;
+    std::optional<CachedCall> m_cachedCall;
+    unsigned m_numberOfMatches { 0 };
+    unsigned m_numberOfCalls { 0 };
+    bool m_wasCalled { false };
+    int64_t m_balanceOfLookups { 0 };
+    // One entry that holds nothing until a replacement is remembered.
+    RecentReplacement m_emptyReplacement;
+    std::span<RecentReplacement> m_recent { singleElementSpan(m_emptyReplacement) };
+    Vector<RecentReplacement> m_memoryOfRecent;
+    Vector<uint16_t> m_usedPlaces;
+    Vector<Latin1Character> m_characters;
+    size_t m_used { 0 };
+    std::optional<StringBuilder> m_builder;
+};
+#endif
+
 static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArguments(VM& vm, JSGlobalObject* globalObject, JSString* string, const String& source, RegExp* regExp, JSObject* replaceFunction, const CallData& callData, JSCellButterfly* result)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -892,6 +1148,12 @@ static ALWAYS_INLINE JSString* replaceAllWithCacheUsingRegExpSearchThreeArgument
     unsigned length = result->length();
     unsigned items = length / cachedCount;
 
+#if ENABLE(AOT)
+    if (callData.type == CallData::Type::Compiled) {
+        if (AOT::KeyedLookup lookup(replaceFunction, callData.compiled.realm); lookup.hasObject())
+            RELEASE_AND_RETURN(scope, ReplacerByKeyedLookup(globalObject, string, source, replaceFunction, callData, lookup).replace(vm, result));
+    }
+#endif
     MarkedArgumentBuffer replacements;
     replacements.fill(vm, items, [](JSValue*) { });
     if (replacements.hasOverflowed()) [[unlikely]] {
@@ -1603,7 +1865,7 @@ ALWAYS_INLINE JSString* replace(VM& vm, JSGlobalObject* globalObject, JSValue th
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     if (!checkObjectCoercible(thisValue)) [[unlikely]] {
-        throwVMTypeError(globalObject, scope);
+        throwVMTypeError(globalObject, scope, replaceMode == StringReplaceMode::Single ? "String.prototype.replace requires that |this| not be null or undefined"_s : "String.prototype.replaceAll requires |this| not to be null nor undefined"_s);
         return nullptr;
     }
     JSString* string = thisValue.toString(globalObject);

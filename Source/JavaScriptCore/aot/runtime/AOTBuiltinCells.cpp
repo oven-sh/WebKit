@@ -459,8 +459,14 @@ JSCell* BuiltinCells::cellReadWithoutTest(uint32_t number)
 
 JSCell* BuiltinCells::findObject(BuiltinID id)
 {
-    if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id)))
+    auto& [recentID, recentNumber] = m_recentObjects[id.index() % m_recentObjects.size()];
+    if (recentID == id)
+        return cell(recentNumber);
+    if (std::optional<uint32_t> number = numberOf(BuiltinCellKey::object(id))) {
+        recentID = id;
+        recentNumber = *number;
         return cell(*number);
+    }
     return find(BuiltinCellKey::object(id)).value_or(nullptr);
 }
 
@@ -969,6 +975,13 @@ void acceptForeignBinaryData(JSGlobalObject* realm)
         instance->state->acceptsForeignBinaryData = true;
 }
 
+void disallowEvaluation(JSGlobalObject* realm)
+{
+    Instance* instance = realm->aotInstance();
+    if (instance && instance->state)
+        instance->state->disallowsEvaluation = true;
+}
+
 void lockBuiltinsWithoutImage()
 {
     locksBuiltinsWithoutImage = true;
@@ -1455,7 +1468,8 @@ private:
         if (!hasFixedNames && !tellsOfWrites)
             return;
         std::optional<std::span<const uint32_t>> namesTakenForAbsent = m_isTestRun ? std::nullopt : std::optional(m_tables.namesTakenForAbsent());
-        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span(), namesTakenForAbsent).get())) [[likely]] {
+        std::span<const uint64_t> lockedAbsentNames = m_isTestRun ? std::span<const uint64_t>() : m_tables.lockedAbsentNames();
+        if (object->makePropertiesImmutable(m_vm, immutablePropertyNamesOf(m_vm, id, constantMembers, m_cells, m_tables.unlockedBuiltinMembers(), m_isTestRun, openedNames.span(), namesTakenForAbsent, lockedAbsentNames).get())) [[likely]] {
             if (m_cells)
                 m_cells->hearsOfWritesTo(id);
             return;

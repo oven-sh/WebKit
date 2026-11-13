@@ -617,6 +617,14 @@ static TypeID typeOfObjectsWithStructureOfClass(TypeArena& types, TypeID source,
     return types.at(passing).hasObjects() && types.isSubset(passing, instances) ? passing : instances;
 }
 
+static TypeID narrowByPositionBelowLength(TypeArena& types, TypeID position, TypeID length)
+{
+    Type lengthType = length ? types.at(length) : Type();
+    if (!length || !types.at(position).isInteger() || !lengthType.isInteger() || lengthType.integers.maximum < 1)
+        return position;
+    return narrowedWithin(types, position, types.intersectionOf(position, types.integer(Range { 0, lengthType.integers.maximum - 1 })));
+}
+
 template<typename Holder> static constexpr bool isCursorOverInput = std::is_same_v<Holder, BodyValue> || std::is_same_v<Holder, BodyTerminator>;
 
 template<typename Test>
@@ -676,6 +684,8 @@ TypeID typeOfEdgeResult(const TypingContext& context, const Test& test, OperandT
     case Proof::IntegerBound:
         RELEASE_ASSERT(narrowedOperandIndex < 2);
         return narrowByComparison(context, opcode, !narrowedOperandIndex, source, operandsOfTest[narrowedOperandIndex ? 0 : 1], side);
+    case Proof::PositionBelowLength:
+        return side == EdgeSide::Taken && !narrowedOperandIndex ? narrowByPositionBelowLength(context.types, source, operandsOfTest[1]) : source;
     case Proof::NotNullish:
         return narrowByNotNullish(context.types, source, side);
     case Proof::StructureOfClass:

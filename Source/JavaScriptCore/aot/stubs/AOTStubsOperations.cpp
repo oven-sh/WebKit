@@ -55,6 +55,47 @@ static void emitFramelessCallerFrame(StubAssembler& jit)
 }
 #endif
 
+StubSignature signatureOfSaveFPRs(StubKey)
+{
+    return StubSignature::withoutResult({ });
+}
+
+StubSignature signatureOfRestoreFPRs(StubKey)
+{
+    return StubSignature::withoutResult({ });
+}
+
+#if CPU(X86_64)
+static Address wordOfFPR(unsigned index)
+{
+    return Address(CCallHelpers::stackPointerRegister, (1 + index) * sizeof(CPURegister));
+}
+
+void generateSaveFPRs(StubAssembler& jit)
+{
+    for (unsigned i = 0; i < 16; ++i)
+        jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), wordOfFPR(i));
+    jit.returnToCaller();
+}
+
+void generateRestoreFPRs(StubAssembler& jit)
+{
+    for (unsigned i = 0; i < 16; ++i)
+        jit.loadDouble(wordOfFPR(i), static_cast<FPRReg>(X86Registers::xmm0 + i));
+    jit.returnToCaller();
+}
+#else
+void generateSaveFPRs(StubAssembler&)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void generateRestoreFPRs(StubAssembler&)
+{
+    RELEASE_ASSERT_NOT_REACHED();
+}
+#endif
+
 StubSignature signatureOfCallOperation(StubKey key)
 {
     return operationCallSignature(operationCallShapes[key.form()].returns, gprOf(stubImmediateRegister));

@@ -230,6 +230,9 @@ public:
         auto addsConstant = [](const Operation* sum) {
             return sum->opcode() == Add && sum->child(1)->hasInt() && !sum->isNarrowReference();
         };
+        auto isShiftOf = [](const Operation* shift, const Operation* shifted) {
+            return (shift->opcode() == Shl || shift->opcode() == SShr || shift->opcode() == ZShr) && shift->child(0) == shifted;
+        };
 
         if (right->hasInt()) {
             if (left->hasInt())
@@ -258,9 +261,9 @@ public:
             return nullptr;
         if (addsConstant(left) && addsConstant(right))
             return m_builder.binary(Add, m_builder.binary(Add, left->child(0), right->child(0)), constant(bitsOf(left->child(1)) + bitsOf(right->child(1))));
-        if (addsConstant(left))
+        if (addsConstant(left) && !isShiftOf(right, left->child(0)))
             return m_builder.binary(Add, m_builder.binary(Add, left->child(0), right), left->child(1));
-        if (addsConstant(right))
+        if (addsConstant(right) && !isShiftOf(left, right->child(0)))
             return m_builder.binary(Add, m_builder.binary(Add, left, right->child(0)), right->child(1));
         return nullptr;
     }

@@ -525,7 +525,7 @@ public:
     uint32_t numberOfOperands() const { return m_hasSideWords ? m_words[3] : m_numberOfInlineOperands; }
     uint32_t numberOfNamedOperands() const { return m_hasSideWords ? m_words[2] & maxNumberOfNamedOperands : m_numberOfInlineOperands; }
     uint32_t numberOfVariadicOperands() const { return numberOfOperands() - numberOfNamedOperands(); }
-    ValueID operand(uint32_t operandIndex) const
+    ALWAYS_INLINE ValueID operand(uint32_t operandIndex) const
     {
         std::span<const ValueID> all = operands();
         RELEASE_ASSERT(operandIndex < all.size());
@@ -557,7 +557,7 @@ public:
             return { sideWords(), numberOfSidePayloadWords() };
         return { m_words.data() + m_numberOfInlineOperands, m_numberOfInlinePayloadWords };
     }
-    uint32_t payloadWordAt(unsigned word) const
+    ALWAYS_INLINE uint32_t payloadWordAt(unsigned word) const
     {
         std::span<const uint32_t> words = payload();
         if (word < words.size()) [[likely]]
@@ -700,6 +700,7 @@ struct Block {
     bool isEntry { false };
     bool meetsStepWrittenByHand { false };
     bool keepsSitesThoughRare { false };
+    bool isInRareLoop { false };
     bool isSealed { false };
     BeliefAheadOfEdges beliefAheadOfEdges { BeliefAheadOfEdges::NoEdgeIsAwaited };
 
@@ -793,7 +794,7 @@ public:
     }
 
     std::span<const uint32_t> payload() const LIFETIME_BOUND { return m_payload.span(); }
-    uint32_t payloadWordAt(unsigned word) const
+    ALWAYS_INLINE uint32_t payloadWordAt(unsigned word) const
     {
         if (word < m_payload.size()) [[likely]]
             return m_payload[word];
@@ -917,6 +918,7 @@ struct GroundsOfPosition {
     SteppedWithCounter steppedBeside { };
     ValueID counterTest;
     bool counterTestResult { true };
+    ValueID remainder;
 };
 
 class PassedTest {
@@ -1075,6 +1077,7 @@ public:
     bool holdsCallThatPlanHasNotCounted() const { return m_holdsCallThatPlanHasNotCounted; }
     bool callsOfFunctionNeverCollect() const { return m_callsOfFunctionNeverCollect; }
     bool readsNumbersOutOfBytes() const { return m_readsNumbersOutOfBytes || m_opcodesOfValues.contains(Opcode::GetDataViewElement); }
+    bool hasOptionalNumberArithmetic() const { return m_hasOptionalNumberArithmetic; }
     bool callsItself() const { return m_callsItself; }
     bool isEntryThatWalksBody() const { return m_isEntryThatWalksBody; }
     bool mayHoldReturnedCalls() const { return m_mayHoldReturnedCalls; }
@@ -1159,6 +1162,7 @@ public:
     BlockID addBlockBehindEdge(EdgeID, BlockFrequency, bool isInLoop);
     void setLoopMarks(BlockID, bool isInLoop, bool isLoopHead);
     void markRareBlockThatKeepsSites(BlockID);
+    void markBlockInRareLoop(BlockID);
     void noteBeliefAheadOfEdges(BlockID, BeliefAheadOfEdges);
     void makeBlocksRare(uint32_t first, uint32_t end);
     void makeBlockRare(BlockID);
@@ -1291,6 +1295,7 @@ public:
         bool holdsCallThatPlanHasNotCounted { false };
         bool callsOfFunctionNeverCollect { false };
         bool readsNumbersOutOfBytes { false };
+        bool hasOptionalNumberArithmetic { false };
         bool callsItself { false };
     };
     Mark mark() const;
@@ -1394,6 +1399,7 @@ private:
     bool m_holdsCallThatPlanHasNotCounted { false };
     bool m_callsOfFunctionNeverCollect { false };
     bool m_readsNumbersOutOfBytes { false };
+    bool m_hasOptionalNumberArithmetic { false };
     bool m_callsItself { false };
     bool m_isEntryThatWalksBody { false };
     bool m_mayHoldReturnedCalls { false };

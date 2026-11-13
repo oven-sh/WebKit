@@ -106,7 +106,7 @@ public:
     virtual void willAddNameTo(BuiltinID holder) = 0;
 };
 
-JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { }, std::optional<std::span<const uint32_t>> namesTakenForAbsent = std::nullopt);
+JS_EXPORT_PRIVATE Ref<ImmutablePropertyNames> immutablePropertyNamesOf(VM&, BuiltinID holder, std::span<const uint32_t> constantMembers = { }, WritesToBuiltinMembers* = nullptr, std::span<const uint32_t> unlockedMembers = { }, bool reflectThrows = false, std::span<const Identifier> openedNames = { }, std::optional<std::span<const uint32_t>> namesTakenForAbsent = std::nullopt, std::span<const uint64_t> lockedAbsentNames = { });
 
 } // namespace AOT
 } // namespace JSC

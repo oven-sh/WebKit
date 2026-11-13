@@ -113,29 +113,30 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
         return &reinterpret_cast<V*>(arr)[i / static_cast<int>(sizeof(V))];
     };
 
-    CallInformation wasmFrameConvention = wasmCallingConvention().callInformationFor(signature, CallRole::Caller);
+    WasmCallingConvention::LocationCursor wasmLocations(wasmCallingConvention(), CallRole::Caller);
     uint64_t* registerSpace = reinterpret_cast<uint64_t*>(sp);
     for (unsigned i = 0; i < signature.argumentCount(); ++i) {
         JSValue jsArg = callFrame->argument(i);
         Type type = signature.argumentType(i);
+        ValueLocation location = wasmLocations.next(type).location;
 
-        dataLogLnIf(WasmOperationsInternal::verbose, "Arg ", i, " ", wasmFrameConvention.params[i].location);
+        dataLogLnIf(WasmOperationsInternal::verbose, "Arg ", i, " ", location);
 
         uint64_t value = toWebAssemblyValue(globalObject, type, jsArg);
         OPERATION_RETURN_IF_EXCEPTION(scope, callee);
 
-        if (wasmFrameConvention.params[i].location.isStackArgument()) {
-            auto dst = wasmFrameConvention.params[i].location.offsetFromSP() + calleeSPOffsetFromFP;
+        if (location.isStackArgument()) {
+            auto dst = location.offsetFromSP() + calleeSPOffsetFromFP;
             if (type.isI32() || type.isF32())
                 *access.operator()<uint32_t>(callFrame, dst) = static_cast<uint32_t>(value);
             else
                 *access.operator()<uint64_t>(callFrame, dst) = value;
         } else {
             int dst = 0;
-            if (wasmFrameConvention.params[i].location.isFPR())
-                dst = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(wasmFrameConvention.params[i].location.fpr()) * bytesForWidth(Width::Width64);
+            if (location.isFPR())
+                dst = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(location.fpr()) * bytesForWidth(Width::Width64);
             else
-                dst = GPRInfo::toArgumentIndex(wasmFrameConvention.params[i].location.gpr()) * sizeof(UCPURegister);
+                dst = GPRInfo::toArgumentIndex(location.gpr()) * sizeof(UCPURegister);
             ASSERT(dst >= 0);
 
             dataLogLnIf(WasmOperationsInternal::verbose, "* Register Arg ", i, " ", dst);
@@ -288,15 +289,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmCalleeStackSize, UCPUStrictInt
 {
     const RTT& signature = *static_cast<WasmOrJSImportableFunctionCallLinkInfo*>(functionInfo)->rtt;
     unsigned argCount = signature.argumentCount();
-    const auto& wasmCC = wasmCallingConvention();
-    CallInformation wasmCallInfo = wasmCC.callInformationFor(signature, CallRole::Callee);
-    RegisterAtOffsetList savedResultRegisters = wasmCallInfo.computeResultsOffsetList();
 
     const unsigned numberOfParameters = argCount + 1; // There is a "this" argument.
     const unsigned numberOfRegsForCall = CallFrame::headerSizeInRegisters + roundArgumentCountToAlignFrame(numberOfParameters);
     ASSERT(!(numberOfRegsForCall % stackAlignmentRegisters()));
     const unsigned numberOfBytesForCall = numberOfRegsForCall * sizeof(Register) - sizeof(CallerFrameAndPC);
-    const unsigned numberOfBytesForSavedResults = savedResultRegisters.sizeOfAreaInBytes();
+    const unsigned numberOfBytesForSavedResults = wasmCallingConvention().sizeOfResultRegisterAreaInBytes(signature, CallRole::Callee);
     const unsigned stackOffset = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(std::max(numberOfBytesForCall, numberOfBytesForSavedResults));
 
     return toUCPUStrictInt32(stackOffset);
@@ -333,13 +331,13 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalArguments, void, (void* sp,
         OPERATION_RETURN(scope);
     }
 
-    const auto& wasmCC = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
-    const auto& jsCC = jsCallingConvention().callInformationFor(signature, CallRole::Callee);
+    WasmCallingConvention::LocationCursor wasmLocations(wasmCallingConvention(), CallRole::Callee);
+    JSCallingConvention::LocationCursor jsLocations(jsCallingConvention(), CallRole::Callee);
 
     for (unsigned argNum = 0; argNum < argCount; ++argNum) {
         Type argType = signature.argumentType(argNum);
-        auto wasmParam = wasmCC.params[argNum].location;
-        auto dst = jsCC.params[argNum].location.offsetFromFP();
+        auto wasmParam = wasmLocations.next(argType).location;
+        auto dst = jsLocations.next(argType).location.offsetFromFP();
 
         switch (argType.kind()) {
         case TypeKind::Void:
@@ -466,13 +464,12 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
 
     auto* globalObject = instance->realm();
 
-    auto wasmCC = wasmCallingConvention().callInformationFor(signature, CallRole::Callee);
-
     JSValue returned = *(reinterpret_cast<JSValue*>(registerSpace));
 
     if (!signature.returnCount())
         OPERATION_RETURN(scope);
 
+    WasmCallingConvention::LocationCursor wasmLocations(wasmCallingConvention(), CallRole::Callee);
     if (signature.returnCount() == 1) {
         const auto& returnType = signature.returnType(0);
         switch (returnType.kind()) {
@@ -495,7 +492,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             break;
         }
         case TypeKind::F32: {
-            FPRReg dest = wasmCC.results[0].location.fpr();
+            FPRReg dest = wasmLocations.next(returnType).location.fpr();
             auto offset = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(dest) * bytesForWidth(Width::Width64);
             if (returned.isNumber()) {
                 if (returned.isInt32()) {
@@ -514,7 +511,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
             break;
         }
         case TypeKind::F64: {
-            FPRReg dest = wasmCC.results[0].location.fpr();
+            FPRReg dest = wasmLocations.next(returnType).location.fpr();
             auto offset = GPRInfo::numberOfArgumentRegisters * sizeof(UCPURegister) + FPRInfo::toArgumentIndex(dest) * bytesForWidth(Width::Width64);
             if (returned.isNumber()) {
                 if (returned.isInt32()) {
@@ -659,7 +656,7 @@ JSC_DEFINE_JIT_OPERATION(operationWasmToJSExitMarshalReturnValues, void, (void* 
         }
         }
 
-        auto rep = wasmCC.results[index];
+        auto rep = wasmLocations.next(returnType);
         if (rep.location.isGPR()) {
             auto offset = GPRInfo::toArgumentIndex(rep.location.gpr()) * sizeof(UCPURegister);
             *access.operator()<uint64_t>(registerSpace, offset) = unboxedValue;

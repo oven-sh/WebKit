@@ -18,8 +18,8 @@
 # EMIT-NOT: = IToD(@[[truncated]]
 # EMIT: Int64 @[[beside]] = Add(@[[truncated]],
 # EMIT-NOT: = IToD(@[[beside]]
-# EMIT: = Below(@[[truncated]],
 # EMIT: = Below(@[[beside]],
+# EMIT: = Below(@[[truncated]],
 # RUN(SHELL): run-in-shell globalThis.bound = () => 12; globalThis.sink = (whole, halves) => { print(String(whole) + " " + String(halves)); };
 # SHELL: 0 0
 # SHELL: exited with 0

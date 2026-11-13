@@ -188,6 +188,7 @@ struct EntryDescription {
     uint8_t numberOfParameters { 0 };
     uint8_t borrowedArguments { 0 };
     bool endsItsTailCalls { false };
+    bool returnsCapture { false };
     bool isGenericEntrypoint { false };
 };
 

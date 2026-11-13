@@ -97,6 +97,15 @@ public:
     const Plan& plan() const { return m_inputs.program.plan; }
     const Code& code() const { return m_inputs.code; }
     BlockID singlePredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
+    bool readsLowWordInRotatingIteration(ValueID unboxed) const { return m_rotatingIteration && std::ranges::contains(m_rotatingIteration->loop->ringReads, unboxed, &RotatingLoop::RingRead::unboxed); }
+    LValue startOfRow(ValueID access) { return m_rotatingIteration ? startOfRowSlow(access) : nullptr; }
+    LValue placeInRow(ValueID position) { return m_rotatingIteration ? placeInRowSlow(position) : nullptr; }
+    ValueID findPristineTestAfter(ValueID typeTest) const;
+    ValueID findStorageTestAfter(ValueID pristineTest, bool followsTypeTest = false) const;
+    void noteHeaderTested(ValueID test, LBasicBlock passed, bool coversStorage = false) { m_headerTests.set(test.index(), HeaderTest { passed, coversStorage }); }
+    bool isHeaderTested(ValueID test) const;
+    bool isStorageTestedWith(ValueID pristineTest) const { return m_headerTests.get(pristineTest.index()).coversStorage; }
+    bool leadsToInnerLoop(BlockID);
     ValueID testThatFoundElement;
     LValue elementFound { nullptr };
     CodeUnit unit() const { return code().unit(); }
@@ -158,6 +167,12 @@ public:
                 functor(carried.head, carried.characters, carried.implFlags);
         }
     }
+    struct CarriedKeysForm {
+        bool areWide { false };
+        bool areTagged { false };
+
+        friend bool operator==(CarriedKeysForm, CarriedKeysForm) = default;
+    };
     LValue keysOfCarriedTable(ValueID table) const
     {
         for (const LoopCarriedTable& carried : m_loopCarriedTables) {
@@ -165,6 +180,14 @@ public:
                 return carried.keys;
         }
         return nullptr;
+    }
+    bool claimKeysOfCarriedTable(ValueID table, CarriedKeysForm form)
+    {
+        auto claimed = std::ranges::find(m_loopCarriedTables, table, &LoopCarriedTable::table);
+        std::optional<CarriedKeysForm>& agreed = m_formsOfCarriedTables[claimed->group];
+        if (!agreed)
+            agreed = form;
+        return *agreed == form;
     }
     void noteKeysOfCheckedTable(ValueID table, LValue keys)
     {
@@ -179,6 +202,7 @@ public:
     bool takesFormOfLoops(const OperationContext&, StateOfKnowledge = StateOfKnowledge::Always) const;
     bool paysForCodeInLine(BlockID block) const { return isInLoop(block); }
     bool runsRepeatedly(BlockID block) const { return isInLoop(block) || isFunctionCalledRepeatedly(); }
+    bool isStepOfExactCounter(ValueID integer) const { return m_stepsOfExactCounters.contains(integer); }
     bool isFunctionCalledRepeatedly() const;
     bool isTrapOfProxy() const { return m_isTrapOfProxy; }
     bool isInRecursion(BlockID block) const { return code().callsItself() && code().at(block).frequency != BlockFrequency::Rare; }
@@ -248,6 +272,8 @@ public:
         return untagged;
     }
     LValue& wordWhoseHoleIsLeftToTestAtWork() { return m_wordWhoseHoleIsLeftToTestAtWork; }
+    void noteWordAskedByMask(LValue word) { m_wordsAskedByMask.set(word->index()); }
+    bool isWordAskedByMask(LValue word) const { return m_wordsAskedByMask.get(word->index()); }
     bool holdsByQuestionInFrontOfTurnsLaidOut(ValueID relation) const { return m_relationsAskedInFrontOfTurnsLaidOut.contains(relation); }
     std::optional<TypedArrayType> kindOfViewFoundInFrontOfTurnsLaidOut(ValueID view) const;
     LValue holdsDoublesAsReadInFrontOfTurnsLaidOut(ValueID list) const;
@@ -259,6 +285,8 @@ public:
         uint32_t valuesPerIteration { 0 };
         ValueID startOfCounter;
     };
+    bool hasArrayStorageTest(ValueID array);
+    bool isPoppedInLoop(ValueID array);
     std::optional<PushesInLoop> findPushesInLoop(BlockID, ValueID array);
     LBasicBlock blockThatHoleLeavesTurnLaidOutBy();
     LBasicBlock optionalNumberHoleExit();
@@ -317,6 +345,7 @@ public:
     std::span<const BlockID> order() const { return m_order.span(); }
     BlockID onlyPredecessorOf(BlockID block) const { return m_singlePredecessors[block.index()]; }
     bool blockDominates(BlockID above, BlockID below);
+    uint32_t suspensionFreeRegionAt(const OperationContext&);
     BlockID nearestDominatorOf(BlockID);
     Operand getIn(ValueID id, Representation wanted)
     {
@@ -328,9 +357,18 @@ public:
         return makeInWantedForm(id, operation, wanted);
     }
     bool holdsAnyNaN(ValueID id) const { return m_followsNumbersOutOfBytes && m_valuesHoldingAnyNaN.quickGet(id.index()); }
+    bool takesUndefinedForNaN(ValueID) const;
+    bool takesAnyNaNIntoBytes(const Operation& store, uint32_t operandIndex) const { return !m_followsMarkers && takesAnyNaN(store, operandIndex); }
     Operand getWithAnyNaN(ValueID);
     bool isCarriedSum(ValueID id) const { return m_carriesSums && m_carriedSums.get(id.index()); }
     LValue integerOfCarriedSum(LValue number, bool isNotNegative = false);
+    static constexpr int64_t biasOfCheckedSums = 1ll << 52;
+    bool isUnboxedBySum(ValueID, const Operation&) const;
+    bool isCheckedSum(ValueID id) const { return m_checksSums && m_checkedSums.get(id.index()); }
+    LValue wordOfCheckedSum(ValueID);
+    LValue noteWordOfCheckedSum(LValue word);
+    LValue wordOfNumberInCheckedSum(LValue number);
+    LValue numberOfCheckedWord(LValue word);
     bool isCarriedBoxed(ValueID id) const { return m_carriesParametersBoxed && m_parametersCarriedBoxed.quickGet(id.index()); }
     bool isCarriedUnboxed(ValueID id) const { return m_carriesParametersUnboxed && m_parametersCarriedUnboxed.quickGet(id.index()); }
     Representation carriedRepresentationOf(ValueID parameter) const
@@ -339,6 +377,19 @@ public:
             return representationOf(parameter);
         return isCarriedBoxed(parameter) ? Representation::JSValue : representationOf(isCarriedUnboxed(parameter) ? code().onlyUserOf(parameter) : parameter);
     }
+    struct ListStorage {
+        ValueID list;
+        BlockID block;
+        bool isBehindCall { false };
+        BlockID usualPredecessor;
+        uint32_t usualSource { 0 };
+        LValue butterfly { nullptr };
+        LValue length { nullptr };
+        LValue mode { nullptr };
+    };
+    ListStorage* listStorageBehindCall(BlockID);
+    const ListStorage* listStorageForLength(ValueID) const;
+    const ListStorage* listStorageForCall(BlockID) const;
     bool rotatesUnrolledIterationNumbers() const { return m_rotatesUnrolledIterationNumbers; }
     LValue numberOfInteger(LValue);
     LValue loopCarriedNumberOf(ValueID conversion) const
@@ -351,14 +402,16 @@ public:
     Operand boxForHandler(ValueID box);
     ALWAYS_INLINE ValueID sumBoxedBy(const Operation& box) const
     {
-        if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || m_followsNumbersOutOfBytes)
+        if (box.opcode != Opcode::Box || box.representation != Representation::JSValue || (m_followsNumbersOutOfBytes && !m_followsMarkers))
             return { };
         if (code().at(box.valueOperand()).representation != Representation::Double) [[likely]]
             return { };
         return sumBoxedBySlow(box);
     }
     bool waitsForBoxOfSum(ValueID, const Operation&) const;
+    bool isRemainderOfBox(ValueID) const;
     bool isLeftToBackEdge(ValueID, const Operation&) const;
+    Number settledNaN(Number);
     Number settleNaNOf(const ValueContext&, Number);
     void noteThatNumberIsNoNaN(const ValueContext&);
     bool takesNothingForNaN(const ValueContext&);
@@ -393,7 +446,7 @@ public:
         if (m_valuesDefinedBoxed.get(id.index())) [[unlikely]]
             m_valuesDefinedBoxed.clear(id.index());
     }
-    std::optional<Boxed> findBoxed(ValueID id) const { return m_valuesDefinedBoxed.get(id.index()) && m_values[id.index()] ? std::optional { Boxed(m_values[id.index()]) } : std::nullopt; }
+    ALWAYS_INLINE std::optional<Boxed> findBoxed(ValueID id) const { return m_valuesDefinedBoxed.get(id.index()) && m_values[id.index()] ? std::optional { Boxed(m_values[id.index()]) } : std::nullopt; }
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
@@ -404,8 +457,11 @@ public:
 
     LBasicBlock blockFor(BlockID) const;
     BlockEdge edgeTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
+    BlockEdge edgeThatMayPassArguments(const TerminatorContext&, const Edge&, std::span<const Operand> declaredResults);
     std::optional<BlockEdge> edgeThatBringsNothing(EdgeID);
     BlockEdge edgeWithoutArguments(const Edge&);
+    std::optional<EdgeID> findEdgeIfAbsent(const ValueContext& lookup);
+    void jumpIfAbsent(EdgeID);
     enum class StepTest : bool { IsDone, HasEntry };
     std::optional<BlockEdge> edgeAfterLastStep(const ValueContext& step, uint32_t indexOfTest, StepTest = StepTest::IsDone);
     void findStepsReadElsewhere();
@@ -420,7 +476,7 @@ public:
     void jumpTo(const TerminatorContext&, uint32_t targetIndex, std::span<const Operand> declaredResults = { });
     ALWAYS_INLINE bool mayHaveUnlikelySide(const TerminatorContext& terminator) const
     {
-        static constexpr OpcodeSet testsWithUnlikelySide { Opcode::LogicalNot, Opcode::ToBoolean, Opcode::StrictEq, Opcode::Eq, Opcode::Parameter };
+        static constexpr OpcodeSet testsWithUnlikelySide { Opcode::LogicalNot, Opcode::ToBoolean, Opcode::StrictEq, Opcode::Eq, Opcode::Parameter, Opcode::IsSlotFilled };
         return terminator.kind() == TerminatorKind::Branch && testsWithUnlikelySide.contains(opcodeOf(terminator->conditionOperand()));
     }
     void markUnlikelySide(const TerminatorContext&, BranchTargets&) const;
@@ -436,8 +492,15 @@ public:
     struct LiteralChain {
         Vector<ComparisonWithLiteral, 8> comparisons;
         Vector<std::pair<BlockID, ValueID>, 4> names;
+        bool goesByTable { false };
     };
     std::optional<LiteralChain> findLiteralChain(BlockID) const;
+    struct SymbolChain {
+        ValueID subject;
+        VariableID first;
+        Vector<BlockID, 16> blocks;
+    };
+    std::optional<SymbolChain> findSymbolChain(BlockID) const;
     BlockEdge edgeOutOf(BlockID, uint32_t targetIndex);
     void generateName(BlockID, ValueID);
     ValueID readLeftToBranchOnItsTruth(BlockID id, std::span<const ValueID> values, ValueID test)
@@ -515,14 +578,19 @@ private:
 public:
     ValueID m_reservationThatBirthHasServed;
     ValueID m_literalLeftToSpreadRightBehind;
+    ValueID m_appendOfRestList;
     LValue bearLiteralAsWritten(BlockID, ValueID literal);
     std::span<const std::pair<ValueID, ValueID>> usersOfLiteralInBlock(BlockID, ValueID literal);
     bool isLiteralStoredIntoByName(BlockID, ValueID literal);
+    bool pushesElements();
+    bool isLiteralHeldAcrossSuspension(BlockID, ValueID literal);
 private:
     void listUsersOfLiterals(BlockID);
     BlockID m_blockWhoseUsersOfLiteralsAreListed;
     Vector<std::pair<ValueID, ValueID>> m_usersOfLiteralsInBlock;
     Vector<ValueID> m_literalsStoredIntoByName;
+    std::optional<bool> m_pushesElements;
+    Vector<ValueID> m_literalsHeldAcrossSuspensions;
     struct LoopCarriedString {
         ValueID string;
         BlockID head;
@@ -541,6 +609,7 @@ private:
         BlockID block;
         size_t place;
         LValue keys;
+        size_t group;
     };
     BlockID usualEntranceOf(BlockID) const;
     void findKeysCheckedTwice();
@@ -636,7 +705,21 @@ private:
     const RowGuard* findCheckingGuard(BlockID id) const { return !m_rows ? nullptr : findCheckingGuardSlow(id); }
     const RowGuard* findCheckingGuardSlow(BlockID) const;
     void findLoopCarriedTables();
+    void findCarriedListStorages();
+    void carryListStorageFrom(uint32_t storage, BlockID, UncheckedKeyHashSet<uint64_t>& joinsOfLists);
+    bool isBackEdgeOfSimpleLoop(BlockID from, BlockID head);
+    bool isJoinWithRareCode(BlockID) const;
+    bool isKnownAtEveryEdgeInto(BlockID, ValueID list);
+    void passListStorages(const Edge&);
+    Vector<ListStorage, 4> m_listStorages;
+    Vector<std::pair<BlockID, uint32_t>, 4> m_listStoragesByBlock;
+    Vector<std::pair<ValueID, uint32_t>, 4> m_lengthsOfListStorages;
+    Vector<std::pair<BlockID, uint32_t>, 4> m_callsOnListStorages;
+    Vector<uint32_t> m_regionsAtHeads;
+    Vector<uint32_t> m_regionsAtEnds;
+    Vector<uint32_t> m_regionsBehindSuspensions;
     Vector<LoopCarriedTable, 2> m_loopCarriedTables;
+    Vector<std::optional<CarriedKeysForm>, 2> m_formsOfCarriedTables;
     Vector<std::pair<ValueID, LValue>, 2> m_keysOfCheckedTables;
     void noteIndexOfKey(ValueID);
     void findRopeTolerantStrings();
@@ -669,6 +752,13 @@ private:
     void createBlocks();
     void createPhis();
     bool isReadByUnboxAlone(BlockID home, ValueID parameter) const;
+    bool isUnboxedBeforeJoin(BlockID home, size_t place, Representation) const;
+    bool isReachedWithoutCalls(BlockID from, BlockID to) const;
+    bool loopMaySuspend(BlockID head, const BitVector& suspendingBlocks);
+    void findSuspensionFreeRegions();
+    bool isReadByBoxedSumAlone(BlockID home, ValueID parameter) const;
+    bool unboxesNumber(const Operation&) const;
+    ValueID boxPassedToJoin(BlockID from, ValueID argument) const;
     bool mayCarryNarrowInteger(BlockID home, ValueID parameter);
     void widenCarriedIntegers(const Block&);
     struct CarriedSum;
@@ -676,13 +766,22 @@ private:
     NEVER_INLINE void tryCarrySum(ValueID parameter);
     bool followCarriedSum(CarriedSum&) const;
     std::optional<double> greatestNumberOfTurns(BlockID head);
-    bool callsOrLoopsWithin(BlockID head);
+    uint32_t endOfLoop(BlockID head);
+    bool callsWithin(BlockID head);
+    bool isReadInLoops(const CarriedSum&);
+    void carrySums();
+    bool carriesSum(BlockID head) const;
+    std::optional<double> maxIterationsForCarriedSums(BlockID head);
     void takeIntegersOfCarriedSums(const Block&);
     static bool isCarriedNarrow(Representation representation, LValue lowered) { return representation == Representation::OptionalInt64 && lowered && lowered->opcode() == Machine::Phi && lowered->type() == Machine::Int32; }
-    bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft) const;
+    bool isReadByBoxAlone(BlockID home, ValueID parameter, unsigned stepsLeft);
+    size_t placeAmongJumpArguments(BlockID home, ValueID parameter);
+    HashMap<ValueID, uint32_t> m_placesAmongJumpArguments;
+    BitVector m_blocksOfJumpArguments;
     ValueID sumBoxedBySlow(const Operation& box) const;
     void followNumbersOutOfBytes();
     bool letsAnyNaNInto(ValueID parameter);
+    bool carriesAnyNaN(BlockID head) const;
     bool goesOnBehindJump(size_t positionInOrder) const;
     bool leavesOutBlockThatNothingLeadsTo(BlockID);
     bool isWordBits(ValueID) const;
@@ -691,6 +790,7 @@ private:
     void generateBlock(BlockID, const Block&);
     void enterBlockOfBodyWithHeapFrame(BlockID, const Block&);
     ValueID testReadByBranchAlone(BlockID, const Terminator&) const;
+    ValueID findNextHeaderTest(ValueID test, Opcode) const;
     std::optional<uint32_t> constantMask(ValueID) const;
     enum class LooksBehindJoins : bool { No, Yes };
     std::optional<bool> unlikelyAnswer(ValueID test, LooksBehindJoins) const;
@@ -729,7 +829,7 @@ private:
             return m_cachedHandler;
         return handlerEdgeOf(block, code().at(block));
     }
-    const Edge* handlerEdgeOf(BlockID id, const Block& block) const
+    ALWAYS_INLINE const Edge* handlerEdgeOf(BlockID id, const Block& block) const
     {
         if (!block.handler) [[likely]]
             return nullptr;
@@ -754,6 +854,24 @@ private:
     ValueID m_checkDeferredToTruthTest;
     Vector<std::pair<ValueID, LValue>, 2> m_untaggedElements;
     LValue m_wordWhoseHoleIsLeftToTestAtWork { nullptr };
+    BitVector m_wordsAskedByMask;
+public:
+    struct ElementPairCopy {
+        ValueID lowerRead;
+        ValueID upperRead;
+        ValueID lowerStore;
+        ValueID upperStore;
+        ValueID firstRead;
+        ValueID firstStore;
+        LValue word { nullptr };
+    };
+    Vector<ElementPairCopy, 2>& elementPairCopies() { return m_elementPairCopies; }
+    bool accessesViewRepeatedly(ValueID access);
+private:
+    Vector<ElementPairCopy, 2> m_elementPairCopies;
+    BlockID m_blockOfViewAccesses;
+    Vector<ValueID, 8> m_viewsAccessed;
+    Vector<ValueID, 8> m_viewsAccessedRepeatedly;
     UncheckedKeyHashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsMadePresentAtHeadsOfBlocks;
     Operand getSlow(ValueID, const Operation&);
     Operand zeroInPlaceOfValueOfFailedCode(Representation);
@@ -762,7 +880,7 @@ private:
     COLD NEVER_INLINE void reportBoxedNumberUse(ValueID);
     Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
-    void defineValue(ValueID id, Representation representation, Operand operand)
+    ALWAYS_INLINE void defineValue(ValueID id, Representation representation, Operand operand)
     {
         if (m_definitionTaken) [[unlikely]] {
             *m_definitionTaken = operand;
@@ -782,6 +900,12 @@ private:
     void failToPassArgument(ValueID parameter, Representation found, Representation wanted);
     bool currentBlockIsOpen() const;
     struct SumOfIntegers {
+        struct EarlierTerm {
+            ValueID sum;
+            ValueID termAsNumber;
+            ValueID term;
+            bool isSubtracted { false };
+        };
         size_t indexOfParameter { 0 };
         ValueID sum;
         ValueID termAsNumber;
@@ -790,6 +914,16 @@ private:
         bool termIsElementOfList { false };
         LValue base { nullptr };
         LValue takenOver { nullptr };
+        bool termIsInvariant { false };
+        LValue invariantTerm { nullptr };
+        bool isVectorizable { true };
+        double largestBase { 0x1p52 };
+        LValue baseAtExit { nullptr };
+        bool isSubtracted { false };
+        Vector<EarlierTerm, 1> earlierTerms;
+        bool isReadInIterations { false };
+        LValue wordOfBase { nullptr };
+        bool subtractsSomeTerm() const { return isSubtracted || std::ranges::any_of(earlierTerms, &EarlierTerm::isSubtracted); }
     };
     struct BoundAskedInFront {
         ValueID read;
@@ -820,6 +954,10 @@ private:
         int64_t offset { 0 };
         ValueID length;
     };
+    struct ExactCounter {
+        size_t indexOfParameter { 0 };
+        int64_t mostStepped { 0 };
+    };
     struct CountedLoop {
         size_t positionOfHead { 0 };
         Vector<BlockID, 4> turn;
@@ -839,6 +977,8 @@ private:
         bool turnsForWideTextsFollow { false };
         bool asksTextsForWide { false };
         Vector<SumOfIntegers, 2> sumsOfIntegers;
+        Vector<ExactCounter, 2> exactCounters;
+        Vector<ValueID, 4> stepsOfExactCounters;
         Vector<LoopCarriedValueStore, 2> loopCarriedValueStores;
         Vector<ListAskedForKind, 2> listsAskedForKind;
         bool asksListsForAnotherKind() const { return std::ranges::any_of(listsAskedForKind, [](const ListAskedForKind& asked) { return !asked.hasOneKind; }); }
@@ -858,6 +998,7 @@ private:
         bool conditionIsTestedOnEntry { false };
         TypedArrayType kindAskedOfView { NotTypedArray };
         bool holesLeaveTurns { false };
+        unsigned numberOfSlotStores { 0 };
         bool storesIntoSlots { false };
         bool storesIntoLists { false };
         bool rotatesNumbers { false };
@@ -957,7 +1098,7 @@ private:
     std::optional<int64_t> maskOfRemainder(const Operation&) const;
     TypedPointer elementOfWideLoop(const WideLoop&, const ValueContext&);
     bool accessSameElement(const Operation& first, const Operation& second) const;
-    void requireWholeNumber(LValue number, ValueID parameter, LBasicBlock otherwise);
+    void requireWholeNumber(LValue number, ValueID parameter, LBasicBlock otherwise, double largest = 0x1p52);
     LValue loadWords(TypedPointer, TypedArrayType, unsigned lanes);
     ElementIndex elementIndexOf(ValueID position) const;
     friend class LaneFinder;
@@ -981,6 +1122,7 @@ private:
     bool isOnlySlotAccess(const CountedLoop&, ValueID store) const;
     bool mayIterationThrow(const CountedLoop&) const;
     bool addsIntegerToParameter(ValueID sum, ValueID parameter) const;
+    std::optional<Vector<SumOfIntegers::EarlierTerm, 1>> findEarlierTerms(ValueID last, ValueID parameter) const;
     struct ElementStream {
         ValueID access;
         ValueID list;
@@ -1012,9 +1154,50 @@ private:
         LValue numberStored { nullptr };
         LValue numberPassedOn { nullptr };
     };
+    friend class MoveLoopFinder;
+    friend class MoveLoopEmitter;
+    void tryEmitMoveLoop(BlockID head);
+    struct ElementMoves {
+        struct Read {
+            ValueID value;
+            ValueID position;
+            bool keyIsIntegral { false };
+        };
+        struct Store {
+            ValueID value;
+            ValueID position;
+            unsigned moved { 0 };
+            bool keyIsIntegral { false };
+            bool addsNumber { false };
+            bool isSubtracted { false };
+            ValueID addend;
+            int64_t written { 0 };
+        };
+        ValueID array;
+        Vector<Read, 3> reads;
+        Vector<Store, 3> stores;
+        Vector<ValueID, 8> madeAhead;
+        size_t end { 0 };
+        LBasicBlock continuation { nullptr };
+    };
+    bool mayMoveElements(BlockID);
+    std::optional<ElementMoves> findElementMoves(std::span<const ValueID> values, size_t first);
+    void beginElementMoves(BlockID, ElementMoves&);
+    void endElementMoves(std::optional<ElementMoves>&);
+    friend class ArrayAllocationLoopFinder;
+    friend class ArrayAllocationLoopEmitter;
+    void tryEmitArrayAllocationLoop(BlockID head);
     friend class RowLoopFinder;
     friend class RowLoopEmitter;
     void tryEmitRowLoop(BlockID head);
+    friend class SearchLoopFinder;
+    friend class SearchLoopEmitter;
+    void tryEmitSearchLoop(BlockID header);
+    bool carriesBesideParameters(BlockID head) const;
+    friend class LinearIntegers;
+    friend class SumNestFinder;
+    friend class SumNestEmitter;
+    void tryEmitSumNest(BlockID head);
     friend class InterleavingFinder;
     std::optional<Interleaving> findInterleaving(const CountedLoop&);
     void layOutInterleaved(const CountedLoop&, Interleaving&);
@@ -1033,6 +1216,112 @@ private:
         ValueID poll;
         Vector<Vector<ValueID, 16>, 4> passes;
     };
+    struct RotatingLoop {
+        struct Stage {
+            int64_t first { 0 };
+            int64_t end { 0 };
+        };
+        size_t positionOfHead { 0 };
+        size_t indexOfCounter { 0 };
+        ValueID counter;
+        ValueID bound;
+        ValueID poll;
+        int64_t iterations { 0 };
+        Vector<BlockID, 32> blocks;
+        Vector<ValueID, 2> invariantConditions;
+        Vector<Stage, 4> stages;
+        Vector<size_t, 8> indexesOfInt32s;
+        struct RingRead {
+            ValueID element;
+            ValueID narrowed;
+            ValueID unboxed;
+            BlockID block;
+            BlockID blockOfConversion;
+        };
+        struct WordSum {
+            ValueID root;
+            Vector<ValueID, 8> terms;
+            Vector<ValueID, 8> members;
+        };
+        struct Majority {
+            ValueID root;
+            ValueID a;
+            ValueID b;
+            ValueID c;
+            Vector<ValueID, 4> members;
+        };
+        struct Access {
+            Opcode opcode;
+            Representation representation;
+            ArrayStorage arrayStorage;
+            TypedArrayType typedArrayType;
+            bool operator==(const Access&) const = default;
+        };
+        Vector<Access, 8> accesses;
+        uint32_t position { 0 };
+        Vector<RingRead, 8> ringReads;
+        Vector<WordSum, 4> wordSums;
+        Vector<Majority, 1> majorities;
+    };
+    struct PositionInRing {
+        int64_t mask { 0 };
+        int64_t place { 0 };
+    };
+    struct RotatingIteration {
+        const RotatingLoop* loop { nullptr };
+        Vector<std::tuple<LValue, LValue, LValue>, 32> differences;
+        struct PartialSum {
+            size_t numberOfTerms { 0 };
+            LValue sum { nullptr };
+        };
+        Vector<PartialSum, 4> partialSums;
+        struct Address {
+            ValueID access;
+            ValueID storage;
+            ValueID position;
+            LValue start { nullptr };
+            LValue place { nullptr };
+        };
+        Vector<Address, 8> addresses;
+        const Address* address { nullptr };
+        bool takesStart { false };
+        bool takesPlace { false };
+        Vector<BlockID, 32> blocks;
+        Vector<BlockID, 32> blocksOfEveryIteration;
+        Vector<BlockID, 32> blocksBegun;
+        bool isInEveryIteration { false };
+        Vector<std::pair<ValueID, LValue>, 2> storedWords;
+        Vector<BlockID, 16> continuations;
+        Vector<ValueID, 8> parametersOfContinuations;
+        Vector<std::pair<BlockID, uint32_t>, 4> knownEdges;
+    };
+    std::optional<RotatingLoop> findRotatingLoop(size_t positionOfHead) const;
+    RotatingIteration findRotatingIteration(const RotatingLoop&, const RotatingLoop::Stage&) const;
+    void unrollRotatingLoop(RotatingLoop&);
+    ValueID wordPassedOn(ValueID) const;
+    std::optional<int64_t> constantIntegerOf(ValueID) const;
+    std::optional<int64_t> distanceFromCounter(const RotatingLoop&, ValueID) const;
+    std::optional<int64_t> boundaryOfRelation(const RotatingLoop&, const Operation& relation, bool& holdsBelow) const;
+    std::optional<int64_t> valueInRotatingIteration(const RotatingLoop&, const RotatingLoop::Stage&, int64_t iteration, ValueID) const;
+    bool takesKnownEdge(const TerminatorContext&);
+    void passToContinuation(const Edge&);
+    bool isReadForLowWordAlone(const RotatingLoop&, ValueID, unsigned depth) const;
+    bool isSumOfWideWords(ValueID) const;
+    void findRingReads(RotatingLoop&) const;
+    void findWordSums(RotatingLoop&) const;
+    void findMajorities(RotatingLoop&) const;
+    std::optional<PositionInRing> positionInRing(const RotatingLoop&, ValueID position, int64_t first, int64_t iteration) const;
+    LValue wordInRotatingIteration(ValueID);
+    void addWordSums();
+    void noteStoredWord(ValueID store);
+    void beginAccessInRow(ValueID access);
+    void endAccessInRow();
+    LValue startOfRowSlow(ValueID access);
+    LValue placeInRowSlow(ValueID position);
+    bool generatesInRotatingIteration(ValueID);
+    void generateTerminatorOfRotatingIteration(const TerminatorContext&);
+    RotatingIteration* m_rotatingIteration { nullptr };
+    Vector<std::pair<uint32_t, Vector<RotatingLoop::Access, 8>>, 1> m_rotatingLoopsUnrolled;
     struct SteppedStore {
         size_t positionOfHead { 0 };
         Vector<BlockID, 4> turn;
@@ -1052,7 +1341,8 @@ private:
     std::span<const ValueID> valuesOfLastPass(std::span<const ValueID> values, Vector<ValueID>& kept) const;
     Vector<ValueID, 16> m_valuesOfEarlierPasses;
     bool carriesOnlyCounter(const CountedLoop&, ValueID value, ValueID carried, unsigned depth) const;
-    void storeLoopCarriedValue(const CountedLoop&, const LoopCarriedValueStore&, LValue);
+    ValueID findValuePassedInIteration(const CountedLoop&, ValueID) const;
+    void storeLoopCarriedValue(const LoopCarriedValueStore&, LValue);
     void versionIterationsByKind(CountedLoop&) const;
     struct LimitOfWrittenLoop {
         BlockID asking;
@@ -1139,7 +1429,9 @@ private:
     void layOutTurnsForEachKindOfView(CountedLoop&);
     void keepArgumentsForNextTurn(const Edge&);
     void findSumsOfIntegers(CountedLoop&, const Edge& back) const;
+    void findExactCounters(CountedLoop&, const Edge& back) const;
     bool addToSumOfIntegers(ValueID);
+    LValue numberOfSum(const SumOfIntegers&);
     bool isTermOfSumOfElements(ValueID read) const { return std::ranges::any_of(m_sumsOfIntegers, [&](const SumOfIntegers& sum) { return sum.termIsElementOfList && sum.term == read; }); }
     void failAtLimit(LimitID, uint64_t needed, const Subject&);
 
@@ -1167,6 +1459,7 @@ private:
     BitVector m_blocksWithOtherJumps;
     std::unique_ptr<CheckedRows> m_rows;
     RowGuard* m_guardChecked { nullptr };
+    Machine::StackSlot* m_slotOfTiles { nullptr };
     bool m_notesHeadsOfBlocks { false };
     std::unique_ptr<KindsTried> m_kindsTried;
     bool m_watchesTerminators { false };
@@ -1189,6 +1482,8 @@ private:
     mutable size_t m_cachedLoopQueryPosition { std::numeric_limits<size_t>::max() };
     mutable std::optional<CountedLoop> m_cachedCountedLoop;
     mutable std::optional<bool> m_isFunctionCalledRepeatedly;
+    std::optional<Vector<ValueID, 4>> m_arraysTestedForStorage;
+    std::optional<Vector<ValueID, 2>> m_arraysPoppedInLoops;
     ValueID m_readLeftToBranch;
     Vector<Operand, 8> m_argumentsForNextTurn;
     std::span<const BlockID> m_turnLaidOut;
@@ -1200,6 +1495,7 @@ private:
     LBasicBlock exitEdgeBlock(const Edge&);
     void widenFactorsBeforeIterations(const CountedLoop&, Vector<LValue, 2>& words);
     Vector<SumOfIntegers, 2> m_sumsOfIntegers;
+    Vector<ValueID, 4> m_stepsOfExactCounters;
     Vector<ValueID, 4> m_valuesLeftOutOfTurnsLaidOut;
     Vector<ValueID, 4> m_stepsLeftToBackEdge;
     BitVector m_boxesLeftToHandlers;
@@ -1223,6 +1519,11 @@ private:
     Vector<std::pair<ValueID, LValue>, 2> m_numbersReadByPresenceTests;
     Machine::UncheckedSpan<const BlockID> m_order;
     Machine::UncheckedSpan<BlockID> m_singlePredecessors;
+    struct HeaderTest {
+        LBasicBlock passed { nullptr };
+        bool coversStorage { false };
+    };
+    UncheckedKeyHashMap<uint32_t, HeaderTest, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_headerTests;
     Machine::UncheckedSpan<ScopeFork> m_scopeAtEndOfBlock;
     BlockID m_onlyEntryBlock;
     bool m_firstBlockHasOtherWaysIn { false };
@@ -1253,13 +1554,19 @@ private:
     bool m_looksForCarriedSums { false };
     bool m_carriesSums { false };
     Vector<uint32_t> m_positionsInOrder;
+    HashMap<uint32_t, std::optional<double>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_maxIterationsForCarriedSums;
     BitVector m_carriedSums;
+    bool m_checksSums { false };
+    BitVector m_checkedSums;
+    UncheckedKeyHashMap<LValue, LValue> m_wordsOfCheckedSums;
+    Vector<ValueID, 4> m_parametersThatMaySum;
     UncheckedKeyHashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersOfCarriedSums;
     BitVector m_valuesDefinedBoxed;
     bool m_hasKeysAskedTwice { false };
     BitVector m_keysAskedTwice;
     UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksOfFirstAccesses;
     bool m_followsNumbersOutOfBytes { false };
+    bool m_followsMarkers { false };
     BitVector m_valuesHoldingAnyNaN;
     BitVector m_valuesReadForBitsOfNaN;
     BitVector m_blocksBegun;

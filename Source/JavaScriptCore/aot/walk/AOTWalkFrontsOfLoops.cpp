@@ -434,6 +434,26 @@ void Walker::noteInt32Candidate()
     candidates.append(candidate);
 }
 
+static constexpr size_t fewestReadsOffVersionedList = 3;
+
+void Walker::noteNumericRead(ValueID read, Reference list)
+{
+    UnswitchCollector& collector = m_unswitchCollectors.last();
+    std::tuple noted { m_frames.last().function, read, list };
+    if (collector.numericReads.contains(noted))
+        return;
+    collector.numericReads.append(noted);
+    if (static_cast<size_t>(std::ranges::count_if(collector.numericReads, [&](const auto& other) { return std::get<Reference>(other) == list; })) < fewestReadsOffVersionedList)
+        return;
+    size_t place = collector.candidates.findIf([](const UnswitchCandidate& candidate) { return candidate.asksForInt32s; });
+    if (place == notFound) {
+        place = collector.candidates.size();
+        collector.candidates.append({ });
+        collector.candidates.last().asksForInt32s = true;
+    }
+    collector.candidates[place].storageAsked = ArrayStorage::Double;
+}
+
 void Walker::noteInt32Guard()
 {
     VersionedLoop& versionedLoop = m_versionedLoops.last();
@@ -544,6 +564,54 @@ static bool conditionMayBeInvariant(const BodyIndex& index, ValueID written, uin
     return mayBeInvariant;
 }
 
+static bool readsElementsOfList(const Facts& facts, FunctionID function, const BodyIndex& index, LoopID loop, uint32_t firstValueOfLoop)
+{
+    auto countReads = [](const BodyIndex& body, const auto& blocks, ValueID list) {
+        size_t reads = 0;
+        for (BlockID block : blocks) {
+            for (BodyValue operation : body.block(block).values())
+                reads += operation.opcode() == Opcode::ElemGet && body.stripCasts(operation.objectOperand()) == list;
+        }
+        return reads;
+    };
+    Vector<ValueID, 8> listsRead;
+    for (BlockID member : index.membersOf(loop)) {
+        for (BodyValue operation : index.block(member).values()) {
+            if (operation.opcode() == Opcode::ElemGet) {
+                ValueID list = index.stripCasts(operation.objectOperand());
+                if (list && list.index() < firstValueOfLoop && !listsRead.contains(list)) {
+                    listsRead.append(list);
+                    if (countReads(index, index.membersOf(loop), list) >= fewestReadsOffVersionedList)
+                        return true;
+                }
+            }
+            if (operation.opcode() != Opcode::Call)
+                continue;
+            FunctionID callee = facts.linked().calleeAt(function, operation.id());
+            const BodyIndex* body = callee ? facts.bodies().find(callee) : nullptr;
+            if (!body || !body->opcodes().contains(Opcode::ElemGet))
+                continue;
+            const Function& called = facts.program().at(callee);
+            std::span<const ValueID> arguments = operation.argumentsOperands();
+            BodyBlock entry = body->block(entryBlock);
+            for (uint32_t place = 0; place < entry.numberOfParameters(); ++place) {
+                uint32_t position = place - called.firstParameterIndex();
+                if (called.entryParameterKind(place) != EntryParameter::Parameter || position >= arguments.size() || !arguments[position])
+                    continue;
+                ValueID argument = index.stripCasts(arguments[position]);
+                if (!argument || argument.index() >= firstValueOfLoop)
+                    continue;
+                size_t reads = 0;
+                for (uint32_t number = 0; number < body->numberOfBlocks() && reads < fewestReadsOffVersionedList; ++number)
+                    reads += countReads(*body, std::array { BlockID(number) }, entry.parameter(place));
+                if (reads >= fewestReadsOffVersionedList)
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 BitVector Walker::findLoopsToUnswitch(FunctionID function, const BodyIndex& index)
 {
     BitVector found;
@@ -569,7 +637,9 @@ BitVector Walker::findLoopsToUnswitch(FunctionID function, const BodyIndex& inde
             }
         }
         if (passesOn)
-            found.set(2 * number + 1);
+            found.set(3 * number + 1);
+        if (readsElementsOfList(facts(), function, index, loop, firstValueOfLoop))
+            found.set(3 * number + 2);
         if (!accessesElement || calls.isEmpty())
             continue;
         auto noParameter = [](uint32_t) { return false; };
@@ -595,7 +665,7 @@ BitVector Walker::findLoopsToUnswitch(FunctionID function, const BodyIndex& inde
             return conditionMayBeInvariant(*body, begins.as<TerminatorKind::Branch>().conditionOperand(), 0, 8, argumentMayBeInvariant) && quietTargetOf(*body, begins);
         };
         if (std::ranges::any_of(index.membersOf(loop), mayUnswitchOn) || std::ranges::any_of(calls, mayUnswitchInside))
-            found.set(2 * number);
+            found.set(3 * number);
     }
     return found;
 }
@@ -613,7 +683,7 @@ bool Walker::mayUnswitchLoop(BlockID inputHead, OtherClassBelowMixin& otherClass
         return false;
     FunctionID function = m_frames[frameIndex].function;
     const BitVector& loopsToUnswitch = m_loopsToUnswitch.ensure(&index, [&] { return findLoopsToUnswitch(function, index); }).iterator->value;
-    bool mayUnswitch = loopsToUnswitch.get(2 * loop.index()) || loopsToUnswitch.get(2 * loop.index() + 1);
+    bool mayUnswitch = loopsToUnswitch.get(3 * loop.index()) || loopsToUnswitch.get(3 * loop.index() + 1) || loopsToUnswitch.get(3 * loop.index() + 2);
     bool holdsReaderLoop = false;
     if (program().someClassExtendsMixin) [[unlikely]] {
         BlockID innerMember;
@@ -1052,6 +1122,8 @@ bool Walker::frontOfQuietTurnsIsWorthAWalk(LoopSummary& summary, const TrialVisi
     if (summary.whatTurnsShowed & wasWalkedAgainForFront)
         return false;
     LocationMasks written = trialVisit.writtenWithoutOtherCode.without(unobservableWriteHeaps);
+    if (trialVisit.carriesElement)
+        written.merge(trialVisit.writtenBeforeIterationRunsAgain);
     bool someReadStaysAsItIsInQuietTurns = trialVisit.readsThatCouldStandInFront.containsIf([&](const LocationMasks& reads) {
         return !reads.overlaps(written);
     });
@@ -1129,6 +1201,48 @@ bool Walker::holdBackEdgeOfTurnThatDidSomething(EdgeID& edge, BlockID head, std:
     return true;
 }
 
+std::optional<uint32_t> Walker::loopWhoseIterationMayRunAgainBehindReads() const
+{
+    std::optional<uint32_t> place = specializedOpenLoop(IterationPurity::EffectFree);
+    if (!place || m_trialVisits.isEmpty() || m_openLoops[*place].frame != m_frames.size() - 1 || handlerPreventsIterationRestart() || !m_mergedHeaderObjects.isEmpty())
+        return std::nullopt;
+    const OpenLoop& loop = m_openLoops[*place];
+    if ((!loop.firstReloadBlock && !loop.watchesTurns) || loop.summaryIndexPlusOne != m_trialVisits.last().summaryIndex + 1 || !mayReadInFrontOfQuietTurns(*place))
+        return std::nullopt;
+    return place;
+}
+
+bool Walker::buildGrowthOfList(Draft&& growth)
+{
+    std::optional<uint32_t> place = loopWhoseIterationMayRunAgainBehindReads();
+    SetForScope runsAgain(m_iterationRunsAgainBehindGrowth, !!place);
+    build(WTF::move(growth));
+    return place && m_openLoops[*place].firstReloadBlock;
+}
+
+void Walker::runIterationAgainBehindReads()
+{
+    if (m_hasFailed || isUnreachable())
+        return;
+    std::optional<uint32_t> place = loopWhoseIterationMayRunAgainBehindReads();
+    if (!place || !m_openLoops[*place].firstReloadBlock) {
+        fail("an iteration whose list has grown cannot run again"_s);
+        return;
+    }
+    BlockID head = m_openLoops[*place].head;
+    Vector<Reference, 8> valuesAtHead;
+    for (ValueID parameter : m_code.at(head).parameters())
+        valuesAtHead.append(Reference::value(parameter));
+    OpenLoop::EdgeHeldBack held;
+    if (!makeReadyToCross(head, valuesAtHead.span(), true, held.arguments))
+        return;
+    m_code.end(m_block, TerminatorDraft(TerminatorKind::Jump, m_origin), 1);
+    held.edge = m_code.at(m_block).terminator.next();
+    m_openLoops.changeable(*place).edgesThatRunIterationAgain.append(WTF::move(held));
+    m_block = { };
+    count(StatisticID::GrownListsRunIterationAgain);
+}
+
 BlockID Walker::closeFrontOfQuietTurns(const OpenLoop& loop)
 {
     if (!loop.firstReloadBlock)
@@ -1138,6 +1252,8 @@ BlockID Walker::closeFrontOfQuietTurns(const OpenLoop& loop)
         count(StatisticID::ReloadingBackEdgesEmitted, loop.edgesHeldBack.size());
     }
     for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack)
+        m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
+    for (const OpenLoop::EdgeHeldBack& held : loop.edgesThatRunIterationAgain)
         m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
     BlockID last = loop.reloadBlocks.last();
     if (!m_code.at(last).hasEnded()) {

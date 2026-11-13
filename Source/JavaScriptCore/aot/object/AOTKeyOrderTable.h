@@ -39,6 +39,7 @@ struct PlacesOfPositionedKeys {
     const Object* object;
     const PropertyTable* table;
     uint32_t structureID;
+    uint32_t extraPropertiesStructureID;
     uint32_t orderWord;
     uint32_t numberOfRemovedEntries;
     uint32_t numberOfCounts;
@@ -90,6 +91,7 @@ public:
     JSPropertyNameEnumerator* enumerator(const LayoutData&, uint32_t orderWord, StructureChain* prototypeChain) const;
     void setEnumerator(VM&, const LayoutData&, uint32_t orderWord, JSPropertyNameEnumerator*, StructureChain* prototypeChain);
     void publishEnumerator(const Object&, JSPropertyNameEnumerator*);
+    void forgetPublishedEnumerators();
     void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const final;
 
@@ -116,6 +118,16 @@ public:
         if (place.shape != shape || place.orderAndCount != orderAndCount || place.key != key)
             m_listedFields[newer + 1] = place;
         place = { shape, orderAndCount, key, lists ? isListed : isNotListed };
+    }
+    bool isOrderOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) const
+    {
+        uint64_t key = keyOfFinishedBirth(layout, orderWord);
+        return m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] == key;
+    }
+    void rememberOrderOfFinishedBirth(const LayoutData& layout, uint32_t orderWord)
+    {
+        uint64_t key = keyOfFinishedBirth(layout, orderWord);
+        m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] = key;
     }
     EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> enumeratorHashShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
     PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
@@ -162,6 +174,10 @@ private:
     std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
     std::array<PlacesOfPositionedKeys, 8> m_placesOfPositionedKeys { };
     std::array<EnumeratorBelowCompiledObjects, 32> m_enumeratorsBelowCompiledObjects { };
+    static constexpr size_t numberOfFinishedBirths = 128;
+    static uint64_t keyOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) { return (static_cast<uint64_t>(layout.index) + 1) << 32 | orderWord; }
+    static size_t placeOfFinishedBirth(uint64_t key) { return ((key >> 32) ^ (key >> 15)) % numberOfFinishedBirths; }
+    std::array<uint64_t, numberOfFinishedBirths> m_ordersOfFinishedBirths { };
     UncheckedKeyHashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };

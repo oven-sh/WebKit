@@ -1051,6 +1051,30 @@ void Encoder::encodeComparison(const Step& step)
         m_jit.zeroExtend8To32(destination, destination);
 }
 
+static bool isLesserOrGreaterNumber(const Encoder& encoder, const Operation* select)
+{
+    const Operation* test = select->child(0);
+    return (test->opcode() == LessThan || test->opcode() == GreaterThan) && select->type() == Double && encoder.m_liveness.isFused(test) && test->child(0) == select->child(1) && test->child(1) == select->child(2);
+}
+
+static void encodeX86LesserOrGreaterNumber(Encoder& encoder, bool isLesser, const X86SelectArm& first, const X86SelectArm& second, FPRReg destination)
+{
+    CCallHelpers& jit = encoder.m_jit;
+    FPRReg result = first.location.isRegister() || !second.location.isRegister() || second.location.fpr() != destination ? destination : scratchFPR;
+    FPRReg firstFPR = first.location.isRegister() ? first.location.fpr() : result;
+    FPRReg secondFPR = second.location.isRegister() ? second.location.fpr() : scratchFPR;
+    if (!first.location.isRegister())
+        moveArmOfX86SelectAfterTest(encoder, first, Reg(firstFPR));
+    if (!second.location.isRegister())
+        moveArmOfX86SelectAfterTest(encoder, second, Reg(secondFPR));
+    if (isLesser)
+        jit.minOrSecondDouble(firstFPR, secondFPR, result);
+    else
+        jit.maxOrSecondDouble(firstFPR, secondFPR, result);
+    if (result != destination)
+        jit.moveDouble(result, destination);
+}
+
 void Encoder::encodeSelect(const Step& step)
 {
     RELEASE_ASSERT(step.kind == StepKind::Execute && step.destination.isRegister());
@@ -1064,6 +1088,10 @@ void Encoder::encodeSelect(const Step& step)
     X86SelectArm otherwise = takeArmOfX86Select(*this, operation, 2, cursor);
 
     Reg destination = step.destination.reg();
+    if (destination.isFPR() && isLesserOrGreaterNumber(*this, operation)) {
+        encodeX86LesserOrGreaterNumber(*this, operation->child(0)->opcode() == LessThan, whenItHolds, otherwise, destination.fpr());
+        return;
+    }
     if (destination.isGPR() && tryEncodeX86SelectOfExactIntegerBound(*this, comparison, whenItHolds, otherwise, destination.gpr()))
         return;
     if (destination.isGPR() && canMoveArmOfX86SelectWithoutClobberingFlags(whenItHolds) && canMoveArmOfX86SelectWithoutClobberingFlags(otherwise)) {

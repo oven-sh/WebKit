@@ -59,6 +59,12 @@ public:
         m_savedFrame = nullptr;
     }
     void didThrow() { didEnd(); }
+    void leaveInPlace(bool leavesAtOnce)
+    {
+        m_state = State::Running;
+        m_savedFrame = nullptr;
+        m_leavesAtOnce = leavesAtOnce;
+    }
 
     static constexpr int32_t generatorSlotInStubFrame = -1;
 
@@ -75,6 +81,7 @@ private:
     SavedFrame* m_savedFrame { nullptr };
     State m_state { State::SuspendedAtStart };
     bool m_hasOtherPrototype { false };
+    bool m_leavesAtOnce { false };
 };
 static_assert(sizeof(Generator) == 32);
 static_assert(Generator::offsetOfSavedFrame() == sizeof(JSObjectWithButterfly) && Generator::offsetOfState() == Generator::offsetOfSavedFrame() + 8);

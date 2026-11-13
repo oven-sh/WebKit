@@ -46,11 +46,8 @@ void Modules::tellHostOfImport(JSPromise* promise, const String& path, std::opti
     auto* didStartImport = host().didStartImport;
     if (!didStartImport || promise->status() != JSPromise::Status::Pending)
         return;
-    std::optional<BitVector> reached;
-    didStartImport(m_instance.globalObject, promise, path, [&](ModuleID module) {
-        if (file && !reached)
-            reached = modulesInLoadGraph(*file);
-        return reached && reached->quickGet(module.index());
+    didStartImport(m_instance.globalObject, promise, path, [&] {
+        return file ? modulesInLoadGraph(*file) : BitVector();
     });
 }
 
@@ -114,26 +111,96 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
         enqueueFetch(promise, module, requested, referrerAsyncOrder, evaluatingCaller ? turnInWhichTextCame(*evaluatingCaller) : m_sourceArrivalCount);
         return;
     }
-    if (m_batchedFetches.isEmpty()) {
-        m_jobsBehindFirstCall = 0;
-        queueJobOfRound(module);
-    }
-    uint64_t place = static_cast<uint64_t>(m_sourceArrivalCount) << 32 | m_numberOfTextsAskedFor++;
-    uint32_t batchNumber = m_batchBeingFulfilled.value_or(m_currentBatchNumber);
-    bool hasImportsToFetch = isTestRun() && !requested && this->hasImportsToFetch(module);
-    size_t position = m_batchedFetches.size();
-    while (!hasImportsToFetch && position > m_fulfilledBatchedFetchCount && m_batchedFetches[position - 1].batchNumber == batchNumber && m_batchedFetches[position - 1].hasImportsToFetch)
-        --position;
-    m_batchedFetches.insert(position, BatchedFetch { place, batchNumber, Strong<JSPromise>(vm, promise), module, Strong<JSCell>(vm, requested), referrerAsyncOrder, caller, m_jobsBehindFirstCall, vm.aotState().momentOfLoads });
-    m_batchedFetches[position].hasImportsToFetch = hasImportsToFetch;
-    m_batchedFetches[position].precedingDiskReads = host().scheduleFetchFulfillment(m_instance.globalObject);
+    auto fetch = makeUnique<BatchedFetch>();
+    fetch->place = static_cast<uint64_t>(m_sourceArrivalCount) << 32 | m_numberOfTextsAskedFor++;
+    fetch->batchNumber = m_batchBeingFulfilled.value_or(m_currentBatchNumber);
+    fetch->promise.set(vm, promise);
+    fetch->module = module;
+    fetch->file = fileOf(module);
+    if (requested)
+        fetch->requestedRecord.set(vm, requested);
+    fetch->referrerAsyncOrder = referrerAsyncOrder;
+    fetch->caller = caller;
+    fetch->callSequenceNumber = vm.aotState().momentOfLoads;
+    fetch->precedingDiskReads = host().scheduleFetchFulfillment(m_instance.globalObject);
+    m_batchedFetches.addCall(WTF::move(fetch));
 }
 
-bool Modules::hasImportsToFetch(ModuleID module, std::optional<ModuleID> arrived)
+bool Modules::BatchedFetches::containsCallOf(ModuleID module, ModuleID file) const
+{
+    auto found = m_callsByFile.find(file);
+    return found != m_callsByFile.end() && found->value.containsIf([&](const BatchedFetch* call) { return call->module == module; });
+}
+
+void Modules::BatchedFetches::addCall(std::unique_ptr<BatchedFetch> call)
+{
+    m_callsByFile.add(call->file, Vector<BatchedFetch*, 1> { }).iterator->value.append(call.get());
+    m_inOrder.append(call.release());
+}
+
+void Modules::BatchedFetches::addImport(std::unique_ptr<BatchedFetch> fetch)
+{
+    m_importersByFile.add(fetch->file, Vector<BatchedFetch*, 1> { });
+    m_inOrder.append(fetch.release());
+}
+
+void Modules::BatchedFetches::addImporter(BatchedFetch& call, ModuleID imported)
+{
+    m_importersByFile.find(imported)->value.append(&call);
+    ++call.missingImports;
+}
+
+std::unique_ptr<Modules::BatchedFetch> Modules::BatchedFetches::takeFirst()
+{
+    BatchedFetch& fetch = *m_inOrder.begin();
+    fetch.remove();
+    return std::unique_ptr<BatchedFetch>(&fetch);
+}
+
+void Modules::BatchedFetches::letWait(std::unique_ptr<BatchedFetch> call)
+{
+    m_waiting.append(call.release());
+}
+
+std::unique_ptr<Modules::BatchedFetch> Modules::BatchedFetches::takeWaiting(BatchedFetch& call)
+{
+    call.remove();
+    return std::unique_ptr<BatchedFetch>(&call);
+}
+
+void Modules::BatchedFetches::didTakeCall(BatchedFetch& call)
+{
+    auto calls = m_callsByFile.find(call.file);
+    calls->value.removeFirst(&call);
+    if (calls->value.isEmpty())
+        m_callsByFile.remove(calls);
+}
+
+Vector<std::unique_ptr<Modules::BatchedFetch>> Modules::BatchedFetches::takeCalls()
+{
+    Vector<std::unique_ptr<BatchedFetch>> calls;
+    for (auto* fetches : { &m_inOrder, &m_waiting }) {
+        while (!fetches->isEmpty()) {
+            BatchedFetch& fetch = *fetches->begin();
+            fetch.remove();
+            std::unique_ptr<BatchedFetch> owned(&fetch);
+            if (owned->isCall())
+                calls.append(WTF::move(owned));
+        }
+    }
+    m_callsByFile.clear();
+    m_importersByFile.clear();
+    return calls;
+}
+
+void Modules::BatchedFetches::clear()
+{
+    takeCalls();
+}
+
+bool Modules::hasImportsToFetch(ModuleID module)
 {
     for (const ModuleRequestData& request : m_table.requests(module)) {
-        if (arrived && fileOf(request.targetModule()) == fileOf(*arrived))
-            continue;
         if (!request.isDeferred && !request.isRequire && !request.isHoisted && textOfImportComesInLaterTurn(request.targetModule(), AskedBy::Import))
             return true;
     }
@@ -142,14 +209,8 @@ bool Modules::hasImportsToFetch(ModuleID module, std::optional<ModuleID> arrived
 
 bool Modules::hasDeferredFetchOf(ModuleID file)
 {
-    for (const BatchedFetch& text : batchedFetches()) {
-        if (fileOf(text.module) == file)
-            return true;
-    }
-    for (const BatchedFetch& text : m_callsToMakeAgain) {
-        if (fileOf(text.module) == file)
-            return true;
-    }
+    if (m_batchedFetches.containsCallOf(file))
+        return true;
     for (const QueuedFetch& text : m_queuedFetches) {
         if (fileOf(text.module) == file)
             return true;
@@ -180,81 +241,123 @@ void Modules::putCallsThatWaitApartInLine()
 {
     if (m_batchedFetches.isEmpty()) [[likely]]
         return;
-    for (BatchedFetch& text : batchedFetches()) {
-        if (!text.requestedRecord)
-            m_modulesOfQueuedImports.set(text.module.index());
-        m_queuedFetches.appendAndBubble(QueuedFetch { text.place, WTF::move(text.promise), text.module, WTF::move(text.requestedRecord), text.referrerAsyncOrder, std::nullopt, text.callSequenceNumber, { }, { }, 0, text.precedingDiskReads }, [&](const QueuedFetch& inLine) {
-            return inLine.place > text.place;
+    Vector<std::unique_ptr<BatchedFetch>> calls = m_batchedFetches.takeCalls();
+    m_filesWithSource.clearAll();
+    std::ranges::sort(calls, { }, [](const auto& call) { return call->place; });
+    for (auto& fetch : calls) {
+        if (!fetch->requestedRecord)
+            m_modulesOfQueuedImports.set(fetch->module.index());
+        m_queuedFetches.appendAndBubble(QueuedFetch { fetch->place, WTF::move(fetch->promise), fetch->module, WTF::move(fetch->requestedRecord), fetch->referrerAsyncOrder, std::nullopt, fetch->callSequenceNumber, { }, { }, 0, fetch->precedingDiskReads }, [&](const QueuedFetch& inLine) {
+            return inLine.place > fetch->place;
         });
     }
-    m_batchedFetches.clear();
-    m_fulfilledBatchedFetchCount = 0;
 }
 
 void Modules::clearBatchedFetches()
 {
     m_batchedFetches.clear();
-    m_fulfilledBatchedFetchCount = 0;
-    m_callsToMakeAgain.clear();
-    m_promiseOfJobThatMakesCallsAgain.clear();
+    m_filesWithSource.clearAll();
     m_promiseOfJobInWhichLoadAsksForOriginal.clear();
-    m_promiseOfJobOfRound.clear();
-    m_isJobOfRoundQueued = false;
+}
+
+void Modules::fetchImports(BatchedFetch& call, ModuleID importer, const BatchedFetch& arrived)
+{
+    Vector<ModuleID, 16> work { importer };
+    while (!work.isEmpty()) {
+        ModuleID module = work.takeLast();
+        for (const ModuleRequestData& request : m_table.requests(module)) {
+            if (request.isDeferred || request.isRequire || request.isHoisted)
+                continue;
+            ModuleID imported = request.targetModule();
+            ModuleID file = fileOf(imported);
+            if (file == fileOf(module) || !call.importedFiles.add(file).isNewEntry)
+                continue;
+            if (m_filesWithSource.get(file.index())) {
+                work.append(imported);
+                continue;
+            }
+            if (!m_batchedFetches.isFetchedForImporters(file)) {
+                if (!textOfImportComesInLaterTurn(imported, AskedBy::Import))
+                    continue;
+                auto fetch = makeUnique<BatchedFetch>();
+                fetch->batchNumber = arrived.batchNumber;
+                fetch->module = imported;
+                fetch->file = file;
+                bool isBehindLaterBatch = !m_batchedFetches.isEmpty() && m_batchedFetches.last().batchNumber > arrived.batchNumber;
+                fetch->precedingDiskReads = isBehindLaterBatch ? host().scheduleFetchFulfillment(m_instance.globalObject) : arrived.precedingDiskReads;
+                m_batchedFetches.addImport(WTF::move(fetch));
+            }
+            m_batchedFetches.addImporter(call, file);
+        }
+    }
 }
 
 bool Modules::tryFulfillFirstBatchedFetch()
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    BatchedFetch text = WTF::move(m_batchedFetches[m_fulfilledBatchedFetchCount]);
-    ++m_fulfilledBatchedFetchCount;
-    Vector<BatchedFetch, 1> joined;
-    if (isTestRun()) {
-        m_batchedFetches.removeAllMatching([&](BatchedFetch& other) {
-            if (other.batchNumber != text.batchNumber || fileOf(other.module) != fileOf(text.module))
-                return false;
-            joined.append(WTF::move(other));
-            return true;
-        }, m_fulfilledBatchedFetchCount);
-    }
-    if (m_fulfilledBatchedFetchCount == m_batchedFetches.size()) {
-        m_batchedFetches.clear();
-        m_fulfilledBatchedFetchCount = 0;
-    }
-    if (m_instance.globalObject->microtaskRunnability() == QueuedTaskResult::Discard)
-        return false;
-    bool isFollowedInBatch = isTestRun() && !text.hasImportsToFetch && firstBatchNumber() == text.batchNumber;
-    m_batchBeingFulfilled = isFollowedInBatch ? std::optional(text.batchNumber) : std::nullopt;
-    m_isInJobsAfterArrival = !isFollowedInBatch;
-    m_fulfillsBatchTogether = !isTestRun() || text.hasImportsToFetch;
-    if ((isTestRun() && !text.hasImportsToFetch) || !text.jobsBehindFirstCall) {
-        makeCallAgain(text);
-        RETURN_IF_EXCEPTION(scope, true);
-        for (BatchedFetch& call : joined) {
-            makeCallAgain(call);
-            RETURN_IF_EXCEPTION(scope, true);
+    std::unique_ptr<BatchedFetch> arrived = m_batchedFetches.takeFirst();
+    uint32_t batchNumber = arrived->batchNumber;
+    bool isDiscarded = m_instance.globalObject->microtaskRunnability() == QueuedTaskResult::Discard;
+    Vector<std::unique_ptr<BatchedFetch>, 1> calls;
+    if (!arrived->isCall()) {
+        m_filesWithSource.set(arrived->file.index());
+        for (BatchedFetch* call : m_batchedFetches.takeImportersOf(arrived->file)) {
+            --call->missingImports;
+            fetchImports(*call, arrived->module, *arrived);
+            if (!call->missingImports)
+                calls.append(m_batchedFetches.takeWaiting(*call));
         }
-        while (isFollowedInBatch && firstBatchNumber() == text.batchNumber && isFetchedBesideFactory(m_batchedFetches[m_fulfilledBatchedFetchCount].module)) {
-            BatchedFetch& next = m_batchedFetches[m_fulfilledBatchedFetchCount];
-            if (!next.hasImportsToFetch || next.place > text.place || hasImportsToFetch(next.module, text.module))
-                break;
-            BatchedFetch call = WTF::move(next);
-            if (++m_fulfilledBatchedFetchCount == m_batchedFetches.size()) {
-                m_batchedFetches.clear();
-                m_fulfilledBatchedFetchCount = 0;
+        if (calls.size() > 2)
+            std::stable_partition(calls.mutableSpan().begin() + 1, calls.mutableSpan().end(), [](const auto& call) { return call->joinsEarlierCall; });
+    } else {
+        if (!arrived->requestedRecord && !isDiscarded) {
+            if (m_batchedFetches.isFetchedForImporters(arrived->file)) {
+                arrived->joinsEarlierCall = true;
+                arrived->importedFiles.add(arrived->file);
+                m_batchedFetches.addImporter(*arrived, arrived->file);
+            } else {
+                arrived->joinsEarlierCall = m_filesWithSource.get(arrived->file.index());
+                fetchImports(*arrived, arrived->module, *arrived);
             }
-            makeCallAgain(call);
-            RETURN_IF_EXCEPTION(scope, true);
         }
-        return true;
+        if (arrived->missingImports) {
+            m_filesWithSource.set(arrived->file.index(), !m_batchedFetches.isFetchedForImporters(arrived->file));
+            m_batchedFetches.letWait(WTF::move(arrived));
+        } else
+            calls.append(WTF::move(arrived));
     }
-    if (m_callsToMakeAgain.isEmpty()) {
-        VM& vm = *m_instance.vm;
-        if (!m_promiseOfJobThatMakesCallsAgain)
-            m_promiseOfJobThatMakesCallsAgain.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
-        m_jobsBehindDelivery = 0;
-        queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), text.module, 1);
+    for (auto& call : calls) {
+        m_batchedFetches.didTakeCall(*call);
+        m_filesWithSource.clear(call->file.index());
+        for (ModuleID file : call->importedFiles)
+            m_filesWithSource.clear(file.index());
     }
-    m_callsToMakeAgain.append(WTF::move(text));
+    if (isDiscarded)
+        return false;
+    bool isFollowedInBatch = firstBatchNumber() == batchNumber;
+    m_batchBeingFulfilled = isFollowedInBatch ? std::optional(batchNumber) : std::nullopt;
+    m_isInJobsAfterArrival = !isFollowedInBatch;
+    JSArray* line = nullptr;
+    bool settlesInLine = !m_mocks && m_modulesWithPendingMock.isEmpty() && calls.containsIf([&](const auto& call) { return call->joinsEarlierCall; }) && calls.containsIf([&](const auto& call) { return call->file != calls.first()->file; });
+    for (auto& call : calls) {
+        JSPromise* promise = call->promise.get();
+        EnsureStillAliveScope keepsPromise(promise);
+        if (settlesInLine && line) {
+            JSPromise* loaded = JSPromise::create(*m_instance.vm, m_instance.globalObject->promiseStructure());
+            settleInLine(line, promise, loaded);
+            RETURN_IF_EXCEPTION(scope, true);
+            call->promise.set(*m_instance.vm, loaded);
+        }
+        makeCallAgain(*call);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (settlesInLine && !line) {
+            bool wasHandled = promise->isHandled();
+            line = createLineBehindCall(promise);
+            RETURN_IF_EXCEPTION(scope, true);
+            if (!wasHandled)
+                promise->setFlags(promise->flags() & ~JSPromise::isHandledFlag);
+        }
+    }
     return true;
 }
 
@@ -378,10 +481,8 @@ bool Modules::isInAnotherLoadGraph(ModuleID file)
     auto leadsToFile = [&](ModuleID root) {
         return fileOf(root) != file && modulesInLoadGraph(root, LoadGraphMode::IgnoreMocks).get(file.index());
     };
-    for (const BatchedFetch& text : batchedFetches()) {
-        if (leadsToFile(text.module))
-            return true;
-    }
+    if (m_batchedFetches.containsCallIf([&](const BatchedFetch& call) { return leadsToFile(call.module); }))
+        return true;
     for (const QueuedFetch& text : m_queuedFetches) {
         if (leadsToFile(text.module))
             return true;
@@ -439,10 +540,13 @@ void Modules::letLoadInFlightAskForOriginal(ModuleID module)
         if (!promiseOfCall && !text.requested && isFetchForCall(text))
             promiseOfCall = text.promise.get();
     }
-    for (const BatchedFetch& text : batchedFetches()) {
-        if (!promiseOfCall && !text.requestedRecord && isFetchForCall(text))
-            promiseOfCall = text.promise.get();
-    }
+    const BatchedFetch* fetchOfCall = nullptr;
+    m_batchedFetches.forEachCall([&](const BatchedFetch& call) {
+        if (!call.requestedRecord && isFetchForCall(call) && (!fetchOfCall || call.place < fetchOfCall->place))
+            fetchOfCall = &call;
+    });
+    if (!promiseOfCall && fetchOfCall)
+        promiseOfCall = fetchOfCall->promise.get();
     if (promiseOfCall)
         RELEASE_AND_RETURN(scope, promiseOfCall->resolve(realm, vm, failed));
 }
@@ -477,22 +581,6 @@ void Modules::walkInPlaceOfCallsHeldForTextOf(ModuleID file)
         return;
     noteImportFailedUnderMock(asked, error);
     recordFactoryFailure(file, error);
-}
-
-void Modules::runJobThatMakesCallsAgain(ModuleID moduleOfJob)
-{
-    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    ++m_jobsBehindDelivery;
-    while (!m_callsToMakeAgain.isEmpty() && m_callsToMakeAgain.first().jobsBehindFirstCall <= m_jobsBehindDelivery) {
-        BatchedFetch text = m_callsToMakeAgain.takeFirst();
-        makeCallAgain(text);
-        if (scope.exception()) [[unlikely]] {
-            m_callsToMakeAgain.clear();
-            return;
-        }
-    }
-    if (!m_callsToMakeAgain.isEmpty())
-        queueStepOfImportInImportTurns(m_promiseOfJobThatMakesCallsAgain.get(), moduleOfJob, 1);
 }
 
 void Modules::updateRetainedImportNamespaces(ModuleID module)
@@ -658,24 +746,6 @@ JSObject* Modules::takeRetainedImportNamespace(JSPromise* importPromise)
     return namespaceObject;
 }
 
-void Modules::queueJobOfRound(ModuleID moduleOfJob)
-{
-    if (!hostHasProgramSources() || std::exchange(m_isJobOfRoundQueued, true))
-        return;
-    VM& vm = *m_instance.vm;
-    if (!m_promiseOfJobOfRound)
-        m_promiseOfJobOfRound.set(vm, JSPromise::create(vm, m_instance.globalObject->promiseStructure()));
-    queueStepOfImportInImportTurns(m_promiseOfJobOfRound.get(), moduleOfJob, 1);
-}
-
-void Modules::runJobOfRound(ModuleID moduleOfJob)
-{
-    m_isJobOfRoundQueued = false;
-    ++m_jobsBehindFirstCall;
-    if (!m_batchedFetches.isEmpty() && !m_instance.vm->defaultMicrotaskQueue().isEmpty())
-        queueJobOfRound(moduleOfJob);
-}
-
 static JSC_DECLARE_HOST_FUNCTION(resumeLoadAfterFactory);
 
 JSC_DEFINE_HOST_FUNCTION(resumeLoadAfterFactory, (JSGlobalObject* realm, CallFrame* callFrame))
@@ -750,11 +820,6 @@ bool fulfillDeferredFetches(VM& vm, uint64_t completedDiskReads)
         isDelivered = batchNumber ? first->tryFulfillFirstBatchedFetch() : first->tryFulfillFirstQueuedFetch();
         if (scope.exception()) [[unlikely]]
             return true;
-        while (first->fulfillsBatchTogether() && batchNumber && first->firstBatchNumber() == batchNumber) {
-            isDelivered |= first->tryFulfillFirstBatchedFetch();
-            if (scope.exception()) [[unlikely]]
-                return true;
-        }
     }
     return true;
 }

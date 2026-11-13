@@ -368,7 +368,7 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         throwException(globalObject, scope, isParent ? createParentNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
         return { };
     }
-    if (auto* errorConstructor = isParent ? dynamicDowncast<ErrorConstructor>(callee) : nullptr; errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
+    if (auto* errorConstructor = dynamicDowncast<ErrorConstructor>(callee); errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
         Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, asObject(newTarget), errorConstructor);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
@@ -433,6 +433,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadArgumentList, JSCell*, (Instance* insta
     if (!words) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
     OPERATION_RETURN(scope, words);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewListOfArguments, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* words, JSCell* listCell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewListOfArguments);
+    JSArray* list = cellArgument<JSArray>(listCell, Entry::operationAOTNewListOfArguments);
+    MarkedArgumentBuffer arguments;
+    for (uint32_t index = 0; index < count; ++index)
+        arguments.append(JSValue::decode(words[index]));
+    JSArray* result = constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    appendElementsOfList(globalObject, result, list);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, result);
 }
 
 static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
@@ -726,6 +740,11 @@ static NEVER_INLINE JSValue enterWithManyArguments(VM& vm, const CallData& callD
     return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 
+static ALWAYS_INLINE JSValue loadArgument(const ArgList& args, size_t index)
+{
+    return JSValue::decode(WTF::opaque(JSValue::encode(args.at(index))));
+}
+
 static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callData, JSObject* callee, JSValue thisSlot, JSCell* context, const ArgList& args)
 {
     switch (args.size()) {
@@ -734,15 +753,15 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
     case 1:
         return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0));
     case 2:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1));
     case 3:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2));
     case 4:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3));
     case 5:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3), loadArgument(args, 4));
     case 6:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4), args.at(5));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3), loadArgument(args, 4), loadArgument(args, 5));
     default:
         return enterWithManyArguments(vm, callData, callee, thisSlot, context, args);
     }

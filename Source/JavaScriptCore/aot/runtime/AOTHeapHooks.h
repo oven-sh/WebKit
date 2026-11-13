@@ -46,6 +46,7 @@ std::span<const uint32_t> narrowReferenceOffsets(const Structure*);
 
 JS_EXPORT_PRIVATE WTF::Vector<std::unique_ptr<MarkingConstraint>> createMarkingConstraints(VM&);
 JS_EXPORT_PRIVATE void initializeCollectorWords(VM&, Instance&);
+JS_EXPORT_PRIVATE void setBarrierThreshold(Instance&, unsigned threshold);
 
 class MutatorMarkStackLayout final : public MarkStackArray {
 public:

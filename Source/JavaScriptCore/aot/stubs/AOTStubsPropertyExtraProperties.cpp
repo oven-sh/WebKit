@@ -51,12 +51,8 @@ void loadExtraPropertiesByStructure(StubAssembler& jit, GPRReg object, GPRReg st
 {
     RELEASE_ASSERT(noOverlap(object, structure, scratch) && noOverlap(object, scratch, result));
     jit.load32(Address(structure, CompiledStructure::offsetOfExtraPropertiesSlot()), scratch);
-    Jump isHeldByStructure = jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(SlotData::maxOffset));
     jit.and32(TrustedImm32(SlotData::maxOffset), scratch);
-    loadExtraProperties(jit, object, scratch, result, hasNone);
-    Jump isLoaded = jit.jump();
-
-    isHeldByStructure.link(&jit);
+    Jump isHeldByObject = jit.branchTest32(CCallHelpers::NonZero, scratch);
     hasNone.append(jit.branchTest8(CCallHelpers::Zero, Address(structure, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasExtraProperties))));
     jit.load16(Address(structure, CompiledStructure::offsetOfHighBitsOfRareData()), scratch);
     jit.lshift64(TrustedImm32(32), scratch);
@@ -65,6 +61,10 @@ void loadExtraPropertiesByStructure(StubAssembler& jit, GPRReg object, GPRReg st
     hasNone.append(jit.branchTestPtr(CCallHelpers::Zero, result));
     jit.loadPtr(Address(result, CompiledStructure::offsetOfHeldExtraPropertiesInRareData()), result);
     hasNone.append(jit.branchTestPtr(CCallHelpers::Zero, result));
+    Jump isLoaded = jit.jump();
+
+    isHeldByObject.link(&jit);
+    loadExtraProperties(jit, object, scratch, result, hasNone);
     isLoaded.link(&jit);
 }
 
@@ -170,7 +170,7 @@ void storeExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraP
     jit.move(r.extraProperties, owner);
     selectStorage(jit, slot, r);
     jit.store64(value, BaseIndex(r.extraProperties, r.wordIndex, CCallHelpers::TimesEight));
-    finish(owner, true);
+    finish(owner);
 }
 
 static void loadNewStructure(StubAssembler& jit, const CachedSlot& slot, GPRReg result)
@@ -185,12 +185,13 @@ static void storeNewStructureID(StubAssembler& jit, const CachedSlot& slot, GPRR
     jit.store32(scratch, Address(object, JSCell::structureIDOffset()));
 }
 
-static void addToExtraProperties(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, const StoreFinish& finish, ExtraPropertyAdditionExits& exits)
+static void addToExtraProperties(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, ExtraPropertyAdditionExits& exits)
 {
+    static_assert(!static_cast<unsigned>(CellState::PossiblyBlack));
     const Address butterfly(r.extraProperties, JSObject::butterflyOffset());
     slot.loadHiddenWordOffset(jit, r.scratch);
     loadExtraProperties(jit, r.object, r.scratch, r.extraProperties, exits.cannot);
-    exits.cannot.append(branchIfBarrierIsNeeded(jit, r.extraProperties, r.scratch));
+    exits.cannot.append(jit.branchTest8(CCallHelpers::Zero, Address(r.extraProperties, JSCell::cellStateOffset())));
     loadNewStructure(jit, slot, r.scratch);
     jit.load32(Address(r.scratch, CompiledStructure::offsetOfExtraPropertiesStructureID()), r.scratch);
     loadWordIndex(jit, slot, r.wordIndex);
@@ -199,17 +200,18 @@ static void addToExtraProperties(StubAssembler& jit, const CachedSlot& slot, con
         storeNewStructureID(jit, slot, r.object, r.scratch);
     };
     Jump isOutOfLine = slot.branchIfFlag(jit, Slot::isOutOfLine);
-    storeStructureIDs();
     jit.store64(value, BaseIndex(r.extraProperties, r.wordIndex, CCallHelpers::TimesEight));
-    finish(r.object, false);
+    storeStructureIDs();
+    Label isAdded = jit.label();
+    returnAfterAddingExtraProperty(jit, r.object, r.extraProperties, r.scratch);
 
     isOutOfLine.link(&jit);
     exits.growsStorage.append(slot.branchIfFlag(jit, Slot::growsStorage));
     exits.cannot.append(jit.branchTestPtr(CCallHelpers::Zero, butterfly));
     storeStructureIDs();
-    jit.loadPtr(butterfly, r.extraProperties);
-    jit.store64(value, BaseIndex(r.extraProperties, r.wordIndex, CCallHelpers::TimesEight));
-    finish(r.object, false);
+    jit.loadPtr(butterfly, r.scratch);
+    jit.store64(value, BaseIndex(r.scratch, r.wordIndex, CCallHelpers::TimesEight));
+    jit.jump().linkTo(isAdded, &jit);
 }
 
 static void allocateExtraProperties(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, JumpList& cannot)
@@ -245,7 +247,7 @@ static void initializeExtraProperties(StubAssembler& jit, const CachedSlot& slot
     fenceAfterAllocation(jit);
 }
 
-static void createExtraProperties(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, const StoreFinish& finish, JumpList& cannot)
+static void createExtraProperties(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, JumpList& cannot)
 {
     const GPRReg hiddenWordOffset = r.wordIndex;
     allocateExtraProperties(jit, slot, r, cannot);
@@ -257,12 +259,13 @@ static void createExtraProperties(StubAssembler& jit, const CachedSlot& slot, co
         encodeCell32(jit, r.extraProperties, r.scratch);
         jit.store32(r.scratch, BaseIndex(r.object, hiddenWordOffset, CCallHelpers::TimesOne));
     }
+    fenceAfterAllocation(jit);
     jit.or32(TrustedImm32(orderWordHasExtraProperties), Address(r.object, offsetOfOrderWord));
     storeNewStructureID(jit, slot, r.object, r.scratch);
-    finish(r.object, false);
+    returnAfterAddingExtraProperty(jit, r.object, std::nullopt, r.scratch);
 }
 
-void addExtraPropertyInNewStorage(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyGrowthRegisters& growth, GPRReg value, const StoreFinish& finish, JumpList& cannot)
+void addExtraPropertyInNewStorage(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyGrowthRegisters& growth, GPRReg value, JumpList& cannot)
 {
     const ExtraPropertyRegisters& r = growth.access;
     const GPRReg newCapacity = r.wordIndex;
@@ -287,21 +290,20 @@ void addExtraPropertyInNewStorage(StubAssembler& jit, const CachedSlot& slot, co
         .addedValue = value,
     }, cannot);
     storeNewStructureID(jit, slot, r.object, r.scratch);
-    finish(r.object, false);
+    returnAfterAddingExtraProperty(jit, r.object, r.extraProperties, r.scratch);
 }
 
-void addExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, const StoreFinish& finish, ExtraPropertyAdditionExits& exits)
+void addExtraProperty(StubAssembler& jit, const CachedSlot& slot, const ExtraPropertyRegisters& r, GPRReg value, ExtraPropertyAdditionExits& exits)
 {
     const Address orderWord(r.object, offsetOfOrderWord);
     RELEASE_ASSERT(slot.kind() == Slot::Kind::ExtraPropertyAddition && slot.form() == SlotForm::Slot);
     RELEASE_ASSERT(noOverlap(slot.header(), value, r.object, r.extraProperties, r.wordIndex, r.scratch));
     exits.isNotExtensible.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(orderWordIsNotExtensible)));
-    exits.cannot.append(branchIfBarrierIsNeeded(jit, r.object, r.scratch));
     Jump hasNone = jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(orderWordHasExtraProperties));
-    addToExtraProperties(jit, slot, r, value, finish, exits);
+    addToExtraProperties(jit, slot, r, value, exits);
 
     hasNone.link(&jit);
-    createExtraProperties(jit, slot, r, value, finish, exits.cannot);
+    createExtraProperties(jit, slot, r, value, exits.cannot);
 }
 
 } } // namespace JSC::AOT

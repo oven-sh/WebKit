@@ -103,7 +103,7 @@ struct ModuleHost {
     std::optional<bool> (*isInPreload)(JSGlobalObject*);
     bool (*reinstallMocks)(JSGlobalObject*, const ScopedLambda<bool(ModuleID)>& isReached);
     uint64_t (*scheduleFetchFulfillment)(JSGlobalObject*);
-    void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path, const ScopedLambda<bool(ModuleID)>& isReached);
+    void (*didStartImport)(JSGlobalObject*, JSPromise*, const String& path, const ScopedLambda<BitVector()>& reachedModules);
     bool (*hasProgramSources)(JSGlobalObject*);
     bool (*isRequestedByPendingFactory)(JSGlobalObject*, ModuleID);
     bool (*hasSourceCache)(JSGlobalObject*);
@@ -461,10 +461,11 @@ JS_EXPORT_PRIVATE JSValue retainedOriginalExports(JSGlobalObject*, ModuleID file
 JS_EXPORT_PRIVATE JSValue revalidateRetainedOriginalExports(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void retainOriginalExports(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void stashActualKeyExports(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE bool mayTakeRunUnderActualKey(JSGlobalObject*, ModuleID file);
 enum class ActualKeyExports : uint8_t { None,
     Restored,
     Superseded };
-JS_EXPORT_PRIVATE ActualKeyExports restoreActualKeyExports(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE ActualKeyExports restoreActualKeyExports(JSGlobalObject*, ModuleID file, bool keepsSuperseded);
 JS_EXPORT_PRIVATE bool tryEvictUnderActualKey(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSObject* retainedOriginalModuleObject(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE void clearRetainedOriginalExports(JSGlobalObject*, ModuleID file);

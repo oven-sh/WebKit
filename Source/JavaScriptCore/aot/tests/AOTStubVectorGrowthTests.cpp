@@ -128,7 +128,6 @@ public:
         prefix.newArrayWithDoubleHeader = doubleStructureID;
         prefix.newArrayWithContiguousHeader = contiguousStructureID;
         runner.instance().allocation.auxiliarySpace = m_auxiliarySpace.bytes.data();
-        runner.instance().barrierThreshold = blackThreshold;
     }
 
     void makeRoomFor(FakeAllocator& allocator, size_t cellSize)
@@ -385,8 +384,45 @@ static void testStoreLeavesOtherVectorsToOperation()
     GrowingArrays arrays;
     for (const ArrayKind& kind : arrayKinds()) {
         checkLeftToOperation<fullLength>(arrays, appendByStore, kind, [](FakeArray&, FakeAllocator&) {
-            return fullLength + 1;
+            return maxLengthForElementwiseCopy + 1;
         });
+    }
+}
+
+template<uint32_t fullLength, uint32_t position>
+static void checkGrowthBeyondLength(GrowingArrays& arrays, const ArrayKind& kind)
+{
+    static_assert(position > fullLength);
+    const size_t sizeStep = sizeStepOfNextVector(position);
+    const size_t cellSize = (sizeStep + 1) * MarkedSpace::sizeStep;
+    const uint32_t newVectorLength = static_cast<uint32_t>((cellSize - sizeof(IndexingHeader)) / sizeof(EncodedJSValue));
+
+    FakeVector<fullLength> full;
+    full.fill(kind);
+    FakeArray array(kind, full.butterfly());
+    FakeAllocator allocator { static_cast<uint32_t>(cellSize) };
+    arrays.makeRoomFor(allocator, cellSize);
+    arrays.setAllocator(sizeStep, &allocator);
+
+    StubRun run = appendByStore(arrays.runner, array, position, kind.appended);
+    AOT_TEST_CHECK(!run.calledOperation && !allocator.hasRoom() && arrays.isWrittenOnlyInCell(cellSize));
+    AOT_TEST_CHECK(array.structureID == kind.structureID && array.publicLength() == position + 1 && array.vectorLength() == newVectorLength);
+    for (uint32_t index = 0; index < newVectorLength; ++index) {
+        uint64_t expected = index < fullLength ? kind.element(index) : index == position ? kind.appendedElement : kind.hole;
+        AOT_TEST_CHECK(array.butterfly[index] == expected);
+    }
+    arrays.setAllocator(sizeStep, nullptr);
+}
+
+static void testStoreBeyondLengthLeavesHoles()
+{
+    GrowingArrays arrays;
+    for (const ArrayKind& kind : arrayKinds()) {
+        checkGrowthBeyondLength<0, 1>(arrays, kind);
+        checkGrowthBeyondLength<0, 2>(arrays, kind);
+        checkGrowthBeyondLength<1, 3>(arrays, kind);
+        checkGrowthBeyondLength<3, 4>(arrays, kind);
+        checkGrowthBeyondLength<2, 7>(arrays, kind);
     }
 }
 
@@ -845,6 +881,7 @@ std::span<const NativeTest> stubVectorGrowthTests()
         { "stubs/vector-growth/reserved-room-is-all-holes-behind-the-length"_s, ImageTests::whenExecutable<testReservedRoomIsAllHolesBehindLength> },
         { "stubs/vector-growth/push-leaves-other-vectors-to-operation"_s, ImageTests::whenExecutable<testPushLeavesOtherVectorsToOperation> },
         { "stubs/vector-growth/store-leaves-other-vectors-to-operation"_s, ImageTests::whenExecutable<testStoreLeavesOtherVectorsToOperation> },
+        { "stubs/vector-growth/store-beyond-length-leaves-holes"_s, ImageTests::whenExecutable<testStoreBeyondLengthLeavesHoles> },
         { "stubs/vector-growth/value-of-other-kind-still-reaches-operation"_s, ImageTests::whenExecutable<testValueOfOtherKindStillReachesOperation> },
         { "stubs/vector-growth/what-is-no-number-widens-integers-where-it-stands"_s, ImageTests::whenExecutable<testWhatIsNoNumberWidensIntegers> },
         { "stubs/definition-under-an-index/is-stored-in-place-or-left-whole-to-the-operation"_s, ImageTests::whenExecutable<testDefinitionUnderIndexIsStoredInPlaceOrLeftWhole> },

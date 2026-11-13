@@ -244,6 +244,18 @@ struct ImportersOfModules {
     BitVector isInLargestCycle;
 };
 
+struct StatementImporters {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StatementImporters);
+
+    enum class Imports : bool { Statements, AllRequests };
+    StatementImporters(const ModuleTable&, Imports);
+
+    std::span<const uint32_t> of(ModuleID module) const { return importers.span().subspan(firstImporterOf[module.index()], firstImporterOf[module.index() + 1] - firstImporterOf[module.index()]); }
+
+    Vector<uint32_t> importers;
+    Vector<uint32_t> firstImporterOf;
+};
+
 struct ReexportedNames {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(ReexportedNames);
 

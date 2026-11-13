@@ -135,6 +135,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathF16Round, double, (double x))
     return Float16 { x };
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTParseIntNumber, double, (double number))
+{
+    if (std::optional<double> parsed = parseIntDouble(number)) [[likely]]
+        return *parsed;
+    NumberToStringBuffer buffer;
+    return parseInt(byteCast<Latin1Character>(std::span<const char>(numberToStringAndSize(number, buffer))), 10);
+}
+
 static NEVER_INLINE double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES parseInt8Slow(const Latin1Character* characters, uint32_t length, int32_t radix)
 {
     return parseInt(unsafeMakeSpan(characters, length), radix);
@@ -161,7 +169,7 @@ static NEVER_INLINE double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES stringToNumber8Slow
 
 extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringToNumber8(const Latin1Character* characters, uint32_t length)
 {
-    if (std::optional<double> value = valueOfFewDigits(unsafeMakeSpan(characters, length)))
+    if (std::optional<double> value = numberOfShortText(unsafeMakeSpan(characters, length)))
         return *value;
     [[clang::musttail]] return stringToNumber8Slow(characters, length);
 }
@@ -171,7 +179,7 @@ extern "C" double AOT_PRESERVE_MOST_LEAF_ATTRIBUTES operationAOTStringToNumber16
     return jsToNumber(StringView { unsafeMakeSpan(characters, length) });
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES numberOfOtherValue(Instance* instance, EncodedJSValue encodedValue)
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNumberOfAnyValue);
     JSValue value = JSValue::decode(encodedValue);
@@ -182,10 +190,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
     if (value.isString()) {
         auto view = asString(value)->view(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if (view->is8Bit()) {
-            if (std::optional<double> few = valueOfFewDigits(view->span8()))
-                OPERATION_RETURN(scope, JSValue::encode(jsNumber(*few)));
-        }
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(jsToNumber(view))));
     }
     JSValue numeric = timeIfDate(value).toNumeric(globalObject);
@@ -194,6 +198,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance
         OPERATION_RETURN(scope, JSValue::encode(numeric));
     ASSERT(numeric.isBigInt());
     OPERATION_RETURN(scope, JSValue::encode(JSBigInt::toNumber(numeric)));
+}
+
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES numberOfTextOrOtherValue(Instance* instance, EncodedJSValue encodedValue)
+{
+    if (JSValue value = JSValue::decode(encodedValue); value.isString()) {
+        auto characters = latin1CharactersWithoutResolving(asString(value));
+        if (std::optional<double> number = characters ? numberOfShortText(*characters) : std::nullopt)
+            return { JSValue::encode(jsNumber(*number)), nullptr };
+    }
+    AOT_MUST_TAIL_CALL return numberOfOtherValue(instance, encodedValue);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNumberOfAnyValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    if (std::optional<double> number = valueOfTextOfFewDigits(JSValue::decode(encodedValue)))
+        return { JSValue::encode(jsNumber(*number)), nullptr };
+    AOT_MUST_TAIL_CALL return numberOfTextOrOtherValue(instance, encodedValue);
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

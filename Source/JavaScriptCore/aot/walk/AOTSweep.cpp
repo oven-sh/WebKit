@@ -26,7 +26,7 @@ static constexpr uint8_t leavesOwedErrorMarkOfSweep = static_cast<uint8_t>(Sweep
 static constexpr uint8_t pollsForNothingMarkOfSweep = static_cast<uint8_t>(SweepMark::PollsForNothing);
 static_assert(!OptionSet<SweepMark> { SweepMark::IsNeeded, SweepMark::ReleasesOperand, SweepMark::LaterBarrierCovers, SweepMark::LeavesOwedError, SweepMark::PollsForNothing, SweepMark::LaterFenceCovers, SweepMark::OwnerIsYoung }.containsAny(OptionSet<SweepMark>::fromRaw(passedByMarkOfSweep)));
 
-static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndCellLifetime, Opcode::ReleaseList, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
+static constexpr OpcodeSet operationsThatSweepNeverDrops { Opcode::LoopHint, Opcode::CountExecution, Opcode::CheckProof, Opcode::EndCellLifetime, Opcode::ReleaseList, Opcode::PrefetchElements, Opcode::AskObjectAgain, Opcode::EnterBodyThatRunsOnce, Opcode::CallBuiltin };
 
 static constexpr OpcodeSet operationsThatSweepKeepsForTheirOperand { Opcode::MarkEnvironmentEscaped, Opcode::ReleaseEnvironment, Opcode::ReleaseArray };
 static_assert(OperandIndex::ReleaseArray::array == OperandIndex::ReleaseEnvironment::environment);
@@ -628,10 +628,114 @@ void Sweep::dropTakenEdge()
     }
 }
 
-static bool storesSameField(const Operation& store, const Operation& later)
+static bool storesSameVariable(const Operation& store, const Operation& later)
 {
+    if (store.opcode != later.opcode)
+        return false;
+    if (store.opcode == Opcode::PutModuleVariable)
+        return store.variable() == later.variable();
     return store.environmentOperand() == later.environmentOperand() && store.layout() == later.layout() && store.field() == later.field();
 }
+
+static constexpr OpcodeSet accessesOfOneSlot { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled, Opcode::PutSlotOrAdd };
+
+static bool mayObserveSlots(const Operation& operation)
+{
+    static constexpr OpcodeSet readsNoSlot { Opcode::NewObject, Opcode::NewArray, Opcode::NewClosure, Opcode::ShapeTest, Opcode::TypeTest, Opcode::GetModuleVariable };
+    EffectTraits traits = operation.traits();
+    return traits.mayExitSideways() || (traits.mayTouchMemory() && !readsNoSlot.contains(operation.opcode));
+}
+
+class SlotStoresOfBlock {
+public:
+    struct Observer {
+        ValueID operation;
+        PropertyKeyID key;
+        uint32_t numberOfStoresBehind;
+    };
+
+    uint32_t noteStore(ValueID store, ValueID object, PropertyKeyID key)
+    {
+        if (!m_numberOfStores++)
+            m_next = store;
+        uint64_t slot = static_cast<uint64_t>(object.bits()) << 32 | key.bits();
+        uint64_t bit = 1ULL << ((object.bits() * 31 + key.bits()) & 63);
+        m_place = notFound;
+        if (m_filter & bit)
+            m_place = findPlace(slot);
+        m_filter |= bit;
+        if (m_place != notFound)
+            return m_stores[m_place].number;
+        m_stores.append({ slot, m_numberOfStores });
+        return 0;
+    }
+
+    void keepStore() { m_stores[m_place].number = m_numberOfStores; }
+
+    template<typename Functor>
+    void forEachObserverUpTo(const Code& code, ValueID store, const Functor& functor)
+    {
+        for (; m_next != store; m_next = code.at(m_next).previous) {
+            const Operation& operation = code.at(m_next);
+            bool mayExit = operation.traits().mayExitSideways();
+            if (operation.opcode == Opcode::PutSlot && !mayExit) {
+                ++m_numberPassed;
+                continue;
+            }
+            if (mayObserveSlots(operation))
+                functor(Observer { m_next, mayExit || !accessesOfOneSlot.contains(operation.opcode) ? PropertyKeyID() : operation.key(), m_numberPassed });
+        }
+    }
+
+    void noteObserver(const Observer& observer)
+    {
+        if (!observer.key)
+            m_storesBehindObserver = observer.numberOfStoresBehind;
+        else
+            m_storesBehindReads.set(observer.key.bits(), observer.numberOfStoresBehind);
+    }
+    void noteUnneededObserver(const Observer& observer) { m_unneededObservers.append(observer); }
+    bool isObserved(uint32_t laterStore, PropertyKeyID key) const { return m_storesBehindObserver >= laterStore || m_storesBehindReads.get(key.bits()) >= laterStore; }
+
+    template<typename Functor>
+    void forEachUnneededObserver(uint32_t laterStore, PropertyKeyID key, const Functor& functor) const
+    {
+        for (size_t index = m_unneededObservers.size(); index-- && m_unneededObservers[index].numberOfStoresBehind >= laterStore;) {
+            const Observer& observer = m_unneededObservers[index];
+            if (!observer.key || observer.key == key)
+                functor(observer.operation);
+        }
+    }
+
+private:
+    static constexpr size_t numberSearched = 16;
+
+    size_t findPlace(uint64_t slot)
+    {
+        if (m_stores.size() <= numberSearched)
+            return m_stores.findIf([&](const Store& store) { return store.slot == slot; });
+        for (; m_numberInPlaces < m_stores.size(); ++m_numberInPlaces)
+            m_places.add(m_stores[m_numberInPlaces].slot, m_numberInPlaces);
+        auto found = m_places.find(slot);
+        return found == m_places.end() ? notFound : found->value;
+    }
+
+    struct Store {
+        uint64_t slot;
+        uint32_t number;
+    };
+    Vector<Store, numberSearched> m_stores;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_places;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_storesBehindReads;
+    Vector<Observer> m_unneededObservers;
+    uint64_t m_filter { 0 };
+    size_t m_place { notFound };
+    ValueID m_next;
+    uint32_t m_numberOfStores { 0 };
+    uint32_t m_numberInPlaces { 0 };
+    uint32_t m_numberPassed { 0 };
+    uint32_t m_storesBehindObserver { 0 };
+};
 
 ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
 {
@@ -667,6 +771,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
     }
     uint32_t numberOfOperationsVisited = 0;
     const Operation* laterStore = nullptr;
+    SlotStoresOfBlock slotStores;
     ValueID previous;
     for (ValueID value = block.m_last; value; value = previous) {
         const Operation& operation = code.at(value);
@@ -683,6 +788,10 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
         uint8_t& marks = arrays.marks[value.index()];
         marks |= passedByMarkOfSweep;
         bool isNeeded = marks & neededMarkOfSweep;
+        if (opcode == Opcode::PutSlot && isOverwrittenUnread(value, operation, slotStores)) {
+            ++m_totals.overwrittenSlotStoresDropped;
+            continue;
+        }
         if (!isNeeded) {
             if (row & isKeptForOperandInRowOfSweep) {
                 if (!noteOperationKeptForItsOperand(id, value, operation))
@@ -690,8 +799,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
             } else {
                 if ((marks & pollsForNothingMarkOfSweep) || !staysInSweptCodeByItselfByRow(operation, row))
                     continue;
-                if (opcode == Opcode::PutEnvironmentField) {
-                    if (overwritingStore && storesSameField(operation, *overwritingStore)) {
+                if (opcode == Opcode::PutEnvironmentField || opcode == Opcode::PutModuleVariable) {
+                    if (overwritingStore && storesSameVariable(operation, *overwritingStore)) {
                         if (!m_sweepsAgainBehindMovedBirths)
                             m_overwrittenStores.append(value);
                         laterStore = overwritingStore;
@@ -753,6 +862,47 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Sweep::visitOperationsOf(BlockID id)
     m_numberOfOperationsInOrder += numberInOrder;
 }
 
+bool Sweep::isOverwrittenUnread(ValueID store, const Operation& operation, SlotStoresOfBlock& stores)
+{
+    if (m_sweepsAgainBehindMovedBirths)
+        return std::ranges::binary_search(m_overwrittenStores, store.index(), { }, &ValueID::index);
+    if (operation.traits().mayExitSideways())
+        return false;
+    const Code& code = *m_code;
+    uint32_t laterStore = stores.noteStore(store, underlyingCellOf(code, operation.objectOperand()), operation.key());
+    if (!laterStore)
+        return false;
+    stores.forEachObserverUpTo(code, store, [&](const SlotStoresOfBlock::Observer& observer) {
+        if (code.isNeeded(observer.operation) || mayBeKeptForItsOperand(code.at(observer.operation)))
+            stores.noteObserver(observer);
+        else
+            stores.noteUnneededObserver(observer);
+    });
+    if (code.isNeeded(store) || stores.isObserved(laterStore, operation.key())) {
+        stores.keepStore();
+        return false;
+    }
+    stores.forEachUnneededObserver(laterStore, operation.key(), [&](ValueID read) {
+        m_storesDroppedUnlessRead.append({ store, read });
+    });
+    m_overwrittenStores.append(store);
+    return true;
+}
+
+void Sweep::needStoresReadLate()
+{
+    m_storesDroppedUnlessRead.removeAllMatching([&](const StoreDroppedUnlessRead& dropped) {
+        if (!m_code->isNeeded(dropped.read))
+            return false;
+        if (!m_code->isNeeded(dropped.store)) {
+            m_overwrittenStores.removeFirst(dropped.store);
+            --m_totals.overwrittenSlotStoresDropped;
+            need(dropped.store);
+        }
+        return true;
+    });
+}
+
 void Sweep::sweepBackward()
 {
     Code& code = *m_code;
@@ -786,6 +936,8 @@ void Sweep::sweepBackward()
                 settleWhatIsNeeded();
         }
         needOperandsOfWhatWayDoesNotComeBy();
+        if (!m_storesDroppedUnlessRead.isEmpty())
+            needStoresReadLate();
     } while (!m_worklist.isEmpty());
     for (uint8_t& marks : code.m_marks)
         marks &= static_cast<uint8_t>(~passedByMarkOfSweep);

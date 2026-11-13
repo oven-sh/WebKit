@@ -345,6 +345,18 @@ public:
         unsigned greatestLength { 0 };
     };
     std::optional<WholeTexts> wholeTexts;
+    // The hash table of wholeTexts for compiled code. A free slot has length 0. The table is followed by as many slots as there are texts, so a search never wraps around.
+    struct WholeTextSlot {
+        uint32_t length { 0 };
+        const char16_t* units { nullptr };
+    };
+    Vector<WholeTextSlot> wholeTextSlots;
+    const WholeTextSlot* firstWholeTextSlot { nullptr };
+    uint32_t wholeTextSlotMask { 0 };
+    uint32_t maxWholeTextLength { 0 };
+    // For each text, the bit at the low bits of its placeOf() is set. Most subjects equal no text, and their bit is clear, so they need no search.
+    static constexpr unsigned numberOfWholeTextBits = 256;
+    std::array<uint64_t, numberOfWholeTextBits / 64> wholeTextBits { };
     // Rows are numbered in this order: position-keyed, run-suffix, capture-keyed.
     unsigned memoRows { 0 };
     unsigned positionKeyedMemoRows { 0 };

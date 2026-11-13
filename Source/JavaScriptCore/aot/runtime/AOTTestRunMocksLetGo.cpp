@@ -309,14 +309,20 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
                 if (required == fileOf(mocked) && released.quickGet(requirer.index()))
                     m_mockedFilesWithReleasedRequirers.set(required, true);
             }
-            else if (!(asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer))))
+            else if (!(asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer)))) {
+                if (which == ReleasedImporters::All)
+                    releasePatchedFileAtMockEnd(requirer);
                 retainedRequirers.add(imported, Vector<ModuleID, 2>()).iterator->value.append(requirer);
+            }
         }
     }
     bool mayHaveImportersWithoutInstances = areReadByImportersWithoutInstances(toRelease.span());
     for (ModuleID importer : toRelease) {
-        if (!tryReleaseModule(importer) && !tryReleasePatchedModule(importer))
+        if (!tryReleaseModule(importer) && !tryReleasePatchedModule(importer)) {
+            if (which == ReleasedImporters::All)
+                releasePatchedFileAtMockEnd(fileOf(importer));
             continue;
+        }
         if (data(fileOf(importer)).isReloadable() && runsTestFilesAgain())
             m_requirersThatRunAgain.set(fileOf(importer).index());
         if (!mayHaveImportersWithoutInstances || !hasEvaluatedImporterWithoutInstances(importer))

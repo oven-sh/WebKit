@@ -133,24 +133,34 @@ static void forEachDistinctNameAmongObjectsOfType(const SetView<ObjectID, Object
     }
 }
 
-FunctionID functionSharedByClosuresOf(TypeReader reader, const Type& type)
+static NEVER_INLINE FunctionID functionSharedBySeveralClosures(TypeReader reader, const Type& type)
 {
     const ObjectTable& objects = reader.objects();
-    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
-        return objects.closureFunction(onlyObject);
     return nameSharedByAllObjectsOfType<FunctionID>(reader.at(type.objects), [&](ObjectID object) {
         return objects.closureFunction(object);
     });
 }
 
-BuiltinID builtinSharedByObjectsOf(TypeReader reader, const Type& type)
+FunctionID functionSharedByClosuresOf(TypeReader reader, const Type& type)
+{
+    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
+        return reader.objects().closureFunction(onlyObject);
+    return functionSharedBySeveralClosures(reader, type);
+}
+
+static NEVER_INLINE BuiltinID builtinSharedBySeveralObjects(TypeReader reader, const Type& type)
 {
     const ObjectTable& objects = reader.objects();
-    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
-        return objects.builtinOf(onlyObject);
     return nameSharedByAllObjectsOfType<BuiltinID>(reader.at(type.objects), [&](ObjectID object) {
         return objects.builtinOf(object);
     });
+}
+
+BuiltinID builtinSharedByObjectsOf(TypeReader reader, const Type& type)
+{
+    if (ObjectID onlyObject = onlyMemberOfSetInType<ObjectID>(type.objects))
+        return reader.objects().builtinOf(onlyObject);
+    return builtinSharedBySeveralObjects(reader, type);
 }
 
 ObjectID singleObjectOf(const Type& type)

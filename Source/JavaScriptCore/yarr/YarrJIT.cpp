@@ -6502,8 +6502,13 @@ class YarrGenerator final : public YarrJITInfo {
 
 #endif
 #if CPU(ARM64) || CPU(X86_64)
+#if defined(YARR_FOR_IMAGE)
+                auto prefixes = op.m_maskedAltInfo ? planTwoPrefixSearch() : std::nullopt;
+                if (op.m_maskedAltInfo && !prefixes) {
+#else
                 // Try multi-pattern SIMD search first if available (more selective for alternation patterns)
                 if (op.m_maskedAltInfo) {
+#endif
                     MacroAssembler::JumpList matched;
                     dataLogLnIf(Options::verboseRegExpCompilation(), "Using multi-pattern SIMD search");
                     auto simdResult = generateMultiPatternSIMDSearch(*op.m_maskedAltInfo, op.m_checkedOffset, matched);
@@ -6544,9 +6549,9 @@ class YarrGenerator final : public YarrJITInfo {
                 }
 #endif
 
-#if defined(YARR_FOR_IMAGE) && CPU(X86_64)
+#if defined(YARR_FOR_IMAGE) && (CPU(ARM64) || CPU(X86_64))
                 if (op.m_maskedAltInfo) {
-                    if (auto prefixes = planTwoPrefixSearch()) {
+                    if (prefixes) {
                         MacroAssembler::JumpList matched;
                         m_jit.add32(MacroAssembler::TrustedImm32(prefixSearchVectorLength), m_regs.index, m_regs.regT1);
                         auto restIsShort = m_jit.branch32(MacroAssembler::Above, m_regs.regT1, m_regs.length);
@@ -11181,7 +11186,7 @@ class YarrGenerator final : public YarrJITInfo {
         m_usesT2 = true;
     }
 
-#if CPU(X86_64)
+#if CPU(ARM64) || CPU(X86_64)
     // The input of FindEitherPrefix: the characters at the first positions of each prefix, by their low halves.
     struct TwoPrefixes {
         unsigned length { 0 };
@@ -11193,13 +11198,18 @@ class YarrGenerator final : public YarrJITInfo {
         static constexpr unsigned halves = 16;
         static constexpr unsigned minPrefixRarity = 8;
         auto& alternatives = m_pattern.m_body->m_alternatives;
-        if (m_direction != Forward || m_executionMode == ExecutionMode::InlineTest || m_charSize != CharSize::Char8 || !m_jit.supportsSupplementalSSE3())
+        if (m_direction != Forward || m_executionMode == ExecutionMode::InlineTest || m_charSize != CharSize::Char8)
             return std::nullopt;
-        // The search ends when too little input is left for the first alternative, so the second must not need less.
-        if (alternatives.size() != 2 || alternatives[0]->m_minimumSize > alternatives[1]->m_minimumSize)
+#if CPU(X86_64)
+        if (!m_jit.supportsSupplementalSSE3())
+            return std::nullopt;
+#endif
+        // Where the search ends with too little input for the first alternative, the body tries the second by its own input check.
+        if (alternatives.size() != 2)
             return std::nullopt;
 
         std::array<Vector<WTF::BitSet<halves>, longPrefixLength>, 2> prefixes;
+        WTF::BitSet<128> letters;
         for (unsigned i = 0; i < alternatives.size(); ++i) {
             for (const PatternTerm& term : alternatives[i]->m_terms) {
                 if (prefixes[i].size() == longPrefixLength)
@@ -11215,15 +11225,21 @@ class YarrGenerator final : public YarrJITInfo {
                     if (!isASCII(term.patternCharacter))
                         break;
                     add(term.patternCharacter);
+                    letters.set(toASCIILower(term.patternCharacter));
                 } else if (term.type == PatternTerm::Type::CharacterClass) {
                     const CharacterClass& characterClass = *term.characterClass;
                     if (term.m_invert || !characterClass.m_matches32.isEmpty() || !characterClass.m_ranges32.isEmpty())
                         break;
-                    for (char32_t character : characterClass.m_matches8)
+                    auto addMember = [&](char32_t character) {
                         add(character);
+                        if (isASCII(character))
+                            letters.set(toASCIILower(character));
+                    };
+                    for (char32_t character : characterClass.m_matches8)
+                        addMember(character);
                     for (auto& range : characterClass.m_ranges8) {
                         for (char32_t character = range.begin; character <= range.end; ++character)
-                            add(character);
+                            addMember(character);
                     }
                     bool isASCIIOnly = std::ranges::all_of(characterClass.m_matches8, [](char32_t character) { return isASCII(character); })
                         && std::ranges::all_of(characterClass.m_ranges8, [](auto& range) { return isASCII(range.end); });
@@ -11235,6 +11251,14 @@ class YarrGenerator final : public YarrJITInfo {
             }
         }
 
+#if CPU(ARM64)
+        // If the prefixes have few different letters, the search for four masked characters stops too often. Otherwise it is faster than this one.
+        static constexpr size_t maxLetters = 4;
+        if (letters.count() > maxLetters)
+            return std::nullopt;
+#else
+        UNUSED_VARIABLE(letters);
+#endif
         TwoPrefixes result;
         size_t known = std::min(prefixes[0].size(), prefixes[1].size());
         result.length = known >= longPrefixLength ? longPrefixLength : shortPrefixLength;

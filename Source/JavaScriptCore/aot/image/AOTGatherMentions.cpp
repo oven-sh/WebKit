@@ -283,6 +283,7 @@ private:
         case RequestKind::TemplateObject:
         case RequestKind::CollectionData:
         case RequestKind::FormatPattern:
+        case RequestKind::Prefetch:
             return;
         case RequestKind::DirectEval:
             addMentionsImpliedByDirectEvalRequest(request.subspan(1));

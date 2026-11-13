@@ -133,7 +133,7 @@ public:
     JSObject* classPrototypeIfExists(const LayoutData&) const;
     bool structureTellsInstancesOf(const LayoutData&, JSCell*, std::span<int32_t> displacementsOfFields) const;
     bool rememberStructureOfInstances(VM&, JSCell*, const LayoutData&, uint32_t offsetOfStructures);
-    bool rememberPrototypeWithoutElements(JSCell*, uint32_t offsetOfStructures);
+    bool rememberPrototypeWithoutElements(VM&, JSCell*, uint32_t offsetOfStructures);
     void forgetStructuresOfHeirs();
     bool prototypeAwaitsFirstTouch(const LayoutData& classLayout) const { return m_classesWhosePrototypeAwaitsFirstTouch.get(m_tables.rankOfClass(classLayout.index)); }
     JSObject* createClassPrototype(VM&, const LayoutData&, JSObject* parent);
@@ -169,6 +169,7 @@ public:
     bool holdersAreLeftOut(const LayoutData&);
     bool tryLeaveHoldersOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
     void nameClassObjectOnPrototypeMadeLeftOut(VM&, const LayoutData&, Closure* classObject, JSObject* prototype);
+    bool namesClassObject(UniquedStringImpl* name) const { return name == m_classObjectOfHolderLeftOut.get(); }
     void didLeaveOutHoldersOfEvaluation(const LayoutData& classLayout, JSObject* prototype) { m_lastEvaluation = { prototype, &classLayout, true }; }
     bool takeWordThatNothingHasAskedBelow(JSValue prototype)
     {
@@ -202,8 +203,10 @@ public:
     void didChangeMember(const LayoutData&, ClassSide, UniquedStringImpl*);
     void noteReplacedMember(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*);
     void updateAssignedMembers(const LayoutData&, ClassSide);
-    void didStoreAssignedMember(uint32_t offset) { m_newAssignedMembers.append(offset); }
+    void didStoreAssignedMember(uint32_t guardBit) { m_newAssignedMembers.append(guardBit); }
     void updateAssignedMembers(const LayoutData&, ClassSide, uint32_t key);
+    void updateAssignedMembersOfHeirs(const LayoutData&);
+    void clearAssignedMembers(const LayoutData&, ClassSide);
     bool isAssignedMemberName(uint32_t key);
     void holdDefinitionToNameInRecord(const LayoutData&, ClassSide, uint32_t index, UniquedStringImpl*, const JSObject* function) const;
     void didDefineMember(VM&, const LayoutData&, ClassSide, uint32_t index, JSObject* holder, UniquedStringImpl*, JSObject* function);
@@ -237,6 +240,8 @@ public:
         const LayoutData* m_outer;
     };
     bool nobodyHearsOfValueUnder(const LayoutData&, ClassSide, UniquedStringImpl*) const;
+    bool someGuardMayName(const LayoutData&, ClassSide, uint32_t key) const;
+    bool everyGuardOfStaticNameHasEnded(const LayoutData&, uint32_t key) const;
     bool dependsOnValueUnder(const LayoutData&, ClassSide, UniquedStringImpl*) const;
     void reportReplacementsOnHolder(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl* uidOrNull);
     void holdMemberToProof(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*);
@@ -261,6 +266,7 @@ public:
     void didFreezeHolder(VM&, const LayoutData&, ClassSide, JSObject* holder);
     void didLayWhatSeesAccesses(VM&, const LayoutData&, ClassSide);
     static bool seesAccesses(VM&, UniquedStringImpl*, unsigned attributes);
+    static bool isAccessorOfProgram(const LayoutData&, JSValue);
     bool holdsMemberOfRecordUnder(VM&, const LayoutData&, ClassSide, JSObject* holder, UniquedStringImpl*) const;
     template<typename Functor> void forEachMethodNamed(const LayoutData&, ClassSide, uint32_t key, const Functor&) const;
     void beginGuardsAtEndOfModule(VM&, const LayoutData&);
@@ -284,6 +290,9 @@ public:
     uint64_t numberOfWalksOverPrototypeHolders() const { return m_numberOfWalksOverPrototypeHolders; }
     void didChangeInstancePrototype(VM&, const LayoutData& instanceLayout, JSValue prototype);
     const LayoutData* classHeldBy(JSObject* holder, ClassSide&) const;
+    const LayoutData* constructorFunctionWithPrototype(VM&, JSObject* prototype) const;
+    const LayoutData* constructorFunctionWithMostFields(VM&, const LayoutData* own, JSObject* prototype) const;
+    const LayoutData* constructorFunctionBelow(VM&, const LayoutData& above, JSObject* prototype) const;
 
     bool declaresOwnMember(const LayoutData&, UniquedStringImpl*) const;
     std::optional<JSObject*> findDeclaredMethod(VM&, const LayoutData&, UniquedStringImpl*);
@@ -383,6 +392,9 @@ private:
     bool hasNoGuardLeft(const LayoutData& classLayout) const { return hasNoGuardLeft(classLayout, ClassSide::Prototype) && hasNoGuardLeft(classLayout, ClassSide::Static); }
     bool everyGuardHasEnded(const LayoutData& classLayout) const { return guardHasEnded(classLayout, ClassSide::Prototype) && guardHasEnded(classLayout, ClassSide::Static); }
     const LayoutData* classOfHolderLeftOut(JSObject* holder, ClassSide&) const;
+    using GuardBits = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    void listGuardsOfPassingStores(const LayoutData&, const LayoutData& relinkedClass, GuardBits&);
+    bool inheritsFromAbove(const LayoutData&, const LayoutData& relinkedClass, ClassSide, uint32_t name) const;
     bool endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl*);
     void didShadowMemberSlowCase(const LayoutData& instanceLayout, const FieldData&);
     void forgetWhatCreatedFieldsHide() { m_fieldsWhoseCreationEndsNoGuard.clear(); }
@@ -499,7 +511,9 @@ private:
     JSValue findAssignedMember(const AssignedMemberData&) const;
     void updateAssignedMember(const AssignedMemberData&);
     void clearDeadAssignedMembers(VM&, CollectionScope);
+    void clearAssignedMemberIfDead(VM&, uint32_t guardBit);
     Vector<uint32_t> m_newAssignedMembers;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_definedHeirCounts;
     UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_assignedMemberNames;
     UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesBelowPrototypes;
     static constexpr uint64_t storesStillPassUnderEndedName = 1ull << 63;

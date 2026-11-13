@@ -24,6 +24,22 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static bool isTableOfInstances(const Program& program, LayoutID id)
+{
+    static constexpr size_t fewestFieldsOfTable = 8;
+    const Layout& layout = program.at(id);
+    return layout.kind == LayoutKind::Record && layout.fields.size() >= fewestFieldsOfTable && std::ranges::all_of(layout.fields, [](const Field& field) {
+        return field.declared.isExpected() && field.declared.writtenFlags().contains(PositionFlags::IsFromCompiler) && field.declared.written();
+    });
+}
+
+static bool isLargeClassOfUntypedCode(const Program& program, LayoutID id)
+{
+    static constexpr size_t fewestFieldsOfLargeClass = 16;
+    const Layout& layout = program.at(id);
+    return layout.kind == LayoutKind::Instance && layout.fields.size() >= fewestFieldsOfLargeClass && layout.constructor && !program.at(layout.constructor).has(FunctionFlags::IsChecked) && !isLibraryCode(program, program.at(layout.constructor));
+}
+
 static constexpr TypeID typeOfIntegerSlotInSlotForms = typeOfPrimitives(Primitive::Integer | Primitive::UndefinedOrNull);
 static constexpr TypeID typeOfNumberSlotInSlotForms = typeOfPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
 static constexpr TypeID filledIntegerSlotTypeInSlotForms = typeOfPrimitives(Primitive::Integer);
@@ -120,7 +136,7 @@ SlotRepresentation narrowFormOfSlotHeldToTypeForFields(const Program& program, T
 static bool isFilledInt32FieldInSlotForms(const Program& program, const Facts& facts, FieldReference row)
 {
     const LinkedCell* cell = facts.linked().findCellOfField(row);
-    if (!cell || !cell->everyWriterIsKnown || !cell->proven || isNeverType(cell->proven) || !cell->isFilledAtEveryRead || row.field >= program.at(row.layout).fields.size())
+    if (!cell || !cell->everyWriterIsKnown || !cell->proven || isNeverType(cell->proven) || !cell->isFilled || !cell->isFilledAtEveryRead || row.field >= program.at(row.layout).fields.size())
         return false;
     Type proven = program.at(cell->proven);
     bool holdsInt32s = proven.isJavaScriptValue() && proven.hasOnlyPrimitives(Primitive::Integer) && proven.integers.isSubsetOf(Range::int32());
@@ -174,8 +190,9 @@ static PropertyKeyID keyOfRowInSlotForms(const Program& program, const SlotPlanP
 
 static constexpr size_t mostLayoutsOfSetForSlotForms = 4;
 
-static void forEachFewLayoutsWithoutFamilyForSlotForms(const Program& program, const LinkTables& linked, const Families& families, NOESCAPE const Invocable<void(LayoutSetID)> auto& functor)
+Vector<LayoutSetID> listFewLayoutsWithoutFamily(const Program& program, const LinkTables& linked, const Families& families)
 {
+    Vector<LayoutSetID> result;
     size_t numberOfTypes = program.types.numberOfTypes();
     BitVector typesAsked(2 * numberOfTypes);
     HashSet<uint32_t> setsAsked;
@@ -187,7 +204,7 @@ static void forEachFewLayoutsWithoutFamilyForSlotForms(const Program& program, c
         if (!layouts || holdsOneMember(layouts) || !liesInProgram(layouts) || program.at(layouts).size() > mostLayoutsOfSetForSlotForms)
             return;
         if (setsAsked.add(layouts.bits()).isNewEntry && !families.familyOf(layouts))
-            functor(layouts);
+            result.append(layouts);
     };
     for (uint32_t index = 0; index < program.functions.size() && index < linked.functions.size(); ++index) {
         if (!linked.functions[index].isReached)
@@ -216,9 +233,10 @@ static void forEachFewLayoutsWithoutFamilyForSlotForms(const Program& program, c
                 ask(cell->proven, false);
         }
     }
+    return result;
 }
 
-void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const GroupsOfLayoutsForFields& groups, const UnitsOfFields& units, std::span<const uint8_t> offsetsOfFirstSlots, const BitVector& layoutsThatLateNamesMayMoveInto, BitVector& layoutsWithSlotsOfOtherWidths)
+void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const GroupsOfLayoutsForFields& groups, const UnitsOfFields& units, std::span<const LayoutSetID> fewLayoutsWithoutFamily, std::span<const uint8_t> offsetsOfFirstSlots, const BitVector& layoutsThatLateNamesMayMoveInto, BitVector& layoutsWithSlotsOfOtherWidths)
 {
     static_assert(!(indicesInRangeOfLoop % 64));
     if (!hasTypedSlotsForFields(facts))
@@ -291,6 +309,11 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     auto wideWidthOf = [&](uint32_t unit) {
         return widthOf(representationOfContentsForSlotForms(contentsOfUnits[unit], false, usesWideReferences, unitsWithSlotHeldToType.quickGet(unit), false));
     };
+    auto narrowWidthOf = [&](LayoutID id, uint32_t unit) {
+        SlotRepresentation narrow = narrowFormOf(unit);
+        bool isReference = narrow == SlotRepresentation::Cell32 || narrow == SlotRepresentation::OptionalCell32;
+        return isReference && isLargeClassOfUntypedCode(program, id) ? wideWidthOf(unit) : widthOf(narrow);
+    };
     auto unitOfChangingForm = [&](LayoutID id, FieldIndex field) {
         if (parts.layouts[id.index()].environmentOfDeferredClosures == field)
             return UnitsOfFields::noUnit;
@@ -329,10 +352,10 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
     forEachRangeOfIndicesInParallel(build.parallelLoops(), numberOfLayouts, [&](size_t firstLayout, size_t endOfLayouts) {
         for (size_t index = firstLayout; index < endOfLayouts; ++index) {
             LayoutID id(static_cast<uint32_t>(index));
-            if (groups.groupOf[index] == GroupsOfLayoutsForFields::noGroup || !hasCellsForFields(parts, id))
+            if (groups.groupOf[index] == GroupsOfLayoutsForFields::noGroup || !hasCellsForFields(parts, id) || isTableOfInstances(program, id))
                 continue;
             EndsOfSlots ends = endsOfSlots(id, [&](uint32_t unit, FieldIndex) -> WidthsOfSlot {
-                return { wideWidthOf(unit), widthOf(narrowFormOf(unit)) };
+                return { wideWidthOf(unit), narrowWidthOf(id, unit) };
             });
             if (sizes.cellSizeFor(ends.narrow) < sizes.cellSizeFor(ends.wide))
                 layoutsThatGainFromNarrowForms.quickSet(index);
@@ -371,7 +394,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         if (sizes.cellSizeFor(ends.narrow) < sizes.cellSizeFor(ends.wide))
             return true;
         EndsOfSlots endsOfAll = endsOfSlots(id, [&](uint32_t unit, FieldIndex) -> WidthsOfSlot {
-            return { wideWidthOf(unit), widthOf(narrowFormOf(unit)) };
+            return { wideWidthOf(unit), narrowWidthOf(id, unit) };
         });
         uint64_t wideSize = sizes.cellSizeFor(endsOfAll.wide);
         return 3 * (wideSize - sizes.cellSizeFor(endsOfAll.narrow)) >= wideSize;
@@ -386,7 +409,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         narrowUnits.shrink(0);
         EndsOfSlots ends = endsOfSlots(id, [&](uint32_t unit, FieldIndex field) -> WidthsOfSlot {
             uint32_t wide = wideWidthOf(unit);
-            uint32_t narrow = widthOf(narrowFormOf(unit));
+            uint32_t narrow = narrowWidthOf(id, unit);
             if (isInherited(id, field))
                 narrow = wide = unitsNarrowByThemselves.quickGet(unit) ? narrow : wide;
             else if (!integersMayHaveMarkers && narrowFormOf(unit) == SlotRepresentation::OptionalInt32)
@@ -458,14 +481,14 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
         return unit;
     };
     BitVector unitsUnitedWithOthers(numberOfUnits);
-    forEachFewLayoutsWithoutFamilyForSlotForms(program, linked, facts.families(), [&](LayoutSetID layouts) {
+    for (LayoutSetID layouts : fewLayoutsWithoutFamily) {
         Vector<LayoutID, mostLayoutsOfSetForSlotForms> members;
         program.at(layouts).forEach([&](LayoutID member) {
             if (hasCellsForFields(parts, member))
                 members.append(member);
         });
         if (members.size() < 2)
-            return;
+            continue;
         Vector<uint32_t, mostLayoutsOfSetForSlotForms> unitsUnderName;
         for (const Field& field : program.at(members[0]).fields) {
             unitsUnderName.shrink(0);
@@ -488,7 +511,7 @@ void chooseFormsOfSlots(Program& program, const Facts& facts, BuildContext& buil
             for (uint32_t unit : unitsUnderName)
                 unitsAbove[lowestUnitedWith(unit)] = lowest;
         }
-    });
+    }
     BitVector unitsNarrowWithOthers(numberOfUnits);
     if (!unitsUnitedWithOthers.isEmpty()) {
         BitVector holdOtherIntegerUnit(numberOfUnits);

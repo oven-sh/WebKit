@@ -385,8 +385,12 @@ static void testUnaryOperations()
         StubRun run = runner.run(numberOfAnyValue(), { encoded(jsNumber(number)) });
         AOT_TEST_CHECK(!run.calledOperation && run.result == encoded(jsNumber(number)));
     }
-    for (uint64_t value : { encoded(jsUndefined()), encoded(jsNull()), encoded(jsBoolean(true)), encoded(jsBoolean(false)), string.address() })
-        checkLeftToOperation(runner, numberOfAnyValue(), Entry::operationAOTNumberOfAnyValue, { value });
+    const std::pair<JSValue, double> immediates[] = { { jsUndefined(), PNaN }, { jsNull(), 0 }, { jsBoolean(true), 1 }, { jsBoolean(false), 0 } };
+    for (auto [value, number] : immediates) {
+        StubRun run = runner.run(numberOfAnyValue(), { encoded(value) });
+        AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalForm(run.result, number));
+    }
+    checkLeftToOperation(runner, numberOfAnyValue(), Entry::operationAOTNumberOfAnyValue, { string.address() });
     for (const UnaryCase& unaryCase : unaryCases) {
         StubKey key = unaryOperation(unaryCase.form);
         for (double number : insideInt64) {
@@ -402,8 +406,12 @@ static void testUnaryOperations()
             StubRun run = runner.run(key, { encoded(jsNumber(number)) });
             AOT_TEST_CHECK(!run.calledOperation && isNumberInCanonicalFormWithSign(run.result, unaryCase.apply(number)));
         }
-        for (uint64_t value : { encoded(jsUndefined()), encoded(jsNull()), encoded(jsBoolean(true)), encoded(jsBoolean(false)), string.address() })
-            checkLeftToOperation(runner, key, unaryCase.entry, { value });
+        for (auto [value, number] : immediates) {
+            const double expected = unaryCase.apply(number);
+            StubRun run = runner.run(key, { encoded(value) });
+            AOT_TEST_CHECK(!run.calledOperation && (std::isnan(expected) ? isNumberInCanonicalForm(run.result, expected) : isNumberInCanonicalFormWithSign(run.result, expected)));
+        }
+        checkLeftToOperation(runner, key, unaryCase.entry, { string.address() });
     }
 }
 
@@ -653,15 +661,23 @@ static void testAllocationAtSites()
         constexpr size_t sizeInKey = 2 * cellSizeStep;
         static_assert(sizeInKey < sizeof(FakeCell));
         StubKey sizedKey = allocateCell(initialization, sizeInKey);
-        FakeCell first;
-        sites.makeRoomFor(first);
-        run = runner.run(sizedKey, { AllocationSites::siteWithAllocator });
-        AOT_TEST_CHECK(!run.calledOperation && run.result == first.address() && sites.allocator.intervalStart() == first.address() + sizeInKey);
-        AOT_TEST_CHECK(first.words[0] == AllocationSites::header);
-        AOT_TEST_CHECK(holdsWordOfBody(std::span(first.words).subspan(2, 2)) && first.words[4] == FakeCell::untouched);
-        sites.allocator.makeRoomAt(0, 0);
-        checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithAllocator);
-        checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithoutRecord);
+        FakeAllocator otherAllocator { sizeof(FakeCell) };
+        for (FakeAllocator* allocatorOfSize : { static_cast<FakeAllocator*>(nullptr), &sites.allocator, &otherAllocator }) {
+            runner.instance().objects.cellAllocators[sizeInKey / cellSizeStep] = allocatorOfSize;
+            FakeCell first;
+            FakeCell other;
+            sites.makeRoomFor(first);
+            otherAllocator.makeRoomAt(other.address(), sizeof(FakeCell));
+            run = runner.run(sizedKey, { AllocationSites::siteWithAllocator });
+            AOT_TEST_CHECK(!run.calledOperation && run.result == first.address() && sites.allocator.intervalStart() == first.address() + sizeInKey);
+            AOT_TEST_CHECK(first.words[0] == AllocationSites::header);
+            AOT_TEST_CHECK(holdsWordOfBody(std::span(first.words).subspan(2, 2)) && first.words[4] == FakeCell::untouched);
+            sites.allocator.makeRoomAt(0, 0);
+            checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithAllocator);
+            checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithoutAllocator);
+            checkCellFromOperation(runner, sizedKey, AllocationSites::siteWithoutRecord);
+            AOT_TEST_CHECK(other.isUntouched());
+        }
     }
 }
 
@@ -746,16 +762,18 @@ static void testAllocationFromTemplates()
         AOT_TEST_CHECK(!run.calledOperation && run.instructionsInStubs);
         return *run.instructionsInStubs;
     };
+    constexpr uint32_t instructionsToCompareAllocator = isX86_64() ? 1 : 0;
     for (CellInitialization initialization : { CellInitialization::Header, CellInitialization::HeaderAndWords }) {
         CellInitialization withZeros = storesWords(initialization) ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
         for (size_t size = 2 * copyChunkBytes; size <= maxCellSizeInKey; size += copyChunkBytes) {
+            runner.instance().objects.cellAllocators[size / cellSizeStep] = &sites.allocator;
             uint32_t bare = instructionsOf(allocateCell(initialization, size), { AllocationSites::siteWithAllocator });
             uint32_t zeroed = instructionsOf(allocateCell(withZeros, size), { AllocationSites::siteWithAllocator });
             uint32_t copied = instructionsOf(allocateCellFromTemplate(initialization, size), { AllocationSites::siteWithAllocator, body.address() });
-            if (copied - bare + instructionsToNameTemplate > instructionsToCopyBody(initialization, size) || zeroed - bare < instructionsToZeroBody(withZeros, size, true))
+            if (copied - bare + instructionsToNameTemplate > instructionsToCopyBody(initialization, size) || zeroed + instructionsToCompareAllocator - bare < instructionsToZeroBody(withZeros, size, true))
                 dataLogLn("a cell of ", size, " bytes, form ", static_cast<unsigned>(initialization), ": ", bare, " instructions bare, ", zeroed, " with zeros, ", copied, " from a template");
             AOT_TEST_CHECK(copied - bare + instructionsToNameTemplate <= instructionsToCopyBody(initialization, size));
-            AOT_TEST_CHECK(zeroed - bare >= instructionsToZeroBody(withZeros, size, true));
+            AOT_TEST_CHECK(zeroed + instructionsToCompareAllocator - bare >= instructionsToZeroBody(withZeros, size, true));
         }
     }
 #endif
@@ -1109,11 +1127,14 @@ static void testLatestRunsOfCreatedFields()
     constexpr uint32_t shapeWord = shapeWordOf(ObjectWithKeyOrder::shape);
     StubRunner runner;
     ObjectWithKeyOrder object(runner);
-    auto latest = [&]() -> const KeyOrderRun& {
-        return object.runs[indexOfLatestRun(shapeWord, slotKey)];
-    };
+    constexpr uint32_t latest = indexOfLatestRun(shapeWord, slotKey);
     auto wordsBefore = [](uint32_t orderWord) {
         return static_cast<uint64_t>(shapeWord) << 32 | orderWord;
+    };
+    auto isLatest = [&](uint32_t order) {
+        return std::ranges::any_of(std::span { object.runs.get() + latest, 2 }, [&](const KeyOrderRun& run) {
+            return run.orderAndShapeWordsBefore == wordsBefore(orderWordOf(order, 1)) && run.slotKeys == slotKey && run.orderAndCountAfter == orderWordOf(order, 2);
+        });
     };
 
     for (uint32_t order : { 2, 3 })
@@ -1123,19 +1144,22 @@ static void testLatestRunsOfCreatedFields()
     for (unsigned round = 0; round < 3; ++round) {
         for (uint32_t order : { 2, 2, 3 }) {
             AOT_TEST_CHECK(object.create(orderWordOf(order, 1), slotKey) && object.orderWord() == orderWordOf(order, 2));
-            AOT_TEST_CHECK(latest().orderAndShapeWordsBefore == wordsBefore(orderWordOf(order, 1)) && latest().slotKeys == slotKey && latest().orderAndCountAfter == orderWordOf(order, 2));
+            AOT_TEST_CHECK(isLatest(order));
             AOT_TEST_CHECK(!object.create(orderWordOf(order, 1), ObjectWithKeyOrder::slotKeys[0]) && !object.create(orderWordOf(order, 2), slotKey));
         }
     }
 
-    KeyOrderRun& run = object.runs[indexOfLatestRun(shapeWord, slotKey)];
-    object.forgetRuns();
-    run = { wordsBefore(orderWordOf(2, 1)), slotKey, orderWordOf(5, 2), 0 };
-    AOT_TEST_CHECK(object.create(orderWordOf(2, 1), slotKey) && object.orderWord() == orderWordOf(5, 2));
-    run.slotKeys = ObjectWithKeyOrder::slotKeys[0];
-    AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
-    run = { wordsBefore(orderWordOf(2, 1)) + (1ull << 32), slotKey, orderWordOf(5, 2), 0 };
-    AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
+    AOT_TEST_CHECK(isLatest(2) && isLatest(3));
+
+    for (KeyOrderRun& run : std::span { object.runs.get() + latest, 2 }) {
+        object.forgetRuns();
+        run = { wordsBefore(orderWordOf(2, 1)), slotKey, orderWordOf(5, 2), 0 };
+        AOT_TEST_CHECK(object.create(orderWordOf(2, 1), slotKey) && object.orderWord() == orderWordOf(5, 2));
+        run.slotKeys = ObjectWithKeyOrder::slotKeys[0];
+        AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
+        run = { wordsBefore(orderWordOf(2, 1)) + (1ull << 32), slotKey, orderWordOf(5, 2), 0 };
+        AOT_TEST_CHECK(!object.create(orderWordOf(2, 1), slotKey));
+    }
 }
 
 struct ExtensionGivenByOperation {
@@ -1192,7 +1216,6 @@ static void testFirstFieldInExtensionOfObjectWithoutOne()
     allocatorInSpace = &allocator;
     instance.allocation.cagedAuxiliarySpace = space.bytes.data();
     instance.cellCageBase = emptyExtension.address() - offsetOfEmptyExtensionInCage;
-    instance.barrierThreshold = blackThreshold;
     const uint32_t wordOfRoom = static_cast<uint32_t>((room.address() - offsetOfEmptyExtensionInCage) >> cell32Shift);
     uint32_t& extensionWord = object.object.at<uint32_t>(offsetOfExtensionWord);
     ExtensionGivenByOperation given { &extensionWord, static_cast<uint32_t>((extensions.given.address() - emptyExtension.address()) >> cell32Shift) };
@@ -1491,7 +1514,6 @@ public:
         zeroSpan(instance.copiesWithoutFrame());
         instance.prefix().structureIDBase = m_structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
         instance.cellCageBase = cageBase();
-        instance.barrierThreshold = blackThreshold;
         m_target.setHeader(static_cast<uint32_t>(m_structures[0].address()), CompiledObjectType);
         m_source.setHeader(static_cast<uint32_t>(m_structures[1].address()), CompiledObjectType);
         m_target.at<uint8_t>(JSCell::cellStateOffset()) = static_cast<uint8_t>(CellState::DefinitelyWhite);
@@ -1684,7 +1706,10 @@ static void testCopiesOfPropertiesByMovesFrom(StubKey head, [[maybe_unused]] uin
     AOT_TEST_CHECK(isCopiedOnlyWithout(copies.copy().excludedRunNumberPlusOne, CopiesByMoves::excludedRun + 64));
     AOT_TEST_CHECK(isCopiedOnlyWithout(copies.target().at<uint8_t>(JSCell::cellStateOffset()), static_cast<uint8_t>(CellState::PossiblyBlack)));
     AOT_TEST_CHECK(isCopiedOnlyWithout(copies.structureOfTarget().at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
-    AOT_TEST_CHECK(isCopiedOnlyWithout(copies.runner().instance().barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+    setBarrierThreshold(copies.runner().instance(), tautologicalThreshold);
+    AOT_TEST_CHECK(!isCopiedByStub(CopiesByMoves::excludedRun, 0, CopiesByMoves::operation));
+    setBarrierThreshold(copies.runner().instance(), blackThreshold);
+    AOT_TEST_CHECK(isCopiedByStub());
 
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && !ASSERT_ENABLED
     copies.runner().setCountsInstructions(true);
@@ -1725,7 +1750,6 @@ static void testCopiesOfPropertiesByChunks()
     Instance& instance = runner.instance();
     zeroSpan(instance.copiesWithoutFrame());
     instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
-    instance.barrierThreshold = blackThreshold;
 
     FakeObject<sizeOfCell> target;
     FakeObject<sizeOfCell> source;
@@ -1777,7 +1801,11 @@ static void testCopiesOfPropertiesByChunks()
         AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfOrderWord), static_cast<uint32_t>(orderStoredOutOfLine)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(structures[0].at<uint8_t>(CompiledStructure::offsetOfFlags()), static_cast<uint8_t>(0)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(structures[0].at<uint32_t>(Structure::bitFieldOffset()), static_cast<uint32_t>(Structure::s_mayBePrototypeBits)));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(instance.barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+        emptyTarget();
+        setBarrierThreshold(instance, tautologicalThreshold);
+        AOT_TEST_CHECK(!isCopiedByStub(head));
+        setBarrierThreshold(instance, blackThreshold);
+        AOT_TEST_CHECK(isCopiedByStub(head));
         emptyTarget();
         AOT_TEST_CHECK(!isCopiedByStub(head, 1) && !isCopiedByStub(head, 0, 1));
         target.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
@@ -1838,7 +1866,11 @@ static void testCopiesOfPropertiesByChunks()
         AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint8_t>(JSCell::typeInfoTypeOffset()), static_cast<uint8_t>(FinalObjectType)));
         AOT_TEST_CHECK(isCopiedOnlyWithout(orderWordOfSource, outOfLineOrderWord | orderWordHasExtraProperties));
         AOT_TEST_CHECK(isCopiedOnlyWithout(orderWordOfSource, outOfLineOrderWord | orderWordHasFieldOutsideSlot));
-        AOT_TEST_CHECK(isCopiedOnlyWithout(instance.barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+        emptyTarget();
+        setBarrierThreshold(instance, tautologicalThreshold);
+        AOT_TEST_CHECK(!isCopiedByStub(head));
+        setBarrierThreshold(instance, blackThreshold);
+        AOT_TEST_CHECK(isCopiedByStub(head));
         emptyTarget();
         AOT_TEST_CHECK(!isCopiedByStub(head, 1) && !isCopiedByStub(head, 0, 1));
         target.at<uint32_t>(offsetOfOrderWord) = orderOfSource;
@@ -1891,7 +1923,6 @@ static void testCopiesOfPropertiesByChunksWithExtension()
     instance.allocation.cagedAuxiliarySpace = space.bytes.data();
     instance.prefix().structureIDBase = structures[0].address() & ~static_cast<uint64_t>(UINT32_MAX);
     instance.cellCageBase = MarkedBlockCage::baseOf(std::bit_cast<const void*>(static_cast<uintptr_t>(extension.address() - offsetOfEmptyExtensionInCage)));
-    instance.barrierThreshold = blackThreshold;
     auto wordOf = [&](auto& cell) {
         return MarkedBlockCage::encode(instance.cellCageBase, std::bit_cast<JSCell*>(cell.address() - offsetOfEmptyExtensionInCage));
     };
@@ -1976,7 +2007,12 @@ static void testCopiesOfPropertiesByChunksWithExtension()
                 word = value;
                 return !isCopiedWith && isCopiedByStub();
             };
-            AOT_TEST_CHECK(isCopiedOnlyWithout(instance.barrierThreshold, static_cast<uint32_t>(tautologicalThreshold)));
+            begin();
+            allocator.makeRoomAt(room.address(), minExtensionSize);
+            setBarrierThreshold(instance, tautologicalThreshold);
+            AOT_TEST_CHECK(!isCopiedByStub());
+            setBarrierThreshold(instance, blackThreshold);
+            AOT_TEST_CHECK(isCopiedByStub());
             AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfShapeWord), shapeWordOf(10)));
             AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfShapeWord), shapeWordOf(9) & ~shapeWordIsUnmarked));
             AOT_TEST_CHECK(isCopiedOnlyWithout(source.at<uint32_t>(offsetOfOrderWord), orderWordOfSource | orderWordHasExtraProperties));

@@ -106,7 +106,7 @@ bool canGenerateSharedRoutine(const SharedRoutine& routine)
         [](const SharedRoutine::FindFirstOfClass&) { return isSupportedCPU; },
         [](const SharedRoutine::FindFirstOfTwoUnits&) { return isSupportedCPU; },
         [](const SharedRoutine::FindFirstPairOfUnits&) { return isSupportedCPU; },
-        [](const SharedRoutine::FindEitherPrefix&) { return isX86_64(); },
+        [](const SharedRoutine::FindEitherPrefix&) { return isSupportedCPU; },
         [](const SharedRoutine::CanonicalEquivalence&) { return comparesWideBackreferences && rangeHiEntriesAboveBMP().has_value(); });
 }
 
@@ -1106,7 +1106,7 @@ struct FirstPairOfUnitsSearchGenerator {
 };
 #endif
 
-#if CPU(X86_64)
+#if CPU(X86_64) || CPU(ARM64)
 // Finds the ends of prefixes. Bit k of a character's byte is set if the character may be at position k of a prefix. The bit stays set if the characters before it are at the positions before k. That is checked for one, then two, then four characters, with carries from the previous vector.
 struct EitherPrefixSearchGenerator {
     static constexpr int32_t unitsInStep = prefixSearchVectorLength;
@@ -1122,21 +1122,36 @@ struct EitherPrefixSearchGenerator {
     static constexpr FPRReg previous = YarrJITDefaultRegisters::vectorInput3;
     static constexpr std::array<FPRReg, maxSteps> firstCarries { YarrJITDefaultRegisters::vectorTemp2, YarrJITDefaultRegisters::vectorTemp3, YarrJITDefaultRegisters::vectorTemp4 };
     static constexpr std::array<FPRReg, maxSteps> secondCarries { YarrJITDefaultRegisters::vectorScratch0, YarrJITDefaultRegisters::vectorScratch1, YarrJITDefaultRegisters::vectorScratch2 };
+#if CPU(ARM64)
+    // What a table is indexed by: the low half of a character, and the bit of one that is not ASCII, for which the table gives zero.
+    static constexpr FPRReg indexMask = YarrJITDefaultRegisters::vectorScratch3;
+    static constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::Unsigned };
+    static constexpr SIMDInfo signedBytes { SIMDLane::i8x16, SIMDSignMode::Signed };
+    static constexpr SIMDInfo whole { SIMDLane::v128, SIMDSignMode::None };
+#endif
 
     bool hasTwoTables() const { return payload.prefixLength == longPrefixLength; }
     unsigned steps() const { return hasTwoTables() ? 3 : 2; }
 
     void clearCarries()
     {
+        auto clear = [&](FPRReg carry) {
+#if CPU(X86_64)
+            jit.m_assembler.pxor_rr(carry, carry);
+#else
+            jit.moveZeroToVector(carry);
+#endif
+        };
         for (unsigned step = 0; step < steps(); ++step) {
-            jit.m_assembler.pxor_rr(firstCarries[step], firstCarries[step]);
+            clear(firstCarries[step]);
             if (hasTwoTables())
-                jit.m_assembler.pxor_rr(secondCarries[step], secondCarries[step]);
+                clear(secondCarries[step]);
         }
     }
 
     void matchPrefixes(FPRReg prefixTable, FPRReg positions, const std::array<FPRReg, maxSteps>& carries)
     {
+#if CPU(X86_64)
         auto& assembler = jit.m_assembler;
         assembler.movaps_rr(prefixTable, positions);
         assembler.pshufb_rr(characters, positions); // Zero for a character that is not ASCII.
@@ -1148,11 +1163,23 @@ struct EitherPrefixSearchGenerator {
             assembler.psllw_i8r(distance, previous); // The bits shifted in from the byte below are not read by later steps.
             assembler.pand_rr(previous, positions);
         }
+#else
+        jit.vectorSwizzle(prefixTable, characters, positions);
+        for (unsigned step = 0; step < steps(); ++step) {
+            unsigned distance = 1u << step;
+            jit.vectorExtractPair(bytes, MacroAssembler::TrustedImm32(unitsInStep - distance), carries[step], positions, previous);
+            jit.moveVector(positions, carries[step]);
+            jit.vectorShl8(bytes, previous, MacroAssembler::TrustedImm32(distance), previous);
+            jit.vectorAnd(whole, positions, previous, positions);
+        }
+#endif
     }
 
     MacroAssembler::Jump testVector()
     {
-        emitVerifySubjectRead(jit, MacroAssembler::BaseIndex(regs.input, regs.index, MacroAssembler::TimesOne), unitsInStep, regs.input, regs.length, 0, __LINE__);
+        const MacroAssembler::BaseIndex subject { regs.input, regs.index, MacroAssembler::TimesOne };
+        emitVerifySubjectRead(jit, subject, unitsInStep, regs.input, regs.length, 0, __LINE__);
+#if CPU(X86_64)
         auto& assembler = jit.m_assembler;
         assembler.movdqu_mr(0, regs.input, regs.index, MacroAssembler::TimesOne, characters);
         matchPrefixes(firstTable, firstPositions, firstCarries);
@@ -1166,17 +1193,42 @@ struct EitherPrefixSearchGenerator {
         }
         assembler.pmovmskb_rr(firstPositions, found);
         return jit.branchTest32(MacroAssembler::NonZero, found);
+#else
+        jit.loadVector(subject, characters);
+        jit.vectorAnd(whole, characters, indexMask, characters);
+        matchPrefixes(firstTable, firstPositions, firstCarries);
+        if (hasTwoTables())
+            matchPrefixes(secondTable, secondPositions, secondCarries);
+        else
+            jit.vectorShl8(bytes, firstPositions, MacroAssembler::TrustedImm32(shortPrefixLength), secondPositions);
+        jit.vectorOr(whole, firstPositions, secondPositions, firstPositions);
+        jit.vectorSshr8(signedBytes, firstPositions, MacroAssembler::TrustedImm32(7), firstPositions);
+        jit.vectorShrnInt8(firstPositions, 4, firstPositions);
+        jit.moveDoubleTo64(firstPositions, found);
+        return jit.branchTest64(MacroAssembler::NonZero, found);
+#endif
     }
 
     void generate()
     {
+#if CPU(X86_64)
         RELEASE_ASSERT(jit.supportsSupplementalSSE3());
+#endif
         const int32_t charactersBeforeEnd = payload.prefixLength - 1;
         jit.sub32(regs.length, MacroAssembler::TrustedImm32(unitsInStep), limit);
         MacroAssembler::Jump restIsShort = jit.branch32(MacroAssembler::GreaterThan, regs.index, limit);
+#if CPU(X86_64)
         jit.m_assembler.movdqu_mr(0, table, firstTable);
         if (hasTwoTables())
             jit.m_assembler.movdqu_mr(unitsInStep, table, secondTable);
+#else
+        jit.loadVector(MacroAssembler::Address(table), firstTable);
+        if (hasTwoTables())
+            jit.loadVector(MacroAssembler::Address(table, unitsInStep), secondTable);
+        v128_t mask;
+        mask.u64x2[0] = mask.u64x2[1] = 0x8f8f8f8f'8f8f8f8fULL;
+        jit.move128ToVector(mask, indexMask);
+#endif
         MacroAssembler::Label begin = jit.label();
         clearCarries();
         MacroAssembler::Label nextVector = jit.label();
@@ -1197,7 +1249,13 @@ struct EitherPrefixSearchGenerator {
         jit.ret();
 
         isInVector.link(&jit);
+#if CPU(X86_64)
         jit.m_assembler.bsf_rr(found, found);
+#else
+        jit.reverseBits64(found, found);
+        jit.countLeadingZeros64(found, found);
+        jit.urshift64(MacroAssembler::TrustedImm32(2), found);
+#endif
         jit.add32(found, regs.index);
         jit.sub32(MacroAssembler::TrustedImm32(charactersBeforeEnd), regs.index);
         jit.ret();
@@ -1211,7 +1269,7 @@ struct EitherPrefixSearchGenerator {
 
 static void generateFindEitherPrefix(CCallHelpers& jit, const SharedRoutine::FindEitherPrefix& payload)
 {
-#if CPU(X86_64)
+#if CPU(X86_64) || CPU(ARM64)
     EitherPrefixSearchGenerator { jit, payload }.generate();
 #else
     UNUSED_PARAM(jit);

@@ -1,0 +1,83 @@
+# function add(o, a, b) { o[0] = a[0] + b[0] * 0.5; o[1] = a[1] + b[1] * 0.5; return o; } function adds(os, as, bs, n) { let s = 0; for (let i = 0; i < n; i++) s = s * 0.5 + add(os[i], as[i], bs[i])[1]; return s; }
+# The flags and the indexing mode of a row lie in one word: where both tests fail alike, one test of the word answers both.
+# RUN(EMITTED): emit f2 mechanisms=all
+# EMITTED: JSCell_usefulBytes
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: 2.375
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Double number=0.5
+    v4 = Double number=1.5
+    v5 = NewArray v3, v4
+    v6 = NewArray v4, v3
+    v7 = NewArray v5, v6
+    v8 = NewArray v3, v4
+    v9 = NewArray v4, v4
+    v10 = NewArray v8, v9
+    v11 = NewArray v3, v3
+    v12 = NewArray v4, v3
+    v13 = NewArray v11, v12
+    v14 = Integer integer=2
+    v15 = Call v0, -, v13, v7, v10, v14 calleeName="adds"
+    v16 = Call v2, -, v15 calleeName="sink"
+    v17 = Undefined
+    Return v17
+}
+function f1 name="add" module=m0 length=3 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}, {type=undefined|null|Array<number> flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: undefined|null|Array, v1: undefined|null|Array<number>, v2: undefined|null|Array<number>):
+    v3 = Integer
+    v4 = Integer
+    v5 = ElemGet v1, v4
+    v6 = Integer
+    v7 = ElemGet v2, v6
+    v8 = Double number=0.5
+    v9 = Mul v7, v8
+    v10 = Add v5, v9
+    ElemSet v0, v3, v10 mode=Sloppy
+    v12 = Integer integer=1
+    v13 = Integer integer=1
+    v14 = ElemGet v1, v13
+    v15 = Integer integer=1
+    v16 = ElemGet v2, v15
+    v17 = Double number=0.5
+    v18 = Mul v16, v17
+    v19 = Add v14, v18
+    ElemSet v0, v12, v19 mode=Sloppy
+    Return v0
+}
+function f2 name="adds" module=m0 length=4 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything):
+    v4 = NewClosure function=f1
+    v5 = Integer
+    v6 = Convert v5 declared={type=number flags=[IsExpected]}
+    v7 = Integer
+    v8 = Convert v7 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v6, v8)
+  b1(v9, v10):
+    LoopHint
+    v12 = Less v10, v3
+    Branch v12 -> taken b2(), notTaken b3()
+  b2():
+    v13 = Double number=0.5
+    v14 = Mul v9, v13
+    v15 = ElemGet v0, v10
+    v16 = ElemGet v1, v10
+    v17 = ElemGet v2, v10
+    v18 = Call v4, -, v15, v16, v17 calleeName="add"
+    v19 = Integer integer=1
+    v20 = ElemGet v18, v19
+    v21 = Add v14, v20
+    v22 = Convert v21 declared={type=number flags=[IsExpected]}
+    v23 = Increment v10
+    v24 = Convert v23 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v22, v24)
+  b3():
+    Return v9
+}

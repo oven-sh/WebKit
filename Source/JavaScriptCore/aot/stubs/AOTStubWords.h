@@ -52,6 +52,7 @@ struct StubWords {
 #endif
     const void* closureEntrypoint;
     const void* slimClosureEntrypoint;
+    const void* closureEntryWithLoadedArguments;
     uint64_t wordsOfCompiledMethodsOfArray[numberOfCompiledMethodsOfArray];
     uint64_t wordOfCompiledSort;
     const void* arrayPush;

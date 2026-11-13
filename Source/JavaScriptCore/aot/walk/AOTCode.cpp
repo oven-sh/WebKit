@@ -68,7 +68,7 @@ bool readsNumberOrNothingOutOfBytes(const Operation& operation)
 
 bool handsOnBitsOfNaN(const Operation& operation)
 {
-    constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div };
+    constexpr OpcodeSet arithmetic { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Div, Opcode::Negate };
     bool isArithmetic = arithmetic.contains(operation.opcode) || operation.opcode == Opcode::ToNumber;
     return isArithmetic && operation.form() == OperatorForm::Numbers && operation.representation == Representation::Double;
 }
@@ -325,6 +325,7 @@ void Code::reset(CodeUnit unit)
     m_holdsCallThatPlanHasNotCounted = false;
     m_callsOfFunctionNeverCollect = false;
     m_readsNumbersOutOfBytes = false;
+    m_hasOptionalNumberArithmetic = false;
     m_callsItself = false;
     m_isEntryThatWalksBody = false;
     m_mayHoldReturnedCalls = false;
@@ -493,6 +494,12 @@ void Code::noteBeliefAheadOfEdges(BlockID blockID, BeliefAheadOfEdges belief)
 {
     RELEASE_ASSERT(!m_isSwept);
     m_blocks[checkedIndexInCode(blockID, m_blocks.size())].beliefAheadOfEdges = belief;
+}
+
+void Code::markBlockInRareLoop(BlockID blockID)
+{
+    RELEASE_ASSERT(!m_isSwept);
+    m_blocks[checkedIndexInCode(blockID, m_blocks.size())].isInRareLoop = true;
 }
 
 void Code::markRareBlockThatKeepsSites(BlockID blockID)
@@ -753,6 +760,11 @@ ValueID Code::append(BlockID blockID, const Draft& draft, TypeID proven, EffectT
         m_hasSuspensions = true;
     if (draft.opcode == Opcode::GetTypedArrayElement && (readsNumberOutOfBytes(operation) || readsNumberOrNothingOutOfBytes(operation)))
         m_readsNumbersOutOfBytes = true;
+    if (!m_hasOptionalNumberArithmetic && handsOnBitsOfNaN(operation)) {
+        operation.forEachChild([&](ValueID operand) {
+            m_hasOptionalNumberArithmetic |= at(operand).representation == Representation::OptionalDouble;
+        });
+    }
     if (draft.opcode == Opcode::CallDirect && operation.function() == m_unit.function)
         m_callsItself = true;
     return id;
@@ -1043,6 +1055,7 @@ Code::Mark Code::mark() const
     mark.holdsCallThatPlanHasNotCounted = m_holdsCallThatPlanHasNotCounted;
     mark.callsOfFunctionNeverCollect = m_callsOfFunctionNeverCollect;
     mark.readsNumbersOutOfBytes = m_readsNumbersOutOfBytes;
+    mark.hasOptionalNumberArithmetic = m_hasOptionalNumberArithmetic;
     mark.callsItself = m_callsItself;
     return mark;
 }
@@ -1198,6 +1211,7 @@ void Code::abandonBackTo(const Mark& mark, std::span<const OpenBlock> openBlocks
     m_holdsCallThatPlanHasNotCounted = mark.holdsCallThatPlanHasNotCounted;
     m_callsOfFunctionNeverCollect = mark.callsOfFunctionNeverCollect;
     m_readsNumbersOutOfBytes = mark.readsNumbersOutOfBytes;
+    m_hasOptionalNumberArithmetic = mark.hasOptionalNumberArithmetic;
     m_callsItself = mark.callsItself;
 }
 

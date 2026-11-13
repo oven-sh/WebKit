@@ -42,15 +42,15 @@
 
 namespace JSC {
 
+static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMilliSeconds);
+#if !ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetDate);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetDay);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetFullYear);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetHours);
-static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMilliSeconds);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMinutes);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMonth);
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetSeconds);
-#if !ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTime);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTimezoneOffset);

@@ -746,7 +746,7 @@ bool AllocationChecker::checkLeaf(const Operation* reader, const Operation* user
         return checkHolds(location, leaf, reader);
     case Location::Spill:
         ++numberOfMemoryOperands;
-        if (isLeafOfAddress(m_liveness, user, childIndex) || !acceptsMemoryOperand(*user, childIndex))
+        if (isLeafOfAddress(m_liveness, user, childIndex) || (!acceptsMemoryOperand(*user, childIndex) && (childIndex || !acceptsSpilledFirstOperand(*user))))
             return fail(FailureKind::WrongValueInSpillSlot, reader);
         return checkHolds(location, leaf, reader);
     case Location::InstanceWord: {
@@ -1493,17 +1493,22 @@ private:
     bool isAsked(Location location) const { return location.isSpill() && m_spills[location.spillIndex()].isStoredAtHeadOfFramedPart; }
     bool isHeld(SpillIndex spill) const { return m_takingThatWrote[spill] == m_taking || std::ranges::binary_search(m_sets[m_heldAtHeadOfBlock], spill); }
 
-    bool read(Location location, const Operation* reader)
+    ALWAYS_INLINE bool read(Location location, const Operation* reader) { return !isAsked(location) || readAsked(location, reader); }
+    ALWAYS_INLINE void write(Location location)
     {
-        if (!isAsked(location) || isHeld(location.spillIndex()))
+        if (isAsked(location))
+            writeAsked(location);
+    }
+    NEVER_INLINE bool readAsked(Location location, const Operation* reader)
+    {
+        if (isHeld(location.spillIndex()))
             return true;
         m_proc.fail(FailureKind::WrongValueInSpillSlot, reader);
         return false;
     }
-
-    void write(Location location)
+    NEVER_INLINE void writeAsked(Location location)
     {
-        if (!isAsked(location) || isHeld(location.spillIndex()))
+        if (isHeld(location.spillIndex()))
             return;
         m_takingThatWrote[location.spillIndex()] = m_taking;
         m_writtenInBlock.append(location.spillIndex());
@@ -1515,7 +1520,7 @@ private:
         return m_allocation.isInFramedPart(block) || (place.isRare() && m_allocation.needsFrameIn(place.rareRegion));
     }
 
-    bool take(const Step&);
+    ALWAYS_INLINE bool take(const Step&);
     bool takeSteps(uint32_t begin, uint32_t end);
     bool takeBlock(const Block*);
     SetOfSlots setHeldBehindBlock();
@@ -1533,7 +1538,7 @@ private:
     uint32_t m_taking { 0 };
 };
 
-bool CheckerOfSavesAtHeads::take(const Step& step)
+ALWAYS_INLINE bool CheckerOfSavesAtHeads::take(const Step& step)
 {
     for (Location source : step.sources) {
         if (!read(source, step.operation))

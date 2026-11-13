@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTReactionChain.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSavedFrame.h"
 #include "AOTState.h"
 #include "AOTStubFrames.h"
@@ -373,6 +374,17 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_state) {
     case State::Running:
+        if (!m_savedFrame) [[unlikely]] {
+            if (m_leavesAtOnce && mode != ResumeMode::Next) {
+                didEnd();
+                RELEASE_AND_RETURN(scope, resume(globalObject, mode, value));
+            }
+            RuntimeCheckFailure failure("generator check failed"_s);
+            failure.atTopCall(vm).detail("the generator of a loop is resumed by a return that was defined while the loop ran");
+            failure.report();
+            failure.crashInHost(globalObject);
+            CRASH();
+        }
         throwException(globalObject, scope, createGeneratorIsExecutingError(globalObject));
         return { };
     case State::Completed:

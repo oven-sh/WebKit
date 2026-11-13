@@ -2635,6 +2635,24 @@ void SavedFrameEmitter::generateTakeGeneratorPrototype(const ValueContext& value
     m_out.appendTo(continuation);
 }
 
+void SavedFrameEmitter::generateGetGeneratorPrototype(const ValueContext& value)
+{
+    CellPointer closure = in<CellPointer>(value->functionOperand());
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    Pointer structure = decodeStructureID(loadGeneratorStructureID(closure, slowPath));
+    join.add(CellPointer(m_out.load64(structure.value(), m_heaps.Structure_prototype)));
+
+    m_out.appendTo(slowPath);
+    join.add(callOperation<CellPointer>(value, RuntimeOperation::GetGeneratorPrototype, { boxCell(closure) }, { .isOnRarePath = true }));
+    define(value, join.finish());
+}
+
+void SavedFrameEmitter::generateTakeGeneratorLeftInPlace(const ValueContext& value)
+{
+    define(value, callOperation<Boxed>(value, RuntimeOperation::TakeGeneratorLeftInPlace, { in<CellPointer>(value->holderOperand()), word32(value->leavesAtOnce()) }, { .isOnRarePath = true }));
+}
+
 void SavedFrameEmitter::generateIsCallDelegated(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
@@ -2684,12 +2702,40 @@ void SavedFrameEmitter::generateReturnAsyncResult(const ValueContext& value)
     define(value, Boxed(callStub(value, returnAsyncResult(), { promise.value(), result.value() }, { .callerHasLeft = true }).first));
 }
 
+static void emitStepOfGeneratorInLine(CCallHelpers& jit, StubCalls& stubCalls, StubKey stub, OptionalIndex site)
+{
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    const GPRReg generator = gprOf(StubRegister::A0);
+    const GPRReg state = gprOf(StubRegister::T9);
+    const GPRReg address = gprOf(StubRegister::T11);
+    const GPRReg leafStep = gprOf(StubRegister::T13);
+    static_assert(static_cast<int32_t>(Generator::State::Running) < 0 && static_cast<int32_t>(Generator::State::Completed) < 0);
+    MacroAssembler::JumpList callsStub;
+    stubCalls.moveAddressOfStub(jit, stub, std::nullopt, address);
+    jit.load32(CCallHelpers::Address(generator, Generator::offsetOfState()), state);
+    callsStub.append(jit.branchTest32(MacroAssembler::Signed, state));
+    jit.loadPtr(CCallHelpers::Address(generator, Generator::offsetOfSavedFrame()), frameOfLeafStep);
+    jit.load64(CCallHelpers::Address(frameOfLeafStep, SavedFrame::offsetOfAsyncContext()), leafStep);
+    callsStub.append(jit.branch64(MacroAssembler::Below, leafStep, CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(numberTag))));
+    jit.zeroExtend32ToWord(leafStep, address);
+    jit.add64(CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), address);
+    if (isARM64())
+        jit.move(generator, gprOf(leafStepGeneratorRegister));
+    callsStub.link(&jit);
+    stubCalls.callRegister(jit, address, site);
+}
+
 void SavedFrameEmitter::generateStepGenerator(const ValueContext& value)
 {
     Boxed generator = in<Boxed>(value->generatorOperand());
     Boxed sentValue = in<Boxed>(value->valueOperand());
     LValue mode = m_out.constInt64(static_cast<int64_t>(value->resumeMode()));
-    defineValueAndWord(value, callStub(value, stepGenerator(value->check()), { generator.value(), mode, sentValue.value() }));
+    CallOptions options;
+    if (value->check() == GeneratorStepCheck::None && value->resumeMode() == ResumeMode::Next && hasOneInstance() && this->generator().usesLoopForms(value.block())) {
+        build().statistics().count(StatisticID::GeneratorStepsInLine);
+        options.emitterOfStubCall = emitStepOfGeneratorInLine;
+    }
+    defineValueAndWord(value, callStub(value, stepGenerator(value->check()), { generator.value(), mode, sentValue.value() }, options));
 }
 
 static bool everyCellIsOfCoroutineClass(TypeReader types, const Type& type, BuiltinClassID builtinClass)

@@ -1,0 +1,39 @@
+# class Counter { constructor() { this.count = 0; this.step = 1; } sum() { return this.count + this.step; } }
+# globalThis.Counter = Counter;
+# Where a slot is empty, sum() reads both by name. The receiver is proven, so each read asks the slot of the field first.
+# RUN: bytes f2:Body mechanisms=all
+# CHECK-NOT: GetById
+# CHECK: argument thunk {{*}} ReadOwnSlot{{*}}Value count 3
+# CHECK: argument thunk {{*}} ReadOwnSlot{{*}}Value count 4
+# CHECK-NOT: GetById
+
+layout L0 kind=Instance name="Counter" module=m0 constructor=f1 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="step" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="sum"
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v0 key="Counter"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="Counter" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Integer integer=0
+    PropSet v0, v1 key="count"
+    v3 = Integer integer=1
+    PropSet v0, v3 key="step"
+    v5 = Undefined
+    Return v5
+}
+function f2 module=m0 flags=[HasThis] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] {
+  b0(v0: L0):
+    v1 = PropGet v0 key="count" @10
+    v2 = PropGet v0 key="step" @20
+    v3 = Add v1, v2 @30
+    Return v3
+}

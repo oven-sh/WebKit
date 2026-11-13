@@ -506,9 +506,14 @@ Reference findLastIndexOfMatch(Walker& walker, Reference regExpObject, PropertyK
     return findLastIndexOrNull(walker, regExpObject).value_or(Reference());
 }
 
+static bool keepsPattern(const Walker& walker, const HeldRegExp& regExp)
+{
+    return regExp.isPrivate || (!regExp.isExpected && !walker.facts().mayRecompileRegExps());
+}
+
 void noteMatchStoresLastIndex(Walker& walker, const HeldRegExp& regExp, Reference regExpObject)
 {
-    if (hasMechanismsOfResultsInParts(walker) && (regExp.isPrivate || !walker.facts().mayRecompileRegExps()) && regExp.flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
+    if (hasMechanismsOfResultsInParts(walker) && keepsPattern(walker, regExp) && regExp.flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky }))
         noteRegExpLastIndex(walker, regExpObject, { });
 }
 
@@ -840,8 +845,10 @@ bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinO
     std::optional<Vector<uint32_t, 2>> groups = summary.canBeCreated() ? addReadGroupSlots(walker, *mentions, summary) : std::nullopt;
     if (!groups || mentions->numberOfParts() > summary.numSubpatterns + 1)
         return false;
-    const bool keepsPattern = regExp.isPrivate || !walker.facts().mayRecompileRegExps();
-    if (!keepsPattern && (mentions->readsLength || mentions->readsGroups))
+    const bool keepsItsPattern = keepsPattern(walker, regExp);
+    if (walker.program().builtins().at(overload).code.implementation.inlineBuiltin == InlineBuiltin::StringMatch && (!keepsItsPattern || regExp.flags.contains(RegExpFlags::Global)))
+        return false;
+    if (!keepsItsPattern && (mentions->readsLength || mentions->readsGroups))
         return false;
     const bool storesLastIndex = regExp.flags.containsAny({ RegExpFlags::Global, RegExpFlags::Sticky });
 
@@ -853,6 +860,7 @@ bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinO
     match.setPattern(regExp.pattern);
     match.setRegExpFlags(regExp.flags);
     match.setIsPrivate(regExp.isPrivate);
+    match.setIsExpected(regExp.isExpected);
     match.setCount(std::max<uint32_t>(mentions->numberOfParts(), storesLastIndex));
     if (Reference stored = storesLastIndex ? findStoredLastIndexInResultsInParts(walker, regExpObject) : Reference())
         match.setLastIndexOperand(stored);
@@ -861,7 +869,7 @@ bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinO
     whole.setPattern(regExp.pattern);
     whole.setRegExpFlags(regExp.flags);
 
-    return buildMatchOnTwoWaysInResultsInParts(walker, call, WTF::move(match), WTF::move(whole), { string, *mentions, WTF::move(*groups), keepsPattern ? summary.groupsPresentInEveryMatch : 0, summary.numSubpatterns + 1, storesLastIndex && keepsPattern ? regExpObject : Reference() });
+    return buildMatchOnTwoWaysInResultsInParts(walker, call, WTF::move(match), WTF::move(whole), { string, *mentions, WTF::move(*groups), keepsItsPattern ? summary.groupsPresentInEveryMatch : 0, summary.numSubpatterns + 1, storesLastIndex && keepsItsPattern ? regExpObject : Reference() });
 }
 
 static uint64_t keyOfOpen(const Walker& walker, ValueID open)
@@ -959,6 +967,40 @@ bool loopTakesMatchesApart(Walker& walker, ValueID step)
     return found != allMentions.end() && found->value.isOnlyTakenApart && !found->value.isReturned && found->value.meetsOthersAt.isEmpty();
 }
 
+static BuiltinOverloadID overloadOfMatchAll(const Walker&);
+
+static Reference buildMatcherOfHeldRegExp(Walker& walker, const HeldRegExp& regExp, Reference regExpObject, Origin origin)
+{
+    Draft creation(Opcode::NewRegExp, origin);
+    walker.chooseConservativeFields(creation);
+    creation.setPattern(regExp.pattern);
+    creation.setRegExpFlags(regExp.flags);
+    Reference matcher = walker.build(WTF::move(creation));
+
+    const PropertyKeyID key = walker.program().keyOf(nameInTableForResultsInParts(walker, "lastIndex"_s));
+    Draft read(Opcode::PropGet, origin);
+    read.setObjectOperand(regExpObject);
+    read.setKey(key);
+    walker.chooseConservativeFields(read);
+    Reference lastIndex = walker.build(WTF::move(read));
+    if (!lastIndex || walker.isUnreachable())
+        return { };
+    Draft length(Opcode::ToLength, origin);
+    walker.chooseConservativeFields(length);
+    length.setValueOperand(lastIndex);
+    Reference firstIndex = walker.build(WTF::move(length));
+    if (!firstIndex || walker.isUnreachable())
+        return { };
+    Draft store(Opcode::PropSet, origin);
+    store.setObjectOperand(matcher);
+    store.setKey(key);
+    store.setMode(ECMAMode::Strict);
+    store.setValueOperand(firstIndex);
+    walker.chooseConservativeFields(store);
+    walker.build(WTF::move(store));
+    return matcher;
+}
+
 bool openMatchIteration(Walker& walker, const CallByOneRow& matchAll)
 {
     if (walker.isUnreachable() || matchAll.isForwarded || matchAll.call.opcode() != Opcode::Call)
@@ -967,9 +1009,16 @@ bool openMatchIteration(Walker& walker, const CallByOneRow& matchAll)
         return false;
     std::optional<LoopOverResult> loop = findLoopOverResult(walker, matchAll.call);
     std::optional<RegExpWrittenForCall> regExp = loop ? findRegExpWrittenForCall(walker, matchAll.call, matchAll.writtenArguments()[0]) : std::nullopt;
-    if (!regExp || !matchesAreSteppedByExec(walker, regExp->pattern, regExp->flags))
+    std::optional<HeldRegExp> held = loop && !regExp ? findHeldRegExp(walker, matchAll.writtenArguments()[0]) : std::nullopt;
+    if (held && (!keepsPattern(walker, *held) || matchAll.overload != overloadOfMatchAll(walker) || !nameInTableForResultsInParts(walker, "lastIndex"_s)))
         return false;
-    const Reference matcher = regExp->object;
+    if ((!regExp && !held) || !matchesAreSteppedByExec(walker, held ? held->pattern : regExp->pattern, held ? held->flags : regExp->flags))
+        return false;
+    Origin origin = matchAll.origin;
+    origin.isTailCall = false;
+    const Reference matcher = held ? buildMatcherOfHeldRegExp(walker, *held, matchAll.arguments[0], origin) : regExp->object;
+    if (!matcher || walker.isUnreachable() || walker.hasFailed())
+        return true;
     auto& iterations = ensureResultPartsAnalysis(walker).matchIterations.add(keyOfOpen(walker, loop->open), Vector<MatchIteration, 1>()).iterator->value;
     iterations.removeAllMatching([&](const MatchIteration& earlier) { return earlier.regExpObject == matcher; });
     iterations.append({ matcher, matchAll.receiver });
@@ -1493,7 +1542,8 @@ bool buildMatchIntoFrame(Walker& walker, const BodyValue& call, BuiltinOverloadI
         match.setPattern(regExp->pattern);
         match.setRegExpFlags(regExp->flags);
         match.setIsPrivate(regExp->isPrivate);
-        if (RegExpSummaries* summaries = regExp->isPrivate || !walker.facts().mayRecompileRegExps() ? walker.regExpSummaries() : nullptr) {
+        match.setIsExpected(regExp->isExpected);
+        if (RegExpSummaries* summaries = keepsPattern(walker, *regExp) ? walker.regExpSummaries() : nullptr) {
             Vector<char16_t> buffer;
             const RegExpSummary& summary = summaries->summaryOf(regExp->pattern, toYarrFlags(regExp->flags), types.viewOf(regExp->pattern, buffer));
             if (summary.canBeCreated())
@@ -1676,12 +1726,8 @@ bool buildFrameMatchElement(Walker& walker, const BodyValue& read, const InputsO
     return true;
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)
+static NEVER_INLINE Reference propertyOfResultOrOfItsParts(Walker& walker, Reference name, Reference whole, PropertyKeyID key)
 {
-    bool isOnlyTakenApart = partsOfListThatIsOnlyTakenApart(walker, name);
-    Reference whole = wholeBesidePartsNamedBy(walker, name);
-    if ((!isOnlyTakenApart && !whole) || liesInThread(key))
-        return { };
     if (whole && walker.code().at(whole.id()).opcode == Opcode::GetMatchArrayGroups) {
         const PropertyKey& name = walker.types().at(key);
         return name.kind == PropertyKeyKind::Text ? walker.state().element(whole, stringKeyInResultsInParts(walker, name.text)) : Reference();
@@ -1692,6 +1738,15 @@ ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& wa
     if (Reference part = partOfListThatIsOnlyTakenApart(walker, name, keyOfNameInResultsInParts(walker, written)))
         return part;
     return whole ? walker.state().element(whole, keyOfNameInResultsInParts(walker, written)) : Reference();
+}
+
+ALWAYS_INLINE_INTO_OTHER_FILES Reference propertyOfResultTakenInParts(Walker& walker, Reference name, PropertyKeyID key)
+{
+    bool isOnlyTakenApart = partsOfListThatIsOnlyTakenApart(walker, name);
+    Reference whole = wholeBesidePartsNamedBy(walker, name);
+    if ((!isOnlyTakenApart && !whole) || liesInThread(key))
+        return { };
+    return propertyOfResultOrOfItsParts(walker, name, whole, key);
 }
 
 std::optional<Vector<Reference, 4>> partsThatPatternTakes(Walker& walker, Reference iterable, uint32_t numberOfSteps)

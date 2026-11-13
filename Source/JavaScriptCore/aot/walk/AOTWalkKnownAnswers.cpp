@@ -828,6 +828,15 @@ std::optional<uint64_t> findKnown(const Walker& walker, const WalkState& state, 
     return answer ? std::optional<uint64_t>(answer->noted) : std::nullopt;
 }
 
+Vector<uint64_t, 16> listKnown(const Walker& walker, KnownNote kind, Reference subject)
+{
+    Vector<uint64_t, 16> notes;
+    const KnownAnswers& answers = walker.state().answers();
+    if (!answers.isEmpty() && walker.has(Mechanism::Folding) && walker.state().remembersPlaces())
+        answers.forEachNoteAbout(rootInKnownAnswers(walker.code(), subject), static_cast<uint8_t>(kind), [&](uint64_t noted) { notes.append(noted); });
+    return notes;
+}
+
 void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other, uint32_t word)
 {
     KnownAnswers& answers = walker.state().answers();
@@ -844,7 +853,7 @@ void endKnown(Walker& walker, KnownNote kind, Reference subject, Reference other
 }
 
 static constexpr OpcodeSet testsNumberedInKnownAnswers = allEqualities | allRelations | OpcodeSet { Opcode::ToBoolean, Opcode::HasArrayStorage };
-static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetTypedArrayLength, Opcode::GetDataViewLimit, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::CallInline };
+static constexpr OpcodeSet valuesNumberedInKnownAnswers = allNumericOperators | OpcodeSet { Opcode::WholeDivisor, Opcode::RemainderByWholeDivisor, Opcode::RemainderByReciprocal, Opcode::RemainderOfIntegers, Opcode::MultiplyIntegers, Opcode::ToInt32, Opcode::ToUint32, Opcode::GetStringLength, Opcode::GetStringCodeUnit, Opcode::GetTypedArrayLength, Opcode::GetDataViewLimit, Opcode::PrivateGet, Opcode::GetValueAtSiteOrAbsent, Opcode::GetKeyedPropertyAddress, Opcode::GetGlobalProperty, Opcode::CallInline };
 static constexpr OpcodeSet operationsThatDoNothingAgainInKnownAnswers { Opcode::GetBuiltinValue, Opcode::ModuleBuiltin };
 static bool doesNothingAgainInKnownAnswers(const Walker& walker, const Draft& draft)
 {
@@ -868,7 +877,7 @@ static bool givesSameAgainInKnownAnswers(const Effects& effects)
 
 static bool givesNewAnswerUnaskedInKnownAnswers(const Walker& walker, const Draft& draft)
 {
-    return draft.opcode == Opcode::GetTypedArrayLength && viewMayFollowSharedMemoryThatGrows(walker, draft.viewOperand());
+    return draft.opcode == Opcode::GetTypedArrayLength && !draft.isCapped() && viewMayFollowSharedMemoryThatGrows(walker, draft.viewOperand());
 }
 
 static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& draft, AnswersOfWalk::WordsOfKey& words)
@@ -890,6 +899,9 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.field());
         break;
     case Opcode::GetTypedArrayLength:
+        words.append(static_cast<uint32_t>(draft.typedArrayType()) << 1 | draft.isCapped());
+        words.append(draft.offset());
+        break;
     case Opcode::GetDataViewLimit:
         words.append(static_cast<uint32_t>(draft.typedArrayType()));
         break;
@@ -976,9 +988,23 @@ static Reference answerOfTestBuiltInKnownAnswers(Walker& walker, const Draft& te
 constinit const OpcodeSet opcodesThatFindEqualOperationBuiltTakes = operationsFoundInKnownAnswers;
 constinit const OpcodeSet opcodesThatNoteOperationBuiltTakes = operationsFoundInKnownAnswers;
 
+static bool isStringConversion(InlineBuiltin builtin)
+{
+    switch (builtin) {
+    case InlineBuiltin::StringToLowerCase:
+    case InlineBuiltin::StringToUpperCase:
+    case InlineBuiltin::StringTrim:
+    case InlineBuiltin::StringTrimStart:
+    case InlineBuiltin::StringTrimEnd:
+        return true;
+    default:
+        return false;
+    }
+}
+
 static bool isNumberedInKnownAnswers(const Draft& draft)
 {
-    return draft.opcode != Opcode::CallInline || isLookupInTable(draft.inlineBuiltin());
+    return draft.opcode != Opcode::CallInline || isLookupInTable(draft.inlineBuiltin()) || isStringConversion(draft.inlineBuiltin());
 }
 
 static bool materializesKeyString(const Draft& draft, const Effects& effects)
@@ -1039,6 +1065,8 @@ Reference findEqualOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft
 
     const KnownAnswer* answer = answers.find(table->placeOfKeyAskedLast());
     Reference built = answer ? unlessWiderThanDraftInKnownAnswers(walker, draft, Reference::fromBits(static_cast<uint32_t>(answer->noted))) : Reference();
+    if (built && opcode == Opcode::GetGlobalProperty)
+        walker.count(StatisticID::GlobalReadsEliminated);
     if (!built || !testsNumberedInKnownAnswers.contains(opcode))
         return built;
     return answerOfTestBuiltInKnownAnswers(walker, draft, effects, built);
@@ -1082,7 +1110,7 @@ void noteOperationBuiltOfItsOpcodes(Walker& walker, const Draft& draft, const Ef
     KnownAnswer answer;
     answer.family = KnownAnswer::Family::Operation;
     answer.noted = built.bits();
-    if (restsOn.containsAny(perObjectHeaps) && draft.numberOfOperands() && opcode != Opcode::GetValueAtSiteOrAbsent)
+    if (restsOn.containsAny(perObjectHeaps) && draft.numberOfOperands() && opcode != Opcode::GetValueAtSiteOrAbsent && opcode != Opcode::GetGlobalProperty)
         answer.holder = rootInKnownAnswers(code, draft.operand(0));
     answer.endsAtSuspension = valuesNumberedInKnownAnswers.contains(opcode) && frameMayBeSavedInKnownAnswers(walker);
     answers.note(words.span(), isKeyAskedLast ? table->placeOfKeyAskedLast() : table->placeOfKey(words.span()), answer, restsOn, false, answer.holder && walker.state().isFresh(answer.holder));

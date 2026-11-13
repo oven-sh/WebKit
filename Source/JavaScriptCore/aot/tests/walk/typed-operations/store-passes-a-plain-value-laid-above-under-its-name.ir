@@ -47,11 +47,12 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v6 = NewClosure function=f3
     v7 = Integer integer=3
     v8 = Call v5, -, v7
-    v9 = Call v6, -, v8
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="sink" [isFreeName]
-    v12 = Call v11, -, v9
-    Return v12
+    v9 = PropDelete v8 key="sent" mode=Sloppy
+    v10 = Call v6, -, v8
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="sink" [isFreeName]
+    v13 = Call v12, -, v10
+    Return v13
 }
 function f1 name="Reply" module=m0 flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
   b0(v0: anything, v1: anything):

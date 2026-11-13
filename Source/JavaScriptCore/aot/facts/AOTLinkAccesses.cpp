@@ -194,13 +194,19 @@ private:
     bool isTextOfFunctions(const LinkType& key);
     bool readsOrStoresUnderTextsThatBodyWrites();
     bool accessesNamesFromLoop();
-    bool appendNamesOfRecords(FlowNodeID, Vector<PropertyKeyID, 16>& names);
+    using PrototypeNames = LinkFlow::PrototypeNames;
+    bool appendNamesOfRecords(FlowNodeID, PrototypeNames, Vector<PropertyKeyID, 16>& names);
+    PrototypeNames prototypeNamesAt(const BodyIndex&, ValueID object, ValueID name, const LinkType& objects);
+    enum class ListedNames : bool { AreThere, MayBeGone };
+    bool storeEachListedValue(const LinkType& listed, PrototypeNames, ListedNames);
     void resolveUnderNames(std::span<const PropertyKeyID>);
     bool storesUnderCallbackKeys(const LinkType& subject);
-    bool storesUnderListedNames(const LinkType& subject);
+    bool accessesListedNames(const LinkType& subject);
+    bool accessesPassedNames();
     FlowNodeID findGatheredArguments() const;
     void readGatheredArguments();
     bool holdsValueUnderKey(const BodyIndex&, const BodyOperation<Opcode::ElemSet>&, const LinkFlow::ListedObject&) const;
+    bool isListedObject(const BodyIndex&, ValueID holder, const LinkFlow::ListedObject&) const;
     bool resolveUnderTexts(std::span<const StringID>);
     bool storesCopiedNamesOnPrototype(const LinkType& subject, const LinkType& source);
     bool isFinalListRead();
@@ -325,8 +331,9 @@ private:
     bool tellsMemberThatTableFindsFrom(BuiltinID) const;
     bool isKeyAbsentFromChain(BuiltinID) const;
     bool isFollowedOnGlobalObject(BuiltinID);
+    bool isFollowedOnBuiltin(BuiltinID);
     bool storesListedObject(BuiltinID holder);
-    bool isNameUndefinedFrom(BuiltinID start);
+    bool isNameUndefinedFrom(BuiltinID start, BuiltinID followed = { });
     bool giveWhatLightFormServes(BuiltinID);
     LinkType anythingInPlaceOf(BuiltinID canonical);
     bool mayRunCodeFoundFrom(BuiltinID start);
@@ -352,6 +359,7 @@ private:
     LinkType m_before;
     NameClass m_nameClass { NameClass::Ordinary };
     bool m_laysObservers;
+    bool m_isUnderListedName { false };
     struct WordThatItCannotTell {
         FlowNodeID value;
         PropertyKeyID key;
@@ -954,7 +962,7 @@ void AccessInLinkAccesses::storeBesideFieldsOf(LayoutID id)
 
 bool AccessInLinkAccesses::resolveOnWhatStandsAbove(FlowNodeID above, unsigned stepsLeft)
 {
-    if (m_laysObservers || m_flow.isWatchedForFirstTime(above, observerOfWhatWasLookedUp()))
+    if ((m_laysObservers && !m_isUnderListedName) || m_flow.isWatchedForFirstTime(above, observerOfWhatWasLookedUp()))
         m_flow.observe(above, observerOfWhatWasLookedUp());
     const LinkType type = m_flow.typeAt(above);
     bool setterTakesStore = false;
@@ -1019,7 +1027,7 @@ bool AccessInLinkAccesses::isNothingDefinedFrom(BuiltinID start, PropertyKeyID k
         bool isClosed = members.isClosedKey(holder) || m_flow.stillNothing(holder, key, [&](FlowNodeID laid) {
             tellAgainOnceClimbsWhoeverTells(laid);
             return true;
-        });
+        }, LinkFlow::LockAbsentName::IfPossible);
         if (!isClosed)
             return false;
         if (m_table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
@@ -1083,9 +1091,8 @@ bool AccessInLinkAccesses::readKey()
     m_keyIsSymbolAsFarAsIsSeen = hasNode && LinkFlow::isSymbolAsFarAsIsSeen(key);
     LinkType seenKeys = key.directPart();
     m_seenKeysAreNumbers = !holdsObjectsForLinkAccesses(seenKeys) && !(seenKeys.primitives & ~LinkType::closed(Primitive::Number));
-    bool keyIsTextOrNumber = !holdsObjects && !(key.primitives & LinkType::closed(Primitive::AnySymbol));
     m_keyIsLiteral = !holdsObjects && !(key.primitives & (Primitive::String | LinkType::closed(Primitive::AnySymbol)));
-    m_keyMayNamePrototypeLink = (holdsObjects || key.primitives & Primitive::String) && keyThatBeginsSoMayNamePrototypeLink(m_program, m_access) && !(keyIsTextOrNumber && storesWhatSetterOfPrototypeLinkPassesOver());
+    m_keyMayNamePrototypeLink = (holdsObjects || key.primitives & Primitive::String) && keyThatBeginsSoMayNamePrototypeLink(m_program, m_access) && !storesWhatSetterOfPrototypeLinkPassesOver();
     return true;
 }
 
@@ -1098,6 +1105,26 @@ static bool mayLeaveLoopForLinkAccesses(const BodyIndex& index, ValueID key)
 }
 
 static bool readsElementInBoundsForLinkAccesses(const Program&, const BodyIndex&, BodyValue element, ValueID list);
+
+static VariableID variableReadAtForLinkAccesses(const BodyIndex& index, ValueID value)
+{
+    while (value && !index.isParameter(value) && inputPassThroughOpcodes.contains(index.opcodeOf(value)))
+        value = index.value(value).operand(0);
+    return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::GetModuleVariable ? index.value(value).as<Opcode::GetModuleVariable>().variable() : VariableID();
+}
+
+static bool onlyReadsItsListForLinkAccesses(const Program& program, PropertyKeyID key, bool& takesCallback)
+{
+    const BuiltinID plain[] { Builtins::ArrayPrototypeIncludes, Builtins::ArrayPrototypeIndexOf, Builtins::ArrayPrototypeLastIndexOf, Builtins::ArrayPrototypeJoin, Builtins::ArrayPrototypeAt };
+    const BuiltinID withCallback[] { Builtins::ArrayPrototypeForEach, Builtins::ArrayPrototypeMap, Builtins::ArrayPrototypeSome, Builtins::ArrayPrototypeEvery, Builtins::ArrayPrototypeFilter, Builtins::ArrayPrototypeFind, Builtins::ArrayPrototypeFindIndex };
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID found = key ? findOwnMember(program, builtins.canonicalID(Builtins::ArrayPrototype), key) : BuiltinID();
+    auto isFound = [&](BuiltinID method) {
+        return found && found == builtins.canonicalID(method) && !program.isUnlocked(method) && !program.isUnlocked(found);
+    };
+    takesCallback = std::ranges::any_of(withCallback, isFound);
+    return takesCallback || std::ranges::any_of(plain, isFound);
+}
 
 static bool appendTextsOfWrittenListForLinkAccesses(const Program& program, const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts)
 {
@@ -1279,6 +1306,8 @@ bool LinkFlow::appendCallbackKeys(FunctionID callback, const BodyIndex& index, V
         return false;
     if (made->isParameter(list))
         return !position && made->blockOf(list) == entryBlock && appendArrayParameterStrings(maker, *made, list, keys);
+    if (!position && (made->useCount(list) > 2 || variableReadAtForLinkAccesses(*made, list)))
+        return appendReadListTexts(maker, *made, list, keys);
     return position ? appendRowStringsForLinkAccesses(program, *made, list, *position, length, keys) : appendTextsOfWrittenListForLinkAccesses(program, *made, list, keys);
 }
 
@@ -1295,22 +1324,66 @@ static FunctionID findCalledFunctionForLinkAccesses(const Program& program, cons
     return variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable) ? variable.function : FunctionID();
 }
 
+static bool callsCallbackWithElements(const Program& program, PropertyKeyID key)
+{
+    if (!key)
+        return false;
+    const BuiltinTable& builtins = program.builtins();
+    BuiltinID method = findOwnMember(program, builtins.canonicalID(Builtins::ArrayPrototype), key);
+    if (!method)
+        return false;
+    if (method == builtins.canonicalID(Builtins::ArrayPrototypeForEach))
+        return true;
+    const NamedBuiltin others[] { Builtins::ArrayPrototypeMap, Builtins::ArrayPrototypeFilter, Builtins::ArrayPrototypeSome, Builtins::ArrayPrototypeEvery, Builtins::ArrayPrototypeFind, Builtins::ArrayPrototypeFindIndex };
+    return std::ranges::any_of(others, [&](BuiltinID other) {
+        return method == builtins.canonicalID(other) && !program.isUnlocked(other) && !program.isUnlocked(method);
+    });
+}
+
+ValueID LinkFlow::findCallbackReadList(FunctionID maker, const BodyIndex& made, ValueID site, ValueID closure) const
+{
+    auto call = made.value(site).as<Opcode::Call>();
+    ValueID callee = call.calleeOperand() ? made.stripCasts(call.calleeOperand()) : ValueID();
+    ValueID list = call.thisValueOperand();
+    if (!list || made.isParameter(list) || call.argumentsOperands().empty() || call.argumentsOperands()[0] != closure || !callee || made.isParameter(callee) || made.opcodeOf(callee) != Opcode::PropGet)
+        return { };
+    auto method = made.value(callee).as<Opcode::PropGet>();
+    bool goesThroughList = method.objectOperand() == list && callsCallbackWithElements(program, method.key());
+    bool hasOtherUses = made.useCount(list) != 2 || variableReadAtForLinkAccesses(made, list);
+    return goesThroughList && hasOtherUses && (findReadList(maker, made, list).list || onlyReadsKeys(maker, made, made.stripCasts(list))) ? made.stripCasts(list) : ValueID();
+}
+
 ValueID LinkFlow::findCallbackList(FunctionID callback, FunctionID& maker) const
+{
+    {
+        Locker locker { m_lockOfLists };
+        if (auto known = m_callbackLists.find(callback.index()); known != m_callbackLists.end()) {
+            maker = known->value.first;
+            return known->value.second;
+        }
+    }
+    ValueID list = findCallbackListSlow(callback, maker);
+    Locker locker { m_lockOfLists };
+    m_callbackLists.add(callback.index(), std::pair { maker, list });
+    return list;
+}
+
+ValueID LinkFlow::findCallbackListSlow(FunctionID callback, FunctionID& maker) const
 {
     maker = findOnlyReferrer(callback);
     const BodyIndex* made = maker && maker != callback ? bodiesLookedAt(looks).find(maker) : nullptr;
     if (!made)
         return { };
     ValueID closure;
-    for (uint32_t number = 0; number < made->numberOfBlocks(); ++number) {
-        for (BodyValue value : made->block(BlockID(number)).values()) {
-            if (value.opcode() != Opcode::NewClosure || value.as<Opcode::NewClosure>().function() != callback)
-                continue;
-            if (closure)
-                return { };
-            closure = value.id();
-        }
+    for (auto& [function, value] : std::ranges::equal_range(closuresInBody(maker), callback, { }, &std::pair<FunctionID, ValueID>::first)) {
+        if (made->opcodeOf(value) != Opcode::NewClosure)
+            continue;
+        if (closure)
+            return { };
+        closure = value;
     }
+    if (std::ranges::any_of(summaries.at(maker).calls, [&](const SummaryCall& call) { return call.callee == SummaryCall::Callee::Binding && call.function == callback; }))
+        return { };
     std::optional<BodyUser> user = closure ? made->onlyUser(closure) : std::nullopt;
     while (user && user->kind == BodyUseKind::Operand && opcodesThatStateTypes.contains(made->opcodeOf(user->value))) {
         closure = user->value;
@@ -1328,12 +1401,12 @@ ValueID LinkFlow::findCallbackList(FunctionID callback, FunctionID& maker) const
         if (!list || !made->hasOneUse(list))
             return { };
     } else {
+        if (ValueID readList = findCallbackReadList(maker, *made, user->value, closure))
+            return readList;
         if (arguments.empty() || arguments[0] != closure || !callee || made->isParameter(callee) || made->opcodeOf(callee) != Opcode::PropGet)
             return { };
         auto method = made->value(callee).as<Opcode::PropGet>();
-        const BuiltinTable& builtins = program.builtins();
-        BuiltinID forEach = builtins.canonicalID(Builtins::ArrayPrototypeForEach);
-        if (!method.key() || findOwnMember(program, builtins.canonicalID(Builtins::ArrayPrototype), method.key()) != forEach)
+        if (!callsCallbackWithElements(program, method.key()))
             return { };
         list = call.thisValueOperand();
         if (!list || method.objectOperand() != list || made->useCount(list) != 2)
@@ -1345,6 +1418,22 @@ ValueID LinkFlow::findCallbackList(FunctionID callback, FunctionID& maker) const
             return { };
     }
     return list;
+}
+
+bool LinkFlow::onlyReadsKeys(FunctionID id, const BodyIndex& index, ValueID list) const
+{
+    if (!list || index.isParameter(list) || index.opcodeOf(list) != Opcode::Call)
+        return false;
+    uint64_t key = static_cast<uint64_t>(id.index() + 1) << 32 | list.index();
+    {
+        Locker locker { m_lockOfLists };
+        if (auto known = m_readLists.find(key); known != m_readLists.end())
+            return !!known->value.list;
+    }
+    ReadList found = onlyReadsList(id, list, { }) ? ReadList { id, list } : ReadList { };
+    Locker locker { m_lockOfLists };
+    m_readLists.add(key, found);
+    return !!found.list;
 }
 
 std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, const BodyIndex& index, ValueID key) const
@@ -1361,7 +1450,7 @@ std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, 
             });
             if (listed == summary.inspections.end())
                 return std::nullopt;
-            return ListedObject { id, index.stripCasts(index.value(step).as<Opcode::ForInStep>().objectOperand()), listed->subject };
+            return ListedObject { id, index.stripCasts(index.value(step).as<Opcode::ForInStep>().objectOperand()), listed->subject, false, true };
         }
     }
 
@@ -1377,10 +1466,17 @@ std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, 
     FunctionID maker = id;
     const BodyIndex* made = &index;
     ValueID list = whatStepGoesThroughForLinkAccesses(index, pair ? pair : key, false);
+    ValueID element = pair ? ValueID() : name;
     if (list) {
         while (!index.isParameter(list) && index.hasOneUse(list) && opcodesThatStateTypes.contains(index.opcodeOf(list)))
             list = index.value(list).operand(0);
-        if (index.isParameter(list) || !index.hasOneUse(list))
+        if (!index.isParameter(list) && !index.hasOneUse(list) && !pair && onlyReadsKeys(id, index, index.stripCasts(list)))
+            list = index.stripCasts(list);
+        else if (index.isParameter(list) || !index.hasOneUse(list))
+            return std::nullopt;
+    } else if (element && !index.isParameter(element) && index.opcodeOf(element) == Opcode::ElemGet) {
+        list = index.stripCasts(index.value(element).as<Opcode::ElemGet>().objectOperand());
+        if (!onlyReadsKeys(id, index, list))
             return std::nullopt;
     } else {
         ValueID element = index.stripCasts(pair ? pair : key);
@@ -1438,7 +1534,11 @@ LinkFlow::ComputedStoreNames LinkFlow::findComputedStoreNames(FunctionID id, Val
         if (!index->hasOneUse(iterated) || !appendArrayParameterStrings(id, *index, iterated, texts))
             return found;
     } else if (!iterated || index->isParameter(iterated)) {
-        if (!appendCallbackKeys(id, *index, index->value(site).as<Opcode::ElemSet>().propertyOperand(), texts))
+        ValueID key = index->value(site).as<Opcode::ElemSet>().propertyOperand();
+        bool isPassed = appendTextsOfParameter(id, *index, key, texts);
+        if (!isPassed)
+            texts.shrink(0);
+        if (!isPassed && !appendCallbackKeys(id, *index, key, texts))
             return found;
     } else if (index->opcodeOf(iterated) == Opcode::Call) {
         ValueID callee = index->stripCasts(index->value(iterated).as<Opcode::Call>().calleeOperand());
@@ -1512,6 +1612,326 @@ bool AccessInLinkAccesses::readsOrStoresUnderTextsThatBodyWrites()
     return m_flow.appendTextsOfKey(m_function, *index, key, texts) && resolveUnderTexts(texts.span());
 }
 
+const LinkFlow::CallsInSight& LinkFlow::findCallsInSight(FunctionID callee) const
+{
+    {
+        Locker locker { m_lockOfCallsInSight };
+        if (auto known = m_callsInSight.find(callee.index()); known != m_callsInSight.end())
+            return *known->value;
+    }
+    std::unique_ptr<CallsInSight> made = listCallsInSight(callee);
+    Locker locker { m_lockOfCallsInSight };
+    auto added = m_callsInSight.add(callee.index(), nullptr);
+    if (added.isNewEntry)
+        added.iterator->value = WTF::move(made);
+    return *added.iterator->value;
+}
+
+const LinkFlow::ClosuresInBody& LinkFlow::closuresInBody(FunctionID maker) const
+{
+    {
+        Locker locker { m_lockOfCallsInSight };
+        if (auto known = m_closuresInBodies.find(maker.index()); known != m_closuresInBodies.end())
+            return *known->value;
+    }
+    std::unique_ptr<ClosuresInBody> made = listClosuresInBody(maker);
+    Locker locker { m_lockOfCallsInSight };
+    auto added = m_closuresInBodies.add(maker.index(), nullptr);
+    if (added.isNewEntry)
+        added.iterator->value = WTF::move(made);
+    return *added.iterator->value;
+}
+
+std::unique_ptr<LinkFlow::ClosuresInBody> LinkFlow::listClosuresInBody(FunctionID maker) const
+{
+    auto closures = makeUniqueWithoutFastMallocCheck<ClosuresInBody>();
+    const BodyIndex& index = *bodiesLookedAt(looks).find(maker);
+    if (!index.holdsAnyOf({ Opcode::NewClosure, Opcode::GetModuleVariable }))
+        return closures;
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        for (BodyValue value : index.block(BlockID(number)).values()) {
+            FunctionID function;
+            if (value.opcode() == Opcode::NewClosure)
+                function = value.as<Opcode::NewClosure>().function();
+            else if (value.opcode() == Opcode::GetModuleVariable)
+                function = functionKeptBy(value.as<Opcode::GetModuleVariable>().variable());
+            if (function)
+                closures->append({ function, value.id() });
+        }
+    }
+    std::ranges::sort(*closures);
+    closures->shrinkToFit();
+    return closures;
+}
+
+bool LinkFlow::isExportedVariable(VariableID id) const
+{
+    std::call_once(m_exportedVariablesAreListed, [&] {
+        m_exportedVariables.ensureSize(program.variables.size());
+        for (size_t number = 0; number < program.modules.size(); ++number) {
+            const Module& module = program.modules[number];
+            auto note = [&](VariableID exported) {
+                if (exported && program.at(exported).module == ModuleID(static_cast<uint32_t>(number)))
+                    m_exportedVariables.quickSet(exported.index());
+            };
+            note(module.exportsVariable);
+            for (const ModuleExport& exported : module.exports)
+                note(exported.variable);
+            for (const SyntheticExport& exported : module.syntheticExports)
+                note(exported.variable);
+        }
+    });
+    return m_exportedVariables.quickGet(id.index());
+}
+
+FunctionID LinkFlow::functionKeptBy(VariableID id) const
+{
+    const Variable& variable = program.at(id);
+    bool keepsFunction = variable.initialization == VariableInitialization::Function && variable.flags.contains(VariableFlags::IsImmutable) && variable.module && !isExportedVariable(id);
+    return keepsFunction ? variable.function : FunctionID();
+}
+
+LinkFlow::SitesFound LinkFlow::appendOnlySites(const BodyIndex& index, FunctionID callee, ValueID closure, Vector<ValueID, 8>& sites) const
+{
+    if (!index.isReachable(index.blockOf(closure)))
+        return SitesFound::All;
+    while (std::optional<BodyUser> user = index.firstUser(closure)) {
+        if (user->kind == BodyUseKind::TerminatorOperand || user->kind == BodyUseKind::EdgeArgument || user->kind == BodyUseKind::HandlerArgument)
+            return index.isReachable(user->block) ? SitesFound::None : SitesFound::MustBeSought;
+        if (user->kind != BodyUseKind::Operand || !index.isReachable(index.blockOf(user->value)))
+            return SitesFound::MustBeSought;
+        BodyValue value = index.value(user->value);
+        bool passesThrough = inputPassThroughOpcodes.contains(value.opcode());
+        bool calls = value.opcode() == Opcode::Call && value.as<Opcode::Call>().calleeOperand() == closure;
+        bool isKept = value.opcode() == Opcode::PutModuleVariable && functionKeptBy(value.as<Opcode::PutModuleVariable>().variable()) == callee;
+        if (!passesThrough && !calls && !isKept)
+            return SitesFound::None;
+        if (!index.hasOneUse(closure))
+            return SitesFound::MustBeSought;
+        if (calls)
+            sites.append(user->value);
+        if (!passesThrough || value.operand(0) != closure)
+            return SitesFound::All;
+        closure = user->value;
+    }
+    return SitesFound::All;
+}
+
+const LinkFlow::CallsInBody& LinkFlow::callsInBody(FunctionID caller) const
+{
+    {
+        Locker locker { m_lockOfCallsInSight };
+        if (auto known = m_callsInBodies.find(caller.index()); known != m_callsInBodies.end())
+            return *known->value;
+    }
+    std::unique_ptr<CallsInBody> made = listCallsInBody(caller);
+    Locker locker { m_lockOfCallsInSight };
+    auto added = m_callsInBodies.add(caller.index(), nullptr);
+    if (added.isNewEntry)
+        added.iterator->value = WTF::move(made);
+    return *added.iterator->value;
+}
+
+std::unique_ptr<LinkFlow::CallsInBody> LinkFlow::listCallsInBody(FunctionID caller) const
+{
+    static constexpr size_t mostCalls = 64;
+    const BodyIndex& index = *bodiesLookedAt(looks).find(caller);
+    auto found = makeUniqueWithoutFastMallocCheck<CallsInBody>();
+    auto& sites = found->sitesOfOnlyCalled;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usedOtherwise;
+    Vector<FunctionID> closures;
+    auto closureAt = [&](ValueID value) { return value && !closures.isEmpty() ? closures[value.index()] : FunctionID(); };
+    auto noteOtherUse = [&](ValueID operand) {
+        if (FunctionID used = closureAt(operand))
+            usedOtherwise.add(used.index());
+    };
+    for (BlockID block : index.blocksInDominatorOrder()) {
+        for (BodyValue value : index.block(block).values()) {
+            Opcode opcode = value.opcode();
+            bool passesThrough = inputPassThroughOpcodes.contains(opcode);
+            FunctionID named;
+            if (opcode == Opcode::NewClosure)
+                named = value.as<Opcode::NewClosure>().function();
+            else if (opcode == Opcode::GetModuleVariable)
+                named = functionKeptBy(value.as<Opcode::GetModuleVariable>().variable());
+            else if (passesThrough)
+                named = closureAt(value.operand(0));
+            if (named) {
+                if (closures.isEmpty())
+                    closures.fill(FunctionID(), index.numberOfValues());
+                closures[value.id().index()] = named;
+            }
+            FunctionID called = opcode == Opcode::Call ? closureAt(value.as<Opcode::Call>().calleeOperand()) : FunctionID();
+            if (called)
+                sites.add(called.index(), Vector<ValueID>()).iterator->value.append(value.id());
+            if (passesThrough || closures.isEmpty())
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                FunctionID used = closureAt(operand);
+                if (!used)
+                    return;
+                bool isKept = opcode == Opcode::PutModuleVariable && functionKeptBy(value.as<Opcode::PutModuleVariable>().variable()) == used;
+                if (!isKept && !(called == used && operandIndex == OperandIndex::Call::callee))
+                    usedOtherwise.add(used.index());
+            });
+        }
+        if (closures.isEmpty())
+            continue;
+        index.terminator(block).forEachOperand([&](ValueID operand, uint32_t) {
+            noteOtherUse(operand);
+        });
+        for (BodyTarget target : index.terminator(block).targets()) {
+            for (ValueID argument : target.arguments())
+                noteOtherUse(argument);
+        }
+        if (index.block(block).hasHandler()) {
+            for (ValueID argument : index.block(block).handler().arguments())
+                noteOtherUse(argument);
+        }
+    }
+    sites.removeIf([&](auto& entry) {
+        return usedOtherwise.contains(entry.key) || entry.value.size() > mostCalls;
+    });
+    return found;
+}
+
+std::unique_ptr<LinkFlow::CallsInSight> LinkFlow::listCallsInSight(FunctionID callee) const
+{
+    auto found = makeUniqueWithoutFastMallocCheck<CallsInSight>();
+    const Function& record = program.at(callee);
+    bool isPlain = (record.kind == FunctionKind::Plain || record.kind == FunctionKind::Arrow) && !record.isCoroutine() && !record.calleeParameterIndex() && !record.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest });
+    FunctionID caller = isPlain && !summaries.at(callee).has(SummaryTrait::UsesArguments) ? findOnlyReferrer(callee) : FunctionID();
+    const BodyIndex* index = caller && caller != callee ? bodiesLookedAt(looks).find(caller) : nullptr;
+    if (!index || summaries.at(caller).has(SummaryTrait::HasDirectEval))
+        return found;
+    static constexpr size_t mostCalls = 64;
+    Vector<ValueID, 8> only;
+    std::span<const ValueID> sites;
+    for (auto& [function, closure] : std::ranges::equal_range(closuresInBody(caller), callee, { }, &std::pair<FunctionID, ValueID>::first)) {
+        SitesFound ofClosure = appendOnlySites(*index, callee, closure, only);
+        if (ofClosure == SitesFound::None)
+            return found;
+        if (ofClosure == SitesFound::All)
+            continue;
+        const auto& calls = callsInBody(caller).sitesOfOnlyCalled;
+        auto sought = calls.find(callee.index());
+        if (sought == calls.end())
+            return found;
+        sites = sought->value.span();
+        break;
+    }
+    if (sites.empty()) {
+        if (only.isEmpty() || only.size() > mostCalls)
+            return found;
+        std::ranges::sort(only, { }, [&](ValueID site) { return std::pair { index->dominatorNumber(index->blockOf(site)), site.index() }; });
+        sites = only.span();
+    }
+    const ThinSummary& summary = summaries.at(caller);
+    for (ValueID site : sites) {
+        auto call = std::ranges::find(summary.calls, site, &SummaryCall::site);
+        if (call == summary.calls.end() || call->isConstruction || call->passesList || call->isMadeByProtocol || (call->callee != SummaryCall::Callee::Value && call->callee != SummaryCall::Callee::Binding)) {
+            found->calls.clear();
+            return found;
+        }
+        found->calls.append({ site, static_cast<uint32_t>(&*call - &*summary.calls.begin()) });
+    }
+    found->caller = caller;
+    return found;
+}
+
+std::optional<uint32_t> LinkFlow::findPassedPosition(FunctionID id, const BodyIndex& index, ValueID value) const
+{
+    value = value ? index.stripCasts(value) : ValueID();
+    if (!value || !index.isParameter(value) || index.blockOf(value) != entryBlock)
+        return std::nullopt;
+    const Function& record = program.at(id);
+    for (uint32_t position = 0; position < record.numberOfPositionalParameters(); ++position) {
+        if (index.block(entryBlock).parameter(record.firstParameterIndex() + position) == value)
+            return position;
+    }
+    return std::nullopt;
+}
+
+StringID LinkFlow::findPassedText(const CallsInSight& found, size_t call, uint32_t position) const
+{
+    const BodyIndex* index = bodiesLookedAt(looks).find(found.caller);
+    std::span<const ValueID> arguments = index->value(found.calls[call].first).as<Opcode::Call>().argumentsOperands();
+    ValueID passed = position < arguments.size() && arguments[position] ? index->stripCasts(arguments[position]) : ValueID();
+    return passed && !index->isParameter(passed) && index->opcodeOf(passed) == Opcode::String ? index->value(passed).as<Opcode::String>().string() : StringID();
+}
+
+FlowNodeID LinkFlow::findPassedNode(FunctionID callee, const CallsInSight& found, size_t call, uint32_t position) const
+{
+    const ThinSummary& summary = summaries.at(found.caller);
+    const SummaryCall& made = summary.calls[found.calls[call].second];
+    uint32_t place = made.callee == SummaryCall::Callee::Binding ? program.at(callee).firstParameterIndex() + position : position;
+    uint32_t node = place < made.numberOfArguments ? summary.arguments[made.firstArgument + place] : noSummaryNode;
+    return node == noSummaryNode ? FlowNodeID() : nodeOf(found.caller, node);
+}
+
+bool LinkFlow::appendTextsOfParameter(FunctionID id, const BodyIndex& index, ValueID key, Vector<StringID, 8>& texts) const
+{
+    std::optional<uint32_t> position = findPassedPosition(id, index, key);
+    if (!position)
+        return false;
+    const CallsInSight& found = findCallsInSight(id);
+    for (size_t call = 0; call < found.calls.size(); ++call) {
+        StringID text = findPassedText(found, call, *position);
+        if (!text)
+            return false;
+        if (!texts.contains(text))
+            texts.append(text);
+    }
+    return !found.calls.isEmpty();
+}
+
+bool AccessInLinkAccesses::accessesPassedNames()
+{
+    bool stores = m_access.kind == Kind::Store;
+    if ((!stores && !isRead()) || m_shared || m_receiver != m_subject || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
+        return false;
+    const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
+    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != (stores ? Opcode::ElemSet : Opcode::ElemGet))
+        return false;
+    ValueID key = stores ? index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand() : index->value(m_access.site).as<Opcode::ElemGet>().propertyOperand();
+    std::optional<uint32_t> position = m_flow.findPassedPosition(m_function, *index, key);
+    Vector<StringID, 8> texts;
+    Vector<PropertyKeyID, 8> names;
+    if (!position || !m_flow.appendTextsOfParameter(m_function, *index, key, texts) || !m_flow.appendNamesOfTexts(texts.span(), names))
+        return false;
+    std::optional<uint32_t> subjectPosition = m_flow.findPassedPosition(m_function, *index, stores ? index->value(m_access.site).as<Opcode::ElemSet>().objectOperand() : index->value(m_access.site).as<Opcode::ElemGet>().objectOperand());
+    std::optional<uint32_t> valuePosition = stores && m_value ? m_flow.findPassedPosition(m_function, *index, index->value(m_access.site).as<Opcode::ElemSet>().valueOperand()) : std::nullopt;
+    const LinkFlow::CallsInSight& found = m_flow.findCallsInSight(m_function);
+    struct Passed {
+        PropertyKeyID name;
+        FlowNodeID subject;
+        FlowNodeID value;
+    };
+    Vector<Passed, 8> passed;
+    for (size_t call = 0; call < found.calls.size(); ++call) {
+        PropertyKey key { .kind = PropertyKeyKind::Text, .text = m_flow.findPassedText(found, call, *position) };
+        Passed each { *m_program.types.find(key), m_subject, m_value };
+        if (subjectPosition)
+            each.subject = m_flow.findPassedNode(m_function, found, call, *subjectPosition);
+        if (valuePosition)
+            each.value = m_flow.findPassedNode(m_function, found, call, *valuePosition);
+        if (!each.subject || (m_value && !each.value))
+            return false;
+        passed.append(each);
+    }
+    for (const Passed& each : passed) {
+        AccessInLinkAccesses ofCall = *this;
+        ofCall.m_subject = each.subject;
+        ofCall.m_receiver = each.subject;
+        ofCall.m_value = each.value;
+        if (each.subject != m_subject)
+            tellAgainOnceClimbsWhoeverTells(each.subject);
+        ofCall.resolveUnderNames(std::span<const PropertyKeyID>(&each.name, 1));
+    }
+    m_flow.build.statistics().count(StatisticID::AccessesUnderPassedNames);
+    return true;
+}
+
 bool LinkFlow::appendArrayParameterStrings(FunctionID id, const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts) const
 {
     const Function& record = program.at(id);
@@ -1567,13 +1987,235 @@ bool LinkFlow::readsUnderIndex(FunctionID id, BodyValue element) const
     return index && readsElementInBoundsForLinkAccesses(program, *index, index->value(element.id()), element.as<Opcode::ElemGet>().objectOperand());
 }
 
+bool LinkFlow::onlyReadsList(FunctionID id, ValueID list, VariableID variable) const
+{
+    ASSERT(list || variable);
+    const Body& body = program.at(id).body;
+    BitVector lists(body.numberOfValues());
+    BitVector methods(body.numberOfValues());
+    if (list)
+        lists.quickSet(list.index());
+    auto isIn = [](const BitVector& values, ValueID value) {
+        return value && values.quickGet(value.index());
+    };
+    Vector<BodyValue> definitions(FillWith { }, body.numberOfValues(), BodyValue());
+    body.forEachBlock([&](const BodyBlock& block) {
+        for (BodyValue value : block.values())
+            definitions[value.id().index()] = value;
+    });
+    bool isOnlyRead = true;
+    bool hasNewNames = true;
+    while (hasNewNames) {
+        hasNewNames = false;
+        body.forEachBlock([&](const BodyBlock& block) {
+            for (BodyValue value : block.values()) {
+                Opcode opcode = value.opcode();
+                bool takesCallback = false;
+                BitVector* names = nullptr;
+                if (opcode == Opcode::GetModuleVariable && variable && value.as<Opcode::GetModuleVariable>().variable() == variable)
+                    names = &lists;
+                else if (inputPassThroughOpcodes.contains(opcode) && isIn(lists, value.operand(0)))
+                    names = &lists;
+                else if (inputPassThroughOpcodes.contains(opcode) && isIn(methods, value.operand(0)))
+                    names = &methods;
+                else if (opcode == Opcode::PropGet && isIn(lists, value.as<Opcode::PropGet>().objectOperand()) && onlyReadsItsListForLinkAccesses(program, value.key(), takesCallback))
+                    names = &methods;
+                if (names && !names->quickSet(value.id().index()))
+                    hasNewNames = true;
+            }
+        });
+    }
+    body.forEachBlock([&](const BodyBlock& block) {
+        for (BodyValue value : block.values()) {
+            Opcode opcode = value.opcode();
+            if (inputPassThroughOpcodes.contains(opcode))
+                continue;
+            value.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
+                if (isIn(methods, operand)) {
+                    bool calls = opcode == Opcode::Call && value.as<Opcode::Call>().calleeOperand() == operand && isIn(lists, value.as<Opcode::Call>().thisValueOperand()) && operandIndex == OperandIndex::Call::callee;
+                    isOnlyRead &= calls;
+                } else if (isIn(lists, operand)) {
+                    switch (opcode) {
+                    case Opcode::ElemGet:
+                        isOnlyRead &= operandIndex == OperandIndex::ElemGet::object && readsUnderIndex(id, value);
+                        break;
+                    case Opcode::PropGet:
+                        isOnlyRead &= operandIndex == OperandIndex::PropGet::object && (value.key() == program.keyOf(BuiltinNames::length) || methods.quickGet(value.id().index()));
+                        break;
+                    case Opcode::IteratorOpen: {
+                        auto opened = value.as<Opcode::IteratorOpen>();
+                        isOnlyRead &= !operandIndex && opened.iteratorKind() == IteratorKind::Sync && !opened.isDelegating();
+                        break;
+                    }
+                    case Opcode::PutModuleVariable:
+                        isOnlyRead &= variable && value.as<Opcode::PutModuleVariable>().variable() == variable;
+                        break;
+                    case Opcode::Call:
+                        isOnlyRead &= operandIndex == OperandIndex::Call::thisValue && isIn(methods, value.as<Opcode::Call>().calleeOperand());
+                        break;
+                    default:
+                        isOnlyRead = false;
+                    }
+                }
+            });
+            if (opcode != Opcode::Call || !isIn(methods, value.as<Opcode::Call>().calleeOperand()))
+                continue;
+            BodyValue method = definitions[value.as<Opcode::Call>().calleeOperand().index()];
+            while (inputPassThroughOpcodes.contains(method.opcode()))
+                method = definitions[method.operand(0).index()];
+            bool takesCallback = false;
+            onlyReadsItsListForLinkAccesses(program, method.key(), takesCallback);
+            if (!takesCallback)
+                continue;
+            std::span<const ValueID> arguments = value.as<Opcode::Call>().argumentsOperands();
+            BodyValue callback = arguments.empty() || !arguments[0] ? BodyValue() : definitions[arguments[0].index()];
+            while (callback && inputPassThroughOpcodes.contains(callback.opcode()))
+                callback = callback.operand(0) ? definitions[callback.operand(0).index()] : BodyValue();
+            if (!callback || callback.opcode() != Opcode::NewClosure) {
+                isOnlyRead = false;
+                continue;
+            }
+            FunctionID called = callback.as<Opcode::NewClosure>().function();
+            const Function& record = program.at(called);
+            isOnlyRead &= record.numberOfPositionalParameters() < 3 && !record.calleeParameterIndex() && !record.hasAny({ FunctionFlags::HasRestParameter, FunctionFlags::HasHiddenRest }) && !summaries.at(called).has(SummaryTrait::UsesArguments) && !summaries.at(called).has(SummaryTrait::HasDirectEval);
+        }
+        BodyTerminator end = block.terminator();
+        end.forEachOperand([&](ValueID operand, uint32_t) {
+            isOnlyRead &= !isIn(lists, operand) && !isIn(methods, operand);
+        });
+        block.forEachOutgoingEdge([&](BodyTarget target, bool) {
+            for (ValueID argument : target.arguments())
+                isOnlyRead &= !isIn(lists, argument) && !isIn(methods, argument);
+        });
+    });
+    return isOnlyRead;
+}
+
+bool LinkFlow::isListVariableOnlyRead(VariableID id) const
+{
+    const Variable& variable = program.at(id);
+    ModuleID moduleID = variable.module;
+    bool isOnlyRead = variable.flags.contains(VariableFlags::IsImmutable) && moduleID;
+    if (isOnlyRead) {
+        const Module& module = program.at(moduleID);
+        isOnlyRead = module.exportsVariable != id && std::ranges::none_of(module.exports, [&](const ModuleExport& exported) { return exported.variable == id; }) && std::ranges::none_of(module.syntheticExports, [&](const SyntheticExport& exported) { return exported.variable == id; });
+    }
+    if (!isOnlyRead)
+        return false;
+    if (m_modulesWithDirectEval.at(moduleID.index()))
+        return false;
+    uint32_t first = m_firstNamerOfVariable[id.index()];
+    return std::ranges::all_of(m_namersOfVariables.span().subspan(first, m_firstNamerOfVariable[id.index() + 1] - first), [&](FunctionID function) {
+        return function == program.at(moduleID).body || onlyReadsList(function, { }, id);
+    });
+}
+
+void LinkFlow::listNamersOfVariables()
+{
+    struct Naming {
+        uint32_t variable;
+        FunctionID namer;
+    };
+    m_modulesWithDirectEval = BytesSharedByThreads(program.modules.size());
+    Vector<Naming> namings = collectInParallel<Naming>(build.parallelLoops(), static_cast<unsigned>(program.functions.size()), [&](unsigned index, Vector<Naming>& namings) {
+        const Function& function = program.functions[index];
+        if (!function.module || !function.hasBody())
+            return;
+        const ThinSummary& summary = summaries.at(FunctionID(index));
+        if (summary.has(SummaryTrait::HasDirectEval))
+            m_modulesWithDirectEval.set(function.module.index(), 1);
+        if (!summary.holdsNodesOf(SummaryNode::Kind::Variable))
+            return;
+        for (const SummaryNode& node : summary.nodes) {
+            if (node.kind != SummaryNode::Kind::Variable || node.first >= program.variables.size())
+                continue;
+            const Variable& variable = program.variables[node.first];
+            if (variable.module == function.module && variable.flags.contains(VariableFlags::IsImmutable))
+                namings.append({ node.first, FunctionID(index) });
+        }
+    });
+    m_firstNamerOfVariable.fill(0, program.variables.size() + 1);
+    for (const Naming& naming : namings)
+        ++m_firstNamerOfVariable[naming.variable + 1];
+    for (size_t variable = 0; variable < program.variables.size(); ++variable)
+        m_firstNamerOfVariable[variable + 1] += m_firstNamerOfVariable[variable];
+    m_namersOfVariables.grow(namings.size());
+    Vector<uint32_t> next(m_firstNamerOfVariable);
+    for (const Naming& naming : namings)
+        m_namersOfVariables[next[naming.variable]++] = naming.namer;
+}
+
+LinkFlow::ReadList LinkFlow::findReadList(FunctionID id, const BodyIndex& index, ValueID list) const
+{
+    if (!list || index.isParameter(index.stripCasts(list)))
+        return { };
+    VariableID variable = variableReadAtForLinkAccesses(index, list);
+    list = index.stripCasts(list);
+    if (!variable && index.opcodeOf(list) != Opcode::NewArray && index.opcodeOf(list) != Opcode::Data)
+        return { };
+    uint64_t key = variable ? static_cast<uint64_t>(variable.index()) : static_cast<uint64_t>(id.index() + 1) << 32 | list.index();
+    {
+        Locker locker { m_lockOfLists };
+        if (auto known = m_readLists.find(key); known != m_readLists.end())
+            return known->value;
+    }
+    ReadList found = findReadListSlow(id, index, variable, list);
+    Locker locker { m_lockOfLists };
+    m_readLists.add(key, found);
+    return found;
+}
+
+LinkFlow::ReadList LinkFlow::findReadListSlow(FunctionID id, const BodyIndex& index, VariableID variable, ValueID list) const
+{
+    FunctionID owner = id;
+    const BodyIndex* made = &index;
+    if (variable) {
+        ModuleID module = program.at(variable).module;
+        owner = module && program.at(variable).flags.contains(VariableFlags::IsImmutable) ? program.at(module).body : FunctionID();
+        made = owner ? bodiesLookedAt(looks).find(owner) : nullptr;
+        list = { };
+    }
+    for (uint32_t number = 0; made && number < made->numberOfBlocks(); ++number) {
+        for (BodyValue value : made->block(BlockID(number)).values()) {
+            if (value.opcode() != Opcode::PutModuleVariable)
+                continue;
+            auto put = value.as<Opcode::PutModuleVariable>();
+            ValueID stored = put.valueOperand() ? made->stripCasts(put.valueOperand()) : ValueID();
+            if (variable && !list && put.variable() == variable)
+                list = stored;
+            else if (variable ? put.variable() == variable : stored == list) {
+                if (variable)
+                    return { };
+                variable = put.variable();
+            }
+        }
+    }
+    if (!made || !list || made->isParameter(list) || (made->opcodeOf(list) != Opcode::NewArray && made->opcodeOf(list) != Opcode::Data) || summaries.at(owner).has(SummaryTrait::HasDirectEval))
+        return { };
+    Vector<StringID, 8> texts;
+    if (!appendTextsOfWrittenListForLinkAccesses(program, *made, list, texts) || !onlyReadsList(owner, list, variable))
+        return { };
+    if (variable && (owner != program.at(program.at(variable).module).body || !isListVariableOnlyRead(variable)))
+        return { };
+    return { owner, list };
+}
+
+bool LinkFlow::appendReadListTexts(FunctionID id, const BodyIndex& index, ValueID list, Vector<StringID, 8>& texts) const
+{
+    ReadList found = findReadList(id, index, list);
+    const BodyIndex* made = found.list ? bodiesLookedAt(looks).find(found.owner) : nullptr;
+    return made && appendTextsOfWrittenListForLinkAccesses(program, *made, found.list, texts);
+}
+
 bool LinkFlow::appendTextsOfElement(FunctionID id, const BodyIndex& index, BodyValue element, Vector<StringID, 8>& texts) const
 {
     ValueID list = element.as<Opcode::ElemGet>().objectOperand();
     ValueID made = list ? index.stripCasts(list) : ValueID();
-    bool mayBeWritten = made && (index.isParameter(made) ? index.blockOf(made) == entryBlock && findOnlyReferrer(id) : index.opcodeOf(made) == Opcode::NewArray || index.opcodeOf(made) == Opcode::Data);
+    bool mayBeWritten = made && (index.isParameter(made) ? index.blockOf(made) == entryBlock && findOnlyReferrer(id) : index.opcodeOf(made) == Opcode::NewArray || index.opcodeOf(made) == Opcode::Data || variableReadAtForLinkAccesses(index, made));
     if (!mayBeWritten || !readsElementInBoundsForLinkAccesses(program, index, element, list))
         return false;
+    if (!index.isParameter(made))
+        return appendReadListTexts(id, index, list, texts);
     uint32_t numberOfReads = 0;
     for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
         for (BodyValue value : index.block(BlockID(number)).values()) {
@@ -1581,20 +2223,56 @@ bool LinkFlow::appendTextsOfElement(FunctionID id, const BodyIndex& index, BodyV
             numberOfReads += value.opcode() == Opcode::PropGet && value.as<Opcode::PropGet>().objectOperand() == list && value.key() == program.keyOf(BuiltinNames::length);
         }
     }
-    if (numberOfReads >= BodyIndex::maxCountedUses || numberOfReads != index.useCount(list))
-        return false;
-    while (!index.isParameter(list) && opcodesThatStateTypes.contains(index.opcodeOf(list))) {
-        list = index.value(list).operand(0);
-        if (!list || !index.hasOneUse(list))
+    return list == made && numberOfReads < BodyIndex::maxCountedUses && numberOfReads == index.useCount(list) && appendArrayParameterStrings(id, index, list, texts);
+}
+
+static constexpr unsigned mostChosenTexts = 8;
+static constexpr unsigned mostBlocksOfChoice = 16;
+static constexpr unsigned mostChoices = 3;
+
+static bool appendChosenTexts(const BodyIndex& index, ValueID value, unsigned depth, Vector<StringID, 8>& texts)
+{
+    value = index.stripCasts(value);
+    if (!index.isParameter(value)) {
+        if (index.opcodeOf(value) != Opcode::String || texts.size() == mostChosenTexts)
             return false;
+        texts.append(index.value(value).as<Opcode::String>().string());
+        return true;
     }
-    if (index.isParameter(list))
-        return index.blockOf(list) == entryBlock && appendArrayParameterStrings(id, index, list, texts);
-    return appendTextsOfWrittenListForLinkAccesses(program, index, list, texts);
+    BlockID block = index.blockOf(value);
+    BlockID chooser = block == entryBlock ? BlockID() : index.immediateDominator(block);
+    if (!depth || !chooser || chooser.index() >= block.index() || block.index() - chooser.index() > mostBlocksOfChoice || index.isEnteredByHandlerEdge(block))
+        return false;
+    uint32_t place = 0;
+    while (index.block(block).parameter(place) != value)
+        ++place;
+    uint32_t numberSeen = 0;
+    for (uint32_t from = chooser.index(); from < block.index(); ++from) {
+        for (BodyTarget target : index.terminator(BlockID(from)).targets()) {
+            if (target.block() != block)
+                continue;
+            if (place >= target.arguments().size() || !appendChosenTexts(index, target.arguments()[place], depth - 1, texts))
+                return false;
+            ++numberSeen;
+        }
+    }
+    return numberSeen && numberSeen == index.numberOfIncomingEdges(block);
+}
+
+static bool isChosenAmongTexts(const BodyIndex& index, ValueID key)
+{
+    ValueID name = key ? index.stripCasts(key) : ValueID();
+    Vector<StringID, 8> texts;
+    return name && index.isParameter(name) && appendChosenTexts(index, name, mostChoices, texts);
 }
 
 bool LinkFlow::appendTextsOfKey(FunctionID id, const BodyIndex& index, ValueID key, Vector<StringID, 8>& texts) const
 {
+    if (isChosenAmongTexts(index, key))
+        return appendChosenTexts(index, key, mostChoices, texts);
+    if (appendTextsOfParameter(id, index, key, texts))
+        return true;
+    texts.shrink(0);
     if (ValueID name = key ? index.stripCasts(key) : ValueID(); name && !index.isParameter(name) && index.opcodeOf(name) == Opcode::ElemGet)
         return appendTextsOfElement(id, index, index.value(name), texts);
     ValueID list = whatStepGoesThroughForLinkAccesses(index, key, false);
@@ -1615,6 +2293,8 @@ bool LinkFlow::appendTextsOfKey(FunctionID id, const BodyIndex& index, ValueID k
         list = index.value(list).operand(0);
     if (!keyIsFirstOfPair && index.isParameter(list) && index.blockOf(list) == entryBlock)
         return index.hasOneUse(list) && appendArrayParameterStrings(id, index, list, texts);
+    if (!keyIsFirstOfPair && !index.isParameter(list) && (!index.hasOneUse(list) || variableReadAtForLinkAccesses(index, list)))
+        return appendReadListTexts(id, index, list, texts);
     if (index.isParameter(list) || !index.hasOneUse(list) || opcodesThatStateTypes.contains(index.opcodeOf(list)))
         return false;
     return keyIsFirstOfPair ? appendFirstTextsOfWrittenPairsForLinkAccesses(index, list, texts) : appendTextsOfWrittenListForLinkAccesses(program, index, list, texts);
@@ -1629,7 +2309,7 @@ Vector<PropertyKeyID, 8> LinkFlow::findNamesOfStore(FunctionID id, const Summary
     if (!index || index->isParameter(access.site) || index->opcodeOf(access.site) != Opcode::ElemSet)
         return names;
     ValueID key = index->value(access.site).as<Opcode::ElemSet>().propertyOperand();
-    if (!mayLeaveLoopForLinkAccesses(*index, key))
+    if (!mayLeaveLoopForLinkAccesses(*index, key) && !isChosenAmongTexts(*index, key))
         return names;
     for (BuiltinID row : { Builtins::ArrayPrototypeValues, Builtins::ArrayIteratorPrototypeNext, Builtins::ArrayPrototypeForEach }) {
         if (program.isUnlocked(row) || program.isUnlocked(program.builtins().canonicalID(row)))
@@ -1643,6 +2323,44 @@ Vector<PropertyKeyID, 8> LinkFlow::findNamesOfStore(FunctionID id, const Summary
     }
     if (!appendNamesOfTexts(texts.span(), names))
         names.shrink(0);
+    return names;
+}
+
+Vector<PropertyKeyID, 8> LinkFlow::findAffixedNamesOfStore(FunctionID id, const SummaryAccess& access) const
+{
+    Vector<PropertyKeyID, 8> names;
+    const BodyIndex* index = access.site ? bodiesLookedAt(looks).find(id) : nullptr;
+    if (!index || index->isParameter(access.site) || index->opcodeOf(access.site) != Opcode::ElemSet)
+        return names;
+    KeyAffixes affixes;
+    ValueID key = valueBetweenAffixes(program, *index, index->value(access.site).as<Opcode::ElemSet>().propertyOperand(), affixes);
+    if (!key || !mayLeaveLoopForLinkAccesses(*index, key))
+        return names;
+    std::optional<ListedObject> listed = findListedObject(id, *index, key);
+    if (!listed || !program.at(listed->function).isModuleBody())
+        return names;
+    const LinkType records = typeAt(nodeOf(listed->function, listed->node));
+    if (records.objects != LinkType::Objects::Layout)
+        return names;
+    auto append = [&](PropertyKeyID key) {
+        if (!key || program.at(key).kind != PropertyKeyKind::Text)
+            return;
+        std::span<const uint8_t> middle = program.string(program.at(key).text);
+        Vector<uint8_t, 64> joined;
+        joined.append(affixes.beginning);
+        joined.append(middle);
+        joined.append(affixes.ending);
+        StringID text = program.strings.find(joined.span());
+        std::optional<PropertyKeyID> name = text ? program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text }) : std::nullopt;
+        if (!name || program.isIndexLike(*name) || nameClassOf(*name) == NameClass::Proto || mayBeElementKey(nameClassOf(*name)))
+            return;
+        names.append(*name);
+    };
+    for (const Field& field : program.at(records.layout).fields)
+        append(field.computedKey ? PropertyKeyID() : field.key);
+    forEachAppendedField(records.layout, [&](PropertyKeyID key, FlowNodeID) {
+        append(key);
+    });
     return names;
 }
 
@@ -1672,18 +2390,166 @@ bool AccessInLinkAccesses::storesUnderCallbackKeys(const LinkType& subject)
     return m_flow.appendCallbackKeys(m_function, *index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand(), keys) && resolveUnderTexts(keys.span());
 }
 
-bool AccessInLinkAccesses::storesUnderListedNames(const LinkType& subject)
+bool LinkFlow::iteratesListsAsBuilt() const
 {
-    if (m_access.kind != Kind::Store || m_shared || subject.objects == LinkType::Objects::None || m_program.admitsReplacedBuiltins || m_flow.testRuns().isTestRun())
-        return false;
-    const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
-    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != Opcode::ElemSet || !mayLeaveLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
-        return false;
     for (BuiltinID row : { Builtins::ArrayPrototypeValues, Builtins::ArrayIteratorPrototypeNext, Builtins::ArrayPrototypeForEach }) {
-        if (m_program.isUnlocked(row) || m_program.isUnlocked(m_table.canonicalID(row)))
+        if (program.isUnlocked(row) || program.isUnlocked(program.builtins().canonicalID(row)))
             return false;
     }
-    if (m_program.isSomeNameOpenedOn(m_table.canonicalID(Builtins::ObjectPrototype)))
+    return !program.admitsReplacedBuiltins && !testRuns().isTestRun() && !program.isSomeNameOpenedOn(program.builtins().canonicalID(Builtins::ObjectPrototype));
+}
+
+static ValueID callThatAloneLeadsIntoBlock(const BodyIndex& index, BlockID block)
+{
+    std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(block);
+    if (!edge)
+        return { };
+    BodyTerminator terminator = index.terminator(edge->from);
+    if (terminator.kind() != TerminatorKind::Branch)
+        return { };
+    bool holds = !edge->targetIndex;
+    ValueID tested = index.stripCasts(terminator.as<TerminatorKind::Branch>().conditionOperand());
+    while (!index.isParameter(tested) && (index.opcodeOf(tested) == Opcode::ToBoolean || index.opcodeOf(tested) == Opcode::LogicalNot)) {
+        holds ^= index.opcodeOf(tested) == Opcode::LogicalNot;
+        tested = index.stripCasts(index.value(tested).operand(0));
+    }
+    return holds && !index.isParameter(tested) && index.opcodeOf(tested) == Opcode::Call ? tested : ValueID();
+}
+
+std::span<const BlockID> LinkFlow::blocksBehindTestsByCalls(FunctionID id, const BodyIndex& index) const
+{
+    {
+        Locker locker { m_lockOfCallsInSight };
+        if (auto known = m_blocksBehindTestsByCalls.find(id.index()); known != m_blocksBehindTestsByCalls.end())
+            return known->value.span();
+    }
+    Vector<BlockID> nearest(FillWith { }, index.numberOfBlocks(), BlockID());
+    for (BlockID block : index.blocksInDominatorOrder()) {
+        BlockID above = index.immediateDominator(block);
+        if (above)
+            nearest[block.index()] = callThatAloneLeadsIntoBlock(index, block) ? block : nearest[above.index()];
+    }
+    Locker locker { m_lockOfCallsInSight };
+    return m_blocksBehindTestsByCalls.add(id.index(), WTF::move(nearest)).iterator->value.span();
+}
+
+bool LinkFlow::isBehindOwnNameTest(FunctionID id, const BodyIndex& index, ValueID site, ValueID object, ValueID name, const LinkType& objects, Vector<FlowNodeID, 4>& watched) const
+{
+    BuiltinID hasOwnProperty = program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty);
+    PropertyKeyID hasOwnKey = program.keyOf(BuiltinNames::hasOwnProperty);
+    PropertyKeyID callKey = program.keyOf(BuiltinNames::call);
+    auto isOpened = [&](BuiltinName opened) {
+        StringID text = program.stringOf(opened);
+        return text && program.isOpenedSomewhere(text);
+    };
+    auto isBuiltin = [&](ValueID value, BuiltinID builtin) {
+        return !index.isParameter(value) && index.opcodeOf(value) == Opcode::Builtin && program.builtins().canonicalID(index.value(value).as<Opcode::Builtin>().builtin()) == program.builtins().canonicalID(builtin);
+    };
+    auto inheritsTest = [&] {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        bool inherits = true;
+        forEachLayoutOf(objects, [&](LayoutID layout) {
+            FlowNodeID appended = findAppendedField(layout, hasOwnKey);
+            if (appended)
+                watched.append(appended);
+            inherits = inherits && !findField(program, layout, hasOwnKey) && (!appended || typeAt(appended).isNever()) && !findMembers(layout, ClassSide::Prototype, hasOwnKey).mayAnswer() && !mayLieOnPrototypeAbove(layout, hasOwnKey, true, PrimitivesOnPrototypes::Count);
+        });
+        return inherits;
+    };
+    auto asksOwnName = [&](ValueID tested) {
+        auto call = index.value(tested).as<Opcode::Call>();
+        ValueID callee = call.calleeOperand() ? index.stripCasts(call.calleeOperand()) : ValueID();
+        std::span<const ValueID> arguments = call.argumentsOperands();
+        auto isAt = [&](size_t place, ValueID expected) {
+            return place < arguments.size() && arguments[place] && index.stripCasts(arguments[place]) == expected;
+        };
+        if (!callee || index.isParameter(callee))
+            return false;
+        if (isBuiltin(callee, Builtins::ObjectHasOwn))
+            return isAt(0, object) && isAt(1, name);
+        if (index.opcodeOf(callee) != Opcode::PropGet || !call.thisValueOperand())
+            return false;
+        auto method = index.value(callee).as<Opcode::PropGet>();
+        ValueID holder = index.stripCasts(method.objectOperand());
+        if (holder != index.stripCasts(call.thisValueOperand()))
+            return false;
+        if (method.key() == hasOwnKey)
+            return holder == object && isAt(0, name) && !isOpened(BuiltinNames::hasOwnProperty) && inheritsTest();
+        if (method.key() != callKey || isOpened(BuiltinNames::call) || isOpened(BuiltinNames::hasOwnProperty) || !isAt(0, object) || !isAt(1, name))
+            return false;
+        if (isBuiltin(holder, Builtins::ObjectPrototypeHasOwnProperty))
+            return true;
+        const ThinSummary& summary = summaries.at(id);
+        auto made = std::ranges::find(summary.calls, tested, &SummaryCall::site);
+        if (made == summary.calls.end() || made->key != callKey || made->isConstruction || made->passesList || made->receiver == noSummaryNode)
+            return false;
+        FlowNodeID node = nodeOf(id, made->receiver);
+        const LinkType& held = typeAt(node);
+        LinkType alone;
+        alone.builtin = held.builtin;
+        if (!(held == alone) || !held.builtin || program.builtins().canonicalID(held.builtin) != hasOwnProperty)
+            return false;
+        watched.append(node);
+        return true;
+    };
+    BlockID blockOfName = index.blockOf(name);
+    std::span<const BlockID> behindTests = blocksBehindTestsByCalls(id, index);
+    for (BlockID block = behindTests[index.blockOf(site).index()]; block && index.strictlyDominates(blockOfName, block); block = behindTests[index.immediateDominator(block).index()]) {
+        if (asksOwnName(callThatAloneLeadsIntoBlock(index, block)))
+            return true;
+    }
+    return false;
+}
+
+Vector<PropertyKeyID, 16> LinkFlow::findListedNamesOfStore(FunctionID id, const SummaryAccess& access) const
+{
+    Vector<PropertyKeyID, 16> names;
+    if (access.kind != SummaryAccess::Kind::Store || access.key || access.keyNode == noSummaryNode || access.isToContents() || !iteratesListsAsBuilt())
+        return names;
+    const BodyIndex* index = access.site ? bodiesLookedAt(looks).find(id) : nullptr;
+    if (!index || index->isParameter(access.site) || index->opcodeOf(access.site) != Opcode::ElemSet)
+        return names;
+    ValueID key = index->value(access.site).as<Opcode::ElemSet>().propertyOperand();
+    std::optional<ListedObject> listed = mayLeaveLoopForLinkAccesses(*index, key) ? findListedObject(id, *index, key) : std::nullopt;
+    if (!listed)
+        return names;
+    const LinkType& objects = typeAt(nodeOf(listed->function, listed->node));
+    Vector<FlowNodeID, 4> watched;
+    bool listsOwnNames = !listed->isLoop || isBehindOwnNameTest(id, *index, access.site, listed->object, index->stripCasts(key), objects, watched);
+    if (objects.isNever() || !appendListedNames(objects, listsOwnNames ? PrototypeNames::Excluded : PrototypeNames::Included, names))
+        names.shrink(0);
+    std::ranges::sort(names, { }, &PropertyKeyID::bits);
+    names.shrink(std::ranges::unique(names).begin() - names.begin());
+    return names;
+}
+
+bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
+{
+    bool stores = m_access.kind == Kind::Store;
+    if ((!stores && !isRead()) || m_shared || (!stores && m_keyIsOnlyNumbers) || subject.objects == LinkType::Objects::None)
+        return false;
+    if (!stores && subject.objects != LinkType::Objects::Layout && subject.objects != LinkType::Objects::Set)
+        return false;
+    if (!m_flow.iteratesListsAsBuilt())
+        return false;
+    const BodyIndex* index = bodiesLookedAt(m_flow.looks).find(m_function);
+    if (!index || index->isParameter(m_access.site) || index->opcodeOf(m_access.site) != (stores ? Opcode::ElemSet : Opcode::ElemGet))
+        return false;
+    if (!stores) {
+        auto read = index->value(m_access.site).as<Opcode::ElemGet>();
+        std::optional<LinkFlow::ListedObject> listed = mayLeaveLoopForLinkAccesses(*index, read.propertyOperand()) ? m_flow.findListedObject(m_function, *index, read.propertyOperand()) : std::nullopt;
+        if (!listed)
+            return false;
+        FlowNodeID node = isListedObject(*index, index->stripCasts(read.objectOperand()), *listed) ? m_subject : m_flow.nodeOf(listed->function, listed->node);
+        tellAgainOnceClimbsWhoeverTells(node);
+        PrototypeNames prototypeNames = listed->isLoop ? prototypeNamesAt(*index, listed->object, index->stripCasts(read.propertyOperand()), m_flow.typeAt(node)) : PrototypeNames::Excluded;
+        Vector<PropertyKeyID, 16> names;
+        if (!appendNamesOfRecords(node, prototypeNames, names))
+            return false;
+        resolveUnderNames(names.span());
+        return true;
+    }
+    if (!mayLeaveLoopForLinkAccesses(*index, index->value(m_access.site).as<Opcode::ElemSet>().propertyOperand()))
         return false;
     auto store = index->value(m_access.site).as<Opcode::ElemSet>();
     std::optional<LinkFlow::ListedObject> listed = m_flow.findListedObject(m_function, *index, store.propertyOperand());
@@ -1692,27 +2558,12 @@ bool AccessInLinkAccesses::storesUnderListedNames(const LinkType& subject)
     FlowNodeID node = m_flow.nodeOf(listed->function, listed->node);
     tellAgainOnceClimbsWhoeverTells(node);
     const LinkType records = m_flow.typeAt(node);
+    PrototypeNames prototypeNames = listed->isLoop ? prototypeNamesAt(*index, listed->object, index->stripCasts(store.propertyOperand()), records) : PrototypeNames::Excluded;
     Vector<PropertyKeyID, 16> names;
-    if (!appendNamesOfRecords(node, names))
+    if (!appendNamesOfRecords(node, prototypeNames, names))
         return false;
-    std::ranges::sort(names, { }, &PropertyKeyID::bits);
-    names.shrink(std::ranges::unique(names).begin() - names.begin());
-    if (!holdsValueUnderKey(*index, store, *listed) || (!records.isNever() && !m_flow.holdsOnlyPlainRecords(records))) {
+    if (!holdsValueUnderKey(*index, store, *listed) || !storeEachListedValue(records, prototypeNames, listed->givesPairs ? ListedNames::AreThere : ListedNames::MayBeGone))
         resolveUnderNames(names.span());
-        return true;
-    }
-    FlowNodeID stored = m_value;
-    m_flow.forEachLayoutOf(records, [&](LayoutID layout) {
-        Vector<LinkFlow::OwnValue, 16> values(m_flow.ownValuesOf(layout));
-        m_flow.appendAppendedFields(layout, values);
-        for (const LinkFlow::OwnValue& value : values) {
-            if (!value.key || m_program.at(value.key).kind != PropertyKeyKind::Text)
-                continue;
-            m_value = value.node;
-            resolveUnderNames(std::span<const PropertyKeyID>(&value.key, 1));
-        }
-    });
-    m_value = stored;
     return true;
 }
 
@@ -1734,9 +2585,22 @@ bool AccessInLinkAccesses::holdsValueUnderKey(const BodyIndex& index, const Body
         ValueID open = openOf(stored, 1);
         return open && openOf(key, 0) == open;
     }
-    if (index.opcodeOf(stored) != Opcode::ElemGet || index.stripCasts(index.value(stored).as<Opcode::ElemGet>().propertyOperand()) != key)
+    if (index.opcodeOf(stored) != Opcode::ElemGet)
         return false;
-    ValueID holder = index.stripCasts(index.value(stored).as<Opcode::ElemGet>().objectOperand());
+    auto isSameElement = [&](ValueID read, ValueID other) {
+        if (index.isParameter(read) || index.isParameter(other) || index.opcodeOf(read) != Opcode::ElemGet || index.opcodeOf(other) != Opcode::ElemGet)
+            return false;
+        auto first = index.value(read).as<Opcode::ElemGet>();
+        auto second = index.value(other).as<Opcode::ElemGet>();
+        return index.stripCasts(first.objectOperand()) == index.stripCasts(second.objectOperand()) && index.stripCasts(first.propertyOperand()) == index.stripCasts(second.propertyOperand());
+    };
+    if (ValueID readUnder = index.stripCasts(index.value(stored).as<Opcode::ElemGet>().propertyOperand()); readUnder != key && !isSameElement(readUnder, key))
+        return false;
+    return isListedObject(index, index.stripCasts(index.value(stored).as<Opcode::ElemGet>().objectOperand()), listed);
+}
+
+bool AccessInLinkAccesses::isListedObject(const BodyIndex& index, ValueID holder, const LinkFlow::ListedObject& listed) const
+{
     if (listed.function == m_function)
         return holder == listed.object;
     const BodyIndex* maker = bodiesLookedAt(m_flow.looks).find(listed.function);
@@ -1782,6 +2646,8 @@ void AccessInLinkAccesses::resolveUnderNames(std::span<const PropertyKeyID> name
     for (PropertyKeyID name : names) {
         AccessInLinkAccesses underName = *this;
         underName.m_access.key = name;
+        underName.m_access.isCopySpelledByLoop = false;
+        underName.m_isUnderListedName = true;
         underName.m_nameClass = m_flow.nameClassOf(name);
         underName.m_keyIsWritten = true;
         underName.m_keyIsOnlyNumbers = false;
@@ -1794,48 +2660,93 @@ void AccessInLinkAccesses::resolveUnderNames(std::span<const PropertyKeyID> name
     }
 }
 
-bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, Vector<PropertyKeyID, 16>& names)
+bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, PrototypeNames prototypeNames, Vector<PropertyKeyID, 16>& names)
 {
     const LinkType records = m_flow.typeAt(node);
-    if (records.hasUnknownObjects || records.holdsLostBuiltins || records.builtin || records.functions != LinkType::Functions::None || records.classes != LinkType::Classes::None || records.primitives & LinkType::closed(Primitive::AnyString))
+    if (records.objects == LinkType::Objects::Layout || records.objects == LinkType::Objects::Set) {
+        m_flow.forEachLayoutOf(records, [&](LayoutID id) {
+            tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(id));
+            tellAgainOnceClimbsWhoeverTells(m_flow.joinedExtraProperties(id));
+            m_flow.trackAppendedNames(id);
+            if (m_program.at(id).kind == LayoutKind::Instance)
+                m_flow.build.statistics().count(StatisticID::InstanceNamesReadByLoops);
+        });
+    }
+    size_t numberOfNames = 0;
+    if (!m_flow.appendListedNames(records, prototypeNames, names, &numberOfNames))
         return false;
-    if (records.objects != LinkType::Objects::None && records.objects != LinkType::Objects::Layout && records.objects != LinkType::Objects::Set)
-        return false;
-    bool areListed = true;
-    size_t numberOfAppendedNames = 0;
-    auto append = [&](PropertyKeyID key) {
-        if (!key) {
-            areListed = false;
+    m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), node, numberOfNames);
+    std::ranges::sort(names, { }, &PropertyKeyID::bits);
+    names.shrink(std::ranges::unique(names).begin() - names.begin());
+    return true;
+}
+
+auto AccessInLinkAccesses::prototypeNamesAt(const BodyIndex& index, ValueID object, ValueID name, const LinkType& objects) -> PrototypeNames
+{
+    Vector<FlowNodeID, 4> watched;
+    if (!m_flow.isBehindOwnNameTest(m_function, index, m_access.site, object, name, objects, watched))
+        return PrototypeNames::Included;
+    for (FlowNodeID node : watched)
+        tellAgainOnceClimbsWhoeverTells(node);
+    return PrototypeNames::Excluded;
+}
+
+bool AccessInLinkAccesses::storeEachListedValue(const LinkType& listed, PrototypeNames prototypeNames, ListedNames listedNames)
+{
+    Vector<LinkFlow::OwnValue, 16> stored;
+    FlowNodeID undefinedIfGone;
+    bool holdsValuesInSight = true;
+    m_flow.forEachLayoutOf(listed, [&](LayoutID layout) {
+        Vector<LinkFlow::OwnValue, 16> values(m_flow.ownValuesOf(layout));
+        holdsValuesInSight = holdsValuesInSight && !values.isEmpty() && !m_flow.possibleChanges[layout.index()].containsAny({ LayoutChange::ChangesPrototype, LayoutChange::GetsAccessor });
+        if (!holdsValuesInSight)
+            return;
+        if (listedNames == ListedNames::MayBeGone) {
+            FlowNodeID lostName = m_flow.lostNameNode(layout);
+            tellAgainOnceClimbsWhoeverTells(lostName);
+            if (!m_flow.typeAt(lostName).isNever())
+                undefinedIfGone = lostName;
+        }
+        size_t numberOfListedValues = values.size();
+        m_flow.appendAppendedNames(layout, values);
+        bool isInstance = m_program.at(layout).kind == LayoutKind::Instance;
+        if (isInstance) {
+            values.removeAllMatching([&](const LinkFlow::OwnValue& value) {
+                return m_flow.typeAt(value.node).isNever();
+            }, numberOfListedValues);
+        }
+        Vector<PropertyKeyID, 16> above;
+        if (isInstance && m_flow.hasFollowedPrototypes(layout) && !m_flow.appendPrototypeNames(layout, above)) {
+            holdsValuesInSight = false;
             return;
         }
-        PropertyKeyKind kind = m_program.at(key).kind;
-        if (kind != PropertyKeyKind::Text)
-            return;
-        NameClass nameClass = m_flow.nameClassOf(key);
-        areListed &= nameClass != NameClass::Proto && !mayBeElementKey(nameClass) && !m_program.isIndexLike(key);
-        names.append(key);
-    };
-    m_flow.forEachLayoutOf(records, [&](LayoutID id) {
-        const Layout& layout = m_program.at(id);
-        if (layout.kind != LayoutKind::Record || layout.has(LayoutFlags::IsOfCreatedObject) || m_flow.escapedLayouts.get(id.index()) || m_flow.possibleChanges[id.index()].contains(LayoutChange::ChangesPrototype)) {
-            areListed = false;
-            return;
+        for (const LinkFlow::OwnValue& value : values) {
+            if (!value.key || m_program.at(value.key).kind != PropertyKeyKind::Text)
+                continue;
+            stored.append(value);
+            if (isInstance && (!m_flow.isAbsentFromObjectPrototype(value.key) || m_flow.findMembers(layout, ClassSide::Prototype, value.key).mayAnswer()))
+                holdsValuesInSight = false;
         }
-        for (const Field& field : layout.fields)
-            append(field.computedKey ? PropertyKeyID() : field.key);
-        FlowNodeID unnamed = m_flow.extraPropertyStoreNode(id);
-        tellAgainOnceClimbsWhoeverTells(unnamed);
-        tellAgainOnceClimbsWhoeverTells(m_flow.joinedExtraProperties(id));
-        areListed &= m_flow.typeAt(unnamed).isNever();
-        Vector<LinkFlow::OwnValue, 16> appended;
-        m_flow.appendAppendedFields(id, appended);
-        numberOfAppendedNames += appended.size();
-        for (const LinkFlow::OwnValue& value : appended)
-            append(value.key);
+        for (PropertyKeyID name : above) {
+            bool isOwn = std::ranges::contains(values, name, &LinkFlow::OwnValue::key);
+            if (isOwn || prototypeNames == PrototypeNames::Included)
+                stored.append({ name, m_flow.foundOnPrototypesAbove(layout, name) });
+        }
     });
-    if (areListed)
-        m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), node, numberOfAppendedNames);
-    return areListed;
+    if (!holdsValuesInSight)
+        return false;
+    FlowNodeID storedUnderAnyName = m_value;
+    for (const LinkFlow::OwnValue& value : stored) {
+        m_value = value.node;
+        resolveUnderNames(std::span<const PropertyKeyID>(&value.key, 1));
+        if (undefinedIfGone) {
+            m_value = undefinedIfGone;
+            resolveUnderNames(std::span<const PropertyKeyID>(&value.key, 1));
+        }
+    }
+    m_value = storedUnderAnyName;
+    m_flow.build.statistics().count(StatisticID::ListedValuesStoredByName);
+    return true;
 }
 
 bool AccessInLinkAccesses::accessesNamesFromLoop()
@@ -1860,16 +2771,21 @@ bool AccessInLinkAccesses::accessesNamesFromLoop()
         node = m_flow.parameter(m_function, subject.index());
     else if (subject && !index->isParameter(subject) && index->opcodeOf(subject) == Opcode::GetModuleVariable)
         node = m_flow.variable(index->value(subject).as<Opcode::GetModuleVariable>().variable());
+    else if (!stores && subject && index->stripCasts(index->value(m_access.site).as<Opcode::ElemGet>().objectOperand()) == subject)
+        node = m_subject;
+    else if (stores && m_access.isCopySpelledByLoop)
+        node = m_flow.nodeOf(m_function, m_flow.sourceOfCopySpelledByLoop(m_function, m_access.site));
     else
         return false;
 
     tellAgainOnceClimbsWhoeverTells(node);
+    const LinkType listed = m_flow.typeAt(node);
+    PrototypeNames prototypeNames = prototypeNamesAt(*index, subject, key, listed);
     Vector<PropertyKeyID, 16> names;
-    if (!appendNamesOfRecords(node, names))
+    if (!appendNamesOfRecords(node, prototypeNames, names))
         return false;
-    std::ranges::sort(names, { }, &PropertyKeyID::bits);
-    names.shrink(std::ranges::unique(names).begin() - names.begin());
-    resolveUnderNames(names.span());
+    if (!stores || !m_access.isCopySpelledByLoop || !storeEachListedValue(listed, prototypeNames, ListedNames::AreThere))
+        resolveUnderNames(names.span());
     return true;
 }
 
@@ -2075,9 +2991,13 @@ static bool readsElementInBoundsForLinkAccesses(const Program& program, const Bo
     Vector<ValueID, 8> met;
     if (!counter || !isAtLeastForLinkAccesses(index, counter, 0, met))
         return false;
+    auto isList = [&](ValueID value) {
+        VariableID variable = variableReadAtForLinkAccesses(index, value);
+        return value == list || (variable && variable == variableReadAtForLinkAccesses(index, list) && program.at(variable).flags.contains(VariableFlags::IsImmutable));
+    };
     auto isLength = [&](ValueID value) {
         value = value ? index.stripCasts(value) : ValueID();
-        return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::PropGet && index.value(value).key() == program.keyOf(BuiltinNames::length) && index.value(value).as<Opcode::PropGet>().objectOperand() == list;
+        return value && !index.isParameter(value) && index.opcodeOf(value) == Opcode::PropGet && index.value(value).key() == program.keyOf(BuiltinNames::length) && isList(index.value(value).as<Opcode::PropGet>().objectOperand());
     };
     for (BlockID block = index.blockOf(element.id()); block && block != entryBlock; block = index.immediateDominator(block)) {
         std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(block);
@@ -2217,6 +3137,12 @@ void AccessInLinkAccesses::resolve()
         FlowNodeID source = m_flow.nodeOf(m_function, m_flow.sourceOfCopySpelledByLoop(m_function, m_access.site));
         tellAgainOnceClimbs(source);
         if (m_flow.followsCopySpelledByLoop(subject, m_flow.typeAt(source))) {
+            m_flow.forEachLayoutOf(m_flow.typeAt(source), [&](LayoutID copied) {
+                if (m_program.at(copied).kind != LayoutKind::Instance)
+                    return;
+                m_flow.build.statistics().count(StatisticID::InstancesCopiedByLoops);
+                tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(copied));
+            });
             mayThrow();
             return;
         }
@@ -2225,7 +3151,9 @@ void AccessInLinkAccesses::resolve()
     }
     if (!isNamed() && !readKey())
         return;
-    if (!isNamed() && (readsOrStoresUnderTextsThatBodyWrites() || storesUnderCallbackKeys(subject) || accessesNamesFromLoop() || storesUnderListedNames(subject)))
+    if (!isNamed() && !m_keyIsOnlyNumbers && accessesPassedNames())
+        return;
+    if (!isNamed() && (readsOrStoresUnderTextsThatBodyWrites() || storesUnderCallbackKeys(subject) || accessesNamesFromLoop() || accessesListedNames(subject)))
         return;
     if (subject.builtin && m_flow.lightFormOf(subject.builtin) && !isServedByLightFormOf(subject.builtin))
         m_flow.noteLossOf(subject.builtin);
@@ -2869,7 +3797,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
         else if (isDefinition && m_value == m_flow.unseen())
             m_flow.defineOnPrototypeOf(id, m_access.key);
         else
-            storeInto(m_flow.storedOnPrototypeOf(id, m_access.key, isStoreByBodyOfFileInItsOwnText(), isDefinition));
+            storeInto(m_flow.storedOnPrototypeOf(id, m_access.key, isStoreByBodyOfFileInItsOwnText(), isDefinition, isDefinition && m_access.isByDescriptor));
         return;
     }
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses();
@@ -2937,7 +3865,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
     std::pair<uint64_t, uint32_t> place {
         static_cast<uint64_t>(family.index()) << 32 | (isNamed() ? m_access.key.index() : 0),
         static_cast<uint32_t>(subjects) | static_cast<uint32_t>(m_access.kind) << 1 | isNamed() << 3 | !!m_value << 4 | valueIsUnseen << 5
-            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9 | m_keyCannotNameBuiltin << 10,
+            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9 | m_keyCannotNameBuiltin << 10 | m_access.setsFlagsAlone << 11,
     };
     auto found = state.indexesOfSharedAccesses.add(place, static_cast<uint32_t>(state.sharedAccesses.size()));
     uint32_t index = found.iterator->value;
@@ -2948,6 +3876,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
         made->access.kind = m_access.kind;
         made->access.key = m_access.key;
         made->access.storesObjectMadeForIt = m_access.storesObjectMadeForIt;
+        made->access.setsFlagsAlone = m_access.setsFlagsAlone;
         made->keyIsOnlyNumbers = m_keyIsOnlyNumbers;
         made->keyCannotNameBuiltin = m_keyCannotNameBuiltin;
         made->keyMayNamePrototypeLink = m_keyMayNamePrototypeLink;
@@ -3114,12 +4043,25 @@ void AccessInLinkAccesses::resolvePrototypePropertyOf(FunctionID function, Layou
             m_flow.note(LinkFlow::Note::PrototypeObjectRead, m_function.index());
         return;
     }
+    if (m_access.setsFlagsAlone)
+        return;
     m_flow.notePrototypeIsReplaced(constructed);
     if (m_access.storesObjectMadeForIt)
         return;
     if (m_access.storesConstructedObject && !m_shared && m_value) {
-        m_flow.addConstructedPrototype(function, constructed, m_value);
-        return;
+        const ThinSummary& summary = m_flow.summaries.at(m_function);
+        const SummaryNode& stored = summary.nodes[m_access.value];
+        bool isCopied = stored.kind == SummaryNode::Kind::ResultOfCall && summary.calls[stored.first].copiesIntoPrototype;
+        if (isCopied) {
+            tellAgainOnceClimbs(m_value);
+            if (m_flow.typeAt(m_value).isNever())
+                return;
+        }
+        uint32_t call = isCopied ? m_flow.firstCallOfFunction[m_function.index()] + stored.first : 0;
+        if (!isCopied || m_flow.followsCopyingCall(call)) {
+            m_flow.addConstructedPrototype(function, constructed, m_value, isCopied ? std::optional(call) : std::nullopt);
+            return;
+        }
     }
     if (m_value)
         tellAgainOnceClimbs(m_value);
@@ -3995,10 +4937,10 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
             m_flow.noteLossOf(m_table.canonicalID(m_table.at(builtin).inheritsFrom));
         if (giveWhatLightFormServes(builtin))
             return;
-        if (isFollowedOnGlobalObject(builtin)) {
+        if (isFollowedOnBuiltin(builtin)) {
             mayThrow();
             givePrimitives(Primitive::Undefined);
-            giveWhatIsHeldAt(m_flow.heldByGlobalObject(m_access.key));
+            giveWhatIsHeldAt(m_flow.heldByBuiltin(m_table.canonicalID(builtin), m_access.key));
             return;
         }
         BuiltinID member;
@@ -4031,8 +4973,8 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
         if (!stored.isNever())
             m_flow.addEdge(m_subject, m_flow.unseen());
     }
-    if (m_access.kind == Kind::Store && isFollowedOnGlobalObject(builtin)) {
-        FlowNodeID held = m_flow.heldByGlobalObject(m_access.key);
+    if (m_access.kind == Kind::Store && isFollowedOnBuiltin(builtin)) {
+        FlowNodeID held = m_flow.heldByBuiltin(m_table.canonicalID(builtin), m_access.key);
         mayThrow();
         storeInto(held);
         tellAgainOnceClimbsWhoeverTells(held);
@@ -4351,7 +5293,7 @@ bool AccessInLinkAccesses::areListsThatOnlyProgramNames(const LinkType& instance
     return true;
 }
 
-bool AccessInLinkAccesses::isNameUndefinedFrom(BuiltinID start)
+bool AccessInLinkAccesses::isNameUndefinedFrom(BuiltinID start, BuiltinID followed)
 {
     if (!isNamed() || m_program.at(m_access.key).kind != PropertyKeyKind::Text || mayBeElementKey(m_nameClass) || m_nameClass == NameClass::Proto)
         return false;
@@ -4371,7 +5313,7 @@ bool AccessInLinkAccesses::isNameUndefinedFrom(BuiltinID start)
         bool isGlobalObject = m_flow.isGlobalObject(holder);
         if (!m_table.hasLockedPrototypeLink(holder) && !isGlobalObject)
             return false;
-        bool isClosed = members.isClosedKey(holder) || (isGlobalObject ? m_flow.followsGlobalObjectUnder(m_access.key, tellAgainAt) : !!m_flow.stillNothing(holder, m_access.key, tellAgainAt));
+        bool isClosed = members.isClosedKey(holder) || (isGlobalObject || holder == followed ? m_flow.followsBuiltinUnder(holder, m_access.key, tellAgainAt) : !!m_flow.stillNothing(holder, m_access.key, tellAgainAt));
         if (!isClosed)
             return false;
         if (m_table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
@@ -4393,6 +5335,16 @@ bool AccessInLinkAccesses::isFollowedOnGlobalObject(BuiltinID builtin)
     if (name.startsWith("__"_s) || std::ranges::any_of(namesDefinedByOptions, [&](ASCIILiteral laid) { return name == laid; }))
         return false;
     return isNameUndefinedFrom(canonical);
+}
+
+bool AccessInLinkAccesses::isFollowedOnBuiltin(BuiltinID builtin)
+{
+    BuiltinID canonical = m_table.canonicalID(builtin);
+    if (m_flow.isGlobalObject(canonical))
+        return isFollowedOnGlobalObject(builtin);
+    if (canonical != m_table.canonicalID(Builtins::Object) || !isNamed() || m_flow.testRuns().isTestRun() || !hasFlag(m_program.excludedCode, Wire::ExcludedCode::UnlistedGlobals))
+        return false;
+    return isNameUndefinedFrom(canonical, canonical);
 }
 
 bool AccessInLinkAccesses::giveWhatIsFoundFrom(BuiltinID start, EngineMayDefineInheritedNames engineMayDefineInheritedNames)
@@ -4859,7 +5811,8 @@ StateOfLinkAccesses& LinkFlow::makeStateOfLinkAccesses()
         m_stateOfLinkAccesses->classesWhoseStaticFieldsAreLetGo = BytesSharedByThreads(program.layouts.size());
         BuiltinID globalObject = program.builtins().canonicalID(Builtins::GlobalThis);
         BitVector namesOfOtherValues;
-        for (size_t number = 0; number < summaries.size(); ++number) {
+        using GlobalNameStored = std::pair<PropertyKeyID, bool>;
+        for (auto [name, storesFunction] : collectInParallel<GlobalNameStored>(loops.ofCurrentThread(), static_cast<unsigned>(summaries.size()), [&](unsigned number, Vector<GlobalNameStored>& found) {
             const ThinSummary& summary = summaries.at(FunctionID(number));
             for (const SummaryAccess& access : summary.accesses) {
                 if (access.kind != SummaryAccess::Kind::Store || !access.key)
@@ -4867,10 +5820,10 @@ StateOfLinkAccesses& LinkFlow::makeStateOfLinkAccesses()
                 const SummaryNode& subject = summary.nodes[access.subject];
                 if (subject.kind != SummaryNode::Kind::Builtin || program.builtins().canonicalID(BuiltinID(subject.first)) != globalObject)
                     continue;
-                bool storesFunction = access.value != noSummaryNode && summary.nodes[access.value].kind == SummaryNode::Kind::Closure;
-                (storesFunction ? m_stateOfLinkAccesses->globalNamesStored : namesOfOtherValues).set(access.key.index());
+                found.append({ access.key, access.value != noSummaryNode && summary.nodes[access.value].kind == SummaryNode::Kind::Closure });
             }
-        }
+        }))
+            (storesFunction ? m_stateOfLinkAccesses->globalNamesStored : namesOfOtherValues).set(name.index());
         m_stateOfLinkAccesses->globalNamesStored.exclude(namesOfOtherValues);
         m_stateOfLinkAccesses->nearestClassesWithStaticFieldUnderKey.grow(numberOfLanes());
 
@@ -4936,6 +5889,10 @@ LayoutID LinkFlow::nearestClassWithStaticFieldThatMayMatch(LayoutID from, Proper
 void LinkFlow::prepareAccessesForSeveralThreads()
 {
     stateOfLinkAccesses();
+    if (m_nodesFoundWhereFieldsAreEmpty.isEmpty())
+        m_nodesFoundWhereFieldsAreEmpty.fill(UINT32_MAX, m_firstFieldOfLayout.last());
+    if (m_newestNameOnClosuresOf.isEmpty())
+        m_newestNameOnClosuresOf.fill(UINT32_MAX, program.functions.size());
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -16,6 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool foldComparisonOfValueWithItself(Walker&, const BodyValue& comparison);
 bool assignSourcesFieldByField(Walker&, const BodyValue& call);
+void forgetSlotsOfLiteralAssignedByName(Walker&, const BodyValue& finished);
 inline constexpr OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes { Opcode::StrictEq, Opcode::CopyObject, Opcode::Call };
 bool buildCopyOrKeyOrderFormOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker, const BodyValue& value) { return opcodesThatBuildCopyOrKeyOrderFormTakes.contains(value.opcode()) && buildCopyOrKeyOrderFormOfItsOpcodes(walker, value); }
@@ -31,11 +32,14 @@ template<Opcode known> ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker
 inline constexpr OpcodeSet opcodesThatOpenGuessOfKeyOrdersTakes { Opcode::PropGet, Opcode::PropSet };
 AOT_LINK_OF_WALK(openGuessOfKeyOrders, opcodesThatOpenGuessOfKeyOrdersTakes)
 bool readPresentStaticField(Walker&, const BodyValue& read);
+bool readMirroredFunctionName(Walker&, const BodyValue& read);
 template<Opcode known> ALWAYS_INLINE bool readStaticField(Walker& walker, const BodyValueOf<known>& value)
 {
     if constexpr (known == Opcode::PropGet) {
         PropertyKeyID key = value.template as<known>().key();
-        return key && !liesInThread(key) && walker.facts().linked().knownStaticFieldKeys.get(key.index()) && readPresentStaticField(walker, value);
+        if (!key || liesInThread(key))
+            return false;
+        return (walker.facts().linked().knownStaticFieldKeys.get(key.index()) && readPresentStaticField(walker, value)) || (walker.plan().promotedEnvironments().keysOfFunctionNameMirrors.get(key.index()) && readMirroredFunctionName(walker, value));
     } else
         return false;
 }
@@ -105,6 +109,7 @@ bool accessThroughKnownProxy(Walker&, const BodyValue& access);
 bool recordFindsNothingAbove(const Walker&, LayoutID, PropertyKeyID);
 TypeID typeOfReadThroughKnownProxy(Walker&, Reference proxy);
 bool accessStaticFieldInVariable(Walker&, const BodyValue& access);
+bool readDeclaredStaticField(Walker&, const BodyValue& read);
 bool buildCopyThatMakesObject(Walker&, const BodyValue& copy);
 bool fillLiteralInSight(Walker&, const BodyValue& firstCopy);
 bool walkCopyApartFromSourceWithoutProperties(Walker&, const BodyValue& copy);

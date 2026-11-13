@@ -51,6 +51,7 @@ public:
     void generateCall(const ValueContext&);
     void generateConstruct(const ValueContext&);
     void generateCallList(const ValueContext&);
+    void callWithLiteralAndList(const ValueContext&, Boxed callee, Boxed thisValue, const Operation& literal);
     void generateConstructList(const ValueContext&);
     void generateCallDirect(const ValueContext&);
     void generateCallTable(const ValueContext&);

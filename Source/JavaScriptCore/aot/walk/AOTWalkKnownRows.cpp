@@ -31,6 +31,7 @@
 #include <optional>
 #include <span>
 #include <wtf/ScopedLambda.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -504,7 +505,9 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
             BuiltinID method = findBuiltinCalledForKnownRows(walker, call);
             bool isForEach = method == table.canonicalID(Builtins::ArrayPrototypeForEach);
             bool fusesOne = fusesOutsideLoops && (walker.runsInIterations() || isReferredToInIterations(walker));
-            if ((mayCopy == MayCopyFunctionCalledDirectly::Yes || fusesOutsideLoops) && fuseChainOfCallbacks(walker, call, method, fusesOne ? 1 : 2))
+            SetForScope fusesUncopiedMethod(walker.fusesUncopiedMethod(), mayCopy != MayCopyFunctionCalledDirectly::Yes);
+            bool fusesReduceInLoop = walker.isInLoop() && holdsElements && mayCopy == MayCopyFunctionCalledDirectly::Yes && method == table.canonicalID(Builtins::ArrayPrototypeReduce);
+            if ((mayCopy == MayCopyFunctionCalledDirectly::Yes || fusesOutsideLoops) && fuseChainOfCallbacks(walker, call, method, fusesOne || fusesReduceInLoop ? 1 : 2))
                 return true;
             if (fusesOne && (isForEach || isOfSubclass))
                 mayCopy = MayCopyFunctionCalledDirectly::Yes;
@@ -547,10 +550,8 @@ bool callLibraryFunctionBehindRows(Walker& walker, const BodyValue& call)
     return isBuilt;
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
+bool isPrivateNameOfBuiltinMember(const Program& program, PropertyKeyID key)
 {
-    if (!key || liesInThread(key) || program.at(key).kind != PropertyKeyKind::EnginePrivateName)
-        return false;
     BuiltinMemberName name = builtinMemberNameOf(program, key);
     return name && name.isPrivateAlias;
 }

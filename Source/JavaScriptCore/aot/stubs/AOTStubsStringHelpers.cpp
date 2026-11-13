@@ -9,8 +9,10 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntimeTable.h"
+#include "AOTRuntimeWords.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "CellState.h"
 #include "JSString.h"
 #include <algorithm>
 #include <bit>
@@ -166,24 +168,93 @@ void branchIfBytesDiffer(StubAssembler& jit, const ComparedBytes& compared, Jump
     UNUSED_PARAM(differingWords);
 }
 
-void branchUnlessASCIIOutsideRange(StubAssembler& jit, const ScannedBytes& scanned, uint8_t first, uint8_t last, JumpList& isNot)
+void branchUnlessASCIIOutsideRange(StubAssembler& jit, const ScannedBytes& scanned, uint8_t first, uint8_t last, JumpList& isNot, CodeUnitWidth codeUnitWidth)
 {
     auto [bytes, size, word, atLeastFirst, aboveLast, addendForFirst, addendForLast] = scanned;
     RELEASE_ASSERT(noOverlap(bytes, size, word, atLeastFirst, aboveLast, addendForFirst, addendForLast));
     RELEASE_ASSERT(first <= last && last < 0x7f);
-    constexpr uint64_t oneInEachByte = 0x0101010101010101ULL;
-    constexpr uint64_t topBitOfEachByte = 0x80 * oneInEachByte;
+    const uint64_t oneInEachCharacter = codeUnitWidth == CodeUnitWidth::EightBits ? 0x0101010101010101ULL : 0x0001000100010001ULL;
+    const uint64_t bitsAboveASCII = (codeUnitWidth == CodeUnitWidth::EightBits ? 0x80 : 0xff80) * oneInEachCharacter;
 
-    jit.move(TrustedImm64((0x80 - first) * oneInEachByte), addendForFirst);
-    jit.move(TrustedImm64((0x80 - (last + 1)) * oneInEachByte), addendForLast);
+    jit.move(TrustedImm64((0x80 - first) * oneInEachCharacter), addendForFirst);
+    jit.move(TrustedImm64((0x80 - (last + 1)) * oneInEachCharacter), addendForLast);
     forEachWordCovering(jit, { bytes }, size, [&](unsigned width, auto addressIn) {
         loadZeroExtended(jit, width, addressIn(bytes), word);
         jit.add64(word, addendForFirst, atLeastFirst);
         jit.add64(word, addendForLast, aboveLast);
         jit.xor64(aboveLast, atLeastFirst);
         jit.or64(word, atLeastFirst);
-        isNot.append(jit.branchTest64(CCallHelpers::NonZero, atLeastFirst, TrustedImm64(topBitOfEachByte)));
+        isNot.append(jit.branchTest64(CCallHelpers::NonZero, atLeastFirst, TrustedImm64(bitsAboveASCII)));
     });
+}
+
+void searchForAtom(StubAssembler& jit, const AtomSearch& search, JumpList& isFound, JumpList& isNotFound)
+{
+    static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
+    constexpr int32_t flagInTypeAndFlags = (ConstantCellWords::flagOfStringConstant | TextInCell::flag) << 8;
+    constexpr int32_t typeAndFlagsOfAtom = StringType | (TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit) << 8 | flagInTypeAndFlags;
+    const GPRReg element = search.element;
+    const GPRReg typeAndFlags = search.scratch;
+    const GPRReg impl = search.scratch;
+
+    JumpList isNoCell;
+    Label nextElement = jit.label();
+    jit.load64(Address(search.cursor), element);
+    isNoCell.append(jit.branchIfNotCell(element));
+    isNoCell.append(jit.branchTest64(CCallHelpers::Zero, element));
+    jit.load16(Address(element, JSCell::typeInfoTypeOffset()), typeAndFlags);
+    jit.or32(TrustedImm32(flagInTypeAndFlags), typeAndFlags);
+    Jump cellDoesNotSay = jit.branch32(CCallHelpers::NotEqual, typeAndFlags, TrustedImm32(typeAndFlagsOfAtom));
+    isFound.append(jit.branchPtr(CCallHelpers::Equal, Address(element, JSString::offsetOfValue()), search.atom));
+    isNoCell.link(&jit);
+    Label passOver = jit.label();
+    jit.addPtr(TrustedImm32(sizeof(EncodedJSValue)), search.cursor);
+    jit.branchPtr(CCallHelpers::Below, search.cursor, search.end).linkTo(nextElement, &jit);
+    isNotFound.append(jit.jump());
+
+    cellDoesNotSay.link(&jit);
+    jit.branchIfNotType(element, StringType).linkTo(passOver, &jit);
+    jit.loadPtr(Address(element, JSString::offsetOfValue()), impl);
+    isFound.append(jit.branchPtr(CCallHelpers::Equal, impl, search.atom));
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
+    jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())).linkTo(passOver, &jit);
+    isRope.link(&jit);
+}
+
+Jump branchIfSurvivedCollection(StubAssembler& jit, GPRReg string)
+{
+    static_assert(!static_cast<unsigned>(CellState::PossiblyBlack));
+    return jit.branchTest8(CCallHelpers::Zero, Address(string, JSCell::cellStateOffset()));
+}
+
+void loadFirstCharactersOfRope(StubAssembler& jit, GPRReg string, GPRReg piece, GPRReg word, GPRReg characters, JumpList& isUnknown)
+{
+    RELEASE_ASSERT(noOverlap(string, piece, word, characters));
+    constexpr int32_t maxDepth = 8;
+    const GPRReg depth = characters;
+    jit.move(TrustedImm32(maxDepth), depth);
+    jit.move(string, piece);
+    Label next = jit.label();
+    jit.loadPtr(Address(piece, JSString::offsetOfValue()), word);
+    Jump isRope = jit.branchIfRopeStringImpl(word);
+    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(word, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(word, StringImpl::lengthMemoryOffset())));
+    jit.loadPtr(Address(word, StringImpl::dataOffset()), characters);
+    Jump isLoaded = jit.jump();
+
+    isRope.link(&jit);
+    Jump isSubstring = jit.branchTestPtr(CCallHelpers::NonZero, word, TrustedImm32(JSRopeString::isSubstringInPointer));
+    jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), word, piece);
+    jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), depth).linkTo(next, &jit);
+    isUnknown.append(jit.jump());
+
+    isSubstring.link(&jit);
+    const GPRReg base = word;
+    loadSubstringBaseAndOffset(jit, piece, base, characters);
+    jit.loadPtr(Address(base, JSString::offsetOfValue()), base);
+    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(base, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.addPtr(Address(base, StringImpl::dataOffset()), characters);
+    isLoaded.link(&jit);
 }
 
 void flattenSubject(StubAssembler& jit, GPRReg string, std::initializer_list<GPRReg> preservedGPRs, Label continuation)

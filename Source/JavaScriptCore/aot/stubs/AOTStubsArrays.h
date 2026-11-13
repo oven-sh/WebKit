@@ -73,6 +73,7 @@ constexpr StubKey arrayLiteral(unsigned count) { return StubKey(StubFamily::Arra
 constexpr StubKey arrayLiteralWithInt32(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithInt32).withCount(count); }
 constexpr StubKey arrayLiteralOfNumbers(unsigned count) { return StubKey(StubFamily::ArrayLiteralOfNumbers).withCount(count); }
 constexpr StubKey arrayLiteralWithRoom(unsigned count, bool holdsInt32) { return StubKey(StubFamily::ArrayLiteralWithRoom).withForm(holdsInt32).withCount(count); }
+constexpr StubKey arrayLiteralToGrow() { return StubKey(StubFamily::ArrayLiteralToGrow); }
 constexpr StubKey arrayLiteralWithDouble(unsigned count) { return StubKey(StubFamily::ArrayLiteralWithDouble).withCount(count); }
 constexpr StubKey arrayLiteralWithDoubleSlow() { return StubKey(StubFamily::ArrayLiteralWithDoubleSlow); }
 constexpr StubKey newCopyOnWriteArray(ArrayElementKind kind, SharedElements elements) { return StubKey(StubFamily::NewCopyOnWriteArray).withForm(static_cast<uint8_t>(kind) + 3 * static_cast<uint8_t>(elements)); }
@@ -98,6 +99,7 @@ constexpr StubKey arrayPushOfKnownKind() { return StubKey(StubFamily::ArrayPushO
 constexpr StubKey appendElements() { return StubKey(StubFamily::AppendElements); }
 constexpr StubKey appendMembers() { return StubKey(StubFamily::AppendMembers); }
 constexpr StubKey appendValuesOfMap() { return StubKey(StubFamily::AppendValuesOfMap); }
+constexpr StubKey listOfIterable() { return StubKey(StubFamily::ListOfIterable); }
 constexpr StubKey appendIterable() { return StubKey(StubFamily::AppendIterable); }
 constexpr StubKey destructureIterable() { return StubKey(StubFamily::DestructureIterable); }
 constexpr StubKey arrayPutAtIndex(ArrayStoredValue stored) { return StubKey(StubFamily::ArrayPutAtIndex).withForm(static_cast<uint8_t>(stored)); }
@@ -114,6 +116,8 @@ constexpr StubKey setArrayLength(bool isInSloppyCode) { return StubKey(StubFamil
 constexpr StubKey arrayGetAtIndex(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtIndex).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayGetAtNumber(ArrayRead read = ArrayRead::OfListAsMade) { return StubKey(StubFamily::ArrayGetAtNumber).withForm(static_cast<uint8_t>(read)); }
 constexpr StubKey arrayIndexOfString(SearchedElements elements) { return StubKey(StubFamily::ArrayIndexOfString).withForm(static_cast<uint8_t>(elements)); }
+inline constexpr int64_t arrayIndexNotSearched = -2;
+constexpr StubKey arrayIndexOfValue(bool holesAreUndefined) { return StubKey(StubFamily::ArrayIndexOfValue).withForm(holesAreUndefined); }
 
 Jump branchIfHavingABadTime(StubAssembler&);
 ptrdiff_t offsetOfArrayWithStorageAllocator(unsigned vectorLength, unsigned propertyRoom = 0);
@@ -139,6 +143,7 @@ static_assert(exists(newArrayOfLength(ArrayElementKind::Contiguous)) && exists(n
 static_assert(exists(newArrayWithLength(ArrayElementKind::Contiguous)) && exists(newEmptyArrayAtSite(ArrayElementKind::Contiguous)) && exists(newEmptyArrayWithCapacity()) && exists(newArrayOfHolesSlow()));
 static_assert(exists(arraySlice(true)) && exists(arrayCopy(true)) && exists(arraySliceAsDoubles()) && exists(arrayCopyAsDoubles()) && !exists(arrayCopyAsDoubles().withForm(6)));
 static_assert(exists(arrayIndexOfString(SearchedElements::Values)) && exists(arrayIndexOfString(SearchedElements::ValuesFromStart)) && !exists(arrayIndexOfString(SearchedElements::Values).withForm(2)));
+static_assert(exists(arrayIndexOfValue(false)) && exists(arrayIndexOfValue(true)) && !exists(arrayIndexOfValue(false).withForm(2)));
 static_assert(exists(arraySlice()) && exists(arrayCopy()) && exists(createArguments()) && exists(arrayPush()) && exists(arrayPushOfKnownKind()) && exists(appendElements()));
 static_assert(exists(appendMembers()));
 static_assert(bodyOf(arrayPushOfKnownKind()) == arrayPush());

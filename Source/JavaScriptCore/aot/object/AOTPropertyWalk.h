@@ -92,6 +92,8 @@ using DescriptorMembers = std::array<JSValue, 6>;
 JS_EXPORT_PRIVATE bool tryReadDescriptorMembers(JSObject* compiledObject, DescriptorMembers&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
 JS_EXPORT_PRIVATE unsigned countPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject*);
+JS_EXPORT_PRIVATE bool hasOwnPrivateField(JSGlobalObject*, JSObject*);
+JS_EXPORT_PRIVATE bool isRuntimeProperty(VM&, UniquedStringImpl*, JSValue);
 JS_EXPORT_PRIVATE bool matchPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches);
 void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);

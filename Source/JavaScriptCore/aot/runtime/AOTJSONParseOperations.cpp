@@ -57,6 +57,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr unsigned maxMantissaDigits = 19;
+static constexpr unsigned maxExactDigits = 15;
 static constexpr uint64_t maxExactInteger = 9007199254740991;
 
 static ALWAYS_INLINE uint8_t* poisonUnusedCapacity(uint8_t* start, size_t size, size_t capacity)
@@ -86,6 +87,7 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTabl
     , m_recordPlanCache(arena)
     , m_learnedNames(arena)
     , m_learnedStrings(arena)
+    , m_repeatedValues(arena)
 {
     instance.json.runtime = this;
     m_hasParsedRecords = instance.state && !instance.state->tables.parsedRecordShapes().empty();
@@ -95,7 +97,7 @@ JSONRuntime::JSONRuntime(Instance& instance, CacheRegistry& registry, ZeroedTabl
 JSONValueParser::LearnedNames& JSONRuntime::learnedNames()
 {
     if (!m_learnedNames) [[unlikely]]
-        m_learnedNames.make(learnedStrings());
+        m_learnedNames.make(learnedStrings(), repeatedValues());
     return *m_learnedNames;
 }
 
@@ -104,6 +106,36 @@ JSONValueParser::LearnedStrings& JSONRuntime::learnedStrings()
     if (!m_learnedStrings) [[unlikely]]
         m_learnedStrings.make();
     return *m_learnedStrings;
+}
+
+void JSONValueParser::RepeatedValues::addPlan(StructureID structureID, const ObjectBuilderPlan& plan)
+{
+    if (isOrderStoredOutOfLine(plan.orderAndCount())) [[unlikely]]
+        return;
+    m_isEmpty = false;
+    uint64_t key = keyOf(structureID, plan.orderAndCount());
+    PlanOfRecord* first = m_plans.data() + indexOf(key);
+    for (unsigned distance = 0; distance < plansTried; ++distance) {
+        if (first[distance].key == key)
+            return;
+        if (!first[distance].key) {
+            first[distance] = { key, &plan, 0 };
+            return;
+        }
+    }
+}
+
+void JSONValueParser::RepeatedValues::addFieldsWithObjects(StructureID structureID, const ObjectBuilderPlan& plan, uint64_t fields)
+{
+    if (PlanOfRecord* known = findPlan(keyOf(structureID, plan.orderAndCount())))
+        known->fieldsWithObjects |= fields;
+}
+
+JSONValueParser::RepeatedValues& JSONRuntime::repeatedValues()
+{
+    if (!m_repeatedValues) [[unlikely]]
+        m_repeatedValues.make();
+    return *m_repeatedValues;
 }
 
 void JSONRuntime::forgetRecordPlansNotFoundLately(VM& vm)
@@ -362,6 +394,8 @@ void JSONRuntime::clear()
         m_learnedNames->clear();
     if (m_learnedStrings)
         m_learnedStrings->clear();
+    if (m_repeatedValues)
+        m_repeatedValues->clear();
     if (m_recordPlanCache)
         m_recordPlanCache->fill({ });
     for (const Vector<RecordPlanForNames, 1>& plansUnderHash : m_recordPlans.values()) {
@@ -532,6 +566,13 @@ struct EightCharacters {
     bool areDigits() const { return !bitsOfOthers; }
     unsigned numberOfDigits() const { return std::countr_zero(bitsOfOthers) / 8; }
     uint32_t number() const { return fast_float::parse_eight_digits_unrolled(characters); }
+    uint32_t numberOfFirstFour(unsigned count) const
+    {
+        ASSERT(count && count <= 4);
+        uint32_t digits = (static_cast<uint32_t>(characters) << (32 - 8 * count)) & 0x0F0F0F0F;
+        uint32_t pairs = ((digits * (1 + (10 << 8))) >> 8) & 0x00FF00FF;
+        return (pairs * (1 + (100 << 16))) >> 16;
+    }
     uint32_t numberOfFirst(unsigned count) const
     {
         ASSERT(count && count < 8);
@@ -542,37 +583,63 @@ struct EightCharacters {
     uint64_t bitsOfOthers;
 };
 
-static ALWAYS_INLINE ParsedJSONNumber parseJSONNumber(const uint8_t* start, const uint8_t* sourceEnd)
+static ALWAYS_INLINE JSValue valueOfFiniteDouble(double number)
 {
-    const uint8_t* cursor = start;
+    constexpr unsigned mantissaBits = 52;
+    uint64_t bits = std::bit_cast<uint64_t>(number);
+    uint64_t exponent = ((bits >> mantissaBits) & 0x7FF) - 1023;
+    if (exponent < 31 && bits << (64 - mantissaBits + exponent)) [[likely]]
+        return JSValue(JSValue::EncodeAsDouble, number);
+    return jsNumber(number);
+}
+
+static ALWAYS_INLINE ParsedJSONValue tryParseJSONNumber(const uint8_t* cursor)
+{
     bool isNegative = *cursor == '-';
     cursor += isNegative;
     const uint8_t* digits = cursor;
-    unsigned digit = *cursor - '0';
-    if (digit > 9) [[unlikely]]
+    EightCharacters whole { cursor };
+    unsigned wholeCount = whole.numberOfDigits();
+    uint64_t mantissa;
+    if (!wholeCount) [[unlikely]]
         return { };
-    uint64_t mantissa = 0;
-    if (!digit) {
-        if (isASCIIDigit(*++cursor)) [[unlikely]]
-            return { };
+    if (*cursor == '0' && wholeCount > 1) [[unlikely]]
+        return { };
+    if (wholeCount <= 4) [[likely]] {
+        mantissa = whole.numberOfFirstFour(wholeCount);
+        cursor += wholeCount;
+    } else if (wholeCount < sizeof(uint64_t)) {
+        mantissa = whole.numberOfFirst(wholeCount);
+        cursor += wholeCount;
     } else {
-        do {
+        mantissa = 0;
+        for (unsigned digit = *cursor - '0'; digit <= 9; digit = *++cursor - '0')
             mantissa = mantissa * 10 + digit;
-            digit = *++cursor - '0';
-        } while (digit <= 9);
     }
     size_t numberOfDigits = cursor - digits;
     size_t numberOfFractionDigits = 0;
     if (*cursor == '.') {
+        static constexpr std::array<uint64_t, 16> powersOfTen { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000, 100000000, 1000000000, 10000000000, 100000000000, 1000000000000, 10000000000000, 100000000000000, 1000000000000000 };
         const uint8_t* fraction = ++cursor;
         EightCharacters eight { cursor };
-        for (; eight.areDigits(); eight = EightCharacters { cursor }) {
-            mantissa = mantissa * 100000000 + eight.number();
-            cursor += 8;
-        }
-        if (unsigned count = eight.numberOfDigits()) {
-            static constexpr std::array<uint32_t, 8> powersOfTen { 1, 10, 100, 1000, 10000, 100000, 1000000, 10000000 };
-            mantissa = mantissa * powersOfTen[count] + eight.numberOfFirst(count);
+        if (eight.areDigits()) {
+            EightCharacters next { cursor + sizeof(uint64_t) };
+            unsigned count = next.numberOfDigits();
+            if (count && count < sizeof(uint64_t)) [[likely]] {
+                mantissa = mantissa * powersOfTen.data()[sizeof(uint64_t) + count] + (eight.number() * powersOfTen.data()[count] + next.numberOfFirst(count));
+                cursor += sizeof(uint64_t) + count;
+            } else {
+                for (; eight.areDigits(); eight = EightCharacters { cursor }) {
+                    mantissa = mantissa * 100000000 + eight.number();
+                    cursor += sizeof(uint64_t);
+                }
+                if (unsigned rest = eight.numberOfDigits()) {
+                    mantissa = mantissa * powersOfTen.data()[rest] + eight.numberOfFirst(rest);
+                    cursor += rest;
+                }
+            }
+        } else if (unsigned count = eight.numberOfDigits()) {
+            mantissa = mantissa * powersOfTen.data()[count] + eight.numberOfFirst(count);
             cursor += count;
         }
         numberOfFractionDigits = cursor - fraction;
@@ -580,38 +647,35 @@ static ALWAYS_INLINE ParsedJSONNumber parseJSONNumber(const uint8_t* start, cons
             return { };
     }
     if (numberOfDigits + numberOfFractionDigits > maxMantissaDigits || (*cursor | 0x20) == 'e') [[unlikely]]
-        return parseJSONNumberSlow(start, sourceEnd);
+        return { };
     double number;
-    if (mantissa <= maxExactInteger) {
+    if (numberOfFractionDigits ? numberOfDigits + numberOfFractionDigits <= maxExactDigits : mantissa <= maxExactInteger) {
         number = static_cast<double>(static_cast<int64_t>(mantissa));
         if (numberOfFractionDigits)
             number /= fast_float::binary_format<double>::exact_power_of_ten(numberOfFractionDigits);
     } else {
         auto adjusted = fast_float::compute_float<fast_float::binary_format<double>>(-static_cast<int64_t>(numberOfFractionDigits), mantissa);
         if (adjusted.power2 < 0) [[unlikely]]
-            return parseJSONNumberSlow(start, sourceEnd);
-        fast_float::to_float(false, adjusted, number);
+            return { };
+        fast_float::to_float(isNegative, adjusted, number);
+        return { valueOfFiniteDouble(number), cursor };
     }
-    return { isNegative ? -number : number, cursor };
+    return { jsNumber(isNegative ? -number : number), cursor };
 }
 
 static ALWAYS_INLINE const uint8_t* tryParseSmallJSONInteger(const uint8_t* start, JSValue& value)
 {
-    unsigned digit = *start - '0';
-    if (digit > 9)
+    EightCharacters eight { start };
+    unsigned count = eight.numberOfDigits();
+    if (!count || count == sizeof(uint64_t)) [[unlikely]]
         return nullptr;
-    const uint8_t* cursor = start + 1;
-    if (unsigned next = *cursor - '0'; next <= 9) {
-        EightCharacters eight { start };
-        if (!digit || eight.areDigits()) [[unlikely]]
-            return nullptr;
-        unsigned count = eight.numberOfDigits();
-        digit = eight.numberOfFirst(count);
-        cursor = start + count;
-    }
-    if (*cursor == '.' || (*cursor | 0x20) == 'e') [[unlikely]]
+    if (*start == '0' && count > 1) [[unlikely]]
         return nullptr;
-    value = jsNumber(static_cast<int32_t>(digit));
+    const uint8_t* cursor = start + count;
+    uint8_t after = *cursor;
+    if (after != ',' && after != '}' && (after == '.' || (after | 0x20) == 'e')) [[unlikely]]
+        return nullptr;
+    value = jsNumber(static_cast<int32_t>(count <= 4 ? eight.numberOfFirstFour(count) : eight.numberOfFirst(count)));
     return cursor;
 }
 
@@ -636,8 +700,12 @@ ALWAYS_INLINE JSONValueParser::JSONValueParser(Instance& instance, VM& vm, JSGlo
     , m_parsingScope(m_cache)
     , m_learnedNames(instance.json.runtime->learnedNames())
     , m_learnedStrings(instance.json.runtime->learnedStrings())
+    , m_predictions(m_learnedStrings.predictions(m_words.sourceEncoding))
+    , m_repeatedValues(instance.json.runtime->repeatedValues())
     , m_sourceEnd(m_words.sourceEnd)
+    , m_stackLimit(vm.stackLimit())
     , m_sourceNumber(m_learnedNames.beginSource(m_words.sourceEncoding))
+    , m_copiesRepeatedValues(m_words.sourceEncoding == JSONSourceEncoding::Latin1)
 {
 }
 
@@ -666,7 +734,7 @@ ParsedJSONValue JSONValueParser::parseValue(Cursor cursor)
     case '{':
         return parseObject(cursor);
     case '[':
-        return parseArray(cursor);
+        return parseArray(cursor, m_learnedNames.unlearned().missedRepeats);
     case 't':
         if (WTF::unalignedLoad<uint32_t>(cursor) != ('t' | 'r' << 8 | 'u' << 16 | 'e' << 24))
             return { };
@@ -698,6 +766,67 @@ ALWAYS_INLINE auto JSONValueParser::unlearnedString(Cursor quote, const ParsedJS
     return &unlearned;
 }
 
+static ALWAYS_INLINE bool isSameText(const uint8_t* text, const uint8_t* other, unsigned length);
+
+static ALWAYS_INLINE bool isSameLongText(const uint8_t* text, const uint8_t* other, size_t length)
+{
+    constexpr size_t stride = SIMD::stride<uint8_t>;
+    constexpr size_t step = 4 * stride;
+    ASSERT(length >= stride);
+    auto difference = [](const uint8_t* text, const uint8_t* other) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitXor(SIMD::load(text), SIMD::load(other));
+    };
+    if (SIMD::isNonZero(difference(text, other)))
+        return false;
+    for (; length > step; length -= step, text += step, other += step) {
+        auto first = SIMD::bitOr(difference(text, other), difference(text + stride, other + stride));
+        auto second = SIMD::bitOr(difference(text + 2 * stride, other + 2 * stride), difference(text + 3 * stride, other + 3 * stride));
+        if (SIMD::isNonZero(SIMD::bitOr(first, second)))
+            return false;
+    }
+    for (; length > stride; length -= stride, text += stride, other += stride) {
+        if (SIMD::isNonZero(difference(text, other)))
+            return false;
+    }
+    return !SIMD::isNonZero(difference(text + length - stride, other + length - stride));
+}
+
+ALWAYS_INLINE bool JSONValueParser::isLearnedString(const LearnedString& string, Cursor value) const
+{
+    if (!string.matchesHead(value))
+        return false;
+    uint32_t length = string.textLength;
+    if (m_sourceEnd - value <= static_cast<ptrdiff_t>(length))
+        return false;
+    if (length > LearnedString::headLength) {
+        if (string.sourceNumber != m_sourceNumber || !isSameText(value + LearnedString::headLength, string.quote + LearnedString::headLength, length - LearnedString::headLength))
+            return false;
+    }
+    return true;
+}
+
+ALWAYS_INLINE void JSONValueParser::LearnedStrings::set(LearnedString& learned, Cursor quote, size_t textLength, JSString* string)
+{
+    static constexpr auto bitsAfter = [] {
+        std::array<std::array<uint64_t, 2>, LearnedString::headLength + 1> bits { };
+        for (size_t length = 0; length <= LearnedString::headLength; ++length) {
+            for (size_t byte = length; byte < LearnedString::headLength; ++byte)
+                bits[length][byte / sizeof(uint64_t)] |= 0xFFULL << (8 * (byte % sizeof(uint64_t)));
+        }
+        return bits;
+    }();
+    m_isEmpty = false;
+    const std::array<uint64_t, 2>& after = bitsAfter.data()[std::min<size_t>(textLength, LearnedString::headLength)];
+    uint64_t low = after.data()[0], high = after.data()[1];
+    learned.afterText[0] = low;
+    learned.afterText[1] = high;
+    learned.head[0] = WTF::unalignedLoad<uint64_t>(quote) | low;
+    learned.head[1] = WTF::unalignedLoad<uint64_t>(quote + sizeof(uint64_t)) | high;
+    learned.string = string;
+    learned.textLength = textLength;
+    learned.next = nullptr;
+}
+
 NEVER_INLINE auto JSONValueParser::parseString(Cursor quote) -> LearnedString*
 {
     if (m_words.sourceEncoding != JSONSourceEncoding::Latin1) [[unlikely]] {
@@ -718,21 +847,23 @@ NEVER_INLINE auto JSONValueParser::parseString(Cursor quote) -> LearnedString*
         JSString* string = m_cache.tryMakeJSString(m_vm, byteCast<Latin1Character>(text), isSourceText);
         return unlearnedString(quote, { string, string ? end + 1 : nullptr });
     }
-    LearnedString::Key key = LearnedString::Key::of(text);
-    LearnedString& learned = m_learnedStrings.at(key);
+    uint64_t hash = LearnedStrings::hashOf(LearnedString::Key::of(text));
+    LearnedString& learned = m_learnedStrings.at(hash);
     bool isKnown = [&] {
-        if (learned.key != key || !learned.string)
+        if (learned.textLength != length + 2 || !learned.matchesHead(quote))
             return false;
-        if (length <= 2 * sizeof(uint64_t))
+        if (learned.textLength <= LearnedString::headLength)
             return true;
         StringImpl* impl = learned.string->tryGetValueImpl();
         return impl && impl->is8Bit() && equal(impl->span8().data(), byteCast<Latin1Character>(text));
     }();
     if (!isKnown) {
         JSString* string = m_cache.tryMakeJSString(m_vm, byteCast<Latin1Character>(text), isSourceText);
+        if (!m_learnedStrings.wasSeen(hash))
+            return unlearnedString(quote, { string, string ? end + 1 : nullptr });
         if (!string) [[unlikely]]
             return nullptr;
-        m_learnedStrings.set(learned, key, string);
+        m_learnedStrings.set(learned, quote, length + 2, string);
     }
     learned.quote = quote;
     learned.sourceNumber = m_sourceNumber;
@@ -741,7 +872,13 @@ NEVER_INLINE auto JSONValueParser::parseString(Cursor quote) -> LearnedString*
 
 NEVER_INLINE ParsedJSONValue JSONValueParser::parseNumber(Cursor cursor)
 {
-    ParsedJSONNumber parsed = parseJSONNumber(cursor, m_sourceEnd);
+    ParsedJSONValue parsed = tryParseJSONNumber(cursor);
+    return parsed.end ? parsed : parseNumberSlow(cursor);
+}
+
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseNumberSlow(Cursor cursor)
+{
+    ParsedJSONNumber parsed = parseJSONNumberSlow(cursor, m_sourceEnd);
     if (!parsed.end) [[unlikely]]
         return { };
     return { jsNumber(parsed.number), parsed.end };
@@ -753,6 +890,7 @@ NEVER_INLINE void JSONValueParser::LearnedNames::forgetForNewSource()
     if (m_sourceNumber)
         return;
     m_strings.clear();
+    m_repeatedValues.clear();
     ++m_sourceNumber;
 }
 
@@ -820,7 +958,6 @@ auto JSONValueParser::LearnedNames::add(const JSONWords& words, Cursor quote, co
         name.tail[1] = WTF::unalignedLoad<uint64_t>(quote + length - sizeof(uint64_t));
     }
     name.likelyNext = &unlearned();
-    name.string = &m_strings.unlearned();
     name.structure = member.structure;
     name.textLength = length;
     return &name;
@@ -902,21 +1039,141 @@ JSObject* JSONValueParser::createOrdinaryObject(Members& members, unsigned count
     return createObjectOfStructure(m_vm, structure, members.values, count);
 }
 
-ALWAYS_INLINE JSObject* JSONValueParser::createObject(Members& members, unsigned count, Structure* structure, LearnedName& name)
+ALWAYS_INLINE JSObject* JSONValueParser::createRecord(Members& members, unsigned count, uint8_t kindsOfAll, LearnedName& name)
 {
-    if (name.plan) [[likely]] {
-        if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *name.plan, name.recordStructure, members.values, members.kinds, members.kindsOfAll)) [[likely]] {
-            ++m_numberOfRecordsMade;
-            return object;
-        }
-        return createOrdinaryObject(members, count, structure);
+    if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *name.plan, name.recordStructure, members.values, members.kinds, kindsOfAll)) [[likely]] {
+        ++m_numberOfRecordsMade;
+        if (kindsOfAll & ObjectBuilderPlan::AcceptsObject)
+            m_repeatedValues.addFieldsWithObjects(name.recordStructure->id(), *name.plan, members.objects);
+        return object;
     }
-    return name.completesOrdinaryObject ? createOrdinaryObject(members, count, structure) : createObjectSlow(members, count, structure, name);
+    return createOrdinaryObject(members, count, name.structure);
+}
+
+ALWAYS_INLINE JSObject* JSONValueParser::createObject(Members& members, unsigned count, uint8_t kindsOfAll, Structure* structure, LearnedName& name)
+{
+    return name.completesOrdinaryObject ? createOrdinaryObject(members, count, structure) : createObjectSlow(members, count, kindsOfAll, structure, name);
+}
+
+ALWAYS_INLINE JSObject* JSONValueParser::copyOf(JSObject* source)
+{
+    auto* record = m_repeatedValues.findPlan(RepeatedValues::keyOf(source));
+    if (!record || record->fieldsWithObjects)
+        return copyOfObjectWithObjects(source);
+    ++m_numberOfRecordsMade;
+    return ObjectBuilder::copyWords(m_vm, *record->plan, source);
+}
+
+JSObject* JSONValueParser::copyOfOrdinaryObject(JSFinalObject* source)
+{
+    Structure* structure = source->structure();
+    if (source->butterfly() || structure->isDictionary()) [[unlikely]]
+        return nullptr;
+    std::array<EncodedJSValue, JSFinalObject::maxInlineCapacity> values;
+    unsigned capacity = structure->inlineCapacity();
+    const auto* sourceValues = reinterpret_cast<const EncodedJSValue*>(source->inlineStorage());
+    for (unsigned index = 0; index < capacity; ++index) {
+        JSValue value = JSValue::decode(sourceValues[index]);
+        if (value && value.isCell() && !value.asCell()->isString()) {
+            JSObject* copy = copyOf(asObject(value.asCell()));
+            if (!copy) [[unlikely]]
+                return nullptr;
+            value = copy;
+        }
+        values[index] = JSValue::encode(value);
+    }
+    ++m_numberOfOrdinaryObjectsMade;
+    return JSFinalObject::createWithButterflyCopyingInlineStorage(m_vm, structure, nullptr, reinterpret_cast<const WriteBarrierBase<Unknown>*>(values.data()));
+}
+
+JSObject* JSONValueParser::copyOfArray(JSArray* source)
+{
+    IndexingType type = source->indexingType();
+    unsigned length = source->length();
+    if (!length)
+        return createArray(nullptr, 0);
+    size_t base = m_elements.size();
+    auto cleanup = makeScopeExit([&] {
+        m_elements.shrink(base);
+    });
+    for (unsigned index = 0; index < length; ++index) {
+        JSValue value;
+        if (hasDouble(type))
+            value = JSValue(JSValue::EncodeAsDouble, source->butterfly()->contiguousDouble().at(source, index));
+        else if (hasInt32(type) || hasContiguous(type)) [[likely]]
+            value = source->butterfly()->contiguous().at(source, index).get();
+        if (!value) [[unlikely]]
+            return nullptr;
+        if (value.isCell() && !value.asCell()->isString()) {
+            value = copyOf(asObject(value.asCell()));
+            if (!value) [[unlikely]]
+                return nullptr;
+        }
+        m_elements.append(value);
+    }
+    if (m_elements.hasOverflowed()) [[unlikely]]
+        return nullptr;
+    return createArray(m_elements.begin() + base, length);
+}
+
+NEVER_INLINE JSObject* JSONValueParser::copyOfObjectWithObjects(JSObject* source)
+{
+    if (currentStackPointer() < m_stackLimit) [[unlikely]]
+        return nullptr;
+    if (auto* record = m_repeatedValues.findPlan(RepeatedValues::keyOf(source))) [[likely]] {
+        JSObject* copy = ObjectBuilder::tryCopy(m_vm, *record->plan, source, record->fieldsWithObjects, [&](JSObject* object) {
+            return copyOf(object);
+        });
+        m_numberOfRecordsMade += !!copy;
+        return copy;
+    }
+    if (isJSArray(source))
+        return copyOfArray(uncheckedDowncast<JSArray>(source));
+    return source->type() == FinalObjectType ? copyOfOrdinaryObject(uncheckedDowncast<JSFinalObject>(source)) : nullptr;
+}
+
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseOrCopy(Cursor bracket, uint16_t& missedRepeats)
+{
+    ++missedRepeats;
+    uint32_t epoch = m_learnedNames.epoch();
+    RepeatedValue& repeated = m_repeatedValues.at(bracket);
+    size_t length = repeated.textLength;
+    if (repeated.sourceNumber == m_sourceNumber && m_sourceEnd - bracket > static_cast<ptrdiff_t>(length) && isSameLongText(bracket, repeated.start, length)) {
+        if (JSObject* copy = copyOf(repeated.object)) [[likely]] {
+            missedRepeats = 0;
+            if (m_learnedNames.epoch() == epoch) [[likely]] {
+                repeated.start = bracket;
+                repeated.object = copy;
+            }
+            return { copy, bracket + length };
+        }
+    }
+    ParsedJSONValue parsed = *bracket == '{' ? parseObject(bracket) : parseArray(bracket, missedRepeats);
+    if (!parsed.end || m_learnedNames.epoch() != epoch || !m_copiesRepeatedValues) [[unlikely]]
+        return parsed;
+    length = parsed.end - bracket;
+    if (length >= RepeatedValues::minTextLength && length <= std::numeric_limits<uint32_t>::max())
+        m_repeatedValues.set(repeated, { bracket, asObject(parsed.value), static_cast<uint32_t>(length), m_sourceNumber });
+    return parsed;
+}
+
+ALWAYS_INLINE ParsedJSONValue JSONValueParser::parseNested(Cursor bracket, uint16_t& missedRepeats)
+{
+    if (bracket[0] == '[' && bracket[1] == ']') {
+        JSArray* array = createArray(nullptr, 0);
+        return { array, array ? bracket + 2 : nullptr };
+    }
+    uint16_t missed = missedRepeats;
+    if (missed < RepeatedValues::maxMissesInRow)
+        return parseOrCopy(bracket, missedRepeats);
+    ++missed;
+    missedRepeats = missed == RepeatedValues::endOfSkippedRow ? 0 : missed;
+    return *bracket == '{' ? parseObject(bracket) : parseArray(bracket, missedRepeats);
 }
 
 NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
 {
-    if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
+    if (currentStackPointer() < m_stackLimit || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
     Cursor cursor = skipWhitespace(brace + 1);
     if (*cursor == '}') [[unlikely]]
@@ -926,6 +1183,7 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
     uint32_t epoch = names.epoch();
     Members members;
     unsigned count = 0;
+    uint8_t kindsOfAll = 0;
     LearnedString* previousString = nullptr;
     LearnedName* previous = nullptr;
     LearnedName* name = &names.findFirst(cursor);
@@ -969,13 +1227,11 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
         for (;;) {
             if (*value == '"') {
                 kind = ObjectBuilderPlan::AcceptsString;
-                auto isNext = [&](LearnedString& string) ALWAYS_INLINE_LAMBDA {
-                    return string.sourceNumber == m_sourceNumber && value + string.textLength < m_sourceEnd && isSameText(value, string.quote, string.textLength);
-                };
-                LearnedString* string = previousString ? previousString->next : name->string;
-                if (!isNext(*string)) [[unlikely]] {
-                    string = name->string;
-                    if (!previousString || !isNext(*string)) {
+                unsigned index = m_predictions[LearnedStrings::indexOfPrediction(*name)];
+                LearnedString* string = &m_learnedStrings.withIndex(index);
+                if (!isLearnedString(*string, value)) [[unlikely]] {
+                    string = previousString ? previousString->next : nullptr;
+                    if (!string || !isLearnedString(*string, value)) {
                         Structure* structureNow = structureWith(*name);
                         string = parseString(value);
                         if (!string) [[unlikely]]
@@ -986,14 +1242,17 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
                             previousString = nullptr;
                         }
                     }
-                    if (previousString)
-                        previousString->next = string;
+                    index = m_learnedStrings.indexOf(*string);
+                    if (index) {
+                        m_predictions[LearnedStrings::indexOfPrediction(*name)] = index;
+                        if (previousString)
+                            previousString->next = string;
+                    }
                 }
                 parsedValue = string->string;
                 cursor = value + string->textLength;
-                if (name->isLearned()) [[likely]]
-                    name->string = string;
-                previousString = string;
+                name->recentStrings = name->recentStrings << LearnedStrings::bitsOfIndex | index;
+                previousString = index ? string : nullptr;
                 break;
             }
             if (isASCIIDigit(*value) || *value == '-') {
@@ -1016,6 +1275,13 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
                 value = next;
                 continue;
             }
+            if (*value == '{' || *value == '[') {
+                if (!parseSlow([&] { return parseNested(value, name->missedRepeats); })) [[unlikely]]
+                    return { };
+                kind = ObjectBuilderPlan::AcceptsObject;
+                members.objects |= 1ull << count;
+                break;
+            }
             if (!parseSlow([&] { return parseValue(value); })) [[unlikely]]
                 return { };
             kind = kindOfParsedValue(parsedValue);
@@ -1023,12 +1289,12 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseObject(Cursor brace)
         }
         members.values[count] = JSValue::encode(parsedValue);
         members.kinds[count++] = kind;
-        members.kindsOfAll |= kind;
+        kindsOfAll |= kind;
 
         if (*cursor != ',') {
             cursor = skipWhitespace(cursor);
             if (*cursor == '}') [[likely]]
-                return { createObject(members, count, structureWith(*name), *name), cursor + 1 };
+                return { name->plan ? createRecord(members, count, kindsOfAll, *name) : createObject(members, count, kindsOfAll, structureWith(*name), *name), cursor + 1 };
             if (*cursor != ',') [[unlikely]]
                 return { };
         }
@@ -1105,7 +1371,7 @@ auto JSONValueParser::findOrAddMember(Structure* from, unsigned index, Cursor qu
     return { to, parsed.afterColon, isMadeNow };
 }
 
-NEVER_INLINE JSObject* JSONValueParser::createObjectSlow(Members& members, unsigned count, Structure* structure, LearnedName& name)
+NEVER_INLINE JSObject* JSONValueParser::createObjectSlow(Members& members, unsigned count, uint8_t kindsOfAll, Structure* structure, LearnedName& name)
 {
     JSONRuntime& runtime = *m_words.runtime;
     uint32_t epoch = m_learnedNames.epoch();
@@ -1114,12 +1380,14 @@ NEVER_INLINE JSObject* JSONValueParser::createObjectSlow(Members& members, unsig
         JSONRuntime::RecordPlan record = runtime.recordPlanFor(m_vm, structure);
         isLearned &= m_learnedNames.epoch() == epoch;
         if (record.plan) {
+            m_repeatedValues.addPlan(record.structure->id(), *record.plan);
             if (isLearned) {
                 name.plan = record.plan;
                 name.recordStructure = record.structure;
             }
-            if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *record.plan, record.structure, members.values, members.kinds, members.kindsOfAll)) {
+            if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *record.plan, record.structure, members.values, members.kinds, kindsOfAll)) {
                 ++m_numberOfRecordsMade;
+                m_repeatedValues.addFieldsWithObjects(record.structure->id(), *record.plan, members.objects);
                 return object;
             }
             return createOrdinaryObject(members, count, structure);
@@ -1155,7 +1423,7 @@ NEVER_INLINE JSObject* JSONValueParser::createObjectSlow(Members& members, unsig
                 }
                 return true;
             };
-            JSObject* object = ObjectBuilder::tryBuild(m_vm, *beside.plan, beside.structure, members.values, members.kinds, members.kindsOfAll);
+            JSObject* object = ObjectBuilder::tryBuild(m_vm, *beside.plan, beside.structure, members.values, members.kinds, kindsOfAll);
             if (object && layNamesBeyondRecord(*uncheckedDowncast<Object>(object))) {
                 ++m_numberOfRecordsMade;
                 return object;
@@ -1224,20 +1492,37 @@ ParsedJSONValue JSONValueParser::parseRemainingMembers(JSObject* object, Cursor 
     }
 }
 
-NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
+NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket, uint16_t& missedRepeats)
 {
-    if (!m_vm.isSafeToRecurse() || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
+    if (currentStackPointer() < m_stackLimit || m_vm.traps().needsOutOfMemoryError()) [[unlikely]]
         return { };
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(m_vm);
     Cursor cursor = skipWhitespace(bracket + 1);
     JSArray* array = nullptr;
     if (*cursor == ']') {
         ++cursor;
-        array = constructEmptyArray(m_globalObject, nullptr);
+        array = createArray(nullptr, 0);
     } else {
         size_t base = m_elements.size();
+        unsigned missed = missedRepeats;
         for (;;) {
-            ParsedJSONValue parsed = *cursor == '{' ? parseObject(cursor) : parseValue(cursor);
+            ParsedJSONValue parsed;
+            if (*cursor == '"') {
+                if (LearnedString* string = parseString(cursor)) [[likely]]
+                    parsed = { string->string, cursor + string->textLength };
+            } else if (*cursor == '{' || *cursor == '[') {
+                if (missed < RepeatedValues::maxMissesInRow) {
+                    missedRepeats = missed;
+                    parsed = parseOrCopy(cursor, missedRepeats);
+                    missed = missedRepeats;
+                } else {
+                    ++missed;
+                    parsed = *cursor == '{' ? parseObject(cursor) : parseArray(cursor, missedRepeats);
+                }
+            } else if (Cursor end = tryParseSmallJSONInteger(cursor, parsed.value))
+                parsed.end = end;
+            else
+                parsed = parseValue(cursor);
             if (!parsed.end || parsed.end >= m_sourceEnd) [[unlikely]]
                 return { };
             m_elements.append(parsed.value);
@@ -1253,6 +1538,7 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
             ++cursor;
             break;
         }
+        missedRepeats = missed < RepeatedValues::endOfSkippedRow ? missed : 0;
         array = createArray(m_elements.begin() + base, static_cast<unsigned>(m_elements.size() - base));
         m_elements.shrink(base);
     }
@@ -1264,7 +1550,7 @@ NEVER_INLINE ParsedJSONValue JSONValueParser::parseArray(Cursor bracket)
 
 JSArray* JSONValueParser::createArray(const JSValue* values, unsigned length)
 {
-    IndexingType indexingType = ArrayWithInt32;
+    IndexingType indexingType = length ? ArrayWithInt32 : ArrayWithUndecided;
     for (unsigned i = 0; i < length; ++i) {
         if (values[i].isInt32())
             continue;
@@ -1274,24 +1560,46 @@ JSArray* JSONValueParser::createArray(const JSValue* values, unsigned length)
         }
         indexingType = ArrayWithDouble;
     }
+    Structure* structure = m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType);
+    if (hasAnyArrayStorage(structure->indexingType()) || length > MAX_STORAGE_VECTOR_LENGTH) [[unlikely]]
+        return createArraySlow(values, length, structure);
+
+    unsigned vectorLength = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), length);
+    void* storage = m_vm.auxiliarySpace().allocate(m_vm, Butterfly::totalSize(0, 0, true, vectorLength * sizeof(EncodedJSValue)), nullptr, AllocationFailureMode::ReturnNull);
+    if (!storage) [[unlikely]]
+        return nullptr;
+    Butterfly* butterfly = Butterfly::fromBase(storage, 0, 0);
+    butterfly->setVectorLength(vectorLength);
+    butterfly->setPublicLength(length);
+    if (indexingType == ArrayWithDouble) {
+        double* data = butterfly->contiguousDouble().data();
+        for (unsigned index = 0; index < length; ++index)
+            data[index] = values[index].asNumber();
+    } else {
+        constexpr unsigned maxLengthCopiedByWord = 8;
+        auto* words = reinterpret_cast<EncodedJSValue*>(butterfly->contiguous().data());
+        if (length > maxLengthCopiedByWord)
+            memcpy(words, values, length * sizeof(EncodedJSValue));
+        else {
+#pragma clang loop unroll(disable)
+            for (unsigned index = 0; index < length; ++index)
+                WTF::atomicStore<MemoryOrder::Relaxed>(&words[index], JSValue::encode(values[index]));
+        }
+    }
+    Butterfly::clearRange(indexingType, butterfly, length, vectorLength);
+    JSArray* array = JSArray::createWithButterfly(m_vm, nullptr, structure, butterfly);
+    m_vm.mutatorFence();
+    return array;
+}
+
+NEVER_INLINE JSArray* JSONValueParser::createArraySlow(const JSValue* values, unsigned length, Structure* structure)
+{
     ObjectInitializationScope initializationScope(m_vm);
-    JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, m_globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType), length);
+    JSArray* array = JSArray::tryCreateUninitializedRestricted(initializationScope, structure, length);
     if (!array) [[unlikely]]
         return nullptr;
-    IndexingType shape = array->indexingType() & IndexingShapeMask;
-    if (shape == DoubleShape) {
-        double* data = array->butterfly()->contiguousDouble().data();
-        for (unsigned i = 0; i < length; ++i)
-            data[i] = values[i].asNumber();
-    } else if (shape == Int32Shape)
-        memcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-    else if (shape == ContiguousShape) {
-        gcSafeMemcpy(std::bit_cast<JSValue*>(array->butterfly()->contiguous().data()), values, length * sizeof(JSValue));
-        m_vm.writeBarrier(array);
-    } else {
-        for (unsigned i = 0; i < length; ++i)
-            array->initializeIndex(initializationScope, i, values[i]);
-    }
+    for (unsigned index = 0; index < length; ++index)
+        array->initializeIndex(initializationScope, index, values[index]);
     return array;
 }
 

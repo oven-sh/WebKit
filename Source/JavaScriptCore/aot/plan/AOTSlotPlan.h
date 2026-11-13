@@ -52,9 +52,9 @@ struct StorageOfLayout {
 };
 
 struct StorageOfLayouts {
-    StorageOfLayout of(LayoutID id) const { return id.index() < layouts.size() ? layouts[id.index()] : StorageOfLayout { }; }
+    ALWAYS_INLINE StorageOfLayout of(LayoutID id) const { return id.index() < layouts.size() ? layouts[id.index()] : StorageOfLayout { }; }
     bool isNeverAllocated(LayoutID id) const { return layoutsNeverAllocated.get(id.index()); }
-    bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
+    ALWAYS_INLINE bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
 
     BitVector layoutsNeverAllocated;
     BitVector layoutsWithoutDirectInstances;
@@ -127,6 +127,8 @@ struct PlannedLayout {
 
     LayoutStorage storage { LayoutStorage::None };
     bool isRecordAlone { false };
+    bool marksFrozenObjects { false };
+    bool marksOtherPrototypes { false };
     bool cellsAreHandedBack { false };
     uint16_t numberOfRecordFields { 0 };
     uint32_t size { 0 };
@@ -141,6 +143,7 @@ struct PlannedLayout {
     std::optional<FieldIndex> environmentOfDeferredClosures;
     BitVector fieldsThatHoldRawValuesFromBirth;
     bool mayBearMark { false };
+    bool isFilledByInitializer { false };
     Vector<FieldIndex> fieldsHeldFilled;
 };
 
@@ -349,6 +352,15 @@ struct MentionedKeys {
     BitVector isSpelledAsText;
 };
 
+enum class InlineFieldsOfModule : uint8_t { None, Few, Many };
+
+struct ModulesThatWriteFields {
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesDefinedAbove;
+    Vector<uint32_t> firstOfKeys;
+    Vector<uint32_t> modules;
+    Vector<InlineFieldsOfModule> inlineFields;
+};
+
 struct SlotPlanParts {
     Vector<PlannedLayout> layouts;
     Vector<PlannedVariable> variables;
@@ -361,8 +373,6 @@ struct SlotPlanParts {
     BitVector keysWithColumn;
     BitVector keysOfSlotsThatHoldMarks;
     BitVector keysOfAccessors;
-    Vector<uint32_t> firstModuleThatWritesFieldUnder;
-    Vector<uint32_t> modulesThatWriteFields;
 };
 
 struct FieldAccessesOfSets {
@@ -469,17 +479,34 @@ public:
     bool someSlotUnderKeyHoldsMark(PropertyKeyID key) const { return m_parts.keysOfSlotsThatHoldMarks.get(key.index()); }
     bool someLayoutHasAccessor(PropertyKeyID key) const { return m_parts.keysOfAccessors.get(key.index()); }
     const BitVector& keysWithColumn() const { return m_parts.keysWithColumn; }
+    void setModulesThatWriteFields(ModulesThatWriteFields&& modules) { m_modulesThatWriteFields = WTF::move(modules); }
     bool someLayoutHasField(PropertyKeyID key) const
     {
-        std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();
+        std::span<const uint32_t> first = m_modulesThatWriteFields.firstOfKeys.span();
         return static_cast<size_t>(key.index()) + 1 >= first.size() || first[key.index()] != first[key.index() + 1];
+    }
+    static uint64_t nameInModule(ModuleID module, PropertyKeyID key) { return static_cast<uint64_t>(module.index()) << 32 | key.bits(); }
+    bool mayBeDefinedAbove(ModuleID module, PropertyKeyID key) const
+    {
+        const auto& names = m_modulesThatWriteFields.namesDefinedAbove;
+        return module && key && !names.isEmpty() && names.contains(nameInModule(module, key));
     }
     bool someLayoutWrittenInHasField(ModuleID module, PropertyKeyID key) const
     {
-        std::span<const uint32_t> first = m_parts.firstModuleThatWritesFieldUnder.span();
+        std::span<const uint32_t> first = m_modulesThatWriteFields.firstOfKeys.span();
         if (!module || static_cast<size_t>(key.index()) + 1 >= first.size())
             return false;
-        return std::ranges::binary_search(m_parts.modulesThatWriteFields.span().subspan(first[key.index()], first[key.index() + 1] - first[key.index()]), module.index());
+        return std::ranges::binary_search(m_modulesThatWriteFields.modules.span().subspan(first[key.index()], first[key.index() + 1] - first[key.index()]), module.index());
+    }
+
+    InlineFieldsOfModule inlineFieldsWrittenIn(ModuleID module, PropertyKeyID key) const
+    {
+        std::span<const uint32_t> first = m_modulesThatWriteFields.firstOfKeys.span();
+        if (!module || static_cast<size_t>(key.index()) + 1 >= first.size())
+            return InlineFieldsOfModule::None;
+        auto modules = m_modulesThatWriteFields.modules.span().subspan(first[key.index()], first[key.index() + 1] - first[key.index()]);
+        auto found = std::ranges::lower_bound(modules, module.index());
+        return found != modules.end() && *found == module.index() ? m_modulesThatWriteFields.inlineFields[first[key.index()] + (found - modules.begin())] : InlineFieldsOfModule::None;
     }
 
     unsigned numberOfLayouts() const { return m_parts.layouts.size(); }
@@ -487,6 +514,7 @@ public:
 
 private:
     SlotPlanParts m_parts;
+    ModulesThatWriteFields m_modulesThatWriteFields;
     PlannedLayout m_unplannedLayout;
     PlacedSlot m_unplannedSlot;
     ClassCreationPlan m_unplannedClass;

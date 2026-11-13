@@ -22,6 +22,7 @@
 #include "AOTPhaseTimes.h"
 #include "AOTProgramVerifier.h"
 #include "AOTRowsOfLayouts.h"
+#include "AOTScalarizedResults.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTSort.h"
 #include "AOTTailCallPlan.h"
@@ -53,6 +54,7 @@ void holdDoorsToProofsInSlotPlan(Program&, const Facts&, const ParallelLoops&, S
 ShapeTable computeShapeTable(const Program&, const LinkTables&, const StorageOfLayouts&, LayoutID closureLayout, std::span<const uint32_t> orderOfLayouts);
 Vector<ParameterGuardPlan> planParameterGuards(Program&, const Facts&, const Plan&, BuildContext&);
 void finishMethodTableForUnions(Program&, const Facts&, Plan&);
+ModulesThatWriteFields findModulesThatWriteFields(const Program&, const Facts&, const SlotPlan&, const ParallelLoops&);
 
 static MethodTablePlan planMethodTable(const Program& program, const Facts& facts, const CallingConventions& conventions, const StorageOfLayouts& storage, const BitVector& layoutsWithClassRecord)
 {
@@ -356,7 +358,15 @@ static SlotRepresentation formOfNumbersProvenOfVariableInPlan(const Program& pro
     Type proven = program.at(cell.proven);
     if (!(proven.primitives & Primitive::Number) || !proven.hasOnlyPrimitives(Primitive::Number | markers))
         return SlotRepresentation::JSValue;
-    return proven.primitives & Primitive::Double ? SlotRepresentation::OptionalDouble : SlotRepresentation::OptionalInt64;
+    if (!(proven.primitives & Primitive::Double))
+        return SlotRepresentation::OptionalInt64;
+#if CPU(X86_64)
+    constexpr bool boxesCutVariables = true;
+#else
+    constexpr bool boxesCutVariables = false;
+#endif
+    bool isCutToInt32 = boxesCutVariables && id.index() < linked.variablesCutToInt32.size() && linked.variablesCutToInt32.quickGet(id.index());
+    return isCutToInt32 ? SlotRepresentation::JSValue : SlotRepresentation::OptionalDouble;
 }
 
 template<typename Functor>
@@ -652,7 +662,9 @@ static BitVector layoutsWithClassRecordInPlan(const Program& program, const Fact
             add(evaluated);
     }
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
-        if (!program.layouts[index].has(LayoutFlags::IsNeverAllocated) && (index >= link.layouts.size() || link.layouts[index].isAllocated))
+        const Layout& layout = program.layouts[index];
+        bool isAllocated = !layout.has(LayoutFlags::IsNeverAllocated) && (index >= link.layouts.size() || link.layouts[index].isAllocated);
+        if (isAllocated || holdsStateOfCollectionsAlone(layout))
             add(LayoutID(index));
     }
     for (const Variable& variable : program.variables) {
@@ -1075,6 +1087,18 @@ static bool makesObjectsWithBirthsInPlan(const Program& program, const LinkTable
     return (kind == LayoutKind::Instance || isRecordThatStaysAsBorn) && slots.layouts[layout].holdsCompiledObjects() && !slots.layoutsNeverAllocated.get(layout);
 }
 
+static bool isFilledByInitializersAloneInPlan(const Program& program, const LinkTables& held, LayoutID id)
+{
+    const Layout& layout = program.at(id);
+    if (layout.kind != LayoutKind::Instance || held.layout(id).possibleChanges.containsAny({ LayoutChange::LosesProperty, LayoutChange::GetsAccessor }))
+        return false;
+    for (FieldIndex field = 0; field < layout.fields.size(); ++field) {
+        if (held.field({ id, field }).isOfBirth)
+            return false;
+    }
+    return true;
+}
+
 static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex field)
 {
     const PlacedSlot& slot = planned.slots[field];
@@ -1082,7 +1106,7 @@ static bool slotMayBeOfBirthInPlan(const PlannedLayout& planned, FieldIndex fiel
         && slot.representation != SlotRepresentation::DeferredClosure && !slot.deferredFunction && planned.environmentOfDeferredClosures != field;
 }
 
-static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, const ParallelLoops& loops, SlotPlanParts& slots)
+static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, const ParallelLoops& loops, Statistics& statistics, SlotPlanParts& slots)
 {
     if (!withoutMechanismsMissingDependencies(facts.mechanisms()).contains(Mechanism::TypedSlots) || program.admitsInspector)
         return;
@@ -1102,6 +1126,14 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, c
     saidOfDeclarations.fill(0, held.fields.size());
     auto say = [&](uint32_t declaration, uint8_t what) {
         AtomicRef(saidOfDeclarations[declaration]).fetch_or(what, std::memory_order_relaxed);
+    };
+    auto hasSeveralParents = [&](LayoutID id) {
+        size_t numberOfClassesLeft = numberOfLayouts;
+        while (program.at(id).base && numberOfClassesLeft--)
+            id = program.at(id).base;
+        bool hasParents = false;
+        forEachOfSeveralParents(program, id, [&](LayoutID) { hasParents = true; });
+        return hasParents;
     };
     BitVector standsInRowOfClasses(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
@@ -1123,9 +1155,13 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, c
                 continue;
             LayoutID id(index);
             bool isReadWithoutLook = !linked.layout(id).reachesUnseenCode;
+            bool waitsForInitializer = isFilledByInitializersAloneInPlan(program, held, id);
+            bool isFilledByParents = !hasSeveralParents(id);
             for (FieldIndex field = 0; field < program.layouts[index].fields.size(); ++field) {
                 uint32_t declaration = declarationOfField({ id, field });
-                bool isOfBirth = held.field({ id, field }).isOfBirth || (program.layouts[index].fields[field].flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth);
+                const Field& declared = program.layouts[index].fields[field];
+                bool isOfBirth = held.field({ id, field }).isOfBirth || (isFilledByParents && declared.flags.contains(FieldFlags::IsInherited) && held.fields[declaration].isOfBirth)
+                    || (waitsForInitializer && declared.key && declared.form.isEmpty() && linked.fieldsFilledByEveryInitializer.names(program, id, declared.key));
                 bool gainsNamesBySpread = (held.recordsThatSpreadsFill.get(index) || (program.layouts[index].kind == LayoutKind::Record && held.layout(id).isFilledUnderComputedKeys)) && held.layout(id).possibleChanges.contains(LayoutChange::GainsProperty);
                 if (!isOfBirth || gainsNamesBySpread || !slotMayBeOfBirthInPlan(slots.layouts[index], field) || standsInRowOfClasses.quickGet(declaredLayoutOf(program, id).index()))
                     say(declaration, isLeftOutBySomeLayout);
@@ -1136,7 +1172,14 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, c
                 const Field& origin = record.originLayout && record.originField ? fieldAt(program, { record.originLayout, *record.originField }) : record;
                 TypeID written = origin.declared.written();
                 LinkedCell cell = held.field({ id, field });
-                if (!traitsOf(slot.representation).hasUndefined || !slot.type || !written || program.types.at(written).isAnything() || program.types.at(written).mayBeUndefinedOrNull()
+                FieldReference declaringField = declarationOf(program, { id, field });
+                bool isPosition = declared.key && linked.fieldsOfPositions.contains(declaringField.layout, declared.key);
+                bool isFlag = declared.key && linked.fieldsStoredBooleansAlone.contains(declaringField.layout, declared.key);
+                bool holdsPositions = slot.type && ((program.types.at(slot.type).isInt32OrNullish() && (isPosition || held.holdsSteppedIntegers({ id, field }))) || isFlag);
+                bool isWrittenWithoutNullish = written && !program.types.at(written).isAnything() && !program.types.at(written).mayBeUndefinedOrNull();
+                bool isExpectedWithoutNullish = written && origin.declared.isExpected() && origin.declared.writtenFlags().contains(PositionFlags::IsFromCompiler) && program.layouts[index].kind == LayoutKind::Instance && program.layouts[index].constructor && !isLibraryCode(program, program.at(program.layouts[index].constructor))
+                    && declared.key && !linked.fieldsStoredNullish.names(program, declaringField.layout, declared.key);
+                if (!traitsOf(slot.representation).hasUndefined || !slot.type || (!holdsPositions && !isWrittenWithoutNullish && !isExpectedWithoutNullish)
                     || cell.isOnlyGivenUndefinedByMakers || cell.isLeftUndefinedByMakers || cell.isGivenByNoMaker || cell.isGivenUndefinedOrNullInSight || held.recordsThatSpreadsFill.get(index)
                     || (slot.provenType && program.types.at(slot.provenType).mayBeUndefinedOrNull()))
                     say(declaration, mayHoldMarkInSomeLayout);
@@ -1156,6 +1199,10 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, c
                 uint8_t said = saidOfDeclarations[declaration];
                 slots.layouts[index].slots[field].isFilledAtBirth = (said & (isLookedAtInSomeLayout | isLeftOutBySomeLayout)) == isLookedAtInSomeLayout;
                 slots.layouts[index].mayBearMark |= slots.layouts[index].slots[field].isFilledAtBirth;
+                const Field& declared = program.layouts[index].fields[field];
+                slots.layouts[index].isFilledByInitializer |= slots.layouts[index].slots[field].isFilledAtBirth && !declared.flags.contains(FieldFlags::IsInherited) && declared.key && linked.fieldsFilledByEveryInitializer.names(program, LayoutID(index), declared.key) && isFilledByInitializersAloneInPlan(program, held, LayoutID(index));
+                slots.layouts[index].marksFrozenObjects = slots.layouts[index].mayBearMark && !held.layout(LayoutID(index)).possibleChanges.contains(LayoutChange::IsFrozen);
+                slots.layouts[index].marksOtherPrototypes = slots.layouts[index].mayBearMark && !held.layout(LayoutID(index)).possibleChanges.contains(LayoutChange::ChangesPrototype);
                 if (slots.layouts[index].slots[field].isFilledAtBirth && !(said & mayHoldMarkInSomeLayout)) {
                     slots.layouts[index].fieldsThatHoldRawValuesFromBirth.set(field);
                     fieldsWithRawValuesInRanges[range].append({ LayoutID(index), field });
@@ -1163,6 +1210,13 @@ static void markSlotsFilledAtBirthInPlan(Program& program, const Facts& facts, c
             }
         }
     });
+
+    uint64_t numberOfFieldsInHierarchies = 0;
+    for (uint32_t index = 0; index < numberOfLayouts; ++index) {
+        if (program.layouts[index].base && !program.layouts[index].isDerived() && slots.layouts[index].mayBearMark)
+            numberOfFieldsInHierarchies += std::ranges::count_if(slots.layouts[index].slots, &PlacedSlot::isFilledAtBirth);
+    }
+    statistics.count(StatisticID::HierarchyFieldsFilledAtBirth, numberOfFieldsInHierarchies);
 
     TypeArena types(program.types, ArenaKeeps::InProgram);
     for (const Vector<FieldReference>& fields : fieldsWithRawValuesInRanges) {
@@ -1219,7 +1273,7 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
         build.statistics().count(StatisticID::PermanentClassCapturesPromoted, parts.promotedEnvironments.numberOfCapturesOfClassesStoredForGood);
         holdDoorsToProofsInSlotPlan(program, facts, build.parallelLoops(), slots);
         appendPromotedVariables(parts.promotedEnvironments, slots);
-        markSlotsFilledAtBirthInPlan(program, facts, build.parallelLoops(), slots);
+        markSlotsFilledAtBirthInPlan(program, facts, build.parallelLoops(), build.statistics(), slots);
         markFieldsHeldFilledInSlotPlan(program, facts.linked(), build.parallelLoops(), slots);
         parts.slots = SlotPlan(WTF::move(slots));
     };
@@ -1271,7 +1325,22 @@ std::unique_ptr<Plan> planProgram(Program& program, const Facts& facts, BuildCon
     parts.conventions.setRemovedCaptures(program, parts.promotedEnvironments);
     addClosureCellsOfFunctionsWithoutCapturesLeft(program, parts);
     std::unique_ptr<Plan> plan = makeUnique<Plan>(WTF::move(parts));
-    plan->setParameterGuards(planParameterGuards(program, facts, *plan, build).span());
+    ModulesThatWriteFields modulesThatWriteFields;
+    Vector<ParameterGuardPlan> parameterGuards;
+    runLanes(build.parallelLoops(), {
+        [&] { parameterGuards = planParameterGuards(program, facts, *plan, build); },
+        [&] { runLane("plan: lane of modules that write fields"_s, [&] { modulesThatWriteFields = findModulesThatWriteFields(program, facts, plan->slots(), build.parallelLoops()); }); },
+    });
+    for (const Layout& layout : program.layouts) {
+        for (const Field& field : layout.fields) {
+            if (field.flags.contains(FieldFlags::MayBeDefinedAbove) && layout.module)
+                modulesThatWriteFields.namesDefinedAbove.add(SlotPlan::nameInModule(layout.module, field.key));
+        }
+    }
+    plan->setModulesThatWriteFields(WTF::move(modulesThatWriteFields));
+    plan->setParameterGuards(parameterGuards.span());
+    plan->setScalarizedResults(planScalarizedResults(program, facts, *plan));
+    plan->setScalarizedParameters(program, planScalarizedParameters(program, facts, *plan));
     plan->setFunctionsThatEndTheirTailCalls(WTF::move(functionsThatEndTheirTailCalls));
     planTailCallsAndStackTests(program, facts, *plan, WTF::move(stackTests));
     finishMethodTableForUnions(program, facts, *plan);

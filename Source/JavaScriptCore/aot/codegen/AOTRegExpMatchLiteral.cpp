@@ -72,10 +72,11 @@ bool ResolvedCallEmitter::isMatchedSeveralTimes(ValueID string)
 
 std::optional<OwnedCharacters> ResolvedCallEmitter::findLoadedSubject(const OperationContext& context, CellPointer string)
 {
-    if (m_generator.keepsValuesInHeapFrame())
+    if (m_generator.keepsValuesInHeapFrame() || m_loadedSubjects.isEmpty())
         return std::nullopt;
+    const uint32_t region = m_generator.suspensionFreeRegionAt(context);
     for (const LoadedSubject& loaded : m_loadedSubjects) {
-        if (loaded.string != string.value() || !m_generator.blockDominates(loaded.block, context.block()))
+        if (loaded.string != string.value() || loaded.suspensionFreeRegion != region || !m_generator.blockDominates(loaded.block, context.block()))
             continue;
         EdgeID handler = loaded.block != context.block() ? m_code.handlerOf(loaded.block) : EdgeID();
         if (!handler || !m_generator.blockDominates(loaded.block, m_code.at(handler).to))
@@ -97,7 +98,7 @@ OwnedCharacters ResolvedCallEmitter::loadCarriedSubstring(const OperationContext
         return *loaded;
     OwnedCharacters characters = emitter<StringEmitter>().loadCharacters(context, string, SubstringBounds { Word32(carried.start), Word32(carried.length) });
     if (isBeforeBranches && isNamedByItsOwner)
-        m_loadedSubjects.append({ context.block(), string.value(), characters });
+        m_loadedSubjects.append({ context.block(), m_generator.suspensionFreeRegionAt(context), string.value(), characters });
     return characters;
 }
 
@@ -118,7 +119,7 @@ std::optional<OwnedCharacters> ResolvedCallEmitter::loadSubject(const OperationC
     if (m_generator.keepsValuesInHeapFrame() || !isMatchedSeveralTimes(definitionOf(match.subject)))
         return std::nullopt;
     OwnedCharacters characters = emitter<StringEmitter>().loadCharacters(context, match.string);
-    m_loadedSubjects.append({ context.block(), match.string.value(), characters });
+    m_loadedSubjects.append({ context.block(), m_generator.suspensionFreeRegionAt(context), match.string.value(), characters });
     return characters;
 }
 
@@ -247,15 +248,30 @@ Boxed ResolvedCallEmitter::createMatchArray(const OperationContext& context, con
     return join.finish();
 }
 
+Condition ResolvedCallEmitter::isMadeByLiteral(const RegExpMatch& match)
+{
+    const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
+    LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(state, match.regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), static_cast<int64_t>(RegExpObject::regExpMask));
+    const OptionSet<Yarr::Flags> flags = toYarrFlags(match.flags);
+    static_assert(sizeof(flags) == sizeof(uint16_t));
+    Word32 record = add(Word32(m_out.load16SignExt32(m_out.address(state, regExp, RegExp::offsetOfImageRecordNumber()))), -1);
+    Word32 flagsOfObject(m_out.load16ZeroExt32(m_out.address(state, regExp, RegExp::offsetOfFlags())));
+    return isZero(bitOr(bitXor(record, numberOf(m_mentions.regExp(match.pattern, flags))), bitXor(flagsOfObject, word32(static_cast<int32_t>(flags.toRaw())))));
+}
+
 CharacterView ResolvedCallEmitter::viewOfSubject(const OperationContext& context, const RegExpMatch& match, const std::optional<OwnedCharacters>& loaded, LBasicBlock calls)
 {
     StringEmitter& strings = emitter<StringEmitter>();
     if (match.isHeld) {
         const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
-        if (!match.isPrivate && m_facts.mayRecompileRegExps())
+        if (!match.isPrivate && !match.isExpected && m_facts.mayRecompileRegExps())
             strings.continueIf(isZero(Word32(m_out.load8ZeroExt32(mutableInstanceField(AOT_INSTANCE_OFFSET(regExpsAreRecompiled))))), rareEdge(calls));
         if (match.isArgument)
             strings.continueIf(equal(loadStructureID(match.regExpObject), loadFilledOnce32(Instance::offsetOfReceiverStructureID(Receiver::RegExp))), rareEdge(calls));
+        if (match.isExpected) {
+            build().statistics().count(StatisticID::ExpectedRegExpsMatchedInPlace);
+            strings.continueIf(isMadeByLiteral(match), unlikelyEdge(calls));
+        }
         Boxed lastIndex(m_out.load64(m_out.address(state, match.regExpObject.value(), RegExpObject::offsetOfLastIndex())));
         if (match.resetsLastIndex)
             strings.continueIf(equal(lastIndex, boxedConstant(jsNumber(0))), unlikelyEdge(calls));
@@ -291,11 +307,17 @@ template<typename T> T ResolvedCallEmitter::matchInPlace(const OperationContext&
 {
     RegExpMatch match = matchOfSubject;
     if (canTestByMatcher(plan, match, answer)) {
-        Boxed isMatch = testByMatcher(context, match);
-        if constexpr (std::is_same_v<T, Condition>)
-            return unboxBoolean(isMatch);
-        else
-            return isMatch;
+        auto test = [&]() -> T {
+            Boxed isMatch = testByMatcher(context, match);
+            if constexpr (std::is_same_v<T, Condition>)
+                return unboxBoolean(isMatch);
+            else
+                return isMatch;
+        };
+        if (!match.isExpected)
+            return test();
+        build().statistics().count(StatisticID::ExpectedRegExpsMatchedInPlace);
+        return either<T>(isMadeByLiteral(match), test, [&] { return call(); });
     }
     const bool recordsMatch = m_facts.mayReadLegacyRegExpStatics();
     const bool keepsGroups = answer == RegExpMatchAnswer::Array || answer == RegExpMatchAnswer::Parts;
@@ -470,12 +492,14 @@ void ResolvedCallEmitter::recordMatch(const OperationContext& context, const Reg
     emitter<BarrierEmitter>().barrier(context, globalObject);
 }
 
-void ResolvedCallEmitter::clearAbsentGroupBounds(CellPointer regExpObject, unsigned count)
+void ResolvedCallEmitter::clearAbsentGroupBounds(const RegExpMatch& match, unsigned count)
 {
+    const CellPointer regExpObject = match.regExpObject;
     const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
     LBasicBlock isRecompiled = newBlock();
     LBasicBlock done = newBlock();
-    branch(isZero(Word32(m_out.load8ZeroExt32(mutableInstanceField(AOT_INSTANCE_OFFSET(regExpsAreRecompiled))))), { normalEdge(done), rareEdge(isRecompiled) });
+    Condition isAsWritten = match.isExpected ? isMadeByLiteral(match) : isZero(Word32(m_out.load8ZeroExt32(mutableInstanceField(AOT_INSTANCE_OFFSET(regExpsAreRecompiled)))));
+    branch(isAsWritten, { normalEdge(done), rareEdge(isRecompiled) });
     m_out.appendTo(isRecompiled);
     LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(state, regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), static_cast<int64_t>(RegExpObject::regExpMask));
     Word32 numberOfGroups(m_out.load32(m_out.address(state, regExp, RegExp::offsetOfNumSubpatterns())));
@@ -529,6 +553,7 @@ void ResolvedCallEmitter::generateMatchHeldRegExpParts(const ValueContext& value
     RegExpMatch match { value->pattern(), value->regExpFlags(), in<CellPointer>(value->stringOperand()), in<CellPointer>(value->regExpOperand()) };
     match.isHeld = true;
     match.isPrivate = value->isPrivate();
+    match.isExpected = value->isExpected();
     if (ValueID lastIndex = value->lastIndexOperand()) {
         Operand operand = get(lastIndex);
         match.lastIndexStored = operand.is<Word32>() ? signExtended(operand.as<Word32>()) : operand.as<Integer>();
@@ -538,8 +563,8 @@ void ResolvedCallEmitter::generateMatchHeldRegExpParts(const ValueContext& value
         if (deferredStore)
             m_out.store64(in<Boxed>(operationAt(deferredStore).valueOperand()).value(), m_out.address(m_heaps.entire(AbstractHeap::RegExpState), match.regExpObject.value(), RegExpObject::offsetOfLastIndex()));
         Condition isFound = unboxBoolean(Boxed(callStub(value, regExpMatch(RegExpMatchResult::Parts), { match.regExpObject.value(), match.string.value() }, { .calledBuiltin = functionOf(value->overload()) }).first));
-        if (!match.isPrivate && m_facts.mayRecompileRegExps())
-            clearAbsentGroupBounds(match.regExpObject, value->count());
+        if (match.isExpected || (!match.isPrivate && m_facts.mayRecompileRegExps()))
+            clearAbsentGroupBounds(match, value->count());
         return isFound;
     };
     const RegExpMatchPlan* plan = matchPlanOf(value.block(), match);
@@ -622,6 +647,7 @@ void ResolvedCallEmitter::generateMatchRegExpIntoFrame(const ValueContext& value
     RegExpMatch match { value->pattern(), value->regExpFlags(), in<CellPointer>(value->stringOperand()), in<CellPointer>(value->regExpOperand()) };
     match.isHeld = true;
     match.isPrivate = value->isPrivate();
+    match.isExpected = value->isExpected();
     const RegExpMatchPlan* plan = match.pattern ? matchPlanOf(value.block(), match) : nullptr;
     if (!plan || plan->isPrefix) {
         define(value, matchIntoFrameByCall(value, slot));

@@ -321,6 +321,8 @@ template<typename Functor> static bool everyUseIs(const BodyIndex& index, ValueI
         });
         for (BodyTarget target : terminator.targets())
             isEveryUseAllowed &= !std::ranges::contains(target.arguments(), value);
+        if (BodyBlock block = index.block(BlockID(number)); block.hasHandler())
+            isEveryUseAllowed &= !std::ranges::contains(block.handler().arguments(), value);
     }
     return isEveryUseAllowed;
 }

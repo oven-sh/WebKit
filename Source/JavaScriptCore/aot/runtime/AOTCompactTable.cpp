@@ -31,6 +31,7 @@
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
 #include "JSWeakMapInlines.h"
+#include "JSWeakSet.h"
 #include "TopExceptionScope.h"
 #include "WeakMapImplInlines.h"
 #include <algorithm>
@@ -102,6 +103,29 @@ unsigned CompactTable::indexBitsFor(uint32_t capacity)
 
 uint32_t CompactTable::capacityFor(uint32_t minCapacity, Width key, Width value)
 {
+    constexpr uint32_t greatestKept = 64;
+    if (minCapacity > greatestKept)
+        return findCapacityFor(minCapacity, key, value);
+    static const auto kept = [] {
+        std::array<uint8_t, 6 * (greatestKept / 2 + 1)> result { };
+        size_t place = 0;
+        for (Width keyWidth : { Width::Narrow, Width::Wide }) {
+            for (Width valueWidth : growthPlanValueWidths) {
+                for (uint32_t entries = 0; entries <= greatestKept; entries += 2) {
+                    uint32_t capacity = findCapacityFor(entries, keyWidth, valueWidth);
+                    RELEASE_ASSERT(capacity <= std::numeric_limits<uint8_t>::max());
+                    result[place++] = static_cast<uint8_t>(capacity);
+                }
+            }
+        }
+        return result;
+    }();
+    size_t widths = (key == Width::Wide ? 3 : 0) + static_cast<size_t>(value) / static_cast<size_t>(Width::Narrow);
+    return kept[widths * (greatestKept / 2 + 1) + (minCapacity + 1) / 2];
+}
+
+uint32_t CompactTable::findCapacityFor(uint32_t minCapacity, Width key, Width value)
+{
     uint32_t capacity = roundUpToMultipleOf<2>(std::max<uint32_t>(minCapacity, 2));
     size_t size = MarkedSpace::optimalSizeFor(allocationSize(capacity, key, value));
     while (capacity < maxCapacity && allocationSize(capacity + 2, key, value) <= size)
@@ -121,22 +145,31 @@ static constexpr unsigned firstGrowthPlanFor(CompactTable::Width value)
     return static_cast<unsigned>(value) / static_cast<unsigned>(CompactTable::Width::Narrow) * CompactTable::growthPlansPerValueWidth;
 }
 
+auto CompactTable::makeGrowthPlans(Width key) -> GrowthPlans
+{
+    static_assert(growthPlanValueWidths.size() * growthPlansPerValueWidth == std::tuple_size_v<GrowthPlans>);
+    GrowthPlans result { };
+    for (Width width : growthPlanValueWidths) {
+        for (uint32_t column = 0; column < growthPlansPerValueWidth; ++column) {
+            uint32_t capacity = capacityFor(capacityAfterGrowth(column * 2, column * 2), key, width);
+            uint64_t indexBits = indexBitsFor(capacity);
+            uint64_t sizeStep = MarkedSpace::sizeClassToIndex(allocationSize(capacity, key, width));
+            RELEASE_ASSERT(capacity <= maxCapacityWithShortSlots && sizeStep < 1u << (64 - sizeStepShiftOfGrowthPlan) && allocationSize(capacity, key, width) <= MarkedSpace::largeCutoff);
+            result[firstGrowthPlanFor(width) + column] = capacity | indexBits << 32 | static_cast<uint64_t>(keysShiftFor(indexBits, capacity)) << 40 | static_cast<uint64_t>(width) << 48 | sizeStep << sizeStepShiftOfGrowthPlan;
+        }
+    }
+    return result;
+}
+
 const uint64_t* CompactTable::growthPlans()
 {
-    using GrowthPlans = std::array<uint64_t, growthPlanValueWidths.size() * growthPlansPerValueWidth>;
-    static const GrowthPlans plans = [] {
-        GrowthPlans result { };
-        for (Width width : growthPlanValueWidths) {
-            for (uint32_t column = 0; column < growthPlansPerValueWidth; ++column) {
-                uint32_t capacity = capacityFor(capacityAfterGrowth(column * 2, column * 2), Width::Narrow, width);
-                uint64_t indexBits = indexBitsFor(capacity);
-                uint64_t sizeStep = MarkedSpace::sizeClassToIndex(allocationSize(capacity, Width::Narrow, width));
-                RELEASE_ASSERT(capacity <= maxCapacityWithShortSlots && sizeStep < 1u << (64 - sizeStepShiftOfGrowthPlan) && allocationSize(capacity, Width::Narrow, width) <= MarkedSpace::largeCutoff);
-                result[firstGrowthPlanFor(width) + column] = capacity | indexBits << 32 | static_cast<uint64_t>(keysShiftFor(indexBits, capacity)) << 40 | static_cast<uint64_t>(width) << 48 | sizeStep << sizeStepShiftOfGrowthPlan;
-            }
-        }
-        return result;
-    }();
+    static const GrowthPlans plans = makeGrowthPlans(Width::Narrow);
+    return plans.data();
+}
+
+const uint64_t* CompactTable::growthPlansOfWideKeys()
+{
+    static const GrowthPlans plans = makeGrowthPlans(Width::Wide);
     return plans.data();
 }
 
@@ -186,7 +219,8 @@ void CompactTable::ensureInitialTableAllocators(VM& vm)
 {
     for (Width key : { Width::Narrow, Width::Wide }) {
         for (Width value : growthPlanValueWidths)
-            vm.cellSpace().allocatorFor(initialSize(key, value), AllocatorForMode::EnsureAllocator);
+            for (uint32_t capacity : { initialCapacity, maxCapacityWithTags })
+                vm.cellSpace().allocatorFor(initialSize(key, value, capacity), AllocatorForMode::EnsureAllocator);
     }
 }
 
@@ -197,14 +231,17 @@ bool CompactTable::canHold(VM& vm, Width width, JSValue value)
     return value.isCell() && vm.heap.cage().contains(value.asCell()) && !(std::bit_cast<uintptr_t>(value.asCell()) & (MarkedBlock::atomSize - 1));
 }
 
-CompactTable* CompactTable::tryCreateForFirstEntry(JSGlobalObject* globalObject, bool hasValues, JSValue key, JSValue value)
+CompactTable* CompactTable::tryCreateForFirstEntry(JSGlobalObject* globalObject, JSObject* owner, bool hasValues, JSValue key, JSValue value)
 {
+    uint32_t capacity = std::max(initialCapacity, std::exchange(deletedPrefixOf(owner), 0));
+    if (capacity > initialCapacity && capacity < maxCapacityWithTags)
+        capacity = maxCapacityWithTags;
     VM& vm = globalObject->vm();
     bool useWideReferences = vm.aotState().image->header().options.useWideReferences();
     auto widthOf = [&](JSValue held) {
         return useWideReferences ? Width::Wide : widthFor(vm, held);
     };
-    return tryCreate(globalObject, widthOf(normalizeMapKey(key)), hasValues ? widthOf(value) : Width::None, initialCapacity);
+    return tryCreate(globalObject, widthOf(normalizeMapKey(key)), hasValues ? widthOf(value) : Width::None, capacity);
 }
 
 CompactTable::Width CompactTable::widthFor(VM& vm, JSValue value)
@@ -638,17 +675,19 @@ void CompactTable::skipObsoleteSuccessors()
 CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSValue key, unsigned hash, JSValue value) const
 {
     uint32_t count = m_used;
+    Width keyWidth = this->keyWidth();
     Width valueWidth = m_valueWidth;
-    uint64_t plan = growthPlans()[firstGrowthPlanFor(valueWidth) + count / 2];
+    bool hasWideKeys = keyWidth == Width::Wide;
+    uint64_t plan = (hasWideKeys ? growthPlansOfWideKeys() : growthPlans())[firstGrowthPlanFor(valueWidth) + count / 2];
     uint32_t capacity = static_cast<uint32_t>(plan);
     unsigned indexBits = static_cast<uint8_t>(plan >> 32);
     uint8_t keysShift = keysShiftFor(indexBits, capacity);
     size_t keys = offsetOfIndex() + (static_cast<size_t>(2) << keysShift);
-    size_t size = MarkedSpace::optimalSizeFor(keys + capacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(valueWidth)));
+    size_t size = MarkedSpace::optimalSizeFor(keys + capacity * (static_cast<size_t>(keyWidth) + static_cast<size_t>(valueWidth)));
     CompactTable* larger = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, structure());
     larger->m_capacity = capacity;
     larger->m_indexBits = indexBits;
-    larger->m_keysShiftAndFlags = keysShift;
+    larger->m_keysShiftAndFlags = keysShift | (hasWideKeys ? keysAreWide : 0);
     larger->m_valueWidth = valueWidth;
     static constexpr size_t maxInlineWords = 8;
     auto copyWords = [](uint64_t*& to, const uint64_t* from, size_t words) ALWAYS_INLINE_LAMBDA {
@@ -682,20 +721,22 @@ CompactTable* CompactTable::copyWithAbsentKey(VM& vm, JSValue key, unsigned hash
         zeroWords(to, (keys - offsetOfIndex()) / sizeof(uint64_t));
     else
         *to++ = *at<uint64_t>(offsetOfIndex()) | static_cast<uint64_t>(hash >> tagShiftOfTags) << (count * 8);
-    const uint32_t* largerKeys = reinterpret_cast<const uint32_t*>(to);
-    copyWords(to, from, count / 2);
-    zeroWords(to, (capacity - count) / 2);
-    copyWords(to, from + count / 2, count * static_cast<size_t>(valueWidth) / sizeof(uint64_t));
+    const uint64_t* largerKeys = to;
+    size_t wordsOfKeys = count * static_cast<size_t>(keyWidth) / sizeof(uint64_t);
+    copyWords(to, from, wordsOfKeys);
+    zeroWords(to, (capacity - count) * static_cast<size_t>(keyWidth) / sizeof(uint64_t));
+    copyWords(to, from + wordsOfKeys, count * static_cast<size_t>(valueWidth) / sizeof(uint64_t));
     zeroWords(to, larger->at<uint64_t>(size) - to);
     larger->finishCreation(vm);
     larger->setKey(count, key);
     larger->setValue(count, value);
     if (indexBits) {
         uint8_t* index = larger->at<uint8_t>(offsetOfIndex());
-        for (uint32_t entry = keepsSlots ? count : 0; entry <= count; ++entry) {
-            unsigned entryHash = entry == count ? hash : hashOfStoredKey(decodeNarrow(largerKeys[entry]));
-            insertIntoIndex<SlotKind::Short>(index, indexBits, entry, entryHash);
+        for (uint32_t entry = keepsSlots ? count : 0; entry < count; ++entry) {
+            JSValue stored = hasWideKeys ? JSValue::decode(largerKeys[entry]) : decodeNarrow(reinterpret_cast<const uint32_t*>(largerKeys)[entry]);
+            insertIntoIndex<SlotKind::Short>(index, indexBits, entry, hashOfStoredKey(stored));
         }
+        insertIntoIndex<SlotKind::Short>(index, indexBits, count, hash);
     }
     WTF::storeStoreFence();
     larger->m_used = count + 1;
@@ -725,6 +766,19 @@ ALWAYS_INLINE_INTO_OTHER_FILES std::optional<unsigned> CompactTable::hashIfAbsen
     const uint32_t* keys = at<uint32_t>(offsetOfKeys());
     auto found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
         return keys[entry] == narrowKey;
+    });
+    return found ? std::nullopt : std::optional(hash);
+}
+
+std::optional<unsigned> CompactTable::hashIfNumberAbsent(JSValue key) const
+{
+    if (keyWidth() != Width::Wide)
+        return std::nullopt;
+    EncodedJSValue word = JSValue::encode(key);
+    const EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
+    unsigned hash = hashOfKeyBits(word);
+    auto found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        return keys[entry] == word;
     });
     return found ? std::nullopt : std::optional(hash);
 }
@@ -808,7 +862,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* 
 
 static ALWAYS_INLINE bool tryShareCharactersOfEqual(JSRopeString* piece, StringImpl& equal)
 {
-    if (equal.is8Bit() != piece->is8Bit())
+    if (piece->is8Bit() && !equal.is8Bit())
         return false;
     piece->resolveBySharing(equal);
     return true;
@@ -863,9 +917,11 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
         if (table->m_used != table->m_capacity && key.isNumber() && table->tryAddNumberQuickly(vm, key, value))
             return true;
         uint32_t count = table->m_used;
-        if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value) || !canHold(vm, Width::Narrow, key))
+        if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value))
             return false;
-        std::optional<unsigned> hash = table->hashIfAbsent(key);
+        if (!key.isNumber() && (table->keyWidth() == Width::Wide || !canHold(vm, Width::Narrow, key)))
+            return false;
+        std::optional<unsigned> hash = key.isNumber() ? table->hashIfNumberAbsent(key) : table->hashIfAbsent(key);
         if (!hash)
             return false;
         CompactTable* larger = table->copyWithAbsentKey(vm, key, *hash, value);
@@ -935,21 +991,18 @@ void CompactTable::reserveForAdditions(JSGlobalObject* globalObject, JSObject* o
             return;
     }
 
+    if (!table) {
+        deletedPrefixOf(owner) = static_cast<uint32_t>(capacity);
+        return;
+    }
     DeferTerminationForAWhile deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    CompactTable* replacement;
-    if (table)
-        replacement = table->tryCopyWithWidths(globalObject, table->keyWidth(), table->m_valueWidth, static_cast<uint32_t>(capacity));
-    else {
-        Width width = vm.aotState().image->header().options.useWideReferences() ? Width::Wide : Width::Narrow;
-        replacement = tryCreate(globalObject, width, owner->type() == JSMapType ? width : Width::None, static_cast<uint32_t>(capacity));
-    }
+    CompactTable* replacement = table->tryCopyWithWidths(globalObject, table->keyWidth(), table->m_valueWidth, static_cast<uint32_t>(capacity));
     if (scope.exception()) [[unlikely]] {
         scope.clearException();
         return;
     }
-    if (table)
-        table->becomeObsolete(vm, Status::Replaced, replacement);
+    table->becomeObsolete(vm, Status::Replaced, replacement);
     setStorage(vm, owner, replacement);
 }
 
@@ -1171,7 +1224,18 @@ std::optional<uint32_t> CompactTable::findInImage(JSGlobalObject* globalObject, 
     return entries.find(image, StringView { impl }, impl.hash());
 }
 
-static constexpr unsigned maxLengthHashedAgain = 48;
+static bool keepsHashInsteadOfCharacters(const JSRopeString* substring, unsigned hash)
+{
+    static constexpr unsigned maxLengthHashedAgain = 48;
+    return substring->length() <= maxLengthHashedAgain && !(substring->hashOfSubstring() & CompactTable::secondSubstringHit) && !canPassShapeTest(hash);
+}
+
+static void recordSubstringHit(const JSRopeString* substring)
+{
+    unsigned word = substring->hashOfSubstring();
+    if (word)
+        substring->setHashOfSubstring(word & CompactTable::firstSubstringHit ? CompactTable::secondSubstringHit : CompactTable::firstSubstringHit);
+}
 
 CompactTable::QuickLookup CompactTable::tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const
 {
@@ -1179,7 +1243,9 @@ CompactTable::QuickLookup CompactTable::tryFindSubstringInImage(JSRopeString* ke
     ProgramStrings& strings = *stateOfTableInImage().strings;
     std::optional<uint32_t> entry = entries.find(*vm().aotState().image, characters, hash);
     JSString* equal = entry ? strings.constantIfCreated(entries.stringConstants()[*entry]) : nullptr;
-    const bool staysRope = key->length() <= maxLengthHashedAgain && (!entry || (isMembershipTest && equal));
+    const bool staysRope = keepsHashInsteadOfCharacters(key, hash) && (!entry || (isMembershipTest && equal));
+    if (staysRope && entry)
+        recordSubstringHit(key);
     if (!staysRope && (!equal || !tryShareCharactersOfEqual(key, *const_cast<StringImpl*>(equal->tryGetValueImpl()))))
         key->resolveBySharing(StringImpl::createSubstringSharingImpl(*const_cast<StringImpl*>(key->substringBase()->tryGetValueImpl()), key->substringOffset(), key->length(), hash).get());
     if (!entry)
@@ -1692,6 +1758,65 @@ uint32_t CompactTable::fillWithNumbers(std::span<const EncodedJSValue> numbers)
     return used;
 }
 
+static ALWAYS_INLINE bool isIdentity(JSValue value)
+{
+    return value && (value.isCell() ? value.isObject() || value.isSymbol() : value.isUndefinedOrNull() || value.isBoolean());
+}
+
+template<CompactTable::SlotKind kind>
+uint32_t CompactTable::fillWithIdentities(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>> identities)
+{
+    uint8_t* index = at<uint8_t>(offsetOfIndex());
+    uint32_t* keys = at<uint32_t>(offsetOfKeys());
+    unsigned indexBits = this->indexBits();
+    uint32_t used = 0;
+    for (auto& identity : identities) {
+        JSValue value = identity.get();
+        uint32_t key = value.isCell() ? MarkedBlockCage::encode(cageBase, value.asCell()) : static_cast<uint32_t>(JSValue::encode(value));
+        unsigned hash = hashOfKeyBits(JSValue::encode(value));
+        bool isPresent = probeIndex<kind>(index, indexBits, used, hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            return keys[entry] == key;
+        }).has_value();
+        if (isPresent)
+            continue;
+        keys[used] = key;
+        insertIntoIndex<kind>(index, indexBits, used, hash);
+        ++used;
+    }
+    return used;
+}
+
+JSSet* CompactTable::tryCreateSetOfIdentities(JSGlobalObject* globalObject, std::span<const WriteBarrier<Unknown>> values)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Instance& instance = *Instance::of(globalObject);
+    uint32_t length = values.size();
+    if (values.size() > maxCapacity || instance.options().useWideReferences()) [[unlikely]]
+        return nullptr;
+    for (auto& value : values) {
+        if (!isIdentity(value.get()) || !canHold(vm, Width::Narrow, value.get()))
+            return nullptr;
+    }
+    CompactTable* table = tryCreate(globalObject, Width::Narrow, Width::None, length);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    uint32_t used = withSlotKind(table->slotKind(), [&](auto kind) {
+        return table->fillWithIdentities<kind()>(instance.cellCageBase, values);
+    });
+    WTF::storeStoreFence();
+    table->m_used = used;
+    table->m_alive = used;
+    if (length > maxCapacityWithShortSlots && used < length / 4) {
+        table = table->tryCopyWithWidths(globalObject, Width::Narrow, Width::None, used + 1);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+
+    JSSet* set = JSSet::create(vm, globalObject->setStructure());
+    set->m_storage.setWithoutWriteBarrier(table);
+    vm.mutatorFence();
+    return set;
+}
+
 JSSet* CompactTable::tryCreateSetOfNumbers(JSGlobalObject* globalObject, JSArray* list)
 {
     VM& vm = globalObject->vm();
@@ -1870,15 +1995,15 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
     size_t length = rope->length();
     size_t offset = rope->substringOffset();
     const StringImpl* baseImpl = rope->substringBase()->tryGetValueImpl();
-    const bool keepsHash = length <= maxLengthHashedAgain;
     ASSERT(baseImpl);
     auto find = [&]<typename CharacterType>(std::span<const CharacterType> text) ALWAYS_INLINE_LAMBDA {
-        unsigned hash = rope->hashOfSubstring();
-        if (!hash) {
+        unsigned hash = rope->hashOfSubstring() & CompactTable::hashMask;
+        const bool isHashed = hash;
+        if (!isHashed)
             hash = StringHasher::computeHashAndMaskTop8Bits(text);
-            if (keepsHash && !canPassShapeTest(hash))
-                rope->setHashOfSubstring(hash);
-        }
+        const bool keepsHash = keepsHashInsteadOfCharacters(rope, hash);
+        if (keepsHash && !isHashed)
+            rope->setHashOfSubstring(hash);
         if (table->isInImage())
             return table->tryFindSubstringInImage(rope, text, hash, isMembershipTest, value);
         auto lookup = table->tryFindCharactersQuickly(text, hash);
@@ -1886,6 +2011,8 @@ static ALWAYS_INLINE CompactTable::QuickLookup tryFindSubstringQuickly(JSObject*
             value = table->valueAt(lookup.entry);
             if (!isMembershipTest || !keepsHash)
                 tryShareCharactersOfEqual(rope, *asString(table->uncheckedKeyAt(lookup.entry))->tryGetValueImpl());
+            else
+                recordSubstringHit(rope);
         } else if (lookup.result == QuickLookup::Absent && !keepsHash) {
             rope->resolveBySharing(StringImpl::createSubstringSharingImpl(const_cast<StringImpl&>(*baseImpl), offset, length, hash).get());
         }
@@ -2005,6 +2132,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTWeakMapSet, EncodedJSValue, (Instance* inst
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTWeakSetAdd, EncodedJSValue, (Instance* instance, JSCell* set, JSCell* lookupKey))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTWeakSetAdd);
+    uncheckedDowncast<JSWeakSet>(set)->add(vm, lookupKey);
+    OPERATION_RETURN(scope, JSValue::encode(set));
+}
+
 template<typename Visitor>
 void CompactTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -2029,11 +2163,12 @@ JSCell* tryCreate(JSGlobalObject* globalObject, bool hasValues)
     return CompactTable::tryCreate(globalObject, width, hasValues ? width : Width::None, CompactTable::initialCapacity);
 }
 
-JSCell* tryCreateForFirstEntry(JSGlobalObject* globalObject, bool hasValues, JSValue key, JSValue value)
+JSCell* tryCreateForFirstEntry(JSGlobalObject* globalObject, JSObject* owner, bool hasValues, JSValue key, JSValue value)
 {
     RELEASE_ASSERT(!Options::useJIT());
-    CompactTable::ensureInitialTableAllocators(globalObject->vm());
-    return CompactTable::tryCreateForFirstEntry(globalObject, hasValues, key, value);
+    if (CompactTable::deletedPrefixOf(owner) <= CompactTable::maxCapacityWithTags)
+        CompactTable::ensureInitialTableAllocators(globalObject->vm());
+    return CompactTable::tryCreateForFirstEntry(globalObject, owner, hasValues, key, value);
 }
 
 JSCell* copy(JSGlobalObject* globalObject, JSCell* storage)

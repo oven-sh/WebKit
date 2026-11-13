@@ -100,6 +100,8 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
 
     m_out.appendTo(isStored);
     elements().setPublicLength(storage, newLength);
+    for (ValueID value : values)
+        prefetchPushedCell(call, value);
     join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
 
     static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
@@ -117,6 +119,36 @@ void ArrayStorageBuiltinEmitter::pushSeveral(const InlineCall& call, CellPointer
         elements().appendOutOfLine(call.context(), array, value);
     join.add(pushOutOfLine(call, array, values.back(), representation));
     finishInlineCall(call, join.finish());
+}
+
+void ArrayStorageBuiltinEmitter::prefetchPushedCell(const InlineCall& call, ValueID pushed)
+{
+    static constexpr OpcodeSet reads { Opcode::ElemGet, Opcode::GetArrayElement, Opcode::PropGet, Opcode::GetSlot, Opcode::GetSlotOrUndefined };
+    if (representationOf(pushed) != Representation::JSValue || !typeOf(pushed).hasCells() || !generator().isInLoop(call.context().block()))
+        return;
+    ValueID root = pushed;
+    while (valuePreservingOpcodes.contains(opcodeOf(root)))
+        root = operationAt(root).operand(0);
+    if (!reads.contains(opcodeOf(root)) || !generator().isPoppedInLoop(call.receiver()))
+        return;
+    build().statistics().count(StatisticID::PushesOntoPoppedArrays);
+#if CPU(X86_64)
+    Machine::PatchOperation* prefetch = m_out.patchpoint(Machine::Void);
+    prefetch->effects = Machine::Effects::none();
+    prefetch->effects.writesLocalState = true;
+    prefetch->appendSomeRegister(in<Boxed>(pushed).value());
+    prefetch->setRunsWithoutFrame(true);
+    prefetch->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        jit.prefetch(CCallHelpers::Address(params[0].gpr()));
+    });
+#endif
+}
+
+bool ArrayStorageBuiltinEmitter::isTestedAgain(ValueID array)
+{
+    while (valuePreservingOpcodes.contains(opcodeOf(array)))
+        array = operationAt(array).operand(0);
+    return generator().hasArrayStorageTest(array);
 }
 
 void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer array)
@@ -155,37 +187,76 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
         forms = elements().formsOfListOfNumbersFor(pushed, generator().usesLoopForms(block));
     bool mayPushCell = typeOf(pushed).hasCells();
     std::optional<CodeGenerator::PushesInLoop> loop = generator().findPushesInLoop(block, call.receiver());
-    LBasicBlock isStored = newBlock();
+    bool joinsForms = forms.size() == 1 || !isTestedAgain(call.receiver());
+    LBasicBlock isStored = joinsForms ? newBlock() : nullptr;
     LBasicBlock slowPath = newBlock();
     LBasicBlock isFull = loop ? newBlock() : slowPath;
     OperandJoin join(m_out, representation);
 
     build().statistics().count(StatisticID::ArrayPushesInlined);
-    ArrayElements storage = elements().elementsOf(array);
-    Word32 length = elements().publicLengthAsWord(storage);
+    const auto* known = call.canMiss() ? generator().listStorageForCall(block) : nullptr;
+    auto* behind = call.canMiss() ? generator().listStorageBehindCall(block) : nullptr;
+    Vector<ValueFromBlock, 4> butterflies;
+    Vector<ValueFromBlock, 4> lengths;
+    Vector<ValueFromBlock, 4> modes;
+    auto carry = [&](const ArrayElements& elements, Integer length, Word32 mode) {
+        butterflies.append(m_out.anchor(elements.butterfly.value()));
+        lengths.append(m_out.anchor(length.value()));
+        modes.append(m_out.anchor(mode.value()));
+    };
+    ArrayElements storage = known ? ArrayElements { array, Pointer(known->butterfly) } : elements().elementsOf(array);
+    Word32 length = known ? low32(Integer(known->length)) : elements().publicLengthAsWord(storage);
+    std::optional<Word32> knownMode;
+    if (known)
+        knownMode = Word32(known->mode);
+    else if (behind)
+        knownMode = elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    auto indexingMode = [&] {
+        return knownMode ? *knownMode : elements().indexingMode(array, IndexingShapeAndWritabilityMask);
+    };
     branchUnless(below(length, elements().vectorLengthAsWord(storage)), isFull);
+    auto finishStore = [&] {
+        Word32 newLength = add(length, word32(1));
+        elements().setPublicLength(storage, newLength);
+        prefetchPushedCell(call, pushed);
+        Operand result = representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength));
+        if (behind)
+            carry(storage, zeroExtended(newLength), *knownMode);
+        join.add(result);
+    };
     auto store = [&](const ArrayStorageForm& form) {
         Operand rawElement = *elements().rawElementToStore(form, pushed, slowPath);
         if (form.holdsCells && mayPushCell)
             branchUnless(emitter<BarrierEmitter>().isBeyondBarrierThreshold(array), slowPath);
         elements().stopWhereHoleWouldBeStored(call.context(), form, rawElement);
-        elements().storeRawElement(form, storage, zeroExtended(length), rawElement);
-        m_out.jump(isStored);
+        elements().storeRawElement(form, storage, known ? Integer(known->length) : zeroExtended(length), rawElement);
+        if (joinsForms)
+            m_out.jump(isStored);
+        else
+            finishStore();
     };
     if (!goesByKindOfNumbers && forms.size() > 1) {
         LBasicBlock hasOtherKind = newBlock();
-        ArrayStorageFormList expectedForm;
-        expectedForm.append(forms.first());
+        ArrayStorageFormList expectedForms;
+        expectedForms.append(forms.first());
         forms.removeAt(0);
-        elements().forEachFormByShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, expectedForm, hasOtherKind, store, ElementAccessEmitter::FirstForm::IsExpected);
+        size_t placeOfInt32s = forms.findIf([](const ArrayStorageForm* form) {
+            return form->kind == ArrayStorage::Int32;
+        });
+        bool expectsInt32s = expectedForms.first()->kind == ArrayStorage::Contiguous && placeOfInt32s != notFound && forms.size() > 1;
+        if (expectsInt32s) {
+            expectedForms.append(forms[placeOfInt32s]);
+            forms.removeAt(placeOfInt32s);
+        }
+        elements().forEachFormByShape(indexingMode(), &ElementAccessEmitter::hasWritableShape, expectedForms, hasOtherKind, store, expectsInt32s ? ElementAccessEmitter::FirstForm::IsLikeTheOthers : ElementAccessEmitter::FirstForm::IsExpected);
         m_out.appendTo(hasOtherKind);
     }
-    elements().forEachFormByShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), &ElementAccessEmitter::hasWritableShape, forms, slowPath, store, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
+    elements().forEachFormByShape(indexingMode(), &ElementAccessEmitter::hasWritableShape, forms, slowPath, store, ElementAccessEmitter::FirstForm::IsLikeTheOthers);
 
-    m_out.appendTo(isStored);
-    Word32 newLength = add(length, word32(1));
-    elements().setPublicLength(storage, newLength);
-    join.add(representation == Representation::Void ? Operand() : lengthResult(call, zeroExtended(newLength)));
+    if (joinsForms) {
+        m_out.appendTo(isStored);
+        finishStore();
+    }
 
     if (loop) {
         m_out.appendTo(isFull);
@@ -193,8 +264,19 @@ void ArrayStorageBuiltinEmitter::pushOne(const InlineCall& call, CellPointer arr
     }
 
     m_out.appendTo(slowPath);
-    join.add(pushOutOfLine(call, array, pushed, representation));
-    finishInlineCall(call, join.finish());
+    Operand lengthBehindSlowPath = pushOutOfLine(call, array, pushed, representation);
+    if (behind) {
+        ArrayElements grown = elements().elementsOf(array);
+        carry(grown, elements().publicLength(grown), elements().indexingMode(array, IndexingShapeAndWritabilityMask));
+    }
+    join.add(lengthBehindSlowPath);
+    Operand result = join.finish();
+    if (behind) {
+        behind->butterfly = m_out.phi(Machine::Int64, butterflies);
+        behind->length = m_out.phi(Machine::Int64, lengths);
+        behind->mode = m_out.phi(Machine::Int32, modes);
+    }
+    finishInlineCall(call, result);
 }
 
 void ArrayStorageBuiltinEmitter::reserveForRemainingIterations(const InlineCall& call, const CodeGenerator::PushesInLoop& loop, CellPointer array, Word32 length, LBasicBlock done)

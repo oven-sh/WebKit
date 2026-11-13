@@ -252,7 +252,8 @@ static std::optional<LiteralInSightInWalkCopies> findLiteralInSightInWalkCopies(
             if (place == notFound)
                 return;
             ++mentions[place];
-            bool fills = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::object) || (opcode == Opcode::CopyDataProperties && operandIndex == OperandIndex::CopyDataProperties::target);
+            bool fills = (opcode == Opcode::PropDefine && operandIndex == OperandIndex::PropDefine::object) || (opcode == Opcode::PropSet && operandIndex == OperandIndex::PropSet::object)
+                || (opcode == Opcode::CopyDataProperties && operandIndex == OperandIndex::CopyDataProperties::target);
             bool handsOn = !operandIndex && literal.names.contains(between.id());
             onlyFillsOrHandsOn &= fills || handsOn;
         });
@@ -634,6 +635,57 @@ static constexpr unsigned maxArmsOfCopyInWalkCopies = 6;
 static unsigned maxArmsOfSourceInWalkCopies(unsigned numberOfArms)
 {
     return std::min(maxArmsOfCopiedSource, std::max(1u, maxArmsOfCopyInWalkCopies / numberOfArms));
+}
+
+static void forgetSlotsHeldOverCallInWalkCopies(Walker& walker, Reference literal)
+{
+    static constexpr size_t mostValuesHeld = 8;
+    const Code& code = walker.code();
+    ValueID cell = literal && literal.isValue() ? underlyingCellOf(code, literal.id()) : ValueID();
+    if (!cell || code.isConstant(cell))
+        return;
+    Vector<WalkState::SlotOfObject, 8> held = walker.state().listSlotsOf(Reference::value(cell));
+    if (held.size() <= mostValuesHeld)
+        return;
+    uint32_t call = code.numberOfValues();
+    while (call > cell.index() && !(code.at(ValueID(call - 1)).block() && !code.at(ValueID(call - 1)).traits().alwaysCompletes()))
+        --call;
+    held.removeAllMatching([&](const WalkState::SlotOfObject& slot) {
+        return !slot.value.isValue() || slot.value.id().index() >= call || code.isConstant(underlyingCellOf(code, slot.value.id()));
+    });
+    if (call == cell.index() || held.size() <= mostValuesHeld)
+        return;
+    for (const WalkState::SlotOfObject& slot : held) {
+        walker.state().noteSlot(Reference::value(cell), slot.field, { });
+        if (PropertyKeyID key = keyOfFieldInWalkCopies(walker, slot.field.layout, slot.field.field))
+            noteFilledSlot(walker, Reference::value(cell), key);
+    }
+}
+
+static bool isReadByStoresOfAssignmentInWalkCopies(const BodyIndex& index, ValueID literal)
+{
+    for (uint32_t id = literal.index() + 1; id < index.numberOfValues(); ++id) {
+        if (index.isParameter(ValueID(id)))
+            continue;
+        BodyValue user = index.value(ValueID(id));
+        bool uses = false;
+        user.forEachOperand([&](ValueID operand, uint32_t) {
+            uses |= operand && !index.isParameter(operand) && index.stripCasts(operand) == literal;
+        });
+        if (!uses)
+            continue;
+        ValueID store = user.opcode() == Opcode::PropGet ? index.onlyUsingValue(ValueID(id)) : ValueID();
+        return store && index.opcodeOf(store) == Opcode::PropSet && index.value(store).as<Opcode::PropSet>().calledBuiltin();
+    }
+    return false;
+}
+
+void forgetSlotsOfLiteralAssignedByName(Walker& walker, const BodyValue& finished)
+{
+    static constexpr uint32_t mostUsesOfOthers = 8;
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (index.useCount(finished.id()) > mostUsesOfOthers && isReadByStoresOfAssignmentInWalkCopies(index, finished.id()))
+        forgetSlotsHeldOverCallInWalkCopies(walker, walker.referenceOf(finished.operand(0)));
 }
 
 bool assignSourcesFieldByField(Walker& walker, const BodyValue& value)

@@ -48,6 +48,10 @@ StubSignature signatureOfGetById(StubKey)
 }
 
 StubSignature signatureOfGetByIdKeepingRegisters(StubKey key) { return signatureOfGetById(key); }
+StubSignature signatureOfGetByIdOutsideSlot(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
+StubSignature signatureOfGetByIdOutsideSlotKeepingRegisters(StubKey key) { return signatureOfGetById(key); }
+StubSignature signatureOfReadOwnSlot(StubKey) { return signatureOfGetById(getById()); }
+StubSignature signatureOfReadOwnSlotKeepingRegisters(StubKey) { return signatureOfGetById(getById()); }
 StubSignature signatureOfGetByIdAfterFrontProbe(StubKey) { return signatureReturningValue({ firstStubOperandRegister, slotHeaderRegister }); }
 StubSignature signatureOfGetByIdHashed(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
 StubSignature signatureOfGetByIdCheckingColumn(StubKey) { return signatureReturningValue({ firstStubOperandRegister }); }
@@ -842,13 +846,23 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
     auto inCell = [=](ptrdiff_t offset) {
         return BaseIndex(plane, index, CCallHelpers::TimesEight, static_cast<int32_t>(offset));
     };
+    const BaseIndex kindAndFlags = inCell(PackedSlot::offsetOfBiasedKindAndFlags());
     struct Answer {
         Jump isAsked;
         Function<void(StubAssembler&, JumpList& needsHandler)> load;
     };
+    struct FiledAnswer {
+        int32_t bits;
+        Function<void(StubAssembler&, JumpList& needsHandler)> load;
+    };
     Vector<Answer, 5> answers;
+    Vector<FiledAnswer, 5> filedAnswers;
     auto answerWhereCellIs = [&](Slot::Kind kind, uint8_t flags, Function<void(StubAssembler&, JumpList&)>&& load) {
-        answers.append(Answer { jit.branch8(CCallHelpers::Equal, inCell(PackedSlot::offsetOfBiasedKindAndFlags()), TrustedImm32(biasedBitsOfFrontCell(kind, flags))), WTF::move(load) });
+        const int32_t bits = biasedBitsOfFrontCell(kind, flags);
+        if (r.filesInAccessTable && kind != Slot::Kind::ExtraProperty)
+            filedAnswers.append(FiledAnswer { bits, WTF::move(load) });
+        else
+            answers.append(Answer { jit.branch8(CCallHelpers::Equal, kindAndFlags, TrustedImm32(bits)), WTF::move(load) });
     };
     auto answerExtraProperty = [&](bool isOutOfLine) {
         answerWhereCellIs(Slot::Kind::ExtraProperty, isOutOfLine ? PackedSlot::isOwn | PackedSlot::isOutOfLine : PackedSlot::isOwn, [=](StubAssembler& jit, JumpList& needsHandler) {
@@ -938,7 +952,29 @@ void readByFrontTable(StubAssembler& jit, const FrontTableRead& r, GPRReg result
         answerValueInStorageOfHolder();
         break;
     }
+    constexpr int32_t bitOfAbsent = biasedBitsOfFrontCell(Slot::Kind::Absent, 0) & PackedSlot::kindMask;
+    static_assert(!(biasedBitsOfFrontCell(Slot::Kind::Value, 0) & PackedSlot::kindMask) && hasOneBitSet(static_cast<unsigned>(bitOfAbsent)));
+    Jump isValueOrAbsent;
+    if (!filedAnswers.isEmpty())
+        isValueOrAbsent = jit.branchTest8(CCallHelpers::Zero, kindAndFlags, TrustedImm32(PackedSlot::kindMask & ~bitOfAbsent));
     Label asksHandler = jit.label();
+    if (!filedAnswers.isEmpty()) {
+        jit.addOutOfLinePart([=, filedAnswers = WTF::move(filedAnswers)](StubAssembler& jit) {
+            isValueOrAbsent.link(&jit);
+            for (const FiledAnswer& answer : filedAnswers) {
+                Jump isOfOtherKind = jit.branch8(CCallHelpers::NotEqual, kindAndFlags, TrustedImm32(answer.bits));
+                JumpList needsHandler;
+                answer.load(jit, needsHandler);
+                if (entersBehindAnswer)
+                    jit.jumpToStub(*entersBehindAnswer);
+                else
+                    jit.returnToCaller();
+                needsHandler.linkTo(asksHandler, &jit);
+                isOfOtherKind.link(&jit);
+            }
+            jit.jump().linkTo(asksHandler, &jit);
+        });
+    }
     for (Answer& answer : answers) {
         jit.addOutOfLinePart([isAsked = answer.isAsked, load = WTF::move(answer.load), asksHandler, entersBehindAnswer](StubAssembler& jit) {
             isAsked.link(&jit);
@@ -1029,6 +1065,7 @@ void generateGetByIdKeepingRegisters(StubAssembler& jit)
     auto callAndReturn = [&](const ScopedLambda<void()>& emitCall) {
         jit.callAndReturnPreservingRegisters({ .callee = StubCallee::CompiledCode, .returnsValue = true, .checksException = true, .registersThatCalleeLoses = registersThatWaysOnwardOfGetByIdLose }, emitCall);
     };
+    Label start = jit.label();
     Jump isNotCell = jit.branchIfNotCell(R0);
     JumpList isNotInAccessTable;
     JumpList isNoFieldOfCompiledObject;
@@ -1050,9 +1087,16 @@ void generateGetByIdKeepingRegisters(StubAssembler& jit)
     if (!nameHasColumn)
         hasOtherName.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
     Jump isNotCompiledObject = jit.branchTest8(CCallHelpers::Zero, Address(R0, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24));
+    Label asksFrontTable = jit.label();
     askFrontTable(ReceiverOfFrontProbe::IsCompiledObject);
     isNotCompiledObject.link(&jit);
     askFrontTable(ReceiverOfFrontProbe::IsAnyCell);
+
+    jit.bindEntry(jit.key().withFamily(StubFamily::GetByIdOutsideSlotKeepingRegisters));
+    jit.branchTest32(CCallHelpers::Zero, Address(R0, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))).linkTo(start, &jit);
+    if (!nameHasColumn)
+        hasOtherName.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
+    jit.jump().linkTo(asksFrontTable, &jit);
 
     isAnsweredByHandler.link(&jit);
     callAndReturn(scopedLambda<void()>([&] {
@@ -1073,6 +1117,54 @@ void generateGetByIdKeepingRegisters(StubAssembler& jit)
     UNUSED_PARAM(jit);
     RELEASE_ASSERT_NOT_REACHED();
 #endif
+}
+
+static void generateReadOfOwnSlot(StubAssembler& jit, StubKey readOutsideSlot)
+{
+    const GPRReg object = jit.operand(0);
+    const OwnSlotForm form = static_cast<OwnSlotForm>(jit.key().form());
+    const Address slot(object, safeCast<int32_t>(jit.key().count() * sizeOfOwnSlot(form)));
+    JumpList isEmpty;
+    switch (form) {
+    case OwnSlotForm::Value:
+        isEmpty.append(jit.branchTest64(CCallHelpers::Zero, slot));
+        jit.load64(slot, jit.result());
+        jit.returnToCaller();
+        break;
+    case OwnSlotForm::NarrowCell: {
+        const GPRReg word = jit.allocateScratch(StubRegister::T10);
+        jit.load32(slot, word);
+        Jump isNoCell = jit.branch32(CCallHelpers::Below, word, TrustedImm32(minCell32));
+        decodeCell32(jit, word, jit.result());
+        jit.returnToCaller();
+
+        isNoCell.link(&jit);
+        static_assert(!absentCell32);
+        isEmpty.append(jit.branchTest32(CCallHelpers::Zero, word));
+        jit.move(word, jit.result());
+        jit.returnToCaller();
+        break;
+    }
+    case OwnSlotForm::NarrowInteger: {
+        const GPRReg word = jit.allocateScratch(StubRegister::T10);
+        jit.load32(slot, word);
+        isEmpty.append(jit.branch32(CCallHelpers::LessThan, word, TrustedImm32(minInlineInt32)));
+        boxInt32(jit, word, jit.result());
+        jit.returnToCaller();
+        break;
+    }
+    }
+    jit.linkToStub(isEmpty, readOutsideSlot);
+}
+
+void generateReadOwnSlot(StubAssembler& jit)
+{
+    generateReadOfOwnSlot(jit, getByIdOutsideSlot());
+}
+
+void generateReadOwnSlotKeepingRegisters(StubAssembler& jit)
+{
+    generateReadOfOwnSlot(jit, StubKey(StubFamily::GetByIdOutsideSlotKeepingRegisters));
 }
 
 void generateGetById(StubAssembler& jit)
@@ -1132,6 +1224,11 @@ void generateGetById(StubAssembler& jit)
     const GPRReg header = T12;
     const GPRReg payload = T13;
     const GPRReg entry = T14;
+    jit.bindEntry(getByIdOutsideSlot().withCallerFrame(callerFrame));
+    hasOtherName.append(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)));
+    jit.branchTest32(CCallHelpers::Zero, Address(R0, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))).linkTo(start, &jit);
+    jit.jump().linkTo(behindFieldTable, &jit);
+
     jit.bindEntry(getByIdCheckingColumn().withCallerFrame(callerFrame));
     jit.branch32(CCallHelpers::BelowOrEqual, name, TrustedImm32(RowDisplacementTable::maxColumn)).linkTo(start, &jit);
     hasOtherName.link(&jit);

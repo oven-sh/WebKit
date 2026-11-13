@@ -1,0 +1,26 @@
+# const told = x => "a " + x + "!";  sink(told);
+# The stub that concatenates converts the value that is added to the texts around it: one call for both sums.
+# RUN: bytes f1:Body mechanisms=all
+# CHECK-LABEL: unit f1:Body
+# CHECK-NOT: Call Stub UnaryOperation.AddToEmptyString
+# CHECK-NOT: Call Stub BinaryOperation.Add
+# CHECK: Call Stub ConvertAndConcatenate.AddendBetweenConstantAndString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="told" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a "
+    v2 = Add v1, v0
+    v3 = String string="!"
+    v4 = Add v2, v3
+    Return v4
+}

@@ -1,0 +1,92 @@
+# a function each closure of which runs at most once runs at most once where one function creates it, outside of loops, and that function runs at most once
+# wrap(once); do { wrap(looped) } while (0); wrap(pair), wrap(pair) of two closures; shared: created here and in other(); other() { wrap(shared); wrap(inner) } is called twice; unmarked: wrap(unmarked)
+# RUN: link functions mechanisms=all
+# CHECK: function f0 {{*}}runs-once
+# CHECK: function f1 {{*}}runs-once
+# CHECK: function f2 {{*}}runs-once
+# RUN(AGAIN): link functions mechanisms=all
+# AGAIN-NOT: function f3 {{*}}runs-once
+# AGAIN-NOT: function f4 {{*}}runs-once
+# AGAIN-NOT: function f5 {{*}}runs-once
+# AGAIN-NOT: function f6 {{*}}runs-once
+# AGAIN-NOT: function f7 {{*}}runs-once
+# AGAIN-NOT: function f8 {{*}}runs-once
+
+variable g0 name="other" module=m0 declared={type=f7 flags=[IsFromCompiler]} initialization=Function function=f7 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="wrap" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f4
+    v5 = Call v1, -, v4
+    v6 = NewClosure function=f4
+    v7 = Call v1, -, v6
+    v8 = NewClosure function=f5
+    v9 = Call v1, -, v8
+    v10 = NewClosure function=f8
+    v11 = Call v1, -, v10
+    v12 = GetModuleVariable variable=g0
+    v13 = Call v12 calleeName="other"
+    v14 = Call v12 calleeName="other"
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v16 = NewClosure function=f3
+    v17 = Call v1, -, v16
+    v18 = ToBoolean v17
+    Branch v18 -> taken b1(), notTaken b2()
+  b2():
+    Return v3
+}
+function f1 name="once" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="wrap" [isFreeName]
+    v2 = NewClosure function=f2
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f2 name="below" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f3 name="looped" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f4 name="pair" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f5 name="shared" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f6 name="inner" module=m0 syntax=[RunsOncePerClosure] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f7 name="other" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="wrap" [isFreeName]
+    v2 = NewClosure function=f5
+    v3 = Call v1, -, v2
+    v4 = NewClosure function=f6
+    v5 = Call v1, -, v4
+    Return v5
+}
+function f8 name="unmarked" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}

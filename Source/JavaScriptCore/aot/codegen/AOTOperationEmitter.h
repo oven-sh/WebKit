@@ -29,6 +29,8 @@ namespace Typed {
 class InlineCall;
 struct TypeTestPlan;
 
+using EmitterOfStubCall = void (*)(CCallHelpers&, StubCalls&, StubKey, OptionalIndex site);
+
 struct CallOptions {
     std::optional<uint32_t> immediate { };
     std::optional<NumberedImmediate> numberedImmediate { };
@@ -51,6 +53,7 @@ struct CallOptions {
     bool callerDelegates { false };
     bool rejectsOnThrow { false };
     bool returnsWord32 { false };
+    EmitterOfStubCall emitterOfStubCall { nullptr };
 };
 
 struct StubCallResult {
@@ -60,7 +63,7 @@ struct StubCallResult {
 
 class OperationEmitter : public PrimitiveEmitter {
 protected:
-    explicit OperationEmitter(CodeGenerator& generator)
+    ALWAYS_INLINE explicit OperationEmitter(CodeGenerator& generator)
         : OperationEmitter(generator, generator.inputs().program, generator.code().unit())
     {
     }
@@ -102,7 +105,7 @@ protected:
     Word32 int32InBox(Boxed);
     Integer integerOf(ValueID);
 
-    void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
+    ALWAYS_INLINE void define(const ValueContext& value, Operand result) { m_generator.define(value, result); }
     void defineNarrowed(const ValueContext&, Operand);
     void defineTest(const ValueContext& value, Condition result) { m_generator.defineTest(value, result); }
     void defineTestByBranching(const ValueContext&, NOESCAPE const Invocable<void(BranchTargets)> auto& branchOnTest);
@@ -162,7 +165,7 @@ protected:
     const AOT::CompileOptions& m_options;
 
 private:
-    OperationEmitter(CodeGenerator& generator, const CodeGenerationInputs& inputs, CodeUnit unit)
+    ALWAYS_INLINE OperationEmitter(CodeGenerator& generator, const CodeGenerationInputs& inputs, CodeUnit unit)
         : PrimitiveEmitter(generator)
         , m_generator(generator)
         , m_program(inputs.program)

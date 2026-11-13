@@ -55,7 +55,7 @@ struct SiteRecords {
     Vector<uint32_t> inlineCallSites;
     uint32_t numberOfSitesWithoutCode { 0 };
 
-    uint32_t addSite(const RecordedSite& site)
+    ALWAYS_INLINE uint32_t addSite(const RecordedSite& site)
     {
         if (positions.size() == positions.capacity()) [[unlikely]] {
             RecordedSite added = site;

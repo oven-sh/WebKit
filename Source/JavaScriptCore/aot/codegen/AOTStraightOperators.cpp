@@ -191,7 +191,7 @@ void StraightEmitter::generateOperator(const BodyValue& value)
         return;
     }
     case Opcode::ToThis:
-        callOperation(value, RuntimeOperation::ToThis, { value.valueOperand() });
+        callStub(value, AOT::toThis(), { value.valueOperand() });
         define(value);
         return;
     default:

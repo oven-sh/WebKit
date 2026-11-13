@@ -328,6 +328,37 @@ static BuiltinClassID classHandedOutByRampForStringOperands(const Function& func
     return function.has(FunctionFlags::IsAsync) ? BuiltinClasses::AsyncGenerator : BuiltinClasses::Generator;
 }
 
+static TypeID arrayExpectedOfStringMethod(Walker& walker, const BodyValue& call)
+{
+    if (call.opcode() != Opcode::Call || !call.thisValueOperand())
+        return { };
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = index.stripCasts(call.calleeOperand());
+    if (!read || index.isParameter(read) || index.opcodeOf(read) != Opcode::PropGet || index.value(read).isFreeName() || index.stripCasts(index.value(read).objectOperand()) != index.stripCasts(call.thisValueOperand()))
+        return { };
+    Reference receiver = walker.referenceOf(call.thisValueOperand());
+    TypeArena& types = walker.types();
+    if (!receiver || !receiver.isRecord() || !types.overlap(walker.typeOf(receiver), TypeTable::string))
+        return { };
+    PropertyKeyID key = index.value(read).key();
+    unsigned numberOfArguments = static_cast<unsigned>(call.argumentsOperands().size());
+    BuiltinID method = findMethodThatSomeClassGivesUnderKey(walker, walker.typeOf(receiver), key, numberOfArguments);
+    if (!method || method != findMethodThatSomeClassGivesUnderKey(walker, TypeTable::string, key, numberOfArguments))
+        return { };
+    BuiltinOperandTypes operands;
+    operands.receiver = TypeTable::string;
+    for (ValueID argument : call.argumentsOperands()) {
+        TypeID passed = typeProvenOrExpectedForStringOperands(walker, argument, call.id());
+        operands.arguments.append(!passed || types.isUninformative(passed) ? TypeID(TypeTable::string) : passed);
+    }
+    TypeID result = resultTypeOfReachableOverloads({ walker.program(), types, nullptr, TypeLevel::Expected }, method, BuiltinCallMode::Call, operands);
+    TypeID array = result && !isNeverType(result) ? types.withoutNullish(result) : TypeID();
+    if (!array || isNeverType(array) || !types.isSubset(array, types.builtinClass(BuiltinClasses::Array)))
+        return { };
+    walker.count(StatisticID::ArraysExpectedOfSplits);
+    return result;
+}
+
 TypeID typeExpectedOfResultOfCall(Walker& walker, const BodyValue& call)
 {
     Opcode opcode = call.opcode();
@@ -345,7 +376,7 @@ TypeID typeExpectedOfResultOfCall(Walker& walker, const BodyValue& call)
 
     BuiltinID builtin = builtinExpectedToBeCalledForStringOperands(walker, call);
     if (!builtin)
-        return { };
+        return arrayExpectedOfStringMethod(walker, call);
     const BuiltinTable& table = program.builtins();
     builtin = table.canonicalID(builtin);
     BuiltinCallMode mode = opcode == Opcode::Construct ? BuiltinCallMode::Construct : BuiltinCallMode::Call;

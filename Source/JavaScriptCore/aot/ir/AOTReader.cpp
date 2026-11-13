@@ -314,6 +314,10 @@ void Reader::readLayouts()
                 continue;
             if (TypeID expected = m_types->typeExpectedBesideViews(fields[field].declared.type))
                 declared.expect(ExpectedType(expected));
+            else if (declared.isExpected() && declared.writtenFlags().contains(PositionFlags::IsFromCompiler)) {
+                if (TypeID made = m_types->typeOfRecordMadeForField(fields[field].declared.type))
+                    declared.expect(ExpectedType(made));
+            }
         }
     });
 }

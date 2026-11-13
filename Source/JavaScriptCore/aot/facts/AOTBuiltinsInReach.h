@@ -44,11 +44,15 @@ const FieldsOfNumbers& fieldsReadAsIntegersIn(const LooksAtBodies&);
 const NamesOfModules& namesReadAsIntegersIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsReadForArithmeticIn(const LooksAtBodies&);
 const FieldsOfNumbers& fieldsStoredWhatIsNoInt32In(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsCopiedByNameIn(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsStoredUntypedValuesIn(const LooksAtBodies&);
 const FieldsOfNumbers& initializerFields(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsFilledByEveryInitializerIn(const LooksAtBodies&);
 BitVector initializerMethodsIn(const LooksAtBodies&, const Program&);
-BitVector functionsCalledInLoopsIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops);
-BitVector functionsCalledInLoopsOfOwnFileIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector variablesCutToInt32In(const LooksAtBodies&, const Program&);
+BitVector functionsCalledInLoopsIn(const LooksAtBodies&, const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, BitVector& keysCalledInLoops, bool& elementsAreCalledInLoops, BitVector& calledInLoopsOfOwnFile);
 BitVector constructorsCalledInLoopsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
+BitVector constructorsCalledInNestedIterationsIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
 BitVector mixedClassesConstructedIn(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
 BitVector functionsCalledByValueInLoopsIn(const Program&, const ThinSummaries&, const LinkTables&, BitVector& functionsInElements);
 BitVector comparatorCallees(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
@@ -56,11 +60,16 @@ void markLiteralsStoredByCallees(ThinSummaries&, const LinkTables& linked, const
 struct FunctionsDoneInIterations {
     BitVector functions;
     BitVector inNestedIterations;
+    BitVector reachedByRecursion;
+    BitVector copiedInRecursion;
 };
 FunctionsDoneInIterations findFunctionsFinishedInIterations(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held);
 FieldsOfNumbers fieldsUsedInProductsIn(const LooksAtBodies&, const BitVector& functionsCalledInLoops);
 FieldsOfNumbers fieldsStoredCountsIn(const LooksAtBodies&, const Program&, const LinkTables& linked);
 const BitVector& keysStoredWhatIsNoInt32In(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsStoredNullishIn(const LooksAtBodies&);
+const FieldsOfNumbers& fieldsStoredBooleansAloneIn(const LooksAtBodies&);
+FieldsOfNumbers fieldsOfPositionsIn(const LooksAtBodies&);
 
 class BuiltinsInReach {
     WTF_MAKE_NONCOPYABLE(BuiltinsInReach);
@@ -104,9 +113,14 @@ public:
     struct NameOnHolder {
         BuiltinID holder;
         PropertyKeyID key;
+        bool isLocked { false };
         friend bool operator==(const NameOnHolder&, const NameOnHolder&) = default;
     };
     Vector<NameOnHolder> takeNamesLaidAfterAll() { return std::exchange(m_namesLaidAfterAll, { }); }
+    std::span<const NameOnHolder> namesTakenForUnlaid() const LIFETIME_BOUND { return m_namesTakenForUnlaid.span(); }
+    NameOnHolder nameTakenForUnlaid(BuiltinID canonicalHolder, PropertyKeyID) const;
+    bool canLockAbsentName(BuiltinID canonicalHolder, PropertyKeyID) const;
+    bool needsAbsentNameLock(const NameOnHolder&) const;
 
     bool mayBeHandedWhatIsNoTextNumberOrBoolean(BuiltinID canonical) const;
     bool hasCallThatMayRunCode(BuiltinID canonical) const;
@@ -127,13 +141,14 @@ public:
     bool objectsMayHaveMethodCalledWithStartupLoads() const;
 
     bool takeForConstant(BuiltinID member);
-    void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID);
+    void takeForUnlaid(BuiltinID canonicalHolder, PropertyKeyID, bool isLocked);
 
     void noteWrite(BuiltinID holder, PropertyKeyID, bool onlyDeletes = false);
     void noteHandedWhatIsNoTextNumberOrBoolean(BuiltinID holder);
     void noteWriteThroughLostBuiltins(PropertyKeyID, bool isByFileOfProduct);
     void noteWriteThroughUnseenByProgram(PropertyKeyID, bool isByFileOfProduct);
     void noteNameWrittenThroughUnseenByLibrary(PropertyKeyID);
+    void noteWriteThroughUnseenInSight(PropertyKeyID);
     void noteReadThroughLostBuiltins(PropertyKeyID);
     void noteClimbFromLostBuiltins();
     void noteClimbFromUnseenObjects();
@@ -160,7 +175,8 @@ public:
     LookupsPastProgramObjects takeLookups();
     void putBackLookups(const LookupsPastProgramObjects&);
 
-    bool mayHaveNameLaid(BuiltinID canonicalHolder, PropertyKeyID) const;
+    bool mayHaveNameLaid(const NameOnHolder&) const;
+    bool programMayLayName(const NameOnHolder&) const;
     bool mayStillBeTakenForConstant(BuiltinID member) const;
 
 private:

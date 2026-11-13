@@ -1,6 +1,6 @@
 # A call through the method table mentions an entry for every method of the family, and a family is all that lies under one name. `C.m` lies under the name too, but one call alone enters it, straight:
 # it waits for that caller and takes what it leaves, and nothing leads to it from whoever calls `m` on something else. So it has no row, and no entry.
-# class A { m() {} }  class B1 extends A { m() {} }  class B2 extends A { m() {} }  class C { m(n) { return n; } }  function f(x) { return x.m(); }  f(new A); f(new B1); f(new B2);  new C().m(1);
+# class A { m() {} }  class B1 extends A { m() {} }  class B2 extends A { m() {} }  class C { m(n) { return n; } }  function f(x) { return x.m(); }  f(new A); f(new B1); f(new B2);  new C().m(hidden);
 # RUN: link functions mechanisms=all
 # CHECK: function f2 {{*}} in-queue-from-start
 # CHECK: function f9 callers-known one-callee {{*}} takes-arrivals
@@ -50,9 +50,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v28 = Call v22, -, v27 calleeName="f" [isNeverInlined]
     v29 = Construct v21
     v30 = PropGet v29 key="m"
-    v31 = Integer integer=1
-    v32 = Call v30, v29, v31 calleeKey="m" [isNeverInlined]
-    Return v32
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="hidden" [isFreeName]
+    v33 = Call v30, v29, v32 calleeKey="m" [isNeverInlined]
+    Return v33
 }
 function f1 name="A" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
   b0(v0: anything):

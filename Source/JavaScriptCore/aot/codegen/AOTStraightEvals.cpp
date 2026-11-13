@@ -18,11 +18,19 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OpcodeSet StraightEmitter::opcodesOfEvals()
 {
-    return { Opcode::DirectEval };
+    return { Opcode::DirectEval, Opcode::DeclareGlobal, Opcode::CheckEvaluation };
 }
 
 void StraightEmitter::generateEval(const BodyValue& value)
 {
+    if (value.opcode() == Opcode::DeclareGlobal) {
+        callOperation(value, RuntimeOperation::DeclareGlobal, { StraightArgument::number(mentionOfName(value.key())), StraightArgument::word(static_cast<uint32_t>(value.step())), StraightArgument::word(value.isFunction()) });
+        return;
+    }
+    if (value.opcode() == Opcode::CheckEvaluation) {
+        callOperation(value, RuntimeOperation::CheckEvaluation, { }, { .calledBuiltin = value.ofFunction() ? Builtins::Function : Builtins::Eval });
+        return;
+    }
     if (value.opcode() != Opcode::DirectEval) {
         fail(value);
         return;

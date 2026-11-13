@@ -268,7 +268,7 @@ static size_t numberOfFieldsWrittenForEscapeAnalysis(const Walker& walker, const
         return SIZE_MAX;
     DataID data = allocation.as<Opcode::Data>().data();
     const DataNode::Object* constant = data ? walker.program().at(data).root.tryAs<DataNode::Object>() : nullptr;
-    return constant && constant->members.size() != made.fields().size() ? constant->members.size() : SIZE_MAX;
+    return constant ? constant->members.size() : SIZE_MAX;
 }
 
 static_assert(allocationsOfEscapeAnalysis.contains(Opcode::NewArrayLike));
@@ -492,7 +492,7 @@ Reference allocateFilledObject(Walker& walker, Reference returned, Origin origin
         return returned;
     noteFreshObject(walker, filled, fields->size());
     notePrototypeOfConstruction(walker, filled, layout);
-    if (bearsNoMark)
+    if (bearsNoMark && (hasLayoutPrototype || !planned.marksOtherPrototypes))
         walker.state().recordCellFacts(filled, CellFact::BearsNoMark);
     if (hasLayoutPrototype)
         walker.state().recordCellFacts(filled, CellFact::HasLayoutPrototype);
@@ -513,6 +513,22 @@ static bool isAllocatedAlikeEverywhere(Walker& walker, LayoutID layout)
     return kind == LayoutKind::Record || (kind == LayoutKind::Instance && walker.facts().isEvaluatedAtMostOnce(declared));
 }
 
+static ArrayStorage numericStorageOfElements(Walker& walker, std::span<const Reference> elements)
+{
+    bool areInt32 = true;
+    bool mayHaveFraction = false;
+    for (Reference element : elements) {
+        TypeID proven = element ? walker.typeOf(element) : TypeID();
+        if (!proven || !walker.types().at(proven).isNumber())
+            return ArrayStorage::Other;
+        areInt32 &= walker.types().at(proven).isInt32();
+        mayHaveFraction |= !!(walker.types().at(proven).primitives & Primitive::Number & ~Primitive::NumberWithoutFraction);
+    }
+    if (elements.empty())
+        return ArrayStorage::Other;
+    return areInt32 ? ArrayStorage::Int32 : mayHaveFraction ? ArrayStorage::Double : ArrayStorage::Other;
+}
+
 static Draft draftOfMergeableObject(Walker& walker, const MergeableObject& merged, Origin origin)
 {
     origin.isTailCall = false;
@@ -521,9 +537,13 @@ static Draft draftOfMergeableObject(Walker& walker, const MergeableObject& merge
         TypeID contents = written ? written->writtenContentsAt(walker.program().builtins(), ContentsSlot::Element) : TypeID();
         Draft allocation(Opcode::NewArray, origin);
         allocation.standsForNoValueOfInput = true;
-        walker.chooseConservativeFields(allocation);
         allocation.setContents(contents ? contents : TypeID(TypeTable::anything));
         allocation.setVariadicOperands(merged.values.span());
+        walker.chooseConservativeFields(allocation);
+        if (walker.has(Mechanism::TypedOperations) && allocation.arrayStorage() == ArrayStorage::Other && (!contents || walker.types().at(contents).isAnything()))
+            allocation.setArrayStorage(numericStorageOfElements(walker, merged.values.span()));
+        if (allocation.arrayStorage() != ArrayStorage::Other)
+            walker.count(StatisticID::MergedLiteralsAllocatedNumeric);
         return allocation;
     }
     Draft allocation(Opcode::NewObject, origin);
@@ -1090,11 +1110,21 @@ static std::optional<FieldReference> fieldThatDeleteClearsInFreshObject(Walker& 
     return field;
 }
 
+static std::optional<uint32_t> fieldsRemovedFromFreshRecord(Walker& walker, Reference object)
+{
+    Reference removed = walker.state().element(object, keyOfPropertiesAsListed());
+    if (!removed || removed == object || !removed.isConstant() || walker.code().at(removed.id()).opcode != Opcode::Integer)
+        return std::nullopt;
+    return static_cast<uint32_t>(walker.code().at(removed.id()).integer());
+}
+
 static Reference freshRecordThatHoldsNothingButFields(Walker& walker, Reference name)
 {
     Reference object = freshObjectNamedBy(walker, name);
     WalkState& state = walker.state();
-    if (!object || !state.shapeOf(object) || !state.orderWordOf(object) || !state.element(object, keyOfPropertiesAsListed()))
+    if (!object || !state.shapeOf(object) || !state.element(object, keyOfPropertiesAsListed()))
+        return { };
+    if (!state.orderWordOf(object) && !fieldsRemovedFromFreshRecord(walker, object))
         return { };
     const Operation& made = walker.code().at(object.id());
     if (made.opcode != Opcode::NewObject || walker.program().at(made.layout()).kind != LayoutKind::Record || !walker.plan().slots().layout(made.layout()).appendedKeys.isEmpty())
@@ -1102,6 +1132,25 @@ static Reference freshRecordThatHoldsNothingButFields(Walker& walker, Reference 
     if (!orderWordTellsOwnKeysOf(walker, made.layout()))
         return { };
     return state.cellFacts(object).containsAll({ CellFact::NotFrozen, CellFact::IsExtensible, CellFact::NoFieldOutsideSlot }) ? object : Reference();
+}
+
+static constexpr size_t maxFieldsFollowedThroughRemovals = 31;
+
+std::optional<Vector<FieldIndex, 8>> remainingFieldsOfFreshRecord(Walker& walker, Reference name)
+{
+    if (!walker.state().holdsFreshObjects())
+        return std::nullopt;
+    Reference object = freshRecordThatHoldsNothingButFields(walker, name);
+    std::optional<uint32_t> removed = object && !walker.state().orderWordOf(object) ? fieldsRemovedFromFreshRecord(walker, object) : std::nullopt;
+    if (!removed)
+        return std::nullopt;
+    const Operation& made = walker.code().at(object.id());
+    Vector<FieldIndex, 8> remaining;
+    for (size_t place = 0; place < made.fields().size(); ++place) {
+        if (place >= maxFieldsFollowedThroughRemovals || !(*removed >> place & 1))
+            remaining.append(made.fields()[place]);
+    }
+    return remaining;
 }
 
 static bool followDeleteOffFreshObject(Walker& walker, const BodyValue& removal)
@@ -1245,9 +1294,21 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
         if (!cleared)
             return false;
         WalkState& state = walker.state();
+        const Operation& made = walker.code().at(written.object.id());
+        std::optional<uint32_t> orderWord = state.orderWordOf(written.object);
+        std::optional<PlacedAllocation> placed = orderWord ? walker.plan().allocation(walker.program(), made.layout(), made.fields()) : std::nullopt;
+        bool isAsMade = placed && *orderWord == placed->orderWord && state.element(written.object, keyOfPropertiesAsListed()) == written.object;
+        std::optional<uint32_t> removed = isAsMade ? std::optional<uint32_t>(0) : orderWord ? std::nullopt : fieldsRemovedFromFreshRecord(walker, written.object);
+        size_t place = std::ranges::find(made.fields(), cleared->field) - made.fields().begin();
+        Reference removedWithThis;
+        if (removed && place < std::min(made.fields().size(), maxFieldsFollowedThroughRemovals)) {
+            Draft places(Opcode::Integer);
+            places.setInteger(static_cast<int64_t>(*removed | 1u << place));
+            removedWithThis = walker.constant(WTF::move(places));
+        }
+        state.noteElement(written.object, keyOfPropertiesAsListed(), removedWithThis);
         state.noteSlot(written.object, *cleared, walker.constant(Draft(Opcode::Absent)));
         state.noteOrderWord(written.object, std::nullopt);
-        state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
         state.invalidateCellFacts(written.object, CellFact::BearsNoMark);
         return true;
     }
@@ -1303,8 +1364,11 @@ static bool followStoreIntoFreshObject(Walker& walker, const Draft& store, const
     state.noteSlot(written.object, *field, value);
     if (walker.code().at(written.object.id()).opcode == Opcode::NewObject && walker.runsInIterations())
         walker.noteStoreIntoUnmadeRecord();
-    if (opcode == Opcode::PutSlotOrAdd)
+    if (opcode == Opcode::PutSlotOrAdd) {
         state.noteOrderWord(written.object, store.orderWordAfter() ? std::optional<uint32_t>(store.orderWordAfter()->value()) : std::nullopt);
+        if (fieldsRemovedFromFreshRecord(walker, written.object))
+            state.noteElement(written.object, keyOfPropertiesAsListed(), Reference());
+    }
     return true;
 }
 

@@ -134,7 +134,7 @@ ArrayStorage arrayStorageOfData(const Program& program, const DataNode::Array& a
 
 bool isShortStringList(const DataNode::Array& array)
 {
-    return !array.elements.isEmpty() && array.elements.size() <= mostElementsComparedInLoop && std::ranges::all_of(array.elements, [](const DataNode& element) {
+    return !array.elements.isEmpty() && array.elements.size() <= mostWordsSwitched && std::ranges::all_of(array.elements, [](const DataNode& element) {
         return element.is<DataNode::String>();
     });
 }

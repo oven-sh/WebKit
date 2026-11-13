@@ -94,11 +94,17 @@ bool buildCallByOneRowForStrings(Walker& walker, const CallByOneRow& call)
     case InlineBuiltin::StringLastIndexOf:
     case InlineBuiltin::StringIncludes:
         return buildSearchInString(walker, call);
+    case InlineBuiltin::ArrayIndexOf:
+    case InlineBuiltin::ArrayIncludes:
+        return buildSearchOfWords(walker, call);
     case InlineBuiltin::StringSplit:
         return buildSplitInParts(walker, call);
     case InlineBuiltin::CallNumberConstructor:
     case InlineBuiltin::ParseInt:
         return buildNumberOfPieceByCall(walker, call);
+    case InlineBuiltin::CallStringConstructor:
+    case InlineBuiltin::NumberToString:
+        return buildMeasuredIntegerString(walker, call);
     case InlineBuiltin::MapGet:
         return buildLookupOfPieceInMap(walker, call);
     case InlineBuiltin::MapHas:

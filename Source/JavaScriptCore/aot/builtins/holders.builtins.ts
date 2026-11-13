@@ -530,13 +530,14 @@ export default b.declarations(
   }),
   b.class("%RegExpStringIterator%", {
     ...lockedIteratorColumns,
+    jsType: "JSRegExpStringIteratorType",
     proto: {
       next: {
-        returns: hostIteratorResult,
+        returns: iteratorResult,
         capability: "js",
         throws: true,
         uses: { this: advances },
-        implementation: b.hostCall,
+        implementation: b.compiled("RegExpStringIteratorPrototype", "next"),
       },
     },
   }),

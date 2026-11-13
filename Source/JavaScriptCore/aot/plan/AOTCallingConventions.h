@@ -44,6 +44,7 @@ struct FunctionConvention {
     bool coroutineNeverSuspends : 1 { false };
     bool generatorNeverYields : 1 { false };
     bool callEntryWalksBody : 1 { false };
+    bool returnsCapture : 1 { false };
     uint8_t borrowedArguments : 2 { 0 };
     uint16_t numberOfEntryParameters { 0 };
     uint16_t numberOfResults { 1 };
@@ -116,6 +117,31 @@ struct CallingConventionParts {
     MethodTablePlan methodTable;
 };
 
+struct ScalarizedResult {
+    FunctionID function;
+    LayoutID layout;
+    Vector<uint32_t, 8> fields;
+    Vector<Representation, 8> forms;
+};
+using ScalarizedResults = Vector<ScalarizedResult>;
+
+struct PlaceOfScalar {
+    uint32_t field { 0 };
+    LayoutID held;
+    uint32_t fieldOfHeld { 0 };
+};
+
+struct ScalarizedParameter {
+    FunctionID function;
+    uint32_t entryParameter { 0 };
+    uint32_t firstScalar { 0 };
+    LayoutID layout;
+    Vector<uint32_t, 8> fields;
+    Vector<PlaceOfScalar, 8> places;
+    Vector<Representation, 8> forms;
+};
+using ScalarizedParameters = Vector<ScalarizedParameter>;
+
 static constexpr unsigned maxArgumentsOfTableCall = 4;
 
 class CallingConventions {
@@ -152,6 +178,36 @@ public:
         return m_parts.typesBehindGuards[convention.firstTypeBehindGuard + entryParameter];
     }
     JS_EXPORT_PRIVATE void setParameterGuards(std::span<const ParameterGuardPlan>);
+    JS_EXPORT_PRIVATE void setScalarizedResults(ScalarizedResults&&);
+    JS_EXPORT_PRIVATE void setScalarizedParameters(const Program&, ScalarizedParameters&&);
+    std::span<const ScalarizedParameter> scalarizedParametersOf(FunctionID id) const LIFETIME_BOUND
+    {
+        if (!m_functionsWithScalarizedParameters.get(id.index())) [[likely]]
+            return { };
+        auto found = std::ranges::equal_range(m_scalarizedParameters, id, { }, &ScalarizedParameter::function);
+        return { found.begin(), found.end() };
+    }
+    bool isScalarizedParameter(FunctionID id, uint32_t entryParameter) const
+    {
+        return std::ranges::contains(scalarizedParametersOf(id), entryParameter, &ScalarizedParameter::entryParameter);
+    }
+    bool takesScalars(CodeUnit unit) const { return m_functionsWithScalarizedParameters.get(unit.function.index()) && unit.role == CodeRole::Body; }
+    uint32_t numberOfScalarsTaken(CodeUnit unit) const
+    {
+        if (!takesScalars(unit)) [[likely]]
+            return 0;
+        uint32_t number = 0;
+        for (const ScalarizedParameter& parameter : scalarizedParametersOf(unit.function))
+            number += parameter.forms.size();
+        return number;
+    }
+    const ScalarizedResult* findScalarizedResult(FunctionID id) const LIFETIME_BOUND
+    {
+        if (!m_functionsWithScalarizedResult.get(id.index())) [[likely]]
+            return nullptr;
+        return &*std::ranges::lower_bound(m_scalarizedResults, id, { }, &ScalarizedResult::function);
+    }
+    bool returnsScalars(CodeUnit unit) const { return m_functionsWithScalarizedResult.get(unit.function.index()) && returnsAsDeclared(unit.role, of(unit.function)); }
     JS_EXPORT_PRIVATE void setModuleStarts(const Program&, const BitVector& bodiesWithModuleStart);
     JS_EXPORT_PRIVATE void setRemovedCaptures(const Program&, const PromotedEnvironments&);
     CodeUnit closureEntryOf(FunctionID id) const { return { id, CodeRole::GenericCallEntry }; }
@@ -188,6 +244,8 @@ public:
 
     ALWAYS_INLINE Representation parameterRepresentation(const Program& program, CodeUnit unit, unsigned parameterIndex) const
     {
+        if (takesScalars(unit) && parameterIndex >= of(unit.function).numberOfEntryParameters) [[unlikely]]
+            return formOfScalar(unit, parameterIndex);
         if (takesEntryParametersAsListed(unit.role) && !m_parts.formsOfEntryParameters.isEmpty())
             return formOfEntryParameterAsListed(program, m_parts.conventions[unit.function.index()], unit.role, parameterIndex);
         return parameterRepresentationByRole(program, unit, parameterIndex);
@@ -197,7 +255,7 @@ public:
         const FunctionConvention& convention = of(unit.function);
         return returnsAsDeclared(unit.role, convention) ? convention.numberOfResults : 1;
     }
-    Representation resultRepresentation(CodeUnit unit, unsigned resultIndex = 0) const
+    ALWAYS_INLINE Representation resultRepresentation(CodeUnit unit, unsigned resultIndex = 0) const
     {
         const FunctionConvention& convention = of(unit.function);
         if (returnsAsDeclared(unit.role, convention)) {
@@ -257,6 +315,7 @@ private:
             return form;
         return formBehindGuard(program, convention, parameterIndex);
     }
+    JS_EXPORT_PRIVATE Representation formOfScalar(CodeUnit, unsigned parameterIndex) const;
     JS_EXPORT_PRIVATE Representation formBehindGuard(const Program&, const FunctionConvention&, unsigned parameterIndex) const;
     JS_EXPORT_PRIVATE Representation parameterRepresentationByRole(const Program&, CodeUnit, unsigned parameterIndex) const;
     JS_EXPORT_PRIVATE bool existsBehindUnitsOfFunctions(CodeUnit) const;
@@ -273,6 +332,10 @@ private:
     FunctionConvention m_conventionOfNoFunction;
     BitVector m_functionsWithGenericEntry;
     BitVector m_functionsWithFusedCallEntry;
+    ScalarizedResults m_scalarizedResults;
+    BitVector m_functionsWithScalarizedResult;
+    ScalarizedParameters m_scalarizedParameters;
+    BitVector m_functionsWithScalarizedParameters;
     TailCallPlan m_tailCalls;
     StackTestPlan m_stackTests;
 };

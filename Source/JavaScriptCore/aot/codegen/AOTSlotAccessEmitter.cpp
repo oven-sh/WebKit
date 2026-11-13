@@ -349,6 +349,14 @@ Operand SlotAccessEmitter::loadFilledSlot(const ValueContext& value, CellPointer
     return emitter<SlotEmitter>().loadSlot(cell, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access), typeOf(value.id()));
 }
 
+static bool isOnlyRequiredCoercible(const Code& code, const ValueContext& value, const Type& type)
+{
+    if (code.useCountOf(value.id()) != 1 || type.primitives & ~Primitive::UndefinedOrNull)
+        return false;
+    ValueID user = code.onlyUserOf(value.id());
+    return user && code.at(user).opcode == Opcode::RequireObjectCoercible;
+}
+
 Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPointer cell, const FieldAccess& access)
 {
     SlotEmitter& slots = emitter<SlotEmitter>();
@@ -361,9 +369,20 @@ Operand SlotAccessEmitter::loadSlotOrUndefined(const ValueContext& value, CellPo
         build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
         return loadSlot(cell, access);
     }
+    bool mayRecheckAnswers = emitter<AccessEmitter>().verifiesFastPathAnswers(value->key()) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly);
+    if (representation == SlotRepresentation::OptionalCell32 && value.representation() == Representation::Cell32 && !access.slot.isOutOfLine() && !checksWhatSlotsHold && !mayRecheckAnswers && isOnlyRequiredCoercible(m_code, value, typeOf(value.id()))) {
+        build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
+        return loadSlot(cell, access);
+    }
     bool holdsMarkedNumber = representation == SlotRepresentation::OptionalDouble || representation == SlotRepresentation::OptionalInt64;
     bool mayRecheckResults = AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckWalkAtRunTime) || AOT::hasFlag(build().options().testing, Wire::TestingSwitch::CheckBoundsInEmittersOnly);
     if (holdsMarkedNumber && value.representation() == Typed::representationOf(representation) && !access.slot.isOutOfLine() && !checksWhatSlotsHold && !mayRecheckResults && generator().isGuardedByUndefinedTest(value)) {
+        build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
+        return loadSlot(cell, access);
+    }
+    if (representation == SlotRepresentation::OptionalCell32 && value.representation() == Representation::JSValue && !access.slot.isOutOfLine() && !checksWhatSlotsHold)
+        return emitter<ConversionEmitter>().decodeEmptyAsUndefined(loadSlot(cell, access).as<NarrowReference>());
+    if (representation == SlotRepresentation::OptionalDouble && value.representation() == Representation::OptionalDouble && !access.slot.isOutOfLine() && !checksWhatSlotsHold && !mayRecheckResults && !emitter<AccessEmitter>().verifiesFastPathAnswers(value->key()) && generator().takesNothingForNaN(value)) {
         build().statistics().count(StatisticID::EmptySlotConversionsSkipped);
         return loadSlot(cell, access);
     }
@@ -408,6 +427,65 @@ static bool everyMemberWithFieldKeepsSlotFilled(const Program& program, const Fa
         bool takesEveryValue = slot.representation == SlotRepresentation::JSValue && (!slot.type || program.at(slot.type).isAnything());
         return cell && cell->isFilledAtEveryRead && (takesEveryValue || (slot.type && slot.everyStoreFits));
     });
+}
+
+void SlotAccessEmitter::loadFieldsTogether(const ValueContext& value, CellPointer object, const FieldAccess& access)
+{
+    SlotEmitter& slots = emitter<SlotEmitter>();
+    auto isInExtension = [&](const FieldAccess& other) {
+        return slotAccessFindsSlotInEveryReceiver(other) && !other.findsOffsetByShape && other.slot.isOutOfLine() && !other.slot.holdsAccessor && representsAbsentAsZero(other.slot.representation) && other.extensionWord.offset == access.extensionWord.offset;
+    };
+    if (!isInExtension(access) || !slots.readsExtensionInLine(access.slot, locationOfSlotAccess(access), access.extensionWord))
+        return;
+    Vector<SlotEmitter::FieldInExtension, 8> fields;
+    fields.append({ access.slot, locationOfSlotAccess(access) });
+    if (slots.findFieldInExtension(object, fields[0]))
+        return;
+    uint32_t lastOffset = access.slot.offset;
+    static constexpr OpcodeSet reads { Opcode::GetSlot, Opcode::GetSlotOrUndefined, Opcode::IsSlotFilled };
+    auto visit = [&](ValueID id) {
+        const Operation& operation = m_code.at(id);
+        if (!reads.contains(operation.opcode)) {
+            EffectTraits traits = operation.traits();
+            return !traits.mayWriteObservableState() && !traits.mayRunOtherCode() && !traits.mayCollect();
+        }
+        if (operation.objectOperand() != value->objectOperand() || operation.level() != KnowledgeLevel::Proven)
+            return true;
+        FieldAccess other = fieldAccessFor(operation.key(), value->receivers(), false);
+        if (operation.receivers() != value->receivers()) {
+            FieldAccess own = fieldAccessFor(operation.key(), operation.receivers(), false);
+            if (!isInExtension(own) || own.slot.offset != other.slot.offset || own.slot.representation != other.slot.representation)
+                return true;
+        }
+        if (!isInExtension(other) || std::ranges::any_of(fields, [&](const SlotEmitter::FieldInExtension& field) { return field.slot.offset == other.slot.offset; }))
+            return true;
+        fields.append({ other.slot, locationOfSlotAccess(other) });
+        lastOffset = std::max(lastOffset, other.slot.offset);
+        return true;
+    };
+    auto nextOnPath = [&](BlockID block) {
+        const Terminator& terminator = m_code.at(block).terminator;
+        BlockID next;
+        for (uint32_t index = 0; index < terminator.numberOfEdges; ++index) {
+            BlockID to = m_code.at(terminator.edge(index)).to;
+            if (m_code.at(to).frequency != BlockFrequency::Normal)
+                continue;
+            if (next)
+                return BlockID();
+            next = to;
+        }
+        return next && generator().onlyPredecessorOf(next) == block ? next : BlockID();
+    };
+    BlockID block = value.block();
+    std::span<const ValueID> behind = m_code.valuesOf(block);
+    behind = behind.subspan(std::ranges::find(behind, value.id()) - behind.begin() + 1);
+    while (std::ranges::all_of(behind, visit) && (block = nextOnPath(block)))
+        behind = m_code.valuesOf(block);
+    if (fields.size() < 2 || granuleOf(lastOffset) >= 2 * fields.size())
+        return;
+    build().statistics().count(StatisticID::ExtensionReadsGrouped, fields.size());
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    slots.loadFieldsInExtension(object, access.extensionWord, fields.span());
 }
 
 Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell, const FieldAccess& access, bool absentIsUndefined)
@@ -484,7 +562,9 @@ void SlotAccessEmitter::generateGetSlot(const ValueContext& value)
     }
     CellPointer object = in<CellPointer>(value->objectOperand());
     unsigned firstNewOperation = m_out.procedure().numberOfOperations();
-    Operand read = readSlot(value, object, fieldAccessOf(value, false), false);
+    FieldAccess access = fieldAccessOf(value, false);
+    loadFieldsTogether(value, object, access);
+    Operand read = readSlot(value, object, access, false);
     ValueID onlyUser = m_code.onlyUserOf(value.id());
     define(value, read.representation == Representation::Int64 ? noteIntegerAddedToInSlot(m_out, read, typeOf(value.id()), firstNewOperation, onlyUser && allSums.contains(opcodeOf(onlyUser))) : read);
     askObjectAgainWhatReadAnswered(value, object, read, false);
@@ -548,7 +628,9 @@ void SlotAccessEmitter::generateGetSlotOrUndefined(const ValueContext& value)
         return;
     }
     CellPointer object = in<CellPointer>(value->objectOperand());
-    Operand read = readSlot(value, object, fieldAccessOf(value, false), true);
+    FieldAccess access = fieldAccessOf(value, false);
+    loadFieldsTogether(value, object, access);
+    Operand read = readSlot(value, object, access, true);
     askObjectAgainWhatReadAnswered(value, object, read, true);
     define(value, read);
 }
@@ -993,6 +1075,7 @@ CellPointer SlotAccessEmitter::newGetterSetter(const ValueContext& context, Valu
         CellPointer pair = emitter<CellAllocationEmitter>().allocateCellWithHeader(InlineAllocation::GetterSetter, hasNoCell);
         m_out.storePtr(getter.value(), m_out.address(fields, pair.value(), GetterSetter::offsetOfGetter()));
         m_out.storePtr(setter.value(), m_out.address(fields, pair.value(), GetterSetter::offsetOfSetter()));
+        m_out.store64(m_out.int64Zero, m_out.address(fields, pair.value(), GetterSetter::offsetOfReturnedCapture()));
         emitter<BarrierEmitter>().fenceAfterInitialization();
         join.add(pair);
     }
@@ -1147,6 +1230,12 @@ static std::optional<KeyOrderContinuation> findSlotContinuationOfEveryMember(con
     return common;
 }
 
+Condition SlotAccessEmitter::hasOrderAndShapeWords(CellPointer cell, Word32 shapeWord, uint64_t words)
+{
+    Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOf(cell);
+    return equal(bitOr(bitXor(orderWord, word32(static_cast<int32_t>(words))), bitXor(shapeWord, word32(static_cast<int32_t>(words >> 32)))), word32(0));
+}
+
 std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPointer cell, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys)
 {
     const ShapeTable& shapes = m_plan.shapes();
@@ -1167,10 +1256,9 @@ std::optional<KeyOrderStep> SlotAccessEmitter::testLikeliestKeyOrderStep(CellPoi
         if (!continuation)
             continue;
         uint64_t wordsBefore = static_cast<uint64_t>(AOT::shapeWordOf(shapes.generalShapeOf(member))) << 32 | continuation->orderWordBefore;
-        Integer words(m_out.load64(m_out.address(m_heaps.AOTObject_orderWord, cell.value(), offsetOfOrderWord)));
-        if (m_plan.layout(member).mayBearMark)
-            words = bitOr(words, integer(static_cast<int64_t>(orderAndShapeWordsAreUnmarked)));
-        return KeyOrderStep { equal(words, integer(static_cast<int64_t>(wordsBefore))), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
+        ShapeTestEmitter& shapeTests = emitter<ShapeTestEmitter>();
+        Word32 shapeWord = m_plan.layout(member).mayBearMark ? shapeTests.shapeWordOf(cell) : shapeTests.shapeWordWithMarkOf(cell);
+        return KeyOrderStep { hasOrderAndShapeWords(cell, shapeWord, wordsBefore), word32(static_cast<int32_t>(continuation->orderWordAfter)) };
     }
     return std::nullopt;
 }
@@ -1252,7 +1340,7 @@ void SlotAccessEmitter::listFieldAfterComputedKeys(const ValueContext& value, Ce
     auto words = [&](LValue base, const Machine::AbstractHeap& heap, ptrdiff_t offset) {
         return Integer(m_out.load64(m_out.address(heap, base, offset)));
     };
-    continueIf(equal(words(cell.value(), m_heaps.AOTObject_orderWord, offsetOfOrderWord), integer(static_cast<int64_t>(wordsBefore))));
+    continueIf(hasOrderAndShapeWords(cell, emitter<ShapeTestEmitter>().shapeWordWithMarkOf(cell), wordsBefore));
     Word32 numberOfExtraKeys(m_out.load16ZeroExt32(m_out.address(loadStructure(cell).value(), m_heaps.AOTCompiledStructure_numberOfExtraKeys)));
     continueIf(equal(numberOfExtraKeys, word32(static_cast<int32_t>(m_numberOfComputedKeys))));
     LValue runs = loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.keyOrderRuns)).value();

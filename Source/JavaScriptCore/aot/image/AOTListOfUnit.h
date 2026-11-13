@@ -87,7 +87,7 @@ public:
         }
         return *this;
     }
-    ListOfUnit& operator=(ListOfUnit&& other)
+    ALWAYS_INLINE ListOfUnit& operator=(ListOfUnit&& other)
     {
         if (this != &other) {
             release();

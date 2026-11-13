@@ -64,3 +64,5 @@ operation ResolveDynamic (specifier: Any/Converted, referrer: Module(Referrer)) 
 
 family Eval AsRead..Placed
 operation DirectEval (evalScope: EvalScope, text: Any/returns, thisValue: Any/retains, newTarget?: Any/retains, environments...: EvalOperand/retains) -> unknown ; unknownCode ; raises = EvaluatesText ; boundTo = Frame ; runtime = DirectEval ; flow = Unsound ; flowRule = Module ; form = Runtime
+operation DeclareGlobal (key: PropertyKey, step: GlobalDeclarationStep) [isFunction] -> none ; unknownCode ; runtime = DeclareGlobal ; flow = TableProves ; form = Runtime
+operation CheckEvaluation () [ofFunction] -> none ; Allocates UsesRuntime reads(ExternalState) throws ; runtime = CheckEvaluation ; flow = TableProves ; form = Runtime

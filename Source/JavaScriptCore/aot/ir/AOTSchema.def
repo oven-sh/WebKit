@@ -50,7 +50,7 @@ enum Representation (holdsCells: Bool, isPassedInFPR: Bool, canBeKey: Bool, canB
 enum ProofLifetime { | engine Forever Stretch }
 enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
     | engine None(Forever, false) TestedType(Forever, false) Truthiness(Forever, false) Equality(Forever, false) IntegerBound(Forever, false)
-    ExactFunction(Forever, false) CaseValue(Forever, false) NotNullish(Forever, false) StructureOfClass(Forever, false)
+    ExactFunction(Forever, false) CaseValue(Forever, false) NotNullish(Forever, false) StructureOfClass(Forever, false) PositionBelowLength(Forever, false)
     Shape(Stretch, true) SlotFilled(Stretch, true) NoExtraProperties(Stretch, true) NoFieldOutsideSlot(Stretch, true) HeldFieldsFilled(Stretch, true) NotFrozen(Stretch, true) OwnInstance(Stretch, true)
     Pristine(Stretch, true) ArrayStorage(Stretch, true) InBounds(Stretch, true) NotThenable(Stretch, false) MemberUnchanged(Stretch, false)
     PrototypeLinkUnchanged(Stretch, true) EvaluatedOnce(Stretch, false) KeyOrder(Stretch, true)
@@ -111,6 +111,7 @@ heap ArrayLengths observable ordered perObject
 heap ArrayCapacity ordered perObject
 heap LoweredArrayLengths ordered perObject
 heap ClassObjects ordered
+heap WrittenTypes observable ordered perObject
 
 effects CreatesConstant = reads(AllocatorState) writes(AllocatorState)
 effects Allocates = reads(AllocatorState) writes(AllocatorState, ClassObjects) collects
@@ -126,7 +127,7 @@ opaque IteratorState Enumerator Exception ClassToken
 opaque Cursor KeyOrder engine directCallsOnly
 opaque StringBuilder engine
 opaque FlatString CodeAddress PropertyAddress Reciprocal MatchRecord engine functionLocal
-opaque ElementWord engine functionLocal
+opaque ElementWord TextWord engine functionLocal
 opaque BuilderCursor ViewVector ArrayStoragePointer engine functionLocal interior
 
 external Builtin : id = BuiltinID, crate::builtins::id::BuiltinId ; namedInText

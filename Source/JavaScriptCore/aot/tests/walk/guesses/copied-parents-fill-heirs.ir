@@ -1,0 +1,62 @@
+# The constructor of Base is copied into that of Heir, whose class may be evaluated again. The copy fills the object that was allocated for Heir: one question about what is above it, then the stores.
+# class Base { constructor(n) { this.n = n; this.rest = null; } }
+# globalThis.extend(Base, B => class Heir extends B { constructor(n, m) { super(n); this.m = m; this.other = null; } });
+# RUN: walk f3 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1]
+# CHECK: = PassesStoresAbove
+# CHECK: PutSlotOrAdd {{*}}key="n" receivers=[L1]
+# CHECK: PutSlotOrAdd {{*}}key="rest" receivers=[L1]
+# CHECK: = PassesStoresAbove
+# CHECK: PutSlotOrAdd {{*}}key="m" receivers=[L1]
+
+layout L0 kind=Instance name="Base" module=m0 position=42 constructor=f1 fields=[{key="n" declared={type=anything} flags=[IsRequired]}, {key="rest" declared={type=anything} flags=[IsRequired]}] place=42
+layout L1 kind=Instance name="Heir" module=m0 position=221 base=L0 constructor=f3 fields=[{key="m" declared={type=anything} flags=[IsRequired]}, {key="other" declared={type=anything} flags=[IsRequired]}, {key="n" declared={type=anything} flags=[IsRequired] originLayout=L0 originField=0}, {key="rest" declared={type=anything} flags=[IsRequired] originLayout=L0 originField=1}] flags=[HasHeritage] place=221
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @36
+    v1 = NewClass v0 layout=L0 @36
+    v2 = FinishClass v1 layout=L0 @36
+    v3 = Convert v2 declared={type=f1 flags=[IsFromCompiler]} @36
+    v4 = Builtin builtin=GlobalThis @183
+    v5 = PropGet v4 key="extend" @183
+    v6 = NewClosure function=f2 @207
+    v7 = Call v5, v4, v3, v6 calleeKey="extend" calleeName="globalThis.extend" @194
+    v8 = Integer integer=1 @568
+    v9 = Construct v7, -, v8, v8 calleeName="Heir" @563 @559
+    Return v9 @559
+}
+function f1 name="Base" module=m0 position=60 sourceRange={start=36 end=169} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @60
+    v3 = NewObject v2 layout=L0 @60
+    v4 = Convert v3 declared={type=L0} @60
+    PropSet v4, v1 key="n" @66
+    v6 = Null @90
+    PropSet v4, v6 key="rest" @78
+    v8 = Undefined @78
+    Return v4 @78
+}
+function f2 module=m0 position=207 sourceRange={start=207 end=354} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ResolveHeritage v0 @234
+    v2 = NewClosure function=f3 @215
+    v3 = NewClass v2, v0, v1 layout=L1 @215
+    v4 = FinishClass v3 layout=L1 @215
+    Return v4 @215
+}
+function f3 name="Heir" module=m0 position=252 sourceRange={start=217 end=354} kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=object flags=[IsFromCompiler]}] {
+  b0(v0: function, v1: anything, v2: anything, v3: anything):
+    v4 = Absent @256
+    v5 = GetSuperBase v0 @261
+    v6 = SuperConstruct v5, v1, v2 layout=L1 @261
+    v7 = Convert v6 declared={type=L1} @261
+    PropSet v7, v3 key="m" @271
+    v9 = Null @296
+    PropSet v7, v9 key="other" @283
+    v11 = Undefined @283
+    Return v7 @283
+}

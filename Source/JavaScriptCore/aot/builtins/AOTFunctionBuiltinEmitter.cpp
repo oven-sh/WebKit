@@ -15,9 +15,11 @@
 #include "AOTElementAccessEmitter.h"
 #include "AOTIRProgram.h"
 #include "AOTPlan.h"
+#include "AOTStubsCallLists.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTestEmitter.h"
 #include "JSBoundFunction.h"
+#include <array>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -122,16 +124,33 @@ void FunctionBuiltinEmitter::generateReflectConstruct(const InlineCall& call)
 {
     RELEASE_ASSERT(call.numberOfArguments() == 2 || call.numberOfArguments() == 3);
     auto constructorOrMiss = [&](ValueID id) {
-        Boxed constructor = boxCell(objectOrMiss(call, id));
-        missUnless(call, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { constructor }));
+        CellPointer constructor = objectOrMiss(call, id);
+        missUnless(call, callWithoutSite<Condition>(RuntimeOperation::IsConstructor, { boxCell(constructor) }));
         return constructor;
     };
-    Boxed target = constructorOrMiss(call.argument(0));
-    Boxed list = boxCell(objectOrMiss(call, call.argument(1)));
-    Boxed newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
+    CellPointer target = constructorOrMiss(call.argument(0));
+    CellPointer list = objectOrMiss(call, call.argument(1));
+    CellPointer newTarget = call.numberOfArguments() == 3 ? constructorOrMiss(call.argument(2)) : target;
     Origin origin = call.context().origin();
     origin.isTailCall = false;
-    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { target, newTarget, list }, { .origin = origin, .constructs = true }));
+    LBasicBlock isArrayBlock = newBlock();
+    LBasicBlock isOtherListBlock = newBlock();
+    LBasicBlock isNativeClassBlock = newBlock();
+    LBasicBlock isOtherTargetBlock = newBlock();
+    Join<CellPointer> arrays(m_out);
+    Join<Boxed> join(m_out);
+    branch(logicalAnd(hasCellType(list, ArrayType), emitter<ElementAccessEmitter>().isPristineArray(list, { PristineAspects::Storage, PristineAspects::Names })), { normalEdge(isArrayBlock), unlikelyEdge(isOtherListBlock) });
+    m_out.appendTo(isArrayBlock);
+    arrays.add(list);
+    m_out.appendTo(isOtherListBlock);
+    branch(hasCellType(target, InternalFunctionType), { normalEdge(isNativeClassBlock), normalEdge(isOtherTargetBlock) });
+    m_out.appendTo(isNativeClassBlock);
+    join.add(callOperation<Boxed>(call.context(), RuntimeOperation::ConstructWithArray, { boxCell(target), boxCell(newTarget), boxCell(list) }, { .origin = origin, .constructs = true }));
+    m_out.appendTo(isOtherTargetBlock);
+    arrays.add(callOperation<CellPointer>(call.context(), RuntimeOperation::NewArgumentList, { boxCell(list) }, { .origin = origin }));
+    const std::array operands { target.value(), newTarget.value(), arrays.finish().value() };
+    join.add(Boxed(callStub(call.context(), constructWithArray(ConstructSyntax::NewExpression), operands, { .origin = origin, .constructs = true }).first));
+    finish(call, join.finish());
 }
 
 void FunctionBuiltinEmitter::generateFunctionApply(const InlineCall& call)
