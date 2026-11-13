@@ -512,7 +512,15 @@ struct ActiveMockExports {
 };
 JS_EXPORT_PRIVATE ActiveMockExports retainedActiveMockExports(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRequiredUnderActiveMock(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasImportedUnderActiveMock(JSGlobalObject*, ModuleID);
+enum class ActiveMockUse : uint8_t {
+    None,
+    ByStatements,
+    ByImports,
+};
+JS_EXPORT_PRIVATE void keepActiveMockUntilPatch(JSGlobalObject*, ModuleID, ActiveMockUse);
 JS_EXPORT_PRIVATE bool wasRequiredUnderPreloadMock(JSGlobalObject*, ModuleID file);
+JS_EXPORT_PRIVATE bool wasImportedUnderPreloadMock(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSObject* activeMockForNamespace(JSCell* moduleNamespace);
 JS_EXPORT_PRIVATE bool hasMockSlot(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willMockModule(JSGlobalObject*, ModuleID, JSValue requireReturnValue, bool hasCommonJSExports, bool hasFactory, JSObject* mock);

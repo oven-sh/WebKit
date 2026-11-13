@@ -877,9 +877,10 @@ bool Modules::isPatchPending(ModuleID file) const
 bool Modules::isRequiredModulePatchPending(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    if (data(file).kind != ModuleKind::CommonJs || !host().isPatchPending || !m_table.hasFilePath(file) || refusesOriginalsBesideMocks()) [[likely]]
+    bool isMockedESModule = data(file).isESModuleOfProgram() && activeMock(file);
+    if ((data(file).kind != ModuleKind::CommonJs && !isMockedESModule) || !host().isPatchPending || !m_table.hasFilePath(file) || refusesOriginalsBesideMocks()) [[likely]]
         return false;
-    return isPatchPending(file) && !wasLoadedByImport(file);
+    return isPatchPending(file) && !(isMockedESModule ? wasImportedUnderActiveMock(file) : wasLoadedByImport(file));
 }
 
 bool Modules::delegatesToHost(ModuleID module)
@@ -2941,6 +2942,12 @@ bool Modules::wasRequiredUnderPreloadMock(ModuleID file)
     return held && held->wasRequiredUnderPreloadMock;
 }
 
+bool Modules::wasImportedUnderPreloadMock(ModuleID file)
+{
+    LoadedModule* held = loadedIfExists(file);
+    return held && held->wasImportedUnderPreloadMock;
+}
+
 void Modules::noteAskUnderMockInPlace(ModuleID fileOrModule)
 {
     LoadedModule& loaded = ensureLoaded(moduleWithExportsOf(fileOrModule));
@@ -4373,6 +4380,26 @@ void Modules::resumeDelayedImport(JSArray* deferredCall)
     uncheckedDowncast<JSPromise>(deferredCall->getIndexQuickly(3))->pipeFrom(vm, loaded);
 }
 
+std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, ModuleID referrer, JSValue options)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!fetchParameters)
+        return fetchParameters.error();
+    Identifier ownKey = keyWithoutForm(fileOf(module));
+    Identifier key;
+    {
+        ResolveOfImportCall resolve(*m_instance.vm, fetchParameters->get());
+        key = loader()->resolve(realm, jsString(*m_instance.vm, ownKey.string()), pathString(referrer), nullptr, true);
+    }
+    RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
+    if (key == ownKey)
+        return std::nullopt;
+    RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
+}
+
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4398,7 +4425,13 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         removeLingeringMock(module);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
-    bool hasMockToRun = (m_modulesWithPendingMock.get(module.index()) || m_modulesWithPendingMock.get(fileOf(module).index())) && !m_mocksRetriedAfterFailure.get(module.index()) && !m_mocksRetriedAfterFailure.get(fileOf(module).index()) && !m_instance.vm->synchronousModuleQueue();
+    if (data(module).isESModuleOfProgram() && isRequiredModulePatchPending(module)) [[unlikely]] {
+        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, options);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        if (original)
+            return *original;
+    }
+    bool hasMockToRun = (m_modulesWithPendingMock.get(module.index()) || m_modulesWithPendingMock.get(fileOf(module).index())) && activeMockUse(module) != ActiveMockUse::ByImports && !m_mocksRetriedAfterFailure.get(module.index()) && !m_mocksRetriedAfterFailure.get(fileOf(module).index()) && !m_instance.vm->synchronousModuleQueue();
     if (!wasDelayed && (hasMockToRun || m_originalBeingEvaluated == module || (isCallFromDependency && m_modulesWithRunningFactory.get(module.index()))) && options.isUndefined()) [[unlikely]] {
         JSPromise* promise = JSPromise::create(*m_instance.vm, realm->promiseStructure());
         MarkedArgumentBuffer call;
@@ -4525,16 +4558,11 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         }
         return promise;
     }
-    if (isRequiredModulePatchPending(module)) [[unlikely]] {
-        Identifier ownKey = keyWithoutForm(fileOf(module));
-        Identifier key;
-        {
-            ResolveOfImportCall resolve(*m_instance.vm, fetchParameters->get());
-            key = loader()->resolve(realm, jsString(*m_instance.vm, ownKey.string()), pathString(referrer), nullptr, true);
-        }
+    if (!data(module).isESModuleOfProgram() && isRequiredModulePatchPending(module)) [[unlikely]] {
+        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, options);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
-        if (key != ownKey)
-            RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
+        if (original)
+            return *original;
     }
     if (!data(module).isUncompiledCode()) {
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
@@ -8833,6 +8861,18 @@ ActiveMockExports retainedActiveMockExports(JSGlobalObject* realm, ModuleID modu
     return modules ? modules->retainedActiveMockExports(module) : ActiveMockExports { };
 }
 
+bool wasImportedUnderActiveMock(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasImportedUnderActiveMock(module);
+}
+
+void keepActiveMockUntilPatch(JSGlobalObject* realm, ModuleID module, ActiveMockUse use)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->keepActiveMockUntilPatch(module, use);
+}
+
 bool wasRequiredUnderActiveMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -8843,6 +8883,12 @@ bool wasRequiredUnderPreloadMock(JSGlobalObject* realm, ModuleID file)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasRequiredUnderPreloadMock(file);
+}
+
+bool wasImportedUnderPreloadMock(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasImportedUnderPreloadMock(file);
 }
 
 bool hasMockSlot(JSGlobalObject* realm, ModuleID module)
