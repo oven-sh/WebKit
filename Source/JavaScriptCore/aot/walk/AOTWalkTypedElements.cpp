@@ -1356,6 +1356,22 @@ static bool hoistUpperBoundCheck(Walker& walker, Reference isBelow, Walker::Iter
     return isHoisted;
 }
 
+static bool isLengthHeldByCheck(Walker& walker, Reference list, Reference length, Reference isBelow)
+{
+    std::optional<uint64_t> noted = findKnown(walker, KnownNote::LengthOfList, list);
+    Reference held = noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : length;
+    if (!held || !held.isValue())
+        return false;
+    const Code& code = walker.code();
+    for (ValueID name = held.id(); !code.isConstant(name) && code.at(name).opcode == Opcode::Narrowed; name = code.at(name).valueOperand()) {
+        if (code.at(name).testOperand() == isBelow.id() && code.at(name).isOnTakenEdge()) {
+            walker.state().answers().noteOutcome(isBelow, true);
+            return true;
+        }
+    }
+    return false;
+}
+
 static std::optional<int64_t> greatestWrittenIndex(const BodyIndex& index, const BodyValue& firstAccess)
 {
     static constexpr OpcodeSet accesses { Opcode::ElemGet, Opcode::ElemSet };
@@ -1438,7 +1454,7 @@ static void hoistArrayBoundsCheck(const AccessOfTypedElements& access)
         test.setForm(operatorFormFor(walker, test));
         isBelow = walker.build(WTF::move(test));
     }
-    if (!isBelow || !isBelow.isValue() || !hoistUpperBoundCheck(walker, isBelow, purity, isLowered))
+    if (!isBelow || !isBelow.isValue() || (!isKeyItself && isLengthHeldByCheck(walker, access.base, length, isBelow)) || !hoistUpperBoundCheck(walker, isBelow, purity, isLowered))
         return;
     if (isKeyItself) {
         walker.state().answers().noteOutcome(isBelow, true);
@@ -5669,7 +5685,7 @@ static void hoistTypedArrayBoundsCheck(const AccessOfTypedElements& access, Type
         test.setForm(operatorFormFor(walker, test));
         isBelow = walker.build(WTF::move(test));
     }
-    if (!isBelow || !isBelow.isValue() || !hoistUpperBoundCheck(walker, isBelow, purity, isLowered))
+    if (!isBelow || !isBelow.isValue() || isLengthHeldByCheck(walker, access.base, length, isBelow) || !hoistUpperBoundCheck(walker, isBelow, purity, isLowered))
         return;
     Reference held;
     {
