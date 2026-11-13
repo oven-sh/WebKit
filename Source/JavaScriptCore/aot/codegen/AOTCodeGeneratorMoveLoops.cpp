@@ -50,6 +50,7 @@ struct MoveLoop {
         bool isKey { false };
         bool isMoved { false };
         bool isNumber { false };
+        bool isOnlyAsked { false };
         bool isHoisted { false };
         bool isReadAgain { false };
     };
@@ -147,6 +148,7 @@ private:
     bool addTerm(Key&, ValueID, bool isSubtracted, unsigned depth = 0);
     std::optional<Key> keyOf(ValueID);
     bool addRead(ValueID, ValueID array, ValueID position);
+    bool askElement(ValueID test);
     bool addStore(BlockID, ValueID, ValueID array, ValueID position, ValueID stored);
     bool addNumber(ValueID, unsigned depth = 0);
     bool isCarriedNumber(ValueID value) const { return std::ranges::contains(m_found.carriedNumbers, value, &MoveLoop::CarriedNumber::parameter); }
@@ -178,6 +180,7 @@ private:
     const CodeGenerator& m_generator;
     const Code& m_code;
     Vector<ValueID, 2> m_operatorsOfAnyValues;
+    Vector<ValueID, 4> m_presenceTests;
     MoveLoop m_found;
 };
 
@@ -287,6 +290,25 @@ bool MoveLoopFinder::addRead(ValueID value, ValueID array, ValueID position)
         return false;
     m_found.readsOfValues.append({ value, static_cast<unsigned>(m_found.reads.size()) });
     m_found.reads.append(MoveLoop::Read { value, *from, *key });
+    return true;
+}
+
+bool MoveLoopFinder::askElement(ValueID test)
+{
+    const Operation& operation = at(test);
+    std::optional<unsigned> from = addArray(operation.arrayOperand());
+    std::optional<Key> key = from ? keyOf(operation.positionOperand()) : std::nullopt;
+    if (!key)
+        return false;
+    if (std::ranges::any_of(m_found.reads, [&](const MoveLoop::Read& read) { return read.array == *from && read.key == *key; }))
+        return true;
+    ArrayStorage storage = operation.arrayStorage();
+    if (m_found.reads.size() == mostReads || (storage != ArrayStorage::Double && storage != ArrayStorage::Contiguous))
+        return false;
+    MoveLoop::Read read { test, *from, *key };
+    read.isOnlyAsked = true;
+    read.isNumber = storage == ArrayStorage::Double;
+    m_found.reads.append(read);
     return true;
 }
 
@@ -582,6 +604,8 @@ bool MoveLoopFinder::followBody()
         static constexpr OpcodeSet testsOfArrays { Opcode::HasArrayStorage, Opcode::IsPristine, Opcode::IsElementPresent };
         if (!isOnPath(condition) || !isPlainBlock(taken.to) || isPlainBlock(notTaken.to) || (!testsOfArrays.contains(at(condition).opcode) && !addComparison(condition)))
             return false;
+        if (at(condition).opcode == Opcode::IsElementPresent)
+            m_presenceTests.append(condition);
         edge = &taken;
     }
     if (edge->arguments().size() != m_code.at(m_found.head).parameters().size())
@@ -591,6 +615,10 @@ bool MoveLoopFinder::followBody()
     for (MoveLoop::CarriedNumber& carried : m_found.carriedNumbers) {
         carried.next = resolve(edge->arguments()[carried.place]);
         if (!addNumber(carried.next))
+            return false;
+    }
+    for (ValueID test : m_presenceTests) {
+        if (!askElement(test))
             return false;
     }
     std::optional<Key> next = keyOf(edge->arguments()[m_found.placeOfCounter]);
@@ -645,7 +673,7 @@ bool MoveLoopFinder::finish()
     if (m_found.stores.isEmpty()) {
         knowsKinds = std::ranges::all_of(m_found.reads, [&](const MoveLoop::Read& read) {
             const Operation& operation = at(read.value);
-            return read.isRow || (operation.opcode == Opcode::GetArrayElement && hasArrayStorageForm(operation.arrayStorage()));
+            return read.isRow || read.isOnlyAsked || (operation.opcode == Opcode::GetArrayElement && hasArrayStorageForm(operation.arrayStorage()));
         });
     }
     bool countsRows = m_generator.m_rows && std::ranges::any_of(m_generator.m_rows->guards, [&](const CodeGenerator::RowGuard& guard) { return m_found.path.contains(guard.presenceBlock); });
@@ -655,7 +683,7 @@ bool MoveLoopFinder::finish()
     if (isPlainCopy && m_code.opcodesOfValues().intersects(copies))
         return false;
     bool addsUp = std::ranges::any_of(m_found.reads, &MoveLoop::Read::isNumber) && !m_found.carriedNumbers.isEmpty();
-    if ((m_found.stores.isEmpty() && !addsUp) || !std::ranges::all_of(m_found.reads, [](const MoveLoop::Read& read) { return read.isRow || read.isKey || read.isMoved || read.isNumber; }))
+    if ((m_found.stores.isEmpty() && !addsUp) || !std::ranges::all_of(m_found.reads, [](const MoveLoop::Read& read) { return read.isRow || read.isKey || read.isMoved || read.isNumber || read.isOnlyAsked; }))
         return false;
     for (const MoveLoop::Array& array : m_found.arrays) {
         if (array.holdsRows && array.isStoredInto)

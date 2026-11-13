@@ -9369,9 +9369,11 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
     MockDoor door(modules, module, "didRemoveMock"_s);
     bool wasUnseen = modules->takeUnseenMock(module);
     bool wasReleased = modules->takeReleaseUnderPendingPatch(module);
+    auto scope = DECLARE_THROW_SCOPE(realm->vm());
     auto evictsFile = makeScopeExit([&] {
         if (!wasUnseen && !wasReleased) [[likely]]
             return;
+        UNUSED_VARIABLE(scope.exception());
         if (wasReleased)
             modules->dropPatch(module);
         modules->releaseImportersOf(module, Modules::ReleasedImporters::All);
@@ -9379,7 +9381,6 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
             modules->oweToEvaluatedImporters(module);
     });
     modules->noteMockEnd(module);
-    auto scope = DECLARE_THROW_SCOPE(realm->vm());
     modules->restoreReleasedPatch(module);
     RETURN_IF_EXCEPTION(scope, void());
     modules->forgetUnchangedFilesAbove(module);

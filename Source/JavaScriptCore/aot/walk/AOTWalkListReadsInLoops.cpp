@@ -7719,20 +7719,18 @@ std::optional<PassedTest> tryHoistElementPresenceCheck(Walker& walker, const Bod
         return std::nullopt;
     Origin origin = walker.originOf(read);
     origin.isTailCall = false;
-    if (isNumber) {
-        Reference hasStorage;
-        {
-            Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
-            Draft storage(Opcode::HasArrayStorage, origin);
-            walker.chooseConservativeFields(storage);
-            storage.setArrayOperand(list);
-            storage.setArrayStorage(tested.storage);
-            storage.setAdmitsInt32Storage(tested.admitsInt32Storage);
-            hasStorage = walker.build(WTF::move(storage));
-        }
-        if (!hasStorage || (hasStorage.isValue() && !walker.tryHoistConditionalCheck(hasStorage, true, purity)))
-            return std::nullopt;
+    Reference hasStorage;
+    {
+        Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);
+        Draft storage(Opcode::HasArrayStorage, origin);
+        walker.chooseConservativeFields(storage);
+        storage.setArrayOperand(list);
+        storage.setArrayStorage(tested.storage);
+        storage.setAdmitsInt32Storage(tested.admitsInt32Storage);
+        hasStorage = walker.build(WTF::move(storage));
     }
+    if (!hasStorage || (hasStorage.isValue() && !walker.tryHoistConditionalCheck(hasStorage, true, purity)))
+        return std::nullopt;
     Reference isThere;
     {
         Walker::SpecializedPreheaderScope preheaderScope(walker, true, purity);

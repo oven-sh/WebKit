@@ -1851,8 +1851,12 @@ std::span<const SpillIndex> Allocator::findSpillsThatPhisAreOnlyHandedOnTo(const
         }
         if (m_heads[next->index()].isSet()) {
             for (const RegisterBinding& binding : m_heads[next->index()].bindings()) {
-                if (binding.value && binding.value->owner() == next && binding.value->opcode() == Phi)
-                    std::replace(takers, takers + numberOfPhis, static_cast<const Operation*>(binding.value), static_cast<const Operation*>(nullptr));
+                if (!binding.value || binding.value->owner() != next || binding.value->opcode() != Phi)
+                    continue;
+                for (size_t index = 0; index < numberOfPhis; ++index) {
+                    if (takers[index] == binding.value)
+                        takers[index] = nullptr;
+                }
             }
             SpillIndex* spills = m_arena.allocateArray<SpillIndex>(numberOfPhis);
             for (size_t index = 0; index < numberOfPhis; ++index) {
