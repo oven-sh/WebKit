@@ -38,6 +38,7 @@ public:
     std::span<const CopyInUnlikelyBlock> copiesInUnlikelyBlock(BlockID) const LIFETIME_BOUND;
     bool isRare(BlockID block) const { return m_code.at(block).frequency == BlockFrequency::Rare && !m_rareBlocksForBigInts.get(block.index()); }
     static bool isArithmetic(const Operation&);
+    static bool mayGoAroundLoops(const Code&, std::span<const BlockID> blocks);
 
 private:
     struct Flow {
