@@ -672,10 +672,10 @@ std::optional<DecimalOperation> decimalOperationOf(TaggedNativeFunction function
 
 #endif // ENABLE(DFG_JIT)
 
-// Not in the proposal.
+// Not in the proposal. The table of built-ins says that it takes any String and does not throw.
 JSC_DEFINE_HOST_FUNCTION(decimalLiteral, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return newDecimal(globalObject, Decimal128::parse(asString(callFrame->uncheckedArgument(0))->tryGetValue().data).value());
+    return newDecimal(globalObject, Decimal128::parse(asString(callFrame->uncheckedArgument(0))->tryGetValue().data).value_or(Decimal128::nan()));
 }
 
 // Not in the proposal, where operators throw. See --useDecimalOperators and BytecodeGenerator::emitDecimalOperator().

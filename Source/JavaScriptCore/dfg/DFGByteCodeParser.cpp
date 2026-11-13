@@ -7051,7 +7051,7 @@ Node* ByteCodeParser::handleDecimalLiteral(int registerOffset, NOESCAPE const Ch
         return nullptr;
 
     insertChecks();
-    return newDecimal(decimalConstant(Decimal128::parse(text).value()));
+    return newDecimal(decimalConstant(Decimal128::parse(text).value_or(Decimal128::nan())));
 }
 
 template<typename ChecksFunctor>
