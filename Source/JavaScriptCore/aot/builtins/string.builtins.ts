@@ -231,13 +231,21 @@ export default b.declarations(
         implementation: b.inline("CallStringConstructor", { otherwise: b.hostCall }),
       },
     ],
-    construct: {
-      args: { value: b.string.loose.optional },
-      returns: b.instance("String").fresh,
-      capability: "heap",
-      throws: b.propagated,
-      implementation: b.hostCall,
-    },
+    construct: [
+      {
+        args: { value: b.string },
+        returns: b.instance("String").fresh,
+        capability: "heap",
+        implementation: b.hostCall,
+      },
+      {
+        args: { value: b.string.loose.optional },
+        returns: b.instance("String").fresh,
+        capability: "heap",
+        throws: b.propagated,
+        implementation: b.hostCall,
+      },
+    ],
     static: {
       fromCharCode: {
         args: { codeUnits: b.f64.loose.rest },

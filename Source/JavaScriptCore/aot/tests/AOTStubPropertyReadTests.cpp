@@ -463,6 +463,73 @@ static void testFieldsOrInheritedGetters()
     AOT_TEST_CHECK(!run.calledOperation && run.landedCall.place == LandedCall::Place::Nowhere && run.result == bitsOf(jsNumber(7)));
 }
 
+static void testGettersThatReturnCaptures()
+{
+    constexpr uint32_t slimClosureStructureID = 0x1080;
+    constexpr uint32_t closureNumber = 1;
+    PropertyReads reads;
+    Instance& instance = reads.runner.instance();
+    instance.slimClosureHeaders[0] = slimClosureStructureID;
+    FakeObject<2 * sizeof(uint64_t)> environment;
+    FakeObject<offsetOfSlimClosureCaptures + sizeof(uint64_t)> getter;
+    getter.setHeader(slimClosureStructureID, SlimClosureType);
+    getter.at<uint64_t>(offsetOfSlimClosureWord) = reads.runner.closureWord(0, { .returnsCapture = true });
+    FakeObject<sizeof(GetterSetter)> accessors;
+    accessors.setHeader(0, GetterSetterType);
+    accessors.at<uint64_t>(GetterSetter::offsetOfGetter()) = getter.address();
+    uint64_t& returnedCapture = accessors.at<uint64_t>(GetterSetter::offsetOfReturnedCapture());
+    FakeHolder holder;
+    holder.property(FakeHolder::inlineOffset) = accessors.address();
+    reads.file(createFieldOrInheritedSlot(SlotRepresentation::JSValue, holder, FakeHolder::inlineOffset, Slot::inheritsGetter, instance.cellCageBase));
+    FakeTypedObject object;
+    object.field() = JSValue::ValueEmpty;
+
+    constexpr uint32_t capacity = 3;
+    std::array<ReturnedCaptureData, capacity + 1> rows { };
+    ReturnedCaptureData& row = rows[ReturnedCaptureData::placeOf(closureNumber + 1, capacity)];
+    instance.image.returnedCaptures = rows.data();
+    instance.image.capacityOfReturnedCaptures = capacity;
+    auto answers = [&](uint64_t value) {
+        StubRun run = reads.read(object.address());
+        return !run.calledOperation && run.landedCall.place == LandedCall::Place::Nowhere && run.result == value;
+    };
+    auto callsGetter = [&] {
+        StubRun run = reads.read(object.address());
+        return !run.calledOperation && run.landedCall.place == LandedCall::Place::CompiledFunction && run.landedCall.values.callee == getter.address();
+    };
+
+    row = ReturnedCaptureData::create(closureNumber, ReturnedCaptureData::baseOfClosure, offsetOfSlimClosureCaptures, 0);
+    getter.at<uint64_t>(offsetOfSlimClosureCaptures) = bitsOf(jsNumber(41));
+    AOT_TEST_CHECK(answers(bitsOf(jsNumber(41))) && returnedCapture == getter.address() + offsetOfSlimClosureCaptures);
+    getter.at<uint64_t>(offsetOfSlimClosureCaptures) = bitsOf(jsNumber(42));
+    AOT_TEST_CHECK(answers(bitsOf(jsNumber(42))));
+    getter.at<uint64_t>(offsetOfSlimClosureCaptures) = JSValue::ValueEmpty;
+    AOT_TEST_CHECK(callsGetter());
+
+    returnedCapture = 0;
+    row = ReturnedCaptureData::create(closureNumber, offsetOfSlimClosureCaptures >> ReturnedCaptureData::baseShift, sizeof(uint64_t), static_cast<uint8_t>(SlotRepresentation::OptionalInt32));
+    getter.at<uint64_t>(offsetOfSlimClosureCaptures) = environment.address();
+    environment.at<uint32_t>(sizeof(uint64_t)) = 7;
+    AOT_TEST_CHECK(answers(bitsOf(jsNumber(7))) && answers(bitsOf(jsNumber(7))));
+    environment.at<uint32_t>(sizeof(uint64_t)) = static_cast<uint32_t>(absentInt32);
+    AOT_TEST_CHECK(callsGetter());
+
+    returnedCapture = 0;
+    row = ReturnedCaptureData::create(closureNumber, ReturnedCaptureData::baseOfStatics, sizeof(uint64_t), ReturnedCaptureData::undefinedIsNotMade);
+    instance.image.statics = std::bit_cast<uint8_t*>(static_cast<uintptr_t>(environment.address()));
+    environment.at<uint64_t>(sizeof(uint64_t)) = bitsOf(jsUndefined());
+    AOT_TEST_CHECK(callsGetter());
+    environment.at<uint64_t>(sizeof(uint64_t)) = bitsOf(jsNull());
+    AOT_TEST_CHECK(answers(bitsOf(jsNull())));
+
+    returnedCapture = 0;
+    row = { };
+    AOT_TEST_CHECK(callsGetter() && static_cast<int64_t>(returnedCapture) == ReturnedCaptureData::returnsNoCapture && callsGetter());
+    returnedCapture = 0;
+    getter.at<uint64_t>(offsetOfSlimClosureWord) = reads.runner.closureWord(0);
+    AOT_TEST_CHECK(callsGetter() && static_cast<int64_t>(returnedCapture) == ReturnedCaptureData::returnsNoCapture);
+}
+
 namespace {
 
 struct FakeTypedHolder : FakeTypedObject {
@@ -588,6 +655,35 @@ static void testReadByKeyHandsBackOwnAccessor()
     AOT_TEST_CHECK(!atPlaceOfOtherKey.calledOperation && atPlaceOfOtherKey.result == bitsOf(jsNumber(11)));
     lay(key.address(), structureID + KeyedValuePlace::getterBit, wordInCell);
     AOT_TEST_CHECK(read(key.address()).result == accessorInCell.address());
+}
+
+static void testReadByKeyFindsFieldInExtensionByPlace()
+{
+    constexpr uint32_t structureID = PropertyReads::structureID;
+    constexpr uint32_t offsetOfExtensionWord = offsetOfFirstField + sizeof(uint64_t);
+    constexpr uint32_t offsetInExtension = 8;
+    PropertyReads reads;
+    uintptr_t cageBase = reads.runner.instance().cellCageBase;
+    FakeTypedObject object;
+    FakeObject<offsetInExtension + sizeof(uint64_t)> extension;
+    extension.at<uint64_t>(offsetOfExtensionGranuleBits) = granuleBitOf(offsetInExtension);
+    object.at<uint32_t>(offsetOfExtensionWord) = MarkedBlockCage::encode(cageBase, std::bit_cast<void*>(extension.address() - offsetOfEmptyExtensionInCage));
+    extension.at<uint64_t>(offsetInExtension) = bitsOf(jsNumber(7));
+    FakeObject<sizeof(Symbol)> key;
+    key.setHeader(0, SymbolType);
+    key.at<uint64_t>(Symbol::offsetOfSymbolImpl()) = std::bit_cast<uintptr_t>(reads.uid());
+    KeyedValuePlace& place = placeOfReadByKey(reads.runner, key.address(), structureID);
+    for (StubKey stub : { getByValCached(), getByValCached(RegistersOfCaller::AreKept) }) {
+        place = { };
+        reads.file(Slot::createField(std::bit_cast<StructureID>(structureID), Slot::Kind::Field, Slot::isOwn | Slot::isOutOfLine, SlotData::create(offsetInExtension, SlotRepresentation::JSValue), 0, offsetOfExtensionWord));
+        StubRun first = reads.runner.run(stub, { object.address(), key.address() });
+        AOT_TEST_CHECK(!first.calledOperation && first.result == bitsOf(jsNumber(7)));
+        AOT_TEST_CHECK(place.key == std::bit_cast<JSCell*>(key.address()) && place.structureID == structureID + KeyedValuePlace::fieldInExtensionBits);
+        AOT_TEST_CHECK(place.fieldInExtension.extensionWordOffset == offsetOfExtensionWord && place.fieldInExtension.slotOffset == offsetInExtension);
+        reads.clear();
+        StubRun again = reads.runner.run(stub, { object.address(), key.address() });
+        AOT_TEST_CHECK(!again.calledOperation && again.result == bitsOf(jsNumber(7)));
+    }
 }
 
 static void testInheritedFieldsOfHolderThatIsNotFiled()
@@ -1539,10 +1635,10 @@ static std::array<AnswerBehindFieldTable, 5> answersBehindFieldTable(FakeHolder&
     };
     return { {
         { "an extra property in the cell"_s, extraProperty(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 32, 32 },
-        { "an extra property out of line"_s, extraProperty(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 41, 41 },
-        { "a value in the cell of a holder"_s, valueOfHolder(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 63, 20 },
-        { "a value out of line in a holder"_s, valueOfHolder(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 76, 28 },
-        { "a name that nothing has"_s, Slot::createWithoutPayload(id, Slot::Kind::Absent, Slot::dependsOnChain), bitsOf(jsUndefined()), 57, 20 },
+        { "an extra property out of line"_s, extraProperty(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 35, 35 },
+        { "a value in the cell of a holder"_s, valueOfHolder(FakeHolder::inlineOffset), other.property(FakeHolder::inlineOffset), 67, 20 },
+        { "a value out of line in a holder"_s, valueOfHolder(FakeHolder::outOfLineOffset), other.property(FakeHolder::outOfLineOffset), 80, 28 },
+        { "a name that nothing has"_s, Slot::createWithoutPayload(id, Slot::Kind::Absent, Slot::dependsOnChain), bitsOf(jsUndefined()), 61, 20 },
     } };
 }
 
@@ -2668,9 +2764,9 @@ static void testStructureFiledWithoutFormIsSentToItsRow()
 #if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
             if (!rowHoldsSlot)
                 continue;
-            if (*run.instructionsInStubs != 40)
-                dataLogLn("a read at a place that sends the structure to its row: ", *run.instructionsInStubs, " instructions, the budget is 40");
-            isWithinBudget &= *run.instructionsInStubs <= 40;
+            if (*run.instructionsInStubs != 42)
+                dataLogLn("a read at a place that sends the structure to its row: ", *run.instructionsInStubs, " instructions, the budget is 42");
+            isWithinBudget &= *run.instructionsInStubs <= 42;
 #endif
         }
     }
@@ -2705,6 +2801,11 @@ static void testWidePlaceAsksItsStructuresInFrontOfShape()
         AOT_TEST_CHECK(*absent.instructionsInStubs <= 19 && *field.instructionsInStubs <= 31);
 #endif
     }
+    StubRun truth = reads.runner.run(readTruthAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, SiteUse::ReadUnderNameOfField), { lacksName.address() }, AnswersAtOnePlace::distance);
+    AOT_TEST_CHECK(!truth.calledOperation && !truth.result);
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+    AOT_TEST_CHECK(isWithinBudgetOfRead(truth, 16, "the truth of a name that the structure lacks, at a wide place"_s));
+#endif
 }
 
 static void testWhetherNameIsThereIsAnsweredByFurtherAnswers()
@@ -3443,9 +3544,11 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id/empty-slots-that-may-be-undefined"_s, ImageTests::whenExecutable<testEmptySlotsThatMayBeUndefined> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-values"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedValues> },
         { "stubs/get-by-id/fields-or-inherited-getters"_s, ImageTests::whenExecutable<testFieldsOrInheritedGetters> },
+        { "stubs/get-by-id/getters-that-return-captures"_s, ImageTests::whenExecutable<testGettersThatReturnCaptures> },
         { "stubs/get-by-id/inherited-fields"_s, ImageTests::whenExecutable<testInheritedFields> },
         { "stubs/get-by-id/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<testInheritedFieldsOfHolderThatIsNotFiled> },
         { "stubs/get-by-val/an-own-getter-at-the-place-hands-back-the-accessor-and-all-else-goes-on-in-the-chain"_s, ImageTests::whenExecutable<testReadByKeyHandsBackOwnAccessor> },
+        { "stubs/get-by-val/fields-in-extension-by-place"_s, ImageTests::whenExecutable<testReadByKeyFindsFieldInExtensionByPlace> },
         { "stubs/get-by-id/fields-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsOrInheritedFields> },
         { "stubs/get-by-id/fields-in-extension-or-inherited-fields"_s, ImageTests::whenExecutable<testFieldsInExtensionOrInheritedFields> },
         { "stubs/get-by-id/names-made-at-run-time"_s, ImageTests::whenExecutable<testNamesMadeAtRunTime> },
@@ -3476,6 +3579,7 @@ std::span<const NativeTest> stubPropertyReadTests()
         { "stubs/get-by-id-keeping-registers/empty-slots-that-may-be-undefined"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testEmptySlotsThatMayBeUndefined>> },
         { "stubs/get-by-id-keeping-registers/fields-in-extension-or-inherited-values"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsInExtensionOrInheritedValues>> },
         { "stubs/get-by-id-keeping-registers/fields-or-inherited-getters"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedGetters>> },
+        { "stubs/get-by-id-keeping-registers/getters-that-return-captures"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testGettersThatReturnCaptures>> },
         { "stubs/get-by-id-keeping-registers/inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFields>> },
         { "stubs/get-by-id-keeping-registers/inherited-fields-of-holder-that-is-not-filed"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testInheritedFieldsOfHolderThatIsNotFiled>> },
         { "stubs/get-by-id-keeping-registers/fields-or-inherited-fields"_s, ImageTests::whenExecutable<withStubThatKeepsRegisters<testFieldsOrInheritedFields>> },

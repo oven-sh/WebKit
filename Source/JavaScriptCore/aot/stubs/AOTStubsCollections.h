@@ -50,6 +50,8 @@ constexpr StubKey weakMapHas() { return StubKey(StubFamily::WeakMapHas); }
 constexpr StubKey weakSetHas() { return StubKey(StubFamily::WeakSetHas); }
 constexpr StubKey newMap() { return StubKey(StubFamily::NewMap); }
 constexpr StubKey newSet() { return StubKey(StubFamily::NewSet); }
+constexpr StubKey newWeakMap() { return StubKey(StubFamily::NewWeakMap); }
+constexpr StubKey newWeakSet() { return StubKey(StubFamily::NewWeakSet); }
 constexpr StubKey newIterator(IteratedClass iterated) { return StubKey(StubFamily::NewIterator).withForm(static_cast<uint8_t>(iterated)); }
 constexpr StubKey nextSetElement() { return StubKey(StubFamily::NextSetElement); }
 constexpr StubKey newCompactTable(CompactTableOwner owner) { return StubKey(StubFamily::NewCompactTable).withForm(static_cast<uint8_t>(owner)); }

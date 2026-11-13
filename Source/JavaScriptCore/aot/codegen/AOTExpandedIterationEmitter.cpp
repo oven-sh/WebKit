@@ -87,6 +87,10 @@ void ExpandedIterationEmitter::generateAppendIterable(const ValueContext& value)
         ArrayAllocationEmitter(generator()).bearLiteralHoldingList(value, in<Boxed>(value->iterableOperand()).value(), appendIterable());
         return;
     }
+    if (const Operation& literal = operationAt(value->arrayOperand()); literal.opcode == Opcode::NewArray && ArrayAllocationEmitter(generator()).isLeftToListCall(value.block(), value->arrayOperand(), literal)) {
+        generator().nameAgain(value->arrayOperand(), callStub(value, listOfIterable(), { in<Boxed>(value->iterableOperand()).value() }).first);
+        return;
+    }
     if (value->readsListsByIndex()) {
         callStub(value, appendIterable(), { in<CellPointer>(value->arrayOperand()).value(), in<Boxed>(value->iterableOperand()).value() });
         return;
@@ -118,8 +122,11 @@ void GuardEmitter::generateIsEnumeratorCurrent(const ValueContext& value)
         return;
     }
     defineTestByBranching(value, [&](BranchTargets targets) {
+        LBasicBlock isName = newBlock();
+        branch(isInStructurePart, { normalEdge(isName), targets.notTaken });
+        m_out.appendTo(isName);
         CellPointer object = cellOrElse(value, value->objectOperand(), targets.notTaken);
-        branch(logicalAnd(isInStructurePart, forIn.hasCachedKeys(enumerator, fields, object)), targets);
+        branch(forIn.hasCachedKeys(enumerator, fields, object), targets);
     });
 }
 

@@ -178,6 +178,18 @@ void Program::noteTakenForAbsent(PropertyKeyID key) const
     m_keysTakenForAbsent.set(key.index());
 }
 
+void Program::noteLockedAbsentName(BuiltinID holder, PropertyKeyID key) const
+{
+    Locker locker { m_keysTakenForAbsentLock };
+    m_lockedAbsentNames.append({ holder, key });
+}
+
+Vector<std::pair<BuiltinID, PropertyKeyID>> Program::lockedAbsentNames() const
+{
+    Locker locker { m_keysTakenForAbsentLock };
+    return m_lockedAbsentNames;
+}
+
 Vector<PropertyKeyID> Program::keysTakenForAbsent() const
 {
     Locker locker { m_keysTakenForAbsentLock };

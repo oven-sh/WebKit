@@ -2619,12 +2619,17 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
     heap.sweeper().doWorkUntil(*this, deadline);
 }
 
-void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* uid)
+void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent event, JSObject* changed, UniquedStringImpl* uid)
 {
 #if ENABLE(AOT)
-    if (hasCompiledCode())
-        AOT::RuntimeHooks::didChangePrototypeChain(*this, changed, uid);
+    if (hasCompiledCode()) {
+        if (event == StructureChainIntegrityEvent::Prototype)
+            AOT::RuntimeHooks::didSetPrototypeOfPrototype(*this, changed);
+        else
+            AOT::RuntimeHooks::didChangePrototypeChain(*this, changed, uid);
+    }
 #else
+    UNUSED_PARAM(event);
     UNUSED_PARAM(changed);
     UNUSED_PARAM(uid);
 #endif

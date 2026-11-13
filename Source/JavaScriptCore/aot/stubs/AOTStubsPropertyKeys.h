@@ -46,8 +46,16 @@ enum class NameAtSite : uint8_t { IsAnyName, HasColumn };
 constexpr StubKey getByIdKeepingRegisters(NameAtSite name = NameAtSite::IsAnyName) { return StubKey(StubFamily::GetByIdKeepingRegisters).withForm(static_cast<uint8_t>(name)); }
 constexpr StubKey getByIdCheckingColumn() { return StubKey(StubFamily::GetByIdCheckingColumn); }
 constexpr StubKey getByIdCalledByCode() { return exists(getByIdKeepingRegisters()) ? getByIdKeepingRegisters() : getByIdCheckingColumn(); }
+enum class OwnSlotForm : uint8_t { Value, NarrowCell, NarrowInteger };
+constexpr unsigned sizeOfOwnSlot(OwnSlotForm form) { return form == OwnSlotForm::Value ? sizeof(uint64_t) : sizeof(uint32_t); }
+constexpr unsigned maxIndexOfOwnSlot = 63;
+constexpr StubKey readOwnSlot(OwnSlotForm form, unsigned index) { return StubKey(StubFamily::ReadOwnSlot).withForm(static_cast<uint8_t>(form)).withCount(index); }
+constexpr StubKey readOwnSlotKeepingRegisters(OwnSlotForm form, unsigned index) { return StubKey(StubFamily::ReadOwnSlotKeepingRegisters).withForm(static_cast<uint8_t>(form)).withCount(index); }
+constexpr StubKey readOwnSlotCalledByCode(OwnSlotForm form, unsigned index) { return exists(readOwnSlotKeepingRegisters(form, index)) ? readOwnSlotKeepingRegisters(form, index) : readOwnSlot(form, index); }
 constexpr std::optional<StubKey> stubThatKeepsFewerRegisters(StubKey key)
 {
+    if (key.family() == StubFamily::ReadOwnSlotKeepingRegisters)
+        return key.withFamily(StubFamily::ReadOwnSlot);
     if (key.family() == StubFamily::GetByIdKeepingRegisters)
         return getByIdCheckingColumn().withCallerFrame(key.callerFrame());
     return std::nullopt;
@@ -56,6 +64,7 @@ constexpr StubKey getByIdAfterFrontProbe() { return StubKey(StubFamily::GetByIdA
 constexpr StubKey getByIdHashed() { return StubKey(StubFamily::GetByIdHashed); }
 constexpr StubKey getByIdOfSymbolOfRealm() { return StubKey(StubFamily::GetByIdOfSymbolOfRealm); }
 constexpr StubKey getByIdOfSilentSlot() { return StubKey(StubFamily::GetByIdOfSilentSlot); }
+constexpr StubKey getByIdOutsideSlot() { return StubKey(StubFamily::GetByIdOutsideSlot); }
 constexpr StubKey getByIdOfNarrowCellInExtension() { return StubKey(StubFamily::GetByIdOfNarrowCellInExtension); }
 constexpr StubKey getByIdOfEmptySlot() { return StubKey(StubFamily::GetByIdOfEmptySlot); }
 constexpr StubKey getByIdOfFieldLeftOut() { return StubKey(StubFamily::GetByIdOfFieldLeftOut); }
@@ -95,10 +104,12 @@ constexpr StubKey readTruthAtSiteAskingStructureFirst(ReceiverAtSite receiver, S
 struct ReadAtSiteRunningNoCodeForm {
     ReceiverAtSite receiver;
     bool asksShapeFirst;
+    bool isOfSuperBase;
 };
 constexpr StubKey readAtSiteRunningNoCode(ReceiverAtSite receiver, bool asksShapeFirst) { return StubKey(StubFamily::ReadAtSiteRunningNoCode).withForm(static_cast<uint8_t>(receiver) + (asksShapeFirst ? 0 : 2)); }
-constexpr ReadAtSiteRunningNoCodeForm readAtSiteRunningNoCodeFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), key.form() < 2 }; }
-static_assert(exists(readAtSiteRunningNoCode(ReceiverAtSite::IsCell, false)) && readAtSiteRunningNoCode(ReceiverAtSite::IsCell, false).form() + 1u == descriptorOf(StubFamily::ReadAtSiteRunningNoCode).numberOfForms);
+constexpr StubKey readAtSiteOfSuperBase() { return StubKey(StubFamily::ReadAtSiteRunningNoCode).withForm(4); }
+constexpr ReadAtSiteRunningNoCodeForm readAtSiteRunningNoCodeFormOf(StubKey key) { return { static_cast<ReceiverAtSite>(key.form() % 2), key.form() < 2, key == readAtSiteOfSuperBase() }; }
+static_assert(exists(readAtSiteOfSuperBase()) && readAtSiteOfSuperBase().form() + 1u == descriptorOf(StubFamily::ReadAtSiteRunningNoCode).numberOfForms);
 constexpr StubKey readAtSiteUnlessAsMade() { return readAtSite(ReceiverAtSite::IsCell).withFamily(StubFamily::ReadAtSiteUnlessAsMade); }
 static_assert(descriptorOf(StubFamily::ReadAtSiteAskingStructureFirst).numberOfForms == 3 * descriptorOf(StubFamily::ReadAtSite).numberOfForms && descriptorOf(StubFamily::ReadTruthAtSiteAskingStructureFirst).numberOfForms == 3 * descriptorOf(StubFamily::ReadTruthAtSite).numberOfForms);
 constexpr uint8_t numberOfWaysBehindSite = 4;
@@ -122,6 +133,7 @@ constexpr ReadBehindSiteForm readBehindSiteFormOf(StubKey key) { return { static
 constexpr StubKey readSizeOfTableAtSite() { return StubKey(StubFamily::ReadSizeOfTableAtSite); }
 constexpr StubKey readLengthAtSite(bool asksStructureFirst) { return StubKey(StubFamily::ReadLengthAtSite).withForm(asksStructureFirst); }
 constexpr uint8_t numberOfSetsLentAtSite = 3;
+constexpr StubKey callToStringAtSite() { return StubKey(StubFamily::CallToStringAtSite); }
 constexpr StubKey callMethodAtSite(unsigned count, unsigned lentArguments = 0, NameAtSite name = NameAtSite::IsAnyName) { return lentArguments ? StubKey(StubFamily::CallMethodAtSiteLending).withCount(count).withForm(static_cast<uint8_t>(lentArguments - 1 + numberOfSetsLentAtSite * static_cast<uint8_t>(name))) : StubKey(StubFamily::CallMethodAtSite).withCount(count).withForm(static_cast<uint8_t>(name)); }
 constexpr StubKey throughProxy(TrapOfProxy trap) { return StubKey(StubFamily::ThroughProxy).withForm(static_cast<uint8_t>(trap)); }
 constexpr StubKey inById(PresenceQuestion question) { return StubKey(StubFamily::InById).withForm(static_cast<uint8_t>(question)); }
@@ -135,6 +147,7 @@ static_assert(exists(findsNameAtSite(PresenceQuestion::HasOwn, false)) && findsN
 constexpr StubKey readFieldInExtension(unsigned granule, SlotInGranule slot) { return StubKey(StubFamily::ReadFieldInExtension).withForm(static_cast<uint8_t>(slot)).withCount(granule); }
 constexpr StubKey tryGetSuperById() { return StubKey(StubFamily::TryGetSuperById); }
 constexpr StubKey getSuperBaseOfClass() { return StubKey(StubFamily::GetSuperBaseOfClass); }
+constexpr StubKey getSuperBaseOfClassObject() { return StubKey(StubFamily::GetSuperBaseOfClassObject); }
 constexpr StubKey instanceOf(InstanceOfOperand operand) { return StubKey(StubFamily::InstanceOf).withForm(static_cast<uint8_t>(operand)); }
 
 constexpr StubKey privateGet() { return StubKey(StubFamily::PrivateGet); }
@@ -231,6 +244,7 @@ constexpr StubKey putByValCached(PutMode mode)
 constexpr StubKey defineByValCached() { return StubKey(StubFamily::DefineByValCached); }
 constexpr StubKey storeElementOfCompiledObject(PutMode mode) { return StubKey(StubFamily::StoreElementOfCompiledObject).withForm(static_cast<uint8_t>(mode)); }
 constexpr StubKey toPropertyKey() { return StubKey(StubFamily::ToPropertyKey); }
+constexpr StubKey toThis() { return StubKey(StubFamily::ToThis); }
 
 constexpr bool isReadTable(SlotHandlerTable table) { return traitsOf(table).operation == SlotOperation::Read; }
 constexpr CallerFrame callerFrameOf(SlotOrigin origin) { return origin == SlotOrigin::ByIdInStubFrame ? CallerFrame::StubFrame : CallerFrame::HasFrame; }
@@ -323,8 +337,10 @@ constexpr StubKey slotCannot(SlotFinisher finisher, SlotOrigin origin)
 }
 
 constexpr StubKey callGetterOfAnswer(CallerFrame callerFrame) { return StubKey(StubFamily::CallGetterOfAnswer).withCallerFrame(callerFrame); }
+constexpr StubKey returnCapture(CallerFrame callerFrame) { return StubKey(StubFamily::ReturnCapture).withCallerFrame(callerFrame); }
 constexpr StubKey getterByAccessTable() { return StubKey(StubFamily::GetterByAccessTable); }
 constexpr StubKey getterAtSite() { return StubKey(StubFamily::GetterAtSite); }
+constexpr StubKey setterAtSite() { return StubKey(StubFamily::SetterAtSite); }
 constexpr StubKey getByValRunningNoCode() { return StubKey(StubFamily::GetByValRunningNoCode); }
 constexpr StubKey getByValCachedOrOwnAccessor() { return StubKey(StubFamily::GetByValCachedOrOwnAccessor); }
 constexpr StubKey findsNoExtraPropertyAtSite() { return StubKey(StubFamily::FindsNoExtraPropertyAtSite); }
@@ -360,7 +376,7 @@ static_assert([] {
     for (StubKey lastFormKey : {
         getById(), getByIdAfterFrontProbe(), getByIdHashed(), getByIdCheckingColumn(), getByIdOfSymbolOfRealm(), getByIdOfSilentSlot(), getByIdOfEmptySlot(), getByIdOfFieldLeftOut(), getByIdOfNarrowCellInExtension(), getLengthAtSite(), throughProxy(TrapOfProxy::Set), inById(PresenceQuestion::HasOwn),
         readFieldInExtension(0, SlotInGranule::ByteAt7),
-        tryGetSuperById(), getSuperBaseOfClass(),
+        tryGetSuperById(), getSuperBaseOfClass(), getSuperBaseOfClassObject(),
         instanceOf(InstanceOfOperand::PrototypeThatIsBuiltin),
         callMethodById(0),
         readAtSite(ReceiverAtSite::IsCell, NameAtSite::HasColumn), readAnswerAtSite(true, 0, SiteUse::ReadUnderNameOfField), readBehindSite(WayBehindSite::AfterHitOfFurtherAnswer, NameAtSite::HasColumn, SiteUse::ReadUnderNameOfField), callMethodAtSite(0, 0, NameAtSite::HasColumn), callMethodAtSite(1, numberOfSetsLentAtSite, NameAtSite::HasColumn),

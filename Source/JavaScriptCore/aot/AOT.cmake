@@ -98,6 +98,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/object/AOTObjectVisiting.h
     aot/object/AOTObjectWords.h
     aot/object/AOTPagedBitSet.h
+    aot/object/AOTPrefetchStep.h
     aot/object/AOTProgramTables.h
     aot/object/AOTPropertyList.h
     aot/object/AOTPropertyWalk.h
@@ -126,6 +127,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTInstance.h
     aot/runtime/AOTInstanceLayout.h
     aot/runtime/AOTJSONWords.h
+    aot/runtime/AOTKeyedLookup.h
     aot/runtime/AOTMembersLeftOut.h
     aot/runtime/AOTModuleData.h
     aot/runtime/AOTModuleHost.h
@@ -133,6 +135,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTModuleTable.h
     aot/runtime/AOTModuleWords.h
     aot/runtime/AOTModules.h
+    aot/runtime/AOTNarrowCopy.h
     aot/runtime/AOTOperationData.h
     aot/runtime/AOTPropertyCachesStringKeys.h
     aot/runtime/AOTPropertyCachesWords.h

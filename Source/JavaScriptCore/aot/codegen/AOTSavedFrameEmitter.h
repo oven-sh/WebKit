@@ -25,6 +25,8 @@ public:
     void generateNewGeneratorOfLibrary(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
     void generateTakeGeneratorPrototype(const ValueContext&);
+    void generateGetGeneratorPrototype(const ValueContext&);
+    void generateTakeGeneratorLeftInPlace(const ValueContext&);
     void generateIsCallDelegated(const ValueContext&);
     void generateGiveDelegatedResult(const ValueContext&);
     void generateCallDelegate(const ValueContext&);

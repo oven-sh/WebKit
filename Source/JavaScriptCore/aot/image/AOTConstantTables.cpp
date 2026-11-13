@@ -130,6 +130,17 @@ static Vector<uint32_t> listNamesTakenForAbsent(const TableEncoder& encoder)
     return numbers;
 }
 
+static Vector<uint64_t> listLockedAbsentNames(const TableEncoder& encoder)
+{
+    const Typed::Program& program = encoder.program;
+    Vector<uint64_t> names;
+    for (auto [holder, key] : program.lockedAbsentNames())
+        names.append(ProgramTables::encodeAbsentName(holder.index(), ProgramTables::numberOfNameTakenForAbsent(program.string(program.at(key).text))));
+    AOT::sortInLine(names);
+    names.shrink(std::unique(names.begin(), names.end()) - names.begin());
+    return names;
+}
+
 void encodeConstantTables(TableEncoder& encoder)
 {
     const ImageNumbers& numbers = encoder.numbers;
@@ -145,6 +156,7 @@ void encodeConstantTables(TableEncoder& encoder)
     encoder.part.setTable(ProgramTableIndex::eagerBuiltinCells, numbers.eagerBuiltinCells());
     encoder.part.setTable(ProgramTableIndex::constantAndUnlockedBuiltinMembers, listConstantAndUnlockedBuiltinMembers(encoder));
     encoder.part.setTable(ProgramTableIndex::namesTakenForAbsent, listNamesTakenForAbsent(encoder));
+    encoder.part.setTable(ProgramTableIndex::lockedAbsentNames, listLockedAbsentNames(encoder));
     setConstantTableOfWords(encoder, ProgramTableIndex::bigIntConstants, numbers.bigIntConstants(), [&](StringID digits) {
         return encoder.stringNumber(digits);
     });

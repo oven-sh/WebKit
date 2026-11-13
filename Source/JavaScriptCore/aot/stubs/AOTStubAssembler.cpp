@@ -15,6 +15,7 @@
 #include "AOTStubsExceptions.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
+#include "AOTStubsValues.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "LinkBuffer.h"
@@ -668,6 +669,14 @@ void StubAssembler::returnToCaller()
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!isARM64() || key().callerFrame() != CallerFrame::Frameless);
+    if (m_stubBehindEveryReturn == valueIsTruthy()) {
+        const GPRReg value = signatureOf(valueIsTruthy()).operands[0].gpr();
+        linkToStub(branch64(Above, value, TrustedImm32(JSValue::ValueUndefined)), largeValueIsTruthy());
+        std::optional<StubKey> stub = std::exchange(m_stubBehindEveryReturn, std::nullopt);
+        returnFlagsTest32(value, TrustedImm32(1));
+        m_stubBehindEveryReturn = stub;
+        return;
+    }
     if (m_stubBehindEveryReturn) {
         jumpToStub(*m_stubBehindEveryReturn);
         return;

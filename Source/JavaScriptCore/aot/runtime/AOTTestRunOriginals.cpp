@@ -532,7 +532,14 @@ bool Modules::isOnCycleWithOtherMock(ModuleID mocked) const
 
 void Modules::noteLoadBegunByFactories(ModuleID root)
 {
-    for (size_t index : m_mocks->modules) {
+    BitVector running = m_modulesWithRunningFactory;
+    running.filter(m_mocks->modules);
+    BitVector candidates = m_mocks->modules;
+    candidates.exclude(m_modulesWithActiveMock);
+    candidates.merge(running);
+    if (isMocked(root))
+        candidates.set(root.index());
+    for (size_t index : candidates) {
         ModuleID mocked(index);
         if (mocked == root) {
             if (!cyclesOfImports().find(mocked)) [[likely]]
@@ -1387,12 +1394,9 @@ bool Modules::tryEvaluateCommonJSOriginal(const Identifier& key, const ArgList& 
     uint8_t storedStatus = std::exchange(m_storedStatuses[file->index()], static_cast<uint8_t>(StoredModuleStatus::Linked));
     auto restoresStatus = makeScopeExit([&] {
         m_storedStatuses[file->index()] = storedStatus;
+        didChangeStatusInRecord(*file);
     });
-    uint32_t outerMark = m_instance.modules.evaluatingMark;
-    m_instance.modules.evaluatingMark = std::min<uint32_t>(outerMark + 1, UINT8_MAX);
-    auto restoresMark = makeScopeExit([&] {
-        m_instance.modules.evaluatingMark = outerMark;
-    });
+    EvaluationMarkScope markScope(*this);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     auto waiting = m_pendingMockCalls.find(*file);
     std::optional<OriginalRun> note;
@@ -1839,12 +1843,9 @@ JSValue Modules::evaluateOriginal(JSModuleRecord* record)
     uint8_t storedStatus = std::exchange(m_storedStatuses[module.index()], static_cast<uint8_t>(StoredModuleStatus::Linked));
     auto restoresStatus = makeScopeExit([&] {
         m_storedStatuses[module.index()] = storedStatus;
+        didChangeStatusInRecord(module);
     });
-    uint32_t outerMark = m_instance.modules.evaluatingMark;
-    m_instance.modules.evaluatingMark = std::min<uint32_t>(outerMark + 1, UINT8_MAX);
-    auto restoresMark = makeScopeExit([&] {
-        m_instance.modules.evaluatingMark = outerMark;
-    });
+    EvaluationMarkScope markScope(*this);
     RELEASE_AND_RETURN(scope, enterBody(module, *body));
 }
 

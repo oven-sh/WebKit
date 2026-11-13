@@ -8,6 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTStringBuilderStorage.h"
+#include <optional>
 #include <span>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -36,6 +38,29 @@ public:
     void generateStackStringBuilderToNumber(const ValueContext&);
     void generateStackStringBuilderToString(const ValueContext&);
     void generateStackStringBuilderFinish(const ValueContext&);
+    bool leavesFinishToAppend(BlockID, ValueID, const Operation& finish, std::span<const ValueID> operationsBehind);
+    std::optional<Pointer> tryAppendFinishedBuilder(const ValueContext& append, Pointer record, Pointer cursor, NOESCAPE const Invocable<Pointer(CellPointer string)> auto& appendString)
+    {
+        ValueID finished = append->valueOperand();
+        if (m_finishLeftToAppend != finished)
+            return std::nullopt;
+        m_finishLeftToAppend = { };
+        const Operation& finish = operationAt(finished);
+        Pointer finishedRecord(in<CellPointer>(finish.builderOperand()).value());
+        Pointer finishedCursor = in<Pointer>(finish.cursorOperand());
+        Pointer buffer = bufferOf(finishedRecord);
+        Integer length(m_out.sub(finishedCursor.value(), buffer.value()));
+        static constexpr int64_t maxCopiedLength = 2 * sizeof(uint64_t);
+        static_assert(maxCopiedLength <= static_cast<int64_t>(StackStringBuilder::maxBytesWrittenPastLimit));
+        Condition isCopied = logicalAnd(equal(limitOf(finishedRecord), limitOnStack(finishedRecord)), belowOrEqual(length, maxCopiedLength));
+        return either<Pointer>(isCopied, [&]() -> Pointer {
+            for (ptrdiff_t offset = 0; offset < maxCopiedLength; offset += sizeof(uint64_t))
+                m_out.store64(m_out.load64(bytesAt(buffer, offset)), bytesAt(cursor, offset));
+            return advance(append, record, offsetBy(cursor, length, 0));
+        }, [&]() -> Pointer {
+            return appendString(finishByCall(append, finishedRecord, finishedCursor));
+        });
+    }
     void generateStackStringBuilderDiscard(const ValueContext&);
 
     Pointer recordOf(const ValueContext& value) const { return Pointer(in<CellPointer>(value->builderOperand()).value()); }
@@ -61,8 +86,12 @@ public:
 private:
     TypedPointer recordField(Pointer record, ptrdiff_t offset) { return m_out.address(m_heaps.AOTStackStringBuilder_fields, record.value(), offset); }
     Pointer limitOnStack(Pointer record);
+    Pointer bufferOf(Pointer record);
+    CellPointer finishByCall(const OperationContext&, Pointer record, Pointer cursor);
     void storeEmptyRecord(Pointer record);
     Pointer copyShortLatin1Characters(Pointer cursor, Pointer source, Word32 length);
+
+    ValueID m_finishLeftToAppend;
 };
 
 } } } // namespace JSC::AOT::Typed

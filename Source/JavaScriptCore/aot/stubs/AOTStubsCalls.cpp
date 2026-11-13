@@ -243,7 +243,16 @@ static void emitEnterCodeOfWord(StubAssembler& jit, const CallRegisters& registe
 }
 #endif
 
-static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isNotCallable)
+static JumpList branchUnlessFullClosureOfThisRealm(StubAssembler& jit, GPRReg scratch)
+{
+    JumpList otherwise;
+    otherwise.append(jit.branchIfNotType(calleeGPR, CompiledClosureType));
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), scratch);
+    otherwise.append(jit.branchPtr(CCallHelpers::NotEqual, Address(calleeGPR, JSCallee::offsetOfScopeChain()), scratch));
+    return otherwise;
+}
+
+static JumpList emitEnterClosureCell(StubAssembler& jit, const CallRegisters& registers, unsigned count, JumpList& isNotCallable, [[maybe_unused]] Label& uncommonCase)
 {
 #if CPU(X86_64)
     Jump isNotSlim;
@@ -251,6 +260,7 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
         Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, count);
         emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
         notCommonCase.link(&jit);
+        uncommonCase = jit.label();
         isNotSlim = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, ClosureWord::maxNumberOfParameters);
     } else {
         jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
@@ -264,9 +274,11 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
     emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
 
     isNotSlim.link(&jit);
+    JumpList isNeither;
     if (jit.options().hasOneInstance)
-        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-    Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
+        isNeither = branchUnlessFullClosureOfThisRealm(jit, registers.word);
+    else
+        isNeither.append(jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
     Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfClosureEntry, count);
     emitEnterCodeOfWordAt(jit, registers, offsetOfClosureEntry, count);
     notCommonCase.link(&jit);
@@ -285,9 +297,7 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
         jit.jump().linkTo(enter, &jit);
 
         isNotSlim.link(&jit);
-        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])), registers.scratch);
-        Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, registers.scratch);
+        JumpList isNeither = branchUnlessFullClosureOfThisRealm(jit, registers.word);
         jit.loadPtr(Address(calleeGPR, offsetOfClosureEntry), registers.word);
         emitEnterClosure(jit, registers, count, isNotCallable);
         return isNeither;
@@ -299,7 +309,9 @@ static Jump emitEnterClosureCell(StubAssembler& jit, const CallRegisters& regist
     isSlim.link(&jit);
     jit.loadPtr(Address(calleeGPR, offsetOfSlimClosureWord), registers.word);
     emitEnterClosure(jit, registers, count, isNotCallable);
-    return isNeither;
+    JumpList result;
+    result.append(isNeither);
+    return result;
 #endif
 }
 
@@ -365,6 +377,15 @@ static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& reg
     JumpList isBoundFunction;
     isBoundFunction.append(jit.branch32(CCallHelpers::Equal, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.boundFunctionStructureID))));
 
+    if (jit.options().hasOneInstance) {
+        Jump isOther = jit.branchIfNotType(calleeGPR, SlimClosureWithPropertiesType);
+        jit.loadPtr(Address(calleeGPR, JSObject::butterflyOffset()), registers.word);
+        jit.load32(Address(registers.word, ReifiedSlimClosure::offsetOfFunctionIndexInButterfly()), registers.word);
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(functionTables.closureWords)), registers.scratch);
+        jit.load64(BaseIndex(registers.scratch, registers.word, CCallHelpers::TimesEight), registers.word);
+        emitEnterClosure(jit, registers, count, isEngineCallee);
+        isOther.link(&jit);
+    }
     Jump isFunction = jit.branchIfType(calleeGPR, JSFunctionType);
 
     JumpList isNotCompiled;
@@ -400,6 +421,28 @@ static void emitCallNotPlainClosure(StubAssembler& jit, const CallRegisters& reg
     emitCallBoundFunction(jit, registers, count, isEngineCallee);
 }
 
+#if CPU(X86_64)
+static void emitEnterSlimClosure(StubAssembler& jit, const CallRegisters& registers, unsigned count, Label uncommonCase)
+{
+    if (!jit.options().hasOneInstance) {
+        jit.jump().linkTo(uncommonCase, &jit);
+        return;
+    }
+    branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, count).linkTo(uncommonCase, &jit);
+    emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
+}
+
+static void emitEnterGeneratorFunction(StubAssembler& jit, const CallRegisters& registers, unsigned count)
+{
+    jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
+    Jump isOtherCell = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, static_cast<int32_t>(AOT_INSTANCE_OFFSET(closures.closureHeaders) + closureStructureOfGeneratorFunctions(false) * sizeof(uint64_t))));
+    Jump refusesCount = branchIfTopByteRefusesCount(jit, offsetOfClosureEntry, count);
+    emitEnterCodeOfWordAt(jit, registers, offsetOfClosureEntry, count);
+    isOtherCell.link(&jit);
+    refusesCount.link(&jit);
+}
+#endif
+
 static void emitCallValueCopy(StubAssembler& jit)
 {
     const unsigned count = jit.key().count();
@@ -409,23 +452,32 @@ static void emitCallValueCopy(StubAssembler& jit)
     jit.setCallPosition(CallPosition::Ordinary);
 #if CPU(X86_64)
     const CallRegisters registers = CallRegisters::allocate(jit);
-    jit.bindEntry(entry(callValueCellWithoutThis(count)));
-    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+    JumpList isNoCell;
+    jit.bindEntryBehindItsHead(entry(callValue(count)));
+    isNoCell.append(jit.branchIfNotCell(calleeGPR));
     jit.bindEntry(entry(callValueCell(count)));
-    Label isCell = jit.label();
-    if (jit.options().hasOneInstance) {
+    const bool isDelegated = jit.key().form() == formOfDelegatedCallValue;
+    if (isDelegated && jit.options().hasOneInstance)
+        emitEnterGeneratorFunction(jit, registers, count);
+    else if (jit.options().hasOneInstance) {
         Jump notCommonCase = branchIfTopByteRefusesCount(jit, offsetOfSlimClosureWord, count);
         emitEnterCodeOfWordAt(jit, registers, offsetOfSlimClosureWord, count);
         notCommonCase.link(&jit);
     }
+    Label uncommonCase = jit.label();
     jit.jumpToStub(callValueCell(count));
 
     jit.bindEntryBehindItsHead(entry(callValueWithoutThis(count)));
+    isNoCell.append(jit.branchIfNotCell(calleeGPR));
+    jit.bindEntry(entry(callValueCellWithoutThis(count)));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
-    Jump isNoCell = jit.jump();
-    jit.bindEntryBehindItsHead(entry(callValue(count)));
-    jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+    if (isDelegated) {
+        if (jit.options().hasOneInstance)
+            emitEnterGeneratorFunction(jit, registers, count);
+        jit.jump().linkTo(uncommonCase, &jit);
+    } else
+        emitEnterSlimClosure(jit, registers, count, uncommonCase);
+
     isNoCell.link(&jit);
     jit.jumpToStub(callValue(count));
 #else
@@ -451,20 +503,27 @@ void generateCallValue(StubAssembler& jit)
     jit.setCallPosition(static_cast<CallPosition>(jit.key().form()));
     const CallRegisters registers = CallRegisters::allocate(jit);
     const unsigned count = jit.key().count();
+#if CPU(X86_64)
+    JumpList isNoCell;
+    jit.bindEntryBehindItsHead(callValue(count, jit.callPosition()));
+    isNoCell.append(jit.branchIfNotCell(calleeGPR));
+#else
     constexpr unsigned sizeOfMove = 4;
     while (isARM64() && (jit.m_assembler.codeSize() + sizeOfMove) % 16)
         jit.nop();
     jit.bindEntry(callValueCellWithoutThis(count, jit.callPosition()));
     jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
     RELEASE_ASSERT(!isARM64() || !(jit.m_assembler.codeSize() % 16));
+#endif
     jit.bindEntry(callValueCell(count, jit.callPosition()));
     Label isCell = jit.label();
 
     JumpList isEngineCallee;
     JumpList isFunctionOfEngine;
-    Jump isNeither = emitEnterClosureCell(jit, registers, count, isEngineCallee);
-
-    isNeither.link(&jit);
+    Label uncommonCase = isCell;
+    emitEnterClosureCell(jit, registers, count, isEngineCallee, uncommonCase).link(&jit);
+    if (jit.options().hasOneInstance)
+        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
     emitCallNotPlainClosure(jit, registers, count, isEngineCallee, isFunctionOfEngine);
 
     isEngineCallee.link(&jit);
@@ -476,20 +535,19 @@ void generateCallValue(StubAssembler& jit)
     jit.move(TrustedImm32(count), countGPR);
     jit.jumpToStub(callEngineFunction());
 
-    if constexpr (isX86_64()) {
-        jit.bindEntryBehindItsHead(callValueWithoutThis(count, jit.callPosition()));
-        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
-        Jump isNoCell = jit.jump();
-        jit.bindEntryBehindItsHead(callValue(count, jit.callPosition()));
-        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
-        isNoCell.link(&jit);
-    } else {
-        jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
-        jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
-        jit.bindEntry(callValue(count, jit.callPosition()));
-        jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
-    }
+#if CPU(X86_64)
+    jit.bindEntryBehindItsHead(callValueWithoutThis(count, jit.callPosition()));
+    isNoCell.append(jit.branchIfNotCell(calleeGPR));
+    jit.bindEntry(callValueCellWithoutThis(count, jit.callPosition()));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+    emitEnterSlimClosure(jit, registers, count, uncommonCase);
+    isNoCell.link(&jit);
+#else
+    jit.bindEntry(callValueWithoutThis(count, jit.callPosition()));
+    jit.move(TrustedImm64(JSValue::ValueUndefined), thisGPR);
+    jit.bindEntry(callValue(count, jit.callPosition()));
+    jit.branchIfCell(calleeGPR).linkTo(isCell, &jit);
+#endif
     jit.callOperationAndReturn(Entry::operationAOTThrowUnlessCallable, { .returns = OperationCall::Returns::Void, .secondArgumentIn = calleeGPR });
 }
 
@@ -673,28 +731,28 @@ void generateCallValueWithCount(StubAssembler& jit)
     enterCodeOfWordAt(offsetOfSlimClosureWord);
 
     isNotSlim.link(&jit);
+    JumpList isNeither;
     if (jit.options().hasOneInstance)
-        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-    Jump isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
+        isNeither = branchUnlessFullClosureOfThisRealm(jit, registers.word);
+    else
+        isNeither.append(jit.branch32(CCallHelpers::NotEqual, registers.word, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0]))));
     isNotClosure.append(branchIfWordIsNotCallableAt(offsetOfClosureEntry));
     enterCodeOfWordAt(offsetOfClosureEntry);
 #else
-    Jump isNeither;
+    JumpList isNeither;
     if (jit.options().hasOneInstance) {
         Jump isNotSlim = branchIfSlimClosureWordRefusesCount(jit, registers, ClosureWord::maxNumberOfParameters);
         emitFillArgumentRegistersUnlessEveryOneIsPassed(jit, registers.scratch);
         emitEnterCodeOfWord(jit, registers, std::nullopt);
 
         isNotSlim.link(&jit);
-        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
-        jit.load32(Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])), registers.scratch);
-        isNeither = jit.branch32(CCallHelpers::NotEqual, registers.word, registers.scratch);
+        isNeither = branchUnlessFullClosureOfThisRealm(jit, registers.word);
         jit.load64(Address(calleeGPR, offsetOfClosureEntry), registers.word);
         emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
     } else {
         jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), registers.word);
         ClosureHeaderBranches branches = branchIfNotPlainClosureHeader(jit, registers.word, registers.scratch);
-        isNeither = branches.isNeither;
+        isNeither.append(branches.isNeither);
         jit.load64(Address(calleeGPR, offsetOfClosureEntry), registers.word);
         emitEnterClosure(jit, registers, std::nullopt, isNotClosure);
 

@@ -27,6 +27,7 @@
 #include "DeferTermination.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionHelpers.h"
+#include "GeneratorPrototype.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -1190,6 +1191,42 @@ static CoroutineKind generatorKind(JSObject* generator, Entry entry)
     if (!generator->inherits<JSAsyncGenerator>()) [[unlikely]]
         crashOnWrongOperand(entry);
     return CoroutineKind::AsyncGenerator;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetGeneratorPrototype, JSCell*, (Instance* instance, EncodedJSValue closure))
+{
+    constexpr Entry entry = Entry::operationAOTGetGeneratorPrototype;
+    AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
+    Structure* structure = structureOfGenerator(globalObject, *instance, objectArgument(closure, entry), CoroutineKind::Generator);
+    scope.releaseAssertNoException();
+    return structure->storedPrototypeObject();
+}
+
+static bool findsReturnOfEngine(JSGlobalObject* realm, JSObject* prototype)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = prototype->getPropertySlot(realm, vm.propertyNames->returnKeyword, slot);
+    scope.assertNoException();
+    return isFound && !slot.isTaintedByOpaqueObject() && slot.slotBase() == realm->generatorPrototype();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorLeftInPlace, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t leavesAtOnce))
+{
+    constexpr Entry entry = Entry::operationAOTTakeGeneratorLeftInPlace;
+    AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSObject* holder = cellArgument<JSObject>(cell, entry);
+    auto* generator = dynamicDowncast<Generator>(holder);
+    JSObject* prototype = generator ? generator->structure()->storedPrototypeObject() : holder;
+    if (findsReturnOfEngine(globalObject, prototype))
+        return JSValue::encode(jsUndefined());
+    if (!generator)
+        generator = Generator::create(vm, Generator::createStructure(vm, globalObject, prototype));
+    generator->leaveInPlace(leavesAtOnce);
+    return JSValue::encode(generator);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance* instance, JSCell* generator, EncodedJSValue closure))

@@ -12,6 +12,7 @@
 #include "AOTCompactTable.h"
 #include "AOTCompileOptionWords.h"
 #include "AOTConvention.h"
+#include "AOTHeapHooks.h"
 #include "AOTImageTestSupport.h"
 #include "AOTInstance.h"
 #include "AOTInstanceLayout.h"
@@ -157,6 +158,7 @@ struct StubEnvironment {
     uint64_t wordsNobodyWrote;
     std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
     std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
+    std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
     std::array<uint8_t, 0x2000> emptyStructures;
     std::array<uint8_t, AccessTable::alignment + sizeof(AccessTable)> roomForAccessTable;
 };
@@ -191,6 +193,7 @@ public:
     uint64_t closureWord(unsigned numberOfParameters, ClosureWord::Flags flags = { }) const { return ClosureWord::encode({ distanceOfCompiledFunction, numberOfParameters }, 1, flags); }
     Instance& instance() { return m_environment->instance; }
     void forgetAccessTable() { instance().propertyCaches.accessTable.forgetEverything(); }
+    void rememberNameOfText(const NameOfText& name) { m_environment->namesOfTexts[NameOfText::firstIndexFor(name.first, name.last, static_cast<uint32_t>(name.length))] = name; }
     uint32_t& stringCell(uint32_t number) { return m_environment->stringCells[number]; }
     void* entryOf(StubKey key) const { return addressOf(key); }
 
@@ -577,7 +580,9 @@ inline StubRunner::StubRunner(const StubOptions& options, std::span<const StubKe
     instance.numbers.keyMultiplierOfTables = CompactTable::keyMultiplier;
     instance.propertyCaches.absenceFilters = m_environment->absenceFilters.data();
     instance.propertyCaches.missesOfPairs = m_environment->missesOfPairs.data();
+    instance.propertyCaches.namesOfTexts = m_environment->namesOfTexts.data();
     instance.propertyCaches.accessTable.publish(*std::bit_cast<AccessTable*>(roundUpToMultipleOf<AccessTable::alignment>(std::bit_cast<uintptr_t>(m_environment->roomForAccessTable.data()))));
+    setBarrierThreshold(instance, blackThreshold);
     instance.realm.keysOfPairs = StringKeyCache::noKeysOfPairs();
     instance.prefix().structureIDBase = std::bit_cast<uintptr_t>(m_environment->emptyStructures.data());
     for (SlotHandlerTable table : allSlotHandlerTables) {

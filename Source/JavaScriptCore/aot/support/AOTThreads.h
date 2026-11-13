@@ -52,6 +52,8 @@ private:
     mutable Vector<uint8_t> m_bytes;
 };
 
+class LoopTeam;
+
 class ParallelLoops {
     WTF_MAKE_NONCOPYABLE(ParallelLoops);
     WTF_MAKE_NONMOVABLE(ParallelLoops);
@@ -59,9 +61,11 @@ public:
     static constexpr size_t workerStackSize = 64 * MB;
 
     JS_EXPORT_PRIVATE explicit ParallelLoops(unsigned width, const HostThreadPool* = nullptr);
+    JS_EXPORT_PRIVATE ~ParallelLoops();
 
     unsigned width() const { return m_width; }
     const HostThreadPool* hostPool() const { return m_hostPool; }
+    LoopTeam& team() const { return m_team; }
 
     JS_EXPORT_PRIVATE void schedule(void (*run)(void* argument), void* argument) const;
 
@@ -80,6 +84,7 @@ private:
     const HostThreadPool* const m_hostPool;
     const ParallelLoops* const m_loopsOfBuild;
     RefPtr<WorkerPool> m_ownPool;
+    const Ref<LoopTeam> m_team;
 };
 
 JS_EXPORT_PRIVATE void runOnBuildThread(NOESCAPE const ScopedLambda<void()>&);

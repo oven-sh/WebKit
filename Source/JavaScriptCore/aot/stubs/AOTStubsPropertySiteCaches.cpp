@@ -5,6 +5,8 @@
 
 #include "config.h"
 #include "AOTStubsPropertyProbes.h"
+#include "AOTProgramTables.h"
+#include "AOTStubsPropertyAccessors.h"
 
 #if ENABLE(AOT)
 
@@ -17,6 +19,7 @@
 #include "AOTRuntimeTable.h"
 #include "AOTStaleAnswers.h"
 #include "AOTStubProgramTables.h"
+#include "AOTStubsArithmetic.h"
 #include "AOTStubsBoxedCalls.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsField.h"
@@ -28,6 +31,7 @@
 #include "JSCell.h"
 #include "JSObject.h"
 #include "JSString.h"
+#include "StringObject.h"
 #include <bit>
 
 namespace JSC { namespace AOT {
@@ -428,6 +432,7 @@ static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked, L
     };
 
     goesOn.append(jit.branchIfNotCell(receiver));
+    goesOn.append(jit.branchTest8(CCallHelpers::NonZero, Address(receiver, offsetOfShapeWord + 3), TrustedImm32(compiledObjectShapeBit >> 24)));
     jit.load8(Address(receiver, JSCell::indexingTypeAndMiscOffset()), scratch);
     jit.sub32(TrustedImm32(ArrayWithUndecided), scratch);
     Jump hasOtherStorage = jit.branchTest32(CCallHelpers::NonZero, scratch, TrustedImm32(bitsThatNoListWithPlainStorageHas));
@@ -507,6 +512,17 @@ static void emitLengthAtSite(StubAssembler& jit, std::optional<int32_t> asked, L
     answer(scratch);
 
     isNotMapped.link(&jit);
+    Jump isNoStringObject = jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(StringObjectType - FirstTypedArrayType));
+    jit.loadPtr(Address(receiver, StringObject::internalValueOffset()), key);
+    jit.loadPtr(Address(key, JSString::offsetOfValue()), scratch);
+    Jump isRopeInObject = jit.branchIfRopeStringImpl(scratch);
+    jit.load32(Address(scratch, StringImpl::lengthMemoryOffset()), scratch);
+    answer(scratch);
+    isRopeInObject.link(&jit);
+    jit.load32(Address(key, JSRopeString::offsetOfLength()), scratch);
+    answer(scratch);
+
+    isNoStringObject.link(&jit);
     goesOn.append(jit.branch32(CCallHelpers::NotEqual, key, TrustedImm32(SlimClosureType - FirstTypedArrayType)));
     jit.load64(Address(receiver, offsetOfSlimClosureWord), key);
     extractBits(jit, key, ClosureWord::functionShift, ClosureWord::numberOfFunctionBits, key);
@@ -678,16 +694,20 @@ public:
 #endif
     }
 
-    Jump loadBitsOfFormUnlessMostCommon(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, [[maybe_unused]] GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
+    Jump branchOnFormBits(StubAssembler& jit, CCallHelpers::ResultCondition condition, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, [[maybe_unused]] GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
 #if CPU(X86_64)
         jit.load32(word(offsetOfAnswer), bitsOfForm);
-        return jit.branchSub32(CCallHelpers::NonZero, Address(cell, JSCell::structureIDOffset()), bitsOfForm);
+        return jit.branchSub32(condition, Address(cell, JSCell::structureIDOffset()), bitsOfForm);
 #else
         jit.load32(Address(cell, JSCell::structureIDOffset()), bitsOfForm);
         jit.loadPair32(m_place, TrustedImm32(static_cast<int32_t>(offsetOfAnswer)), keyOfAnswer, operand);
-        return jit.branchSub32(CCallHelpers::NonZero, keyOfAnswer, bitsOfForm, bitsOfForm);
+        return jit.branchSub32(condition, keyOfAnswer, bitsOfForm, bitsOfForm);
 #endif
+    }
+    Jump loadBitsOfFormUnlessMostCommon(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, GPRReg operand, GPRReg keyOfAnswer) const
+    {
+        return branchOnFormBits(jit, CCallHelpers::NonZero, offsetOfAnswer, cell, bitsOfForm, operand, keyOfAnswer);
     }
     void loadBitsOfForm(StubAssembler& jit, ptrdiff_t offsetOfAnswer, GPRReg cell, GPRReg bitsOfForm, [[maybe_unused]] GPRReg operand, [[maybe_unused]] GPRReg keyOfAnswer) const
     {
@@ -736,7 +756,7 @@ private:
 static constexpr ptrdiff_t offsetOfFirstAnswer = OBJECT_OFFSETOF(SiteAnswers, first);
 static constexpr ptrdiff_t offsetOfSecondAnswer = OBJECT_OFFSETOF(SiteAnswers, second);
 
-static Jump branchUnlessIndexIsOfWideAnswers(StubAssembler& jit, GPRReg index, GPRReg scratch)
+Jump branchUnlessIndexIsOfWideAnswers(StubAssembler& jit, GPRReg index, GPRReg scratch)
 {
     const Address firstWord(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.firstWordOfWideAnswers));
 #if CPU(X86_64)
@@ -953,17 +973,20 @@ static void readFieldThatDifferenceNames(StubAssembler& jit, const RegistersOfFi
     ways.isNotAsked.append(exits.cannot);
 }
 
-static void returnFieldUnlessSlotIsEmpty(StubAssembler& jit, GPRReg receiver, GPRReg offset, [[maybe_unused]] GPRReg value, GPRReg result, JumpList& slotIsEmpty)
+static void returnFieldUnlessSlotIsEmpty(StubAssembler& jit, GPRReg receiver, GPRReg offset, GPRReg value, GPRReg result, JumpList& slotIsEmpty)
 {
     const BaseIndex slot(receiver, offset, CCallHelpers::TimesOne);
 #if CPU(X86_64)
-    slotIsEmpty.append(jit.branchTest64(CCallHelpers::Zero, slot));
-    jit.load64(slot, result);
-#else
+    if (receiver == result) {
+        slotIsEmpty.append(jit.branchTest64(CCallHelpers::Zero, slot));
+        jit.load64(slot, result);
+        jit.returnToCaller();
+        return;
+    }
+#endif
     jit.load64(slot, value);
     slotIsEmpty.append(jit.branchTest64(CCallHelpers::Zero, value));
     jit.move(value, result);
-#endif
     jit.returnToCaller();
 }
 
@@ -1061,7 +1084,7 @@ static void answerWhereSlotIsEmpty(const ReadAtSiteInWork& read, GPRReg place, G
     const GPRReg distance = read.distance;
     const GPRReg result = read.result;
     slotIsEmpty.link(&jit);
-    isNotAsked.append(jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+    Jump mayBeOutsideSlot = jit.branchTest32(CCallHelpers::NonZero, Address(receiver, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot)));
     loadStructure(jit, receiver, key);
     Jump isNotBelowObjectPrototype = jit.branchTest8(CCallHelpers::Zero, Address(key, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyFieldsBelowObjectPrototype)));
     loadNameOfSiteOrMark(jit, distance, key, place);
@@ -1076,6 +1099,7 @@ static void answerWhereSlotIsEmpty(const ReadAtSiteInWork& read, GPRReg place, G
 
     JumpList isNotAnsweredAbove;
     isNotBelowObjectPrototype.link(&jit);
+    mayBeOutsideSlot.link(&jit);
     isNotAnsweredAbove.append(branchUnlessAnswersAreWide(jit, distance, place, key));
     const AnswersOfStub wideAnswers = AnswersOfStub::atLoadedIndex(jit, place);
     jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
@@ -1276,11 +1300,27 @@ void generateReadAnswerAtSite(StubAssembler& jit)
         const GPRReg cell = distance == gprOf(slotHeaderRegister) ? distance : jit.clobberRegister(slotHeaderRegister);
         RELEASE_ASSERT(noOverlap(object, name, cell, place, key, operand, instanceGPR) && noOverlap(receiver, name, place));
         checkStubOperands(getByIdAfterFrontProbe(), { object, cell });
+        Jump isProxy = jit.branchTest32(CCallHelpers::NonZero, operand);
         loadNameOfSiteOrMark(jit, distance, name, place);
         jit.move(receiver, object);
         jit.load32(Address(object, JSCell::structureIDOffset()), key);
         loadFrontCell(jit, SlotAccess::Read, { key, name, operand, cell, place });
         read.goOnIn(getByIdAfterFrontProbe());
+
+        isProxy.link(&jit);
+        const StubKey getsThroughProxy = throughProxy(TrapOfProxy::Get);
+        const GPRReg keyOfTrap = gprOf(slotPayloadRegister);
+        const GPRReg header = cell;
+        checkStubOperands(getsThroughProxy, { object, keyOfTrap, header });
+        RELEASE_ASSERT((keyOfTrap == key || keyOfTrap == operand) && noOverlap(keyOfTrap, receiver, distance, place) && noOverlap(header, receiver, operand, place));
+        if (asksTruth)
+            isNotAsked.append(jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, StubAssembler::trapAwareSoftStackLimitWord()));
+        loadNameOfSiteOrMark(jit, distance, header, place);
+        static_assert(Slot::locationShiftInHeader + 8 * sizeof(uint16_t) == 64);
+        jit.lshift64(TrustedImm32(Slot::locationShiftInHeader), header);
+        jit.move(receiver, object);
+        decodeCell32(jit, operand, keyOfTrap);
+        read.goOnIn(getsThroughProxy);
         break;
     }
     case Form::OwnFieldInExtension: {
@@ -1353,6 +1393,7 @@ static void emitReadAtSite(StubAssembler& jit, bool asksTruth, bool asksShapeFir
     RELEASE_ASSERT((registersOfAnswerAtSite() == RegistersOfAnswerAtSite { receiver, place, key, operand }) && distance == gprOf(shortStubImmediateRegister));
     const GPRReg value = receiver == result ? operand : result;
     const SiteUse use = form.use;
+    RELEASE_ASSERT(value != result || noOverlap(result, receiver, distance, place, key, operand, difference));
     RELEASE_ASSERT(use == SiteUse::Read || !asksShapeFirst);
     const bool asksShape = asksShapeFirst || (use == SiteUse::ReadUnderNameOfField && !form.asksNoShapeUnderNameOfField);
     const ReadAtSiteInWork read { jit, asksTruth, form.name, use, receiver, distance, result };
@@ -1373,47 +1414,42 @@ static void emitReadAtSite(StubAssembler& jit, bool asksTruth, bool asksShapeFir
     };
     if (asksShapeFirst)
         askAnswerByShape();
-    Jump hasOtherKey = answers.loadBitsOfFormUnlessMostCommon(jit, offsetOfSecondAnswer, receiver, key, operand, keyOfAnswer);
-    if (use == SiteUse::ReadUnderNameOfField) {
-        answers.loadOperand(jit, offsetOfSecondAnswer, operandOfCommonForm);
-        returnFieldUnlessSlotIsEmpty(jit, receiver, operandOfCommonForm, value, result, slotOfAnyObjectIsEmpty);
-    } else {
+    auto answerMostCommonForm = [&] {
+        if (use == SiteUse::ReadUnderNameOfField) {
+            answers.loadOperand(jit, offsetOfSecondAnswer, operandOfCommonForm);
+            returnFieldUnlessSlotIsEmpty(jit, receiver, operandOfCommonForm, value, result, slotOfAnyObjectIsEmpty);
+            return;
+        }
         answers.loadSignedOperand(jit, offsetOfSecondAnswer, operandOfCommonForm);
-        Jump liesInStorage = jit.branchTest64(CCallHelpers::Signed, operandOfCommonForm);
-        jit.load64(BaseIndex(receiver, operandOfCommonForm, CCallHelpers::TimesEight), result);
-        jit.returnToCaller();
-
-        liesInStorage.link(&jit);
+        Jump isInCell = jit.branchTest64(CCallHelpers::PositiveOrZero, operandOfCommonForm);
         jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
         jit.load64(BaseIndex(storage, operandOfCommonForm, CCallHelpers::TimesEight), result);
         jit.returnToCaller();
-    }
 
-    hasOtherKey.link(&jit);
+        isInCell.link(&jit);
+        jit.load64(BaseIndex(receiver, operandOfCommonForm, CCallHelpers::TimesEight), result);
+        jit.returnToCaller();
+    };
+    const bool expectsOtherForm = asksShape;
+    Jump isUnexpected = answers.branchOnFormBits(jit, expectsOtherForm ? CCallHelpers::Zero : CCallHelpers::NonZero, offsetOfSecondAnswer, receiver, key, operand, keyOfAnswer);
+    if (!expectsOtherForm) {
+        answerMostCommonForm();
+        isUnexpected.link(&jit);
+    }
     Jump isNotAnsweredByStructure = jit.branch32(CCallHelpers::Above, key, TrustedImm32(SiteAnswers::formMask));
     answers.loadOperand(jit, offsetOfSecondAnswer, operand);
     jumpToHandlerOfAnswer(jit, answerHandlerTable(asksTruth, false, use), key);
+    if (expectsOtherForm) {
+        isUnexpected.link(&jit);
+        answerMostCommonForm();
+    }
 
     static_assert(offsetOfFirstExtensionSlot == extensionGranuleSize && extensionGranuleSize == sizeof(uint64_t) && maxExtensionGranules == 64);
     static_assert(!(WideSiteAnswers::numberOfStructuresThatLackName % 2) && WideSiteAnswers::numberOfFurtherAnswers == 2);
     JumpList findsNothing;
     std::array<Jump, WideSiteAnswers::numberOfFurtherAnswers> hasFurtherAnswer;
-    auto askWideAnswers = [&] {
-#if CPU(X86_64)
-        Jump hasNoMoreAnswers = branchUnlessIndexIsOfWideAnswers(jit, place, InvalidGPRReg);
-#else
-        Jump hasNoMoreAnswers = branchUnlessAnswersAreWide(jit, distance, key, operand);
-#endif
-        jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
-#if CPU(X86_64)
-        for (unsigned index = 0; index < hasFurtherAnswer.size(); ++index)
-            hasFurtherAnswer[index] = jit.branch32(CCallHelpers::Equal, answers.word(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers) + index * sizeof(uint32_t)), key);
-#else
-        jit.loadPair32(place, TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers))), keyOfAnswer, operand);
-        hasFurtherAnswer[0] = jit.branch32(CCallHelpers::Equal, key, keyOfAnswer);
-        hasFurtherAnswer[1] = jit.branch32(CCallHelpers::Equal, key, operand);
-#endif
-        for (unsigned index = 0; index < WideSiteAnswers::numberOfStructuresThatLackName; index += 2) {
+    auto askWhetherStructureLacksName = [&](unsigned begin, unsigned end) {
+        for (unsigned index = begin; index < end; index += 2) {
             const ptrdiff_t offset = OBJECT_OFFSETOF(WideSiteAnswers, structuresThatLackName) + index * sizeof(uint32_t);
 #if CPU(X86_64)
             findsNothing.append(jit.branch32(CCallHelpers::Equal, answers.word(offset), key));
@@ -1424,6 +1460,25 @@ static void emitReadAtSite(StubAssembler& jit, bool asksTruth, bool asksShapeFir
             findsNothing.append(jit.branch32(CCallHelpers::Equal, key, operand));
 #endif
         }
+    };
+    const unsigned numberAskedFirst = asksTruth && use == SiteUse::ReadUnderNameOfField ? 2 : 0;
+    auto askWideAnswers = [&] {
+#if CPU(X86_64)
+        Jump hasNoMoreAnswers = branchUnlessIndexIsOfWideAnswers(jit, place, InvalidGPRReg);
+#else
+        Jump hasNoMoreAnswers = branchUnlessAnswersAreWide(jit, distance, key, operand);
+#endif
+        jit.load32(Address(receiver, JSCell::structureIDOffset()), key);
+        askWhetherStructureLacksName(0, numberAskedFirst);
+#if CPU(X86_64)
+        for (unsigned index = 0; index < hasFurtherAnswer.size(); ++index)
+            hasFurtherAnswer[index] = jit.branch32(CCallHelpers::Equal, answers.word(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers) + index * sizeof(uint32_t)), key);
+#else
+        jit.loadPair32(place, TrustedImm32(static_cast<int32_t>(OBJECT_OFFSETOF(WideSiteAnswers, structuresOfFurtherAnswers))), keyOfAnswer, operand);
+        hasFurtherAnswer[0] = jit.branch32(CCallHelpers::Equal, key, keyOfAnswer);
+        hasFurtherAnswer[1] = jit.branch32(CCallHelpers::Equal, key, operand);
+#endif
+        askWhetherStructureLacksName(numberAskedFirst, WideSiteAnswers::numberOfStructuresThatLackName);
         hasNoMoreAnswers.link(&jit);
     };
     isNotAnsweredByStructure.link(&jit);
@@ -1639,6 +1694,7 @@ void generateReadAtSiteRunningNoCode(StubAssembler& jit)
     constexpr SiteUse use = SiteUse::Read;
     using Form = SiteAnswers::Form;
     const ReadAtSiteRunningNoCodeForm form = readAtSiteRunningNoCodeFormOf(jit.key());
+    const uint32_t whatStubDoes = stubOfSiteFollowsFurtherAnswers | (form.isOfSuperBase ? stubReadsForOtherReceiver : 0);
     const GPRReg receiver = jit.operand(0);
     const GPRReg result = jit.result();
     const GPRReg distance = jit.immediate();
@@ -1714,13 +1770,13 @@ void generateReadAtSiteRunningNoCode(StubAssembler& jit)
         askAnswerByShape();
     Jump hasOtherKey = answers.loadBitsOfFormUnlessMostCommon(jit, offsetOfSecondAnswer, receiver, key, operand, keyOfAnswer);
     answers.loadSignedOperand(jit, offsetOfSecondAnswer, operandOfCommonForm);
-    Jump liesInStorage = jit.branchTest64(CCallHelpers::Signed, operandOfCommonForm);
-    jit.load64(BaseIndex(receiver, operandOfCommonForm, CCallHelpers::TimesEight), result);
-    jit.returnToCaller();
-
-    liesInStorage.link(&jit);
+    Jump isInCell = jit.branchTest64(CCallHelpers::PositiveOrZero, operandOfCommonForm);
     jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
     jit.load64(BaseIndex(storage, operandOfCommonForm, CCallHelpers::TimesEight), result);
+    jit.returnToCaller();
+
+    isInCell.link(&jit);
+    jit.load64(BaseIndex(receiver, operandOfCommonForm, CCallHelpers::TimesEight), result);
     jit.returnToCaller();
 
     hasOtherKey.link(&jit);
@@ -1804,7 +1860,7 @@ void generateReadAtSiteRunningNoCode(StubAssembler& jit)
             hasFormAndOperand.append(jit.jump());
     }
     hasFormAndOperand.link(&jit);
-    static_assert(WideSiteAnswers::formsOfFurtherAnswers == std::array { Form::ExtraValueInCell, Form::OwnFieldInCell, Form::OwnValueInCell, Form::ExtraValueInStorage, Form::ValueInWordOfCage });
+    static_assert(WideSiteAnswers::formsOfFurtherAnswers == std::array { Form::ExtraValueInCell, Form::OwnFieldInCell, Form::OwnValueInCell, Form::ExtraValueInStorage, Form::ValueInWordOfCage, Form::Nothing });
     branchIfOfForm(Form::OwnFieldInCell).linkTo(readsOwnField, &jit);
     branchIfOfForm(Form::OwnValueInCell).linkTo(readsOwnValueInCell, &jit);
     branchIfOfForm(Form::ValueInWordOfCage).linkTo(readsWordOfCage, &jit);
@@ -1866,14 +1922,14 @@ void generateReadAtSiteRunningNoCode(StubAssembler& jit)
 
     hasAnswers.link(&jit);
     Jump hasAnswersOfItsOwn = jit.branch32(CCallHelpers::NotEqual, scratchOfMiss, TrustedImm32(indexOfSiteAnswersThatHoldNothing));
-    countMissAtSite(jit, result, distance, key, operand, use, stubOfSiteFollowsFurtherAnswers);
+    countMissAtSite(jit, result, distance, key, operand, use, whatStubDoes);
     askFrontOfTables();
     isNoHit.append(jit.jump());
 
     hasAnswersOfItsOwn.link(&jit);
     askFrontOfTables();
     jit.move(receiver, result);
-    countMissAtSite(jit, result, distance, key, operand, use, stubOfSiteFollowsFurtherAnswers);
+    countMissAtSite(jit, result, distance, key, operand, use, whatStubDoes);
     isNoHit.link(&jit);
     jit.move(TrustedImm32(0), result);
     jit.returnToCaller();
@@ -2222,6 +2278,35 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments, Nam
         jit.loadPtr(Address(calleeGPR, GetterSetter::offsetOfGetter()), key);
         askAgainWhatSiteAnswers(jit, thisGPR, key, distance, KindOfAnswer::Accessor, StubThatAnswers::CachedGetterByName);
     }
+    static_assert(ReturnedCaptureData::formShift == 56);
+    JumpList hasForm;
+    hasForm.append(jit.branch32(CCallHelpers::Above, Address(calleeGPR, GetterSetter::offsetOfReturnedCapture() + sizeof(uint32_t)), TrustedImm32((1 << 24) - 1)));
+    jit.loadPtr(Address(calleeGPR, GetterSetter::offsetOfReturnedCapture()), key);
+    Jump isUnknown = jit.branchTestPtr(CCallHelpers::Zero, key);
+    jit.load64(Address(key), key);
+    Jump isEmpty = jit.branchTest64(CCallHelpers::Zero, key);
+    countSlowPathRead(jit);
+    jit.move(key, calleeGPR);
+    jit.jumpToStub(callsValue);
+
+    hasForm.link(&jit);
+    JumpList isNoClosureCell;
+    if (!jit.options().useWideReferences) {
+        isNoClosureCell.append(jit.branch8(CCallHelpers::NotEqual, Address(calleeGPR, GetterSetter::offsetOfReturnedCapture() + ReturnedCaptureData::formShift / 8), TrustedImm32(ReturnedCaptureData::isClosureCell)));
+        jit.load64(Address(calleeGPR, GetterSetter::offsetOfReturnedCapture()), key);
+        jit.lshift64(TrustedImm32(64 - ReturnedCaptureData::formShift), key);
+        jit.urshift64(TrustedImm32(64 - ReturnedCaptureData::formShift), key);
+        jit.load32(Address(key), key);
+        isNoClosureCell.append(jit.branchTest32(CCallHelpers::Zero, key));
+        countSlowPathRead(jit);
+        jit.add32(TrustedImm32(1), key);
+        decodeCell32(jit, key, calleeGPR);
+        jit.jumpToStub(callsValue);
+    }
+
+    isUnknown.link(&jit);
+    isEmpty.link(&jit);
+    isNoClosureCell.link(&jit);
     const StubKey callOfGetter = callGetterOfAnswer(CallerFrame::StubFrame);
     Vector<GPRReg, 1 + numberOfArgumentGPRs> kept;
     kept.append(thisGPR);
@@ -2237,6 +2322,35 @@ static void emitCallMethodAtSite(StubAssembler& jit, unsigned lentArguments, Nam
     });
     jit.emitFunctionEpilogue();
     jit.jumpToStub(callsValue);
+}
+
+StubSignature signatureOfCallToStringAtSite(StubKey) { return signatureOf(callMethodAtSite(0)); }
+
+void generateCallToStringAtSite(StubAssembler& jit)
+{
+    const StubKey callsMethod = callMethodAtSite(0);
+    if (jit.options().methodsOfBuiltinsMayBeReplaced) {
+        jit.jumpToStub(callsMethod);
+        return;
+    }
+    const GPRReg scratch = calleeGPR;
+    RELEASE_ASSERT(noOverlap(thisGPR, scratch, jit.immediate()));
+    jit.recordClobbers(RegisterSet { scratch });
+    Jump isCell = jit.branchIfCell(thisGPR);
+    jit.move(thisGPR, scratch);
+    jit.and64(TrustedImm32(~JSValue::UndefinedTag), scratch);
+    jit.linkToStub(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm32(JSValue::ValueNull)), callsMethod);
+    const StubKey toString = unaryOperation(UnaryOperationForm::ToString);
+    if (const GPRReg operand = signatureOf(toString).operands[0].gpr(); operand != thisGPR) {
+        jit.recordClobbers(RegisterSet { operand });
+        jit.move(thisGPR, operand);
+    }
+    jit.jumpToStub(toString);
+
+    isCell.link(&jit);
+    jit.linkToStub(jit.branchIfNotString(thisGPR), callsMethod);
+    jit.move(thisGPR, jit.result());
+    jit.returnToCaller();
 }
 
 void generateCallMethodAtSite(StubAssembler& jit)

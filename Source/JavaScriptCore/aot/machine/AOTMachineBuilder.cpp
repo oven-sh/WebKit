@@ -250,7 +250,7 @@ static bool machineBuilderMayBeFusedIntoItsUser(const Operation* operation)
 {
     Opcode opcode = operation->opcode();
     if (isLoad(opcode)) {
-        if (operation->has(OperationFlag::ReadsWordFilledOnce))
+        if (operation->has(OperationFlag::ReadsWordFilledOnce) || operation->isNarrowReference())
             return false;
         return operation->child(0)->hasNoPosition() || (isX86_64() && operation->type() != Int64 && operation->useCount() < 2);
     }
@@ -730,6 +730,27 @@ bool Builder::findsAgain(Operation* sumOrProduct)
     return findNumbered(key, Numbering::hashOf(key)) == sumOrProduct;
 }
 
+bool Builder::isVisibleComputation(Operation* computation)
+{
+    switch (computation->opcode()) {
+    case Trunc:
+    case Neg:
+    case Add:
+    case Sub:
+    case Mul:
+    case BitAnd:
+    case BitOr:
+    case BitXor:
+    case Shl:
+        break;
+    default:
+        return computation->isConstant();
+    }
+    bool isBinary = descriptionOf(computation->opcode()).numberOfChildren == 2;
+    NumberingKey key = machineBuilderKeyOf(computation->opcode(), computation->type(), computation->child(0), isBinary ? computation->child(1) : nullptr);
+    return findNumbered(key, Numbering::hashOf(key)) == computation;
+}
+
 Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
 {
     ASSERT(descriptionOf(opcode).numberOfChildren == 2);
@@ -778,6 +799,8 @@ Operation* Builder::binary(Opcode opcode, Operation* left, Operation* right)
     Operation* result = appendNewComputation(opcode, type, left, right);
     if (ownShift)
         m_proc.noteOwnShiftOfSum(result, ownShift);
+    if ((opcode == Equal || opcode == NotEqual) && left->opcode() == Add) [[unlikely]]
+        noteComparisonOfSum(result);
     if ((opcode == Add || opcode == Sub) && left->has(OperationFlag::IsInnerPointer))
         result->m_flags |= static_cast<uint16_t>(OperationFlag::IsInnerPointer);
     m_numbering.add(key, hash, result);
@@ -1079,6 +1102,32 @@ Operation* Builder::makeOwnShiftOfSum(Operation* shift)
         return nullptr;
     }
     return appendNewComputation(Shl, Int64, shift->child(0), shift->child(1));
+}
+
+void Builder::noteComparisonOfSum(Operation* comparison)
+{
+    const Operation* sum = comparison->child(0);
+    const Operation* bound = comparison->child(1);
+    if (!bound->hasInt() || !sum->child(1)->hasInt() || sum->hasNoPosition() || sum->has(OperationFlag::IsInnerPointer))
+        return;
+    auto difference = static_cast<int64_t>(static_cast<uint64_t>(bound->asInt()) - static_cast<uint64_t>(sum->child(1)->asInt()));
+    if (sum->type() == Int32)
+        difference = static_cast<int32_t>(difference);
+    if (isEncodableArithmeticConstant(difference))
+        m_proc.noteComparisonOfSum(comparison, constantOfType(sum->type(), difference));
+}
+
+Operation* Builder::compareTermOfSum(Operation* sum)
+{
+    if (sum->opcode() != Add || !sum->child(1)->hasInt() || sum->hasNoPosition() || sum->owner() != m_block || sum->has(OperationFlag::IsInnerPointer))
+        return nullptr;
+    auto bound = static_cast<int64_t>(-static_cast<uint64_t>(sum->child(1)->asInt()));
+    if (sum->type() == Int32)
+        bound = static_cast<int32_t>(bound);
+    if (!isEncodableArithmeticConstant(bound))
+        return nullptr;
+    Operation* comparison = binary(NotEqual, sum->child(0), constantOfType(sum->type(), bound));
+    return comparison->opcode() == NotEqual ? comparison : nullptr;
 }
 
 Operation* Builder::makeSumOfStore(Operation* sum, const Operation* stored)
@@ -1516,7 +1565,10 @@ void Builder::branch(Operation* predicate, Edge whenNotZero, Edge whenZero)
     }
 
     predicate = duplicateIfFusable(predicate);
-    appendNew(Branch, Void, predicate);
+    Operation* comparison = predicate->opcode() == Add ? compareTermOfSum(predicate) : nullptr;
+    Operation* result = appendNew(Branch, Void, predicate);
+    if (comparison) [[unlikely]]
+        m_proc.noteBranchOnSum(result, comparison);
     m_block->setSuccessorsInline(whenNotZero, whenZero);
 }
 

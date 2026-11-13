@@ -40,6 +40,7 @@ public:
     void generatePutSlot(const ValueContext&);
     void generatePutSlotOrAdd(const ValueContext&);
 
+    void loadFieldsTogether(const ValueContext&, CellPointer, const FieldAccess&);
     CellPointer baseOfSlot(CellPointer, const FieldAccess&);
     CellPointer baseOfSlot(CellPointer, const FieldAccess&, LayoutSetID receivers);
     std::optional<CellPointer> baseOfSlotWhereOneTableTellsShapeAndDistance(CellPointer, const FieldAccess&, LayoutSetID receivers, bool rejectsMarkedObjects, LBasicBlock whereShapeIsNoReceiver);
@@ -66,6 +67,7 @@ public:
     void markCellIfMarkerReplacesRawValue(CellPointer, const FieldAccess&, ValueID stored);
     void askObjectWhatStandsInWayOfStore(const ValueContext&, CellPointer);
     std::optional<KeyOrderStep> testLikeliestKeyOrderStep(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys);
+    Condition hasOrderAndShapeWords(CellPointer, Word32 shapeWord, uint64_t words);
     std::optional<KeyOrderStep> testNextKeyOrderStep(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys);
     void takeKeyOrderStepOr(CellPointer, const std::optional<KeyOrderStep>&, NOESCAPE const Invocable<void()> auto& otherwise);
     void listCreatedFields(CellPointer, LayoutSetID receivers, std::span<const PropertyKeyID> createdKeys, bool isExpectedToCreate, NOESCAPE const Invocable<void()> auto& listIfMissing);

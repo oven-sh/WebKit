@@ -83,9 +83,11 @@ Operand OperatorEmitter::bitwiseResult(const ValueContext& value, BitwiseOperato
         case Representation::JSValue:
             if (typeOf(id).isNumber())
                 return emitter<ConversionEmitter>().toInt32OfBoxedNumber(in<Boxed>(id));
-            if (!typeOf(id).hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull))
+            if (!typeOf(id).hasOnlyPrimitives(Primitive::NumberLike))
                 break;
-            return emitter<ConversionEmitter>().truncateNullableNumber(in<Boxed>(id));
+            if (std::optional<Word32> known = emitter<CastEmitter>().takeBitsHandedOnTo(id))
+                return *known;
+            return emitter<ConversionEmitter>().bitsOfPrimitive(in<Boxed>(id), typeOf(id).primitives & Primitive::Boolean);
         case Representation::Unchosen:
         case Representation::Void:
         case Representation::Boolean:

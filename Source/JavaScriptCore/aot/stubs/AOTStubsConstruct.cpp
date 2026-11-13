@@ -38,9 +38,9 @@ static void loadConstructorClassInfo(StubAssembler& jit, GPRReg callee, GPRReg r
     jit.loadPtr(Address(result, Structure::classInfoOffset()), result);
 }
 
-static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GPRReg callee, GPRReg function, GPRReg globalObject, GPRReg scratch, JumpList& genericPath)
+static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GPRReg callee, GPRReg newTarget, GPRReg function, GPRReg globalObject, GPRReg scratch, JumpList& genericPath)
 {
-    RELEASE_ASSERT(noOverlap(callee, function, globalObject, scratch, instanceGPR));
+    RELEASE_ASSERT(noOverlap(callee, newTarget, function, globalObject, scratch, instanceGPR));
 
     jit.load8(Address(callee, JSCell::typeInfoTypeOffset()), scratch);
     Jump isInternalFunction = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(InternalFunctionType));
@@ -58,8 +58,14 @@ static void loadNativeConstructor(StubAssembler& jit, ConstructSyntax syntax, GP
 
     isInternalFunction.link(&jit);
     switch (syntax) {
-    case ConstructSyntax::NewExpression:
+    case ConstructSyntax::NewExpression: {
+        Jump isOwnNewTarget = jit.branchPtr(CCallHelpers::Equal, callee, newTarget);
+        loadConstructorClassInfo(jit, callee, scratch);
+        jit.loadRuntimePointer(Entry::ErrorConstructorClassInfo, function);
+        genericPath.append(jit.branchPtr(CCallHelpers::Equal, scratch, function));
+        isOwnNewTarget.link(&jit);
         break;
+    }
     case ConstructSyntax::SuperCall:
         loadConstructorClassInfo(jit, callee, scratch);
         for (Entry classInfo : { Entry::ErrorConstructorClassInfo, Entry::ArrayConstructorClassInfo }) {
@@ -154,7 +160,7 @@ static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, En
     JumpList genericPath;
     genericPath.append(jit.branchIfNotCell(callee));
     genericPath.append(jit.branchIfNotCell(newTarget));
-    loadNativeConstructor(jit, syntax, callee, function, globalObject, scratch, genericPath);
+    loadNativeConstructor(jit, syntax, callee, newTarget, function, globalObject, scratch, genericPath);
 
     jit.emitFunctionPrologue();
     JumpList overflowsStack = checkHostFrameCapacity(jit, count, scratch);

@@ -266,7 +266,7 @@ static NEVER_INLINE bool tryCopyDataPropertiesOfDictionary(VM& vm, JSObject* tar
 
 static bool tryCopyDataProperties(VM& vm, JSObject* target, JSObject* source)
 {
-    Structure* sourceStructure = source->structure();
+    Structure* sourceStructure = WTF::opaque(source->structure());
     if (!takesPlainPropertiesDirectly(target->structure()))
         return false;
     if (sourceStructure->isDictionary()) [[unlikely]]
@@ -559,8 +559,11 @@ static ALWAYS_INLINE void copyDataPropertiesAsBeforeOrByAnyWay(Instance* instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataProperties, void, (Instance* instance, JSCell* target, EncodedJSValue source, uint32_t excludedRun, uint32_t count, const EncodedJSValue* excludedKeys))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTCopyDataProperties);
-    if (Object* from = compiledObjectOrNull(JSValue::decode(source)); from && from->bearsMark() && !(from->orderWord() & orderWordHasFieldOutsideSlot)) [[unlikely]]
-        from->tryFinishBirth();
+    if (Object* from = compiledObjectOrNull(JSValue::decode(source))) {
+        if (from->bearsMark() && !(from->orderWord() & orderWordHasFieldOutsideSlot)) [[unlikely]]
+            from->tryFinishBirth();
+        from->finishFillingExtraProperties(vm);
+    }
     scope.release();
     copyDataPropertiesAsBeforeOrByAnyWay(instance, globalObject, vm, target, source, excludedRun, count, excludedKeys);
     OPERATION_RETURN(scope);
@@ -598,6 +601,7 @@ static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObj
 // Out of line: the operation keeps nothing alive across the calls in here.
 static NEVER_INLINE JSObject* tryCopyCompiledObject(Instance* instance, JSGlobalObject* globalObject, VM& vm, Object& source)
 {
+    source.finishFillingExtraProperties(vm);
     if (Object* copy = &source.state() == instance->state ? Object::tryCreateCopyOfFields(vm, source) : nullptr)
         return copy;
     return tryCopyAsOrdinaryObject(vm, globalObject, &source, ExcludedRun { });
@@ -607,6 +611,7 @@ static NEVER_INLINE JSObject* copyObjectByNames(Instance* instance, JSGlobalObje
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (run.numberPlusOne && excludedKeys.empty() && source.isObject() && isCompiledObject(asObject(source))) {
+        uncheckedDowncast<Object>(asObject(source))->finishFillingExtraProperties(vm);
         JSObject* rest = PropertyWalk::tryCopyWithGetters(globalObject, asObject(source), run.numberPlusOne, instance->state->objects->caches->assignmentPlans.excludedNames(run).names());
         RETURN_IF_EXCEPTION(scope, nullptr);
         if (rest)

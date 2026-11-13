@@ -104,12 +104,17 @@ constexpr StubKey callOperationThatMayFailToAllocate(OperationCall::Returns retu
     return StubKey(StubFamily::CallOperation).withForm(*form);
 }
 
+constexpr StubKey callOperationFor(Entry entry, OperationCall::Returns returns, OperationCall::FirstArgument firstArgument, const Typed::Effects& effects)
+{
+    if (effects.mayThrow) {
+        return callOperation(returns, firstArgument, mayFailToAllocate(entry, firstArgument, effects) || (returns == OperationCall::Returns::Pair && firstArgument == OperationCall::FirstArgument::Instance));
+    }
+    return mayFailToAllocate(entry, firstArgument, effects) ? callOperationThatMayFailToAllocate(returns) : tailCallOperation(firstArgument);
+}
+
 constexpr StubKey callOperationFor(Entry entry, OperationCall::Returns returns, OperationCall::FirstArgument firstArgument)
 {
-    if (effectsOf(entry).mayThrow) {
-        return callOperation(returns, firstArgument, mayFailToAllocate(entry, firstArgument) || (returns == OperationCall::Returns::Pair && firstArgument == OperationCall::FirstArgument::Instance));
-    }
-    return mayFailToAllocate(entry, firstArgument) ? callOperationThatMayFailToAllocate(returns) : tailCallOperation(firstArgument);
+    return callOperationFor(entry, returns, firstArgument, effectsOf(entry));
 }
 
 constexpr std::optional<StubKey> tryCallOperationPreservingRegisters(const OperationCall& call)

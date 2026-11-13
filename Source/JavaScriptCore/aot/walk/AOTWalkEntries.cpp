@@ -293,7 +293,7 @@ Reference BuilderOfEntries::inFormThatUnitTakes(Reference operand, CodeUnit targ
         return { };
     Representation wanted = m_conventions.parameterRepresentation(m_program, target, entryParameter);
     auto allowsWantedForm = [&] {
-        return isLegalRepresentation(m_types.at(m_walker.typeOf(operand)), wanted);
+        return (target.role == CodeRole::Body && m_conventions.isScalarizedParameter(target.function, entryParameter)) || isLegalRepresentation(m_types.at(m_walker.typeOf(operand)), wanted);
     };
     TypeID promised = typeAtEntryOfFunction(entryParameter);
     bool isAsked = m_types.at(promised).isJavaScriptValue() && m_types.at(m_walker.typeOf(operand)).isJavaScriptValue() && !m_types.isSubset(m_walker.typeOf(operand), m_walker.typeThatUnitMayTestFor(m_types.testablePartOf(promised)));
@@ -366,7 +366,7 @@ Reference BuilderOfEntries::callUnit(CodeUnit target, std::span<const Reference>
 {
     if (!m_conventions.exists(target))
         fail("a unit goes on to a unit that does not exist"_s);
-    else if (m_conventions.numberOfResults(target) != 1 || m_conventions.numberOfResults(m_unit) != 1)
+    else if ((m_conventions.numberOfResults(target) != 1 && !m_conventions.returnsScalars(target)) || m_conventions.numberOfResults(m_unit) != 1)
         fail("a unit goes on to a unit that does not return one value as it does itself"_s);
     if (m_cannotGoOn)
         return { };
@@ -387,7 +387,8 @@ void BuilderOfEntries::returnResultOf(Reference call)
 {
     if (m_cannotGoOn)
         return;
-    bool isLastOperation = call.isValue() && m_walker.code().lastOperationOf(m_walker.currentBlock()) == call.id();
+    static constexpr OpcodeSet calls { Opcode::Call, Opcode::CallList, Opcode::CallDirect, Opcode::CallTable };
+    bool isLastOperation = call.isValue() && m_walker.code().lastOperationOf(m_walker.currentBlock()) == call.id() && calls.contains(m_walker.code().at(call.id()).opcode);
     if (!isLastOperation || !haveSameRegisterRepresentation(m_walker.representationOf(call), m_conventions.resultRepresentation(m_unit))) {
         returnValue(call);
         return;

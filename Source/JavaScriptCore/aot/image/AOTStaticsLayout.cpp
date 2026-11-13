@@ -265,6 +265,8 @@ private:
         const NumberedKeys& guards = m_mentions.keys(NumberSpace::ClassGuard);
         uint32_t firstCount = placeOfFirstClassGuardCount();
         auto isCountedFromFirst = [&](std::span<const uint32_t> guard) {
+            if (askerOfClassGuardKey(guard) == AskerOfClassGuardOfName::AssignedMember)
+                return true;
             LayoutID classLayout(guard[0]);
             ClassSide side = sideOfClassGuardKey(guard);
             bool isCountedWhereGuardsBegin = side == ClassSide::Prototype && isClassGuardOfNamesKey(guard) && guardsOfNamesAwaitBeginningOf(m_program, m_plan, classLayout);

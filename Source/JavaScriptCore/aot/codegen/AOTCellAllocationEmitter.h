@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTOperationEmitter.h"
+#include "AOTStubsAllocation.h"
 #include "IndexingType.h"
 #include <optional>
 #include <span>
@@ -27,7 +28,9 @@ public:
     explicit CellAllocationEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
 
     CellPointer allocateHeapCell(Pointer allocatorOrNull, LBasicBlock slowPath);
-    CellPointer allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
+    CellPointer allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath, bool refillsInline = true);
+    bool allocatesInline(const OperationContext&) const;
+    bool allocatesInline(const OperationContext&, const MentionedAllocation&) const;
     void storeHeader(CellPointer, Integer header);
 
     CellPointer allocateObject(InlineAllocation, LBasicBlock slowPath);
@@ -35,6 +38,7 @@ public:
     MentionedAllocation allocationOf(const OperationContext&, LayoutID, std::span<const FieldIndex> initialFields);
     MentionedAllocation environmentAllocationOf(LayoutID);
     MentionedAllocation closureAllocationOf(unsigned numberOfCaptures);
+    Pointer endOfAllocationSiteRecord(const MentionedAllocation&);
     Pointer allocationSiteRecord(const MentionedAllocation&);
     CellPointer allocate(const OperationContext&, const MentionedAllocation&, ZeroedBy = ZeroedBy::Nobody);
     std::pair<CellPointer, Condition> allocateInstance(const OperationContext&, const MentionedAllocation&, CellPointer prototype);
@@ -58,6 +62,8 @@ public:
 private:
     Integer rowOf(const MentionedAllocation& allocation) { return zeroExtended(numberOf(allocation.mention)); }
     void zeroBody(CellPointer, const MentionedAllocation&);
+    CellPointer allocateInline(const MentionedAllocation&, CellInitialization, LValue bodyTemplate, LBasicBlock slowPath);
+    CellPointer allocateInlineOr(const MentionedAllocation&, CellInitialization, LValue bodyTemplate, NOESCAPE const Invocable<CellPointer()> auto& callStub);
     LValue slotOfFrameCell(const OperationContext&, size_t size);
 
     struct SlotOfClosuresLent {

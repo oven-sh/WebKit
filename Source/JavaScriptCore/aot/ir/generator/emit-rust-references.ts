@@ -146,7 +146,7 @@ fn skip<W: Words + ?Sized>(words: &W, at: &mut usize, count: usize) -> Option<()
 }
 
 #[inline]
-fn present<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+fn present<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     words.get(*at)?;
     visit(field, *at);
     *at += 1;
@@ -154,7 +154,7 @@ fn present<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit
 }
 
 #[inline]
-fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+fn optional<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     if words.get(*at)? != ABSENT_WORD {
         visit(field, *at);
     }
@@ -163,7 +163,7 @@ fn optional<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visi
 }
 
 #[inline]
-fn counted<W: Words + ?Sized>(words: &W, at: &mut usize, field: FieldWord, visit: Visit<'_>) -> Option<()> {
+fn counted<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(words: &W, at: &mut usize, field: FieldWord, visit: &mut F) -> Option<()> {
     let count = words.get(*at)?;
     *at += 1;
     for _ in 0..count {
@@ -256,7 +256,7 @@ function visitFunction(
   const bodies = entries.map(entry => ({ label: entry.name, body: entryStatements(entry) }));
   return [
     attribute,
-    `pub fn ${name}<W: Words + ?Sized>(${parameter}: ${enumName}, words: &W, at: usize, visit: &mut dyn FnMut(FieldWord, usize)) -> Option<usize> {`,
+    `pub fn ${name}<W: Words + ?Sized, F: FnMut(FieldWord, usize)>(${parameter}: ${enumName}, words: &W, at: usize, visit: &mut F) -> Option<usize> {`,
     `${indentation}let mut at = at;`,
     `${indentation}match ${parameter} {`,
     ...groupedArms(enumName, bodies, indentation.repeat(2)),

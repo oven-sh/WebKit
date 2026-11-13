@@ -217,6 +217,8 @@ static ASCIILiteral nameInFactsText(SummaryTrait trait)
         return "NeverReturns"_s;
     case SummaryTrait::SuspendsAfterStart:
         return "SuspendsAfterStart"_s;
+    case SummaryTrait::CallsAccessorDefiner:
+        return "CallsAccessorDefiner"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -577,6 +579,7 @@ static void printChangeOfSummary(IRPrinter& printer, const ThinSummary& summary,
     }
     printNamedNodeOfSummary(printer, summary, "other="_s, change.other);
     printNamedNodeOfSummary(printer, summary, "getter="_s, change.getter);
+    printNamedNodeOfSummary(printer, summary, "setter="_s, change.setter);
     if (change.isUnderNameThatNobodyElseNames)
         out.print(" under-a-name-that-nobody-else-names"_s);
     if (change.descriptorIsInSight)

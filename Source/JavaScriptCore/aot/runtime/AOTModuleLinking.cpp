@@ -525,8 +525,8 @@ static void createHub(const ModuleTable& table, MockedModules& mocks)
     auto reach = [&](ModuleID reached) {
         if (hub.reached.quickSet(reached.index()))
             return;
-        if (uint32_t position = mocks.positionBelow[reached.index()]; position != MockedModules::notBelow)
-            hub.reachedBelow.quickSet(position);
+        if (std::optional<uint32_t> position = mocks.positionBelow(reached))
+            hub.reachedBelow.quickSet(*position);
         if (!mocks.modules.quickGet(reached.index()))
             work.append(reached);
     };
@@ -544,36 +544,48 @@ static void createHub(const ModuleTable& table, MockedModules& mocks)
     }
 }
 
-static Box<MockedModules> createMockedModules(const ModuleTable& table, const ImportersOfModules& importers, BitVector&& modules, const MockedModules* earlier, std::optional<ModuleID> added)
+static Box<MockedModules> createMockedModules(const ModuleTable& table, const ImportersOfModules& importers, BitVector&& modules, const MockedModules* earlier, ModuleID added)
 {
     Box<MockedModules> mocks = Box<MockedModules>::create(importers);
     mocks->modules = WTF::move(modules);
-    Vector<ModuleID, 32> work;
-    if (earlier && added) {
-        mocks->positionBelow = earlier->positionBelow;
+    if (earlier && earlier->positionsBelow) {
+        mocks->positionsBelow = earlier->positionsBelow;
         mocks->numberBelow = earlier->numberBelow;
-        work.append(*added);
-    } else {
-        mocks->positionBelow.fill(MockedModules::notBelow, table.size());
-        for (size_t module : mocks->modules)
-            work.append(ModuleID(module));
+        mocks->addModulesBelow(table, { added });
     }
+    if (earlier && earlier->comeToMock) {
+        mocks->comeToMock = earlier->comeToMock;
+        importers.addModulesAbove({ added }, *mocks->comeToMock);
+    }
+    return mocks;
+}
+
+void MockedModules::ensurePositionsBelow(const ModuleTable& table)
+{
+    if (positionsBelow) [[likely]]
+        return;
+    positionsBelow = Box<Vector<uint32_t>>::create();
+    positionsBelow->fill(notBelow, table.size());
+    Vector<ModuleID, 32> work;
+    for (size_t module : modules)
+        work.append(ModuleID(module));
+    addModulesBelow(table, WTF::move(work));
+}
+
+void MockedModules::addModulesBelow(const ModuleTable& table, Vector<ModuleID, 32>&& work)
+{
+    Vector<uint32_t>& positions = *positionsBelow;
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
-        uint32_t& position = mocks->positionBelow[module.index()];
-        if (position != MockedModules::notBelow)
+        uint32_t& position = positions[module.index()];
+        if (position != notBelow)
             continue;
-        position = mocks->numberBelow++;
+        position = numberBelow++;
         forEachModuleRequestedBy(table, module, [&](ModuleID requested) {
-            if (mocks->positionBelow[requested.index()] == MockedModules::notBelow)
+            if (positions[requested.index()] == notBelow)
                 work.append(requested);
         });
     }
-    if (earlier && added && earlier->comeToMock) {
-        mocks->comeToMock = earlier->comeToMock;
-        importers.addModulesAbove({ *added }, *mocks->comeToMock);
-    }
-    return mocks;
 }
 
 const ImportersOfModules& Modules::importersOfModules() const
@@ -582,6 +594,34 @@ const ImportersOfModules& Modules::importersOfModules() const
     if (!importers)
         importers = makeUnique<ImportersOfModules>(m_table);
     return *importers;
+}
+
+const StatementImporters& Modules::statementImporters() const
+{
+    std::unique_ptr<StatementImporters>& importers = m_instance.vm->aotState().statementImporters;
+    if (!importers)
+        importers = makeUnique<StatementImporters>(m_table, StatementImporters::Imports::Statements);
+    return *importers;
+}
+
+const StatementImporters& Modules::importersOfEveryImport() const
+{
+    std::unique_ptr<StatementImporters>& importers = m_instance.vm->aotState().importersOfEveryImport;
+    if (!importers)
+        importers = makeUnique<StatementImporters>(m_table, StatementImporters::Imports::AllRequests);
+    return *importers;
+}
+
+const Vector<ModuleID>& Modules::uncompiledModules() const
+{
+    if (!m_uncompiledModules) {
+        m_uncompiledModules.emplace();
+        for (uint32_t index = 0; index < m_table.size(); ++index) {
+            if (data(ModuleID(index)).isUncompiledCode())
+                m_uncompiledModules->append(ModuleID(index));
+        }
+    }
+    return *m_uncompiledModules;
 }
 
 void Modules::willMock(ModuleID mocked)
@@ -646,9 +686,13 @@ void Modules::didRemoveMock(ModuleID mocked)
         m_mocks = nullptr;
         return;
     }
-    for (size_t module : others)
+    BitVector withoutMoment = others;
+    if (m_testFileOfMomentsOfMocks == m_instance.vm->aotState().momentOfTestFile)
+        withoutMoment.exclude(m_modulesWithMomentOfMock);
+    for (size_t module : withoutMoment)
         momentOfFirstMockInTestFile(ModuleID(module));
-    m_mocks = createMockedModules(m_table, importersOfModules(), WTF::move(others), nullptr, std::nullopt);
+    m_mocks = Box<MockedModules>::create(importersOfModules());
+    m_mocks->modules = WTF::move(others);
 }
 
 bool Modules::MocksInGraph::rootComesToMock() const
@@ -676,8 +720,8 @@ const BitVector& Modules::MocksInGraph::reachedFromRoot() const
         auto reachModule = [&](ModuleID module, bool isMocked) {
             if ((reachesHub && hub->reached.quickGet(module.index())) || reached.quickSet(module.index()))
                 return;
-            if (uint32_t position = m_mocks->positionBelow[module.index()]; position != MockedModules::notBelow)
-                reachedBelow->quickSet(position);
+            if (std::optional<uint32_t> position = m_mocks->positionBelow(module))
+                reachedBelow->quickSet(*position);
             if (!isMocked)
                 work.append(module);
         };

@@ -310,11 +310,24 @@ static void growVector(StubAssembler& jit, const VectorGrowth& growth, std::opti
     RELEASE_ASSERT(noOverlap(array, butterfly, length, storage, allocator, scratch, instanceGPR));
     RELEASE_ASSERT(!neededLength || noOverlap(*neededLength, array, butterfly, length, storage, allocator, scratch, instanceGPR));
 
-    slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(maxLengthForElementwiseCopy)));
+    slowPath.append(jit.branch32(CCallHelpers::Above, neededLength.value_or(length), TrustedImm32(neededLength ? growth.maxNeededLength : maxLengthForElementwiseCopy)));
     slowPath.append(branchIfBarrierIsNeeded(jit, array, scratch));
     if (growth.isOfExtraProperties) {
         jit.load32(Address(array, JSCell::structureIDOffset()), scratch);
         slowPath.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(realm.headerOfExtraPropertiesWithElements))));
+    } else if (growth.mayBeOrdinaryObject) {
+        JumpList isNoOriginalArray;
+        branchUnlessHasOriginalArrayStructure(jit, array, scratch, isNoOriginalArray);
+        Jump hasOnlyElements = jit.jump();
+        isNoOriginalArray.link(&jit);
+        slowPath.append(jit.branchIfNotType(array, FinalObjectType));
+        decodeStructureID(jit, scratch);
+        constexpr PropertyOffset maxOffsetWithoutProperties = Structure::greatestMaxOffsetOutsideRareData + 1;
+        jit.load16(Address(scratch, Structure::maxOffsetOffset()), scratch);
+        Jump hasNoProperties = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(maxOffsetWithoutProperties));
+        slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(firstOutOfLineOffset)));
+        hasNoProperties.link(&jit);
+        hasOnlyElements.link(&jit);
     } else
         branchUnlessHasOriginalArrayStructure(jit, array, scratch, slowPath);
     loadAllocatorOfNextVector(jit, growth, neededLength, slowPath);

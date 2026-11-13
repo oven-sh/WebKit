@@ -14,7 +14,7 @@
 # RUN(OTHER): walk f2 mechanisms=all
 # OTHER-LABEL: code f2:Body
 # OTHER: handler=
-# OTHER: TryCallInline {{*}}inlineBuiltin=ArrayIndexOf
+# OTHER: SwitchString v0 strings=["a", "b",
 
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0

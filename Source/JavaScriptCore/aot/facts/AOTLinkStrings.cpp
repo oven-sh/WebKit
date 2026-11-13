@@ -62,6 +62,25 @@ static std::span<const uint8_t> affixOfValue(const Program& program, const BodyI
     return { };
 }
 
+ValueID valueBetweenAffixes(const Program& program, const BodyIndex& index, ValueID key, KeyAffixes& affixes)
+{
+    key = key ? index.stripCasts(key) : ValueID();
+    if (!key || index.isParameter(key))
+        return { };
+    Vector<ValueID, 3> parts;
+    if (index.opcodeOf(key) == Opcode::Add) {
+        auto sum = index.value(key).as<Opcode::Add>();
+        parts = { sum.leftOperand(), sum.rightOperand() };
+    } else if (index.opcodeOf(key) == Opcode::Strcat)
+        parts.append(index.value(key).as<Opcode::Strcat>().partsOperands());
+    if (parts.size() != 2 && parts.size() != 3)
+        return { };
+    affixes = { affixOfValue(program, index, parts.first(), AffixSide::Beginning), affixOfValue(program, index, parts.last(), AffixSide::Ending) };
+    size_t first = affixes.beginning.empty() ? 0 : 1;
+    size_t end = parts.size() - (affixes.ending.empty() ? 0 : 1);
+    return affixes && first + 1 == end ? parts[first] : ValueID();
+}
+
 KeyAffixes affixesOfKey(const Program& program, const BodyIndex& index, ValueID key)
 {
     key = key ? index.stripCasts(key) : ValueID();

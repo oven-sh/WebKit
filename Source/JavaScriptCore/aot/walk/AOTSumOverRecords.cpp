@@ -206,6 +206,62 @@ bool SumOverRecords::isFromZeroUp(size_t firstTerm, unsigned& sumsLeft) const
     return false;
 }
 
+struct FallInSumOverRecords {
+    ValueID from;
+    Range by;
+};
+
+static std::optional<int64_t> writtenIntegerInSumOverRecords(const Code& code, ValueID operand)
+{
+    const Operation& constant = code.at(rootInSumOverRecords(code, operand));
+    return constant.opcode == Opcode::Integer ? std::optional(constant.integer()) : std::nullopt;
+}
+
+static bool shiftsByConstantInSumOverRecords(const Code& code, const Operation& record)
+{
+    static constexpr int64_t shiftMask = 31;
+    std::optional<int64_t> by = writtenIntegerInSumOverRecords(code, record.operand(1));
+    return by && (*by & shiftMask);
+}
+
+static bool isLessByOneInSumOverRecords(const Code& code, const TypeArena& types, ValueID operand, ValueID root)
+{
+    ValueID lessened = rootInSumOverRecords(code, operand);
+    const Operation& difference = code.at(lessened);
+    if (code.isConstant(lessened) || !isExactInSumOverRecords(code, types, difference) || rootInSumOverRecords(code, difference.operand(0)) != root)
+        return false;
+    return difference.opcode == Opcode::Decrement || (difference.opcode == Opcode::Sub && writtenIntegerInSumOverRecords(code, difference.operand(1)) == 1) || (difference.opcode == Opcode::Add && writtenIntegerInSumOverRecords(code, difference.operand(1)) == -1);
+}
+
+static std::optional<FallInSumOverRecords> findFallInSumOverRecords(const Code& code, const TypeArena& types, const Operation& record)
+{
+    ValueID from;
+    int64_t most = std::numeric_limits<int32_t>::max();
+    switch (record.opcode) {
+    case Opcode::URShift:
+        most = std::numeric_limits<uint32_t>::max();
+        [[fallthrough]];
+    case Opcode::RShift:
+        if (shiftsByConstantInSumOverRecords(code, record))
+            from = record.operand(0);
+        break;
+    case Opcode::BitAnd:
+        for (uint32_t side = 0; side < 2 && !from; ++side) {
+            if (isLessByOneInSumOverRecords(code, types, record.operand(1 - side), rootInSumOverRecords(code, record.operand(side))))
+                from = record.operand(side);
+        }
+        break;
+    default:
+        break;
+    }
+    if (!from || code.isConstant(from) || !isIntegerInSumOverRecords(code, types, from))
+        return std::nullopt;
+    Range held = types.at(code.at(from).type).integers;
+    if (held.isEmpty() || held.minimum < 1 || held.maximum > most)
+        return std::nullopt;
+    return FallInSumOverRecords { from, Range { -held.maximum, -1 } };
+}
+
 std::optional<Range> findStepsFrom(const Code& code, const TypeArena& types, ValueID value, ValueID from, StepsAreExact exactness)
 {
     static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub };
@@ -250,6 +306,10 @@ std::optional<Range> findStepsFrom(const Code& code, const TypeArena& types, Val
             follow(record.operand(firstIsAddend ? 1 : 0), isSubtracted ? Range { added.minimum - step.maximum, added.maximum - step.minimum } : Range { added.minimum + step.minimum, added.maximum + step.maximum });
             continue;
         }
+        if (std::optional<FallInSumOverRecords> fall = findFallInSumOverRecords(code, types, record)) {
+            follow(fall->from, Range { added.minimum + fall->by.minimum, added.maximum + fall->by.maximum });
+            continue;
+        }
         const Block* block = record.opcode == Opcode::Parameter ? &code.at(record.block()) : nullptr;
         if (!block || block->isEntry || block->isLoopHead || !block->firstEdgeIn())
             return std::nullopt;
@@ -264,9 +324,26 @@ std::optional<Range> findStepsFrom(const Code& code, const TypeArena& types, Val
     return isBounded && !found.isEmpty() ? std::optional { found } : std::nullopt;
 }
 
+static bool emptiesInSumOverRecords(const Code& code, const TypeArena& types, ValueID value, ValueID from)
+{
+    ValueID stepped = rootInSumOverRecords(code, value);
+    from = rootInSumOverRecords(code, from);
+    if (code.isConstant(stepped) || !isIntegerInSumOverRecords(code, types, from))
+        return false;
+    const Operation& record = code.at(stepped);
+    if (record.opcode == Opcode::URShift)
+        return rootInSumOverRecords(code, record.operand(0)) == from && shiftsByConstantInSumOverRecords(code, record);
+    if (record.opcode != Opcode::BitAnd)
+        return false;
+    return (rootInSumOverRecords(code, record.operand(0)) == from && isLessByOneInSumOverRecords(code, types, record.operand(1), from))
+        || (rootInSumOverRecords(code, record.operand(1)) == from && isLessByOneInSumOverRecords(code, types, record.operand(0), from));
+}
+
 bool stepsSecondCounter(const Code& code, const TypeArena& types, const SecondCounter& second, ValueID stepped, ValueID counter)
 {
     std::optional<Range> steps = stepped && counter ? findStepsFrom(code, types, stepped, second.stepped) : std::nullopt;
+    if (second.counterEmpties)
+        return steps && steps->isSubsetOf(second.steps) && emptiesInSumOverRecords(code, types, counter, second.counter);
     std::optional<Range> counted = steps ? findStepsFrom(code, types, counter, second.counter) : std::nullopt;
     return counted && steps->isSubsetOf(second.steps) && (second.counterRises ? counted->minimum > 0 : counted->maximum < 0);
 }
@@ -303,7 +380,7 @@ bool isSteppedWithCounter(const Code& code, const TypeArena& types, const Steppe
     return true;
 }
 
-bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const GroundsOfPosition& grounds)
+bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const GroundsOfPosition& grounds, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds)
 {
     ValueID stepped = rootInSumOverRecords(code, grounds.counter);
     if (!grounds.start || !grounds.loweredFrom || code.isConstant(stepped) || code.at(stepped).opcode != Opcode::Parameter || rootInSumOverRecords(code, grounds.loweredCounter) != stepped)
@@ -323,6 +400,7 @@ bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const Gr
         size_t placeOfStepped = code.at(header).placeOfParameter(stepped);
         size_t placeOfCounter = code.at(header).placeOfParameter(counter);
         Range steps = Range::one(0);
+        Range counterSteps = Range::empty();
         ValueID enteringStepped;
         ValueID enteringCounter;
         ValueID addedInIteration;
@@ -344,6 +422,7 @@ bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const Gr
             std::optional<Range> counted = added ? findStepsFrom(code, types, nextCounter, counter) : std::nullopt;
             if (counted) {
                 steps = steps.unionWith(*added);
+                counterSteps = counterSteps.isEmpty() ? *counted : counterSteps.unionWith(*counted);
                 isShown = counterRises ? counted->minimum > 0 : counted->maximum < 0;
                 const Operation& sum = code.at(rootInSumOverRecords(code, nextStepped));
                 addsOneNumber &= (sum.opcode == Opcode::Add || sum.opcode == Opcode::Sub) && rootInSumOverRecords(code, sum.operand(0)) == stepped && (!addedInIteration || (isSame(addedInIteration, sum.operand(1)) && isSubtracted == (sum.opcode == Opcode::Sub)));
@@ -364,6 +443,26 @@ bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const Gr
             SumOverRecords distance(code, types, admitsEqual ? 0 : sign * step);
             return distance.add(limit, sign) && distance.add(enteringStepped, -sign) && distance.add(bound, -sign * timesOfBound) && distance.add(enteringCounter, sign * timesOfBound) && distance.isFromZeroUp();
         };
+        int64_t counterStep = counterSteps.minimum == counterSteps.maximum && std::abs(counterSteps.minimum) <= std::numeric_limits<int32_t>::max() ? std::abs(counterSteps.minimum) : 1;
+        auto isRemainderOfDistance = [&] {
+            const Operation& remainder = code.at(rootInSumOverRecords(code, grounds.remainder));
+            if (remainder.opcode != Opcode::Mod || !types.at(remainder.type).isInteger() || !isIntegerInSumOverRecords(code, types, remainder.operand(0)) || code.at(remainder.operand(1)).opcode != Opcode::Integer || code.at(remainder.operand(1)).integer() != counterStep)
+                return false;
+            return std::ranges::all_of(std::array { 1, -1 }, [&](int64_t sign) {
+                int64_t timesOfBound = counterRises ? sign : -sign;
+                SumOverRecords difference(code, types, admitsEqual ? 0 : sign);
+                return difference.add(remainder.operand(0), sign) && difference.add(bound, -timesOfBound) && difference.add(enteringCounter, timesOfBound) && difference.isFromZeroUp();
+            });
+        };
+        bool hasRemainder = grounds.remainder && counterStep > 1 && isRemainderOfDistance();
+        auto isBeyondMultiples = [&](ValueID limit, int64_t step, int64_t sign, ValueID test, bool testResult) {
+            if (!hasRemainder || !test || !relationsInSumOverRecords.contains(code.at(test).opcode) || !holds(test, testResult))
+                return false;
+            int64_t timesOfBound = counterRises ? step : -step;
+            SumOverRecords distance(code, types, admitsEqual ? 0 : sign * step);
+            return distance.add(limit, sign * counterStep) && distance.add(enteringStepped, -sign * counterStep) && distance.add(bound, -sign * timesOfBound) && distance.add(enteringCounter, sign * timesOfBound) && distance.add(grounds.remainder, sign * step)
+                && distance.takeAwayWhatIsFromZeroUp(test, testResult) && distance.isFromZeroUp();
+        };
         auto isAfterAllSteps = [&](ValueID limit, bool limitIsLess) {
             const Operation& sum = code.at(rootInSumOverRecords(code, limit));
             if (!addsOneNumber || !addedInIteration || isSubtracted != limitIsLess || sum.opcode != (limitIsLess ? Opcode::Sub : Opcode::Add) || !isExactInSumOverRecords(code, types, sum) || !isSame(sum.operand(0), enteringStepped))
@@ -381,7 +480,8 @@ bool secondCounterStaysWithin(const Code& code, const TypeArena& types, const Gr
             }
             return false;
         };
-        if ((isBeyond(grounds.loweredFrom, steps.maximum, 1) || isAfterAllSteps(grounds.loweredFrom, false)) && (isBeyond(grounds.start, steps.minimum, -1) || isAfterAllSteps(grounds.start, true)))
+        bool staysBelow = isBeyond(grounds.loweredFrom, steps.maximum, 1) || isAfterAllSteps(grounds.loweredFrom, false) || isBeyondMultiples(grounds.loweredFrom, steps.maximum, 1, grounds.isBelow, grounds.isBelowResult);
+        if (staysBelow && (isBeyond(grounds.start, steps.minimum, -1) || isAfterAllSteps(grounds.start, true) || isBeyondMultiples(grounds.start, steps.minimum, -1, grounds.isFromZeroUp, grounds.isNonNegativeResult)))
             return true;
     }
     return false;
@@ -443,17 +543,22 @@ std::optional<EnteringCounters> findEnteringCounters(const Code& code, const Typ
 
 std::optional<Range> rangeOfSecondCounter(const Code& code, const TypeArena& types, const SecondCounter& second, const EnteringCounters& entering, const Operation& test, uint32_t operandIndex, bool testIsTrue)
 {
-    if (!relationsInSumOverRecords.contains(test.opcode) || test.form() != OperatorForm::Integers)
+    bool asksTruth = test.opcode == Opcode::ToBoolean;
+    if ((!relationsInSumOverRecords.contains(test.opcode) && !asksTruth) || test.form() != OperatorForm::Integers)
         return std::nullopt;
-    if (code.blockOf(second.counter) != code.blockOf(second.stepped) || second.counter == second.stepped || !isIntegerInSumOverRecords(code, types, test.operand(1 - operandIndex)))
+    if (code.blockOf(second.counter) != code.blockOf(second.stepped) || second.counter == second.stepped || (!asksTruth && !isIntegerInSumOverRecords(code, types, test.operand(1 - operandIndex))))
+        return std::nullopt;
+    if (asksTruth && (operandIndex || !testIsTrue || second.counterRises || !isIntegerInSumOverRecords(code, types, second.counter)))
+        return std::nullopt;
+    if (second.counterEmpties != (asksTruth && types.at(code.at(second.counter).type).integers.minimum < 0))
         return std::nullopt;
     bool isLess = test.opcode == Opcode::Less || test.opcode == Opcode::LessEq;
-    bool admitsEqual = (test.opcode == Opcode::LessEq || test.opcode == Opcode::GreaterEq) == testIsTrue;
-    bool liesBelow = (isLess == testIsTrue) == !operandIndex;
+    bool admitsEqual = !asksTruth && (test.opcode == Opcode::LessEq || test.opcode == Opcode::GreaterEq) == testIsTrue;
+    bool liesBelow = !asksTruth && (isLess == testIsTrue) == !operandIndex;
     if (liesBelow != second.counterRises)
         return std::nullopt;
 
-    Range bound = types.at(code.at(test.operand(1 - operandIndex)).type).integers;
+    Range bound = asksTruth ? Range::one(0) : types.at(code.at(test.operand(1 - operandIndex)).type).integers;
     if (entering.stepped.isEmpty() || entering.counter.isEmpty() || bound.isEmpty() || !entering.stepped.isSubsetOf(Range::exact()) || !entering.counter.isSubsetOf(Range::exact()) || !bound.isSubsetOf(Range::exact()))
         return std::nullopt;
     CheckedInt64 turns = second.counterRises ? bound.maximum : entering.counter.maximum;
@@ -461,7 +566,7 @@ std::optional<Range> rangeOfSecondCounter(const Code& code, const TypeArena& typ
     turns -= admitsEqual ? 0 : 1;
     if (turns.hasOverflowed())
         return std::nullopt;
-    CheckedInt64 mostTurns = std::max<int64_t>(turns.value(), 0);
+    CheckedInt64 mostTurns = second.counterEmpties ? mostIterationsThatEmptyWord : std::max<int64_t>(turns.value(), 0);
     CheckedInt64 least = mostTurns * std::min<int64_t>(second.steps.minimum, 0);
     CheckedInt64 greatest = mostTurns * std::max<int64_t>(second.steps.maximum, 0);
     least += entering.stepped.minimum;
@@ -564,7 +669,14 @@ bool groundsShowPositionInside(const Code& code, const TypeArena& types, ValueID
         return each && (!isTest || holds(each, testResult));
     };
     SumOverRecords fromZero(code, types);
-    SumOverRecords belowLength(code, types, -1);
+    auto offsetProvenByTest = [&]() -> int64_t {
+        if (!grounds.length || !grounds.isBelow || code.at(grounds.isBelow).opcode != Opcode::IsBelowLength || !grounds.isBelowResult || !mayBeTaken(grounds.isBelow, true))
+            return 0;
+        ValueID length = rootInSumOverRecords(code, grounds.length);
+        bool isRead = !code.isConstant(length) && code.at(length).opcode == Opcode::GetTypedArrayLength && rootInSumOverRecords(code, code.at(grounds.isBelow).lengthOperand()) == length;
+        return isRead ? static_cast<int64_t>(code.at(length).offset()) : 0;
+    };
+    SumOverRecords belowLength(code, types, offsetProvenByTest() - 1);
     if (!grounds.length || !fromZero.add(position, 1) || !belowLength.add(grounds.length, 1) || !belowLength.add(position, -1))
         return false;
     if (grounds.counterTest && !holds(grounds.counterTest, grounds.counterTestResult))

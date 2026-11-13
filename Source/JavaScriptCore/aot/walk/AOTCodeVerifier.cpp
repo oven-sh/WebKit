@@ -13,6 +13,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTClosureWord.h"
 #include "AOTConvention.h"
+#include "AOTDominatorJumps.h"
 #include "AOTEffectsDeclared.h"
 #include "AOTHeldOperands.h"
 #include "AOTIRProgram.h"
@@ -588,8 +589,14 @@ void CodeVerifier::computeDominators()
     Vector<uint32_t> epochOfLastClimb;
     epochOfLastClimb.fill(0, m_numbers.size());
     uint32_t epoch = 0;
+    DominatorJumps jumps(m_numbers.size(), root());
+    auto above = [&](uint32_t node, uint32_t limit) {
+        uint32_t jump = jumps.from(node);
+        return m_numbers[jump] >= m_numbers[limit] ? jump : m_dominators[node];
+    };
 
-    for (bool hasChanged = true; hasChanged;) {
+    bool isFirstRound = true;
+    for (bool hasChanged = true; hasChanged; isFirstRound = false) {
         hasChanged = false;
         for (uint32_t node : m_nodesInOrder.span().subspan(1)) {
             ++epoch;
@@ -604,12 +611,12 @@ void CodeVerifier::computeDominators()
                 while (predecessor != dominator) {
                     if (m_numbers[predecessor] < m_numbers[dominator]) {
                         epochOfLastClimb[dominator] = epoch;
-                        dominator = m_dominators[dominator];
+                        dominator = above(dominator, predecessor);
                         continue;
                     }
                     if (std::exchange(epochOfLastClimb[predecessor], epoch) == epoch)
                         return;
-                    predecessor = m_dominators[predecessor];
+                    predecessor = above(predecessor, dominator);
                 }
             };
             BlockID block(node / 2);
@@ -624,6 +631,10 @@ void CodeVerifier::computeDominators()
             if (m_dominators[node] != dominator) {
                 m_dominators[node] = dominator;
                 hasChanged = true;
+                if (isFirstRound)
+                    jumps.set(node, dominator);
+                else
+                    jumps.stop();
             }
         }
     }
@@ -1129,6 +1140,7 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
     const bool isPointer = m_code.at(ground).opcode == Opcode::GetArrayStorage;
     static_assert(!declaredBoundOf(Opcode::ConvertToDoubleStorage).writes.contains(AbstractHeap::ArrayLengths));
     const bool isLength = m_code.at(ground).opcode == Opcode::GetArrayLength;
+    const bool isCapacity = m_code.at(ground).opcode == Opcode::GetArrayCapacity;
     static constexpr OpcodeSet readsOfObjects { Opcode::GetObjectStorage, Opcode::GetObjectStorageLength };
     AbstractHeapSet heapsOfLists = isPointer ? heapsOfLengths | AbstractHeapSet { AbstractHeap::ArrayCapacity } : heapsOfLengths;
     if (readsOfObjects.contains(m_code.at(ground).opcode))
@@ -1147,7 +1159,7 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         for (ValueID each : operationsOf(in)) {
             uint32_t place = m_places[each.index()];
             const Operation& operation = m_code.at(each);
-            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || (isPointer && operation.opcode == Opcode::ShortenArray) || (isLength && operation.opcode == Opcode::ConvertToDoubleStorage) || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
+            if (place <= after || place >= before || operation.opcode == Opcode::ExtendArrayLength || ((isPointer || isCapacity) && operation.opcode == Opcode::ShortenArray) || (isLength && operation.opcode == Opcode::ConvertToDoubleStorage) || operation.traits().mayRunOtherCode() || !operation.traits().mayWriteObservableState())
                 continue;
             if (writesLists(operation) && operation.numberOfOperands() && operation.operand(0) && areSameCells(operation.operand(0), list))
                 return each;
@@ -1424,7 +1436,8 @@ void CodeVerifier::verifyNarrowed(BlockID block, ValueID id, const Operation& na
         return;
     }
     if (narrowed.narrowsWithCounter()) {
-        ValueID counter = m_code.at(test).numberOfOperands() == 2 ? valueBeforeConversions(m_code.at(test).operand(narrowed.operandIndex() & 1)) : ValueID();
+        bool holdsCounter = m_code.at(test).numberOfOperands() == 2 || (m_code.at(test).opcode == Opcode::ToBoolean && !(narrowed.operandIndex() & 1));
+        ValueID counter = holdsCounter ? valueBeforeConversions(m_code.at(test).operand(narrowed.operandIndex() & 1)) : ValueID();
         if (!counter || m_code.at(counter).opcode != Opcode::Parameter || m_code.at(value).opcode != Opcode::Parameter || m_code.blockOf(counter) != m_code.blockOf(value))
             return fail(block, id, "a Narrowed is bounded beside what is no counter of its head"_s, test);
         return;
@@ -2145,7 +2158,11 @@ void CodeVerifier::verifyTestsPassed()
                     if (!named || !isDefinedBefore(named, header, 0))
                         return fail(block, id, "a limit of a second counter is not computed before its loop"_s, named);
                 }
-                if (!isAnsweredAt(grounds.counterTest, grounds.counterTestResult, block, place) || !secondCounterStaysWithin(m_code, m_types, grounds))
+                if (grounds.remainder && !isDefinedBefore(grounds.remainder, header, 0))
+                    return fail(block, id, "the remainder of a counter's distance is not computed before its loop"_s, grounds.remainder);
+                if (!isAnsweredAt(grounds.counterTest, grounds.counterTestResult, block, place) || !secondCounterStaysWithin(m_code, m_types, grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
+                    return isAnsweredAt(relation, testResult, block, place);
+                })))
                     return fail(block, id, "the second counter that an access counts on may lie outside its limits"_s, grounds.counter);
                 if (!groundsShowPositionInside(m_code, m_types, access.operand(1), grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
                     return isAnsweredAt(relation, testResult, block, place);

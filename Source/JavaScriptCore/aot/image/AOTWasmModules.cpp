@@ -629,6 +629,8 @@ struct WasmModuleCompiler {
             code.javaScriptImportStubs.append(generateWithoutRelocations("stub of import from JavaScript"_s, index, [&](CCallHelpers& jit) {
                 Wasm::emitWasmToJS(jit, info, index, &pointers);
             }));
+            if (Wasm::canImportStubCallClosure(info, index))
+                context.statistics().count(StatisticID::WasmImportStubsCallingClosures);
         }
         for (uint32_t entry = 0; entry < jsEntrypointTypes.size(); ++entry) {
             const Wasm::RTT& rtt = info.rtt(Wasm::TypeSignatureIndex(jsEntrypointTypes[entry]));

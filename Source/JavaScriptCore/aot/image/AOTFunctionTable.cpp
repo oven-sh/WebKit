@@ -273,6 +273,7 @@ static Vector<uint64_t> encodeClosureWords(const FunctionTableInputs& inputs, Bu
         ClosureWord::Flags flags = closureWordFlags(inputs.programTables.kindOfFunction(function.index()));
         flags.borrowedArguments = entry.borrowedArguments;
         flags.endsItsTailCalls = entry.endsItsTailCalls;
+        flags.returnsCapture = entry.returnsCapture;
         words[function.index() - range.omittedWordCount] = ClosureWord::encode({ codeOffset, entry.numberOfParameters }, numbers.closureNumberOf(function), flags);
     });
     return words;

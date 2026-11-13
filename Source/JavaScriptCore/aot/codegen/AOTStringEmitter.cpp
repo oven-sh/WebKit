@@ -674,6 +674,21 @@ Integer StringEmitter::indexInString(Integer x, Word32 length, bool isRelativeTo
     return select(below(x, limit), x, -1);
 }
 
+Integer StringEmitter::indexInString(Number position, Word32 length, bool isRelativeToEnd)
+{
+#if !CPU(ARM64)
+    if (!isRelativeToEnd && !position.value()->hasDouble() && !integerBehindStringPosition(position)) {
+        Integer index = emitter<ConversionEmitter>().toInteger(position);
+        return selectByBranch<Integer>(logicalNot(below(index, zeroExtended(length))), [&] {
+            return select(equal(position, position), integer(-1), select(isNotZero(length), integer(0), integer(-1)));
+        }, [&] {
+            return index;
+        }, Machine::EdgeClass::Unlikely);
+    }
+#endif
+    return indexInString(truncateToInteger(position), length, isRelativeToEnd);
+}
+
 void StringEmitter::generateSubstring(const ValueContext& value)
 {
     CellPointer string = in<CellPointer>(value->stringOperand());
@@ -919,6 +934,8 @@ std::optional<CellPointer> StringEmitter::tryConcatenateInteger(const OperationC
                 return ConcatenatedInteger::ConstantStringInteger;
             return parts[1].isConstant() ? ConcatenatedInteger::StringConstantInteger : ConcatenatedInteger::StringsThenInteger;
         }
+        if (parts[0].integer && parts[2].integer && isString(1))
+            return parts[1].isConstant() ? ConcatenatedInteger::IntegersAroundConstant : ConcatenatedInteger::IntegersAroundString;
         if (!parts[1].integer || !isString(0) || !isString(2))
             return std::nullopt;
         if (parts[0].isConstant())
@@ -928,10 +945,27 @@ std::optional<CellPointer> StringEmitter::tryConcatenateInteger(const OperationC
     std::optional<ConcatenatedInteger> form = formOf();
     if (!form)
         return std::nullopt;
+    if (form == ConcatenatedInteger::IntegersAroundString || form == ConcatenatedInteger::IntegersAroundConstant)
+        build().statistics().count(StatisticID::IntegersConcatenatedAroundString);
     Vector<LValue, 3> operands;
     for (const StringPart& part : parts)
         operands.append(part.integer ? part.integer->value() : part.isConstant() && !(form == ConcatenatedInteger::ConstantStringInteger && &part == &parts[1]) ? m_out.wideNumber(m_mentions.add(NumberSpace::StringCell, part.constant)) : cellOf(context, part).value());
     return CellPointer(callStub(context, concatenateInteger(*form), operands.span()).first);
+}
+
+std::optional<CellPointer> StringEmitter::tryConcatenateIntegers(const OperationContext& context, std::span<const StringPart> parts)
+{
+    static constexpr size_t fewestIntegers = 2;
+    static constexpr size_t mostPartsOfRope = 3;
+    static constexpr size_t mostParts = 32;
+    size_t integerCount = std::ranges::count_if(parts, [](const StringPart& part) { return part.integer.has_value(); });
+    if (integerCount < fewestIntegers || parts.size() <= mostPartsOfRope || parts.size() > mostParts || std::ranges::any_of(parts, [](const StringPart& part) { return part.unconverted.has_value(); }))
+        return std::nullopt;
+    build().statistics().count(StatisticID::IntegersConcatenatedTogether, integerCount);
+    Vector<Boxed, 16> primitives;
+    for (const StringPart& part : parts)
+        primitives.append(part.integer ? boxInt32(Word32(m_out.castToInt32(part.integer->value()))) : boxCell(cellOf(context, part)));
+    return callOperation<CellPointer>(context, RuntimeOperation::Concatenate, { word32(static_cast<int32_t>(primitives.size())), argumentBuffer(primitives.span()), word32(static_cast<int32_t>(UseOfJoinedText::Unknown)) });
 }
 
 CellPointer StringEmitter::concatenateTwoOrThree(const OperationContext& context, std::span<const StringPart> parts)
@@ -940,21 +974,21 @@ CellPointer StringEmitter::concatenateTwoOrThree(const OperationContext& context
         return *joined;
     std::optional<ConstantsOfConcatenation> constants = chooseConstants(parts);
     Vector<LValue, 3> operands;
-    bool converts = false;
+    std::optional<StubKey> convertingStub;
     for (unsigned index = 0; index < parts.size(); ++index) {
         if (constants && isConstantOperand(*constants, index))
             operands.append(m_out.wideNumber(m_mentions.add(NumberSpace::StringCell, parts[index].constant)));
         else if (parts[index].unconverted) {
-            RELEASE_ASSERT(!converts && index == lastOperandThatIsNoConstant(constants, static_cast<unsigned>(parts.size())));
-            converts = true;
+            RELEASE_ASSERT(!convertingStub);
+            convertingStub = findConvertAndConcatenate({ constants, static_cast<uint8_t>(parts.size()), static_cast<uint8_t>(index), parts[index].conversion });
+            RELEASE_ASSERT(convertingStub);
             operands.append(parts[index].unconverted->value());
         } else
             operands.append(cellOf(context, parts[index]).value());
     }
-    if (converts) {
-        const StubKey stub = convertAndConcatenate(constants, static_cast<unsigned>(parts.size()));
+    if (convertingStub) {
         return CellPointer(generator().withConversionLeftToConcatenation(context, [&](const OperationContext& conversion) {
-            return callStub(conversion, stub, operands.span()).first;
+            return callStub(conversion, *convertingStub, operands.span()).first;
         }));
     }
     StubKey stub = constants ? concatenateWithConstants(*constants) : AOT::concatenate(static_cast<unsigned>(parts.size()));
@@ -967,6 +1001,8 @@ CellPointer StringEmitter::concatenate(const OperationContext& context, std::spa
         return emptyString();
     if (parts.size() == 1)
         return cellOf(context, parts[0]);
+    if (std::optional<CellPointer> joined = tryConcatenateIntegers(context, parts))
+        return *joined;
 
     bool startsWithRepeatedString = parts[0].cell && parts[1].cell && parts[0].cell->value() == parts[1].cell->value();
     size_t numberOfPartsJoined = std::min<size_t>(parts.size(), startsWithRepeatedString ? 2 : 3);

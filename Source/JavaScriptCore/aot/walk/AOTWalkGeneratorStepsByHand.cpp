@@ -322,6 +322,24 @@ bool isOnlyReadStep(Walker& walker, ValueID step)
     return step.index() < walker.currentBodyIndex().numberOfValues() && findOnlyReadSteps(walker).values.quickGet(step.index());
 }
 
+static Reference continueIfHasType(Walker&, Reference value, TypeID tested, BlockID otherwise, bool& someWayTurnsAway, Origin);
+
+static Reference buildFirstReadOfNextInStepsByHand(Walker& walker, Reference generator, BlockID byCall, Origin origin)
+{
+    bool someWayTurnsAway = false;
+    generator = continueIfHasType(walker, generator, walker.types().builtinClass(BuiltinClasses::Generator), byCall, someWayTurnsAway, origin);
+    Draft test = draftOfCoroutineCalls(walker, Opcode::IsUnmodifiedGenerator, origin);
+    test.setValueOperand(generator);
+    Reference passes = buildInStepsByHand(walker, WTF::move(test));
+    if (!passes)
+        return { };
+    BlockID passed = walker.addBlock();
+    walker.branch(passes, passed, byCall);
+    walker.continueIn(passed);
+    buildFirstReadsThatOpenOfGeneratorLeavesOut(walker, origin, false);
+    return generator;
+}
+
 static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Reference generator, Reference sent, bool resultIsOnlyRead)
 {
     bool readsNextAfterStep = !walker.referenceOf(call.calleeOperand());
@@ -332,16 +350,20 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
         walker.bind(call.calleeOperand(), Reference());
     Origin origin = written.origin();
     origin.isTailCall = false;
-    Reference stepped = buildStepOfGenerator(walker, generator, ResumeMode::Next, sent, checkLeftToStepOf(walker, generator), origin);
-    if (!stepped)
-        return true;
+    BlockID byCall;
+    if (readsNextAfterStep && mustReadGeneratorNext(walker)) {
+        byCall = walker.addBlock(BlockFrequency::Rare);
+        generator = buildFirstReadOfNextInStepsByHand(walker, generator, byCall, origin);
+    }
+    Reference stepped = walker.isUnreachable() ? Reference() : buildStepOfGenerator(walker, generator, ResumeMode::Next, sent, checkLeftToStepOf(walker, generator), origin);
     Reference value = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Value, origin);
     Reference status = buildResultAtInStepsByHand(walker, stepped, StepGeneratorResult::Status, origin);
     Reference isNotStepped = buildTestOfStatusInStepsByHand(walker, status, GeneratorStepStatus::NotStepped, origin);
-    if (!isNotStepped)
+    if (walker.hasFailed() || (!isNotStepped && !byCall))
         return true;
 
-    BlockID byCall = walker.addBlock(BlockFrequency::Rare);
+    if (!byCall)
+        byCall = walker.addBlock(BlockFrequency::Rare);
     BlockID isStepped = walker.addBlock();
     BlockID meeting = walker.addBlock();
     Reference whole;
@@ -355,7 +377,8 @@ static bool buildStepInStepsByHand(Walker& walker, const BodyValue& call, Refere
     if (resultIsOnlyRead)
         walker.code().markMeetingOfStepWrittenByHand(meeting);
     bool someWayArrives = false;
-    walker.branch(isNotStepped, byCall, isStepped);
+    if (isNotStepped)
+        walker.branch(isNotStepped, byCall, isStepped);
 
     walker.continueIn(byCall);
     written.setOrigin(origin);

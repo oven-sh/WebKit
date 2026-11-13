@@ -114,6 +114,7 @@ static bool requestMentionHasExpectedWordCount(RequestKind kind, size_t numberOf
     case RequestKind::FormatPattern:
         return !!numberOfWords;
     case RequestKind::ImportChecks:
+    case RequestKind::Prefetch:
         return numberOfWords && !(numberOfWords % 2);
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -647,6 +648,7 @@ static LayoutID classOfRequestMention(std::span<const uint32_t> key)
     case RequestKind::CollectionData:
     case RequestKind::FormatPattern:
     case RequestKind::ImportChecks:
+    case RequestKind::Prefetch:
         return { };
     }
     RELEASE_ASSERT_NOT_REACHED();

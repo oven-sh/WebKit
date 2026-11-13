@@ -32,7 +32,7 @@ struct ExtraPropertyAdditionExits {
     JumpList cannot;
 };
 
-using StoreFinish = ScopedLambda<void(GPRReg owner, bool valueMayNeedBarrier)>;
+using StoreFinish = ScopedLambda<void(GPRReg owner)>;
 
 void loadExtraProperties(StubAssembler&, GPRReg object, GPRReg hiddenWordOffset, GPRReg result, JumpList& hasNone);
 void loadExtraPropertiesByStructure(StubAssembler&, GPRReg object, GPRReg structure, GPRReg scratch, GPRReg result, JumpList& hasNone);
@@ -43,8 +43,8 @@ void loadExtraPropertyByFrontCell(StubAssembler&, GPRReg cell, GPRReg object, GP
 void loadExtraPropertyByFrontCell(StubAssembler&, const BaseIndex& cell, bool isOutOfLine, GPRReg object, GPRReg word, GPRReg result, JumpList& hasNone);
 #endif
 void storeExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg value, const StoreFinish&, JumpList& miss);
-void addExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg value, const StoreFinish&, ExtraPropertyAdditionExits&);
-void addExtraPropertyInNewStorage(StubAssembler&, const CachedSlot&, const ExtraPropertyGrowthRegisters&, GPRReg value, const StoreFinish&, JumpList& cannot);
+void addExtraProperty(StubAssembler&, const CachedSlot&, const ExtraPropertyRegisters&, GPRReg value, ExtraPropertyAdditionExits&);
+void addExtraPropertyInNewStorage(StubAssembler&, const CachedSlot&, const ExtraPropertyGrowthRegisters&, GPRReg value, JumpList& cannot);
 
 } } // namespace JSC::AOT
 

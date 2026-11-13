@@ -13,6 +13,12 @@
 namespace JSC { namespace AOT {
 
 constexpr StubKey callWithArray(CallPosition position = CallPosition::Ordinary) { return StubKey(StubFamily::CallWithArray).withForm(static_cast<uint8_t>(position)); }
+constexpr StubKey callWithList() { return StubKey(StubFamily::CallWithList); }
+constexpr StubKey callWithWordsAndArray(unsigned numberOfWords, CallPosition position = CallPosition::Ordinary)
+{
+    RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(numberOfWords && numberOfWords < numberOfArgumentGPRs);
+    return StubKey(StubFamily::CallWithWordsAndArray).withForm(static_cast<uint8_t>(position)).withCount(numberOfWords);
+}
 constexpr StubKey tailCallWithList() { return StubKey(StubFamily::TailCallWithList); }
 constexpr StubKey constructWithArray(ConstructSyntax syntax) { return StubKey(StubFamily::ConstructWithArray).withForm(static_cast<uint8_t>(syntax)); }
 constexpr StubKey superConstructWithArray() { return constructWithArray(ConstructSyntax::SuperCall); }

@@ -52,7 +52,9 @@ struct SecondCounter {
     Range steps;
     bool counterRises { true };
     bool isSpeculated { false };
+    bool counterEmpties { false };
 };
+inline constexpr int64_t mostIterationsThatEmptyWord = 32;
 
 struct EnteringCounters {
     Range counter { Range::empty() };
@@ -62,7 +64,7 @@ struct EnteringCounters {
 std::optional<Range> rangeOfSecondCounter(const Code&, const TypeArena&, const SecondCounter&, const EnteringCounters&, const Operation& test, uint32_t operandIndex, bool testIsTrue);
 std::optional<EnteringCounters> findEnteringCounters(const Code&, const TypeArena&, const SecondCounter&);
 bool stepsSecondCounter(const Code&, const TypeArena&, const SecondCounter&, ValueID stepped, ValueID counter);
-bool secondCounterStaysWithin(const Code&, const TypeArena&, const GroundsOfPosition&);
+bool secondCounterStaysWithin(const Code&, const TypeArena&, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds);
 SecondCounter secondCounterOf(const SteppedWithCounter&);
 bool isSteppedWithCounter(const Code&, const TypeArena&, const SteppedWithCounter&);
 bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);

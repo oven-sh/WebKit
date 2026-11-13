@@ -91,7 +91,10 @@ const Effects& ScanOfBody::noteOwnEffectsOfOperator(const BodyValue& value, uint
 ALWAYS_INLINE const Effects& ScanOfBody::noteOwnEffects(const BodyValue& value, uint32_t block, std::optional<SummaryAccess::Kind> access, const Effects& effects, Effects& storage)
 {
     uint32_t traits = traitsOfOpcodeInScan(value.opcode());
-    if (access && (traits & RowOfOpcodeInScan::mayCallUnknownCode) && keyWrittenAtInScanKnownEffects(m_program, value, m_keyOfOperation)) {
+    auto isJudgedByLink = [&] {
+        return value.opcode() == Opcode::ElemGet || value.opcode() == Opcode::ElemSet || !!keyWrittenAtInScanKnownEffects(m_program, value, m_keyOfOperation);
+    };
+    if (access && (traits & RowOfOpcodeInScan::mayCallUnknownCode) && isJudgedByLink()) {
         m_knownEffects.whatIsLeftApartMayThrow = true;
         return noEffectsInScan;
     }
@@ -274,9 +277,18 @@ OriginInScan ScanOfBody::narrowerOfTwoTests(OriginInScan origin, TypeID passes)
     Type newer = types.at(passes);
     if (isSubset(types, older, newer))
         return origin;
-    if (isSubset(types, newer, older) || overlap(types, older, newer))
+    if (isSubset(types, newer, older))
         return { origin.node, passes };
-    return { constant(TypeTable::never), { } };
+    if (!overlap(types, older, newer))
+        return { constant(TypeTable::never), { } };
+    Type object = types.at(TypeTable::object);
+    auto passesNoOtherObjects = [&](Type type) {
+        type.primitives = 0;
+        type.noteAnswersOfParts();
+        return isSubset(types, type, object);
+    };
+    bool passesObjectsAlone = !(older.primitives & newer.primitives) && isSubset(types, object, older) && isSubset(types, object, newer) && (passesNoOtherObjects(older) || passesNoOtherObjects(newer));
+    return { origin.node, passesObjectsAlone ? TypeTable::object : passes };
 }
 
 } } } // namespace JSC::AOT::Typed

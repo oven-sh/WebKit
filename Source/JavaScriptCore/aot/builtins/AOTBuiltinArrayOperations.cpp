@@ -9,12 +9,15 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinOperationSupport.h"
+#include "AOTGrowingText.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
+#include "AOTJSONTextWriter.h"
 #include "AOTObject.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTRopeCharacters.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTSortedStorage.h"
@@ -111,21 +114,41 @@ static ALWAYS_INLINE CharacterType* appendCharacters(CharacterType* destination,
 }
 
 template<typename CharacterType>
-static ALWAYS_INLINE CharacterType* appendString(CharacterType* destination, JSString* string)
+static ALWAYS_INLINE CharacterType* appendFlatString(CharacterType* destination, const StringImpl& impl)
+{
+    if constexpr (std::is_same_v<CharacterType, Latin1Character>)
+        return appendCharacters(destination, impl.span8());
+    else {
+        if (impl.is8Bit())
+            return appendCharacters(destination, impl.span8());
+        return appendCharacters(destination, impl.span16());
+    }
+}
+
+template<typename CharacterType>
+static NEVER_INLINE CharacterType* appendRope(CharacterType* destination, const CharacterType* endOfRoom, JSString* rope)
+{
+    if (JSString* second = rope->isNonSubstringRope() && !thirdPartOf(rope) ? secondPartOf(rope) : nullptr) {
+        const StringImpl* firstImpl = firstPartOf(rope)->tryGetValueImpl();
+        const StringImpl* secondImpl = second->tryGetValueImpl();
+        constexpr bool takes16Bit = !std::is_same_v<CharacterType, Latin1Character>;
+        if (firstImpl && secondImpl && (takes16Bit || (firstImpl->is8Bit() && secondImpl->is8Bit())))
+            return appendFlatString(appendFlatString(destination, *firstImpl), *secondImpl);
+    }
+    unsigned length = rope->length();
+    if constexpr (std::is_same_v<CharacterType, Latin1Character>) {
+        if (tryWriteRope(rope, destination, endOfRoom)) [[likely]]
+            return destination + length;
+    }
+    rope->resolveToBuffer(std::span { destination, length });
+    return destination + length;
+}
+
+template<typename CharacterType>
+static ALWAYS_INLINE CharacterType* appendString(CharacterType* destination, const CharacterType* endOfRoom, JSString* string)
 {
     StringImpl* impl = string->tryGetValueImpl();
-    if (!impl) [[unlikely]] {
-        unsigned length = string->length();
-        string->resolveToBuffer(std::span { destination, length });
-        return destination + length;
-    }
-    if constexpr (std::is_same_v<CharacterType, Latin1Character>)
-        return appendCharacters(destination, impl->span8());
-    else {
-        if (impl->is8Bit())
-            return appendCharacters(destination, impl->span8());
-        return appendCharacters(destination, impl->span16());
-    }
+    return impl ? appendFlatString(destination, *impl) : appendRope(destination, endOfRoom, string);
 }
 
 template<typename CharacterType>
@@ -135,28 +158,29 @@ static RefPtr<StringImpl> joinStrings(const WriteBarrier<Unknown>* elements, uns
     RefPtr<StringImpl> joined = StringImpl::tryCreateUninitialized(joinedLength, buffer);
     if (!joined) [[unlikely]]
         return nullptr;
-    CharacterType* end = appendString(buffer.data(), asString(elements[0].get()));
+    const CharacterType* const endOfRoom = std::to_address(buffer.end());
+    CharacterType* end = appendString(buffer.data(), endOfRoom, asString(elements[0].get()));
     switch (between.length()) {
     case 0:
         for (unsigned i = 1; i < count; ++i)
-            end = appendString(end, asString(elements[i].get()));
+            end = appendString(end, endOfRoom, asString(elements[i].get()));
         break;
     case 1: {
         CharacterType unit = static_cast<CharacterType>(between[0]);
         for (unsigned i = 1; i < count; ++i) {
             *end++ = unit;
-            end = appendString(end, asString(elements[i].get()));
+            end = appendString(end, endOfRoom, asString(elements[i].get()));
         }
         break;
     }
     default:
         for (unsigned i = 1; i < count; ++i) {
             between.getCharacters(std::span { end, between.length() });
-            end = appendString(end + between.length(), asString(elements[i].get()));
+            end = appendString(end + between.length(), endOfRoom, asString(elements[i].get()));
         }
         break;
     }
-    RELEASE_ASSERT(end == std::to_address(buffer.end()));
+    RELEASE_ASSERT(end == endOfRoom);
     return joined;
 }
 
@@ -291,6 +315,17 @@ static bool holdsOnlyHoles(JSArray* array)
     return std::ranges::all_of(std::span { butterfly.contiguous().data(), length }, [](const WriteBarrier<Unknown>& element) { return !element; });
 }
 
+static ALWAYS_INLINE bool canJoinNestedList(JSArray* outer, JSValue element)
+{
+    if (!isJSArray(element) || element == outer)
+        return false;
+    JSArray* list = asArray(element);
+    IndexingType type = list->indexingType();
+    if (!hasInt32(type) && !hasDouble(type) && !hasContiguous(type) && !(hasUndecided(type) && !list->butterfly()->publicLength()))
+        return false;
+    return list->isToPrimitiveFastAndNonObservable();
+}
+
 static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject, JSArray* array, std::span<const Latin1Character> separator)
 {
     static constexpr unsigned mostElements = 32;
@@ -311,11 +346,21 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
         end = appendCharacters(end, text);
         return true;
     };
+    bool hasRopePairs = false;
     auto appendRope = [&](JSString* rope) -> bool {
         unsigned ropeLength = rope->length();
         if (!rope->is8Bit() || end > limit || ropeLength > static_cast<size_t>(limit - end))
             return false;
-        rope->resolveToBuffer(std::span { end, ropeLength });
+        if (JSString* second = rope->isNonSubstringRope() && !thirdPartOf(rope) ? secondPartOf(rope) : nullptr) {
+            const StringImpl* firstImpl = firstPartOf(rope)->tryGetValueImpl();
+            const StringImpl* secondImpl = second->tryGetValueImpl();
+            if (firstImpl && secondImpl && firstImpl->is8Bit() && secondImpl->is8Bit()) {
+                hasRopePairs = true;
+                return append(firstImpl->span8()) && append(secondImpl->span8());
+            }
+        }
+        if (!tryWriteRope(rope, end, std::to_address(units.end())))
+            rope->resolveToBuffer(std::span { end, ropeLength });
         end += ropeLength;
         return true;
     };
@@ -326,9 +371,7 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
             *end++ = '0' + integer;
             return true;
         }
-        unsigned digits = lengthOfIntegerAsString(integer);
-        writeIntegerToBuffer(integer, std::span { end, digits });
-        end += digits;
+        end = appendJSONInteger(end, integer);
         return true;
     };
     auto appendDouble = [&](double number) ALWAYS_INLINE_LAMBDA -> bool {
@@ -338,40 +381,59 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
             return appendInteger(integer);
         return append(vm.numericStrings.add(number).span8());
     };
-    bool holdsDoubles = hasDouble(array->indexingType());
-    bool hasHoles = false;
-    for (unsigned index = 0; index < length; ++index) {
-        if (index && !append(separator))
-            return nullptr;
-        bool isAppended = true;
-        if (holdsDoubles) {
-            double number = butterfly.contiguousDouble().data()[index];
-            if (!isHole(number)) {
-                if (!appendDouble(number))
-                    return nullptr;
+    auto appendElements = [&](JSArray* list, std::span<const Latin1Character> between, NOESCAPE const auto& appendList) -> bool {
+        Butterfly& elements = *list->butterfly();
+        unsigned count = elements.publicLength();
+        bool holdsDoubles = hasDouble(list->indexingType());
+        bool hasHoles = false;
+        for (unsigned index = 0; index < count; ++index) {
+            if (index && !append(between))
+                return false;
+            bool isAppended = true;
+            if (holdsDoubles) {
+                double number = elements.contiguousDouble().data()[index];
+                if (!isHole(number)) {
+                    if (!appendDouble(number))
+                        return false;
+                    continue;
+                }
+            } else if (JSValue element = elements.contiguous().data()[index].get()) {
+                if (element.isInt32())
+                    isAppended = appendInteger(element.asInt32());
+                else if (element.isDouble())
+                    isAppended = appendDouble(element.asDouble());
+                else if (element.isString()) {
+                    StringImpl* impl = asString(element)->tryGetValueImpl();
+                    isAppended = impl ? impl->is8Bit() && append(impl->span8()) : appendRope(asString(element));
+                } else if (element.isBoolean())
+                    isAppended = append(element.asBoolean() ? "true"_span8 : "false"_span8);
+                else if (element.isObject())
+                    isAppended = appendList(element);
+                else
+                    isAppended = element.isUndefinedOrNull();
+                if (!isAppended)
+                    return false;
                 continue;
             }
-        } else if (JSValue element = butterfly.contiguous().data()[index].get()) {
-            if (element.isInt32())
-                isAppended = appendInteger(element.asInt32());
-            else if (element.isDouble())
-                isAppended = appendDouble(element.asDouble());
-            else if (element.isString()) {
-                if (length == 1)
-                    return asString(element);
-                StringImpl* impl = asString(element)->tryGetValueImpl();
-                isAppended = impl ? impl->is8Bit() && append(impl->span8()) : appendRope(asString(element));
-            } else if (element.isBoolean())
-                isAppended = append(element.asBoolean() ? "true"_span8 : "false"_span8);
-            else
-                isAppended = element.isUndefinedOrNull();
-            if (!isAppended)
-                return nullptr;
-            continue;
+            if (!std::exchange(hasHoles, true) && holesMustForwardToPrototype(list))
+                return false;
         }
-        if (!std::exchange(hasHoles, true) && holesMustForwardToPrototype(array))
-            return nullptr;
+        return true;
+    };
+    if (length == 1 && !hasDouble(array->indexingType())) {
+        if (JSValue only = butterfly.contiguous().data()[0].get(); only && only.isString())
+            return asString(only);
     }
+    bool areAppended = appendElements(array, separator, [&](JSValue element) {
+        static constexpr Latin1Character comma = ',';
+        return canJoinNestedList(array, element) && asArray(element)->butterfly()->publicLength() <= mostElements && appendElements(asArray(element), span(comma), [](JSValue) {
+            return false;
+        });
+    });
+    if (!areAppended)
+        return nullptr;
+    if (hasRopePairs)
+        countEvent(vm, RuntimeCounterID::RopePairsJoined);
     std::span<const Latin1Character> text { units.data(), end };
     if (text.size() < 2)
         return text.empty() ? jsEmptyString(vm) : jsSingleCharacterString(vm, text.front());
@@ -392,12 +454,16 @@ static NEVER_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject,
     return joined;
 }
 
-static ALWAYS_INLINE bool holdsObjectAmongElements(JSArray* array)
+static constexpr unsigned mostElementsLookedThrough = 32;
+
+static ALWAYS_INLINE bool holdsObjectAmongFewElements(JSArray* array, NOESCAPE const Invocable<bool(JSValue)> auto& isSought)
 {
+    if (!hasContiguous(array->indexingType()) || array->butterfly()->publicLength() > mostElementsLookedThrough)
+        return false;
     Butterfly& butterfly = *array->butterfly();
     for (unsigned index = butterfly.publicLength(); index--;) {
         JSValue element = butterfly.contiguous().data()[index].get();
-        if (element && element.isObject())
+        if (element && element.isObject() && isSought(element))
             return true;
     }
     return false;
@@ -406,10 +472,9 @@ static ALWAYS_INLINE bool holdsObjectAmongElements(JSArray* array)
 static ALWAYS_INLINE JSString* tryJoinFewPrimitives(JSGlobalObject* globalObject, JSArray* array, JSString* separatorOrNull)
 {
     static constexpr Latin1Character comma = ',';
-    static constexpr unsigned mostElementsLookedThrough = 32;
     if (!hasInt32(array->indexingType()) && !hasDouble(array->indexingType()) && !hasContiguous(array->indexingType())) [[unlikely]]
         return nullptr;
-    if (hasContiguous(array->indexingType()) && array->butterfly()->publicLength() <= mostElementsLookedThrough && holdsObjectAmongElements(array))
+    if (holdsObjectAmongFewElements(array, [](JSValue object) { return !isJSArray(object); }))
         return nullptr;
     if (!separatorOrNull)
         return tryJoinFewPrimitives(globalObject, array, span(comma));
@@ -568,6 +633,8 @@ static ALWAYS_INLINE JSString* tryJoinAtOnce(JSGlobalObject* globalObject, JSArr
         return joined;
     if (JSString* joined = tryJoinFewPrimitives(globalObject, array, separatorOrNull))
         return joined;
+    if (holdsObjectAmongFewElements(array, [](JSValue) { return true; }))
+        return nullptr;
     return tryJoinElements(globalObject, array, separatorOrNull);
 }
 
@@ -832,6 +899,64 @@ static ALWAYS_INLINE bool precedesInDefaultOrder(const StringImpl& first, const 
     return is_lt(codePointCompare(StringView { first }, StringView { second }));
 }
 
+static ALWAYS_INLINE uint64_t firstEightUnits(std::span<const Latin1Character> characters)
+{
+    static_assert(std::endian::native == std::endian::little);
+    const Latin1Character* start = characters.data();
+    size_t length = characters.size();
+    uint64_t units = 0;
+    if (length >= sizeof(uint64_t))
+        units = WTF::unalignedLoad<uint64_t>(start);
+    else if (length >= sizeof(uint32_t))
+        units = WTF::unalignedLoad<uint32_t>(start) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(start + length - sizeof(uint32_t))) << 8 * (length - sizeof(uint32_t));
+    else {
+        for (size_t i = 0; i < length; ++i)
+            units |= static_cast<uint64_t>(start[i]) << 8 * i;
+    }
+    return __builtin_bswap64(units);
+}
+
+namespace {
+
+struct SortedString {
+    uint64_t units;
+    const StringImpl* impl;
+    EncodedJSValue value;
+};
+
+} // anonymous namespace
+
+static ALWAYS_INLINE void loadUnitsOfStrings(std::span<SortedString> strings)
+{
+    size_t start = 0;
+    while (true) {
+        uint64_t differences = 0;
+        bool areAllLonger = !strings.empty();
+        for (SortedString& string : strings) {
+            std::span<const Latin1Character> characters = string.impl->span8().subspan(start);
+            string.units = firstEightUnits(characters);
+            differences |= string.units ^ strings[0].units;
+            areAllLonger &= characters.size() >= sizeof(uint64_t);
+        }
+        if (differences || !areAllLonger)
+            return;
+        start += sizeof(uint64_t);
+    }
+}
+
+template<bool countsEqual>
+static ALWAYS_INLINE unsigned countStringsWithUnitsBelow(const SortedString* strings, unsigned count, uint64_t units)
+{
+    const SortedString* first = strings;
+    auto isCounted = [&](const SortedString& string) ALWAYS_INLINE_LAMBDA { return countsEqual ? string.units <= units : string.units < units; };
+    while (count > 1) {
+        unsigned half = count / 2;
+        first += isCounted(first[half - 1]) ? half : 0;
+        count -= half;
+    }
+    return static_cast<unsigned>(first - strings) + (count && isCounted(*first));
+}
+
 SortedStorage& SortedStorage::ensure(State& state)
 {
     if (SortedStorage* storage = state.instance.realm.sortedStorage) [[likely]]
@@ -864,9 +989,8 @@ static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* 
     }
 
     const WriteBarrier<Unknown>* elements = butterfly.contiguous().data();
-    std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> sorted;
-    std::array<const StringImpl*, maxLengthOfInsertionSortedArray> impls;
-    bool isSorted = true;
+    std::array<SortedString, maxLengthOfInsertionSortedArray> sorted;
+    unsigned sharedFlags = StringImpl::flagIs8Bit();
     for (unsigned i = 0; i < length; ++i) {
         JSValue element = elements[i].get();
         if (!element || !element.isString())
@@ -877,23 +1001,34 @@ static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* 
             RETURN_IF_EXCEPTION(scope, false);
             impl = asString(element)->tryGetValueImpl();
         }
-        unsigned position = i;
-        if (i && precedesInDefaultOrder(*impl, *impls[i - 1])) {
-            unsigned end = i - 1;
-            position = 0;
+        sharedFlags &= impl->is8Bit() ? StringImpl::flagIs8Bit() : 0;
+        sorted[i] = { 0, impl, JSValue::encode(element) };
+    }
+    if (sharedFlags) [[likely]]
+        loadUnitsOfStrings(std::span { sorted }.first(length));
+    bool isSorted = true;
+    for (unsigned i = 0; i < length; ++i) {
+        SortedString string = sorted[i];
+        auto precedes = [&](const SortedString& other) ALWAYS_INLINE_LAMBDA {
+            return string.units == other.units ? precedesInDefaultOrder(*string.impl, *other.impl) : string.units < other.units;
+        };
+        if (!i || !precedes(sorted[i - 1]))
+            continue;
+        unsigned end = countStringsWithUnitsBelow<true>(sorted.data(), i, string.units);
+        unsigned position = end;
+        if (end && sorted[end - 1].units == string.units) {
+            position = countStringsWithUnitsBelow<false>(sorted.data(), end, string.units);
             while (position < end) {
                 unsigned middle = position + (end - position) / 2;
-                if (precedesInDefaultOrder(*impl, *impls[middle]))
+                if (precedesInDefaultOrder(*string.impl, *sorted[middle].impl))
                     end = middle;
                 else
                     position = middle + 1;
             }
-            std::copy_backward(sorted.begin() + position, sorted.begin() + i, sorted.begin() + i + 1);
-            std::copy_backward(impls.begin() + position, impls.begin() + i, impls.begin() + i + 1);
-            isSorted = false;
         }
-        sorted[position] = JSValue::encode(element);
-        impls[position] = impl;
+        std::copy_backward(sorted.begin() + position, sorted.begin() + i, sorted.begin() + i + 1);
+        sorted[position] = string;
+        isSorted = false;
     }
     if (isSorted) {
         if (shared)
@@ -902,12 +1037,15 @@ static bool trySortStrings(JSGlobalObject* globalObject, State& state, JSArray* 
     }
     if (JSCellButterfly* made = shared ? JSCellButterfly::tryCreate(vm, WTF::opaque(shared->structure()), length) : nullptr) {
         for (unsigned i = 0; i < length; ++i)
-            made->setIndex(vm, i, JSValue::decode(sorted[i]));
+            made->setIndex(vm, i, JSValue::decode(sorted[i].value));
         array->setButterfly(vm, made->toButterfly());
         SortedStorage::ensure(state).remember(shared, made);
         return true;
     }
-    RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { sorted }.first(length)));
+    std::array<EncodedJSValue, maxLengthOfInsertionSortedArray> values;
+    for (unsigned i = 0; i < length; ++i)
+        values[i] = sorted[i].value;
+    RELEASE_AND_RETURN(scope, array->appendMemcpy(globalObject, vm, 0, ArrayWithContiguous, std::span<const EncodedJSValue> { values }.first(length)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTArraySortInDefaultOrder, EncodedJSValue, (Instance* instance, JSCell* cell))
@@ -1453,13 +1591,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArrayPopGeneric, EncodedJSValue, (Instance*
 
 static constexpr uint64_t mostElementsConcatenated = 4 * maxLengthForElementwiseCopy;
 
+static bool isConcatenatedAsElement(VM& vm, JSGlobalObject* globalObject, JSObject* object)
+{
+    if (object->type() == ArrayType || object->type() == DerivedArrayType || object->type() == ProxyObjectType)
+        return false;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = object->getPropertySlot(globalObject, vm.propertyNames->isConcatSpreadableSymbol, slot);
+    scope.assertNoException();
+    return !isFound && !slot.isTaintedByOpaqueObject();
+}
+
 static JSArray* tryConcatFast(VM& vm, JSGlobalObject* globalObject, JSArray* first, JSValue argument)
 {
     auto isPlain = [&](JSArray* array) {
         return array->isPristine() && array->structure()->realm() == globalObject;
     };
     JSArray* second = argument.isCell() && argument.asCell()->type() == ArrayType ? asArray(argument) : nullptr;
-    if ((!second && argument.isObject()) || !isPlain(first) || (second && !isPlain(second)) || globalObject->isHavingABadTime() || globalObject->arrayIsConcatSpreadableWatchpointSet().state() != IsWatched)
+    if (!isPlain(first) || (second && !isPlain(second)) || globalObject->isHavingABadTime() || globalObject->arrayIsConcatSpreadableWatchpointSet().state() != IsWatched)
+        return nullptr;
+    if (!second && argument.isObject() && !isConcatenatedAsElement(vm, globalObject, asObject(argument)))
         return nullptr;
 
     struct Part {
@@ -1586,6 +1737,8 @@ template<RemovedElements removedElements>
 static JSArray* trySpliceInPlace(JSGlobalObject* globalObject, JSArray* array, JSValue start, JSValue deleteCount, std::span<const EncodedJSValue> items)
 {
     VM& vm = globalObject->vm();
+    if (isCopyOnWrite(array->indexingMode()) && start.isInt32() && deleteCount.isInt32() && globalObject->isOriginalArrayStructure(array->structure()))
+        array->ensureWritable(vm);
     IndexingType mode = array->indexingMode();
     if ((mode != ArrayWithContiguous && mode != ArrayWithInt32 && mode != ArrayWithDouble) || !start.isInt32() || !deleteCount.isInt32())
         return nullptr;

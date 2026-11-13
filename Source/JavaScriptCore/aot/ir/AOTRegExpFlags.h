@@ -47,6 +47,7 @@ inline OptionSet<Yarr::Flags> toYarrFlags(OptionSet<RegExpFlags> flags)
 inline constexpr OptionSet<RegExpFlags> flagsOfMatchesUsingObject { RegExpFlags::Global, RegExpFlags::Sticky, RegExpFlags::HasIndices };
 
 inline constexpr uint32_t privateRegExpParameter = 1u << 8;
+inline constexpr uint32_t expectedRegExpParameter = 1u << 9;
 
 inline constexpr uint32_t countedMatchesParameter = 1u << 31;
 

@@ -847,7 +847,7 @@ void Object::setExtraProperties(VM& vm, JSObject* extra, CompiledStructure* with
     vm.mutatorFence();
     at<uint32_t>(offsetOfOrderWord) |= orderWordHasExtraProperties;
     vm.mutatorFence();
-    JSCell::setStructure(vm, withExtraProperties);
+    setVariantOfStructure(vm, withExtraProperties);
     vm.writeBarrier(this, extra);
 }
 
@@ -877,7 +877,7 @@ void Object::didChangeExtraProperties(VM& vm)
     const CompiledStructure& current = compiledStructure();
     if (Structure* listed = current.heldStructure()) [[unlikely]] {
         if (listed != extra->structure())
-            JSCell::setStructure(vm, state().objects->structures.withoutHeldStructure(vm, current));
+            setVariantOfStructure(vm, state().objects->structures.withoutHeldStructure(vm, current));
         return;
     }
     StructureID namedStructureID = current.extraPropertiesStructureID();
@@ -889,7 +889,7 @@ void Object::didChangeExtraProperties(VM& vm)
     CompiledStructure* updatedStructure = structures.existingWithExtraProperties(current, *extra->structure());
     if (!updatedStructure && !namedStructureID)
         return;
-    JSCell::setStructure(vm, updatedStructure ? updatedStructure : structures.withExtraProperties(vm, current, nullptr));
+    setVariantOfStructure(vm, updatedStructure ? updatedStructure : structures.withExtraProperties(vm, current, nullptr));
 }
 
 void Object::ensureStructureForExtraProperties(VM& vm)
@@ -912,10 +912,43 @@ void Object::ensureStructureForExtraProperties(VM& vm)
     CompiledStructure* updatedStructure = state().objects->structures.withExtraProperties(vm, current, extra->structure());
     if (updatedStructure == &current)
         return;
-    JSCell::setStructure(vm, updatedStructure);
+    setVariantOfStructure(vm, updatedStructure);
     state().propertyCaches->forgetFieldExits();
     if (!wasDictionary)
         state().propertyCaches->forgetAddedExtraProperties();
+}
+
+static bool isFilledAsTable(Structure* structure)
+{
+    return structure->isDictionary() || structure->hasBeenFlattenedBefore();
+}
+
+void Object::finishFillingExtraProperties(VM& vm)
+{
+    JSObject* extra = extraProperties();
+    if (!extra || extra->type() != FinalObjectType || !isFilledAsTable(extra->structure())) [[likely]]
+        return;
+    Structure* structure = extra->structure();
+    if (structure->isUncacheableDictionary() || structure->mayBePrototype() || structure->inlineSize() + structure->outOfLineSize() > static_cast<unsigned>(Structure::s_maxTransitionLength))
+        return;
+    const CompiledStructure& current = compiledStructure();
+    if (current.mayBePrototype() || current.heldExtraProperties() || isInFrame())
+        return;
+    uint32_t numberOfNames = 0;
+    structure->forEachProperty(vm, [&](const auto&) {
+        ++numberOfNames;
+        return true;
+    });
+    if (numberOfNames != numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity()))
+        return;
+    DeferGC deferGC(vm);
+    if (structure->isDictionary())
+        structure->flattenDictionaryStructure(vm, extra);
+    didFinishFilling(structure);
+    if (current.extraPropertiesStructureID() != structure->id())
+        setVariantOfStructure(vm, state().objects->structures.withExtraProperties(vm, current, structure));
+    if (hasKeyOrderOfItsOwn())
+        tryLeaveKeyOrderOfItsOwn(vm, state());
 }
 
 bool Object::tryNameHeldStructure(VM& vm)
@@ -976,6 +1009,8 @@ Object::ExtraPropertyStoreResult Object::tryStoreExtraProperty(VM& vm, PropertyN
     if (hadNone)
         extra = constructEmptyObject(vm, Instance::of(realm)->realm.emptyExtraPropertiesStructure);
     StructureID structureBefore = extra->structureID();
+    if (flags.contains(ExtraPropertyStoreFlag::BeginsDictionary))
+        extra->convertToDictionary(vm);
     PutPropertySlot slot(extra);
     extra->putDirect(vm, name, value, slot);
     if (hadNone)

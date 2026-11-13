@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTIRProgram.h"
 #include "AOTOpcodeSets.h"
@@ -17,6 +18,7 @@
 #include "AOTStringTable.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include "AOTWalkKnown.h"
 #include "YarrFlags.h"
 #include <array>
 #include <limits>
@@ -155,6 +157,39 @@ static Reference buildSearchForWrittenTextForStringSearches(Walker& walker, Refe
     else
         search.setLiteral(text);
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(search));
+}
+
+static const DataNode::Array* findSearchedLiteral(Walker& walker, const CallByOneRow& call)
+{
+    const Code& code = walker.code();
+    if (!call.receiver || !call.receiver.isValue() || code.isConstant(call.receiver.id()) || call.call.opcode() != Opcode::Call)
+        return nullptr;
+    const Operation& literal = code.at(call.receiver.id());
+    if (literal.opcode != Opcode::Data || literal.encoding() != DataEncoding::CopyOnWriteArray || !literal.data())
+        return nullptr;
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto written = call.call.as<Opcode::Call>();
+    ValueID read = index.stripCasts(written.calleeOperand());
+    ValueID made = written.thisValueOperand();
+    static constexpr uint32_t readAndCall = 2;
+    if (!read || !made || index.isParameter(read) || index.isParameter(made) || index.opcodeOf(made) != Opcode::Data || index.opcodeOf(read) != Opcode::PropGet || index.value(read).objectOperand() != made || index.useCount(made) != readAndCall)
+        return nullptr;
+    return walker.program().at(literal.data()).root.tryAs<DataNode::Array>();
+}
+
+bool buildSearchOfWords(Walker& walker, const CallByOneRow& call)
+{
+    static constexpr size_t fewestWords = 2;
+    if (call.arguments.size() != 1 || !call.arguments[0] || call.isForwarded || walker.isUnreachable())
+        return false;
+    const auto* literal = findSearchedLiteral(walker, call);
+    if (!literal || literal->elements.size() < fewestWords || !isShortStringList(*literal))
+        return false;
+    AnswerOfSearch asked = *call.codeInLine == InlineBuiltin::ArrayIncludes ? AnswerOfSearch::Membership : AnswerOfSearch::Place;
+    Reference answer = buildSearchAmongWords(walker, *literal, call.arguments[0], asked, call.origin);
+    if (answer)
+        bindForStrings(walker, call.call.id(), answer, call.origin);
+    return answer || walker.isUnreachable() || walker.hasFailed();
 }
 
 bool buildSearchInString(Walker& walker, const CallByOneRow& call)

@@ -8,7 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConstantEmitter.h"
 #include "AOTControlEmitter.h"
+#include "AOTImageText.h"
 #include "AOTRuntimeCallEmitter.h"
 #include "AOTStringTable.h"
 #include "AOTStubsStrings.h"
@@ -84,9 +86,166 @@ Condition StringEmitter::areEqual(const OperationContext& context, CellPointer a
     return Condition(m_out.castToInt32(callStub(context, stub, { a.value(), b.value() }).first));
 }
 
+void StringEmitter::branchOnEqualityOfDistinctStrings(const OperationContext& context, CellPointer a, CellPointer b, BranchTargets targets)
+{
+    LBasicBlock areFlat = newBlock();
+    LBasicBlock haveDifferentImpls = newBlock();
+    LBasicBlock haveSameLength = newBlock();
+    LBasicBlock comparesCharacters = newBlock();
+    Pointer first = loadField<Pointer>(a, m_heaps.JSString_value);
+    Pointer second = loadField<Pointer>(b, m_heaps.JSString_value);
+    Condition bothAreFlat = hasNoBits(Pointer(m_out.bitOr(first.value(), second.value())), JSString::isRopeInPointer);
+    m_out.branch(bothAreFlat.value(), normalEdge(areFlat), unlikelyEdge(comparesCharacters));
+    m_out.appendTo(areFlat);
+    m_out.branch(equal(first, second).value(), targets.taken, normalEdge(haveDifferentImpls));
+    m_out.appendTo(haveDifferentImpls);
+    m_out.branch(equal(loadField<Word32>(first, m_heaps.StringImpl_length), loadField<Word32>(second, m_heaps.StringImpl_length)).value(), normalEdge(haveSameLength), targets.notTaken);
+    m_out.appendTo(haveSameLength);
+    Word32 sharedFlags(m_out.bitAnd(flagsInImpl(first).value(), flagsInImpl(second).value()));
+    m_out.branch(hasNoBits(sharedFlags, flagsOfUniqueTexts).value(), normalEdge(comparesCharacters), targets.notTaken);
+    m_out.appendTo(comparesCharacters);
+    branch(areEqual(context, a, b, StringIdentity::Distinct), targets);
+}
+
 Word32 StringEmitter::order(const OperationContext& context, CellPointer a, CellPointer b)
 {
     return low32(Integer(callStub(context, compareStrings(), { a.value(), b.value() }).first));
+}
+
+static constexpr int64_t noWordOfText = std::numeric_limits<int64_t>::min();
+static constexpr int64_t firstBitsOfBytes = 0x0101010101010101;
+static constexpr int64_t lastBitsOfBytes = static_cast<int64_t>(0x8080808080808080);
+
+StringEmitter::ShortText StringEmitter::shortTextOf(CellPointer string, BlockEdge otherwise)
+{
+    constexpr int32_t wordSize = sizeof(uint64_t);
+    constexpr ptrdiff_t offsetOfText = StringImpl::headerSize<Latin1Character>();
+    static_assert(offsetOfText >= wordSize);
+    Pointer impl = loadField<Pointer>(string, m_heaps.JSString_value);
+    continueIf(hasNoBits(impl, JSString::isRopeInPointer), otherwise);
+    continueIf(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_width), StringImpl::flagIs8Bit()), otherwise);
+    continueIf(equal(loadField<Pointer>(impl, m_heaps.StringImpl_data), offsetBy(impl, offsetOfText)), otherwise);
+    Word32 length = loadField<Word32>(impl, m_heaps.StringImpl_length);
+    continueIf(below(sub(length, word32(1)), word32(wordSize)), otherwise);
+    LValue upToEnd = m_out.load64(m_out.baseIndex(m_heaps.wordOfText, impl.value(), zeroExtended(length).value(), ScaleOne, offsetOfText - wordSize));
+    LValue bitsInFront = m_out.neg(m_out.shl(length.value(), 3));
+    return { Integer(m_out.lShr(upToEnd, bitsInFront)), length };
+}
+
+void StringEmitter::generateWordOfText(const ValueContext& value)
+{
+    LBasicBlock hasNone = newBlock();
+    Join<Pointer> join(m_out);
+    ShortText text = shortTextOf(in<CellPointer>(value->stringOperand()), unlikelyEdge(hasNone));
+    continueIf(hasNoBits(Pointer(text.word.value()), static_cast<uintptr_t>(lastBitsOfBytes)), unlikelyEdge(hasNone));
+    LValue zeroBytes = m_out.bitAnd(m_out.sub(text.word.value(), m_out.constInt64(firstBitsOfBytes)), m_out.constInt64(lastBitsOfBytes));
+    LValue zeroCharacters = m_out.shl(zeroBytes, m_out.neg(m_out.shl(text.length.value(), 3)));
+    continueIf(isZero(Integer(zeroCharacters)), unlikelyEdge(hasNone));
+    join.add(Pointer(text.word.value()));
+
+    m_out.appendTo(hasNone);
+    join.add(Pointer(m_out.constInt64(noWordOfText)));
+    define(value, join.finish());
+}
+
+void StringEmitter::generateReverseWordOfText(const ValueContext& value)
+{
+    define(value, Pointer(reverseBytes(in<Pointer>(value->wordOperand()).value())));
+}
+
+void StringEmitter::generateHasTextInCell(const ValueContext& value)
+{
+    Word32 flags(loadByte(in<CellPointer>(value->stringOperand()), m_heaps.JSString_flags));
+    Word32 flag(m_out.bitAnd(flags.value(), m_out.constInt32(TextInCell::flag)));
+    Condition hasWord(m_out.greaterThanOrEqual(in<Pointer>(value->wordOperand()).value(), m_out.constInt64(0)));
+    define(value, select(hasWord, flag, 0));
+}
+
+void StringEmitter::generateLocaleCompareToWord(const ValueContext& value)
+{
+    build().statistics().count(StatisticID::LocaleComparesToWords);
+    CellPointer string = in<CellPointer>(value->stringOperand());
+    CellPointer other = in<CellPointer>(value->otherOperand());
+    LValue word = in<Pointer>(value->wordOperand()).value();
+    LValue reversedWord = in<Pointer>(value->reversedWordOperand()).value();
+    LBasicBlock calls = newBlock();
+    LBasicBlock isEqual = newBlock();
+    LBasicBlock differs = newBlock();
+    LBasicBlock mayComeFirst = newBlock();
+    LBasicBlock mayComeLast = newBlock();
+    LBasicBlock comesFirst = newBlock();
+    LBasicBlock comesLast = newBlock();
+    LBasicBlock hasNoWeight = newBlock();
+    LBasicBlock otherHasNoWeight = newBlock();
+    LBasicBlock otherHasZeroByte = newBlock();
+    LBasicBlock isBefore = newBlock();
+    LBasicBlock isBehind = newBlock();
+    Join<Word32> join(m_out);
+
+    LBasicBlock isInCell = newBlock();
+    LBasicBlock isElsewhere = newBlock();
+    LBasicBlock differsInCell = newBlock();
+    Word32 flags(loadByte(other, m_heaps.JSString_flags));
+    m_out.branch(m_out.testNonZero32(flags.value(), in<Word32>(value->flagOperand()).value()), normalEdge(isInCell), normalEdge(isElsewhere));
+    m_out.appendTo(isInCell);
+    LValue textInCell = m_out.load64(m_out.address(m_heaps.wordOfText, other.value(), JSRopeString::offsetOfFiber2()));
+    m_out.branch(m_out.equal(reversedWord, textInCell), unlikelyEdge(isEqual), normalEdge(differsInCell));
+    m_out.appendTo(differsInCell);
+    m_out.branch(m_out.above(textInCell, reversedWord), normalEdge(isBefore), normalEdge(isBehind));
+
+    m_out.appendTo(isElsewhere);
+    continueIf(Condition(m_out.greaterThanOrEqual(word, m_out.constInt64(0))), unlikelyEdge(calls));
+    ShortText text = shortTextOf(other, unlikelyEdge(calls));
+    LValue reversedText = reverseBytes(text.word.value());
+    m_out.branch(m_out.equal(reversedWord, reversedText), unlikelyEdge(isEqual), normalEdge(differs));
+    m_out.appendTo(differs);
+    m_out.branch(m_out.above(reversedText, reversedWord), normalEdge(mayComeFirst), normalEdge(mayComeLast));
+
+    struct FirstDifference {
+        LValue firstBit;
+        Word32 byte;
+        Word32 otherByte;
+        Word32 weight;
+        Word32 otherWeight;
+    };
+    auto readFirstDifference = [&] {
+        LValue firstBit = m_out.castToInt32(m_out.bitAnd(countTrailingZerosOfNonZero(m_out.bitXor(word, text.word.value())), m_out.constInt64(0x38)));
+        auto byteOf = [&](LValue bytes) { return m_out.bitAnd(m_out.castToInt32(m_out.lShr(bytes, firstBit)), m_out.constInt32(0xff)); };
+        LValue byte = byteOf(word);
+        LValue otherByte = byteOf(text.word.value());
+        LValue weights = m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(collation.knownLevel1Weights)));
+        auto weightOf = [&](LValue byte) { return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.AOTInstance_fixedFields, weights, m_out.zeroExtPtr(byte), ScaleOne))); };
+        return FirstDifference { firstBit, Word32(byte), Word32(otherByte), weightOf(byte), weightOf(otherByte) };
+    };
+
+    m_out.appendTo(mayComeFirst);
+    FirstDifference first = readFirstDifference();
+    m_out.branch(below(first.weight, first.otherWeight).value(), normalEdge(comesFirst), unlikelyEdge(calls));
+    m_out.appendTo(comesFirst);
+    m_out.branch(isNotZero(first.weight).value(), normalEdge(isBefore), unlikelyEdge(hasNoWeight));
+    m_out.appendTo(hasNoWeight);
+    m_out.branch(isZero(first.byte).value(), normalEdge(isBefore), unlikelyEdge(calls));
+
+    m_out.appendTo(mayComeLast);
+    FirstDifference last = readFirstDifference();
+    m_out.branch(above(last.weight, last.otherWeight).value(), normalEdge(comesLast), unlikelyEdge(calls));
+    m_out.appendTo(comesLast);
+    m_out.branch(isNotZero(last.otherWeight).value(), normalEdge(isBehind), unlikelyEdge(otherHasNoWeight));
+    m_out.appendTo(otherHasNoWeight);
+    m_out.branch(isZero(last.otherByte).value(), normalEdge(otherHasZeroByte), unlikelyEdge(calls));
+    m_out.appendTo(otherHasZeroByte);
+    m_out.branch(aboveOrEqual(Word32(last.firstBit), Word32(m_out.shl(text.length.value(), 3))).value(), normalEdge(isBehind), unlikelyEdge(calls));
+
+    m_out.appendTo(isBefore);
+    join.add(word32(-1));
+    m_out.appendTo(isBehind);
+    join.add(word32(1));
+    m_out.appendTo(isEqual);
+    join.add(word32(0));
+
+    m_out.appendTo(calls);
+    join.add(low32(callOperation<Integer>(value, RuntimeOperation::StringLocaleCompare, { string, other })));
+    define(value, join.finish());
 }
 
 Word32 StringEmitter::orderToCharacter(const CharacterView& view, char16_t character)
@@ -276,6 +435,14 @@ void StringEmitter::branchOnEqualsLiteral(const OperationContext& context, Compa
             continueUnlessHoldsName(string, literal, targets, isString);
             leavesCharactersToStub = text.length() > maxCharactersNextToName;
         }
+        else if (operand == ComparedOperand::String && mayBeNameInLoop(context, text)) {
+            if (std::optional<CellPointer> constant = emitter<ConstantEmitter>().stringConstantIfMade(literal)) {
+                LBasicBlock isOtherCell = newBlock();
+                m_out.branch(equal(string, *constant).value(), targets.taken, normalEdge(isOtherCell));
+                m_out.appendToContinuation(isOtherCell);
+                build().statistics().count(StatisticID::LiteralCellsCompared);
+            }
+        }
         if (!isString)
             continueIf(hasCellType(string, StringType), targets.notTaken);
     } else {
@@ -355,6 +522,96 @@ void StringEmitter::generateValueEqualsLiteral(const ValueContext& value)
     const Type& type = typeOf(value->valueOperand());
     bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
     generateEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(value->valueOperand()).value(), std::nullopt, everyCellIsString);
+}
+
+void StringEmitter::addOrderByFirstDifference(ValueID left, ValueID right, LBasicBlock byCall, Join<Word32>& order)
+{
+    constexpr unsigned width = sizeof(uint32_t);
+    constexpr uint32_t nonASCIIBits = 0x80808080;
+    struct Side {
+        CellPointer cell;
+        Pointer impl;
+        const CharacterSource* source;
+    };
+    auto open = [&](ValueID string) -> Side {
+        CellPointer cell = in<CellPointer>(string);
+        if (std::optional<FlatStringCell> flat = flatStringByType(string)) {
+            auto opened = m_openedStrings.find(cell.value());
+            if (opened == m_openedStrings.end() || !opened->value.mayBeRope)
+                return { cell, implOfFlatString(*flat), opened == m_openedStrings.end() ? nullptr : &opened->value.source };
+        }
+        Pointer impl = loadField<Pointer>(cell, m_heaps.JSString_value);
+        continueIf(hasNoBits(impl, JSString::isRopeInPointer), unlikelyEdge(byCall));
+        return { cell, impl, nullptr };
+    };
+    Side x = open(left);
+    Side y = open(right);
+    auto flagsOf = [&](const Side& side) { return side.source ? side.source->implFlags : flagsInImpl(side.impl); };
+    auto lengthOf = [&](const Side& side) { return side.source ? side.source->length : loadField<Word32>(side.impl, m_heaps.StringImpl_length); };
+    auto charactersOf = [&](const Side& side) { return side.source ? side.source->characters : loadField<Pointer>(side.impl, m_heaps.StringImpl_data); };
+    continueIf(hasBits(bitAnd(flagsOf(x), flagsOf(y)), StringImpl::flagIs8Bit()), unlikelyEdge(byCall));
+    Word32 xLength = lengthOf(x);
+    Word32 yLength = lengthOf(y);
+    Word32 length = select(below(xLength, yLength), xLength, yLength);
+    continueIf(aboveOrEqual(length, word32(width)), unlikelyEdge(byCall));
+    Pointer xCharacters = charactersOf(x);
+    Pointer yCharacters = charactersOf(y);
+    auto load = [&](Pointer address) { return Word32(loadBytes(m_out, width, TypedPointer(m_heaps.characters8.atAnyIndex(), address.value()))); };
+
+    LBasicBlock firstAreEqual = newBlock();
+    LBasicBlock firstDiffer = newBlock();
+    LBasicBlock differ = newBlock();
+    Vector<ValueFromBlock, 2> differences;
+    Vector<ValueFromBlock, 2> xAddresses;
+    Vector<ValueFromBlock, 2> yAddresses;
+    auto join = [&](Word32 xUnits, Word32 yUnits, Pointer xAddress, Pointer yAddress) {
+        differences.append(m_out.anchor(bitXor(xUnits, yUnits).value()));
+        xAddresses.append(m_out.anchor(xAddress.value()));
+        yAddresses.append(m_out.anchor(yAddress.value()));
+        m_out.jump(differ);
+    };
+    Word32 xFirst = load(xCharacters);
+    Word32 yFirst = load(yCharacters);
+    m_out.branch(notEqual(xFirst, yFirst).value(), normalEdge(firstDiffer), normalEdge(firstAreEqual));
+
+    m_out.appendTo(firstAreEqual);
+    continueIf(belowOrEqual(length, word32(2 * width)), unlikelyEdge(byCall));
+    Integer offset = zeroExtended(sub(length, word32(width)));
+    Pointer xEnd = offsetBy(xCharacters, offset, 0);
+    Pointer yEnd = offsetBy(yCharacters, offset, 0);
+    Word32 xLast = load(xEnd);
+    Word32 yLast = load(yEnd);
+    continueIf(notEqual(xLast, yLast), unlikelyEdge(byCall));
+    continueIf(Condition(m_out.testIsZero32(bitOr(xFirst, bitOr(xLast, yLast)).value(), word32(nonASCIIBits).value())), unlikelyEdge(byCall));
+    join(xLast, yLast, xEnd, yEnd);
+
+    m_out.appendTo(firstDiffer);
+    continueIf(Condition(m_out.testIsZero32(bitOr(xFirst, yFirst).value(), word32(nonASCIIBits).value())), unlikelyEdge(byCall));
+    join(xFirst, yFirst, xCharacters, yCharacters);
+
+    m_out.appendTo(differ);
+    Word32 difference(m_out.phi(Machine::Int32, differences));
+    Pointer xAddress(m_out.phi(machineTypeOf(Pointer::representation), xAddresses));
+    Pointer yAddress(m_out.phi(machineTypeOf(Pointer::representation), yAddresses));
+    LValue firstByte = m_out.lShr(countTrailingZerosOfNonZero(zeroExtended(difference).value()), 3);
+    Pointer weights(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(collation.knownLevel1Weights))));
+    auto byteAt = [&](Pointer bytes, LValue index) { return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, bytes.value(), index))); };
+    Word32 xByte = byteAt(xAddress, firstByte);
+    Word32 yByte = byteAt(yAddress, firstByte);
+    ensureStillAliveHere(x.cell);
+    ensureStillAliveHere(y.cell);
+    Word32 xWeight = byteAt(weights, zeroExtended(xByte).value());
+    Word32 yWeight = byteAt(weights, zeroExtended(yByte).value());
+    continueIf(notEqual(xWeight, yWeight), unlikelyEdge(byCall));
+    LBasicBlock isBefore = newBlock();
+    LBasicBlock isBehind = newBlock();
+    m_out.branch(below(xWeight, yWeight).value(), normalEdge(isBefore), normalEdge(isBehind));
+    m_out.appendTo(isBefore);
+    continueIf(isNotZero(xWeight), unlikelyEdge(byCall));
+    order.add(word32(-1));
+    m_out.appendTo(isBehind);
+    continueIf(isNotZero(yWeight), unlikelyEdge(byCall));
+    order.add(word32(1));
 }
 
 void StringEmitter::branchOnBytesAt(Pointer address, std::span<const uint8_t> bytes, const Machine::AbstractHeap& heap, CellPointer owner, BranchTargets targets)

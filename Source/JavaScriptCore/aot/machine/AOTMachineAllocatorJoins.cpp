@@ -662,7 +662,7 @@ static ALWAYS_INLINE void listIncomingValuesAtEdge(const Block* from, const Bloc
     }
 }
 
-static Operation* findChildThatDiesInRegisterOfResult(const Liveness& liveness, const Operation* user, unsigned childIndex)
+static ALWAYS_INLINE Operation* findChildThatDiesInRegisterOfResult(const Liveness& liveness, const Operation* user, unsigned childIndex)
 {
     Operation* child = user->child(childIndex);
     if (liveness.isFused(child)) {
@@ -1801,6 +1801,81 @@ SpillIndex Allocator::findSpillOfDeadSource(const Operation* phi)
     return noSpill;
 }
 
+static bool isReadOnce(const Liveness& liveness, const Operation* value)
+{
+    uint32_t firstUse = liveness.of(value).firstUse;
+    return firstUse && !liveness.use(firstUse).next;
+}
+
+std::span<const SpillIndex> Allocator::findSpillsThatPhisAreOnlyHandedOnTo(const Block* target)
+{
+    constexpr size_t fewPhis = 16;
+    const size_t numberOfPhis = target->phis().size();
+    const Operation** handedOn = m_arena.allocateArray<const Operation*>(2 * numberOfPhis);
+    const Operation** takers = handedOn + numberOfPhis;
+    auto notePlacesHandedOn = [&] {
+        if (numberOfPhis <= fewPhis)
+            return;
+        if (m_placesHandedOn.empty()) {
+            size_t numberOfOperations = m_proc.numberOfOperations();
+            m_placesHandedOn = { m_arena.allocateArray<uint32_t>(numberOfOperations), numberOfOperations };
+            std::ranges::fill(m_placesHandedOn, 0);
+        }
+        for (size_t place = 0; place < numberOfPhis; ++place) {
+            if (handedOn[place])
+                m_placesHandedOn[handedOn[place]->index()] = static_cast<uint32_t>(place);
+        }
+    };
+    auto placeHandedOn = [&](const Operation* value) -> size_t {
+        if (numberOfPhis <= fewPhis)
+            return std::find(handedOn, handedOn + numberOfPhis, value) - handedOn;
+        size_t place = value->index() < m_placesHandedOn.size() ? m_placesHandedOn[value->index()] : numberOfPhis;
+        return place < numberOfPhis && handedOn[place] == value ? place : numberOfPhis;
+    };
+    bool someIsHandedOn = false;
+    for (size_t index = 0; index < numberOfPhis; ++index) {
+        const Operation* phi = target->phis()[index];
+        bool mayBeHandedOn = !m_allocation.isSpilled(phi) && isReadOnce(m_liveness, phi) && valueMayShareSpill(*this, phi);
+        handedOn[index] = mayBeHandedOn ? phi : nullptr;
+        someIsHandedOn |= mayBeHandedOn;
+    }
+    const Block* block = target;
+    for (unsigned stepsLeft = 8; someIsHandedOn && stepsLeft && block->last()->isUnconditionalJump() && !m_order.of(block).isRare(); --stepsLeft) {
+        const Block* next = block->successor(0).block();
+        std::fill_n(takers, numberOfPhis, nullptr);
+        notePlacesHandedOn();
+        for (const Operation* upsilon : block->upsilons()) {
+            size_t place = placeHandedOn(upsilon->valueHandedOn());
+            if (place != numberOfPhis && upsilon->phi()->owner() == next && upsilon->phi()->type() == handedOn[place]->type() && valueMayShareSpill(*this, upsilon->phi()))
+                takers[place] = upsilon->phi();
+        }
+        if (m_heads[next->index()].isSet()) {
+            for (const RegisterBinding& binding : m_heads[next->index()].bindings()) {
+                if (!binding.value || binding.value->owner() != next || binding.value->opcode() != Phi)
+                    continue;
+                for (size_t index = 0; index < numberOfPhis; ++index) {
+                    if (takers[index] == binding.value)
+                        takers[index] = nullptr;
+                }
+            }
+            SpillIndex* spills = m_arena.allocateArray<SpillIndex>(numberOfPhis);
+            for (size_t index = 0; index < numberOfPhis; ++index) {
+                spills[index] = takers[index] && m_allocation.isSpilled(takers[index]) ? m_allocation.spillOf(takers[index]) : noSpill;
+                if (spills[index] != noSpill && (m_allocation.m_spills[spills[index]].isSaveInRareRegion || m_allocation.m_spills[spills[index]].isPointerBesideNarrowReference))
+                    spills[index] = noSpill;
+            }
+            return { spills, numberOfPhis };
+        }
+        someIsHandedOn = false;
+        for (size_t index = 0; index < numberOfPhis; ++index) {
+            handedOn[index] = takers[index] && isReadOnce(m_liveness, takers[index]) ? takers[index] : nullptr;
+            someIsHandedOn |= !!handedOn[index];
+        }
+        block = next;
+    }
+    return { };
+}
+
 void Allocator::letEdgesWritePhi(Operation* phi, SpillIndex spill, const BlockPlace& place)
 {
     if (!m_allocation.m_phisWrittenByEdges.size())
@@ -2150,6 +2225,33 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                 SpillIndex second { noSpill };
             };
             SpillsHandedToPhi* spillsHandedToPhis = nullptr;
+            auto askWhetherEdgesMayWritePhis = [&]() ALWAYS_INLINE_LAMBDA {
+                if (!std::exchange(isKnownWhetherEdgesMayWritePhis, true))
+                    edgesMayWritePhis = edgesMayWritePhisWithRegistersAtHead(*this, target, place);
+                return edgesMayWritePhis;
+            };
+            auto phiMayLieIn = [&](SpillIndex candidate) {
+                PhisInSpill& phisInCandidate = phisInSpill(candidate);
+                Operation** endOfPhisNotYetDead = phisInCandidate.begin();
+                for (Operation* other : phisInCandidate) {
+                    const Position lastUse = factsOfValues[other->index()].lastUse;
+                    if (lastUse == noPosition || lastUse >= m_headOfBlock)
+                        *endOfPhisNotYetDead++ = other;
+                }
+                phisInCandidate.shrink(static_cast<uint32_t>(endOfPhisNotYetDead - phisInCandidate.begin()));
+                return std::ranges::none_of(phisInCandidate, [&](const Operation* other) {
+                    return other->owner() == target || (isLiveAtHeadBeingFixed<kind>(*this, head, other) && (other->opcode() != Phi || isReadOnSomeWayFromHeadOf(other, target)));
+                });
+            };
+            auto layPhiIn = [&](Operation* phi, SpillIndex shared) {
+                m_allocation.m_spillOfValue[phi->index()] = shared;
+                factsOfSpills[shared].isSharedByPhis = true;
+                letEdgesWritePhi(phi, shared, place);
+                m_phisInSpills[shared]->append(m_arena, phi);
+            };
+            std::span<const SpillIndex> spillsHandedOnTo;
+            if (kind != KindOfHeadBeingFixed::PlainButRare && !head.isRare && !isInRareRegion() && target->last()->isUnconditionalJump() && askWhetherEdgesMayWritePhis())
+                spillsHandedOnTo = findSpillsThatPhisAreOnlyHandedOnTo(target);
             for (size_t index = 0; index < numberOfPhis; ++index) {
                 Operation* phi = phis[index];
                 const ValueFacts& facts = factsOfValues[phi->index()];
@@ -2158,15 +2260,19 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                 Reg reg = anyRegisterOf(phi, ~RegisterMask { 0 });
                 registersAtDefinitions[phi->index()] = reg;
                 bool isKeptByCalls = reg && (calleeSavedRegisters & maskOf(reg));
+                if (index < spillsHandedOnTo.size() && spillsHandedOnTo[index] != noSpill && phiMayLieIn(spillsHandedOnTo[index])) {
+                    if (reg) {
+                        unbindRegisterBetweenBlocks(*this, reg, states[phi->index()]);
+                        registersAtDefinitions[phi->index()] = Reg();
+                    }
+                    layPhiIn(phi, spillsHandedOnTo[index]);
+                    continue;
+                }
                 if (reg && !facts.has(ValueFlag::LivesIntoLandingPad) && !facts.has(ValueFlag::LivesAcrossSuspension) && (isKeptByCalls || targetStartsUnframed || !phiLivesAcrossCall(index, phi, facts)))
                     continue;
 
                 if constexpr (kind != KindOfHeadBeingFixed::PlainButRare) {
-                    if (!isKnownWhetherEdgesMayWritePhis) {
-                        isKnownWhetherEdgesMayWritePhis = true;
-                        edgesMayWritePhis = edgesMayWritePhisWithRegistersAtHead(*this, target, place);
-                    }
-                    if (edgesMayWritePhis && valueMayShareSpill(*this, phi) && !m_allocation.isSpilled(phi)) {
+                    if (askWhetherEdgesMayWritePhis() && valueMayShareSpill(*this, phi) && !m_allocation.isSpilled(phi)) {
                         if (!spillsHandedToPhis) {
                             spillsHandedToPhis = m_arena.allocateArray<SpillsHandedToPhi>(numberOfPhis);
                             std::fill_n(spillsHandedToPhis, numberOfPhis, SpillsHandedToPhi { });
@@ -2199,18 +2305,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                         for (SpillIndex candidate : { spillsHandedToPhis[index].first, spillsHandedToPhis[index].second }) {
                             if (candidate == noSpill)
                                 break;
-                            PhisInSpill& phisInCandidate = phisInSpill(candidate);
-                            Operation** endOfPhisNotYetDead = phisInCandidate.begin();
-                            for (Operation* other : phisInCandidate) {
-                                const Position lastUse = factsOfValues[other->index()].lastUse;
-                                if (lastUse == noPosition || lastUse >= m_headOfBlock)
-                                    *endOfPhisNotYetDead++ = other;
-                            }
-                            phisInCandidate.shrink(static_cast<uint32_t>(endOfPhisNotYetDead - phisInCandidate.begin()));
-                            bool liesApart = std::ranges::none_of(phisInCandidate, [&](const Operation* other) {
-                                return other->owner() == target || (isLiveAtHeadBeingFixed<kind>(*this, head, other) && (other->opcode() != Phi || isReadOnSomeWayFromHeadOf(other, target)));
-                            });
-                            if (liesApart) {
+                            if (phiMayLieIn(candidate)) {
                                 shared = candidate;
                                 break;
                             }
@@ -2223,10 +2318,7 @@ void Allocator::fixHeadOf(Block* targetOfEdge, Block* blockOfEdge, const BlockPl
                             }
                         }
                         if (shared != noSpill) {
-                            m_allocation.m_spillOfValue[phi->index()] = shared;
-                            factsOfSpills[shared].isSharedByPhis = true;
-                            letEdgesWritePhi(phi, shared, place);
-                            m_phisInSpills[shared]->append(m_arena, phi);
+                            layPhiIn(phi, shared);
                             continue;
                         }
                         if (head.startsLoop) {

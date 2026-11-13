@@ -50,6 +50,8 @@ public:
     virtual TypeID resultOfCallBeingTyped(TypeLevel, uint32_t resultIndex) const = 0;
     virtual TypeID resultOfReadBeingTyped(TypeLevel) const { return { }; }
     virtual TypeID contentsBeingTyped(TypeLevel) const { return { }; }
+    virtual TypeID scalarOfResult(TypeLevel, FunctionID, uint32_t) const { return { }; }
+    virtual TypeID scalarOfField(TypeLevel, LayoutID, uint32_t, Representation) const { return { }; }
     virtual TypeID resultOfSelector(TypeLevel, uint32_t) const { return { }; }
     virtual TypeID resultOfTableRow(TypeLevel, uint32_t, LayoutID, bool&) const { return { }; }
 
@@ -159,7 +161,7 @@ ALWAYS_INLINE std::optional<uint32_t> numberOfResultsOf(const Program& program, 
 TypeID naturalTypeFrom(TypeArena&, const NaturalType&);
 TypeID widestPrimitiveResultOf(Opcode);
 TypeID widestPrimitiveResultOf(TypeArena&, Opcode producer, uint32_t resultIndex);
-inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin, Opcode::GetValueAtPlaceInMap };
+inline constexpr OpcodeSet recordsTypedByWhatIsProvenOfContents { Opcode::ResultAt, Opcode::CallInline, Opcode::CallBuiltin, Opcode::GetValueAtPlaceInMap, Opcode::GetMapValueByTag, Opcode::GetMapValueByStringTag };
 inline constexpr OpcodeSet readsTypedByWhatIsProvenOfInput { Opcode::ElemGet, Opcode::GetArrayElement, Opcode::GetContiguousIndex, Opcode::GetOwnContiguousIndex };
 
 constexpr UnknownSeed seedOfUnknownResultByRowOf(Opcode opcode)

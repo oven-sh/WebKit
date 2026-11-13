@@ -109,7 +109,15 @@ public:
             m_numbersOfBindings.clear();
         if (!m_numbersOfBuiltins.isEmpty())
             m_numbersOfBuiltins.clear();
+        if (!m_elementIndices.isEmpty())
+            m_elementIndices.clear();
     }
+
+    void setCode(const Code& code) { m_code = &code; }
+    bool addElementIndex(Reference);
+    std::span<const Reference> elementIndices(int64_t position) const LIFETIME_BOUND;
+
+    Reference arrayKeepingElements;
 
     uint32_t addCheckedName(Reference value, Reference name)
     {
@@ -174,6 +182,8 @@ private:
     Vector<uint32_t> m_numbersThatName;
     HashMap<uint64_t, uint32_t> m_numbersOfBindings;
     HashMap<uint32_t, uint32_t> m_numbersOfBuiltins;
+    HashMap<uint64_t, Vector<Reference, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_elementIndices;
+    const Code* m_code { nullptr };
     bool m_remembersPlaces { true };
 };
 
@@ -218,7 +228,11 @@ public:
         if (!other.m_answers.isEmpty())
             m_answers.swap(other.m_answers);
     }
-    ~WalkState() { release(m_held); }
+    ALWAYS_INLINE ~WalkState()
+    {
+        if (m_held)
+            letGoOfHeld();
+    }
 
     WalkState& operator=(const WalkState& other)
     {
@@ -335,6 +349,31 @@ public:
             const Holder& holder = m_held->m_holders[place.holder];
             if (!holder.hasEnded && holder.object)
                 functor(holder.object, FieldReference { LayoutID(place.first), place.second }, place.value, place.kind == PlaceKind::Slot);
+        }
+    }
+    void forEachHolderOfElementsNotSharedWithAll(std::span<const WalkState* const> ways, NOESCAPE const Invocable<void(Reference holder)> auto& functor) const
+    {
+        if (!mayHold(Kinds::places) || !m_held->m_numberOfPlaces)
+            return;
+        Vector<uint32_t, 16> holders;
+        for (const WalkState* way : ways) {
+            if (way->m_held == m_held)
+                continue;
+            if (!way->m_held)
+                return;
+            m_held->m_places.forEachStretchNotSharedWith(way->m_held->m_places, [&](uint32_t begin, uint32_t end) {
+                for (uint32_t position = begin; position < end; ++position) {
+                    const Place& place = m_held->m_places[position];
+                    if (place.value && place.kind == PlaceKind::Element && !place.second)
+                        holders.append(place.holder);
+                }
+            });
+        }
+        std::ranges::sort(holders);
+        holders.shrink(std::ranges::unique(holders).begin() - holders.begin());
+        for (uint32_t holder : holders) {
+            if (!m_held->m_holders[holder].hasEnded && m_held->m_holders[holder].object)
+                functor(m_held->m_holders[holder].object);
         }
     }
     void forEachBeliefOfFreshHolderLackingIn(const WalkState& arriving, NOESCAPE const Invocable<void(Reference holder, std::optional<FieldReference> fieldOfScope, Reference believed)> auto& functor) const
@@ -590,9 +629,22 @@ public:
         if (!remembersPlaces())
             return;
         if (writesInPlace() || !noteChangesNothing(element(object, index), value)) {
-            heldToWrite().noteElement(object, index, value);
+            heldToWrite().noteElement(object, index, value, value && m_program.numbers && m_program.numbers->addElementIndex(index));
             m_marks.kinds |= Kinds::places;
         }
+    }
+    void endElementAt(Reference object, int64_t position)
+    {
+        for (Reference index : m_program.numbers->elementIndices(position))
+            noteElement(object, index, { });
+    }
+    Reference elementAt(Reference object, int64_t position) const
+    {
+        for (Reference index : m_program.numbers->elementIndices(position)) {
+            if (Reference held = element(object, index))
+                return held;
+        }
+        return { };
     }
     void noteElementWithNaNForHole(Reference object, Reference index, Reference value)
     {
@@ -782,7 +834,8 @@ private:
         bool isFresh { false };
         bool hasEnded { false };
         bool isListedAsFreshWithElements { false };
-        bool elementsLieOutsideViews { false };
+        bool elementsLieOutsideViews : 1 { false };
+        bool hasElementsUnderOtherKeys : 1 { false };
     };
     static_assert(sizeof(Holder) == 56);
     static_assert(static_cast<unsigned>(PlaceKind::GuardOfReads) < 8 * sizeof(Holder::kindsOfPlaces));
@@ -794,6 +847,7 @@ private:
         PlaceKind kind;
         uint8_t bit { entireHeap };
         bool isListed { true };
+        bool isUnderConstant { false };
         uint32_t holder { none };
         uint32_t first { 0 };
         uint32_t second { 0 };
@@ -867,7 +921,7 @@ private:
         void noteSlot(const ProgramOfState&, Reference object, FieldReference, Reference value);
         void noteVariable(const ProgramOfState&, VariableID, Reference value);
         void noteEnvironmentField(const ProgramOfState&, Reference environment, FieldReference, Reference value);
-        void noteElement(Reference object, Reference index, Reference value);
+        void noteElement(Reference object, Reference index, Reference value, bool isUnderConstant);
         void noteElementWithNaNForHole(Reference object, Reference index, Reference value);
         void noteElementsLieOutsideViews(Reference object);
         void invalidateAliasedSlots(const ProgramOfState&, Reference object, FieldReference, NOESCAPE const ScopedLambda<bool(Reference other)>& mayBeSameObject, NOESCAPE const ScopedLambda<bool(Reference, LayoutID)>& isOfLayoutAlone);
@@ -895,7 +949,9 @@ private:
         uint32_t findOrAddHolder(Reference);
         inline uint32_t findPlace(uint32_t holder, PlaceKind, uint32_t first, uint32_t second) const;
         Reference valueOfPlace(PlaceKind, Reference base, uint32_t first, uint32_t second) const;
-        void notePlace(PlaceKind, Reference base, uint32_t first, uint32_t second, Reference value, NOESCAPE const Invocable<uint8_t()> auto& bit);
+        void notePlace(PlaceKind, Reference base, uint32_t first, uint32_t second, Reference value, NOESCAPE const Invocable<uint8_t()> auto& bit, bool isUnderConstant = false);
+        void endElementsUnderOtherKeys(uint32_t holder);
+        void endElementsOf(const ProgramOfState&, uint32_t holder);
         enum class ListOfPlaces : uint8_t { AllButElements, Elements };
         void endPlace(uint32_t place);
         void endPlacesOf(uint32_t holder, ListOfPlaces, NOESCAPE const Invocable<bool(const Place&)> auto& ends);
@@ -1030,6 +1086,7 @@ private:
         uint32_t m_newestStoreIntoUnmadeRecord { 0 };
     };
 
+    NEVER_INLINE void letGoOfHeld() { release(m_held); }
     static void release(Held* held)
     {
         if (held && !--held->numberOfOwners)

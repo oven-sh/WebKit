@@ -138,22 +138,67 @@ struct AbsenceFilter {
     uint32_t unused;
 };
 
+struct NameShapes {
+    static constexpr unsigned lastLengthBit = 63;
+
+    void add(const StringImpl& name)
+    {
+        lengths |= bitOfLength(name.length());
+        if (name.length())
+            firstUnits |= bitOfUnit(name[0]);
+    }
+    static constexpr uint64_t bitOfLength(unsigned length) { return uint64_t { 1 } << std::min(length, lastLengthBit); }
+    static constexpr uint64_t bitOfUnit(char16_t unit) { return uint64_t { 1 } << (unit & 63); }
+    static constexpr NameShapes ofAnyName() { return { UINT64_MAX, UINT64_MAX }; }
+    bool areOfAnyName() const { return lengths == UINT64_MAX; }
+
+    uint64_t lengths { 0 };
+    uint64_t firstUnits { 0 };
+};
+
+struct NameShapesOfStructure {
+    static constexpr unsigned numberOfEntries = 64;
+    static constexpr unsigned sizeShift = 5;
+    static constexpr unsigned maxIndexLength = 10;
+    static constexpr unsigned indexFor(StructureID id) { return (id.bits() >> StructureRowWords::granuleShift) & (numberOfEntries - 1); }
+
+    uint32_t structureID;
+    uint32_t questionsBeforeListing;
+    uint32_t isBelowObjectPrototype;
+    uint32_t unused;
+    NameShapes ownNames;
+};
+static_assert(sizeof(NameShapesOfStructure) == 1 << NameShapesOfStructure::sizeShift);
+
 struct NameOfText {
-    static constexpr unsigned numberOfPairs = 64;
+    static constexpr unsigned numberOfPairs = 512;
     static constexpr unsigned numberOfEntries = 2 * numberOfPairs;
     static constexpr unsigned sizeShift = 5;
     static constexpr uint32_t minLength = 2;
     static constexpr uint32_t maxLength = 16;
+    static constexpr uint32_t lengthOfWideText = 1 << 8;
+    static constexpr uint64_t upperHalvesOfUnits = 0xff00ff00ff00ff00ull;
     static constexpr uint64_t multiplier = 0x9e3779b97f4a7c15ull;
-    static constexpr unsigned pairShift = 64 - 6;
+    static constexpr unsigned pairShift = 64 - 9;
 
     static constexpr unsigned widthOfWordFor(uint32_t length) { return length >= 8 ? 8 : length >= 4 ? 4 : 2; }
-    static constexpr unsigned firstIndexFor(uint64_t first, uint64_t last, uint32_t length) { return static_cast<unsigned>((first + 2 * last + length) * multiplier >> pairShift) * 2; }
+    static constexpr uint64_t hashOf(uint64_t first, uint64_t last, uint64_t length) { return (first + 2 * last + length) * multiplier; }
+    static constexpr unsigned firstIndexFor(uint64_t first, uint64_t last, uint32_t length) { return static_cast<unsigned>(hashOf(first, last, length) >> pairShift) * 2; }
 
     uint64_t first;
     uint64_t last;
     uint64_t length;
     UniquedStringImpl* uid;
+};
+
+struct FirstElementTransition {
+    static constexpr unsigned numberOfEntries = 64;
+    static constexpr uint32_t maxIndex = 15;
+    static unsigned indexFor(StructureID before, IndexingType shape) { return ((before.bits() >> StructureRowWords::granuleShift) + shape) & (numberOfEntries - 1); }
+
+    uint32_t structureIDBefore;
+    uint32_t shape;
+    Structure* after;
 };
 
 struct UsesOfSubstringAsKey {
@@ -181,6 +226,7 @@ struct KeyedValuePlace {
     static constexpr uint32_t getterBit = 4;
     static constexpr uint32_t notOwnBits = getterBit | absenceBit;
     static constexpr uint32_t getterAboveBits = getterBit | fieldBit;
+    static constexpr uint32_t fieldInExtensionBits = getterBit | fieldBit | absenceBit;
     static constexpr uint32_t globalObjectBit = 1;
     static constexpr uint32_t additionBit = 4;
     static constexpr uint32_t fieldOfAnyValueBits = additionBit | absenceBit;
@@ -191,6 +237,11 @@ struct KeyedValuePlace {
         int16_t wordIndex;
     };
 
+    struct FieldInExtension {
+        uint16_t extensionWordOffset;
+        uint16_t slotOffset;
+    };
+
     JSCell* key;
     uint32_t structureID;
     union {
@@ -199,6 +250,7 @@ struct KeyedValuePlace {
         uint32_t offsetOfSlot;
         uint32_t wordInCellCage;
         ExtraProperty extraProperty;
+        FieldInExtension fieldInExtension;
     };
 };
 
@@ -226,6 +278,7 @@ struct AcceptedKindOfValue {
     static constexpr uint32_t classesWithNarrowReferences = 2;
 
     static constexpr uint32_t isEntryOfFieldTable = 1u << 31;
+    static constexpr uint32_t isRefused = 1u << 30;
     uint32_t type;
     uint32_t kind;
 };
@@ -282,7 +335,8 @@ struct ReadGroupCache {
         uint32_t structure;
         uint32_t structureThatHoldsAll;
         int16_t places[numberOfPlaces];
-        uint16_t numberOfReads;
+        uint8_t numberOfReads;
+        uint8_t absentReads;
         uint16_t wordOfExtension;
 
         void claim(uint32_t claimedBy, uint16_t wordOfExtension);
@@ -309,6 +363,7 @@ inline void ReadGroupCache::Row::claim(uint32_t claimedBy, uint16_t word)
     structure = claimedBy;
     wordOfExtension = word;
     structureThatHoldsAll = 0;
+    absentReads = 0;
     std::ranges::fill(places, placeIsNotKnown);
 }
 
@@ -324,8 +379,9 @@ inline void ReadGroupCache::Row::show()
     bool knowsAll = numberOfReads;
     bool allLieInCell = true;
     for (unsigned index = 0; index < numberOfReads; ++index) {
-        knowsAll &= places[index] != placeIsAskedOfStub && places[index] != placeIsNotKnown;
-        allLieInCell &= places[index] > 0;
+        bool isAbsent = absentReads >> index & 1;
+        knowsAll &= isAbsent || (places[index] != placeIsAskedOfStub && places[index] != placeIsNotKnown);
+        allLieInCell &= isAbsent || places[index] > 0;
     }
     structureThatHoldsAll = 0;
     if (knowsAll && allLieInCell)
@@ -389,6 +445,15 @@ struct StringSwitchTarget {
     intptr_t offset;
 };
 
+struct ProxyHandlerTraps {
+    static constexpr unsigned numberOfPlaces = 16;
+    static constexpr unsigned numberOfTraps = 13;
+
+    uint32_t handlerStructureID;
+    uint32_t prototypeStructureID;
+    std::array<uint8_t, numberOfTraps> offsets;
+};
+
 struct FunctionAllocationEntry {
     static constexpr unsigned numberOfBirths = 128;
     static constexpr unsigned executableShift = 4;
@@ -400,12 +465,34 @@ struct FunctionAllocationEntry {
     void* allocator;
 };
 
+struct ClosureAddition {
+    static constexpr unsigned numberOfPlaces = 128;
+    static constexpr unsigned sizeShift = 6;
+    static constexpr unsigned nameShift = 3;
+    static constexpr unsigned uidShift = 4;
+    static constexpr unsigned numberOfInitialValues = 4;
+    static constexpr uint32_t hasNoNumber = UINT32_MAX;
+
+    static unsigned placeOf(uint32_t upperHalfOfWord, uint32_t name) { return (upperHalfOfWord ^ name << nameShift) % numberOfPlaces; }
+    static unsigned placeOf(uint32_t upperHalfOfWord, const UniquedStringImpl* uid) { return (upperHalfOfWord ^ std::bit_cast<uintptr_t>(uid) >> uidShift) % numberOfPlaces; }
+    unsigned place() const { return uid ? placeOf(upperHalfOfWord, uid) : placeOf(upperHalfOfWord, name); }
+
+    uint32_t upperHalfOfWord;
+    uint32_t name;
+    uint32_t structureBefore;
+    uint32_t structureAfter;
+    EncodedJSValue initialValues[numberOfInitialValues];
+    uint16_t typeAndFlagsAfter;
+    const UniquedStringImpl* uid;
+};
+static_assert(sizeof(ClosureAddition) == 1u << ClosureAddition::sizeShift);
+
 struct ReplacedMember {
     static constexpr unsigned numberOfPlaces = 4;
     static constexpr unsigned sizeShift = 5;
 
     const JSCell* holder;
-    EncodedJSValue* word;
+    ptrdiff_t offsetOfValue;
     uint32_t structureID;
     uint32_t name;
     uint64_t padding;
@@ -421,11 +508,14 @@ struct PropertyCacheWords {
     uint32_t creationGeneration;
     const uint64_t* namesOfObjectPrototypes;
     const uint64_t* objectPrototypeStoreStoppers;
+    const NameShapesOfStructure* nameShapes;
+    const NameShapes* nameShapesOfObjectPrototypes;
     const uint64_t* namesChangedOnChains;
     uint8_t* missesOfPairs;
     const NameOfText* namesOfTexts;
     uint8_t missIsDueForFiling;
     uint8_t placesSayAbsence;
+    uint8_t readGroupsSayAbsence;
     uint8_t placesTakeReplacementsAsUnwatched;
     uint8_t pairsHavePlaces;
     uint8_t hasCachedSlotValues;
@@ -474,6 +564,7 @@ struct PropertyCacheWords {
 
     const StringSwitchTarget* switchTargets;
     const FunctionAllocationEntry* functionAllocationEntries;
+    const ClosureAddition* closureAdditions;
     void* clonedArgumentsAllocator;
 
     ReplacedMember replacedMembers[ReplacedMember::numberOfPlaces];

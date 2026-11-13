@@ -480,7 +480,12 @@ static Reference buildParseOfProvenNumber(Walker& walker, const CallByOneRow& ca
         return buildOperatorInNumberForms(walker, Opcode::Add, number, integerInNumberForms(walker, 0), call.origin);
     const BodyIndex& index = walker.currentBodyIndex();
     bool standsInLoop = walker.isInLoop() || index.loopDepthOf(index.blockOf(call.call.id()));
-    return standsInLoop && walker.opensGuesses() && number.isValue() ? buildParsedIntegerOfFractionInNumberBuiltins(walker, call, number) : Reference();
+    if (standsInLoop && walker.opensGuesses() && number.isValue())
+        return buildParsedIntegerOfFractionInNumberBuiltins(walker, call, number);
+    if (call.codeInLine != InlineBuiltin::ParseInt || !number.isValue() || walker.representationOf(number) != Representation::Double)
+        return { };
+    walker.count(StatisticID::NumbersParsedByLeaf);
+    return buildCodeInLineInNumberBuiltins(walker, call, singleElementSpan(number));
 }
 
 static Reference buildParseAfterTest(Walker& walker, const CallByOneRow& call, Reference value, TypeID tested, bool parsesInteger)
@@ -544,6 +549,10 @@ static Reference buildParseOfNumberInNumberBuiltins(Walker& walker, const CallBy
     Type type = typeOfBuiltInNumberBuiltins(walker, value);
     bool isNumber = type.isNumber();
     const BodyIndex& index = walker.currentBodyIndex();
+    if (index.isUnused(call.call.id()) && arguments.size() == 1 && type.isJavaScriptValue() && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Boolean)) {
+        walker.count(StatisticID::UnusedParsesDropped);
+        return walker.constant(PrimitiveKnownToFolding::number(PNaN));
+    }
     bool standsInLoop = walker.isInLoop() || index.loopDepthOf(index.blockOf(call.call.id()));
     bool mayBeNumber = !isNumber && !index.isUnused(call.call.id()) && walker.opensGuesses() && value && value.isValue() && type.isJavaScriptValue() && walker.types().overlap(walker.typeOf(value), TypeTable::number);
     bool asksWhole = standsInLoop && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);

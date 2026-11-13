@@ -55,6 +55,13 @@ private:
 };
 
 #if ENABLE(AOT)
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetDate);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetDay);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetFullYear);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetHours);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMinutes);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetMonth);
+JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetSeconds);
 JSC_DECLARE_HOST_FUNCTION(dateProtoFuncGetTime);
 JSC_DECLARE_HOST_FUNCTION(dateProtoFuncToPrimitiveSymbol);
 #endif

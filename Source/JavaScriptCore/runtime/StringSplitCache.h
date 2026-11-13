@@ -73,6 +73,20 @@ public:
         return subject.isAtom() || wasSplitBefore(subject);
     }
 
+    // If a program splits more strings of its image than the cache holds, every result would evict another before it is used again. While few lookups succeed, most strings are not cached.
+    static bool hasRoomForImageString()
+    {
+        unsigned misses = s_imageStringMisses.load(std::memory_order_relaxed);
+        s_imageStringMisses.store(misses + 1, std::memory_order_relaxed);
+        return misses < stringCacheSize || !(misses % imageStringMissesPerEntry);
+    }
+
+    static void noteHitOfImageString()
+    {
+        unsigned misses = s_imageStringMisses.load(std::memory_order_relaxed);
+        s_imageStringMisses.store(misses - std::min(misses, imageStringMissesPerHit), std::memory_order_relaxed);
+    }
+
     JSCellButterfly* getForString(const String& subject, const String& separator);
     JSCellButterfly* getForKeys(StringImpl* subject, StringImpl* separator);
     void setForString(const String& subject, const String& separator, JSCellButterfly*);
@@ -89,6 +103,8 @@ public:
 private:
     static constexpr unsigned stringCacheSize = 64;
     static constexpr unsigned regExpCacheSize = 256;
+    static constexpr unsigned imageStringMissesPerEntry = 16;
+    static constexpr unsigned imageStringMissesPerHit = 4;
     static_assert(!(stringCacheSize & (stringCacheSize - 1)));
     static_assert(!(regExpCacheSize & (regExpCacheSize - 1)));
 
@@ -106,6 +122,8 @@ private:
 
     // One bit for each string that was split. The strings are static, so all threads share the bits. If two strings share a bit, the second one is cached at its first split.
     inline static constinit std::array<std::atomic<uint64_t>, 128> s_splitOnce { };
+
+    inline static constinit std::atomic<unsigned> s_imageStringMisses { 0 };
 
     std::array<StringEntry, stringCacheSize> m_stringEntries { };
     std::array<RegExpEntry, regExpCacheSize> m_regExpEntries { };

@@ -126,6 +126,7 @@ struct alignas(16) Slot {
     };
 
     static constexpr Kind fieldOfGetter = Kind::FieldCreation;
+    static constexpr Kind closureAddition = Kind::ClosureName;
 
     static constexpr uint8_t isOutOfLine = 1 << 0;
     static constexpr uint8_t dependsOnChain = 1 << 1;
@@ -705,6 +706,7 @@ static constexpr uint32_t stubOfSiteFollowsFurtherAnswers = 1u << 9;
 static constexpr uint32_t visitorHitFurtherAnswer = 1u << 10;
 static constexpr uint32_t stubJumpsToArmOfAnswer = 1u << 11;
 static constexpr uint32_t stubAsksForPresence = 1u << 12;
+static constexpr uint32_t stubReadsForOtherReceiver = 1u << 13;
 static constexpr uint16_t indexOfSiteAnswersThatHoldNothing = 2;
 
 struct alignas(16) SiteAnswers {
@@ -838,7 +840,7 @@ static_assert(sizeof(SiteAnswers) == 16 && sizeof(SiteAnswers::Answer) == 8 && s
 struct alignas(16) WideSiteAnswers {
     static constexpr unsigned numberOfFurtherAnswers = 2;
     static constexpr unsigned numberOfStructuresThatLackName = 4;
-    static constexpr std::array formsOfFurtherAnswers { SiteAnswers::Form::ExtraValueInCell, SiteAnswers::Form::OwnFieldInCell, SiteAnswers::Form::OwnValueInCell, SiteAnswers::Form::ExtraValueInStorage, SiteAnswers::Form::ValueInWordOfCage };
+    static constexpr std::array formsOfFurtherAnswers { SiteAnswers::Form::ExtraValueInCell, SiteAnswers::Form::OwnFieldInCell, SiteAnswers::Form::OwnValueInCell, SiteAnswers::Form::ExtraValueInStorage, SiteAnswers::Form::ValueInWordOfCage, SiteAnswers::Form::Nothing };
     static constexpr std::array formsOfFurtherAnswersWithIndex { SiteAnswers::Form::ValueInStorageOfHolder, SiteAnswers::Form::GetterInStorageOfHolder };
     static constexpr bool canBeFurtherAnswer(SiteAnswers::Form form, int32_t indexInStorageOfHolder)
     {

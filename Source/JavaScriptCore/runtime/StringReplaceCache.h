@@ -50,7 +50,7 @@ public:
     StringReplaceCache() = default;
 
     struct Entry {
-        RefPtr<AtomStringImpl> m_subject { nullptr };
+        RefPtr<StringImpl> m_subject { nullptr };
         RegExp* m_regExp { nullptr };
         JSCellButterfly* m_result { nullptr }; // We use JSCellButterfly since we would like to keep all entries alive while repeatedly calling a JS function.
         MatchResult m_matchResult { };
@@ -68,6 +68,9 @@ public:
     }
 
 private:
+    // Strings that are likely to be seen again: literals are atoms, and static strings where a compiled program holds them.
+    static bool isCacheable(const String& subject) { return subject.impl() && (subject.impl()->isAtom() || subject.impl()->isStatic()); }
+
     std::array<Entry, cacheSize> m_entries { };
 };
 

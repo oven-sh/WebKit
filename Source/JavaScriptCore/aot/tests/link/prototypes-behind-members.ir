@@ -1,0 +1,132 @@
+# var Shapes = {};  Shapes.Vector = function (x) { this.x = x; };  Shapes.Vector.prototype = { twice: function () { return this.x + this.x; }, sum: function (a) { return a + a; } };  function run(x) { return new Shapes.Vector(x).twice(); }
+# Nothing runs between the two stores, so no code has a Vector before its prototype is there: neither the birth nor the method asks a guard.
+# RUN(FIRST): walk f1:Body mechanisms=all
+# FIRST: code f1:Body
+# FIRST-NOT: GetConstructPrototype
+# FIRST-NOT: AreMembersUnchanged
+# FIRST-NOT: PropGet
+# FIRST: Return
+# Shapes.Vector.prototype.sum(x): the method that stands on the prototype is named without an object of its own.
+# RUN(NAMED): walk f4:Body mechanisms=all
+# NAMED: code f4:Body
+# NAMED-NOT: AreMembersUnchanged
+# NAMED-NOT: PropGet
+# NAMED: Return
+# A call stands between the stores of the second function: it may construct one.
+# RUN(LATE): walk f7:Body mechanisms=all
+# LATE: code f7:Body
+# LATE: GetConstructPrototype
+# LATE: Return
+
+layout L0 kind=Instance name="Vector" module=m0 constructor=f2 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+layout L1 module=m0 position=13 fields=[{key="Vector" declared={type=anything} flags=[IsRequired]}, {key="Other" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
+layout L2 kind=Instance name="Other" module=m0 constructor=f5 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+variable g0 name="Shapes" module=m0 declared={type=undefined|null|L1 flags=[IsExpected]} initialization=Undefined flags=[IsImmutable]
+data d0 root=Object{layout=L1} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Data data=d0
+    PutModuleVariable v0 variable=g0
+    v2 = GetModuleVariable variable=g0
+    v3 = NewClosure function=f2
+    PropSet v2, v3 key="Vector" mode=Sloppy
+    v5 = GetModuleVariable variable=g0
+    v6 = PropGet v5 key="Vector"
+    v7 = NewDictionary
+    v8 = NewClosure function=f3
+    PropDefine v7, v8 key="twice"
+    v10 = NewClosure function=f9
+    PropDefine v7, v10 key="sum"
+    PropSet v6, v7 key="prototype" mode=Sloppy
+    v13 = GetModuleVariable variable=g0
+    v14 = NewClosure function=f5
+    PropSet v13, v14 key="Other" mode=Sloppy
+    v16 = NewClosure function=f8
+    v17 = Call v16
+    v18 = GetModuleVariable variable=g0
+    v19 = PropGet v18 key="Other"
+    v20 = NewDictionary
+    v21 = NewClosure function=f6
+    PropDefine v20, v21 key="twice"
+    PropSet v19, v20 key="prototype" mode=Sloppy
+    v24 = NewClosure function=f1
+    v25 = Double number=1.5
+    v26 = Call v24, -, v25
+    v27 = NewClosure function=f4
+    v28 = Call v27, -, v25
+    v29 = NewClosure function=f7
+    v30 = Call v29, -, v25
+    v31 = Undefined
+    Return v31
+}
+function f1 name="run" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="Vector"
+    v3 = Construct v2, -, v0
+    v4 = PropGet v3 key="twice"
+    v5 = Call v4, v3 calleeKey="twice"
+    Return v5
+}
+function f2 name="Vector" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x" mode=Sloppy
+    v3 = Undefined
+    Return v3
+}
+function f3 name="twice" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}
+function f4 name="named" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="Vector"
+    v3 = Construct v2, -, v0
+    v4 = GetModuleVariable variable=g0
+    v5 = PropGet v4 key="Vector"
+    v6 = PropGet v5 key="prototype"
+    v7 = PropGet v6 key="sum"
+    v8 = PropGet v3 key="x"
+    v9 = Call v7, v6, v8 calleeKey="sum"
+    Return v9
+}
+function f5 name="Other" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] constructedClass=L2 {
+  b0(v0: anything, v1: anything):
+    PropSet v0, v1 key="x" mode=Sloppy
+    v3 = Undefined
+    Return v3
+}
+function f6 name="twice" module=m0 flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="x"
+    v2 = Add v1, v1
+    Return v2
+}
+function f7 name="late" module=m0 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = PropGet v1 key="Other"
+    v3 = Construct v2, -, v0
+    v4 = PropGet v3 key="twice"
+    v5 = Call v4, v3 calleeKey="twice"
+    Return v5
+}
+function f8 name="between" module=m0 thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = GetModuleVariable variable=g0
+    v1 = PropGet v0 key="Other"
+    v2 = Integer integer=1
+    v3 = Construct v1, -, v2
+    v4 = Undefined
+    Return v4
+}
+function f9 name="sum" module=m0 flags=[IsSloppy] thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Add v0, v0
+    Return v1
+}

@@ -312,7 +312,7 @@ private:
 class ChooserOfFieldsStorage {
     WTF_MAKE_NONCOPYABLE(ChooserOfFieldsStorage);
 public:
-    ChooserOfFieldsStorage(Program&, const Facts&, BuildContext&, SlotPlanParts&, const LayoutsBelowTheirBases&, GroupsOfLayoutsForFields&&, UnitsOfFields&&);
+    ChooserOfFieldsStorage(Program&, const Facts&, BuildContext&, SlotPlanParts&, const LayoutsBelowTheirBases&, GroupsOfLayoutsForFields&&, UnitsOfFields&&, std::span<const LayoutSetID> fewLayoutsWithoutFamily);
 
     void run();
 
@@ -368,6 +368,7 @@ private:
     CellSizesForFields m_cellSizes;
     GroupsOfLayoutsForFields m_groups;
     UnitsOfFields m_units;
+    const std::span<const LayoutSetID> m_fewLayoutsWithoutFamily;
 
     BitVector m_groupsLaidAgain;
 
@@ -384,7 +385,7 @@ private:
     HashMap<uint32_t, Vector<LayoutID, 4>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_layoutsBelow;
 };
 
-ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units)
+ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units, std::span<const LayoutSetID> fewLayoutsWithoutFamily)
     : m_program(program)
     , m_facts(facts)
     , m_link(facts.linked())
@@ -394,6 +395,7 @@ ChooserOfFieldsStorage::ChooserOfFieldsStorage(Program& program, const Facts& fa
     , m_cellSizes(build)
     , m_groups(WTF::move(groups))
     , m_units(WTF::move(units))
+    , m_fewLayoutsWithoutFamily(fewLayoutsWithoutFamily)
     , m_groupsLaidAgain(program.layouts.size())
 {
 }
@@ -491,7 +493,7 @@ BitVector ChooserOfFieldsStorage::findLayoutsThatLateNamesMayMoveInto()
 void ChooserOfFieldsStorage::chooseForms()
 {
     BitVector layoutsWithSlotsOfOtherWidths(numberOfLayouts());
-    chooseFormsOfSlots(m_program, m_facts, m_build, m_parts, m_groups, m_units, m_offsetsOfFirstSlots.span(), findLayoutsThatLateNamesMayMoveInto(), layoutsWithSlotsOfOtherWidths);
+    chooseFormsOfSlots(m_program, m_facts, m_build, m_parts, m_groups, m_units, m_fewLayoutsWithoutFamily, m_offsetsOfFirstSlots.span(), findLayoutsThatLateNamesMayMoveInto(), layoutsWithSlotsOfOtherWidths);
     for (size_t index : layoutsWithSlotsOfOtherWidths)
         layGroupAgain(LayoutID(static_cast<uint32_t>(index)));
 }
@@ -993,9 +995,9 @@ void ChooserOfFieldsStorage::layCells()
 
 } // anonymous namespace
 
-void chooseStorageOfFields(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units)
+void chooseStorageOfFields(Program& program, const Facts& facts, BuildContext& build, SlotPlanParts& parts, const LayoutsBelowTheirBases& layoutsBelowTheirBases, GroupsOfLayoutsForFields&& groups, UnitsOfFields&& units, std::span<const LayoutSetID> fewLayoutsWithoutFamily)
 {
-    ChooserOfFieldsStorage(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groups), WTF::move(units)).run();
+    ChooserOfFieldsStorage(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groups), WTF::move(units), fewLayoutsWithoutFamily).run();
 }
 
 static bool isNarrowFormForFieldsStorage(SlotRepresentation representation)

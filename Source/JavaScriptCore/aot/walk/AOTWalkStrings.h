@@ -79,7 +79,12 @@ void noteCodePointBesideCharacter(Walker&, Reference character, Reference codePo
 Reference buildLengthOfCharacterInSight(Walker&, Reference character, Origin);
 Reference buildLengthOnlyJoin(Walker&, ValueID text, Origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails);
 Reference buildLengthOfIntegerString(Walker&, Reference string, Origin);
+bool buildMeasuredIntegerString(Walker&, const CallByOneRow&);
 Reference codeUnitOfCharCodeInSight(Walker&, Reference number);
+bool armsBringCharCode(Walker&, std::span<const Walker::JoinArm>, size_t position);
+void appendCodeUnitOfArm(Walker&, Walker::JoinArm&, size_t position, Origin);
+void noteCodeUnitBesideCharCode(Walker&, Reference charCode, Reference codeUnit);
+bool jumpWithBoxedCharCode(Walker&, BlockID target, std::span<Reference> arguments, size_t place);
 Reference stringBehindFlatString(const Walker&, Reference);
 Reference flatLiteralBeforeLoop(Walker&, Reference literal, Origin);
 Reference buildComparisonOfRangeWithText(Walker&, const PieceOfString&, StringID, Origin);
@@ -105,6 +110,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker&, const CallByOneRow&);
 bool buildStoreUnderPieceInMap(Walker&, const CallByOneRow&);
 bool buildTestOfEndOfString(Walker&, const CallByOneRow&);
 bool buildSearchInString(Walker&, const CallByOneRow&);
+bool buildSearchOfWords(Walker&, const CallByOneRow&);
 inline constexpr OpcodeSet opcodesThatBuildTestAgainstJoinOfTextsTakes = operationsThatJoinTexts;
 AOT_LINK_OF_WALK(buildTestAgainstJoinOfTexts, opcodesThatBuildTestAgainstJoinOfTextsTakes)
 Reference buildTestOfCodeUnitBesidePartOfJoin(Walker&, Reference string, Reference lengthOfPart, Reference holdsOfPart, char16_t unit, bool testsStart, Origin);

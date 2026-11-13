@@ -178,7 +178,7 @@ private:
             return m_value >> 1;
         }
 
-        bool foundNothingWhileFieldOfCompiledHandlerWasEmpty() const
+        bool missedWithEmptyHandlerField() const
         {
             ASSERT(state() == State::HasCachedOffset);
             return m_value & 1;
@@ -212,6 +212,9 @@ private:
     template<typename... Traps> bool isKnownToHaveNoHandlerTraps(Traps...);
 #if ENABLE(AOT)
     JS_EXPORT_PRIVATE bool isCachedTrapFieldEmpty(JSObject* handler, HandlerTrap);
+    JSObject* getTrapOfCompiledHandler(JSGlobalObject*, JSObject* handler, CallData&, const Identifier&, HandlerTrap);
+    bool tryCopyCachedTraps(VM&, JSObject* handler);
+    void cacheTrapForStructure(JSObject* handler, HandlerTrap);
 #endif
     NODELETE void clearHandlerTrapsOffsetsCache();
 

@@ -15,6 +15,16 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+void EvalEmitter::generateCheckEvaluation(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::CheckEvaluation, { }, { .calledBuiltin = value->ofFunction() ? Builtins::Function : Builtins::Eval });
+}
+
+void EvalEmitter::generateDeclareGlobal(const ValueContext& value)
+{
+    callVoidOperation(value, RuntimeOperation::DeclareGlobal, { identifierNumber(value->key()), word32(static_cast<uint32_t>(value->step())), word32(value->isFunction()) });
+}
+
 void EvalEmitter::generateDirectEval(const ValueContext& value)
 {
     Vector<Boxed, 8> operands;

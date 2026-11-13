@@ -476,7 +476,15 @@ void AccessEmitter::generateTryCopyFields(const ValueContext& value)
     if (shapesOfLayout.count > 1)
         orderWordOfTarget = m_out.select(isGeneralShape(shapeTests.shapeWordOf(target)).value(), orderWordOfTarget, m_out.constInt32(unorderedOrderWord));
     m_out.store32(orderWordOfTarget, m_out.address(m_heaps.AOTObject_orderWord, target.value(), offsetOfOrderWord));
-    if (planned.mayBearMark)
+    if (planned.marksOtherPrototypes) {
+        LBasicBlock hasLayoutPrototype = newBlock();
+        LBasicBlock done = newBlock();
+        m_out.branch(hasNoBits(loadByte(target, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine).value(), normalEdge(hasLayoutPrototype), unlikelyEdge(done));
+        m_out.appendTo(hasLayoutPrototype);
+        shapeTests.clearMark(target);
+        m_out.jump(done);
+        m_out.appendTo(done);
+    } else if (planned.mayBearMark)
         shapeTests.clearMark(target);
     if (mayCopyCell)
         emitter<BarrierEmitter>().barrier(value, target);
@@ -510,6 +518,12 @@ void AccessEmitter::generateGetSuperBase(const ValueContext& value)
     if (!operandIsHomeObject(homeKind)) {
         if (LayoutID classLayout = value->layout(); classLayout && m_plan.hasClassRecord(classLayout) && m_facts.isEvaluatedAtMostOnce(classLayout)) {
             define(value, Boxed(callStub(value, getSuperBaseOfClass(), { boxCell(home).value() }, { .numberedImmediate = NumberedImmediate { m_mentions.add(NumberSpace::ClassRank, classLayout) } }).first));
+            return;
+        }
+        FunctionID constructor = singleFunctionOf(types(), typeOf(value->homeOperand()));
+        LayoutID classLayout = constructor && isClassConstructorOf(m_program.at(constructor).kind) ? m_program.at(constructor).constructedClass : LayoutID();
+        if (classLayout && m_program.at(classLayout).constructor == constructor && m_plan.hasClassRecord(classLayout) && !m_plan.slots().classCreation(classLayout).createsClassObjectOnMutation) {
+            define(value, Boxed(callStub(value, getSuperBaseOfClassObject(), { boxCell(home).value() }).first));
             return;
         }
         define(value, readByOperation(false));
@@ -559,7 +573,9 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
         return;
     }
 
-    Boxed found(callStub(value, tryGetSuperById(), { base.value() }, { .numberedImmediate = NumberedImmediate { name } }).first);
+    std::optional<NumberedImmediate> answers = m_program.nameClassOf(key) == NameClass::Length ? std::nullopt : answersAtSite(value, key, SiteUse::Read);
+    Boxed found(answers ? callStub(value, readAtSiteOfSuperBase(), { base.value() }, { .numberedImmediate = *answers }).first
+        : callStub(value, tryGetSuperById(), { base.value() }, { .numberedImmediate = NumberedImmediate { name } }).first);
     define(value, either<Boxed>(isNotEmpty(found), [&] {
         return found;
     }, [&] {

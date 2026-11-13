@@ -47,6 +47,30 @@ RegExp* RegExpCache::lookup(VM&, const WTF::String& patternString, OptionSet<Yar
     return m_weakCache.get(key);
 }
 
+#if ENABLE(AOT)
+namespace {
+
+struct PatternOfRegExp {
+    OptionSet<Yarr::Flags> flags;
+    StringView pattern;
+    unsigned hash { 0 };
+};
+
+struct PatternOfRegExpTranslator {
+    static unsigned hash(const PatternOfRegExp& key) { return key.hash; }
+    static bool equal(const RegExpKey& key, const PatternOfRegExp& wanted) { return key.flagsValue == wanted.flags && key.pattern && StringView { *key.pattern } == wanted.pattern; }
+};
+
+} // anonymous namespace
+
+RegExp* RegExpCache::lookup(StringView pattern, unsigned hashOfPattern, OptionSet<Yarr::Flags> flags)
+{
+    Locker locker { m_lock };
+    auto found = m_weakCache.find<PatternOfRegExpTranslator>(PatternOfRegExp { flags, pattern, hashOfPattern });
+    return found == m_weakCache.end() ? nullptr : found->value.get();
+}
+#endif
+
 template<typename Create>
 RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags, const Create& create)
 {

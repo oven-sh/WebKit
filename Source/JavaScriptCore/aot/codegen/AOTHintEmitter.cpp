@@ -14,6 +14,7 @@
 #include "AOTCompileUnit.h"
 #include "AOTConstantEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTElementAccessEmitter.h"
 #include "AOTExceptionEmitter.h"
 #include "AOTInstance.h"
 #include "AOTPoisonedCell.h"
@@ -106,6 +107,33 @@ void HintEmitter::generateReleaseList(const ValueContext& value)
         released = select(isCell(list), released, integer(0));
     ptrdiff_t place = value->isCopy() ? AOT_INSTANCE_OFFSET(arrays.releasedCopy) : AOT_INSTANCE_OFFSET(arrays.releasedArray);
     m_out.store64(released.value(), instanceField(m_heaps.entire(AbstractHeap::AllocatorState), place));
+}
+
+void HintEmitter::generatePrefetchElements(const ValueContext& value)
+{
+    Type listType = typeOf(value->listOperand());
+    Boxed list = emitter<ConversionEmitter>().box(value, get(value->listOperand()), listType);
+    LBasicBlock continuation = newBlock();
+    if (listType.primitives & ~cellPrimitives) {
+        LBasicBlock listIsCell = newBlock();
+        branch(isCell(list), { normalEdge(listIsCell), rareEdge(continuation) });
+        m_out.appendTo(listIsCell);
+    }
+    CellPointer array = unboxCell(list);
+    LBasicBlock isArray = newBlock();
+    LBasicBlock holdsBoxed = newBlock();
+    LBasicBlock isLong = newBlock();
+    branch(hasCellType(array, ArrayType), { normalEdge(isArray), rareEdge(continuation) });
+    m_out.appendTo(isArray);
+    ElementAccessEmitter& elements = emitter<ElementAccessEmitter>();
+    branch(equal(elements.indexingMode(array, IndexingShapeMask), word32(ContiguousShape)), { normalEdge(holdsBoxed), rareEdge(continuation) });
+    m_out.appendTo(holdsBoxed);
+    branch(aboveOrEqual(elements.arrayLength(array), integer(value->minLength())), { rareEdge(isLong), normalEdge(continuation) });
+    m_out.appendTo(isLong);
+    Integer position = emitter<ConversionEmitter>().inRepresentation(value, get(value->positionOperand()), typeOf(value->positionOperand()), Representation::Int64).as<Integer>();
+    callLeaf<Integer>(RuntimeOperation::PrefetchElements, { array, position, numberOf(m_mentions.request(RequestKind::Prefetch, value->steps())), Pointer(m_instance) });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 void HintEmitter::generateAskObjectAgain(const ValueContext& value)

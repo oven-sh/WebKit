@@ -12,8 +12,10 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTLimits.h"
 #include "AOTObjectModel.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -796,7 +798,10 @@ void KeyOrderTable::setEnumerator(VM&, const LayoutData& layout, uint32_t orderW
 
 static bool reportsEveryChangeOfKeys(JSObject* prototype)
 {
-    return prototype->structure()->hasImmutableProperties() || prototype->classInfo() == ClassPrototype::info();
+    Structure* structure = prototype->structure();
+    if (structure->hasImmutableProperties() || prototype->classInfo() == ClassPrototype::info())
+        return true;
+    return prototype->classInfo() == JSFinalObject::info() && structure->mayBePrototype() && !structure->hasPolyProto() && !hasIndexedProperties(structure->indexingType());
 }
 
 void KeyOrderTable::publishEnumerator(const Object& object, JSPropertyNameEnumerator* enumerator)
@@ -818,9 +823,22 @@ void KeyOrderTable::publishEnumerator(const Object& object, JSPropertyNameEnumer
     m_state.instance.objects.enumerators[indexOfCachedEnumerator(structureID, object.orderWord())] = { object.orderWord(), structureID, enumerator };
 }
 
-void KeyOrderTable::dropChainDependent(VM&, uint32_t, UniquedStringImpl*)
+void KeyOrderTable::forgetPublishedEnumerators()
 {
     zeroSpan(std::span { m_state.instance.objects.enumerators, numberOfCachedEnumerators });
+}
+
+void KeyOrderTable::dropChainDependent(VM&, uint32_t, UniquedStringImpl*)
+{
+    forgetPublishedEnumerators();
+}
+
+void RuntimeHooks::willAddElementsToPrototype(VM& vm)
+{
+    for (Instance* instance : vm.aotState().instances) {
+        if (State* state = instance->state; state && state->objects)
+            state->objects->keyOrders.forgetPublishedEnumerators();
+    }
 }
 
 bool KeyOrderTable::hasChainDependent(VM&, uint32_t, UniquedStringImpl*) const

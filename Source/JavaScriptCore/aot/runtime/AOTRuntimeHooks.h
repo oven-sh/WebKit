@@ -27,6 +27,7 @@ namespace AOT {
 enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
+void didSetPrototypeOfChainObject(VM&, JSObject* changed);
 
 } // namespace AOT
 
@@ -57,6 +58,8 @@ void installDeferredWatchpoints(JSGlobalObject*);
 [[noreturn]] void crashOnHavingABadTime();
 [[noreturn]] void stopAtHostResult(Instance&, CallerFrameAndPC* operationFrameRecord, JSValue found, JSCell* function, uint32_t kinds);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
+inline void didSetPrototypeOfPrototype(VM& vm, JSObject* changed) { didSetPrototypeOfChainObject(vm, changed); }
+void willAddElementsToPrototype(VM&);
 bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didCreateAdditionTransition(VM&, Structure* made);
 Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);

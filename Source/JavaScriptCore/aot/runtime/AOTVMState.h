@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTNarrowCopy.h"
 #include "AOTVector.h"
 #include <JavaScriptCore/CollectionScope.h>
 #include <JavaScriptCore/Weak.h>
@@ -46,6 +47,7 @@ struct CyclesOfImports;
 struct FormatPatternState;
 struct FunctionTables;
 struct ImportersOfModules;
+struct StatementImporters;
 struct Instance;
 struct ReexportedNames;
 
@@ -143,6 +145,8 @@ public:
     std::unique_ptr<FunctionTables> functionTables;
     std::unique_ptr<CyclesOfImports> cyclesOfImports;
     std::unique_ptr<ImportersOfModules> importersOfModules;
+    std::unique_ptr<StatementImporters> statementImporters;
+    std::unique_ptr<StatementImporters> importersOfEveryImport;
     std::optional<Vector<uint32_t>> modulesWithQuery;
     std::unique_ptr<ReexportedNames> reexportedNames;
     PlacesSeenByPlans placesSeenByPlans;
@@ -212,6 +216,9 @@ public:
     KeysComparedLastWithLongNames keysComparedLastWithLongNames;
     UniqueArray<int> regExpMatchOutput;
     size_t sizeOfRegExpMatchOutput { 0 };
+    static constexpr size_t sizeOfWordAroundSubject = 16;
+    std::span<Latin1Character> narrowSubject() LIFETIME_BOUND { return std::span { narrowSubjectWithWordsAround }.subspan<sizeOfWordAroundSubject, maxLengthCopiedAsLatin1>(); }
+    std::array<Latin1Character, sizeOfWordAroundSubject + maxLengthCopiedAsLatin1 + sizeOfWordAroundSubject> narrowSubjectWithWordsAround { };
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
     WriteBarrier<Structure> poisonedCellStructure;

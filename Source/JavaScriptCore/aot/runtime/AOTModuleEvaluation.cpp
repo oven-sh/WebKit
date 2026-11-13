@@ -615,13 +615,52 @@ JSValue Modules::enterBody(ModuleID module, FunctionID body)
     RELEASE_AND_RETURN(scope, callCompiledCode(realm, closures.createClosureForOneCall(vm, body), jsUndefined(), ArgList()));
 }
 
-auto Modules::noteModulesThatMayBeginUnder(uint8_t mark, ModuleID root) -> Vector<ModuleThatMayBegin, 8>
+Modules::EvaluationMarkScope::EvaluationMarkScope(Modules& modules)
+    : m_modules(modules)
+    , m_outerMark(modules.m_evaluationMark)
+{
+    modules.m_evaluationMark = mark();
+    modules.m_instance.modules.evaluatingMark = storedMark();
+    if (m_outerMark < UINT8_MAX) [[likely]]
+        return;
+    std::span<uint8_t> statuses = modules.m_storedStatuses;
+    for (size_t index = WTF::find(std::span<const uint8_t>(statuses), storedMark()); index != notFound; index = WTF::find(std::span<const uint8_t>(statuses), storedMark(), index + 1)) {
+        m_outerModules.append(ModuleID(static_cast<uint32_t>(index)));
+        modules.m_marksOfOuterModules.set(m_outerModules.last(), m_outerMark);
+        statuses[index] = static_cast<uint8_t>(StoredModuleStatus::Evaluating);
+    }
+}
+
+void Modules::EvaluationMarkScope::leave()
+{
+    if (std::exchange(m_hasLeft, true))
+        return;
+    stopMarking();
+    m_modules.m_evaluationMark = m_outerMark;
+    for (ModuleID module : m_outerModules) {
+        m_modules.m_marksOfOuterModules.remove(module);
+        if (uint8_t& stored = m_modules.m_storedStatuses[module.index()]; stored == static_cast<uint8_t>(StoredModuleStatus::Evaluating))
+            stored = storedMark(m_outerMark);
+    }
+}
+
+uint32_t Modules::evaluationMarkOf(ModuleID module) const
+{
+    uint8_t stored = m_storedStatuses[module.index()];
+    if (stored == UINT8_MAX) [[unlikely]]
+        return m_evaluationMark;
+    if (stored == static_cast<uint8_t>(StoredModuleStatus::Evaluating) && !m_marksOfOuterModules.isEmpty()) [[unlikely]]
+        return m_marksOfOuterModules.getOptional(module).value_or(stored);
+    return stored;
+}
+
+auto Modules::noteModulesThatMayBeginUnder(uint32_t mark, ModuleID root) -> Vector<ModuleThatMayBegin, 8>
 {
     if (m_marksOfEvaluationsUnderOthers.isEmpty())
         m_marksOfEvaluationsUnderOthers.fill(0, m_table.size());
     Vector<ModuleThatMayBegin, 8> found;
     auto note = [&](ModuleID module) {
-        uint8_t& noted = m_marksOfEvaluationsUnderOthers[module.index()];
+        uint32_t& noted = m_marksOfEvaluationsUnderOthers[module.index()];
         if (noted == mark || !hasNotBegun(module))
             return;
         found.append({ module, noted });
@@ -655,19 +694,16 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
     bool isInRecord = bodyStoresStatus && storedStatus(module) == StoredModuleStatus::InRecord;
     if (isInRecord)
         setStoredStatus(module, StoredModuleStatus::Linked);
-    uint32_t outerMark = m_instance.modules.evaluatingMark;
-    uint8_t mark = static_cast<uint8_t>(std::min<uint32_t>(outerMark + 1, UINT8_MAX));
-    bool isUnderAnotherEvaluation = outerMark != static_cast<uint32_t>(StoredModuleStatus::Evaluating);
+    EvaluationMarkScope markScope(*this);
     Vector<ModuleThatMayBegin, 8> mayBeginHere;
-    if (isUnderAnotherEvaluation && bodyStoresStatus) [[unlikely]]
-        mayBeginHere = noteModulesThatMayBeginUnder(mark, module);
-    m_instance.modules.evaluatingMark = mark;
+    if (markScope.isUnderAnotherEvaluation() && bodyStoresStatus) [[unlikely]]
+        mayBeginHere = noteModulesThatMayBeginUnder(markScope.mark(), module);
     if (ModuleID file = m_table.moduleBehindFacade(module).value_or(module); data(file).isImportableDuringEvaluation()) [[unlikely]] {
         ensureLoaded(file).synchronousLoadCountAtStart = m_synchronousLoadCount;
         ensureLoaded(file).beganInsideSynchronousLoad = m_activeSynchronousLoad;
     }
     JSValue result = callBody(module);
-    m_instance.modules.evaluatingMark = outerMark;
+    markScope.stopMarking();
     for (auto [left, markBefore] : mayBeginHere) {
         if (hasNotBegun(left))
             m_marksOfEvaluationsUnderOthers[left.index()] = markBefore;
@@ -681,13 +717,14 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
 
     Vector<ModuleID, 16> beingEvaluated;
     std::span<const uint8_t> statuses = m_storedStatuses;
-    for (size_t index = WTF::find(statuses, mark); index != notFound; index = WTF::find(statuses, mark, index + 1))
+    for (size_t index = WTF::find(statuses, markScope.storedMark()); index != notFound; index = WTF::find(statuses, markScope.storedMark(), index + 1))
         beingEvaluated.append(ModuleID(static_cast<uint32_t>(index)));
     ModulesThatWaitForCycles haveRun;
     for (ModuleID failed : beingEvaluated) {
         if (isOnCycleOfImports(failed))
             lookAtCycleOf(failed, haveRun);
     }
+    markScope.leave();
     if (isInRecord)
         setStoredStatus(module, StoredModuleStatus::InRecord);
     for (ModuleID failed : beingEvaluated) {
@@ -695,7 +732,7 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
             didThrowInBody(failed, exception->value());
     }
     for (size_t index : haveRun.modules) {
-        if (ModuleID failed(static_cast<uint32_t>(index)); markOfEvaluationThatBegan(failed) == mark)
+        if (ModuleID failed(static_cast<uint32_t>(index)); markOfEvaluationThatBegan(failed) == markScope.mark())
             setFailed(failed, exception->value());
     }
     return result;
@@ -810,6 +847,7 @@ bool Modules::tryDiscardFailureDuringFetch(ModuleID file)
         return false;
     discardFailedEvaluation(file);
     recordIfExists(file)->setEvaluationError(*m_instance.vm, JSValue());
+    didChangeStatusInRecord(file);
     return true;
 }
 
@@ -858,7 +896,7 @@ bool Modules::isAwaitedByImportFromBeforeItRan(ModuleID file)
 bool Modules::isAwaitedByImport(ModuleID file)
 {
     for (ModuleID moduleOrFacade : { file, m_table.facadeOf(file).value_or(file) }) {
-        if (m_modulesOfQueuedImports.get(moduleOrFacade.index()) || m_loadsInFlight.hasRoot(moduleOrFacade) || std::ranges::contains(batchedFetches(), moduleOrFacade, &BatchedFetch::module))
+        if (m_modulesOfQueuedImports.get(moduleOrFacade.index()) || m_loadsInFlight.hasRoot(moduleOrFacade) || m_batchedFetches.containsCallOf(moduleOrFacade, fileOf(moduleOrFacade)))
             return true;
     }
     return false;
@@ -928,12 +966,12 @@ void Modules::lookAtCycleOf(ModuleID module, ModulesThatWaitForCycles& waiting) 
         return;
     std::span<const uint32_t> members = cycles.membersOf(asked->cycle);
     countEvent(*m_instance.vm, RuntimeCounterID::ModulesScannedForPendingCycles, members.size());
-    if (std::ranges::none_of(members, [&](uint32_t member) { return m_storedStatuses[member] > evaluating; }))
+    if (std::ranges::none_of(members, [&](uint32_t member) { return evaluationMarkOf(ModuleID(member)) > evaluating; }))
         return;
 
-    Vector<uint8_t> evaluationOf(members.size(), [&](size_t place) -> uint8_t {
+    Vector<uint32_t> evaluationOf(members.size(), [&](size_t place) -> uint32_t {
         ModuleID member(members[place]);
-        uint8_t stored = m_storedStatuses[member.index()];
+        uint32_t stored = evaluationMarkOf(member);
         if (stored < evaluated || stored == evaluating || !isOnCycleOfImports(member))
             return 0;
         return stored == evaluated ? markOfEvaluationThatBegan(member) : stored;
@@ -965,7 +1003,7 @@ void Modules::lookAtCycleOf(ModuleID module, ModulesThatWaitForCycles& waiting) 
         uint32_t importer;
         uint32_t cycle;
         const CyclesOfImports& cycles;
-        const Vector<uint8_t>& evaluationOf;
+        const Vector<uint32_t>& evaluationOf;
 
         size_t size() const { return requests.size(); }
         uint32_t operator[](size_t index) const
@@ -2176,22 +2214,18 @@ unsigned Modules::numberOfGraphsBeingLoaded()
 
 bool Modules::comesToLoadInFlight(ModuleID required)
 {
-    Vector<ModuleID, 8> rootsThatWait;
-    bool loaderGoesThroughGraph = false;
-    for (LoadInFlight& load : m_loadsInFlight) {
-        if (load.isLoaded)
-            continue;
-        if (load.isWalked) {
-            loaderGoesThroughGraph = true;
-            if (RefPtr plan = std::exchange(load.planWithoutMarks, nullptr))
-                markModulesOfPlan(*plan);
-            else if (!std::exchange(load.hasMarksBelowRoot, true))
-                markModulesBelowWalkedRoot(load.root);
-        } else if (status(load.root) != ModuleStatus::Evaluating && (load.root == required || data(load.root).isImportedByModule()))
-            rootsThatWait.append(load.root);
+    while (LoadInFlight* load = m_loadsInFlight.takeWalkedWithoutMarks()) {
+        if (RefPtr plan = std::exchange(load->planWithoutMarks, nullptr))
+            markModulesOfPlan(*plan);
+        else if (!std::exchange(load->hasMarksBelowRoot, true))
+            markModulesBelowWalkedRoot(load->root);
     }
-    if (!loaderGoesThroughGraph && rootsThatWait.isEmpty())
+    bool loaderGoesThroughGraph = m_loadsInFlight.hasWalkedLoad();
+    if (!loaderGoesThroughGraph && !m_loadsInFlight.hasWaitingLoad())
         return false;
+    auto isWaitingRoot = [&](ModuleID module) {
+        return (module == required || data(module).isImportedByModule()) && m_loadsInFlight.hasWaitingRoot(module) && status(module) != ModuleStatus::Evaluating;
+    };
 
     const uint32_t isSeen = takeMarkOfSearch();
     PlacesSeenByPlans& placesSeen = m_placesSeenByPlans;
@@ -2199,7 +2233,7 @@ bool Modules::comesToLoadInFlight(ModuleID required)
     Vector<ModuleID, 16> modules { required };
     while (!modules.isEmpty()) {
         ModuleID module = modules.takeLast();
-        if (rootsThatWait.contains(module))
+        if (isWaitingRoot(module))
             return true;
         bool isNotLoaded = this->isNotLoaded(module);
         if (loaderGoesThroughGraph && m_modulesBelowWalkedRoots.get(module.index()) && (isNotLoaded || hasNotBegunAsFile(module)))
@@ -2212,7 +2246,7 @@ bool Modules::comesToLoadInFlight(ModuleID required)
             ModuleID target = request.targetModule();
             if (std::exchange(placesSeen[target.index()], isSeen) == isSeen)
                 continue;
-            if (isLoadedModuleWithoutRecord(target) && !rootsThatWait.contains(target))
+            if (isLoadedModuleWithoutRecord(target) && !isWaitingRoot(target))
                 continue;
             modules.append(target);
         }
@@ -2731,6 +2765,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     m_loadsInFlight.forEachOfRoot(root, [&](LoadInFlight& load) {
         load.hasMarksBelowRoot = true;
         load.planWithoutMarks = plan.ptr();
+        m_loadsInFlight.willMark(load);
         marksWait = true;
     });
     if (!marksWait)
@@ -3577,14 +3612,8 @@ bool Modules::isEvictedModuleImported()
     auto leaves = [&](ModuleID root) { return m_modulesToEvictOnceLoaded.contains(root); };
     if (m_factoryBlockedImportRoots.containsIf(leaves) || m_importsAwaitingSource.containsIf([&](const ImportAwaitingSource& each) { return leaves(each.module); }))
         return true;
-    for (const BatchedFetch& fetch : batchedFetches()) {
-        if (leaves(fetch.module))
-            return true;
-    }
-    for (const BatchedFetch& fetch : m_callsToMakeAgain) {
-        if (leaves(fetch.module))
-            return true;
-    }
+    if (m_batchedFetches.containsCallIf([&](const BatchedFetch& call) { return leaves(call.module); }))
+        return true;
     for (const QueuedFetch& fetch : m_queuedFetches) {
         if (leaves(fetch.module))
             return true;
@@ -3997,12 +4026,10 @@ BitVector Modules::modulesRequestedByImports(bool wasMockReplaced)
         if (!wasMockReplaced || !m_modulesToEvictOnceLoaded.contains(root))
             requested.merge(staticImportClosure(root, MockTraversal::Stop));
     };
-    for (const BatchedFetch& fetch : batchedFetches()) {
+    m_batchedFetches.forEachCall([&](const BatchedFetch& call) {
         if (!wasMockReplaced)
-            addRequests(fetch.module);
-    }
-    for (const BatchedFetch& fetch : m_callsToMakeAgain)
-        addRequests(fetch.module);
+            addRequests(call.module);
+    });
     for (const QueuedFetch& fetch : m_queuedFetches) {
         if (!wasMockReplaced)
             addRequests(fetch.module);

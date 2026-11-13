@@ -32,11 +32,13 @@
 #include "AOTStubsCollections.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTStubsHashTables.h"
+#include "AOTStubsKeyed.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPropertyKeys.h"
 #include "AOTStubsRegExp.h"
 #include "AOTStubsStrings.h"
 #include "AOTVector.h"
+#include "DateInstance.h"
 #include "IndexingType.h"
 #include "JSArray.h"
 #include "JSArrayBufferView.h"
@@ -149,6 +151,7 @@ static StubSignature receiverOperationSignature(unsigned numberOfArguments)
 
 StubSignature signatureOfCallBoxedBuiltin(StubKey) { return callConventionSignature({ }); }
 StubSignature signatureOfWeakMapSet(StubKey) { return receiverOperationSignature(2); }
+StubSignature signatureOfWeakSetAdd(StubKey) { return receiverOperationSignature(1); }
 StubSignature signatureOfStringStartsWith(StubKey) { return receiverOperationSignature(1); }
 StubSignature signatureOfStringIndexOf(StubKey) { return receiverOperationSignature(1); }
 
@@ -217,6 +220,7 @@ static void emitObjectFreeze(StubAssembler& jit, GPRReg scratch, JumpList& calls
         LayoutData bits { };
         bits.impossibleMutationsRaw = OptionSet<ObjectMutation>(ObjectMutation::ChangeIntegrity).toRaw();
         bits.hasFieldsWithSymbolKeys = true;
+        bits.marksFrozenObjects = true;
         return bits;
     }();
     callsHostFunction.append(jit.branchIfNotCell(object));
@@ -453,6 +457,50 @@ static void emitDataViewAccess(StubAssembler& jit, GPRReg scratch, JumpList& cal
     jit.returnToCaller();
 }
 
+struct CalendarFieldOfDate {
+    BoxedCallForm form;
+    unsigned offset;
+    unsigned width;
+};
+
+static constexpr CalendarFieldOfDate calendarFieldsOfDate[] = {
+    { BoxedCallForm::DateGetDate, PlainGregorianDateTime::monthDayOffset, PlainGregorianDateTime::monthDayWidth },
+    { BoxedCallForm::DateGetDay, PlainGregorianDateTime::weekDayOffset, PlainGregorianDateTime::weekDayWidth },
+    { BoxedCallForm::DateGetFullYear, PlainGregorianDateTime::yearOffset, PlainGregorianDateTime::yearWidth },
+    { BoxedCallForm::DateGetHours, PlainGregorianDateTime::hourOffset, PlainGregorianDateTime::hourWidth },
+    { BoxedCallForm::DateGetMinutes, PlainGregorianDateTime::minuteOffset, PlainGregorianDateTime::minuteWidth },
+    { BoxedCallForm::DateGetMonth, PlainGregorianDateTime::monthOffset, PlainGregorianDateTime::monthWidth },
+    { BoxedCallForm::DateGetSeconds, PlainGregorianDateTime::secondOffset, PlainGregorianDateTime::secondWidth },
+};
+
+static void emitDateGetField(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    const CalendarFieldOfDate& field = *std::ranges::find(calendarFieldsOfDate, static_cast<BoxedCallForm>(jit.key().form()), &CalendarFieldOfDate::form);
+    const GPRReg fields = scratch;
+    const GPRReg value = jit.allocateScratch(StubRegister::T11);
+    RELEASE_ASSERT(noOverlap(fields, value, calleeGPR, thisGPR, instanceGPR));
+    jit.load64(Address(thisGPR, DateInstance::offsetOfCachedGregorianDateTime()), fields);
+    static_assert(PlainGregorianDateTime::validityMask == PlainGregorianDateTime::monthDayMask << PlainGregorianDateTime::monthDayOffset);
+    extractBits(jit, fields, PlainGregorianDateTime::monthDayOffset, PlainGregorianDateTime::monthDayWidth, value);
+    callsHostFunction.append(jit.branchTest32(CCallHelpers::Zero, value));
+    if (field.form == BoxedCallForm::DateGetFullYear) {
+        static_assert(PlainGregorianDateTime::yearOffset + PlainGregorianDateTime::yearWidth == 64);
+        jit.rshift64(TrustedImm32(field.offset), fields);
+        jit.zeroExtend32ToWord(fields, value);
+    } else
+        extractBits(jit, fields, field.offset, field.width, value);
+    boxInt32(jit, value, jit.result());
+    jit.returnToCaller();
+}
+
+static void emitDateGetTime(StubAssembler& jit, GPRReg, JumpList&)
+{
+    const FPRReg time = jit.allocateScratch(FPRInfo::fpRegT0);
+    jit.loadDouble(Address(thisGPR, DateInstance::offsetOfInternalNumber()), time);
+    boxDouble(jit, PureDouble::purify(jit, time, time), jit.result());
+    jit.returnToCaller();
+}
+
 static void emitObjectGetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
 {
     constexpr GPRReg object = argumentGPR(0);
@@ -618,6 +666,16 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     isAtEnd.append(jit.jump());
 
     seeksText.link(&jit);
+    JumpList hasNoAtom;
+    hasNoAtom.append(jit.branchIfRopeStringImpl(searchedText));
+    hasNoAtom.append(jit.branchTest32(CCallHelpers::Zero, Address(searchedText, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    Label seeksAtom = jit.label();
+    searchForAtom(jit, { searchedText, cursor, end, element, text }, isFound, isAtEnd);
+    Label seeksByCharacters = jit.label();
+    loadSearchedText();
+    Jump searchedIsRope = jit.branchIfRopeStringImpl(searchedText);
+    loadSearchedLength();
+    Label seeksByLength = jit.label();
     JumpList isAnother;
     Label nextText = jit.label();
     jit.load64(Address(cursor), element);
@@ -712,6 +770,29 @@ static void emitArraySearch(StubAssembler& jit, GPRReg scratch, JumpList& callsH
 
     seeksTextThatIsRope.link(&jit);
     flattenSubject(jit, searched, { thisGPR, calleeGPR, searched }, start);
+
+    searchedIsRope.link(&jit);
+    jit.load32(Address(searched, JSRopeString::offsetOfLength()), searchedLength);
+    jit.jump().linkTo(seeksByLength, &jit);
+
+    hasNoAtom.link(&jit);
+    JumpList hasNoName;
+    Jump namedIsRope = jit.branchIfRopeStringImpl(searchedText);
+    constexpr int32_t minElementsComparedWithAtom = 8;
+    jit.subPtr(end, cursor, text);
+    hasNoName.append(jit.branch64(CCallHelpers::Below, text, TrustedImm32(minElementsComparedWithAtom * static_cast<int32_t>(sizeof(EncodedJSValue)))));
+    jit.loadPtr(Address(searchedText, StringImpl::dataOffset()), text);
+    Jump hasCharacters = jit.jump();
+    namedIsRope.link(&jit);
+    loadSubstringCharacters(jit, searched, searchedText, text, searchedLength, hasNoName);
+    hasCharacters.link(&jit);
+    hasNoName.append(jit.branchTest32(CCallHelpers::Zero, Address(searchedText, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    findNameOfText(jit, text, searchedLength, element, cursor, searchedText, hasNoName);
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), cursor);
+    jit.jump().linkTo(seeksAtom, &jit);
+    hasNoName.link(&jit);
+    jit.loadPtr(Address(thisGPR, JSObject::butterflyOffset()), cursor);
+    jit.jump().linkTo(seeksByCharacters, &jit);
 
     if (static_cast<BoxedCallForm>(jit.key().form()) == BoxedCallForm::ArrayIncludes) {
         isAtEnd.link(&jit);
@@ -1018,8 +1099,7 @@ static void emitArrayConcat(StubAssembler& jit, GPRReg scratch, JumpList& callsH
     checkCalleeRealm(jit, scratch, callsHostFunction);
     JumpList isOneElement;
     isOneElement.append(jit.branchIfNotCell(argument));
-    isOneElement.append(jit.branchIfType(argument, StringType));
-    callsHostFunction.append(jit.branchIfNotType(argument, ArrayType));
+    isOneElement.append(jit.branchIfNotType(argument, ArrayType));
     callsHostFunction.append(branchIfNotPristine(jit, argument));
     concatPlainArrays(jit, scratch, isOneElement);
     isOneElement.link(&jit);
@@ -1564,6 +1644,49 @@ static void emitStringEndsWith(StubAssembler& jit, GPRReg scratch, JumpList& cal
     emitFirstCallThatFits(jit, scratch, callsHostFunction);
 }
 
+static void emitStringIncludes(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)
+{
+    static_assert(areDistinctOnEveryISA(StubRegister::A0, StubRegister::A1, StubRegister::A2, StubRegister::A3, StubRegister::A5, StubRegister::T9));
+    static constexpr int32_t maxPlacesSearchedInStub = 32;
+    const GPRReg sought = argumentGPR(0);
+    const GPRReg place = jit.reuseScratch(StubRegister::A1);
+    const GPRReg soughtCharacters = jit.reuseScratch(StubRegister::A2);
+    const GPRReg length = jit.reuseScratch(StubRegister::A3);
+    const GPRReg pair = jit.reuseScratch(StubRegister::A5);
+    const GPRReg lastPlace = scratch;
+    RELEASE_ASSERT(noOverlap(thisGPR, calleeGPR, sought, place, soughtCharacters, length, pair, lastPlace));
+    JumpList needsOperation;
+    needsOperation.append(jit.branchIfNotCell(sought));
+    needsOperation.append(jit.branchIfNotType(sought, StringType));
+    jit.loadPtr(Address(thisGPR, JSString::offsetOfValue()), place);
+    jit.loadPtr(Address(sought, JSString::offsetOfValue()), soughtCharacters);
+    needsOperation.append(jit.branchIfRopeStringImpl(place));
+    needsOperation.append(jit.branchIfRopeStringImpl(soughtCharacters));
+    jit.load32(Address(soughtCharacters, StringImpl::lengthMemoryOffset()), length);
+    jit.load32(Address(place, StringImpl::lengthMemoryOffset()), lastPlace);
+    needsOperation.append(jit.branch32(CCallHelpers::Below, length, TrustedImm32(2)));
+    Jump isLongerThanString = jit.branch32(CCallHelpers::Above, length, lastPlace);
+    jit.sub32(length, lastPlace);
+    needsOperation.append(jit.branch32(CCallHelpers::AboveOrEqual, lastPlace, TrustedImm32(maxPlacesSearchedInStub)));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(place, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(soughtCharacters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(place, StringImpl::dataOffset()), place);
+    jit.loadPtr(Address(soughtCharacters, StringImpl::dataOffset()), soughtCharacters);
+    jit.addPtr(place, lastPlace);
+    jit.load16(Address(soughtCharacters), pair);
+    Label searchesPlace = jit.label();
+    jit.load16(Address(place), length);
+    needsOperation.append(jit.branch32(CCallHelpers::Equal, length, pair));
+    jit.addPtr(TrustedImm32(1), place);
+    jit.branchPtr(CCallHelpers::BelowOrEqual, place, lastPlace).linkTo(searchesPlace, &jit);
+    isLongerThanString.link(&jit);
+    jit.move(TrustedImm32(JSValue::ValueFalse), jit.result());
+    jit.returnToCaller();
+
+    needsOperation.link(&jit);
+    emitFirstCallThatFits(jit, scratch, callsHostFunction);
+}
+
 static constexpr uint32_t noSplitLimit = UINT32_MAX;
 static constexpr auto anything = ArgumentGuard::None;
 static constexpr auto aText = ArgumentGuard::IsString;
@@ -1577,7 +1700,10 @@ static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, a
 static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearGeneric } };
 static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearGeneric } };
 static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::Array) } };
-static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
+static constexpr CallWithoutHostFunction regExpTestCalls[] = {
+    { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) },
+    { { ArgumentGuard::IsObject, anything }, Entry::operationAOTRegExpTestOfObject },
+};
 static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };
 static constexpr CallWithoutHostFunction stringIncludesCalls[] = { { { aText, anything }, Entry::operationAOTStringIncludes } };
 static constexpr CallWithoutHostFunction stringMatchCalls[] = { { { aPattern, anything }, std::nullopt, regExpMatch(RegExpMatchResult::ArrayForStringMatch) } };
@@ -1627,6 +1753,14 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::DataViewSetUint16, 2, 3, exactly(DataViewType), emitDataViewAccess },
     { BoxedCallForm::DataViewSetUint32, 2, 3, exactly(DataViewType), emitDataViewAccess },
     { BoxedCallForm::DataViewSetUint8, 2, 2, exactly(DataViewType), emitDataViewAccess },
+    { BoxedCallForm::DateGetDate, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetDay, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetFullYear, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetHours, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetMinutes, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetMonth, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetSeconds, 0, 0, exactly(JSDateType), emitDateGetField },
+    { BoxedCallForm::DateGetTime, 0, 0, exactly(JSDateType), emitDateGetTime },
     { BoxedCallForm::FunctionBind, 0, 1 + JSBoundFunction::maxEmbeddedArgs, exactly(SlimClosureType), emitFunctionBind },
     { BoxedCallForm::IsNaN, 1, BoxedCallEntry::maxArgumentCount, std::nullopt, emitIsNaN },
     { BoxedCallForm::JSONStringify, 1, 2, std::nullopt, emitJSONStringify },
@@ -1661,7 +1795,7 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::StringCharCodeAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
     { BoxedCallForm::StringCodePointAt, 1, 1, exactly(StringType), emitStringCodeUnitAt },
     { BoxedCallForm::StringEndsWith, 1, 1, exactly(StringType), emitStringEndsWith, { }, anything, stringEndsWithCalls },
-    { BoxedCallForm::StringIncludes, 1, 1, exactly(StringType), emitFirstCallThatFits, { }, anything, stringIncludesCalls },
+    { BoxedCallForm::StringIncludes, 1, 1, exactly(StringType), emitStringIncludes, { }, anything, stringIncludesCalls },
     { BoxedCallForm::StringIndexOf, 1, 1, exactly(StringType), emitStringSearchFromPosition },
     { BoxedCallForm::StringIsWellFormed, 0, 0, exactly(StringType), emitStringIsWellFormed },
     { BoxedCallForm::StringLastIndexOf, 1, 1, exactly(StringType), emitStringSearchFromPosition },
@@ -1683,6 +1817,7 @@ static constexpr BoxedCallHandler boxedCallHandlers[] = {
     { BoxedCallForm::WeakMapGet, 1, 1, exactly(JSWeakMapType), emitJumpToTarget, weakMapGet() },
     { BoxedCallForm::WeakMapHas, 1, 1, exactly(JSWeakMapType), emitJumpToTarget, weakMapHas() },
     { BoxedCallForm::WeakMapSet, 2, 2, exactly(JSWeakMapType), emitJumpToTarget, weakMapSet(), ArgumentGuard::IsObject },
+    { BoxedCallForm::WeakSetAdd, 1, 1, exactly(JSWeakSetType), emitJumpToTarget, weakSetAdd(), ArgumentGuard::IsObject },
     { BoxedCallForm::WeakSetHas, 1, 1, exactly(JSWeakSetType), emitJumpToTarget, weakSetHas() },
 };
 static_assert(std::size(boxedCallHandlers) == numberOfBuiltinBoxedStubs);
@@ -2142,6 +2277,12 @@ void generateCallMethodOfBuiltinClassByValue(StubAssembler& jit)
     jit.linkToStub(isOtherReceiver, forOtherReceivers);
 }
 
+static std::optional<BoxedCallForm> nextUnreadForm(BoxedCallForm form)
+{
+    std::optional<BoxedCallForm> next = formAskedBehind(form);
+    return next && boxedCallHandlers[static_cast<unsigned>(form)].receiverTypes && boxedCallHandlers[static_cast<unsigned>(*next)].receiverTypes ? next : std::nullopt;
+}
+
 StubSignature signatureOfReadMethodAtSiteUnlessReceiverFindsIt(StubKey) { return signatureOf(readAtSite(ReceiverAtSite::IsAnyValue)); }
 
 void generateReadMethodAtSiteUnlessReceiverFindsIt(StubAssembler& jit)
@@ -2156,6 +2297,15 @@ void generateReadMethodAtSiteUnlessReceiverFindsIt(StubAssembler& jit)
     branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCallUnlessReceiverFindsIt, jit.allocateScratch(StubRegister::T11), looksUp, std::nullopt, jit.operand(0));
     jit.move(TrustedImm64(JSValue::encode(JSValue())), jit.result());
     jit.returnToCaller();
+    if (std::optional<BoxedCallForm> next = nextUnreadForm(handler.form)) {
+        looksUp.link(&jit);
+        JumpList isOfNeitherClass;
+        isOfNeitherClass.append(jit.branchIfNotCell(jit.operand(0)));
+        isOfNeitherClass.append(jit.branchIfNotType(jit.operand(0), *boxedCallHandlers[static_cast<unsigned>(*next)].receiverTypes));
+        jit.jumpToStub(StubKey(StubFamily::ReadMethodAtSiteUnlessReceiverFindsIt).withForm(static_cast<uint8_t>(*next)).withCount(jit.key().count()));
+        jit.linkToStub(isOfNeitherClass, reads);
+        return;
+    }
     jit.linkToStub(looksUp, reads);
 }
 
@@ -2167,9 +2317,24 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
 {
     const BoxedCallHandler& handler = boxedCallHandlers[jit.key().form()];
     const unsigned count = jit.key().count();
+    const bool asksClass = servesCallsByName(handler.form, count) && handler.receiverTypes;
+    const GPRReg scratch = asksClass ? jit.allocateScratch(StubRegister::T9) : InvalidGPRReg;
     jit.bindEntry(callMethodThatMayBeUnreadInTailPosition(handler.form, count));
-    jit.linkToStub(jit.branchTest64(CCallHelpers::NonZero, calleeGPR), callValueCell(count, CallPosition::Tail));
-    Jump isUnread = jit.jump();
+    Jump isUnread = jit.branchTest64(CCallHelpers::Zero, calleeGPR);
+    Jump isReadAndFound;
+    JumpList isOtherMethod;
+    if (asksClass) {
+        isOtherMethod.append(jit.branchIfType(calleeGPR, SlimClosureType));
+        JumpList isOtherReceiver;
+        branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCall, scratch, isOtherReceiver);
+        isReadAndFound = jit.jump();
+        if (std::optional<BoxedCallForm> next = nextUnreadForm(handler.form))
+            jit.linkToStub(isOtherReceiver, callMethodThatMayBeUnreadInTailPosition(*next, count));
+        else
+            isOtherMethod.append(isOtherReceiver);
+    } else
+        isOtherMethod.append(jit.jump());
+    jit.linkToStub(isOtherMethod, callValueCell(count, CallPosition::Tail));
     JumpList wasRead;
     jit.bindEntry(callMethodOfAnyReceiverThatMayBeUnread(handler.form, count));
     wasRead.append(jit.branchTest64(CCallHelpers::NonZero, calleeGPR));
@@ -2177,13 +2342,15 @@ void generateCallMethodThatMayBeUnread(StubAssembler& jit)
     isUnread.link(&jit);
     jit.bindEntry(jit.key());
     JumpList callsValue;
-    if (servesCallsByName(handler.form, count) && handler.receiverTypes) {
-        const GPRReg scratch = jit.allocateScratch(StubRegister::T9);
+    if (asksClass) {
         branchUnlessReceiverFindsBuiltin(jit, handler, MethodIsRead::InFrontOfTheCallUnlessReceiverFindsIt, scratch, callsValue);
+        isReadAndFound.link(&jit);
         handler.emit(jit, scratch, callsValue);
         callsValue.link(&jit);
     }
     Jump isRead = jit.branchTest64(CCallHelpers::NonZero, calleeGPR);
+    if (std::optional<BoxedCallForm> next = nextUnreadForm(handler.form))
+        jit.linkToStub(jit.branchIfNotType(thisGPR, *handler.receiverTypes), callMethodThatMayBeUnread(*next, count));
     BuiltinID method = BuiltinTable::singleton().methodCalledBy(handler.form);
     RELEASE_ASSERT(method);
     Vector<GPRReg, 6> preserved { thisGPR };
@@ -2412,12 +2579,14 @@ void generateCallMethodOfBuiltinClassWithSharedPattern(StubAssembler& jit)
     emitCallOfMethodOfBuiltinClass(jit, true);
 }
 
-void generateWeakMapSet(StubAssembler& jit)
+static void emitAddToWeakTable(StubAssembler& jit, bool isMap)
 {
     using MapBucket = WeakMapBucket<WeakMapBucketDataKeyValue>;
-    static_assert(sizeof(MapBucket) == 2 * sizeof(EncodedJSValue));
+    using SetBucket = WeakMapBucket<WeakMapBucketDataKey>;
+    static_assert(sizeof(MapBucket) == 2 * sizeof(EncodedJSValue) && sizeof(SetBucket) == sizeof(EncodedJSValue));
+    static_assert(JSWeakMap::offsetOfBuffer() == JSWeakSet::offsetOfBuffer() && JSWeakMap::offsetOfCapacity() == JSWeakSet::offsetOfCapacity() && JSWeakMap::offsetOfKeyCount() == JSWeakSet::offsetOfKeyCount() && JSWeakMap::offsetOfDeleteCount() == JSWeakSet::offsetOfDeleteCount() && MapBucket::offsetOfKey() == SetBucket::offsetOfKey());
     const GPRReg key = jit.operand(1);
-    const GPRReg value = jit.operand(2);
+    const GPRReg value = isMap ? jit.operand(2) : InvalidGPRReg;
     const GPRReg map = jit.allocateScratch(StubRegister::T10);
     const GPRReg mask = jit.allocateScratch(StubRegister::T9);
     const GPRReg other = jit.allocateScratch(StubRegister::A2);
@@ -2431,21 +2600,38 @@ void generateWeakMapSet(StubAssembler& jit)
     jit.sub32(TrustedImm32(1), mask);
     Label loop = jit.label();
     jit.and32(mask, hash);
-    jit.lshift32(hash, TrustedImm32(1), bucket);
+    if (isMap)
+        jit.lshift32(hash, TrustedImm32(1), bucket);
+    else
+        jit.move(hash, bucket);
     jit.loadPtr(BaseIndex(buffer, bucket, CCallHelpers::TimesEight, MapBucket::offsetOfKey()), other);
     Jump found = jit.branchPtr(CCallHelpers::Equal, other, key);
     jit.add32(TrustedImm32(1), hash);
     jit.branchTestPtr(CCallHelpers::NonZero, other).linkTo(loop, &jit);
 
-    Jump absent = jit.jump();
-
-    found.link(&jit);
-    jit.store64(value, BaseIndex(buffer, bucket, CCallHelpers::TimesEight, MapBucket::offsetOfValue()));
-    Jump notCell = jit.branchIfNotCell(value);
-    Jump needsBarrier = branchIfBarrierIsNeeded(jit, map, other);
-    notCell.link(&jit);
+    jit.load32(Address(map, JSWeakMap::offsetOfKeyCount()), other);
+    jit.add32(TrustedImm32(1), other, hash);
+    jit.add32(Address(map, JSWeakMap::offsetOfDeleteCount()), other);
+    jit.add32(TrustedImm32(1), other);
+    jit.lshift32(TrustedImm32(1), other);
+    Jump hasNoRoom = jit.branch32(CCallHelpers::Above, other, mask);
+    jit.storePtr(key, BaseIndex(buffer, bucket, CCallHelpers::TimesEight, MapBucket::offsetOfKey()));
+    if (isMap)
+        jit.store64(value, BaseIndex(buffer, bucket, CCallHelpers::TimesEight, MapBucket::offsetOfValue()));
+    jit.store32(hash, Address(map, JSWeakMap::offsetOfKeyCount()));
+    JumpList needsBarrier;
+    needsBarrier.append(branchIfBarrierIsNeeded(jit, map, other));
+    Label returnsTable = jit.label();
     jit.move(map, jit.result());
     jit.returnToCaller();
+
+    found.link(&jit);
+    if (isMap) {
+        jit.store64(value, BaseIndex(buffer, bucket, CCallHelpers::TimesEight, MapBucket::offsetOfValue()));
+        jit.branchIfNotCell(value).linkTo(returnsTable, &jit);
+        needsBarrier.append(branchIfBarrierIsNeeded(jit, map, other));
+    }
+    jit.jump().linkTo(returnsTable, &jit);
 
     needsBarrier.link(&jit);
     jit.emitFunctionPrologue();
@@ -2455,12 +2641,16 @@ void generateWeakMapSet(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     jit.ret();
 
-    absent.link(&jit);
-    jit.move(jit.clobberOperand(2), operationArgumentGPR(3));
+    hasNoRoom.link(&jit);
+    if (isMap)
+        jit.move(jit.clobberOperand(2), operationArgumentGPR(3));
     jit.move(jit.clobberOperand(1), operationArgumentGPR(2));
     jit.move(map, operationArgumentGPR(1));
-    jit.callOperationAndReturn(Entry::operationAOTWeakMapSet, { });
+    jit.callOperationAndReturn(isMap ? Entry::operationAOTWeakMapSet : Entry::operationAOTWeakSetAdd, { });
 }
+
+void generateWeakMapSet(StubAssembler& jit) { emitAddToWeakTable(jit, true); }
+void generateWeakSetAdd(StubAssembler& jit) { emitAddToWeakTable(jit, false); }
 
 static void emitStringOperationAtPositionZero(StubAssembler& jit, Entry operation, const ScopedLambda<void()>& boxResult)
 {

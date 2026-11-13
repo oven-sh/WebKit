@@ -209,6 +209,7 @@ static void forEachRequestForData(const NumberedKeys& requests, NOESCAPE const I
         case RequestKind::DirectEval:
         case RequestKind::FormatPattern:
         case RequestKind::ImportChecks:
+        case RequestKind::Prefetch:
             break;
         }
     }

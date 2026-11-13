@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayStorageForms.h"
 #include "AOTCallingConventions.h"
 #include "AOTIRProgram.h"
 #include "AOTLimits.h"
@@ -27,6 +28,7 @@ OperatorForm operatorFormFor(Walker&, const Draft&);
 Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 Reference checkIntegerBeforeLoop(Walker&, Reference value, TypeID tested, Origin, StatisticID counted);
 bool isElementIndex(const BodyIndex&, ValueID);
+bool callsArrayPush(Walker&, const BodyValue& call, Reference list);
 
 static constexpr OpcodeSet operatorsOfNumberPaths = allSums | allBitwiseOperators | allRelations | OpcodeSet { Opcode::Mul, Opcode::Negate, Opcode::StrictEq };
 static constexpr OpcodeSet operatorsThatGiveNumbersOnNumberPaths { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Negate, Opcode::Increment, Opcode::Decrement };
@@ -587,8 +589,29 @@ bool buildArmsInFrontOfTypedFormsOfItsOpcodes(Walker& walker, const BodyValue& v
     return buildNumberPath(walker, value) || (allRelations.contains(value.opcode()) && buildComparisonAfterUndefinedTests(walker, value));
 }
 
+static bool isPushedOntoArray(Walker& walker, const BodyValue& call, ValueID pushed)
+{
+    if (call.opcode() != Opcode::Call || !walker.isInLoop())
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    auto pushCall = call.as<Opcode::Call>();
+    ValueID callee = index.stripCasts(call.calleeOperand());
+    std::span<const ValueID> arguments = pushCall.argumentsOperands();
+    if (arguments.size() != 1 || arguments[0] != pushed || !pushCall.thisValueOperand() || index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
+        return false;
+    BodyValue method = index.value(callee);
+    Reference array = walker.referenceOf(pushCall.thisValueOperand());
+    if (method.isFreeName() || method.key() != walker.program().keyOf(BuiltinNames::push) || !array || !array.isValue() || !callsArrayPush(walker, call, array))
+        return false;
+    return arrayStorageDeclaredBy(walker.program(), walker.types(), walker.typeOf(array)).predicted() != ArrayStorage::Double;
+}
+
 static bool takerWantsBoxInNumberPaths(Walker& walker, const BodyValue& taker, ValueID taken, Reference standIn, TypeID typeOfSum)
 {
+    if (isPushedOntoArray(walker, taker, taken)) {
+        walker.count(StatisticID::PushedSumsStayBoxed);
+        return true;
+    }
     if (!takersOfBoxesInNumberPaths.contains(taker.opcode()))
         return false;
 
@@ -714,6 +737,32 @@ static bool isStoredBoxedAndCompared(Walker& walker, const BodyValue& written, R
     return true;
 }
 
+static bool isUsuallyWithoutFraction(Walker& walker, Reference value)
+{
+    auto hasNoFraction = [&](TypeID type) {
+        return type && !isNeverType(type) && walker.types().at(type).hasOnlyPrimitives(Primitive::NumberWithoutFraction | Primitive::Undefined);
+    };
+    const Code& code = walker.code();
+    if (!value.isValue() || code.isConstant(value.id()))
+        return false;
+    const Operation& record = code.at(value.id());
+    if (hasNoFraction(walker.typeOf(value)))
+        return true;
+    if (record.opcode != Opcode::Parameter || code.at(record.block()).isLoopHead)
+        return false;
+    std::span<const ValueID> parameters = code.at(record.block()).parameters();
+    size_t place = std::ranges::find(parameters, value.id()) - parameters.begin();
+    bool isUsual = false;
+    bool usualWaysBringNoFraction = true;
+    code.forEachIncomingEdgeUnsealed(record.block(), [&](const Edge& edge) {
+        if (code.at(edge.from).frequency == BlockFrequency::Rare)
+            return;
+        isUsual = true;
+        usualWaysBringNoFraction &= place < edge.arguments().size() && edge.arguments()[place] && hasNoFraction(code.at(edge.arguments()[place]).type);
+    });
+    return isUsual && usualWaysBringNoFraction;
+}
+
 bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
 {
     if (!walker.has(Mechanism::UnboxedNumbers) || !allSums.contains(sum.opcode) || written.opcode() != sum.opcode)
@@ -727,7 +776,9 @@ bool sumStaysBoxed(Walker& walker, const BodyValue& written, const Draft& sum)
         Type type = walker.types().at(walker.typeOf(operand));
         if (type.isInt32())
             continue;
-        if (!type.isNumber() || !(type.primitives & Primitive::Integer) || walker.representationOf(operand) != Representation::JSValue)
+        if (!type.isNumber() && (!type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined) || !isUsuallyWithoutFraction(walker, operand)))
+            return false;
+        if (!(type.primitives & Primitive::Integer) || walker.representationOf(operand) != Representation::JSValue)
             return false;
         boxedNumber = operand;
         if (const Operation& record = walker.code().at(operand.id()); sum.opcode == Opcode::Add && record.opcode == Opcode::Narrowed)

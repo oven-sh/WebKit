@@ -44,6 +44,7 @@ bool reflectThrowsOnLockedProperty(JSObject* lockedObject);
 bool isReportedAsReadOnly(JSObject* lockedObject, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE ASCIILiteral rejectedEvaluationMessage();
 void rejectEvaluationUnlessAllowed(JSGlobalObject*);
+JS_EXPORT_PRIVATE void disallowEvaluation(JSGlobalObject*);
 Instance* reserveInstance(JSGlobalObject*);
 void makeBuiltinsImmutable(Instance&);
 void markOriginalStructuresPristine(VM&, JSGlobalObject*);

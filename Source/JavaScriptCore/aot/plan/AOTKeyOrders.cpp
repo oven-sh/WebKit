@@ -673,10 +673,15 @@ auto CollectorOfKeyOrders::listEventsOnThis(const LinkTables& link, const ThinSu
     LayoutID constructed = isClassConstructorOf(record.kind) ? record.constructedClass : LayoutID();
     std::optional<unsigned> thisParameter = record.kind == FunctionKind::Initializer ? std::optional<unsigned>(0) : record.thisParameterIndex();
     const ThinSummary& summary = summaries.at(function);
-    auto isConstructedLayout = [&](LayoutID layout) {
+    std::optional<std::pair<LayoutID, bool>> askedLast;
+    auto isConstructedLayout = [&](LayoutID asked) {
+        if (askedLast && askedLast->first == asked)
+            return askedLast->second;
+        LayoutID layout = asked;
         size_t stepsLeft = m_program.layouts.size();
         while (layout && layout != constructed && stepsLeft--)
             layout = m_program.at(layout).base;
+        askedLast.emplace(asked, layout == constructed);
         return layout == constructed;
     };
     auto isSuperCall = [&](const SummaryCall& call) {

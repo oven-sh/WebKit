@@ -646,6 +646,7 @@ static WordOfMentionKey wordOfRequestKeyAt(RequestKind kind, size_t index)
         return index ? WordOfMentionKey::Number : WordOfMentionKey::Data;
     case RequestKind::FormatPattern:
     case RequestKind::ImportChecks:
+    case RequestKind::Prefetch:
         return WordOfMentionKey::Number;
     }
     RELEASE_ASSERT_NOT_REACHED();

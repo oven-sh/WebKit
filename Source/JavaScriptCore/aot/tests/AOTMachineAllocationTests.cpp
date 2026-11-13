@@ -2319,6 +2319,74 @@ static void allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses()
     }
 }
 
+static void allocatorPrefersLikelyReadersInLoops()
+{
+    TestProcedure test;
+    Output& out = test.out();
+    RegisterFile file = registerFileFor(test.procedure().traits());
+    LValue rounds = test.argumentGPR(0);
+    LValue addend = test.argumentGPR(1);
+    LValue buffer = test.argumentGPR(2);
+    RegisterMask argumentRegisters = maskOf(rounds->argumentReg()) | maskOf(addend->argumentReg()) | maskOf(buffer->argumentReg());
+    RegisterMask leftAlone = 0;
+    RegisterMask others = file.allocatableIn(Bank::GP) & ~file.calleeSaved & ~argumentRegisters;
+    for (unsigned count = 0; count < 3; ++count) {
+        leftAlone |= others & ~(others - 1);
+        others &= others - 1;
+    }
+    LValue readSeldom = out.load64(allocationTestWordAt(test, buffer, 1));
+    LBasicBlock head = out.newBlock();
+    LBasicBlock body = out.newBlock();
+    LBasicBlock reads = out.newBlock();
+    LBasicBlock rest = out.newBlock();
+    LBasicBlock exit = out.newBlock();
+    LValue left = out.phiIn(head, Int64);
+    LValue sum = out.phiIn(head, Int64);
+    out.upsilon(rounds, left);
+    out.upsilon(out.int64Zero, sum);
+    out.jump(normalEdge(head));
+
+    out.appendTo(head);
+    out.branch(left, normalEdge(body), normalEdge(exit));
+
+    out.appendTo(body);
+    out.branch(out.testNonZero64(sum, 1), unlikelyEdge(reads), normalEdge(rest));
+
+    out.appendTo(reads);
+    out.store64(readSeldom, allocationTestWordAt(test, buffer, 2));
+    out.jump(normalEdge(rest));
+
+    out.appendTo(rest);
+    allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~leftAlone);
+    out.upsilon(out.add(sum, addend), sum);
+    out.upsilon(out.sub(left, 1), left);
+    out.jump(normalEdge(head));
+
+    out.appendTo(exit);
+    out.store64(sum, allocationTestWordAt(test, buffer, 0));
+    out.ret(readSeldom);
+    compileOrFail(test);
+
+    AllocationTestText text(test);
+    const Allocation& allocation = test.procedure().allocation();
+    AOT_ALLOCATION_TEST_CHECK(test, allocationTestCountOf(leftAlone) == 3 && allocation.isSpilled(readSeldom) && text.isStoredOnceBehindDefinition(readSeldom));
+    RegisterMask held = 0;
+    for (LValue value : { addend, left, sum }) {
+        Reg reg = allocationTestRegisterAtHead(test, head, value);
+        AOT_ALLOCATION_TEST_CHECK(test, reg && !allocation.isSpilled(value));
+        held |= maskOf(reg);
+    }
+    AOT_ALLOCATION_TEST_CHECK(test, held == leftAlone);
+
+    constexpr uint64_t added = 5;
+    for (uint64_t numberOfRounds : { 0u, 1u, 3u }) {
+        std::array<uint64_t, 64> words = allocationTestWords<uint64_t>();
+        uint64_t written = numberOfRounds > 1 ? words[1] : words[2];
+        AOT_ALLOCATION_TEST_CHECK(test, test.call<uint64_t>(numberOfRounds, added, words.data()) == words[1]);
+        AOT_ALLOCATION_TEST_CHECK(test, words[0] == numberOfRounds * added && words[2] == written);
+    }
+}
+
 static void allocatorCountsWhatCrossesPatchesOfLoopAgainstRegistersTheyLeave()
 {
     TestProcedure test;
@@ -3665,7 +3733,7 @@ static void allocatorSkipsRarelyComparedConstant()
     constexpr int64_t tag = JSValue::NumberTag;
     std::optional<PinnedConstant> pinned = findPinnedConstant(static_cast<uint64_t>(tag));
     AOT_TEST_CHECK(pinned);
-    for (unsigned numberOfWords : { 2u, 3u }) {
+    for (unsigned numberOfWords : { 1u, 2u }) {
         TestProcedure test;
         Output& out = test.out();
         RegisterFile file = registerFileFor(test.procedure().traits());
@@ -3686,7 +3754,7 @@ static void allocatorSkipsRarelyComparedConstant()
             out.branch(out.aboveOrEqual(out.load64(allocationTestWordAt(test, buffer, word)), constant), normalEdge(next), normalEdge(exit));
         }
         out.appendTo(latch);
-        if (numberOfWords == 3)
+        if (numberOfWords == 2)
             allocationTestAppendPatchThatTakes(test, file.allocatableIn(Bank::GP) & ~file.calleeSaved);
         out.upsilon(out.sub(left, 1), left);
         out.jump(normalEdge(head));
@@ -4257,6 +4325,7 @@ std::span<const NativeTest> machineAllocationTests()
         { "machine-allocation/phi-of-a-join-has-a-word-of-its-own-where-the-value-that-is-handed-to-it-lives-on"_s, Machine::allocatorLaysPhiOfJoinInWordOfValueThatIsHandedToIt<true> },
         { "machine-allocation/phis-that-lie-in-memory-rotate"_s, Machine::allocatorRotatesPhisThatLieInMemory },
         { "machine-allocation/what-only-lives-through-a-loop-gives-way-for-the-registers-its-patches-leave-alone"_s, Machine::allocatorGivesRegistersThatPatchesLeaveAloneToWhatLoopUses },
+        { "machine-allocation/values-read-on-unlikely-paths-yield-registers"_s, Machine::allocatorPrefersLikelyReadersInLoops },
         { "machine-allocation/what-crosses-the-patches-of-a-loop-is-counted-against-the-registers-they-leave"_s, Machine::allocatorCountsWhatCrossesPatchesOfLoopAgainstRegistersTheyLeave },
         { "machine-allocation/what-a-loop-reads-only-ahead-of-a-patch-is-counted-among-what-crosses-it"_s, Machine::allocatorCountsWhatLoopReadsOnlyAheadOfPatchAmongWhatCrossesIt },
         { "machine-allocation/nothing-is-loaded-at-a-join-for-a-rare-arm"_s, Machine::allocatorLoadsNothingAtJoinForRareArm },

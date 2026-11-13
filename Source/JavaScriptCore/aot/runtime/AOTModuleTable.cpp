@@ -56,13 +56,12 @@ const CyclesOfImports::Member* CyclesOfImports::find(ModuleID module) const
     return found != membersByModule.end() && found->module == module.index() ? &*found : nullptr;
 }
 
-ImportersOfModules::ImportersOfModules(const ModuleTable& table)
-    : namedByListsAlone(table.size())
+static void collectImporters(const ModuleTable& table, Vector<uint32_t>& importers, Vector<uint32_t>& firstImporterOf, NOESCAPE const Invocable<bool(const ModuleRequestData&)> auto& isIncluded)
 {
     auto forEachRequest = [&](auto&& functor) {
         for (uint32_t importer = 0; importer < table.size(); ++importer) {
             for (const ModuleRequestData& request : table.requests(ModuleID(importer))) {
-                if (!request.isHoisted)
+                if (isIncluded(request))
                     functor(importer, request.target());
             }
         }
@@ -76,6 +75,21 @@ ImportersOfModules::ImportersOfModules(const ModuleTable& table)
     importers.fill(0, firstImporterOf[table.size()]);
     forEachRequest([&](uint32_t importer, uint32_t imported) {
         importers[--firstImporterOf[imported]] = importer;
+    });
+}
+
+StatementImporters::StatementImporters(const ModuleTable& table, Imports imports)
+{
+    collectImporters(table, importers, firstImporterOf, [&](const ModuleRequestData& request) {
+        return !request.isRequire && (imports == Imports::AllRequests || (!request.isHoisted && !request.isDeferred));
+    });
+}
+
+ImportersOfModules::ImportersOfModules(const ModuleTable& table)
+    : namedByListsAlone(table.size())
+{
+    collectImporters(table, importers, firstImporterOf, [](const ModuleRequestData& request) {
+        return !request.isHoisted;
     });
 
     auto importersOf = [&](uint32_t module) {

@@ -17,7 +17,8 @@ public:
     explicit TruthinessEmitter(CodeGenerator&);
 
     Condition isTruthy(const OperationContext&, Operand, const Type&);
-    void branchOnTruthiness(const OperationContext&, Operand, const Type&, BranchTargets, bool expectsObjectOrNothing = false, bool expectsInt32OrNothing = false, bool isAnswerOfCall = false, bool expectsBoolean = false);
+    Condition isTruthyOfAnyKind(const OperationContext&, Boxed);
+    void branchOnTruthiness(const OperationContext&, Operand, const Type&, BranchTargets, bool expectsObjectOrNothing = false, bool expectsInt32OrNothing = false, bool isAnswerOfCall = false, bool expectsBoolean = false, bool isOfAnyKind = false);
 
     struct DeferredTruthTest {
         ValueID shapeTest;
@@ -34,7 +35,7 @@ private:
     ValueID shapeTestAfter(const ValueContext& question);
     Condition isTruthyCell(CellPointer, const Type&);
     Condition isTruthyBoxed(const OperationContext&, Boxed, const Type&);
-    void branchOnTruthinessOfAnyValue(const OperationContext&, Boxed, const Type&, BranchTargets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean);
+    void branchOnTruthinessOfAnyValue(const OperationContext&, Boxed, const Type&, BranchTargets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean, bool isOfAnyKind);
     Type withoutPrimitives(const Type&, uint16_t removed);
 
     Vector<DeferredTruthTest, 2> m_deferredTruthTests;

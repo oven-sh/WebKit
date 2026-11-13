@@ -1088,6 +1088,143 @@ bool readPresentStaticField(Walker& walker, const BodyValue& access)
     return true;
 }
 
+static VariableID findMirrorOfFunctionName(Walker& walker, TypeID holder, PropertyKeyID key, FunctionID& function)
+{
+    TypeArena& types = walker.types();
+    if (!holder)
+        return { };
+    TypeID objects = types.withoutNullish(holder);
+    if (isNeverType(objects) || types.at(objects).primitives)
+        return { };
+    function = singleFunctionOf(types, types.at(objects));
+    return walker.plan().promotedEnvironments().mirrorOfFunctionName(function, key);
+}
+
+bool isFunctionNameMirrored(Walker& walker, const BodyValue& access)
+{
+    if (access.opcode() != Opcode::PropGet || access.isFreeName() || !walker.plan().promotedEnvironments().keysOfFunctionNameMirrors.get(access.key().index()))
+        return false;
+    Reference object = walker.referenceOf(access.objectOperand());
+    FunctionID holder;
+    return object && object.isValue() && findMirrorOfFunctionName(walker, walker.typeOf(object), access.key(), holder);
+}
+
+bool readMirroredFunctionName(Walker& walker, const BodyValue& access)
+{
+    if (access.isFreeName())
+        return false;
+    PropertyKeyID key = access.key();
+    ValueID input = access.objectOperand();
+    Reference object = walker.referenceOf(input);
+    FunctionID holder;
+    VariableID variable = object && object.isValue() ? findMirrorOfFunctionName(walker, walker.typeOf(object), key, holder) : VariableID();
+    if (!variable)
+        return false;
+    TypeID type = walker.facts().linked().findNameOnFunction(holder, key)->proven;
+    Origin origin = walker.originOf(access);
+    origin.isTailCall = false;
+    if (walker.types().at(walker.typeOf(object)).primitives & Primitive::UndefinedOrNull) {
+        Draft check(Opcode::RequireObjectCoercible, walker.originOf(access));
+        check.setValueOperand(object);
+        check.setNullishAccess(NullishAccess::Read);
+        check.setName(walker.program().at(key).text);
+        Reference checked = walker.build(WTF::move(check));
+        if (!checked || walker.hasFailed() || walker.isUnreachable())
+            return true;
+        walker.state().noteCheckedName(object, checked);
+        object = checked;
+    }
+    if (std::optional<uint64_t> known = findStaticFieldValue(walker, variable)) {
+        walker.bind(access.id(), Reference::fromBits(static_cast<uint32_t>(*known)));
+        return true;
+    }
+    Draft read(Opcode::GetStaticFieldOrAbsent, origin);
+    read.setVariable(variable);
+    read.setKey(key);
+    read.setValueType(type);
+    read.setClassObjectOperand(object);
+    read.setIsKnownInitialized(true);
+    Reference held = walker.build(WTF::move(read));
+    if (!held || walker.hasFailed())
+        return true;
+    walker.count(StatisticID::FunctionNamesReadFromMirrors);
+    noteStaticField(walker, KnownNote::StaticFieldValue, variable, key, held);
+    walker.bind(access.id(), held);
+    return true;
+}
+
+bool Walker::storesMirroredFunctionName(const BodyValue& store)
+{
+    PropertyKeyID key = store.key();
+    if (!key || store.isFreeName() || liesInThread(key) || !plan().promotedEnvironments().keysOfFunctionNameMirrors.get(key.index()))
+        return false;
+    return std::ranges::any_of(facts().linked().storesOfFunctionNamesAt(currentFunction(), store.id()), [&](const LinkedFunctionNameStore& listed) {
+        return !!plan().promotedEnvironments().mirrorOfFunctionName(listed.holder, listed.key);
+    });
+}
+
+void Walker::mirrorStoredFunctionName(const BodyValue& store)
+{
+    PropertyKeyID key = store.key();
+    Origin origin = originOf(store);
+    origin.isTailCall = false;
+    for (const LinkedFunctionNameStore& listed : facts().linked().storesOfFunctionNamesAt(currentFunction(), store.id())) {
+        VariableID variable = plan().promotedEnvironments().mirrorOfFunctionName(listed.holder, key);
+        if (isUnreachable() || m_hasFailed)
+            return;
+        if (!variable)
+            continue;
+        Reference object = referenceOf(store.objectOperand());
+        Reference stored = referenceOf(store.valueOperand());
+        if (!object || !stored)
+            return;
+        auto mirror = [&](Reference holder) {
+            Draft put(Opcode::PutStaticField, origin);
+            put.setVariable(variable);
+            put.setKey(key);
+            put.setClassObjectOperand(holder);
+            put.setValueOperand(stored);
+            build(WTF::move(put));
+        };
+        FunctionID only;
+        if (!(m_types.at(typeOf(object)).primitives) && findMirrorOfFunctionName(*this, typeOf(object), key, only) == variable) {
+            mirror(object);
+            continue;
+        }
+        Draft test(Opcode::IsClosureOf, origin);
+        chooseConservativeFields(test);
+        test.setFunction(listed.holder);
+        test.setValueOperand(object);
+        Reference isHolder = build(WTF::move(test));
+        if (!isHolder || isUnreachable() || m_hasFailed)
+            return;
+        if (!isHolder.isValue())
+            continue;
+        BlockID mirrored = addBlock();
+        BlockID behind = addBlock();
+        branch(isHolder, mirrored, behind);
+        Vector<JoinArm, 2> arms;
+        continueIn(mirrored);
+        if (!isUnreachable()) {
+            Draft proof(Opcode::Narrowed, origin);
+            proof.setValueOperand(object);
+            proof.setTestOperand(isHolder);
+            proof.setOperandIndex(OperandIndex::IsClosureOf::value);
+            proof.setIsOnTakenEdge(true);
+            if (Reference holder = build(WTF::move(proof)); holder && !isUnreachable() && !m_hasFailed)
+                mirror(holder);
+            if (!isUnreachable() && !m_hasFailed)
+                arms.append(JoinArm { currentBlock(), { } });
+        }
+        continueIn(behind);
+        if (!isUnreachable())
+            arms.append(JoinArm { currentBlock(), { } });
+        std::array<Reference, 0> met;
+        if (m_hasFailed || arms.isEmpty() || !joinArms(arms.span(), addBlock(), met))
+            return;
+    }
+}
+
 static bool isCounted(const BodyIndex& index, const BodyBlock& block, const BodyValue& read, uint32_t end)
 {
     static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement };
@@ -1124,6 +1261,35 @@ static bool isStoredOffSameHolder(const BodyIndex& index, const BodyValue& read)
     return false;
 }
 
+static TypeID typeInVariableOfStaticField(Walker& walker, VariableID variable)
+{
+    uint16_t primitives = walker.facts().linked().primitivesOfStaticField(variable);
+    return primitives ? TypeArena::fromPrimitives(primitives | Primitive::Absent) : walker.types().withPrimitives(TypeTable::anything, Primitive::Absent);
+}
+
+static bool endsWithComparisonOfStaticField(Walker& walker, const BodyIndex& index, const BodyBlock& block, const BodyValue& read)
+{
+    static constexpr OpcodeSet taken = inputIdentityOpcodes | allEqualities | OpcodeSet { Opcode::ToBoolean, Opcode::LogicalNot };
+    uint32_t first = block.firstValue().index();
+    uint32_t size = block.numberOfValues();
+    uint32_t place = read.id().index() - first;
+    BodyTerminator terminator = block.terminator();
+    if (place + 1 == size || !(terminator.isConditionalBranch() || terminator.kind() == TerminatorKind::Return) || terminator.operand(0) != ValueID(first + size - 1))
+        return false;
+    bool comparesField = false;
+    for (uint32_t later = place + 1; later < size; ++later) {
+        BodyValue operation = index.value(ValueID(first + later));
+        if (!taken.contains(operation.opcode()))
+            return false;
+        if (allEqualities.contains(operation.opcode()) || operation.opcode() == Opcode::ToBoolean) {
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                comparesField |= operand && index.stripCasts(operand) == read.id();
+            });
+        }
+    }
+    return comparesField && walker.armsMayTakeBranchOf(block.id(), place + 1, Reference()) && walker.canThreadBranchAfter(read);
+}
+
 bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
 {
     Opcode opcode = access.opcode();
@@ -1144,6 +1310,9 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     if (heir)
         variable = findInheritedStaticFieldVariable(walker, heir, access.key());
     if (!variable)
+        return false;
+    TypeID typeInVariable = typeInVariableOfStaticField(walker, variable);
+    if (isStore && !types.isSubset(walker.typeOf(stored), typeInVariable))
         return false;
 
     const BodyIndex& index = walker.currentBodyIndex();
@@ -1211,7 +1380,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
             Draft read(Opcode::GetStaticFieldOrAbsent, origin);
             read.setVariable(variable);
             read.setKey(access.key());
-            read.setValueType(types.withPrimitives(TypeTable::anything, Primitive::Absent));
+            read.setValueType(typeInVariable);
             read.setClassObjectOperand(object);
             before = walker.build(WTF::move(read));
             if (!before || walker.hasFailed())
@@ -1268,7 +1437,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     Draft read(Opcode::GetStaticFieldOrAbsent, origin);
     read.setVariable(variable);
     read.setKey(access.key());
-    read.setValueType(types.withPrimitives(TypeTable::anything, Primitive::Absent));
+    read.setValueType(typeInVariable);
     read.setClassObjectOperand(object);
     Reference held = walker.build(WTF::move(read));
     if (!held || walker.hasFailed())
@@ -1307,6 +1476,7 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
         else if (!operationsBetweenAccessesOfOneLook.contains(other.opcode()))
             break;
     }
+    bool takesBranch = !isStore && typeInVariable != types.withPrimitives(TypeTable::anything, Primitive::Absent) && end == place + 1 && !walker.isNestedTooDeeply() && endsWithComparisonOfStaticField(walker, index, block, access);
 
     BlockID asWritten = foundElsewhere ? foundElsewhere : walker.addBlock(BlockFrequency::Rare);
     BlockID liesInVariable = walker.addBlock();
@@ -1331,7 +1501,9 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
             liesThere = stored;
         } else
             walker.bind(access.id(), liesThere);
-        if (end > place + 1 && liesThere && !walker.hasFailed() && !walker.isUnreachable()) {
+        if (takesBranch && !walker.hasFailed())
+            walker.threadBranchAfter(access);
+        else if (end > place + 1 && liesThere && !walker.hasFailed() && !walker.isUnreachable()) {
             Walker::StaticFieldSeenInVariable seen { variable, liesThere, liesInVariable, walker.code().numberOfValues(), isStore ? ValueID() : access.id(), origin.inlineFrame };
             SetForScope ofThisArm(walker.staticFieldSeenInVariableByArm(), &seen);
             TypeID expected = isStore ? TypeID() : findExpectation(walker, access.id()).type;
@@ -1347,10 +1519,26 @@ bool accessStaticFieldInVariable(Walker& walker, const BodyValue& access)
     if (walker.hasFailed())
         return true;
 
-    walker.walkClosedArm(asWritten, stretch, arms);
+    if (takesBranch) {
+        walker.continueIn(asWritten);
+        Walker::ClosedArm closedArm(walker);
+        walker.walkStretch(block.id(), place, end);
+        if (!walker.hasFailed())
+            walker.threadBranchAfter(access);
+        walker.listArm(stretch, arms);
+    } else
+        walker.walkClosedArm(asWritten, stretch, arms);
     if (!walker.hasFailed())
         walker.joinArms(stretch, arms, meeting);
     return true;
+}
+
+bool readDeclaredStaticField(Walker& walker, const BodyValue& read)
+{
+    if (read.opcode() != Opcode::PropGet || read.isFreeName())
+        return false;
+    Reference object = walker.referenceOf(read.objectOperand());
+    return object && object.isValue() && findVariableOfStaticFieldInKeyOrdersAccessors(walker, walker.typeOf(object), read.key()) && accessStaticFieldInVariable(walker, read);
 }
 
 } } } // namespace JSC::AOT::Typed

@@ -190,7 +190,7 @@ public:
         m_endOfInheritedEntries = m_log.size();
     }
 
-    void switchBlocks(Block* from, Block* to)
+    ALWAYS_INLINE void switchBlocks(Block* from, Block* to)
     {
         ASSERT(from != to);
         if (!m_suspendedBlocks.isEmpty() || !from->isTerminated()) {
@@ -240,7 +240,7 @@ private:
     {
         return operation->m_owner && !operation->traps() && !hasTrait(operation->m_opcode, OpcodeTrait::HasEffects | OpcodeTrait::HasNoPosition | OpcodeTrait::IsNeverNumbered);
     }
-    static bool matches(const NumberingKey& key, const Entry& entry)
+    ALWAYS_INLINE static bool matches(const NumberingKey& key, const Entry& entry)
     {
         const Operation* operation = entry.operation;
         return operation->m_opcode == key.opcode && operation->m_type == key.type && entry.payload == key.payload

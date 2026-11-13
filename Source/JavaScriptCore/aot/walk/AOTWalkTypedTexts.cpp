@@ -27,6 +27,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+OperatorForm operatorFormFor(Walker&, const Draft&);
+
 using PartsOfJoinedText = Vector<Reference, 8>;
 using JoinsTakenApart = Vector<ValueID, 2>;
 
@@ -311,6 +313,67 @@ static bool tryHoistConcatenationChecks(Walker& walker, TextsJoinedInFrontInWalk
     return areShort && walker.tryBranchInPreheader(areShort, true);
 }
 
+static bool hasOnlyTextsBeside(Walker& walker, const BodyIndex& index, const BodyValue& join, ValueID sum)
+{
+    bool hasOnlyTexts = true;
+    join.forEachOperand([&](ValueID operand, uint32_t) {
+        if (operand == sum)
+            return;
+        bool isWritten = operand && !index.isParameter(operand) && index.opcodeOf(operand) == Opcode::String;
+        Reference part = !isWritten && operand && operand < sum ? walker.referenceOf(operand) : Reference();
+        hasOnlyTexts &= isWritten || (part && hasTextByItself(walker.types().at(walker.typeOf(part))));
+    });
+    return hasOnlyTexts;
+}
+
+static bool tryConvertAddendInFrontOfTexts(Walker& walker, const BodyIndex& index, const BodyValue& sum, PartsOfJoinedText& parts)
+{
+    if (sum.opcode() != Opcode::Add || walker.hasStringsInBuilders() || walker.facts().linked().calleeAt(walker.currentFunction(), sum.id()))
+        return false;
+    std::optional<size_t> converted;
+    bool joinsTexts = false;
+    for (size_t place = 0; place < parts.size(); ++place) {
+        Reference part = parts[place];
+        if (!part)
+            return false;
+        Type type = walker.types().at(walker.typeOf(part));
+        joinsTexts |= type.isAnyString();
+        if (hasTextByItself(type))
+            continue;
+        if (converted || !part.isValue())
+            return false;
+        converted = place;
+    }
+    if (!converted || !joinsTexts)
+        return false;
+    for (uint32_t side : { OperandIndex::Add::left, OperandIndex::Add::right }) {
+        ValueID operand = sum.operand(side);
+        TypeID expected = walker.referenceOf(operand) == parts[*converted] ? findExpectation(walker, operand).type : TypeID();
+        if (expected && hasTextByItself(walker.types().at(expected)))
+            return false;
+    }
+    ValueID taker = findJoinThatAloneTakesInWalkTexts(walker, index, index.block(index.blockOf(sum.id())), sum.id());
+    if (!taker || !hasOnlyTextsBeside(walker, index, index.value(taker), sum.id()) || useAsKeyInWalkTexts(walker, index, sum.id(), true) > UseOfTextAsKey::None)
+        return false;
+
+    Origin origin = walker.originOf(sum);
+    origin.isTailCall = false;
+    Draft emptyText(Opcode::String, origin);
+    emptyText.setString(walker.program().strings.emptyString());
+    Draft conversion(Opcode::Add, origin);
+    walker.chooseConservativeFields(conversion);
+    conversion.setLeftOperand(walker.constant(WTF::move(emptyText)));
+    conversion.setRightOperand(parts[*converted]);
+    conversion.setForm(operatorFormFor(walker, conversion));
+    if (conversion.form() != OperatorForm::MayBeString)
+        return false;
+    if (Reference text = walker.build(WTF::move(conversion))) {
+        parts[*converted] = text;
+        walker.count(StatisticID::AddendsConvertedInRows);
+    }
+    return true;
+}
+
 static Reference buildJoinedTextInWalkTexts(Walker& walker, const BodyValue& join, std::span<const Reference> parts, UseOfTextAsKey use)
 {
     PartsOfJoinedText merged(parts);
@@ -392,10 +455,17 @@ bool buildTypedJoinOfTextsOfItsOpcodes(Walker& walker, const BodyValue& first)
         if (tryConvertAndAppendParts(walker, first, parts.span()))
             return true;
         UseOfTextAsKey use = first.opcode() == Opcode::Strcat && !parts.contains(Reference()) ? useAsKeyInWalkTexts(walker, index, first.id()) : UseOfTextAsKey::None;
-        if (use <= UseOfTextAsKey::None)
-            return bindKeyOfTextAndValueInWalkTexts(walker, index, first);
-        bindJoinedTextInWalkTexts(walker, first, parts.span(), use);
-        return true;
+        if (use > UseOfTextAsKey::None) {
+            bindJoinedTextInWalkTexts(walker, first, parts.span(), use);
+            return true;
+        }
+        if (bindKeyOfTextAndValueInWalkTexts(walker, index, first))
+            return true;
+        if (!tryConvertAddendInFrontOfTexts(walker, index, first, parts))
+            return false;
+        if (walker.isUnreachable() || walker.hasFailed())
+            return true;
+        joinsThatFailWhereReaderFails.clear();
     }
 
     BodyBlock block = index.block(index.blockOf(first.id()));

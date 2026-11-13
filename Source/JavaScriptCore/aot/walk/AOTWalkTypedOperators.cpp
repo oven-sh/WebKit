@@ -25,6 +25,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool buildOperatorOnNumbers(Walker&, const BodyValue&, const InputsOfTypedOperation&);
 bool isTakenAsItIsByFormNumbers(const Type&);
+bool takesBitsOfBoxedPrimitive(Walker&, Opcode, Reference operand);
 Reference boxNumberIfNeeded(Walker&, Reference, Origin);
 
 static constexpr OpcodeSet arithmeticAmongTypedOperators = operatorsOfKinds({ OperatorKind::Additive, OperatorKind::Multiplicative, OperatorKind::Bitwise });
@@ -59,7 +60,10 @@ OperatorForm operatorFormFor(Walker& walker, const Draft& draft)
     if (draft.numberOfNamedOperands() == 2)
         operands.right = walker.typeOf(draft.operand(1));
     OperatorForm form = chooseFormOfOperator(walker.program(), walker.types(), draft.opcode, operands);
-    if (form == OperatorForm::Numbers && (!isTakenAsItIsByFormNumbers(walker.types().at(operands.left)) || (operands.right && !isTakenAsItIsByFormNumbers(walker.types().at(operands.right)))))
+    auto isTakenAsItIs = [&](TypeID type, Reference operand) {
+        return isTakenAsItIsByFormNumbers(walker.types().at(type)) || takesBitsOfBoxedPrimitive(walker, draft.opcode, operand);
+    };
+    if (form == OperatorForm::Numbers && (!isTakenAsItIs(operands.left, draft.operand(0)) || (operands.right && !isTakenAsItIs(operands.right, draft.operand(1)))))
         return OperatorForm::Generic;
     constexpr OpcodeSet madeOnDoublesAsWell { Opcode::Add, Opcode::Sub, Opcode::Mul, Opcode::Increment, Opcode::Decrement, Opcode::Negate };
     if (form == OperatorForm::CheckedIntegers && madeOnDoublesAsWell.contains(draft.opcode)) {

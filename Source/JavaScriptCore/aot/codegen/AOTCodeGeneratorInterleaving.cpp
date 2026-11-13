@@ -448,7 +448,9 @@ std::optional<CodeGenerator::Interleaving> InterleavingFinder::find()
         if (dependsOnRow(stream.list) || dependsOnRow(stream.storage))
             return std::nullopt;
     }
-    if (std::ranges::any_of(m_outerParameters, [&](ValueID parameter) { return !m_generator.m_values[parameter.index()] || m_generator.isCarriedBoxed(parameter); }))
+    if (std::ranges::any_of(m_outerParameters, [&](ValueID parameter) { return !m_generator.m_values[parameter.index()] || m_generator.isCarriedBoxed(parameter) || m_generator.isCarriedUnboxed(parameter) || m_generator.isCarriedSum(parameter); }))
+        return std::nullopt;
+    if (m_generator.carriesBesideParameters(m_found.outerHead))
         return std::nullopt;
     for (ValueID stepped : m_found.steppedParameters) {
         if (isInTurn(stepped))
@@ -461,7 +463,7 @@ std::optional<CodeGenerator::Interleaving> InterleavingFinder::find()
 
 std::optional<CodeGenerator::Interleaving> CodeGenerator::findInterleaving(const CountedLoop& loop)
 {
-    if (loop.testsAtEnd || loop.step != 1 || (loop.relation != Opcode::Less && loop.relation != Opcode::LessEq) || m_keepsValuesInHeapFrame || m_followsNumbersOutOfBytes || !loop.loopCarriedValueStores.isEmpty() || loop.storesIntoSlots || !loop.storesIntoLists || !loop.flatStrings.isEmpty())
+    if (loop.testsAtEnd || loop.step != 1 || (loop.relation != Opcode::Less && loop.relation != Opcode::LessEq) || m_keepsValuesInHeapFrame || (m_followsNumbersOutOfBytes && !m_followsMarkers) || carriesAnyNaN(m_order[loop.positionOfHead]) || !loop.loopCarriedValueStores.isEmpty() || loop.storesIntoSlots || !loop.storesIntoLists || !loop.flatStrings.isEmpty())
         return std::nullopt;
     if (!loop.viewsAskedForKind.isEmpty() || !loop.boundsAskedInFront.isEmpty())
         return std::nullopt;

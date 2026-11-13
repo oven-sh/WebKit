@@ -13,15 +13,20 @@
 #include "AOTClosure.h"
 #include "AOTCompiledCall.h"
 #include "AOTCompiledCallee.h"
+#include "AOTDoubleStringCache.h"
 #include "AOTGrowingText.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPendingStars.h"
 #include "AOTPrimitives.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesKeys.h"
+#include "AOTPropertyCachesStringKeys.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTTextsOfFewDigits.h"
@@ -31,10 +36,12 @@
 #include "FunctionPrototype.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
+#include "JSCellButterfly.h"
 #include "MathCommon.h"
 #include "NumberPrototype.h"
 #include "NumericStrings.h"
 #include "Operations.h"
+#include "StringObject.h"
 #include "TypeofType.h"
 
 namespace JSC { namespace AOT {
@@ -61,10 +68,23 @@ static ALWAYS_INLINE JSCell* inheritedMethodIn(const Slot& method)
     return function.isCell() ? function.asCell() : nullptr;
 }
 
-static ALWAYS_INLINE JSCell* findInheritedMethod(Instance* instance, Object& object, const Identifier& name)
+static NEVER_INLINE JSCell* findOwnMethod(Object& object, const Identifier& name)
+{
+    if (hasPendingStars(object))
+        return nullptr;
+    const FieldData* field = object.fieldNamed(object.state(), name.impl());
+    if (!field || field->flags & (fieldIsAccessor | fieldIsPrivate) || !object.isInSlot(*field))
+        return nullptr;
+    JSValue function = object.read(*field);
+    return function && function.isCell() ? function.asCell() : nullptr;
+}
+
+static ALWAYS_INLINE JSCell* findMethodWithoutCode(Instance* instance, Object& object, const Identifier& name)
 {
     const Slot* method = findReadWithoutCode(instance, object, name);
-    return method ? inheritedMethodIn(*method) : nullptr;
+    if (!method)
+        return nullptr;
+    return method->has(Slot::isOwn) ? findOwnMethod(object, name) : inheritedMethodIn(*method);
 }
 
 static JSValue primitiveFromValueOf(JSGlobalObject* globalObject, JSObject* object)
@@ -129,7 +149,7 @@ static ALWAYS_INLINE JSValue tryPrimitiveOfCompiledObject(Instance* instance, Ob
         return { };
     if (exotic->kind != Slot::Kind::Absent)
         RELEASE_AND_RETURN(scope, tryPrimitiveByHint(instance, object, *exotic, hint));
-    JSCell* valueOf = findInheritedMethod(instance, object, vm.propertyNames->valueOf);
+    JSCell* valueOf = findMethodWithoutCode(instance, object, vm.propertyNames->valueOf);
     if (!valueOf)
         return { };
     if (valueOf != globalObject->objectProtoValueOfFunction()) {
@@ -151,7 +171,7 @@ static ALWAYS_INLINE JSValue tryPrimitiveOfCompiledObject(Instance* instance, Ob
         throwTypeError(globalObject, scope, "No default value"_s);
         return { };
     }
-    JSValue result = tryPrimitiveByString(instance, object, findInheritedMethod(instance, object, vm.propertyNames->toString));
+    JSValue result = tryPrimitiveByString(instance, object, findMethodWithoutCode(instance, object, vm.propertyNames->toString));
     RETURN_IF_EXCEPTION(scope, { });
     if (result && result.isObject()) [[unlikely]] {
         throwTypeError(globalObject, scope, "No default value"_s);
@@ -218,9 +238,21 @@ JSValue timeIfDate(JSValue value)
     return jsNumber(date->internalNumber());
 }
 
+static ALWAYS_INLINE JSValue stringIfStringObject(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!value.isCell() || value.asCell()->type() != StringObjectType) [[likely]]
+        return value;
+    if (value.asCell()->structure() != globalObject->stringObjectStructure() || !globalObject->stringValueOfWatchpointSet().isStillValid() || !globalObject->stringSymbolToPrimitiveWatchpointSet().isStillValid())
+        return value;
+    return uncheckedDowncast<StringObject>(value.asCell())->internalValue();
+}
+
 #define AOT_TAKE_PRIMITIVES(left, right, hint, returned) \
     if (hint == PreferNumber) \
         left = timeIfDate(left); \
+    left = stringIfStringObject(globalObject, left); \
+    if (!left.isObject()) \
+        right = stringIfStringObject(globalObject, right); \
     if (isCompiledObject(left)) { \
         left = primitiveIfKnown(instance, left, hint); \
         OPERATION_RETURN_IF_EXCEPTION(scope, returned); \
@@ -251,6 +283,40 @@ static ALWAYS_INLINE double numberOfValueThatIsNoCell(JSValue value)
     if (value.isUndefined())
         return PNaN;
     return value.isTrue() ? 1 : 0;
+}
+
+static ALWAYS_INLINE double numberOfString(JSGlobalObject* globalObject, JSValue value)
+{
+    if (std::optional<double> number = valueOfTextOfFewDigits(value))
+        return *number;
+    return asString(value)->toNumber(globalObject);
+}
+
+static ALWAYS_INLINE std::optional<double> numberOfDigitsOrWord(JSValue value)
+{
+    if (!value.isString())
+        return std::nullopt;
+    auto characters = latin1CharactersWithoutResolving(asString(value));
+    return characters ? numberOfShortText(*characters) : std::nullopt;
+}
+
+static ALWAYS_INLINE std::optional<int32_t> int32OfDigitsOrWord(JSValue value)
+{
+    if (value.isInt32())
+        return value.asInt32();
+    if (std::optional<double> number = numberOfDigitsOrWord(value))
+        return toInt32(*number);
+    return std::nullopt;
+}
+
+static ALWAYS_INLINE bool isStringOrNoCell(JSValue value)
+{
+    return !value.isCell() || value.isString();
+}
+
+static ALWAYS_INLINE double numberOfStringOrNoCell(JSGlobalObject* globalObject, JSValue value)
+{
+    return value.isCell() ? numberOfString(globalObject, value) : numberOfValueThatIsNoCell(value);
 }
 
 template<unsigned... lengths>
@@ -345,16 +411,24 @@ static ALWAYS_INLINE JSBigInt* tryShortBigInts(Instance* instance, EncodedJSValu
         JSValue right = BigIntArithmetic::valueInHeap(vm, JSValue::decode(encodedRight)); \
         if (left.isHeapBigInt() && right.isHeapBigInt()) \
             OPERATION_RETURN(scope, JSValue::encode(JSBigInt::bigIntFunction(globalObject, left.asHeapBigInt(), right.asHeapBigInt()))); \
-        if (!left.isCell() && !right.isCell()) { \
-            double x = numberOfValueThatIsNoCell(left); \
-            double y = numberOfValueThatIsNoCell(right); \
+        if (isStringOrNoCell(left) && isStringOrNoCell(right)) { \
+            double x = numberOfStringOrNoCell(globalObject, left); \
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue()); \
+            double y = numberOfStringOrNoCell(globalObject, right); \
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue()); \
             OPERATION_RETURN(scope, JSValue::encode(jsNumber(ofNumbers))); \
         } \
         AOT_TAKE_PRIMITIVES(left, right, PreferNumber, encodedJSValue()) \
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
     }
 
-#define AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(name, function, bigIntFunction, tryBigInts) \
+#define AOT_RETURN_IF_DIGITS_OR_WORDS(ofIntegers) \
+    if (std::optional<int32_t> x = int32OfDigitsOrWord(JSValue::decode(encodedLeft))) { \
+        if (std::optional<int32_t> y = int32OfDigitsOrWord(JSValue::decode(encodedRight))) \
+            return { JSValue::encode(jsNumber(ofIntegers)), nullptr }; \
+    }
+
+#define AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(name, function, bigIntFunction, tryBigInts, ofIntegers) \
     static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES name##OfAnyValues(Instance*, EncodedJSValue, EncodedJSValue); \
     JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
@@ -364,6 +438,7 @@ static ALWAYS_INLINE JSBigInt* tryShortBigInts(Instance* instance, EncodedJSValu
     } \
     OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES name##OfAnyValues(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight) \
     { \
+        AOT_RETURN_IF_DIGITS_OR_WORDS(ofIntegers) \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
         JSValue left = JSValue::decode(encodedLeft); \
         JSValue right = JSValue::decode(encodedRight); \
@@ -373,9 +448,10 @@ static ALWAYS_INLINE JSBigInt* tryShortBigInts(Instance* instance, EncodedJSValu
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, left, right))); \
     }
 
-#define AOT_DEFINE_BITWISE_OPERATION(name, function, bigIntFunction) \
+#define AOT_DEFINE_BITWISE_OPERATION(name, function, bigIntFunction, ofIntegers) \
     JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
     { \
+        AOT_RETURN_IF_DIGITS_OR_WORDS(ofIntegers) \
         AOT_OPERATION_BEGIN(instance, Entry::name); \
         JSValue left = JSValue::decode(encodedLeft); \
         JSValue right = JSValue::decode(encodedRight); \
@@ -393,8 +469,13 @@ static ALWAYS_INLINE JSBigInt* tryShortBigInts(Instance* instance, EncodedJSValu
         JSValue right = JSValue::decode(encodedRight); \
         if (left.isHeapBigInt() && right.isHeapBigInt()) \
             OPERATION_RETURN(scope, JSBigInt::compare(left.asHeapBigInt(), right.asHeapBigInt()) ofHeapBigInts); \
-        if (!left.isCell() && !right.isCell()) \
-            OPERATION_RETURN(scope, numberOfValueThatIsNoCell(left) relation numberOfValueThatIsNoCell(right)); \
+        if (!left.isCell() ? isStringOrNoCell(right) : left.isString() && !right.isCell()) { \
+            double leftNumber = numberOfStringOrNoCell(globalObject, left); \
+            OPERATION_RETURN_IF_EXCEPTION(scope, 0); \
+            double rightNumber = numberOfStringOrNoCell(globalObject, right); \
+            OPERATION_RETURN_IF_EXCEPTION(scope, 0); \
+            OPERATION_RETURN(scope, leftNumber relation rightNumber); \
+        } \
         AOT_TAKE_PRIMITIVES(left, right, PreferNumber, 0) \
         OPERATION_RETURN(scope, result); \
     }
@@ -404,20 +485,24 @@ AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMul, jsMul, multiply, tryIn
 AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueDiv, jsDiv, divide, tryInHeap<StepOnBigInts::Divide>, findNoBigInt, x / y)
 AOT_DEFINE_NUMERIC_BINARY_OPERATION(operationAOTValueMod, jsRemainder, remainder, tryInHeap<StepOnBigInts::Remainder>, (tryBigIntsOfUsualLength<2 * BigIntArithmetic::usualLength, tryInHeap<StepOnBigInts::RemainderOfUsualProduct>>), Math::fmodDouble(x, y))
 AOT_DEFINE_BINARY_OPERATION(operationAOTValuePow, EncodedJSValue, JSValue::encode(jsPow(globalObject, left, right)))
-AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(operationAOTValueBitAnd, jsBitwiseAnd, bitwiseAnd, tryInHeap<StepOnBigInts::BitwiseAnd>)
-AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitOr, jsBitwiseOr, bitwiseOr)
-AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitXor, jsBitwiseXor, bitwiseXor)
-AOT_DEFINE_BITWISE_OPERATION(operationAOTValueLShift, jsLShift, leftShift)
-AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(operationAOTValueRShift, jsRShift, signedRightShift, tryInHeap<StepOnBigInts::SignedRightShift>)
+AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(operationAOTValueBitAnd, jsBitwiseAnd, bitwiseAnd, tryInHeap<StepOnBigInts::BitwiseAnd>, *x & *y)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitOr, jsBitwiseOr, bitwiseOr, *x | *y)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueBitXor, jsBitwiseXor, bitwiseXor, *x ^ *y)
+AOT_DEFINE_BITWISE_OPERATION(operationAOTValueLShift, jsLShift, leftShift, static_cast<int32_t>(static_cast<uint32_t>(*x) << (*y & 31)))
+AOT_DEFINE_BITWISE_OPERATION_WITH_FAST_PATH(operationAOTValueRShift, jsRShift, signedRightShift, tryInHeap<StepOnBigInts::SignedRightShift>, *x >> (*y & 31))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::ComparisonResult::LessThan, <, jsLess<true>(globalObject, left, right))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, <=, jsLessEq<true>(globalObject, left, right))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, >, jsLess<false>(globalObject, right, left))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreaterEq, != JSBigInt::ComparisonResult::LessThan, >=, jsLessEq<false>(globalObject, right, left))
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCompareEq);
     JSValue left = JSValue::decode(encodedLeft);
     JSValue right = JSValue::decode(encodedRight);
+    if (left.isNumber() || right.isNumber()) {
+        if (std::optional<double> number = numberOfDigitsOrWord(left.isNumber() ? right : left))
+            return { *number == (left.isNumber() ? left : right).asNumber(), nullptr };
+    }
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCompareEq);
     if (isCompiledObject(left) ? !right.isObject() && !right.isUndefinedOrNull() : isCompiledObject(right) && !left.isObject() && !left.isUndefinedOrNull()) {
         JSValue& object = isCompiledObject(left) ? left : right;
         object = primitiveIfKnown(instance, object, NoPreference);
@@ -463,7 +548,7 @@ static ALWAYS_INLINE JSValue tryStringPrimitive(Instance* instance, Object& obje
     bool isOrdinary = exotic && exotic->kind == Slot::Kind::Absent;
     JSValue result;
     if (isOrdinary) [[likely]]
-        result = tryPrimitiveByString(instance, object, findInheritedMethod(instance, object, vm.propertyNames->toString));
+        result = tryPrimitiveByString(instance, object, findMethodWithoutCode(instance, object, vm.propertyNames->toString));
     else if (exotic)
         result = tryPrimitiveByHint(instance, object, *exotic, PreferString);
     RETURN_IF_EXCEPTION(scope, { });
@@ -506,6 +591,19 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
     OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(text), joined)));
 }
 
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addCompiledObjectAndString(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueAdd);
+    JSValue left = JSValue::decode(encodedLeft);
+    JSValue right = JSValue::decode(encodedRight);
+    JSValue& object = left.isString() ? right : left;
+    object = primitiveIfKnown(instance, object, NoPreference);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (object.isString()) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
+    OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
+}
+
 static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addShortBigInts(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
 {
     if (JSBigInt* result = tryShortBigInts<tryInHeap<StepOnBigInts::Add>>(instance, encodedLeft, encodedRight))
@@ -513,10 +611,58 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
     AOT_MUST_TAIL_CALL return addAnyValues(instance, encodedLeft, encodedRight);
 }
 
+static ALWAYS_INLINE JSString* findStringOfSharedElements(Instance* instance, JSArray* array)
+{
+    if (!isCopyOnWrite(array->indexingMode()) || !array->isToPrimitiveFastAndNonObservable())
+        return nullptr;
+    auto& strings = instance->vm->immutableButterflyToStringCache;
+    auto known = strings.find(JSCellButterfly::fromButterfly(array->butterfly()));
+    return known != strings.end() ? known->value : nullptr;
+}
+
+static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addStringAndConvertedValue(Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTValueAdd);
+    JSValue left = JSValue::decode(encodedLeft);
+    JSValue right = JSValue::decode(encodedRight);
+    auto convert = [&](JSValue value) -> JSString* {
+        if (value.isInt32())
+            return instance->state->stringKeys->textOfInt32(vm, value.asInt32());
+        JSValue string = stringIfStringObject(globalObject, value);
+        return string.isString() ? asString(string) : nullptr;
+    };
+    if (left.isString()) [[likely]] {
+        JSString* converted = convert(right);
+        if (!converted) [[unlikely]]
+            OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
+        if (!asString(left)->length())
+            OPERATION_RETURN(scope, JSValue::encode(converted));
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), converted)));
+    }
+    JSString* converted = convert(left);
+    if (!converted) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
+    OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, converted, asString(right))));
+}
+
+static ALWAYS_INLINE bool isInt32OrStringObject(JSValue value)
+{
+    return value.isCell() ? value.asCell()->type() == StringObjectType : value.isInt32();
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
-    if (JSValue left = JSValue::decode(encodedLeft), right = JSValue::decode(encodedRight); right.isCell() && right.asCell()->type() == ArrayType && left.isString())
+    if (JSValue left = JSValue::decode(encodedLeft), right = JSValue::decode(encodedRight); (left.isString() && isInt32OrStringObject(right)) || (right.isString() && isInt32OrStringObject(left)))
+        AOT_MUST_TAIL_CALL return addStringAndConvertedValue(instance, encodedLeft, encodedRight);
+    if (JSValue left = JSValue::decode(encodedLeft), right = JSValue::decode(encodedRight); right.isCell() && right.asCell()->type() == ArrayType && left.isString()) {
+        if (JSString* known = asString(left)->length() ? nullptr : findStringOfSharedElements(instance, asArray(right.asCell())))
+            return { JSValue::encode(known), nullptr };
         AOT_MUST_TAIL_CALL return addListToText(instance, encodedLeft, encodedRight);
+    }
+    if (JSValue left = JSValue::decode(encodedLeft), right = JSValue::decode(encodedRight); left.isCell() && right.isCell()) {
+        if ((left.isString() && isCompiledObject(right)) || (isCompiledObject(left) && right.isString()))
+            AOT_MUST_TAIL_CALL return addCompiledObjectAndString(instance, encodedLeft, encodedRight);
+    }
     if (JSBigInt* result = tryBigIntsOfUsualLength<BigIntArithmetic::usualLength, tryInHeap<StepOnBigInts::AddOfUsualLength>>(instance, encodedLeft, encodedRight))
         return { JSValue::encode(result), nullptr };
     AOT_MUST_TAIL_CALL return addShortBigInts(instance, encodedLeft, encodedRight);
@@ -534,6 +680,7 @@ OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addAnyValues(Instan
             operand = joined;
     };
     if (left.isString()) {
+        right = stringIfStringObject(globalObject, right);
         takeTextOfList(right);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
@@ -564,7 +711,19 @@ OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES addAnyValues(Instan
             OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
     }
     AOT_TAKE_PRIMITIVES(left, right, NoPreference, encodedJSValue())
+    if (left.isString() && right.isString())
+        OPERATION_RETURN(scope, JSValue::encode(joinTexts(globalObject, *instance, asString(left), asString(right))));
     OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
+}
+
+DoubleStringCache& DoubleStringCache::ensure(State& state)
+{
+    if (DoubleStringCache* cache = state.instance.realm.doubleStrings) [[likely]]
+        return *cache;
+    DoubleStringCache* cache = state.tableArena.allocate<DoubleStringCache>(1);
+    state.caches->addClearedEachCollection("strings of doubles"_s, asMutableByteSpan(std::span { cache->entries }));
+    state.instance.realm.doubleStrings = cache;
+    return *cache;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, EncodedJSValue encodedOperand))
@@ -593,8 +752,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, JSCell*, (Instance* instance, Enc
     }
     if (operand.isInt32())
         OPERATION_RETURN(scope, int32ToString(vm, operand.asInt32(), 10));
-    if (operand.isDouble())
-        OPERATION_RETURN(scope, numberToString(vm, operand.asDouble(), 10));
+    if (operand.isDouble()) {
+        JSString* string = numberToString(vm, operand.asDouble(), 10);
+        if (vm.aotState().counts) [[unlikely]]
+            countEvent(vm, RuntimeCounterID::DoublesConvertedToStrings);
+        DoubleStringCache::ensure(*instance->state).remember(encodedOperand, string);
+        OPERATION_RETURN(scope, string);
+    }
     OPERATION_RETURN(scope, operand.toString(globalObject));
 }
 
@@ -995,6 +1159,15 @@ static ALWAYS_INLINE double subtractProduct(double dividend, double quotient, do
 }
 #endif
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAddToCheckedSum, int64_t, (int64_t word, int64_t addend))
+{
+    static constexpr int64_t bias = 1ll << 52;
+    int64_t carried = word - bias;
+    double number = static_cast<uint64_t>(word) <= static_cast<uint64_t>(2 * bias) ? static_cast<double>(carried) : std::bit_cast<double>(carried);
+    double sum = number + static_cast<double>(addend);
+    return std::abs(sum) <= static_cast<double>(bias) ? static_cast<int64_t>(sum) + bias : std::bit_cast<int64_t>(sum) + bias;
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFmod, double, (double a, double b))
 {
     double dividend = std::abs(a);
@@ -1062,9 +1235,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryConvertToInteger, int64_t, (Enc
         AOT_OPERATION_BEGIN(instance, Entry::name); \
         auto bits = NumberAndValueBits::decode(typeAndNumberSide); \
         JSValue other = JSValue::decode(value); \
-        if (!other.isCell()) { \
-            double x = bits.numberIsOnRight ? numberOfValueThatIsNoCell(other) : withoutPayload(number); \
-            double y = bits.numberIsOnRight ? withoutPayload(number) : numberOfValueThatIsNoCell(other); \
+        if (hint == PreferNumber ? isStringOrNoCell(other) : !other.isCell()) { \
+            double converted = numberOfStringOrNoCell(globalObject, other); \
+            OPERATION_RETURN_IF_EXCEPTION(scope, 0); \
+            double x = bits.numberIsOnRight ? converted : withoutPayload(number); \
+            double y = bits.numberIsOnRight ? withoutPayload(number) : converted; \
             OPERATION_RETURN(scope, ofNumbers); \
         } \
         if (hint == PreferNumber) \

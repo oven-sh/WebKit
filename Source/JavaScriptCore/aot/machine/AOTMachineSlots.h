@@ -103,6 +103,9 @@ public:
         Position end { 0 };
     };
     ArenaVector<PositionsTakenBehindGaps> m_positionsTakenBehindGaps[numberOfParts];
+    const ArenaVector<uint32_t>* m_placesSearchedLast { nullptr };
+    Position m_beginOfLastSearch { noPosition };
+    uint32_t m_endOfNextSearch { 0 };
     uint32_t m_bytesOfPart[numberOfParts] { 0, 0 };
     bool m_holdsPairs { false };
     ArenaVector<Part> m_partOfSpill;

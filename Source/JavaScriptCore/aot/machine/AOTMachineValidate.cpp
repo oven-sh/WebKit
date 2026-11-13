@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTDominatorJumps.h"
 #include "AOTMachine.h"
 #include "AOTMachineTarget.h"
 #include <algorithm>
@@ -677,6 +678,11 @@ void MachineValidator::computeDominators()
     dominator[0] = 0;
     for (const Entrypoint& entrypoint : m_proc.entrypoints())
         dominator[m_placeOf[entrypoint.block->index()]] = 0;
+    DominatorJumps jumps(numberReached + 1);
+    auto above = [&](uint32_t place, uint32_t limit) {
+        uint32_t jump = jumps.from(place);
+        return jump >= limit ? jump : dominator[place];
+    };
 
     ArenaVector<uint32_t> lastMergeAt;
     lastMergeAt.fill(m_arena, numberReached + 1, 0);
@@ -685,13 +691,13 @@ void MachineValidator::computeDominators()
         while (common != from) {
             if (common > from) {
                 lastMergeAt[common] = merge;
-                common = dominator[common];
+                common = above(common, from);
                 continue;
             }
             if (lastMergeAt[from] == merge)
                 break;
             lastMergeAt[from] = merge;
-            from = dominator[from];
+            from = above(from, common);
         }
         return common;
     };
@@ -720,7 +726,7 @@ void MachineValidator::computeDominators()
     }
 
     bool changed = true;
-    while (changed) {
+    for (bool isFirstRound = true; changed; isFirstRound = false) {
         changed = false;
         for (uint32_t place = 1; place <= numberReached; ++place) {
             uint32_t next = notReached;
@@ -731,8 +737,14 @@ void MachineValidator::computeDominators()
                     continue;
                 next = next == notReached ? from : intersect(next, from);
             }
-            changed |= next != dominator[place];
-            dominator[place] = next;
+            if (next != dominator[place]) {
+                changed = true;
+                dominator[place] = next;
+                if (!isFirstRound)
+                    jumps.stop();
+            }
+            if (isFirstRound)
+                jumps.set(place, next);
         }
     }
 

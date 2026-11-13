@@ -6785,7 +6785,7 @@ public:
     // writable region of memory; to modify the code in an execute-only execuable
     // pool the 'repatch' and 'relink' methods should be used.
 
-    void linkJump(AssemblerLabel from, AssemblerLabel to)
+    ALWAYS_INLINE void linkJump(AssemblerLabel from, AssemblerLabel to)
     {
         ASSERT(from.isSet());
         ASSERT(to.isSet());
@@ -7117,7 +7117,7 @@ public:
 
 private:
 
-    AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
+    ALWAYS_INLINE AssemblerLabel didEmitJump(AssemblerLabel end, X86JumpKind kind, uint8_t condition)
     {
         if (m_recordsJumps) [[unlikely]] {
             if (m_emittedJumps.size() == m_emittedJumps.capacity())
@@ -7210,7 +7210,7 @@ private:
 
         class SingleInstructionBufferWriter : public AssemblerBuffer::LocalWriter {
         public:
-            SingleInstructionBufferWriter(AssemblerBuffer& buffer)
+            ALWAYS_INLINE SingleInstructionBufferWriter(AssemblerBuffer& buffer)
                 : AssemblerBuffer::LocalWriter(buffer, maxInstructionSize)
             {
             }

@@ -66,6 +66,7 @@
 #include "AbstractSlotVisitorInlines.h"
 #include "AddressSpaceBudget.h"
 #include "BooleanConstructor.h"
+#include "ProxyConstructor.h"
 #include "DeferGC.h"
 #include "ArrayConstructor.h"
 #include "ErrorConstructor.h"
@@ -201,7 +202,9 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
     static_assert(static_cast<unsigned>(TypeofType::Function) + 1 == InstanceHeader::numberOfTypeStrings);
     for (unsigned type = 0; type < InstanceHeader::numberOfTypeStrings; ++type)
         instance.typeStrings[type] = vm.smallStrings.typeString(static_cast<TypeofType>(type));
+    static constexpr uint8_t unknownLevel1Weights[256] { };
     instance.collation.ducetLevel1Weights = ducetLevel1Weights;
+    instance.collation.knownLevel1Weights = unknownLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
     prefix.structureIDBase = JSC::structureIDBase();
@@ -248,6 +251,11 @@ static void fillImageWords(Instance& instance, VM& vm, const Image& image, Progr
     words.data = image.programTables().data().data();
     words.closureFactNumbers = image.programTables().closureFactNumbers().data();
     words.closureFacts = image.programTables().closureFacts().data();
+    static constexpr ReturnedCaptureData noReturnedCapture { };
+    std::span<const ReturnedCaptureData> returnedCaptures = image.programTables().returnedCaptures();
+    words.returnedCaptures = returnedCaptures.empty() ? &noReturnedCapture : returnedCaptures.data();
+    words.capacityOfReturnedCaptures = returnedCaptures.empty() ? 0 : returnedCaptures.size() - ReturnedCaptureData::numberOfRowsBehind;
+    words.statics = instance.statics();
     words.regExps = image.section<ImageRegExp>(ImageSection::RegExps).data();
     words.regExpCode = image.regExpCode().data();
     words.functionSteps = image.functionStarts().steps();
@@ -532,6 +540,7 @@ Instance* Instance::create(JSGlobalObject* realm)
         instance->effectsNet.exercised = makeEffectsNetExercised().data();
 
     State::create(*instance);
+    instance->state->caches->addClearedEachCollection("loops that prefetch"_s, asMutableByteSpan(instance->state->prefetchingLoops));
     instance->state->caches->addClearedEachCollection("growing flat text"_s, asMutableByteSpan(instance->state->growingFlatText));
     instance->state->caches->addClearedEachCollection("wide character strings"_s, asMutableByteSpan(instance->state->wideCharacterStrings));
     instance->state->caches->addClearedEachCollection("texts of few strings"_s, asMutableByteSpan(instance->state->textsOfFewStrings));
@@ -539,6 +548,7 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("released array"_s, asMutableByteSpan(instance->arrays.releasedArray));
     instance->state->caches->addClearedEachCollection("released copy"_s, asMutableByteSpan(instance->arrays.releasedCopy));
     instance->state->caches->addClearedEachCollection("sort keys"_s, asMutableByteSpan(instance->arrays.sortKeys));
+    instance->state->caches->addClearedEachCollection("last lookup in a Map"_s, asMutableByteSpan(instance->arrays.lastMapLookup));
     instance->state->caches->addClearedEachCollection("chains above lists without names"_s, asMutableByteSpan(instance->arrays.chainsAboveListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures of lists without names"_s, asMutableByteSpan(instance->arrays.structuresOfListsWithoutNames));
     instance->state->caches->addClearedEachCollection("structures around the first shift"_s, asMutableByteSpan(instance->arrays.structuresAroundFirstShift));
@@ -901,6 +911,7 @@ static void fillThunkAndPointers(void** entries, const Image& image)
     set(Entry::ArrayConstructorClassInfo, const_cast<ClassInfo*>(ArrayConstructor::info()));
     set(Entry::ObjectConstructorClassInfo, const_cast<ClassInfo*>(ObjectConstructor::info()));
     set(Entry::BooleanConstructorClassInfo, const_cast<ClassInfo*>(BooleanConstructor::info()));
+    set(Entry::ProxyConstructorClassInfo, const_cast<ClassInfo*>(ProxyConstructor::info()));
     set(Entry::CustomGetterClassInfo, const_cast<ClassInfo*>(JSCustomGetterFunction::info()));
     set(Entry::NumberConstructorClassInfo, const_cast<ClassInfo*>(NumberConstructor::info()));
     set(Entry::StringConstructorClassInfo, const_cast<ClassInfo*>(StringConstructor::info()));
@@ -1134,6 +1145,8 @@ void VMState::releaseImage(VM& vm)
     functionTables = nullptr;
     cyclesOfImports = nullptr;
     importersOfModules = nullptr;
+    statementImporters = nullptr;
+    importersOfEveryImport = nullptr;
     modulesWithQuery = std::nullopt;
     reexportedNames = nullptr;
     callSiteCache = nullptr;
@@ -1964,6 +1977,16 @@ ProgramStatics::ProgramStatics(State& state)
     state.caches->add(CacheKind::ClearedEachCollection, "scopes of closures in a heap snapshot"_s, m_scopesOfClosures);
     for (const StaticsRange& range : m_tables.staticsClearedEachCollection())
         state.caches->addClearedAndGivenBackEachCollection("statics cleared each collection"_s, { statics + range.offset, range.size });
+}
+
+void ProgramStatics::clearCaches()
+{
+    for (const StaticsRange& range : m_tables.staticsClearedEachCollection()) {
+        for (uint64_t& word : std::span { reinterpret_cast<uint64_t*>(m_instance.statics() + range.offset), range.size / sizeof(uint64_t) }) {
+            if (word)
+                word = 0;
+        }
+    }
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

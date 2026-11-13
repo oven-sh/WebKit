@@ -1,0 +1,78 @@
+# function best(v, n) { let a = v.a, .. j = v.j; for (let i = 0; i < n; i++) { const w = one(v); if (w) { a = w.a; .. j = w.j } } return all(a, .. j); }
+# ten values go round a loop that calls, so their phis lie in the frame at its head. Where the turn leaves them as they are it neither loads nor stores them: the phis behind the branch lie in the same words
+# f1 = best, f2 = one, f3 = all. best is handed to sink
+# REQUIRES: x86_64 unsanitized-code
+# RUN: allocate f1:Body mechanisms=none+DirectCalls
+# CHECK-LABEL: unit f1:Body
+# CHECK: #8: rbx
+# CHECK-NOT: reload
+# CHECK: #2: rax
+# CHECK: #3: rbx
+# CHECK-NOT: -> s6
+# CHECK: #4:
+
+variable g0 name="one" module=m0 declared={type=f2 flags=[IsFromCompiler]} initialization=Function function=f2 flags=[IsImmutable]
+variable g1 name="all" module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2
+    Return v3
+}
+function f1 name="best" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="a"
+    v3 = PropGet v0 key="b"
+    v4 = PropGet v0 key="c"
+    v5 = PropGet v0 key="d"
+    v6 = PropGet v0 key="e"
+    v7 = PropGet v0 key="f"
+    v8 = PropGet v0 key="g"
+    v9 = PropGet v0 key="h"
+    v10 = PropGet v0 key="i"
+    v11 = PropGet v0 key="j"
+    v12 = Integer
+    Jump -> next b1(v12, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11)
+  b1(v13, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23):
+    LoopHint
+    v25 = Less v13, v1
+    Branch v25 -> taken b2(), notTaken b5()
+  b2():
+    v26 = GetModuleVariable variable=g0
+    v27 = Call v26, -, v0 calleeName="one"
+    v28 = ToBoolean v27
+    Branch v28 -> taken b3(), notTaken b4(v14, v15, v16, v17, v18, v19, v20, v21, v22, v23)
+  b3():
+    v29 = PropGet v27 key="a"
+    v30 = PropGet v27 key="b"
+    v31 = PropGet v27 key="c"
+    v32 = PropGet v27 key="d"
+    v33 = PropGet v27 key="e"
+    v34 = PropGet v27 key="f"
+    v35 = PropGet v27 key="g"
+    v36 = PropGet v27 key="h"
+    v37 = PropGet v27 key="i"
+    v38 = PropGet v27 key="j"
+    Jump -> next b4(v29, v30, v31, v32, v33, v34, v35, v36, v37, v38)
+  b4(v39, v40, v41, v42, v43, v44, v45, v46, v47, v48):
+    v49 = Increment v13
+    Jump -> next b1(v49, v39, v40, v41, v42, v43, v44, v45, v46, v47, v48)
+  b5():
+    v50 = GetModuleVariable variable=g1
+    v51 = Call v50, -, v14, v15, v16, v17, v18, v19, v20, v21, v22, v23 calleeName="all"
+    Return v51
+}
+function f2 name="one" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="w"
+    Return v1
+}
+function f3 name="all" module=m0 length=10 thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything, v5: anything, v6: anything, v7: anything, v8: anything, v9: anything):
+    v10 = PropGet v9 key="k"
+    Return v10
+}

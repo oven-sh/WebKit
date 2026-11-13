@@ -345,10 +345,13 @@ struct TestOfRemainder {
 
 } // anonymous namespace
 
-static std::optional<TestOfRemainder> findTestInQuotients(Walker& walker, const BodyValue& remainder, std::optional<int64_t> divisor)
+static bool isDivisorOfTestInQuotients(int64_t divisor)
 {
-    if (!divisor || *divisor < 2 || *divisor > std::numeric_limits<int32_t>::max())
-        return std::nullopt;
+    return divisor >= 2 && divisor <= std::numeric_limits<int32_t>::max();
+}
+
+static std::optional<TestOfRemainder> findTestInQuotients(Walker& walker, const BodyValue& remainder)
+{
     const BodyIndex& index = walker.currentBodyIndex();
     std::optional<BodyUser> firstMention = index.firstUser(remainder.id());
     if (!firstMention || firstMention->kind != BodyUseKind::Operand)
@@ -377,9 +380,9 @@ ValueID findTestOfRemainder(Walker& walker, const BodyValue& remainder)
         return { };
     const BodyIndex& index = walker.currentBodyIndex();
     ValueID divisor = index.stripCasts(remainder.operand(1));
-    if (!divisor || index.isParameter(divisor) || index.opcodeOf(divisor) != Opcode::Integer)
+    if (!divisor || (!index.isParameter(divisor) && index.opcodeOf(divisor) == Opcode::Integer && !isDivisorOfTestInQuotients(index.value(divisor).as<Opcode::Integer>().integer())))
         return { };
-    std::optional<TestOfRemainder> found = findTestInQuotients(walker, remainder, index.value(divisor).as<Opcode::Integer>().integer());
+    std::optional<TestOfRemainder> found = findTestInQuotients(walker, remainder);
     return found ? found->test : ValueID();
 }
 
@@ -393,13 +396,26 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
     Reference divisor = walker.referenceOf(writtenDivisor);
     if (!dividend.isValue())
         return false;
-    if (walker.isInLoop() && walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Rare && walker.representationOf(dividend) != Representation::JSValue)
-        return false;
+    bool isInFrequentLoop = walker.isInLoop() && walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Rare;
+    std::optional<int64_t> knownDivisor = integerKnownInNumberForms(walker, divisor);
+    bool divisorVaries = !knownDivisor;
+    if (divisorVaries) {
+        if (!isInFrequentLoop || !divisor.isValue() || (walker.representationOf(dividend) != Representation::JSValue && walker.representationOf(divisor) != Representation::JSValue))
+            return false;
+    } else {
+        if (isInFrequentLoop && walker.representationOf(dividend) != Representation::JSValue)
+            return false;
+    }
     Type typeOfDividend = typeOfBuiltInQuotients(walker, dividend);
-    if (!typeOfDividend.isNumber() || typeOfDividend.isInteger() || !(typeOfDividend.primitives & Primitive::Integer))
+    if (!typeOfDividend.isNumber() || (typeOfDividend.isInteger() && !divisorVaries) || !(typeOfDividend.primitives & Primitive::Integer))
         return false;
+    if (divisorVaries) {
+        Type typeOfDivisor = typeOfBuiltInQuotients(walker, divisor);
+        if (!typeOfDivisor.isNumber() || !(typeOfDivisor.primitives & Primitive::Integer) || (typeOfDivisor.isInteger() && typeOfDividend.isInteger()))
+            return false;
+    }
 
-    std::optional<TestOfRemainder> found = findTestInQuotients(walker, remainder, integerKnownInNumberForms(walker, divisor));
+    std::optional<TestOfRemainder> found = divisorVaries || isDivisorOfTestInQuotients(*knownDivisor) ? findTestInQuotients(walker, remainder) : std::nullopt;
     if (!found)
         return false;
     const BodyIndex& index = walker.currentBodyIndex();
@@ -408,8 +424,12 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
     uint32_t firstValue = block.firstValue().index();
     std::optional<int64_t> comparedWith = found->comparedWith;
 
-    TypeID whole = walker.types().integer(Range::exact());
-    if (walker.types().testablePartOf(whole) != whole)
+    constexpr int64_t greatestInt32 = std::numeric_limits<int32_t>::max();
+    TypeID whole = walker.types().integer(divisorVaries ? Range { 0, greatestInt32 } : Range::exact());
+    TypeID positive = walker.types().integer({ 1, greatestInt32 });
+    if (walker.types().testablePartOf(whole) != whole || walker.types().testablePartOf(positive) != positive)
+        return false;
+    if (divisorVaries && (!walker.types().overlap(walker.typeOf(dividend), whole) || !walker.types().overlap(walker.typeOf(divisor), positive)))
         return false;
 
     uint32_t placeOfTest = test.id().index() - firstValue;
@@ -419,26 +439,41 @@ bool buildNumberRemainderWithItsTest(Walker& walker, const BodyValue& remainder)
 
     Origin origin = walker.originOf(remainder);
     origin.isTailCall = false;
-    Draft isWhole(Opcode::TypeTest, origin);
-    walker.chooseConservativeFields(isWhole);
-    isWhole.setValueOperand(dividend);
-    isWhole.setTestedType(whole);
-    Reference dividendIsWhole = walker.build(WTF::move(isWhole));
-    if (!dividendIsWhole)
-        return true;
-
-    BlockID onIntegers = walker.addBlock();
     BlockID onNumbers = walker.addBlock(BlockFrequency::Unlikely);
     BlockID meeting = walker.addBlock();
-    walker.branch(dividendIsWhole, onIntegers, onNumbers);
+    auto narrowedTo = [&](Reference value, TypeID tested) -> Reference {
+        if (!value || walker.types().isSubset(walker.typeOf(value), tested))
+            return value;
+        Draft isTested(Opcode::TypeTest, origin);
+        walker.chooseConservativeFields(isTested);
+        isTested.setValueOperand(value);
+        isTested.setTestedType(tested);
+        Reference passes = walker.build(WTF::move(isTested));
+        if (!passes)
+            return { };
+        continueIfTrue(walker, passes, onNumbers);
+        return walker.isUnreachable() ? Reference() : buildNarrowedInNumberForms(walker, value, passes, OperandIndex::TypeTest::value, true, origin);
+    };
 
     auto endOfArm = [&](Reference left, Reference answer) {
         return WayInNumberForms { left && answer ? walker.currentBlock() : BlockID(), answer, left };
     };
 
-    walker.continueIn(onIntegers);
     WayInNumberForms wayOfIntegers { };
-    if (Reference integer = buildNarrowedInNumberForms(walker, dividend, dividendIsWhole, OperandIndex::TypeTest::value, true, origin)) {
+    if (divisorVaries) {
+        Reference integer = narrowedTo(dividend, whole);
+        Reference integerDivisor = integer ? narrowedTo(divisor, positive) : Reference();
+        if (integer && integerDivisor) {
+            walker.count(StatisticID::RemaindersTestedAsIntegers);
+            Reference left = buildOperatorInNumberForms(walker, Opcode::Mod, integer, integerDivisor, origin);
+            Reference answer;
+            if (left && !comparedWith)
+                answer = buildOperatorInNumberForms(walker, Opcode::ToBoolean, left, { }, origin);
+            else if (left)
+                answer = buildOperatorInNumberForms(walker, Opcode::StrictEq, left, integerInNumberForms(walker, *comparedWith), origin);
+            wayOfIntegers = endOfArm(left, answer);
+        }
+    } else if (Reference integer = narrowedTo(dividend, whole)) {
         Reference bound = walker.referenceBoundTo(writtenDividend);
         walker.bind(writtenDividend, integer);
         Reference left = buildOperatorInNumberForms(walker, Opcode::Mod, integer, divisor, origin);

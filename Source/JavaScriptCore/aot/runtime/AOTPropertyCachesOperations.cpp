@@ -63,9 +63,13 @@ static bool beganOrEndedAsDictionary(Structure* before, Structure* after)
     return after != before && (before->isDictionary() || after->isDictionary());
 }
 
+static void rememberOrderOfCreation(PropertyAnswer&, Instance&, JSObject* base, Structure* structureBefore, uint32_t orderWordBefore);
+
 static void fileStore(Instance* instance, JSObject* base, Structure* structureBefore, const CachedName& name, const PutPropertySlot& slot, PutMode mode, std::optional<uint32_t> orderWordBefore = std::nullopt)
 {
     PropertyAnswer answer = classifyStore({ instance->globalObject, base, structureBefore, name.uid, slot, mode, orderWordBefore });
+    if (orderWordBefore)
+        rememberOrderOfCreation(answer, *instance, base, structureBefore, *orderWordBefore);
     instance->state->propertyCaches->cache({ structureBefore, name, accessFor(mode) }, WTF::move(answer));
     ensureStillAliveHere(structureBefore);
 }
@@ -270,22 +274,57 @@ bool canCreateFieldInSlot(VM& vm, const Object& object, const FieldData& field)
     return !(object.orderWord() & orderWordHasFieldOutsideSlot) || !livesInExtraProperties(vm, object, field);
 }
 
+static void rememberClosureAddition(const NamedAccess& access, Structure* structureBefore, uint32_t upperHalfOfWord, const ReifiedSlimClosure& closure)
+{
+    static_assert(ClosureAddition::numberOfInitialValues == initialOutOfLineCapacity);
+    constexpr unsigned numberOfInitialProperties = ClosureAddition::numberOfInitialValues - 1;
+    Structure* structureAfter = closure.structure();
+    bool hasPrototypeProperty = structureAfter->outOfLineCapacity() != initialOutOfLineCapacity;
+    ClosureAddition addition { .upperHalfOfWord = upperHalfOfWord, .name = access.number.value_or(ClosureAddition::hasNoNumber), .structureBefore = structureBefore->id().bits(), .structureAfter = structureAfter->id().bits(), .initialValues = { }, .typeAndFlagsAfter = static_cast<uint16_t>(structureAfter->typeInfo().type() | structureAfter->typeInfo().inlineTypeFlags() << 8), .uid = access.number ? nullptr : access.ident.impl() };
+    for (unsigned i = 0; i < numberOfInitialProperties + hasPrototypeProperty; ++i)
+        addition.initialValues[numberOfInitialProperties - i] = JSValue::encode(closure.getDirect(firstOutOfLineOffset + i));
+    access.caches().remember(addition);
+}
+
 static void putToSlimClosureAndCache(const NamedAccess& access, SlimClosure& closure, JSValue value, PutMode mode)
 {
     VM& vm = *access.instance->vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Structure* structureOfSlimClosures = WTF::opaque(closure.structure());
+    UniquedStringImpl* uid = access.ident.impl();
     Structure* withoutProperty = closure.state().objects->closures.reifiedSlimClosureStructure(vm, closure.function());
-    if (const Slot* filed = access.caches().findByKey(withoutProperty, access.ident.impl(), SlotAccess::Store); filed && filed->kind == Slot::Kind::Transition) {
+    const Slot* filed = access.caches().findByKey(withoutProperty, uid, SlotAccess::Store);
+    if (filed && filed->kind == Slot::Kind::Transition) {
         // As in operationAOTAddPropertyBySlot(): this pointer alone keeps the Structure alive across the allocations of the callee.
-        closure.reifyWithAddedProperty(vm, WTF::opaque(filed->transition.newStructureID.decode()), filed->offsetInStorage(), value);
-        holdClosureToLackingNameSlowCase(vm, &closure, access.ident.impl());
+        Structure* withProperty = WTF::opaque(filed->transition.newStructureID.decode());
+        PropertyOffset offset = filed->offsetInStorage();
+        bool canRemember = structureOfSlimClosures->realm() == access.instance->globalObject && closureAdmitsName(vm, &closure, uid);
+        if (canRemember) {
+            const Slot* filedForSlimClosures = access.caches().findByKey(structureOfSlimClosures, uid, SlotAccess::Store);
+            if (!filedForSlimClosures || filedForSlimClosures->kind != Slot::closureAddition)
+                access.caches().cache({ structureOfSlimClosures, access.name(), accessFor(mode) }, classifyClosureAddition(access.instance->globalObject, &closure, uid));
+        }
+        uint32_t upperHalfOfWord = closure.upperHalfOfWord();
+        ReifiedSlimClosure* reified = closure.reifyWithAddedProperty(vm, withProperty, offset, value);
+        if (canRemember)
+            rememberClosureAddition(access, structureOfSlimClosures, upperHalfOfWord, *reified);
+        else
+            holdClosureToLackingNameSlowCase(vm, reified, uid);
         return;
     }
-    Structure* structureOfSlimClosures = WTF::opaque(closure.structure());
+    bool isFiledAsUncacheable = filed && filed->kind == Slot::Kind::Uncacheable;
     closure.reify(vm);
+    if (isFiledAsUncacheable) {
+        const Slot* filedForSlimClosures = access.caches().findByKey(structureOfSlimClosures, uid, SlotAccess::Store);
+        if (filedForSlimClosures && filedForSlimClosures->kind == Slot::Kind::Uncacheable) {
+            PutPropertySlot slot(&closure, mode != PutMode::Sloppy, PutPropertySlot::PutById);
+            RELEASE_AND_RETURN(scope, void(JSValue(&closure).putInline(access.instance->globalObject, access.ident, value, slot)));
+        }
+    }
     putAndCache(access, &closure, value, mode);
     RETURN_IF_EXCEPTION(scope, void());
-    access.caches().cache({ structureOfSlimClosures, access.name(), accessFor(mode) }, PropertyAnswer::uncacheable(accessFor(mode)));
+    if (access.number || access.caches().shouldFile(structureOfSlimClosures->id(), uid, accessFor(mode)))
+        access.caches().cache({ structureOfSlimClosures, access.name(), accessFor(mode) }, PropertyAnswer::uncacheable(accessFor(mode)));
 }
 
 static bool orderGainedFieldAlone(State& state, const LayoutData& layout, uint32_t orderWordBefore, uint32_t orderWordAfter, const FieldData& field)
@@ -295,6 +334,15 @@ static bool orderGainedFieldAlone(State& state, const LayoutData& layout, uint32
     std::span<const uint16_t> before = state.objects->keyOrders.entriesListedBy(layout, orderWordBefore);
     std::span<const uint16_t> after = state.objects->keyOrders.entriesListedBy(layout, orderWordAfter);
     return std::ranges::equal(before, after.first(before.size())) && after.back() == layout.indexOf(field);
+}
+
+static void rememberOrderOfCreation(PropertyAnswer& answer, Instance& instance, JSObject* base, Structure* structureBefore, uint32_t orderWordBefore)
+{
+    Object* object = answer.kind == PropertyAnswerKind::FieldCreation ? compiledObjectOrNull(base) : nullptr;
+    if (!object || object->structure() != structureBefore || structureBefore->mayBePrototype())
+        return;
+    if (takesAnyValue(*instance.image.tables, object->layout(), *answer.field) && orderGainedFieldAlone(object->state(), object->layout(), orderWordBefore, object->orderWord(), *answer.field))
+        answer.orderWords = std::pair { orderWordBefore, object->orderWord() };
 }
 
 void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode mode)
@@ -364,10 +412,8 @@ void putAndCache(const NamedAccess& access, JSCell* cell, JSValue value, PutMode
     }
 
     PropertyAnswer answer = classifyStore({ globalObject, asObject(cell), structureBefore, uid, slot, mode, object ? std::optional(orderWordBefore) : std::nullopt });
-    if (object && answer.kind == PropertyAnswerKind::FieldCreation) {
-        if (cell->structure() == structureBefore && !structureBefore->mayBePrototype() && takesAnyValue(*access.instance->image.tables, object->layout(), *answer.field) && orderGainedFieldAlone(object->state(), object->layout(), orderWordBefore, object->orderWord(), *answer.field))
-            answer.orderWords = std::pair { orderWordBefore, object->orderWord() };
-    }
+    if (object)
+        rememberOrderOfCreation(answer, *access.instance, object, structureBefore, orderWordBefore);
     access.caches().cache({ structureBefore, access.name(), accessFor(mode) }, answer);
     ensureStillAliveHere(structureBefore);
 }
@@ -484,14 +530,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFillSiteAnswers, void, (Instance* 
     if (!caches.answersAtSites().isDueForFilling(place))
         return;
     LeafOperationScope leaf(*instance->vm);
-    constexpr uint32_t whatStubDoes = stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer | stubAsksForPresence;
-    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~whatStubDoes), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer, use & stubAsksForPresence);
+    constexpr uint32_t whatStubDoes = stubOfSiteFollowsFurtherAnswers | stubJumpsToArmOfAnswer | stubAsksForPresence | stubReadsForOtherReceiver;
+    caches.fillSiteAnswers(place, base, key, static_cast<SiteUse>(use & ~whatStubDoes), use & stubOfSiteFollowsFurtherAnswers, use & stubJumpsToArmOfAnswer, use & stubAsksForPresence, use & stubReadsForOtherReceiver);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTClaimReadGroupRow, void, (Instance* instance, EncodedJSValue base, EncodedJSValue* group, uint32_t numberOfReads))
 {
     LeafOperationScope leaf(*instance->vm);
-    instance->state->propertyCaches->claimAndFillReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group), numberOfReads);
+    instance->state->propertyCaches->claimAndFillReadGroupRow(JSValue::decode(base), *std::bit_cast<ReadGroupCache*>(group), numberOfReads & 0xff, numberOfReads >> 8);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInstanceOfAndCache, size_t, (Instance* instance, EncodedJSValue encodedValue, EncodedJSValue encodedConstructor))
@@ -534,9 +580,10 @@ static bool isPlainObjectBelowNoIndexedProperties(Structure* structure)
     return prototype.isNull() || (realm && prototype == realm->objectPrototype() && realm->objectPrototypeChainIsSane());
 }
 
-static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue property)
+static JSValue getByVal(Instance* instance, JSValue base, JSValue property)
 {
-    VM& vm = globalObject->vm();
+    VM& vm = *instance->vm;
+    JSGlobalObject* globalObject = instance->globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (base.isUndefinedOrNull()) [[unlikely]] {
         throwException(globalObject, scope, createNotAnObjectError(globalObject, base, property));
@@ -557,7 +604,7 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
         }
         RELEASE_AND_RETURN(scope, base.get(globalObject, *index));
     }
-    auto key = property.toPropertyKey(globalObject);
+    auto key = toPropertyKey(instance, property);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, base.get(globalObject, key));
 }
@@ -565,7 +612,7 @@ static JSValue getByVal(JSGlobalObject* globalObject, JSValue base, JSValue prop
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByVal);
-    OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, JSValue::decode(encodedBase), JSValue::decode(encodedProperty))));
+    OPERATION_RETURN(scope, JSValue::encode(getByVal(instance, JSValue::decode(encodedBase), JSValue::decode(encodedProperty))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByValOfPlainList, EncodedJSValue, (Instance* instance, EncodedJSValue encodedList, EncodedJSValue encodedProperty))
@@ -667,7 +714,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReflectSet, size_t, (Instance* instance, En
         OPERATION_RETURN(scope, resultOf(ReflectSetResult::Refused));
     }
     JSObject* target = asObject(value);
-    auto name = property.toPropertyKey(globalObject);
+    auto name = toPropertyKey(instance, property);
     OPERATION_RETURN_IF_EXCEPTION(scope, resultOf(ReflectSetResult::Refused));
     bool convertsWithoutOtherCode = property.isString() || property.isSymbol();
     if (convertsWithoutOtherCode && isOrdinaryReflectSet(globalObject, target, receiver, name)) {
@@ -704,10 +751,6 @@ static std::optional<FixedProperty> findFixedProperty(VM& vm, JSObject* target, 
 {
     if (!key->isString())
         return std::nullopt;
-    StringImpl* impl = const_cast<StringImpl*>(uncheckedDowncast<JSString>(key)->tryGetValueImpl());
-    if (!impl || !impl->isAtom() || parseIndex(*impl))
-        return std::nullopt;
-    auto* name = static_cast<UniquedStringImpl*>(impl);
     JSObject* holder = target;
     if (target->type() == CompiledObjectType) {
         auto* object = uncheckedDowncast<Object>(target);
@@ -716,7 +759,13 @@ static std::optional<FixedProperty> findFixedProperty(VM& vm, JSObject* target, 
         holder = extraPropertiesIfCreated(*object);
         if (!holder)
             return object->hasExtraProperties() ? std::nullopt : std::optional(FixedProperty { });
+        if (!holder->structure()->hasNonConfigurableProperties())
+            return FixedProperty { };
     }
+    StringImpl* impl = const_cast<StringImpl*>(uncheckedDowncast<JSString>(key)->tryGetValueImpl());
+    if (!impl || !impl->isAtom() || parseIndex(*impl))
+        return std::nullopt;
+    auto* name = static_cast<UniquedStringImpl*>(impl);
     Structure* structure = holder->structure();
     if (structure->typeInfo().overridesGetOwnPropertySlot() || structure->typeInfo().hasStaticPropertyTable())
         return std::nullopt;
@@ -805,6 +854,64 @@ JSC_DEFINE_JIT_OPERATION(operationAOTFinishSetThroughProxy, void, (Instance* ins
     OPERATION_RETURN(scope);
 }
 
+static bool isOrdinaryStructureWithoutElements(JSGlobalObject* globalObject, Structure* structure)
+{
+    if (structure->typeInfo().type() != FinalObjectType || structure->indexingType() != NonArray || structure->realm() != globalObject || structure->outOfLineCapacity())
+        return false;
+    if (structure->isCompiledStructure() || structure->isDictionary() || structure->hasPolyProto() || structure->mayBePrototype() || structure->mayInterceptIndexedAccesses() || !structure->isStructureExtensible() || structure->typeInfo().overridesPut())
+        return false;
+    JSValue prototype = structure->storedPrototype();
+    return prototype.isNull() || prototype == JSValue(globalObject->objectPrototype());
+}
+
+static bool mayObjectPrototypeInterceptElements(JSGlobalObject* globalObject)
+{
+    JSObject* prototype = globalObject->objectPrototype();
+    return globalObject->isHavingABadTime() || prototype->structure()->mayInterceptIndexedAccesses() || prototype->hasFrozenElementsInPlace() || JSGlobalObject::isTakenToInterceptIndexedAccesses(prototype);
+}
+
+static bool tryStoreFirstElement(Instance* instance, JSObject* object, uint32_t index, JSValue value)
+{
+    VM& vm = *instance->vm;
+    const VMPropertyCaches& tables = instance->state->propertyCaches->tables();
+    const StructureID before = object->structureID();
+    const bool isDouble = value.isDouble();
+    const IndexingType shape = value.isInt32() ? Int32Shape : isDouble ? DoubleShape : ContiguousShape;
+    if ((isDouble && value.asDouble() != value.asDouble()) || index > FirstElementTransition::maxIndex || object->butterfly() || !tables.structureWithFirstElement(before, shape) || mayObjectPrototypeInterceptElements(instance->globalObject))
+        return false;
+    unsigned vectorLength = Butterfly::optimalContiguousVectorLength(size_t { 0 }, index + 1);
+    Butterfly* butterfly = Butterfly::tryCreateUninitialized(vm, object, 0, 0, true, vectorLength * sizeof(EncodedJSValue));
+    Structure* after = tables.structureWithFirstElement(before, shape);
+    if (!butterfly || !after) [[unlikely]]
+        return false;
+    butterfly->setPublicLength(index + 1);
+    butterfly->setVectorLength(vectorLength);
+    EncodedJSValue hole = isDouble ? std::bit_cast<EncodedJSValue>(PNaN) : JSValue::encode(JSValue());
+    EncodedJSValue element = isDouble ? std::bit_cast<EncodedJSValue>(value.asDouble()) : JSValue::encode(value);
+    auto* elements = reinterpret_cast<EncodedJSValue*>(butterfly);
+    for (unsigned i = 0; i < vectorLength; ++i)
+        elements[i] = hole;
+    elements[index] = element;
+    object->nukeStructureAndSetButterfly(vm, before, butterfly);
+    object->setStructure(vm, after);
+    vm.writeBarrier(object, value);
+    return true;
+}
+
+static NEVER_INLINE void putFirstElement(Instance* instance, JSObject* object, uint32_t index, JSValue value, bool isStrict)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*instance->vm);
+    Structure* before = object->structure();
+    bool isOrdinary = isOrdinaryStructureWithoutElements(globalObject, before);
+    JSValue(object).putByIndex(globalObject, index, value, isStrict);
+    RETURN_IF_EXCEPTION(scope, void());
+    Structure* after = object->structure();
+    if (isOrdinary && (hasInt32(after->indexingType()) || hasDouble(after->indexingType()) || hasContiguous(after->indexingType())) && after->previousID() == before)
+        instance->state->propertyCaches->tables().rememberFirstElement(before->id(), after);
+    ensureStillAliveHere(before);
+}
+
 static void putByVal(Instance* instance, JSValue base, JSValue property, JSValue value, bool isStrict)
 {
     JSGlobalObject* globalObject = instance->globalObject;
@@ -820,12 +927,21 @@ static void putByVal(Instance* instance, JSValue base, JSValue property, JSValue
         if (base.isCell() && base.asCell()->type() == ProxyObjectType && *index < NumericStrings::cacheSize)
             vm.numericStrings.addJSString(vm, static_cast<int>(*index));
         scope.release();
+        if (base.isCell() && base.asCell()->type() == FinalObjectType && !hasIndexedProperties(asObject(base)->indexingType())) {
+            if (!tryStoreFirstElement(instance, asObject(base), *index, value))
+                putFirstElement(instance, asObject(base), *index, value, isStrict);
+            return;
+        }
         if (!base.isObject() || !asObject(base)->trySetIndexQuickly(vm, *index, value))
             base.putByIndex(globalObject, *index, value, isStrict);
         return;
     }
-    auto key = property.toPropertyKey(globalObject);
+    auto key = toPropertyKey(instance, property);
     RETURN_IF_EXCEPTION(scope, void());
+    if (base.isCell() && base.asCell()->type() == SlimClosureType && !parseIndex(*key.impl())) {
+        LookByName look(vm, base, key.impl());
+        RELEASE_AND_RETURN(scope, putAndCache({ instance, key, std::nullopt }, base.asCell(), value, isStrict ? PutMode::Strict : PutMode::Sloppy));
+    }
     if (tryReplaceGlobalProperty(instance, vm, base, key.impl(), value))
         return;
     PutPropertySlot slot(base, isStrict);
@@ -1142,10 +1258,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByValAndCache);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
+    if (auto name = base.isCell() ? nameOfShortArray(instance, property) : std::nullopt) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, *name)));
     if (auto longKeyName = findNameEqualToLongString(base, property)) [[unlikely]]
         OPERATION_RETURN(scope, JSValue::encode(*longKeyName ? asObject(base)->get(globalObject, Identifier::fromUid(vm, *longKeyName)) : jsUndefined()));
     if (!base.isCell())
-        OPERATION_RETURN(scope, JSValue::encode(getByVal(globalObject, base, property)));
+        OPERATION_RETURN(scope, JSValue::encode(getByVal(instance, base, property)));
 
     if (compiledObjectOrNull(property)) [[unlikely]] {
         property = primitiveKeyIfKnown(instance, property);
@@ -1168,7 +1286,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance
                 OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
     }
-    OPERATION_RETURN(scope, JSValue::encode(name ? getFromCellAndCache(instance, base, *name) : getByVal(globalObject, base, property)));
+    OPERATION_RETURN(scope, JSValue::encode(name ? getFromCellAndCache(instance, base, *name) : getByVal(instance, base, property)));
 }
 
 static void putByValAndCache(Instance* instance, JSValue base, JSValue property, JSValue value, PutMode mode)
@@ -1198,6 +1316,10 @@ static void putByValAndCache(Instance* instance, JSValue base, JSValue property,
         RELEASE_AND_RETURN(scope, putByVal(instance, base, property, value, isStrict));
 
     JSObject* object = asObject(base);
+    if (object->type() == SlimClosureType) {
+        LookByName look(vm, base, name->impl());
+        RELEASE_AND_RETURN(scope, putAndCache({ instance, *name, std::nullopt }, object, value, mode));
+    }
     CachedName cachedName { name->impl(), std::nullopt };
     PropertyCaches& caches = *instance->state->propertyCaches;
     bool shouldFile = caches.shouldFile(object->structureID(), name->impl(), accessFor(mode));

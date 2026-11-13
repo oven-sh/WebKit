@@ -770,7 +770,12 @@ static void testWideSubjectsOfLiterals()
         run = testWithObject(wide, withCodeForBothWidths);
         AOT_TEST_CHECK(!run.calledOperation && run.result == JSValue::ValueTrue && matches.script.numberOfCalls == 1 && matches.lastIndex() == bitsOfValue(jsNumber(isGlobal ? 3 : 0)));
         run = testWithObject(wide, withCodeFor8BitSubjectsAlone);
-        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234 && !matches.script.numberOfCalls && matches.lastIndex() == bitsOfValue(jsNumber(0)));
+        AOT_TEST_CHECK(run.calledOperation && !matches.script.numberOfCalls && matches.lastIndex() == bitsOfValue(jsNumber(0)));
+        if (!isGlobal) {
+            AOT_TEST_CHECK(!run.numberOfRecordedCalls && run.result == JSValue::ValueFalse);
+            continue;
+        }
+        AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == 0x1234);
         AOT_TEST_CHECK(run.recordedArguments[0] == matches.regExpObject.address() && run.recordedArguments[1] == wide.address());
     }
 }

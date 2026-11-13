@@ -165,6 +165,10 @@ template<Opcode opcode> static bool buildTypedOperationOf(Walker& walker, const 
         return true;
     if (buildTypedIteration(walker, value) || buildTypedConstruction(walker, value) || buildInstanceOfBuiltin(walker, value, InputsOfTypedOperation(walker, nullptr)))
         return true;
+    if constexpr (opcode == Opcode::StrictEq) {
+        if (buildGuardedStringEquality(walker, walked))
+            return true;
+    }
     if (buildTestAgainstJoinOfTexts(walker, value))
         return true;
     if (buildTypedJoinOfTexts(walker, value))

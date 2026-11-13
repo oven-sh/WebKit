@@ -21,6 +21,7 @@
 
 namespace JSC { namespace AOT {
 
+class Object;
 struct State;
 
 using ChainObjects = Vector<JSObject*, 4>;
@@ -121,6 +122,7 @@ public:
     bool hasDependents(JSObject* object) const { return m_dependentsByObject.contains(object); }
     size_t numberOfDependents(JSObject*) const;
     JSGlobalObject* realm() const;
+    bool areStoresPassedAbove(Object&);
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
@@ -152,8 +154,26 @@ private:
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final;
     ChainDependentOwner& ownerOf(const ChainDependent& dependent) { return *m_owners[static_cast<unsigned>(dependent.owner)]; }
 
+    class StructuresThatPassStores final : public ChainDependentOwner {
+    public:
+        explicit StructuresThatPassStores(ChainDependents& dependents)
+            : m_dependents(dependents)
+        {
+        }
+
+    private:
+        void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final;
+        bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final;
+        bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*, const CreatedMembers&) final;
+        bool readsValuesInPlace() const final { return true; }
+
+        ChainDependents& m_dependents;
+    };
+
     State& m_state;
     Vector<ChainDependentOwner*, 8> m_owners;
+    StructuresThatPassStores m_structuresThatPassStores { *this };
+    ChainDependentOwnerID m_idOfStructuresThatPassStores;
     UncheckedKeyHashSet<StructureID> m_structuresWithState;
     UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
     ObjectsSeen m_objectsWithDependents;
@@ -163,6 +183,7 @@ private:
 };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
+void didSetPrototypeOfChainObject(VM&, JSObject* changed);
 void didReplaceValueOnChainObject(VM&, JSObject* changed, UniquedStringImpl*);
 void startReportingReplacements(VM&, JSObject*);
 enum class StoredName : bool { MayBeSpelledByProgram, IsNotSpelledByProgram };

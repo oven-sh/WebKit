@@ -1,0 +1,57 @@
+# class Base { static count = 0; }  class Heir extends Base { constructor(id) { super(id); this.order = ++new.target.count; } }  globalThis.Heir = Heir; globalThis.made = Heir.count; globalThis.first = Base.count;
+# The body of a module opens no guess. Base.count is read off its variable; Heir.count by name: a guard of the name would make every ++new.target.count slow.
+# RUN: walk f0:Body mechanisms=all
+# CHECK: code f0:Body
+# CHECK-NOT: = AreMembersUnchanged {{*}}side=Static key="count"
+# CHECK: = GetStaticFieldOrAbsent {{*}}key="count"
+# CHECK-NOT: = AreMembersUnchanged {{*}}side=Static key="count"
+
+layout L0 kind=Instance name="Base" module=m0 constructor=f1 staticFields=[{key="count" variable=g2}]
+layout L1 kind=Instance name="Heir" module=m0 base=L0 constructor=f2 fields=[{key="order" declared={type=anything} flags=[IsRequired]}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=1
+variable g0 module=m0 declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 module=m0 declared={type=f2 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 name="count" module=m0 declared={type=anything} owner=L0
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClass v0 layout=L0
+    PutModuleVariable v1 variable=g0
+    v3 = FinishClass v1 layout=L0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]}
+    v5 = Integer
+    PropDefine v4, v5 key="count"
+    v7 = ResolveHeritage v4
+    v8 = NewClosure function=f2
+    v9 = NewClass v8, v4, v7 layout=L1
+    PutModuleVariable v9 variable=g1
+    v11 = FinishClass v9 layout=L1
+    v12 = Convert v11 declared={type=f2 flags=[IsFromCompiler]}
+    v13 = Builtin builtin=GlobalThis
+    PropSet v13, v12 key="Heir"
+    v15 = PropGet v12 key="count"
+    PropSet v13, v15 key="made"
+    v17 = PropGet v4 key="count"
+    PropSet v13, v17 key="first"
+    v19 = Undefined
+    Return v19
+}
+function f1 name="Base" module=m0 kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0
+    v3 = NewObject v2 layout=L0
+    v4 = Convert v3 declared={type=L0}
+    Return v4
+}
+function f2 name="Heir" module=m0 kind=DerivedConstructor flags=[HasNewTarget, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: anything):
+    v3 = GetSuperBase v0
+    v4 = SuperConstruct v3, v1, v2 layout=L1
+    v5 = Convert v4 declared={type=L1}
+    v6 = PropGet v1 key="count"
+    v7 = Increment v6
+    PropSet v1, v7 key="count"
+    PropSet v5, v7 key="order"
+    Return v5
+}

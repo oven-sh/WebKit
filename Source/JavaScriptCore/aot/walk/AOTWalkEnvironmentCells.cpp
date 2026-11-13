@@ -269,6 +269,36 @@ Reference Walker::carriedResultOf(const WalkState& state, Reference headerParame
     return noted ? Reference::fromBits(static_cast<uint32_t>(*noted)) : headerParameter;
 }
 
+void Walker::findCarriedFieldsThatMeet(const OpenLoop& loop, std::span<const WalkState* const> states, Vector<FieldOfScope, 4>& found)
+{
+    const Vector<CarriedResult>& requests = m_carriedResultRequests.find(loop.carriedResultsSummary)->value;
+    Vector<Representation, 4> forms;
+    for (const OpenLoop::CarriedField& carried : loop.carriedFields) {
+        const CarriedResult& request = requests[carried.slot];
+        if (!carried.object || request.staticField)
+            continue;
+        FieldOfScope field { carried.object, request.field, TypeID(), Representation::JSValue, { }, { }, { } };
+        field.slotKey = request.fieldKey;
+        bool allBringOneValue = true;
+        forms.shrink(0);
+        for (const WalkState* state : states) {
+            Reference value = state->slot(carried.object, request.field);
+            TypeID type = value && value.isRecord() ? ownTypeOf(value) : TypeID();
+            if (!type || !m_types.at(type).isNumber())
+                break;
+            allBringOneValue &= field.values.isEmpty() || value == field.values[0];
+            field.type = field.type ? joinTypes(field.type, type) : type;
+            field.values.append(value);
+            forms.append(representationOf(value));
+        }
+        if (allBringOneValue || field.values.size() < states.size())
+            continue;
+        field.form = formOfParameter(field.type, forms.span());
+        found.append(WTF::move(field));
+        count(StatisticID::CarriedSlotsMergedAtJoins);
+    }
+}
+
 void Walker::findCarriedResultsThatMeet(std::span<const WalkState* const> states, Vector<FieldOfScope, 4>& found)
 {
     Vector<Representation, 4> forms;
@@ -277,6 +307,7 @@ void Walker::findCarriedResultsThatMeet(std::span<const WalkState* const> states
             continue;
         std::span<const ValueID> parameters = m_code.at(loop.head).parameters();
         parameters = parameters.last(std::min<size_t>(loop.carriedResultCount, parameters.size()));
+        findCarriedFieldsThatMeet(loop, states, found);
         for (uint32_t slot = 0; slot < parameters.size(); ++slot) {
             FieldOfScope field;
             field.carriedResult = Reference::value(parameters[slot]);
@@ -302,7 +333,70 @@ void Walker::findCarriedResultsThatMeet(std::span<const WalkState* const> states
     }
 }
 
-void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states, Vector<FieldOfScope, 4>& found)
+void Walker::forEachStoredElementThatMeets(std::span<const WalkState* const> states, NOESCAPE const Invocable<void(Reference holder, Reference key, std::span<const Reference> values)> auto& functor)
+{
+    auto behindNarrowing = [&](Reference name) -> Reference {
+        const Operation& operation = m_code.at(name.id());
+        if (operation.opcode != Opcode::Narrowed || operation.narrowsHolderOfOperand() || operation.narrowsOtherResultOfOperand() || m_code.isConstant(operation.operand(0)))
+            return { };
+        return Reference::value(operation.operand(0));
+    };
+    auto narrowestNameOfBoth = [&](Reference first, Reference second) {
+        while (first != second) {
+            Reference& later = first.id().index() > second.id().index() ? first : second;
+            later = behindNarrowing(later);
+            if (!later)
+                return Reference();
+        }
+        return first;
+    };
+    struct NamedElement {
+        uint32_t root;
+        Reference key;
+        Reference value;
+    };
+    auto listElementsOf = [&](const WalkState& state, Reference holder) {
+        Vector<NamedElement, 4> elements;
+        if (state.isFresh(holder))
+            return elements;
+        for (auto [key, value] : state.listElementsOf(holder)) {
+            TypeID type = key.isValue() && !m_code.isConstant(key.id()) ? ownTypeOf(value) : TypeID();
+            if (!type || !m_types.at(type).isNumber())
+                continue;
+            Reference root = key;
+            while (Reference behind = behindNarrowing(root))
+                root = behind;
+            elements.append({ root.id().index(), key, value });
+        }
+        std::ranges::sort(elements, { }, &NamedElement::root);
+        return elements;
+    };
+    Vector<Reference, 4> holders;
+    states[0]->forEachHolderOfElementsNotSharedWithAll(states, [&](Reference holder) { holders.append(holder); });
+    for (Reference holder : holders) {
+        Vector<Vector<NamedElement, 4>, 4> elements;
+        for (const WalkState* state : states)
+            elements.append(listElementsOf(*state, holder));
+        uint32_t rootBefore = std::numeric_limits<uint32_t>::max();
+        for (const NamedElement& first : elements[0]) {
+            if (std::exchange(rootBefore, first.root) == first.root)
+                continue;
+            Reference common = first.key;
+            Vector<Reference, 4> values { first.value };
+            for (const auto& others : elements.span().subspan(1)) {
+                auto other = std::ranges::lower_bound(others, first.root, { }, &NamedElement::root);
+                if (other == others.end() || other->root != first.root)
+                    break;
+                common = narrowestNameOfBoth(common, other->key);
+                values.append(other->value);
+            }
+            if (values.size() == states.size())
+                functor(holder, common, values.span());
+        }
+    }
+}
+
+void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states, Vector<FieldOfScope, 4>& found, bool mayMergeElements)
 {
     if (states.size() < 2)
         return;
@@ -319,7 +413,7 @@ void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states
     bool meetsUnmadeRecords = mayMeetUnmadeRecords(*states[0]) && std::ranges::any_of(states.subspan(1), [&](const WalkState* state) {
         return state->newestStoreIntoUnmadeRecord() != states[0]->newestStoreIntoUnmadeRecord();
     });
-    if (fieldsOfOpenLoops.isEmpty() && !unitHasMadeScopes() && !meetsUnmadeRecords)
+    if (fieldsOfOpenLoops.isEmpty() && !unitHasMadeScopes() && !meetsUnmadeRecords && !mayMergeElements)
         return;
     auto isFilledOnEveryWay = [&](Reference holder, FieldReference place) {
         if (!holder.isValue() || m_code.isConstant(holder.id()) || m_code.at(holder.id()).opcode != Opcode::NewObject || m_code.at(holder.id()).layout() != place.layout || isEnvironmentAllocation(holder))
@@ -357,6 +451,16 @@ void Walker::findFieldsOfScopesThatMeet(std::span<const WalkState* const> states
         found.append(WTF::move(field));
         return true;
     };
+    if (mayMergeElements) {
+        forEachStoredElementThatMeets(states, [&](Reference holder, Reference key, std::span<const Reference> values) {
+            FieldOfScope field;
+            field.scope = holder;
+            field.element = key;
+            size_t way = 0;
+            if (meetInParameter(WTF::move(field), [&](const WalkState&) { return values[way++]; }))
+                count(StatisticID::StoredElementsMergedAtJoins);
+        });
+    }
     for (const Vector<FieldOfScope>* fields : fieldsOfOpenLoops) {
         for (const FieldOfScope& carried : *fields) {
             if (!carried.variable || found.containsIf([&](const FieldOfScope& other) { return other.variable == carried.variable; }))
@@ -557,7 +661,7 @@ bool Walker::learnSlotsOfObjectsThatComeRound(LoopSummary& summary, const TrialV
     BodyBlock head = index.block(visit.inputHead);
     Vector<SlotOfLoop, 2>& slots = summary.storesIntoScopes.slots;
     auto learn = [&](ValueID holder, PropertyKeyID key) {
-        auto place = std::ranges::lower_bound(slots, std::pair { holder, key.bits() }, { }, &SlotOfLoop::order);
+        auto place = std::ranges::lower_bound(slots, std::tuple { holder, VariableID(), 0u, key.bits() }, { }, &SlotOfLoop::order);
         if (place != slots.end() && place->holder == holder && place->key == key)
             return false;
         slots.insert(place - slots.begin(), SlotOfLoop { holder, key });
@@ -618,8 +722,22 @@ static ValueID checkedConstantVariable(const Program& program, const Code& code,
     return cell;
 }
 
+void Walker::noteSlotReadOnEveryIteration(Reference object, Reference read)
+{
+    std::optional<uint32_t> place = m_trialVisits.isEmpty() || !read.isValue() || !object.isValue() || !has(Mechanism::LoopInvariants) ? std::nullopt : innermostOpenLoop();
+    ValueID held = place ? underlyingCellOf(m_code, read.id()) : ValueID();
+    if (held && !m_code.isConstant(held) && held.index() >= m_openLoops[*place].firstRecord && isInvariantInLoop(*place, object) && executesOnEveryIteration(*place, currentHoistPoint()))
+        m_trialVisits.last().slotsReadOnEveryIteration.append(held);
+}
+
+bool isConstantOfFile(const Program& program, const Code& code, ValueID object)
+{
+    return !!checkedConstantVariable(program, code, underlyingCellOf(code, object));
+}
+
 void Walker::noteSlotRead(Reference object, PropertyKeyID key, Reference read)
 {
+    noteSlotReadOnEveryIteration(object, read);
     if (ValueID holder = !m_trialVisits.isEmpty() && object.isValue() && !m_code.isConstant(object.id()) ? underlyingCellOf(m_code, object.id()) : ValueID(); holder && !m_code.isConstant(holder) && m_code.at(holder).opcode == Opcode::Parameter)
         noteSlotOfParameter(holder, key);
     TypeID type = m_trialVisits.isEmpty() || !object.isValue() ? TypeID() : ownTypeOf(read);
@@ -685,6 +803,30 @@ void Walker::notePositions(const BodyValue& operation)
         note(argument, methodsWeight);
 }
 
+static bool isComputedFromInWalk(const Code& code, Reference stored, Reference before)
+{
+    if (!before || !before.isValue() || !stored.isValue() || code.isConstant(stored.id()))
+        return false;
+    static constexpr OpcodeSet operators = allBitwiseOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub, Opcode::Mul };
+    const Operation& made = code.at(underlyingCellOf(code, stored.id()));
+    if (!operators.contains(made.opcode))
+        return false;
+    ValueID held = underlyingCellOf(code, before.id());
+    return std::ranges::any_of(made.operands(), [&](ValueID operand) {
+        ValueID term = operand ? underlyingCellOf(code, operand) : ValueID();
+        if (term && !code.isConstant(term) && code.at(term).opcode == Opcode::ToInt32)
+            term = underlyingCellOf(code, code.at(term).operand(0));
+        return term == held;
+    });
+}
+
+static Reference objectOfVariableInWalk(Walker& walker, VariableID variable)
+{
+    if (Reference held = walker.state().variable(variable))
+        return held;
+    return valueOfStableVariable(walker, variable, walker.positions().variable(TypeLevel::Proven, variable));
+}
+
 void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before, Reference stored, bool isFirstFill)
 {
     TypeID type = m_trialVisits.isEmpty() || !object.isValue() || !stored.isValue() ? TypeID() : ownTypeOf(stored);
@@ -717,6 +859,7 @@ void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before
     std::optional<bool> staysInt32;
     bool stepsByOne = isStep({ Opcode::Increment, Opcode::Decrement });
     bool isStepUp = isStep({ Opcode::Increment });
+    bool isComputedFromItself = isComputedFromInWalk(m_code, stored, before);
     for (size_t place = m_trialVisits.size(); place--;) {
         TrialVisit& visit = m_trialVisits[place];
         if (cell.index() >= visit.firstRecord) {
@@ -727,8 +870,104 @@ void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before
         if (!staysInt32)
             staysInt32 = isInt32(type) || isSumWithInt32();
         visit.slotAccesses.append(SlotAccess { cell, key, before && before.isValue() ? underlyingCellOf(m_code, before.id()) : ValueID(), underlyingCellOf(m_code, stored.id()), *staysInt32, stepsByOne, isStepUp, isFirstFill });
+        visit.slotAccesses.last().isComputedFromItself = isComputedFromItself;
         visit.slotAccesses.last().isInInnerLoop = m_openLoops.isEmpty() || m_openLoops.last().frame != visit.frameIndex || m_frames[visit.frameIndex].index->loop(m_openLoops.last().loop).head != visit.inputHead;
     }
+}
+
+void Walker::noteUnfilledSlot(Reference object, PropertyKeyID key)
+{
+    std::pair<ValueID, PropertyKeyID> slot { underlyingCellOf(m_code, object.id()), key };
+    for (TrialVisit& visit : m_trialVisits) {
+        if (!visit.unfilledSlots.contains(slot))
+            visit.unfilledSlots.append(slot);
+    }
+}
+
+void Walker::recordUnfilledSlots(LoopSummary& summary, const TrialVisit& visit)
+{
+    if (visit.unfilledSlots.isEmpty())
+        return;
+    const BodyIndex& index = *m_frames[visit.frameIndex].index;
+    uint32_t firstValueOfLoop = index.block(visit.inputHead).firstParameter().index();
+    HashMap<uint32_t, ValueID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holders;
+    for (BlockID member : index.membersOf(index.loopOf(visit.inputHead))) {
+        for (BodyValue operation : index.block(member).values()) {
+            operation.forEachOperand([&](ValueID operand, uint32_t) {
+                ValueID holder = operand ? index.stripCasts(operand) : ValueID();
+                Reference named = holder && holder.index() < firstValueOfLoop ? m_frames[visit.frameIndex].references[holder.index()] : Reference();
+                if (named && named.isValue() && !m_code.isConstant(named.id()))
+                    holders.add(underlyingCellOf(m_code, named.id()).index(), holder);
+            });
+        }
+    }
+    for (auto [cell, key] : visit.unfilledSlots) {
+        UnfilledSlotOfLoop slot;
+        slot.key = key;
+        if (cell.index() >= visit.firstRecord) {
+            if (m_code.isConstant(cell) || m_code.at(cell).opcode != Opcode::GetSlot || m_code.isConstant(m_code.at(cell).objectOperand()))
+                continue;
+            slot.holderKey = m_code.at(cell).key();
+            cell = underlyingCellOf(m_code, m_code.at(cell).objectOperand());
+        }
+        auto found = holders.find(cell.index());
+        if (found == holders.end())
+            continue;
+        slot.holder = found->value;
+        if (!summary.storesIntoScopes.unfilledSlots.contains(slot))
+            summary.storesIntoScopes.unfilledSlots.append(slot);
+    }
+}
+
+bool Walker::mayTestUnfilledSlot(const UnfilledSlotOfLoop& slot, const Effects& ofIterations)
+{
+    Reference holder = referenceOf(slot.holder);
+    if (!holder || !holder.isValue() || m_code.isConstant(holder.id()))
+        return false;
+    if (!slot.holderKey)
+        return !findFilledSlotOf(*this, holder, slot.key) && slotStaysFilled(*this, typeOf(holder), slot.key);
+    std::optional<FilledSlot> filled = findFilledSlotOf(*this, holder, slot.holderKey);
+    LocationMasks stores;
+    stores.add(program(), MemoryLocation::objectField(slot.holderKey));
+    if (!filled || ofIterations.writes.overlaps(stores))
+        return false;
+    FieldOfScope read { holder, filled->place, TypeID(), Representation::JSValue, { }, { }, { } };
+    read.slotKey = slot.holderKey;
+    read.receivers = filled->receivers;
+    Reference held = m_state.slot(holder, filled->place);
+    TypeID type = held && held.isRecord() ? typeOf(held) : resultTypeOf(draftVariableRead(read));
+    return type && (!held || !findKnown(*this, KnownNote::FilledSlot, held, { }, slot.key.bits())) && slotStaysFilled(*this, type, slot.key);
+}
+
+bool Walker::testUnfilledSlot(const UnfilledSlotOfLoop& slot, const ScopedLambda<BlockID()>& empty)
+{
+    Reference object = referenceOf(slot.holder);
+    if (slot.holderKey) {
+        std::optional<FilledSlot> filled = findFilledSlotOf(*this, object, slot.holderKey);
+        if (!filled)
+            return false;
+        Reference held = m_state.slot(object, filled->place);
+        if (!held || !held.isValue()) {
+            FieldOfScope read { object, filled->place, TypeID(), Representation::JSValue, { }, { }, { } };
+            read.slotKey = slot.holderKey;
+            read.receivers = filled->receivers;
+            held = build(draftReadBeforeHeader(read, ReadBeforeHeaderUse::GuardOperand));
+            if (!held || !held.isValue() || m_hasFailed || isUnreachable())
+                return false;
+            m_state.noteSlot(object, filled->place, held);
+        }
+        object = held;
+    }
+    if (!slotStaysFilled(*this, typeOf(object), slot.key))
+        return false;
+    Reference isFilled = buildTestOfFilledSlot(*this, object, slot.key, m_origin);
+    if (!isFilled || !isFilled.isValue() || m_hasFailed || isUnreachable())
+        return false;
+    BlockID passed = addBlock();
+    branch(isFilled, passed, empty());
+    continueIn(passed);
+    noteFilledSlot(*this, object, slot.key);
+    return true;
 }
 
 static bool readsConstantOfFile(const Program& program, const BodyValue& operation)
@@ -791,9 +1030,22 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
         }
     };
     bool hasLearnedMore = false;
+    bool isInnermost = index.loop(index.loopOf(visit.inputHead)).numberOfLoopsWithin == 1;
+    std::optional<bool> calls;
+    auto callsOnUsualWay = [&] {
+        if (!calls) {
+            calls = false;
+            for (uint32_t record = visit.firstRecord; !*calls && record < m_code.numberOfValues(); ++record) {
+                const Operation& operation = m_code.at(ValueID(record));
+                calls = operation.block() && operation.traits().mayCollect() && operation.opcode != Opcode::LoopHint && resultRuleOf(operation.opcode) != ResultRule::Allocation && m_code.at(operation.block()).frequency == BlockFrequency::Normal;
+            }
+        }
+        return *calls;
+    };
     for (size_t first = 0; first < accesses.size();) {
         size_t end = first;
         bool isStored = false;
+        bool isComputedFromItself = false;
         Vector<ValueID, 8> values;
         bool staysInt32 = true;
         bool isSteppedByOne = true;
@@ -803,6 +1055,7 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
         bool isSteppedInInnerLoop = false;
         while (end < accesses.size() && accesses[end].object == accesses[first].object && accesses[end].key == accesses[first].key) {
             isStored |= !!accesses[end].stored;
+            isComputedFromItself |= accesses[end].isComputedFromItself;
             for (ValueID value : { accesses[end].before, accesses[end].stored }) {
                 if (value)
                     values.append(value);
@@ -829,10 +1082,18 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
             continue;
         nameHolders();
         auto found = holders.find(access.object.index());
-        if (found == holders.end())
-            continue;
-        auto place = std::ranges::lower_bound(slots, std::pair { found->value, access.key.bits() }, { }, &SlotOfLoop::order);
-        if (place != slots.end() && place->holder == found->value && place->key == access.key) {
+        VariableID holderVariable;
+        Reference nameOfObject;
+        if (found == holders.end()) {
+            auto named = std::ranges::find(visit.objectsOfVariables, access.object, &TrialVisit::ObjectOfVariable::object);
+            if (named == visit.objectsOfVariables.end() || isFilledOnce)
+                continue;
+            holderVariable = named->variable;
+            nameOfObject = named->name;
+        }
+        ValueID holder = holderVariable ? ValueID() : found->value;
+        auto place = std::ranges::lower_bound(slots, std::tuple { holder, holderVariable, 0u, access.key.bits() }, { }, &SlotOfLoop::order);
+        if (place != slots.end() && place->holder == holder && place->holderVariable == holderVariable && place->key == access.key) {
             place->isInt32Position = isInt32Position;
             place->isPosition = weight;
             place->isSteppedByOne = isSteppedByOne && weight < methodsWeight;
@@ -841,14 +1102,17 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
             continue;
         }
         if (isFilledOnce) {
-            slots.insert(place - slots.begin(), SlotOfLoop { .holder = found->value, .key = access.key, .isFilledOnce = true });
+            slots.insert(place - slots.begin(), SlotOfLoop { .holder = holder, .key = access.key, .isFilledOnce = true });
             continue;
         }
-        if ((!isRead && !isSteppedByOne) || !findFilledSlot(*this, typeOfHolder(found->value), access.key))
+        Reference object = holderVariable ? nameOfObject : m_frames[visit.frameIndex].references[holder.index()];
+        bool isReadByItsStores = isSteppedByOne || (isInnermost && isComputedFromItself && specializesLoop(visit.frameIndex, visit.inputHead));
+        bool mayComeRound = isRead || (isSteppedByOne && !holderVariable) || (isReadByItsStores && !callsOnUsualWay());
+        if (!mayComeRound || !object || !object.isRecord() || !findFilledSlotOf(*this, object, access.key))
             continue;
-        slots.insert(place - slots.begin(), SlotOfLoop { found->value, access.key, isInt32Position, !!weight, false, isSteppedByOne && weight < methodsWeight, onlyGrows });
+        slots.insert(place - slots.begin(), SlotOfLoop { holder, access.key, isInt32Position, !!weight, false, isSteppedByOne && weight < methodsWeight, onlyGrows, false, Range::empty(), false, false, { }, { }, { }, holderVariable });
         if (isInt32Position && isSteppedByOne && !isSteppedInInnerLoop && specializesLoop(visit.frameIndex, visit.inputHead))
-            slots[slots.findIf([&](const SlotOfLoop& slot) { return slot.holder == found->value && slot.key == access.key; })].stepsOfTurn = steps;
+            slots[slots.findIf([&](const SlotOfLoop& slot) { return slot.holder == holder && slot.holderVariable == holderVariable && slot.key == access.key; })].stepsOfTurn = steps;
         hasLearnedMore = true;
     }
     return hasLearnedMore;
@@ -881,20 +1145,7 @@ static bool incrementsSlotInWalk(const Code& code, const Draft& store, Reference
 
 static bool computesPlaceFromItself(const Code& code, const Draft& store, Reference before)
 {
-    Reference stored = store.valueOperand();
-    if (!before || !before.isValue() || !stored.isValue() || code.isConstant(stored.id()))
-        return false;
-    static constexpr OpcodeSet operators = allBitwiseOperators | OpcodeSet { Opcode::Increment, Opcode::Decrement, Opcode::Add, Opcode::Sub, Opcode::Mul };
-    const Operation& made = code.at(underlyingCellOf(code, stored.id()));
-    if (!operators.contains(made.opcode))
-        return false;
-    ValueID held = underlyingCellOf(code, before.id());
-    return std::ranges::any_of(made.operands(), [&](ValueID operand) {
-        ValueID term = operand ? underlyingCellOf(code, operand) : ValueID();
-        if (term && !code.isConstant(term) && code.at(term).opcode == Opcode::ToInt32)
-            term = underlyingCellOf(code, code.at(term).operand(0));
-        return term == held;
-    });
+    return isComputedFromInWalk(code, store.valueOperand(), before);
 }
 
 void Walker::noteAccessByCopy(const Draft& draft)
@@ -906,13 +1157,24 @@ void Walker::noteAccessByCopy(const Draft& draft)
     else
         place.field = { draft.layout(), draft.field() };
     bool mayComeRound = place.variable ? !plan().promotedEnvironments().find(place.variable) && !isVariableFilledAtFirstRead(plan(), place.variable) && !plan().deferredDefinitions().findDeferred(place.variable)
-        : plan().promotedEnvironments().isPromoted(place.field.layout) && place.field.field < SlotOfLoop::mostFieldsOfScope;
+        : place.field.field < SlotOfLoop::mostFieldsOfScope;
     if (!mayComeRound)
         return;
+    if (!place.variable && !plan().promotedEnvironments().isPromoted(place.field.layout)) {
+        Reference environment = draft.environmentOperand();
+        place.scope = environment && environment.isValue() && !m_code.isConstant(environment.id()) ? referenceTo(underlyingCellOf(m_code, environment.id())) : Reference();
+        if (!place.scope || !place.scope.isValue() || m_code.isConstant(place.scope.id()))
+            return;
+    }
     if (isStore) {
         Reference before = place.variable ? m_state.variable(place.variable) : m_state.environmentField(draft.environmentOperand(), place.field);
         place.isSteppedByOne = incrementsSlotInWalk(m_code, draft, before);
-        place.isComputedFromItself = place.variable && computesPlaceFromItself(m_code, draft, before);
+        auto mayLackNumber = [&] {
+            Type type = m_types.at(typeOf(before));
+            bool holdsNumberOrUndefined = !type.hasObjects() && !(type.primitives & ~(Primitive::Number | Primitive::Undefined));
+            return (type.primitives & (Primitive::UndefinedOrNull | Primitive::Absent)) && !(holdsNumberOrUndefined && place.variable && m_types.at(typeOf(draft.valueOperand())).isNumber());
+        };
+        place.isComputedFromItself = place.scope ? computesPlaceFromItself(m_code, draft, before) : place.variable && (computesPlaceFromItself(m_code, draft, before) || (before && before.isValue() && !m_code.isConstant(before.id()) && !mayLackNumber()));
     }
     size_t openLoop = m_openLoops.size();
     for (size_t number = m_trialVisits.size(); number--;) {
@@ -921,7 +1183,7 @@ void Walker::noteAccessByCopy(const Draft& draft)
             --openLoop;
         if (!openLoop)
             return;
-        if (visit.frameIndex + 1 >= m_frames.size())
+        if (visit.frameIndex + 1 >= m_frames.size() || (place.scope && place.scope.id().index() >= visit.firstRecord))
             continue;
         Vector<SlotOfLoop>& places = isStore ? visit.placesStoredByCopies : visit.placesReadByCopies;
         if (SlotOfLoop* listed = findPlaceInWalk(places, place)) {
@@ -930,6 +1192,16 @@ void Walker::noteAccessByCopy(const Draft& draft)
         } else if (isStore || executesOnEveryIteration(openLoop - 1, currentHoistPoint()))
             places.append(place);
     }
+}
+
+void Walker::noteVariableReadByCopy(VariableID variable, Reference held)
+{
+    if (m_trialVisits.isEmpty() || !held.isValue() || m_code.isConstant(held.id()) || m_trialVisits.last().frameIndex + 1 >= m_frames.size() || !m_types.at(typeOf(held)).isObject())
+        return;
+    ValueID object = underlyingCellOf(m_code, held.id());
+    Vector<TrialVisit::ObjectOfVariable, 2>& objects = m_trialVisits.last().objectsOfVariables;
+    if (object.index() < m_trialVisits.last().firstRecord && std::ranges::find(objects, object, &TrialVisit::ObjectOfVariable::object) == objects.end())
+        objects.append({ object, variable, held });
 }
 
 void Walker::noteScopeAllocatedBefore(TypeID scope, uint32_t loop)
@@ -945,17 +1217,19 @@ void Walker::noteScopeAllocatedBefore(TypeID scope, uint32_t loop)
     }
 }
 
-bool Walker::recordSlotsStoredByCopies(LoopSummary& summary, TrialVisit& visit)
+bool Walker::recordSlotsStoredByCopies(LoopSummary& summary, TrialVisit& visit, bool isWalkedAgainAtOnce)
 {
     bool hasLearnedMore = false;
     Vector<SlotOfLoop, 2>& slots = summary.storesIntoScopes.slots;
     const BodyIndex& index = *m_frames[visit.frameIndex].index;
     bool isInnermost = index.loop(index.loopOf(visit.inputHead)).numberOfLoopsWithin == 1;
     for (SlotOfLoop stored : visit.placesStoredByCopies) {
-        bool isReadByItsStores = isInnermost && stored.isComputedFromItself && specializesLoop(visit.frameIndex, visit.inputHead);
+        if (stored.scope && !isWalkedAgainAtOnce)
+            continue;
+        bool isReadByItsStores = isInnermost && stored.isComputedFromItself && (stored.scope || specializesLoop(visit.frameIndex, visit.inputHead));
         if (!isReadByItsStores && !findPlaceInWalk(visit.placesReadByCopies, stored))
             continue;
-        if (!stored.variable) {
+        if (!stored.variable && !stored.scope) {
             size_t scope = visit.scopesAllocatedBeforeLoop.findIf([&](TypeID type) { return m_types.at(type).environment == stored.field.layout; });
             if (scope == notFound)
                 continue;
@@ -984,24 +1258,32 @@ void Walker::findSlotsStoredByCopies(std::span<const SlotOfLoop> slots, const Ef
         found.field = slot.field;
         found.isSteppedByOne = slot.isSteppedByOne;
         found.isSteppedOrAddedTo = slot.isSteppedByOne;
+        found.isComputedFromItself = slot.isComputedFromItself;
         if (!slot.variable)
-            found.scope = unspecifiedConstant(slot.typeOfScope);
+            found.scope = slot.scope ? slot.scope : unspecifiedConstant(slot.typeOfScope);
+        bool isListed = slot.scope && known.containsIf([&](const FieldOfScope& other) { return !other.slotKey && other.scope == found.scope && other.field == found.field; });
+        if (isListed)
+            continue;
         if (shouldReadBeforeHeader && isUnreachable())
             return;
         TypeID type = resultTypeOf(draftVariableRead(found));
         if (!type || (m_types.at(type).primitives & Primitive::Absent))
             continue;
-        bool isTestedInFront = !shouldReadBeforeHeader && slot.variable && (slot.isSteppedByOne || (m_types.at(type).isNumber() && mayBeInDeadZone(found)));
+        bool holdsBoxedNumbers = slot.variable && facts().linked().variablesCutToInt32.quickGet(slot.variable.index()) && plan().variable(slot.variable).representation == SlotRepresentation::JSValue;
+        found.isComputedFromItself &= !holdsBoxedNumbers || m_types.isSubset(m_types.intersectionOf(type, TypeTable::number), TypeTable::int32);
+        if (slot.scope && m_state.isFresh(slot.scope))
+            found.isComputedFromItself = false;
+        bool isTestedInFront = !shouldReadBeforeHeader && slot.variable && (slot.isSteppedByOne || (m_types.at(type).isNumber() && mayBeInDeadZone(found)) || (found.isComputedFromItself && m_types.overlap(type, TypeTable::number)));
         Draft read = draftReadBeforeHeader(found, ReadBeforeHeaderUse::LoopCarriedValue);
         if (!slot.variable)
             read.setIsKnownInitialized(false);
         if (TypeID typeReadAgain = resultTypeOf(read); !isTestedInFront && (!typeReadAgain || !m_types.isSubset(typeReadAgain, type)))
             continue;
         Reference value = valueKnownOf(found);
-        bool isReadByItsStores = !value && slot.isComputedFromItself && m_state.isPastDeadZone(slot.variable);
+        bool isReadByItsStores = !value && found.isComputedFromItself && m_state.isPastDeadZone(slot.variable);
         if (!value && slot.variable && !isTestedInFront && !isReadByItsStores)
             continue;
-        if (isReadByItsStores && shouldReadBeforeHeader)
+        if ((isReadByItsStores || (value && found.isComputedFromItself)) && shouldReadBeforeHeader)
             count(StatisticID::CopiedVariablesCarried);
         if (!value && shouldReadBeforeHeader)
             value = build(WTF::move(read));
@@ -1014,14 +1296,13 @@ void Walker::findSlotsStoredByCopies(std::span<const SlotOfLoop> slots, const Ef
 void Walker::findLoopSlots(std::span<const SlotOfLoop> slots, uint32_t firstValueOfLoop, Vector<FieldOfScope, 4>& known, bool shouldReadBeforeHeader)
 {
     for (const SlotOfLoop& slot : slots) {
-        if (!slot.holder || slot.isFilledOnce)
+        if ((!slot.holder && !slot.holderVariable) || slot.isFilledOnce)
             continue;
-        const BodyIndex& index = currentBodyIndex();
-        bool isConstantOfFile = slot.holder.index() >= firstValueOfLoop && !index.isParameter(slot.holder) && readsConstantOfFile(program(), index.value(slot.holder));
-        if (slot.holder.index() >= firstValueOfLoop && !isConstantOfFile)
+        VariableID constant = variableOfSlotHolder(slot, firstValueOfLoop);
+        if (!constant && slot.holder.index() >= firstValueOfLoop)
             continue;
-        Reference object = isConstantOfFile ? m_state.variable(index.value(slot.holder).variable()) : referenceOf(slot.holder);
-        std::optional<FilledSlot> filled = object && object.isRecord() ? findFilledSlot(*this, typeOf(object), slot.key) : std::nullopt;
+        Reference object = constant ? objectOfVariableInWalk(*this, constant) : referenceOf(slot.holder);
+        std::optional<FilledSlot> filled = object && object.isRecord() ? findFilledSlotOf(*this, object, slot.key) : std::nullopt;
         if (!filled)
             continue;
         FieldOfScope found { object, filled->place, TypeID(), Representation::JSValue, { }, { }, { } };
@@ -1029,6 +1310,7 @@ void Walker::findLoopSlots(std::span<const SlotOfLoop> slots, uint32_t firstValu
         found.receivers = filled->receivers;
         found.slotIsInt32Position = slot.isInt32Position;
         found.slotHolder = slot.holder;
+        found.slotHolderVariable = slot.holderVariable;
         found.slotIsSteppedByOne = slot.isSteppedByOne;
         found.slotOnlyGrows = slot.onlyGrows;
         if (!slot.hasUnknownSteps)
@@ -1055,6 +1337,8 @@ bool Walker::isFilledOnceInLoop(const SlotOfLoop& slot)
 
 VariableID Walker::variableOfSlotHolder(const SlotOfLoop& slot, uint32_t firstValueOfLoop) const
 {
+    if (slot.holderVariable)
+        return slot.holderVariable;
     const BodyIndex& index = currentBodyIndex();
     return slot.holder.index() >= firstValueOfLoop && !index.isParameter(slot.holder) && readsConstantOfFile(program(), index.value(slot.holder)) ? index.value(slot.holder).variable() : VariableID();
 }
@@ -1746,7 +2030,7 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
         Reference value = fitForParameterOfField(field, valueCarriedByLoop(field, arguments.span()));
         if (TrialVisit* visit = !value && field.startsAsInteger ? findTryOfBlockAheadOfEdges(head) : nullptr) {
             for (SlotOfLoop& slot : m_loopSummaries[visit->summaryIndex].storesIntoScopes.slots)
-                slot.hasLeftIntegers |= slot.holder == field.slotHolder && slot.key == field.slotKey;
+                slot.hasLeftIntegers |= slot.holder == field.slotHolder && slot.holderVariable == field.slotHolderVariable && slot.key == field.slotKey;
             for (CapturedCounter& counter : m_loopSummaries[visit->summaryIndex].storesIntoScopes.counters)
                 counter.hasLeftIntegers |= !field.slotKey && counter.field == field.field;
             visit->misfits = true;
@@ -1785,7 +2069,7 @@ bool Walker::bringFieldsOfScopesRound(EdgeID& edge, BlockID head, Vector<Referen
             noteCapturedCounter(*visit, field, value);
         if (TrialVisit* visit = field.slotKey ? findTryOfBlockAheadOfEdges(head) : nullptr) {
             for (SlotOfLoop& slot : m_loopSummaries[visit->summaryIndex].storesIntoScopes.slots) {
-                if (slot.holder != field.slotHolder || slot.key != field.slotKey || slot.hasUnknownSteps)
+                if (slot.holder != field.slotHolder || slot.holderVariable != field.slotHolderVariable || slot.key != field.slotKey || slot.hasUnknownSteps)
                     continue;
                 std::optional<Range> steps = value.isValue() && field.parameter.isValue() ? findStepsFrom(m_code, m_types, value.id(), field.parameter.id(), StepsAreExact::AsAssumed) : std::nullopt;
                 slot.hasUnknownSteps = !steps;
@@ -2285,6 +2569,7 @@ void Walker::handScopesKeptAtHeadToPreview(const BodyIndex& index, BlockID input
     Vector<Reference, 2>& scopes = preview.scopesThatTurnsOnlyBorrow;
     scopes.shrink(0);
     preview.slots = stores.slots;
+    preview.unfilledSlots = stores.unfilledSlots;
     preview.counters = stores.counters;
     for (const FreshObjectKeptAtHead& object : kept) {
         if (isEnvironmentAllocation(object.object))

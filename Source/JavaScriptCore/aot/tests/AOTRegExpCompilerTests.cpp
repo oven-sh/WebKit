@@ -304,7 +304,8 @@ static void testTwoPrefixesAreSearchedTogether()
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { }, 1) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Sticky }) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Unicode }) == 0);
-    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efgh"_s) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efgh"_s) == 4);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcdefghijkl|hgfedcba"_s) == 8);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abc|efgh"_s) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh|ijkl"_s) == 0);
 }

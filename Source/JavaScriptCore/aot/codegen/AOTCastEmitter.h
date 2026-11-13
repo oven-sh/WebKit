@@ -40,6 +40,7 @@ public:
     };
     std::optional<QuestionForStub> questionForStubThatTells(TypeID);
     std::optional<Operand> takeIntegerHandedOnTo(ValueID unboxing);
+    std::optional<Word32> takeBitsHandedOnTo(ValueID primitive);
     struct DeferredNumberCheck {
         Boxed value;
         BlockEdge failing;
@@ -53,6 +54,8 @@ private:
     bool tryBranchOnInt32AndHandItOn(const ValueContext& test, Operand);
     ValueID unboxingToDoubleBehindTestForNumber(const ValueContext& test);
     bool tryBranchOnNumberAndHandItOn(const ValueContext& test, Operand);
+    ValueID primitiveTakenForBits(const ValueContext& test);
+    bool tryBranchOnBitsOfPrimitive(const ValueContext& test, Operand);
     ValueID conversionAfterInt32Test(const ValueContext& test);
     bool tryBranchOnTruncatedInt32(const ValueContext& test, Operand);
     ValueID integerAfterDoubleTest(const ValueContext& test);
@@ -77,6 +80,7 @@ private:
     UncheckedKeyHashMap<uint32_t, ClosureChainPosition, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closureChainPositions;
 
     UncheckedKeyHashMap<uint32_t, Operand, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersHandedOn;
+    UncheckedKeyHashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bitsHandedOn;
     UncheckedKeyHashMap<uint32_t, Vector<DeferredNumberCheck, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberChecksOfSums;
 };
 

@@ -20,6 +20,7 @@
 #include "JSGenerator.h"
 #include "JSIteratorHelper.h"
 #include "JSIteratorHelperPrototype.h"
+#include "JSRegExpStringIterator.h"
 
 namespace JSC { namespace AOT {
 
@@ -124,6 +125,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResumeGenerator, EncodedJSValue, (Instance*
         OPERATION_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, bytecodeGenerator, engineResumeModeOf(mode), value)));
     throwException(globalObject, scope, createNotAGeneratorError(globalObject));
     OPERATION_RETURN(scope, encodedJSValue());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStepMatchIterator, EncodedJSValue, (Instance* instance, EncodedJSValue encodedIterator))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStepMatchIterator);
+    auto* iterator = uncheckedDowncast<JSRegExpStringIterator>(JSValue::decode(encodedIterator).asCell());
+    if (iterator->isDone())
+        OPERATION_RETURN(scope, JSValue::encode(jsNull()));
+    JSValue match = iterator->nextImpl(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(match));
 }
 
 template<ResumeMode mode>

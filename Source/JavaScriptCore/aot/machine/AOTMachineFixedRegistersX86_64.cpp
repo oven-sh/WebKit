@@ -61,6 +61,14 @@ struct FixedRegisterMultiplicationGenerator {
     }
 };
 
+struct FoldedProductGenerator {
+    void operator()(CCallHelpers& jit, const PatchParameters& parameters) const
+    {
+        jit.x86UMulHigh64(parameters[1].gpr(), X86Registers::eax, X86Registers::edx);
+        jit.xor32(X86Registers::edx, X86Registers::eax);
+    }
+};
+
 template<Opcode opcode, Width width>
 struct FixedRegisterShiftGenerator {
     static_assert(opcode == Shl || opcode == SShr || opcode == ZShr);
@@ -153,6 +161,28 @@ static PatchOperation* appendFixedRegisterShift(Builder& builder, Type type, Ope
     // The generator moves the value into the result register before it reads rcx, so the result must not be rcx. The late clobber keeps it out.
     patch->clobberLate(maskOf(Reg(X86Registers::ecx)));
     return finishFixedRegisterPatch<FixedRegisterShiftGenerator<opcode, Width32>, FixedRegisterShiftGenerator<opcode, Width64>>(builder, patch);
+}
+
+Operation* appendFoldedProduct(Builder& builder, Operation* left, Operation* right)
+{
+    RELEASE_ASSERT(left->type() == Int64 && right->type() == Int64);
+    constexpr PureFunction function { PureFunction::firstIDOfBackEnd | numberOfOpcodes, true };
+    Operation* operands[] = { left, right };
+    if (Operation* existing = builder.findPurePatch(function, Int32, operands))
+        return existing;
+
+    PatchOperation* patch = builder.patch(Int32);
+    patch->effects = Effects::none();
+    patch->setRunsWithoutFrame(true);
+    patch->pureFunction = function;
+    patch->append(left, ValueRep::SomeRegister);
+    patch->append(right, ValueRep::reg(X86Registers::eax));
+    patch->resultConstraints = { ValueRep::reg(X86Registers::eax) };
+    patch->clobberLate(maskOf(Reg(X86Registers::edx)));
+    patch->setClearsUpperHalf(true);
+    patch->setGenerator(FoldedProductGenerator());
+    builder.recordPurePatch(patch);
+    return patch;
 }
 
 PatchOperation* appendWithFixedRegisters(Builder& builder, Opcode opcode, Type type, Operation* left, Operation* right)

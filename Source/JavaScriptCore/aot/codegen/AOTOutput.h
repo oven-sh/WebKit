@@ -156,6 +156,14 @@ public:
     LValue mul(LValue left, LValue right) { return binary(Machine::Mul, left, right); }
     LValue mulHigh(LValue left, LValue right) { return binary(Machine::MulHigh, left, right); }
     LValue uMulHigh(LValue left, LValue right) { return binary(Machine::UMulHigh, left, right); }
+    LValue foldedProduct(LValue left, LValue right)
+    {
+#if CPU(X86_64)
+        return Machine::appendFoldedProduct(*this, left, right);
+#else
+        return castToInt32(bitXor(mul(left, right), uMulHigh(left, right)));
+#endif
+    }
     LValue div(LValue left, LValue right) { return binary(Machine::Div, left, right); }
     LValue uDiv(LValue left, LValue right) { return binary(Machine::UDiv, left, right); }
     LValue mod(LValue left, LValue right) { return binary(Machine::Mod, left, right); }
@@ -262,7 +270,7 @@ public:
     LValue valueOf(TypedPointer pointer) { return pointer.offset() ? add(pointer.base(), constIntPtr(pointer.offset())) : pointer.base(); }
     TypedPointer address(const Machine::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0) { return TypedPointer(heap, base, offset); }
     TypedPointer address(LValue base, const Machine::AbstractHeap& field, ptrdiff_t offset = 0) { return TypedPointer(field, base, offset + field.offset()); }
-    LValue baseIndex(LValue base, LValue index, Scale scale, ptrdiff_t offset = 0)
+    ALWAYS_INLINE LValue baseIndex(LValue base, LValue index, Scale scale, ptrdiff_t offset = 0)
     {
         LValue sum = add(base, logScale(scale) ? shl(index, logScale(scale)) : index);
         return offset ? add(sum, constIntPtr(offset)) : sum;

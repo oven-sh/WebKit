@@ -39,6 +39,7 @@ public:
     uint32_t numberOfDerivedLayouts() const { return m_numberOfDerivedLayouts; }
     void readTypes();
     TypeID typeExpectedBesideViews(uint32_t wireIndex) const { return wireIndex < m_typesExpectedBesideViews.size() ? m_typesExpectedBesideViews[wireIndex] : TypeID(); }
+    TypeID typeOfRecordMadeForField(uint32_t wireIndex) const { return m_typesOfRecordsMadeForFields.get(wireIndex + 1); }
     void finishLayouts();
     void findModulesNamedByBodies();
     void finishObjects();
@@ -46,6 +47,7 @@ public:
 private:
     void planTaggedLayouts(ArenasOfWorkers&, Vector<LayoutSetID>& members, const class TellingFields&);
     void findTypesExpectedBesideViews(ArenasOfWorkers&, const Vector<TypeID>& typesOfWireIndexes);
+    void findTypesOfRecordsMadeForFields(ArenasOfWorkers&);
     enum class ViewsWithoutLayouts : bool { ReadAsAnything, AreLeftOut };
     TypeParts readPartsWithoutClasses(TypeArena&, uint32_t index, ViewsWithoutLayouts = ViewsWithoutLayouts::ReadAsAnything) const;
     bool readsAsAnything(std::span<const uint32_t> namedLayouts) const;
@@ -59,6 +61,7 @@ private:
     BitVector m_typeParametersWithoutFamily;
     BitVector m_viewsWithoutLayouts;
     Vector<TypeID> m_typesExpectedBesideViews;
+    UncheckedKeyHashMap<uint32_t, TypeID> m_typesOfRecordsMadeForFields;
     Vector<ObjectSetID> m_functionFamilies;
     std::optional<InternalError> m_errorInFunctionFamilies;
     BitVector m_modulesNamedByBodies;

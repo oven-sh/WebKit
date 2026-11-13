@@ -1,0 +1,44 @@
+# function text(value) { const made = value.toString(); return made; }      sink(text);
+# Nothing is known of the receiver. Strings, numbers and booleans inherit the engine's method, which nobody replaces: one stub answers them, and calls the method of every other receiver at the site.
+# RUN(TEXT): bytes f1:Body mechanisms=all
+# TEXT-LABEL: unit f1:Body
+# TEXT: Call Stub CallToStringAtSite
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; globalThis.sink = text => { for (let turn = 0; turn < 2; turn++) { for (const value of ["ab", 12, 70000, -3, 1.5, -0, NaN, true, false, 10n, Symbol("s"), [1, 2], { toString: () => "own" }, { get toString() { print("getter"); return () => "got"; } }, new Number(5), new String("cd"), null, undefined, {}]) says(() => text(value)); } };
+# SHELL: ab
+# SHELL-NEXT: 12
+# SHELL-NEXT: 70000
+# SHELL-NEXT: -3
+# SHELL-NEXT: 1.5
+# SHELL-NEXT: 0
+# SHELL-NEXT: NaN
+# SHELL-NEXT: true
+# SHELL-NEXT: false
+# SHELL-NEXT: 10
+# SHELL-NEXT: Symbol(s)
+# SHELL-NEXT: 1,2
+# SHELL-NEXT: own
+# SHELL-NEXT: getter
+# SHELL-NEXT: got
+# SHELL-NEXT: 5
+# SHELL-NEXT: cd
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: TypeError
+# SHELL-NEXT: [object Object]
+# SHELL-NEXT: ab
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0
+    Return v3
+}
+function f1 name="text" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="toString" @110
+    v2 = Call v1, v0 calleeKey="toString" calleeName="value.toString" @120
+    Return v2
+}

@@ -157,13 +157,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithHolesAtSite, JSCell*, (Instance
     bool isReviewed = !(profile.word & ArrayAllocationProfile::countMask);
     profile.word -= ArrayAllocationProfile::oneAllocation;
     if (isReviewed) {
-        reviewArrayAllocationProfile(profile, lastArray, seedIndexingType == ArrayWithUndecided);
+        reviewArrayAllocationProfile(profile, lastArray);
         profile.startInterval();
         lastArray = nullptr;
     }
     IndexingType shape = std::max<IndexingType>(profile.shape(), seedIndexingType & IndexingShapeMask);
     if (shape == UndecidedShape)
-        shape = ContiguousShape;
+        shape = Int32Shape;
     JSArray* array = bearArrayWithHoles(globalObject, vm, scope, source, length, IsArray | shape, 0);
     if (isReviewed && array)
         lastArray = array;

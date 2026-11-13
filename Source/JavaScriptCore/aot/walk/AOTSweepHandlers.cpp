@@ -57,6 +57,13 @@ static constexpr TerminatorKindSet sweptTerminatorsThatMayExitSidewaysOrCollect 
     return kinds;
 }();
 
+static ALWAYS_INLINE bool makingSweptConstantsMayExitSidewaysOrCollect(const Code&, std::span<const ValueID>);
+
+static NEVER_INLINE bool makingOperandsOfSweptConstantMayExitSidewaysOrCollect(const Code& code, const Operation& constant)
+{
+    return makingSweptConstantsMayExitSidewaysOrCollect(code, constant.operands());
+}
+
 static ALWAYS_INLINE bool makingSweptConstantsMayExitSidewaysOrCollect(const Code& code, std::span<const ValueID> used)
 {
     for (ValueID id : used) {
@@ -65,7 +72,7 @@ static ALWAYS_INLINE bool makingSweptConstantsMayExitSidewaysOrCollect(const Cod
         const Operation& constant = code.at(id);
         if (constant.blockIndex != Operation::noBlock)
             continue;
-        if (sweptConstantsThatMayExitSidewaysOrCollect.contains(constant.opcode) || makingSweptConstantsMayExitSidewaysOrCollect(code, constant.operands()))
+        if (sweptConstantsThatMayExitSidewaysOrCollect.contains(constant.opcode) || (!constant.operands().empty() && makingOperandsOfSweptConstantMayExitSidewaysOrCollect(code, constant)))
             return true;
     }
     return false;

@@ -152,7 +152,10 @@ public:
     const KeyOrders& keyOrders() const { return m_parts.keyOrders; }
     const CallingConventions& conventions() const { return m_parts.conventions; }
     void setMethodTable(MethodTablePlan&& methodTable) { m_parts.conventions.setMethodTable(WTF::move(methodTable)); }
+    void setModulesThatWriteFields(ModulesThatWriteFields&& modules) { m_parts.slots.setModulesThatWriteFields(WTF::move(modules)); }
     void setParameterGuards(std::span<const ParameterGuardPlan> guards) { m_parts.conventions.setParameterGuards(guards); }
+    void setScalarizedParameters(const Program& program, ScalarizedParameters&& parameters) { m_parts.conventions.setScalarizedParameters(program, WTF::move(parameters)); }
+    void setScalarizedResults(ScalarizedResults&& results) { m_parts.conventions.setScalarizedResults(WTF::move(results)); }
     void setFunctionsThatEndTheirTailCalls(FunctionsThatEndTheirTailCalls&& functions) { m_parts.functionsThatEndTheirTailCalls = WTF::move(functions); }
     void setTailCalls(TailCallPlan&& tailCalls) { m_parts.conventions.setTailCalls(WTF::move(tailCalls)); }
     void setStackTests(StackTestPlan&& stackTests) { m_parts.conventions.setStackTests(WTF::move(stackTests)); }

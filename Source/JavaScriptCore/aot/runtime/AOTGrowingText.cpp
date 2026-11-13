@@ -39,21 +39,6 @@ static ALWAYS_INLINE EndOfText& endOfTextIn(StringImpl& characters)
 }
 
 using CompactFibers = JSRopeString::CompactFibers;
-static_assert(sizeof(JSRopeString) == 4 * sizeof(uint64_t) && JSRopeString::offsetOfFiber0() == sizeof(uint64_t) && JSRopeString::offsetOfLength() == 2 * sizeof(uint64_t) && JSRopeString::offsetOfFiber2() == 3 * sizeof(uint64_t));
-static_assert(CompactFibers::shiftOfFiber1LowerInLengthWord == 32 && CompactFibers::widthOfFiber1LowerInLengthWord == 32 && CompactFibers::shiftOfFiber2InUpperWord == 16);
-
-static ALWAYS_INLINE uint64_t wordOfRope(const JSString* rope, ptrdiff_t offset)
-{
-    return WTF::unalignedLoad<uint64_t>(std::bit_cast<const uint8_t*>(rope) + offset);
-}
-
-static ALWAYS_INLINE JSString* firstPartOf(const JSString* rope) { return std::bit_cast<JSString*>(wordOfRope(rope, JSRopeString::offsetOfFiber0()) & JSRopeString::stringMask); }
-static ALWAYS_INLINE JSString* secondPartOf(const JSString* rope)
-{
-    constexpr uint64_t upperBitsOfSecondPart = (1ull << CompactFibers::shiftOfFiber2InUpperWord) - 1;
-    return std::bit_cast<JSString*>(wordOfRope(rope, JSRopeString::offsetOfLength()) >> CompactFibers::shiftOfFiber1LowerInLengthWord | (wordOfRope(rope, JSRopeString::offsetOfFiber2()) & upperBitsOfSecondPart) << CompactFibers::widthOfFiber1LowerInLengthWord);
-}
-static ALWAYS_INLINE JSString* thirdPartOf(const JSString* rope) { return std::bit_cast<JSString*>(wordOfRope(rope, JSRopeString::offsetOfFiber2()) >> CompactFibers::shiftOfFiber2InUpperWord); }
 
 static ALWAYS_INLINE JSString* createSubstringOfBuffer(Instance& instance, VM& vm, JSString* buffer, uint32_t offset, uint32_t length, bool is8Bit)
 {

@@ -20,6 +20,7 @@ runtime ArraySpliceItemGeneric : EncodedJSValue (JSCell* array, EncodedJSValue s
 runtime ArrayOfLengthOrElement : JSCell* (EncodedJSValue lengthOrElement) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime NumberOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime StringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
+runtime NewStringObject : JSCell* (EncodedJSValue string) ; RuntimeAllocates
 runtime ObjectToStringOfAnyValue : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime TextOfBytes : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue encoding, EncodedJSValue start, EncodedJSValue end) ; unknownCode
 runtime TypedArraySetOfAnyValue : EncodedJSValue (EncodedJSValue receiver, EncodedJSValue source, EncodedJSValue offset) ; unknownCode
@@ -47,6 +48,7 @@ runtime NewSetFromIterable, NewMapFromEntries : JSCell* (EncodedJSValue iterable
 runtime PropertyIsEnumerable : size_t (EncodedJSValue object, EncodedJSValue property) ; unknownCode
 runtime IsPrototypeOf : size_t (EncodedJSValue prototype, EncodedJSValue value) ; unknownCode
 runtime GetOwnPropertyDescriptor : EncodedJSValue (EncodedJSValue object, EncodedJSValue property) ; unknownCode
+runtime ObjectDefineProperty : EncodedJSValue (EncodedJSValue object, EncodedJSValue property, EncodedJSValue descriptor) ; unknownCode
 runtime ObjectAssignWithoutCode, ObjectAssignWithoutGetters : size_t (JSCell* target, EncodedJSValue source) ; unknownCode
 runtime ObjectCreate : JSCell* (JSCell* prototype, uint32_t isSmall) ; reads(all) writes(PrototypeLinks, ShapeWords, AllocatorState, RuntimeState) collects
 
@@ -54,6 +56,7 @@ runtime IsConstructor : size_t (EncodedJSValue value) ; reads(all)
 runtime ReadsIteratorOfListUnseen : size_t (EncodedJSValue value) ; reads(all)
 runtime ArraySpeciesCreate : EncodedJSValue (EncodedJSValue length, JSCell* array) ; unknownCode
 runtime ResumeGenerator : EncodedJSValue (EncodedJSValue generator, int32_t mode, EncodedJSValue value) ; unknownCode
+runtime StepMatchIterator : EncodedJSValue (EncodedJSValue iterator) ; unknownCode
 runtime IsGeneratorSuspendedAtStart : size_t (JSCell* generator) ; reads(all)
 runtime ToLength : EncodedJSValue (EncodedJSValue value) ; unknownCode
 runtime RequireBuiltinModule : EncodedJSValue (uint32_t id) ; unknownCode
@@ -64,6 +67,7 @@ runtime NewBigInt64 : JSCell* (uint64_t bits, uint32_t isSigned) ; reads(all) wr
 runtime DateNow : double () ; reads(all) writes(ExternalState)
 runtime DateToISOString : JSCell* (double timeValue) ; RuntimeAllocates
 runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates
+runtime PrepareProxyAllocation : void () ; RuntimeAllocates
 runtime NewError : JSCell* (uint32_t errorKind, EncodedJSValue message, EncodedJSValue options) ; unknownCode
 runtime FormatDateTime : JSCell* (EncodedJSValue formatter, double timeValue) ; RuntimeAllocates
 runtime FormatNumber : JSCell* (EncodedJSValue formatter, double number) ; RuntimeAllocates
@@ -81,6 +85,7 @@ runtime MathHypot : double (double x, double y) ; none ; leaf
 runtime MathHypot3 : double (double x, double y, double z) ; none ; leaf
 
 runtime ParseInt8 : double (const Latin1Character* characters, uint32_t length, int32_t radix) ; reads(StringStorage) ; leaf preserveMost
+runtime ParseIntNumber : double (double number) ; none ; leaf
 runtime ParseInt16 : double (const char16_t* characters, uint32_t length, int32_t radix) ; reads(StringStorage) ; leaf preserveMost
 runtime StringToNumber8 : double (const Latin1Character* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
 runtime StringToNumber16 : double (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
@@ -102,11 +107,13 @@ runtime StringUTF8Length8 : size_t (const Latin1Character* characters, uint32_t 
 runtime StringUTF8Length16 : size_t (const char16_t* characters, uint32_t length) ; reads(StringStorage) ; leaf preserveMost
 runtime StringImplsAreEqual : size_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
 runtime CompareStringImpls : int64_t (void* first, void* second) ; reads(StringStorage) ; leaf preserveMost
+runtime StackStringBuilderAppendWide : size_t (void* instance, uint8_t* builder, uint8_t* cursor, JSCell* string) ; reads(StringStorage, RuntimeState) ; leaf preserveMost
 runtime CompareStringsInPlace : int64_t (JSCell* first, JSCell* second) ; reads(StringStorage) ; leaf preserveMost
 runtime StringImplEqualsImageString : size_t (void* impl, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
 runtime CharactersEqualImageString : size_t (const Latin1Character* characters, uint32_t length, uint32_t string) ; reads(StringStorage) ; leaf preserveMost
 runtime HashStringImpl : size_t (void* impl) ; reads(StringStorage) writes(StringStorage) ; leaf preserveMost
 runtime FindKeptStringOfTwoCharacters : size_t (void* vm, uint32_t units) ; reads(StringStorage, RuntimeState) ; leaf preserveMost
+runtime NarrowSubject : size_t (void* instance, const char16_t* characters, uint32_t length) ; reads(StringStorage, RuntimeState) ; leaf preserveMost
 
 runtime StringFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) ; reads(all)
 runtime StringReverseFindLiteral8 : size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) ; reads(all)
@@ -126,6 +133,7 @@ runtime StringToLowerCase, StringToUpperCase : JSCell* (JSCell* string) ; Runtim
 runtime StringRepeat : JSCell* (JSCell* string, uint32_t count) ; RuntimeCreatesString
 runtime StringPad : JSCell* (JSCell* string, uint32_t length, JSCell* filler, uint32_t isAtStart) ; RuntimeCreatesString
 runtime NarrowCharactersOfString : size_t (JSCell* string) ; reads(all) writes(StringStorage, AllocatorState)
+runtime StringSwitchCase : size_t (JSCell* string, void* table) ; reads(all) writes(StringStorage, AllocatorState)
 runtime StringCodeUnitAt : size_t (JSCell* string, uint32_t index) ; reads(all) writes(StringStorage, AllocatorState)
 runtime TryResolveRope : size_t (JSCell* string) ; reads(all) writes(StringStorage, AllocatorState)
 
@@ -135,6 +143,7 @@ runtime RegExpTest : size_t (JSCell* regExp, JSCell* string) ; unknownCode
 runtime RegExpMatchFlatProgram8 : int64_t (void* program, const Latin1Character* characters, uint32_t length, uint32_t* output, void* instance) ; none ; leaf
 runtime RegExpMatchFlatProgram16 : int64_t (void* program, const char16_t* characters, uint32_t length, uint32_t* output, void* instance) ; none ; leaf
 runtime RegExpTestBoxed : EncodedJSValue (JSCell* regExp, JSCell* string) ; unknownCode
+runtime RegExpTestOfObject : EncodedJSValue (JSCell* regExp, JSCell* operand) ; unknownCode
 runtime RegExpMatchLiteral : EncodedJSValue (JSCell* regExp, JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchLiteralWithoutObject : EncodedJSValue (JSCell* string, uint32_t regExpRecord, uint32_t form) ; RuntimeMatchesRegExp
 runtime RegExpMatchArray : EncodedJSValue (JSCell* regExp, JSCell* string, void* record) ; RuntimeMatchesRegExp
@@ -151,7 +160,7 @@ runtime StringReplaceRegExp, StringReplaceAllRegExp : JSCell* (JSCell* string, J
 runtime StringReplaceRegExpString : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement, uint32_t startOfFirstMatchPlusOne) ; unknownCode
 runtime StringLengthWithoutMatches : size_t (JSCell* string, JSCell* regExp, uint32_t startOfFirstMatchPlusOne) ; unknownCode
 runtime StringReplaceRegExpWithFunction : JSCell* (JSCell* string, JSCell* regExp, JSCell* replacement) ; unknownCode
-runtime StringSplitString : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
+runtime StringSplitString, StringSplitWithOwnStorage : JSCell* (JSCell* string, JSCell* separator, uint32_t limit) ; RuntimeCreatesString
 runtime StringSplitRegExp : JSCell* (JSCell* string, JSCell* regExp, uint32_t limit) ; unknownCode
 runtime StringMatchRegExp, StringSearchRegExp : EncodedJSValue (JSCell* string, JSCell* regExp) ; unknownCode
 

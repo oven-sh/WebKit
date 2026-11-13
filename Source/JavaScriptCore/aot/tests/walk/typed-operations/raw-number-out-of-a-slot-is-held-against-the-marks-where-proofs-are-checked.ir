@@ -1,7 +1,7 @@
 # testing=CheckProofsAtRunTime: every construction in sight fills `count` with an integer and `ratio` with a number, and every writer is known: the slots are raw, and the reads give raw words.
 # Such a slot has a mark for undefined and one for null, which pass every door of the run time. Of a raw word no test tells anything: a read that leaves no room for the marks takes one for a number.
 # Under the switch the SLOT is asked in front of the read whether what lies there is a value, and the process ends with "what a field holds" where unseen code has stored undefined or null.
-# const box = { count: 1, ratio: 1.5 };  function count(b) { return b.count + 1; }  function ratio(b) { return b.ratio * 2; }  count(box) + ratio(box)
+# const box = { count: 1, ratio: 1.5 };  kept = box;  function count(b) { return b.count + 1; }  function ratio(b) { return b.ratio * 2; }  count(box) + ratio(box)
 # OPTIONS: testing=CheckProofsAtRunTime
 # RUN(INTEGER): walk f1 mechanisms=all-Inlining
 # INTEGER-LABEL: code f1:Body
@@ -14,6 +14,7 @@
 # DOUBLE-NEXT: CheckProof [[holds]] checkedType=true {{*}}source=Field
 # DOUBLE-NEXT: @Double = GetSlot {{*}}key="ratio"
 
+variable g0 name="kept" module=m0 declared={type=anything}
 module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 layout L0 module=m0 fields=[{key="count" declared={type=anything} flags=[IsRequired]}, {key="ratio" declared={type=anything} flags=[IsRequired]}] ownFieldCount=2
@@ -23,15 +24,16 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v1 = Double number=1.5
     v2 = NewObject -, v0, v1 layout=L0 fields=[0, 1]
     v3 = FinishObject v2
-    v4 = NewClosure function=f1
-    v5 = Call v4, -, v3 calleeName="count"
-    v6 = NewClosure function=f2
-    v7 = Call v6, -, v3 calleeName="ratio"
-    v8 = Add v5, v7
-    v9 = Integer integer=2
-    v10 = NewObject -, v9, v1 layout=L0 fields=[0, 1]
-    v11 = FinishObject v10
-    Return v8
+    PutModuleVariable v3 variable=g0
+    v5 = NewClosure function=f1
+    v6 = Call v5, -, v3 calleeName="count"
+    v7 = NewClosure function=f2
+    v8 = Call v7, -, v3 calleeName="ratio"
+    v9 = Add v6, v8
+    v10 = Integer integer=2
+    v11 = NewObject -, v10, v1 layout=L0 fields=[0, 1]
+    v12 = FinishObject v11
+    Return v9
 }
 function f1 name="count" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

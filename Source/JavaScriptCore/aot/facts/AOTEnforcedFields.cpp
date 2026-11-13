@@ -411,6 +411,62 @@ static bool holdsSeenStores(const LinkTables& held, TypeArena& types, FieldRefer
     return types.isSubset(stored, type);
 }
 
+static TypeID valuesMadeByConstructor(const Program& program, TypeArena& types, FieldReference declaration)
+{
+    static constexpr size_t fewestFieldsOfLargeClass = 8;
+    const Layout& layout = program.at(declaration.layout);
+    const DeclaredType& declared = layout.fields[declaration.field].declared;
+    if ((layout.kind != LayoutKind::Instance && layout.kind != LayoutKind::Record) || layout.fields.size() < fewestFieldsOfLargeClass || !declared.isExpected() || !declared.writtenFlags().contains(PositionFlags::IsFromCompiler) || !declared.written())
+        return { };
+    TypeID objects = types.withoutNullish(declared.written());
+    if (isNeverType(objects) || !types.at(objects).isJavaScriptValue() || (!types.at(objects).isObject() && objects != TypeTable::string))
+        return { };
+    if (layout.kind == LayoutKind::Record) {
+        Type instances = types.at(objects);
+        bool holdsInstances = instances.hasOnlyLayouts() && !instances.hasOnlyClosures() && std::ranges::all_of(types.listOf(instances.layouts), [&](LayoutID member) {
+            return program.at(member).kind == LayoutKind::Instance;
+        });
+        if (!holdsInstances)
+            return { };
+    }
+    return declared.written();
+}
+
+static bool mayBeStoredOtherObjects(const Program& program, const LinkTables& linked, TypeArena& types, FieldReference declaration, TypeID type)
+{
+    PropertyKeyID key = program.at(declaration.layout).fields[declaration.field].key;
+    bool reachesUnseenCode = declaration.layout.index() >= linked.layouts.size() || linked.layouts[declaration.layout.index()].reachesUnseenCode;
+    bool holdsObjectsOrStrings = types.at(type).layouts || types.at(type).primitives & Primitive::AnyString;
+    return key && reachesUnseenCode && holdsObjectsOrStrings && linked.fieldsStoredUntypedValues.names(program, declaration.layout, key);
+}
+
+static bool holdsStoresThatAreKnown(const LinkTables& held, TypeArena& types, FieldReference field, TypeID type)
+{
+    const LinkedCell* seen = held.findCellOfField(field);
+    if (!seen || !seen->proven || isNeverType(seen->proven))
+        return true;
+    Type shown = types.at(seen->proven);
+    if (shown.hasUnboundedUnknown() || (shown.primitives & Primitive::All) == Primitive::All)
+        return true;
+    TypeID stored = types.withoutPrimitives(seen->proven, Primitive::UndefinedOrNull | Primitive::Absent);
+    return isNeverType(stored) || types.isSubset(stored, type);
+}
+
+static bool holdsPositions(const Program& program, const LinkTables& linked, const LinkTables& held, TypeArena& types, FieldReference declaration, bool moreIsStoredThanIsSeen)
+{
+    const Layout& layout = program.at(declaration.layout);
+    PropertyKeyID key = layout.fields[declaration.field].key;
+    bool isPosition = key && linked.fieldsOfPositions.contains(declaration.layout, key);
+    if (layout.kind != LayoutKind::Instance || !key || (!isPosition && (moreIsStoredThanIsSeen || !held.holdsSteppedIntegers(declaration))) || isLibraryLayout(program, declaration.layout))
+        return false;
+    if (linked.keysStoredWhatIsNoInt32.get(key.index()) || linked.fieldsStoredWhatIsNoInt32.names(program, declaration.layout, key))
+        return false;
+    const LinkedCell* proven = linked.findCellOfField(declaration);
+    if (proven && proven->proven && types.at(proven->proven).isInteger())
+        return false;
+    return isPosition || linked.fieldsReadAsIntegers.names(program, declaration.layout, key) || linked.fieldsStoredCounts.names(program, declaration.layout, key);
+}
+
 EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& linked, const LinkTables& held, const Families& families, const FamiliesOfInstances& familiesOfInstances, WrittenTypesOfFamilies& writtenInFamilies, TypeArena& types, FieldReference reference)
 {
     if (!slotsOfLayoutMayBeHeldToTypes(program, familiesOfInstances, reference.layout))
@@ -456,17 +512,39 @@ EnforcedField enforcedTypeOfField(const Program& program, const LinkTables& link
         bool isFilledOnceByDefinition = fieldAt(program, declaration).form.containsAll({ FieldForm::IsReadOnly, FieldForm::IsNotConfigurable });
         if (const LinkedCell* seen = held.findCellOfField(declaration); seen && seen->proven && (!seen->leavesOutWhatArrives || isFilledOnceByDefinition) && !isNeverType(seen->proven)) {
             Type shown = types.at(seen->proven);
-            if (!shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All && !shown.hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull)) {
+            if (!shown.hasUnboundedUnknown() && (shown.primitives & Primitive::All) != Primitive::All && !shown.hasOnlyPrimitives(rawValuesInEnforcedFields | Primitive::UndefinedOrNull) && !mayBeStoredOtherObjects(program, linked, types, declaration, seen->proven)) {
                 written = seen->proven;
                 source = SourceOfSlotType::Seen;
             }
         }
     }
 
+    bool isMadeByLiteral = false;
+    if (!isAppended && !moreIsStoredThanIsSeen && (!written || written == TypeTable::anything)) {
+        if (TypeID made = valuesMadeByConstructor(program, types, declaration); made && holdsStoresThatAreKnown(held, types, declaration, made) && !mayBeStoredOtherObjects(program, linked, types, declaration, made)) {
+            written = made;
+            source = SourceOfSlotType::WrittenInFamily;
+            isMadeByLiteral = program.at(declaration.layout).kind == LayoutKind::Record;
+        }
+    }
+
+    if (!isAppended && (!written || written == TypeTable::anything) && holdsPositions(program, linked, held, types, declaration, moreIsStoredThanIsSeen)) {
+        written = TypeTable::int32;
+        source = SourceOfSlotType::Seen;
+    }
+
+    if (!isAppended && !moreIsStoredThanIsSeen && (!written || written == TypeTable::anything) && program.at(declaration.layout).kind == LayoutKind::Instance && !isLibraryLayout(program, declaration.layout)) {
+        PropertyKeyID keyOfField = program.at(declaration.layout).fields[declaration.field].key;
+        if (keyOfField && linked.fieldsStoredBooleansAlone.contains(declaration.layout, keyOfField)) {
+            written = TypeTable::boolean;
+            source = SourceOfSlotType::Seen;
+        }
+    }
+
     EnforcedField answer;
     TypeID type;
     PropertyKeyID key = isAppended ? keyOfAppendedFieldInEnforcedFields(linked, reference.layout, reference.field - numberDeclared) : fieldAt(program, declaration).key;
-    bool isHeld = written && holdsField(program, linked, families, familiesOfInstances, types, reference, key, written);
+    bool isHeld = written && (isMadeByLiteral || holdsField(program, linked, families, familiesOfInstances, types, reference, key, written));
     if (isHeld && written != TypeTable::anything && !describesBagOfOptions(types, written))
         type = typeInWordsOfTestsInEnforcedFields(families, types, written);
     if (type) {

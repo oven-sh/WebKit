@@ -709,21 +709,37 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
 
     Origin origin = written.origin();
     origin.isTailCall = false;
+    constexpr OptionSet<PropertyDescriptorFlags> saysYesToEverything {
+        PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable, PropertyDescriptorFlags::IsWritable, PropertyDescriptorFlags::HasEnumerable,
+        PropertyDescriptorFlags::IsEnumerable, PropertyDescriptorFlags::HasConfigurable, PropertyDescriptorFlags::IsConfigurable
+    };
+    const bool definesPlainField = descriptor->flags == saysYesToEverything && descriptor->value && !typeOfObject.primitives && walker.has(Mechanism::TypedOperations);
+    TypeID receiver = written.thisValueOperand() ? walker.typeOf(written.thisValueOperand()) : TypeID();
+    const bool isOfPropertyMap = receiver && walker.types().at(receiver).isObject() && singleBuiltinOf(walker.types(), walker.types().at(receiver)) == BuiltinID(Builtins::ObjectDefineProperties);
+    const BuiltinID definer = isOfPropertyMap ? BuiltinID(Builtins::ObjectDefineProperties) : overload.builtin;
     Reference key = operands->key;
+    if (definesPlainField && !nameThatKeyIs(walker, key)) {
+        Draft element(Opcode::ElemDefine, origin);
+        walker.chooseConservativeFields(element);
+        element.setObjectOperand(operands->object);
+        element.setPropertyOperand(key);
+        element.setValueOperand(descriptor->value);
+        element.setCalledBuiltin(definer);
+        walker.build(WTF::move(element));
+        if (!walker.isUnreachable() && !walker.hasFailed())
+            walker.bind(call.id(), operands->object);
+        return true;
+    }
     if (!typeOfKey.hasOnlyPrimitives(Primitive::AnyString | Primitive::AnySymbol)) {
         Draft conversion(Opcode::ToPropertyKey, origin);
         walker.chooseConservativeFields(conversion);
         conversion.setValueOperand(key);
+        conversion.setCalledBuiltin(definer);
         key = walker.build(WTF::move(conversion));
         if (!key)
             return true;
     }
 
-    constexpr OptionSet<PropertyDescriptorFlags> saysYesToEverything {
-        PropertyDescriptorFlags::HasValue, PropertyDescriptorFlags::HasWritable, PropertyDescriptorFlags::IsWritable, PropertyDescriptorFlags::HasEnumerable,
-        PropertyDescriptorFlags::IsEnumerable, PropertyDescriptorFlags::HasConfigurable, PropertyDescriptorFlags::IsConfigurable
-    };
-    bool definesPlainField = descriptor->flags == saysYesToEverything && descriptor->value && !typeOfObject.primitives && walker.has(Mechanism::TypedOperations);
     PropertyKeyID name = definesPlainField ? nameThatKeyIs(walker, key) : PropertyKeyID();
     if (name && definePlainFieldInSlot(walker, call, call.argumentsOperands()[operands->argumentOfObject], operands->object, name, descriptor->value)) {
         if (!walker.isUnreachable() && !walker.hasFailed())
@@ -734,7 +750,7 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
         provenOfObject, walker.typeOf(key), walker.typeOf(descriptor->value), TypeID(), TypeID(), descriptor->flags
     });
     if (name && !writesSlotInLine) {
-        Draft field(Opcode::PropDefine, origin);
+        Draft field(Opcode::PropDefine, walker.originInCalledBuiltin(origin, definer));
         walker.chooseConservativeFields(field);
         field.setObjectOperand(operands->object);
         field.setKey(name);
@@ -746,8 +762,7 @@ bool buildDefinitionByWrittenDescriptorOfItsOpcodes(Walker& walker, const BodyVa
     }
 
     OptionSet<PropertyDescriptorFlags> flags = descriptor->flags;
-    TypeID receiver = written.thisValueOperand() ? walker.typeOf(written.thisValueOperand()) : TypeID();
-    if (receiver && walker.types().at(receiver).isObject() && singleBuiltinOf(walker.types(), walker.types().at(receiver)) == BuiltinID(Builtins::ObjectDefineProperties))
+    if (isOfPropertyMap)
         flags.add(PropertyDescriptorFlags::IsOfPropertyMap);
     auto buildDefinition = [&](Reference object) {
         Draft definition(Opcode::DefineOwnProperty, origin);

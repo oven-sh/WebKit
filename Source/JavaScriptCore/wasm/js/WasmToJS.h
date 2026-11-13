@@ -47,6 +47,9 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> wasmToJS(c
 // With the pointer table of the module where the code is for an image.
 void emitWasmToJS(CCallHelpers&, const Wasm::ModuleInformation&, unsigned importIndex, const ImagePointerTable* = nullptr);
 
+// Whether the import's stub in an image can call a compiled closure directly, with all arguments in registers.
+bool canImportStubCallClosure(const Wasm::ModuleInformation&, unsigned importIndex);
+
 void emitThrowWasmToJSException(CCallHelpers&, GPRReg wasmInstance, Wasm::ExceptionType);
 
 } } // namespace JSC::Wasm
