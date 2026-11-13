@@ -1797,12 +1797,56 @@ bool Walker::findReadsAfterRegion(std::span<const BlockID> region, ValueID first
     return true;
 }
 
+static bool mayOverrideReturnByName(const Walker& walker)
+{
+    const LookupsPastProgramObjects& lookups = walker.facts().linked().lookups;
+    PropertyKeyID key = walker.program().keyOf(BuiltinNames::returnKeyword);
+    return key && (lookups.namesWrittenThroughUnseenByProgram.get(key.index()) || lookups.namesWrittenThroughLostBuiltins.get(key.index()));
+}
+
+static bool mayStoreUnderUnknownKey(const Walker& walker, FunctionID function, BodyBlock block)
+{
+    const Facts& facts = walker.facts();
+    bool storesUnderComputedKey = facts.summaries().at(function).has(SummaryTrait::StoresUnderComputedKey);
+    for (BodyValue operation : block.values()) {
+        if (operation.opcode() == Opcode::ElemSet && storesUnderComputedKey)
+            return true;
+        if (!callsCode(operation.opcode()))
+            continue;
+        FunctionID callee = facts.linked().calleeAt(function, operation.id());
+        if (!callee)
+            return true;
+        Effects effects = facts.effectsOnReturn(callee);
+        effects.merge(facts.effectsOnThrow(callee));
+        if (effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::NamedProperties) || effects.writes.contains(AbstractHeap::PrototypeLinks))
+            return true;
+    }
+    return false;
+}
+
+static bool mayOverrideReturnInIteration(const Walker& walker, FunctionID consumer, const BodyIndex& index, std::span<const BlockID> region, FunctionID generator)
+{
+    const LookupsPastProgramObjects& lookups = walker.facts().linked().lookups;
+    if (!lookups.writesUnderAnyNameThroughUnseenByProgram && !lookups.writesUnderAnyNameThroughLostBuiltins)
+        return false;
+    for (BlockID block : region) {
+        if (mayStoreUnderUnknownKey(walker, consumer, index.block(block)))
+            return true;
+    }
+    const BodyIndex& body = walker.facts().bodies().at(generator);
+    for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
+        if (mayStoreUnderUnknownKey(walker, generator, body.block(BlockID(number))))
+            return true;
+    }
+    return false;
+}
+
 bool Walker::mayWalkMethodGenerator(const BodyValue& read, FunctionID method)
 {
     size_t frameIndex = m_frames.size() - 1;
     Frame& frame = m_frames[frameIndex];
     const BodyIndex& index = *frame.index;
-    if (!program().at(method).has(FunctionFlags::IsGenerator) || isBeingWalkedOtherThanAtYield(method) || m_code.inlineFrames().size() >= mostInlineFramesOfGeneratorsInLoops)
+    if (!program().at(method).has(FunctionFlags::IsGenerator) || isBeingWalkedOtherThanAtYield(method) || m_code.inlineFrames().size() >= mostInlineFramesOfGeneratorsInLoops || mayOverrideReturnByName(*this))
         return false;
     if (!has(Mechanism::Folding) || !has(Mechanism::Handlers) || !m_opensGuesses || m_coldCopyDepth || hasStringsInBuilders() || walksStretchInsideAnother() || !m_versionedLoops.isEmpty() || !frame.loopsBeingVersioned.isEmpty() || !frame.blocksBeingTailDuplicated.isEmpty() || !m_generatorsWalkedInConsumers.isEmpty())
         return false;
@@ -1820,6 +1864,8 @@ bool Walker::mayWalkMethodGenerator(const BodyValue& read, FunctionID method)
         m_liveness.compute(index);
     BlockID head = index.loop(found->loop).head;
     Vector<BlockID, 8> region = collectRegionOfIteration(index, m_liveness, head, found->loop, found->open);
+    if (mayOverrideReturnInIteration(*this, currentFunction(), index, region.span(), method))
+        return false;
     uint64_t numberOfOperations = facts().summaries().at(method).numberOfOperations;
     for (BlockID member : region) {
         numberOfOperations += index.block(member).numberOfValues() + 1;
@@ -2023,7 +2069,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         return false;
     Reference functionTested = !takerCallsMethodItself && (m_generatorMethodsTested.contains(std::pair { m_frames[frameIndex].inlineFrame, call.id() }) || m_generatorMethodsTested.contains(std::pair { m_frames[frameIndex].inlineFrame, index.stripCasts(call.as<Opcode::Call>().calleeOperand()) })) ? referenceOf(call.as<Opcode::Call>().calleeOperand()) : Reference();
     bool needsModificationGuard = !*described.nobodyLooksAbove && !functionTested;
-    if (needsModificationGuard && (!passedGenerator || stepsPassed || call.opcode() != Opcode::IteratorOpen || !has(Mechanism::Guesses) || !mayLeaveCopyForCall()))
+    if (needsModificationGuard && (!passedGenerator || stepsPassed || call.opcode() != Opcode::IteratorOpen || !has(Mechanism::Guesses) || !mayLeaveCopyForCall() || mayOverrideReturnByName(*this)))
         return false;
     if (((byHand && byHand->frontIsSeen) || (row && row->frontIsSeen)) && !described.isQuietBeforeInitialYield)
         return false;
@@ -2109,6 +2155,8 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
         if (!m_liveness.isComputedFor(index))
             m_liveness.compute(index);
         taken.region = collectRegionOfIteration(index, m_liveness, taken.inputHead, loop, taker);
+        if (needsModificationGuard && mayOverrideReturnInIteration(*this, currentFunction(), index, taken.region.span(), callee))
+            return false;
         uint64_t numberOfOperationsOfRegion = 0;
         uint64_t numberOfCloses = 0;
         bool holdsWhatIsWalkedInPlaceOfItself = false;

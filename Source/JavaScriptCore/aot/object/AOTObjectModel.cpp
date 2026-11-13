@@ -215,6 +215,8 @@ const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, Uni
     CachedField& cached = placeOfCachedField(layout.shape, name);
     if (cached.shape == layout.shape && cached.name == name) [[likely]]
         return cached.field;
+    if (!name->isSymbol() && !identifiersOf(m_state.instance).numberOf(name))
+        return nullptr;
     const FieldData* found = findField(vm, layout, name);
     ASSERT(!found || !parseIndex(PropertyName(name)));
     name->ref();

@@ -383,14 +383,18 @@ bool Walker::isInvariantInLoop(uint32_t indexOfLoop, Reference reference) const
 {
     if (!reference.isValue())
         return reference.isConstant();
-    if (reference.id().index() < m_openLoops[indexOfLoop].firstRecord)
+    bool isBuiltBefore = reference.id().index() < m_openLoops[indexOfLoop].firstRecord;
+    if (isBuiltBefore && m_hoistedFlatStrings.isEmpty())
+        return true;
+    const Operation& operation = m_code.at(reference.id());
+    bool isFlatWhereRead = operation.opcode == Opcode::FlattenString && !operation.isReadOperands().empty();
+    if (isBuiltBefore && (!isFlatWhereRead || (indexOfLoop && reference.id().index() < m_openLoops[indexOfLoop - 1].firstRecord)))
         return true;
     BlockID block = m_code.blockOf(reference.id());
     uint32_t place = block && block.index() < m_preheaderDepths.size() ? m_preheaderDepths[block.index()] : 0;
     if (!place || place - 1 > indexOfLoop)
         return false;
-    const Operation& operation = m_code.at(reference.id());
-    return place - 1 < indexOfLoop || (operation.opcode != Opcode::Strcat && (operation.opcode != Opcode::FlattenString || operation.isReadOperands().empty()));
+    return place - 1 < indexOfLoop || (operation.opcode != Opcode::Strcat && !isFlatWhereRead);
 }
 
 static bool mayLeaveSomeLoopForLoopInvariants(const TypeArena& types, const Draft& draft, const Effects& effects, bool proofsHoldEverywhere, bool testsNumberForInt32)
