@@ -314,6 +314,10 @@ JS_EXPORT_PRIVATE void willSetExtensionLoader(JSGlobalObject*, StringView extens
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
 bool tryReplaceExportOfRecord(JSGlobalObject*, AbstractModuleRecord*, UniquedStringImpl* name, JSValue);
+// What tryReplaceExport() or tryReplaceExportOfRecord() would replace, for a host that puts it back later. Stores nothing.
+// `held` is empty where the export has no value yet. False where the store would be refused.
+JS_EXPORT_PRIVATE bool readExportToReplace(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue& held);
+JS_EXPORT_PRIVATE bool readExportOfRecordToReplace(JSGlobalObject*, AbstractModuleRecord*, UniquedStringImpl* name, JSValue& held);
 JS_EXPORT_PRIVATE String spyOnExportErrorMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& uncompiledCaller);
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String mockModuleErrorMessage(JSGlobalObject*, const String& path, const String& uncompiledCaller);

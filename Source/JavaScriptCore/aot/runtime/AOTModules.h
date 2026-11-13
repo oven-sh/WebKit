@@ -218,13 +218,14 @@ public:
     bool isBypassingMocks() const { return m_isBypassingMocks; }
     JSValue readExportIfInitialized(ModuleID, unsigned index, Environment* instance = nullptr) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
+    // With `onlyRead` nothing is stored: it gets what the store would replace, empty for an export that has no value yet. The answer is the store's.
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr, JSValue* onlyRead = nullptr);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
-    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr, JSValue* onlyRead = nullptr);
+    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, JSValue* onlyRead = nullptr);
+    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue, JSValue* onlyRead = nullptr);
+    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue, JSValue* onlyRead = nullptr);
     struct SyntheticExportPlace {
         ModuleID module;
         uint32_t name;
