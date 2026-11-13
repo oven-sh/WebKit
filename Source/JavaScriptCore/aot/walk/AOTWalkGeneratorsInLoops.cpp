@@ -1804,7 +1804,33 @@ static bool mayOverrideReturnByName(const Walker& walker)
     return key && (lookups.namesWrittenThroughUnseenByProgram.get(key.index()) || lookups.namesWrittenThroughLostBuiltins.get(key.index()));
 }
 
-static bool mayStoreUnderUnknownKey(const Walker& walker, FunctionID function, BodyBlock block)
+static BuiltinID findCalledBuiltin(const Walker& walker, const BodyIndex& body, const BodyValue& call, bool isInWalkedFrame)
+{
+    ValueID callee = call.opcode() == Opcode::Call ? body.stripCasts(call.as<Opcode::Call>().calleeOperand()) : ValueID();
+    if (!callee || body.isParameter(callee))
+        return { };
+    if (body.opcodeOf(callee) == Opcode::Builtin)
+        return body.value(callee).as<Opcode::Builtin>().builtin();
+    if (body.opcodeOf(callee) != Opcode::PropGet || body.value(callee).isFreeName())
+        return { };
+    BodyValue read = body.value(callee);
+    ValueID object = body.stripCasts(read.objectOperand());
+    if (!body.isParameter(object) && body.opcodeOf(object) == Opcode::Builtin)
+        return findConstantMemberFrom(walker.program(), walker.facts(), body.value(object).as<Opcode::Builtin>().builtin(), read.key());
+    Reference reference = isInWalkedFrame ? walker.referenceBoundTo(object) : Reference();
+    return reference && !reference.isVirtual() ? findMemberOnObjectAsMade(walker, walker.typeOf(reference), read.key()) : BuiltinID();
+}
+
+static bool mayStoreUnderUnknownKey(const Walker& walker, BuiltinID builtin)
+{
+    const BuiltinTable& table = walker.program().builtins();
+    std::span<const BuiltinOverload> overloads = table.overloadsOf(table.canonicalID(builtin));
+    return overloads.empty() || std::ranges::any_of(overloads, [](const BuiltinOverload& overload) {
+        return overload.isUndeclared() || !overload.flow.callbacks.empty() || !overload.flow.handlerCalls.empty() || !overload.flow.propertyActions.empty() || overload.effects.writes.contains(AbstractHeap::NamedProperties) || overload.effects.writes.contains(AbstractHeap::PrototypeLinks);
+    });
+}
+
+static bool mayStoreUnderUnknownKey(const Walker& walker, FunctionID function, const BodyIndex& body, BodyBlock block, bool isInWalkedFrame, bool inspectsCallees)
 {
     const Facts& facts = walker.facts();
     bool storesUnderComputedKey = facts.summaries().at(function).has(SummaryTrait::StoresUnderComputedKey);
@@ -1814,12 +1840,23 @@ static bool mayStoreUnderUnknownKey(const Walker& walker, FunctionID function, B
         if (!callsCode(operation.opcode()))
             continue;
         FunctionID callee = facts.linked().calleeAt(function, operation.id());
-        if (!callee)
-            return true;
+        if (!callee) {
+            BuiltinID builtin = findCalledBuiltin(walker, body, operation, isInWalkedFrame);
+            if (!builtin || mayStoreUnderUnknownKey(walker, builtin))
+                return true;
+            continue;
+        }
         Effects effects = facts.effectsOnReturn(callee);
         effects.merge(facts.effectsOnThrow(callee));
-        if (effects.mayRunOtherCode() || effects.writes.contains(AbstractHeap::NamedProperties) || effects.writes.contains(AbstractHeap::PrototypeLinks))
+        if (!effects.mayRunOtherCode() && !effects.writes.contains(AbstractHeap::NamedProperties) && !effects.writes.contains(AbstractHeap::PrototypeLinks))
+            continue;
+        const BodyIndex* bodyOfCallee = inspectsCallees ? facts.bodies().find(callee) : nullptr;
+        if (!bodyOfCallee)
             return true;
+        for (uint32_t number = 0; number < bodyOfCallee->numberOfBlocks(); ++number) {
+            if (mayStoreUnderUnknownKey(walker, callee, *bodyOfCallee, bodyOfCallee->block(BlockID(number)), false, false))
+                return true;
+        }
     }
     return false;
 }
@@ -1830,12 +1867,12 @@ static bool mayOverrideReturnInIteration(const Walker& walker, FunctionID consum
     if (!lookups.writesUnderAnyNameThroughUnseenByProgram && !lookups.writesUnderAnyNameThroughLostBuiltins)
         return false;
     for (BlockID block : region) {
-        if (mayStoreUnderUnknownKey(walker, consumer, index.block(block)))
+        if (mayStoreUnderUnknownKey(walker, consumer, index, index.block(block), true, true))
             return true;
     }
     const BodyIndex& body = walker.facts().bodies().at(generator);
     for (uint32_t number = 0; number < body.numberOfBlocks(); ++number) {
-        if (mayStoreUnderUnknownKey(walker, generator, body.block(BlockID(number))))
+        if (mayStoreUnderUnknownKey(walker, generator, body, body.block(BlockID(number)), false, true))
             return true;
     }
     return false;

@@ -65,6 +65,7 @@ enum StatisticID (stage: StatisticStage) {
     SpreadCallsSpecializedForArrays
     SpreadCallsUnpackedToParameters
     BranchesFoldedToJumps
+    SuperReadsAskingTables
     DeadValueProofChecksRemoved OverwrittenSlotStoresDropped
     ObjectSpreadsRemovedAsEmpty
     URLAllocationsElided IteratorsSteppedWithoutCall KnownProxyTrapsCalled IteratorMethodsCalledDirectly AsyncArrayIterationsIndexed GeneratorMethodsInlinedIntoIterations LargeGeneratorsInlinedIntoLoops GeneratorLeafSteps SpeculatedNextMethodsGuarded DeclaredNextMethodsGuarded OwnKeyWalksExpanded

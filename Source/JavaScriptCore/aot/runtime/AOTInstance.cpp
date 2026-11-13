@@ -41,6 +41,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPoisonedCell.h"
 #include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
@@ -1151,6 +1152,7 @@ void VMState::releaseImage(VM& vm)
     runtimeTable = nullptr;
     identifiers = nullptr;
     countedFiles = { };
+    poisonedCellSites = nullptr;
     caches = nullptr;
     pages = nullptr;
 
