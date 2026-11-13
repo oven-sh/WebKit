@@ -6441,7 +6441,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 build().statistics().count(StatisticID::KnownKindsCheckedAtLoopEntry);
                 continue;
             }
-            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
+            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked || !loop.viewsAskedForKind.isEmpty() ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
             m_out.branch(answerTo(hasKind.value()), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
             m_out.appendTo(holds);
         }

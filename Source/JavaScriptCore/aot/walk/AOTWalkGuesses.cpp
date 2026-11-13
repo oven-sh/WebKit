@@ -18224,6 +18224,12 @@ static std::optional<Opcode> operatorThatElementGoesThroughForGuesses(Walker& wa
     return operatorThatValueGoesThroughForGuesses(walker, index, access.id(), &found);
 }
 
+static bool holdsConstantsAlone(const BodyIndex& index, BlockID block)
+{
+    static constexpr OpcodeSet constants = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double };
+    return std::ranges::all_of(index.block(block).values(), [](BodyValue operation) { return constants.contains(operation.opcode()); });
+}
+
 static ValueID parameterWhereValueMeetsWrittenNumberForGuesses(Walker& walker, const BodyIndex& index, ValueID value, BodyUser user, ValueID* number)
 {
     if (user.kind == BodyUseKind::Operand) {
@@ -18262,20 +18268,29 @@ static ValueID parameterWhereValueMeetsWrittenNumberForGuesses(Walker& walker, c
     BodyTerminator fork = index.terminator(index.immediateDominator(join));
     if (!fork.isConditionalBranch())
         return { };
+    auto assignsNothingElse = [&](BodyTarget way) {
+        for (size_t place = 0; place < handsOn.arguments().size(); ++place) {
+            if (place != position && (place >= way.arguments().size() || index.stripCasts(way.arguments()[place]) != index.stripCasts(handsOn.arguments()[place])))
+                return false;
+        }
+        return way.arguments().size() == handsOn.arguments().size();
+    };
     ValueID other;
     bool comesFromFork = false;
     for (BodyTarget way : fork.targets()) {
         if (way.block() == user.block || way.arguments().data() == handsOn.arguments().data()) {
+            if (number && way.block() == user.block && !holdsConstantsAlone(index, user.block))
+                return { };
             comesFromFork = true;
             continue;
         }
         BodyTarget intoJoin = way;
         if (way.block() != join) {
-            if (index.terminator(way.block()).kind() != TerminatorKind::Jump)
+            if (index.terminator(way.block()).kind() != TerminatorKind::Jump || (number && !holdsConstantsAlone(index, way.block())))
                 return { };
             intoJoin = *index.terminator(way.block()).targets().begin();
         }
-        if (intoJoin.block() != join || position >= intoJoin.arguments().size())
+        if (intoJoin.block() != join || position >= intoJoin.arguments().size() || (number && !assignsNothingElse(intoJoin)))
             return { };
         other = index.stripCasts(intoJoin.arguments()[position]);
     }

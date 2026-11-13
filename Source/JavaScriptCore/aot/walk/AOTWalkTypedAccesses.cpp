@@ -2102,7 +2102,10 @@ Reference buildHoistedFieldRead(Walker& walker, const BodyValue& read, Reference
             return { };
         walker.state().recordCellFacts(object, CellFact::NoFieldOutsideSlot);
     }
-    return walker.build(draftOfSlotOperationForTypedAccess(walker, read, Opcode::GetSlotOrUndefined, object, *receivers, read.key()));
+    Draft held(Opcode::GetSlotOrUndefined, origin);
+    walker.chooseConservativeFields(held);
+    fillSlotOperationForTypedAccess(held, object, *receivers, read.key());
+    return walker.build(WTF::move(held));
 }
 
 static Reference readFieldArrayInPreheader(Walker& walker, PropertyKeyID key, Origin readOrigin, Reference object, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field)
