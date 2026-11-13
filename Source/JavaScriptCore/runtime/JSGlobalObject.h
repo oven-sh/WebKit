@@ -1490,6 +1490,19 @@ inline JSObject* JSGlobalObject::globalThis() const
     return m_globalThis.get();
 }
 
+// putByIndex() takes no receiver: the code behind it takes the object it stores to for one. Script stores to a global object
+// through its proxy, and the JSGlobalObject itself is a JSScope, which a callee reads as no `this` (JSValue::toThis()). This
+// is what to hand to a setter or to a Proxy in place of that object. Upstream hands out the JSGlobalObject.
+ALWAYS_INLINE JSValue receiverForPutByIndex(JSValue thisValue)
+{
+    if (thisValue.isCell() && thisValue.asCell()->type() == GlobalObjectType) [[unlikely]] {
+        // Null until JSGlobalObject::finishCreation() has made the proxy.
+        if (JSObject* globalThis = uncheckedDowncast<JSGlobalObject>(thisValue.asCell())->globalThis())
+            return globalThis;
+    }
+    return thisValue;
+}
+
 ALWAYS_INLINE VM& getVM(JSGlobalObject* globalObject)
 {
     return globalObject->vm();

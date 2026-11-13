@@ -234,7 +234,7 @@ public:
     JS_EXPORT_PRIVATE static bool put(JSCell*, JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
     NODELETE static bool mightBeSpecialProperty(VM&, JSType, UniquedStringImpl*);
     JS_EXPORT_PRIVATE NEVER_INLINE static bool definePropertyOnReceiver(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
-    // putByIndex assumes that the receiver is this JSCell object.
+    // putByIndex assumes that the receiver is this JSCell object. For a JSGlobalObject that is its proxy: receiverForPutByIndex().
     JS_EXPORT_PRIVATE static bool putByIndex(JSCell*, JSGlobalObject*, unsigned propertyName, JSValue, bool shouldThrow);
         
     // This performs the ECMAScript Set() operation.
