@@ -1808,6 +1808,36 @@ static int64_t findGreatestFallingStart(Walker& walker, const BodyIndex& index, 
     return greatest.value_or(0);
 }
 
+static bool namesKeyElementInCountersOfLoops(const BodyIndex& index, const UsersOfValuesInCountersOfLoops& users, std::span<const std::pair<ValueID, unsigned>> names)
+{
+    static constexpr unsigned mostSteps = 3;
+    Vector<std::pair<ValueID, unsigned>, 16> reached(names);
+    auto isAmongNames = [&](ValueID value) {
+        return std::ranges::contains(names, value, &std::pair<ValueID, unsigned>::first);
+    };
+    for (size_t next = 0; next < reached.size(); ++next) {
+        auto [name, steps] = reached[next];
+        for (uint32_t use = users.firstUseOf(name); use != UsersOfValuesInCountersOfLoops::none; use = users.at(use).next) {
+            ValueID user = users.at(use).user;
+            if (index.isParameter(user))
+                continue;
+            BodyValue operation = index.value(user);
+            Opcode opcode = operation.opcode();
+            if (opcode == Opcode::ElemGet || opcode == Opcode::ElemSet || opcode == Opcode::ElemDefine) {
+                if (operation.propertyOperand() == name)
+                    return true;
+                continue;
+            }
+            bool statesType = opcodesThatStateTypes.contains(opcode);
+            bool isStep = opcode == Opcode::ToNumeric || opcode == Opcode::ToPropertyKey || opcode == Opcode::Increment || opcode == Opcode::Decrement;
+            if ((!statesType && (!isStep || steps == mostSteps)) || operation.operand(0) != name || isAmongNames(user))
+                continue;
+            reached.append({ user, isStep ? steps + 1 : steps });
+        }
+    }
+    return false;
+}
+
 std::optional<Range> findIterationSteps(Walker& walker, BlockID inputHead, uint32_t position)
 {
     static constexpr size_t mostNames = 48;
@@ -1890,30 +1920,18 @@ std::optional<Range> findIterationSteps(Walker& walker, BlockID inputHead, uint3
     }
     if (!isBounded || found.isEmpty() || (!found.minimum && !found.maximum))
         return std::nullopt;
-    auto isStepped = [&](ValueID key) {
-        for (unsigned names = 0; names < 4 && key; ++names) {
-            key = index.stripCasts(key);
-            if (key == from || std::ranges::any_of(reached, [&](const auto& name) { return name.first == key; }))
-                return true;
-            if (index.isParameter(key) || (index.opcodeOf(key) != Opcode::ToNumeric && index.opcodeOf(key) != Opcode::ToPropertyKey && index.opcodeOf(key) != Opcode::Increment && index.opcodeOf(key) != Opcode::Decrement))
-                return false;
-            key = index.value(key).operand(0);
-        }
-        return false;
-    };
     bool isCounter = false;
     BodyTerminator end = index.terminator(inputHead);
     if (ValueID condition = end.kind() == TerminatorKind::Branch ? end.as<TerminatorKind::Branch>().conditionOperand() : ValueID(); condition && !index.isParameter(condition) && allRelations.contains(index.opcodeOf(condition)))
         isCounter = index.stripCasts(index.value(condition).operand(0)) == from || index.stripCasts(index.value(condition).operand(1)) == from;
-    for (BlockID member : index.membersOf(loop)) {
-        if (isCounter)
-            break;
-        for (BodyValue operation : index.block(member).values()) {
-            if ((operation.opcode() == Opcode::ElemGet || operation.opcode() == Opcode::ElemSet || operation.opcode() == Opcode::ElemDefine) && isStepped(operation.propertyOperand()))
-                return found;
-        }
+    if (isCounter)
+        return found;
+    Vector<std::pair<ValueID, unsigned>, 16> names { { from, 0u } };
+    for (auto [name, added] : reached) {
+        if (!std::ranges::contains(names, name, &std::pair<ValueID, unsigned>::first))
+            names.append({ name, 0u });
     }
-    return isCounter ? std::optional { found } : std::nullopt;
+    return namesKeyElementInCountersOfLoops(index, *usersOfValuesOfLoopInCountersOfLoops(walker, index, inputHead), names.span()) ? std::optional { found } : std::nullopt;
 }
 
 static std::optional<Range> findAddendRange(Walker& walker, const BodyIndex& index, uint32_t firstValueOfLoop, ValueID addend)

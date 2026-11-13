@@ -446,7 +446,7 @@ public:
         if (m_valuesDefinedBoxed.get(id.index())) [[unlikely]]
             m_valuesDefinedBoxed.clear(id.index());
     }
-    std::optional<Boxed> findBoxed(ValueID id) const { return m_valuesDefinedBoxed.get(id.index()) && m_values[id.index()] ? std::optional { Boxed(m_values[id.index()]) } : std::nullopt; }
+    ALWAYS_INLINE std::optional<Boxed> findBoxed(ValueID id) const { return m_valuesDefinedBoxed.get(id.index()) && m_values[id.index()] ? std::optional { Boxed(m_values[id.index()]) } : std::nullopt; }
     void defineTest(const ValueContext&, Condition);
     void defineResults(const ValueContext&, std::span<const Operand>);
     Operand resultAt(ValueID producer, uint32_t index) const;
@@ -829,7 +829,7 @@ private:
             return m_cachedHandler;
         return handlerEdgeOf(block, code().at(block));
     }
-    const Edge* handlerEdgeOf(BlockID id, const Block& block) const
+    ALWAYS_INLINE const Edge* handlerEdgeOf(BlockID id, const Block& block) const
     {
         if (!block.handler) [[likely]]
             return nullptr;
@@ -880,7 +880,7 @@ private:
     COLD NEVER_INLINE void reportBoxedNumberUse(ValueID);
     Operand makeInWantedForm(ValueID, const Operation&, Representation wanted);
     Operand makeConstant(ValueID, const Operation&);
-    void defineValue(ValueID id, Representation representation, Operand operand)
+    ALWAYS_INLINE void defineValue(ValueID id, Representation representation, Operand operand)
     {
         if (m_definitionTaken) [[unlikely]] {
             *m_definitionTaken = operand;

@@ -385,16 +385,6 @@ SpillIndex Allocator::markSpilled(Operation* value)
     return spill;
 }
 
-SpillIndex Allocator::addSpill(const SpillFacts& facts)
-{
-    ASSERT(facts.value);
-    ASSERT(facts.begin != noPosition && facts.begin <= facts.end);
-    ASSERT(facts.width == Width32 || facts.width == Width64 || facts.width == Width128);
-    SpillIndex index = m_allocation.m_spills.size();
-    m_allocation.m_spills.append(m_arena, facts);
-    return index;
-}
-
 } } } // namespace JSC::AOT::Machine
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

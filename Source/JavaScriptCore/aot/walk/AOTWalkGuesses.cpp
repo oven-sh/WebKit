@@ -2978,6 +2978,8 @@ static DetailedExpectation expectationByBuiltinMemberNames(Walker& walker, std::
     const Program& program = walker.program();
     BuiltinClassID only;
     for (PropertyKeyID key : names) {
+        if (builtinClassesWithMember(program, key).empty() && !std::ranges::contains(walker.facts().linked().functionsWrittenOverBuiltins, key.bits(), &LinkedFunctionWrittenOverBuiltin::key))
+            return { };
         BuiltinClassID named = onlyBuiltinClassWithMember(walker, key);
         if (!named)
             continue;
@@ -3318,16 +3320,16 @@ static DetailedExpectation expectationOfWhatLoopReadsByKeyForGuesses(Walker& wal
             return { walker.types().builtinClass(BuiltinClasses::Array), false };
         }
     }
-    if (std::ranges::none_of(names, [&](PropertyKeyID name) { return program.nameClassOf(name) == NameClass::Length; }))
+    if (names.empty())
         return expectationOfPlaceThatLoopsReadByKeyForGuesses(walker, input);
     const BodySpeculationCache& kept = usesOfValues(walker, walker.currentBodyIndex());
-    if (kept.rootsOfValuesWithMarks.isEmpty())
-        return { };
     uint32_t root = kept.rootOf(input.index());
-    if (std::ranges::binary_search(kept.rootsWhoseElementsAreAskedInLoops, root))
-        return isProvenDictionaryForGuesses(walker, input) ? DetailedExpectation() : DetailedExpectation { walker.types().builtinClass(BuiltinClasses::Array), false };
-    if (!std::ranges::binary_search(kept.rootsWhoseElementsMeetTextsInLoops, root))
+    bool asksElements = std::ranges::binary_search(kept.rootsWhoseElementsAreAskedInLoops, root);
+    bool elementsMeetTexts = !asksElements && std::ranges::binary_search(kept.rootsWhoseElementsMeetTextsInLoops, root);
+    if ((!asksElements && !elementsMeetTexts) || std::ranges::none_of(names, [&](PropertyKeyID name) { return program.nameClassOf(name) == NameClass::Length; }))
         return expectationOfPlaceThatLoopsReadByKeyForGuesses(walker, input);
+    if (asksElements)
+        return isProvenDictionaryForGuesses(walker, input) ? DetailedExpectation() : DetailedExpectation { walker.types().builtinClass(BuiltinClasses::Array), false };
     bool textsAnswerEveryName = std::ranges::all_of(names, [&](PropertyKeyID key) {
         if (program.nameClassOf(key) == NameClass::Length)
             return true;
@@ -7744,7 +7746,7 @@ static StretchOfGuess findStretchOfGuess(Walker& walker, Reference value, const 
         if (!user || !block.holds(user) || index.opcodeOf(user) != Opcode::PropSet)
             return false;
         BodyValue store = index.value(user);
-        return store.valueOperand() == read && namesValueOfGuess(store.objectOperand());
+        return store.valueOperand() == read && namesValueOfGuess(store.objectOperand()) && !store.as<Opcode::PropSet>().calledBuiltin();
     };
     bool slotsAreAsFound = true;
     Vector<std::pair<ValueID, PropertyKeyID>, 8> slotsStoredInStretch;

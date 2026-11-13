@@ -35,6 +35,7 @@
 #include "AOTSweep.h"
 #include "AOTTypeNarrowing.h"
 #include "AOTTypeText.h"
+#include "AOTWalkCopies.h"
 #include "AOTWalkCountersOfLoops.h"
 #include "AOTWalkCoroutinePositions.h"
 #include "AOTWalkCoroutinePromises.h"
@@ -9944,6 +9945,7 @@ void Walker::walkOperation(const BodyValue& value)
         finishBirthWhereLiteralEnds(value);
         if (isUnreachable())
             return;
+        forgetSlotsOfLiteralAssignedByName(*this, value);
     }
     const bool listsEscapes = summaryListsEscapes();
     if (listsEscapes) [[unlikely]] {

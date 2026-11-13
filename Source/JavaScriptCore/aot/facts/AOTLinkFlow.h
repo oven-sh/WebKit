@@ -1684,6 +1684,7 @@ public:
     const CallsInBody& callsInBody(FunctionID caller) const LIFETIME_BOUND;
     std::unique_ptr<ClosuresInBody> listClosuresInBody(FunctionID maker) const;
     const ClosuresInBody& closuresInBody(FunctionID maker) const LIFETIME_BOUND;
+    std::span<const BlockID> blocksBehindTestsByCalls(FunctionID, const BodyIndex&) const LIFETIME_BOUND;
     bool isExportedVariable(VariableID) const;
     std::unique_ptr<CallsInSight> listCallsInSight(FunctionID) const;
     const CallsInSight& findCallsInSight(FunctionID) const LIFETIME_BOUND;
@@ -2817,6 +2818,8 @@ private:
         uint32_t end { 0 };
     };
     BitVector m_layoutsWhoseSuperCallMayAnswerWithOlderObject;
+    HashMap<uint32_t, LayoutID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesOfInitializers;
+    bool m_someSuperCallMayAnswerWithOlderObject { false };
     BitVector m_layoutsWhoseConstructionMayAnswerWithOlderObject;
     Vector<uint32_t> m_numbersOfAllocatedMembersOfFamilies;
     Vector<StretchInTreeOfBases> m_stretchesAtAndBelowLayouts;
@@ -2935,6 +2938,7 @@ private:
     mutable HashMap<uint32_t, std::unique_ptr<CallsInSight>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callsInSight WTF_GUARDED_BY_LOCK(m_lockOfCallsInSight);
     mutable HashMap<uint32_t, std::unique_ptr<CallsInBody>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callsInBodies WTF_GUARDED_BY_LOCK(m_lockOfCallsInSight);
     mutable HashMap<uint32_t, std::unique_ptr<ClosuresInBody>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closuresInBodies WTF_GUARDED_BY_LOCK(m_lockOfCallsInSight);
+    mutable HashMap<uint32_t, Vector<BlockID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksBehindTestsByCalls WTF_GUARDED_BY_LOCK(m_lockOfCallsInSight);
     mutable std::once_flag m_exportedVariablesAreListed;
     mutable BitVector m_exportedVariables;
     HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_placesOfAccessesUnderNames;

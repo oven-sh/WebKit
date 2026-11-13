@@ -525,7 +525,7 @@ public:
     uint32_t numberOfOperands() const { return m_hasSideWords ? m_words[3] : m_numberOfInlineOperands; }
     uint32_t numberOfNamedOperands() const { return m_hasSideWords ? m_words[2] & maxNumberOfNamedOperands : m_numberOfInlineOperands; }
     uint32_t numberOfVariadicOperands() const { return numberOfOperands() - numberOfNamedOperands(); }
-    ValueID operand(uint32_t operandIndex) const
+    ALWAYS_INLINE ValueID operand(uint32_t operandIndex) const
     {
         std::span<const ValueID> all = operands();
         RELEASE_ASSERT(operandIndex < all.size());
@@ -557,7 +557,7 @@ public:
             return { sideWords(), numberOfSidePayloadWords() };
         return { m_words.data() + m_numberOfInlineOperands, m_numberOfInlinePayloadWords };
     }
-    uint32_t payloadWordAt(unsigned word) const
+    ALWAYS_INLINE uint32_t payloadWordAt(unsigned word) const
     {
         std::span<const uint32_t> words = payload();
         if (word < words.size()) [[likely]]
@@ -794,7 +794,7 @@ public:
     }
 
     std::span<const uint32_t> payload() const LIFETIME_BOUND { return m_payload.span(); }
-    uint32_t payloadWordAt(unsigned word) const
+    ALWAYS_INLINE uint32_t payloadWordAt(unsigned word) const
     {
         if (word < m_payload.size()) [[likely]]
             return m_payload[word];

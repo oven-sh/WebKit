@@ -574,7 +574,7 @@ struct PatchEffectsMemo {
     Vector<Machine::HeapIndex*> lists;
 };
 
-static uint64_t hashOfLocationMasks(const LocationMasks& masks, uint64_t hash)
+static ALWAYS_INLINE uint64_t hashOfLocationMasks(const LocationMasks& masks, uint64_t hash)
 {
     hash = (std::rotl(hash, 32) ^ static_cast<uint64_t>(masks.heaps().toRaw())) * 0x9E3779B97F4A7C15ull;
     if (!masks.containsAny(indexedHeaps))
@@ -771,10 +771,10 @@ void RuntimeCallEmitter::fillEntryRequest(CallRequestWithOwnOptions& request, AO
         && numberOfGPRArgumentsOf(signature, first) <= GPRInfo::numberOfArgumentRegisters
         && (first != OperationCall::FirstArgument::None || !checksException);
     if (callerOptions.isOnRarePath && canPreserveRegisters) {
-        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first) };
+        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first, request.ownEffects) };
         request.key = callOperationPreservingRegisters(*request.preservingCall);
     } else
-        request.key = callOperationFor(entry, returns, first);
+        request.key = callOperationFor(entry, returns, first, request.ownEffects);
 }
 
 void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LValue> arguments, OperationCall::FirstArgument first) const

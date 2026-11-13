@@ -342,7 +342,15 @@ public:
     }
     Reg bringIntoRegister(Operation* value, RegisterMask allowed, Reg preferred);
     SpillIndex markSpilled(Operation* value);
-    SpillIndex addSpill(const SpillFacts&);
+    ALWAYS_INLINE SpillIndex addSpill(const SpillFacts& facts)
+    {
+        ASSERT(facts.value);
+        ASSERT(facts.begin != noPosition && facts.begin <= facts.end);
+        ASSERT(facts.width == Width32 || facts.width == Width64 || facts.width == Width128);
+        SpillIndex index = m_allocation.m_spills.size();
+        m_allocation.m_spills.append(m_arena, facts);
+        return index;
+    }
     ALWAYS_INLINE void noteCalleeSaveUse(Reg reg)
     {
         RegisterMask bit = maskOf(reg) & m_file.calleeSaved;

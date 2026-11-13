@@ -9597,8 +9597,23 @@ void LinkFlow::findSuperCallsThatMayAnswerWithOlderObject()
         const Layout& layout = program.layouts[index];
         if (layout.kind != LayoutKind::Instance || (!layout.base && !layout.has(LayoutFlags::HasHeritage)))
             continue;
-        if (!layout.base || m_layoutsWhoseConstructionMayAnswerWithOlderObject.quickGet(layout.base.index()))
+        if (!layout.base || m_layoutsWhoseConstructionMayAnswerWithOlderObject.quickGet(layout.base.index())) {
             m_layoutsWhoseSuperCallMayAnswerWithOlderObject.quickSet(index);
+            m_someSuperCallMayAnswerWithOlderObject = true;
+        }
+    }
+    for (size_t index = 0; m_someSuperCallMayAnswerWithOlderObject && index < program.functions.size(); ++index) {
+        const Function& function = program.functions[index];
+        TypeID own = function.kind == FunctionKind::Initializer ? function.thisType.written() : TypeID();
+        if (!own || holdsOnlyPrimitives(own) || !program.at(own).hasOnlyLayouts())
+            continue;
+        LayoutID constructed;
+        for (LayoutID member : Typed::membersOf(TypeReader(program), program.at(own))) {
+            if (program.at(member).kind == LayoutKind::Instance && (!constructed || standsAtOrBelow(constructed, member)))
+                constructed = member;
+        }
+        if (constructed)
+            m_classesOfInitializers.add(static_cast<uint32_t>(index), constructed);
     }
 }
 
@@ -9665,20 +9680,12 @@ LayoutID LinkFlow::classUnderConstruction(FunctionID writer) const
     const Function& function = program.at(writer);
     if (function.kind == FunctionKind::DerivedConstructor)
         return function.constructedClass;
-    TypeID own = function.kind == FunctionKind::Initializer ? function.thisType.written() : TypeID();
-    if (!own || holdsOnlyPrimitives(own) || !program.at(own).hasOnlyLayouts())
-        return { };
-    LayoutID constructed;
-    for (LayoutID member : Typed::membersOf(TypeReader(program), program.at(own))) {
-        if (program.at(member).kind == LayoutKind::Instance && (!constructed || standsAtOrBelow(constructed, member)))
-            constructed = member;
-    }
-    return constructed;
+    return function.kind == FunctionKind::Initializer ? m_classesOfInitializers.get(writer.index()) : LayoutID();
 }
 
 bool LinkFlow::mayStoreIntoOlderObjectThatSuperCallAnswered(FunctionID writer, const SummaryAccess& access) const
 {
-    if (!access.isPartOfConstruction || summaries.at(writer).nodes[access.subject].kind == SummaryNode::Kind::Allocation)
+    if (!m_someSuperCallMayAnswerWithOlderObject || !access.isPartOfConstruction || summaries.at(writer).nodes[access.subject].kind == SummaryNode::Kind::Allocation)
         return false;
     LayoutID constructed = classUnderConstruction(writer);
     return constructed && superCallMayAnswerWithOlderObject(constructed);

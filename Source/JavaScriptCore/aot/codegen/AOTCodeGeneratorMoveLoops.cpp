@@ -1363,10 +1363,6 @@ void MoveLoopEmitter::emit(std::span<const LValue> firsts, LBasicBlock written, 
 
 bool CodeGenerator::mayMoveElements(BlockID id)
 {
-    static constexpr OpcodeSet reads { Opcode::ElemGet, Opcode::GetArrayElement };
-    static constexpr OpcodeSet stores { Opcode::ElemSet, Opcode::PutArrayElement };
-    if (!code().opcodesOfValues().intersects(reads) || !code().opcodesOfValues().intersects(stores)) [[likely]]
-        return false;
     return code().at(id).frequency != BlockFrequency::Rare && runsRepeatedly(id) && !m_keepsValuesInHeapFrame && !m_interleaving && !m_headOfTurnsLaidOut && !m_checksEffects && !m_rows;
 }
 

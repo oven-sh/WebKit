@@ -141,7 +141,7 @@ static void samplePressureOfScan(BackwardScan& scan, uint32_t loop, bool standsB
     }
 }
 
-static void endCountOfPhiReadOnlyBehindLoop(BackwardScan& scan, const Operation* phi)
+static ALWAYS_INLINE void endCountOfPhiReadOnlyBehindLoop(BackwardScan& scan, const Operation* phi)
 {
     if (!scan.m_isPhiReadOnlyBehindLoop.get(phi->index()))
         return;
@@ -383,7 +383,7 @@ static NEVER_INLINE bool failScannedRead(BackwardScan& scan, const PlaceOfScanne
     return at.loop != noLoop && scan.m_order.headOf(value->owner()) < at.beginOfLoop;
 }
 
-static void countScannedReadExtendedOverLoopsForCalls(BackwardScan& scan, const Operation* value, SummaryOfScannedReads& summary, uint32_t loop, Position position)
+static ALWAYS_INLINE void countScannedReadExtendedOverLoopsForCalls(BackwardScan& scan, const Operation* value, SummaryOfScannedReads& summary, uint32_t loop, Position position)
 {
     ASSERT(loop != noLoop);
     const Loop* loops = scan.m_order.loops().data();
@@ -731,7 +731,7 @@ static ALWAYS_INLINE void noteScannedReadOfWholeWord(BackwardScan& scan, const O
         noteScannedReadOfWholeWordTheLongWay(scan, operation);
 }
 
-static bool functionEndsBehindScannedPatch(const PatchOperation* patch)
+static ALWAYS_INLINE bool functionEndsBehindScannedPatch(const PatchOperation* patch)
 {
     const Block* block = patch->owner();
     if (patch->endsBlock())

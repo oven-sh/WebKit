@@ -270,7 +270,7 @@ public:
     LValue valueOf(TypedPointer pointer) { return pointer.offset() ? add(pointer.base(), constIntPtr(pointer.offset())) : pointer.base(); }
     TypedPointer address(const Machine::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0) { return TypedPointer(heap, base, offset); }
     TypedPointer address(LValue base, const Machine::AbstractHeap& field, ptrdiff_t offset = 0) { return TypedPointer(field, base, offset + field.offset()); }
-    LValue baseIndex(LValue base, LValue index, Scale scale, ptrdiff_t offset = 0)
+    ALWAYS_INLINE LValue baseIndex(LValue base, LValue index, Scale scale, ptrdiff_t offset = 0)
     {
         LValue sum = add(base, logScale(scale) ? shl(index, logScale(scale)) : index);
         return offset ? add(sum, constIntPtr(offset)) : sum;

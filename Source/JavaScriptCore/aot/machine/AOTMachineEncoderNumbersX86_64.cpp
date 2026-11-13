@@ -164,7 +164,7 @@ void Encoder::zeroDestinationOf(const Step& step, FPRReg destination)
     m_stepsWithZeroedDestination[m_numberOfZeroedDestinations++ % m_stepsWithZeroedDestination.size()] = &step;
 }
 
-bool Encoder::writesNumberRegister(const Step& step, FPRReg reg) const
+ALWAYS_INLINE bool Encoder::writesNumberRegister(const Step& step, FPRReg reg) const
 {
     if (step.destination.isRegister() && step.destination.reg() == Reg(reg))
         return true;

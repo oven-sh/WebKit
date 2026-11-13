@@ -404,7 +404,7 @@ inline bool isLeafOfAddress(const Liveness& liveness, const Operation* user, uns
     return addsScaledIndex(liveness, user);
 }
 
-inline bool standsInInstruction(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
+ALWAYS_INLINE bool standsInInstruction(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
 {
     if (addsScaledIndex(liveness, user))
         return scaledSumAcceptsBase(*leaf);

@@ -4046,7 +4046,9 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     bool testWaitsForBranch = false;
     m_readLeftToBranch = readLeftToBranchOnItsTruth(id, values, test);
     static constexpr OpcodeSet readsOfElements { Opcode::ElemGet, Opcode::GetArrayElement };
-    const bool looksForElementMoves = mayMoveElements(id);
+    static constexpr OpcodeSet storesOfElements { Opcode::ElemSet, Opcode::PutArrayElement };
+    const OpcodeSet& opcodesOfCode = code().opcodesOfValues();
+    const bool looksForElementMoves = opcodesOfCode.intersects(storesOfElements) && opcodesOfCode.intersects(readsOfElements) && mayMoveElements(id);
     std::optional<ElementMoves> moves;
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];

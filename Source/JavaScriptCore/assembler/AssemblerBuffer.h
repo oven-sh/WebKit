@@ -425,7 +425,7 @@ namespace JSC {
 #if !CPU(ARM64) // If we ever need to use this on arm64e, we would need to make the checksum aware of this.
         class LocalWriter {
         public:
-            LocalWriter(AssemblerBuffer& buffer, unsigned requiredSpace)
+            ALWAYS_INLINE LocalWriter(AssemblerBuffer& buffer, unsigned requiredSpace)
                 : m_buffer(buffer)
             {
                 buffer.ensureSpace(requiredSpace);

@@ -1011,6 +1011,8 @@ public:
     }
     void noteTextsSpelledIn(const DataNode&);
     void noteTextThatMayNameEvent(StringID);
+    const BitVector& namesUnderWhichEventsHang();
+    void noteNameOfStoreOfAssignment(const BodyValue&);
     void noteNameThatMayBecomeText(BuiltinName);
     void noteTextsThatMayNameEventsIn(const DataNode&);
     const BitVector& textsSpelled() const { return m_textsSpelled; }
@@ -1621,6 +1623,8 @@ private:
     const BitVector* m_namesUnderWhichTextIsEvaluated;
     const BitVector* m_bodiesThatSeveralModulesName;
     BitVector m_namesListedByThisScan;
+    BitVector m_keysUnderWhichEventsHang;
+    bool m_keysUnderWhichEventsHangAreListed { false };
     BitVector m_namesOfEvaluatorsListedByThisScan;
     const BitVector& m_textsThatNameFieldsNeverWritten;
     BitVector m_textsSpelled;
@@ -2855,12 +2859,29 @@ void ScanOfBody::noteTextThatMayNameEvent(StringID text)
     BuiltinName name = m_program.strings.builtinName(text);
     if (!name || isLibraryCode(m_program, *m_function))
         return;
+    if (namesUnderWhichEventsHang().get(name.index()))
+        m_summary.textsThatNameEvents.append(m_program.keyOf(name));
+}
+
+const BitVector& ScanOfBody::namesUnderWhichEventsHang()
+{
     if (!m_namesUnderWhichEventsHang) {
         m_namesListedByThisScan = namesUnderWhichEventsHangInScan(m_program.builtins());
         m_namesUnderWhichEventsHang = &m_namesListedByThisScan;
     }
-    if (m_namesUnderWhichEventsHang->get(name.index()))
-        m_summary.textsThatNameEvents.append(m_program.keyOf(name));
+    return *m_namesUnderWhichEventsHang;
+}
+
+void ScanOfBody::noteNameOfStoreOfAssignment(const BodyValue& store)
+{
+    if (!std::exchange(m_keysUnderWhichEventsHangAreListed, true)) {
+        for (size_t name : namesUnderWhichEventsHang()) {
+            if (PropertyKeyID key = m_program.keyOf(BuiltinName(static_cast<uint32_t>(name))))
+                m_keysUnderWhichEventsHang.set(key.index());
+        }
+    }
+    if (m_keysUnderWhichEventsHang.get(m_keyOfOperation.index()) && store.as<Opcode::PropSet>().calledBuiltin() && !isLibraryCode(m_program, *m_function)) [[unlikely]]
+        m_summary.textsThatNameEvents.append(m_keyOfOperation);
 }
 
 void ScanOfBody::noteNameThatMayBecomeText(BuiltinName name)
@@ -4214,6 +4235,8 @@ ALWAYS_INLINE void ScanOfBody::readOperation(const BodyValue& value, uint32_t bl
 
     beginResult();
     if (access) {
+        if (opcode == Opcode::PropSet)
+            noteNameOfStoreOfAssignment(value);
         readAccess(value, *access, block);
         return;
     }

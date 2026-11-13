@@ -255,7 +255,7 @@ public:
         const FunctionConvention& convention = of(unit.function);
         return returnsAsDeclared(unit.role, convention) ? convention.numberOfResults : 1;
     }
-    Representation resultRepresentation(CodeUnit unit, unsigned resultIndex = 0) const
+    ALWAYS_INLINE Representation resultRepresentation(CodeUnit unit, unsigned resultIndex = 0) const
     {
         const FunctionConvention& convention = of(unit.function);
         if (returnsAsDeclared(unit.role, convention)) {

@@ -16,6 +16,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool foldComparisonOfValueWithItself(Walker&, const BodyValue& comparison);
 bool assignSourcesFieldByField(Walker&, const BodyValue& call);
+void forgetSlotsOfLiteralAssignedByName(Walker&, const BodyValue& finished);
 inline constexpr OpcodeSet opcodesThatBuildCopyOrKeyOrderFormTakes { Opcode::StrictEq, Opcode::CopyObject, Opcode::Call };
 bool buildCopyOrKeyOrderFormOfItsOpcodes(Walker&, const BodyValue&);
 ALWAYS_INLINE bool buildCopyOrKeyOrderForm(Walker& walker, const BodyValue& value) { return opcodesThatBuildCopyOrKeyOrderFormTakes.contains(value.opcode()) && buildCopyOrKeyOrderFormOfItsOpcodes(walker, value); }

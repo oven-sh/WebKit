@@ -2399,6 +2399,40 @@ bool LinkFlow::iteratesListsAsBuilt() const
     return !program.admitsReplacedBuiltins && !testRuns().isTestRun() && !program.isSomeNameOpenedOn(program.builtins().canonicalID(Builtins::ObjectPrototype));
 }
 
+static ValueID callThatAloneLeadsIntoBlock(const BodyIndex& index, BlockID block)
+{
+    std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(block);
+    if (!edge)
+        return { };
+    BodyTerminator terminator = index.terminator(edge->from);
+    if (terminator.kind() != TerminatorKind::Branch)
+        return { };
+    bool holds = !edge->targetIndex;
+    ValueID tested = index.stripCasts(terminator.as<TerminatorKind::Branch>().conditionOperand());
+    while (!index.isParameter(tested) && (index.opcodeOf(tested) == Opcode::ToBoolean || index.opcodeOf(tested) == Opcode::LogicalNot)) {
+        holds ^= index.opcodeOf(tested) == Opcode::LogicalNot;
+        tested = index.stripCasts(index.value(tested).operand(0));
+    }
+    return holds && !index.isParameter(tested) && index.opcodeOf(tested) == Opcode::Call ? tested : ValueID();
+}
+
+std::span<const BlockID> LinkFlow::blocksBehindTestsByCalls(FunctionID id, const BodyIndex& index) const
+{
+    {
+        Locker locker { m_lockOfCallsInSight };
+        if (auto known = m_blocksBehindTestsByCalls.find(id.index()); known != m_blocksBehindTestsByCalls.end())
+            return known->value.span();
+    }
+    Vector<BlockID> nearest(FillWith { }, index.numberOfBlocks(), BlockID());
+    for (BlockID block : index.blocksInDominatorOrder()) {
+        BlockID above = index.immediateDominator(block);
+        if (above)
+            nearest[block.index()] = callThatAloneLeadsIntoBlock(index, block) ? block : nearest[above.index()];
+    }
+    Locker locker { m_lockOfCallsInSight };
+    return m_blocksBehindTestsByCalls.add(id.index(), WTF::move(nearest)).iterator->value.span();
+}
+
 bool LinkFlow::isBehindOwnNameTest(FunctionID id, const BodyIndex& index, ValueID site, ValueID object, ValueID name, const LinkType& objects, Vector<FlowNodeID, 4>& watched) const
 {
     BuiltinID hasOwnProperty = program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty);
@@ -2423,8 +2457,6 @@ bool LinkFlow::isBehindOwnNameTest(FunctionID id, const BodyIndex& index, ValueI
         return inherits;
     };
     auto asksOwnName = [&](ValueID tested) {
-        if (index.isParameter(tested) || index.opcodeOf(tested) != Opcode::Call)
-            return false;
         auto call = index.value(tested).as<Opcode::Call>();
         ValueID callee = call.calleeOperand() ? index.stripCasts(call.calleeOperand()) : ValueID();
         std::span<const ValueID> arguments = call.argumentsOperands();
@@ -2461,23 +2493,10 @@ bool LinkFlow::isBehindOwnNameTest(FunctionID id, const BodyIndex& index, ValueI
         return true;
     };
     BlockID blockOfName = index.blockOf(name);
-    for (BlockID block = index.blockOf(site); block != entryBlock && block != blockOfName;) {
-        BlockID above = index.immediateDominator(block);
-        if (!above)
-            return false;
-        std::optional<BodyIncomingEdge> edge = index.onlyIncomingEdge(block);
-        BodyTerminator terminator = index.terminator(above);
-        if (edge && terminator.kind() == TerminatorKind::Branch) {
-            bool holds = !edge->targetIndex;
-            ValueID tested = index.stripCasts(terminator.as<TerminatorKind::Branch>().conditionOperand());
-            while (!index.isParameter(tested) && (index.opcodeOf(tested) == Opcode::ToBoolean || index.opcodeOf(tested) == Opcode::LogicalNot)) {
-                holds ^= index.opcodeOf(tested) == Opcode::LogicalNot;
-                tested = index.stripCasts(index.value(tested).operand(0));
-            }
-            if (holds && asksOwnName(tested))
-                return true;
-        }
-        block = above;
+    std::span<const BlockID> behindTests = blocksBehindTestsByCalls(id, index);
+    for (BlockID block = behindTests[index.blockOf(site).index()]; block && index.strictlyDominates(blockOfName, block); block = behindTests[index.immediateDominator(block).index()]) {
+        if (asksOwnName(callThatAloneLeadsIntoBlock(index, block)))
+            return true;
     }
     return false;
 }

@@ -422,7 +422,7 @@ static ALWAYS_INLINE LineColumn lineColumnNear(const Program& program, ModuleID 
     return lineColumnInOtherStretch(program, id, position, place);
 }
 
-static SitePosition positionIn(const Program& program, ShownFunction& shown, uint32_t position, uint32_t frame)
+static ALWAYS_INLINE SitePosition positionIn(const Program& program, ShownFunction& shown, uint32_t position, uint32_t frame)
 {
     if (shown.positionInBuiltin)
         return { shown.positionInBuiltin->line, shown.positionInBuiltin->column, ModuleID(), 0, frame };

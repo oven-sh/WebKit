@@ -662,7 +662,7 @@ static ALWAYS_INLINE void listIncomingValuesAtEdge(const Block* from, const Bloc
     }
 }
 
-static Operation* findChildThatDiesInRegisterOfResult(const Liveness& liveness, const Operation* user, unsigned childIndex)
+static ALWAYS_INLINE Operation* findChildThatDiesInRegisterOfResult(const Liveness& liveness, const Operation* user, unsigned childIndex)
 {
     Operation* child = user->child(childIndex);
     if (liveness.isFused(child)) {

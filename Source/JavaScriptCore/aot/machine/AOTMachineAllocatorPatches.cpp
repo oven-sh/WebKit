@@ -334,7 +334,7 @@ static bool registersMatterBehindPatch(const PatchOperation* patch)
     return !patch->endsBlock() || someSuccessorIsNoLandingPad(patch->owner());
 }
 
-static bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const PatchOperation* patch, const Operation* value, Position late)
+static ALWAYS_INLINE bool isReadOnlyByFixedPatchOperands(const Allocator& allocator, const PatchOperation* patch, const Operation* value, Position late)
 {
     if (patch->opcode() == Check || (registersMatterBehindPatch(patch) && allocator.isLiveBehind(value, late)))
         return false;
