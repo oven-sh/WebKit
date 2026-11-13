@@ -857,6 +857,18 @@ TEST_F(WTF_URLParser, ParserDifferences)
     checkURL("notspecial://H%4fSt"_s, { "notspecial"_s, ""_s, ""_s, "H%4fSt"_s, 0, ""_s, ""_s, ""_s, "notspecial://H%4fSt"_s });
     checkURLDifferences(utf16String(u"notspecial://H😍ßt"),
         { "notspecial"_s, ""_s, ""_s, "H%F0%9F%98%8D%C3%9Ft"_s, 0, ""_s, ""_s, ""_s, "notspecial://H%F0%9F%98%8D%C3%9Ft"_s }, testTabsValueForSurrogatePairs);
+    // The forbidden host code points are 17 ASCII code points. U+10020 is not U+0020.
+    checkURL(utf16String(u"notspecial://a\U00010020/"), { "notspecial"_s, ""_s, ""_s, "a%F0%90%80%A0"_s, 0, "/"_s, ""_s, ""_s, "notspecial://a%F0%90%80%A0/"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U00010000"), { "notspecial"_s, ""_s, ""_s, "%F0%90%80%80"_s, 0, ""_s, ""_s, ""_s, "notspecial://%F0%90%80%80"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://a\U0001002Fb/"), { "notspecial"_s, ""_s, ""_s, "a%F0%90%80%AFb"_s, 0, "/"_s, ""_s, ""_s, "notspecial://a%F0%90%80%AFb/"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U0001003A:80/p"), { "notspecial"_s, ""_s, ""_s, "%F0%90%80%BA"_s, 80, "/p"_s, ""_s, ""_s, "notspecial://%F0%90%80%BA:80/p"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U0001007C"), { "notspecial"_s, ""_s, ""_s, "%F0%90%81%BC"_s, 0, ""_s, ""_s, ""_s, "notspecial://%F0%90%81%BC"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U00020000/"), { "notspecial"_s, ""_s, ""_s, "%F0%A0%80%80"_s, 0, "/"_s, ""_s, ""_s, "notspecial://%F0%A0%80%80/"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U000E0020/"), { "notspecial"_s, ""_s, ""_s, "%F3%A0%80%A0"_s, 0, "/"_s, ""_s, ""_s, "notspecial://%F3%A0%80%A0/"_s }, testTabsValueForSurrogatePairs);
+    checkURL(utf16String(u"notspecial://\U00100020/"), { "notspecial"_s, ""_s, ""_s, "%F4%80%80%A0"_s, 0, "/"_s, ""_s, ""_s, "notspecial://%F4%80%80%A0/"_s }, testTabsValueForSurrogatePairs);
+    // U+001F and U+007F are forbidden in a domain, not in the host of a non-special URL.
+    checkURL("notspecial://h\x1Fo\x7Fst/"_s, { "notspecial"_s, ""_s, ""_s, "h%1Fo%7Fst"_s, 0, "/"_s, ""_s, ""_s, "notspecial://h%1Fo%7Fst/"_s });
+    checkURL(utf16String(u"notspecial://h\u001Fo\u007Fst\U0001F600/"), { "notspecial"_s, ""_s, ""_s, "h%1Fo%7Fst%F0%9F%98%80"_s, 0, "/"_s, ""_s, ""_s, "notspecial://h%1Fo%7Fst%F0%9F%98%80/"_s }, testTabsValueForSurrogatePairs);
     checkURLDifferences("http://[ffff:aaaa:cccc:eeee:bbbb:dddd:255.255.255.255]/"_s,
         { "http"_s, ""_s, ""_s, "[ffff:aaaa:cccc:eeee:bbbb:dddd:ffff:ffff]"_s, 0, "/"_s, ""_s, ""_s, "http://[ffff:aaaa:cccc:eeee:bbbb:dddd:ffff:ffff]/"_s }, TestTabs::No);
     checkURLDifferences("http://[::123.234.12.210]/"_s,
@@ -1098,6 +1110,8 @@ TEST_F(WTF_URLParser, ParserFailures)
     shouldFail("http://[a:b:c:d:e:f:127.0.0.0x11]"_s); // Chrome treats this as hex, Firefox and the spec fail
     shouldFail("http://[a:b:c:d:e:f:127.0.-0.1]"_s);
     shouldFail("asdf://space In\aHost"_s);
+    shouldFail(utf16String(u"asdf://space In\U00010020Host"));
+    shouldFail(utf16String(u"asdf://\U00010020|"));
     shouldFail("asdf://[0:0:0:0:a:b:c:d"_s);
     shouldFail("http://[::0:0.0.00000.0]/"_s);
 }
