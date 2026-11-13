@@ -1100,8 +1100,11 @@ JSValue RehearsalOfRegExpTexts::valueOfCommonJsModule(ModuleID id)
 {
     runModule(id);
     const Module& module = m_program.at(id);
-    if (JSValue object = m_moduleObjects[id.index()])
-        return asObject(object)->getDirect(*m_vm, Identifier::fromString(*m_vm, "exports"_s));
+    if (JSValue object = m_moduleObjects[id.index()]) {
+        unsigned attributes = 0;
+        JSValue exported = asObject(object)->getDirect(*m_vm, Identifier::fromString(*m_vm, "exports"_s), attributes);
+        return exported && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? exported : unknown();
+    }
     if (!module.exportsVariable)
         return unknown();
     JSValue exported = m_variables[module.exportsVariable.index()];
