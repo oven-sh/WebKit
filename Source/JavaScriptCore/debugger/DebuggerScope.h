@@ -36,7 +36,9 @@ class JSScope;
 class DebuggerScope final : public JSNonFinalObject {
 public:
     using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut;
+    // The wrapped scope holds the properties, and every scope object of a realm has this one structure:
+    // the structure tells neither where a property is nor that one is absent.
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | ProhibitsPropertyCaching | GetOwnPropertySlotIsImpureForPropertyAbsence;
 
     template<typename CellType, SubspaceAccess mode>
     static GCClient::IsoSubspace* subspaceFor(VM& vm)
