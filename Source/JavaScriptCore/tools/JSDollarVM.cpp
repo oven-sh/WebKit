@@ -2202,6 +2202,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionPutByIndexDuringTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
@@ -2937,6 +2938,30 @@ JSC_DEFINE_HOST_FUNCTION(functionHasPendingTermination, (JSGlobalObject* globalO
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsBoolean(globalObject->vm().hasPendingTermination()));
+}
+
+// A store to an index that begins with a termination under way, as in native code that goes on behind a call of its
+// own that was terminated. With `thrown` the TerminationException is pending when the store begins; without, the
+// termination is only requested, which is what is left once something has cleared the exception. Withdraws the
+// termination and returns what the store returned.
+// Usage: $vm.putByIndexDuringTermination(object, index, value, thrown)
+JSC_DEFINE_HOST_FUNCTION(functionPutByIndexDuringTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSObject* object = callFrame->argument(0).getObject();
+    JSValue index = callFrame->argument(1);
+    if (!object || !index.isUInt32())
+        return JSValue::encode(jsUndefined());
+    bool thrown = callFrame->argument(3).isTrue();
+
+    vm.ensureTerminationException();
+    vm.setHasTerminationRequest();
+    if (thrown)
+        vm.throwTerminationException();
+    bool result = object->methodTable()->putByIndex(object, globalObject, index.asUInt32(), callFrame->argument(2), false);
+    vm.cancelTermination();
+    return JSValue::encode(jsBoolean(result));
 }
 
 // Runs a full GC synchronously.
@@ -6215,6 +6240,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, allowIfNotFuzz, "cancelTermination"_s, functionCancelTermination, 0);
     addFunction(vm, allowIfNotFuzz, "hasPendingTermination"_s, functionHasPendingTermination, 0);
+    addFunction(vm, allowIfNotFuzz, "putByIndexDuringTermination"_s, functionPutByIndexDuringTermination, 4);
     addFunction(vm, allowIfNotFuzz, "breakpoint"_s, functionBreakpoint, 0);
     addFunction(vm, allowIfNotFuzz, "exit"_s, functionExit, 0);
 

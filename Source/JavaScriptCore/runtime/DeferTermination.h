@@ -54,4 +54,36 @@ private:
 
 using DeferTerminationForAWhile = DeferTermination<VMTraps::DeferAction::DeferForAWhile>;
 
+// A DeferTerminationForAWhile that its owner can end before the end of the scope. A function that defers
+// termination while it changes the state of an object, and then calls user code (a setter), ends the deferral
+// first: held across the call, it keeps that code from being terminated for as long as it runs.
+class EndableDeferTerminationForAWhile {
+    WTF_MAKE_NONCOPYABLE(EndableDeferTerminationForAWhile);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE EndableDeferTerminationForAWhile(VM& vm)
+        : m_vm(vm)
+    {
+        m_vm.traps().deferTermination(VMTraps::DeferAction::DeferForAWhile);
+    }
+
+    ALWAYS_INLINE ~EndableDeferTerminationForAWhile()
+    {
+        if (!m_ended)
+            m_vm.traps().undoDeferTermination(VMTraps::DeferAction::DeferForAWhile);
+    }
+
+    // A TerminationException that was pending when the deferral began is pending again after this.
+    ALWAYS_INLINE void end()
+    {
+        ASSERT(!m_ended);
+        m_ended = true;
+        m_vm.traps().undoDeferTermination(VMTraps::DeferAction::DeferForAWhile);
+    }
+
+private:
+    VM& m_vm;
+    bool m_ended { false };
+};
+
 } // namespace JSC
