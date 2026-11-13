@@ -698,7 +698,7 @@ public:
     FlowNodeID thrown(FunctionID) const;
     FlowNodeID capture(FunctionID, uint32_t index) const;
     FlowNodeID variable(VariableID) const;
-    FlowNodeID field(FieldReference reference) const
+    ALWAYS_INLINE FlowNodeID field(FieldReference reference) const
     {
         uint32_t first = m_firstFieldOfLayout[reference.layout.index()];
         RELEASE_ASSERT(reference.field < m_firstFieldOfLayout[reference.layout.index() + 1] - first);

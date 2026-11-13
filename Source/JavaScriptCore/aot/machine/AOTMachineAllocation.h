@@ -202,6 +202,7 @@ public:
     const BitSpan& liveSpillsAt(uint32_t suspension) const { return m_liveSpillsAtSuspension[suspension]; }
 
     RegisterMask usedCalleeSaves() const { return m_usedCalleeSaves; }
+    Reg baseOfFarWords() const { return m_baseOfFarWords; }
     bool needsFrameOutsideRareRegions() const { return m_needsFrameOutsideRareRegions; }
     bool needsFrameIn(uint32_t rareRegion) const { return m_regionNeedsFrame.get(rareRegion); }
     bool holdsPatchThatFollowsFrameSetup() const { return m_holdsPatchThatFollowsFrameSetup; }
@@ -260,6 +261,7 @@ private:
     ArenaVector<PatchOperation*> m_suspensions;
     ArenaVector<BitSpan> m_liveSpillsAtSuspension;
     RegisterMask m_usedCalleeSaves { 0 };
+    Reg m_baseOfFarWords;
     BitSpan m_phisWrittenByEdges;
     uint32_t m_numberOfOperationsAllocated { 0 };
     uint64_t m_laterUsesScanned { 0 };

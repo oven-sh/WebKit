@@ -55,7 +55,7 @@ static bool fitsFieldTypes(Walker& walker, TypeID holder, TypeID stored)
 {
     HolderLayouts layouts = exactLayoutsOf(walker, holder);
     return !layouts.isEmpty() && std::ranges::all_of(layouts, [&](LayoutID layout) {
-        for (FieldIndex field = 0; field < walker.program().at(layout).fields.size(); ++field) {
+        for (FieldIndex field = 0; field < walker.plan().slots().layout(layout).numberOfFields(); ++field) {
             TypeID held = walker.plan().slot(layout, field).typeThatStoresAreHeldTo();
             if (held && !walker.types().isSubset(stored, TypeTable::valuesOf(held)))
                 return false;
@@ -64,18 +64,20 @@ static bool fitsFieldTypes(Walker& walker, TypeID holder, TypeID stored)
     });
 }
 
-static bool hasNamedFields(const Program& program, LayoutID layout)
+static bool hasNamedFields(Walker& walker, LayoutID layout)
 {
+    const Program& program = walker.program();
+    auto isName = [&](PropertyKeyID key) { return key && program.at(key).kind == PropertyKeyKind::Text; };
     std::span<const Field> fields = program.at(layout).fields;
-    return !fields.empty() && std::ranges::all_of(fields, [&](const Field& field) {
-        return field.key && program.at(field.key).kind == PropertyKeyKind::Text;
+    return !fields.empty() && std::ranges::all_of(walker.plan().slots().layout(layout).appendedKeys, isName) && std::ranges::all_of(fields, [&](const Field& field) {
+        return isName(field.key);
     });
 }
 
 static bool findsOnlyFields(Walker& walker, TypeID holder)
 {
     HolderLayouts layouts = holder ? exactLayoutsOf(walker, holder) : HolderLayouts();
-    return !layouts.isEmpty() && std::ranges::all_of(layouts, [&](LayoutID layout) { return hasNamedFields(walker.program(), layout); });
+    return !layouts.isEmpty() && std::ranges::all_of(layouts, [&](LayoutID layout) { return hasNamedFields(walker, layout); });
 }
 
 static void addFieldsOf(Walker& walker, TypeID holder, LocationMasks& masks)
@@ -83,6 +85,8 @@ static void addFieldsOf(Walker& walker, TypeID holder, LocationMasks& masks)
     for (LayoutID layout : exactLayoutsOf(walker, holder)) {
         for (const Field& field : walker.program().at(layout).fields)
             masks.add(walker.program(), MemoryLocation::objectField(field.key));
+        for (PropertyKeyID appended : walker.plan().slots().layout(layout).appendedKeys)
+            masks.add(walker.program(), MemoryLocation::objectField(appended));
     }
 }
 
@@ -532,7 +536,7 @@ static bool hasFewNames(Walker& walker, TypeID holder)
     HolderLayouts layouts = exactLayoutsOf(walker, holder);
     size_t names = 0;
     for (LayoutID layout : layouts) {
-        if (!hasNamedFields(walker.program(), layout))
+        if (!hasNamedFields(walker, layout))
             return false;
         names += walker.program().at(layout).fields.size();
     }

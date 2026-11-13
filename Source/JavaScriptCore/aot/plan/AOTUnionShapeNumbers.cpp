@@ -85,7 +85,7 @@ private:
         uint32_t mentions { 0 };
     };
 
-    bool hasShape(LayoutID id) const { return m_storage.holdsCompiledObjectsInUse(id); }
+    ALWAYS_INLINE bool hasShape(LayoutID id) const { return m_storage.holdsCompiledObjectsInUse(id); }
 
     std::span<const uint32_t> leavesOf(const MentionedSet& set) const LIFETIME_BOUND
     {

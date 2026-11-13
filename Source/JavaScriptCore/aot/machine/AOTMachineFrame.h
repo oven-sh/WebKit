@@ -65,6 +65,7 @@ public:
         frameAtBlock = static_cast<uint8_t>(holds ? frameAtBlock | holdsSteps : frameAtBlock & ~holdsSteps);
     }
 
+    static constexpr unsigned wordsWithinReachOfStackPointer = 4096;
     MacroAssembler::Address addressInFrame(intptr_t offsetFromFP) const
     {
         ASSERT(hasFrame());

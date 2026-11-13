@@ -1342,7 +1342,7 @@ private:
     Vector<ValueID, 16> m_valuesOfEarlierPasses;
     bool carriesOnlyCounter(const CountedLoop&, ValueID value, ValueID carried, unsigned depth) const;
     ValueID findValuePassedInIteration(const CountedLoop&, ValueID) const;
-    void storeLoopCarriedValue(const CountedLoop&, const LoopCarriedValueStore&, LValue);
+    void storeLoopCarriedValue(const LoopCarriedValueStore&, LValue);
     void versionIterationsByKind(CountedLoop&) const;
     struct LimitOfWrittenLoop {
         BlockID asking;

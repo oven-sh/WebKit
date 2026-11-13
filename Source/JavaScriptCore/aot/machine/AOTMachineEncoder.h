@@ -308,6 +308,19 @@ public:
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
+    ALWAYS_INLINE MacroAssembler::Address addressWithinReach(MacroAssembler::Address address, Width width)
+    {
+        if (isARM64() && m_allocation.baseOfFarWords()) [[unlikely]]
+            return addressOffBaseOfFarWords(address, width);
+        return address;
+    }
+    MacroAssembler::Address addressOffBaseOfFarWords(MacroAssembler::Address, Width);
+    void settleBaseOfFarWordsAtHead(const Block*, const BlockPlace&);
+    bool liesOutOfReach(SpillIndex) const;
+    bool accessesWordsOutOfReach(uint32_t beginOfSteps, uint32_t endOfSteps) const;
+    void findRareRegionsThatKeepBaseOfFarWords();
+    int32_t baseOfFarWordsThatEnters(const BlockPlace&, uint32_t rareRegion) const;
+    bool writesBaseOfFarWords(const PatchOperation*) const;
     std::pair<GPRReg, bool> referenceOf(const Operation* access, const AddressForm&) const;
     void recordTrappingAccess(const Operation* access, const AddressForm&, MacroAssembler::Label instruction);
 
@@ -437,6 +450,13 @@ public:
     const SpillIndex* const m_spillsOfValues;
     const ValueFacts* const m_valueFacts;
     mutable int32_t m_readSlotTags { 0 };
+    static constexpr int32_t noBaseOfFarWords = -1;
+    int32_t m_offsetOfBaseOfFarWords { noBaseOfFarWords };
+    bool m_blockMovesBaseOfFarWords { false };
+    const Block* m_blockEncodedLast { nullptr };
+    uint32_t m_numberOfBlocksPassedByBaseOfFarWords { 0 };
+    ArenaVector<int32_t> m_basesOfFarWordsAtEnds;
+    ArenaVector<bool> m_rareRegionKeepsBaseOfFarWords;
 
     UncheckedSpan<MacroAssembler::Label> m_labels;
     UncheckedSpan<const Block*> m_blocksEntered;
@@ -612,7 +632,7 @@ ALWAYS_INLINE void Encoder::encodeReload(const Step& step)
     checkMemoryOfEncodedMove(*this, step.sources[0], step.width, MemoryOfEncodedMove::IsRead);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    loadForEncodedMove(m_jit, addressOf(step.sources[0]), step.width, step.destination.reg());
+    loadForEncodedMove(m_jit, addressWithinReach(addressOf(step.sources[0]), step.width), step.width, step.destination.reg());
 }
 
 ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
@@ -622,7 +642,7 @@ ALWAYS_INLINE void Encoder::encodeSave(const Step& step)
     checkMemoryOfEncodedMove(*this, step.destination, step.width, MemoryOfEncodedMove::IsWritten);
 
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
-    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressOf(step.destination, MemoryOfEncodedMove::IsWritten));
+    storeForEncodedMove(m_jit, step.sources[0].reg(), step.width, addressWithinReach(addressOf(step.destination, MemoryOfEncodedMove::IsWritten), step.width));
 }
 
 ALWAYS_INLINE bool patchRepAnswersConstraint(const ValueRep& answer, const ValueRep& constraint)
@@ -748,6 +768,8 @@ ALWAYS_INLINE void Encoder::encodePatch(const Step& step, PatchOperation* patch)
     if (isX86_64() && isCall(*patch))
         m_lastCall = m_jit.labelIgnoringWatchpoints();
     patch->generator()->run(m_jit, parameters);
+    if (isARM64() && m_allocation.baseOfFarWords() && writesBaseOfFarWords(patch)) [[unlikely]]
+        m_offsetOfBaseOfFarWords = noBaseOfFarWords;
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

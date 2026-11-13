@@ -10,6 +10,7 @@
 
 #include "AOTInliningAcrossFiles.h"
 #include "AOTMachineCallsOnWays.h"
+#include "AOTMachineFrame.h"
 #include "AOTSort.h"
 #include <algorithm>
 #include <cstring>
@@ -424,6 +425,26 @@ void Allocator::letGoOfWorkingLists()
     m_waitingEdges.letGo(m_arena);
 }
 
+NEVER_INLINE void Allocator::keepRegisterForFarWords()
+{
+    const ProcedureTraits& traits = m_proc.traits();
+    if (traits.savesFrameOnSuspend || traits.savesRegistersOfCallers)
+        return;
+    unsigned mostLive = 0;
+    for (const Block* block : m_order.blocksInOrder())
+        mostLive = std::max(mostLive, m_liveness.mostLiveIn(block, Bank::GP) + m_liveness.mostLiveIn(block, Bank::FP));
+    if (mostLive <= Frame::wordsWithinReachOfStackPointer)
+        return;
+    Reg kept;
+    forEachRegister(m_file.calleeSavedIn(Bank::GP), [&](Reg reg) {
+        kept = reg;
+    });
+    ASSERT(kept.isGPR());
+    m_file.allocatable[static_cast<unsigned>(Bank::GP)] &= ~maskOf(kept);
+    m_allocation.m_usedCalleeSaves |= maskOf(kept);
+    m_allocation.m_baseOfFarWords = kept;
+}
+
 Allocator::Allocator(Procedure& proc, Allocation& allocation)
     : m_proc(proc)
     , m_arena(proc.arena())
@@ -445,6 +466,8 @@ Allocator::Allocator(Procedure& proc, Allocation& allocation)
     const uint32_t numberOfBlocks = m_order.mostBlocks();
     const uint32_t mostOperations = m_order.mostOperations();
     const uint32_t capacityOfPatchAssignments = numberOfOperations / 4 + 4;
+    if (isARM64() && numberOfOperations > Frame::wordsWithinReachOfStackPointer) [[unlikely]]
+        keepRegisterForFarWords();
     const size_t numberOfWordsForBlocks = (static_cast<size_t>(numberOfBlocks) + 63) / 64;
     const size_t numberOfWordsForRareRegions = (m_order.rareRegions().size() + 63) / 64;
 

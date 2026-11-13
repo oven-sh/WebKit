@@ -52,9 +52,9 @@ struct StorageOfLayout {
 };
 
 struct StorageOfLayouts {
-    StorageOfLayout of(LayoutID id) const { return id.index() < layouts.size() ? layouts[id.index()] : StorageOfLayout { }; }
+    ALWAYS_INLINE StorageOfLayout of(LayoutID id) const { return id.index() < layouts.size() ? layouts[id.index()] : StorageOfLayout { }; }
     bool isNeverAllocated(LayoutID id) const { return layoutsNeverAllocated.get(id.index()); }
-    bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
+    ALWAYS_INLINE bool holdsCompiledObjectsInUse(LayoutID id) const { return of(id).holdsCompiledObjects() && !isNeverAllocated(id); }
 
     BitVector layoutsNeverAllocated;
     BitVector layoutsWithoutDirectInstances;

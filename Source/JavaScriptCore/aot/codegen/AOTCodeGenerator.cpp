@@ -5075,15 +5075,15 @@ bool CodeGenerator::findStoresOfWhatComesRound(CountedLoop& loop, const Edge& ba
     return !mayIterationThrow(loop);
 }
 
-void CodeGenerator::storeLoopCarriedValue(const CountedLoop& loop, const LoopCarriedValueStore& store, LValue value)
+void CodeGenerator::storeLoopCarriedValue(const LoopCarriedValueStore& store, LValue value)
 {
     Vector<ValueID, 4> leftOut = std::exchange(m_valuesLeftOutOfTurnsLaidOut, { });
     Vector<SumOfIntegers, 2> sums = std::exchange(m_sumsOfIntegers, { });
     LValue loopCarriedValue = std::exchange(m_values[store.loopCarriedValue.index()], value->type() == Machine::Int64 ? value : emitter<ConversionEmitter>().purified(Number(value)).value());
     LValue box = store.box ? std::exchange(m_values[store.box.index()], nullptr) : nullptr;
     if (store.box)
-        generateValue(loop.turn.last(), store.box, code().at(store.box), false, { });
-    generateValue(loop.turn.last(), store.store, code().at(store.store), false, { });
+        generateValue(code().blockOf(store.box), store.box, code().at(store.box), false, { });
+    generateValue(code().blockOf(store.store), store.store, code().at(store.store), false, { });
     m_values[store.loopCarriedValue.index()] = loopCarriedValue;
     if (store.box)
         m_values[store.box.index()] = box;
@@ -6238,7 +6238,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.appendTo(someTurnHasRun);
             }
             for (const LoopCarriedValueStore& store : loop.loopCarriedValueStores)
-                storeLoopCarriedValue(loop, store, values[store.indexOfParameter]);
+                storeLoopCarriedValue(store, values[store.indexOfParameter]);
             if (behindStores) {
                 m_out.jump(normalEdge(behindStores));
                 m_out.appendTo(behindStores);
@@ -6608,7 +6608,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 m_out.appendTo(someIterationHasRun);
             }
             for (const LoopCarriedValueStore& store : loop.loopCarriedValueStores)
-                storeLoopCarriedValue(loop, store, values[store.indexOfParameter]);
+                storeLoopCarriedValue(store, values[store.indexOfParameter]);
             if (behindStores) {
                 m_out.jump(normalEdge(behindStores));
                 m_out.appendTo(behindStores);
@@ -6828,7 +6828,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         m_out.appendTo(stretchHasEnded);
         for (const LoopCarriedValueStore& store : loop.loopCarriedValueStores) {
             const SumOfIntegers* sum = sumAt(store.indexOfParameter);
-            storeLoopCarriedValue(loop, store, sum ? m_out.doubleAdd(sum->base, m_out.intToDouble(sum->added)) : forWrittenLoop(store.indexOfParameter, valuesBehindTurns[store.indexOfParameter]));
+            storeLoopCarriedValue(store, sum ? m_out.doubleAdd(sum->base, m_out.intToDouble(sum->added)) : forWrittenLoop(store.indexOfParameter, valuesBehindTurns[store.indexOfParameter]));
         }
         Vector<ValueID, 4> leftOut = std::exchange(m_valuesLeftOutOfTurnsLaidOut, { });
         generateValue(code().blockOf(loop.poll), loop.poll, code().at(loop.poll), false, { });

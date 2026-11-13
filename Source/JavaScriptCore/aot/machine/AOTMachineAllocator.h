@@ -342,6 +342,7 @@ public:
     }
     Reg bringIntoRegister(Operation* value, RegisterMask allowed, Reg preferred);
     SpillIndex markSpilled(Operation* value);
+    void keepRegisterForFarWords();
     ALWAYS_INLINE SpillIndex addSpill(const SpillFacts& facts)
     {
         ASSERT(facts.value);
@@ -476,7 +477,7 @@ public:
     const Order& m_order;
     const Liveness& m_liveness;
     Allocation& m_allocation;
-    const RegisterFile m_file;
+    RegisterFile m_file;
     const ValueFacts* m_valueFacts { nullptr };
     const Use* m_uses { nullptr };
     uint64_t m_smallestPinnedConstant { UINT64_MAX };
