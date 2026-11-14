@@ -2049,8 +2049,9 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
             work.append(promise);
     };
 
-    JSGlobalObject* globalObject = dependency->globalObject();
-    auto* settledByHostReaction = globalObject->globalObjectMethodTable()->promisesSettledByHostReaction;
+    // A compiled module record has no realm. The promise of an import() has the realm of the loader that made it.
+    JSGlobalObject* globalObject = importPromise->realmMayBeNull();
+    auto* settledByHostReaction = globalObject ? globalObject->globalObjectMethodTable()->promisesSettledByHostReaction : nullptr;
     std::optional<bool> hostHasReactions;
     auto followHostReaction = [&](JSValue context) {
         if (!settledByHostReaction)
