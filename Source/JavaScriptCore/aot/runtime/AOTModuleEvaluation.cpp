@@ -709,6 +709,7 @@ JSValue Modules::callBodyUnderOwnMark(ModuleID module, bool bodyStoresStatus, bo
             m_marksOfEvaluationsUnderOthers[left.index()] = markBefore;
     }
     Exception* exception = scope.exception();
+    isInRecord = isInRecord && m_records.contains(module);
     if (!exception) [[likely]] {
         if (isInRecord)
             setStoredStatus(module, StoredModuleStatus::InRecord);

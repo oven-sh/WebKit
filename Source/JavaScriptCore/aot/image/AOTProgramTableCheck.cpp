@@ -618,26 +618,14 @@ static void checkFunctionTables(const JoinedTables& check)
         return variable.offset < tables.instanceSizes.sizeOfStatics && variable.function < tables.numberOfFunctions();
     }), "TableOutOfBounds"_s, { }, "functionVariables"_s);
 
-    if (std::span<const uint32_t> blocks = tables.quotedSourceBlocks(); !blocks.empty()) {
-        std::span<const uint32_t> ends = blocks.subspan(1);
-        bool blocksFit = !ends.empty() && ends.size() == (static_cast<uint64_t>(blocks[0]) + sourceBlockSize - 1) / sourceBlockSize && std::ranges::is_sorted(ends) && ends.back() == tables.quotedSourceText().size();
-        if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "quotedSourceBlocks"_s))
-            return;
-    }
     for (const FunctionSources& sources : tables.functionSources()) {
         uint64_t sizeOfEntries = static_cast<uint64_t>(sources.numberOfEntries) * sizeof(FunctionSourceEntry);
-        bool liesInPart = (!sources.numberOfEntries || check.liesInPart(TablePartID::FunctionSources, sources.entriesOffset, sizeOfEntries, alignof(FunctionSourceEntry))) && (!sources.sourceOffset || check.liesInPart(TablePartID::FunctionSources, sources.sourceOffset, 0, 1)) && (!sources.numberOfBlocks || check.liesInPart(TablePartID::FunctionSources, sources.blockEndsOffset, static_cast<uint64_t>(sources.numberOfBlocks) * sizeof(uint32_t), alignof(uint32_t)));
+        bool liesInPart = (!sources.numberOfEntries || check.liesInPart(TablePartID::FunctionSources, sources.entriesOffset, sizeOfEntries, alignof(FunctionSourceEntry))) && (!sources.sourceSize || check.liesInPart(TablePartID::FunctionSources, sources.sourceOffset, sources.sourceSize, 1));
         if (!check.expect(liesInPart, "OffsetOutsideItsPart"_s, { }, "functionSources"_s))
             return;
-        if (sources.numberOfBlocks) {
-            auto ends = spanReinterpretCast<const uint32_t>(check.bytes.subspan(sources.blockEndsOffset, static_cast<uint64_t>(sources.numberOfBlocks) * sizeof(uint32_t)));
-            bool blocksFit = sources.numberOfBlocks == (static_cast<uint64_t>(sources.sourceSize) + sourceBlockSize - 1) / sourceBlockSize && std::ranges::is_sorted(ends)
-                && check.liesInPart(TablePartID::FunctionSources, sources.sourceOffset, ends.back(), 1);
-            if (!check.expect(blocksFit, "OffsetOutsideItsPart"_s, { }, "functionSources"_s))
-                return;
-        }
         auto entries = spanReinterpretCast<const FunctionSourceEntry>(check.bytes.subspan(sources.numberOfEntries ? sources.entriesOffset : 0, sizeOfEntries));
         check.expect(std::ranges::is_sorted(entries, { }, [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; }), "TableNotSorted"_s, { }, "functionSources"_s);
+        check.expect(std::ranges::all_of(entries, [&](const FunctionSourceEntry& entry) { return entry.start < entry.end && entry.end <= sources.sourceSize; }), "TableOutOfBounds"_s, { }, "functionSources"_s);
     }
 }
 

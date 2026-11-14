@@ -7,9 +7,35 @@
 
 #if ENABLE(AOT)
 
+#include "CollectionScope.h"
 #include "JSObject.h"
+#include <wtf/HashMap.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/TZoneMalloc.h>
 
 namespace JSC { namespace AOT {
+
+class CacheRegistry;
+
+class PoisonedCellSites {
+    WTF_MAKE_NONCOPYABLE(PoisonedCellSites);
+    WTF_MAKE_TZONE_ALLOCATED(PoisonedCellSites);
+public:
+    struct Site {
+        uint32_t function { 0 };
+        uint32_t position { 0 };
+    };
+
+    explicit PoisonedCellSites(CacheRegistry&);
+
+    void set(const JSCell* cell, Site site) { m_sites.set(cell, site); }
+    Site get(const JSCell* cell) const { return m_sites.get(cell); }
+    size_t size() const { return m_sites.size(); }
+    size_t removeDeadEntries(VM&, CollectionScope);
+
+private:
+    UncheckedKeyHashMap<const JSCell*, Site> m_sites;
+};
 
 class PoisonedCell final : public JSObject {
 public:

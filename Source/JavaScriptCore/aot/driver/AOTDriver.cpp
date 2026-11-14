@@ -246,7 +246,6 @@ private:
     bool m_planIsChecked { false };
     std::unique_ptr<Typed::TypeOrigins> m_typeOrigins;
     std::unique_ptr<EarlyWasmModules> m_earlyWasmModules;
-    std::unique_ptr<PreparedFunctionSources> m_functionSources;
 };
 
 void BuildDriver::read(std::span<const uint8_t> bytes)
@@ -345,8 +344,6 @@ void BuildDriver::runStagesAfterRead()
         return true;
     };
     bool isCompiled = false;
-    if (makesImage && m_prepared.program->admitsReplacedBuiltins)
-        m_functionSources = prepareFunctionSources(*m_prepared.program, m_context);
     if (makesImage && !m_prepared.program->webAssemblyModules.isEmpty()) {
         runLanes(m_context.parallelLoops(), {
             [&] { isCompiled = analyzeAndCompile(); },
@@ -463,7 +460,6 @@ void BuildDriver::buildImageFromCode()
         .bodyFacts = WTF::move(bodyFacts),
         .entriesUsedByFunctions = m_compiled.entriesUsed,
         .earlyWasmModules = WTF::move(m_earlyWasmModules),
-        .functionSources = WTF::move(m_functionSources),
     }, m_context));
     if (hasErrors())
         return;
