@@ -8856,7 +8856,10 @@ bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue 
 bool tryReplaceExportOfRecord(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSValue value)
 {
     Modules* modules = modulesOf(realm);
-    return modules->tryReplaceExport(modules->moduleWithNamesOf(uncheckedDowncast<ModuleRecord>(record)->module()), name, value);
+    auto* compiled = uncheckedDowncast<ModuleRecord>(record);
+    ModuleID module = modules->moduleWithNamesOf(compiled->module());
+    auto* instance = module == compiled->module() && compiled->belongsToReleasedInstance() ? uncheckedDowncast<Environment>(compiled->moduleInstance()) : nullptr;
+    return modules->tryReplaceExport(module, name, value, instance);
 }
 
 JSValue readExportOfRecord(AbstractModuleRecord* record, const Identifier& name)
@@ -10739,7 +10742,7 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
 JSValue ModuleRecord::readExportIfInitialized(const Identifier& name)
 {
     if (std::optional<unsigned> index = modules().table().findExport(m_module, name.impl()))
-        return modules().readExportIfInitialized(m_module, *index);
+        return modules().readExportIfInitialized(m_module, *index, m_moduleInstance ? uncheckedDowncast<Environment>(m_moduleInstance.get()) : nullptr);
     if (!takesNamesFromValue(modules().data(m_module)))
         return { };
     return modules().capturedValue(modules().moduleWithNamesOf(m_module), name);
