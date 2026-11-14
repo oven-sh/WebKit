@@ -219,12 +219,28 @@ public:
     JSValue readExportIfInitialized(ModuleID, unsigned index, Environment* instance = nullptr) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
+    // Where an export keeps the value that tryReplaceExport() replaces.
+    struct ReplaceablePlace {
+        enum class Kind : uint8_t { None, Variable, Field, CapturedTable, AddedTable, NamespaceHandedOn };
+        Kind kind { Kind::None };
+        bool hasVariable { false }; // CapturedTable: `slot` is a variable of the program that holds a copy of the entry.
+        SlotData slot { }; // Variable, Field.
+        Environment* instance { nullptr }; // Field.
+        ModuleID module; // CapturedTable, AddedTable: the module of the table. NamespaceHandedOn: the module of the namespace.
+        UniquedStringImpl* name { nullptr }; // CapturedTable, AddedTable.
+        JSObject* table { nullptr }; // CapturedTable, AddedTable.
+        explicit operator bool() const { return kind != Kind::None; }
+    };
+    // The place that tryReplaceExport() stores into. None where it stores nothing.
+    ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, Environment* instance = nullptr);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    struct StoreIntoPlace;
+    struct FindPlace;
+    template<typename Action> typename Action::Answer walkToPlaceOfExport(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Environment* instance, Action);
+    template<typename Action> typename Action::Answer walkToPlaceOfExportBehindStars(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Action);
+    template<typename Action> typename Action::Answer walkToPlaceOfCapturedExport(ModuleID, UniquedStringImpl* name, Action);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
         uint32_t name;
