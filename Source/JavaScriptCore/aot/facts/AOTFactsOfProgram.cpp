@@ -670,6 +670,7 @@ static constexpr uint8_t writeOnlyDeletesInProgramFacts = 2;
 struct BuiltinsHeldByVariablesInProgramFacts {
     Vector<BuiltinID> held;
     BitVector areFollowedByLinkAsTheObject;
+    BitVector areExportedByEntries;
 };
 
 class BodyLookOfProgramFacts {
@@ -691,6 +692,7 @@ public:
         , m_found(found)
         , m_builtinsHeldByVariables(builtinsHeldByVariables.held.span())
         , m_variablesThatLinkFollowsAsTheObject(builtinsHeldByVariables.areFollowedByLinkAsTheObject)
+        , m_variablesExportedByEntries(builtinsHeldByVariables.areExportedByEntries)
     {
     }
 
@@ -824,6 +826,7 @@ private:
     Vector<Finding>& m_found;
     std::span<const BuiltinID> m_builtinsHeldByVariables;
     const BitVector& m_variablesThatLinkFollowsAsTheObject;
+    const BitVector& m_variablesExportedByEntries;
     Vector<uint64_t> m_callsBoundToBuiltins;
     Vector<uint32_t> m_callSites;
     uint32_t m_numberOfQuestionsAboutCalls { 0 };
@@ -1480,7 +1483,8 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsFollowedByLink;
         if (accessClassOf(opcode) == AccessClass::ByName)
             return isOnlyInspected && receiverOf(opcode) == operandIndex ? Fate::IsAskedForAnyMember : Fate::IsLetGo;
-        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || opcode == Opcode::PutModuleVariable || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
+        bool isStoredInInternalVariable = opcode == Opcode::PutModuleVariable && !m_variablesExportedByEntries.get(user.as<Opcode::PutModuleVariable>().variable().index());
+        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || isStoredInInternalVariable || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
             return Fate::IsFollowedByLink;
         bool isHandedToCodeOfProgram = (opcode == Opcode::InstanceOf && !operandIndex && !builtinSurelyAt(user.operand(1))) || operandInfoOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).protocols.contains(Protocol::ToPrimitive);
         if (isHandedToCodeOfProgram && !linkFollowsWritesOn(user.operand(operandIndex), user.id()))
@@ -3393,6 +3397,12 @@ static BuiltinID builtinWrittenOutAtInProgramFacts(const Program& program, const
 static BuiltinsHeldByVariablesInProgramFacts builtinsHeldByVariablesStoredOnceInProgramFacts(const Program& program, const RowsOfProgramFacts& rows, const BodyIndexTable& bodies)
 {
     BuiltinsHeldByVariablesInProgramFacts table;
+    for (const Entry& entry : program.entries) {
+        for (uint32_t index = 0; index < program.at(entry.module).exports.size(); ++index) {
+            if (VariableID exported = program.variableBehindExport(entry.module, index))
+                table.areExportedByEntries.set(exported.index());
+        }
+    }
     Vector<BuiltinID>& held = table.held;
     BitVector isStored;
     for (uint32_t number = 0; number < program.modules.size(); ++number) {
