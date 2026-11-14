@@ -1442,14 +1442,17 @@ bool Modules::wasLoadedWithImporter(ModuleID module) const
 }
 
 // The walk of tryReplaceExport() is written once, for what is done with the place at its end. This one stores a value there.
+template<Modules::KeepsReplaced keeper>
 struct Modules::StoreIntoPlace {
     using Answer = bool;
     JSValue value;
+    // A host that keeps what its stores replace in a table of its own stores into a place of that table. No mock of a compiled file keeps that too.
+    static constexpr bool isKeptByHost = keeper == KeepsReplaced::Host;
 
     ALWAYS_INLINE bool variable(Modules& modules, SlotData variable) const
     {
         Instance& instance = modules.m_instance;
-        if (modules.m_moduleBeingPatched) {
+        if (modules.m_moduleBeingPatched && !isKeptByHost) {
             LoadedModule& mocked = modules.ensureLoaded(*modules.m_moduleBeingPatched);
             if (!mocked.variablesBeforeMock)
                 mocked.variablesBeforeMock.set(modules, modules.createTableOfExports());
@@ -1464,7 +1467,7 @@ struct Modules::StoreIntoPlace {
 
     ALWAYS_INLINE bool field(Modules& modules, Environment* instance, SlotData slot) const
     {
-        if (modules.m_moduleBeingPatched) {
+        if (modules.m_moduleBeingPatched && !isKeptByHost) {
             LoadedModule& mocked = modules.ensureLoaded(*modules.m_moduleBeingPatched);
             if (!mocked.variablesBeforeMock)
                 mocked.variablesBeforeMock.set(modules, modules.createTableOfExports());
@@ -1504,7 +1507,7 @@ struct Modules::StoreIntoPlace {
         auto scope = DECLARE_THROW_SCOPE(vm);
         Identifier key = Identifier::fromUid(vm, name);
         LoadedModule& loaded = modules.ensureLoaded(module);
-        if ((modules.m_libraryModulesWithMock.get(module.index()) || modules.m_moduleBeingPatched) && !loaded.exportsWhatMockNamesAlone) {
+        if ((modules.m_libraryModulesWithMock.get(module.index()) || modules.m_moduleBeingPatched) && !loaded.exportsWhatMockNamesAlone && !isKeptByHost) {
             if (!loaded.exportsBeforeMock)
                 loaded.exportsBeforeMock.set(modules, modules.createTableOfExports());
             JSObject* before = loaded.exportsBeforeMock;
@@ -1552,7 +1555,7 @@ struct Modules::FindPlace {
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, Environment* instance)
 {
     BitVector seenBehindStars;
-    return walkToPlaceOfExport(module, name, seenBehindStars, instance, StoreIntoPlace { value });
+    return walkToPlaceOfExport(module, name, seenBehindStars, instance, StoreIntoPlace<KeepsReplaced::Mock> { value });
 }
 
 auto Modules::findPlaceToReplaceExport(ModuleID module, UniquedStringImpl* name, Environment* instance) -> ReplaceablePlace
@@ -1633,6 +1636,201 @@ typename Action::Answer Modules::walkToPlaceOfExportBehindStars(ModuleID module,
             return answer;
     }
     return { };
+}
+
+JSValue Modules::readReplaceablePlace(const ReplaceablePlace& place)
+{
+    switch (place.kind) {
+    case ReplaceablePlace::Kind::Variable:
+        return ProgramStatics::readVariable(m_instance, place.slot);
+    case ReplaceablePlace::Kind::Field:
+        return readField(place.instance, place.slot);
+    case ReplaceablePlace::Kind::CapturedTable:
+    case ReplaceablePlace::Kind::AddedTable: {
+        // A table stands for a value that its source has yet to give. That reads as no value.
+        JSValue held = storedValue(m_instance.globalObject, place.table, Identifier::fromUid(*m_instance.vm, place.name));
+        return held == JSValue(place.table) ? JSValue() : held;
+    }
+    case ReplaceablePlace::Kind::NamespaceHandedOn:
+    case ReplaceablePlace::Kind::None:
+        break;
+    }
+    return { };
+}
+
+const Identifier& Modules::nameOfPlacesOfKeptExports()
+{
+    if (m_nameOfPlacesOfKeptExports.isNull())
+        m_nameOfPlacesOfKeptExports = enginePrivateName(*m_instance.vm, "placesOfKeptExports"_s);
+    return m_nameOfPlacesOfKeptExports;
+}
+
+// What the table of places holds for one export name.
+enum RememberedPlace : unsigned { KindOfPlace, SlotOfPlace, InstanceOfPlace, ModuleOfPlace, NameInTableOfPlace, TableOfPlace, HasVariableOfPlace, LengthOfRememberedPlace };
+
+auto Modules::keepExportToReplace(ModuleID module, UniquedStringImpl* name, Environment* instance, JSObject* kept, UniquedStringImpl* keptUnder) -> KeptExport
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ReplaceablePlace place = findPlaceToReplaceExport(module, name, instance);
+    RETURN_IF_EXCEPTION(scope, KeptExport::Refused);
+    if (!place || place.kind == ReplaceablePlace::Kind::NamespaceHandedOn)
+        return KeptExport::Refused;
+    // A store adds a name that the table does not have. There is nothing to keep of it.
+    if (place.isTable() && !storedValue(realm, place.table, Identifier::fromUid(vm, place.name)))
+        return KeptExport::NothingToKeep;
+    Identifier key = Identifier::fromUid(vm, keptUnder);
+    if (storedValue(realm, kept, key)) {
+        // The first value is the one to put back: a later one is what an earlier store left.
+        KeptPlace remembered = keptPlace(kept, keptUnder);
+        if (!remembered.place)
+            return KeptExport::NothingToKeep;
+        if (remembered.place == place)
+            return KeptExport::Kept;
+        // The name leads to another place by now: the module that holds it was loaded again. The place that it led to gets its value back.
+        putBackKeptExport(kept, keptUnder);
+        RETURN_IF_EXCEPTION(scope, KeptExport::Refused);
+    }
+    JSValue value = readReplaceablePlace(place);
+    kept->putDirectMayBeIndex(realm, key, value ? value : JSValue(kept));
+    RETURN_IF_EXCEPTION(scope, KeptExport::Refused);
+
+    JSValue tableOfPlaces = kept->getDirect(vm, nameOfPlacesOfKeptExports());
+    JSObject* places = tableOfPlaces ? asObject(tableOfPlaces) : nullptr;
+    if (!places) {
+        places = createTableOfExports();
+        kept->putDirect(vm, nameOfPlacesOfKeptExports(), places, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
+    JSCellButterfly* remembered = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, LengthOfRememberedPlace);
+    remembered->setIndex(vm, KindOfPlace, jsNumber(static_cast<int32_t>(place.kind)));
+    remembered->setIndex(vm, SlotOfPlace, jsNumber(static_cast<int32_t>(place.slot.encoded())));
+    remembered->setIndex(vm, InstanceOfPlace, place.instance ? JSValue(place.instance) : jsNull());
+    remembered->setIndex(vm, ModuleOfPlace, jsNumber(static_cast<int32_t>(place.isTable() ? place.module.index() : 0)));
+    remembered->setIndex(vm, NameInTableOfPlace, place.name ? JSValue(jsString(vm, String(place.name))) : jsNull());
+    remembered->setIndex(vm, TableOfPlace, place.table ? JSValue(place.table) : jsNull());
+    remembered->setIndex(vm, HasVariableOfPlace, jsBoolean(place.hasVariable));
+    places->putDirectMayBeIndex(realm, key, remembered);
+    RETURN_IF_EXCEPTION(scope, KeptExport::Refused);
+    return KeptExport::Kept;
+}
+
+auto Modules::keptPlace(JSObject* kept, UniquedStringImpl* keptUnder) -> KeptPlace
+{
+    VM& vm = *m_instance.vm;
+    JSValue places = kept->getDirect(vm, nameOfPlacesOfKeptExports());
+    JSValue found = places ? storedValue(m_instance.globalObject, asObject(places), Identifier::fromUid(vm, keptUnder)) : JSValue();
+    if (!found)
+        return { };
+    auto* remembered = uncheckedDowncast<JSCellButterfly>(found.asCell());
+    KeptPlace result;
+    ReplaceablePlace& place = result.place;
+    place.kind = static_cast<ReplaceablePlace::Kind>(remembered->get(KindOfPlace).asInt32());
+    place.slot = SlotData::decode(static_cast<uint32_t>(remembered->get(SlotOfPlace).asInt32()));
+    if (JSValue instance = remembered->get(InstanceOfPlace); instance.isCell())
+        place.instance = uncheckedDowncast<Environment>(instance.asCell());
+    place.hasVariable = remembered->get(HasVariableOfPlace).asBoolean();
+    if (!place.isTable())
+        return result;
+    place.module = ModuleID(static_cast<uint32_t>(remembered->get(ModuleOfPlace).asInt32()));
+    result.nameInTable = Identifier::fromString(vm, asString(remembered->get(NameInTableOfPlace))->tryGetValue());
+    place.name = result.nameInTable.impl();
+    place.table = asObject(remembered->get(TableOfPlace));
+    LoadedModule* loaded = loadedIfExists(place.module);
+    JSObject* current = !loaded ? nullptr : place.kind == ReplaceablePlace::Kind::CapturedTable ? loaded->capturedExports.get() : loaded->exportsAddedByMock.get();
+    if (current == place.table)
+        return result;
+    bool isSetAside = loaded && place.kind == ReplaceablePlace::Kind::CapturedTable && loaded->capturedExportsBeforeMockInPlace.get() == place.table;
+    result.table = isSetAside ? KeptPlace::Table::SetAside : KeptPlace::Table::Gone;
+    return result;
+}
+
+bool Modules::hasExportLeftKeptPlace(ModuleID module, UniquedStringImpl* name, Environment* instance, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    KeptPlace remembered = keptPlace(kept, keptUnder);
+    if (!remembered.place)
+        return false;
+    // A table that a mock in place of its module keeps aside is still the table of the export. One that went with the run of its module is not.
+    if (remembered.table != KeptPlace::Table::Current)
+        return remembered.table == KeptPlace::Table::Gone;
+    ReplaceablePlace place = findPlaceToReplaceExport(module, name, instance);
+    RETURN_IF_EXCEPTION(scope, false);
+    return remembered.place != place;
+}
+
+bool Modules::storeIntoKeptPlace(const KeptPlace& remembered, JSValue value)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    const ReplaceablePlace& place = remembered.place;
+    StoreIntoPlace<KeepsReplaced::Host> store { value };
+    switch (place.kind) {
+    case ReplaceablePlace::Kind::Variable:
+        return store.variable(*this, place.slot);
+    case ReplaceablePlace::Kind::Field:
+        return store.field(*this, place.instance, place.slot);
+    case ReplaceablePlace::Kind::AddedTable:
+        if (remembered.table == KeptPlace::Table::Current)
+            RELEASE_AND_RETURN(scope, store.addedTable(*this, place.module, place.name, place.table));
+        return true;
+    case ReplaceablePlace::Kind::CapturedTable: {
+        std::optional<SlotData> copy = place.hasVariable ? std::optional(place.slot) : std::nullopt;
+        if (remembered.table == KeptPlace::Table::Current)
+            RELEASE_AND_RETURN(scope, store.capturedTable(*this, place.module, place.name, place.table, copy));
+        // The table went with the run of the module that made it, and what a store left in it went too.
+        if (remembered.table == KeptPlace::Table::Gone)
+            return true;
+        // A mock stands in place of the module, which keeps its own table, its own namespace and the copy aside until that mock ends.
+        Identifier key = Identifier::fromUid(vm, place.name);
+        place.table->putDirectMayBeIndex(realm, key, value);
+        RETURN_IF_EXCEPTION(scope, true);
+        if (auto* own = dynamicDowncast<ModuleNamespace>(ensureLoaded(place.module).namespaceBeforeMockInPlace.get())) {
+            own->replaceCapturedValue(realm, key, value);
+            RETURN_IF_EXCEPTION(scope, true);
+        }
+        if (copy)
+            ProgramStatics::writeVariable(m_instance, *copy, value);
+        return true;
+    }
+    case ReplaceablePlace::Kind::NamespaceHandedOn:
+    case ReplaceablePlace::Kind::None:
+        break;
+    }
+    return false;
+}
+
+bool Modules::storeIntoKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder, JSValue value)
+{
+    KeptPlace remembered = keptPlace(kept, keptUnder);
+    return remembered.place && storeIntoKeptPlace(remembered, value);
+}
+
+JSValue Modules::readKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    KeptPlace remembered = keptPlace(kept, keptUnder);
+    return remembered.place && remembered.table != KeptPlace::Table::Gone ? readReplaceablePlace(remembered.place) : JSValue();
+}
+
+bool Modules::putBackKeptExport(JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    KeptPlace remembered = keptPlace(kept, keptUnder);
+    if (!remembered.place)
+        return false;
+    JSValue value = storedValue(realm, kept, Identifier::fromUid(vm, keptUnder));
+    if (value == JSValue(kept)) {
+        // A variable does not go back to having no value. A table gets the value that its source had yet to give.
+        if (remembered.place.kind != ReplaceablePlace::Kind::CapturedTable || remembered.table == KeptPlace::Table::Gone)
+            return true;
+        JSObject* source = ensureLoaded(remembered.place.module).deferredExportsSource;
+        value = source ? source->get(realm, remembered.nameInTable) : jsUndefined();
+        RETURN_IF_EXCEPTION(scope, true);
+    }
+    RELEASE_AND_RETURN(scope, storeIntoKeptPlace(remembered, value));
 }
 
 bool Modules::hasStartedLoading(ModuleID module) const
@@ -3721,7 +3919,7 @@ bool Modules::mayBeMocked(ModuleID module) const
 
 bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value)
 {
-    return walkToPlaceOfCapturedExport(module, name, StoreIntoPlace { value });
+    return walkToPlaceOfCapturedExport(module, name, StoreIntoPlace<KeepsReplaced::Mock> { value });
 }
 
 template<typename Action>
@@ -8849,6 +9047,52 @@ bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue 
 bool tryReplaceExportOfRecord(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSValue value)
 {
     return modulesOf(realm)->tryReplaceExport(uncheckedDowncast<ModuleRecord>(record)->module(), name, value);
+}
+
+KeptExport keepExportToReplace(JSCell* moduleNamespace, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    auto scope = DECLARE_THROW_SCOPE(object->vm());
+    Environment* instance = object->bindModuleInstance();
+    RETURN_IF_EXCEPTION(scope, KeptExport::Refused);
+    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->keepExportToReplace(object->module(), name, instance, kept, keptUnder));
+}
+
+KeptExport keepExportOfRecordToReplace(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    return modulesOf(realm)->keepExportToReplace(uncheckedDowncast<ModuleRecord>(record)->module(), name, nullptr, kept, keptUnder);
+}
+
+bool hasExportLeftKeptPlace(JSCell* moduleNamespace, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    auto scope = DECLARE_THROW_SCOPE(object->vm());
+    Environment* instance = object->bindModuleInstance();
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->hasExportLeftKeptPlace(object->module(), name, instance, kept, keptUnder));
+}
+
+bool hasExportOfRecordLeftKeptPlace(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    return modulesOf(realm)->hasExportLeftKeptPlace(uncheckedDowncast<ModuleRecord>(record)->module(), name, nullptr, kept, keptUnder);
+}
+
+bool storeIntoKeptPlace(JSGlobalObject* realm, JSObject* kept, UniquedStringImpl* keptUnder, JSValue value)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->storeIntoKeptPlace(kept, keptUnder, value);
+}
+
+JSValue readKeptPlace(JSGlobalObject* realm, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->readKeptPlace(kept, keptUnder) : JSValue();
+}
+
+bool putBackKeptExport(JSGlobalObject* realm, JSObject* kept, UniquedStringImpl* keptUnder)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->putBackKeptExport(kept, keptUnder);
 }
 
 bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
