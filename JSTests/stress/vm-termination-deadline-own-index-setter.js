@@ -43,7 +43,7 @@ const stores = {
     "an index setter that the object inherits": () => { Object.create(Object.defineProperty({ }, 0, endless()))[0] = 1; },
 };
 for (const [what, store] of Object.entries(stores)) {
-    shouldBe(timesOut(store, 20), true, what);
+    shouldBe(timesOut(store, 2), true, what);
     shouldBe($vm.hasPendingTermination(), false, `${what}: something is still pending`);
 }
 
@@ -53,10 +53,11 @@ for (const [what, store] of Object.entries(stores)) {
     const object = { set 0(value) { while (spinning) { } } };
     const store = function (value) { object[0] = value; };
     noInline(store);
-    for (let i = 0; i < 1e5; i++)
+    // Until the DFG has compiled the store. Where there is no DFG, numberOfDFGCompiles() is not zero.
+    for (let i = 0; i < testLoopCount || (i < 100 * testLoopCount && !numberOfDFGCompiles(store)); i++)
         store(i);
     spinning = true;
-    shouldBe(timesOut(() => store(1), 20), true, "a store that the JITs compiled");
+    shouldBe(timesOut(() => store(1), 2), true, "a store that the JITs compiled");
     shouldBe($vm.hasPendingTermination(), false, "a store that the JITs compiled: something is still pending");
 }
 
@@ -66,14 +67,12 @@ for (const [what, store] of Object.entries(stores)) {
 {
     let cutShort;
     let ranToItsEnd = false;
-    const object = {
-        set 0(value) {
-            cutShort = timesOut(() => {
-                for (const end = preciseTime() + 5; preciseTime() < end;) { }
-                ranToItsEnd = true;
-            }, 20);
-        },
+    const spin = () => {
+        for (const end = preciseTime() + 5; preciseTime() < end;) { }
+        ranToItsEnd = true;
     };
+    noDFG(spin); // LLInt and Baseline code poll for the termination at each turn of a loop.
+    const object = { set 0(value) { cutShort = timesOut(spin, 2); } };
     $vm.callWithTimeLimit(() => { object[0] = 1; }, 60000);
     shouldBe(cutShort, true, "a limit inside the setter");
     shouldBe(ranToItsEnd, false, "a call with a limit inside the setter ran to its end");
@@ -103,9 +102,9 @@ for (const thrown of [true, false]) {
 // short: a store writes the length before it adds the entry, and polls no trap in between. Upstream's bug 299499
 // (https://bugs.webkit.org/show_bug.cgi?id=299499) was an entry that was added first. This holds with and without
 // the deferral.
-for (let round = 0; round < 60; round++) {
+for (let round = 0; round < testLoopCount / 500; round++) {
     let array;
-    timesOut(() => {
+    const fill = () => {
         for (;;) {
             array = [1];
             if (round & 1) {
@@ -116,7 +115,9 @@ for (let round = 0; round < 60; round++) {
                 array[0x20000000] = 2; // The map that is there, and a longer array.
             }
         }
-    }, 1 + round % 3);
+    };
+    noDFG(fill);
+    timesOut(fill, 1);
     if (!array)
         continue;
     for (const key of Object.keys(array))
