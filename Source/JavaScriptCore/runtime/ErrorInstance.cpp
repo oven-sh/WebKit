@@ -878,14 +878,39 @@ bool ErrorInstance::putPositionProperty(JSGlobalObject* globalObject, PropertyNa
     // A store that only passes through, from an object that inherits from this error, leaves the name the engine's. So does a
     // store to an error whose properties are immutable, which is refused.
     bool isStoreOfUserCode = !isThisValueAltered(slot, this) && !structure()->isImmutableProperty(propertyName.uid());
-    bool materializedProperties = materializeErrorInfoIfNeeded(vm);
-    RETURN_IF_EXCEPTION(scope, {});
+    // The first store of user code makes the name an ordinary property, as a store to an Error makes one in V8, which defines
+    // no line, column or sourceURL. The name is marked before materialization, which then leaves it to this store.
+    bool takesOver = isStoreOfUserCode && !(m_positionPropertiesOwnedByUser & property);
+    bool wasExtensible = isStructureExtensible();
     if (isStoreOfUserCode)
         m_positionPropertiesOwnedByUser |= property;
-    // An inline cache answers a later store by the Structure and does not call this function. That is right only for a store
-    // that replaces a property of user code: a store to the engine's own has to come here to be marked.
+    bool materializedProperties = materializeErrorInfoIfNeeded(vm);
+    RETURN_IF_EXCEPTION(scope, {});
     unsigned attributes;
-    if (materializedProperties || !isValidOffset(structure()->get(vm, propertyName, attributes)) || (attributes & PropertyAttribute::DontEnum))
+    PropertyOffset offset = structure()->get(vm, propertyName, attributes);
+    if (takesOver) {
+        if (isValidOffset(offset) && attributes == positionPropertyAttributes && isStructureExtensible()) {
+            // The engine defined the name: an earlier lookup, a store of another name, or the parser. It is removed, and the
+            // store below adds it again behind the properties that the error has now. A removal shares its Structure
+            // transition only for a property without attributes (Structure.cpp looks the transition up under the attributes
+            // of the property and files it under none), so the attributes are cleared first. An error that takes no more
+            // properties keeps the engine's, and the store replaces its value.
+            putDirect(vm, propertyName, getDirect(offset), 0);
+            DeletePropertySlot deleteSlot;
+            JSObject::deleteProperty(this, globalObject, propertyName, deleteSlot);
+            RETURN_IF_EXCEPTION(scope, {});
+            offset = invalidOffset;
+        } else if (!isValidOffset(offset) && wasExtensible && !isStructureExtensible() && !structure()->isImmutableProperty(propertyName.uid())) {
+            // The host's stack hook made the error refuse new properties during this store. The value goes where the engine
+            // would have defined the name, as before.
+            putDirect(vm, propertyName, value, positionPropertyAttributes);
+            slot.disableCaching();
+            return true;
+        }
+    }
+    // An inline cache answers a later store by the Structure and does not call this function. That is right only for a store
+    // that replaces a property of user code: a store to the engine's own has to come here to take the name over.
+    if (materializedProperties || !isValidOffset(offset) || (attributes & PropertyAttribute::DontEnum))
         slot.disableCaching();
     RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
 }
