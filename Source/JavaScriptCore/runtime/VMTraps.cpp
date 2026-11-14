@@ -36,6 +36,7 @@
 #include "LLIntPCRanges.h"
 #include "MachineContext.h"
 #include "MacroAssemblerCodeRef.h"
+#include "SideDataRepository.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
 #include "VMManager.h"
@@ -443,6 +444,59 @@ CONCURRENT_SAFE void VMTraps::updateThreadStopRequestIfNeeded()
         cancelThreadStopIfNeeded();
 }
 
+namespace {
+// $vm.callWithTerminationAtTrapCheck(): see VMTraps::beginTerminationAtTrapCheck().
+class TerminationAtTrapCheckData final : public SideDataRepository::SideData {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(TerminationAtTrapCheckData);
+public:
+    unsigned trapChecksLeft { 0 };
+    VMTraps::TerminationAtTrapCheck state { VMTraps::TerminationAtTrapCheck::None };
+};
+char terminationAtTrapCheckKey;
+// The number of counts that run, in all VMs. handleTraps() looks for the side data of its VM only when there is one.
+std::atomic<unsigned> terminationsAtTrapCheckInProgress;
+}
+
+static TerminationAtTrapCheckData& terminationAtTrapCheckData(VM& vm)
+{
+    return vm.ensureSideData<TerminationAtTrapCheckData>(&terminationAtTrapCheckKey, [] {
+        return makeUnique<TerminationAtTrapCheckData>();
+    });
+}
+
+void VMTraps::beginTerminationAtTrapCheck(unsigned count)
+{
+    VM& vm = this->vm();
+    auto& data = terminationAtTrapCheckData(vm);
+    ASSERT(count);
+    ASSERT(!vm.watchdog());
+    ASSERT(data.state == TerminationAtTrapCheck::None);
+    data.trapChecksLeft = count;
+    data.state = TerminationAtTrapCheck::Counting;
+    ++terminationsAtTrapCheckInProgress;
+    // The bit of the watchdog brings each trap check to handleTraps(), which counts it and does not pass it on.
+    fireTrap(NeedWatchdogCheck);
+}
+
+bool VMTraps::endTerminationAtTrapCheck()
+{
+    auto& data = terminationAtTrapCheckData(vm());
+    ASSERT(data.state != TerminationAtTrapCheck::None);
+    bool wasRequested = data.state == TerminationAtTrapCheck::Requested;
+    data.trapChecksLeft = 0;
+    data.state = TerminationAtTrapCheck::None;
+    --terminationsAtTrapCheckInProgress;
+    clearTrap(NeedWatchdogCheck);
+    return wasRequested;
+}
+
+auto VMTraps::terminationAtTrapCheck() -> TerminationAtTrapCheck
+{
+    if (!terminationsAtTrapCheckInProgress.load(std::memory_order_relaxed))
+        return TerminationAtTrapCheck::None;
+    return terminationAtTrapCheckData(vm()).state;
+}
+
 bool VMTraps::handleTraps(VMTraps::BitField mask)
 {
     VM& vm = this->vm();
@@ -453,6 +507,20 @@ bool VMTraps::handleTraps(VMTraps::BitField mask)
     if (m_trapsDeferred)
         RELEASE_AND_RETURN(scope, false); // We'll service them on the next opportunity after deferring has stopped.
 
+    if (terminationsAtTrapCheckInProgress.load(std::memory_order_relaxed) && hasTrapBit(NeedWatchdogCheck, mask)) [[unlikely]] {
+        // $vm.callWithTerminationAtTrapCheck(): see beginTerminationAtTrapCheck(). The trap check that ends the count
+        // requests the termination, as another thread does. Before that, no termination is pending.
+        if (auto& data = terminationAtTrapCheckData(vm); data.state == TerminationAtTrapCheck::Counting) {
+            ASSERT(!vm.watchdog());
+            mask &= ~NeedWatchdogCheck;
+            bool canBegin = !isDeferringTermination() && !hasTrapBit(NeedTermination) && !vm.hasPendingTerminationException();
+            if (canBegin && !--data.trapChecksLeft) {
+                data.state = TerminationAtTrapCheck::Requested;
+                fireTrap(NeedTermination);
+                clearTrap(NeedWatchdogCheck);
+            }
+        }
+    }
     if (isDeferringTermination())
         mask &= ~NeedTermination;
 

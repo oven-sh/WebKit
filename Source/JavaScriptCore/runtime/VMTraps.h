@@ -216,6 +216,23 @@ public:
     };
 
     bool isDeferringTermination() const { return m_deferTerminationCount; }
+    // For tests ($vm.callWithTerminationAtTrapCheck()). While a count runs, each handling of traps at which a
+    // termination can begin counts down, and the one that reaches zero requests a termination and takes it. So a test
+    // can begin a termination at every exception check of an operation in turn, where a time limit reaches the few
+    // that are slow. A handling does not count while traps or terminations are deferred, while another termination
+    // is requested and not taken yet, or while one unwinds: the termination of the count is then not taken for that
+    // one.
+    // The count is side data of the VM (VM::ensureSideData()). While it runs it keeps the trap bit of the watchdog
+    // set, so the VM must have no watchdog.
+    enum class TerminationAtTrapCheck : uint8_t {
+        None, // No count runs.
+        Counting,
+        Requested, // The count has ended and has requested the termination. endTerminationAtTrapCheck() is still to come.
+    };
+    JS_EXPORT_PRIVATE void beginTerminationAtTrapCheck(unsigned count);
+    // Returns whether the count has ended.
+    JS_EXPORT_PRIVATE bool endTerminationAtTrapCheck();
+    JS_EXPORT_PRIVATE TerminationAtTrapCheck terminationAtTrapCheck();
     inline void deferTermination(DeferAction);
     inline void undoDeferTermination(DeferAction);
 
