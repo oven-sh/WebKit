@@ -219,12 +219,54 @@ public:
     JSValue readExportIfInitialized(ModuleID, unsigned index, Environment* instance = nullptr) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
+    // Where an export keeps the value that tryReplaceExport() replaces.
+    struct ReplaceablePlace {
+        enum class Kind : uint8_t { None, Variable, Field, CapturedTable, AddedTable, NamespaceHandedOn };
+        Kind kind { Kind::None };
+        bool hasVariable { false }; // CapturedTable: `slot` is a variable of the program that holds a copy of the entry.
+        SlotData slot { }; // Variable, Field.
+        Environment* instance { nullptr }; // Field.
+        ModuleID module; // CapturedTable, AddedTable: the module of the table. NamespaceHandedOn: the module of the namespace.
+        UniquedStringImpl* name { nullptr }; // CapturedTable, AddedTable.
+        JSObject* table { nullptr }; // CapturedTable, AddedTable.
+        explicit operator bool() const { return kind != Kind::None; }
+        bool isTable() const { return kind == Kind::CapturedTable || kind == Kind::AddedTable; }
+        // A table has one entry for a name, and `module` and `hasVariable` follow from the rest.
+        bool operator==(const ReplaceablePlace& other) const { return kind == other.kind && slot == other.slot && instance == other.instance && table == other.table && name == other.name; }
+    };
+    // The place that tryReplaceExport() stores into. None where it stores nothing.
+    ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, Environment* instance = nullptr);
+    // Empty for a place that has no value yet.
+    JSValue readReplaceablePlace(const ReplaceablePlace&);
+    // A host keeps what its stores replace in a table of its own, by export name: `kept`. The table stands for an export that has no value yet.
+    // Under a private name it also remembers the place of each value that it got here. A store into that place, a read of it and the put-back
+    // resolve no name, so they reach what the keep found, whatever the name leads to by then.
+    KeptExport keepExportToReplace(ModuleID, UniquedStringImpl* name, Environment* instance, JSObject* kept, UniquedStringImpl* keptUnder);
+    bool storeIntoKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder, JSValue);
+    JSValue readKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder);
+    bool putBackKeptExport(JSObject* kept, UniquedStringImpl* keptUnder);
+    // Whether the export leads to another place by now than the one that the table remembers under the name: the module that holds it was loaded again.
+    // What the table keeps under the name is then the value of another load.
+    bool hasExportLeftKeptPlace(ModuleID, UniquedStringImpl* name, Environment* instance, JSObject* kept, UniquedStringImpl* keptUnder);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    // Who keeps what a store replaces: the mock of a compiled file that is being laid, or a host, in a table of its own, before it stores.
+    enum class KeepsReplaced : bool { Mock, Host };
+    template<KeepsReplaced> struct StoreIntoPlace;
+    struct FindPlace;
+    template<typename Action> typename Action::Answer walkToPlaceOfExport(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Environment* instance, Action);
+    template<typename Action> typename Action::Answer walkToPlaceOfExportBehindStars(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Action);
+    template<typename Action> typename Action::Answer walkToPlaceOfCapturedExport(ModuleID, UniquedStringImpl* name, Action);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
+    // A place that a table of a host remembers. A table of exports can have gone with the run of the module that made it, or be set aside for a mock in its place.
+    struct KeptPlace {
+        enum class Table : uint8_t { Current, SetAside, Gone };
+        ReplaceablePlace place;
+        Identifier nameInTable;
+        Table table { Table::Current };
+    };
+    KeptPlace keptPlace(JSObject* kept, UniquedStringImpl* keptUnder);
+    bool storeIntoKeptPlace(const KeptPlace&, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
         uint32_t name;
@@ -2446,6 +2488,8 @@ private:
     UncheckedKeyHashMap<ModuleID, ModuleID> m_linkFailures;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
+    const Identifier& nameOfPlacesOfKeptExports();
+    Identifier m_nameOfPlacesOfKeptExports;
     enum class RecordedRequire : uint8_t { Begun, BegunForEvictedModule, Returned, BegunAgain, BegunFirstESModuleRequire, ReturnedAndNotListed };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
     struct RecordedRequireIndex {
