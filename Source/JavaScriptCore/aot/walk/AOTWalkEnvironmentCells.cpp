@@ -1262,7 +1262,7 @@ void Walker::findSlotsStoredByCopies(std::span<const SlotOfLoop> slots, const Ef
         if (!slot.variable)
             found.scope = slot.scope ? slot.scope : unspecifiedConstant(slot.typeOfScope);
         bool isListed = slot.scope && known.containsIf([&](const FieldOfScope& other) { return !other.slotKey && other.scope == found.scope && other.field == found.field; });
-        if (isListed)
+        if (isListed || (!valueKnownOf(found) && isBeforeFirstStore(found)))
             continue;
         if (shouldReadBeforeHeader && isUnreachable())
             return;
@@ -1654,6 +1654,8 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             if (Draft read = draftVariableRead(found); variable && !found.anticipatedRead && !m_state.isPastDeadZone(variable) && excludesInitialPrimitive(read, resultTypeOf(read)) && !shouldAssumeVariablesInitialized())
                 continue;
             Reference value = valueKnownOf(found);
+            if (!value && isBeforeFirstStore(found))
+                continue;
             if (!value && shouldReadBeforeHeader && !mayBeInDeadZone(found)) {
                 if (variable)
                     count(StatisticID::LoopStoredVariableReadsHoisted);
@@ -1759,6 +1761,17 @@ bool Walker::mayBeInDeadZone(const FieldOfScope& field) const
         return false;
     TypeID written = program().at(field.field.layout).fields[field.field.field].declared.written();
     return written && (program().at(written).primitives & Primitive::Absent) && !m_state.isPastDeadZone(field.scope, field.field);
+}
+
+bool Walker::isBeforeFirstStore(const FieldOfScope& field) const
+{
+    if (field.variable || field.slotKey || !field.scope || m_state.isPastDeadZone(field.scope, field.field))
+        return false;
+    return std::ranges::any_of(m_frames, [&](const Frame& frame) {
+        return frame.index && std::ranges::any_of(facts().summaries().at(frame.function).scopesStoredFirst.span(), [&](const SummaryScopeStoredFirst& scope) {
+            return frame.index->value(scope.allocation).as<Opcode::NewObject>().layout() == field.field.layout && std::ranges::binary_search(scope.fields, field.field.field);
+        });
+    });
 }
 
 Draft Walker::draftVariableRead(const FieldOfScope& field)
