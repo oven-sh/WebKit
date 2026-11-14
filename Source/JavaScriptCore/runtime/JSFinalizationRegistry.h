@@ -102,6 +102,7 @@ private:
     }
 
     JS_EXPORT_PRIVATE void finishCreation(VM&, JSGlobalObject*, JSObject* callback);
+    bool scheduleCleanup(VM&);
 
     struct Registration {
         JSCell* target;
