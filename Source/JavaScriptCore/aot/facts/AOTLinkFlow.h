@@ -960,6 +960,7 @@ public:
         bool isDefinedUnderSomeSymbol { false };
         bool isDefinedInSight { false };
         bool mayInterceptStores { false };
+        bool hasAppendedField { false };
         FlowNodeID getter;
         FlowNodeID setter;
 
@@ -2421,6 +2422,7 @@ private:
     Vector<ConstructedPrototype> m_constructedPrototypes;
     BitVector m_layoutsWithReplacedPrototypes;
     bool layConstructedPrototypes();
+    bool addAppendedFieldsToPrototype(LayoutID below, LayoutID parent);
     void noteNameMayInterceptStores(uint32_t record);
     bool noteNamesThatMayInterceptStores();
     LayoutID findConstructedParent(const ConstructedPrototype&) const;

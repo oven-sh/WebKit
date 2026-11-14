@@ -2425,17 +2425,20 @@ ALWAYS_INLINE void CallInLinkCalls::callName()
     }
     const BuiltinCondition* light = receiver.builtin ? m_flow.lightFormOf(receiver.builtin) : nullptr;
     bool isServedByLightForm = light && std::ranges::contains(light->methodsServed, m_program.builtinNameOf(m_call.key));
-    if (receiver.builtin && (m_shared || (!isServedByLightForm && (m_call.receiver == noSummaryNode || !m_flow.isSpelledInBody(m_caller, m_call.receiver)))))
-        m_flow.note(LinkFlow::Note::BuiltinUsedViaFlow, m_builtins.canonicalID(receiver.builtin).index());
+    bool isBroughtByFlow = receiver.builtin && (m_shared || (!isServedByLightForm && (m_call.receiver == noSummaryNode || !m_flow.isSpelledInBody(m_caller, m_call.receiver))));
+    bool callsFoundMember = false;
     if (isServedByLightForm) {
         give(passToUnseen(passedByCall().withoutReceiver()));
     } else if (receiver.builtin && !isSettledButForOwnCallees()) {
         MemberOfTable found = findAbove(receiver.builtin);
+        callsFoundMember = found.outcome == Lookup::Found && !light && !m_shared;
         bool isUndefined = found.outcome != Lookup::Found && isNameUndefinedOn(receiver.builtin);
         if (isUndefined)
             found.outcome = Lookup::Absent;
         callMemberOfTable(found, valuesOf(builtinForLinkCalls(receiver.builtin)), isUndefined ? WhenAbsent::CallThrows : WhenAbsent::MayHaveBeenAdded);
     }
+    if (isBroughtByFlow && !callsFoundMember)
+        m_flow.note(LinkFlow::Note::BuiltinUsedViaFlow, m_builtins.canonicalID(receiver.builtin).index());
     if (receiver.hasUnknownObjects) {
         UnknownIs how = howUnknownIs(receiver);
         bool holdsWhatCanBeRead = false;
