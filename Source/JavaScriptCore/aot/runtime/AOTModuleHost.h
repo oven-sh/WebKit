@@ -312,6 +312,15 @@ JS_EXPORT_PRIVATE void willSetExtensionLoader(JSGlobalObject*, StringView extens
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
 bool tryReplaceExportOfRecord(JSGlobalObject*, AbstractModuleRecord*, UniquedStringImpl* name, JSValue);
+// A host keeps what its stores replace in compiled code in a table of its own, by export name: `kept`. JSModuleNamespaceObject::keepCompiledExportValue()
+// fills it through the first two. The table stands for an export that had no value yet, and it remembers the place of each value that it got.
+// The other three are for a name that it has a place for, and answer false or empty for any other name:
+// a store into the place, what the place holds now, and a store of the kept value back into it.
+bool keepExportToReplace(JSCell* moduleNamespace, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder);
+bool keepExportOfRecordToReplace(JSGlobalObject*, AbstractModuleRecord*, UniquedStringImpl* name, JSObject* kept, UniquedStringImpl* keptUnder);
+JS_EXPORT_PRIVATE bool storeIntoKeptPlace(JSGlobalObject*, JSObject* kept, UniquedStringImpl* keptUnder, JSValue);
+JS_EXPORT_PRIVATE JSValue readKeptPlace(JSGlobalObject*, JSObject* kept, UniquedStringImpl* keptUnder);
+JS_EXPORT_PRIVATE bool putBackKeptExport(JSGlobalObject*, JSObject* kept, UniquedStringImpl* keptUnder);
 JS_EXPORT_PRIVATE String spyOnExportErrorMessage(JSCell* moduleNamespace, UniquedStringImpl* name, const String& uncompiledCaller);
 JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String mockModuleErrorMessage(JSGlobalObject*, const String& path, const String& uncompiledCaller);

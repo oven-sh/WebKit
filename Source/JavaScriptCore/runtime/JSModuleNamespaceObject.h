@@ -66,6 +66,9 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool overrideExportValue(JSGlobalObject*, PropertyName, JSValue);
+    // For an export whose value overrideExportValue() would replace in compiled code: `kept`, a table by export name that the caller owns, gets that
+    // value, and remembers its place. See AOT::storeIntoKeptPlace(). False for any other export.
+    bool keepCompiledExportValue(JSGlobalObject*, PropertyName, JSObject* kept);
     void overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue &result)>& iter);
 #endif
     DECLARE_VISIT_CHILDREN;

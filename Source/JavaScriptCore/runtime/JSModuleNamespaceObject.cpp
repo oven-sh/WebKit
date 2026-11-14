@@ -619,6 +619,20 @@ static bool isLiveBindingExport(AbstractModuleRecord* record)
 #endif
 }
 
+// What holds the value of an export, for overrideExportValue() and keepCompiledExportValue().
+enum class HolderOfExport : uint8_t { Binding, LiveExportsSource, NamespaceOfCompiledOriginal, CompiledRecord };
+static HolderOfExport holderOfExport(AbstractModuleRecord* record)
+{
+#if ENABLE(AOT)
+    if (record->isCompiledOriginal())
+        return HolderOfExport::NamespaceOfCompiledOriginal;
+#endif
+    // Live exports come from liveExportsSource(). There's no binding to override.
+    if (record->hasLiveExports())
+        return HolderOfExport::LiveExportsSource;
+    return isLiveBindingExport(record) ? HolderOfExport::CompiledRecord : HolderOfExport::Binding;
+}
+
 void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue& result)>& iter)
 {
     VM& vm = globalObject->vm();
@@ -673,14 +687,16 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
-#if ENABLE(AOT)
-    if (record->isCompiledOriginal())
-        RELEASE_AND_RETURN(scope, AOT::tryReplaceExport(record->liveExportsSource(), resolution.localName.impl(), value));
-#endif
-    // Live exports come from liveExportsSource(). There's no binding to override.
-    if (record->hasLiveExports())
+    switch (holderOfExport(record)) {
+    case HolderOfExport::LiveExportsSource:
         return false;
-    if (isLiveBindingExport(record)) {
+    case HolderOfExport::NamespaceOfCompiledOriginal:
+#if ENABLE(AOT)
+        RELEASE_AND_RETURN(scope, AOT::tryReplaceExport(record->liveExportsSource(), resolution.localName.impl(), value));
+#else
+        [[fallthrough]];
+#endif
+    case HolderOfExport::CompiledRecord: {
 #if ENABLE(AOT)
         bool isReplaced = AOT::tryReplaceExportOfRecord(globalObject, record, resolution.localName.impl(), value);
         RETURN_IF_EXCEPTION(scope, false);
@@ -689,6 +705,9 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
 #endif
         throwTypeError(globalObject, scope, "Cannot replace a module export that is a live binding"_s);
         return false;
+    }
+    case HolderOfExport::Binding:
+        break;
     }
     // DFG and FTL drop the TDZ check once a binding is initialized, so it must never go back to empty.
     RELEASE_ASSERT(value);
@@ -706,6 +725,33 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     RETURN_IF_EXCEPTION(scope, {});
     moduleNamespaceObject->m_isOverridingValue = false;
     return putResult;
+}
+
+bool JSModuleNamespaceObject::keepCompiledExportValue(JSGlobalObject* globalObject, PropertyName name, JSObject* kept)
+{
+#if ENABLE(AOT)
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto resolution = moduleRecord()->resolveExport(globalObject, Identifier::fromUid(vm, name.uid()));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (resolution.type != AbstractModuleRecord::Resolution::Type::Resolved)
+        return false;
+    auto* record = resolution.moduleRecord;
+    switch (holderOfExport(record)) {
+    case HolderOfExport::NamespaceOfCompiledOriginal:
+        RELEASE_AND_RETURN(scope, AOT::keepExportToReplace(record->liveExportsSource(), resolution.localName.impl(), kept, name.uid()));
+    case HolderOfExport::CompiledRecord:
+        RELEASE_AND_RETURN(scope, AOT::keepExportOfRecordToReplace(globalObject, record, resolution.localName.impl(), kept, name.uid()));
+    case HolderOfExport::LiveExportsSource:
+    case HolderOfExport::Binding:
+        break;
+    }
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(name);
+    UNUSED_PARAM(kept);
+#endif
+    return false;
 }
 
 #endif

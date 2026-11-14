@@ -230,15 +230,25 @@ public:
         JSObject* table { nullptr }; // CapturedTable, AddedTable.
         bool hasVariable { false };
         explicit operator bool() const { return kind != Kind::None; }
+        bool isTable() const { return kind == Kind::CapturedTable || kind == Kind::AddedTable; }
     };
     // The place that tryReplaceExport() stores into. None where it stores nothing.
     ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, Environment* instance = nullptr);
     bool storeIntoReplaceablePlace(const ReplaceablePlace&, JSValue);
+    // Empty for a place that has no value yet.
+    JSValue readReplaceablePlace(const ReplaceablePlace&);
+    // A host keeps what its stores replace in a table of its own, by export name: `kept`. The table stands for an export that had no value yet.
+    // It also remembers, under a private name, the place of each value that it got here, so that a later store goes there whatever the name resolves to by then.
+    bool keepExportToReplace(ModuleID, UniquedStringImpl* name, Environment* instance, JSObject* kept, UniquedStringImpl* keptUnder);
+    bool storeIntoKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder, JSValue);
+    JSValue readKeptPlace(JSObject* kept, UniquedStringImpl* keptUnder);
+    bool putBackKeptExport(JSObject* kept, UniquedStringImpl* keptUnder);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
     ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Environment* instance = nullptr);
     ReplaceablePlace findPlaceToReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars);
     ReplaceablePlace findPlaceToReplaceCapturedExport(ModuleID, UniquedStringImpl* name);
+    ReplaceablePlace keptPlace(JSObject* kept, UniquedStringImpl* keptUnder, Identifier& nameInTable, bool& isGone);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
@@ -2459,6 +2469,8 @@ private:
     UncheckedKeyHashMap<ModuleID, ModuleID> m_linkFailures;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
+    const Identifier& nameOfPlacesOfKeptExports();
+    Identifier m_nameOfPlacesOfKeptExports;
     enum class RecordedRequire : uint8_t { Begun, BegunForEvictedModule, Returned, BegunAgain, BegunFirstESModuleRequire, ReturnedAndNotListed };
     UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
     struct RecordedRequireIndex {
