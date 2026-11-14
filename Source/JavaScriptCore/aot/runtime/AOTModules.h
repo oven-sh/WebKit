@@ -1241,7 +1241,7 @@ public:
     void noteImportInFlight(JSPromise*, ModuleID);
     bool hasMockRegisteredAfter(ModuleID, uint32_t moment) const;
     JSObject* takeReleasedImportNamespace(JSPromise*, ModuleID);
-    bool tryRestartReleasedImport(JSPromise*);
+    bool tryRestartReleasedImport(JSPromise*, JSValue asyncContext);
     void restorePreloadInstances();
     void noteRestoredModule(ModuleID module) { m_restoredModules.set(module.index()); }
     Vector<ModuleID, 16> linkInstances(ModuleID root);
@@ -1866,7 +1866,7 @@ public:
     enum class ImportSourceState : uint8_t { MayArriveLater, Arrived, ArrivedWithDeferredMocks };
     JSPromise* startImport(ModuleID, std::optional<int64_t> referrerAsyncOrder, ImportCaller = ImportCaller::CompiledCode, ImportSourceState = ImportSourceState::MayArriveLater, JSPromise* promiseOfCaller = nullptr, JSValue importWaitState = JSValue(), std::optional<bool> priorRunMocksResult = std::nullopt);
     JSPromise* rejectImportWithErrorOfLoad(ModuleID, ImportCaller);
-    void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSPromise* loaderPromise = nullptr);
+    void startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext, JSPromise* loaderPromise = nullptr);
     bool tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester);
     void fulfillFirstQueuedFetch();
     void fulfillQueuedFetch(JSPromise*);
@@ -1893,9 +1893,9 @@ public:
     void tellHostOfImport(JSPromise*, const String& path, std::optional<ModuleID> file = std::nullopt);
     JSPromise* importDynamic(JSValue specifier, JSValue options, ModuleID referrer);
     JSPromise* importUncompiled(const Identifier& key, ModuleID referrer, RefPtr<ScriptFetchParameters>&&, JSValue importWaitState = { });
-    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    void continueImport(JSPromise* importPromise, ModuleID, std::optional<int64_t> referrerAsyncOrder, JSValue asyncContext);
     void resolveWithNamespace(JSPromise* importPromise, ModuleID);
-    void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error);
+    void finishImportOfEvaluatedModule(JSPromise* importPromise, ModuleID, JSValue error, JSValue asyncContext);
     JSPromise* behindStepsOfImportThatWaitsFor(JSPromise* evaluation, ModuleID);
     void updateRetainedImportNamespaces(ModuleID);
     void recordMockedImport(JSPromise*, ModuleID);
@@ -3344,9 +3344,12 @@ private:
         Strong<JSCell> importerLoad { };
     };
     Vector<DeferredRequest> m_deferredRequests;
+    JSValue asyncContextForImport() const;
+    Strong<Unknown> currentAsyncContext() const;
     struct DeferredImport {
         ModuleID file;
         Strong<JSPromise> promise;
+        Strong<Unknown> asyncContext;
     };
     Vector<DeferredImport> m_deferredImports;
     struct MockedImport {
@@ -3522,7 +3525,7 @@ private:
         std::optional<int64_t> referrerAsyncOrder;
         std::optional<uint32_t> loaderStepsAtCall;
         uint32_t callSequenceNumber;
-        Strong<Unknown> asyncContextOfCallWhoseMocksRunNow { };
+        Strong<Unknown> asyncContext { };
         ModuleID importCallerModule { };
         uint32_t importSequenceNumber { 0 };
         uint64_t precedingDiskReads { 0 };
@@ -3556,6 +3559,7 @@ private:
         std::optional<int64_t> referrerAsyncOrder;
         ImportCaller caller { ImportCaller::CompiledCode };
         uint32_t callSequenceNumber { 0 };
+        Strong<Unknown> asyncContext { };
         uint64_t precedingDiskReads { 0 };
 
         bool isCall() const { return !!promise; }

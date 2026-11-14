@@ -791,7 +791,13 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
+#if USE(BUN_JSC_ADDITIONS)
+    // The modules that wait for this one run in that job. It continues whoever evaluates this one, a job of the module
+    // loader or a host function for its caller: ModuleEvaluationAsyncContextScope says under which async context.
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, moduleLoader()->asyncContextOfModulesThatWait(vm, globalObject));
+#else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+#endif
     // 9. Perform ! module.ExecuteModule(capability).
     execute(globalObject, promise);
     RETURN_IF_EXCEPTION(scope, void());

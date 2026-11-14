@@ -25,6 +25,7 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
 #include "AOTVMState.h"
+#include "AsyncContextSwapScope.h"
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
@@ -1731,9 +1732,10 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
     EagerLoad eagerLoad { root, std::nullopt, m_innermostEagerLoad, jobs == EagerLoadJobPolicy::DeferJobs, load };
     eagerLoad.runsBeforeLoaderSteps = jobs == EagerLoadJobPolicy::DeferLoaderSteps;
     eagerLoad.loadQueue = vm.synchronousModuleQueue();
+    JSValue asyncContextOfLoad = load ? load->asyncContext() : JSValue();
     SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);
     SetForScope modulesWithEagerLoads(vm.aotState().modulesWithEagerLoads, eagerLoad.runsBeforeLoaderJobs ? this : vm.aotState().modulesWithEagerLoads);
-    if (jobs == EagerLoadJobPolicy::DeferJobs && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun) {
+    if (jobs == EagerLoadJobPolicy::DeferJobs && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
         ensureRecord(root)->retain();
         if (storedStatus(root) == StoredModuleStatus::InRecord) {
             bool hadQueuedTicks = hasQueuedTicks();
@@ -1858,6 +1860,9 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
         bool hadQueuedTicks = hasQueuedTicks();
         eagerLoad.moduleOrFacade = imported;
         eagerLoad.jobCountBeforeModule = numberOfJobs;
+        std::optional<ModuleLoaderAsyncContextScope> asyncContextOfFile;
+        if (jobs == EagerLoadJobPolicy::DeferJobs)
+            asyncContextOfFile.emplace(vm, m_instance.globalObject, asyncContextOfLoad);
         if (!isOriginalDue) [[likely]] {
             if (ModuleID file = fileOf(imported); isMocked(file) && !activeMock(file) && hasBypassingImporterBelow(root, imported)) [[unlikely]] {
                 evaluatePastPendingMock(imported);
@@ -1872,6 +1877,7 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
             runFileBesideMock(fileOf(imported));
             RETURN_IF_EXCEPTION(scope, didRunFile);
         }
+        asyncContextOfFile.reset();
         Exception* exception = scope.exception();
         bool didQueueJobsBeforeLoader = eagerLoad.runsBeforeLoaderJobs && (queuedJobCount(jobs) != numberOfJobs || (!hadQueuedTicks && hasQueuedTicks()));
         if (didQueueJobsBeforeLoader && !(exception && vm.isTerminationException(exception))) [[unlikely]] {
@@ -2019,7 +2025,7 @@ void Modules::transferSynchronousLoad(EagerLoad& files)
     SetForScope moduleBeingTransferred(m_moduleBeingTransferred, fileOf(running));
     SetForScope isInHostRequest(m_currentHostRequest, true);
     takeUpWaysOfLoads();
-    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate });
+    JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     scope.assertNoException();
     m_transferredSynchronousLoads.append({ files.root, Strong<JSPromise>(vm, promise) });
     runSynchronousStepsInFrontOf(fileOf(running));

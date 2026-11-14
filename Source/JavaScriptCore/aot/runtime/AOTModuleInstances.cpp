@@ -2499,7 +2499,7 @@ void Modules::didTakeFirstHostImportStep(JSPromise* importPromise)
         tellThatFileDidNotRunAgain(import.module);
 }
 
-bool Modules::tryRestartReleasedImport(JSPromise* importPromise)
+bool Modules::tryRestartReleasedImport(JSPromise* importPromise, JSValue asyncContext)
 {
     if (m_importsInFlight.isEmpty()) [[likely]]
         return false;
@@ -2516,7 +2516,7 @@ bool Modules::tryRestartReleasedImport(JSPromise* importPromise)
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, std::optional(found->value.moment));
     m_importsInFlight.remove(found);
     tellOfFactoriesInCycle(module);
-    startImportWhoseTextHasCome(importPromise, module, std::nullopt, importPromise);
+    startImportWhoseTextHasCome(importPromise, module, std::nullopt, asyncContext, importPromise);
     return true;
 }
 

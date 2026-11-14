@@ -1144,8 +1144,15 @@ static void runPromiseFinallyReactionJob(JSGlobalObject* jobGlobalObject, VM& vm
     promiseResolveThenableJob(globalObject, resolutionObject, then, resolve, reject, microtaskCallCache);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static void runAsyncModuleExecutionDone(JSGlobalObject* jobGlobalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache*)
+#else
 static void runAsyncModuleExecutionDone(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
+#endif
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, jobGlobalObject, argument3);
+#endif
     auto* module = uncheckedDowncast<CyclicModuleRecord>(argument2);
     JSGlobalObject* globalObject = nullptr;
 #if ENABLE(AOT)
@@ -1200,6 +1207,10 @@ static void asyncModuleExecutionResume(JSGlobalObject* globalObject, VM& vm, JSM
 
 static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    JSValue asyncContext = uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext();
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // argument0 = pre-created modulePromise
@@ -1224,6 +1235,8 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
                 return;
             }
             if (source) [[unlikely]] {
+                // This job runs again behind the source, and takes the async context again.
+                entry->giveBackAsyncContext(vm, asyncContext);
                 source->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryFetchSettled, modulePromise, entry);
                 return;
             }
@@ -1307,6 +1320,9 @@ static void runModuleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, Int
 
 static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // argument0 = pre-created loadPromise
@@ -1349,7 +1365,12 @@ static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicr
             if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
                 compiled->willBeLoadedByImport();
 #endif
-            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), vm.hasCompiledCode() && context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
+            ModuleGraphLoadingState* parentState = vm.hasCompiledCode() && context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), parentState, context->asyncContext());
+#else
+            JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), parentState);
+#endif
             if (scope.exception()) {
                 loadPromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1443,6 +1464,9 @@ static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicr
 
 static void runModuleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // loadModule first overload: fetch promise settled
@@ -1468,7 +1492,11 @@ static void runModuleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, Intern
         if (!moduleData.inherits<AbstractModuleRecord>()) {
 #endif
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+        context->loader()->provideFetch(globalObject, specifier, type, moduleData, context->asyncContext());
+#else
         context->loader()->provideFetch(globalObject, specifier, type, moduleData);
+#endif
         if (scope.exception()) {
             intermediatePromise->rejectWithCaughtException(vm, scope);
             return;
@@ -1490,13 +1518,17 @@ static void runModuleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, Intern
             innerLoadFlags.add(ModuleLoadFlag::UseImportMap);
         if (context->dynamic()) {
 #if USE(BUN_JSC_ADDITIONS)
-            combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred(), context->referrerAsyncOrder());
+            combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred(), context->referrerAsyncOrder(), context->asyncContext());
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
+#if USE(BUN_JSC_ADDITIONS)
+            combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher, context->asyncContext());
+#else
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
+#endif
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
             loadPromise = context->loader()->loadModule(globalObject, globalObject, request, combinedCell, scriptFetcher, innerLoadFlags);
@@ -1658,6 +1690,9 @@ static void runModuleLoadCombinedStateSettled(JSGlobalObject*, VM& vm, InternalM
 
 static void runModuleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // loadModule second overload: onFulfilled
@@ -1811,6 +1846,14 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
         }
 
         // 6.d-f. Perform PerformPromiseThen(evaluatePromise, onFulfilled, onRejected).
+#if ENABLE(AOT)
+        // The job gets the namespace of the module. For a compiled CommonJS file that reads the exports, which can call
+        // getters of the program. So there the job has the async context of the import(), paired with the module.
+        if (vm.hasCompiledCode() && module->inherits<AOT::ModuleRecord>()) [[unlikely]] {
+            evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::DynamicImportEvaluateSettled, capabilityPromise, AsyncContextSwapScope::wrap(vm, globalObject, module, dynamicPayload->asyncContext()));
+            return;
+        }
+#endif
         evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::DynamicImportEvaluateSettled, capabilityPromise, module);
         return;
     }
@@ -1894,6 +1937,10 @@ static void runDynamicImportDeferDependencySettled(JSGlobalObject* globalObject,
 
 static void runDynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if ENABLE(AOT)
+    // argument2 is the module. A compiled module is paired with the async context of the import() where there is one.
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(argument2));
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // https://tc39.es/ecma262/#sec-ContinueDynamicImport
@@ -1930,12 +1977,19 @@ static void runDynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm
         capabilityPromise->reject(vm, argument1);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static void runImportModuleNamespace(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
+#else
 static void runImportModuleNamespace(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue, JSValue, MicrotaskCallCache*)
+#endif
 {
     // requestImportModule: namespace getter
     // argument0 = resultPromise
     // argument1 = module namespace (from dynamic import pipeline) or error
-    // argument2 = unused
+    // argument2 = unused. Bun: the async context of the import()
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, argument2);
+#endif
     auto* resultPromise = uncheckedDowncast<JSPromise>(argument0);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
@@ -2419,19 +2473,24 @@ static void runCompiledModuleBodyResume(JSGlobalObject* globalObject, VM& vm, In
     LEAVE_FOR_COMPILED_JOB(AOT::runAsyncFunctionResumeJob(globalObject, vm, task, payload, argument0, argument1, argument2, argument3, microtaskCallCache));
 }
 
-static void runCompiledModuleImport(JSGlobalObject* globalObject, VM&, InternalMicrotask, uint8_t, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
+static void runCompiledModuleImport(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache*)
 {
-    AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2);
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+    AOT::runCompiledModuleImport(globalObject, argument0, argument1, argument2, argument3);
 }
 
-static void runCompiledModuleImportSettled(JSGlobalObject* globalObject, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
+static void runCompiledModuleImportSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
-    AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload));
+    // argument2 is the module, paired with the async context of the import() where there is one.
+    JSValue asyncContext = AsyncContextSwapScope::unwrapContextTuple(argument2);
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
+    AOT::runCompiledModuleImportSettled(globalObject, argument0, argument1, argument2, static_cast<JSPromise::Status>(payload), asyncContext);
 }
 
-static void runCompiledModuleImportStep(JSGlobalObject*, VM&, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
+static void runCompiledModuleImportStep(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache*)
 {
-    AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload);
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, argument3);
+    AOT::runCompiledModuleImportStep(argument0, argument1, argument2, payload, argument3);
 }
 #endif
 
@@ -2493,11 +2552,17 @@ static void runModuleLoadReturnModuleKey(JSGlobalObject*, VM& vm, InternalMicrot
 
 static void runDynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoaderPayload>(argument2)->asyncContext());
+#endif
     dynamicImportLoadSettled(globalObject, vm, argument0, argument1, argument2, payload, /* deferred */ false);
 }
 
 static void runDynamicImportDeferLoadSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleEvaluationAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoaderPayload>(argument2)->asyncContext());
+#endif
     dynamicImportLoadSettled(globalObject, vm, argument0, argument1, argument2, payload, /* deferred */ true);
 }
 

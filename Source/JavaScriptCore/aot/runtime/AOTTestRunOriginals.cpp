@@ -1943,6 +1943,7 @@ void evaluateOriginalAsync(JSGlobalObject* realm, JSModuleRecord* record)
 {
     VM& vm = realm->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue asyncContext = JSModuleLoader::asyncContextOfModulesThatWait(vm, realm);
     JSValue result = modulesOf(realm)->evaluateOriginal(record);
     RETURN_IF_EXCEPTION(scope, void());
     auto* promise = dynamicDowncast<JSPromise>(result);
@@ -1950,7 +1951,7 @@ void evaluateOriginalAsync(JSGlobalObject* realm, JSModuleRecord* record)
         promise = JSPromise::resolvedPromise(realm, result);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, record);
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, record, asyncContext);
 }
 
 void willEndMockOfBuiltin(JSGlobalObject* realm, ModuleID builtin, MockEnd end)

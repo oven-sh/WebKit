@@ -13,6 +13,7 @@
 #include "AOTModuleRecord.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "AsyncContextSwapScope.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
@@ -119,6 +120,8 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
     fetch->file = fileOf(module);
     if (requested)
         fetch->requestedRecord.set(vm, requested);
+    else
+        fetch->asyncContext = currentAsyncContext();
     fetch->referrerAsyncOrder = referrerAsyncOrder;
     fetch->caller = caller;
     fetch->callSequenceNumber = vm.aotState().momentOfLoads;
@@ -247,7 +250,7 @@ void Modules::putCallsThatWaitApartInLine()
     for (auto& fetch : calls) {
         if (!fetch->requestedRecord)
             m_modulesOfQueuedImports.set(fetch->module.index());
-        m_queuedFetches.appendAndBubble(QueuedFetch { fetch->place, WTF::move(fetch->promise), fetch->module, WTF::move(fetch->requestedRecord), fetch->referrerAsyncOrder, std::nullopt, fetch->callSequenceNumber, { }, { }, 0, fetch->precedingDiskReads }, [&](const QueuedFetch& inLine) {
+        m_queuedFetches.appendAndBubble(QueuedFetch { fetch->place, WTF::move(fetch->promise), fetch->module, WTF::move(fetch->requestedRecord), fetch->referrerAsyncOrder, std::nullopt, fetch->callSequenceNumber, WTF::move(fetch->asyncContext), { }, 0, fetch->precedingDiskReads }, [&](const QueuedFetch& inLine) {
             return inLine.place > fetch->place;
         });
     }
@@ -381,6 +384,8 @@ void Modules::makeCallAgain(BatchedFetch& text)
         return;
     }
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
+    AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, text.asyncContext.get());
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get());
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, ImportSourceState::Arrived, promise);
     bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
