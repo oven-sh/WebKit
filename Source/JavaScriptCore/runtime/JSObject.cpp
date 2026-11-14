@@ -985,7 +985,7 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
     }
 
     if (propertyName > MAX_ARRAY_INDEX) {
-        PutPropertySlot slot(cell, shouldThrow);
+        PutPropertySlot slot(receiverForPutByIndex(cell), shouldThrow);
         return thisObject->methodTable()->put(thisObject, globalObject, Identifier::from(vm, propertyName), value, slot);
     }
 
@@ -3727,7 +3727,7 @@ bool JSObject::attemptToInterceptPutByIndexOnHoleForPrototype(JSGlobalObject* gl
         if (current->type() == ProxyObjectType) {
             scope.release();
             auto* proxy = uncheckedDowncast<ProxyObject>(current);
-            putResult = proxy->putByIndexCommon(globalObject, thisValue, i, value, shouldThrow);
+            putResult = proxy->putByIndexCommon(globalObject, receiverForPutByIndex(thisValue), i, value, shouldThrow);
             return true;
         }
 

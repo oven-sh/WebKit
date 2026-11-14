@@ -247,6 +247,14 @@ JSValue SparseArrayEntry::getConcurrently() const
     return attributesDependency.consume(this)->m_value.get();
 }
 
+// Not inline: with the receiver check in it, SparseArrayEntry::put() is too large to be inlined into
+// SparseArrayValueMap::putEntry(), and every store to a sparse map pays for the call. The parameters are in the order
+// of GetterSetter::callSetter()'s, so that they stay in their registers.
+static NEVER_INLINE bool callSetterOfIndex(GetterSetter* getterSetter, JSGlobalObject* globalObject, JSValue thisValue, JSValue value, bool shouldThrow)
+{
+    return getterSetter->callSetter(globalObject, receiverForPutByIndex(thisValue), value, shouldThrow);
+}
+
 bool SparseArrayEntry::put(JSGlobalObject* globalObject, JSValue thisValue, SparseArrayValueMap* map, JSValue value, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
@@ -260,7 +268,7 @@ bool SparseArrayEntry::put(JSGlobalObject* globalObject, JSValue thisValue, Spar
         return true;
     }
 
-    RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(m_value.get())->callSetter(globalObject, thisValue, value, shouldThrow));
+    RELEASE_AND_RETURN(scope, callSetterOfIndex(uncheckedDowncast<GetterSetter>(m_value.get()), globalObject, thisValue, value, shouldThrow));
 }
 
 JSValue SparseArrayEntry::getNonSparseMode() const
