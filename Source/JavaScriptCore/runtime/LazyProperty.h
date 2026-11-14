@@ -92,6 +92,20 @@ public:
 
     ElementType* getInitializedOnMainThread(const OwnerType* owner) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_pointer & lazyTag) [[unlikely]]
+            return initializeOnFirstUse(owner);
+        return std::bit_cast<ElementType*>(m_pointer);
+    }
+
+    // Once per property and owner: one function for each instantiation, not code at every get().
+    NEVER_INLINE ElementType* initializeOnFirstUse(const OwnerType* owner) const
+    {
+        ASSERT(!isCompilationThread());
+        FuncType func = *std::bit_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
+        return func(Initializer(const_cast<OwnerType*>(owner), *const_cast<LazyProperty*>(this)));
+    }
+#else
         if (m_pointer & lazyTag) [[unlikely]] {
             ASSERT(!isCompilationThread());
             FuncType func = *std::bit_cast<FuncType*>(m_pointer & ~(lazyTag | initializingTag));
@@ -99,6 +113,7 @@ public:
         }
         return std::bit_cast<ElementType*>(m_pointer);
     }
+#endif
     
     void setMayBeNull(VM&, const OwnerType* owner, ElementType*);
     void set(VM&, const OwnerType* owner, ElementType*);
