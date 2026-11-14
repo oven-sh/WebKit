@@ -323,6 +323,22 @@ static void testVisitOfPoisonedEnvironment(LoadedProgram& program)
     AOT_TEST_CHECK(after.values.isEmpty());
 }
 
+static void testSitesOfPoisonedCells(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    constexpr size_t numberOfCells = 20000;
+    Strong<JSCell> kept;
+    for (size_t i = 0; i < numberOfCells; ++i) {
+        Environment* environment = allocateEnvironment(program);
+        AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, environment, i, 0));
+        if (i == numberOfCells / 2)
+            kept.set(vm, environment);
+    }
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(vm.aotState().poisonedCellSites->size() < numberOfCells / 10);
+    AOT_TEST_CHECK(vm.aotState().poisonedCellSites->get(kept.get()).function == numberOfCells / 2);
+}
+
 static FunctionID slimFunctionNamed(LoadedProgram& program, ASCIILiteral name)
 {
     const ProgramTables& tables = program.state().tables;
@@ -639,6 +655,7 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/collector-takes-a-link-between-environments-for-no-cell"_s, withProgram<testCollectorTakesLinkBetweenEnvironmentsForNoCell> },
         { "compiled-structures/visit-of-poisoned-object"_s, withProgram<testVisitOfPoisonedObject> },
         { "compiled-structures/visit-of-poisoned-environment"_s, withProgram<testVisitOfPoisonedEnvironment> },
+        { "compiled-structures/sites-of-poisoned-cells"_s, withProgram<testSitesOfPoisonedCells> },
         { "compiled-structures/closure-moved-to-the-heap-marks-the-environment-that-it-holds"_s, withProgram<testClosureMovedToHeapMarksEnvironmentThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-takes-along-the-closures-of-frames-that-it-holds"_s, withProgram<testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-twice-is-one-cell"_s, withProgram<testClosureMovedToHeapTwiceIsOneCell> },

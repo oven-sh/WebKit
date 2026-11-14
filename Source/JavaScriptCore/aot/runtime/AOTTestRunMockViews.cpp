@@ -781,6 +781,8 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     uint32_t momentLoaded = m_momentsOfLoads[importer.index()];
     if (!momentLoaded || momentLoaded > mock->value.momentLaid)
         return true;
+    if (hasInstances(importer) && !m_linkedInstances.get(importer.index()) && status(importer) <= ModuleStatus::Linked)
+        return true;
     return !m_loadedInPreload.get(importer.index()) && !wasReleasedByLoader(importer) && momentLinked(importer) < mock->value.momentOfTestFile;
 }
 

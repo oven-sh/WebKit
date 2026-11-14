@@ -608,6 +608,8 @@ bool RowLoopFinder::exploreBody(const Edge& edge, const Body& before)
     for (size_t index = 0; index < block.parameters().size(); ++index) {
         ValueID parameter = block.parameters()[index];
         ValueID argument = edge.arguments()[index];
+        if (!m_code.isNeeded(parameter))
+            continue;
         if (m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(argument).representation || isNeverType(at(argument).type))
             return false;
         body.operations.append({ Step::Kind::Name, id, parameter, argument, true, 0 });
@@ -711,6 +713,8 @@ bool RowLoopFinder::followInnerLoop(const Edge& entry)
         body.blocks.append(id);
         for (size_t index = 0; index < next.parameters().size(); ++index) {
             ValueID parameter = next.parameters()[index];
+            if (!m_code.isNeeded(parameter))
+                continue;
             if (m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(edge->arguments()[index]).representation)
                 return false;
             body.operations.append({ Step::Kind::Name, id, parameter, edge->arguments()[index], true, 0 });
@@ -794,6 +798,8 @@ bool RowLoopFinder::follow(const Edge& edge)
         ValueID argument = edge.arguments()[index];
         if (m_found.store)
             break;
+        if (!m_code.isNeeded(parameter))
+            continue;
         if (isBehindNested() || m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(argument).representation || isNeverType(at(argument).type) || (!isConstant(argument) && !isInLoop(argument) && !m_generator.m_values[argument.index()])) {
             restorePlace(place, hadInnerLoop);
             return false;

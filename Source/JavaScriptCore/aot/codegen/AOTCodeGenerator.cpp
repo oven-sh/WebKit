@@ -151,6 +151,8 @@ GenerationResult CodeGenerator::run()
 
     m_generatesWatched = m_watchesOperations || m_looksBehindEachOperation;
     definePinnedValues(m_out, m_pinned);
+    if (!m_checksEffects && BigIntValues::mayGoAroundLoops(code(), order()))
+        emitter<OperatorEmitter>().bigIntValues();
     emitter<EntryEmitter>().generateEntries();
     for (size_t position = 0; position < m_order.size(); ++position) {
         if (m_hasFailed)
@@ -6439,7 +6441,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 build().statistics().count(StatisticID::KnownKindsCheckedAtLoopEntry);
                 continue;
             }
-            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
+            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked || !loop.viewsAskedForKind.isEmpty() ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
             m_out.branch(answerTo(hasKind.value()), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
             m_out.appendTo(holds);
         }

@@ -12,13 +12,17 @@
 #include "AOTChainDependents.h"
 #include "AOTClassTable.h"
 #include "AOTClosure.h"
+#include "AOTEnvironment.h"
 #include "AOTErrorMessages.h"
+#include "AOTModuleNamespace.h"
+#include "AOTModules.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
 #include "AOTPendingStars.h"
+#include "AOTProgramStatics.h"
 #include "AOTPropertyCachesKeys.h"
 #include "AOTRuntimeFunctions.h"
 #include "AOTRuntimeHooks.h"
@@ -368,19 +372,34 @@ static JSObject* checkSuperBase(JSGlobalObject* globalObject, VM& vm, JSValue ba
     return base.getObject();
 }
 
+static JSValue tryReadExportThroughSuper(Instance* instance, JSObject* parent, const Slot& slot)
+{
+    if (!slot.has(Slot::isInModuleInstance))
+        return ProgramStatics::readVariableWithoutAllocating(*instance, slot.field.slot);
+    const Environment* moduleInstance = slot.field.type ? uncheckedDowncast<Environment>(MarkedBlockCage::decode(instance->cellCageBase, slot.field.type)) : uncheckedDowncast<ModuleNamespace>(parent)->boundModuleInstance();
+    return instance->state->modules->readField(moduleInstance, slot.field.slot);
+}
+
 static ALWAYS_INLINE EncodedJSValue propertyThroughSuperById(Instance* instance, EncodedJSValue base, EncodedJSValue receiver, uint32_t name)
 {
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     const Identifier& identifier = identifierAt(instance, name);
-    JSObject* parent = checkSuperBase(globalObject, vm, JSValue::decode(base), &identifier);
-    RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (instance->state->propertyCaches->findByKey(parent->structure(), identifier.impl(), SlotAccess::Read)) {
-        if (JSValue found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl())))
+    JSValue value = JSValue::decode(base);
+    const Slot* slot = value.isObject() ? instance->state->propertyCaches->findByKey(asObject(value)->structure(), identifier.impl(), SlotAccess::Read) : nullptr;
+    if (slot) {
+        JSObject* parent = asObject(value);
+        JSValue found = slot->kind == Slot::Kind::Variable ? tryReadExportThroughSuper(instance, parent, *slot) : JSValue();
+        if (!found)
+            found = JSValue::decode(operationAOTGetGeneric(instance, parent, identifier.impl()));
+        if (found)
             return JSValue::encode(found);
-        RELEASE_AND_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
     }
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* parent = checkSuperBase(globalObject, vm, value, &identifier);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (slot)
+        RELEASE_AND_RETURN(scope, JSValue::encode(getWithoutCaches(instance, parent, identifier, JSValue::decode(receiver))));
     RELEASE_AND_RETURN(scope, JSValue::encode(getAndCache({ instance, identifier, name }, parent, JSValue::decode(receiver))));
 }
 

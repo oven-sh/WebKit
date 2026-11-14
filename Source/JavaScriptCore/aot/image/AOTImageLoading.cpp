@@ -15,6 +15,7 @@
 #include "WasmCodeInImage.h"
 #include <wtf/AccessibleAddress.h>
 #include <wtf/CryptographicallyRandomNumber.h>
+#include <wtf/Lock.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
 #include <wtf/Scope.h>
