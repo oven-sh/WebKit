@@ -4380,24 +4380,20 @@ void Modules::resumeDelayedImport(JSArray* deferredCall)
     uncheckedDowncast<JSPromise>(deferredCall->getIndexQuickly(3))->pipeFrom(vm, loaded);
 }
 
-std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, ModuleID referrer, JSValue options)
+std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, ModuleID referrer, const RefPtr<ScriptFetchParameters>& fetchParameters)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (!fetchParameters)
-        return fetchParameters.error();
     Identifier ownKey = keyWithoutForm(fileOf(module));
     Identifier key;
     {
-        ResolveOfImportCall resolve(*m_instance.vm, fetchParameters->get());
+        ResolveOfImportCall resolve(*m_instance.vm, fetchParameters.get());
         key = loader()->resolve(realm, jsString(*m_instance.vm, ownKey.string()), pathString(referrer), nullptr, true);
     }
     RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     if (key == ownKey)
         return std::nullopt;
-    RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
+    RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, RefPtr { fetchParameters }));
 }
 
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
@@ -4425,8 +4421,13 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         removeLingeringMock(module);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
+    std::optional<std::expected<RefPtr<ScriptFetchParameters>, JSPromise*>> parsedOptions;
     if (data(module).isESModuleOfProgram() && isRequiredModulePatchPending(module)) [[unlikely]] {
-        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, options);
+        parsedOptions = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+        if (!*parsedOptions)
+            return parsedOptions->error();
+        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, **parsedOptions);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         if (original)
             return *original;
@@ -4529,7 +4530,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     if (Exception* exception = scope.exception(); exception && !m_instance.vm->isTerminationException(exception)) [[unlikely]]
         noteImportFailedUnderMock(module, exception->value());
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
-    auto fetchParameters = JSModuleLoader::fetchParametersFromImportOptions(realm, options);
+    auto fetchParameters = parsedOptions ? WTF::move(*parsedOptions) : JSModuleLoader::fetchParametersFromImportOptions(realm, options);
     RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     if (!fetchParameters)
         return fetchParameters.error();
@@ -4559,7 +4560,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         return promise;
     }
     if (!data(module).isESModuleOfProgram() && isRequiredModulePatchPending(module)) [[unlikely]] {
-        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, options);
+        std::optional<JSPromise*> original = importOriginalUnderPatch(module, referrer, *fetchParameters);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         if (original)
             return *original;
@@ -6326,12 +6327,24 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
                 record->didRequestCompiledModule(key, target);
         };
         bool isNextLeft = level->next.has_value();
+        auto isRequestedByOwnImporter = [&](const PlanOfLoad::Found& next) {
+            if (!next.leadsToFile || next.importer == level->place)
+                return false;
+            return std::ranges::none_of(m_table.requests(module), [&](const ModuleRequestData& request) {
+                return !request.isHoisted && !request.isRequire && (request.targetModule() == next.module || (next.isAliased && data(request.targetModule()).isUncompiledCode()));
+            });
+        };
         auto appendNext = [&] {
             isNextLeft = false;
             bool isFetchedByHost = false;
             if (auto asked = m_levelsOfLoads.find(*level->next); asked != m_levelsOfLoads.end()) {
                 asked->value->isAskedFor = true;
-                isFetchedByHost = asked->value->plan == &plan && plan.found[asked->value->place].isFetchedByHost;
+                if (asked->value->plan == &plan) {
+                    const PlanOfLoad::Found& next = plan.found[asked->value->place];
+                    if (isRequestedByOwnImporter(next))
+                        return;
+                    isFetchedByHost = next.isFetchedByHost;
+                }
             }
             append(*level->next, isFetchedByHost);
         };
@@ -8418,6 +8431,8 @@ AbstractModuleRecord* moduleRecord(JSGlobalObject* realm, ModuleID module)
         }
     }
     if (modules->isCommonJSModuleOrFacade(module)) {
+        modules->takeCopiesAnewWhereMockCallAloneTookThem(modules->moduleWithExportsOf(module));
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (!modules->isInHostRequest())
             modules->didImportFileFromUncompiledCode(module);
         RELEASE_AND_RETURN(scope, modules->recordOfCommonJSFile(module, Modules::LoadOfFile::IsRequested));
@@ -10919,6 +10934,8 @@ void ModuleNamespace::setHiddenExports(VM& vm, JSCellButterfly* hidden)
 
 bool ModuleNamespace::isHiddenExport(unsigned index) const
 {
+    if (exports()[index].isHiddenUntilInitialized && modules().isNameOfReleasedLoad(m_module, index, boundModuleInstance())) [[unlikely]]
+        return false;
     if (m_hasHiddenExports) [[unlikely]] {
         unsigned first = 0;
         unsigned end = m_hiddenExports ? m_hiddenExports->length() : 0;
