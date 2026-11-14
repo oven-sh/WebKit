@@ -32,6 +32,7 @@
 #include "InspectorHeapAgent.h"
 #include "InspectorScriptProfilerAgent.h"
 #include "ScriptArguments.h"
+#include "ScriptCallStackFactory.h"
 #include <wtf/CheckedRef.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -70,7 +71,20 @@ JSGlobalObjectConsoleClient::JSGlobalObjectConsoleClient(InspectorConsoleAgent* 
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSGlobalObjectConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, MessageArguments arguments)
+{
+    // logToSystemConsole() is false, so only an enabled inspector needs a copy of the arguments.
+    if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
+        return;
+
+    internalAddMessage(type, level, globalObject, createScriptArguments(globalObject, arguments));
+}
+
+void JSGlobalObjectConsoleClient::internalAddMessage(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+#else
 void JSGlobalObjectConsoleClient::messageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+#endif
 {
     if (JSGlobalObjectConsoleClient::logToSystemConsole())
         ConsoleClient::printConsoleMessageWithArguments(MessageSource::ConsoleAPI, type, level, globalObject, arguments.copyRef());
@@ -193,12 +207,16 @@ void JSGlobalObjectConsoleClient::time(JSGlobalObject* globalObject, const Strin
     m_consoleAgent->startTiming(globalObject, label);
 }
 
-void JSGlobalObjectConsoleClient::timeLog(JSGlobalObject* globalObject, const String& label, Ref<ScriptArguments>&& arguments)
+void JSGlobalObjectConsoleClient::timeLog(JSGlobalObject* globalObject, const String& label, MessageArguments arguments)
 {
     if (!m_consoleAgent->developerExtrasEnabled()) [[likely]]
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    m_consoleAgent->logTiming(globalObject, label, createScriptArguments(globalObject, arguments));
+#else
     m_consoleAgent->logTiming(globalObject, label, WTF::move(arguments));
+#endif
 }
 
 void JSGlobalObjectConsoleClient::timeEnd(JSGlobalObject* globalObject, const String& label)

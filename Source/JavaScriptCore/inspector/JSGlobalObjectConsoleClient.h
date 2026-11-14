@@ -58,14 +58,14 @@ public:
     void setPersistentHeapAgent(InspectorHeapAgent* agent) { m_heapAgent = agent; }
 
 private:
-    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<ScriptArguments>&&) final;
+    void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, MessageArguments) final;
     void count(JSC::JSGlobalObject*, const String& label) final;
     void countReset(JSC::JSGlobalObject*, const String& label) final;
     void profile(JSC::JSGlobalObject*, const String& title) final;
     void profileEnd(JSC::JSGlobalObject*, const String& title) final;
     void takeHeapSnapshot(JSC::JSGlobalObject*, const String& title) final;
     void time(JSC::JSGlobalObject*, const String& label) final;
-    void timeLog(JSC::JSGlobalObject*, const String& label, Ref<ScriptArguments>&&) final;
+    void timeLog(JSC::JSGlobalObject*, const String& label, MessageArguments) final;
     void timeEnd(JSC::JSGlobalObject*, const String& label) final;
     void timeStamp(JSC::JSGlobalObject*, Ref<ScriptArguments>&&) final;
     void record(JSC::JSGlobalObject*, Ref<ScriptArguments>&&) final;
