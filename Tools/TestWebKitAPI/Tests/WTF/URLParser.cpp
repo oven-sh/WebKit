@@ -518,6 +518,72 @@ TEST_F(WTF_URLParser, Credentials)
     testUserPassword(invalidSurrogate, replacementA, "%EF%BF%BDA"_s);
 }
 
+TEST_F(WTF_URLParser, NonSpecialCredentialsWithoutPath)
+{
+    // Bun: the fork's own test. When '?' or '#' follows the host, only a special URL gets the path "/"
+    // (https://url.spec.whatwg.org/#path-start-state). Upstream gives "notspecial://user@host/?query" for the first row.
+    // A URL with credentials ends its host in State::Host. A plain host takes the first arm there. A port, an IPv6
+    // address or a percent sign sends the host through parseHostAndPort.
+    struct Row {
+        ASCIILiteral input;
+        ExpectedParts parts;
+    };
+    auto sixteenBit = [](ASCIILiteral literal) {
+        String string = literal;
+        string.convertTo16Bit();
+        EXPECT_FALSE(string.is8Bit());
+        return string;
+    };
+
+    // The parser changes nothing in these: the path stays empty, and the URL keeps its input string.
+    const Row unchanged[] = {
+        { "notspecial://user@host?query"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, "query"_s, ""_s, "notspecial://user@host?query"_s } },
+        { "notspecial://user@host#fragment"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, ""_s, "fragment"_s, "notspecial://user@host#fragment"_s } },
+        { "notspecial://user:pass@host:99?query#fragment"_s, { "notspecial"_s, "user"_s, "pass"_s, "host"_s, 99, ""_s, "query"_s, "fragment"_s, "notspecial://user:pass@host:99?query#fragment"_s } },
+        { "notspecial://user:pass@host:99#fragment"_s, { "notspecial"_s, "user"_s, "pass"_s, "host"_s, 99, ""_s, ""_s, "fragment"_s, "notspecial://user:pass@host:99#fragment"_s } },
+        { "notspecial://user@[::1]#fragment"_s, { "notspecial"_s, "user"_s, ""_s, "[::1]"_s, 0, ""_s, ""_s, "fragment"_s, "notspecial://user@[::1]#fragment"_s } },
+        { "notspecial://user@ho%73t?query"_s, { "notspecial"_s, "user"_s, ""_s, "ho%73t"_s, 0, ""_s, "query"_s, ""_s, "notspecial://user@ho%73t?query"_s } },
+    };
+    for (auto& row : unchanged) {
+        for (String input : { String { row.input }, sixteenBit(row.input) }) {
+            checkURL(input, row.parts);
+            URL url { String { input } };
+            EXPECT_EQ(input.impl(), url.string().impl());
+        }
+    }
+
+    // A special URL still gets the path "/", in both arms.
+    const Row special[] = {
+        { "http://user@host?query"_s, { "http"_s, "user"_s, ""_s, "host"_s, 0, "/"_s, "query"_s, ""_s, "http://user@host/?query"_s } },
+        { "http://user@host#fragment"_s, { "http"_s, "user"_s, ""_s, "host"_s, 0, "/"_s, ""_s, "fragment"_s, "http://user@host/#fragment"_s } },
+        { "wss://user:pass@host:99?query"_s, { "wss"_s, "user"_s, "pass"_s, "host"_s, 99, "/"_s, "query"_s, ""_s, "wss://user:pass@host:99/?query"_s } },
+        { "wss://user:pass@host:99#fragment"_s, { "wss"_s, "user"_s, "pass"_s, "host"_s, 99, "/"_s, ""_s, "fragment"_s, "wss://user:pass@host:99/#fragment"_s } },
+    };
+    for (auto& row : special) {
+        checkURL(row.input, row.parts);
+        checkURL(sixteenBit(row.input), row.parts);
+    }
+
+    // 16-bit strings that the parser has to change: U+041F is percent-encoded.
+    checkURL(utf16String(u"notspecial://user@host?П"), { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, "%D0%9F"_s, ""_s, "notspecial://user@host?%D0%9F"_s });
+    checkURL(utf16String(u"notspecial://user@П#fragment"), { "notspecial"_s, "user"_s, ""_s, "%D0%9F"_s, 0, ""_s, ""_s, "fragment"_s, "notspecial://user@%D0%9F#fragment"_s });
+    checkURL(utf16String(u"notspecial://user:pass@host:99?П#П"), { "notspecial"_s, "user"_s, "pass"_s, "host"_s, 99, ""_s, "%D0%9F"_s, "%D0%9F"_s, "notspecial://user:pass@host:99?%D0%9F#%D0%9F"_s });
+    checkURL(utf16String(u"http://user@host?П"), { "http"_s, "user"_s, ""_s, "host"_s, 0, "/"_s, "%D0%9F"_s, ""_s, "http://user@host/?%D0%9F"_s });
+    checkURL(utf16String(u"wss://user:pass@host:99#П"), { "wss"_s, "user"_s, "pass"_s, "host"_s, 99, "/"_s, ""_s, "%D0%9F"_s, "wss://user:pass@host:99/#%D0%9F"_s });
+
+    // Credentials that are empty after parsing, and references.
+    checkURL("notspecial://@host?query"_s, { "notspecial"_s, ""_s, ""_s, "host"_s, 0, ""_s, "query"_s, ""_s, "notspecial://host?query"_s });
+    checkRelativeURL("?query"_s, "notspecial://user@host"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, "query"_s, ""_s, "notspecial://user@host?query"_s });
+    // TestTabs::No: State::RelativeSlash does not skip a tab that is directly after the "//" of a reference on a
+    // non-special base. The tab stays in the user name ("%09user"). That is a defect of its own.
+    checkRelativeURL("//user@host?query"_s, "notspecial://example.org/foo/bar"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, "query"_s, ""_s, "notspecial://user@host?query"_s }, TestTabs::No);
+
+    // A slash in the input stays. So does the empty path at the end of the input, and a backslash starts the path of a special URL.
+    checkURL("notspecial://user@host/?query"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, "/"_s, "query"_s, ""_s, "notspecial://user@host/?query"_s });
+    checkURL("notspecial://user@host"_s, { "notspecial"_s, "user"_s, ""_s, "host"_s, 0, ""_s, ""_s, ""_s, "notspecial://user@host"_s });
+    checkURL("http://user@host\\path"_s, { "http"_s, "user"_s, ""_s, "host"_s, 0, "/path"_s, ""_s, ""_s, "http://user@host/path"_s });
+}
+
 TEST_F(WTF_URLParser, ParseRelative)
 {
     checkRelativeURL("/index.html"_s, "http://webkit.org/path1/path2/"_s, { "http"_s, ""_s, ""_s, "webkit.org"_s, 0, "/index.html"_s, ""_s, ""_s, "http://webkit.org/index.html"_s });
