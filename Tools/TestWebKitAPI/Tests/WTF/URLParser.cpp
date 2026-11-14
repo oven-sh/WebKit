@@ -1201,4 +1201,112 @@ TEST_F(WTF_URLParser, DotSegmentsInLongPaths)
             "http://host/aaaaaaaaaaaaaaaa/cccccccccccccccc"_s });
 }
 
+// A backslash ends a path segment only in a special URL (https://url.spec.whatwg.org/#path-state). In every other URL
+// it is a character of the segment, so dots that a backslash follows are an ordinary segment, not a dot segment.
+TEST_F(WTF_URLParser, DotsBeforeBackslash)
+{
+    struct Dots {
+        ASCIILiteral text;
+        bool isDoubleDot;
+    };
+    static constexpr std::array dots {
+        Dots { "."_s, false }, Dots { "%2e"_s, false }, Dots { "%2E"_s, false },
+        Dots { ".."_s, true }, Dots { ".%2e"_s, true }, Dots { "%2E."_s, true }, Dots { "%2e%2E"_s, true },
+    };
+    // What follows the backslash.
+    struct Tail {
+        ASCIILiteral text;
+        ASCIILiteral path;
+        ASCIILiteral query;
+        ASCIILiteral fragment;
+    };
+    static constexpr std::array tails {
+        Tail { ""_s, ""_s, ""_s, ""_s }, Tail { "x"_s, "x"_s, ""_s, ""_s }, Tail { "/"_s, "/"_s, ""_s, ""_s },
+        Tail { "?q"_s, ""_s, "q"_s, ""_s }, Tail { "#f"_s, ""_s, ""_s, "f"_s },
+    };
+    // Each is another way into the path state.
+    struct Authority {
+        ASCIILiteral text;
+        ASCIILiteral user;
+        ASCIILiteral host;
+        unsigned short port;
+    };
+    static constexpr std::array authorities {
+        Authority { ""_s, ""_s, ""_s, 0 }, Authority { "//"_s, ""_s, ""_s, 0 }, Authority { "//h"_s, ""_s, "h"_s, 0 },
+        Authority { "//u@h:8"_s, "u"_s, "h"_s, 8 }, Authority { "//[::1]"_s, ""_s, "[::1]"_s, 0 },
+    };
+
+    for (auto& dot : dots) {
+        for (auto& tail : tails) {
+            auto segment = makeString(dot.text, '\\', tail.path);
+            auto rest = makeString(dot.text, '\\', tail.text);
+            auto path = makeString('/', segment);
+            for (auto& authority : authorities) {
+                auto input = makeString("zz:"_s, authority.text, '/', rest);
+                checkURL(input, { "zz"_s, authority.user, ""_s, authority.host, authority.port, path, tail.query, tail.fragment, input });
+                // The parser changes nothing in it, so the URL keeps the string it was made from.
+                EXPECT_EQ(URL { input }.string().impl(), input.impl());
+            }
+            auto inDirectory = makeString("/a/"_s, segment);
+            auto withoutHost = makeString("zz:/a/"_s, rest);
+            checkRelativeURL(rest, "zz:/a/b"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, inDirectory, tail.query, tail.fragment, withoutHost });
+            auto withHost = makeString("zz://h/a/"_s, rest);
+            checkRelativeURL(rest, "zz://h/a/b"_s, { "zz"_s, ""_s, ""_s, "h"_s, 0, inDirectory, tail.query, tail.fragment, withHost });
+            auto fromRoot = makeString("zz://h/"_s, rest);
+            checkRelativeURL(makeString('/', rest), "zz://h/a/b"_s, { "zz"_s, ""_s, ""_s, "h"_s, 0, path, tail.query, tail.fragment, fromRoot });
+            auto otherHost = makeString("zz://g/"_s, rest);
+            checkRelativeURL(makeString("//g/"_s, rest), "zz://h/a/b"_s, { "zz"_s, ""_s, ""_s, "g"_s, 0, path, tail.query, tail.fragment, otherHost });
+        }
+
+        // A 16-bit string.
+        auto wide = makeString("zz://h/"_s, dot.text, '\\', char16_t { 0x41F });
+        auto widePath = makeString('/', dot.text, "\\%D0%9F"_s);
+        auto wideString = makeString("zz://h"_s, widePath);
+        checkURL(wide, { "zz"_s, ""_s, ""_s, "h"_s, 0, widePath, ""_s, ""_s, wideString });
+
+        // In a special URL the backslash ends the segment, and the dot segment is removed.
+        for (auto scheme : { "http"_s, "https"_s, "ws"_s, "wss"_s, "ftp"_s, "file"_s }) {
+            ASCIILiteral host = scheme == "file"_s ? ""_s : "h"_s;
+            ASCIILiteral removed = dot.isDoubleDot ? "/a/x"_s : "/a/b/x"_s;
+            auto string = makeString(scheme, "://"_s, host, removed);
+            checkURL(makeString(scheme, "://"_s, host, "/a/b/"_s, dot.text, "\\x"_s), { scheme, ""_s, ""_s, host, 0, removed, ""_s, ""_s, string });
+            auto base = makeString(scheme, "://"_s, host, "/a/b/c"_s);
+            checkRelativeURL(makeString(dot.text, "\\x"_s), base, { scheme, ""_s, ""_s, host, 0, removed, ""_s, ""_s, string });
+        }
+    }
+
+    // Dot segments beside them are removed as before, and ".." removes such a segment like any other.
+    checkURL("zz:/a/.\\b/../c"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/c"_s, ""_s, ""_s, "zz:/a/c"_s });
+    checkURL("zz:/a/..\\/./x"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/..\\/x"_s, ""_s, ""_s, "zz:/a/..\\/x"_s });
+    checkURL("zz:/a/..\\/../x"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/x"_s, ""_s, ""_s, "zz:/a/x"_s });
+    checkURL("zz:/a/b/..\\/%2e%2E/.?q"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/b/"_s, "q"_s, ""_s, "zz:/a/b/?q"_s });
+    checkURL("zz:/a/b/..\\..\\x"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/b/..\\..\\x"_s, ""_s, ""_s, "zz:/a/b/..\\..\\x"_s });
+    // In a base, the segment is the last one, or one of those before it.
+    checkRelativeURL("x"_s, "zz:/a/b/..\\c"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/b/x"_s, ""_s, ""_s, "zz:/a/b/x"_s });
+    checkRelativeURL("x"_s, "zz:/a/.\\b/c"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/.\\b/x"_s, ""_s, ""_s, "zz:/a/.\\b/x"_s });
+    checkRelativeURL(".."_s, "zz:/a/..\\b/c"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/"_s, ""_s, ""_s, "zz:/a/"_s });
+    checkRelativeURL("?q"_s, "zz:/a/..\\b"_s, { "zz"_s, ""_s, ""_s, ""_s, 0, "/a/..\\b"_s, "q"_s, ""_s, "zz:/a/..\\b?q"_s });
+    // Segments longer than the 16 code units that the path scanner reads at a time.
+    checkURL("zz://h/ssssssssssssssss/..\\ssssssssssssssss/.\\ssssssssssssssss"_s,
+        { "zz"_s, ""_s, ""_s, "h"_s, 0, "/ssssssssssssssss/..\\ssssssssssssssss/.\\ssssssssssssssss"_s, ""_s, ""_s,
+            "zz://h/ssssssssssssssss/..\\ssssssssssssssss/.\\ssssssssssssssss"_s });
+    checkURL(utf16String(u"zz:/ssssssssssssssss/%2e%2e\\ssssssssssssssssП"),
+        { "zz"_s, ""_s, ""_s, ""_s, 0, "/ssssssssssssssss/%2e%2e\\ssssssssssssssss%D0%9F"_s, ""_s, ""_s,
+            "zz:/ssssssssssssssss/%2e%2e\\ssssssssssssssss%D0%9F"_s });
+
+    // Without a host, such a segment can be the first one. The accessors and the setters find the path where it starts.
+    URL url { "zz:/..\\x"_s };
+    EXPECT_TRUE(eq("/..\\x"_s, url.path()));
+    EXPECT_TRUE(eq("..\\x"_s, url.lastPathComponent()));
+    EXPECT_TRUE(eq("zz:"_s, url.protocolHostAndPort()));
+    url.setPath(url.path());
+    EXPECT_TRUE(eq("zz:/..\\x"_s, url.string()));
+    url.setHostAndPort("h:1"_s);
+    EXPECT_TRUE(eq("zz://h:1/..\\x"_s, url.string()));
+    url.setPort(2);
+    EXPECT_TRUE(eq("zz://h:2/..\\x"_s, url.string()));
+    url.setPath("/a/b/.\\"_s);
+    EXPECT_TRUE(eq("zz://h:2/a/b/.\\"_s, url.string()));
+}
+
 } // namespace TestWebKitAPI
