@@ -4,7 +4,7 @@
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
-1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A11 list every such behavior, how to
+1. **The fork behaves differently on purpose.** Update the expectation. Sections A1–A12 list every such behavior, how to
    recognize it in a failure, and the fork code that causes it. If a failure matches one of these and the fork code is
    still there, the test is the thing to change.
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
@@ -154,6 +154,36 @@ Rules for an edit to an upstream test:
 - File: `stress/reflect-set-proxy-receiver-custom-value.js`: `Object.hasOwn(reified, 'value2')` is `true` (upstream:
   `false`). A row of a static table that is not reified keeps upstream's result, so the other lines of the file stand.
 
+### A12. A store to an Error's `line`, `column` or `sourceURL` makes an ordinary property of user code
+
+- Upstream defines the three names when one of them, or `stack`, is first looked up, writable, configurable and not
+  enumerable, and a store replaces the value: `e.line = 5` leaves `5`, still not enumerable. V8 defines none of the three,
+  so the same store makes a writable, enumerable, configurable property there, and packages list, copy and serialize
+  what they stored (`Object.keys`, `Object.assign`, `JSON.stringify`).
+- Fork code: `ErrorInstance::putPositionProperty` (`runtime/ErrorInstance.cpp`), the part under `isFirstStore`, under
+  `USE(BUN_JSC_ADDITIONS)`. The first store of one of the names that the error itself receives removes the property
+  that the engine defined and runs the ordinary store. So the keys come in the order of the stores, a setter or a
+  read-only property of that name on the prototype chain answers the store, and an error that was made not extensible
+  before anything looked at it refuses the name.
+- What stays as upstream has it: an `ErrorInstance` that nobody wrote to (the three names are own and not enumerable); a
+  definition (`Object.defineProperty(e, "line", { value: 5 })` and a class field are applied to what the engine defined,
+  in the engine's key order); a store that does not start at the error (from an object that inherits from it, through a
+  `Proxy`, `Reflect.set` with another target, `super.line = v`), which ends in a definition on the engine's property
+  and makes the name user code's as it is, so that a later store to the error itself does not make it ordinary; an
+  error that is frozen, sealed, not extensible with the name defined, or whose properties are immutable.
+- Two results follow from the engine's names being own properties, and go away only if the engine stops defining them:
+  a name that a class declares on its prototype is read from the engine's property until the first store, and from the
+  class afterwards; and code that stores every own name of one error on another (`Object.getOwnPropertyNames`) makes
+  the copy's `line`, `column` and `sourceURL` enumerable, where V8 has no such names to copy.
+- How to recognize it: a test stores `line`, `column` or `sourceURL` on an Error that is the receiver of the store and
+  then expects the property not to be enumerable, expects a setter of that name on the prototype chain not to run, or
+  expects the store to succeed on an error that was made not extensible before anything looked at it.
+- Files (0). No upstream test expects any of that: `stress/put-to-proto-chain-overrides-put.js` stores through heirs and
+  proxies only, and `stress/native-error-properties.js` reads the value back.
+- The rule that a `line`, `column` or `sourceURL` of user code is never replaced by a later materialization
+  (`m_positionPropertiesOwnedByUser`, `materializePositionProperty`) is not a difference from upstream that a test of
+  upstream's can see: upstream has no way to give an error frames later.
+
 ---
 
 ## B. The test cannot pass in a mode or build we run: narrowed, not changed
@@ -264,6 +294,7 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-return-address-of-function-is-signed.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function signs the return address that it saves in LLInt, Baseline, the DFG and the FTL alike: `$vm.returnAddressOfCallerIsSigned()` signs the address again and compares. Elsewhere, and on a processor without pointer authentication (`$vm.functionsSignReturnAddress()`), the test ends at once |
 | `stress/bun-return-address-with-wrong-signature-is-not-returned-to.js` | with `ENABLE(RETURN_ADDRESS_SIGNING)` a function does not return once a bit of the signature of its saved return address was flipped, in each of the four tiers: the run must crash. Where nothing is signed the test crashes by itself |
 | `stress/bun-error-keeps-line-column-source-url-of-user-code.js` | a `line`, `column` or `sourceURL` that user code stored, defined or deleted on an Error stays as user code left it when the engine materializes: when frames arrive on an error that was made without frames (`$vm.setStackFramesOfError`, which does what a host does with `ErrorInstance::setStackFrames`), when `Error.captureStackTrace` leaves a stack to materialize, on a dictionary, and at a store site in every tier. A store that materializes makes no inline cache. A name that nobody wrote, and the line the parser gave a SyntaxError, follow the frames |
+| `stress/bun-error-assigned-line-column-source-url.js` | a store to `line`, `column` or `sourceURL` that an Error receives makes a writable, enumerable, configurable property behind the properties the error has, before and after the engine defined the name, at a hot store site in every tier, and at a site shared with errors whose name user code defined by hand; errors written the same way share a Structure; a name that user code defined by hand or deleted stays as user code left it; a definition, a class field, a store from an heir, and a frozen, sealed or immutable error keep what the engine defined (A12) |
 | `stress/bun-frozen-array-push.js` | `push()` throws for an array that was frozen in place, with copy-on-write storage (`JSObject::tryFreezeArrayInPlace`), in every tier and with no arguments too: the DFG makes no `GetArrayLength` of that push (`ArrayPushIntrinsic` in `dfg/DFGByteCodeParser.cpp`) |
 | the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
@@ -275,7 +306,7 @@ the programs that test ahead-of-time compilation are in Bun's `test/aot`.
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A11 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A12 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.

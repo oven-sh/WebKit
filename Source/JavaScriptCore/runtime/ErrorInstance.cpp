@@ -881,14 +881,48 @@ bool ErrorInstance::putPositionProperty(JSGlobalObject* globalObject, PropertyNa
     // A store that only passes through, from an object that inherits from this error, leaves the name the engine's. So does a
     // store to an error whose properties are immutable, which is refused.
     bool isStoreOfUserCode = !isThisValueAltered(slot, this) && !structure()->isImmutableProperty(propertyName.uid());
+    // The first store of user code makes the name an ordinary property, as a store to an Error makes one in V8, which defines
+    // no line, column or sourceURL.
+    bool isFirstStore = isStoreOfUserCode && !(m_positionPropertiesOwnedByUser & property);
+    unsigned attributes = 0;
+    // A name that the error does not have yet is marked before materialization, which then leaves it to this store.
+    bool isAbsent = isFirstStore && !isValidOffset(structure()->get(vm, propertyName, attributes));
+    bool wasExtensible = isStructureExtensible();
+    if (isAbsent)
+        m_positionPropertiesOwnedByUser |= property;
     bool materializedProperties = materializeErrorInfoIfNeeded(vm);
     RETURN_IF_EXCEPTION(scope, {});
-    if (isStoreOfUserCode)
+    PropertyOffset offset = structure()->get(vm, propertyName, attributes);
+    if (isAbsent) {
+        // What the error has under the name now, the host's stack hook stored or defined during this store: it is user
+        // code's as it is, and the store below replaces its value.
+        if (!isValidOffset(offset) && wasExtensible && !isStructureExtensible() && !structure()->isImmutableProperty(propertyName.uid())) {
+            // The stack hook made the error refuse new properties during this store. The value goes where the engine would
+            // have defined the name, as before.
+            putDirect(vm, propertyName, value, positionPropertyAttributes);
+            slot.disableCaching();
+            return true;
+        }
+    } else if (isFirstStore) {
+        // The error had the name before this store: the engine defined it (an earlier lookup, a store of another name, or
+        // the parser). If the stack hook stored, defined or deleted the name during this store, it is user code's as it is.
+        bool isOwnedByStackHook = m_positionPropertiesOwnedByUser & property;
         m_positionPropertiesOwnedByUser |= property;
+        if (!isOwnedByStackHook && isValidOffset(offset) && attributes == positionPropertyAttributes && isStructureExtensible()) {
+            // The engine's property is removed, and the store below adds the name again behind the properties that the error
+            // has now. A removal shares its Structure transition only for a property without attributes (Structure.cpp looks
+            // the transition up under the attributes of the property and files it under none), so the attributes are cleared
+            // first. An error that takes no more properties keeps the engine's, and the store replaces its value.
+            putDirect(vm, propertyName, getDirect(offset), 0);
+            DeletePropertySlot deleteSlot;
+            JSObject::deleteProperty(this, globalObject, propertyName, deleteSlot);
+            RETURN_IF_EXCEPTION(scope, {});
+            offset = invalidOffset;
+        }
+    }
     // An inline cache answers a later store by the Structure and does not call this function. That is right only for a store
-    // that replaces a property of user code: a store to the engine's own has to come here to be marked.
-    unsigned attributes;
-    if (materializedProperties || !isValidOffset(structure()->get(vm, propertyName, attributes)) || (attributes & PropertyAttribute::DontEnum))
+    // that replaces a property of user code: a store to the engine's own has to come here to take the name over.
+    if (materializedProperties || !isValidOffset(offset) || (attributes & PropertyAttribute::DontEnum))
         slot.disableCaching();
     RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
 }
