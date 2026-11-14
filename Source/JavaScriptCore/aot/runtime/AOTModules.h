@@ -219,12 +219,27 @@ public:
     JSValue readExportIfInitialized(ModuleID, unsigned index, Environment* instance = nullptr) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
+    // Where an export keeps the value that tryReplaceExport() replaces. To read a place or to store into one resolves no name and runs no code of the program.
+    struct ReplaceablePlace {
+        enum class Kind : uint8_t { None, Variable, Field, CapturedTable, AddedTable, NamespaceHandedOn };
+        Kind kind { Kind::None };
+        SlotData slot { }; // Variable, Field. CapturedTable: the variable that holds a copy, if `hasVariable`.
+        Environment* instance { nullptr }; // Field.
+        ModuleID module; // CapturedTable, AddedTable: the module of the table. NamespaceHandedOn: the module of the namespace.
+        UniquedStringImpl* name { nullptr }; // CapturedTable, AddedTable.
+        JSObject* table { nullptr }; // CapturedTable, AddedTable.
+        bool hasVariable { false };
+        explicit operator bool() const { return kind != Kind::None; }
+    };
+    // The place that tryReplaceExport() stores into. None where it stores nothing.
+    ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, Environment* instance = nullptr);
+    bool storeIntoReplaceablePlace(const ReplaceablePlace&, JSValue);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
+    ReplaceablePlace findPlaceToReplaceExport(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars, Environment* instance = nullptr);
+    ReplaceablePlace findPlaceToReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, BitVector& seenBehindStars);
+    ReplaceablePlace findPlaceToReplaceCapturedExport(ModuleID, UniquedStringImpl* name);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
         uint32_t name;
