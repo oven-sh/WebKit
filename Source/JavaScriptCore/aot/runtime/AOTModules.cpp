@@ -8855,7 +8855,14 @@ bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue 
 
 bool tryReplaceExportOfRecord(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSValue value)
 {
-    return modulesOf(realm)->tryReplaceExport(uncheckedDowncast<ModuleRecord>(record)->module(), name, value);
+    Modules* modules = modulesOf(realm);
+    return modules->tryReplaceExport(modules->moduleWithNamesOf(uncheckedDowncast<ModuleRecord>(record)->module()), name, value);
+}
+
+JSValue readExportOfRecord(AbstractModuleRecord* record, const Identifier& name)
+{
+    auto* compiled = dynamicDowncast<ModuleRecord>(record);
+    return compiled ? compiled->readExportIfInitialized(name) : JSValue();
 }
 
 bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
@@ -10727,6 +10734,15 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
     JSObject* namespaceObject = keepsToModule() ? modules().originalNamespace(m_module) : modules().moduleNamespace(m_module, ModulePhase::Evaluation);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, namespaceObject->get(globalObject, exportName));
+}
+
+JSValue ModuleRecord::readExportIfInitialized(const Identifier& name)
+{
+    if (std::optional<unsigned> index = modules().table().findExport(m_module, name.impl()))
+        return modules().readExportIfInitialized(m_module, *index);
+    if (!takesNamesFromValue(modules().data(m_module)))
+        return { };
+    return modules().capturedValue(modules().moduleWithNamesOf(m_module), name);
 }
 
 JSObject* ModuleRecord::moduleNamespaceObject(JSGlobalObject*, ModulePhase phase)
