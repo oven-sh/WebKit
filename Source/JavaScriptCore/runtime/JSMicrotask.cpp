@@ -1758,6 +1758,24 @@ static void resolveDeferredImportNamespace(JSGlobalObject* globalObject, VM& vm,
     capabilityPromise->fulfill(vm, moduleNamespace);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Whether the module that an import() is about to wait for waits itself for the promise of that import(), across a reaction of
+// the host. Neither can settle first then, so the import() goes on with the module as it is, as an import statement in a cycle does.
+static bool importGatesModuleItWaitsFor(JSGlobalObject* globalObject, AbstractModuleRecord* module, JSPromise* capabilityPromise)
+{
+    auto* cyclic = dynamicDowncast<CyclicModuleRecord>(module);
+    if (!cyclic || cyclic->status() != CyclicModuleRecord::Status::EvaluatingAsync) [[likely]]
+        return false;
+    CyclicModuleRecord* root = cyclic->cycleRoot();
+    auto* settledByHostReaction = globalObject->globalObjectMethodTable()->promisesSettledByHostReaction;
+    Vector<JSPromise*, 2> none;
+    if (!root || !settledByHostReaction || !settledByHostReaction(globalObject, JSValue(), none))
+        return false;
+    bool acrossHostReaction = false;
+    return AbstractModuleRecord::importPromiseGatesAsyncDependency(capabilityPromise, root, &acrossHostReaction) && acrossHostReaction;
+}
+#endif
+
 static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSValue argument0, JSValue argument1, JSValue argument2, uint8_t payload, bool deferred)
 {
     // https://tc39.es/ecma262/#sec-ContinueDynamicImport
@@ -1799,6 +1817,17 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
     }
 
     if (!deferred) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (importGatesModuleItWaitsFor(globalObject, module, capabilityPromise)) [[unlikely]] {
+            JSObject* moduleNamespace = module->moduleNamespaceObject(globalObject);
+            if (scope.exception()) [[unlikely]] {
+                capabilityPromise->rejectWithCaughtException(vm, scope);
+                return;
+            }
+            capabilityPromise->fulfill(vm, moduleNamespace);
+            return;
+        }
+#endif
         // 6.c. Let evaluatePromise be module.Evaluate().
 #if USE(BUN_JSC_ADDITIONS)
         JSPromise* evaluatePromise = module->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
@@ -1838,6 +1867,8 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
     MarkedArgumentBuffer asyncDepsEvaluationPromises;
     for (AbstractModuleRecord* dep : evaluationList) {
 #if USE(BUN_JSC_ADDITIONS)
+        if (importGatesModuleItWaitsFor(globalObject, dep, capabilityPromise)) [[unlikely]]
+            continue;
         JSPromise* depPromise = dep->evaluate(globalObject, dynamicPayload->referrerAsyncOrder(), capabilityPromise);
 #else
         JSPromise* depPromise = dep->evaluate(globalObject);
@@ -1854,6 +1885,12 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
         capabilityPromise->rejectWithCaughtException(vm, scope);
         return;
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (asyncDepsEvaluationPromises.isEmpty()) [[unlikely]] {
+        resolveDeferredImportNamespace(globalObject, vm, scope, capabilityPromise, module);
+        return;
+    }
+#endif
 
     // Let evaluatePromise be ! SafePerformPromiseAll(asyncDepsEvaluationPromises);
     // PerformPromiseThen(evaluatePromise, onFulfilled, onRejected).

@@ -100,6 +100,9 @@ struct GlobalObjectMethodTable {
     JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
     JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
     const AOT::ModuleHost* moduleHost { nullptr };
+    // Adds the pending promises that the host settles from a promise reaction with this context. With an empty context it adds
+    // nothing and says whether the host has such a reaction now. See AbstractModuleRecord::importPromiseGatesAsyncDependency().
+    bool (*promisesSettledByHostReaction)(JSGlobalObject*, JSValue context, Vector<JSPromise*, 2>&) { nullptr };
 #endif
 };
 
