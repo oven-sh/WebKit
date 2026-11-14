@@ -120,6 +120,82 @@ TEST_F(WTF_URL, URLProtocolHostAndPort)
 
     url = createURL("asdf:///a/b/c"_s);
     EXPECT_EQ(String("asdf://"_s), url.protocolHostAndPort());
+
+    url = createURL("asdf:/a/b/c"_s);
+    EXPECT_EQ(String("asdf:"_s), url.protocolHostAndPort());
+
+    url = createURL("asdf:/.a/b/c"_s);
+    EXPECT_EQ(String("asdf:"_s), url.protocolHostAndPort());
+}
+
+// A URL without a host whose path starts with "//" is serialized with "/." in front of the path so that it does not
+// parse back as an authority. That prefix is not part of the path; a first segment that starts with "." is.
+TEST_F(WTF_URL, PathStartingWithDotWithoutHost)
+{
+    auto url = createURL("asdf:/.a/b"_s);
+    EXPECT_TRUE(url.isValid());
+    EXPECT_TRUE(url.hasPath());
+    EXPECT_EQ(String("asdf:/.a/b"_s), url.string());
+    EXPECT_EQ(String("/.a/b"_s), url.path().toString());
+    EXPECT_EQ(String("b"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+    EXPECT_EQ(String(".a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/..a"_s);
+    EXPECT_EQ(String("/..a"_s), url.path().toString());
+    EXPECT_EQ(String("..a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.well-known/x?q#f"_s);
+    EXPECT_EQ(String("/.well-known/x"_s), url.path().toString());
+    EXPECT_EQ(String("x"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    EXPECT_EQ(String("asdf:/.//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
+    EXPECT_EQ(String("b"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf:/.//.a"_s);
+    EXPECT_EQ(String("//.a"_s), url.path().toString());
+    EXPECT_EQ(String(".a"_s), url.lastPathComponent().toString());
+
+    url = createURL("asdf://host/.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:///.a"_s);
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:/x"_s);
+    url.setPath("/.a/b"_s);
+    EXPECT_EQ(String("asdf:/.a/b"_s), url.string());
+    EXPECT_EQ(String("/.a/b"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setPath("/b"_s);
+    EXPECT_EQ(String("asdf:/b"_s), url.string());
+    EXPECT_EQ(String("/b"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setPath("//b"_s);
+    EXPECT_EQ(String("asdf:/.//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    url.setPath("/.c"_s);
+    EXPECT_EQ(String("asdf:/.c"_s), url.string());
+    EXPECT_EQ(String("/.c"_s), url.path().toString());
+
+    url = createURL("asdf:/.a"_s);
+    url.setHostAndPort("host:1"_s);
+    EXPECT_TRUE(url.isValid());
+    EXPECT_EQ(String("asdf://host:1/.a"_s), url.string());
+    EXPECT_EQ(String("/.a"_s), url.path().toString());
+
+    url = createURL("asdf:/.//b"_s);
+    url.setHostAndPort("host:1"_s);
+    EXPECT_EQ(String("asdf://host:1//b"_s), url.string());
+    EXPECT_EQ(String("//b"_s), url.path().toString());
 }
 
 TEST_F(WTF_URL, URLDataURIStringSharing)
@@ -161,6 +237,72 @@ TEST_F(WTF_URL, URLSetQuery)
     EXPECT_EQ(urlWithFragmentIdentifier.string(), urlWithFragmentIdentifier1.string());
     EXPECT_EQ(urlWithFragmentIdentifier.string(), urlWithFragmentIdentifier2.string());
     EXPECT_EQ(urlWithFragmentIdentifier.string(), urlWithFragmentIdentifier3.string());
+}
+
+// URL::setPath looks at the start of its value: it adds the "/" that a path starts with, and, without a host, the "/."
+// that keeps a path starting with "//" from being read as a host. The parser removes tab and newline from the value,
+// so they are not part of that start.
+TEST_F(WTF_URL, SetPathStartOfValue)
+{
+    struct Row {
+        ASCIILiteral url;
+        ASCIILiteral value;
+        ASCIILiteral string;
+        ASCIILiteral path;
+        ASCIILiteral host;
+    };
+    static constexpr std::array rows {
+        Row { "zz:/a/b"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/a/b"_s, "//x"_s, "zz:/.//x"_s, "//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/\t/evil/x"_s, "zz:/.//evil/x"_s, "//evil/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\t//x"_s, "zz:/.//x"_s, "//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/\n\r/"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/a/b"_s, "\n/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\r\nx"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\t"_s, "zz:/"_s, "/"_s, ""_s },
+        Row { "zz:/a/b"_s, ""_s, "zz:/"_s, "/"_s, ""_s },
+        // The path that is replaced starts with a dot, or with the "/." that is not part of it.
+        Row { "zz:/.a/b"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.a/b"_s, "/\t/evil/x"_s, "zz:/.//evil/x"_s, "//evil/x"_s, ""_s },
+        Row { "zz:/..\\x"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.//a"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.//a"_s, "\t/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        // With a host, "//" is two empty segments, and the empty path stays empty.
+        Row { "zz://h/a"_s, "//x"_s, "zz://h//x"_s, "//x"_s, "h"_s },
+        Row { "zz://h/a"_s, "\t//x"_s, "zz://h//x"_s, "//x"_s, "h"_s },
+        Row { "zz://h/a"_s, ""_s, "zz://h"_s, ""_s, "h"_s },
+        Row { "zz://h/a"_s, "\t"_s, "zz://h"_s, ""_s, "h"_s },
+        Row { "zz://h/a"_s, "\nx"_s, "zz://h/x"_s, "/x"_s, "h"_s },
+        Row { "zz:///a"_s, "//x"_s, "zz:////x"_s, "//x"_s, ""_s },
+        Row { "zz:///a"_s, "\t"_s, "zz://"_s, ""_s, ""_s },
+        // A special URL, where a backslash is a slash.
+        Row { "http://h/a"_s, "\t/x"_s, "http://h/x"_s, "/x"_s, "h"_s },
+        Row { "http://h/a"_s, "\t//x"_s, "http://h//x"_s, "//x"_s, "h"_s },
+        Row { "http://h/a"_s, "\n\\x"_s, "http://h/x"_s, "/x"_s, "h"_s },
+        Row { "http://h/a"_s, "//"_s, "http://h//"_s, "//"_s, "h"_s },
+        Row { "http://h/a"_s, ""_s, "http://h/"_s, "/"_s, "h"_s },
+        Row { "http://h/a"_s, "\t"_s, "http://h/"_s, "/"_s, "h"_s },
+        Row { "file:///a"_s, "\t/x"_s, "file:///x"_s, "/x"_s, ""_s },
+        Row { "file:///a"_s, "\r\\\\x"_s, "file:////x"_s, "//x"_s, ""_s },
+        // A backslash is not a slash in a non-special URL. Without a host, an empty value leaves the path "/".
+        Row { "zz:/a/b"_s, "\\x"_s, "zz:/\\x"_s, "/\\x"_s, ""_s },
+        Row { "zz://h/a"_s, "\\x"_s, "zz://h/\\x"_s, "/\\x"_s, "h"_s },
+        Row { "zz:/.//a"_s, ""_s, "zz:/"_s, "/"_s, ""_s },
+        Row { "zz:/.//a"_s, "\t"_s, "zz:/"_s, "/"_s, ""_s },
+        // A space is not removed like a tab. A slash that is only the second code unit is not "//".
+        Row { "zz:/a/b"_s, " //x"_s, "zz:/%20//x"_s, "/%20//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "x/y"_s, "zz:/x/y"_s, "/x/y"_s, ""_s },
+    };
+    for (auto& row : rows) {
+        auto url = createURL(row.url);
+        url.setPath(row.value);
+        EXPECT_TRUE(url.isValid());
+        EXPECT_EQ(String(row.string), url.string());
+        EXPECT_EQ(String(row.path), url.path().toString());
+        EXPECT_EQ(String(row.host), url.host().toString());
+        EXPECT_TRUE(WTF::URLParser::internalValuesConsistent(url));
+    }
 }
 
 TEST_F(WTF_URL, URLSetFragmentIdentifier)
