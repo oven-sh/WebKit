@@ -730,6 +730,8 @@ public:
     enum class CallerOfGatherer : uint8_t { InSight, UnseenByEscapeAlone };
     FlowNodeID argumentGatheredAt(FunctionID, uint32_t place);
     FlowNodeID argumentsGatheredAtAnyPlace(FunctionID);
+    FlowNodeID elementsOfAppliedArguments(FunctionID);
+    void takeElementsOfAppliedArguments(FunctionID);
     void noteNumberOfArgumentsGathered(FunctionID, uint32_t number, CallerOfGatherer = CallerOfGatherer::InSight);
     void gatherWhatListsThatArriveHold(FunctionID);
     void passOnGatheredArgument(FunctionID gatherer, uint32_t place, FlowNodeID to);
@@ -2757,6 +2759,8 @@ private:
         uint32_t fewestInSight { UINT32_MAX };
         uint32_t fewestByEscapeAlone { UINT32_MAX };
         FlowNodeID atAnyPlace;
+        FlowNodeID elementsApplied;
+        bool takesElementsApplied { false };
         Vector<FlowNodeID> atPlaces;
         Vector<Taker> takers;
         Vector<GathererBehind> gatherersBehind;

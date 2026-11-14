@@ -1881,6 +1881,7 @@ void CallInLinkCalls::noteArgumentsEscape()
     if (m_shared || !m_call.sharesArgumentsObject)
         return;
     m_flow.arrive(m_flow.argumentsGatheredAtAnyPlace(m_caller), LinkType::anything());
+    m_flow.takeElementsOfAppliedArguments(m_caller);
     m_flow.noteNumberOfArgumentsGathered(m_caller, 0);
 }
 
@@ -3704,6 +3705,8 @@ CallInLinkCalls::Entry CallInLinkCalls::passTo(FunctionID callee, const Passed& 
     uint32_t numberOfPositional = function.numberOfPositionalParameters();
     uint32_t numberWritten = static_cast<uint32_t>(passed.arguments.size());
     bool passesOnWhatCallerGathered = !m_shared && !numberWritten && (passed.listIsGathered || (m_call.passesOnGatheredArguments && &passed == &passedByCall()));
+    if (passesOnWhatCallerGathered && passed.listIsGathered)
+        flowInto(*passed.list, m_flow.elementsOfAppliedArguments(m_caller));
     const LinkFlow::PrototypeHelper* helper = findFollowedHelper(callee, passed);
     for (uint32_t parameter = static_cast<uint32_t>(function.captures.size()); parameter < numberOfParameters; ++parameter) {
         FlowNodeID to = m_flow.parameter(callee, parameter);

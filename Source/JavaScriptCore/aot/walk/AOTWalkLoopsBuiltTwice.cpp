@@ -3286,6 +3286,7 @@ void Walker::restartIteration()
         fail("a loop iteration that cannot be undone restarts in the generic version"_s, InternalErrorKind::IterationCannotBeUndone);
         return;
     }
+    SetForScope outsideFusedChain(m_frameOfFusedChain, 0u);
     if (m_state.restartMark() & WalkState::undoableStoresBit) {
         for (size_t place = 0; place < m_versionedLoops.last().moduleVariablesAtHeader.size(); ++place) {
             SavedModuleVariable saved = m_versionedLoops.last().moduleVariablesAtHeader[place];
