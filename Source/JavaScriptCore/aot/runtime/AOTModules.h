@@ -2146,6 +2146,7 @@ private:
         enum class Kind : uint8_t { Variable, Field, Namespace, Name };
 
         bool isSameBinding(const LinkedBinding& other) const { return kind == other.kind && holder == other.holder && place == other.place && name == other.name; }
+        bool mayMakeNameAmbiguous() const { return !isOfMock || isOfReleasedLoad; }
 
         Type type { Type::NotFound };
         Kind kind { Kind::Name };
@@ -2154,6 +2155,7 @@ private:
         uint64_t place { 0 };
         UniquedStringImpl* name { nullptr };
         bool isLackedByMock { false };
+        bool isOfReleasedLoad { false };
     };
     struct BindingSearch {
         using Query = std::tuple<uint32_t, const Environment*, UniquedStringImpl*>;

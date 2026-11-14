@@ -1339,7 +1339,7 @@ auto Modules::bindingOfExport(ModuleID module, unsigned index, Environment* inst
     auto follow = [&](ModuleID requested, uint32_t importName) -> LinkedBinding {
         const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, requested) : nullptr;
         if (ModuleNamespace* word = link ? mockWord(*link, instance) : nullptr)
-            return { Type::Resolved, Kind::Name, true, word, 0, identifier(importName).impl() };
+            return { Type::Resolved, Kind::Name, true, word, 0, identifier(importName).impl(), false, word->isLoadWord() };
         if (isCommonJSModuleOrFacade(requested))
             return { Type::Resolved, Kind::Name, false, nullptr, fileOf(requested).index(), identifier(importName).impl() };
         if (!link || !link->hasLink)
@@ -1370,7 +1370,7 @@ auto Modules::bindingOfExport(ModuleID module, unsigned index, Environment* inst
         RETURN_IF_EXCEPTION(scope, { });
         if (!hasName)
             return { .isLackedByMock = true };
-        return { Type::Resolved, Kind::Name, true, word, 0, identifier(nameInMock).impl() };
+        return { Type::Resolved, Kind::Name, true, word, 0, identifier(nameInMock).impl(), false, word->isLoadWord() };
     };
     switch (entry.kind()) {
     case ModuleExportKind::Field: {
@@ -1417,7 +1417,7 @@ auto Modules::resolveBindingAmongStars(ModuleID module, const Identifier& name, 
         }
         if (binding.type == Type::NotFound)
             binding = found;
-        else if (!binding.isOfMock && !found.isOfMock && !binding.isSameBinding(found)) {
+        else if (binding.mayMakeNameAmbiguous() && found.mayMakeNameAmbiguous() && !binding.isSameBinding(found)) {
             binding = { Type::Ambiguous };
             return false;
         }
@@ -1431,7 +1431,7 @@ auto Modules::resolveBindingAmongStars(ModuleID module, const Identifier& name, 
             bool hasName = hasNameInMock(word, name);
             RETURN_IF_EXCEPTION(scope, false);
             isLackedByMock |= !hasName;
-            return !hasName || merge({ Type::Resolved, Kind::Name, true, word, 0, name.impl() });
+            return !hasName || merge({ Type::Resolved, Kind::Name, true, word, 0, name.impl(), false, word->isLoadWord() });
         }
         if (JSObject* mock = !hasInstances(module) && someMockIsSeen() ? mockSeenBy(target, module) : nullptr) [[unlikely]] {
             bool hasName = mock->hasProperty(m_instance.globalObject, name);
