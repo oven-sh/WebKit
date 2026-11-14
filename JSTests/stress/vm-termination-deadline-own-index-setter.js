@@ -21,8 +21,23 @@ function timesOut(fn, ms) {
     return false;
 }
 
+// Every setter below says that it was entered. A limit can pass before its store has begun, on a machine that
+// stalls. Such a call times out as well and proves nothing, so it is made again.
+let entered = false;
+
+function timesOutInItsSetter(store) {
+    for (let attempt = 0; attempt < 100; attempt++) {
+        entered = false;
+        if (!timesOut(store, 2))
+            return false;
+        if (entered)
+            return true;
+    }
+    return false;
+}
+
 function endless() {
-    return { set(value) { for (;;) { } }, configurable: true };
+    return { set(value) { entered = true; for (;;) { } }, configurable: true };
 }
 
 const stores = {
@@ -36,28 +51,28 @@ const stores = {
     "array[1] = value": () => { Object.defineProperty([1, 2, 3], 1, endless())[1] = 1; },
     "array.fill(value)": () => { Object.defineProperty([1, 2, 3], 1, endless()).fill(7); },
     "arguments[0] = value": () => { (function () { Object.defineProperty(arguments, 0, endless()); arguments[0] = 1; })(1); },
-    "a setter of an object literal": () => { ({ set 0(value) { for (;;) { } } })[0] = 1; },
-    "a static setter of a class": () => { (class { static set 0(value) { for (;;) { } } })[0] = 1; },
+    "a setter of an object literal": () => { ({ set 0(value) { entered = true; for (;;) { } } })[0] = 1; },
+    "a static setter of a class": () => { (class { static set 0(value) { entered = true; for (;;) { } } })[0] = 1; },
     // These two did time out: neither setter is called under the deferral.
     "object.name = value": () => { Object.defineProperty({ }, "name", endless()).name = 1; },
     "an index setter that the object inherits": () => { Object.create(Object.defineProperty({ }, 0, endless()))[0] = 1; },
 };
 for (const [what, store] of Object.entries(stores)) {
-    shouldBe(timesOut(store, 2), true, what);
+    shouldBe(timesOutInItsSetter(store), true, what);
     shouldBe($vm.hasPendingTermination(), false, `${what}: something is still pending`);
 }
 
 // The same store from code that the JITs compiled.
 {
     let spinning = false;
-    const object = { set 0(value) { while (spinning) { } } };
+    const object = { set 0(value) { entered = true; while (spinning) { } } };
     const store = function (value) { object[0] = value; };
     noInline(store);
     // Until the DFG has compiled the store. Where there is no DFG, numberOfDFGCompiles() is not zero.
     for (let i = 0; i < testLoopCount || (i < 100 * testLoopCount && !numberOfDFGCompiles(store)); i++)
         store(i);
     spinning = true;
-    shouldBe(timesOut(() => store(1), 2), true, "a store that the JITs compiled");
+    shouldBe(timesOutInItsSetter(() => store(1)), true, "a store that the JITs compiled");
     shouldBe($vm.hasPendingTermination(), false, "a store that the JITs compiled: something is still pending");
 }
 
