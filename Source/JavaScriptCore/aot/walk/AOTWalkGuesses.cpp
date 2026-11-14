@@ -14636,10 +14636,13 @@ bool mayReadLengthInIterations(const Walker& walker, const BodyValue& read)
     return index.loopOf(index.blockOf(holder)) == loop;
 }
 
-static LocationMasks readsOfLength(const Program& program)
+static LocationMasks readsOfLength(const Walker& walker)
 {
+    const Program& program = walker.program();
+    PropertyKeyID length = program.keyOf(BuiltinNames::length);
     LocationMasks reads(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::TypedArrayStorage });
-    reads.add(program, MemoryLocation::objectField(program.keyOf(BuiltinNames::length)));
+    reads.add(program, MemoryLocation::objectField(length));
+    reads.add(AbstractHeap::ObjectFields, walker.plan().fieldsReadByGetters().maskUnder(program, length));
     reads.merge(declaredBoundInTable(Opcode::GetArrayLength).reads);
     return reads;
 }
@@ -14653,7 +14656,7 @@ static bool canReadLengthInPreheader(Walker& walker, const BodyValue& read, Refe
 {
     if (!canReadLengthInIterations(walker, read, object) || !walker.isInvariantInSpecializedVersion(object, Walker::IterationPurity::KnownEffectsOnly))
         return false;
-    LocationMasks reads = readsOfLength(walker.program());
+    LocationMasks reads = readsOfLength(walker);
     return walker.canHoistLookup(reads) || walker.canReadInPreheader(reads);
 }
 
@@ -19771,6 +19774,7 @@ void noteHoistedUnknownField(Walker& walker, PropertyKeyID key, Reference holder
 {
     LocationMasks reads(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks });
     reads.add(walker.program(), MemoryLocation::objectField(key));
+    reads.add(AbstractHeap::ObjectFields, walker.plan().fieldsReadByGetters().maskUnder(walker.program(), key));
     noteKnown(walker, KnownNote::HoistedUnknownField, holder, { }, key.index(), reads, value.bits());
 }
 

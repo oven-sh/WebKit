@@ -814,7 +814,80 @@ private:
             });
         }
         ++m_entries[0];
-        return m_entries[0] == 1;
+        return m_entries[0] == 1 && !hasPartialDefinition();
+    }
+
+    bool hasPartialDefinition()
+    {
+        const size_t count = m_blocks.size();
+        static_assert(maxBlocks < 32);
+        std::array<uint32_t, maxBlocks + 1> dominators;
+        std::array<uint32_t, maxBlocks + 1> reachable;
+        RELEASE_ASSERT(count <= dominators.size());
+        dominators.fill(std::numeric_limits<uint32_t>::max());
+        reachable.fill(0);
+        dominators[0] = 1;
+        auto forEachBehind = [&](size_t place, const auto& functor) {
+            if (m_blocks[place] == m_blockOfYield)
+                return;
+            m_code.forEachEdgeOf(m_blocks[place], [&](EdgeID, const Edge& edge) {
+                if (auto next = m_placesOfBlocks.find(edge.to.index()); next != m_placesOfBlocks.end())
+                    functor(next->value, edge);
+            });
+        };
+        for (size_t place = 0; place < count; ++place) {
+            forEachBehind(place, [&](uint32_t next, const Edge&) {
+                dominators[next] &= dominators[place] | (1u << next);
+            });
+        }
+        for (size_t place = count; place--;) {
+            reachable[place] = 1u << place;
+            forEachBehind(place, [&](uint32_t next, const Edge&) {
+                reachable[place] |= reachable[next];
+            });
+        }
+        bool found = false;
+        for (size_t place = 0; place < count && !found; ++place) {
+            auto read = [&](ValueID id) {
+                if (!id || m_code.isConstant(id))
+                    return;
+                auto definition = m_placesOfBlocks.find(m_code.blockOf(id).index());
+                if (definition == m_placesOfBlocks.end() || isBehindYield(id))
+                    return;
+                found |= !((dominators[place] | reachable[place]) & (1u << definition->value));
+            };
+            for (ValueID id : m_code.valuesOf(m_blocks[place])) {
+                if (id != m_yield && !m_code.isNeeded(id))
+                    continue;
+                for (ValueID operand : m_code.at(id).operands())
+                    read(operand);
+                if (id == m_yield)
+                    break;
+            }
+            if (m_blocks[place] == m_blockOfYield) {
+                for (ValueID live : m_code.liveAt(m_yield))
+                    read(live);
+                for (ValueID held : heldOperandsOf(m_code.at(m_yield)))
+                    read(held);
+                continue;
+            }
+            for (ValueID operand : m_code.at(m_blocks[place]).terminator.operands())
+                read(operand);
+            forEachBehind(place, [&](uint32_t, const Edge& edge) {
+                for (ValueID argument : edge.arguments())
+                    read(argument);
+            });
+        }
+        return found;
+    }
+
+    bool isBehindYield(ValueID id) const
+    {
+        if (m_code.blockOf(id) != m_blockOfYield)
+            return false;
+        std::span<const ValueID> values = m_code.valuesOf(m_blockOfYield);
+        auto yield = std::ranges::find(values, m_yield);
+        return std::ranges::find(yield, values.end(), id) != values.end();
     }
 
     Place newPlace(bool isDouble)
@@ -1044,11 +1117,14 @@ private:
             m_fails = true;
             return;
         }
-        const Comparison& asked = comparison->value;
+        const Comparison asked = comparison->value;
+        const InstructionOfLeafStep test = withRight({ .kind = asked.isDouble ? Kind::BranchDouble : Kind::BranchInt64, .left = asked.left.number, .condition = asked.condition }, asked.right);
         const Edge& taken = m_code.at(end.taken());
         const Edge& notTaken = m_code.at(end.notTaken());
         auto branchTo = [&](uint32_t label) {
-            append(withRight({ .kind = asked.isDouble ? Kind::BranchDouble : Kind::BranchInt64, .left = asked.left.number, .condition = asked.condition, .label = label }, asked.right));
+            InstructionOfLeafStep branch = test;
+            branch.label = label;
+            append(branch);
         };
         auto isPlain = [&](const Edge& edge) {
             auto found = m_placesOfBlocks.find(edge.to.index());

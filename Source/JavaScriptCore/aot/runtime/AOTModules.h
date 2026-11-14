@@ -1087,7 +1087,8 @@ public:
     }
     void setIsRunningPreloads(bool runsPreloads) { m_isRunningPreloads = runsPreloads; }
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
-    bool hasBeenImported(ModuleID) const;
+    enum class ImportsYetToBeFetched : bool { DoNotCount, Count };
+    bool hasBeenImported(ModuleID, ImportsYetToBeFetched = ImportsYetToBeFetched::Count) const;
     bool hasBeenImportedSinceReset(ModuleID) const;
     std::optional<uint32_t> firstImportSinceReset(ModuleID) const;
     bool hasPendingMockAfterReset(ModuleID) const;
@@ -1099,7 +1100,7 @@ public:
     bool hasPlannedLoadReached(ModuleID importer) const;
     enum class ImportResolver : bool { Build, Loader };
     void runDataFileAgainForImport(ModuleID, ImportResolver);
-    void reevaluateDataFile(ModuleID);
+    void reevaluateDataFile(ModuleID, ImportResolver);
     void didImportFromUncompiledCode(ModuleID module, bool isRootOfImportCall)
     {
         if (data(module).kind != ModuleKind::Data)
@@ -1365,6 +1366,7 @@ public:
     };
     ResolvedVariable resolveVariable(ModuleID, unsigned exportIndex, Environment* instance) const;
     bool isLinkedReexport(ModuleID module, unsigned exportIndex) const { return hasInstances(module) && m_table.findReexportedField(module, exportIndex); }
+    bool isNameOfReleasedLoad(ModuleID, unsigned exportIndex, Environment* instance) const;
     JSValue readLinkedMock(ModuleNamespace* word, uint32_t name) { return readLinkedMock(word, identifier(name)); }
     JSValue readLinkedMock(ModuleNamespace* word, const Identifier& name);
     bool hasOutdatedLinkForName(ModuleID, const Identifier& name, Environment* instance) const;
@@ -1449,7 +1451,7 @@ public:
     bool delegatesToHost(ModuleID);
     bool delegatesWithoutPlugins(ModuleID);
     bool isRequiredModulePatchPending(ModuleID);
-    std::optional<JSPromise*> importOriginalUnderPatch(ModuleID, ModuleID referrer, JSValue options);
+    std::optional<JSPromise*> importOriginalUnderPatch(ModuleID, ModuleID referrer, const RefPtr<ScriptFetchParameters>&);
     bool isPatchPending(ModuleID file) const;
     bool isEvaluatedUnderPendingPatch(ModuleID);
     void tellIfFactoryIsRunning(ModuleID requested, LoadKind);
@@ -3087,7 +3089,8 @@ private:
     bool isDeferredByCurrentSweep(ModuleID) const;
     const Vector<uint32_t>& importDepthsInSweep();
     bool isOriginalLoadedBySweep(ModuleID mocked);
-    void rejectRequireInSweep(ModuleID target);
+    bool onlyRequirersBypassMock(ModuleID mocked);
+    void rejectRequireInSweep(ModuleID target, ModuleID referrer);
     Vector<ModuleID, 4> commonJSOriginalsInGraph(ModuleID root);
     std::optional<ModuleID> m_commonJSModuleBeforeFactories;
     Vector<uint32_t> m_importDepthsInSweep;
@@ -3238,6 +3241,7 @@ private:
         bool importsWrapWhatRequireMapHolds { false };
         bool wasStoredByImportedFile { false };
         bool wasStoredDuringImport { false };
+        bool liesOverPendingMock { false };
         ActiveMockUse activeMockUse { ActiveMockUse::None };
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;

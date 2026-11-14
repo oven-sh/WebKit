@@ -665,7 +665,7 @@ std::optional<CodeGenerator::SymbolChain> CodeGenerator::findSymbolChain(BlockID
             return false;
         Type held = inputs().types.at(operation.type);
         PlannedVariable planned = plan().variable(operation.variable());
-        return held.primitives == Primitive::LiteralSymbol && !held.hasObjects() && program().at(operation.variable()).flags.contains(VariableFlags::IsImmutable)
+        return held.primitives == Primitive::LiteralSymbol && !held.hasObjects() && plan().isImmutable(program(), operation.variable())
             && planned.hasWordInStatics() && planned.encoding == VariableEncoding::Plain && planned.representation == SlotRepresentation::JSValue && !planned.hasViewMirror;
     };
     auto comparisonAt = [&](BlockID block) -> std::optional<ComparisonWithSymbol> {

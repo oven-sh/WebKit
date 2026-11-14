@@ -1089,7 +1089,7 @@ bool Modules::beginModuleInRecord(ModuleID module)
     if (storedStatus(module) != StoredModuleStatus::InRecord) [[unlikely]]
         RELEASE_AND_RETURN(scope, beginModuleInRecord(module));
     if (data(module).mayRunAsOriginal()) [[unlikely]] {
-        rejectRequireInSweep(module);
+        rejectRequireInSweep(module, ModuleID());
         RETURN_IF_EXCEPTION(scope, false);
     }
     if (data(module).mayRunAsOriginal() && status(module) <= ModuleStatus::Linked && host().requireOriginal) [[unlikely]] {
@@ -4812,13 +4812,13 @@ bool Modules::hasPendingMockAfterReset(ModuleID module) const
     return m_momentOfModuleReset && data(module).isOfLibrary() && m_modulesWithPendingMock.get(module.index()) && hasBeenImported(module) && !hasBeenImportedSinceReset(module);
 }
 
-bool Modules::hasBeenImported(ModuleID target) const
+bool Modules::hasBeenImported(ModuleID target, ImportsYetToBeFetched importsYetToBeFetched) const
 {
     if (namespaceIfCreated(target, ModulePhase::Evaluation))
         return true;
     if (isFetchedSynchronously(target))
         return false;
-    if (m_dataFilesImportedByUncompiledCode.get(target.index()) || isImportResolvedByLoader(target))
+    if (m_dataFilesImportedByUncompiledCode.get(target.index()) || (importsYetToBeFetched == ImportsYetToBeFetched::Count && isImportResolvedByLoader(target)))
         return true;
     uint32_t momentMockInItsPlaceEnded = m_momentsMocksInPlaceOfLibraryModulesEnded.get(target);
     if (auto released = m_lastLinksOfReleasedImporters.find(target); released != m_lastLinksOfReleasedImporters.end() && released->value >= momentMockInItsPlaceEnded)
@@ -4860,15 +4860,15 @@ void Modules::runDataFileAgainForImport(ModuleID file, ImportResolver resolver)
         return;
     if (resolver == ImportResolver::Build && !loaded->wasRequiredByHost && !data(file).isDataFoundByName() && !isTestRun())
         return;
-    reevaluateDataFile(file);
+    reevaluateDataFile(file, resolver);
 }
 
-void Modules::reevaluateDataFile(ModuleID file)
+void Modules::reevaluateDataFile(ModuleID file, ImportResolver resolver)
 {
     LoadedModule* loaded = loadedIfExists(file);
     if (data(file).kind != ModuleKind::Data || !loaded || !loaded->requiredValue || isMocked(file))
         return;
-    if (status(file) != ModuleStatus::Evaluated || hasBeenImported(file))
+    if (status(file) != ModuleStatus::Evaluated || hasBeenImported(file, resolver == ImportResolver::Loader ? ImportsYetToBeFetched::DoNotCount : ImportsYetToBeFetched::Count))
         return;
     setStatus(file, ModuleStatus::Linked);
     evaluateSynchronously(file, SynchronousEvaluationReason::Require);
@@ -5091,7 +5091,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             return original;
         RELEASE_AND_RETURN(scope, answerOwnFactoryRequire(target));
     }
-    rejectRequireInSweep(target);
+    rejectRequireInSweep(target, referrer);
     RETURN_IF_EXCEPTION(scope, { });
     if (m_mocks && referrer && targetData.isESModuleOfProgram()) [[unlikely]] {
         captureEvaluatingRequirer(referrer, target);
@@ -5373,7 +5373,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         loaded.requiredValue.set(*this, result);
     loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program;
     if (isFetchedSynchronously(target)) {
-        reevaluateDataFile(target);
+        reevaluateDataFile(target, ImportResolver::Build);
         RETURN_IF_EXCEPTION(scope, { });
     } else if (!m_table.importsOfHeldFile(target).empty()) {
         runDataFileAgainForImport(target, ImportResolver::Build);

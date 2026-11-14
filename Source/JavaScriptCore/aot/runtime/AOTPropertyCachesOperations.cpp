@@ -35,7 +35,7 @@ namespace JSC { namespace AOT {
 static void fileRead(Instance* instance, JSValue base, Structure* structureBefore, const CachedName& name, const PropertySlot& slot)
 {
     PropertyAnswer answer = classifyRead({ instance->globalObject, base, structureBefore, name.uid, slot });
-    answerByGetterField(base, structureBefore, answer);
+    answerByGetterField(base, structureBefore, name.uid, answer);
     if (answer.kind == PropertyAnswerKind::Uncacheable && answer.didFlatten && base.isObject()) {
         VM& vm = *instance->vm;
         DeferTerminationForAWhile deferTermination(vm);
@@ -149,7 +149,7 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver, S
     Structure* structureBefore = structureForPrimitive(globalObject, base);
     if (lazy.result == LazyPrototypeReadResult::Answered) {
         PropertyAnswer filed = lazy.answer;
-        answerByGetterField(base, structureBefore, filed);
+        answerByGetterField(base, structureBefore, uid, filed);
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, filed);
         RELEASE_AND_RETURN(scope, readThroughAnswer(globalObject, receiver, lazy.answer));
     }
@@ -177,7 +177,7 @@ void fileReadWithoutCode(Instance* instance, JSObject* base, const Identifier& i
     }
     Structure* structureBefore = base->structure();
     if (lazy.result == LazyPrototypeReadResult::Answered) {
-        answerByGetterField(base, structureBefore, lazy.answer);
+        answerByGetterField(base, structureBefore, uid, lazy.answer);
         access.caches().cache({ structureBefore, access.name(), SlotAccess::Read }, lazy.answer);
         return;
     }

@@ -334,8 +334,10 @@ ValueID OperatorEmitter::zeroComparedWithRemainder(BlockID block, ValueID remain
 bool OperatorEmitter::isConstantRead(ValueID value) const
 {
     const Operation& read = operationAt(value);
-    if (read.opcode == Opcode::GetModuleVariable)
-        return m_program.at(read.variable()).flags.contains(VariableFlags::IsImmutable);
+    if (read.opcode == Opcode::GetModuleVariable) {
+        const PromotedVariable* promoted = m_plan.promotedEnvironments().find(read.variable());
+        return (!promoted || promoted->maker != m_code.function()) && m_plan.isImmutable(m_program, read.variable());
+    }
     if (read.opcode != Opcode::GetEnvironmentField)
         return false;
     const Layout& layout = m_program.at(read.layout());

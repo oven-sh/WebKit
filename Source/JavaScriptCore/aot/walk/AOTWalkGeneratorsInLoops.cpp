@@ -2027,11 +2027,15 @@ static bool mayRunOtherCode(const Walker& walker, const BuiltinOverload& overloa
         return true;
     if (overload.effects.capability == BuiltinCapability::JS && !overload.flags.contains(BuiltinOverloadFlag::RunsOnlyOperandCode))
         return true;
+    TypingContext typing { walker.program(), walker.types(), PositionTypes::knowingNothing() };
+    const TypeID primitive = walker.types().withoutObjects(TypeTable::anything);
     auto runsCodeOf = [&](BuiltinOperand position, ValueID operand) {
         const BuiltinParameter* parameter = walker.program().builtins().parameterFor(overload, position);
-        if (!parameter || (parameter->protocols.isEmpty() && !parameter->uses.containsAny(usesThatRunCode) && !parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused)))
+        if (!parameter)
             return false;
-        return objects.mayHold(operand);
+        if (objects.mayHold(operand))
+            return !parameter->protocols.isEmpty() || parameter->uses.containsAny(usesThatRunCode) || parameter->roles.contains(BuiltinOperandRole::DescribedWhenRefused);
+        return effectsOfProtocolsOn(typing, parameter->protocols, primitive).mayRunOtherCode();
     };
     auto operands = call.as<Opcode::Call>();
     if (overload.receiver && runsCodeOf(BuiltinOperand::receiver(), operands.thisValueOperand()))

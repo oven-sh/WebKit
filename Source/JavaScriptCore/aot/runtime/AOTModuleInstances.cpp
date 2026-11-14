@@ -1552,6 +1552,14 @@ bool Modules::isAmbiguousInLinks(ModuleID module, const Identifier& name, Enviro
     return binding.type == LinkedBinding::Type::Ambiguous;
 }
 
+bool Modules::isNameOfReleasedLoad(ModuleID module, unsigned index, Environment* instance) const
+{
+    if (!m_hasReleasedInstances || !instance || !isLinkedReexport(module, index))
+        return false;
+    ResolvedVariable resolved = resolveVariable(module, index, instance);
+    return resolved.mockWord && resolved.mockWord->isLoadWord() && resolved.mockWord->hasExport(identifier(resolved.nameInMock).impl());
+}
+
 auto Modules::collectStarExports(ModuleID module, Environment* instance) -> Vector<DynamicExport>
 {
     VM& vm = *m_instance.vm;
@@ -1584,7 +1592,7 @@ auto Modules::collectStarExports(ModuleID module, Environment* instance) -> Vect
             if (name == vm.propertyNames->defaultKeyword)
                 continue;
             std::optional<unsigned> own = m_table.findExport(module, name.impl());
-            bool isOwn = own && !(m_table.exports(module)[*own].isHiddenUntilInitialized && isLeftOut(module, *own, TablesBehindStars::MayLackName));
+            bool isOwn = own && !(m_table.exports(module)[*own].isHiddenUntilInitialized && isLeftOut(module, *own, TablesBehindStars::MayLackName) && !isNameOfReleasedLoad(module, *own, instance));
             if (!isOwn && !(link && reexportsNameOf(link->targetModule(), name, module)))
                 found.append({ name, source });
         }
