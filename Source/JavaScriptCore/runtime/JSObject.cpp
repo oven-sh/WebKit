@@ -3829,7 +3829,7 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
     // We're transitioning between states here, if a termination comes in we could leave the object
     // in an inconsistent state. We could still be in the middle a GC during termination so we could
     // try to mark this object and crash. It's much easier to just not think about it.
-    DeferTerminationForAWhile noTermination(vm);
+    EndableDeferTerminationForAWhile noTermination(vm);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(!isCopyOnWrite(indexingMode()));
@@ -3878,8 +3878,11 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
     // We are currently using a map - check whether we still want to be doing so.
     // We will continue  to use a sparse map if SparseMode is set, a vector would be too sparse, or if allocation fails.
     unsigned numValuesInArray = storage->m_numValuesInVector + map->size();
-    if (map->sparseMode() || !isDenseEnoughForVector(length, numValuesInArray) || !increaseVectorLength(vm, length))
+    if (map->sparseMode() || !isDenseEnoughForVector(length, numValuesInArray) || !increaseVectorLength(vm, length)) {
+        // Nothing is in transition here, and the entry can be an accessor: a termination has to reach its setter.
+        noTermination.end();
         RELEASE_AND_RETURN(scope, map->putEntry(globalObject, this, i, value, shouldThrow));
+    }
 
     // Reread m_storage after increaseVectorLength, update m_numValuesInVector.
     storage = arrayStorage();
