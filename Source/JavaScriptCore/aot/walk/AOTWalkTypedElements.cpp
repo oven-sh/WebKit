@@ -3350,7 +3350,7 @@ static bool buildRoomAtEnd(const AccessOfTypedElements& access, const HoistedArr
         if (!isWithin || !continueOrRestartIteration(walker, isWithin, true))
             return false;
     }
-    if (std::optional<PassedTest> below = walker.findPassedTest(isWithin))
+    if (std::optional<PassedTest> below = walker.findTestPassedOnPath(isWithin))
         room = walker.boundsProofFromChecks(access.base, access.key, capacity, fromZeroUp, *below);
     walker.count(StatisticID::StoresGrowingArrays);
     return !walker.isUnreachable() && !walker.hasFailed();
@@ -3368,7 +3368,7 @@ static bool buildAppendingArm(const AccessOfTypedElements& access, const Hoisted
         return walker.build(WTF::move(capacity));
     };
     auto positionBelow = [&](Reference bound, Reference isBelow) -> std::optional<PassedTest> {
-        std::optional<PassedTest> below = isBelow ? walker.findPassedTest(isBelow) : std::nullopt;
+        std::optional<PassedTest> below = isBelow ? walker.findTestPassedOnPath(isBelow) : std::nullopt;
         return below ? walker.boundsProofFromChecks(access.base, access.key, bound, fromZeroUp, *below) : std::nullopt;
     };
     auto append = [&](Reference capacity, Reference isWithinCapacity, Reference pointer) {
@@ -3666,7 +3666,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
             return true;
         lengthComparison.setForm(operatorFormFor(walker, lengthComparison));
         Reference currentLength = lengthComparison.rightOperand();
-        std::optional<PassedTest> fromZeroUp = isKeyNonNegative ? walker.findPassedTest(isKeyNonNegative) : walker.findNonNegativeProof(access.key);
+        std::optional<PassedTest> fromZeroUp = isKeyNonNegative ? walker.findTestPassedOnPath(isKeyNonNegative) : walker.findNonNegativeProof(access.key);
         mayAppend &= !asksForKind || access.key == currentLength;
         mayAppend &= fromZeroUp && access.key.isValue() && currentLength.isValue() && !(walker.code().isConstant(access.key.id()) && walker.code().isConstant(currentLength.id()));
         if (access.isPushAtLength && (!mayAppend || access.key != currentLength))
@@ -3678,7 +3678,7 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
             Reference isKeyWithinLength = walker.build(WTF::move(lengthComparison));
             if (!continueOrRestartIteration(walker, isKeyWithinLength, true))
                 return true;
-            std::optional<PassedTest> below = walker.findPassedTest(isKeyWithinLength);
+            std::optional<PassedTest> below = walker.findTestPassedOnPath(isKeyWithinLength);
             if (below && fromZeroUp) {
                 inside = walker.boundsProofFromChecks(access.base, access.key, currentLength, *fromZeroUp, *below);
                 noteLengthAbovePosition(walker, currentLength, isKeyWithinLength, origin);

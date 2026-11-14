@@ -1632,6 +1632,7 @@ public:
     void resumeGraphsDeferredForImports();
     void countLoaderStep() { ++m_loaderStepCount; }
     void didSettlePromiseOfImport(JSPromise* promise) { m_loadsInFlight.didSettle(promise); }
+    void didRefetchFile(ModuleID file);
     void keepFailedImportError(JSPromise* settled);
     BitVector m_mockEntriesToEvict;
     void runFileThatWaitsForItsTurn(ModuleID);
@@ -2145,6 +2146,7 @@ private:
         enum class Kind : uint8_t { Variable, Field, Namespace, Name };
 
         bool isSameBinding(const LinkedBinding& other) const { return kind == other.kind && holder == other.holder && place == other.place && name == other.name; }
+        bool mayMakeNameAmbiguous() const { return !isOfMock || isOfReleasedLoad; }
 
         Type type { Type::NotFound };
         Kind kind { Kind::Name };
@@ -2153,6 +2155,7 @@ private:
         uint64_t place { 0 };
         UniquedStringImpl* name { nullptr };
         bool isLackedByMock { false };
+        bool isOfReleasedLoad { false };
     };
     struct BindingSearch {
         using Query = std::tuple<uint32_t, const Environment*, UniquedStringImpl*>;
@@ -2496,6 +2499,9 @@ private:
     void collectOuterRequests(EagerLoad&);
     bool hasSynchronousLoadFetched(ModuleID file);
     bool tryDiscardFailureDuringFetch(ModuleID file);
+    void discardFailure(ModuleID file);
+    JSValue errorCachedByLoader(ModuleID file) const;
+    bool runsAgainAfterRefetch(ModuleID file);
     bool takeThrowAfterFetch(ModuleID moduleOrFacade);
     void makeRecordWithoutExports(ModuleID facade);
     void transferGraphToLoader(EagerLoad&, std::optional<ModuleID> finishedFile = std::nullopt);
@@ -3655,7 +3661,9 @@ private:
     }
     void makeCallAgain(BatchedFetch&);
     JSArray* createLineBehindCall(JSPromise* earlierCall);
-    void settleInLine(JSArray* line, JSPromise*, JSPromise* loaded);
+    void settleInLine(JSArray* line, JSPromise*, JSPromise* loaded, std::optional<ModuleID> refetchedFile = std::nullopt);
+    bool isRefetchedByImport(ModuleID);
+    void settleRefetchingImport(JSPromise*, JSPromise* loaded, ModuleID file);
     BatchedFetches m_batchedFetches;
     bool isTextReadOnOtherThread(ModuleID file);
     void putCallsThatWaitApartInLine();
