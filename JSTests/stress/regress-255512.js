@@ -21,7 +21,7 @@ const StringProxy = new Proxy(String, {
   }
 });
 
-shouldThrow(() => { StringProxy.split(StringProxy); }, "TypeError: Cannot convert a symbol to a string");
+shouldThrow(() => { StringProxy.split(StringProxy); }, "TypeError: Cannot convert a Symbol value to a string");
 
 if (!(keyObj instanceof String))
   throw new Error("Bad assertion!");
