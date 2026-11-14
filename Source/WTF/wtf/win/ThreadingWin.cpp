@@ -403,15 +403,16 @@ void Mutex::unlock()
 }
 
 // Returns an interval in milliseconds suitable for passing to one of the Win32 wait functions (e.g., ::WaitForSingleObject).
-static DWORD absoluteTimeToWaitTimeoutInterval(WallTime absoluteTime)
+template<typename TimeType>
+static DWORD absoluteTimeToWaitTimeoutInterval(TimeType absoluteTime)
 {
     if (absoluteTime.isInfinity()) {
-        if (absoluteTime == -WallTime::infinity())
+        if (absoluteTime == -TimeType::infinity())
             return 0;
         return INFINITE;
     }
 
-    WallTime currentTime = WallTime::now();
+    TimeType currentTime = TimeType::now();
 
     // Time is in the past - return immediately.
     if (absoluteTime < currentTime)
@@ -440,6 +441,20 @@ bool ThreadCondition::timedWait(Mutex& mutex, WallTime absoluteTime)
         // match the pthreads implementation.
         return false;
     }
+
+    if (SleepConditionVariableSRW(&m_condition, &mutex.impl(), interval, 0))
+        return true;
+    ASSERT(GetLastError() == ERROR_TIMEOUT);
+    return false;
+}
+
+bool ThreadCondition::timedWait(Mutex& mutex, MonotonicTime absoluteTime)
+{
+    // SleepConditionVariableSRW() takes an interval, which it counts in timer ticks, so either kind of
+    // deadline only has to be measured against its own clock once.
+    DWORD interval = absoluteTimeToWaitTimeoutInterval(absoluteTime);
+    if (!interval)
+        return false;
 
     if (SleepConditionVariableSRW(&m_condition, &mutex.impl(), interval, 0))
         return true;
