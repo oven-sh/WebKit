@@ -1881,6 +1881,7 @@ void CallInLinkCalls::noteArgumentsEscape()
     if (m_shared || !m_call.sharesArgumentsObject)
         return;
     m_flow.arrive(m_flow.argumentsGatheredAtAnyPlace(m_caller), LinkType::anything());
+    m_flow.takeElementsOfAppliedArguments(m_caller);
     m_flow.noteNumberOfArgumentsGathered(m_caller, 0);
 }
 
@@ -2425,17 +2426,20 @@ ALWAYS_INLINE void CallInLinkCalls::callName()
     }
     const BuiltinCondition* light = receiver.builtin ? m_flow.lightFormOf(receiver.builtin) : nullptr;
     bool isServedByLightForm = light && std::ranges::contains(light->methodsServed, m_program.builtinNameOf(m_call.key));
-    if (receiver.builtin && (m_shared || (!isServedByLightForm && (m_call.receiver == noSummaryNode || !m_flow.isSpelledInBody(m_caller, m_call.receiver)))))
-        m_flow.note(LinkFlow::Note::BuiltinUsedViaFlow, m_builtins.canonicalID(receiver.builtin).index());
+    bool isBroughtByFlow = receiver.builtin && (m_shared || (!isServedByLightForm && (m_call.receiver == noSummaryNode || !m_flow.isSpelledInBody(m_caller, m_call.receiver))));
+    bool callsFoundMember = false;
     if (isServedByLightForm) {
         give(passToUnseen(passedByCall().withoutReceiver()));
     } else if (receiver.builtin && !isSettledButForOwnCallees()) {
         MemberOfTable found = findAbove(receiver.builtin);
+        callsFoundMember = found.outcome == Lookup::Found && !light && !m_shared;
         bool isUndefined = found.outcome != Lookup::Found && isNameUndefinedOn(receiver.builtin);
         if (isUndefined)
             found.outcome = Lookup::Absent;
         callMemberOfTable(found, valuesOf(builtinForLinkCalls(receiver.builtin)), isUndefined ? WhenAbsent::CallThrows : WhenAbsent::MayHaveBeenAdded);
     }
+    if (isBroughtByFlow && !callsFoundMember)
+        m_flow.note(LinkFlow::Note::BuiltinUsedViaFlow, m_builtins.canonicalID(receiver.builtin).index());
     if (receiver.hasUnknownObjects) {
         UnknownIs how = howUnknownIs(receiver);
         bool holdsWhatCanBeRead = false;
@@ -3701,6 +3705,8 @@ CallInLinkCalls::Entry CallInLinkCalls::passTo(FunctionID callee, const Passed& 
     uint32_t numberOfPositional = function.numberOfPositionalParameters();
     uint32_t numberWritten = static_cast<uint32_t>(passed.arguments.size());
     bool passesOnWhatCallerGathered = !m_shared && !numberWritten && (passed.listIsGathered || (m_call.passesOnGatheredArguments && &passed == &passedByCall()));
+    if (passesOnWhatCallerGathered && passed.listIsGathered)
+        flowInto(*passed.list, m_flow.elementsOfAppliedArguments(m_caller));
     const LinkFlow::PrototypeHelper* helper = findFollowedHelper(callee, passed);
     for (uint32_t parameter = static_cast<uint32_t>(function.captures.size()); parameter < numberOfParameters; ++parameter) {
         FlowNodeID to = m_flow.parameter(callee, parameter);

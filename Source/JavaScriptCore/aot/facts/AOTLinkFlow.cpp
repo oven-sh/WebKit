@@ -8836,6 +8836,22 @@ FlowNodeID LinkFlow::argumentsGatheredAtAnyPlace(FunctionID function)
     return argumentsGatheredBy(function).atAnyPlace;
 }
 
+FlowNodeID LinkFlow::elementsOfAppliedArguments(FunctionID function)
+{
+    LockerOfWhatIsShared locker(*this);
+    ArgumentsGathered& gathered = argumentsGatheredBy(function);
+    if (!gathered.elementsApplied)
+        gathered.elementsApplied = makeNode();
+    return gathered.elementsApplied;
+}
+
+void LinkFlow::takeElementsOfAppliedArguments(FunctionID function)
+{
+    LockerOfWhatIsShared locker(*this);
+    if (!std::exchange(argumentsGatheredBy(function).takesElementsApplied, true))
+        addEdge(elementsOfAppliedArguments(function), argumentsGatheredAtAnyPlace(function));
+}
+
 FlowNodeID LinkFlow::argumentGatheredAt(FunctionID function, uint32_t place)
 {
     LockerOfWhatIsShared locker(*this);
@@ -8890,7 +8906,7 @@ void LinkFlow::gatherWhatListsThatArriveHold(FunctionID function)
         if (call.passesOnGatheredArguments)
             addEdge(nodeOf(function, summary.arguments[call.firstArgument]), atAnyPlace);
         else if (call.appliesGatheredArguments)
-            arrive(atAnyPlace, LinkType::anything());
+            takeElementsOfAppliedArguments(function);
     }
     noteNumberOfArgumentsGathered(function, 0);
 }

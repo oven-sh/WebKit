@@ -6664,6 +6664,17 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         for (LValue word : wordsWidenedBeforeIterations)
             emitter<ConversionEmitter>().forgetSignExtended(Word32(word));
     });
+    auto blockWhereTurnsRunAgain = [&] {
+        return blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
+            const SumOfIntegers* sum = sumAt(index);
+            if (sum && !(comesBack && !single))
+                return m_out.doubleAdd(sum->base, m_out.intToDouble(phisOfTurns[index]));
+            if (sum)
+                return passSumToExit(*sum, phisOfTurns[index]);
+            LValue left = indexesOfWide.contains(index) ? m_out.castToInt32(phisOfTurns[index]) : phisOfTurns[index];
+            return comesBack ? left : forWrittenLoop(index, left);
+        });
+    };
     auto emitIterations = [&](unsigned numberOfIterations) -> bool {
         for (unsigned turnLaidOut = 0; turnLaidOut < numberOfIterations; ++turnLaidOut) {
             forgetTurn();
@@ -6676,6 +6687,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             }
             LBasicBlock blockLeavingTurn = nullptr;
             m_blockLeavingTurnLaidOut = [&] {
+                if (!blockLeavingTurn && turnLaidOut && m_boxedWordsOfElementsInTurns)
+                    blockLeavingTurn = blockWhereTurnsRunAgain();
                 if (!blockLeavingTurn) {
                     blockLeavingTurn = blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
                         if (const SumOfIntegers* sum = sumAt(index))
@@ -6733,15 +6746,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         return;
     m_asksElementsBehindTurns = false;
     if (LValue words = std::exchange(m_boxedWordsOfElementsInTurns, nullptr)) {
-        LBasicBlock someIsAbsent = blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
-            const SumOfIntegers* sum = sumAt(index);
-            if (sum && !(comesBack && !single))
-                return m_out.doubleAdd(sum->base, m_out.intToDouble(phisOfTurns[index]));
-            if (sum)
-                return passSumToExit(*sum, phisOfTurns[index]);
-            LValue left = indexesOfWide.contains(index) ? m_out.castToInt32(phisOfTurns[index]) : phisOfTurns[index];
-            return comesBack ? left : forWrittenLoop(index, left);
-        });
+        LBasicBlock someIsAbsent = blockWhereTurnsRunAgain();
         LBasicBlock everyOneIsThere = m_out.newBlock();
         m_out.branch(emitter<ElementAccessEmitter>().areInt32Elements(words).value(), normalEdge(everyOneIsThere), rareEdge(someIsAbsent));
         m_out.appendTo(everyOneIsThere);
