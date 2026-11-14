@@ -290,6 +290,9 @@ TEST_F(WTF_URL, SetPathStartOfValue)
         Row { "zz://h/a"_s, "\\x"_s, "zz://h/\\x"_s, "/\\x"_s, "h"_s },
         Row { "zz:/.//a"_s, ""_s, "zz:/"_s, "/"_s, ""_s },
         Row { "zz:/.//a"_s, "\t"_s, "zz:/"_s, "/"_s, ""_s },
+        // A space is not removed like a tab. A slash that is only the second code unit is not "//".
+        Row { "zz:/a/b"_s, " //x"_s, "zz:/%20//x"_s, "/%20//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "x/y"_s, "zz:/x/y"_s, "/x/y"_s, ""_s },
     };
     for (auto& row : rows) {
         auto url = createURL(row.url);
