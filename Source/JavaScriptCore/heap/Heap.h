@@ -292,6 +292,8 @@ class Heap;
     v(intlSegmentIteratorSpace, intlSegmentIteratorHeapCellType, IntlSegmentIterator) \
     v(intlSegmenterSpace, intlSegmenterHeapCellType, IntlSegmenter) \
     v(intlSegmentsSpace, intlSegmentsHeapCellType, IntlSegments) \
+    v(sharedStructSpace, sharedStructHeapCellType, JSSharedStruct) \
+    v(sharedArraySpace, sharedArrayHeapCellType, JSSharedArray) \
     v(iteratorHelperSpace, cellHeapCellType, JSIteratorHelper) \
     v(javaScriptCallFrameSpace, javaScriptCallFrameHeapCellType, Inspector::JSJavaScriptCallFrame) \
     v(jsModuleRecordSpace, jsModuleRecordHeapCellType, JSModuleRecord) \
@@ -1174,6 +1176,8 @@ public:
     IsoHeapCellType intlSegmentIteratorHeapCellType;
     IsoHeapCellType intlSegmenterHeapCellType;
     IsoHeapCellType intlSegmentsHeapCellType;
+    IsoHeapCellType sharedStructHeapCellType;
+    IsoHeapCellType sharedArrayHeapCellType;
 #if ENABLE(FFI)
     IsoHeapCellType ffiFunctionHeapCellType;
     IsoHeapCellType ffiCallbackHeapCellType;
