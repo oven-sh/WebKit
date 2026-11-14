@@ -205,6 +205,7 @@ Upstream's too, and run by the `test` job.
 | `StackTraceTest.cpp` | `StackTraceTest.StackTraceWorks` and `.CaptureStackTraceLimitAndSkip` are `DISABLED_` on Linux | the build, as in B: `DEFAULT_CFLAGS` in `Dockerfile` has `-fno-unwind-tables -fno-asynchronous-unwind-tables`, and glibc's `backtrace()` then returns its own frame alone |
 | `StringBuilder.cpp` | the `JSONEscape*` tests are the fork's own | they hold `appendEscapedJSONStringContent()` (`wtf/text/StringBuilderJSON.h`), which the fork vectorizes, to a scalar escaper, to its buffer, and to its check that the output has six characters of room for each one of the input |
 | `PtrTag.cpp` | the file is the fork's own | `WTF::removeReturnAddressSignature()` (`wtf/PtrTag.h`) gives the return address of a function that signs the one it saves. The function is compiled with `pac-ret` on ARM64 Linux in every build. On a processor without pointer authentication nothing is signed and the test passes whatever the code does |
+| `URLParser.cpp` | `WTF_URLParser.NonSpecialCredentialsWithoutPath` is the fork's own | on purpose, as in A: `State::Host` of `URLParser::parse()` (`wtf/URLParser.cpp`) follows the path start state of the URL Standard. When `?` or `#` follows the host of a URL with credentials, only a special URL gets the path `/`. Upstream gives every URL that path: `notspecial://user@host/?query` |
 
 ---
 
