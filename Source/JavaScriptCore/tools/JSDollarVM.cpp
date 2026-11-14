@@ -43,6 +43,7 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "Debugger.h"
+#include "DebuggerScope.h"
 #include "ExecutableBaseInlines.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 #include "FrameTracers.h"
@@ -2240,6 +2241,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateDebuggerScope);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateRuntimeArray);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateImpureGetter);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomGetterObject);
@@ -3667,6 +3669,20 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateProxy, (JSGlobalObject* globalObject, Cal
         return JSValue::encode(jsUndefined());
     Structure* structure = JSGlobalProxy::createStructure(vm, target, target->getPrototypeDirect());
     return JSValue::encode(JSGlobalProxy::create(vm, structure, target));
+}
+
+// Creates the object that the inspector gives for a scope of a paused call frame. No debugger is needed.
+// Usage: $vm.createDebuggerScope(function) for the scope that the function closes over,
+//        $vm.createDebuggerScope() for the global object of this realm.
+JSC_DEFINE_HOST_FUNCTION(functionCreateDebuggerScope, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    JSScope* scope = globalObject;
+    if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)))
+        scope = function->scope();
+    return JSValue::encode(DebuggerScope::create(vm, scope));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateRuntimeArray, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6286,6 +6302,7 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, allowIfNotFuzz, "createGlobalObject"_s, functionCreateGlobalObject, 0);
     addFunction(vm, allowIfNotFuzz, "createGlobalProxy"_s, functionCreateProxy, 1);
+    addFunction(vm, allowIfNotFuzz, "createDebuggerScope"_s, functionCreateDebuggerScope, 1);
     addFunction(vm, allowIfNotFuzz, "createRuntimeArray"_s, functionCreateRuntimeArray, 0);
 
     addFunction(vm, allowIfNotFuzz, "createImpureGetter"_s, functionCreateImpureGetter, 1);

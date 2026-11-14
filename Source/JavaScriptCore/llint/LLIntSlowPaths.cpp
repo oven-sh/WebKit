@@ -909,7 +909,8 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id_direct)
 
         JSCell* baseCell = baseValue.asCell();
         Structure* structure = baseCell->structure();
-        if (slot.isValue()) {
+        // A JSGlobalProxy answers with the slot of its target: the offset is not one of the base's structure.
+        if (slot.isValue() && slot.slotBase() == baseValue) {
             // Start out by clearing out the old cache.
             metadata.m_structureID = StructureID();
             metadata.m_offset = 0;
