@@ -29,6 +29,7 @@
 #include "ButterflyInlines.h"
 #include "ClonedArguments.h"
 #include "DirectArguments.h"
+#include "HeapAnalyzer.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "JSObjectInlines.h"
 #include "JSSetInlines.h"
@@ -50,6 +51,32 @@ void JSCellButterfly::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSCellButterfly);
+
+// visitFields() marks the elements with a hidden append, which reports no edge. This runs visitFields() with a visitor
+// that reports them instead, so both see the same slots. JSObject::analyzeHeap also reports them for an array that
+// shares this storage. Nothing else does for the other owners: a Map or a Set (this is its table), their iterators,
+// a bound function with more arguments than it has fields for.
+void JSCellButterfly::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    Base::analyzeHeap(cell, analyzer);
+
+    struct Reporter {
+        void appendValuesHidden(const WriteBarrierBase<Unknown>* slots, size_t count)
+        {
+            // A removed entry of a Map or Set table holds this cell, which the VM roots: it is not something the table keeps alive.
+            JSCell* deletedValue = cell->vm().orderedHashTableDeletedValue();
+            for (unsigned i = 0; i < count; ++i) {
+                JSValue value = slots[i].get();
+                if (value && value.isCell() && value.asCell() != deletedValue)
+                    analyzer.analyzeIndexEdge(cell, value.asCell(), i);
+            }
+        }
+
+        JSCell* cell;
+        HeapAnalyzer& analyzer;
+    } reporter { cell, analyzer };
+    visitFields(uncheckedDowncast<JSCellButterfly>(cell), reporter);
+}
 
 void JSCellButterfly::copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length)
 {
