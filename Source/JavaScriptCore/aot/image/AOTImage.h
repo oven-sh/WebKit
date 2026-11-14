@@ -13,7 +13,6 @@
 #include "AOTCallSiteTable.h"
 #include "AOTCodeSites.h"
 #include "AOTFaultTable.h"
-#include "AOTHostFunctionSources.h"
 #include "AOTImageFormat.h"
 #include "AOTImageForward.h"
 #include "AOTImageText.h"
@@ -31,7 +30,6 @@
 #include <mutex>
 #include <span>
 #include <wtf/IterationStatus.h>
-#include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/TZoneMalloc.h>
@@ -124,15 +122,6 @@ public:
     const std::optional<PlaceInExecutable>& placeInExecutable() const { return m_placeInExecutable; }
     void setPlaceInExecutable(const PlaceInExecutable& place) { m_placeInExecutable = place; }
 
-    struct DecompressedSourceBlocks {
-        Lock lock;
-        uint8_t* bytes { nullptr };
-        uint8_t* isDecompressed { nullptr };
-    };
-    void setDecompressSource(DecompressSourceFunction decompress) const { m_decompressSource.store(decompress, std::memory_order_release); }
-    DecompressSourceFunction decompressSource() const { return m_decompressSource.load(std::memory_order_acquire); }
-    DecompressedSourceBlocks& decompressedFunctionSources() const { return m_decompressedFunctionSources; }
-    DecompressedSourceBlocks& decompressedQuotedSources() const { return m_decompressedQuotedSources; }
     const std::optional<PositionInFile>& positionOfCodeInFile() const { return m_positionOfCodeInFile; }
     void setPositionOfCodeInFile(const std::optional<PositionInFile>& position) { m_positionOfCodeInFile = position; }
     unsigned number() const { return m_number; }
@@ -220,9 +209,6 @@ private:
     static std::atomic<const Image*> s_lastPublished;
 
     mutable std::array<std::atomic<void*>, 9> m_frequentStubs { };
-    mutable std::atomic<DecompressSourceFunction> m_decompressSource { nullptr };
-    mutable DecompressedSourceBlocks m_decompressedFunctionSources;
-    mutable DecompressedSourceBlocks m_decompressedQuotedSources;
     unsigned m_number { 0 };
     const Image* m_publishedBefore { nullptr };
     std::optional<PlaceInExecutable> m_placeInExecutable;

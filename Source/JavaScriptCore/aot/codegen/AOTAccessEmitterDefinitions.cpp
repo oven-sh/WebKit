@@ -568,19 +568,55 @@ void AccessEmitter::generateSuperGet(const ValueContext& value)
         return callOperation<Boxed>(value, RuntimeOperation::GetSuperPropertyById, { base, receiver, numberOf(name) }, { .isOnRarePath = isOnRarePath });
     };
     bool standsInRareBlock = m_code.at(value.block()).frequency == BlockFrequency::Rare;
-    if (keyIsThreadLocal || standsInRareBlock) {
+    bool isRepeated = m_generator.isInLoop(value.block());
+    if (keyIsThreadLocal || (standsInRareBlock && !isRepeated)) {
         define(value, readByOperation(standsInRareBlock));
         return;
     }
 
-    std::optional<NumberedImmediate> answers = m_program.nameClassOf(key) == NameClass::Length ? std::nullopt : answersAtSite(value, key, SiteUse::Read);
-    Boxed found(answers ? callStub(value, readAtSiteOfSuperBase(), { base.value() }, { .numberedImmediate = *answers }).first
-        : callStub(value, tryGetSuperById(), { base.value() }, { .numberedImmediate = NumberedImmediate { name } }).first);
-    define(value, either<Boxed>(isNotEmpty(found), [&] {
-        return found;
-    }, [&] {
-        return readByOperation(true);
-    }));
+    auto readFromTables = [&](bool isOnRarePath) {
+        if (isRepeated)
+            build().statistics().count(StatisticID::SuperReadsAskingTables);
+        Boxed found(callStub(value, tryGetSuperById(), { base.value() }, { .numberedImmediate = NumberedImmediate { name }, .isOnRarePath = isOnRarePath }).first);
+        return either<Boxed>(isNotEmpty(found), [&] {
+            return found;
+        }, [&] {
+            return readByOperation(true);
+        });
+    };
+    std::optional<NumberedImmediate> answers = standsInRareBlock || m_program.nameClassOf(key) == NameClass::Length ? std::nullopt : answersAtSite(value, key, SiteUse::Read);
+    if (!answers) {
+        define(value, readFromTables(false));
+        return;
+    }
+    auto readAtSite = [&] {
+        Boxed found(callStub(value, readAtSiteOfSuperBase(), { base.value() }, { .numberedImmediate = *answers }).first);
+        return either<Boxed>(isNotEmpty(found), [&] {
+            return found;
+        }, [&] {
+            return isRepeated ? readFromTables(true) : readByOperation(true);
+        });
+    };
+    bool mayReadNamespace = isRepeated && !m_code.isConstant(value->baseOperand()) && operationAt(value->baseOperand()).opcode == Opcode::GetSuperBase && operandIsHomeObject(operationAt(value->baseOperand()).homeKind());
+    if (!mayReadNamespace) {
+        define(value, readAtSite());
+        return;
+    }
+    LBasicBlock asksType = newBlock();
+    LBasicBlock asksFlags = newBlock();
+    LBasicBlock asksSite = newBlock();
+    LBasicBlock asksTables = newBlock();
+    Join<Boxed> join(m_out);
+    branch(isCell(base), { normalEdge(asksType), rareEdge(asksSite) });
+    m_out.appendTo(asksType);
+    branch(equal(loadByte(unboxCell(base), m_heaps.JSCell_typeInfoType), static_cast<int32_t>(ObjectType)), { rareEdge(asksFlags), normalEdge(asksSite) });
+    m_out.appendTo(asksFlags);
+    branch(hasNoBits(loadByte(unboxCell(base), m_heaps.JSCell_typeInfoFlags), OverridesGetOwnPropertySlot), { normalEdge(asksSite), rareEdge(asksTables) });
+    m_out.appendTo(asksTables);
+    join.add(readFromTables(true));
+    m_out.appendTo(asksSite);
+    join.add(readAtSite());
+    define(value, join.finish());
 }
 
 void AccessEmitter::generateSuperSet(const ValueContext& value)

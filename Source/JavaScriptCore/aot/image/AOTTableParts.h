@@ -211,8 +211,6 @@ struct AnswersAboutModules {
     Vector<uint32_t> compiledRuntimeFunctions;
 };
 
-class PreparedFunctionSources;
-
 struct TableInputs {
     const Typed::Program& program;
     const Typed::Facts& facts;
@@ -221,7 +219,6 @@ struct TableInputs {
     const BodyFactsForTables& bodyFacts;
     const CompileOptions& options;
     const BuildContext* build { nullptr };
-    const PreparedFunctionSources* functionSources { nullptr };
     mutable std::optional<AnswersAboutModules> answersAboutModules { };
 };
 

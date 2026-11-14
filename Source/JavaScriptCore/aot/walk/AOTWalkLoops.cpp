@@ -2988,6 +2988,8 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
     LoopSummaryKey key = loopSummaryKey(copyOfLoop, numberOfEntriesBefore);
     uint32_t place = m_loopSummaryIndices.add(key, static_cast<uint32_t>(m_loopSummaries.size())).iterator->value;
     if (place == m_loopSummaries.size()) {
+        if (!m_carriedResultRequests.isEmpty())
+            m_carriedResultRequests.remove(place);
         moveWhereSanitizerWatches(m_loopSummaries);
         m_loopSummaries.append(LoopSummary { });
         if (m_effectsSeededForNextRow) {

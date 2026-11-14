@@ -11,6 +11,7 @@
 #include "AOTClosure.h"
 #include "AOTEndOfThread.h"
 #include "AOTEnvironment.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTObject.h"
 #include "AOTObjectWords.h"
 #include "AOTRuntimeCheckFailure.h"
@@ -22,36 +23,26 @@
 #include "JSCInlines.h"
 #include <wtf/Atomics.h>
 #include <wtf/DataLog.h>
-#include <wtf/HashMap.h>
-#include <wtf/Lock.h>
-#include <wtf/NeverDestroyed.h>
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
 
 const ClassInfo PoisonedCell::s_info = { "PoisonedCell"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PoisonedCell) };
 
-namespace {
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PoisonedCellSites);
 
-struct PlaceOfAllocation {
-    uint32_t function { 0 };
-    uint32_t position { 0 };
-};
-
-struct PlacesOfPoisonedCells {
-    Lock lock;
-    UncheckedKeyHashMap<const JSCell*, PlaceOfAllocation> places WTF_GUARDED_BY_LOCK(lock);
-};
-
-} // anonymous namespace
-
-static PlacesOfPoisonedCells& placesOfPoisonedCells()
+PoisonedCellSites::PoisonedCellSites(CacheRegistry& caches)
 {
-    static LazyNeverDestroyed<PlacesOfPoisonedCells> places;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        places.construct();
+    caches.add(CacheKind::WeakByKey, "allocation sites of poisoned cells"_s, *this);
+}
+
+size_t PoisonedCellSites::removeDeadEntries(VM& vm, CollectionScope)
+{
+    size_t sizeBefore = m_sites.size();
+    m_sites.removeIf([&](const auto& entry) {
+        return !vm.heap.isMarked(entry.key);
     });
-    return places;
+    return sizeBefore - m_sites.size();
 }
 
 namespace {
@@ -59,7 +50,7 @@ namespace {
 struct CellLent {
     JSCell* cell;
     const void* frame;
-    PlaceOfAllocation place;
+    PoisonedCellSites::Site site;
 };
 
 } // anonymous namespace
@@ -88,7 +79,7 @@ uint32_t PoisonedCell::poisonCellsLentBelow(VM& vm, const void* frame, bool andB
     Vector<CellLent>& lent = cellsLentOnThisThread();
     while (!lent.isEmpty() && (lent.last().frame < frame || (andByThatFrame && lent.last().frame == frame))) {
         CellLent last = lent.last();
-        numberPoisoned += tryPoison(vm, last.cell, last.place.function, last.place.position);
+        numberPoisoned += tryPoison(vm, last.cell, last.site.function, last.site.position);
     }
     return numberPoisoned;
 }
@@ -138,11 +129,9 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
         state.poisonedCellStructure.setWithoutWriteBarrier(createStructure(vm));
     Structure* structure = state.poisonedCellStructure.get();
 
-    {
-        PlacesOfPoisonedCells& table = placesOfPoisonedCells();
-        Locker locker { table.lock };
-        table.places.set(cell, PlaceOfAllocation { function, position });
-    }
+    if (!state.poisonedCellSites)
+        state.poisonedCellSites = makeUnique<PoisonedCellSites>(*state.caches);
+    state.poisonedCellSites->set(cell, { function, position });
 
     *reinterpret_cast<uint64_t*>(bytes + JSObject::butterflyOffset()) = 0;
     constexpr uint64_t cellStateMask = 0xffull << 8 * JSCell::cellStateOffset();
@@ -156,14 +145,8 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
 
 void PoisonedCell::stop(const JSCell* cell)
 {
-    PlaceOfAllocation place;
-    {
-        PlacesOfPoisonedCells& table = placesOfPoisonedCells();
-        Locker locker { table.lock };
-        place = table.places.get(cell);
-    }
     RuntimeCheckFailure failure("lifetime check failed"_s);
-    failure.inFunction(FunctionID(place.function));
+    failure.inFunction(FunctionID(cell->vm().aotState().poisonedCellSites->get(cell).function));
     failure.detail("an object that this function allocated was used after the compiler ended its lifetime");
     failure.report();
     CRASH();

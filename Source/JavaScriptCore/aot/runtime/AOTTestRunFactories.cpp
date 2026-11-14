@@ -796,6 +796,19 @@ void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy, boo
     }
 }
 
+void Modules::keepActiveMockUntilPatch(ModuleID fileOrModule, ActiveMockUse use)
+{
+    auto call = m_pendingMockCalls.find(fileOrModule);
+    if (call != m_pendingMockCalls.end())
+        call->value.activeMockUse = use;
+}
+
+ActiveMockUse Modules::activeMockUse(ModuleID module) const
+{
+    auto call = m_pendingMockCalls.find(fileOf(module));
+    return call != m_pendingMockCalls.end() ? call->value.activeMockUse : ActiveMockUse::None;
+}
+
 void Modules::removeUnusedLingeringMocksSlow(ModuleID requested)
 {
     if (m_hasImportsBlockedOnFactories || !m_modulesWithRunningFactory.isEmpty() || m_loadsInFlight.numberBeingLoaded())
@@ -2259,7 +2272,8 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
             return false;
         }
         bool isLeftToHost = isEvicted(fileOf(root)) && hasPendingMockAfterReset(module);
-        bool runsMock = m_modulesWithPendingMock.get(module.index()) && !isLeftToHost && !isMockLingering(module) && (isImportedByStatement || !m_originalsDueUnderMock.get(module.index())) && (m_isResumingFactoryChainImport || !isUnmockedInDetachedLoad(root, module)) && !isFetchedByPendingFactoryCall(root, module);
+        bool keepsActiveMock = !isRequired && !vm.aotState().requireRunsMocks && !m_evaluatesSynchronously && activeMockUse(module) >= (isImportedByStatement ? ActiveMockUse::ByStatements : ActiveMockUse::ByImports);
+        bool runsMock = m_modulesWithPendingMock.get(module.index()) && !keepsActiveMock && !isLeftToHost && !isMockLingering(module) && (isImportedByStatement || !m_originalsDueUnderMock.get(module.index())) && (m_isResumingFactoryChainImport || !isUnmockedInDetachedLoad(root, module)) && !isFetchedByPendingFactoryCall(root, module);
         bool isPutAside = runsMock && isImportedByStatement && m_mocksRetriedAfterFailure.get(module.index());
         if (isPutAside) {
             if (!endsBeforeLink)

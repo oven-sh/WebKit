@@ -7896,7 +7896,10 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
             return;
     }
     found.lists.removeAllMatching([&](const HoistedArrayGuard& list) {
-        return !isProvenArray(walker, list.name) && !(list.onlyHoldsRows && isInstanceOfArraySubclass(walker, list.name)) && !classOfProvenViewInListReadsInLoops(walker, list.name);
+        if (classOfProvenViewInListReadsInLoops(walker, list.name)) {
+            return list.isWritable || hasArrayStorageForm(list.storage);
+        }
+        return !isProvenArray(walker, list.name) && !(list.onlyHoldsRows && isInstanceOfArraySubclass(walker, list.name));
     });
     if (found.lists.isEmpty())
         return;
