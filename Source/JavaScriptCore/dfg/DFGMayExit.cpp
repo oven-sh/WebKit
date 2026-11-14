@@ -52,6 +52,11 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case DoubleConstant:
     case LazyJSConstant:
     case Int52Constant:
+    case DecimalWordConstant:
+    case GetDecimalWord:
+    case DecimalArith:
+    case DecimalTest:
+    case DecimalToNumber:
     case ConstantStoragePointer:
     case MovHint:
     case InitializeEntrypointArguments:
@@ -73,6 +78,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case PhantomNewObject:
     case PhantomNewArrayWithButterfly:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomNewButterflyWithSize:
     case PutStack:
@@ -205,6 +211,8 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case GetLazyClosureVar:
     case NewStringObject:
     case NewInternalFieldObject:
+    case DecimalToString:
+    case NewDecimal:
     case NewPromise:
     case NewRegExp:
     case NewMap:
@@ -232,6 +240,12 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case AllocatePropertyStorage:
     case ReallocatePropertyStorage:
         result = ExitsForExceptions;
+        break;
+
+    case ToDecimal:
+    case DecimalScale:
+        if (node->argumentOfDecimalNode().useKind() == UntypedUse)
+            return Exits;
         break;
 
     case NewRegExpUntyped: {

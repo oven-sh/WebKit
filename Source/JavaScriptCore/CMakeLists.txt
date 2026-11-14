@@ -70,6 +70,7 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
     runtime/BooleanPrototype.cpp
     runtime/DateConstructor.cpp
     runtime/DatePrototype.cpp
+    runtime/DecimalPrototype.cpp
     runtime/ErrorPrototype.cpp
     runtime/GeneratorPrototype.cpp
     runtime/IntlCollatorConstructor.cpp
@@ -1282,6 +1283,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DatePrototypeInlines.h
     runtime/DeferTermination.h
     runtime/DeferredWorkTimer.h
+    runtime/Decimal128.h
+    runtime/DecimalConstructor.h
+    runtime/DecimalObject.h
+    runtime/DecimalOperator.h
+    runtime/DecimalPrototype.h
     runtime/DefinePropertyAttributes.h
     runtime/DeletePropertySlot.h
     runtime/DirectArguments.h

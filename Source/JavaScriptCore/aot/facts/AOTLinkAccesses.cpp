@@ -5326,7 +5326,7 @@ bool AccessInLinkAccesses::isFollowedOnGlobalObject(BuiltinID builtin)
     BuiltinID canonical = m_table.canonicalID(builtin);
     if (!m_flow.isGlobalObject(canonical) || !isNamed() || m_flow.testRuns().isTestRun() || !hasFlag(m_program.excludedCode, Wire::ExcludedCode::UnlistedGlobals))
         return false;
-    static constexpr std::array namesDefinedByOptions { "$vm"_s, "Loader"_s, "gc"_s };
+    static constexpr std::array namesDefinedByOptions { "$vm"_s, "Decimal"_s, "Loader"_s, "gc"_s };
     const PropertyKey& key = m_program.at(m_access.key);
     if (key.kind != PropertyKeyKind::Text)
         return false;

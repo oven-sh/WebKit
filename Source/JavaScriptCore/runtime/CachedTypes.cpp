@@ -5329,8 +5329,14 @@ protected:
     // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
     // 14: op_profile_control_flow says whether its basic block is in a loop header.
     // 15: upstream's op_call_varargs_with_spread (325231@main; opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 15;
-    static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
+    // 16: LinkTimeConstant::decimalLiteral and decimalOperator.
+    static constexpr uint32_t cachedTypesFormatRevision = 16;
+    static uint32_t currentCacheVersion()
+    {
+        // With these options operators are compiled into other code, which does something else.
+        uint32_t decimalOperators = Options::useDecimal() && Options::useDecimalOperators() ? 0x85EBCA6Bu : 0;
+        return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u) ^ decimalOperators;
+    }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
         : m_cacheVersion(currentCacheVersion())

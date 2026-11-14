@@ -1072,7 +1072,7 @@ void SpeculativeJIT::emitCall(Node* node)
             }
         }
         TaggedNativeFunction nativeFunction;
-        if (executable->isHostFunction() && executable->intrinsic() == NoIntrinsic) {
+        if (executable->isHostFunction() && !mayHaveThunk(executable->intrinsic())) {
             if (isConstruct)
                 nativeFunction = uncheckedDowncast<NativeExecutable>(executable)->constructor();
             else
@@ -4786,6 +4786,46 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
+    case DecimalWordConstant:
+        compileDecimalWordConstant(node);
+        break;
+
+    case GetDecimalWord:
+        compileGetDecimalWord(node);
+        break;
+
+    case ToDecimal:
+        compileToDecimal(node);
+        break;
+
+    case DecimalArith:
+        compileDecimalArith(node);
+        break;
+
+    case DecimalScale:
+        compileDecimalScale(node);
+        break;
+
+    case DecimalTest:
+        compileDecimalTest(node);
+        break;
+
+    case DecimalToNumber:
+        compileDecimalToNumber(node);
+        break;
+
+    case DecimalToString:
+        compileDecimalToString(node);
+        break;
+
+    case DecimalToFixed:
+        compileDecimalToFixed(node);
+        break;
+
+    case NewDecimal:
+        compileNewDecimal(node);
+        break;
+
     case NewPromise: {
         compileNewPromise(node);
         break;
@@ -6866,6 +6906,7 @@ void SpeculativeJIT::compile(Node* node)
     case PhantomNewAsyncFunction:
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomCreateActivation:
     case PhantomNewRegExp:

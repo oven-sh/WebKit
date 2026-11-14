@@ -28,6 +28,7 @@
 #include "BigIntConstructor.h"
 
 #include "BigIntPrototype.h"
+#include "DecimalObject.h"
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "ParseInt.h"
@@ -96,6 +97,10 @@ JSC_DEFINE_HOST_FUNCTION(callBigIntConstructor, (JSGlobalObject* globalObject, C
     auto scope = DECLARE_THROW_SCOPE(vm);
     
     JSValue value = callFrame->argument(0);
+    // https://tc39.es/proposal-decimal/#sec-bigint-constructor-number-value
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSValue::encode(decimal->toBigIntValue(globalObject)));
+
     JSValue primitive = value.toPrimitive(globalObject, PreferNumber);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
 

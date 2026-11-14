@@ -267,6 +267,13 @@
     macro(revoke) \
     macro(roundingIncrement) \
     macro(roundingMode) \
+    macro(halfEven) \
+    macro(halfExpand) \
+    macro(trunc) \
+    macro(floor) \
+    macro(ceil) \
+    macro(precision) \
+    macro(digits) \
     macro(roundingPriority) \
     macro(script) \
     macro(second) \

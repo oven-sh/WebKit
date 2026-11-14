@@ -182,6 +182,7 @@ private:
     ALWAYS_INLINE std::optional<NumberParseResult> parseBinary();
     ALWAYS_INLINE std::optional<NumberParseResult> parseOctal();
     ALWAYS_INLINE std::optional<NumberParseResult> parseDecimal();
+    ALWAYS_INLINE bool parseDecimalSuffix(JSTokenData*);
     ALWAYS_INLINE bool parseNumberAfterDecimalPoint();
     ALWAYS_INLINE bool parseNumberAfterExponentIndicator();
     ALWAYS_INLINE bool parseMultilineComment();

@@ -147,7 +147,7 @@ public:
     // once it is escaped if it still has pointers to it in order to
     // replace any use of those pointers by the corresponding
     // materialization
-    enum class Kind { Escaped, Array, ArrayButterfly, Object, Activation, Function, GeneratorFunction, AsyncFunction, AsyncGeneratorFunction, InternalFieldObject, RegExpObject, Promise };
+    enum class Kind { Escaped, Array, ArrayButterfly, Object, Activation, Function, GeneratorFunction, AsyncFunction, AsyncGeneratorFunction, InternalFieldObject, RegExpObject, Promise, Decimal };
 
     using Fields = UncheckedKeyHashMap<PromotedLocationDescriptor, Node*>;
 
@@ -830,6 +830,7 @@ private:
                 case NewAsyncFunction:
                 case NewInternalFieldObject:
                 case NewRegExp:
+                case NewDecimal:
                 case NewPromise:
                 case CreateActivation:
                     return true;
@@ -1208,6 +1209,14 @@ private:
             break;
         }
 
+        case NewDecimal: {
+            target = &m_heap.newAllocation(node, Allocation::Kind::Decimal);
+            writes.add(StructurePLoc, LazyNode(m_graph.freeze(node->structure().get())));
+            writes.add(PromotedLocationDescriptor(DecimalWordPLoc, 0), LazyNode(node->child1().node()));
+            writes.add(PromotedLocationDescriptor(DecimalWordPLoc, 1), LazyNode(node->child2().node()));
+            break;
+        }
+
         case NewPromise: {
             ASSERT(node->structure()->classInfoForCells() == JSPromise::info());
             target = &m_heap.newAllocation(node, Allocation::Kind::Promise);
@@ -1394,6 +1403,14 @@ private:
             target = m_heap.onlyLocalAllocation(node->child1().node());
             if (target && target->isFunctionAllocation())
                 exactRead = FunctionActivationPLoc;
+            else
+                m_heap.escape(node->child1().node());
+            break;
+
+        case GetDecimalWord:
+            target = m_heap.onlyLocalAllocation(node->child1().node());
+            if (target && target->kind() == Allocation::Kind::Decimal)
+                exactRead = PromotedLocationDescriptor(DecimalWordPLoc, node->decimalWordIndex());
             else
                 m_heap.escape(node->child1().node());
             break;
@@ -2003,6 +2020,13 @@ escapeChildren:
                 OpInfo(allocation.identifier()->structure()), OpInfo(data), 0, 0);
         }
 
+        case Allocation::Kind::Decimal: {
+            return m_graph.addNode(
+                allocation.identifier()->prediction(), NewDecimal,
+                where->origin.withSemantic(allocation.identifier()->origin.semantic),
+                OpInfo(allocation.identifier()->structure()));
+        }
+
         case Allocation::Kind::Promise: {
             return m_graph.addNode(
                 allocation.identifier()->prediction(), NewPromise,
@@ -2226,7 +2250,9 @@ escapeChildren:
                 if (location.kind() == ArrayIndexedPropertyPLoc && hasDouble(allocation.indexingType())) {
                     ASSERT(allocation.kind() == Allocation::Kind::Array);
                     phiNode->mergeFlags(NodeResultDouble);
-                } else
+                } else if (location.kind() == DecimalWordPLoc)
+                    phiNode->mergeFlags(NodeResultStorage);
+                else
                     phiNode->mergeFlags(NodeResultJS);
                 return phiNode;
             });
@@ -2433,6 +2459,10 @@ escapeChildren:
 
                     case NewInternalFieldObject:
                         node->convertToPhantomNewInternalFieldObject();
+                        break;
+
+                    case NewDecimal:
+                        node->convertToPhantomNewDecimal();
                         break;
 
                     case NewPromise:
@@ -2785,6 +2815,16 @@ escapeChildren:
             ASSERT(locations.contains(activation));
 
             node->child1() = Edge(resolve(block, activation), KnownCellUse);
+            break;
+        }
+
+        case NewDecimal: {
+            ASSERT(m_locationsForAllocation.get(escapee).size() == 3);
+            auto word = [&](unsigned index) {
+                return Edge(resolve(block, PromotedHeapLocation(allocation.identifier(), PromotedLocationDescriptor(DecimalWordPLoc, index))), KnownStorageUse);
+            };
+            node->child1() = word(0);
+            node->child2() = word(1);
             break;
         }
 

@@ -322,6 +322,7 @@ public:
     String m_cachedToLocaleStringNumberFormatLocale;
     uint64_t m_cachedToLocaleStringNumberFormatLanguagesEpoch { 0 };
 
+    LazyClassStructure m_decimalStructure;
     LazyClassStructure m_durationStructure;
     LazyClassStructure m_instantStructure;
     LazyClassStructure m_plainDateStructure;
@@ -1129,6 +1130,9 @@ public:
     JSObject* dateTimeFormatPrototype() LIFETIME_BOUND;
     JSObject* numberFormatConstructor() LIFETIME_BOUND { return m_numberFormatStructure.constructor(this); }
     JSObject* numberFormatPrototype() LIFETIME_BOUND;
+
+    Structure* decimalStructure() { return m_decimalStructure.get(this); }
+    Structure* decimalStructureConcurrently() const { return m_decimalStructure.getConcurrently(); }
 
     Structure* durationStructure() { return m_durationStructure.get(this); }
     Structure* instantStructure() { return m_instantStructure.get(this); }

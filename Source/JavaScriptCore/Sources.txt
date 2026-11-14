@@ -499,6 +499,7 @@ dfg/DFGSSAConversionPhase.cpp
 dfg/DFGSSALoweringPhase.cpp
 dfg/DFGSnippetParams.cpp
 dfg/DFGSpeculativeJIT.cpp @no-unify-when(bundle<=8) @cost:9
+dfg/DFGSpeculativeJITDecimal.cpp @no-unify
 dfg/DFGSpeculativeJIT64.cpp @no-unify-when(bundle<=8) @cost:4
 dfg/DFGStackLayoutPhase.cpp
 dfg/DFGStaticExecutionCountEstimationPhase.cpp
@@ -875,6 +876,11 @@ runtime/DateConstructor.cpp
 runtime/DateConversion.cpp
 runtime/DateInstance.cpp
 runtime/DatePrototype.cpp
+runtime/Decimal128.cpp @no-unify
+runtime/DecimalConstructor.cpp @no-unify
+runtime/DecimalObject.cpp @no-unify
+runtime/DecimalOperations.cpp @no-unify
+runtime/DecimalPrototype.cpp @no-unify
 runtime/DeferredWorkTimer.cpp
 runtime/DirectArguments.cpp
 runtime/DirectArgumentsOffset.cpp

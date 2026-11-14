@@ -5333,6 +5333,14 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
 
         return createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
     }
+    case DECIMALLITERAL: {
+        const Identifier* ident = m_token.m_data.ident;
+        JSTokenLocation location(tokenLocation());
+        JSTextPosition start = tokenStartPosition();
+        JSTextPosition end = tokenEndPosition();
+        next();
+        return context.createDecimal(location, *ident, start, end);
+    }
     case BIGINT: {
         const Identifier* ident = m_token.m_data.bigIntString;
         uint8_t radix = m_token.m_data.radix;

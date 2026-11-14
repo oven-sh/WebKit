@@ -49,6 +49,7 @@
 #include "CustomGetterSetterInlines.h"
 #include "DOMAttributeGetterSetterInlines.h"
 #include "DateInstance.h"
+#include "DecimalStringCache.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
 #include "Disassembler.h"
@@ -885,6 +886,13 @@ Ref<VM> VM::createContextGroup(HeapType heapType)
     return adoptRef(*new VM(VMType::APIContextGroup, heapType));
 }
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DecimalStringCache);
+
+void VM::initializeDecimalStringCache()
+{
+    m_decimalStringCache = makeUnique<DecimalStringCache>();
+}
+
 Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop)
 {
     return adoptRef(*new VM(VMType::Default, heapType, runLoop));
@@ -1163,6 +1171,7 @@ static Ref<NativeJITCode> jitCodeForConstructTrampoline()
 NEVER_INLINE static NativeExecutable* hostFunctionStubWithThunk(VM& vm, NativeFunction function, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction constructor, const DOMJIT::Signature* signature, unsigned length, const String& name)
 {
     JSC_REMOVABLE_DEFINITION(JIT, hostFunctionStubWithThunk);
+    ASSERT(mayHaveThunk(intrinsic) || intrinsic == NoIntrinsic || !thunkGeneratorForIntrinsic(intrinsic));
     return vm.jitStubs->hostFunctionStub(
         vm, toTagged(function), toTagged(constructor),
         intrinsic != NoIntrinsic ? thunkGeneratorForIntrinsic(intrinsic) : nullptr,
@@ -2441,6 +2450,8 @@ void VM::visitAggregateImpl(Visitor& visitor)
     }
 #endif
     numericStrings.visitAggregate(visitor);
+    if (m_decimalStringCache)
+        m_decimalStringCache->visitAggregate(visitor);
     m_jsonCache->visitAggregate(visitor);
     m_builtinExecutables->visitAggregate(visitor);
     m_regExpCache->visitAggregate(visitor);

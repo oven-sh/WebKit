@@ -267,6 +267,7 @@ class Heap;
     v(customSetterFunctionSpace, customSetterFunctionHeapCellType, JSCustomSetterFunction) \
     v(dataViewSpace, cellHeapCellType, JSDataView) \
     v(debuggerScopeSpace, cellHeapCellType, DebuggerScope) \
+    v(decimalObjectSpace, cellHeapCellType, DecimalObject) \
     v(errorInstanceSpace, errorInstanceHeapCellType, ErrorInstance) \
     v(finalizationRegistrySpace, finalizationRegistryCellType, JSFinalizationRegistry) \
     v(float16ArraySpace, cellHeapCellType, JSFloat16Array) \

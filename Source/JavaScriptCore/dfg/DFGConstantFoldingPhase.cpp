@@ -2211,6 +2211,7 @@ private:
             case PhantomNewAsyncGeneratorFunction:
             case PhantomNewAsyncFunction:
             case PhantomNewInternalFieldObject:
+            case PhantomNewDecimal:
             case PhantomNewPromise:
             case PhantomCreateActivation:
             case PhantomDirectArguments:
