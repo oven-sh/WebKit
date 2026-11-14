@@ -100,7 +100,7 @@ void GenericArgumentsImpl<Type>::getOwnPropertyNames(JSObject* object, JSGlobalO
     VM& vm = globalObject->vm();
     Type* thisObject = uncheckedDowncast<Type>(object);
 
-    if (array.includeStringProperties()) {
+    if (array.includeIndexedProperties()) {
         for (unsigned i = 0; i < thisObject->internalLength(); ++i) {
             if (!thisObject->isMappedArgument(i))
                 continue;

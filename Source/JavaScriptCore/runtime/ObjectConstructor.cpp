@@ -1474,6 +1474,10 @@ NODELETE static CachedPropertyNamesKind inferCachedPropertyNamesKind(PropertyNam
     case PropertyNameMode::StringsAndSymbols:
         ASSERT(dontEnumPropertiesMode == DontEnumPropertiesMode::Include);
         return CachedPropertyNamesKind::StringsAndSymbols;
+    case PropertyNameMode::NonIndexStrings:
+    case PropertyNameMode::NonIndexStringsAndSymbols:
+        // The keys a Structure caches have a kind, and no kind is without the index keys.
+        break;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -1606,6 +1610,12 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
         }
         break;
     }
+
+    case PropertyNameMode::NonIndexStrings:
+    case PropertyNameMode::NonIndexStringsAndSymbols:
+        // inferCachedPropertyNamesKind() did not return for these.
+        ASSERT_NOT_REACHED();
+        break;
     }
 
     return keys;
