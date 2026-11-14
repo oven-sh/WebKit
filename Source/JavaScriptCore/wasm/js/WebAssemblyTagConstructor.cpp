@@ -83,7 +83,8 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyTag, (JSGlobalObject* globalObjec
             return;
         }
 
-        parameters.append(type);
+        if (!parameters.tryAppend(type)) [[unlikely]]
+            throwOutOfMemoryError(globalObject, scope);
     });
     RETURN_IF_EXCEPTION(scope, { });
 
