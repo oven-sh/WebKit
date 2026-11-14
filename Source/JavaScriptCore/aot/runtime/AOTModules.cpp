@@ -4342,6 +4342,8 @@ static JSC_DECLARE_HOST_FUNCTION(didFulfillImportUnderMock);
 static JSC_DECLARE_HOST_FUNCTION(didRejectImportUnderMock);
 static JSC_DECLARE_HOST_FUNCTION(settleCallsBehindEarlierCall);
 static JSC_DECLARE_HOST_FUNCTION(settleCallBehindOwnLoad);
+static JSC_DECLARE_HOST_FUNCTION(fulfillRefetchingImport);
+static JSC_DECLARE_HOST_FUNCTION(rejectRefetchingImport);
 static constexpr unsigned firstCallInLine = 2;
 static JSC_DECLARE_HOST_FUNCTION(importByKeyBehindFactories);
 
@@ -5195,7 +5197,7 @@ void Modules::fulfillFirstQueuedFetch()
         return;
     }
     Vector<QueuedFetch, 2> callsMadeWhileLoaderTookNoStep;
-    while (!m_queuedFetches.isEmpty() && !m_queuedFetches.first().requested && m_queuedFetches.first().loaderStepsAtCall == text.loaderStepsAtCall)
+    while (!m_queuedFetches.isEmpty() && !m_queuedFetches.first().requested && m_queuedFetches.first().loaderStepsAtCall == text.loaderStepsAtCall && !runsAgainAfterRefetch(fileOf(m_queuedFetches.first().module)))
         callsMadeWhileLoaderTookNoStep.append(m_queuedFetches.takeFirst());
     SetForScope loaderStepsAtCall(m_resumingCallLoaderSteps, text.loaderStepsAtCall);
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -5207,6 +5209,7 @@ void Modules::fulfillFirstQueuedFetch()
         SetForScope currentImportCallerModule(m_currentImportCallerModule, call.importCallerModule);
         SetForScope currentImportRequestedModule(m_currentImportRequestedModule, call.module);
         SetForScope currentImportSequenceNumber(m_currentImportSequenceNumber, call.importSequenceNumber);
+        didRefetchFile(fileOf(call.module));
         startImportWhoseTextHasCome(call.promise.get(), call.module, call.referrerAsyncOrder);
     };
     start(text);
@@ -5523,10 +5526,17 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         }
         LoadInFlight* earlierLoad = isCalledByProgram && isFile && !m_innermostEagerLoad && m_queuedFetches.isEmpty() ? loadToSettleFirst(module) : nullptr;
         bool isFetchedByCall = isCalledByProgram && text == ImportSourceState::MayArriveLater && isNotLoaded(module) && isTestRun() && !loader()->registryEntry(moduleKey(module));
-        JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder, isCalledByProgram ? nullptr : promiseOfCaller);
+        std::optional<ModuleID> refetchedFile = isRefetchedByImport(module) ? std::optional(fileOf(module)) : std::nullopt;
+        JSPromise* loaded = askLoaderForImport(module, referrerAsyncOrder, isCalledByProgram || refetchedFile ? nullptr : promiseOfCaller);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
         if (ModuleRecord* record = isFetchedByCall ? recordIfExists(module) : nullptr)
             record->setMomentFetched(vm.aotState().momentOfLoads);
+        if (refetchedFile && !earlierLoad) [[unlikely]] {
+            JSPromise* promise = promiseForCaller();
+            settleRefetchingImport(promise, loaded, *refetchedFile);
+            RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+            return promise;
+        }
         if (!isCalledByProgram)
             return loaded;
         if (earlierLoad) [[unlikely]] {
@@ -5537,7 +5547,7 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
                 RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
                 earlierLoad->callsThatSettleBehind.set(vm, line);
             }
-            settleInLine(line, promise, loaded);
+            settleInLine(line, promise, loaded, refetchedFile);
             RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
             return promise;
         }
@@ -5812,7 +5822,7 @@ JSArray* Modules::createLineBehindCall(JSPromise* earlierCall)
     return line;
 }
 
-void Modules::settleInLine(JSArray* line, JSPromise* promise, JSPromise* loaded)
+void Modules::settleInLine(JSArray* line, JSPromise* promise, JSPromise* loaded, std::optional<ModuleID> refetchedFile)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -5822,12 +5832,49 @@ void Modules::settleInLine(JSArray* line, JSPromise* promise, JSPromise* loaded)
     parts.append(loaded);
     parts.append(jsBoolean(false));
     parts.append(line);
+    parts.append(refetchedFile ? jsNumber(refetchedFile->index()) : jsUndefined());
     JSArray* call = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), parts);
     RETURN_IF_EXCEPTION(scope, void());
     line->push(realm, call);
     RETURN_IF_EXCEPTION(scope, void());
     JSFunction* behindOwnLoad = JSFunction::create(vm, realm, 2, String(), settleCallBehindOwnLoad, ImplementationVisibility::Private);
     loaded->performPromiseThenWithContext(vm, realm, behindOwnLoad, behindOwnLoad, jsUndefined(), call);
+}
+
+void Modules::settleRefetchingImport(JSPromise* promise, JSPromise* loaded, ModuleID file)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer parts;
+    parts.append(promise);
+    parts.append(loaded);
+    parts.append(jsBoolean(false));
+    parts.append(jsUndefined());
+    parts.append(jsNumber(file.index()));
+    JSArray* call = constructArray(realm, static_cast<JSC::ArrayAllocationProfile*>(nullptr), parts);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSFunction* didFulfill = JSFunction::create(vm, realm, 2, String(), fulfillRefetchingImport, ImplementationVisibility::Private);
+    JSFunction* didReject = JSFunction::create(vm, realm, 2, String(), rejectRefetchingImport, ImplementationVisibility::Private);
+    loaded->performPromiseThenWithContext(vm, realm, didFulfill, didReject, jsUndefined(), call);
+}
+
+bool Modules::isRefetchedByImport(ModuleID module)
+{
+    if (!m_loadsInFlight.hasRoot(module) || !isCommonJSModuleOrFacade(module)) [[likely]]
+        return false;
+    ModuleID file = fileOf(module);
+    if (status(module) >= ModuleStatus::Evaluating || data(file).isImportedAsESModule() || m_instance.vm->synchronousModuleQueue() || isEvaluatedByLoader(file) || isFetchedInsideCall(file) || isMocked(file) || activeMock(file))
+        return false;
+    for (LoadInFlight& load : m_loadsInFlight) {
+        if (!m_loadsInFlight.isBeingLoaded(load))
+            continue;
+        if (load.root == module)
+            return true;
+        if (leadsTo(load.root, module))
+            return false;
+    }
+    return false;
 }
 
 Modules::LoadInFlight* Modules::loadToSettleFirst(ModuleID module)
@@ -8464,6 +8511,18 @@ std::optional<ModuleID> compiledModuleForRecord(JSGlobalObject* realm, AbstractM
     return modules->table().moduleBehindFacade(compiled->module()).value_or(compiled->module());
 }
 
+static void rejectRefetchingImportInLaterTask(VM& vm, JSArray* call)
+{
+    auto ticket = vm.deferredWorkTimer->addPendingWork(DeferredWorkTimer::WorkType::ImminentlyScheduled, vm, call, { });
+    vm.deferredWorkTimer->scheduleWorkSoonIfActive(ticket, [](DeferredWorkTimer::Ticket& ticket) {
+        JSArray* call = asArray(ticket.target());
+        auto* promise = uncheckedDowncast<JSPromise>(call->getIndexQuickly(0));
+        if (Modules* modules = modulesOf(promise->realm()))
+            modules->didRefetchFile(ModuleID(call->getIndexQuickly(4).asUInt32()));
+        promise->reject(promise->realm()->vm(), uncheckedDowncast<JSPromise>(call->getIndexQuickly(1))->result());
+    });
+}
+
 static void settleCallsInLine(VM& vm, JSArray* line)
 {
     if (!line->getIndexQuickly(0).asBoolean())
@@ -8477,6 +8536,8 @@ static void settleCallsInLine(VM& vm, JSArray* line)
         auto* loaded = uncheckedDowncast<JSPromise>(call->getIndexQuickly(1));
         if (loaded->status() == JSPromise::Status::Fulfilled)
             promise->fulfill(vm, loaded->result());
+        else if (call->getIndexQuickly(4).isUInt32())
+            rejectRefetchingImportInLaterTask(vm, call);
         else
             promise->reject(vm, loaded->result());
     }
@@ -8496,6 +8557,19 @@ JSC_DEFINE_HOST_FUNCTION(settleCallBehindOwnLoad, (JSGlobalObject* realm, CallFr
     JSArray* call = asArray(callFrame->argument(1));
     call->setIndexQuickly(realm->vm(), 2, jsBoolean(true));
     settleCallsInLine(realm->vm(), asArray(call->getIndexQuickly(3)));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(fulfillRefetchingImport, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    JSArray* call = asArray(callFrame->argument(1));
+    uncheckedDowncast<JSPromise>(call->getIndexQuickly(0))->fulfill(realm->vm(), callFrame->argument(0));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(rejectRefetchingImport, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    rejectRefetchingImportInLaterTask(realm->vm(), asArray(callFrame->argument(1)));
     return JSValue::encode(jsUndefined());
 }
 

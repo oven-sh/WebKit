@@ -845,10 +845,38 @@ bool Modules::tryDiscardFailureDuringFetch(ModuleID file)
     ModuleRegistryEntry* entry = facade ? loader()->registryEntry(moduleKey(*facade)) : nullptr;
     if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
         return false;
+    discardFailure(file);
+    return true;
+}
+
+void Modules::discardFailure(ModuleID file)
+{
     discardFailedEvaluation(file);
     recordIfExists(file)->setEvaluationError(*m_instance.vm, JSValue());
     didChangeStatusInRecord(file);
-    return true;
+}
+
+JSValue Modules::errorCachedByLoader(ModuleID file) const
+{
+    std::optional<ModuleID> facade = data(file).kind == ModuleKind::CommonJs ? m_table.facadeOf(file) : std::nullopt;
+    return facade && status(*facade) == ModuleStatus::Failed ? recordIfExists(*facade)->evaluationError() : JSValue();
+}
+
+void Modules::didRefetchFile(ModuleID file)
+{
+    if (!runsAgainAfterRefetch(file)) [[likely]]
+        return;
+    discardFailure(file);
+    noteRequestByLoader(file);
+}
+
+bool Modules::runsAgainAfterRefetch(ModuleID file)
+{
+    if (status(file) != ModuleStatus::Failed || data(file).isImportedAsESModule() || !errorCachedByLoader(file)) [[likely]]
+        return false;
+    if (!data(file).runsAgainAfterThrow() && !mayBeEvicted(file) && !mayBeMocked(file))
+        return false;
+    return !isEvicted(file) && !isMocked(file) && !activeMock(file);
 }
 
 bool Modules::takeThrowAfterFetch(ModuleID moduleOrFacade)
@@ -926,11 +954,12 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         }
         return;
     }
+    JSValue cachedByLoader = errorCachedByLoader(module);
     if (data(module).cachesEvaluationError())
-        setFailed(module, error);
+        setFailed(module, cachedByLoader ? cachedByLoader : error);
     else
         setStatus(module, ModuleStatus::Evaluated);
-    if (isCommonJSModuleOrFacade(module) && wasImportedDuringEvaluation(m_table.moduleBehindFacade(module).value_or(module)))
+    if (!cachedByLoader && isCommonJSModuleOrFacade(module) && wasImportedDuringEvaluation(m_table.moduleBehindFacade(module).value_or(module)))
         dropErrorOfFile(module);
 }
 

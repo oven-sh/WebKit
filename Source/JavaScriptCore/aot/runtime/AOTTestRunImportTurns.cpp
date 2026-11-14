@@ -381,6 +381,7 @@ void Modules::makeCallAgain(BatchedFetch& text)
         return;
     }
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
+    didRefetchFile(text.file);
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, ImportSourceState::Arrived, promise);
     bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
