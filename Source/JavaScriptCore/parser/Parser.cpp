@@ -564,6 +564,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseGenerato
 
         SyntaxChecker generatorFunctionContext(const_cast<VM&>(m_vm), m_lexer.get());
         failIfFalse(parseSourceElements(generatorFunctionContext, mode), "Cannot parse the body of a generator");
+        captureWrapperParametersRedeclaredInBody(generatorBodyScope.scope());
         popScope(generatorBodyScope, TreeBuilder::NeedsFreeVariableInfo);
     }
     info.body = context.createFunctionMetadata(startLocation, tokenLocation(), functionStart, functionNameStart, parametersStart, implementationVisibility(), lexicallyScopedFeatures(), ConstructorKind::None, m_superBinding, info.parameterCount, SourceParseMode::GeneratorBodyMode, false);
@@ -618,6 +619,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseAsyncFun
         // When body doesn't use await, we'll inline it directly in the wrapper.
         // In this case, there's no body function, so we don't need to track closed variables
         // (which would unnecessarily mark parameters as captured).
+        if (bodyUsesAwait)
+            captureWrapperParametersRedeclaredInBody(asyncFunctionBodyScope.scope());
         popScope(asyncFunctionBodyScope, bodyUsesAwait ? TreeBuilder::NeedsFreeVariableInfo : false);
     }
 
@@ -704,6 +707,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseAsyncGen
             else
                 failIfFalse(parseSourceElements(syntaxChecker, mode), "Cannot parse the body of async function");
         }
+        captureWrapperParametersRedeclaredInBody(asyncFunctionBodyScope.scope());
         popScope(asyncFunctionBodyScope, TreeBuilder::NeedsFreeVariableInfo);
     }
     info.body = context.createFunctionMetadata(startLocation, tokenLocation(), functionStart, functionNameStart, parametersStart, implementationVisibility(), lexicallyScopedFeatures(), ConstructorKind::None, m_superBinding, info.parameterCount, parseMode, isArrowFunctionBodyExpression);

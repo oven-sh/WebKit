@@ -609,6 +609,8 @@ public:
     {
         return m_declaredParameters.contains(ident) || hasDeclaredVariable(ident);
     }
+
+    bool isDeclaredParameter(UniquedStringImpl* ident) const { return m_declaredParameters.contains(ident); }
     
     void preventAllVariableDeclarations()
     {
@@ -1438,6 +1440,23 @@ private:
     ALWAYS_INLINE std::tuple<VariableEnvironment, DeclarationStacks::FunctionStack> popScope(Scope* scope, bool shouldTrackClosedVariables)
     {
         return popScopeInternal(scope, shouldTrackClosedVariables);
+    }
+
+    // A generator or async function is a wrapper function, which takes the parameters, and a body function, which
+    // runs later. The body declares no variable for a `var` that has the name of a wrapper parameter: it is that
+    // parameter (see the wrapper parameter names in BytecodeGenerator), so the body reads and writes it through the
+    // scope chain. Such a use is not a free variable of the body scope, which declares the name itself, so the
+    // wrapper scope does not see it. Record the parameter as captured in the wrapper scope here, before the body
+    // scope is popped. A function declaration of that name gives the body a local of its own.
+    void captureWrapperParametersRedeclaredInBody(Scope* bodyScope)
+    {
+        Scope* wrapperScope = bodyScope->containingScope();
+        for (auto& entry : bodyScope->declaredVariables()) {
+            if (!entry.value.isVar() || entry.value.isFunction())
+                continue;
+            if (wrapperScope->isDeclaredParameter(entry.key.get()))
+                wrapperScope->addClosedVariableCandidateUnconditionally(entry.key.get());
+        }
     }
 
     // If hasPrecomputedFreeVariables is true, precomputedFreeVariables contains nestedScope's
