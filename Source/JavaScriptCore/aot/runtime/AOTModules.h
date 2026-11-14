@@ -668,6 +668,7 @@ public:
     void noteAskUnderMockInPlace(ModuleID fileOrModule);
     void noteRequireOfMockLaidInPreload(ModuleID moduleOrFacade);
     bool wasRequiredUnderPreloadMock(ModuleID file);
+    bool wasImportedUnderPreloadMock(ModuleID file);
     LoadedBy activeMockReloadedBy(ModuleID fileOrModule);
     bool wasActiveMockEntryRemoved(ModuleID fileOrModule) { return activeMock(fileOrModule) && ensureLoaded(moduleWithExportsOf(fileOrModule)).nextRequestReloadsActiveMock; }
     void willRunBodyOfRecord(ModuleID, ModuleRecord*);
@@ -1448,6 +1449,7 @@ public:
     bool delegatesToHost(ModuleID);
     bool delegatesWithoutPlugins(ModuleID);
     bool isRequiredModulePatchPending(ModuleID);
+    std::optional<JSPromise*> importOriginalUnderPatch(ModuleID, ModuleID referrer, JSValue options);
     bool isPatchPending(ModuleID file) const;
     bool isEvaluatedUnderPendingPatch(ModuleID);
     void tellIfFactoryIsRunning(ModuleID requested, LoadKind);
@@ -1643,6 +1645,9 @@ public:
     void answerFirstRequireBehindMock(ModuleID file);
     void noteLoadBehindMock(ModuleID moduleOrFacade, bool isRequired);
     bool wasRequiredUnderActiveMock(ModuleID file) const;
+    bool wasImportedUnderActiveMock(ModuleID file) { return ensureLoaded(moduleWithExportsOf(file)).wasImportedUnderActiveMock; }
+    ActiveMockUse activeMockUse(ModuleID) const;
+    void keepActiveMockUntilPatch(ModuleID, ActiveMockUse);
     bool isRunningFilesOf(ModuleID root) const
     {
         for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
@@ -3233,6 +3238,7 @@ private:
         bool importsWrapWhatRequireMapHolds { false };
         bool wasStoredByImportedFile { false };
         bool wasStoredDuringImport { false };
+        ActiveMockUse activeMockUse { ActiveMockUse::None };
     };
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;
     BitVector m_unseenMocks;

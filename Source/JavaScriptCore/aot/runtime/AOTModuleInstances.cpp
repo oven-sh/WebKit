@@ -193,7 +193,7 @@ ModuleNamespace* Modules::mockNamespaceForLoad(ModuleID target)
     ModuleID file = m_table.moduleBehindFacade(target).value_or(target);
     ModuleID module = moduleWithExportsOf(file);
     LoadedModule& held = ensureLoaded(file);
-    bool isPending = isMockPending(file);
+    bool isPending = isMockPending(file) && !(activeMock(file) && isMockLingering(file));
     JSObject* standing = isPending ? nullptr : activeMock(file);
     Reference<JSObject*>& stored = isPending ? held.pendingMockWord : held.mockWord;
     if (JSObject* word = stored)

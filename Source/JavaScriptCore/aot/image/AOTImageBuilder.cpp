@@ -857,7 +857,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     const CodeTemplates& templates = *createdTemplates;
     times.didFinish("create code templates"_s);
 
-    TableInputs tableInputs { program, inputs.facts, inputs.plan, functions, inputs.bodyFacts, context.options(), &context, inputs.functionSources.get() };
+    TableInputs tableInputs { program, inputs.facts, inputs.plan, functions, inputs.bodyFacts, context.options(), &context };
     result.numbers = makeUniqueWithoutFastMallocCheck<ImageNumbers>();
     ImageNumbers& numbers = *result.numbers;
 

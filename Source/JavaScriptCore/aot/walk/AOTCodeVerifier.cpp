@@ -2113,7 +2113,7 @@ void CodeVerifier::verifyTestsPassed()
             auto isSamePosition = [&](ValueID one, ValueID other) {
                 one = valueBeforeConversions(underlyingCell(one));
                 other = valueBeforeConversions(underlyingCell(other));
-                return one == other || (m_code.at(one).opcode == Opcode::Integer && m_code.at(other).opcode == Opcode::Integer && m_code.at(one).integer() == m_code.at(other).integer());
+                return one == other || isSameConstantNumber(m_code, one, other);
             };
             if (!areSameCells(grounds.view, access.operand(0)) || !isSamePosition(grounds.position, access.operand(1)))
                 return fail(block, id, "the grounds of an access speak of another holder or of another position"_s, grounds.view);

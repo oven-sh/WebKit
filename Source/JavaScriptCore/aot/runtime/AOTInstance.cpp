@@ -41,6 +41,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPoisonedCell.h"
 #include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
@@ -517,8 +518,6 @@ Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
-    if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setDecompressSource(host->decompressSource);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -1153,6 +1152,7 @@ void VMState::releaseImage(VM& vm)
     runtimeTable = nullptr;
     identifiers = nullptr;
     countedFiles = { };
+    poisonedCellSites = nullptr;
     caches = nullptr;
     pages = nullptr;
 

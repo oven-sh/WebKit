@@ -454,120 +454,42 @@ static size_t distinctSourcesSize(ProgramWithSourcesSize size, String (*sourceAt
     return result;
 }
 
-static size_t maxPackedSize(size_t sourceSize)
-{
-    return sourceSize;
-}
-
-static size_t packSevenBitBytes(std::span<uint8_t> packed, std::span<const uint8_t> text)
-{
-    uint32_t held = 0;
-    unsigned numberOfBitsHeld = 0;
-    size_t written = 0;
-    for (uint8_t byte : text) {
-        if (byte >> 7)
-            return 0;
-        held |= static_cast<uint32_t>(byte) << numberOfBitsHeld;
-        for (numberOfBitsHeld += 7; numberOfBitsHeld >= 8; numberOfBitsHeld -= 8, held >>= 8)
-            packed[written++] = static_cast<uint8_t>(held);
-    }
-    if (numberOfBitsHeld)
-        packed[written++] = static_cast<uint8_t>(held);
-    return written;
-}
-
-static void unpackSevenBitBytes(std::span<uint8_t> text, std::span<const uint8_t> packed)
-{
-    uint32_t held = 0;
-    unsigned numberOfBitsHeld = 0;
-    size_t read = 0;
-    for (uint8_t& byte : text) {
-        if (numberOfBitsHeld < 7) {
-            held |= static_cast<uint32_t>(packed[read++]) << numberOfBitsHeld;
-            numberOfBitsHeld += 8;
-        }
-        byte = held & 127;
-        held >>= 7;
-        numberOfBitsHeld -= 7;
-    }
-    AOT_TEST_CHECK(read == packed.size());
-}
-
-static Vector<uint8_t> unpackSourceBlocks(const uint8_t* packed, std::span<const uint32_t> ends, uint32_t sourceSize)
-{
-    AOT_TEST_CHECK(ends.size() == (sourceSize + sourceBlockSize - 1) / sourceBlockSize);
-    Vector<uint8_t> text;
-    text.grow(sourceSize);
-    for (uint32_t block = 0; block < ends.size(); ++block) {
-        uint32_t first = block ? ends[block - 1] : 0;
-        size_t offset = static_cast<size_t>(block) * sourceBlockSize;
-        unpackSevenBitBytes(text.mutableSpan().subspan(offset, std::min<size_t>(sourceBlockSize, sourceSize - offset)), { packed + first, ends[block] - first });
-    }
-    return text;
-}
-
-static Vector<uint8_t> unpackFunctionSources(const ProgramTables& tables, const FunctionSources& sources, uint32_t sourceSize)
-{
-    if (!sources.numberOfBlocks)
-        return Vector<uint8_t>(std::span { tables.at<uint8_t>(sources.sourceOffset), sourceSize });
-    AOT_TEST_CHECK(sources.sourceSize == sourceSize);
-    return unpackSourceBlocks(tables.at<uint8_t>(sources.sourceOffset), { tables.at<uint32_t>(sources.blockEndsOffset), sources.numberOfBlocks }, sourceSize);
-}
-
-static Vector<uint8_t> unpackQuotedSourceText(const ProgramTables& tables)
-{
-    std::span<const uint32_t> blocks = tables.quotedSourceBlocks();
-    if (blocks.empty())
-        return Vector<uint8_t>(tables.quotedSourceText());
-    AOT_TEST_CHECK(blocks.back() == tables.quotedSourceText().size());
-    return unpackSourceBlocks(tables.quotedSourceText().data(), blocks.subspan(1), blocks[0]);
-}
-
 static void checkSourcesRoundTrip(const TestImage& image, ProgramWithSourcesSize size)
 {
     const ProgramTables& tables = image.image->programTables();
     uint32_t groupsInModule = (size.functionsInModule + quotedSourceGroupSize - 1) / quotedSourceGroupSize;
     AOT_TEST_CHECK(tables.quotedSourceGroups().size() == size.numberOfModules * groupsInModule);
-    Vector<uint8_t> quotedSourceText = unpackQuotedSourceText(tables);
+    std::span<const uint8_t> quotedSourceText = tables.quotedSourceText();
     AOT_TEST_CHECK(quotedSourceText.size() == distinctSourcesSize(size, quotedSourceAt));
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
         uint32_t module = size.moduleOf(function);
-        AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), module, lineColumnOfPlace(size.placeOf(function))) == quotedSourceAt(module, size.placeOf(function)));
+        AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText, module, lineColumnOfPlace(size.placeOf(function))) == quotedSourceAt(module, size.placeOf(function)));
     }
-    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), 0, lineColumnOfPlace(size.functionsInModule)).isNull());
-    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText.span(), size.numberOfModules, lineColumnOfPlace(0)).isNull());
+    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText, 0, lineColumnOfPlace(size.functionsInModule)).isNull());
+    AOT_TEST_CHECK(readQuotedSource(tables, quotedSourceText, size.numberOfModules, lineColumnOfPlace(0)).isNull());
 
     AOT_TEST_CHECK(tables.functionSources().size() == 1);
     const FunctionSources& sources = tables.functionSources()[0];
     AOT_TEST_CHECK(sources.numberOfEntries == size.numberOfFunctions());
     std::span entries { tables.at<FunctionSourceEntry>(sources.entriesOffset), sources.numberOfEntries };
-    Vector<uint8_t> unpackedFunctionSources = unpackFunctionSources(tables, sources, static_cast<uint32_t>(distinctSourcesSize(size, functionSourceAt)));
+    AOT_TEST_CHECK(sources.sourceSize == distinctSourcesSize(size, functionSourceAt));
+    std::span functionSources { tables.at<Latin1Character>(sources.sourceOffset), sources.sourceSize };
     uint32_t endOfText = 0;
     for (uint32_t function = 1; function <= size.numberOfFunctions(); ++function) {
         const FunctionSourceEntry& entry = entries[function - 1];
         AOT_TEST_CHECK(tables.sourceFunctionOf(entry.function) == function);
-        String text(byteCast<Latin1Character>(unpackedFunctionSources.span().subspan(entry.start, entry.end - entry.start)));
+        String text(functionSources.subspan(entry.start, entry.end - entry.start));
         AOT_TEST_CHECK(text == functionSourceAt(size.moduleOf(function), size.placeOf(function)));
         endOfText = std::max<uint32_t>(endOfText, entry.end);
     }
-    AOT_TEST_CHECK(endOfText == distinctSourcesSize(size, functionSourceAt));
+    AOT_TEST_CHECK(endOfText == sources.sourceSize);
 }
 
 static void testSourcesRoundTrip()
 {
-    TestBuild build(textOfProgramWithSources(fewSources), { });
-    checkSourcesRoundTrip(builtImage(build, codeOfProgramWithSources(build, fewSources)), fewSources);
-}
-
-static void testCompressedSourcesRoundTrip()
-{
     for (ProgramWithSourcesSize size : { fewSources, manySources }) {
         TestBuild build(textOfProgramWithSources(size), { });
-        build.context().setFunctionSources({ .maxCompressedSize = maxPackedSize, .compress = packSevenBitBytes });
-        TestImage image = builtImage(build, codeOfProgramWithSources(build, size));
-        AOT_TEST_CHECK(image.image->programTables().functionSources()[0].numberOfBlocks >= (size.numberOfFunctions() == manySources.numberOfFunctions() ? 2u : 1u));
-        AOT_TEST_CHECK(image.image->programTables().quotedSourceBlocks().size() >= (size.numberOfFunctions() == manySources.numberOfFunctions() ? 3u : 2u));
-        checkSourcesRoundTrip(image, size);
+        checkSourcesRoundTrip(builtImage(build, codeOfProgramWithSources(build, size)), size);
     }
 }
 
@@ -580,8 +502,6 @@ static HostFunctionSources hostOf(SourcesAtHost& sources)
             const Vector<uint8_t>& source = static_cast<SourcesAtHost*>(owner)->modules[module];
             memcpy(destination, source.span().data(), source.size());
         },
-        .maxCompressedSize = maxPackedSize,
-        .compress = packSevenBitBytes,
         .view = [](void* owner, uint32_t module) -> const uint8_t* { return module % 2 ? static_cast<SourcesAtHost*>(owner)->modules[module].span().data() : nullptr; },
         .release = [](void* owner) {
             static_cast<SourcesAtHost*>(owner)->modules = { };
@@ -590,7 +510,7 @@ static HostFunctionSources hostOf(SourcesAtHost& sources)
     };
 }
 
-static void testPreparedSourcesRoundTrip()
+static void testHostSourcesRoundTrip()
 {
     for (ProgramWithSourcesSize size : { fewSources, manySources }) {
         TestBuild build(textOfProgramWithSources(size), { });
@@ -601,14 +521,7 @@ static void testPreparedSourcesRoundTrip()
                 module.functionSource = { };
         }
         build.context().setFunctionSources(hostOf(sources));
-        AOT_TEST_CHECK(!prepareFunctionSources(build.program(), build.context(), 0));
-        build.program().admitsReplacedBuiltins = true;
-        AOT_TEST_CHECK(!prepareFunctionSources(build.program(), build.context()) && !sources.releases);
-        std::unique_ptr<PreparedFunctionSources> prepared = prepareFunctionSources(build.program(), build.context(), 0);
-        AOT_TEST_CHECK(prepared && sources.releases == 1);
-        build.program().admitsReplacedBuiltins = false;
-        TestImage image = builtImage(build, codeOfProgramWithSources(build, size), WTF::move(prepared));
-        AOT_TEST_CHECK(image.image->programTables().functionSources()[0].numberOfBlocks);
+        TestImage image = builtImage(build, codeOfProgramWithSources(build, size));
         AOT_TEST_CHECK(sources.releases == 1);
         checkSourcesRoundTrip(image, size);
     }
@@ -987,8 +900,7 @@ std::span<const NativeTest> determinismTests()
         { "image/determinism/mentions-in-two-arrival-orders"_s, testMentionsInTwoArrivalOrders },
         { "image/determinism/types-born-in-two-orders"_s, testTypesBornInTwoOrders },
         { "image/determinism/sources-round-trip"_s, testSourcesRoundTrip },
-        { "image/determinism/compressed-sources-round-trip"_s, testCompressedSourcesRoundTrip },
-        { "image/determinism/prepared-sources-round-trip"_s, testPreparedSourcesRoundTrip },
+        { "image/determinism/host-sources-round-trip"_s, testHostSourcesRoundTrip },
         { "image/determinism/lists-longer-than-a-range"_s, testListsLongerThanRange },
         { "image/determinism/records-of-many-layouts"_s, testRecordsOfManyLayouts },
         { "image/determinism/records-of-many-layouts-of-a-validating-build"_s, testRecordsOfManyLayoutsOfValidatingBuild },

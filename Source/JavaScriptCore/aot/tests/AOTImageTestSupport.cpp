@@ -170,7 +170,7 @@ Vector<uint8_t> TestBuild::encodeTables()
     return encodeProgramTables(tableInputs, numbers, bytesOfParts, context());
 }
 
-TestImage TestBuild::build(Vector<CompiledCode>&& code, std::unique_ptr<PreparedFunctionSources> functionSources)
+TestImage TestBuild::build(Vector<CompiledCode>&& code)
 {
     LinkedFunctions functions = createLinkedFunctions(WTF::move(code), context());
     BodyFactsForTables bodyFacts = collectBodyFactsForTables(program(), plan(), functions, context());
@@ -183,7 +183,6 @@ TestImage TestBuild::build(Vector<CompiledCode>&& code, std::unique_ptr<Prepared
             .functions = WTF::move(functions),
             .bodyFacts = WTF::move(bodyFacts),
             .entriesUsedByFunctions = { },
-            .functionSources = WTF::move(functionSources),
         }, context()),
         { },
         nullptr,

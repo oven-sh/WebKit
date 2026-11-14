@@ -206,12 +206,9 @@ struct FunctionSources {
     uint32_t numberOfEntries;
     uint32_t entriesOffset;
     uint32_t sourceOffset;
-    uint32_t numberOfBlocks;
-    uint32_t blockEndsOffset;
     uint32_t sourceSize;
 };
-static_assert(sizeof(FunctionSources) == 24 && isImageRecord<FunctionSources>);
-static constexpr uint32_t sourceBlockSize = 64 * 1024;
+static_assert(sizeof(FunctionSources) == 16 && isImageRecord<FunctionSources>);
 
 struct FunctionSourceEntry {
     Number24 function;
@@ -435,7 +432,6 @@ bool forEachNamedCapture(std::span<const uint8_t> bytes, const auto& visit)
     v(quotedSourceGroups, QuotedSourceGroupData) \
     v(quotedSourceRows, uint8_t) \
     v(quotedSourceText, uint8_t) \
-    v(quotedSourceBlocks, uint32_t) \
     v(constructors, ConstructorData) \
     v(constructEntrypoints, ConstructEntrypointData)
 
