@@ -182,6 +182,7 @@ macro doVMEntry(makeCall)
     const protoCallFrame = a2
 
     vmEntryRecord(cfr, sp)
+    initializeVMEntryRecordTail(sp, t4)
 
     checkStackPointerAlignment(t4, 0xbad0dc01)
 
