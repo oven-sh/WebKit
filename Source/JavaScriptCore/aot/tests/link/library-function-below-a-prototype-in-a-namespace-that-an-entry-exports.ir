@@ -1,0 +1,30 @@
+# What an entry hands out is let go, also where code outside the image is refused, and so is what lies below it.
+# Link follows a built-in into a variable. A build that refuses code from outside lets no export of an entry go, so a prototype that nobody reads in the program left its functions out.
+# lib.js: export const held = Array.prototype;   main.js: export * as lib from "./lib.js";
+# OPTIONS: exclude=CodeOutsideImage
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+variable g0 name="held" module=m2 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}] exports=[{name="lib" kind=Namespace module=m2}]
+module m1 path="/$bun/js/engine/Library.ts" displayPath="/$bun/js/engine/Library.ts" flags=[IsLibrary]
+module m2 path="lib.js" displayPath="lib.js" body=f2 exports=[{name="held" variable=g0}]
+entry module=m0
+runtimefunction id=ArrayPrototypeMap function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototype
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}

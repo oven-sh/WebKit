@@ -1,0 +1,24 @@
+# What an entry hands out is let go, also where code outside the image is refused, and so is what lies below it.
+# Link follows a built-in into a variable. A build that refuses code from outside lets no export of an entry go, so a prototype that nobody reads in the program left its functions out.
+# export const held = Reflect;
+# OPTIONS: exclude=CodeOutsideImage
+# LIBRARY: own
+# RUN: link functions mechanisms=all
+# CHECK-NOT: function f1 unreached
+
+variable g0 name="held" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 exports=[{name="held" variable=g0}]
+module m1 path="/$bun/js/engine/Library.ts" displayPath="/$bun/js/engine/Library.ts" flags=[IsLibrary]
+entry module=m0
+runtimefunction id=ReflectObjectGet function=f1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Reflect
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f1 name="get" module=m1 kind=Method role=Library flags=[HasExplicitName] length=1 enclosingRuntimeFunction=ReflectObjectGet thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}
