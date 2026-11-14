@@ -133,6 +133,14 @@ auto BytecodeBasicBlock<OpcodeTraits>::computeImpl(Block* codeBlock, const Instr
     }
     // After this point, we never change basicBlocks.
 
+    // Blocks are sorted by leaderOffset (they were created in program order) so we can use binary
+    // search to find successor blocks instead of walking the whole list, which would make the linking
+    // loop below quadratic in the number of blocks. BytecodeGraph::findBasicBlockWithLeaderOffset
+    // already relies on this ordering.
+    auto findBlockWithLeaderOffset = [&] (typename InstructionStreamType::Offset leaderOffset) -> BytecodeBasicBlock<OpcodeTraits>* {
+        return tryBinarySearch<BytecodeBasicBlock<OpcodeTraits>, unsigned>(basicBlocks, basicBlocks.size(), leaderOffset, [] (BytecodeBasicBlock<OpcodeTraits>* basicBlock) { return basicBlock->leaderOffset(); });
+    };
+
     // Link basic blocks together.
     for (unsigned i = 0; i < basicBlocks.size(); i++) {
         auto& block = basicBlocks[i];
@@ -166,12 +174,8 @@ auto BytecodeBasicBlock<OpcodeTraits>::computeImpl(Block* codeBlock, const Instr
                     linkBlocks(block, basicBlocks.last());
                     break;
                 }
-                for (auto& otherBlock : basicBlocks) {
-                    if (handler->target == otherBlock.leaderOffset()) {
-                        linkBlocks(block, otherBlock);
-                        break;
-                    }
-                }
+                if (auto* otherBlock = findBlockWithLeaderOffset(handler->target))
+                    linkBlocks(block, *otherBlock);
                 break;
             }
 
@@ -181,21 +185,12 @@ auto BytecodeBasicBlock<OpcodeTraits>::computeImpl(Block* codeBlock, const Instr
                 Vector<typename InstructionStreamType::Offset, 1> bytecodeOffsetsJumpedTo;
                 findJumpTargetsForInstruction(codeBlock, instruction, bytecodeOffsetsJumpedTo);
 
-                size_t numberOfJumpTargets = bytecodeOffsetsJumpedTo.size();
-                ASSERT(numberOfJumpTargets);
-                for (auto& otherBlock : basicBlocks) {
-                    if (bytecodeOffsetsJumpedTo.contains(otherBlock.leaderOffset())) {
-                        linkBlocks(block, otherBlock);
-                        --numberOfJumpTargets;
-                        if (!numberOfJumpTargets)
-                            break;
-                    }
+                ASSERT(bytecodeOffsetsJumpedTo.size());
+                for (auto offset : bytecodeOffsetsJumpedTo) {
+                    // addSuccessor() dedupes, so duplicate targets in switch-type opcodes are harmless.
+                    if (auto* otherBlock = findBlockWithLeaderOffset(offset))
+                        linkBlocks(block, *otherBlock);
                 }
-                // numberOfJumpTargets may not be 0 here if there are multiple jumps targeting the same
-                // basic blocks (e.g. in a switch type opcode). Since we only decrement numberOfJumpTargets
-                // once per basic block, the duplicates are not accounted for. For our purpose here,
-                // that doesn't matter because we only need to link to the target block once regardless
-                // of how many ways this block can jump there.
 
                 if (isUnconditionalBranch(opcodeID))
                     fallsThrough = false;
