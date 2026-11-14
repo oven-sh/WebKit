@@ -64,6 +64,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
 #endif // ENABLE(WEBASSEMBLY)
 #if USE(BUN_JSC_ADDITIONS)
     , m_stackStringIsFramesOnly(false)
+    , m_positionPropertiesOwnedByUser(0)
 #endif
 {
 }
@@ -611,6 +612,58 @@ JSValue ErrorInstance::stackWithHeader(VM& vm, String&& frames)
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+// The bits of m_positionPropertiesOwnedByUser.
+static constexpr uint8_t lineProperty = 1 << 0;
+static constexpr uint8_t columnProperty = 1 << 1;
+static constexpr uint8_t sourceURLProperty = 1 << 2;
+
+// What the engine gives the line, column and sourceURL that it defines.
+static constexpr unsigned positionPropertyAttributes = static_cast<unsigned>(PropertyAttribute::DontEnum);
+
+static uint8_t positionPropertyFor(VM& vm, PropertyName propertyName)
+{
+    if (propertyName == vm.propertyNames->line)
+        return lineProperty;
+    if (propertyName == vm.propertyNames->column)
+        return columnProperty;
+    if (propertyName == vm.propertyNames->sourceURL)
+        return sourceURLProperty;
+    return 0;
+}
+
+// Writes what the engine has for one of the three names, unless the name is user code's. It is user code's when its bit
+// is set. A store that an inline cache answered does not call put(), so it sets no bit: the property it made has other
+// attributes than the engine's, and that one stays too. The engine's own property is written again, which is how frames
+// installed later give the error their position.
+void ErrorInstance::materializePositionProperty(VM& vm, PropertyName propertyName, uint8_t property, JSValue value)
+{
+    if (m_positionPropertiesOwnedByUser & property)
+        return;
+    // The common case: nobody gave the error the name, and an error of this Structure got it before. The transition that
+    // adds the name says that the error does not have it, and the write follows that transition: one lookup, as before.
+    if (tryPutDirectByExistingTransition(vm, propertyName, value, positionPropertyAttributes))
+        return;
+    unsigned attributes;
+    if (isValidOffset(structure()->get(vm, propertyName, attributes)) && attributes != positionPropertyAttributes)
+        return;
+    putDirect(vm, propertyName, value, positionPropertyAttributes);
+}
+
+// The caller holds an AllowLazyMaterializationOfImmutableProperties. No JavaScript runs.
+void ErrorInstance::materializePositionProperties(VM& vm)
+{
+    materializePositionProperty(vm, vm.propertyNames->line, lineProperty, jsNumber(m_lineColumn.line));
+    materializePositionProperty(vm, vm.propertyNames->column, columnProperty, jsNumber(m_lineColumn.column));
+    if (!m_sourceURL.isEmpty()) {
+        // The field is emptied whether or not the property is written, as before: the host reads it when it formats frames.
+        String sourceURL = WTF::move(m_sourceURL);
+        if (!(m_positionPropertiesOwnedByUser & sourceURLProperty))
+            materializePositionProperty(vm, vm.propertyNames->sourceURL, sourceURLProperty, jsString(vm, WTF::move(sourceURL)));
+    }
+}
+#endif
+
 bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
     bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
@@ -642,10 +695,7 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        materializePositionProperties(vm);
 
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
@@ -662,10 +712,14 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
         {
             // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs inside.
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+#if USE(BUN_JSC_ADDITIONS)
+            materializePositionProperties(vm);
+#else
             putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
             putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
             if (!m_sourceURL.isEmpty())
                 putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+#endif
         }
 
         if (!m_stackPropertyProvidedByCapturedStackTrace) {
@@ -758,6 +812,12 @@ bool ErrorInstance::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalO
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
     // Only materializing can throw; a ThrowScope on the common path would oblige every caller to check.
     if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        // A line, column or sourceURL that user code owns is not the engine's to define: the answer does not need the
+        // frames formatted, and the host's stack hook does not run for it.
+        if (thisObject->m_positionPropertiesOwnedByUser & positionPropertyFor(vm, propertyName))
+            return Base::getOwnPropertySlot(thisObject, globalObject, propertyName, slot);
+#endif
         auto scope = DECLARE_THROW_SCOPE(vm);
         thisObject->materializeErrorInfoIfNeeded(vm);
         RETURN_IF_EXCEPTION(scope, false);
@@ -778,8 +838,20 @@ bool ErrorInstance::defineOwnProperty(JSObject* object, JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(object);
-    thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    RETURN_IF_EXCEPTION(scope, {});
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        thisObject->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, {});
+#if USE(BUN_JSC_ADDITIONS)
+        if (uint8_t property = positionPropertyFor(vm, propertyName)) {
+            // The descriptor is applied to what the engine defined, as before. The result is user code's.
+            bool isDefined = Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (isDefined)
+                thisObject->m_positionPropertiesOwnedByUser |= property;
+            return isDefined;
+        }
+#endif
+    }
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
 }
 
@@ -788,20 +860,93 @@ bool ErrorInstance::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    RETURN_IF_EXCEPTION(scope, {});
-    if (materializedProperties)
-        slot.disableCaching();
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+        if (uint8_t property = positionPropertyFor(vm, propertyName))
+            RELEASE_AND_RETURN(scope, thisObject->putPositionProperty(globalObject, propertyName, property, value, slot));
+#endif
+        bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, {});
+        if (materializedProperties)
+            slot.disableCaching();
+    }
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool ErrorInstance::putPositionProperty(JSGlobalObject* globalObject, PropertyName propertyName, uint8_t property, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A store that only passes through, from an object that inherits from this error, leaves the name the engine's. So does a
+    // store to an error whose properties are immutable, which is refused.
+    bool isStoreOfUserCode = !isThisValueAltered(slot, this) && !structure()->isImmutableProperty(propertyName.uid());
+    // The first store of user code makes the name an ordinary property, as a store to an Error makes one in V8, which defines
+    // no line, column or sourceURL.
+    bool isFirstStore = isStoreOfUserCode && !(m_positionPropertiesOwnedByUser & property);
+    unsigned attributes = 0;
+    // A name that the error does not have yet is marked before materialization, which then leaves it to this store.
+    bool isAbsent = isFirstStore && !isValidOffset(structure()->get(vm, propertyName, attributes));
+    bool wasExtensible = isStructureExtensible();
+    if (isAbsent)
+        m_positionPropertiesOwnedByUser |= property;
+    bool materializedProperties = materializeErrorInfoIfNeeded(vm);
+    RETURN_IF_EXCEPTION(scope, {});
+    PropertyOffset offset = structure()->get(vm, propertyName, attributes);
+    if (isAbsent) {
+        // What the error has under the name now, the host's stack hook stored or defined during this store: it is user
+        // code's as it is, and the store below replaces its value.
+        if (!isValidOffset(offset) && wasExtensible && !isStructureExtensible() && !structure()->isImmutableProperty(propertyName.uid())) {
+            // The stack hook made the error refuse new properties during this store. The value goes where the engine would
+            // have defined the name, as before.
+            putDirect(vm, propertyName, value, positionPropertyAttributes);
+            slot.disableCaching();
+            return true;
+        }
+    } else if (isFirstStore) {
+        // The error had the name before this store: the engine defined it (an earlier lookup, a store of another name, or
+        // the parser). If the stack hook stored, defined or deleted the name during this store, it is user code's as it is.
+        bool isOwnedByStackHook = m_positionPropertiesOwnedByUser & property;
+        m_positionPropertiesOwnedByUser |= property;
+        if (!isOwnedByStackHook && isValidOffset(offset) && attributes == positionPropertyAttributes && isStructureExtensible()) {
+            // The engine's property is removed, and the store below adds the name again behind the properties that the error
+            // has now. A removal shares its Structure transition only for a property without attributes (Structure.cpp looks
+            // the transition up under the attributes of the property and files it under none), so the attributes are cleared
+            // first. An error that takes no more properties keeps the engine's, and the store replaces its value.
+            putDirect(vm, propertyName, getDirect(offset), 0);
+            DeletePropertySlot deleteSlot;
+            JSObject::deleteProperty(this, globalObject, propertyName, deleteSlot);
+            RETURN_IF_EXCEPTION(scope, {});
+            offset = invalidOffset;
+        }
+    }
+    // An inline cache answers a later store by the Structure and does not call this function. That is right only for a store
+    // that replaces a property of user code: a store to the engine's own has to come here to take the name over.
+    if (materializedProperties || !isValidOffset(offset) || (attributes & PropertyAttribute::DontEnum))
+        slot.disableCaching();
+    RELEASE_AND_RETURN(scope, Base::put(this, globalObject, propertyName, value, slot));
+}
+#endif
 
 bool ErrorInstance::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
     VM& vm = globalObject->vm();
     ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
-    bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm, propertyName);
-    if (materializedProperties)
-        slot.disableCaching();
+    if (isErrorInfoProperty(vm, propertyName)) [[unlikely]] {
+        bool isCacheable = true;
+#if USE(BUN_JSC_ADDITIONS)
+        // Marked before materialization: a name that the engine has not defined yet is then not defined at all. An error
+        // whose properties are immutable has its properties from the start, so it keeps the engine's. A cached delete
+        // does not come here.
+        if (uint8_t property = positionPropertyFor(vm, propertyName); property && !thisObject->structure()->isImmutableProperty(propertyName.uid())) {
+            thisObject->m_positionPropertiesOwnedByUser |= property;
+            isCacheable = false;
+        }
+#endif
+        bool materializedProperties = thisObject->materializeErrorInfoIfNeeded(vm);
+        if (materializedProperties || !isCacheable)
+            slot.disableCaching();
+    }
     return Base::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
