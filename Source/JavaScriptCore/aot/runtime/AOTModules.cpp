@@ -1441,64 +1441,162 @@ bool Modules::wasLoadedWithImporter(ModuleID module) const
     return false;
 }
 
+// The walk of tryReplaceExport() is written once, for what is done with the place at its end. This one stores a value there.
+struct Modules::StoreIntoPlace {
+    using Answer = bool;
+    Modules& modules;
+    JSValue value;
+
+    ALWAYS_INLINE bool variable(SlotData variable) const
+    {
+        Instance& instance = modules.m_instance;
+        if (modules.m_moduleBeingPatched) {
+            LoadedModule& mocked = modules.ensureLoaded(*modules.m_moduleBeingPatched);
+            if (!mocked.variablesBeforeMock)
+                mocked.variablesBeforeMock.set(modules, modules.createTableOfExports());
+            Identifier place = Identifier::from(*instance.vm, variable.encoded());
+            JSValue replaced = ProgramStatics::readVariable(instance, variable);
+            if (!storedValue(instance.globalObject, mocked.variablesBeforeMock, place))
+                storeValue(instance.globalObject, mocked.variablesBeforeMock.get(), variable.encoded(), replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
+        }
+        ProgramStatics::writeVariable(instance, variable, value);
+        return true;
+    }
+
+    ALWAYS_INLINE bool field(Environment* instance, SlotData slot) const
+    {
+        if (modules.m_moduleBeingPatched) {
+            LoadedModule& mocked = modules.ensureLoaded(*modules.m_moduleBeingPatched);
+            if (!mocked.variablesBeforeMock)
+                mocked.variablesBeforeMock.set(modules, modules.createTableOfExports());
+            JSValue replaced = modules.readField(instance, slot);
+            mocked.fieldsBeforeMock.add({ instance, slot.encoded() }, replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
+            modules.m_storedReferences.recordAll();
+        }
+        modules.writeField(instance, slot, value);
+        return true;
+    }
+
+    ALWAYS_INLINE bool namespaceHandedOn(ModuleID reexportedModule) const
+    {
+        return modules.tryReplaceNamespaceHandedOn(reexportedModule, value);
+    }
+
+    ALWAYS_INLINE bool addedTable(ModuleID module, UniquedStringImpl* name, JSObject* added) const
+    {
+        VM& vm = *modules.m_instance.vm;
+        JSGlobalObject* realm = modules.m_instance.globalObject;
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Identifier key = Identifier::fromUid(vm, name);
+        added->putDirectMayBeIndex(realm, key, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (JSObject* namespaceObject = modules.namespaceIfCreated(module, ModulePhase::Evaluation)) {
+            uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        return true;
+    }
+
+    // `copy`: a variable of the program that holds a copy of the entry.
+    ALWAYS_INLINE bool capturedTable(ModuleID module, UniquedStringImpl* name, JSObject* captured, std::optional<SlotData> copy) const
+    {
+        VM& vm = *modules.m_instance.vm;
+        JSGlobalObject* realm = modules.m_instance.globalObject;
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Identifier key = Identifier::fromUid(vm, name);
+        LoadedModule& loaded = modules.ensureLoaded(module);
+        if ((modules.m_libraryModulesWithMock.get(module.index()) || modules.m_moduleBeingPatched) && !loaded.exportsWhatMockNamesAlone) {
+            if (!loaded.exportsBeforeMock)
+                loaded.exportsBeforeMock.set(modules, modules.createTableOfExports());
+            JSObject* before = loaded.exportsBeforeMock;
+            JSValue replaced = storedValue(realm, captured, key);
+            if (replaced && !storedValue(realm, before, key)) {
+                before->putDirectMayBeIndex(realm, key, replaced == JSValue(captured) ? JSValue(before) : replaced);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+        }
+        captured->putDirectMayBeIndex(realm, key, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        for (ModulePhase phase : { ModulePhase::Evaluation, ModulePhase::Defer }) {
+            JSObject* namespaceObject = modules.namespaceIfCreated(module, phase);
+            if (!namespaceObject)
+                continue;
+            uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        if (copy && !modules.isLibraryOriginalDisplaced(module))
+            ProgramStatics::writeVariable(modules.m_instance, *copy, value);
+        return true;
+    }
+};
+
+// This one stores nothing and answers the place.
+struct Modules::FindPlace {
+    using Answer = ReplaceablePlace;
+    Modules& modules;
+
+    ALWAYS_INLINE ReplaceablePlace variable(SlotData variable) const { return { ReplaceablePlace::Kind::Variable, false, variable }; }
+    ALWAYS_INLINE ReplaceablePlace field(Environment* instance, SlotData slot) const { return { ReplaceablePlace::Kind::Field, false, slot, instance }; }
+    // Only the mock of a compiled file that is being laid stands in for a namespace that a file hands on.
+    ALWAYS_INLINE ReplaceablePlace namespaceHandedOn(ModuleID reexportedModule) const
+    {
+        if (!modules.m_moduleBeingPatched)
+            return { };
+        return { ReplaceablePlace::Kind::NamespaceHandedOn, false, { }, nullptr, reexportedModule };
+    }
+    ALWAYS_INLINE ReplaceablePlace addedTable(ModuleID module, UniquedStringImpl* name, JSObject* added) const { return { ReplaceablePlace::Kind::AddedTable, false, { }, nullptr, module, name, added }; }
+    ALWAYS_INLINE ReplaceablePlace capturedTable(ModuleID module, UniquedStringImpl* name, JSObject* captured, std::optional<SlotData> copy) const
+    {
+        return { ReplaceablePlace::Kind::CapturedTable, !!copy, copy.value_or(SlotData { }), nullptr, module, name, captured };
+    }
+};
+
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, Environment* instance)
 {
     BitVector seenBehindStars;
-    return tryReplaceExport(module, name, value, seenBehindStars, instance);
+    return walkToPlaceOfExport(module, name, seenBehindStars, instance, StoreIntoPlace { *this, value });
 }
 
-bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars, Environment* instance)
+auto Modules::findPlaceToReplaceExport(ModuleID module, UniquedStringImpl* name, Environment* instance) -> ReplaceablePlace
+{
+    BitVector seenBehindStars;
+    return walkToPlaceOfExport(module, name, seenBehindStars, instance, FindPlace { *this });
+}
+
+template<typename Action>
+typename Action::Answer Modules::walkToPlaceOfExport(ModuleID module, UniquedStringImpl* name, BitVector& seenBehindStars, Environment* instance, const Action& action)
 {
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
         std::optional<unsigned> index = m_table.findExport(module, name);
         if (!index) {
             auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
             if (data(module).hasDynamicStarExport() && !standsForWholeModule(module)) {
-                bool isReplaced = tryReplaceExportBehindStars(module, name, value, seenBehindStars);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (isReplaced)
-                    return true;
+                auto answer = walkToPlaceOfExportBehindStars(module, name, seenBehindStars, action);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (answer)
+                    return answer;
             }
-            RELEASE_AND_RETURN(scope, tryReplaceCapturedExport(module, name, value));
+            RELEASE_AND_RETURN(scope, walkToPlaceOfCapturedExport(module, name, action));
         }
         const ModuleExportData& moduleExport = m_table.exports(module)[*index];
         switch (moduleExport.kind()) {
         case ModuleExportKind::Variable:
             if (!moduleExport.isReplaceable)
-                return false;
+                return { };
             if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
-                return tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value);
-            if (m_moduleBeingPatched) {
-                LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
-                if (!mocked.variablesBeforeMock)
-                    mocked.variablesBeforeMock.set(*this, createTableOfExports());
-                Identifier place = Identifier::from(*m_instance.vm, moduleExport.variable.encoded());
-                JSValue replaced = ProgramStatics::readVariable(m_instance, moduleExport.variable);
-                if (!storedValue(m_instance.globalObject, mocked.variablesBeforeMock, place))
-                    storeValue(m_instance.globalObject, mocked.variablesBeforeMock.get(), moduleExport.variable.encoded(), replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
-            }
-            ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
-            return true;
+                return walkToPlaceOfCapturedExport(origin->module, identifier(origin->name).impl(), action);
+            return action.variable(moduleExport.variable);
         case ModuleExportKind::Field: {
             if (!moduleExport.isReplaceable)
-                return false;
+                return { };
             ResolvedField field = resolveField(module, *index, instance);
             instance = field.instance;
             if (!instance)
-                return false;
-            if (m_moduleBeingPatched) {
-                LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
-                if (!mocked.variablesBeforeMock)
-                    mocked.variablesBeforeMock.set(*this, createTableOfExports());
-                JSValue replaced = readField(instance, field.slot);
-                mocked.fieldsBeforeMock.add({ instance, field.slot.encoded() }, replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
-                m_storedReferences.recordAll();
-            }
-            writeField(instance, field.slot, value);
-            return true;
+                return { };
+            return action.field(instance, field.slot);
         }
         case ModuleExportKind::Namespace:
-            return tryReplaceNamespaceHandedOn(moduleExport.targetModule(), value);
+            return action.namespaceHandedOn(moduleExport.targetModule());
         case ModuleExportKind::Indirect: {
             const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
             module = moduleLoadedUnder(indirectExport.targetModule());
@@ -1508,13 +1606,14 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
         }
     }
-    return false;
+    return { };
 }
 
-bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
+template<typename Action>
+typename Action::Answer Modules::walkToPlaceOfExportBehindStars(ModuleID module, UniquedStringImpl* name, BitVector& seenBehindStars, const Action& action)
 {
     if (name == m_instance.vm->propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
-        return false;
+        return { };
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     for (ModuleRequestData request : m_table.dynamicStars(module)) {
@@ -1524,18 +1623,18 @@ bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* na
             hasName = hasCapturedExport(target, Identifier::fromUid(vm, name));
         else if (data(target).isUncompiledCode()) {
             JSObject* namespaceObject = uncompiledNamespace(target, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
-            RETURN_IF_EXCEPTION(scope, false);
+            RETURN_IF_EXCEPTION(scope, { });
             hasName = namespaceObject->hasProperty(m_instance.globalObject, Identifier::fromUid(vm, name));
         }
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, { });
         if (!hasName)
             continue;
-        bool isReplaced = tryReplaceExport(target, name, value, seenBehindStars);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isReplaced)
-            return true;
+        auto answer = walkToPlaceOfExport(target, name, seenBehindStars, nullptr, action);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (answer)
+            return answer;
     }
-    return false;
+    return { };
 }
 
 bool Modules::hasStartedLoading(ModuleID module) const
@@ -1928,27 +2027,6 @@ void Modules::appendNamesAddedByMock(ModuleID module, WTF::Vector<Identifier>& n
     RETURN_IF_EXCEPTION(scope, void());
     for (const Identifier& name : added)
         names.append(name);
-}
-
-bool Modules::tryReplaceExportAddedByMock(ModuleID module, UniquedStringImpl* name, JSValue value)
-{
-    VM& vm = *m_instance.vm;
-    JSGlobalObject* realm = m_instance.globalObject;
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    LoadedModule& loaded = ensureLoaded(module);
-    JSObject* added = loaded.exportsAddedByMock;
-    if (!added)
-        return false;
-    Identifier key = Identifier::fromUid(vm, name);
-    if (!loaded.takesNamesThatMockAdds && !storedValue(realm, added, key))
-        return false;
-    added->putDirectMayBeIndex(realm, key, value);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (JSObject* namespaceObject = namespaceIfCreated(module, ModulePhase::Evaluation)) {
-        uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    return true;
 }
 
 bool Modules::dropExportThatFindsNothing(ModuleID importer, const RequiredNameData& requiredName)
@@ -3645,6 +3723,12 @@ bool Modules::mayBeMocked(ModuleID module) const
 
 bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value)
 {
+    return walkToPlaceOfCapturedExport(module, name, StoreIntoPlace { *this, value });
+}
+
+template<typename Action>
+typename Action::Answer Modules::walkToPlaceOfCapturedExport(ModuleID module, UniquedStringImpl* name, const Action& action)
+{
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3655,39 +3739,24 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     auto found = std::ranges::find_if(syntheticExports, isNamed);
     bool isListed = found != syntheticExports.end();
     if (isListed ? !found->isReplaceable : !data(m_table.moduleBehindFacade(module).value_or(module)).mayBeMocked())
-        return false;
-    if (!isListed && data(module).hasExportTable() && !m_table.moduleBehindFacade(module))
-        RELEASE_AND_RETURN(scope, tryReplaceExportAddedByMock(module, name, value));
-
+        return { };
     Identifier key = Identifier::fromUid(vm, name);
+    if (!isListed && data(module).hasExportTable() && !m_table.moduleBehindFacade(module)) {
+        // A name that a mock of the module added.
+        LoadedModule& loaded = ensureLoaded(module);
+        JSObject* added = loaded.exportsAddedByMock;
+        if (!added || (!loaded.takesNamesThatMockAdds && !storedValue(realm, added, key)))
+            return { };
+        RELEASE_AND_RETURN(scope, action.addedTable(module, name, added));
+    }
+
     JSObject* captured = capturedExports(module);
-    RETURN_IF_EXCEPTION(scope, false);
+    RETURN_IF_EXCEPTION(scope, { });
     LoadedModule& loaded = ensureLoaded(module);
     bool hasItsNames = loaded.exportsWhatMockNamesAlone ? loaded.wasLoadedBehindMock : !m_libraryModulesThatMockReplaces.get(module.index());
     if (hasItsNames && !storedValue(realm, captured, key))
-        return false;
-    if ((m_libraryModulesWithMock.get(module.index()) || m_moduleBeingPatched) && !loaded.exportsWhatMockNamesAlone) {
-        if (!loaded.exportsBeforeMock)
-            loaded.exportsBeforeMock.set(*this, createTableOfExports());
-        JSObject* before = loaded.exportsBeforeMock;
-        JSValue replaced = storedValue(realm, captured, key);
-        if (replaced && !storedValue(realm, before, key)) {
-            before->putDirectMayBeIndex(realm, key, replaced == JSValue(captured) ? JSValue(before) : replaced);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
-    }
-    captured->putDirectMayBeIndex(realm, key, value);
-    RETURN_IF_EXCEPTION(scope, false);
-    for (ModulePhase phase : { ModulePhase::Evaluation, ModulePhase::Defer }) {
-        JSObject* namespaceObject = namespaceIfCreated(module, phase);
-        if (!namespaceObject)
-            continue;
-        uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    if (isListed && found->hasVariable && !isLibraryOriginalDisplaced(module))
-        ProgramStatics::writeVariable(m_instance, found->variable, value);
-    return true;
+        return { };
+    RELEASE_AND_RETURN(scope, action.capturedTable(module, name, captured, isListed && found->hasVariable ? std::optional(found->variable) : std::nullopt));
 }
 
 JSObject* Modules::capturedExports(ModuleID module)
