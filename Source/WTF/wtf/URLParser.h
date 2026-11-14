@@ -72,6 +72,12 @@ private:
     // Parses into `result`, which must be a default-constructed URL.
     URLParser(URL& result, String&&, const URL& base = { }, const URLTextEncoding* = nullptr);
 
+    // The state override of https://url.spec.whatwg.org/#concept-basic-url-parser, which a setter passes. With one, '?'
+    // and '#' do not end the path.
+    enum class StateOverride : bool { None, PathStart };
+    // The pathname setter: replaces the path of a valid URL with the result of parsing `path` from the path start state.
+    URLParser(URL&, StringView path, StateOverride);
+
     friend class URL;
 
     URL& m_url;
@@ -87,6 +93,8 @@ private:
     using Latin1Buffer = Vector<Latin1Character, defaultInlineBufferSize>;
 
     template<typename CharacterType> void parse(std::span<const CharacterType>, const URL&, const URLTextEncoding*);
+    template<typename CharacterType> void parsePathWithStateOverride(std::span<const CharacterType>, size_t pathBegin, size_t pathEnd);
+    template<typename CharacterType, StateOverride = StateOverride::None> void parsePathSegments(const CharacterType*& position, CodePointIterator<CharacterType>&, const CharacterType* inputBegin, const CharacterType* inputEnd, bool& afterSlash);
     template<typename CharacterType> void parseAuthority(CodePointIterator<CharacterType>);
     enum class HostParsingResult : uint8_t { InvalidHost, IPv6WithPort, IPv6WithoutPort, IPv4WithPort, IPv4WithoutPort, DNSNameWithPort, DNSNameWithoutPort, NonSpecialHostWithoutPort, NonSpecialHostWithPort };
     template<typename CharacterType> HostParsingResult parseHostAndPort(CodePointIterator<CharacterType>);
@@ -102,9 +110,9 @@ private:
     template<typename CharacterType> void syntaxViolation(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> void beginSyntaxViolation(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> bool isPercentEncodedDot(CodePointIterator<CharacterType>);
-    template<typename CharacterType> bool isWindowsDriveLetter(CodePointIterator<CharacterType>);
-    template<typename CharacterType> bool isSingleDotPathSegment(CodePointIterator<CharacterType>);
-    template<typename CharacterType> bool isDoubleDotPathSegment(CodePointIterator<CharacterType>);
+    template<typename CharacterType, StateOverride = StateOverride::None> bool isWindowsDriveLetter(CodePointIterator<CharacterType>);
+    template<typename CharacterType, StateOverride = StateOverride::None> bool isSingleDotPathSegment(CodePointIterator<CharacterType>);
+    template<typename CharacterType, StateOverride = StateOverride::None> bool isDoubleDotPathSegment(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool shouldCopyFileURL(CodePointIterator<CharacterType>);
     template<typename CharacterType> NODELETE bool checkLocalhostCodePoint(CodePointIterator<CharacterType>&, char32_t);
     template<typename CharacterType> NODELETE bool isAtLocalhost(CodePointIterator<CharacterType>);

@@ -787,7 +787,7 @@ void URL::removeQueryAndFragmentIdentifier()
 
 void URL::setQuery(StringView newQuery)
 {
-    // FIXME: Consider renaming this function to setEncodedQuery and/or calling percentEncodeCharacters the way setPath does.
+    // FIXME: Consider renaming this function to setEncodedQuery and/or calling percentEncodeCharacters the way setUser does.
     // https://webkit.org/b/161176
 
     if (!m_isValid)
@@ -799,14 +799,6 @@ void URL::setQuery(StringView newQuery)
         newQuery,
         StringView(m_string).substring(m_queryEnd)
     ));
-}
-
-static String escapePathWithoutCopying(StringView path)
-{
-    auto questionMarkOrNumberSignOrNonASCII = [] (char16_t character) {
-        return character == '?' || character == '#' || !isASCII(character);
-    };
-    return percentEncodeCharacters(path, questionMarkOrNumberSignOrNonASCII);
 }
 
 // To match Node.js pathToFileURL, the following chars are escaped: \0, \t, \n, \r, " # % ? [ ] ^ | ~
@@ -840,13 +832,7 @@ void URL::setPath(StringView path)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(
-        StringView(m_string).left(pathStart()),
-        path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
-        !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
-        escapePathWithoutCopying(path),
-        StringView(m_string).substring(m_pathEnd)
-    ));
+    URLParser(*this, path, URLParser::StateOverride::PathStart);
 }
 
 StringView URL::viewWithoutQueryOrFragmentIdentifier() const LIFETIME_BOUND

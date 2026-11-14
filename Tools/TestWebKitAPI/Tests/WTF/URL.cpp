@@ -192,6 +192,219 @@ TEST_F(WTF_URL, URLSetFragmentIdentifier)
     EXPECT_EQ(urlWithQuery.string(), urlWithQuery3.string());
 }
 
+enum class ParsesBack : bool { No, Yes };
+
+static void checkSetPath(const String& urlString, const String& path, ASCIILiteral expected, ParsesBack parsesBack = ParsesBack::Yes)
+{
+    URL original { urlString };
+    EXPECT_TRUE(original.isValid());
+
+    auto check = [&](const String& urlStringToParse, const String& pathToSet) {
+        URL url { urlStringToParse };
+        url.setPath(pathToSet);
+        EXPECT_TRUE(url.isValid());
+        EXPECT_EQ(String(expected), url.string());
+        EXPECT_TRUE(WTF::URLParser::internalValuesConsistent(url));
+        EXPECT_EQ(original.protocol().toString(), url.protocol().toString());
+        EXPECT_EQ(original.encodedUser().toString(), url.encodedUser().toString());
+        EXPECT_EQ(original.encodedPassword().toString(), url.encodedPassword().toString());
+        EXPECT_EQ(original.hostAndPort(), url.hostAndPort());
+        EXPECT_EQ(original.query().toString(), url.query().toString());
+        EXPECT_EQ(original.fragmentIdentifier().toString(), url.fragmentIdentifier().toString());
+        EXPECT_EQ(parsesBack == ParsesBack::Yes, WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+
+        url.setPath(pathToSet);
+        EXPECT_EQ(String(expected), url.string());
+    };
+    auto in16Bit = [](String string) {
+        string.convertTo16Bit();
+        return string;
+    };
+
+    check(urlString, path);
+    check(in16Bit(urlString), path);
+    if (path.is8Bit())
+        check(urlString, in16Bit(path));
+}
+
+// URL::setPath is the pathname setter of the URL Standard: the value is parsed from the path start state, so none of it
+// can become anything but the path.
+TEST_F(WTF_URL, URLSetPath)
+{
+    // A value that starts with "//" is not an authority. A URL without a host writes it after "/.".
+    checkSetPath("zz:/p"_s, "//"_s, "zz:/.//"_s);
+    checkSetPath("zz:/p?q#f"_s, "//"_s, "zz:/.//?q#f"_s);
+    checkSetPath("zz:/p"_s, "//x"_s, "zz:/.//x"_s);
+    checkSetPath("zz:/p"_s, "///"_s, "zz:/.///"_s);
+    checkSetPath("zz:/p"_s, "//x/.."_s, "zz:/.//"_s);
+    checkSetPath("zz:/p"_s, "//x/../.."_s, "zz:/"_s);
+    checkSetPath("zz:/p"_s, "//h:99999"_s, "zz:/.//h:99999"_s);
+    checkSetPath("zz:/p"_s, "//a:b@c"_s, "zz:/.//a:b@c"_s);
+    checkSetPath("zz:/p"_s, "//["_s, "zz:/.//["_s);
+    checkSetPath("zz:/.//x"_s, "/y"_s, "zz:/y"_s);
+    checkSetPath("zz:/.//x"_s, "//"_s, "zz:/.//"_s);
+    checkSetPath("zz:/.//x?q"_s, "//y"_s, "zz:/.//y?q"_s);
+    checkSetPath("zz://h/p"_s, "//"_s, "zz://h//"_s);
+    checkSetPath("zz://h:8/p"_s, "//x"_s, "zz://h:8//x"_s);
+    checkSetPath("zz:///p"_s, "//"_s, "zz:////"_s);
+    checkSetPath("zz://[::1]/p#f"_s, "//x"_s, "zz://[::1]//x#f"_s);
+    checkSetPath("http://h/p"_s, "//"_s, "http://h//"_s);
+    checkSetPath("file:///p"_s, "//"_s, "file:////"_s);
+
+    // The empty value leaves no path only in a URL that is not special and has a host.
+    checkSetPath("zz:/p"_s, ""_s, "zz:/"_s);
+    checkSetPath("zz:/.//x"_s, ""_s, "zz:/"_s);
+    checkSetPath("zz://h/p"_s, ""_s, "zz://h"_s);
+    checkSetPath("zz://h/p?q#f"_s, ""_s, "zz://h?q#f"_s);
+    checkSetPath("zz:///p"_s, ""_s, "zz://"_s);
+    checkSetPath("http://h/p?q#f"_s, ""_s, "http://h/?q#f"_s);
+    checkSetPath("file:///p"_s, ""_s, "file:///"_s);
+
+    // A value without a leading slash gets one.
+    checkSetPath("zz:/p"_s, "x"_s, "zz:/x"_s);
+    checkSetPath("zz:/p"_s, "x/y"_s, "zz:/x/y"_s);
+    checkSetPath("zz://h"_s, "x"_s, "zz://h/x"_s);
+    checkSetPath("zz://h/p"_s, "x/y"_s, "zz://h/x/y"_s);
+    checkSetPath("http://h/p"_s, "x"_s, "http://h/x"_s);
+    checkSetPath("https://u:pw@h:8/p?q#f"_s, "/x"_s, "https://u:pw@h:8/x?q#f"_s);
+    checkSetPath("zz://u:pw@h:8/p?q#f"_s, "x"_s, "zz://u:pw@h:8/x?q#f"_s);
+
+    // A backslash is a slash only in a special URL.
+    checkSetPath("http://h/p"_s, "\\\\x"_s, "http://h//x"_s);
+    checkSetPath("http://h/p"_s, "\\x\\y"_s, "http://h/x/y"_s);
+    checkSetPath("http://h/p"_s, "/a\\..\\b"_s, "http://h/b"_s);
+    checkSetPath("zz://h/p"_s, "\\x"_s, "zz://h/\\x"_s);
+    checkSetPath("zz://h/p"_s, "/a\\b"_s, "zz://h/a\\b"_s);
+    checkSetPath("zz:/p"_s, "\\\\x"_s, "zz:/\\\\x"_s);
+
+    // Tab and newline are removed before anything looks at the value. No other character is.
+    checkSetPath("zz:/p"_s, "/\t/"_s, "zz:/.//"_s);
+    checkSetPath("zz:/p"_s, "\t//"_s, "zz:/.//"_s);
+    checkSetPath("zz:/p"_s, "//\n"_s, "zz:/.//"_s);
+    checkSetPath("zz:/p"_s, "/\r/x"_s, "zz:/.//x"_s);
+    checkSetPath("zz:/p"_s, "/\n/x"_s, "zz:/.//x"_s);
+    checkSetPath("zz:/p"_s, "/\t/["_s, "zz:/.//["_s);
+    checkSetPath("zz:/p"_s, "\t/x"_s, "zz:/x"_s);
+    checkSetPath("zz:/p"_s, "\tx"_s, "zz:/x"_s);
+    checkSetPath("zz:/p"_s, "\n/evil.com/y"_s, "zz:/evil.com/y"_s);
+    checkSetPath("zz:/p"_s, "\r/evil.com/y"_s, "zz:/evil.com/y"_s);
+    checkSetPath("zz:/p"_s, "\t"_s, "zz:/"_s);
+    checkSetPath("zz://h/p"_s, "\n"_s, "zz://h"_s);
+    checkSetPath("zz://h/p"_s, "\n/x/y"_s, "zz://h/x/y"_s);
+    checkSetPath("http://h/p"_s, "\r\n"_s, "http://h/"_s);
+    checkSetPath("http://h/p"_s, "\t/x"_s, "http://h/x"_s);
+    checkSetPath("http://h/p"_s, "\t\\x"_s, "http://h/x"_s);
+    checkSetPath("http://h/p"_s, "/x\t"_s, "http://h/x"_s);
+    checkSetPath("http://h/p"_s, "/a/.\t./b"_s, "http://h/b"_s);
+    checkSetPath("http://h/p"_s, "/%\t2e/x"_s, "http://h/x"_s);
+    checkSetPath("file:///p"_s, "\t/x"_s, "file:///x"_s);
+    checkSetPath("zz:/p"_s, " //x"_s, "zz:/%20//x"_s);
+    checkSetPath("zz:/p"_s, "/\f/x"_s, "zz:/%0C/x"_s);
+    checkSetPath("http://h/p"_s, " x"_s, "http://h/%20x"_s);
+    checkSetPath("data:/nospace"_s, "space "_s, "data:/space%20"_s);
+
+    // '?' and '#' are path characters, so they do not end a dot segment either.
+    checkSetPath("zz:/p"_s, "?x#y"_s, "zz:/%3Fx%23y"_s);
+    checkSetPath("zz:/p"_s, "//?"_s, "zz:/.//%3F"_s);
+    checkSetPath("http://h/p?q#f"_s, "/a?b#c"_s, "http://h/a%3Fb%23c?q#f"_s);
+    checkSetPath("http://h/a/b"_s, "/x/..?y"_s, "http://h/x/..%3Fy"_s);
+    checkSetPath("http://h/p"_s, "/a/..#/c"_s, "http://h/a/..%23/c"_s);
+    checkSetPath("http://h/p"_s, "/.#x"_s, "http://h/.%23x"_s);
+    checkSetPath("http://h/p"_s, "/%2e?"_s, "http://h/%2e%3F"_s);
+    checkSetPath("zz://h/p"_s, "/a/%2E%2e#"_s, "zz://h/a/%2E%2e%23"_s);
+
+    checkSetPath("http://h/p"_s, "/a/./b/../c"_s, "http://h/a/c"_s);
+    checkSetPath("http://h/p"_s, "/a/%2e%2E/b"_s, "http://h/b"_s);
+    checkSetPath("http://h/p"_s, "/a/.%2e/%2e./b"_s, "http://h/b"_s);
+    checkSetPath("http://h/p"_s, "/a/.."_s, "http://h/"_s);
+    checkSetPath("http://h/p"_s, "/a/b/."_s, "http://h/a/b/"_s);
+    checkSetPath("http://h/p"_s, "/a/b/../"_s, "http://h/a/"_s);
+    checkSetPath("http://h/p"_s, "/a/b/%2E/"_s, "http://h/a/b/"_s);
+    checkSetPath("http://h/p"_s, ".."_s, "http://h/"_s);
+    checkSetPath("http://h/p"_s, "."_s, "http://h/"_s);
+    checkSetPath("http://h/p"_s, "/../../x"_s, "http://h/x"_s);
+    checkSetPath("zz://h/p"_s, "/a/../.."_s, "zz://h/"_s);
+    checkSetPath("zz:/p"_s, "/a/../../b"_s, "zz:/b"_s);
+    checkSetPath("http://h/p"_s, "/a/.../b"_s, "http://h/a/.../b"_s);
+    checkSetPath("http://h/p"_s, "/a/.b/..c/d"_s, "http://h/a/.b/..c/d"_s);
+    checkSetPath("http://h/p"_s, "/a/%2ex/b"_s, "http://h/a/%2ex/b"_s);
+    checkSetPath("zz:/p"_s, "/.x"_s, "zz:/.x"_s);
+    checkSetPath("zz:/p"_s, "/..x/y"_s, "zz:/..x/y"_s);
+
+    // A Windows drive letter is written with ':' when it starts the path of a file URL without a host, and ".." keeps it.
+    checkSetPath("file:///p"_s, "C|/x"_s, "file:///C:/x"_s);
+    checkSetPath("file:///p"_s, "/C|"_s, "file:///C:"_s);
+    checkSetPath("file:///p"_s, "/C\t|/x"_s, "file:///C:/x"_s);
+    checkSetPath("file:///C:/p"_s, "D|\\x"_s, "file:///D:/x"_s);
+    checkSetPath("file:///p"_s, "/C|/../x"_s, "file:///C:/x"_s);
+    checkSetPath("file:///p"_s, "/C|/../.."_s, "file:///C:/"_s);
+    checkSetPath("file:///p"_s, "/c:/.."_s, "file:///c:/"_s);
+    checkSetPath("file:///C:/p"_s, "/../x"_s, "file:///x"_s);
+    checkSetPath("file:///p"_s, "/C|?x"_s, "file:///C|%3Fx"_s);
+    checkSetPath("file:///p"_s, "/C|x"_s, "file:///C|x"_s);
+    checkSetPath("file:///p"_s, "/CC|/x"_s, "file:///CC|/x"_s);
+    checkSetPath("file:///p"_s, "//C|/x"_s, "file:////C|/x"_s);
+    checkSetPath("file:///p"_s, "/x/C|/.."_s, "file:///x/"_s);
+    checkSetPath("http://h/p"_s, "/C|/x"_s, "http://h/C|/x"_s);
+
+    checkSetPath("http://h/p"_s, "/a b"_s, "http://h/a%20b"_s);
+    checkSetPath("http://h/p"_s, "/\x01\x1f\x7f"_s, "http://h/%01%1F%7F"_s);
+    checkSetPath("http://h/p"_s, "/^`{}|"_s, "http://h/%5E%60%7B%7D|"_s);
+    checkSetPath("http://h/p"_s, "/\"<>"_s, "http://h/%22%3C%3E"_s);
+    checkSetPath("http://h/p"_s, "/[]@:;=&$"_s, "http://h/[]@:;=&$"_s);
+    checkSetPath("http://h/p"_s, "/%zz%2"_s, "http://h/%zz%2"_s);
+    checkSetPath("http://h/p"_s, "/a%2Fb%2f"_s, "http://h/a%2Fb%2f"_s);
+    checkSetPath("http://h/p"_s, String { "/a\0b"_span8 }, "http://h/a%00b"_s);
+    checkSetPath("http://h/p"_s, String::fromUTF8("/\xc3\xa9"), "http://h/%C3%A9"_s);
+    checkSetPath("http://h/p"_s, String::fromUTF8("/\xf0\x9f\x98\x80"), "http://h/%F0%9F%98%80"_s);
+    checkSetPath("http://h/p"_s, utf16String(u"/\xD83D"), "http://h/%EF%BF%BD"_s);
+
+    // Longer than one step of the run scanner, and longer than the parser's inline buffer.
+    checkSetPath("http://h/p?q#f"_s, "/0123456789abcdef/0123456789abcdef"_s, "http://h/0123456789abcdef/0123456789abcdef?q#f"_s);
+    checkSetPath("http://h/p?q#f"_s, "/0123456789abcdef/./0123456789abcde f"_s, "http://h/0123456789abcdef/0123456789abcde%20f?q#f"_s);
+    StringBuilder longPath;
+    StringBuilder longExpected;
+    longPath.append("//"_s);
+    longExpected.append("zz:/.//"_s);
+    for (unsigned i = 0; i < 40; ++i) {
+        longPath.append("0123456789/"_s);
+        longExpected.append("0123456789/"_s);
+    }
+    longPath.append("x/../y z"_s);
+    longExpected.append("y%20z?q#f"_s);
+    URL longURL { "zz:/p?q#f"_s };
+    longURL.setPath(longPath.toString());
+    EXPECT_EQ(longExpected.toString(), longURL.string());
+    EXPECT_TRUE(WTF::URLParser::internalValuesConsistent(longURL));
+    EXPECT_TRUE(WTF::URLParser::allValuesEqual(longURL, URL { longURL.string() }));
+
+    // The new path can be a view of the URL's own string.
+    URL self { "zz:/.//a?q"_s };
+    self.setPath(self.path());
+    EXPECT_EQ(String("zz:/.//a?q"_s), self.string());
+    self.setPath(self.path().substring(1));
+    EXPECT_EQ(String("zz:/a?q"_s), self.string());
+
+    // The setter runs the path loop of URLParser::parse, so where that differs from the URL Standard the setter does too.
+    // parse() ends a dot segment at a backslash in every URL, not only in a special one.
+    checkSetPath("zz://h/p"_s, "/a/..\\b"_s, "zz://h/b"_s);
+    checkSetPath("zz:/p"_s, "/.\\x"_s, "zz:/x"_s);
+    // parse() writes a drive letter with ':' only at the start of the path and only without a host. The results of the
+    // second and third call are strings that parse() changes again.
+    checkSetPath("file://h/p"_s, "C|/x"_s, "file://h/C|/x"_s);
+    checkSetPath("file:///p"_s, "/./C|/x"_s, "file:///C|/x"_s, ParsesBack::No);
+    checkSetPath("file:///p"_s, "/a/../C|/x"_s, "file:///C|/x"_s, ParsesBack::No);
+    // parse() puts a slash behind an authority with userinfo that ends at '?' or '#', also in a URL that is not special.
+    // The setter leaves the path empty there, as the URL Standard does.
+    checkSetPath("zz://u@h/p?q"_s, ""_s, "zz://u@h?q"_s, ParsesBack::No);
+    checkSetPath("zz://u:pw@h:8/p#f"_s, "\t"_s, "zz://u:pw@h:8#f"_s, ParsesBack::No);
+
+    URL invalid { "http://"_s };
+    EXPECT_FALSE(invalid.isValid());
+    invalid.setPath("/x"_s);
+    EXPECT_EQ(String("http://"_s), invalid.string());
+}
+
 TEST_F(WTF_URL, URLRemoveQueryAndFragmentIdentifier)
 {
     URL url = createURL("http://www.webkit.org/"_s);

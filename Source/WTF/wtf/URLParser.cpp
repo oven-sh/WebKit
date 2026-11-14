@@ -758,7 +758,7 @@ NODELETE bool URLParser::takesTwoAdvancesUntilEnd(CodePointIterator<CharacterTyp
     return iterator.atEnd();
 }
 
-template<typename CharacterType>
+template<typename CharacterType, URLParser::StateOverride stateOverride>
 ALWAYS_INLINE bool URLParser::isWindowsDriveLetter(CodePointIterator<CharacterType> iterator)
 {
     // https://url.spec.whatwg.org/#start-with-a-windows-drive-letter
@@ -770,7 +770,7 @@ ALWAYS_INLINE bool URLParser::isWindowsDriveLetter(CodePointIterator<CharacterTy
     if (*iterator != ':' && *iterator != '|')
         return false;
     advance<CharacterType, ReportSyntaxViolation::No>(iterator);
-    return iterator.atEnd() || *iterator == '/' || *iterator == '\\' || *iterator == '?' || *iterator == '#';
+    return iterator.atEnd() || *iterator == '/' || *iterator == '\\' || (stateOverride == StateOverride::None && (*iterator == '?' || *iterator == '#'));
 }
 
 ALWAYS_INLINE void URLParser::appendToASCIIBuffer(char32_t codePoint)
@@ -1306,14 +1306,17 @@ void URLParser::copyURLPartsUntil(const URL& base, URLPart part, const CodePoint
 
 constexpr std::array<uint8_t, 2> dotASCIICode { '2', 'e' };
 
-template<typename CharacterType>
+template<typename CharacterType, URLParser::StateOverride stateOverride>
 ALWAYS_INLINE bool URLParser::isSingleDotPathSegment(CodePointIterator<CharacterType> c)
 {
+    auto endsSegment = [](char32_t codePoint) ALWAYS_INLINE_LAMBDA {
+        return stateOverride == StateOverride::None ? isSlashQuestionOrHash(codePoint) : (codePoint == '/' || codePoint == '\\');
+    };
     if (c.atEnd())
         return false;
     if (*c == '.') {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return c.atEnd() || isSlashQuestionOrHash(*c);
+        return c.atEnd() || endsSegment(*c);
     }
     if (*c != '%')
         return false;
@@ -1325,19 +1328,19 @@ ALWAYS_INLINE bool URLParser::isSingleDotPathSegment(CodePointIterator<Character
         return false;
     if (isASCIIAlphaCaselessEqual(*c, dotASCIICode[1])) {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return c.atEnd() || isSlashQuestionOrHash(*c);
+        return c.atEnd() || endsSegment(*c);
     }
     return false;
 }
 
-template<typename CharacterType>
+template<typename CharacterType, URLParser::StateOverride stateOverride>
 ALWAYS_INLINE bool URLParser::isDoubleDotPathSegment(CodePointIterator<CharacterType> c)
 {
     if (c.atEnd())
         return false;
     if (*c == '.') {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return isSingleDotPathSegment(c);
+        return isSingleDotPathSegment<CharacterType, stateOverride>(c);
     }
     if (*c != '%')
         return false;
@@ -1349,7 +1352,7 @@ ALWAYS_INLINE bool URLParser::isDoubleDotPathSegment(CodePointIterator<Character
         return false;
     if (isASCIIAlphaCaselessEqual(*c, dotASCIICode[1])) {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return isSingleDotPathSegment(c);
+        return isSingleDotPathSegment<CharacterType, stateOverride>(c);
     }
     return false;
 }
@@ -1530,6 +1533,58 @@ ALWAYS_INLINE size_t URLParser::currentPosition(const CharacterType* position)
     if (m_didSeeSyntaxViolation) [[unlikely]]
         return m_asciiBuffer.size();
     return position - reinterpret_cast<const CharacterType*>(m_inputBegin);
+}
+
+// The loop of the path state: copies path characters and slashes and removes dot segments, up to a code point that needs
+// anything else or to the end of the input. parse() runs it in the middle of its own loop, so its cursors come by reference.
+template<typename CharacterType, URLParser::StateOverride stateOverride>
+ALWAYS_INLINE void URLParser::parsePathSegments(const CharacterType*& p, CodePointIterator<CharacterType>& c, const CharacterType* inputBegin, const CharacterType* inputEnd, bool& afterSlash)
+{
+    auto positionOf = [&](const CodePointIterator<CharacterType>& iterator) ALWAYS_INLINE_LAMBDA {
+        return inputBegin + iterator.codeUnitsSince(inputBegin);
+    };
+    auto iteratorAt = [&](const CharacterType* position) ALWAYS_INLINE_LAMBDA {
+        return CodePointIterator<CharacterType>(std::span<const CharacterType>(position, inputEnd));
+    };
+    while (true) {
+        ASSERT(p != inputEnd);
+        if (afterSlash && (*p == '.' || *p == '%')) [[unlikely]] {
+            c = iteratorAt(p);
+            bool isDoubleDot = isDoubleDotPathSegment<CharacterType, stateOverride>(c);
+            if (isDoubleDot || isSingleDotPathSegment<CharacterType, stateOverride>(c)) {
+                syntaxViolation(c);
+                if (isDoubleDot) {
+                    consumeDoubleDotPathSegment(c);
+                    popPath();
+                } else
+                    consumeSingleDotPathSegment(c);
+                ASSERT(m_didSeeSyntaxViolation);
+                afterSlash = !m_asciiBuffer.isEmpty() && m_asciiBuffer.last() == '/';
+                p = positionOf(c);
+                if (p == inputEnd)
+                    break;
+                continue;
+            }
+        }
+        auto* runStart = p;
+        const CharacterType* lastSlash;
+        p = findPathRunEnd(p, inputEnd, lastSlash);
+        appendToASCIIBuffer(std::span(runStart, p));
+        if (lastSlash)
+            m_url.m_pathAfterLastSlash = currentPosition(p) - (p - lastSlash - 1);
+        if (p != inputEnd && (*p == '/' || (m_urlIsSpecial && *p == '\\'))) {
+            if (*p == '\\') [[unlikely]]
+                syntaxViolation(iteratorAt(p));
+            appendToASCIIBuffer('/');
+            ++p;
+            m_url.m_pathAfterLastSlash = currentPosition(p);
+            afterSlash = true;
+            if (p == inputEnd)
+                break;
+            continue;
+        }
+        break;
+    }
 }
 
 URLParser::URLParser(URL& result, String&& input, const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
@@ -2516,45 +2571,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             auto* p = positionOf(c);
             bool afterSlash = m_didSeeSyntaxViolation ? (!m_asciiBuffer.isEmpty() && m_asciiBuffer.last() == '/') : (p != inputBegin && p[-1] == '/');
             ASSERT(afterSlash == (currentPosition(c) && parsedDataView(currentPosition(c) - 1) == '/'));
-            while (true) {
-                ASSERT(p != inputEnd);
-                if (afterSlash && (*p == '.' || *p == '%')) [[unlikely]] {
-                    c = iteratorAt(p);
-                    bool isDoubleDot = isDoubleDotPathSegment(c);
-                    if (isDoubleDot || isSingleDotPathSegment(c)) {
-                        syntaxViolation(c);
-                        if (isDoubleDot) {
-                            consumeDoubleDotPathSegment(c);
-                            popPath();
-                        } else
-                            consumeSingleDotPathSegment(c);
-                        ASSERT(m_didSeeSyntaxViolation);
-                        afterSlash = !m_asciiBuffer.isEmpty() && m_asciiBuffer.last() == '/';
-                        p = positionOf(c);
-                        if (p == inputEnd)
-                            break;
-                        continue;
-                    }
-                }
-                auto* runStart = p;
-                const CharacterType* lastSlash;
-                p = findPathRunEnd(p, inputEnd, lastSlash);
-                appendToASCIIBuffer(std::span(runStart, p));
-                if (lastSlash)
-                    m_url.m_pathAfterLastSlash = currentPosition(p) - (p - lastSlash - 1);
-                if (p != inputEnd && (*p == '/' || (m_urlIsSpecial && *p == '\\'))) {
-                    if (*p == '\\') [[unlikely]]
-                        syntaxViolation(iteratorAt(p));
-                    appendToASCIIBuffer('/');
-                    ++p;
-                    m_url.m_pathAfterLastSlash = currentPosition(p);
-                    afterSlash = true;
-                    if (p == inputEnd)
-                        break;
-                    continue;
-                }
-                break;
-            }
+            parsePathSegments(p, c, inputBegin, inputEnd, afterSlash);
             c = iteratorAt(p);
             if (c.atEnd() || isTabOrNewline(*c))
                 break;
@@ -2902,6 +2919,120 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     } else
         m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
     m_url.m_isValid = true;
+    URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8());
+}
+
+// https://url.spec.whatwg.org/#dom-url-pathname empties the path of the URL and runs the basic URL parser on the value
+// with the path start state as the state override. The input here is the URL with the value in the place of its path, and
+// only the value is parsed: what is in front of it and behind it stays as it is.
+URLParser::URLParser(URL& url, StringView path, StateOverride stateOverride)
+    : m_url(url)
+{
+    ASSERT_UNUSED(stateOverride, stateOverride == StateOverride::PathStart);
+    ASSERT(m_url.isValid());
+#if ASSERT_ENABLED
+    URL originalURL = m_url;
+#endif
+
+    auto urlScheme = scheme(m_url.protocol());
+    m_urlIsSpecial = urlScheme != Scheme::NonSpecial;
+    m_urlIsFile = urlScheme == Scheme::File;
+
+    // https://url.spec.whatwg.org/#path-start-state: the path starts with a slash, which is the first code point of the
+    // value when that is one. Only a URL that is not special and has a host can have an empty path.
+    unsigned valueStart = 0;
+    while (valueStart < path.length() && isTabOrNewline(path[valueStart])) [[unlikely]]
+        ++valueStart;
+    size_t pathBegin = m_url.m_hostEnd + m_url.m_portLength;
+    bool hasNullHost = pathBegin == m_url.m_schemeEnd + 1U;
+    bool needsSlash = valueStart == path.length()
+        ? m_urlIsSpecial || hasNullHost
+        : path[valueStart] != '/' && (path[valueStart] != '\\' || !m_urlIsSpecial);
+    auto schemeAndAuthority = StringView(m_url.m_string).left(pathBegin);
+    auto queryAndFragment = StringView(m_url.m_string).substring(m_url.m_pathEnd);
+    if (needsSlash)
+        m_inputString = makeString(schemeAndAuthority, '/', path, queryAndFragment);
+    else
+        m_inputString = makeString(schemeAndAuthority, path, queryAndFragment);
+
+    size_t pathEnd = pathBegin + needsSlash + path.length();
+    if (m_inputString.is8Bit()) {
+        auto characters = m_inputString.span8();
+        m_inputBegin = characters.data();
+        parsePathWithStateOverride(characters, pathBegin, pathEnd);
+    } else {
+        auto characters = m_inputString.span16();
+        m_inputBegin = characters.data();
+        parsePathWithStateOverride(characters, pathBegin, pathEnd);
+    }
+    ASSERT(internalValuesConsistent(m_url));
+
+    if (needsNonSpecialDotSlash()) [[unlikely]]
+        addNonSpecialDotSlash();
+
+#if ASSERT_ENABLED
+    if (!m_didSeeSyntaxViolation) {
+        // Force a syntax violation at the beginning to make sure we get the same result.
+        URLParser parser(originalURL, makeString('\t', path), StateOverride::PathStart);
+        ASSERT(allValuesEqual(originalURL, m_url));
+    }
+#endif // ASSERT_ENABLED
+}
+
+template<typename CharacterType>
+void URLParser::parsePathWithStateOverride(std::span<const CharacterType> input, size_t pathBegin, size_t pathEnd)
+{
+    URL_PARSER_LOG("Parsing path <%s> of URL <%s>", String(input.subspan(pathBegin, pathEnd - pathBegin)).utf8(), m_url.string().utf8());
+    ASSERT(m_asciiBuffer.isEmpty());
+
+    const CharacterType* const inputBegin = input.data();
+    const CharacterType* const inputEnd = inputBegin + pathEnd;
+    CodePointIterator<CharacterType> c(input.subspan(pathBegin, pathEnd - pathBegin));
+    unsigned queryLength = m_url.m_queryEnd - m_url.m_pathEnd;
+
+    // The slash that starts the path: the constructor put one in front of a value that has none.
+    while (!c.atEnd() && isTabOrNewline(*c)) [[unlikely]] {
+        syntaxViolation(c);
+        ++c;
+    }
+    if (!c.atEnd()) {
+        ASSERT(*c == '/' || (m_urlIsSpecial && *c == '\\'));
+        if (*c == '\\') [[unlikely]]
+            syntaxViolation(c);
+        appendToASCIIBuffer('/');
+        advance(c);
+    }
+    m_url.m_pathAfterLastSlash = currentPosition(c);
+
+    // parse() looks for a Windows drive letter at the start of the path of a file URL only when the URL has no host.
+    if (m_urlIsFile && m_url.m_hostEnd == m_url.m_passwordEnd && isWindowsDriveLetter<CharacterType, StateOverride::PathStart>(c)) [[unlikely]]
+        appendWindowsDriveLetter(c);
+
+    // https://url.spec.whatwg.org/#path-state
+    while (!c.atEnd()) {
+        if (isTabOrNewline(*c)) [[unlikely]] {
+            syntaxViolation(c);
+            ++c;
+            continue;
+        }
+        auto* p = inputBegin + c.codeUnitsSince(inputBegin);
+        bool afterSlash = m_didSeeSyntaxViolation ? (!m_asciiBuffer.isEmpty() && m_asciiBuffer.last() == '/') : (p != inputBegin && p[-1] == '/');
+        parsePathSegments<CharacterType, StateOverride::PathStart>(p, c, inputBegin, inputEnd, afterSlash);
+        c = CodePointIterator<CharacterType>(std::span<const CharacterType>(p, inputEnd));
+        if (c.atEnd() || isTabOrNewline(*c))
+            continue;
+        utf8PercentEncode<isInPathEncodeSet>(c);
+        ++c;
+    }
+
+    m_url.m_pathEnd = currentPosition(c);
+    m_url.m_queryEnd = m_url.m_pathEnd + queryLength;
+    m_url.m_hasOpaquePath = false;
+    if (m_didSeeSyntaxViolation) {
+        appendToASCIIBuffer(input.subspan(pathEnd));
+        m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
+    } else
+        m_url.m_string = WTF::move(m_inputString);
     URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8());
 }
 
