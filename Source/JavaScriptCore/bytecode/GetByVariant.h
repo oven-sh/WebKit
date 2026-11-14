@@ -76,6 +76,14 @@ public:
     CodePtr<CustomAccessorPtrTag> customAccessorGetter() const { return m_customAccessorGetter; }
     DOMAttributeAnnotation* domAttribute() const LIFETIME_BOUND { return m_domAttribute.get(); }
 
+#if ASSERT_ENABLED
+    // The realm a custom accessor has to be called with: the realm of the object that holds it. GetByStatus makes a
+    // variant for a custom accessor only when this is the realm of the code origin, which is the realm the DFG and the
+    // FTL pass. It is recorded so that the DFG can assert it where it emits the call.
+    JSGlobalObject* customAccessorRealm() const { return m_customAccessorRealm; }
+    void setCustomAccessorRealm(JSGlobalObject* realm) { m_customAccessorRealm = realm; }
+#endif
+
     bool isPropertyUnset() const { return offset() == invalidOffset; }
 
     bool attemptToMerge(const GetByVariant& other);
@@ -118,6 +126,14 @@ private:
     CodePtr<CustomAccessorPtrTag> m_customAccessorGetter;
     std::unique_ptr<DOMAttributeAnnotation> m_domAttribute;
     CacheableIdentifier m_identifier;
+#if ASSERT_ENABLED
+    JSGlobalObject* m_customAccessorRealm { nullptr };
+#endif
 };
+
+#if !ASSERT_ENABLED && CPU(ADDRESS64)
+// m_customAccessorRealm is for assertions only. A recorded GetByStatus holds its variants inline, so it must not grow.
+static_assert(sizeof(GetByVariant) == 64);
+#endif
 
 } // namespace JSC

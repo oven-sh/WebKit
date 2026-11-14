@@ -164,6 +164,12 @@ public:
     CodePtr<CustomAccessorPtrTag> customAccessorSetter() const { return m_customAccessorSetter; }
     DOMAttributeAnnotation* domAttribute() const LIFETIME_BOUND { return m_domAttribute.get(); }
 
+#if ASSERT_ENABLED
+    // The realm a custom accessor has to be called with. See GetByVariant::customAccessorRealm().
+    JSGlobalObject* customAccessorRealm() const { return m_customAccessorRealm; }
+    void setCustomAccessorRealm(JSGlobalObject* realm) { m_customAccessorRealm = realm; }
+#endif
+
 private:
     bool attemptToMergeTransitionWithReplace(const PutByVariant& replace);
     
@@ -177,6 +183,14 @@ private:
     CodePtr<CustomAccessorPtrTag> m_customAccessorSetter;
     std::unique_ptr<DOMAttributeAnnotation> m_domAttribute;
     CacheableIdentifier m_identifier;
+#if ASSERT_ENABLED
+    JSGlobalObject* m_customAccessorRealm { nullptr };
+#endif
 };
+
+#if !ASSERT_ENABLED && CPU(ADDRESS64)
+// m_customAccessorRealm is for assertions only. A recorded PutByStatus holds its variants inline, so it must not grow.
+static_assert(sizeof(PutByVariant) == 72);
+#endif
 
 } // namespace JSC
