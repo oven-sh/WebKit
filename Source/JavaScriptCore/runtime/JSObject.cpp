@@ -3692,13 +3692,6 @@ void JSObject::deallocateSparseIndexMap()
         arrayStorage->m_sparseMap.clear();
 }
 
-// Not inline, and with the parameters in the order of ProxyObject::putByIndexCommon()'s: the walk below then compiles
-// to what it was, but for the function it calls.
-static NEVER_INLINE bool putByIndexThroughProxy(ProxyObject* proxy, JSGlobalObject* globalObject, JSValue thisValue, unsigned i, JSValue value, bool shouldThrow)
-{
-    return proxy->putByIndexCommon(globalObject, receiverForPutByIndex(thisValue), i, value, shouldThrow);
-}
-
 bool JSObject::attemptToInterceptPutByIndexOnHoleForPrototype(JSGlobalObject* globalObject, JSValue thisValue, unsigned i, JSValue value, bool shouldThrow, bool& putResult)
 {
     VM& vm = globalObject->vm();
@@ -3734,7 +3727,7 @@ bool JSObject::attemptToInterceptPutByIndexOnHoleForPrototype(JSGlobalObject* gl
         if (current->type() == ProxyObjectType) {
             scope.release();
             auto* proxy = uncheckedDowncast<ProxyObject>(current);
-            putResult = putByIndexThroughProxy(proxy, globalObject, thisValue, i, value, shouldThrow);
+            putResult = proxy->putByIndexCommon(globalObject, receiverForPutByIndex(thisValue), i, value, shouldThrow);
             return true;
         }
 

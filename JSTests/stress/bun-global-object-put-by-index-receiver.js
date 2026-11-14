@@ -1,8 +1,9 @@
 //@ requireOptions("--useShadowRealm=1")
 
 // A store to an array index of a global object ends in JSObject::putByIndex() on the JSGlobalObject, and putByIndex() takes
-// no receiver. Script holds a global object only as its proxy, globalThis, so that is the receiver of the store: a setter
-// gets it as `this`, and the set trap of a Proxy gets it as its receiver argument.
+// no receiver. The JSGlobalObject and its proxy, globalThis, are one object to script, and only the proxy can be a `this`.
+// So the proxy is the receiver of the store: a setter gets it as `this`, and the set trap of a Proxy gets it as its
+// receiver argument.
 
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
@@ -225,6 +226,66 @@ for (const [realmName, global] of realms) {
         shouldBe(calls, 0, message + ": calls of the setter");
         shouldBe(global[9], "again", message + ": value");
         shouldBe(delete global.Object.prototype[9] && delete global[9], true, message + ": delete");
+    }
+}
+
+// A native can hand the JSGlobalObject itself to script, as $vm.createGlobalObject() does. A store to an index of that one
+// has the proxy as its receiver too.
+{
+    const bare = $vm.createGlobalObject();
+    const global = bare.globalThis;
+    shouldBe(bare === global, false, "$vm.createGlobalObject() returns the JSGlobalObject");
+
+    for (const [holderName, holder] of holdersOf(global)) {
+        for (const [setterName, makeSetter] of setterMakers) {
+            for (const [setterRealmName, setterRealm] of realms) {
+                for (const [storeName, store] of stores) {
+                    for (const key of keys) {
+                        const message = `${storeName}, key ${key}, global is a JSGlobalObject, ${setterName} of ${setterRealmName} on ${holderName}`;
+                        const seen = storeWithSetter(holder, key, makeSetter(setterRealm), () => store(bare, key));
+                        shouldBe(seen.calls, 1, message + ": calls of the setter");
+                        shouldBe(seen.receiver, global, message + ": this");
+                        shouldBe(seen.value, "value", message + ": value");
+                    }
+                }
+            }
+        }
+    }
+
+    let receiver;
+    Object.defineProperty(global.Object.prototype, 3, {
+        set(value) {
+            "use strict";
+            receiver = this;
+        },
+        configurable: true,
+    });
+    function storeInEveryTier(object, value) {
+        object[3] = value;
+    }
+    noInline(storeInEveryTier);
+    for (let i = 0; i < testLoopCount; i++) {
+        receiver = null;
+        storeInEveryTier(bare, i);
+        shouldBe(receiver, global, "a store to a JSGlobalObject, iteration " + i);
+    }
+
+    // The same with a Proxy on the prototype chain.
+    const receivers = [];
+    const withTrap = new Proxy({}, {
+        set(target, key, value, receiver) {
+            receivers.push(receiver);
+            return true;
+        },
+    });
+    const bareBelowProxy = $vm.createGlobalObject(Object.create(withTrap));
+    for (const [storeName, store] of stores) {
+        for (const key of keys) {
+            receivers.length = 0;
+            store(bareBelowProxy, key);
+            shouldBe(receivers.length, 1, `${storeName}, key ${key}, global is a JSGlobalObject: calls of the set trap`);
+            shouldBe(receivers[0], bareBelowProxy.globalThis, `${storeName}, key ${key}, global is a JSGlobalObject: receiver of the set trap`);
+        }
     }
 }
 
