@@ -2193,6 +2193,14 @@ bool Walker::passesOnEveryIteration(const VersionedLoop& versionedLoop, Unrolled
     return index.dominates(block, versionedLoop.lastBackEdgeDominator);
 }
 
+static LocationMasks readsOfNamedLookup(const Walker& walker, PropertyKeyID key)
+{
+    LocationMasks found(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks });
+    found.add(walker.program(), MemoryLocation::objectField(key));
+    found.add(AbstractHeap::ObjectFields, walker.plan().fieldsReadByGetters().maskUnder(walker.program(), key));
+    return found;
+}
+
 bool Walker::canHoistNamedLookup(PropertyKeyID key) const
 {
     std::optional<uint32_t> loop = specializedOpenLoop(IterationPurity::KnownEffectsOnly);
@@ -2202,9 +2210,7 @@ bool Walker::canHoistNamedLookup(PropertyKeyID key) const
     if (!passesOnEveryIteration(versionedLoop) || !executesOnEveryIteration(*loop, currentHoistPoint()))
         return false;
     const Effects& ofTurns = m_openLoops[*loop].effects;
-    LocationMasks found(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks });
-    found.add(program(), MemoryLocation::objectField(key));
-    return !ofTurns.mayRunOtherCode() && !ofTurns.writes.overlaps(found);
+    return !ofTurns.mayRunOtherCode() && !ofTurns.writes.overlaps(readsOfNamedLookup(*this, key));
 }
 
 LocationMasks Walker::writesThatMoveAccessor(uint32_t loop, PropertyKeyID key) const
@@ -2252,9 +2258,7 @@ bool Walker::isGuardedByEquality(uint32_t loopIndex) const
 
 bool Walker::canReadNamedInPreheader(PropertyKeyID key) const
 {
-    LocationMasks found(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks });
-    found.add(program(), MemoryLocation::objectField(key));
-    return canReadInPreheader(found);
+    return canReadInPreheader(readsOfNamedLookup(*this, key));
 }
 
 bool Walker::canReadInPreheader(const LocationMasks& reads) const

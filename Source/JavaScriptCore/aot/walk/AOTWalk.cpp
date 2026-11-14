@@ -4795,6 +4795,9 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
             effects.reads.merge(readsOfOwnKeyLookup(program()));
             break;
         case Opcode::GetValueAtSiteOrAbsent:
+            narrowNamedLookupEffects(program(), draft.key(), effects);
+            effects.reads.add(AbstractHeap::ObjectFields, plan().fieldsReadByGetters().maskUnder(program(), draft.key()));
+            break;
         case Opcode::HasPropertyOrAbsent:
             narrowNamedLookupEffects(program(), draft.key(), effects);
             break;

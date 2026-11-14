@@ -93,6 +93,18 @@ struct StoredGlobalValue {
     bool isSameAs(const StoredGlobalValue& other) const { return layout == other.layout && function == other.function && builtinClass == other.builtinClass && type == other.type; }
 };
 
+struct FieldsReadByGetters {
+    struct UnderName {
+        StringID name;
+        uint64_t mask { 0 };
+    };
+
+    uint64_t maskUnder(const Program&, PropertyKeyID) const;
+
+    uint64_t maskUnderAnyName { 0 };
+    Vector<UnderName> underNames;
+};
+
 struct PlanParts {
     DeferredDefinitions deferredDefinitions;
     HeldRegExps heldRegExps;
@@ -117,6 +129,7 @@ struct PlanParts {
     BitVector functionsWhoseCallEntryWalksBody;
     BitVector globalNamesNeverStoredByName;
     BitVector namesOfFieldsWrittenAsOneFunction;
+    FieldsReadByGetters fieldsReadByGetters;
     BitVector globalNamesNeverStoredThroughBinding;
     Vector<StoredGlobalValue> storedGlobalValues;
 
@@ -209,6 +222,7 @@ public:
     bool genericCallEntryWalksBody(FunctionID id) const { return m_parts.functionsWhoseCallEntryWalksBody.get(id.index()); }
     void findCallEntriesThatWalkBodies(const Program&, const Facts&);
 
+    const FieldsReadByGetters& fieldsReadByGetters() const { return m_parts.fieldsReadByGetters; }
     bool someFieldUnderNameIsWrittenAsOneFunction(PropertyKeyID key) const { return m_parts.namesOfFieldsWrittenAsOneFunction.get(key.index()); }
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 

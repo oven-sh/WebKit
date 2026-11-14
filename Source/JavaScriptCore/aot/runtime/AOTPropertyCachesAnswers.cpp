@@ -675,7 +675,7 @@ LazyPrototypeRead classifyReadThroughLazyPrototypes(JSGlobalObject* globalObject
     return read;
 }
 
-void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswer& answer)
+void answerByGetterField(JSValue base, Structure* structureBefore, UniquedStringImpl* name, PropertyAnswer& answer)
 {
     if (answer.kind != PropertyAnswerKind::Accessor || answer.isOwn || !answer.holder || !answer.dependsOnChain() || !base.isCell())
         return;
@@ -683,7 +683,7 @@ void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswe
     if (!object || object == answer.holder || object->structure() != structureBefore || structureBefore->isDictionary())
         return;
     auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(answer.holder, answer.offset).asCell());
-    const FieldData* field = accessor->isGetterNull() ? nullptr : findFieldReadByGetter(*object, accessor->getter());
+    const FieldData* field = accessor->isGetterNull() ? nullptr : findFieldReadByGetter(*object, accessor->getter(), name);
     if (!field)
         return;
     answer.kind = PropertyAnswerKind::FieldOfGetter;
@@ -1316,7 +1316,12 @@ static Slot slotForExtraProperty(const PropertyAnswer& answer, StructureID id, S
     return Slot::createExtraPropertyAddition(id, flags, answer.newStructure->id(), answer.offset, *extraPropertiesWordOffset);
 }
 
-const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter)
+static bool answersUnder(const State& state, uint32_t answeredName, UniquedStringImpl* name)
+{
+    return !name || answeredName == FieldGetterData::answersUnderAnyName || identifiersOf(state.instance).uid(answeredName) == name;
+}
+
+const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter, UniquedStringImpl* name)
 {
     State& state = object.state();
     if (getter->structure()->realm() != state.instance.globalObject)
@@ -1330,7 +1335,7 @@ const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter)
         return nullptr;
     auto getters = programTables().fieldGetters();
     auto found = std::ranges::lower_bound(getters, function.index(), { }, &FieldGetterData::function);
-    if (found == getters.end() || found->function != function.index())
+    if (found == getters.end() || found->function != function.index() || !answersUnder(state, found->answeredName, name))
         return nullptr;
     const FieldData* field = object.fieldNamed(state, identifiersOf(state.instance).uid(found->field));
     return field && !field->isAccessor() && object.isInSlot(*field) ? field : nullptr;
