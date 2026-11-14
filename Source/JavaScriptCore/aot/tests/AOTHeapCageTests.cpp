@@ -1000,7 +1000,23 @@ public:
     ~BlocksOfNoHeap()
     {
         while (m_count)
-            m_blocks.remove(block(--m_count));
+            removeLast();
+    }
+
+    // As MarkedSpace::freeBlock() takes a block out.
+    void removeLast()
+    {
+        AOT_TEST_CHECK(m_count);
+        m_blocks.remove(block(--m_count));
+    }
+
+    bool setHasEach() const
+    {
+        for (unsigned index = 0; index < m_count; ++index) {
+            if (!m_blocks.set().contains(block(index)))
+                return false;
+        }
+        return true;
     }
 
     bool tryAdd()
@@ -1059,6 +1075,68 @@ static void checkSetOfBlocksWithoutMemoryToGrowTakesWhatItHasRoomFor()
 
     pieces.giveBack();
     AOT_TEST_CHECK(blocks.tryAdd() && set.capacity() == 2 * capacityOfSetWithLargeTable);
+}
+
+// A table shrinks once less than a sixth of its slots are full. The request for the smaller table may fail, and then the table stays as it is.
+static void checkSetOfBlocksWithoutMemoryToShrinkStaysAsItWas()
+{
+    TestVM test;
+    JSGlobalObject* realm = test.createRealm();
+    VM& vm = test.vm();
+    const auto& set = vm.heap.objectSpace().blocks().set();
+    DeferGC deferGC(vm);
+    BlocksOfNoHeap blocks(vm, realm);
+    blocks.addUntilCapacityIs(capacityOfSetWithLargeTable);
+
+    // The table of half as many slots takes 74 KB.
+    LargePiecesOfMalloc pieces;
+    while (set.size() > capacityOfSetWithLargeTable / 8)
+        blocks.removeLast();
+    AOT_TEST_CHECK(set.capacity() == capacityOfSetWithLargeTable && blocks.setHasEach());
+
+    pieces.giveBack();
+    blocks.removeLast();
+    AOT_TEST_CHECK(set.capacity() == capacityOfSetWithLargeTable / 2 && blocks.setHasEach());
+}
+
+// The table that finds the Symbol of a key loses its dead Symbols at the end of a full collection.
+static void checkTableOfSymbolsWithoutMemoryToShrinkStaysAsItWas()
+{
+    constexpr unsigned numberOfSymbols = 16000;
+    constexpr unsigned numberOfSymbolsKept = 4000;
+    // As in a compiled program: the collection below may want its own thread where no stack can be had.
+    Thread::setSurvivesFailedCreation();
+    TestVM test;
+    VM& vm = test.vm();
+    auto& table = vm.symbolImplToSymbolMap;
+
+    MarkedArgumentBuffer kept;
+    MarkedArgumentBuffer dropped;
+    for (unsigned index = 0; index < numberOfSymbols; ++index)
+        (index < numberOfSymbolsKept ? kept : dropped).append(Symbol::create(vm));
+    AOT_TEST_CHECK(!kept.hasOverflowed() && !dropped.hasOverflowed());
+    auto tableHasEachKept = [&] {
+        for (unsigned index = 0; index < numberOfSymbolsKept; ++index) {
+            Symbol* symbol = asSymbol(kept.at(index));
+            if (table.get(&symbol->uid()) != symbol)
+                return false;
+        }
+        return true;
+    };
+    // With all of its Symbols the table keeps its size, and with the ones that stay it is due to shrink. The smaller table takes 279 KB or more.
+    unsigned capacity = table.capacity();
+    AOT_TEST_CHECK(table.size() >= numberOfSymbols && capacity <= 6 * numberOfSymbols && capacity > 12 * numberOfSymbolsKept);
+
+    dropped.clear();
+    LargePiecesOfMalloc pieces;
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    // The dead Symbols are out, and the table is as large as it was.
+    AOT_TEST_CHECK(table.size() >= numberOfSymbolsKept && 6 * table.size() < capacity);
+    AOT_TEST_CHECK(table.capacity() == capacity && tableHasEachKept());
+
+    pieces.giveBack();
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    AOT_TEST_CHECK(table.capacity() < capacity && tableHasEachKept());
 }
 
 static constexpr ASCIILiteral setOfBlocksWithoutRoomTest = "heap-cage/cage/set-of-blocks-without-room-for-a-block-says-why"_s;
@@ -1880,7 +1958,9 @@ std::span<const NativeTest> heapCageTests()
         { "heap-cage/cage/no-address-in-the-image-names-a-cell-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkNoAddressInImageNamesCell> },
         { "heap-cage/cage/error-of-another-request-settles-cells-under-a-limit-on-address-space"_s, runInProcessWithSharedRange<checkErrorOfAnotherRequestAndErrorOwedForCells<true>> },
         { "heap-cage/tables/a-table-that-finds-no-memory-to-grow-stays-as-it-was"_s, checkTableIsUnchangedWhenGrowthFails },
+        { "heap-cage/tables/a-table-of-symbols-that-finds-no-memory-to-shrink-stays-as-it-was"_s, runInProcessWithSharedRange<checkTableOfSymbolsWithoutMemoryToShrinkStaysAsItWas> },
         { "heap-cage/cage/set-of-blocks-without-memory-to-grow-takes-what-it-has-room-for"_s, runInProcessWithSharedRange<checkSetOfBlocksWithoutMemoryToGrowTakesWhatItHasRoomFor> },
+        { "heap-cage/cage/set-of-blocks-without-memory-to-shrink-stays-as-it-was"_s, runInProcessWithSharedRange<checkSetOfBlocksWithoutMemoryToShrinkStaysAsItWas> },
         { setOfBlocksWithoutRoomTest, testSetOfBlocksWithoutRoomForBlockSaysWhy },
         { structureBlockWithoutRoomTest, testStructureBlockThatSetHasNoRoomForNamesLimitOnAddressSpace },
         { "heap-cage/cage/storage-gets-no-block-that-the-set-has-no-room-for"_s, runInProcessWithSharedRange<checkStorageGetsNoBlockThatSetHasNoRoomFor> },
