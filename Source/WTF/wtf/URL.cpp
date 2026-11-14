@@ -840,10 +840,21 @@ void URL::setPath(StringView path)
     if (!m_isValid)
         return;
 
+    // The parser removes tab and newline from its input, so they do not count in what the path starts with.
+    std::array<char16_t, 2> start { };
+    unsigned startLength = 0;
+    for (unsigned i = 0; i < path.length() && startLength < start.size(); ++i) {
+        if (auto character = path[i]; character != '\t' && character != '\n' && character != '\r')
+            start[startLength++] = character;
+    }
+    bool startsWithSlash = startLength && (start[0] == '/' || (start[0] == '\\' && hasSpecialScheme()));
+    bool startsWithTwoSlashes = startLength == 2 && start[0] == '/' && start[1] == '/';
+    bool keepsEmptyPath = !startLength && !hasSpecialScheme() && m_schemeEnd + 1U < pathStart();
+
     parseAllowingC0AtEnd(makeString(
         StringView(m_string).left(pathStart()),
-        path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
-        !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
+        startsWithSlash || keepsEmptyPath ? ""_s : "/"_s,
+        startsWithTwoSlashes && !hasSpecialScheme() && host().isEmpty() ? "/."_s : ""_s,
         escapePathWithoutCopying(path),
         StringView(m_string).substring(m_pathEnd)
     ));

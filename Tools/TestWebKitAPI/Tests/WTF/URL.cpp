@@ -163,6 +163,69 @@ TEST_F(WTF_URL, URLSetQuery)
     EXPECT_EQ(urlWithFragmentIdentifier.string(), urlWithFragmentIdentifier3.string());
 }
 
+// URL::setPath looks at the start of its value: it adds the "/" that a path starts with, and, without a host, the "/."
+// that keeps a path starting with "//" from being read as a host. The parser removes tab and newline from the value,
+// so they are not part of that start.
+TEST_F(WTF_URL, SetPathStartOfValue)
+{
+    struct Row {
+        ASCIILiteral url;
+        ASCIILiteral value;
+        ASCIILiteral string;
+        ASCIILiteral path;
+        ASCIILiteral host;
+    };
+    static constexpr std::array rows {
+        Row { "zz:/a/b"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/a/b"_s, "//x"_s, "zz:/.//x"_s, "//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/\t/evil/x"_s, "zz:/.//evil/x"_s, "//evil/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\t//x"_s, "zz:/.//x"_s, "//x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/\n\r/"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/a/b"_s, "\n/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\r\nx"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        Row { "zz:/a/b"_s, "\t"_s, "zz:/"_s, "/"_s, ""_s },
+        Row { "zz:/a/b"_s, ""_s, "zz:/"_s, "/"_s, ""_s },
+        // The path that is replaced starts with a dot, or with the "/." that is not part of it.
+        Row { "zz:/.a/b"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.a/b"_s, "/\t/evil/x"_s, "zz:/.//evil/x"_s, "//evil/x"_s, ""_s },
+        Row { "zz:/..\\x"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.//a"_s, "//"_s, "zz:/.//"_s, "//"_s, ""_s },
+        Row { "zz:/.//a"_s, "\t/x"_s, "zz:/x"_s, "/x"_s, ""_s },
+        // With a host, "//" is two empty segments, and the empty path stays empty.
+        Row { "zz://h/a"_s, "//x"_s, "zz://h//x"_s, "//x"_s, "h"_s },
+        Row { "zz://h/a"_s, "\t//x"_s, "zz://h//x"_s, "//x"_s, "h"_s },
+        Row { "zz://h/a"_s, ""_s, "zz://h"_s, ""_s, "h"_s },
+        Row { "zz://h/a"_s, "\t"_s, "zz://h"_s, ""_s, "h"_s },
+        Row { "zz://h/a"_s, "\nx"_s, "zz://h/x"_s, "/x"_s, "h"_s },
+        Row { "zz:///a"_s, "//x"_s, "zz:////x"_s, "//x"_s, ""_s },
+        Row { "zz:///a"_s, "\t"_s, "zz://"_s, ""_s, ""_s },
+        // A special URL, where a backslash is a slash.
+        Row { "http://h/a"_s, "\t/x"_s, "http://h/x"_s, "/x"_s, "h"_s },
+        Row { "http://h/a"_s, "\t//x"_s, "http://h//x"_s, "//x"_s, "h"_s },
+        Row { "http://h/a"_s, "\n\\x"_s, "http://h/x"_s, "/x"_s, "h"_s },
+        Row { "http://h/a"_s, "//"_s, "http://h//"_s, "//"_s, "h"_s },
+        Row { "http://h/a"_s, ""_s, "http://h/"_s, "/"_s, "h"_s },
+        Row { "http://h/a"_s, "\t"_s, "http://h/"_s, "/"_s, "h"_s },
+        Row { "file:///a"_s, "\t/x"_s, "file:///x"_s, "/x"_s, ""_s },
+        Row { "file:///a"_s, "\r\\\\x"_s, "file:////x"_s, "//x"_s, ""_s },
+        // A backslash is not a slash in a non-special URL. Without a host, an empty value leaves the path "/".
+        Row { "zz:/a/b"_s, "\\x"_s, "zz:/\\x"_s, "/\\x"_s, ""_s },
+        Row { "zz://h/a"_s, "\\x"_s, "zz://h/\\x"_s, "/\\x"_s, "h"_s },
+        Row { "zz:/.//a"_s, ""_s, "zz:/"_s, "/"_s, ""_s },
+        Row { "zz:/.//a"_s, "\t"_s, "zz:/"_s, "/"_s, ""_s },
+    };
+    for (auto& row : rows) {
+        auto url = createURL(row.url);
+        url.setPath(row.value);
+        EXPECT_TRUE(url.isValid());
+        EXPECT_EQ(String(row.string), url.string());
+        EXPECT_EQ(String(row.path), url.path().toString());
+        EXPECT_EQ(String(row.host), url.host().toString());
+        EXPECT_TRUE(WTF::URLParser::internalValuesConsistent(url));
+    }
+}
+
 TEST_F(WTF_URL, URLSetFragmentIdentifier)
 {
     URL url = createURL("http://www.webkit.org/#newFragment%C3%83%C2%A5"_s);
