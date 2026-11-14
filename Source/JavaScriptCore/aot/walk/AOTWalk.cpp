@@ -10081,7 +10081,7 @@ bool Walker::fillsEmptyPlaceOfLoop(BlockID inputBlock) const
         Reference holder = referenceOf(index.stripCasts(object));
         if (!holder || !holder.isValue())
             return false;
-        if (m_code.isConstant(holder.id()) || isConstantOfFile(program(), m_code, holder.id()))
+        if (m_code.isConstant(holder.id()) || isConstantOfFile(program(), plan(), m_code, holder.id()))
             return true;
         std::optional<uint32_t> loop = innermostOpenLoop();
         return loop && standsInFrontOfOpenLoop(*loop, holder);

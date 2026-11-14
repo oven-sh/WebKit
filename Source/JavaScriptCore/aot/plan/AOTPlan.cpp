@@ -1817,6 +1817,13 @@ void CheckerOfPlan::check()
 
 #undef FOR_EACH_AOT_PLAN_RULE
 
+bool Plan::isImmutable(const Program& program, VariableID id) const
+{
+    if (const PromotedVariable* promoted = promotedEnvironments().find(id))
+        return !!promoted->function;
+    return program.at(id).flags.contains(VariableFlags::IsImmutable);
+}
+
 void Plan::findCallEntriesThatWalkBodies(const Program& program, const Facts& facts)
 {
     auto storesListAtEntry = [&](FunctionID id, const BodyIndex& body) {

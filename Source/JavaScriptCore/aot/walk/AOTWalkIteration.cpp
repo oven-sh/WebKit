@@ -844,6 +844,8 @@ public:
         m_origin.isTailCall = false;
     }
 
+    static bool mayTakePairApartWhenDone(const Walker::IndexedIteration& iteration) { return iteration.isEntryPairElided && !iteration.inputHead; }
+
     void standFor(const BodyValue& site) { m_site = &site; }
     void expectUnderNext(FunctionID function) { m_expectedUnderNext = function; }
     void expectWhatIsWrittenUnderNextOfIteratorOf(ValueID iterated) { m_iteratedWhoseNextIsAsked = iterated; }
@@ -1405,7 +1407,7 @@ public:
         Walker::IndexedIteration pattern;
         pattern.builtinClass = BuiltinClasses::Array;
         pattern.hasPrecomputedSteps = true;
-        if (!stepping.hasProtocolFallback) {
+        if (!stepping.hasProtocolFallback && !stepping.pairIsInParts) {
             pattern.precomputedSteps.append(stepping.keyOfPair);
             pattern.precomputedSteps.append(stepping.valueOfPair);
             m_walker.count(StatisticID::MapEntryAllocationsElided);
@@ -1415,8 +1417,14 @@ public:
         pattern.precomputedSteps.append(m_walker.addParameter(after, { }, Representation::JSValue));
         pattern.precomputedSteps.append(m_walker.addParameter(after, { }, Representation::JSValue));
         BlockID byProtocol = addBlock(BlockFrequency::Unlikely);
-        if (!m_walker.shouldSkipPairGuard()) [[likely]]
-            continueIfIndexedIteration(stepping, byProtocol);
+        if (!m_walker.shouldSkipPairGuard()) [[likely]] {
+            if (stepping.pairIsInParts) {
+                BlockID isInParts = addBlock();
+                branch(stepping.pairIsInParts, isInParts, byProtocol);
+                continueIn(isInParts);
+            } else
+                continueIfIndexedIteration(stepping, byProtocol);
+        }
         if (m_walker.checksProofs() && !m_walker.isUnreachable()) {
             Draft again = draft(Opcode::TypeTest);
             again.setValueOperand(stepping.list);
@@ -1644,6 +1652,7 @@ public:
         Reference table = iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
         Reference keyOfPair = !iteration.isEntryPairElided ? Reference() : iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : m_walker.addParameter(after, { }, m_walker.formOfParameter(m_walker.types().integer(Range { 0, Walker::doneIterationPosition }), { }));
         Reference valueOfPair = iteration.isEntryPairElided ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
+        Reference pairIsInParts = mayTakePairApartWhenDone(iteration) ? m_walker.addParameter(after, TypeTable::boolean, m_walker.formOfParameter(TypeTable::boolean, { })) : Reference();
 
         if (iteration.hasProtocolFallback)
             iteration.elementsProven = { };
@@ -1652,6 +1661,7 @@ public:
         iteration.table = table;
         iteration.keyOfPair = keyOfPair;
         iteration.valueOfPair = valueOfPair;
+        iteration.pairIsInParts = pairIsInParts;
         return resultsOf(done, value);
     }
 
@@ -3419,6 +3429,8 @@ private:
             endThreadedStep(after, done, { value, position });
         else if (iteration.isProtocolOnly)
             jumpTo(after, { done, value });
+        else if (mayTakePairApartWhenDone(iteration))
+            jumpTo(after, { done, value, position, keyOfPair ? keyOfPair : integer(0), valueOfPair ? valueOfPair : undefined(), boolean(!!keyOfPair) });
         else if (iteration.isEntryPairElided)
             jumpTo(after, { done, value, position, keyOfPair ? keyOfPair : integer(0), valueOfPair ? valueOfPair : undefined() });
         else
@@ -3442,6 +3454,8 @@ private:
             endThreadedStep(after, done, { value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined() });
         else if (m_doneBlock)
             endThreadedStep(after, done, { value, position, table });
+        else if (mayTakePairApartWhenDone(iteration))
+            jumpTo(after, { done, value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined(), boolean(!!keyOfPair) });
         else if (iteration.isEntryPairElided)
             jumpTo(after, { done, value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined() });
         else

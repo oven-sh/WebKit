@@ -205,6 +205,7 @@ public:
         return coroutine && coroutine->returned && !isNeverType(coroutine->returned) ? coroutine->returned : TypeID();
     }
     bool runTimeMayFill(VariableID id) const { return m_parts.variablesThatRunTimeMayFill.get(id.index()); }
+    bool isImmutable(const Program&, VariableID) const;
     bool genericCallEntryWalksBody(FunctionID id) const { return m_parts.functionsWhoseCallEntryWalksBody.get(id.index()); }
     void findCallEntriesThatWalkBodies(const Program&, const Facts&);
 

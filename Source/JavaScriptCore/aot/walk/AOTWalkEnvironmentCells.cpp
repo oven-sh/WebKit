@@ -713,11 +713,11 @@ ValueID findFirstFill(TypeArena& types, const BodyIndex& index, BlockID block)
     return { };
 }
 
-static ValueID checkedConstantVariable(const Program& program, const Code& code, ValueID cell)
+static ValueID checkedConstantVariable(const Program& program, const Plan& plan, const Code& code, ValueID cell)
 {
     while (!code.isConstant(cell) && code.at(cell).opcode == Opcode::CheckInitialized)
         cell = underlyingCellOf(code, code.at(cell).operand(0));
-    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::GetModuleVariable || !program.at(code.at(cell).variable()).flags.contains(VariableFlags::IsImmutable))
+    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::GetModuleVariable || !plan.isImmutable(program, code.at(cell).variable()))
         return { };
     return cell;
 }
@@ -730,9 +730,9 @@ void Walker::noteSlotReadOnEveryIteration(Reference object, Reference read)
         m_trialVisits.last().slotsReadOnEveryIteration.append(held);
 }
 
-bool isConstantOfFile(const Program& program, const Code& code, ValueID object)
+bool isConstantOfFile(const Program& program, const Plan& plan, const Code& code, ValueID object)
 {
-    return !!checkedConstantVariable(program, code, underlyingCellOf(code, object));
+    return !!checkedConstantVariable(program, plan, code, underlyingCellOf(code, object));
 }
 
 void Walker::noteSlotRead(Reference object, PropertyKeyID key, Reference read)
@@ -863,7 +863,7 @@ void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before
     for (size_t place = m_trialVisits.size(); place--;) {
         TrialVisit& visit = m_trialVisits[place];
         if (cell.index() >= visit.firstRecord) {
-            cell = isFirstFill ? checkedConstantVariable(program(), m_code, cell) : ValueID();
+            cell = isFirstFill ? checkedConstantVariable(program(), plan(), m_code, cell) : ValueID();
             if (!cell)
                 return;
         }
@@ -1012,7 +1012,7 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
                     Reference held = m_frames[visit.frameIndex].references[operation.id().index()];
                     if (held && held.isValue() && !m_code.isConstant(held.id())) {
                         ValueID cell = underlyingCellOf(m_code, held.id());
-                        ValueID variable = cell.index() >= visit.firstRecord ? checkedConstantVariable(program(), m_code, cell) : ValueID();
+                        ValueID variable = cell.index() >= visit.firstRecord ? checkedConstantVariable(program(), plan(), m_code, cell) : ValueID();
                         holders.add((variable ? variable : cell).index(), operation.id());
                     }
                     continue;
