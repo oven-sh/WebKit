@@ -1,5 +1,5 @@
 # What an entry exports is let go, also where code outside the image is refused: the host may read it, and no read of it stands in the program.
-# Link follows a built-in into a variable. It followed this one to nobody, and left out the function of the library behind it, in builds that refuse such code (every hardened one).
+# A file that stores a built-in in a variable lets it go. When Link followed it there, it followed this one to nobody, and left out the function of the library behind it, in builds that refuse such code (every hardened one).
 # OPTIONS: exclude=CodeOutsideImage
 # PROGRAM-OF: library-function-behind-a-built-in-that-is-read.ir
 # LIBRARY: own

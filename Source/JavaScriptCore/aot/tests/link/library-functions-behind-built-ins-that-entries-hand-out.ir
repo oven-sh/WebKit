@@ -1,5 +1,5 @@
 # A built-in that is written in the library has its code where a file stores it in a variable, however an entry hands it out: under a namespace, by a star, under another name,
-# as its default, under the namespace of a namespace, or as an entry that another one imports. Nobody inside a build that refuses code from outside reads what an entry exports, and Link follows a variable to its readers.
+# as its default, under the namespace of a namespace, or as an entry that another one imports. Nobody inside a build that refuses code from outside reads what an entry exports, so a built-in that Link followed into a variable would be left out.
 # lib1.js: export const map = Array.prototype.map;   main.js: export * as first from "./lib1.js"; export * from "./lib2.js"; import * as second from "./lib3.js"; export { second }; export { findLast as renamed } from "./lib4.js";
 # import * as whole from "./lib5.js"; export default whole; export * as nested from "./outer.js"; import * as other from "./other-entry.js";   outer.js: export * as inner from "./lib6.js";
 # OPTIONS: exclude=CodeOutsideImage

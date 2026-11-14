@@ -1,5 +1,5 @@
 # What an entry hands out is let go, also where code outside the image is refused, and so is what lies below it.
-# Link follows a built-in into a variable. A build that refuses code from outside lets no export of an entry go, so a prototype that nobody reads in the program left its functions out.
+# A file that stores a built-in in a variable lets it go. If Link followed it there, nobody in a build that refuses code from outside would read what the entry exports, and a prototype would leave its functions out.
 # lib.js: export const held = Array.prototype;   main.js: export * as lib from "./lib.js";
 # OPTIONS: exclude=CodeOutsideImage
 # LIBRARY: own

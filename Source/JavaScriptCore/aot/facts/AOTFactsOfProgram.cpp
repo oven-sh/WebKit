@@ -670,7 +670,6 @@ static constexpr uint8_t writeOnlyDeletesInProgramFacts = 2;
 struct BuiltinsHeldByVariablesInProgramFacts {
     Vector<BuiltinID> held;
     BitVector areFollowedByLinkAsTheObject;
-    BitVector areHandedOut;
 };
 
 class BodyLookOfProgramFacts {
@@ -692,7 +691,6 @@ public:
         , m_found(found)
         , m_builtinsHeldByVariables(builtinsHeldByVariables.held.span())
         , m_variablesThatLinkFollowsAsTheObject(builtinsHeldByVariables.areFollowedByLinkAsTheObject)
-        , m_variablesHandedOut(builtinsHeldByVariables.areHandedOut)
     {
     }
 
@@ -826,7 +824,6 @@ private:
     Vector<Finding>& m_found;
     std::span<const BuiltinID> m_builtinsHeldByVariables;
     const BitVector& m_variablesThatLinkFollowsAsTheObject;
-    const BitVector& m_variablesHandedOut;
     Vector<uint64_t> m_callsBoundToBuiltins;
     Vector<uint32_t> m_callSites;
     uint32_t m_numberOfQuestionsAboutCalls { 0 };
@@ -1483,7 +1480,7 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsFollowedByLink;
         if (accessClassOf(opcode) == AccessClass::ByName)
             return isOnlyInspected && receiverOf(opcode) == operandIndex ? Fate::IsAskedForAnyMember : Fate::IsLetGo;
-        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || (opcode == Opcode::PutModuleVariable && !m_variablesHandedOut.get(user.as<Opcode::PutModuleVariable>().variable().index())) || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
+        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
             return Fate::IsFollowedByLink;
         bool isHandedToCodeOfProgram = (opcode == Opcode::InstanceOf && !operandIndex && !builtinSurelyAt(user.operand(1))) || operandInfoOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).protocols.contains(Protocol::ToPrimitive);
         if (isHandedToCodeOfProgram && !linkFollowsWritesOn(user.operand(operandIndex), user.id()))
@@ -3393,59 +3390,9 @@ static BuiltinID builtinWrittenOutAtInProgramFacts(const Program& program, const
     return member && standsForObjectInProgramFacts(builtins, builtins.canonicalID(member)) ? member : BuiltinID();
 }
 
-static BitVector findVariablesHandedOutInProgramFacts(const Program& program, const BodyIndexTable& bodies)
-{
-    static constexpr OpcodeSet namespacesMade { Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule };
-    BitVector variables(program.variables.size());
-    BitVector modules(program.modules.size());
-    Vector<ModuleID> modulesToLookThrough;
-    auto handOutVariable = [&](VariableID variable) {
-        if (variable)
-            variables.set(variable.index());
-    };
-    auto handOutModule = [&](ModuleID id) {
-        if (id && !modules.set(id.index()))
-            modulesToLookThrough.append(id);
-    };
-    for (const Entry& entry : program.entries)
-        handOutModule(entry.module);
-    for (uint32_t number = 0; number < program.functions.size(); ++number) {
-        const BodyIndex* index = bodies.find(FunctionID(number));
-        if (!index || !index->holdsAnyOf(namespacesMade))
-            continue;
-        for (uint32_t place = 0; place < index->numberOfValues(); ++place) {
-            if (index->isParameter(ValueID(place)))
-                continue;
-            BodyValue made = index->value(ValueID(place));
-            if (made.opcode() == Opcode::ModuleNamespace)
-                handOutModule(made.as<Opcode::ModuleNamespace>().module());
-            else if (made.opcode() == Opcode::ImportModule)
-                handOutModule(made.as<Opcode::ImportModule>().module());
-            else if (made.opcode() == Opcode::RequireModule)
-                handOutModule(made.as<Opcode::RequireModule>().module());
-        }
-    }
-    while (!modulesToLookThrough.isEmpty()) {
-        const Module& module = program.at(modulesToLookThrough.takeLast());
-        for (const ModuleExport& exported : module.exports) {
-            handOutVariable(exported.variable);
-            handOutModule(exported.module);
-        }
-        for (const SyntheticExport& exported : module.syntheticExports)
-            handOutVariable(exported.variable);
-        handOutVariable(module.exportsVariable);
-        for (const ModuleRequest& request : module.requests) {
-            if (request.isDynamicStarExport)
-                handOutModule(request.target);
-        }
-    }
-    return variables;
-}
-
 static BuiltinsHeldByVariablesInProgramFacts builtinsHeldByVariablesStoredOnceInProgramFacts(const Program& program, const RowsOfProgramFacts& rows, const BodyIndexTable& bodies)
 {
     BuiltinsHeldByVariablesInProgramFacts table;
-    table.areHandedOut = findVariablesHandedOutInProgramFacts(program, bodies);
     Vector<BuiltinID>& held = table.held;
     BitVector isStored;
     for (uint32_t number = 0; number < program.modules.size(); ++number) {
