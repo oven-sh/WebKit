@@ -199,7 +199,13 @@ protected:
 #endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_stackStringIsFramesOnly : 1;
+    // A bit for each of line, column and sourceURL that user code stored, defined or deleted on this error.
+    // Materialization does not write such a name.
+    uint8_t m_positionPropertiesOwnedByUser : 3;
     JSValue stackWithHeader(VM&, String&& frames);
+    void materializePositionProperty(VM&, PropertyName, uint8_t property, JSValue);
+    void materializePositionProperties(VM&);
+    bool putPositionProperty(JSGlobalObject*, PropertyName, uint8_t property, JSValue, PutPropertySlot&);
 #endif
 
 private:
