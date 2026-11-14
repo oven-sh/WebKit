@@ -9230,7 +9230,7 @@ bool hasMockImportsAwaitingSource(JSGlobalObject* realm)
     return modules && modules->hasMockImportsAwaitingSource();
 }
 
-void deferMock(JSGlobalObject* realm, ModuleID module, FactoryFailurePolicy failurePolicy, bool isFromPreload)
+void deferMock(JSGlobalObject* realm, ModuleID module, FactoryFailurePolicy failurePolicy, bool isFromPreload, bool settlesWithOriginal)
 {
     Modules* modules = modulesOf(realm);
     MockDoor door(modules, module, failurePolicy == FactoryFailurePolicy::RetryFactory ? "deferMock, asks again"_s : "deferMock"_s);
@@ -9240,7 +9240,7 @@ void deferMock(JSGlobalObject* realm, ModuleID module, FactoryFailurePolicy fail
     if (modules->isMockLingering(module) && !modules->isHeldByDetachedLoad(module))
         modules->removeLingeringMocks();
     RETURN_IF_EXCEPTION(scope, void());
-    RELEASE_AND_RETURN(scope, modules->deferMock(module, failurePolicy, isFromPreload));
+    RELEASE_AND_RETURN(scope, modules->deferMock(module, failurePolicy, isFromPreload, settlesWithOriginal));
 }
 
 JSValue exportsBeforeMock(JSGlobalObject* realm, ModuleID module, bool evenIfEvaluationFailed, bool* didExportReadThrow)

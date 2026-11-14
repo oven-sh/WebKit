@@ -352,7 +352,7 @@ JS_EXPORT_PRIVATE bool isEntryOwnedByTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE std::optional<ModuleID> findVariantToMock(JSGlobalObject*, StringView path, std::optional<ModuleID> file);
 JS_EXPORT_PRIVATE Vector<ModuleID, 2> importAttributeVariants(JSGlobalObject*, StringView path);
 enum class FactoryFailurePolicy : bool { CacheError, RetryFactory };
-JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, FactoryFailurePolicy = FactoryFailurePolicy::CacheError, bool isFromPreload = false);
+JS_EXPORT_PRIVATE void deferMock(JSGlobalObject*, ModuleID, FactoryFailurePolicy = FactoryFailurePolicy::CacheError, bool isFromPreload = false, bool settlesWithOriginal = false);
 JS_EXPORT_PRIVATE void didFailImportOriginalFactory(JSGlobalObject*, ModuleID, JSValue error);
 JS_EXPORT_PRIVATE bool hasMockImportsAwaitingSource(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasInFlightOriginalRequest(JSGlobalObject*, ModuleID);

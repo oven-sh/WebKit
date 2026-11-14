@@ -277,11 +277,27 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         return false;
     };
 
+    auto settleMock = [&](ModuleID mocked) {
+        bool wasLaidWhileEvaluationRan = settleMockLeftToEvaluation(mocked);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!wasLaidWhileEvaluationRan) [[likely]]
+            return;
+        BitVector entered(m_table.size());
+        for (const EvaluationFrame& frame : frames)
+            entered.quickSet(frame.module.index());
+        RELEASE_AND_RETURN(scope, linkAnewFilesYetToRun(entered));
+    };
+
     BitVector modulesPassed;
     BitVector seenBehindModulesThatHaveRun;
     auto pass = [&](ModuleID module) {
-        if (m_mockOperations) [[unlikely]]
+        if (m_mockOperations) [[unlikely]] {
+            if (isMockLeftToEvaluation(module)) {
+                settleMock(module);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
             passModuleThatHasRun(module, modulesPassed);
+        }
         if (!m_importersEnteredAboveMocks.isEmpty() && !scope.exception()) [[unlikely]]
             evaluateImportersBehindModuleThatHasRun(module, root, context.stack, seenBehindModulesThatHaveRun);
     };
@@ -330,6 +346,10 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         if (!frames.isEmpty() && status(module) == ModuleStatus::Linked && passImporterEnteredAboveMock(module, root, context.stack)) [[unlikely]]
             return false;
         if (isMocked(module) && !runsBesideMock && !isPatchedByMock(module)) [[unlikely]] {
+            if (isMockLeftToEvaluation(module)) {
+                settleMock(module);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
             setStatus(module, ModuleStatus::Evaluated);
             return false;
         }
@@ -502,6 +522,11 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
                 const ModuleData& requiredData = data(required);
                 bool isLinked = !runsBesideMock && (stored == StoredModuleStatus::Linked || stored == StoredModuleStatus::Unlinked);
                 if (isLinked && isMocked(required) && !isPatchedByMock(required)) [[unlikely]] {
+                    if (isMockLeftToEvaluation(required)) {
+                        settleMock(required);
+                        if (scope.exception()) [[unlikely]]
+                            continue;
+                    }
                     setStoredStatus(required, StoredModuleStatus::Evaluated);
                     continue;
                 }

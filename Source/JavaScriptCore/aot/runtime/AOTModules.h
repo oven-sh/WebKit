@@ -846,7 +846,7 @@ public:
     Vector<ModuleID> libraryModulesInRequireCache();
     bool isLibraryModuleInRequireCache(ModuleID);
     std::optional<ModuleID> findVariantToMock(StringView path, std::optional<ModuleID> file) const;
-    void deferMock(ModuleID, FactoryFailurePolicy, bool isFromPreload = false);
+    void deferMock(ModuleID, FactoryFailurePolicy, bool isFromPreload = false, bool settlesWithOriginal = false);
     void forgetMockThatWaits(ModuleID);
     void leaveImportersAbove(ModuleID mocked);
     void endMockOfLibraryModule(ModuleID);
@@ -3079,6 +3079,13 @@ private:
     BitVector m_modulesPendingAfterSweep;
     std::optional<ModuleID> m_originalBeingEvaluated;
     bool needsOriginalBeforeFactory(ModuleID mocked) const { return m_modulesWithPendingMock.get(mocked.index()) && m_mocksRetriedAfterFailure.get(mocked.index()); }
+    BitVector m_mocksSettledByOriginal;
+    BitVector m_mocksLeftToEvaluation;
+    BitVector m_mocksLaidWhileEvaluationRan;
+    bool isSettledWhereEvaluationComes(ModuleID mocked);
+    bool isMockLeftToEvaluation(ModuleID mocked) const { return m_mocksLeftToEvaluation.get(mocked.index()) && m_modulesWithPendingMock.get(mocked.index()); }
+    bool settleMockLeftToEvaluation(ModuleID mocked);
+    void linkAnewFilesYetToRun(const BitVector& entered);
     bool sweepAheadOfFactories(ModuleID root);
     bool isOriginalDelegatedToHost(ModuleID mocked, const BitVector& held, const BitVector& isOnPath);
     bool isDataFile(ModuleID module) const { return data(module).kind == ModuleKind::Data && m_table.fullPath(module).find('?') == notFound; }

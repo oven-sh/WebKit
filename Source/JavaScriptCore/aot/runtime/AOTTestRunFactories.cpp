@@ -763,7 +763,7 @@ void Modules::forgetCallOfMock(ModuleID fileOrModule)
     m_pendingMockCalls.remove(fileOrModule);
 }
 
-void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy, bool isFromPreload)
+void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy, bool isFromPreload, bool settlesWithOriginal)
 {
     m_unseenMocks.clear(fileOf(module).index());
     finishLoadsAwaitingLoader(module);
@@ -782,6 +782,9 @@ void Modules::deferMock(ModuleID module, FactoryFailurePolicy failurePolicy, boo
     m_missingMockFailures.removeAllMatching([&](const auto& load) { return fileOf(load.first) == fileOf(module); });
     m_failuresOfFactories.removeAllMatching([&](const FailureOfFactory& failure) { return failure.mocked == module; });
     m_mocksRetriedAfterFailure.set(module.index(), failurePolicy == FactoryFailurePolicy::RetryFactory);
+    m_mocksSettledByOriginal.set(module.index(), settlesWithOriginal && failurePolicy == FactoryFailurePolicy::RetryFactory);
+    if (m_innermostEvaluation && m_mocksLeftToEvaluation.get(module.index())) [[unlikely]]
+        m_mocksLaidWhileEvaluationRan.set(module.index());
     clearLoadErrorsForMock(module);
     if (data(module).kind == ModuleKind::CommonJs)
         ensureRecord(module);
@@ -859,12 +862,13 @@ void Modules::removeLingeringMock(ModuleID module)
     m_modulesWithLingeringMock.clear(module.index());
     bool anotherWaits = m_modulesWithPendingMock.get(module.index());
     bool asksAgain = m_mocksRetriedAfterFailure.get(module.index());
+    bool settlesWithOriginal = m_mocksSettledByOriginal.get(module.index());
     bool wasInstalledOnPreloadMock = !m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.get(module.index());
     m_modulesWhoseEndPutOffBringsNoMockOfPreloadBack.clear(module.index());
     AOT::didRemoveMock(m_instance.globalObject, module, RetainedOriginalPolicy::DiscardWithMock, wasInstalledOnPreloadMock, m_originalsRestoredAtUnmock.get(module.index()));
     scope.exception();
     if (anotherWaits)
-        deferMock(module, asksAgain ? FactoryFailurePolicy::RetryFactory : FactoryFailurePolicy::CacheError);
+        deferMock(module, asksAgain ? FactoryFailurePolicy::RetryFactory : FactoryFailurePolicy::CacheError, false, settlesWithOriginal);
 }
 
 JSValue Modules::takeErrorOfFactoryThatFailedWhileCallWasHeldForItsText(ModuleID asked)
@@ -970,6 +974,7 @@ bool Modules::runPendingMockSlow(ModuleID module)
         RETURN_IF_EXCEPTION(scope, false);
     }
     m_modulesWithPendingMock.clear(module.index());
+    m_mocksLeftToEvaluation.clear(module.index());
     m_modulesWhoseFactoryWasCalled.set(module.index());
     m_failuresOfFactories.removeAllMatching([&](const FailureOfFactory& failure) { return failure.mocked == module; });
     bool ranAlready = m_modulesWithRunningFactory.set(module.index());
@@ -1540,6 +1545,63 @@ bool Modules::displacesRequiredMock(ModuleID mocked)
     return waiting != m_pendingMockCalls.end() && waiting->value.keepsActiveMock && ensureLoaded(file).isKeptByRequire && !ensureLoaded(moduleWithExportsOf(file)).wasImportedUnderActiveMock;
 }
 
+// A mock that its original settles waits for nothing. Nobody is held for it: the evaluation runs the original and makes the mock where it comes to the mocked module.
+// The host makes such a mock in the call that ends its original only where isSynchronousESModule() holds, and the evaluation comes only to a module that has something to evaluate.
+bool Modules::isSettledWhereEvaluationComes(ModuleID mocked)
+{
+    if (!m_mocksSettledByOriginal.get(mocked.index()) || !needsOriginalBeforeFactory(mocked) || !host().evaluateOriginalBeforeFactory)
+        return false;
+    const ModuleData& original = data(mocked);
+    return original.kind == ModuleKind::SourceText && !original.isFacade() && original.isSynchronous() && original.needsEvaluation() && !importsModuleWithPendingMock(mocked);
+}
+
+// Returns whether the mock was laid while the evaluation ran: the files that the evaluation has linked and has yet to run are linked to the mock that waited when it began.
+bool Modules::settleMockLeftToEvaluation(ModuleID mocked)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    m_mocksLeftToEvaluation.clear(mocked.index());
+    bool wasLaidWhileEvaluationRan = m_mocksLaidWhileEvaluationRan.clear(mocked.index());
+    JSValue thrownByBody = errorOfModuleThatRanBesideMock(mocked);
+    if (thrownByBody && !wasDisplacedAfterFailure(mocked)) [[unlikely]] {
+        throwException(m_instance.globalObject, scope, thrownByBody);
+        return false;
+    }
+    ModuleStatus body = status(mocked);
+    bool hasBodyRun = thrownByBody || wasOriginalEvaluated(mocked) || (body != ModuleStatus::Unlinked && body != ModuleStatus::Linked);
+    if (!hasBodyRun) {
+        bool hasFactory = false;
+        JSPromise* evaluation;
+        {
+            SetForScope originalBeingEvaluated(m_originalBeingEvaluated, mocked);
+            evaluation = host().evaluateOriginalBeforeFactory(m_instance.globalObject, mocked, hasFactory);
+        }
+        RETURN_IF_EXCEPTION(scope, false);
+        if (evaluation) {
+            evaluation->markAsHandled();
+            if (evaluation->status() == JSPromise::Status::Rejected) {
+                throwException(m_instance.globalObject, scope, evaluation->result());
+                return false;
+            }
+        }
+    }
+    if (m_modulesWithPendingMock.get(mocked.index())) {
+        runPendingMock(mocked);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return wasLaidWhileEvaluationRan;
+}
+
+void Modules::linkAnewFilesYetToRun(const BitVector& entered)
+{
+    Vector<ModuleID, 16> linked;
+    for (size_t index : m_linkedInstances) {
+        ModuleID module(index);
+        if ((status(module) <= ModuleStatus::Linked || entered.get(index)) && currentInstance(module))
+            linked.append(module);
+    }
+    linkInstances(linked.span());
+}
+
 auto Modules::runOriginalInSweep(ModuleID mocked) -> OriginalInSweep
 {
     VM& vm = *m_instance.vm;
@@ -1667,6 +1729,12 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         }
     };
     auto evaluateNow = [&](ModuleID module) {
+        if (isMockLeftToEvaluation(module)) {
+            didRunCode();
+            settleMockLeftToEvaluation(module);
+            RETURN_IF_EXCEPTION(scope, false);
+            return true;
+        }
         if (status(module) <= ModuleStatus::Linked) {
             didRunCode();
             JSPromise* evaluation = evaluate(module, std::nullopt, nullptr, nullptr);
@@ -1767,6 +1835,11 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
             break;
         bool isSeen = seen.quickSet(imported.index());
         if (needsOriginalBeforeFactory(mocked)) {
+            if (!path.last().isHeld && isMockLeftToEvaluation(mocked)) {
+                if (!isSeen)
+                    path.last().finished.append(mocked);
+                continue;
+            }
             noteMock(mocked);
             bool hasRun = holdPath();
             if (scope.exception())
@@ -2232,12 +2305,17 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
         return isRequireBlocked;
     MocksInGraph mocks = mocksInGraph(root);
     bool mayComeToOne = false;
-    for (size_t module : m_modulesWithPendingMock)
+    bool hasMockSettledByOriginal = false;
+    for (size_t module : m_modulesWithPendingMock) {
         mayComeToOne |= !isMocked(ModuleID(module)) || !mocks.hides(ModuleID(module));
+        hasMockSettledByOriginal |= m_mocksSettledByOriginal.get(module);
+    }
     if (!mayComeToOne)
         return isRequireBlocked;
     std::optional<ModuleID> fileOfRoot = m_table.moduleBehindFacade(root);
-    bool walksInFrontOfMocks = rootOfLoad == LoadRootKind::StartsLoad && m_modulesWithRunningFactory.isEmpty() && !m_evaluatesSynchronously && !m_rootWhoseLoadIsSwept && !vm.aotState().requireRunsMocks && !vm.synchronousModuleQueue();
+    bool startsLoadThatMayWait = rootOfLoad == LoadRootKind::StartsLoad && m_modulesWithRunningFactory.isEmpty() && !m_evaluatesSynchronously && !vm.aotState().requireRunsMocks && !vm.synchronousModuleQueue();
+    bool walksInFrontOfMocks = startsLoadThatMayWait && !m_rootWhoseLoadIsSwept;
+    bool evaluationSettlesMocks = startsLoadThatMayWait && hasMockSettledByOriginal;
     bool isRequired = vm.aotState().requireRunsMocks && m_currentRequireTarget == root;
     std::optional<bool> endsBeforeLink;
     bool hasCalledOrdinaryFactories = !walksInFrontOfMocks;
@@ -2259,7 +2337,10 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
     };
     Deque<Request, 32> work;
     Vector<std::pair<ModuleID, uint32_t>, 4> precedingCommonJSModules;
+    BitVector isBelowModuleThatHasBegun(evaluationSettlesMocks ? m_table.size() : 0);
     auto addRequest = [&](ModuleID requested, ModuleID requester, ModuleID importerOfRequester, uint32_t depth) {
+        if (evaluationSettlesMocks && (status(requester) > ModuleStatus::Linked || isBelowModuleThatHasBegun.quickGet(requester.index())))
+            isBelowModuleThatHasBegun.quickSet(requested.index());
         if (isBreadthFirst && data(requester).isFacade())
             work.prepend(Request { requested, importerOfRequester, depth });
         else
@@ -2293,7 +2374,10 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
         bool keepsActiveMock = !isRequired && !vm.aotState().requireRunsMocks && !m_evaluatesSynchronously && activeMockUse(module) >= (isImportedByStatement ? ActiveMockUse::ByStatements : ActiveMockUse::ByImports);
         bool runsMock = m_modulesWithPendingMock.get(module.index()) && !keepsActiveMock && !isLeftToHost && !isMockLingering(module) && (isImportedByStatement || !m_originalsDueUnderMock.get(module.index())) && (m_isResumingFactoryChainImport || !isUnmockedInDetachedLoad(root, module)) && !isFetchedByPendingFactoryCall(root, module);
         bool isPutAside = runsMock && isImportedByStatement && m_mocksRetriedAfterFailure.get(module.index());
-        if (isPutAside) {
+        bool isLeftToEvaluation = isPutAside && evaluationSettlesMocks && !isBelowModuleThatHasBegun.get(module.index()) && isSettledWhereEvaluationComes(module);
+        if (runsMock)
+            m_mocksLeftToEvaluation.set(module.index(), isLeftToEvaluation);
+        if (isPutAside && !isLeftToEvaluation) {
             if (!endsBeforeLink)
                 endsBeforeLink = hasUnresolvableRequestInGraph(root);
             isPutAside = !hasCalledOrdinaryFactories || *endsBeforeLink;
