@@ -260,6 +260,8 @@ public:
     bool hasArrayBuffer() const { return JSC::hasArrayBuffer(mode()); }
     
     inline bool isShared();
+    // See ArrayBufferContents::canBeWrittenConcurrently.
+    inline bool canBeWrittenConcurrently();
     JS_EXPORT_PRIVATE ArrayBuffer* unsharedBuffer();
     inline ArrayBuffer* possiblySharedBuffer();
     JSArrayBuffer* unsharedJSBuffer(JSGlobalObject* globalObject);
