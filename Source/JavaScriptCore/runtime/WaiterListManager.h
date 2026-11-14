@@ -153,9 +153,12 @@ public:
     Ref<Waiter> takeFirst(const AbstractLocker&)
     {
         // `takeFisrt` is used to consume a waiter (either notify, timeout, or remove).
-        // So, the waiter must not be removed and belong to this list.
+        // So, the waiter must not be removed and belong to this list. An async waiter's
+        // ticket may be gone already: the end of a collection cancels and releases the
+        // tickets of a dead realm before the realm's sweep unregisters its waiters.
+        // notifyWaiterImpl then finds nothing to schedule.
         Waiter& waiter = *m_waiters.begin();
-        ASSERT((!waiter.isAsync() || waiter.ticket(NoLockingNecessary)) && waiter.vm() && waiter.isOnList());
+        ASSERT(waiter.vm() && waiter.isOnList());
         Ref<Waiter> protectedWaiter = Ref { waiter };
         removeWithUpdate(waiter);
         return protectedWaiter;
