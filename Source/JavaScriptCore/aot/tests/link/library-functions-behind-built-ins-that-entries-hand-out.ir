@@ -1,0 +1,145 @@
+# A built-in that is written in the library has its code where a file stores it in a variable, however an entry hands it out: under a namespace, by a star, under another name,
+# as its default, under the namespace of a namespace, or as an entry that another one imports. Nobody inside a build that refuses code from outside reads what an entry exports, and Link follows a variable to its readers.
+# lib1.js: export const map = Array.prototype.map;   main.js: export * as first from "./lib1.js"; export * from "./lib2.js"; import * as second from "./lib3.js"; export { second }; export { findLast as renamed } from "./lib4.js";
+# import * as whole from "./lib5.js"; export default whole; export * as nested from "./outer.js"; import * as other from "./other-entry.js";   outer.js: export * as inner from "./lib6.js";
+# OPTIONS: exclude=CodeOutsideImage
+# LIBRARY: own
+# RUN(F0): link functions mechanisms=all
+# F0-NOT: function f9 unreached
+# RUN(F1): link functions mechanisms=all
+# F1-NOT: function f10 unreached
+# RUN(F2): link functions mechanisms=all
+# F2-NOT: function f11 unreached
+# RUN(F3): link functions mechanisms=all
+# F3-NOT: function f12 unreached
+# RUN(F4): link functions mechanisms=all
+# F4-NOT: function f13 unreached
+# RUN(F5): link functions mechanisms=all
+# F5-NOT: function f14 unreached
+# RUN(F6): link functions mechanisms=all
+# F6-NOT: function f15 unreached
+# RUN: link functions mechanisms=all
+# CHECK: function f16 unreached
+
+variable g0 name="map" module=m2 declared={type=anything} initialization=Uninitialized
+variable g1 name="filter" module=m3 declared={type=anything} initialization=Uninitialized
+variable g2 name="some" module=m4 declared={type=anything} initialization=Uninitialized
+variable g3 name="findLast" module=m5 declared={type=anything} initialization=Uninitialized
+variable g4 name="forEach" module=m6 declared={type=anything} initialization=Uninitialized
+variable g5 name="every" module=m7 declared={type=anything} initialization=Uninitialized
+variable g6 name="find" module=m8 declared={type=anything} initialization=Uninitialized
+variable g7 name="default" module=m0 declared={type=anything} initialization=Uninitialized
+module m0 path="main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}, {target=m5 completes=true}, {target=m6 completes=true}, {target=m9 completes=true}, {target=m8 completes=true}] exports=[{name="default" variable=g7}, {name="filter" variable=g1}, {name="first" kind=Namespace module=m2}, {name="nested" kind=Namespace module=m9}, {name="renamed" variable=g3}, {name="second" kind=Namespace module=m4}]
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+module m2 path="lib1.js" displayPath="lib1.js" body=f1 exports=[{name="map" variable=g0}]
+module m3 path="lib2.js" displayPath="lib2.js" body=f2 exports=[{name="filter" variable=g1}]
+module m4 path="lib3.js" displayPath="lib3.js" body=f3 exports=[{name="some" variable=g2}]
+module m5 path="lib4.js" displayPath="lib4.js" body=f4 exports=[{name="findLast" variable=g3}]
+module m6 path="lib5.js" displayPath="lib5.js" body=f5 exports=[{name="forEach" variable=g4}]
+module m7 path="lib6.js" displayPath="lib6.js" body=f6 exports=[{name="every" variable=g5}]
+module m8 path="other-entry.js" displayPath="other-entry.js" body=f7 exports=[{name="find" variable=g6}]
+module m9 path="outer.js" displayPath="outer.js" body=f8 requests=[{target=m7 completes=true}] exports=[{name="inner" kind=Namespace module=m7}]
+entry module=m0
+entry module=m8
+runtimefunction id=ArrayPrototypeEvery function=f14
+runtimefunction id=ArrayPrototypeFilter function=f10
+runtimefunction id=ArrayPrototypeFind function=f15
+runtimefunction id=ArrayPrototypeFindIndex function=f16
+runtimefunction id=ArrayPrototypeFindLast function=f12
+runtimefunction id=ArrayPrototypeForEach function=f13
+runtimefunction id=ArrayPrototypeMap function=f9
+runtimefunction id=ArrayPrototypeSome function=f11
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = ModuleNamespace module=m6
+    PutModuleVariable v0 variable=g7
+    v2 = ModuleNamespace module=m8
+    v3 = Undefined
+    Return v3
+}
+function f1 module=m2 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    PutModuleVariable v0 variable=g0
+    v2 = Undefined
+    Return v2
+}
+function f2 module=m3 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeFilter
+    PutModuleVariable v0 variable=g1
+    v2 = Undefined
+    Return v2
+}
+function f3 module=m4 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeSome
+    PutModuleVariable v0 variable=g2
+    v2 = Undefined
+    Return v2
+}
+function f4 module=m5 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeFindLast
+    PutModuleVariable v0 variable=g3
+    v2 = Undefined
+    Return v2
+}
+function f5 module=m6 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeForEach
+    PutModuleVariable v0 variable=g4
+    v2 = Undefined
+    Return v2
+}
+function f6 module=m7 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeEvery
+    PutModuleVariable v0 variable=g5
+    v2 = Undefined
+    Return v2
+}
+function f7 module=m8 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeFind
+    PutModuleVariable v0 variable=g6
+    v2 = Undefined
+    Return v2
+}
+function f8 module=m9 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f9 name="map" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f10 name="filter" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f11 name="some" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f12 name="findLast" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFindLast thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f13 name="forEach" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f14 name="every" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeEvery thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f15 name="find" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFind thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f16 name="findIndex" module=m1 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFindIndex thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

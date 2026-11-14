@@ -670,7 +670,6 @@ static constexpr uint8_t writeOnlyDeletesInProgramFacts = 2;
 struct BuiltinsHeldByVariablesInProgramFacts {
     Vector<BuiltinID> held;
     BitVector areFollowedByLinkAsTheObject;
-    BitVector areExportedByEntries;
 };
 
 class BodyLookOfProgramFacts {
@@ -692,7 +691,6 @@ public:
         , m_found(found)
         , m_builtinsHeldByVariables(builtinsHeldByVariables.held.span())
         , m_variablesThatLinkFollowsAsTheObject(builtinsHeldByVariables.areFollowedByLinkAsTheObject)
-        , m_variablesExportedByEntries(builtinsHeldByVariables.areExportedByEntries)
     {
     }
 
@@ -804,6 +802,7 @@ private:
     bool rowsOnlyBindAsReceiver(BuiltinID callee, BuiltinOperand) const;
     bool linkFollowsWritesOn(ValueID written, ValueID site) const;
     bool linkHoldsAsTheObject(ValueID) const;
+    bool isWrittenInLibrary(ValueID) const;
     bool storesGlobalObjectOnItself(const BodyValue&) const;
     bool rowsOnlyConstructReceiver(BuiltinID callee, BuiltinID receiver) const;
     bool rowsOnlyCallReceiver(BuiltinID callee, BuiltinID receiver) const;
@@ -826,7 +825,6 @@ private:
     Vector<Finding>& m_found;
     std::span<const BuiltinID> m_builtinsHeldByVariables;
     const BitVector& m_variablesThatLinkFollowsAsTheObject;
-    const BitVector& m_variablesExportedByEntries;
     Vector<uint64_t> m_callsBoundToBuiltins;
     Vector<uint32_t> m_callSites;
     uint32_t m_numberOfQuestionsAboutCalls { 0 };
@@ -1292,6 +1290,15 @@ bool BodyLookOfProgramFacts::storesGlobalObjectOnItself(const BodyValue& store) 
     return operation.key() && isGlobalObject(builtinSurelyAt(operation.objectOperand())) && isGlobalObject(builtinSurelyAt(operation.valueOperand())) && isGlobalObject(findOwnMember(m_program, globalObject, operation.key()));
 }
 
+bool BodyLookOfProgramFacts::isWrittenInLibrary(ValueID value) const
+{
+    BuiltinID builtin = builtinAt(value);
+    return builtin && std::ranges::any_of(m_builtins.overloadsOf(m_builtins.canonicalID(builtin)), [&](const BuiltinOverload& overload) {
+        const RuntimeFunctionEntry* code = findRuntimeFunction(m_program, overload.code.implementation.function);
+        return code && code->function;
+    });
+}
+
 bool BodyLookOfProgramFacts::linkHoldsAsTheObject(ValueID written) const
 {
     if (!builtinAt(written))
@@ -1483,8 +1490,7 @@ BodyLookOfProgramFacts::Fate BodyLookOfProgramFacts::fateOf(const BodyValue& use
             return Fate::IsFollowedByLink;
         if (accessClassOf(opcode) == AccessClass::ByName)
             return isOnlyInspected && receiverOf(opcode) == operandIndex ? Fate::IsAskedForAnyMember : Fate::IsLetGo;
-        bool isStoredInInternalVariable = opcode == Opcode::PutModuleVariable && !m_variablesExportedByEntries.get(user.as<Opcode::PutModuleVariable>().variable().index());
-        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || isStoredInInternalVariable || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
+        if ((opcode == Opcode::NewArray || opcode == Opcode::NewClosure || opcode == Opcode::PutEnvironmentField || (opcode == Opcode::PutModuleVariable && !isWrittenInLibrary(user.operand(operandIndex))) || (opcode == Opcode::NewObject && operandIndex != OperandIndex::NewObject::prototype)) && linkHoldsAsTheObject(user.operand(operandIndex)))
             return Fate::IsFollowedByLink;
         bool isHandedToCodeOfProgram = (opcode == Opcode::InstanceOf && !operandIndex && !builtinSurelyAt(user.operand(1))) || operandInfoOf(opcode, std::min(operandIndex, numberOfNamedOperandsOf(opcode))).protocols.contains(Protocol::ToPrimitive);
         if (isHandedToCodeOfProgram && !linkFollowsWritesOn(user.operand(operandIndex), user.id()))
@@ -3397,12 +3403,6 @@ static BuiltinID builtinWrittenOutAtInProgramFacts(const Program& program, const
 static BuiltinsHeldByVariablesInProgramFacts builtinsHeldByVariablesStoredOnceInProgramFacts(const Program& program, const RowsOfProgramFacts& rows, const BodyIndexTable& bodies)
 {
     BuiltinsHeldByVariablesInProgramFacts table;
-    for (const Entry& entry : program.entries) {
-        for (uint32_t index = 0; index < program.at(entry.module).exports.size(); ++index) {
-            if (VariableID exported = program.variableBehindExport(entry.module, index))
-                table.areExportedByEntries.set(exported.index());
-        }
-    }
     Vector<BuiltinID>& held = table.held;
     BitVector isStored;
     for (uint32_t number = 0; number < program.modules.size(); ++number) {
