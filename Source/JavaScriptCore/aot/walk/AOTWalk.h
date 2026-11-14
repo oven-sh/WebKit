@@ -1420,6 +1420,7 @@ public:
     void branchOnTest(Reference test, BlockID taken, BlockID notTaken) { branch(test, taken, notTaken, true); }
     std::optional<PassedTest> continueIfCheckPasses(Reference test, BlockID whereItFails, bool passesWithYes = true);
     std::optional<PassedTest> findPassedTest(Reference test, bool passesWithYes = true);
+    std::optional<PassedTest> findTestPassedOnPath(Reference test, bool passesWithYes = true);
     bool stillHolds(const PassedTest&);
     std::optional<PassedTest> findUpperBoundProof(Reference value, Reference bound);
     std::optional<PassedTest> findNonNegativeProof(Reference value);

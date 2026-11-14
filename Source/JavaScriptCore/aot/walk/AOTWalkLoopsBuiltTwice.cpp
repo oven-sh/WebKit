@@ -1544,13 +1544,13 @@ std::optional<PassedTest> Walker::findWhatHoldsPositionBelowRoomOfView(Reference
 std::optional<PassedTest> Walker::showPositionInside(const GroundsOfPosition& grounds)
 {
     bool isShown = groundsShowPositionInside(m_code, m_types, grounds.position, grounds, scopedLambda<bool(ValueID, bool)>([&](ValueID relation, bool testResult) {
-        return !!findPassedTest(referenceTo(relation), testResult);
+        return !!findTestPassedOnPath(referenceTo(relation), testResult);
     }));
     if (!isShown)
         return std::nullopt;
     PassedTest passed;
     auto restOn = [&](ValueID relation, bool testResult) {
-        if (std::optional<PassedTest> one = relation ? findPassedTest(referenceTo(relation), testResult) : std::nullopt)
+        if (std::optional<PassedTest> one = relation ? findTestPassedOnPath(referenceTo(relation), testResult) : std::nullopt)
             passed = passed.with(*one);
     };
     restOn(grounds.isBelow, grounds.isBelowResult);

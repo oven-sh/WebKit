@@ -5628,6 +5628,30 @@ std::optional<PassedTest> Walker::findPassedTest(Reference test, bool passesWith
     return PassedTest(test.id(), passesWithYes);
 }
 
+std::optional<PassedTest> Walker::findTestPassedOnPath(Reference test, bool passesWithYes)
+{
+    if (has(Mechanism::Folding) || !test || !test.isValue())
+        return findPassedTest(test, passesWithYes);
+    const ValueID asked = underlyingCellOf(m_code, test.id());
+    for (BlockID block = m_block; block && !m_code.at(block).isLoopHead;) {
+        const Edge* only = nullptr;
+        bool isJoin = false;
+        m_code.forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            isJoin |= !!std::exchange(only, &edge);
+        });
+        if (!only || isJoin)
+            return std::nullopt;
+        block = only->from;
+        const Terminator& end = m_code.at(block).terminator;
+        if (!end.isConditionalBranch() || underlyingCellOf(m_code, end.conditionOperand()) != asked)
+            continue;
+        if (only != &m_code.at(passesWithYes ? end.taken() : end.notTaken()))
+            return std::nullopt;
+        return PassedTest(test.id(), passesWithYes);
+    }
+    return std::nullopt;
+}
+
 std::optional<PassedTest> Walker::findWhatHoldsWordInsideListMadeByWalk(Reference listInParameter, Reference listAsMade, Reference word)
 {
     if (!listInParameter || !listInParameter.isRecord() || !listAsMade || !listAsMade.isValue() || !word || !word.isConstant() || m_code.at(word.id()).opcode != Opcode::Integer)
