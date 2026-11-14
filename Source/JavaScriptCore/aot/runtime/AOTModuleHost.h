@@ -321,6 +321,14 @@ JS_EXPORT_PRIVATE bool hasImportStartedLoading(JSGlobalObject*, ModuleID moduleO
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isMockAwaitedByRefusedRequire(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void forEachEvaluatingModuleOnStack(VM&, CallFrame*, const ScopedLambda<void(ModuleID)>&);
+// A mock leaves a loaded module as it is only if no module that is linked to it has yet to run. vi.doMock() asks with this: an importer that has begun its body is
+// none of those, since it keeps what it imported. Nor is a package that the host externalizes, which gets the module itself.
+struct BegunImporters {
+    // In: the modules that forEachEvaluatingModuleOnStack() names at the call. Each has begun its body, whatever its status says.
+    Vector<ModuleID, 4> bodiesOnStack;
+    // Out: the importers that were passed over, each once. The body of one of them may be what mocks, so the host runs them again for the next test file.
+    Vector<ModuleID, 2> passedOver;
+};
 JS_EXPORT_PRIVATE bool isBeingEvaluated(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasDisplacedDuringEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRegisteredByFailedLoad(JSGlobalObject*, ModuleID);
@@ -420,7 +428,7 @@ JS_EXPORT_PRIVATE void reportKeptImporters(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void releaseModule(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void releaseCommonJSFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void setModuleWithSettledFactory(JSGlobalObject*, std::optional<ModuleID>);
-JS_EXPORT_PRIVATE bool releaseModuleAndImporters(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
+JS_EXPORT_PRIVATE bool releaseModuleAndImporters(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking, BegunImporters* = nullptr);
 JS_EXPORT_PRIVATE void setReplacedTestFile(JSGlobalObject*, std::optional<ModuleID>);
 JS_EXPORT_PRIVATE void releaseImporters(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void releaseMockImporters(JSGlobalObject*, ModuleID);
@@ -488,7 +496,7 @@ JS_EXPORT_PRIVATE JSValue mockedModuleEvaluationError(JSGlobalObject*, ModuleID)
 JS_EXPORT_PRIVATE bool runMocksInGraph(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue requireReturnValue, bool keepsEarlierMockForImporters = false);
-JS_EXPORT_PRIVATE bool tryKeepOriginalIntact(JSGlobalObject*, ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed = false);
+JS_EXPORT_PRIVATE bool tryKeepOriginalIntact(JSGlobalObject*, ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed = false, BegunImporters* = nullptr);
 JS_EXPORT_PRIVATE bool hasIntactOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void displaceEntryParent(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void reportReloadableFileKept(JSGlobalObject*, ModuleID);
@@ -504,7 +512,9 @@ JS_EXPORT_PRIVATE bool isDisplacedByMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE AbstractModuleRecord* originalModuleRecord(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasActiveMock(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
+JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking, BegunImporters* = nullptr);
+// For a module that runs from source, under the key that the loader holds it under: whether a module of the program that is linked to it has yet to run.
+JS_EXPORT_PRIVATE bool hasUnevaluatedAbsentModuleImporter(JSGlobalObject*, const String& key, std::optional<ModuleID> asking, BegunImporters* = nullptr);
 JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool remainsOriginal, bool keepsCurrentTestFileLoads);
 struct ActiveMockExports {
     JSObject* namespaceObject { nullptr };

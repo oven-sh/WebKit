@@ -100,6 +100,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(stringBuilderStorageTests) \
     v(driverTests) \
     v(childProcessTests) \
+    v(begunImporterTests) \
     v(boxedCallProgramTests) \
     v(builtinResultObjectTests) \
     v(builtinSubclassTests) \

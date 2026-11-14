@@ -3309,6 +3309,30 @@ void Modules::recordEvaluationIfNothingIsLeftToRun(ModuleID module)
     setStatus(module, ModuleStatus::Evaluated);
 }
 
+// For a module that is EVALUATING and whose body is not on the stack: whether its body has begun all the same. The status does not say. A module is EVALUATING
+// while its imports run and while its body runs, and a member of an import cycle that a walk ran stays so from the end of its body until the root of the cycle is done.
+// A member that a start row ran is Evaluated by then: hasUnevaluatedLinkedImporter() asks waitsForItsCycle() for that one.
+bool Modules::hasRunBodyBehindItsWalk(ModuleID module) const
+{
+    ASSERT(status(module) == ModuleStatus::Evaluating);
+    // A walk holds a module from enter() until leave() has called its body. With the body off the stack, the module is at its imports.
+    for (const EvaluationInProgress* walk = m_innermostEvaluation; walk; walk = walk->outer) {
+        for (const EvaluationFrame& frame : walk->frames) {
+            if (frame.module == module)
+                return false;
+        }
+    }
+    // passImporterEnteredAboveMock() sets the status without a frame, for a module that runs later.
+    for (const ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+        if (above.passed.get(module.index()))
+            return false;
+    }
+    // What is left is a record that leave() has left in its cycle. leave() called its body unless the record waits for an import that awaits.
+    ModuleRecord* record = recordIfExists(module);
+    ASSERT(!record || record->ownsStatus());
+    return record && record->pendingAsyncDependencies() == 0;
+}
+
 bool Modules::isLeftToStartsOfImporters(ModuleID module) const
 {
     return status(module) == ModuleStatus::Linked && isPassedOverByEvaluation(data(module));

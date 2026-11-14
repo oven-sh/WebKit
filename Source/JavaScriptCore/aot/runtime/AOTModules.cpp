@@ -3129,15 +3129,19 @@ BitVector Modules::modulesThatWerePassedWithoutStatus() const
     return passed;
 }
 
-bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<ModuleID> asking, bool onlyOfProject) const
+// With `begun`, an importer that has begun its body does not count, and is named there. A package that the host externalizes does not count either.
+bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<ModuleID> asking, bool onlyOfProject, BegunImporters* begun) const
 {
     std::optional<BitVector> passed;
+    ModulesThatWaitForCycles waiting;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID importer(index);
         if (!data(importer).isESModuleOfProgram() || data(importer).isFacade() || !wasLoadedWithGraph(importer))
             continue;
         bool keepsStatus = keepsStatusOfRunBeforeLoadThatRuns(importer);
-        if (status(importer) > ModuleStatus::Evaluating && !keepsStatus)
+        // A member of an import cycle that a start row ran is Evaluated from the end of its body, while the cycle still runs. It has begun like a member that a walk left in its record.
+        bool hasRunInItsCycle = begun && !keepsStatus && status(importer) == ModuleStatus::Evaluated && waitsForItsCycle(importer, waiting);
+        if (status(importer) > ModuleStatus::Evaluating && !keepsStatus && !hasRunInItsCycle)
             continue;
         if (isEvicted(importer) || (hasInstances(importer) && !m_linkedInstances.get(index) && status(importer) == ModuleStatus::Unlinked))
             continue;
@@ -3145,12 +3149,22 @@ bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<Module
             continue;
         if (onlyOfProject && isOfPackage(importer))
             continue;
+        // A package that the host externalizes gets the module itself, so the mock is not for it.
+        if (begun && isExternalizedPackage(importer))
+            continue;
         if (std::optional<bool> isLinked = isLinkedToCurrentEntry(importer, module); isLinked && !*isLinked)
             continue;
         for (const ModuleRequestData& request : m_table.imports(importer)) {
             if (request.isHoisted || (moduleLoadedBy(request) != module && moduleLoadedBy(request) != moduleWithExportsOf(module)))
                 continue;
-            if (data(importer).needsEvaluation() && !keepsStatus)
+            bool hasOwnStatus = data(importer).needsEvaluation() && !keepsStatus;
+            // A body on the stack has begun whatever the status says: a start row stores none for a body that it calls.
+            if (begun && (hasRunInItsCycle || begun->bodiesOnStack.contains(importer) || (hasOwnStatus && status(importer) == ModuleStatus::Evaluating && hasRunBodyBehindItsWalk(importer)))) {
+                if (!begun->passedOver.contains(importer))
+                    begun->passedOver.append(importer);
+                break;
+            }
+            if (hasOwnStatus)
                 return true;
             if (!passed)
                 passed = modulesThatWerePassedWithoutStatus();
@@ -3158,6 +3172,20 @@ bool Modules::hasUnevaluatedLinkedImporter(ModuleID module, std::optional<Module
                 return true;
             break;
         }
+    }
+    return false;
+}
+
+// The same for a module that runs from source. The program names such a module once for each file that imports it, and `key` is what the loader holds it under.
+bool Modules::hasUnevaluatedLinkedImporterOfAbsentModule(const String& key, std::optional<ModuleID> asking, BegunImporters* begun) const
+{
+    for (const UncompiledModuleData& entry : m_table.modulesOfUncompiledCode()) {
+        ModuleID external(entry.module);
+        const LoadedModule* loaded = loadedIfExists(external);
+        if (!loaded || loaded->keyOfLatestLoad.isNull() || loaded->keyOfLatestLoad.string() != key)
+            continue;
+        if (hasUnevaluatedLinkedImporter(external, asking, false, begun))
+            return true;
     }
     return false;
 }
@@ -3208,7 +3236,7 @@ bool Modules::wasLoadedBeforeTestFile(ModuleID module)
     return loadedBy == LoadedBy::EarlierTestFile || loadedBy == LoadedBy::Preload;
 }
 
-bool Modules::tryKeepOriginalIntact(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed)
+bool Modules::tryKeepOriginalIntact(ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed, BegunImporters* begun)
 {
     bool wasRunByThisMockCall = std::exchange(m_moduleWhoseBodyMockCallRan, std::nullopt) == module;
     if (auto waiting = m_mocksWithIntactOriginal.find(module); waiting != m_mocksWithIntactOriginal.end() && !waiting->value.isInPlace && wasReleasedByLoader(module))
@@ -3236,9 +3264,9 @@ bool Modules::tryKeepOriginalIntact(ModuleID module, bool onlyIfLoadedInPreload,
         return false;
     if (onlyIfLoadedInPreload && !ranInPreload && !wasEvaluatedUnderMock && !m_loadedInPreload.get(withExports.index()))
         return false;
-    if ((isGraphRunning() || hasFailed) && hasUnevaluatedLinkedImporter(module, asking))
+    if ((isGraphRunning() || hasFailed) && hasUnevaluatedLinkedImporter(module, asking, false, begun))
         return false;
-    if (wasRunByThisMockCall && hasUnevaluatedLinkedImporter(module, asking, true))
+    if (wasRunByThisMockCall && hasUnevaluatedLinkedImporter(module, asking, true, begun))
         return false;
     bool isOfThisTestFile = wasFileLoadedByTest(module);
     if (!isOfThisTestFile && !isAwaitedByDetachedLoad(module)) {
@@ -8789,10 +8817,10 @@ bool setMock(JSGlobalObject* realm, ModuleID module, JSObject* mock, JSValue req
     return modules && modules->setActiveMock(module, mock, requireReturnValue, keepsEarlierMockForImporters);
 }
 
-bool tryKeepOriginalIntact(JSGlobalObject* realm, ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed)
+bool tryKeepOriginalIntact(JSGlobalObject* realm, ModuleID module, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed, BegunImporters* begun)
 {
     Modules* modules = modulesOf(realm);
-    return modules && modules->tryKeepOriginalIntact(module, onlyIfLoadedInPreload, asking, evenIfEvaluationFailed);
+    return modules && modules->tryKeepOriginalIntact(module, onlyIfLoadedInPreload, asking, evenIfEvaluationFailed, begun);
 }
 
 bool hasIntactOriginal(JSGlobalObject* realm, ModuleID module)
@@ -8832,12 +8860,18 @@ bool hasActiveMock(JSGlobalObject* realm, ModuleID module)
     return modules && modules->activeMock(module) && !modules->hasRemovedMock(module);
 }
 
-bool hasUnevaluatedActiveMockImporter(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
+bool hasUnevaluatedActiveMockImporter(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking, BegunImporters* begun)
 {
     if (!hasActiveMock(realm, module))
         return false;
     Modules* modules = modulesOf(realm);
-    return modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking);
+    return modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking, false, begun);
+}
+
+bool hasUnevaluatedAbsentModuleImporter(JSGlobalObject* realm, const String& key, std::optional<ModuleID> asking, BegunImporters* begun)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporterOfAbsentModule(key, asking, begun);
 }
 
 bool tryKeepActiveMock(JSGlobalObject* realm, ModuleID module, bool remainsOriginal, bool keepsCurrentTestFileLoads)

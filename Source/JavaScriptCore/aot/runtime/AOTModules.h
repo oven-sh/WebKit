@@ -427,9 +427,11 @@ public:
     Vector<ImportCalledByBodySetAside, 2> m_importsCalledByBodiesSetAside;
     size_t m_settledImportsReleaseThreshold { 0 };
     std::optional<std::pair<ModuleID, ModuleID>> m_importThatBodySetAsideCallsNow;
-    bool tryKeepOriginalIntact(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt, bool evenIfEvaluationFailed);
+    bool tryKeepOriginalIntact(ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> askingAsHostNamesIt, bool evenIfEvaluationFailed, BegunImporters* = nullptr);
     bool isGraphRunning() const { return m_innermostEvaluation || m_rootWhoseFilesRun || m_rootAwaitingLoader || m_instance.vm->synchronousModuleQueue(); }
-    bool hasUnevaluatedLinkedImporter(ModuleID, std::optional<ModuleID> askingAsHostNamesIt, bool onlyOfProject = false) const;
+    bool hasUnevaluatedLinkedImporter(ModuleID, std::optional<ModuleID> askingAsHostNamesIt, bool onlyOfProject = false, BegunImporters* = nullptr) const;
+    bool hasUnevaluatedLinkedImporterOfAbsentModule(const String& key, std::optional<ModuleID> askingAsHostNamesIt, BegunImporters*) const;
+    bool hasRunBodyBehindItsWalk(ModuleID) const;
     bool keepsStatusOfRunBeforeLoadThatRuns(ModuleID) const;
     BitVector modulesThatWerePassedWithoutStatus() const;
     uint32_t momentOfFirstMockInTestFile(ModuleID);

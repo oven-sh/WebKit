@@ -3612,7 +3612,7 @@ void setReplacedTestFile(JSGlobalObject* realm, std::optional<ModuleID> testFile
         modules->setReplacedTestFile(testFile);
 }
 
-bool releaseModuleAndImporters(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking)
+bool releaseModuleAndImporters(JSGlobalObject* realm, ModuleID module, std::optional<ModuleID> asking, BegunImporters* begun)
 {
     Modules* modules = modulesOf(realm);
     if (modules && !modules->hasInstances(module) && !modules->mayReleaseModule(module)) {
@@ -3622,7 +3622,7 @@ bool releaseModuleAndImporters(JSGlobalObject* realm, ModuleID module, std::opti
         modules->didEvictDataFile(module);
         return false;
     }
-    if (!modules || (!modules->mayReleaseModule(module) && !modules->isPatchedInPreload(module)) || (modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking)))
+    if (!modules || (!modules->mayReleaseModule(module) && !modules->isPatchedInPreload(module)) || (modules->isGraphRunning() && modules->hasUnevaluatedLinkedImporter(module, asking, false, begun)))
         return false;
     if (modules->hasEvaluatedImporterWithoutInstances(module) || modules->isAwaitedByDetachedLoad(module))
         return false;

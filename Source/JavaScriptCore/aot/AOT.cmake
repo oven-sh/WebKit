@@ -208,6 +208,7 @@ list(APPEND JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 # Written by aot-source-lists.ts: every .cpp under aot/tests/ that is in no list below. Linked into testaot only, with JavaScriptCore_AOT_SCHEMA_GENERATED_TEST_SOURCES.
 set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTArrayTests.cpp
+    aot/tests/AOTBegunImporterTests.cpp
     aot/tests/AOTBodyTests.cpp
     aot/tests/AOTBoxedCallProgramTests.cpp
     aot/tests/AOTBranchesGrowthTests.cpp
