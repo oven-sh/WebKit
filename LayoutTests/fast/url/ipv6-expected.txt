@@ -47,7 +47,7 @@ PASS canonicalize('http://[1::%]/') is 'http://[1::%]/'
 PASS canonicalize('http://[%]/') is 'http://[%]/'
 PASS canonicalize('http://[::%:]/') is 'http://[::%:]/'
 PASS canonicalize('http://[:0:0::0:0:8]/') is 'http://[:0:0::0:0:8]/'
-FAIL canonicalize('http://[0:0::0:0:8:]/') should be http://[0:0::0:0:8:]/. Was http://[::8]/.
+PASS canonicalize('http://[0:0::0:0:8:]/') is 'http://[0:0::0:0:8:]/'
 PASS canonicalize('http://[:0:0::0:0:8:]/') is 'http://[:0:0::0:0:8:]/'
 PASS canonicalize('http://[::192.168..1]/') is 'http://[::192.168..1]/'
 PASS canonicalize('http://[::1 hello]/') is 'http://[::1 hello]/'
