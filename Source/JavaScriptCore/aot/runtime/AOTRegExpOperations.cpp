@@ -670,7 +670,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpFlags, JSCell*, (Instance* instance, 
 JSC_DEFINE_JIT_OPERATION(operationAOTRegExpSource, JSCell*, (Instance* instance, JSCell* regExp))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpSource);
-    OPERATION_RETURN(scope, jsString(vm, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpSource)->regExp()->escapedPattern()));
+    OPERATION_RETURN(scope, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpSource)->regExp()->sourceString(vm));
 }
 
 static JSString* replaceMatchesGeneric(JSGlobalObject* globalObject, VM& vm, JSString* string, RegExpObject* regExpObject, JSValue replacement)
