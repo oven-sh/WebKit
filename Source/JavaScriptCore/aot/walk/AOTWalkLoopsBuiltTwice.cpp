@@ -5592,6 +5592,7 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
     asksAtHead |= guesses.isEmpty() && listsRead.lists.isEmpty() && counters.isEmpty() && steppedAtHead.asTheyEntered.isEmpty() && !m_coldCopyDepth && !hasStringsInBuilders() && benefitsFromHeaderGuard(*this, inputHead, entering);
     Vector<VariableID, 4> variablesCheckedInTurns;
     Vector<VariableID, 4> constantsOfCallees;
+    Vector<VariableID, 2> variablesFilledInFront;
     struct CheckedInstanceField {
         Reference instance;
         FieldReference field;
@@ -5604,6 +5605,12 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
         for (BodyValue operation : index.block(member).values()) {
             if (operation.opcode() == Opcode::Call && index.loopOf(member) == loop)
                 appendCalleeDeferredArrays(*this, operation, variablesCheckedInTurns), appendCalleeConstantObjects(*this, operation, constantsOfCallees);
+            if (operation.opcode() == Opcode::GetModuleVariable) {
+                VariableID variable = operation.variable();
+                if (program().at(variable).initialization == VariableInitialization::Undefined && objectOfVariablePutOffStays(*this, variable) && !objectOfVariablePutOff(*this, variable) && !m_state.variable(variable) && !variablesFilledInFront.contains(variable) && BackEdgeDominators(index, index.loopOf(member)).contains(member))
+                    variablesFilledInFront.append(variable);
+                continue;
+            }
             ValueID read = operation.opcode() == Opcode::CheckInitialized ? index.stripCasts(operation.operand(0)) : ValueID();
             if (read && !index.isParameter(read) && index.opcodeOf(read) == Opcode::GetEnvironmentField) {
                 BodyValue fieldRead = index.value(read);
@@ -6400,13 +6407,13 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
     bool checksVariableInFront = false;
     bool hasRareGenericStartEdge = false;
     bool hasLikelyGenericStartEdge = false;
-    auto checkInPreheader = [&](Draft&& read, Reference held = { }) -> Reference {
+    auto checkInPreheader = [&](Draft&& read, Reference held = { }, uint16_t unfilled = Primitive::Absent) -> Reference {
         Reference found = isUnreachable() ? Reference() : held ? held : build(WTF::move(read));
-        if (!found || !found.isValue() || !(m_types.at(typeOf(found)).primitives & Primitive::Absent))
+        if (!found || !found.isValue() || !(m_types.at(typeOf(found)).primitives & unfilled))
             return { };
         Draft test(Opcode::TypeTest, origin);
         test.setValueOperand(found);
-        test.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+        test.setTestedType(TypeArena::fromPrimitives(unfilled));
         Reference isEmpty = build(WTF::move(test));
         if (!isEmpty || !isEmpty.isValue())
             return { };
@@ -6431,14 +6438,24 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
         bool mayPrecedeStore = isDeferred ? !isUsedAfterFirstStore(variable) : constantsOfCallees.contains(variable);
         if (mayPrecedeStore && excludesInitialPrimitive(read, resultTypeOf(read)))
             read.setReturnsRawSlot(true);
-        Reference held = checkInPreheader(WTF::move(read), isDeferred ? Reference() : m_state.variable(variable));
+        bool isBornUndefined = isDeferred && program().at(variable).initialization == VariableInitialization::Undefined;
+        Reference held = checkInPreheader(WTF::move(read), isDeferred ? Reference() : m_state.variable(variable), isBornUndefined ? Primitive::Undefined : Primitive::Absent);
         if (!held)
             continue;
-        m_state.noteEndOfDeadZone(variable);
+        if (!isBornUndefined)
+            m_state.noteEndOfDeadZone(variable);
         if (takeObjectOfDeferredVariable(*this, variable, held, origin))
             continue;
         m_state.noteVariable(variable, held);
         noteValueOfStableBinding(*this, variable, held);
+    }
+    for (VariableID variable : variablesFilledInFront) {
+        Draft read(Opcode::GetModuleVariable, origin);
+        read.setVariable(variable);
+        if (Reference held = checkInPreheader(WTF::move(read), { }, Primitive::Undefined)) {
+            takeObjectOfDeferredVariable(*this, variable, held, origin);
+            count(StatisticID::ModuleConstantReadsHoisted);
+        }
     }
     bool hasGuardedSlot = false;
     for (const SlotOfLoop& slot : slotsFilledOnce) {
