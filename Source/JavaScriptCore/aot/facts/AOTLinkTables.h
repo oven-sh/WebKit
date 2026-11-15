@@ -1149,6 +1149,11 @@ struct LinkTables : LinkedFirstStores {
         });
         return { found.begin(), found.end() };
     }
+    std::span<const LinkedFunctionNameStore> storesOfFunctionNamesIn(FunctionID function) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::equal_range(storesOfFunctionNames, function, { }, &LinkedFunctionNameStore::function);
+        return { found.begin(), found.end() };
+    }
     BitVector keysNamedOnFunctions;
     const LinkedNameOnFunction* findNameOnFunction(FunctionID holder, PropertyKeyID) const LIFETIME_BOUND;
     bool closuresLackName(FunctionID, PropertyKeyID) const;
