@@ -19,10 +19,12 @@
 #include "AOTRuntimeCheckFailure.h"
 #include "AOTState.h"
 #include "BuiltinExecutables.h"
+#include "FunctionPrototype.h"
 #include "ImmutablePropertyNames.h"
 #include "JSCInlines.h"
 #include "MicrotaskQueueInlines.h"
 #include "ObjectPropertyCondition.h"
+#include "PropertyDescriptor.h"
 
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
@@ -51,27 +53,81 @@ class RefusalsOfHostFunctions final : public ImmutablePropertyNames::OutsideName
 public:
     bool contains(UniquedStringImpl*) const final { return false; }
     String storeErrorMessage(UniquedStringImpl* uid) const final { return lockedBuiltinPropertyErrorMessage(uid); }
+    String deleteErrorMessage(UniquedStringImpl* uid) const final { return deletionOfInheritedNameMessage(uid); }
     String setPrototypeErrorMessage() const final { return lockedBuiltinPrototypeErrorMessage(); }
     bool throwsInSloppyMode() const final { return true; }
 };
 
 } // anonymous namespace
 
+static Ref<ImmutablePropertyNames> createNamesClosedOnFunctions(VM& vm)
+{
+    IdentifierSet names;
+    for (const Identifier& name : { Identifier::fromString(vm, "call"_s), Identifier::fromString(vm, "apply"_s), vm.propertyNames->bind, vm.propertyNames->hasInstanceSymbol })
+        names.add(name.impl());
+    return ImmutablePropertyNames::create(WTF::move(names), ImmutablePropertyNames::Part::Prototype, { }, adoptRef(*new RefusalsOfHostFunctions));
+}
+
 Structure* structureForHostFunctions(JSGlobalObject* realm, Structure* structure)
 {
     if (!locksBuiltins(realm))
         return structure;
     VM& vm = realm->vm();
-    IdentifierSet names;
-    for (const Identifier& name : { Identifier::fromString(vm, "call"_s), Identifier::fromString(vm, "apply"_s), vm.propertyNames->bind, vm.propertyNames->hasInstanceSymbol })
-        names.add(name.impl());
-    Ref<ImmutablePropertyNames> closed = ImmutablePropertyNames::create(WTF::move(names), ImmutablePropertyNames::Part::Prototype, { }, adoptRef(*new RefusalsOfHostFunctions));
+    Ref<ImmutablePropertyNames> closed = createNamesClosedOnFunctions(vm);
     return Structure::makeListedPropertiesImmutableTransition(vm, structure, closed.get());
 }
 
 bool rejectsNativeConstructorProperty(JSGlobalObject* realm, PropertyName name)
 {
     return !name.isPrivateName() && Closure::isNameThatBuiltinFunctionsRefuse(realm->vm(), name.uid()) && locksBuiltins(realm);
+}
+
+static JSValue findFixedValueAbove(VM& vm, JSObject* function, PropertyName name)
+{
+    for (JSObject* above = function->getPrototypeDirect().getObject(); above; above = above->getPrototypeDirect().getObject()) {
+        Structure* structure = above->structure();
+        TypeInfo typeInfo = structure->typeInfo();
+        if (structure->isCompiledStructure() || typeInfo.overridesGetOwnPropertySlot() || typeInfo.overridesGetPrototype() || structure->hasNonReifiedStaticProperties())
+            return { };
+        const bool isListed = structure->isImmutablePropertyForReader(name.uid());
+        unsigned attributes = 0;
+        if (PropertyOffset offset = structure->get(vm, name, attributes); isValidOffset(offset)) {
+            const bool isFixed = isListed || ((attributes & PropertyAttribute::ReadOnly) && (attributes & PropertyAttribute::DontDelete));
+            return isFixed && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? above->getDirect(offset) : JSValue();
+        }
+        auto* constructor = dynamicDowncast<InternalFunction>(above);
+        const bool rejectsName = constructor && rejectsNativeConstructorProperty(constructor->globalObject(), name);
+        if (!isListed && !rejectsName && structure->isStructureExtensible())
+            return { };
+    }
+    return { };
+}
+
+bool definesInheritedValue(JSObject* function, PropertyName name, const PropertyDescriptor& descriptor)
+{
+    JSValue value = descriptor.value();
+    if (!value || !isFunctionType(function->type()) || function->inherits<FunctionPrototype>())
+        return false;
+    if (function->mayBePrototype() && (descriptor.attributes() & PropertyAttribute::ReadOnly))
+        return false;
+    return findFixedValueAbove(function->vm(), function, name) == value;
+}
+
+bool closeNamesOfFunction(VM& vm, JSObject* function, PropertyName name)
+{
+    Structure* structure = function->structure();
+    if (structure->isImmutablePropertyForReader(name.uid()))
+        return true;
+    Ref<ImmutablePropertyNames> closed = createNamesClosedOnFunctions(vm);
+    if (!isCompiledClosure(function))
+        return function->makePropertiesImmutable(vm, closed.get());
+    if (ImmutablePropertyNames* names = structure->listedImmutablePropertyNames())
+        closed = ImmutablePropertyNames::createUnion(*names, closed);
+    DeferredStructureTransitionWatchpointFire deferred(vm, structure);
+    function->setStructure(vm, Structure::makeListedPropertiesImmutableTransition(vm, structure, closed.get(), &deferred));
+    if (function->mayBePrototype())
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, function);
+    return true;
 }
 
 static bool isBinaryDataClass(JSGlobalObject* realm, JSObject* constructor)

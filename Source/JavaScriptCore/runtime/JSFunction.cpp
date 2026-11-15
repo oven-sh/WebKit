@@ -513,7 +513,7 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
 #if ENABLE(AOT)
-    if (rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]]
+    if (rejectsNewProperty(vm, thisObject, propertyName) && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
         return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
 #endif
 

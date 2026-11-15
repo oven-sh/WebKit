@@ -67,6 +67,7 @@
 #include "AOTMembersLeftOut.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeHooks.h"
+#include "AOTRuntimeReporter.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -4584,6 +4585,18 @@ static bool repeatsReportedDescriptor(JSGlobalObject* globalObject, JSObject* ob
     return reportIfLocked(object, propertyName, reported) && reported.equalTo(globalObject, descriptor);
 }
 
+static bool definesInheritedValue(JSObject* object, PropertyName propertyName, const PropertyDescriptor& descriptor)
+{
+#if ENABLE(AOT)
+    return AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor);
+#else
+    UNUSED_PARAM(object);
+    UNUSED_PARAM(propertyName);
+    UNUSED_PARAM(descriptor);
+    return false;
+#endif
+}
+
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
 bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* object, PropertyName propertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException)
@@ -4601,8 +4614,15 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
                 return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, NonExtensibleObjectPropertyDefineError);
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
-        if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
-            return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
+        std::optional<AllowLazyMaterializationOfImmutableProperties> admitsInheritedValue;
+        if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
+            if (!definesInheritedValue(object, propertyName, descriptor))
+                return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
+            admitsInheritedValue.emplace(vm);
+#if ENABLE(AOT)
+            AOT::countEvent(vm, AOT::RuntimeCounterID::InheritedValuesDefined);
+#endif
+        }
 
         if (object) {
             if (descriptor.isAccessorDescriptor()) {
@@ -4639,7 +4659,8 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
             return true;
         bool onlyRestricts = onlyRepeatsOrRestrictsProperty(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
-        if (!onlyRestricts)
+        bool keepsInheritedValue = !onlyRestricts && current.value() && current.value() == descriptor.value() && definesInheritedValue(object, propertyName, descriptor);
+        if (!onlyRestricts && !keepsInheritedValue)
             return rejectWriteToLockedProperty(globalObject, scope, throwException, current.configurable() ? WriteOrigin::Reflect : WriteOrigin::RejectedBySpec, object, propertyName, ImmutablePropertyDefineError);
         restrictsImmutableProperty = true;
     }

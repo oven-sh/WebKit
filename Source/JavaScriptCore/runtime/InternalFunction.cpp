@@ -67,8 +67,10 @@ bool InternalFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globa
             object->putDirect(vm, propertyName, descriptor.value(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
             return true;
         }
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        if (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName)) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        }
     }
     return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
 }

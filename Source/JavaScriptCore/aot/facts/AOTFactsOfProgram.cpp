@@ -4656,6 +4656,9 @@ private:
     bool isSurelyNot(const BodyIndex&, ValueID, BuiltinID member) const;
     bool isGuardedByFailingTest(const BodyIndex&, ValueID site, BuiltinID member) const;
     bool changesMember(const BodyIndex&, ValueID descriptor, BuiltinID member, bool& isCertain) const;
+    BuiltinID inheritedFunctionUnder(BuiltinID function, PropertyKeyID) const;
+    BuiltinID functionReadByPath(const BodyIndex&, ValueID) const;
+    std::optional<bool> replacesInheritedFunction(const BodyIndex&, ValueID descriptor, BuiltinID inherited) const;
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
     bool codeThatNobodyNamesMayLeave();
@@ -6921,6 +6924,54 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfCopy(const Bod
     return worst;
 }
 
+BuiltinID BuilderOfProgramFacts::inheritedFunctionUnder(BuiltinID function, PropertyKeyID key) const
+{
+    BuiltinKind kind = m_builtins.at(function).kind;
+    if (kind != BuiltinKind::Function && kind != BuiltinKind::Method && kind != BuiltinKind::Constructor)
+        return { };
+    BuiltinID inherited = memberFoundOnInProgramFacts(m_source, function, key);
+    if (!inherited || m_builtins.at(inherited).kind == BuiltinKind::Accessor || !isObjectKind(m_builtins.at(inherited).kind))
+        return { };
+    return isLockedLocation(m_source, m_builtins.canonicalID(m_builtins.at(inherited).holder), key) ? inherited : BuiltinID();
+}
+
+BuiltinID BuilderOfProgramFacts::functionReadByPath(const BodyIndex& index, ValueID value) const
+{
+    if (BuiltinID read = builtinReadByPath(index, value))
+        return read;
+    value = value ? index.stripCasts(value) : ValueID();
+    if (!value || index.isParameter(value) || index.opcodeOf(value) != Opcode::PropGet)
+        return { };
+    auto read = index.value(value).as<Opcode::PropGet>();
+    BuiltinID function = builtinReadByPath(index, read.objectOperand());
+    return function ? inheritedFunctionUnder(m_builtins.canonicalID(function), read.key()) : BuiltinID();
+}
+
+std::optional<bool> BuilderOfProgramFacts::replacesInheritedFunction(const BodyIndex& index, ValueID descriptor, BuiltinID inherited) const
+{
+    descriptor = descriptor ? index.stripCasts(descriptor) : ValueID();
+    Vector<PropertyKeyID, 2> namesTakenAway;
+    if (!descriptor || index.isParameter(descriptor) || !isHandedOverOnce(index, descriptor, namesTakenAway) || !namesTakenAway.isEmpty())
+        return false;
+    if (index.opcodeOf(descriptor) == Opcode::Data)
+        return true;
+    ValueID value;
+    bool bringsAccessor = false;
+    bool isAsWritten = forEachPropertyOfWrittenLiteral(index, descriptor, { }, [&](PropertyKeyID key, ValueID brought) {
+        if (key == m_source.keyOf(BuiltinNames::value))
+            value = brought;
+        else
+            bringsAccessor |= isPartThatBringsValueOrAccessor(key);
+    });
+    if (!isAsWritten)
+        return false;
+    if (!value || bringsAccessor)
+        return true;
+    if (BuiltinID brought = functionReadByPath(index, value))
+        return m_builtins.canonicalID(brought) == m_builtins.canonicalID(inherited) ? std::nullopt : std::optional(true);
+    return isSurelyNot(index, value, inherited);
+}
+
 std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyIndex& index, const Witness& site, BuiltinID holder, PropertyKeyID key, BuiltinPropertyActionKind action, ValueID brought, bool throwsWhereRefused)
 {
     const Builtin& object = m_builtins.at(holder);
@@ -6958,6 +7009,12 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyInd
         isCertain = true;
         if (member && !changesMember(index, brought, member, isCertain))
             return std::nullopt;
+        if (BuiltinID inherited = member ? BuiltinID() : inheritedFunctionUnder(holder, key)) {
+            std::optional<bool> replaces = replacesInheritedFunction(index, brought, inherited);
+            if (!replaces)
+                return std::nullopt;
+            isCertain = *replaces;
+        }
         break;
     default:
         break;

@@ -19,6 +19,7 @@ class InternalFunction;
 class JSFunction;
 class JSValue;
 class ObjectPropertyCondition;
+class PropertyDescriptor;
 class PropertyName;
 struct CallerFrameAndPC;
 
@@ -44,6 +45,8 @@ using AOT::takePreallocatedStaticProperty;
 void willInitializeRealm(JSGlobalObject*);
 Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
 bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+bool definesInheritedValue(JSObject* function, PropertyName, const PropertyDescriptor&);
+bool closeNamesOfFunction(VM&, JSObject* function, PropertyName);
 bool acceptsHasInstanceOfHost(InternalFunction*, PropertyName, JSValue method);
 inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
 String lockedBuiltinPropertyErrorMessage(PropertyName);
