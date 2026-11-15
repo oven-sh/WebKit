@@ -811,7 +811,7 @@ void JSFunction::assertTypeInfoFlagInvariants()
     // If you change this, you'll need to update speculationFromClassInfoInheritance.
     const ClassInfo* info = classInfo();
     if (!(inlineTypeFlags() & ImplementsDefaultHasInstance))
-        RELEASE_ASSERT(info == JSBoundFunction::info());
+        RELEASE_ASSERT(info->methodTable.customHasInstance != JSCell::customHasInstance);
     else
         RELEASE_ASSERT(info != JSBoundFunction::info());
 }
