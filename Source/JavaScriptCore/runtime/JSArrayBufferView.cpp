@@ -181,6 +181,9 @@ void JSArrayBufferView::finishCreation(VM& vm)
     case FastTypedArray:
         return;
     case OversizeTypedArray:
+#if USE(BUN_JSC_ADDITIONS)
+        vm.heap.reportOversizeTypedArrayVectorAllocated(byteLengthRaw());
+#endif
         vm.heap.addFinalizer(this, finalize);
         return;
     case WastefulTypedArray:
@@ -234,8 +237,12 @@ void JSArrayBufferView::finalize(JSCell* cell)
     // to a WastefulTypedArray via slowDownAndWasteMemory(). Hence, it is possible
     // to get to this finalizer and found the mode to be WastefulTypedArray.
     ASSERT(thisObject->m_mode == OversizeTypedArray || thisObject->hasArrayBuffer());
-    if (thisObject->m_mode == OversizeTypedArray)
+    if (thisObject->m_mode == OversizeTypedArray) {
+#if USE(BUN_JSC_ADDITIONS)
+        Heap::heap(cell)->reportOversizeTypedArrayVectorFreed(thisObject->byteLengthRaw());
+#endif
         Gigacage::free(Gigacage::Primitive, thisObject->vector());
+    }
 }
 
 JSArrayBuffer* JSArrayBufferView::unsharedJSBuffer(JSGlobalObject* globalObject)
@@ -319,6 +326,10 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
         // allocated when it allocated it, so only the ArrayBuffer itself is new.
         buffer = ArrayBuffer::createAdopted(span());
         bytesAlreadyReported = buffer->byteLength();
+#if USE(BUN_JSC_ADDITIONS)
+        // The buffer now owns the vector, and addReference() below counts it in m_arrayBuffers.
+        heap->reportOversizeTypedArrayVectorFreed(bytesAlreadyReported);
+#endif
         break;
     }
 
