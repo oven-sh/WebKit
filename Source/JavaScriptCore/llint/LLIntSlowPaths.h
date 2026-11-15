@@ -97,6 +97,8 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_instanceof);
 extern "C" EncodedJSValue SYSV_ABI llint_aot_index_of_character(const Latin1Character* characters, uint64_t lengthAndStart, uint32_t character) REFERENCED_FROM_ASM WTF_INTERNAL;
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_switch_string);
+extern "C" EncodedJSValue SYSV_ABI llint_aot_map_get(JSObject*, EncodedJSValue key) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_has(JSObject*, EncodedJSValue key) REFERENCED_FROM_ASM WTF_INTERNAL;
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_add_number_to_string);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_to_string);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_by_id_with_this);

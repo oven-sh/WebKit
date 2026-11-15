@@ -5079,6 +5079,48 @@ _llint_aot_math_clz32_thunk:
 .clz32HostFunction:
     jmp _llint_native_call_trampoline
 
+# A collection whose table answers for a string, a number or an object without running code.
+macro findInThunk(collectionType, helper, hostFunction)
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bib t0, 2, hostFunction
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], a0
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], a1
+    move constexpr JSValue::NotCellMask, t5
+    btqnz a0, t5, hostFunction
+    bbneq JSCell::m_type[a0], collectionType, hostFunction
+    btqnz a1, t5, .isNoCell
+    bbeq JSCell::m_type[a1], StringType, .asks
+    bbb JSCell::m_type[a1], ObjectType, hostFunction
+    jmp .asks
+.isNoCell:
+    move constexpr JSValue::NumberTag, t5
+    btqz a1, t5, hostFunction
+.asks:
+    preserveCallerPCAndCFR()
+    cCall2(helper)
+    restoreCallerPCAndCFR()
+    btqz r0, hostFunction
+    ret
+end
+
+global _llint_aot_map_get_thunk
+_llint_aot_map_get_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_map_get, .mapGetHostFunction)
+.mapGetHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_map_has_thunk
+_llint_aot_map_has_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_collection_has, .mapHasHostFunction)
+.mapHasHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_has_thunk
+_llint_aot_set_has_thunk:
+    findInThunk(constexpr JSSetType, _llint_aot_collection_has, .setHasHostFunction)
+.setHasHostFunction:
+    jmp _llint_native_call_trampoline
+
 # Array.prototype.push() of one value that fits behind the elements of an array of int32s or of values: JSArray::pushInline().
 global _llint_aot_array_push_thunk
 _llint_aot_array_push_thunk:

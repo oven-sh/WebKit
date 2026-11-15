@@ -1471,6 +1471,15 @@ std::optional<uint32_t> CompactTable::findOtherKey(JSGlobalObject*, JSValue norm
     });
 }
 
+auto CompactTable::tryFindNumberOrObject(JSValue key) const -> Lookup
+{
+    ASSERT(key.isNumber() || key.isObject());
+    if (!isLive() || isInImage()) [[unlikely]]
+        return { };
+    std::optional<uint32_t> entry = findOtherKey(nullptr, normalizeMapKey(key));
+    return entry ? Lookup { QuickLookup::Found, *entry } : Lookup { QuickLookup::Absent, 0 };
+}
+
 ALWAYS_INLINE bool CompactTable::hasStoredKey(JSValue key) const
 {
     if (key.isString()) {
@@ -2344,6 +2353,28 @@ JSSet* createUnion(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
 JSSet* createSymmetricDifference(JSGlobalObject* globalObject, JSSet* set, JSSet* other)
 {
     return CompactTable::trySubtractBothWays(globalObject, set, other);
+}
+
+static ALWAYS_INLINE CompactTable::Lookup tryFindWithoutFrame(JSObject* collection, JSValue key)
+{
+    if (!static_cast<JSOrderedHashTable<MapTraits>*>(collection)->hasCompactStorage())
+        return { };
+    const CompactTable* table = CompactTable::tableOf(collection);
+    return key.isString() ? table->tryFindQuickly(asString(key)) : table->tryFindNumberOrObject(key);
+}
+
+extern "C" EncodedJSValue SYSV_ABI llint_aot_map_get(JSObject* map, EncodedJSValue key)
+{
+    CompactTable::Lookup lookup = tryFindWithoutFrame(map, JSValue::decode(key));
+    if (lookup.result == CompactTable::QuickLookup::Found)
+        return JSValue::encode(CompactTable::tableOf(map)->valueAt(lookup.entry));
+    return lookup.result == CompactTable::QuickLookup::Absent ? encodedJSUndefined() : encodedJSValue();
+}
+
+extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_has(JSObject* collection, EncodedJSValue key)
+{
+    CompactTable::Lookup lookup = tryFindWithoutFrame(collection, JSValue::decode(key));
+    return lookup.result == CompactTable::QuickLookup::Unknown ? encodedJSValue() : JSValue::encode(jsBoolean(lookup.result == CompactTable::QuickLookup::Found));
 }
 
 } // namespace AOT::CompactStorage

@@ -345,6 +345,7 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    Lookup tryFindNumberOrObject(JSValue key) const;
     QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const;
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const

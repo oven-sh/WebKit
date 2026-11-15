@@ -1089,6 +1089,12 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
         return llint_aot_is_array_thunk;
     case ArrayPushIntrinsic:
         return llint_aot_array_push_thunk;
+    case JSMapGetIntrinsic:
+        return llint_aot_map_get_thunk;
+    case JSMapHasIntrinsic:
+        return llint_aot_map_has_thunk;
+    case JSSetHasIntrinsic:
+        return llint_aot_set_has_thunk;
     case CharAtIntrinsic:
         return llint_aot_char_at_thunk;
     case FromCharCodeIntrinsic:
