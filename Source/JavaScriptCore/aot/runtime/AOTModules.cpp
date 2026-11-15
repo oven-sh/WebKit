@@ -7058,6 +7058,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTAbandonModuleEvaluation, void, (In
     scope.assertNoException();
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTResumeLoadAfterThrow, size_t, (Instance* instance, uint32_t module, JSCell* exception, uint32_t failedStep))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTResumeLoadAfterThrow);
+    modulesOf(*instance).resumeLoadAfterThrow(ModuleID(module), ModuleStartStepData { failedStep }, cellArgument<Exception>(exception, Entry::operationAOTResumeLoadAfterThrow));
+    OPERATION_RETURN(scope, 0);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTImportDynamic, EncodedJSValue, (Instance* instance, EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTImportDynamic);

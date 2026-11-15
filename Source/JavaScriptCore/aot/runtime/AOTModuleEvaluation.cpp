@@ -604,6 +604,7 @@ JSValue Modules::enterBody(ModuleID module, FunctionID body)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(closureNumberOf(body))));
+        SetForScope moduleStartedByRuntime(m_moduleStartedByRuntime, std::optional(module));
         m_instance.modules.moduleThatRunTimeStartsPlusOne = module.index() + 1;
         auto forgetsStart = makeScopeExit([&] {
             m_instance.modules.moduleThatRunTimeStartsPlusOne = 0;
@@ -967,6 +968,22 @@ void Modules::abandonEvaluation(ModuleID module, JSValue error)
 {
     if (storedStatus(module) >= StoredModuleStatus::Evaluating && !isOnCycleOfImports(module))
         didThrowInBody(module, error);
+}
+
+void Modules::resumeLoadAfterThrow(ModuleID root, ModuleStartStepData failedStep, Exception* exception)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    bool hasNotBegunRoot = status(root) == ModuleStatus::Unlinked || status(root) == ModuleStatus::Linked;
+    if (m_moduleStartedByRuntime == root || !hasNotBegunRoot || !failedStep.callsStart()) {
+        throwException(m_instance.globalObject, scope, exception);
+        return;
+    }
+    ModuleID failed(failedStep.operand());
+    bool hasEnded = status(failed) == ModuleStatus::Failed || status(failed) == ModuleStatus::Evaluated;
+    if (!hasEnded)
+        setFailed(failed, exception->value());
+    scope.release();
+    require(root, ModuleID());
 }
 
 bool Modules::waitsForItsCycle(ModuleID module, ModulesThatWaitForCycles& waiting) const

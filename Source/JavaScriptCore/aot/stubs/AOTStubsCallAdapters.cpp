@@ -418,6 +418,8 @@ void generateStartModule(StubAssembler& jit)
     const GPRReg target = operation;
     const Address nextStepInFrame(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfNextStep));
     const Address moduleToAbandon(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfModuleToAbandon));
+    const Address resumesLoad(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfModuleToAbandon + sizeof(uint32_t)));
+    const Address exceptionInFrame(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfException));
     const TrustedImm32 inRecord(static_cast<int32_t>(StoredModuleStatus::InRecord));
     const TrustedImm32 flagOfStep(static_cast<int32_t>(ModuleStartStepData::flagBit));
     RELEASE_ASSERT(start == directArgumentGPR(0) && start == operationArgumentGPR(0) && operand == operationArgumentGPR(1));
@@ -469,6 +471,7 @@ void generateStartModule(StubAssembler& jit)
     begins.append(branchIfStepIs(Operation::Begin));
     Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
     Jump finishes = branchIfStepIs(Operation::Finish);
+    Jump resumesLoadOnThrow = branchIfStepIs(Operation::ResumeLoadOnThrow);
     jit.breakpoint();
 
     callsStart.link(&jit);
@@ -504,21 +507,31 @@ void generateStartModule(StubAssembler& jit)
     Label afterCall = jit.bindReturnLabel(StubFrameKind::ModuleStart);
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(ModuleStartFrame::size)), fp, sp);
     jit.loadPtr(nextStepInFrame, nextStep);
-    jit.branchTestPtr(CCallHelpers::NonZero, nextStep).linkTo(takesNextStep, &jit);
+    jit.branchTestPtr(CCallHelpers::Zero, nextStep, TrustedImm32(static_cast<int32_t>(ModuleStartFrame::hasThrownBit))).linkTo(takesNextStep, &jit);
 
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTCatchException, jit.reuseScratch(StubRegister::Operation));
-    jit.store64(GPRInfo::returnValueGPR, nextStepInFrame);
+    jit.store64(GPRInfo::returnValueGPR, exceptionInFrame);
     jit.move(GPRInfo::returnValueGPR, operationArgumentGPR(2));
     jit.load32(moduleToAbandon, operationArgumentGPR(1));
     jit.sub32(TrustedImm32(1), operationArgumentGPR(1));
+    Jump resumes = jit.branchTest32(CCallHelpers::NonZero, resumesLoad);
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTAbandonModuleEvaluation, jit.reuseScratch(StubRegister::Operation));
-    jit.load64(nextStepInFrame, operationArgumentGPR(1));
+    jit.load64(exceptionInFrame, operationArgumentGPR(1));
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTThrow, jit.reuseScratch(StubRegister::Operation));
     jit.emitFunctionEpilogue();
     jit.jumpToExceptionHandler();
+
+    resumes.link(&jit);
+    jit.loadPtr(nextStepInFrame, operationArgumentGPR(3));
+    jit.load32(Address(operationArgumentGPR(3), -static_cast<int32_t>(sizeof(ModuleStartStepData) + ModuleStartFrame::hasThrownBit)), operationArgumentGPR(3));
+    jit.store64(TrustedImm32(0), moduleToAbandon);
+    jit.move(instanceGPR, operationArgumentGPR(0));
+    jit.callOperation(Entry::operationAOTResumeLoadAfterThrow, jit.reuseScratch(StubRegister::Operation));
+    hasThrown.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
+    returns.append(jit.jump());
 
     begins.link(&jit);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
@@ -560,6 +573,12 @@ void generateStartModule(StubAssembler& jit)
     abandonsOnThrow.link(&jit);
     jit.add32(TrustedImm32(1), operand);
     jit.store64(operand, moduleToAbandon);
+    jit.jump().linkTo(takesNextStep, &jit);
+
+    resumesLoadOnThrow.link(&jit);
+    jit.add32(TrustedImm32(1), operand);
+    jit.store32(operand, moduleToAbandon);
+    jit.store32(TrustedImm32(static_cast<int32_t>(ModuleStartFrame::resumesLoad)), resumesLoad);
     jit.jump().linkTo(takesNextStep, &jit);
 
     auto branchUnlessLoadingStops = [&](Label continuation) {

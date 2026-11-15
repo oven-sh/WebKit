@@ -1584,6 +1584,7 @@ public:
     }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
+    void resumeLoadAfterThrow(ModuleID root, ModuleStartStepData failedStep, Exception*);
     template<typename Visitor> void visitRoots(Visitor&);
 
     bool loadRuntimeModules(ModuleID root);
@@ -3347,6 +3348,7 @@ private:
     mutable std::optional<UncheckedKeyHashMap<uint32_t, Vector<ModuleID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_modulesWithSyntheticExport;
     std::optional<ModuleID> m_moduleWithDeferredJobs;
     std::optional<ModuleID> m_rootWhoseFilesRun;
+    std::optional<ModuleID> m_moduleStartedByRuntime;
     struct DeferredRequest {
         ModuleID file;
         Strong<JSCell> context;

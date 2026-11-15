@@ -272,6 +272,7 @@ runtime EnterBodyThatRunsOnce : void (uint32_t function) ; reads(RuntimeState) w
 runtime BeginModuleEvaluation : size_t (uint32_t module) ; unknownCode
 runtime StopLoadingBehindFile : size_t (uint32_t module) ; unknownCode
 runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects
+runtime ResumeLoadAfterThrow : size_t (uint32_t module, JSCell* exception, uint32_t failedStep) ; unknownCode
 runtime ImportDynamic : EncodedJSValue (EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer) ; unknownCode
 runtime RequireDynamicWithRequirer : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, EncodedJSValue requirerObject) ; unknownCode
