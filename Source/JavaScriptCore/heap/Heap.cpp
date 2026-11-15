@@ -1129,6 +1129,9 @@ size_t Heap::arrayBufferSize()
 
 size_t Heap::extraMemorySize()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return extraMemorySizeWithOversizeTypedArrayVectors(m_oversizeTypedArrayVectorBytesVisited);
+#else
     // FIXME: Change this to use SaturatingArithmetic when available.
     // https://bugs.webkit.org/show_bug.cgi?id=170411
     CheckedSize checkedTotal = m_extraMemorySize;
@@ -1141,7 +1144,41 @@ size_t Heap::extraMemorySize()
     // It would be nice to have `ASSERT(m_objectSpace.capacity() >= m_objectSpace.size());` here but `m_objectSpace.size()`
     // requires having heap access which thread might not. Specifically, we might be called from the resource usage thread.
     return std::min(total, std::numeric_limits<size_t>::max() - m_objectSpace.capacity());
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+size_t Heap::extraMemorySizeWithOversizeTypedArrayVectors(size_t oversizeTypedArrayVectorBytes)
+{
+    // FIXME: Change this to use SaturatingArithmetic when available.
+    // https://bugs.webkit.org/show_bug.cgi?id=170411
+    CheckedSize checkedTotal = m_extraMemorySize;
+    checkedTotal += m_deprecatedExtraMemorySize;
+    checkedTotal += m_arrayBuffers.size();
+    checkedTotal += oversizeTypedArrayVectorBytes;
+    size_t total = std::numeric_limits<size_t>::max();
+    if (!checkedTotal.hasOverflowed()) [[likely]]
+        total = checkedTotal.value();
+
+    // It would be nice to have `ASSERT(m_objectSpace.capacity() >= m_objectSpace.size());` here but `m_objectSpace.size()`
+    // requires having heap access which thread might not. Specifically, we might be called from the resource usage thread.
+    return std::min(total, std::numeric_limits<size_t>::max() - m_objectSpace.capacity());
+}
+
+size_t Heap::extraMemorySizeForReporting()
+{
+    return extraMemorySizeWithOversizeTypedArrayVectors(m_oversizeTypedArrayVectorBytes.loadRelaxed());
+}
+
+size_t Heap::typedArrayBackingStoreSize()
+{
+    CheckedSize checkedTotal = m_arrayBuffers.size();
+    checkedTotal += m_oversizeTypedArrayVectorBytes.loadRelaxed();
+    if (checkedTotal.hasOverflowed()) [[unlikely]]
+        return std::numeric_limits<size_t>::max();
+    return checkedTotal.value();
+}
+#endif
 
 size_t Heap::size()
 {
@@ -2513,6 +2550,9 @@ void Heap::willStartCollection(CollectionScope scope)
 #if ENABLE(RESOURCE_USAGE)
         m_externalMemorySize = 0;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+        m_oversizeTypedArrayVectorBytesVisited = 0;
+#endif
         m_shouldDoOpportunisticFullCollection = false;
         if (m_fullActivityCallback)
             m_fullActivityCallback->willCollect();
@@ -3067,6 +3107,24 @@ void Heap::reportExternalMemoryVisited(size_t size)
     for (;;) {
         size_t oldSize = *counter;
         if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, oldSize + size))
+            return;
+    }
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+void Heap::reportOversizeTypedArrayVectorVisited(size_t size)
+{
+    size_t* counter = &m_oversizeTypedArrayVectorBytesVisited;
+
+    for (;;) {
+        size_t oldSize = *counter;
+        CheckedSize checkedNewSize = oldSize;
+        checkedNewSize += size;
+        size_t newSize = std::numeric_limits<size_t>::max();
+        if (!checkedNewSize.hasOverflowed()) [[likely]]
+            newSize = checkedNewSize.value();
+        if (WTF::atomicCompareExchangeWeakRelaxed(counter, oldSize, newSize))
             return;
     }
 }

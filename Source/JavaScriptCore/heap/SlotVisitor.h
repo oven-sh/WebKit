@@ -177,6 +177,9 @@ public:
 #if ENABLE(RESOURCE_USAGE)
     void reportExternalMemoryVisited(size_t) final;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    void reportOversizeTypedArrayVectorVisited(size_t) final;
+#endif
     
     void dump(PrintStream&) const final;
 
@@ -262,6 +265,10 @@ private:
 
     // Bytes of extra memory reported by cells of m_extraMemoryHeap and not yet added to that heap's count.
     CheckedSize m_extraMemoryInHeap { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    // Same, for the OversizeTypedArray vectors of m_extraMemoryHeap's cells.
+    CheckedSize m_oversizeTypedArrayVectorBytesInHeap { 0 };
+#endif
     SUPPRESS_FORWARD_DECL_MEMBER JSC::Heap* m_extraMemoryHeap { nullptr }; // Heap is not refcounted.
 
     JSCell* m_currentCell { nullptr };
