@@ -48,6 +48,17 @@ const InstanceAuxiliarySpace = constexpr (AOT_INSTANCE_OFFSET(allocation.auxilia
 const InstanceCellSpace = constexpr (AOT_INSTANCE_OFFSET(allocation.cellSpace))
 const InstanceCustomAccessors = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.customAccessors))
 const InstanceEnumerators = constexpr (AOT_INSTANCE_OFFSET(objects.enumerators))
+# JSMapIterator has the same fields.
+const EntryOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Entry
+const StorageOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Storage
+const KindOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Kind
+const CompactTableUsed = constexpr (AOT::CompactTable::offsetOfUsed())
+const CompactTableCapacity = constexpr (AOT::CompactTable::offsetOfCapacity())
+const CompactTableKeysShift = constexpr (AOT::CompactTable::offsetOfKeysShift())
+const CompactTableValueWidth = constexpr (AOT::CompactTable::offsetOfValueWidth())
+const CompactTableStatus = constexpr (AOT::CompactTable::offsetOfStatus())
+const CompactTableIndex = constexpr (AOT::CompactTable::offsetOfIndex())
+
 const InstanceHasInstanceUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID))
 const InstancePrototypeUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID))
 const InstanceDefaultHasInstanceFunction = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction))
@@ -3975,6 +3986,271 @@ aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
 end)
 end
 
+# iteratorNextFastArray(), JSSetIterator::nextWithAdvance() and JSMapIterator::nextWithAdvance() of a collection that is a compact table, and the call of a next() that belongs to none of these.
+aotOp(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
+    loadVariable(get, m_next, t3)
+    bqb t3, numberTag, .isNoIndex
+    # An array or a string is walked. The indexing type of a string is none of an array's.
+    loadVariable(get, m_iterator, t0)
+    bbneq JSCell::m_type[t0], constexpr SentinelType, .ordinary
+    loadVariable(get, m_iterable, t2)
+    btqnz t2, notCellMask, .ordinary
+    loadb JSCell::m_indexingTypeAndMisc[t2], t1
+    andi IndexingTypeMask, t1
+    bieq t1, ArrayWithContiguous, .hasElements
+    bineq t1, ArrayWithInt32, .mayHaveDoubles
+.hasElements:
+    loadp JSObjectWithButterfly::m_butterfly[t2], t0
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .ordinary
+    zxi2q t3, t2
+    loadq [t0, t2, 8], t1
+    btqz t1, .ordinary
+.hasElement:
+    storeVariable(get, m_value, t1, t0)
+    addq 1, t3
+    storeVariable(get, m_next, t3, t0)
+    move ValueFalse, t1
+    storeVariable(get, m_done, t1, t0)
+    dispatch()
+
+.mayHaveDoubles:
+    bineq t1, constexpr ArrayWithDouble, .mayBeString
+    loadp JSObjectWithButterfly::m_butterfly[t2], t0
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .ordinary
+    zxi2q t3, t2
+    loadd [t0, t2, 8], ft0
+    bdnequn ft0, ft0, .ordinary
+    fd2q ft0, t1
+    subq numberTag, t1
+    jmp .hasElement
+
+.mayBeString:
+    bbneq JSCell::m_type[t2], StringType, .ordinary
+    loadp JSString::m_fiber[t2], t0
+    btpnz t0, isRopeInPointer, .ordinary
+    biaeq t3, StringImpl::m_length[t0], .ordinary
+    zxi2q t3, t1
+    loadStringCharacter(t0, t1, t2, .ordinary)
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t2, PtrSize], t1
+    jmp .hasElement
+
+.isNoIndex:
+    btqnz t3, notCellMask, .ordinary
+    bbneq JSCell::m_type[t3], constexpr SentinelType, .callsNext
+    loadVariable(get, m_iterator, t0)
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isCollectionIterator
+    bbneq JSCell::m_type[t0], constexpr JSMapIteratorType, .ordinary
+
+    # The entries of a table that was walked stay where they are. The key of a deleted entry is empty.
+.isCollectionIterator:
+    loadp StorageOfCollectionIterator[t0], t2
+    btpz t2, .ordinary
+    bbneq JSCell::m_type[t2], constexpr CellType, .ordinary
+    btbnz CompactTableStatus[t2], .ordinary
+    loadb CompactTableKeysShift[t2], t7
+    btinz t7, constexpr AOT::CompactTable::keysAreInImage, .ordinary
+    loadi EntryOfCollectionIterator[t0], t6
+    biaeq t6, CompactTableUsed[t2], .isPastLastEntry
+    btinz t7, constexpr AOT::CompactTable::wasWalked, .isMarked
+    ori constexpr AOT::CompactTable::wasWalked, t7
+    storeb t7, CompactTableKeysShift[t2]
+.isMarked:
+    move t7, t3
+    andi constexpr AOT::CompactTable::keysShiftMask, t3
+    move 2, t5
+    lshiftp t3, t5
+    addp t2, t5
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Entries, .isPair
+    btinz t7, constexpr AOT::CompactTable::keysAreWide, .hasWideKey
+    loadi CompactTableIndex[t5, t6, 4], t3
+    btiz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .hasNarrowValue
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Keys, .hasNarrowValue
+    loadi CompactTableCapacity[t2], t3
+    leap [t5, t3, 4], t5
+    jmp .loadsValue
+
+.hasWideKey:
+    loadq CompactTableIndex[t5, t6, 8], t3
+    btqz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .hasValue
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Keys, .hasValue
+    loadi CompactTableCapacity[t2], t3
+    leap [t5, t3, 8], t5
+.loadsValue:
+    bbneq CompactTableValueWidth[t2], constexpr AOT::CompactTable::Width::Wide, .loadsNarrowValue
+    loadq CompactTableIndex[t5, t6, 8], t3
+    jmp .hasValue
+
+    # AOT::CompactTable::decodeNarrow().
+.loadsNarrowValue:
+    loadi CompactTableIndex[t5, t6, 4], t3
+.hasNarrowValue:
+    bib t3, constexpr AOT::minCell32, .hasValue
+    loadTableInstance(t5, .ordinary)
+    lshiftp constexpr AOT::cell32Shift, t3
+    addp InstanceCellCageBase[t5], t3
+.hasValue:
+    storeVariable(get, m_value, t3, t1)
+    addi 1, t6
+    orq numberTag, t6
+    storeq t6, EntryOfCollectionIterator[t0]
+    move ValueFalse, t0
+    storeVariable(get, m_done, t0, t1)
+    dispatch()
+
+.isPastLastEntry:
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp (constexpr (VM::offsetOfOrderedHashTableSentinel()))[t1], t1
+    storep t1, StorageOfCollectionIterator[t0]
+    move 0, t0
+    storeVariable(get, m_value, t0, t1)
+    move ValueTrue, t0
+    storeVariable(get, m_done, t0, t1)
+    dispatch()
+
+    # constructArrayPair() of the key, which goes to t3, and the value, which goes to t7. Nobody sees a storage whose array cannot be allocated.
+.isPair:
+    loadRealmInstance(t1, .ordinary)
+    btiz InstanceNewArrayWithContiguousHeader[t1], .ordinary
+    btinz t7, constexpr AOT::CompactTable::keysAreWide, .hasWideKeyOfPair
+    loadi CompactTableIndex[t5, t6, 4], t3
+    btiz t3, .ordinary
+    bib t3, constexpr AOT::minCell32, .hasNarrowKeyOfPair
+    lshiftp constexpr AOT::cell32Shift, t3
+    addp InstanceCellCageBase[t1], t3
+.hasNarrowKeyOfPair:
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isPairOfSet
+    loadi CompactTableCapacity[t2], t7
+    leap [t5, t7, 4], t5
+    jmp .loadsValueOfPair
+
+.hasWideKeyOfPair:
+    loadq CompactTableIndex[t5, t6, 8], t3
+    btqz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isPairOfSet
+    loadi CompactTableCapacity[t2], t7
+    leap [t5, t7, 8], t5
+.loadsValueOfPair:
+    bbneq CompactTableValueWidth[t2], constexpr AOT::CompactTable::Width::Wide, .loadsNarrowValueOfPair
+    loadq CompactTableIndex[t5, t6, 8], t7
+    jmp .hasPair
+
+.loadsNarrowValueOfPair:
+    loadi CompactTableIndex[t5, t6, 4], t7
+    bib t7, constexpr AOT::minCell32, .hasPair
+    lshiftp constexpr AOT::cell32Shift, t7
+    addp InstanceCellCageBase[t1], t7
+    jmp .hasPair
+
+.isPairOfSet:
+    move t3, t7
+.hasPair:
+    loadp InstanceAuxiliarySpace[t1], t2
+    loadp (constexpr (CompleteSubspace::offsetOfAllocatorForSizeStep())) + ((constexpr BASE_CONTIGUOUS_VECTOR_LEN) + 1) * 4[t2], t2
+    btpz t2, .ordinary
+    allocateCell(t2, t5, t0, .ordinary)
+    storei 2, IndexingHeader::u.lengths.publicLength[t5]
+    storei constexpr BASE_CONTIGUOUS_VECTOR_LEN, IndexingHeader::u.lengths.vectorLength[t5]
+    storeq t3, sizeof IndexingHeader[t5]
+    storeq t7, sizeof IndexingHeader + 8[t5]
+    storeq ValueEmpty, sizeof IndexingHeader + 16[t5]
+    loadp InstanceArrayAllocator[t1], t2
+    allocateCell(t2, t3, t0, .ordinary)
+    loadq InstanceNewArrayWithContiguousHeader[t1], t2
+    storeq t2, [t3]
+    addp sizeof IndexingHeader, t5
+    storep t5, JSObjectWithButterfly::m_butterfly[t3]
+    fenceAfterAllocation(t2)
+    loadVariable(get, m_iterator, t0)
+    jmp .hasValue
+
+    # What next() answers is in m_value till its value is there. A compiled object has no properties that the cache of the site holds.
+.callsNext:
+    if ARM64E or C_LOOP
+        jmp .ordinary
+    else
+        macro readsResult()
+            jmp .readsDone
+        end
+
+        macro getCallee(dst)
+            get(m_next, dst)
+        end
+
+        macro getArgumentIncludingThisStart(dst)
+            getu(size, OpIteratorNext, m_stackOffset, dst)
+        end
+
+        macro getArgumentIncludingThisCount(dst)
+            move 1, dst
+        end
+
+        macro loadNameAndReadCompiledResult(offsetOfName, slow, done)
+            loadp CodeBlock[cfr], t1
+            loadp CodeBlock::m_vm[t1], t1
+            loadp VM::propertyNames[t1], t1
+            loadp offsetOfName[t1], t1
+            getFromCompiledObject(slow, done)
+        end
+
+        metadata(t5, t0)
+        callHelper(aot_op_iterator_next, OpIteratorNext, dispatchAfterCallWithoutProfile, m_nextResultValueProfile, m_value, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, readsResult, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
+
+    .readsDone:
+        loadVariable(get, m_value, t3)
+        btqnz t3, notCellMask, .asksForDone
+        bbeq JSCell::m_type[t3], CompiledObjectType, .readsDoneOfCompiledResult
+        metadata(t2, t1)
+        performGetByIDHelper(OpIteratorNext, m_doneModeMetadata, m_doneValueProfile, .asksForDone, size, macro (value)
+            move value, t0
+            jmp .hasDone
+        end)
+
+    .readsDoneOfCompiledResult:
+        loadNameAndReadCompiledResult(constexpr AOT::Interpreter::offsetOfDoneAmongPropertyNames, .asksForDone, .hasDone)
+
+    .hasDone:
+        storeVariable(get, m_done, t0, t1)
+    .testsDone:
+        btqnz t0, ~0xf, .asksForValue
+        btiz t0, 1, .isNotDone
+        dispatch()
+
+    .isNotDone:
+        loadVariable(get, m_value, t3)
+        bbeq JSCell::m_type[t3], CompiledObjectType, .readsValueOfCompiledResult
+        metadata(t2, t1)
+        performGetByIDHelper(OpIteratorNext, m_valueModeMetadata, m_valueValueProfile, .asksForValue, size, macro (value)
+            move value, t0
+            jmp .hasValueOfResult
+        end)
+
+    .readsValueOfCompiledResult:
+        loadNameAndReadCompiledResult(constexpr AOT::Interpreter::offsetOfValueAmongPropertyNames, .asksForValue, .hasValueOfResult)
+
+    .hasValueOfResult:
+        storeVariable(get, m_value, t0, t1)
+        dispatch()
+
+    .asksForDone:
+        callSlowPath(_llint_slow_path_iterator_next_get_done)
+        branchIfException(_llint_throw_from_slow_path_trampoline)
+        loadVariable(get, m_done, t0)
+        jmp .testsDone
+
+    .asksForValue:
+        callSlowPath(_llint_slow_path_iterator_next_get_value)
+        dispatch()
+    end
+
+.ordinary:
+    jumpToOrdinaryHandler(size, op_iterator_next)
+end)
+
 macro loadInstanceOfCompiledCallee(callee, instance, scratch)
     loadStructureWithScratch(callee, instance, scratch)
     loadp Structure::m_realm[instance], instance
@@ -4772,6 +5048,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpInByVal, op_in_by_val)
     setEntryAddresses(OpInc, op_inc)
     setEntryAddresses(OpInstanceof, op_instanceof)
+    setEntryAddresses(OpIteratorNext, op_iterator_next)
     setEntryAddresses(OpJfalse, op_jfalse)
     setEntryAddresses(OpJgreater, op_jgreater)
     setEntryAddresses(OpJgreatereq, op_jgreatereq)

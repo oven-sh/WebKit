@@ -16,6 +16,7 @@
 #include "AOTVector.h"
 #include "ArrayAllocationProfile.h"
 #include "ArrayConventions.h"
+#include "CommonIdentifiers.h"
 #include "CompleteSubspace.h"
 #include "GetPutInfo.h"
 #include "IndexingHeader.h"
@@ -214,6 +215,9 @@ struct SymbolTableOffsets {
     static constexpr uintptr_t invalidatedSingleton = IsInvalidated << 1 | 1;
 };
 void checkSymbolTableOffsets(SymbolTable&);
+
+inline constexpr ptrdiff_t offsetOfDoneAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, done);
+inline constexpr ptrdiff_t offsetOfValueAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, value);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);
