@@ -826,8 +826,7 @@ std::optional<Boxed> AccessEmitter::tryStubOfDirectCall(const ValueContext& call
     unsigned numberOfArguments = method->method == CompiledMethodOfArray::Reduce ? static_cast<unsigned>(*count) : 1;
     for (unsigned place = 0; place < numberOfArguments; ++place)
         arguments.append(conversions.box(call, get(passed[place]), typeOf(passed[place])).value());
-    uint32_t flags = (closure->loan() != LoanOfClosure::None ? ArrayCallbackFlags::callbackIsLent : 0) | (call.returnCall() ? ArrayCallbackFlags::onlyTries : 0);
-    std::optional<StubKey> stub = chooseCallbackStub(call, *closure, method->method, flags, arguments);
+    std::optional<StubKey> stub = chooseCallbackStub(call, *closure, method->method, ArrayCallbackFlags::onlyTries, arguments);
     if (!stub)
         return std::nullopt;
     ConventionCall conventionCall { .stub = *stub, .thisValue = conversions.box(call, get(receiver), typeOf(receiver)).value(), .arguments = arguments.span() };

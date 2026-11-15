@@ -33,6 +33,9 @@
 #include "JSMapInlines.h"
 #include "MapPrototype.h"
 #include "VMInlines.h"
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
 
 namespace JSC {
 
@@ -84,6 +87,15 @@ JSC_DEFINE_HOST_FUNCTION(constructMap, (JSGlobalObject* globalObject, CallFrame*
         if (canPerformFastSet && iterableMap->isIteratorProtocolFastAndNonObservable())
             RELEASE_AND_RETURN(scope, JSValue::encode(iterableMap->clone(globalObject, vm, mapStructure)));
     }
+
+#if ENABLE(AOT)
+    if (canPerformFastSet && vm.hasCompiledCode()) [[unlikely]] {
+        JSObject* made = AOT::RuntimeHooks::tryMakeMapOfIterable(globalObject, callFrame, mapStructure, iterable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (made)
+            return JSValue::encode(made);
+    }
+#endif
 
     JSMap* map = JSMap::create(vm, mapStructure);
 

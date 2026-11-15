@@ -982,6 +982,11 @@ void disallowEvaluation(JSGlobalObject* realm)
         instance->state->disallowsEvaluation = true;
 }
 
+bool areBuiltinsLockedWithoutImage()
+{
+    return locksBuiltinsWithoutImage;
+}
+
 void lockBuiltinsWithoutImage()
 {
     locksBuiltinsWithoutImage = true;

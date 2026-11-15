@@ -28,6 +28,7 @@
 
 #include "AOTInterpreterSlowPaths.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRemovableFeature.h"
 #include "AOTRuntimeHooks.h"
 #include "AbortReason.h"
@@ -1198,6 +1199,56 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 }
 
 #if ENABLE(AOT)
+extern "C" uintptr_t SYSV_ABI llint_aot_put_to_dictionary(CallFrame* callFrame, JSObject* object, UniquedStringImpl* uid, EncodedJSValue encodedValue)
+{
+    VM& vm = callFrame->codeBlock()->vm();
+    StructureID structureID = object->structureID();
+    Structure* structure = structureID.decode();
+    ASSERT(object->type() == FinalObjectType && structure->isUncacheableDictionary());
+    if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || structure->didPreventExtensions() || !object->canPerformFastPutInline(vm, uid) || parseIndex(*uid)) [[unlikely]]
+        return 0;
+    SlowPathFrameTracer tracer(vm, callFrame);
+    auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, uid, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+        unsigned oldCapacity = structure->outOfLineCapacity();
+        unsigned newCapacity = Structure::outOfLineCapacity(newMaxOffset);
+        if (newCapacity == oldCapacity) {
+            structure->setMaxOffset(vm, newMaxOffset);
+            return;
+        }
+        Butterfly* butterfly = object->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+        object->nukeStructureAndSetButterfly(vm, structureID, butterfly);
+        structure->setMaxOffset(vm, newMaxOffset);
+        WTF::storeStoreFence();
+        object->setStructureIDDirectly(structureID);
+    });
+    if (!isAdded) {
+        if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[unlikely]]
+            return 0;
+        structure->didReplaceProperty(offset);
+    }
+    object->putDirectOffset(vm, offset, JSValue::decode(encodedValue));
+    return 1;
+}
+
+extern "C" uintptr_t SYSV_ABI llint_aot_delete_from_dictionary(CallFrame* callFrame, JSObject* object, UniquedStringImpl* uid)
+{
+    VM& vm = callFrame->codeBlock()->vm();
+    Structure* structure = object->structure();
+    ASSERT(object->type() == FinalObjectType && structure->isUncacheableDictionary());
+    if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || vm.aotState().hasObjectsBeingFilled || vm.deletePropertyMode() != VM::DeletePropertyMode::Default || parseIndex(*uid)) [[unlikely]]
+        return 0;
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, uid, attributes);
+    if (offset == invalidOffset)
+        return 1;
+    if (attributes & PropertyAttribute::DontDelete) [[unlikely]]
+        return 0;
+    SlowPathFrameTracer tracer(vm, callFrame);
+    structure->removePropertyWithoutTransition(vm, uid, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
+    object->locationForOffset(offset)->clear();
+    return 1;
+}
+
 // The base is not a compiled object, and the property table has no entry for its Structure and the name.
 LLINT_SLOW_PATH_DECL(slow_path_aot_get_uncached)
 {
@@ -1209,6 +1260,15 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_get_uncached)
     if (cache.mode == GetByIdMode::Default && cache.defaultMode.structureID && !cache.defaultMode.padding1)
         startWaitForOtherStructure(cache, true);
     LLINT_RETURN(result);
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_by_symbol)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetByVal>();
+    JSObject& base = *asObject(getOperand(callFrame, bytecode.m_base));
+    SymbolImpl& symbol = uncheckedDowncast<Symbol>(getOperand(callFrame, bytecode.m_property).asCell())->uid();
+    LLINT_RETURN(AOT::Interpreter::getBySymbol(globalObject, base, symbol));
 }
 #endif
 
@@ -1934,6 +1994,22 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_instanceof)
     RELEASE_AND_RETURN(throwScope, llint_slow_path_instanceof(callFrame, pc));
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_property_enumerator)
+{
+    LLINT_BEGIN();
+    JSValue baseValue = getOperand(callFrame, pc->as<OpGetPropertyEnumerator>().m_base);
+    if (vm.aotState().hasObjectsBeingFilled && baseValue.isCell() && baseValue.asCell()->type() == FinalObjectType && baseValue.asCell()->structure()->isDictionary())
+        AOT::flattenOnce(vm, asObject(baseValue));
+    RELEASE_AND_RETURN(throwScope, slow_path_get_property_enumerator(callFrame, pc));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_from_proxy)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetById>();
+    LLINT_RETURN(getOperand(callFrame, bytecode.m_base).get(globalObject, codeBlock->identifier(bytecode.m_property)));
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
 {
     LLINT_BEGIN();
@@ -1968,6 +2044,13 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_new_empty_array)
     LLINT_BEGIN();
     auto bytecode = pc->as<OpNewArray>();
     LLINT_RETURN(AOT::Interpreter::createEmptyArray(globalObject, bytecode.metadata(codeBlock).m_arrayAllocationProfile));
+}
+
+extern "C" EncodedJSValue SYSV_ABI llint_aot_index_of_character(const Latin1Character* characters, uint64_t lengthAndStart, uint32_t character)
+{
+    const uint64_t start = lengthAndStart >> 32;
+    size_t place = WTF::find(unsafeMakeSpan(characters + start, static_cast<uint32_t>(lengthAndStart) - start), static_cast<Latin1Character>(character));
+    return JSValue::encode(jsNumber(place == notFound ? -1 : static_cast<int32_t>(start + place)));
 }
 
 // llint_aot_op_get_by_id already found the accessor, so there is no second lookup.

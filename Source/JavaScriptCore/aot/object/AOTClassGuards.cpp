@@ -2320,15 +2320,22 @@ bool ClassTable::takesObjectsLaidBelowPrototype(VM& vm, const LayoutData& instan
             return false;
         between.append(object);
     }
+    const bool isOfLibrary = m_tables.kindOfFunction(FunctionID(layout.classData().classConstructor).index()).isInRuntimeModule;
     bool mayHideMembers = std::ranges::all_of(between, [&](JSObject* object) {
         unsigned attributes = 0;
         Object* compiled = compiledObjectOrNull(object);
         JSValue constructor = compiled ? compiled->getDirectFromNativeCode(vm, vm.propertyNames->constructor.impl(), &attributes) : object->getDirect(vm, vm.propertyNames->constructor);
-        auto* classObject = constructor && constructor.isObject() ? dynamicDowncast<Closure>(asObject(constructor)) : nullptr;
+        JSObject* function = constructor ? constructor.getObject() : nullptr;
+        auto* classObject = function ? dynamicDowncast<Closure>(function) : nullptr;
+        if (function && !classObject && !isOfLibrary && function->structure()->realm() == realm) {
+            std::optional<FunctionID> id = functionOf(function);
+            const LayoutData* constructed = id ? classConstructedBy(*id) : nullptr;
+            return id && (!constructed || !isDefinedByClass(*constructed));
+        }
         if (!classObject || Instance::owning(classObject) != &m_state.instance)
             return false;
         const LayoutData* evaluated = classConstructedBy(functionOfOwnClosure(*classObject));
-        return !evaluated || (evaluated->hasUntypedBase && (evaluated->assumedBase() == LayoutData::noBase || evaluated->assumedBase() == layout.index));
+        return !evaluated || (!isDefinedByClass(*evaluated) && !isOfLibrary) || (evaluated->hasUntypedBase && (evaluated->assumedBase() == LayoutData::noBase || evaluated->assumedBase() == layout.index));
     });
     Vector<uint32_t, 16> namesBetween;
     Vector<uint32_t, 16> namesOfFieldsBetween;

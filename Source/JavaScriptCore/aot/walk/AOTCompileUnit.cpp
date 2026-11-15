@@ -1276,6 +1276,13 @@ static bool looksUnderKeyThatHasPreparation(const WalkInputs& inputs, FunctionID
     return looks;
 }
 
+static bool storesMirroredFunctionName(const WalkInputs& inputs, FunctionID function)
+{
+    return std::ranges::any_of(inputs.facts.linked().storesOfFunctionNamesIn(function), [&](const LinkedFunctionNameStore& store) {
+        return !!inputs.plan.promotedEnvironments().mirrorOfFunctionName(store.holder, store.key);
+    });
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputPassThroughOpcodes | OpcodeSet {
@@ -1287,7 +1294,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         return false;
     if (inputs.facts.beforeEvaluation().holdsIn(unit.function))
         return false;
-    if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
+    if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function) || storesMirroredFunctionName(inputs, unit.function))
         return false;
     if (readsScopesWhoseLivesMayHaveEnded(inputs, index))
         return false;

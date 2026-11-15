@@ -112,6 +112,13 @@ private:
     const uint32_t* m_groups;
 };
 
+struct ModuleOfRuntimeFunctions {
+    static constexpr uint32_t none = UINT32_MAX;
+
+    uint32_t firstFunction;
+    uint32_t module;
+};
+
 #define FOR_EACH_AOT_IMAGE_SECTION(macro) \
     macro(Functions, uint32_t) \
     macro(FunctionStarts, uint32_t) \
@@ -192,6 +199,7 @@ enum class ImageFlag : uint32_t {
     SetsMainModulePath = 1 << 10,
     HasReloadableModules = 1 << 11,
     RefusesOriginalsBesideMocks = 1 << 12,
+    RecordsOrder = 1 << 13,
 };
 
 struct ImageNumberRanges {
@@ -216,7 +224,7 @@ struct ImageHeader {
     uint64_t address;
     uint64_t executableSize;
     uint32_t formatVersion;
-    uint32_t reserved;
+    uint32_t sizeOfCodeOfStart;
     RecordedOptions options;
     ImageHeapOptions heap;
     ImageSectionRange sections[numberOfImageSections];

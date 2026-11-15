@@ -182,12 +182,21 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     }
     bool returnsOneValue = locations.results.size() == 1 && locations.results[0].representation == Representation::JSValue;
     if (returnsOneValue && !value->isConstruction() && calledFunction.role == FunctionRole::Library && (!value.returnCall() || emitter<AccessEmitter>().returnsOneBoxedValue())) {
-        if (std::optional<Boxed> result = emitter<AccessEmitter>().tryStubOfDirectCall(value, callee.function)) {
+        if (std::optional<Boxed> answer = emitter<AccessEmitter>().tryStubOfDirectCall(value, callee.function)) {
             if (!value.returnCall()) {
-                define(value, *result);
+                LBasicBlock isAnswered = newBlock();
+                LBasicBlock isUnanswered = newBlock();
+                OperandJoin results(m_out, Representation::JSValue);
+                branch(isNotEmpty(*answer), { normalEdge(isAnswered), rareEdge(isUnanswered) });
+                m_out.appendTo(isAnswered);
+                results.add(*answer);
+                m_out.appendTo(isUnanswered);
+                PlacedArguments placed = placeArguments(callee, locations, operandsOf(value->argumentsOperands(), locations).span());
+                results.add(resultOfCall(locations.results[0], emitCall(value, CallTarget::unit(callee, primaryEntry), placed, locations.results.span(), { .isOnRarePath = true, .callerSuspendsAtReturn = value.isAwaitedAtOnce() })));
+                define(value, results.finish());
                 return;
             }
-            emitter<AccessEmitter>().returnUnlessEmpty(*result);
+            emitter<AccessEmitter>().returnUnlessEmpty(*answer);
         }
     }
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);

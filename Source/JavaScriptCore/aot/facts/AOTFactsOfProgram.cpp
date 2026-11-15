@@ -4465,6 +4465,7 @@ public:
         m_isLookedThrough.quickSet(canonicalHolder.index());
         m_holdersToLookThrough.append(canonicalHolder);
     }
+    void notePrototypeAboveOtherObjects(BuiltinID canonicalPrototype) { lookThrough(canonicalPrototype); }
     void noteReadUnderNameThatLoopGave() { m_readsUnderNamesThatLoopsGave = true; }
     void noteInstancesAnswerEveryNameWithObjects() { m_objectsMayHaveMethodCalledWithStartupLoads = true; }
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const { return m_functionsThatAnswerEveryNameOnInstances.span(); }
@@ -4656,6 +4657,11 @@ private:
     bool isSurelyNot(const BodyIndex&, ValueID, BuiltinID member) const;
     bool isGuardedByFailingTest(const BodyIndex&, ValueID site, BuiltinID member) const;
     bool changesMember(const BodyIndex&, ValueID descriptor, BuiltinID member, bool& isCertain) const;
+    BuiltinID inheritedFunctionUnder(BuiltinID function, PropertyKeyID) const;
+    BuiltinID functionReadByPath(const BodyIndex&, ValueID) const;
+    std::optional<bool> replacesInheritedFunction(const BodyIndex&, ValueID descriptor, BuiltinID inherited) const;
+    bool isExtendedByClasses(BuiltinID function) const;
+    bool makesReadOnlyProperty(const BodyIndex&, ValueID descriptor) const;
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
     bool codeThatNobodyNamesMayLeave();
@@ -5596,6 +5602,8 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
         noteConstruction(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.holdersReadUnderKeysNobodyKnows)
         noteReadUnderKeyNobodyKnowsOff(BuiltinID(static_cast<uint32_t>(index)));
+    for (size_t index : lookups.prototypesAboveOtherObjects)
+        notePrototypeAboveOtherObjects(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsCalledWithoutRow)
         noteCallWithoutRow(BuiltinID(static_cast<uint32_t>(index)));
     m_rowsThatLinkApplies.merge(lookups.rowsApplied);
@@ -6921,6 +6929,81 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOfCopy(const Bod
     return worst;
 }
 
+BuiltinID BuilderOfProgramFacts::inheritedFunctionUnder(BuiltinID function, PropertyKeyID key) const
+{
+    BuiltinKind kind = m_builtins.at(function).kind;
+    if (kind != BuiltinKind::Function && kind != BuiltinKind::Method && kind != BuiltinKind::Constructor)
+        return { };
+    BuiltinID inherited = memberFoundOnInProgramFacts(m_source, function, key);
+    if (!inherited || m_builtins.at(inherited).kind == BuiltinKind::Accessor || !isObjectKind(m_builtins.at(inherited).kind))
+        return { };
+    return isLockedLocation(m_source, m_builtins.canonicalID(m_builtins.at(inherited).holder), key) || isConstantLocation(inherited) ? inherited : BuiltinID();
+}
+
+BuiltinID BuilderOfProgramFacts::functionReadByPath(const BodyIndex& index, ValueID value) const
+{
+    if (BuiltinID read = builtinReadByPath(index, value))
+        return read;
+    value = value ? index.stripCasts(value) : ValueID();
+    if (!value || index.isParameter(value) || index.opcodeOf(value) != Opcode::PropGet)
+        return { };
+    auto read = index.value(value).as<Opcode::PropGet>();
+    BuiltinID function = builtinReadByPath(index, read.objectOperand());
+    return function ? inheritedFunctionUnder(m_builtins.canonicalID(function), read.key()) : BuiltinID();
+}
+
+bool BuilderOfProgramFacts::isExtendedByClasses(BuiltinID function) const
+{
+    for (uint32_t number = 1; number < m_builtins.builtinCount(); ++number) {
+        const Builtin& entry = m_builtins.at(BuiltinID(number));
+        if (entry.prototypeLink == BuiltinPrototypeLink::Builtin && entry.inheritsFrom && m_builtins.canonicalID(entry.inheritsFrom) == function)
+            return true;
+    }
+    return std::ranges::any_of(m_source.layouts, [&](const Layout& layout) {
+        BuiltinID constructor = layout.writtenBuiltinBase ? m_builtins.at(layout.writtenBuiltinBase).constructor : BuiltinID();
+        return constructor && m_builtins.canonicalID(constructor) == function;
+    });
+}
+
+bool BuilderOfProgramFacts::makesReadOnlyProperty(const BodyIndex& index, ValueID descriptor) const
+{
+    descriptor = descriptor ? index.stripCasts(descriptor) : ValueID();
+    if (!descriptor || index.isParameter(descriptor))
+        return false;
+    ValueID writable;
+    bool isAsWritten = forEachPropertyOfWrittenLiteral(index, descriptor, { }, [&](PropertyKeyID part, ValueID brought) {
+        if (part == m_source.keyOf(BuiltinNames::writable))
+            writable = brought;
+    });
+    writable = writable ? index.stripCasts(writable) : ValueID();
+    return isAsWritten && !(writable && !index.isParameter(writable) && index.opcodeOf(writable) == Opcode::Boolean && index.value(writable).as<Opcode::Boolean>().boolean());
+}
+
+std::optional<bool> BuilderOfProgramFacts::replacesInheritedFunction(const BodyIndex& index, ValueID descriptor, BuiltinID inherited) const
+{
+    descriptor = descriptor ? index.stripCasts(descriptor) : ValueID();
+    Vector<PropertyKeyID, 2> namesTakenAway;
+    if (!descriptor || index.isParameter(descriptor) || !isHandedOverOnce(index, descriptor, namesTakenAway) || !namesTakenAway.isEmpty())
+        return false;
+    if (index.opcodeOf(descriptor) == Opcode::Data)
+        return true;
+    ValueID value;
+    bool bringsAccessor = false;
+    bool isAsWritten = forEachPropertyOfWrittenLiteral(index, descriptor, { }, [&](PropertyKeyID key, ValueID brought) {
+        if (key == m_source.keyOf(BuiltinNames::value))
+            value = brought;
+        else
+            bringsAccessor |= isPartThatBringsValueOrAccessor(key);
+    });
+    if (!isAsWritten)
+        return false;
+    if (!value || bringsAccessor)
+        return true;
+    if (BuiltinID brought = functionReadByPath(index, value))
+        return m_builtins.canonicalID(brought) == m_builtins.canonicalID(inherited) ? std::nullopt : std::optional(true);
+    return isSurelyNot(index, value, inherited);
+}
+
 std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyIndex& index, const Witness& site, BuiltinID holder, PropertyKeyID key, BuiltinPropertyActionKind action, ValueID brought, bool throwsWhereRefused)
 {
     const Builtin& object = m_builtins.at(holder);
@@ -6958,6 +7041,12 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyInd
         isCertain = true;
         if (member && !changesMember(index, brought, member, isCertain))
             return std::nullopt;
+        if (BuiltinID inherited = member ? BuiltinID() : inheritedFunctionUnder(holder, key)) {
+            std::optional<bool> replaces = replacesInheritedFunction(index, brought, inherited);
+            if (!replaces)
+                return makesReadOnlyProperty(index, brought) && isExtendedByClasses(holder) ? std::optional(UserDiagnosticKind::InheritedValueIsMadeReadOnly) : std::nullopt;
+            isCertain = *replaces;
+        }
         break;
     default:
         break;
@@ -7692,6 +7781,14 @@ void BuiltinsInReach::noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder)
         return;
     m_wasToldSomethingNew = true;
     m_builder->noteReadUnderKeyNobodyKnowsOff(canonicalHolder);
+}
+
+void BuiltinsInReach::notePrototypeAboveOtherObjects(BuiltinID canonicalPrototype)
+{
+    if (m_linked->lookups.prototypesAboveOtherObjects.set(canonicalPrototype.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->notePrototypeAboveOtherObjects(canonicalPrototype);
 }
 
 void BuiltinsInReach::noteReadUnderKeyNobodyKnows()

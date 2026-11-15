@@ -12,6 +12,7 @@
 
 namespace JSC {
 
+class CallFrame;
 class InlineWatchpointSet;
 class JSArray;
 class JSCell;
@@ -19,6 +20,7 @@ class InternalFunction;
 class JSFunction;
 class JSValue;
 class ObjectPropertyCondition;
+class PropertyDescriptor;
 class PropertyName;
 struct CallerFrameAndPC;
 
@@ -44,6 +46,8 @@ using AOT::takePreallocatedStaticProperty;
 void willInitializeRealm(JSGlobalObject*);
 Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
 bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+bool definesInheritedValue(JSObject* function, PropertyName, const PropertyDescriptor&);
+bool closeNamesOfFunction(VM&, JSObject* function, PropertyName);
 bool acceptsHasInstanceOfHost(InternalFunction*, PropertyName, JSValue method);
 inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
 String lockedBuiltinPropertyErrorMessage(PropertyName);
@@ -75,6 +79,10 @@ JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
 JSObject* proxyOwnKeysTarget(VM&, JSObject* proxy, bool asksDescriptors);
 
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
+JSObject* tryMakeSetOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
+JSObject* tryMakeMapOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
+
+JSObject* tryCopyObject(JSGlobalObject*, JSObject* compiledObject);
 
 class NoHelperThreadsScope {
     WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);

@@ -420,6 +420,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         m_aotState.attachImage(*this);
     else if (AOT::Image::isDisabledOnThisThread() && Options::aotCountsPath()) [[unlikely]]
         m_aotState.countWithoutImage(*this);
+    if (AOT::areBuiltinsLockedWithoutImage()) [[unlikely]]
+        m_aotState.mayLockBuiltins = true;
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
@@ -1091,8 +1093,22 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
         return llint_aot_is_array_thunk;
     case ArrayPushIntrinsic:
         return llint_aot_array_push_thunk;
+    case JSMapGetIntrinsic:
+        return llint_aot_map_get_thunk;
+    case JSMapHasIntrinsic:
+        return llint_aot_map_has_thunk;
+    case JSSetHasIntrinsic:
+        return llint_aot_set_has_thunk;
+    case JSMapDeleteIntrinsic:
+        return llint_aot_map_delete_thunk;
+    case JSSetDeleteIntrinsic:
+        return llint_aot_set_delete_thunk;
     case CharAtIntrinsic:
         return llint_aot_char_at_thunk;
+    case JSMapSetIntrinsic:
+        return llint_aot_map_set_thunk;
+    case JSSetAddIntrinsic:
+        return llint_aot_set_add_thunk;
     case FromCharCodeIntrinsic:
         return llint_aot_from_char_code_thunk;
     case HasOwnPropertyIntrinsic:

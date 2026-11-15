@@ -139,6 +139,7 @@ struct CompileOptions {
     bool obfuscates() const { return hasFlag(output, OutputOptions::Obfuscate); }
     bool hidesFunctionNames() const { return obfuscates() && !hasFlag(output, OutputOptions::KeepsFunctionNames); }
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
+    bool recordsOrder() const { return hasFlag(output, OutputOptions::RecordsOrder); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);
 };

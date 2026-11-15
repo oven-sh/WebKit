@@ -1,0 +1,57 @@
+# lib.mjs: export const copy = { map: Array.prototype.map }; export const other = { filter: Array.prototype.filter }; const inside = { some: Array.prototype.some };
+# main.mjs: export { copy } from "./lib.mjs";
+# Only the re-exported name is an export of the entry. The built-ins behind the other two are not compiled.
+# OPTIONS: exclude=CodeOutsideImage
+# LIBRARY: own
+# RUN: link functions variables mechanisms=all
+# CHECK-NOT: function f2 unreached
+# CHECK: function f3 unreached
+# CHECK: function f4 unreached
+
+layout L0 module=m1 fields=[{key="map" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 module=m1 fields=[{key="filter" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L2 module=m1 fields=[{key="some" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="copy" module=m1 declared={type=anything} initialization=Uninitialized
+variable g1 name="other" module=m1 declared={type=anything} initialization=Uninitialized
+variable g2 name="inside" module=m1 declared={type=anything} initialization=Uninitialized
+module m0 path="/main.mjs" displayPath="/main.mjs" body=f0 requests=[{target=m1 completes=true}] exports=[{name="copy" variable=g0}]
+module m1 path="/lib.mjs" displayPath="/lib.mjs" body=f1 exports=[{name="copy" variable=g0}, {name="other" variable=g1}]
+module m2 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary]
+entry module=m0 hostReads=[{exportName="default" builtin=BunServe namesLookedFor=["fetch", "app", "stop"]}, {exportName="then"}]
+runtimefunction id=ArrayPrototypeFilter function=f3
+runtimefunction id=ArrayPrototypeMap function=f2
+runtimefunction id=ArrayPrototypeSome function=f4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Undefined
+    Return v0
+}
+function f1 module=m1 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=ArrayPrototypeMap
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = FinishObject v1
+    PutModuleVariable v2 variable=g0
+    v4 = Builtin builtin=ArrayPrototypeFilter
+    v5 = NewObject -, v4 layout=L1 fields=[0]
+    v6 = FinishObject v5
+    PutModuleVariable v6 variable=g1
+    v8 = Builtin builtin=ArrayPrototypeSome
+    v9 = NewObject -, v8 layout=L2 fields=[0]
+    v10 = FinishObject v9
+    PutModuleVariable v10 variable=g2
+    v12 = Undefined
+    Return v12
+}
+function f2 name="map" module=m2 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeMap thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f3 name="filter" module=m2 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeFilter thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f4 name="some" module=m2 kind=Method role=Library flags=[HasThis, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeSome thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}

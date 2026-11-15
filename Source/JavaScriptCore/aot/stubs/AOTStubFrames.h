@@ -99,7 +99,11 @@ constexpr unsigned bytesAboveReturnAddressOf(StubFrameKind kind)
 struct ModuleStartFrame {
     static constexpr ptrdiff_t offsetOfNextStep = -8;
     static constexpr ptrdiff_t offsetOfModuleToAbandon = -16;
-    static constexpr unsigned size = 16;
+    static constexpr ptrdiff_t offsetOfException = -24;
+    static constexpr unsigned size = 32;
+
+    static constexpr uint64_t hasThrownBit = 1;
+    static constexpr uint32_t resumesLoad = 1;
 };
 
 struct PlainFunctionConstructFrame {

@@ -1502,12 +1502,27 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
             name = m_code.at(name).operand(0);
         return m_code.at(name).isOnTakenEdge();
     };
+    BitVector isBehindFailingEdge(m_code.numberOfBlocks());
+    const BlockID blockOfTest = m_code.blockOf(test);
+    if (EdgeID fails = findAnswerEdge(test, false, blockOfTest)) {
+        Vector<BlockID, 16> waiting { m_code.at(fails).to };
+        while (!waiting.isEmpty()) {
+            BlockID block = waiting.takeLast();
+            if (!isReached(block) || dominates(headOf(block), headOf(blockOfTest)) || isBehindFailingEdge.set(block.index()))
+                continue;
+            m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                waiting.append(edge.to);
+            });
+        }
+    }
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             const Operation& user = m_code.at(id);
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
                 if (user.operand(operandIndex) == test && (user.opcode != Opcode::Narrowed || user.valueOperand() == test))
                     return false;
+                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame && isBehindFailingEdge.get(block.index()))
+                    isUsedOnFailure = true;
                 if (!user.operand(operandIndex) || !names.get(user.operand(operandIndex).index()) || names.get(id.index()))
                     continue;
                 if (user.position != asked.position || user.inlineFrame != asked.inlineFrame)
@@ -1813,6 +1828,54 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
             });
         }
     }
+    auto otherSideIsNumberWhereReadArrives = [&](const Operation& sum, uint32_t operandIndex) {
+        struct Sides {
+            bool operator==(const Sides&) const = default;
+
+            ValueID side;
+            ValueID other;
+        };
+        if (sum.opcode != Opcode::Add || operandIndex >= 2)
+            return false;
+        Vector<Sides, 8> sidesToAsk;
+        sidesToAsk.append(Sides { sum.operand(operandIndex), sum.operand(1 - operandIndex) });
+        for (size_t place = 0; place < sidesToAsk.size(); ++place) {
+            ValueID side = sidesToAsk[place].side;
+            ValueID other = sidesToAsk[place].other;
+            if (!side || !other)
+                return false;
+            if (!readBehind(side))
+                continue;
+            auto isNumberOrUndefined = [&] {
+                const Type& type = m_types.at(m_code.at(other).type);
+                return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+            };
+            while (!isNumberOrUndefined() && valuePreservingOpcodes.contains(m_code.at(other).opcode))
+                other = m_code.at(other).operand(0);
+            if (isNumberOrUndefined())
+                continue;
+            while (valuePreservingOpcodes.contains(m_code.at(side).opcode))
+                side = m_code.at(side).operand(0);
+            if (m_code.at(side).opcode != Opcode::Parameter || m_code.at(other).opcode != Opcode::Parameter || m_code.at(side).block() != m_code.at(other).block())
+                return false;
+            BlockID join = m_code.at(side).block();
+            std::span<const ValueID> parameters = m_code.at(join).parameters();
+            size_t positionOfSide = std::ranges::find(parameters, side) - parameters.begin();
+            size_t positionOfOther = std::ranges::find(parameters, other) - parameters.begin();
+            for (BlockID from : m_reachedBlocks) {
+                m_code.forEachEdgeOf(from, [&](EdgeID, const Edge& edge) {
+                    if (edge.to != join)
+                        return;
+                    std::span<const ValueID> arguments = edge.arguments();
+                    size_t mostNeeded = std::max(positionOfSide, positionOfOther);
+                    Sides handed = mostNeeded < arguments.size() ? Sides { arguments[positionOfSide], arguments[positionOfOther] } : Sides { };
+                    if (!sidesToAsk.contains(handed))
+                        sidesToAsk.append(handed);
+                });
+            }
+        }
+        return true;
+    };
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             const Operation& user = m_code.at(id);
@@ -1820,7 +1883,7 @@ void CodeVerifier::verifyUsersOfHolesReadAsNaN()
                 continue;
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
                 ValueID read = user.operand(operandIndex) ? readBehind(user.operand(operandIndex)) : ValueID();
-                if (read && !treatsUndefinedAsNaN(id, user, operandIndex))
+                if (read && !treatsUndefinedAsNaN(id, user, operandIndex) && !otherSideIsNumberWhereReadArrives(user, operandIndex))
                     return fail(block, id, "a hole is read as NaN for an operation that tells NaN from undefined"_s, read);
                 ValueID laid = user.operand(operandIndex) && user.opcode != Opcode::ResultAt ? readLaidInto(user.operand(operandIndex)) : ValueID();
                 if (laid)

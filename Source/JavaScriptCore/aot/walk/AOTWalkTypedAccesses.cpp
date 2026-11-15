@@ -2807,7 +2807,7 @@ static FunctionID findMethodForEmptyField(const Walker& walker, const ReceiversO
     if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.liesInOneSlot || !field.isMovedOutByNoStore || possibleChangesForbid(changesThatMayReachFieldForTypedAccess(receivers, field), TypedAccess::ReadsSlotThatMayBeEmpty))
         return { };
     FunctionID method = methodUnderAppendedField(walker, receivers, key);
-    return method && closureTableHoldsMethodForTypedAccess(walker, method) ? method : FunctionID();
+    return method && closureTableHoldsMethodForTypedAccess(walker, method) && link.mayBeMentionedBy(walker.unit(), method) ? method : FunctionID();
 }
 
 static bool shouldReadMethodUnderField(const Walker& walker)

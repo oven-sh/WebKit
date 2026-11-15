@@ -125,7 +125,7 @@ static FunctionKindData functionKindDataOfWrittenKind(FunctionKind functionKind)
     return kind;
 }
 
-static bool functionObjectsLieInRuntimeModule(const Program& program, const Function& function)
+bool functionObjectsLieInRuntimeModule(const Program& program, const Function& function)
 {
     if (function.module && isBundlerHelperModule(program, program.at(function.module)))
         return false;

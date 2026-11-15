@@ -161,7 +161,17 @@ public:
         return positionOfCodeAt(place);
     }
 
+    void reorder(std::span<const uint32_t> order);
+    std::span<const uint32_t> newPositions() const { return m_newPositions.span(); }
+
     std::optional<uint32_t> positionOfCodeAt(uint32_t place) const
+    {
+        std::optional<uint32_t> position = originalPositionOfCodeAt(place);
+        return position && !m_newPositions.isEmpty() ? m_newPositions[*position] : position;
+    }
+
+private:
+    std::optional<uint32_t> originalPositionOfCodeAt(uint32_t place) const
     {
         std::span<const uint32_t> places = m_placesInCode.span();
         size_t first = 0;
@@ -211,6 +221,7 @@ private:
     ListOfKeptCode m_functions;
     Vector<uint32_t> m_placesInCode;
     Vector<uint32_t> m_firstPositionInGroupOfPlaces;
+    Vector<uint32_t> m_newPositions;
     unsigned m_shiftOfGroupsOfPlaces { 0 };
     Vector<BlocksOfUnits> m_blocks;
     Vector<FusedCallEntry> m_fusedCallEntries;

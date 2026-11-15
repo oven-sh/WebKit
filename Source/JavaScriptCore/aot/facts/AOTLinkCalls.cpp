@@ -5987,6 +5987,7 @@ void CallInLinkCalls::applyAction(RowCall& call, const BuiltinPropertyAction& ac
         if (action.kind == BuiltinPropertyActionKind::ChangesPrototype) {
             forEachType(valuesAt(call, action.object), [&](const LinkType& type, const Source*) {
                 m_flow.noteWhatMayMakeThenableOf(type, m_caller, std::nullopt);
+                m_flow.noteInstancesChangePrototype(type);
             });
         }
         break;

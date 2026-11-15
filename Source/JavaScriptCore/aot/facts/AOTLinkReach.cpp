@@ -232,6 +232,7 @@ private:
     bool hostReadsNamesAloneOff(ModuleID) const;
     enum class HostWith : bool { Looks, Takes };
     void showExportsThatHostReadsOff(const Entry&, HostWith);
+    void escapeExportedBuiltins();
     bool globalObjectExposesModules() const;
     bool exposeModulesOnGlobalObject();
     void escapeFacadesWithGetters();
@@ -962,6 +963,68 @@ void StateOfLinkReach::showExportsThatHostReadsOff(const Entry& entry, HostWith 
             else
                 escapeExportsOf(entry.module);
         }
+    }
+}
+
+void StateOfLinkReach::escapeExportedBuiltins()
+{
+    BitVector visitedNodes(m_flow.numberOfNodes());
+    BitVector visitedModules(m_program.modules.size());
+    Vector<FlowNodeID, 16> nodes;
+    Vector<ModuleID, 8> modules;
+    auto addNode = [&](FlowNodeID node) {
+        if (node && node != m_flow.unseen() && node.index() < visitedNodes.size() && !visitedNodes.set(node.index()))
+            nodes.append(node);
+    };
+    auto addModule = [&](ModuleID id) {
+        if (id && !visitedModules.set(id.index()))
+            modules.append(id);
+    };
+    for (const Entry& entry : m_program.entries) {
+        if (hostReadsNamesAloneOff(entry.module))
+            addModule(entry.module);
+    }
+    while (!modules.isEmpty() || !nodes.isEmpty()) {
+        if (!modules.isEmpty()) {
+            ModuleID id = modules.takeLast();
+            const Module& module = m_program.at(id);
+            if (module.exportsVariable)
+                addNode(m_flow.variable(module.exportsVariable));
+            for (const SyntheticExport& synthetic : module.syntheticExports) {
+                if (synthetic.variable)
+                    addNode(m_flow.variable(synthetic.variable));
+            }
+            addModule(commonJsModuleCapturedBy(m_program, module));
+            for (uint32_t index = 0; index < module.exports.size(); ++index) {
+                const ModuleExport& exported = module.exports[index];
+                for (const LinkFlow::ExportedLocation& location : m_flow.resolveExport(id, index))
+                    addNode(location.variable ? m_flow.variable(location.variable) : m_flow.field(location.field));
+                if (exported.kind == ModuleExportKind::Namespace && exported.module) {
+                    m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
+                    addModule(exported.module);
+                }
+                if (exported.kind == ModuleExportKind::Indirect && exported.module && exported.importName)
+                    m_flow.noteLossOfExportOfBuiltinModule(exported.module, exported.importName);
+            }
+            for (const ModuleRequest& request : module.requests) {
+                if (!request.isDynamicStarExport)
+                    continue;
+                m_flow.noteLossOfObjectOfBuiltinModule(request.target);
+                addModule(request.target);
+            }
+            continue;
+        }
+        LinkType type = m_flow.typeAt(nodes.takeLast());
+        if (type.isNever())
+            continue;
+        m_flow.noteEscapedBuiltins(type);
+        m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
+            if (m_program.at(layout).kind == LayoutKind::ModuleNamespace)
+                addModule(m_program.at(layout).namespaceOf);
+        });
+        m_flow.forEachContainedNode(type, scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
+            addNode(node);
+        }));
     }
 }
 
@@ -2041,6 +2104,7 @@ bool StateOfLinkReach::enterLibraryInReach()
     escapeFacadesWithGetters();
     tellWhatHostFindsAtEntries();
     readAccessorsOfExports();
+    escapeExportedBuiltins();
     bool somethingHasLeft = m_flow.letGoWhoWaitsForAccessorsLaidAbove();
     if (m_flow.objectsReachUnseen() && !std::exchange(m_nativeCodeMayHoldObjects, true)) {
         m_builtinsInReach.noteNativeCodeMayHoldObjects();

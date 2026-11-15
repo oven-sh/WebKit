@@ -554,6 +554,7 @@ struct ModuleStartStepData {
         Return,
         FinishAndReturn,
         CallStartUnlessStopped,
+        ResumeLoadOnThrow,
     };
 
     static constexpr unsigned numberOfOperationBits = 4;
@@ -576,7 +577,7 @@ struct ModuleStartStepData {
     uint32_t bits;
 };
 static_assert(sizeof(ModuleStartStepData) == 4 && isImageRecord<ModuleStartStepData>);
-static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::CallStartUnlessStopped) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
+static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::ResumeLoadOnThrow) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
 static_assert(!ModuleStartStepData::create(ModuleStartStepData::Operation::Trap).bits);
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).operand() == 0xabcdef && ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).hasFlag());
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).operation() == ModuleStartStepData::Operation::CallBody && !ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).hasFlag());

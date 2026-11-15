@@ -42,6 +42,7 @@ struct ModuleStart {
     std::span<const ModuleID> filesRunWhileLoaded;
     bool beginsInBody { false };
     bool mayBeLeftByCaughtError { false };
+    bool resumesLoadOnThrow { false };
     bool bodyOnlyReturns { false };
 };
 
@@ -54,6 +55,7 @@ struct ModuleStartOperation {
         Finish,
         ReturnIfLoadingStops,
         AbandonOnThrow,
+        ResumeLoadOnThrow,
         NeverComesBack,
     };
 

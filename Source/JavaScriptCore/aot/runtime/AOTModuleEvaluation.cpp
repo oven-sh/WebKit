@@ -605,6 +605,7 @@ JSValue Modules::enterBody(ModuleID module, FunctionID body)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if ((moduleData.kind == ModuleKind::SourceText && !moduleData.hasTopLevelAwait()) || moduleData.kind == ModuleKind::CommonJs) {
         EncodedJSValue function = JSValue::encode(jsNumber(static_cast<int32_t>(closureNumberOf(body))));
+        SetForScope moduleStartedByRuntime(m_moduleStartedByRuntime, std::optional(module));
         m_instance.modules.moduleThatRunTimeStartsPlusOne = module.index() + 1;
         auto forgetsStart = makeScopeExit([&] {
             m_instance.modules.moduleThatRunTimeStartsPlusOne = 0;
@@ -842,6 +843,11 @@ bool Modules::hasSynchronousLoadFetched(ModuleID file)
 
 bool Modules::tryDiscardFailureDuringFetch(ModuleID file)
 {
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !loaded->failedInSynchronousLoad)
+        return false;
+    if (!data(file).runsAgainAfterThrow() && !mayBeEvicted(file) && !mayBeMocked(file))
+        return false;
     std::optional<ModuleID> facade = data(file).kind == ModuleKind::CommonJs ? m_table.facadeOf(file) : std::nullopt;
     ModuleRegistryEntry* entry = facade ? loader()->registryEntry(moduleKey(*facade)) : nullptr;
     if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
@@ -955,6 +961,11 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         }
         return;
     }
+    if (data(module).kind == ModuleKind::CommonJs) {
+        bool isSynchronous = m_instance.vm->synchronousModuleQueue();
+        if (LoadedModule* loaded = isSynchronous ? &ensureLoaded(module) : loadedIfExists(module))
+            loaded->failedInSynchronousLoad = isSynchronous;
+    }
     JSValue cachedByLoader = errorCachedByLoader(module);
     if (data(module).cachesEvaluationError())
         setFailed(module, cachedByLoader ? cachedByLoader : error);
@@ -968,6 +979,22 @@ void Modules::abandonEvaluation(ModuleID module, JSValue error)
 {
     if (storedStatus(module) >= StoredModuleStatus::Evaluating && !isOnCycleOfImports(module))
         didThrowInBody(module, error);
+}
+
+void Modules::resumeLoadAfterThrow(ModuleID root, ModuleStartStepData failedStep, Exception* exception)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    bool hasNotBegunRoot = status(root) == ModuleStatus::Unlinked || status(root) == ModuleStatus::Linked;
+    if (m_moduleStartedByRuntime == root || !hasNotBegunRoot || !failedStep.callsStart()) {
+        throwException(m_instance.globalObject, scope, exception);
+        return;
+    }
+    ModuleID failed(failedStep.operand());
+    bool hasEnded = status(failed) == ModuleStatus::Failed || status(failed) == ModuleStatus::Evaluated;
+    if (!hasEnded)
+        setFailed(failed, exception->value());
+    scope.release();
+    require(root, ModuleID());
 }
 
 bool Modules::waitsForItsCycle(ModuleID module, ModulesThatWaitForCycles& waiting) const
@@ -4667,10 +4694,6 @@ bool Modules::wasImportedByStatement(ModuleID file) const
 ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    auto wasRequired = [&](ModuleID form) {
-        const LoadedModule* loaded = loadedIfExists(form);
-        return loaded && (loaded->requiredValue || loaded->wasRequiredByHost);
-    };
     if (wasRequired(target) || isEvicted(target))
         return target;
     Identifier key = keyWithoutForm(target);
@@ -5319,7 +5342,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return loaded.exportsWhileRequired.get();
     }
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.loaderReturnsNamespace();
-    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target))));
+    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target)) && !m_table.fullPath(target).endsWith("?text"_s)));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
         return loaded.requiredValue.get();
     bool wasBeingRequired = false;

@@ -721,7 +721,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_TAKES_BACK(macro) \
     macro(block) macro(blockFollowsClosedArms) macro(endOfValues) macro(firstValueListedByBirthInFront) macro(endOfValuesListedByBirthInFront) macro(hasHandler) macro(handlerOnlyClosesIterations) macro(isInPreheader) macro(narrowedValues) macro(firstNarrowerName) macro(listOfNarrowerNamesIsLong) macro(lookedAt) \
-    macro(wholeExpectations) macro(shapesOfValues) macro(handlerBindingsBlock) macro(hasPreheaderHandlerBindings) macro(handlerBindings)
+    macro(wholeExpectations) macro(shapesOfValues) macro(handlerBindingsBlock) macro(hasPreheaderHandlerBindings) macro(handlerBindings) macro(inlineFrame)
 
 #define FOR_EACH_FIELD_OF_FRAME_IN_TRY_THAT_STANDING_BESIDE_PLAIN_WALK_LEAVES(macro) \
     macro(returnDominator) macro(exitDominator) macro(walkedUpTo) macro(endOfStretch) macro(numberOfStretchesBeingWalked) macro(currentBlockEndCount) macro(placeTakenByEndOfBlockAskedLast) \
@@ -743,7 +743,7 @@ bool Walker::hasOpenTrialVisit(size_t frameIndex, BlockID inputHead) const
 
 #define FOR_EACH_FIELD_OF_FRAME_SET_WHERE_FRAME_IS_LAID(macro) \
     macro(function) macro(body) macro(index) macro(variablesStoredFirst) macro(loopDepthAtCall) macro(isInCallbackCopy) macro(numberOfValuesBuiltBefore) macro(typeExpectedOfAnswer) macro(answerIsDeclared) macro(useOfAnswerAsKey) \
-    macro(inlineFrame) macro(isSpecializedBody) macro(isVersionOfArrayKind) macro(canCallInstead) macro(keyOfComparator) macro(callsAreCountedByPlan) macro(callCopied) macro(isCopiedByLinkOfChain) macro(inlineeRestartPoint) macro(displacedRestartMark) macro(mayLeaveForCall) macro(isWalkedWhereItsGuardFailed) macro(inlinedHeadBlocks) macro(handlerOfCodeBelow)
+    macro(isSpecializedBody) macro(isVersionOfArrayKind) macro(canCallInstead) macro(keyOfComparator) macro(callsAreCountedByPlan) macro(callCopied) macro(isCopiedByLinkOfChain) macro(inlineeRestartPoint) macro(displacedRestartMark) macro(mayLeaveForCall) macro(isWalkedWhereItsGuardFailed) macro(inlinedHeadBlocks) macro(handlerOfCodeBelow)
 
 #define FOR_EACH_FIELD_OF_FRAME_THAT_ITS_WRITER_PUTS_BACK(macro) \
     macro(returnsInPlaceOfUnit) macro(isOfUnit) macro(countAmongFramesOfFunction) macro(loopsInTrialVisits)

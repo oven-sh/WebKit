@@ -16,11 +16,15 @@ aot/builtins/AOTMathBuiltinEmitterNumbers.cpp
 aot/builtins/AOTObjectBuiltinEmitter.cpp
 aot/builtins/AOTOwnPropertyBuiltinEmitter.cpp
 aot/builtins/AOTRuntimeIntrinsicEmitter.cpp
+aot/codegen/AOTArrayBuiltinEmitter.cpp
 aot/codegen/AOTArrayBuiltinEmitterCopies.cpp
 aot/codegen/AOTArrayIntrinsicEmitter.cpp
 aot/codegen/AOTCodeGeneratorInterleaving.cpp
+aot/codegen/AOTCodeGeneratorRotatingLoops.cpp
 aot/codegen/AOTCodeGeneratorRowLoops.cpp
 aot/codegen/AOTCodeGeneratorVectors.cpp
+aot/codegen/AOTElementAccessEmitterTypedArrays.cpp
+aot/codegen/AOTElementEmitterLiterals.cpp
 aot/codegen/AOTEvalEmitter.cpp
 aot/codegen/AOTExpandedIterationEmitter.cpp
 aot/codegen/AOTForInEmitter.cpp
@@ -65,6 +69,7 @@ aot/image/AOTFFIStubs.cpp
 aot/image/AOTImageSymbols.cpp
 aot/image/AOTMethodTable.cpp
 aot/image/AOTObfuscatedSites.cpp
+aot/image/AOTOrderFile.cpp
 aot/image/AOTProgramTableCheck.cpp
 aot/image/AOTProgramTablesDriver.cpp
 aot/image/AOTRegExpBitParallel.cpp
@@ -79,9 +84,11 @@ aot/ir/AOTTaggedLayouts.cpp
 aot/ir/AOTTypeClosure.cpp
 aot/ir/AOTTypeText.cpp
 aot/ir/AOTTypeTextParser.cpp
+aot/machine/AOTMachineAllocationChecker.cpp
 aot/machine/AOTMachineFrameChecker.cpp
 aot/machine/AOTMachinePrinter.cpp
 aot/plan/AOTNumberMethodSelectors.cpp
+aot/runtime/AOTOrderRecorder.cpp
 aot/stubs/AOTStubArgumentThunks.cpp
 aot/stubs/AOTStubAssemblerCalls.cpp
 aot/stubs/AOTStubFrontEnds.cpp
@@ -155,6 +162,7 @@ aot/walk/AOTCodeVerifier.cpp
 aot/walk/AOTWalkEnforcedFillers.cpp
 aot/walk/AOTWalkFusedChains.cpp
 aot/walk/AOTWalkKnownKeys.cpp
+aot/walk/AOTWalkLoopsOverGenerators.cpp
 aot/walk/AOTWalkMergedObjects.cpp
 aot/walk/AOTWalkNotes.cpp
 aot/walk/AOTWalkStringFoldsByEngine.cpp

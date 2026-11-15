@@ -8481,6 +8481,8 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (m_hasFailed)
         return;
 
+    if (!m_generatorsWalkedInConsumers.isEmpty()) [[unlikely]]
+        chooseInlineFrameOfStep();
     Vector<Reference, 8> entering;
     Vector<TypeID, 8> entryTypes;
     for (uint32_t index = 0; index < numberOfParameters; ++index) {
@@ -9332,6 +9334,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         return false;
     if (!isBuilt && callThroughTargetResolvedOnce(*this, value))
         return false;
+    if (!isBuilt && known == Opcode::ElemGet && !m_versionedLoops.isEmpty())
+        isBuilt = lookUpVaryingKey(*this, value);
     if (!isBuilt && !replaceOperation(*this, value))
         copy(value);
     return false;
@@ -10056,7 +10060,9 @@ bool Walker::canFollowNotTakenEdge(const BodyTerminator& terminator)
     BodyTarget target = terminator.targets()[1];
     const BodyIndex& index = currentBodyIndex();
     BlockID to = target.block();
-    return target.proofs().empty() && index.numberOfIncomingEdges(to) > 1 && to != terminator.block() && !index.isLoopHead(to) && !index.isEnteredByHandlerEdge(to) && !index.block(to).isHandlerBlock() && !inputBlock(m_frames.last(), to).head;
+    if (!target.proofs().empty() || index.numberOfIncomingEdges(to) <= 1 || to == terminator.block() || index.isLoopHead(to) || index.isEnteredByHandlerEdge(to) || index.block(to).isHandlerBlock() || inputBlock(m_frames.last(), to).head)
+        return false;
+    return letArmsLeadEdgesOf(terminator.block());
 }
 
 void Walker::followNotTakenEdge(const BodyTerminator& terminator)

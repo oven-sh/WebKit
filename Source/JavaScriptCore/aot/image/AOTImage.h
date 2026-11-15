@@ -138,6 +138,7 @@ public:
     const ImageText& text() const { return m_text; }
     ImageText& text() { return m_text; }
     bool isObfuscated() const { return header().has(ImageFlag::IsObfuscated); }
+    bool recordsOrder() const { return header().has(ImageFlag::RecordsOrder); }
     bool admitsUnknownJavaScript() const { return header().has(ImageFlag::AdmitsUnknownJavaScript); }
     bool loadsModulesByName() const { return header().has(ImageFlag::LoadsModulesByName); }
     bool allowsLibrarySource() const { return header().has(ImageFlag::AllowsLibrarySource); }

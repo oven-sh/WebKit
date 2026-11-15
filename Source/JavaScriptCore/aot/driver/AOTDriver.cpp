@@ -555,6 +555,7 @@ std::unique_ptr<CompileOutput> compileBytesWithBuildDriver(std::span<const uint8
             jobs = &context.backgroundJobs();
             context.setFunctionSources(owner.functionSources);
             context.setStringEncoders(owner.stringEncoders);
+            context.setOrderFile(owner.orderFile);
             BuildDriver driver(context, *output, owner);
             driver.setMechanisms(withoutMechanismsThatOptionsWithhold(mechanisms, options.testing));
             logTimeToEnterEngine(context, entered);

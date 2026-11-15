@@ -935,11 +935,29 @@ static std::optional<LoopOverResult> findLoopOverResult(Walker& walker, const Bo
     return LoopOverResult { openID, step };
 }
 
+void walkTypesStatedOfOtherValues(Walker& walker, ValueID behind, ValueID call, ValueID taker)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(walker.inputBlockOf(call));
+    for (uint32_t number = behind.index() + 1; number < taker.index() && !walker.isUnreachable() && !walker.hasFailed(); ++number) {
+        ValueID between(number);
+        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.stripCasts(between) == call)
+            continue;
+        uint32_t place = number - block.firstValue().index();
+        walker.walkStretch(block.id(), place, place + 1);
+    }
+}
+
 static void openLoopOverResult(Walker& walker, const BodyValue& call, const LoopOverResult& loop, Reference state)
 {
-    for (uint32_t value = call.id().index(); value <= loop.open.index(); ++value)
-        walker.bind(ValueID(value), state);
-    BodyBlock block = walker.currentBodyIndex().block(walker.inputBlockOf(call.id()));
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (uint32_t number = call.id().index(); number <= loop.open.index(); ++number) {
+        ValueID value(number);
+        if (value == loop.open || index.stripCasts(value) == call.id())
+            walker.bind(value, state);
+    }
+    walkTypesStatedOfOtherValues(walker, call.id(), call.id(), loop.open);
+    BodyBlock block = index.block(walker.inputBlockOf(call.id()));
     const uint32_t place = loop.open.index() - block.firstValue().index() + 1;
     walker.walkStretch(block.id(), place, place);
 }

@@ -82,6 +82,8 @@ static ASCIILiteral nameInPlanText(ModuleStartOperation::Kind kind)
         return "ReturnIfLoadingStops"_s;
     case ModuleStartOperation::Kind::AbandonOnThrow:
         return "AbandonOnThrow"_s;
+    case ModuleStartOperation::Kind::ResumeLoadOnThrow:
+        return "ResumeLoadOnThrow"_s;
     case ModuleStartOperation::Kind::NeverComesBack:
         return "NeverComesBack"_s;
     }

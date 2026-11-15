@@ -98,6 +98,7 @@ public:
     bool endArmWithBranch();
     bool armsMayWalkEndOfBlockFrom(uint32_t begin);
     bool canSplitBlockEnd(uint32_t begin) { return isInInnermostLoop() && endOfBlockMayBeWalkedForEachWayFrom(begin); }
+    bool letWaysLeadEdges() { return letTerminatorBeWalkedForEachWay(m_block.firstValue()); }
     bool isInInnermostLoop() const
     {
         LoopID loop = m_index.loopOf(m_block.id());
@@ -1641,6 +1642,13 @@ bool Walker::armsMayTakeBranchOf(BlockID inputBlock, uint32_t end, Reference val
     if ((value && !value.isValue()) || !mayBeTaken || frame.endOfStretch != block.numberOfValues() || block.numberOfValues() - end > mostOperationsOfJoinWalkedForEachWay)
         return false;
     return !hasStringsInBuilders() && !standsInForValueOfFrame();
+}
+
+bool Walker::letArmsLeadEdgesOf(BlockID inputBlock)
+{
+    if (!walksStretchInsideAnother())
+        return true;
+    return !standsInForValueOfFrame() && KnownThreading(*this, inputBlock).letWaysLeadEdges();
 }
 
 bool Walker::canSplitBranch(BlockID inputBlock, uint32_t end)

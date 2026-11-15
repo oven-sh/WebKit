@@ -2638,7 +2638,7 @@ void Modules::releaseExportsOfLoad(ModuleID facade)
         word->releaseLoad(vm, createTableOfExports());
     }
     exporting->loadWord.set(*this, nullptr);
-    exporting->bindsEarlierCapture = false;
+    forgetEarlierCapture(*exporting);
     m_exportsLeftOut.remove(facade);
     discardNamespace(facade);
     exporting->namespaceToRestore.set(*this, nullptr);

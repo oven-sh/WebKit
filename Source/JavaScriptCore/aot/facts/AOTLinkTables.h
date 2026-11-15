@@ -198,6 +198,7 @@ struct LinkedNameOnPrototype {
     TypeID seen;
     bool mayBeReadOnly { true };
     bool isLaidFirst { false };
+    bool isDefinedAsValue { false };
     FunctionID getter;
     FunctionID setter;
 };
@@ -507,6 +508,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsCalledWithoutRow;
     BitVector builtinsCalledWithOperandsNobodyRead;
     BitVector holdersReadUnderKeysNobodyKnows;
+    BitVector prototypesAboveOtherObjects;
     BitVector rowsApplied;
     BitVector builtinsWithCallsLeftToUnseen;
     BitVector builtinsWithCallsThatMayRunCode;
@@ -1147,6 +1149,11 @@ struct LinkTables : LinkedFirstStores {
         auto found = std::ranges::equal_range(storesOfFunctionNames, std::pair { function, site }, { }, [](const LinkedFunctionNameStore& store) {
             return std::pair { store.function, store.site };
         });
+        return { found.begin(), found.end() };
+    }
+    std::span<const LinkedFunctionNameStore> storesOfFunctionNamesIn(FunctionID function) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::equal_range(storesOfFunctionNames, function, { }, &LinkedFunctionNameStore::function);
         return { found.begin(), found.end() };
     }
     BitVector keysNamedOnFunctions;
