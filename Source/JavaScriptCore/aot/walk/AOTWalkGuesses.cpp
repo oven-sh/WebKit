@@ -15159,6 +15159,9 @@ bool lookUpVaryingKeyOfItsOpcodes(Walker& walker, const BodyValue& read)
     ValueID user = index.onlyUsingValue(read.id());
     if (user && callsOfValuesForGuesses.contains(index.opcodeOf(user)))
         return false;
+    ValueID keyOfRead = index.stripCasts(read.propertyOperand());
+    if (!keyOfRead || index.isParameter(keyOfRead) || index.opcodeOf(keyOfRead) != Opcode::PropGet)
+        return false;
     if (!holdsOnlyStringsForGuesses(walker, read.propertyOperand()) && !isKeyComparedWithString(walker, index.stripCasts(read.propertyOperand())))
         return false;
     Origin origin = walker.originOf(read);
