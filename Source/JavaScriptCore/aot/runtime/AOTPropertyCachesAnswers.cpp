@@ -1100,6 +1100,8 @@ PropertyAnswer classifyCompiledObjectStore(const StoreQuery& query, Object& obje
 static PropertyAnswer classifyFieldDeletion(const DeletionQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
 {
     constexpr SlotAccess access = SlotAccess::Delete;
+    if (field.attributes() & PropertyAttribute::DontDelete)
+        return PropertyAnswer::uncacheable(access);
     if (before.mayBePrototype() || before.hasOutOfLineKeyOrder() || field.isOutOfLine() || field.isPrivate() || !absentPatternOf(field.slot.representation()) || field.slot.offset > UINT16_MAX)
         return PropertyAnswer::uncacheable(access);
     if (object.structure() != &before || query.orderWordBefore & orderWordIntegrityBits)
