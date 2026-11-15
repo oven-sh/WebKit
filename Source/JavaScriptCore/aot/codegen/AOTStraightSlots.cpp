@@ -152,15 +152,6 @@ void StraightEmitter::storeSlot(GPRReg cell, const PlacedSlot& slot, GPRReg boxe
             m_jit->store64(boxed, address);
             barrierAfterStore(cell);
             return;
-        case SlotRepresentation::OptionalInt64:
-        case SlotRepresentation::OptionalDouble:
-            if (resumesGenerator()) {
-                AllowMacroScratchRegisterUsage allowScratch(*m_jit);
-                convertToNumberOfSlotInStraightForm(*m_jit, slot.representation, boxed, takeResultFPR());
-                m_jit->store64(boxed, address);
-                return;
-            }
-            break;
         default:
             break;
         }

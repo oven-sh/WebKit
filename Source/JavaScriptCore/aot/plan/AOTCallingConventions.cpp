@@ -214,8 +214,6 @@ static unsigned numberOfParametersInConventionOf(const CallingConventions& conve
     case CodeRole::ModuleStart:
     case CodeRole::SlowBody:
     case CodeRole::ParameterGuard:
-        if (unit.role == CodeRole::SlowBody && conventions.hasResumeBody(unit.function))
-            return 3;
         return conventions.of(unit.function).numberOfEntryParameters + conventions.numberOfScalarsTaken(unit);
     case CodeRole::CoroutineBody:
         return conventions.of(unit.function).numberOfEntryParameters + 1;
@@ -365,8 +363,6 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
         RELEASE_ASSERT(m_parts.formsOfEntryParameters.isEmpty());
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
     case CodeRole::SlowBody:
-        if (hasResumeBody(unit.function))
-            return parameterIndex == 1 ? Representation::Int32 : Representation::JSValue;
         if (formOfEntryParameterInConvention(m_parts, program, unit.function, parameterIndex) == Representation::Void)
             return Representation::Void;
         return boxedFormOfEntryParameter(program, program.at(unit.function), parameterIndex);
@@ -388,7 +384,7 @@ Representation CallingConventions::parameterRepresentationByRole(const Program& 
 static size_t numberOfCapturesPassedBehindParameters(const CallingConventions& conventions, const Program& program, CodeUnit unit)
 {
     size_t numberOfCaptures = program.at(unit.function).captures.size();
-    if (!numberOfCaptures || (unit.role == CodeRole::SlowBody && conventions.hasResumeBody(unit.function)))
+    if (!numberOfCaptures)
         return 0;
     bool takesParametersOfFunction = unit.role == CodeRole::Body || unit.role == CodeRole::SlowBody || unit.role == CodeRole::ParameterGuard || unit.role == CodeRole::CoroutineBody;
     unsigned numberOfValues = conventions.of(unit.function).numberOfEntryParameters + conventions.isCoroutine(unit.function);
@@ -725,7 +721,6 @@ static void chooseRolesOfConvention(const Program& program, const Facts& facts, 
         add(CodeRole::CoroutineBody);
         convention.coroutineNeverSuspends = isAsyncFunctionInWhichNothingSuspends(program, facts, id);
         convention.generatorNeverYields = isNonYieldingGenerator(program, facts, id);
-        convention.hasResumeBody = function.has(FunctionFlags::IsGenerator) && !function.has(FunctionFlags::IsAsync) && !convention.generatorNeverYields;
     }
 }
 

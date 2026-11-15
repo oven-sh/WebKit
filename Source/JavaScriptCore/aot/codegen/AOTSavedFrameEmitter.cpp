@@ -1452,18 +1452,6 @@ void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
     define(value, boxCell(frame));
 }
 
-void SavedFrameEmitter::generateNewSuspendedIteration(const ValueContext& value)
-{
-    CellPointer state = callOperation<CellPointer>(value, RuntimeOperation::NewSuspendedIteration, { in<Boxed>(value->subjectOperand()), in<Boxed>(value->positionOperand()), in<Boxed>(value->tableOperand()), word32(static_cast<int32_t>(value->suspendedKind())) }, { .isOnRarePath = true });
-    define(value, boxCell(state));
-}
-
-void SavedFrameEmitter::generateNewSuspendedEnumeration(const ValueContext& value)
-{
-    CellPointer state = callOperation<CellPointer>(value, RuntimeOperation::NewSuspendedEnumeration, { in<CellPointer>(value->enumeratorOperand()), in<Boxed>(value->positionOperand()) }, { .isOnRarePath = true });
-    define(value, boxCell(state));
-}
-
 void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 {
     if (Machine::StackSlot* slot = slotOfHeapWordsInFrame(value->frameOperand())) {
@@ -1489,14 +1477,6 @@ void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
     m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
     if (value->remembersFrame())
         emitter<BarrierEmitter>().barrierAfterStore(value, frame, storedType);
-}
-
-void SavedFrameEmitter::generatePutHeapFrameScope(const ValueContext& value)
-{
-    CellPointer frame = unboxCell(in<Boxed>(value->frameOperand()));
-    CellPointer scope = in<CellPointer>(value->scopeOperand());
-    m_out.store64(boxCell(scope).value(), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
-    emitter<BarrierEmitter>().barrierAfterStore(value, frame, typeOf(value->scopeOperand()));
 }
 
 bool SavedFrameEmitter::findBlocksBehindFirstYield()
@@ -2746,22 +2726,7 @@ void SavedFrameEmitter::generateGetGeneratorPrototype(const ValueContext& value)
 
 void SavedFrameEmitter::generateTakeGeneratorLeftInPlace(const ValueContext& value)
 {
-    static_assert(SavedFrame::generatorWord == GeneratorFrameLayout::generatorWord);
-    CellPointer holder(m_out.intPtrZero);
-    if (ValueID held = value->holderOperand())
-        holder = in<CellPointer>(held);
-    CellPointer words(m_out.intPtrZero);
-    Pointer resumeAddress(m_out.intPtrZero);
-    if (ValueID held = value->wordsOperand()) {
-        words = unboxCell(in<Boxed>(held));
-        Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
-        patch->effects = Machine::Effects::none();
-        patch->setGenerator([records = &m_records, unit = CodeUnit { value->function(), CodeRole::SlowBody }](CCallHelpers&, const Machine::PatchParameters& params) {
-            records->stubCalls.moveAddressOfFunction(unit, primaryEntry, params[0].gpr());
-        });
-        resumeAddress = Pointer(patch);
-    }
-    define(value, callOperation<Boxed>(value, RuntimeOperation::TakeGeneratorLeftInPlace, { holder, words, resumeAddress, word32(value->leavesAtOnce()), word32(value->isHeldByIteration()) }, { .isOnRarePath = true }));
+    define(value, callOperation<Boxed>(value, RuntimeOperation::TakeGeneratorLeftInPlace, { in<CellPointer>(value->holderOperand()), word32(value->leavesAtOnce()) }, { .isOnRarePath = true }));
 }
 
 void SavedFrameEmitter::generateIsCallDelegated(const ValueContext& value)

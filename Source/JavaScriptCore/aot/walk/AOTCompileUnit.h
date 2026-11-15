@@ -168,8 +168,6 @@ struct WalkOptions {
     const HostStringEncoders* stringEncoders { nullptr };
 };
 
-class CompileWorker;
-
 struct WalkInputs {
     const Program& program;
     const Facts& facts;
@@ -179,7 +177,6 @@ struct WalkInputs {
     RegExpSummaries* regExpSummaries { nullptr };
     FormatPatternPlans* formatPatternPlans { nullptr };
     ScratchRealm* scratchRealm { nullptr };
-    CompileWorker* worker { nullptr };
 };
 
 WalkOptions walkOptionsOf(const BuildContext&);
@@ -299,7 +296,6 @@ public:
     CompileWorker(const CompileInputs&, BuildContext&, TypeTable&);
     std::optional<CompiledCode> compileStraight(CodeUnit);
     std::optional<CompiledCode> compileEntryByHand(CodeUnit);
-    bool canEmitResumeBody(FunctionID);
     ~CompileWorker();
 
     std::optional<CompiledCode> compile(CodeUnit);
@@ -332,7 +328,6 @@ private:
 
     const CompileInputs& m_inputs;
     BuildContext& m_build;
-    TypeTable& m_table;
     TypeArena m_types;
     std::unique_ptr<Machine::Arena> m_arena;
     std::unique_ptr<ScratchRealm> m_scratchRealm;

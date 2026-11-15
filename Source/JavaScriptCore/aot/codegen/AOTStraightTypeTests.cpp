@@ -120,15 +120,6 @@ void StraightEmitter::testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne)
     isTested.link(&jit);
 }
 
-void StraightEmitter::trapOnFalseProof(GPRReg boxed, TypeID tested, ProofSource source, Origin origin)
-{
-    origin.isTailCall = false;
-    AllowMacroScratchRegisterUsage allowScratch(*m_jit);
-    uint16_t primitives = primitivesOfTypeInStraightTest(m_types, tested);
-    emitStraightThrowSite(*m_jit, m_records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedProofType = FalseProofWord::summarize(primitives, !holdsOnlyPrimitives(tested) && m_types.recordOf(tested).hasObjects()) }, boxed, 0, addSite(origin, { }));
-    m_jit->breakpoint();
-}
-
 void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource source, Origin origin)
 {
     if (m_types.isSubset(TypeTable::anything, tested))
@@ -143,11 +134,17 @@ void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource
         if (maker.opcode() == Opcode::NewObject && m_types.isSubset(m_types.forLayout(maker.as<Opcode::NewObject>().layout()), tested))
             return;
     }
+    origin.isTailCall = false;
     GPRReg boxed = temporary(1);
+    auto stopByName = [&] {
+        AllowMacroScratchRegisterUsage allowScratch(*m_jit);
+        emitStraightThrowSite(*m_jit, m_records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = source, .expectedProofType = FalseProofWord::summarize(primitives, !holdsOnlyPrimitives(tested) && m_types.recordOf(tested).hasObjects()) }, boxed, 0, addSite(origin, { }));
+        m_jit->breakpoint();
+    };
     storeWhatWaitsInRegister();
     if (!value) {
         m_jit->move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), boxed);
-        trapOnFalseProof(boxed, tested, source, origin);
+        stopByName();
         return;
     }
     load(value, boxed);
@@ -157,7 +154,7 @@ void StraightEmitter::trapUnlessOfType(ValueID value, TypeID tested, ProofSource
         return;
     CCallHelpers::Jump isOfType = m_jit->branchTest32(CCallHelpers::NonZero, passes);
     load(value, boxed);
-    trapOnFalseProof(boxed, tested, source, origin);
+    stopByName();
     isOfType.link(m_jit);
 }
 

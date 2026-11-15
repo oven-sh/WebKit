@@ -43,7 +43,6 @@ struct FunctionConvention {
     bool callEntryTakesNewTarget : 1 { false };
     bool coroutineNeverSuspends : 1 { false };
     bool generatorNeverYields : 1 { false };
-    bool hasResumeBody : 1 { false };
     bool callEntryWalksBody : 1 { false };
     bool returnsCapture : 1 { false };
     uint8_t borrowedArguments : 2 { 0 };
@@ -164,11 +163,10 @@ public:
     bool exists(CodeUnit unit) const
     {
         if (isRoleOfOneFunction(unit.role))
-            return !unit.numberOfBoundArguments && (of(unit.function).has(unit.role) || (unit.role == CodeRole::SlowBody && hasResumeBody(unit.function)));
+            return !unit.numberOfBoundArguments && of(unit.function).has(unit.role);
         return existsBehindUnitsOfFunctions(unit);
     }
     bool isCoroutine(FunctionID id) const { return of(id).has(CodeRole::CoroutineBody); }
-    bool hasResumeBody(FunctionID id) const { return of(id).hasResumeBody; }
     CodeUnit directEntryOf(FunctionID id) const { return { id, hasParameterGuard(id) ? CodeRole::ParameterGuard : CodeRole::Body }; }
     CodeUnit entryBehindGuardOf(FunctionID id) const { return { id, CodeRole::Body }; }
     bool hasParameterGuard(FunctionID id) const { return of(id).has(CodeRole::ParameterGuard); }

@@ -181,7 +181,7 @@ static constexpr RepresentationRule representationRuleOf(Opcode opcode)
     case Opcode::IsCallDelegated: case Opcode::GiveDelegatedResult: case Opcode::CallDelegate:
     case Opcode::Await: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame: case Opcode::ReadScope:
     case Opcode::NewPromise: case Opcode::CreatePromise: case Opcode::ResolvePromise: case Opcode::RejectPromise: case Opcode::FulfillFreshPromise: case Opcode::IsNotThenable: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements: case Opcode::StartReactionChain:
-    case Opcode::NewHeapWords: case Opcode::NewSuspendedIteration: case Opcode::NewSuspendedEnumeration: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::PutHeapFrameScope:
+    case Opcode::NewHeapWords: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord:
     case Opcode::MarkEnvironmentEscaped: case Opcode::ReleaseEnvironment:
     case Opcode::EvaluateModule: case Opcode::RecordRequire: case Opcode::RequireModule: case Opcode::ImportModule: case Opcode::ModuleNamespace:
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:

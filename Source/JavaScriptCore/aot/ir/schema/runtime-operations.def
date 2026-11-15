@@ -182,7 +182,7 @@ runtime RejectWithException : JSCell* (uint64_t frame) ; unknownCode
 runtime NewGenerator : JSCell* (EncodedJSValue closure) ; reads(all) writes(ShapeWords, NamedProperties, AllocatorState, RuntimeState) collects
 runtime NewAsyncGenerator, NewGeneratorOfLibrary : JSCell* (EncodedJSValue closure) ; unknownCode
 runtime GetGeneratorPrototype : JSCell* (EncodedJSValue closure) ; RuntimeAllocates
-runtime TakeGeneratorLeftInPlace : EncodedJSValue (JSCell* holder, JSCell* words, void* resumeAddress, uint32_t leavesAtOnce, uint32_t isHeldByIteration) ; reads(all) writes(ShapeWords, InternalFields, AllocatorState, RuntimeState) collects
+runtime TakeGeneratorLeftInPlace : EncodedJSValue (JSCell* holder, uint32_t leavesAtOnce) ; reads(all) writes(ShapeWords, InternalFields, AllocatorState, RuntimeState) collects
 runtime NewHeapFrame : JSCell* (uint32_t numberOfWords, void* resumeAddress) ; reads(all) writes(AllocatorState, RuntimeState, InternalFields) collects
 runtime TakeGeneratorPrototype : void (JSCell* generator, EncodedJSValue closure) ; unknownCode
 runtime SaveFrameAndAwait, SaveFrameAndAwaitCall, SaveFrameAndAwaitInModuleBody, SaveFrameAndAwaitResolution : JSCell* (EncodedJSValue awaited, uint64_t* frame, const uint64_t* bottom, void* resumeAddress, const uint64_t* suspensionWords) ; unknownCode suspends

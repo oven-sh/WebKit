@@ -1,9 +1,5 @@
 runtime OpenIteration : JSCell* (EncodedJSValue iterable) ; unknownCode
 runtime StepIteration : UGPRPair (JSCell* state) ; unknownCode
-runtime OpenDelegation : JSCell* (EncodedJSValue iterable) ; unknownCode
-runtime StepDelegation : UGPRPair (JSCell* state, EncodedJSValue sent, uint32_t mode) ; unknownCode
 runtime CloseIteration, CloseIterationAfterThrow : void (JSCell* state) ; unknownCode
-runtime NewSuspendedIteration : JSCell* (EncodedJSValue subject, EncodedJSValue position, EncodedJSValue table, uint32_t kind) ; reads(all) writes(ShapeWords, InternalFields, AllocatorState, RuntimeState) collects
-runtime NewSuspendedEnumeration : JSCell* (JSCell* enumerator, EncodedJSValue position) ; reads(all) writes(ShapeWords, InternalFields, AllocatorState, RuntimeState) collects
 runtime OpenEnumeration : JSCell* (EncodedJSValue object) ; unknownCode
 runtime StepEnumeration : UGPRPair (JSCell* state, EncodedJSValue object) ; unknownCode

@@ -28,31 +28,11 @@ static void storeListOfStraightArrays(StraightEmitter& emitter, std::span<const 
         emitter.storeInScratchArea(values[i], static_cast<uint32_t>(i));
 }
 
-static void generateNewArrayWithHoles(StraightEmitter& emitter, const BodyValue& value)
-{
-    emitter.callStub(value, arrayLiteral(0), { });
-    emitter.define(value);
-    emitter.slotOf(value.id());
-    std::span<const ValueID> elements = value.elementsOperands();
-    std::span<const uint32_t> holes = value.holes();
-    size_t element = 0;
-    for (uint32_t index = 0; index < elements.size() + holes.size(); ++index) {
-        if (std::ranges::binary_search(holes, index))
-            emitter.callOperation(value, RuntimeOperation::AppendHole, { value.id() });
-        else
-            emitter.callStub(value, arrayPush(), { value.id(), elements[element++] });
-    }
-}
-
 static void generateNewArray(StraightEmitter& emitter, const BodyValue& value)
 {
     std::span<const ValueID> elements = value.elementsOperands();
-    if (elements.size() > maxValuesInArrayLiteral || (!value.holes().empty() && !emitter.resumesGenerator())) {
+    if (!value.holes().empty() || elements.size() > maxValuesInArrayLiteral) {
         emitter.fail(value);
-        return;
-    }
-    if (!value.holes().empty()) {
-        generateNewArrayWithHoles(emitter, value);
         return;
     }
     if (elements.size() <= maxArrayElementsInRegisters) {

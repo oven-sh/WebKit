@@ -1213,24 +1213,18 @@ static bool findsReturnOfEngine(JSGlobalObject* realm, JSObject* prototype)
     return isFound && !slot.isTaintedByOpaqueObject() && slot.slotBase() == realm->generatorPrototype();
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorLeftInPlace, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* words, void* resumeAddress, uint32_t leavesAtOnce, uint32_t isHeldByIteration))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorLeftInPlace, EncodedJSValue, (Instance* instance, JSCell* cell, uint32_t leavesAtOnce))
 {
     constexpr Entry entry = Entry::operationAOTTakeGeneratorLeftInPlace;
     AOT_OPERATION_BEGIN(instance, entry);
     DeferTerminationForAWhile deferTermination(vm);
-    JSObject* holder = cell ? cellArgument<JSObject>(cell, entry) : globalObject->generatorPrototype();
+    JSObject* holder = cellArgument<JSObject>(cell, entry);
     auto* generator = dynamicDowncast<Generator>(holder);
     JSObject* prototype = generator ? generator->structure()->storedPrototypeObject() : holder;
-    if (!isHeldByIteration && findsReturnOfEngine(globalObject, prototype))
+    if (findsReturnOfEngine(globalObject, prototype))
         return JSValue::encode(jsUndefined());
     if (!generator)
         generator = Generator::create(vm, Generator::createStructure(vm, globalObject, prototype));
-    if (words) {
-        SavedFrame* frame = cellArgument<SavedFrame>(words, entry);
-        frame->suspendAtYield(vm, generator, resumeAddress);
-        generator->suspendAtYield(vm, frame);
-        return JSValue::encode(generator);
-    }
     generator->leaveInPlace(leavesAtOnce);
     return JSValue::encode(generator);
 }
