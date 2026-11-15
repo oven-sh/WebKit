@@ -778,7 +778,11 @@ void JSGenericTypedArrayView<Adaptor>::visitChildrenImpl(JSCell* cell, Visitor& 
     }
 
     case OversizeTypedArray: {
+#if USE(BUN_JSC_ADDITIONS)
+        visitor.reportOversizeTypedArrayVectorVisited(byteSize);
+#else
         visitor.reportExtraMemoryVisited(byteSize);
+#endif
         break;
     }
 
