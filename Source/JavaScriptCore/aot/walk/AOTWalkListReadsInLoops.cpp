@@ -6310,7 +6310,7 @@ static ListsReadInLoop findListsReadInLoopInListReadsInLoops(Walker& walker, Blo
             if (readsLength) {
                 if (isProvenToBeList(types, types.withoutNullish(proven)))
                     noteThatComesOfLengthOrRemainder(operation);
-                bool staysAsMadeByLink = readsOffEntryParameterThatStaysAsMade(walker, operation) || receiverStaysAsMadeByLink(walker, operation);
+                bool staysAsMadeByLink = readsOffEntryParameterThatStaysAsMade(walker, operation, proven) || receiverStaysAsMadeByLink(walker, operation);
                 auto lengthIsFoundByNote = [&] {
                     return findKnown(walker, KnownNote::LengthOfViewIsFoundAbove, name) && loopTakesInstancesBelowViewForItsLength(walker, inputHead, name);
                 };

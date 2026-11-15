@@ -607,7 +607,33 @@ bool viewMayFollowSharedMemoryThatGrows(const Walker& walker, Reference view)
     return !findKnown(walker, KnownNote::ViewOverMemoryThatNoOtherThreadGrows, view) && !isViewOverUnsharedMemory(walker, view);
 }
 
-bool readsOffEntryParameterThatStaysAsMade(Walker& walker, const BodyValue& access)
+static bool linkSawClassNamedInWalkBuiltins(Walker& walker, TypeID seen, TypeID named)
+{
+    if (!seen || !named || isNeverType(seen) || isNeverType(named))
+        return true;
+    TypeArena& types = walker.types();
+    const ClassPart* classSeen = singleBuiltinClassOf(types, types.at(types.withoutNullish(seen)));
+    if (!classSeen || (classSeen->builtinClass != BuiltinClasses::Uint8Array && classSeen->builtinClass != BuiltinClasses::Buffer))
+        return true;
+    const ClassPart* classNamed = singleBuiltinClassOf(types, types.at(types.withoutNullish(named)));
+    return !classNamed || classNamed->builtinClass == classSeen->builtinClass;
+}
+
+static TypeID typeThatLinkSawInWalkBuiltins(Walker& walker, const BodyIndex& index, ValueID operand)
+{
+    ValueID input = operand ? index.stripCasts(operand) : ValueID();
+    while (input && !index.isParameter(input) && index.opcodeOf(input) == Opcode::CheckInitialized)
+        input = index.stripCasts(index.value(input).operand(0));
+    if (!input)
+        return { };
+    if (index.isParameter(input)) {
+        std::span<const LinkedParameter> parameters = walker.facts().linked().parametersOf(walker.currentFunction());
+        return index.blockOf(input) == entryBlock && input.index() < parameters.size() ? parameters[input.index()].proven : TypeID();
+    }
+    return index.opcodeOf(input) == Opcode::GetModuleVariable ? walker.facts().linked().variable(index.value(input).variable()).proven : TypeID();
+}
+
+bool readsOffEntryParameterThatStaysAsMade(Walker& walker, const BodyValue& access, TypeID named)
 {
     const BodyIndex& index = walker.currentBodyIndex();
     if (access.id().index() >= index.numberOfValues() || index.value(access.id()).words() != access.words())
@@ -616,7 +642,7 @@ bool readsOffEntryParameterThatStaysAsMade(Walker& walker, const BodyValue& acce
     if (!input || !index.isParameter(input) || index.blockOf(input) != entryBlock)
         return false;
     std::span<const LinkedParameter> parameters = walker.facts().linked().parametersOf(walker.currentFunction());
-    return input.index() < parameters.size() && parameters[input.index()].staysAsItsClassMakesIt;
+    return input.index() < parameters.size() && parameters[input.index()].staysAsItsClassMakesIt && linkSawClassNamedInWalkBuiltins(walker, parameters[input.index()].proven, named);
 }
 
 static bool namesEntryParameterThatStaysAsMadeInWalkBuiltins(Walker& walker, const BodyValue& user, ValueID operand)
@@ -987,11 +1013,13 @@ static bool receiverStaysAsMadeByLinkInWalkBuiltins(Walker& walker, const BodyVa
     if ((!knownToTakeLinksWord || receiver != knownToTakeLinksWord) && !linksWordCanBeHeldAgainst(walker, receiver))
         return false;
     FunctionID function = walker.currentFunction();
-    if (linked.receiverStaysAsMadeAt(function, operation.id()))
+    ValueID receiverInBody = operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().thisValueOperand() : operation.objectOperand();
+    const bool linkSawClassNamed = linkSawClassNamedInWalkBuiltins(walker, typeThatLinkSawInWalkBuiltins(walker, index, receiverInBody), proven);
+    if (linkSawClassNamed && linked.receiverStaysAsMadeAt(function, operation.id()))
         return true;
     if (wordOfBody == WordOfBodyOnAsMade::IsTaken && !walker.program().admitsReplacedBuiltins && bodyMayMakeReceiver && linksWordCanBeHeldAgainst(walker, receiver) && isMadeInFrontOfLoopThatHoldsOperationInWalkBuiltins(index, operation) && receiverIsMadeHereAndLeavesByReturnAloneInWalkBuiltins(walker, operation, receiver))
         return true;
-    if (operation.opcode() != Opcode::PropGet)
+    if (operation.opcode() != Opcode::PropGet || !linkSawClassNamed)
         return false;
     ValueID user = index.onlyUsingValue(operation.id());
     while (user && opcodesThatStateTypes.contains(index.opcodeOf(user)))
@@ -1105,7 +1133,7 @@ TypedForm buildReadOfBuiltinMember(Walker& walker, const BodyValue& read, TypeID
     BuiltinID location = object ? findConstantMemberReadOff(walker, object, key) : findConstantMemberReadOff(std::as_const(walker), typeOfObject, key);
     TypedForm formAskedAbout = TypedForm::Built;
     bool wordCanBeHeld = !location && classThatHasTestOfObjectAsMadeInWalkBuiltins(walker, typeOfObject);
-    if (wordCanBeHeld && (readsOffEntryParameterThatStaysAsMade(walker, read) || receiverStaysAsMadeByLink(walker, read, WordOfBodyOnAsMade::IsTaken))) {
+    if (wordCanBeHeld && (readsOffEntryParameterThatStaysAsMade(walker, read, typeOfObject) || receiverStaysAsMadeByLink(walker, read, WordOfBodyOnAsMade::IsTaken))) {
         location = findMemberReadOffInWalkBuiltins(walker, typeOfObject, key, true);
         if (location && object)
             holdLinksWordAgainstObjectAsMade(walker, object, walker.originOf(read));
@@ -1541,7 +1569,7 @@ CallInWalkBuiltins::Operand CallInWalkBuiltins::operandAsWritten(ValueID input, 
     Operand operand { written, written, m_inputs.areOnlyTypes() ? m_inputs.typeOf(input) : written ? m_walker.typeOf(written) : TypeID() };
     bool isReceiver = input && input == (m_call.opcode() == Opcode::Call ? m_call.as<Opcode::Call>().thisValueOperand() : m_call.opcode() == Opcode::PropGet ? m_call.objectOperand() : ValueID());
     bool wordCanBeHeld = m_inputs.areOnlyTypes() ? operand.type && classThatHasTestOfObjectAsMadeInWalkBuiltins(m_walker, operand.type) : linksWordCanBeHeldAgainst(m_walker, written);
-    operand.staysAsMade = wordCanBeHeld && (namesEntryParameterThatStaysAsMadeInWalkBuiltins(m_walker, m_call, input) || namesVariableThatStaysAsMadeInWalkBuiltins(m_walker, m_call, input) || (isReceiver && receiverStaysAsMadeByLinkInWalkBuiltins(m_walker, m_call, WordOfBodyOnAsMade::IsTaken, written)));
+    operand.staysAsMade = wordCanBeHeld && (((namesEntryParameterThatStaysAsMadeInWalkBuiltins(m_walker, m_call, input) || namesVariableThatStaysAsMadeInWalkBuiltins(m_walker, m_call, input)) && linkSawClassNamedInWalkBuiltins(m_walker, typeThatLinkSawInWalkBuiltins(m_walker, m_walker.currentBodyIndex(), input), operand.type)) || (isReceiver && receiverStaysAsMadeByLinkInWalkBuiltins(m_walker, m_call, WordOfBodyOnAsMade::IsTaken, written)));
     LayoutID heir = isReceiver && look == LookAtReceiver::IsCountedOn && operand.type ? layoutKnownByStructureOfClass(m_walker, operand.type) : LayoutID();
     Reference name = heir && written ? nameBehindLookAtStructureOfClass(m_walker, written, heir) : Reference();
     if (heir && m_program.at(heir).writtenBuiltinBase && (m_inputs.areOnlyTypes() || name)) {

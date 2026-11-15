@@ -5560,7 +5560,7 @@ bool buildOwnPropertyTest(Walker&, const BodyValue& question, Reference object, 
 bool dispatchOwnPropertyTest(Walker&, const BodyValue& question, Reference object, Reference key);
 BuiltinID findMemberAboveHeirsOfBuiltinClass(const Walker&, BuiltinClassID, PropertyKeyID);
 TypedForm buildReadOfMemberAboveHeirOfBuiltinClass(Walker&, const BodyValue& read, TypeID typeOfObject, Reference object, BuiltinID location);
-bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access);
+bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access, TypeID named);
 bool someThreadMayGrowSharedMemory(const Walker&);
 bool isViewOverUnsharedMemory(const Walker&, Reference view);
 bool viewMayFollowSharedMemoryThatGrows(const Walker&, Reference view);

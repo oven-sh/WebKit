@@ -6610,7 +6610,7 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         bool onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase)) || classified.typedArrayType == NotTypedArray || classOfViewBesideInstancesBelowIt(walker, typeOfBase);
         bool isFoundAboveByNote = onlyClass && !isOnlyAskedAbout && base && base.isValue() && walker.program().nameClassOf(value.key()) == NameClass::Length && findKnown(walker, KnownNote::LengthOfViewIsFoundAbove, base);
         bool isSeenToFindGetter = onlyClass && !isOnlyAskedAbout && (findConstantMemberReadOff(walker, base, value.key()) || isFoundAboveByNote);
-        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value);
+        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value, typeOfBase);
         if (!isSeenToFindGetter && !isSaidByLinkToFindGetter)
             return false;
         if (isOnlyAskedAbout)
