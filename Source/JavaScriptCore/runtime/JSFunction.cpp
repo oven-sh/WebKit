@@ -443,7 +443,7 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
 }
 
 #if ENABLE(AOT)
-static bool rejectsNewProperty(VM& vm, JSFunction* function, PropertyName propertyName)
+static NEVER_INLINE bool rejectsNewProperty(VM& vm, JSFunction* function, PropertyName propertyName)
 {
     return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->realm(), propertyName) && !function->isHostFunction() && function->jsExecutable()->isPrivateBuiltinFunction() && !isValidOffset(function->structure()->get(vm, propertyName));
 }
@@ -459,7 +459,7 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
 
 #if ENABLE(AOT)
-    if (slot.thisValue() == JSValue(thisObject) && rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]] {
+    if (vm.mayLockBuiltins() && slot.thisValue() == JSValue(thisObject) && rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]] {
         slot.disableCaching();
         bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
         return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
@@ -513,7 +513,7 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
 #if ENABLE(AOT)
-    if (rejectsNewProperty(vm, thisObject, propertyName) && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
+    if (vm.mayLockBuiltins() && rejectsNewProperty(vm, thisObject, propertyName) && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
         return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
 #endif
 

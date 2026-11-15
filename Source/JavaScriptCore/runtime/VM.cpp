@@ -420,6 +420,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         m_aotState.attachImage(*this);
     else if (AOT::Image::isDisabledOnThisThread() && Options::aotCountsPath()) [[unlikely]]
         m_aotState.countWithoutImage(*this);
+    if (AOT::areBuiltinsLockedWithoutImage()) [[unlikely]]
+        m_aotState.mayLockBuiltins = true;
 #endif
     structureRareDataStructure.setWithoutWriteBarrier(StructureRareData::createStructure(*this, nullptr, jsNull()));
     stringStructure.setWithoutWriteBarrier(JSString::createStructure(*this, nullptr, jsNull()));
