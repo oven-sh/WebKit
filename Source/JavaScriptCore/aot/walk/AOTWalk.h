@@ -4687,7 +4687,10 @@ private:
     bool isOnlyTestedSinceCall(Reference generator) const;
     bool checkPassedGenerator(Reference generator, Origin, Reference* holderOfReturn = nullptr);
     Reference buildGeneratorPrototype(Reference function, Origin);
-    void closeByChangedReturn(Reference holder, IteratorCompletion, bool leavesAtOnce, BlockID inPlace, BlockID after, Origin);
+    bool isResumableGenerator(FunctionID generatorFunction);
+    Reference buildSuspendedGeneratorFrame(size_t place, Origin);
+    Reference buildSuspendedIteration(const Frame& suspended, ValueID open, Reference state, Origin);
+    void closeByChangedReturn(size_t place, IteratorCompletion, BlockID inPlace, BlockID after, Origin);
     bool runsNothingSinceCall(Reference generator) const;
     bool isOnlyPassedToCopy(Reference generator);
     bool callMakesGenerator(const Frame& caller, const BodyValue& call, Reference generator) const;

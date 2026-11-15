@@ -151,6 +151,8 @@ GenerationResult CodeGenerator::run()
 
     m_generatesWatched = m_watchesOperations || m_looksBehindEachOperation;
     definePinnedValues(m_out, m_pinned);
+    if (!m_checksEffects && code().opcodesOfValues().contains(Opcode::TakeGeneratorLeftInPlace))
+        emitter<OperatorEmitter>().bigIntValues();
     if (!m_checksEffects && BigIntValues::mayGoAroundLoops(code(), order()))
         emitter<OperatorEmitter>().bigIntValues();
     emitter<EntryEmitter>().generateEntries();

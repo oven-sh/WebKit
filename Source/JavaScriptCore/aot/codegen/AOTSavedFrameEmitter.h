@@ -46,8 +46,11 @@ public:
     void branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise);
 
     void generateNewHeapWords(const ValueContext&);
+    void generateNewSuspendedIteration(const ValueContext&);
+    void generateNewSuspendedEnumeration(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
     void generatePutHeapFrameWord(const ValueContext&);
+    void generatePutHeapFrameScope(const ValueContext&);
 
     bool layOutHeapFrame();
     bool standsBehindFirstYield(BlockID block) const { return m_blocksBehindFirstYield.get(block.index()) || (block == m_blockOfFirstYield && m_hasPassedFirstYield); }
