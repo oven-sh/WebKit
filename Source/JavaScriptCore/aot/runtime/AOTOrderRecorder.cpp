@@ -129,7 +129,8 @@ private:
     std::atomic<bool> m_isRestoring { false };
 
     Lock m_lock;
-    uint32_t m_numberOfWrittenUnits WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    uint32_t m_numberOfListedUnits WTF_GUARDED_BY_LOCK(m_lock) { 0 };
+    Vector<uint8_t> m_bytesToWrite WTF_GUARDED_BY_LOCK(m_lock);
     bool m_hasWrittenNumberOfFunctions WTF_GUARDED_BY_LOCK(m_lock) { false };
     UncheckedKeyHashMap<String, uint32_t> m_numbersOfFiles WTF_GUARDED_BY_LOCK(m_lock);
     NumberMap m_firstFunctionsOfModules WTF_GUARDED_BY_LOCK(m_lock);
@@ -290,8 +291,6 @@ ASCIILiteral OrderRecorder::start()
     fillWithTraps(m_writableCopies[0]);
     __builtin___clear_cache(reinterpret_cast<char*>(m_writableCopies[0]), reinterpret_cast<char*>(m_writableCopies[0] + m_size));
 
-    if (mremap(m_executableCopies[0], 0, m_size, MREMAP_MAYMOVE | MREMAP_FIXED, m_code) == MAP_FAILED)
-        return "the system does not allow the mappings that the recorder needs"_s;
     s_current = this;
     struct sigaction action { };
     action.sa_sigaction = handleTrap;
@@ -300,6 +299,11 @@ ASCIILiteral OrderRecorder::start()
     for (int fault : { SIGSEGV, SIGBUS, SIGILL, SIGFPE })
         sigdelset(&action.sa_mask, fault);
     RELEASE_ASSERT(!sigaction(SIGTRAP, &action, &s_previousAction));
+    if (mremap(m_executableCopies[0], 0, m_size, MREMAP_MAYMOVE | MREMAP_FIXED, m_code) == MAP_FAILED) {
+        RELEASE_ASSERT(!sigaction(SIGTRAP, &s_previousAction, nullptr));
+        s_current = nullptr;
+        return "the system does not allow the mappings that the recorder needs"_s;
+    }
     __builtin___clear_cache(reinterpret_cast<char*>(m_code), reinterpret_cast<char*>(m_code + m_size));
     Thread::create("AOT order"_s, [this] {
         runWriter();
@@ -427,21 +431,22 @@ void OrderRecorder::write()
 {
     Locker locker { m_lock };
     uint32_t count = m_numberOfEnteredUnits.load(std::memory_order_acquire);
-    if (m_numberOfWrittenUnits == count)
+    if (m_numberOfListedUnits == count && m_bytesToWrite.isEmpty())
         return;
     SetForScope runningImage(*Image::addressOfCurrentOfThread(), &m_image);
     ModuleTable modules(m_image.programTables());
     if (m_bodies.isEmpty())
         findBodies();
-    Vector<uint8_t> lines;
-    for (; m_numberOfWrittenUnits < count; ++m_numberOfWrittenUnits)
-        appendLineForUnit(lines, modules, m_enteredUnits[m_numberOfWrittenUnits]);
-    for (size_t written = 0; written < lines.size();) {
-        ssize_t result = ::write(m_file, lines.span().data() + written, lines.size() - written);
+    for (; m_numberOfListedUnits < count; ++m_numberOfListedUnits)
+        appendLineForUnit(m_bytesToWrite, modules, m_enteredUnits[m_numberOfListedUnits]);
+    size_t written = 0;
+    while (written < m_bytesToWrite.size()) {
+        ssize_t result = ::write(m_file, m_bytesToWrite.span().data() + written, m_bytesToWrite.size() - written);
         if (result < 0 && errno != EINTR)
-            return;
+            break;
         written += std::max<ssize_t>(result, 0);
     }
+    m_bytesToWrite.removeAt(0, written);
 }
 
 void OrderRecorder::runWriter()
@@ -468,14 +473,17 @@ ASCIILiteral startOrderRecording(const char* path)
         close(file);
         return { };
     }
-    if (ftruncate(file, 0))
-        return "the file cannot be written"_s;
     constexpr auto head = "aot-order v1\n"_s;
-    if (::write(file, head.characters(), head.length()) != static_cast<ssize_t>(head.length()))
+    if (ftruncate(file, 0) || ::write(file, head.characters(), head.length()) != static_cast<ssize_t>(head.length())) {
+        close(file);
         return "the file cannot be written"_s;
+    }
     static LazyNeverDestroyed<OrderRecorder> recorder;
     recorder.construct(*image, file);
-    return recorder->start();
+    ASCIILiteral failure = recorder->start();
+    if (!failure.isNull())
+        close(file);
+    return failure;
 }
 
 void finishOrderRecording()
