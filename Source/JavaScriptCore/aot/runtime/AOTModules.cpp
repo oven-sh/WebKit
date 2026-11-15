@@ -1459,7 +1459,7 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
                 if (isReplaced)
                     return true;
             }
-            RELEASE_AND_RETURN(scope, tryReplaceCapturedExport(module, name, value));
+            RELEASE_AND_RETURN(scope, tryReplaceBoundExport(module, name, value));
         }
         const ModuleExportData& moduleExport = m_table.exports(module)[*index];
         switch (moduleExport.kind()) {
@@ -1467,7 +1467,7 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
             if (!moduleExport.isReplaceable)
                 return false;
             if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
-                return tryReplaceCapturedExport(origin->module, identifier(origin->name).impl(), value);
+                return tryReplaceBoundExport(origin->module, identifier(origin->name).impl(), value);
             if (m_moduleBeingPatched) {
                 LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
                 if (!mocked.variablesBeforeMock)
@@ -3641,6 +3641,19 @@ ModuleID Modules::moduleWithExportsOf(ModuleID module) const
 bool Modules::mayBeMocked(ModuleID module) const
 {
     return data(module).mayBeMocked();
+}
+
+bool Modules::tryReplaceBoundExport(ModuleID module, UniquedStringImpl* name, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    bool isReplaced = tryReplaceCapturedExport(module, name, value);
+    RETURN_IF_EXCEPTION(scope, false);
+    const LoadedModule* loaded = isReplaced && !m_moduleBeingPatched ? loadedIfExists(module) : nullptr;
+    auto* bound = loaded && loaded->bindsEarlierCapture ? dynamicDowncast<ModuleNamespace>(loaded->namespaceOfBoundCapture.get()) : nullptr;
+    if (bound && bound->hasExport(name))
+        bound->replaceCapturedValue(m_instance.globalObject, Identifier::fromUid(*m_instance.vm, name), value);
+    RETURN_IF_EXCEPTION(scope, false);
+    return isReplaced;
 }
 
 bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value)
