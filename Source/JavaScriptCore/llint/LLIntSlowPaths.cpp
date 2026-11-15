@@ -1980,6 +1980,13 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_new_empty_array)
     LLINT_RETURN(AOT::Interpreter::createEmptyArray(globalObject, bytecode.metadata(codeBlock).m_arrayAllocationProfile));
 }
 
+extern "C" EncodedJSValue SYSV_ABI llint_aot_index_of_character(const Latin1Character* characters, uint64_t lengthAndStart, uint32_t character)
+{
+    const uint64_t start = lengthAndStart >> 32;
+    size_t place = WTF::find(unsafeMakeSpan(characters + start, static_cast<uint32_t>(lengthAndStart) - start), static_cast<Latin1Character>(character));
+    return JSValue::encode(jsNumber(place == notFound ? -1 : static_cast<int32_t>(start + place)));
+}
+
 // llint_aot_op_get_by_id already found the accessor, so there is no second lookup.
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame* callFrame, const JSInstruction* pc, const AOT::CustomAccessorRecord* record, JSCell* base)
 {

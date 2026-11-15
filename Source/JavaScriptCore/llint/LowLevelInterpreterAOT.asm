@@ -4440,16 +4440,18 @@ _llint_aot_char_code_at_thunk:
     jmp _llint_native_call_trampoline
 
 # The same for String.prototype.indexOf: one character of one byte looked for in a whole string of such characters, from the start or from an int32 that is not negative: text that is made at run time to
-# take a URL apart asks for this. Everything else is the host function's.
+# take a URL apart asks for this. Everything else is the host function's. t3: the characters, t0: how many, t2: the one that is looked for, t1: the place.
 global _llint_aot_string_index_of_thunk
 _llint_aot_string_index_of_thunk:
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
-    bib t0, 2, .indexOfIsHostFunctions
+    move 0, t1
+    bineq t0, 2, .indexOfMayHaveStart
+.indexOfHasStart:
     loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], t3
     loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], t2
-    move constexpr JSValue::NotCellMask, t1
-    btqnz t3, t1, .indexOfIsHostFunctions
-    btqnz t2, t1, .indexOfIsHostFunctions
+    move constexpr JSValue::NotCellMask, t5
+    btqnz t3, t5, .indexOfIsHostFunctions
+    btqnz t2, t5, .indexOfIsHostFunctions
     bbneq JSCell::m_type[t3], StringType, .indexOfIsHostFunctions
     bbneq JSCell::m_type[t2], StringType, .indexOfIsHostFunctions
     loadp JSString::m_fiber[t3], t3
@@ -4459,25 +4461,21 @@ _llint_aot_string_index_of_thunk:
     bineq StringImpl::m_length[t2], 1, .indexOfIsHostFunctions
     btiz StringImpl::m_hashAndFlags[t2], HashFlags8BitBuffer, .indexOfIsHostFunctions
     btiz StringImpl::m_hashAndFlags[t3], HashFlags8BitBuffer, .indexOfIsHostFunctions
-    move 0, t1
-    bib t0, 3, .indexOfHasStart
-    loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t1
-    move constexpr JSValue::NumberTag, t5
-    bqb t1, t5, .indexOfIsHostFunctions
-    bilt t1, 0, .indexOfIsHostFunctions
-    zxi2q t1, t1
-.indexOfHasStart:
     loadp StringImpl::m_data8[t2], t2
     loadb [t2], t2
     loadi StringImpl::m_length[t3], t0
     loadp StringImpl::m_data8[t3], t3
-.indexOfNextCharacter:
-    biaeq t1, t0, .indexOfFindsNothing
-    loadb [t3, t1], t5
-    bieq t5, t2, .indexOfFindsCharacter
-    addi 1, t1
-    jmp .indexOfNextCharacter
-
+.indexOfNextCharacters:
+    addq 4, t1, t5
+    bqa t5, t0, .indexOfAtEnd
+    bbeq [t3, t1], t2, .indexOfFindsCharacter
+    bbeq 1[t3, t1], t2, .indexOfFindsSecond
+    bbeq 2[t3, t1], t2, .indexOfFindsThird
+    bbeq 3[t3, t1], t2, .indexOfFindsFourth
+    move t5, t1
+    # The rest of a long string is looked at by many characters at a time.
+    btqnz t5, 28, .indexOfNextCharacters
+    bqb t5, t0, .indexOfLooksFar
 .indexOfFindsNothing:
     move 0xffffffff, t1
 .indexOfFindsCharacter:
@@ -4486,6 +4484,36 @@ _llint_aot_string_index_of_thunk:
     orq t5, r0
     ret
 
+.indexOfFindsFourth:
+    addi 1, t1
+.indexOfFindsThird:
+    addi 1, t1
+.indexOfFindsSecond:
+    addi 1, t1
+    jmp .indexOfFindsCharacter
+
+.indexOfAtEnd:
+    bqaeq t1, t0, .indexOfFindsNothing
+    bbeq [t3, t1], t2, .indexOfFindsCharacter
+    addq 1, t1
+    jmp .indexOfAtEnd
+
+.indexOfLooksFar:
+    # a1 is t1, a2 is t2.
+    lshiftq 32, t1
+    orq t0, t1
+    move t3, a0
+    preserveCallerPCAndCFR()
+    cCall3(_llint_aot_index_of_character)
+    restoreCallerPCAndCFR()
+    ret
+
+.indexOfMayHaveStart:
+    bib t0, 2, .indexOfIsHostFunctions
+    loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t1
+    move constexpr JSValue::NumberTag, t5
+    subq t5, t1
+    bqbeq t1, 0x7fffffff, .indexOfHasStart
 .indexOfIsHostFunctions:
     jmp _llint_native_call_trampoline
 
