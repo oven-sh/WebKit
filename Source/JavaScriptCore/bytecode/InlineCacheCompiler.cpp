@@ -1749,10 +1749,12 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
     switch (type) {
     case AccessType::GetById:
     case AccessType::GetByIdDirect:
+    case AccessType::GetByIdThrowIfNotFound:
     case AccessType::InById:
     case AccessType::GetPrivateNameById: {
         using ArgumentTypes = FunctionTraits<decltype(operationGetByIdOptimize)>::ArgumentTypes;
         static_assert(std::same_as<FunctionTraits<decltype(operationGetByIdDirectOptimize)>::ArgumentTypes, ArgumentTypes>);
+        static_assert(std::same_as<FunctionTraits<decltype(operationGetByIdThrowIfNotFoundOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationInByIdOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationGetPrivateNameByIdOptimize)>::ArgumentTypes, ArgumentTypes>);
         return vm.getCTIStub(getByIdSlowPathCodeGenerator);
@@ -7246,6 +7248,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
             switch (m_propertyCache.accessType) {
             case AccessType::GetById:
             case AccessType::GetByIdDirect:
+            case AccessType::GetByIdThrowIfNotFound:
             case AccessType::GetPrivateNameById: {
                 switch (accessCase.m_type) {
                 case AccessCase::GetGetter:
@@ -7277,6 +7280,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     break;
                 }
                 case AccessCase::Miss: {
+                    ASSERT(m_propertyCache.accessType != AccessType::GetByIdThrowIfNotFound);
                     ASSERT(canBeViaGlobalProxy(accessCase.m_type));
                     if (!accessCase.viaGlobalProxy()) {
                         collectConditions(accessCase, watchedConditions, checkingConditions);

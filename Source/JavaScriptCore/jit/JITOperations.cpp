@@ -541,6 +541,70 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSVal
     })));
 }
 
+// AccessType::GetByIdThrowIfNotFound is the read of a variable through the object that holds it, the way
+// op_get_from_scope does it with ThrowIfNotFound: a name with no property is a ReferenceError, not undefined.
+// Every way such an access can end without a property comes through here, and nothing is cached for it.
+template<typename WhenFoundFunctor>
+static ALWAYS_INLINE JSValue getByIdThrowIfNotFound(JSGlobalObject* globalObject, VM& vm, JSValue baseValue, CacheableIdentifier identifier, const WhenFoundFunctor& whenFound)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    PropertyName propertyName = identifier;
+    PropertySlot slot(baseValue, PropertySlot::InternalMethodType::Get);
+    bool found = baseValue.getPropertySlot(globalObject, propertyName, slot);
+    EXCEPTION_ASSERT(!scope.exception() || !found);
+    if (!found) [[unlikely]] {
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(globalObject, scope, createUndefinedVariableError(globalObject, Identifier::fromUid(vm, propertyName.uid())));
+        return { };
+    }
+
+    whenFound(slot);
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, propertyName));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationGetByIdThrowIfNotFoundGaveUp, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    propertyCache->tookSlowPath = true;
+
+    JSValue baseValue = JSValue::decode(base);
+
+    OPERATION_RETURN(scope, JSValue::encode(getByIdThrowIfNotFound(globalObject, vm, baseValue, propertyCache->identifier(), [&] (PropertySlot& slot) {
+        LOG_IC((ICEvent::OperationGetByIdThrowIfNotFoundGaveUp, baseValue.classInfoOrNull(), baseValue == slot.slotBase()));
+    })));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationGetByIdThrowIfNotFoundOptimize, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CacheableIdentifier identifier = propertyCache->identifier();
+
+    JSValue baseValue = JSValue::decode(base);
+
+    OPERATION_RETURN(scope, JSValue::encode(getByIdThrowIfNotFound(globalObject, vm, baseValue, identifier, [&] (PropertySlot& slot) {
+        LOG_IC((ICEvent::OperationGetByIdThrowIfNotFoundOptimize, baseValue.classInfoOrNull(), baseValue == slot.slotBase()));
+
+        CodeBlock* codeBlock = callFrame->codeBlock();
+        if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, baseValue.structureOrNull(), identifier))
+            repatchGetBy(globalObject, codeBlock, baseValue, identifier, slot, *propertyCache, GetByKind::ByIdThrowIfNotFound, /* isNonStringPrimitiveKey */ false);
+    })));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationGetByIdWithThisGaveUp, EncodedJSValue, (EncodedJSValue base, EncodedJSValue thisEncoded, PropertyInlineCache* propertyCache))
 {
     SuperSamplerScope superSamplerScope(false);
