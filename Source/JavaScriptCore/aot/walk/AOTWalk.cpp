@@ -8481,6 +8481,8 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (m_hasFailed)
         return;
 
+    if (!m_generatorsWalkedInConsumers.isEmpty()) [[unlikely]]
+        chooseInlineFrameOfStep();
     Vector<Reference, 8> entering;
     Vector<TypeID, 8> entryTypes;
     for (uint32_t index = 0; index < numberOfParameters; ++index) {
