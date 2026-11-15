@@ -13,6 +13,7 @@
 #include "AOTNumbering.h"
 #include "AOTObjectVisiting.h"
 #include "AOTPlan.h"
+#include "AOTStartOrder.h"
 #include "AOTSupportTestCommands.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
@@ -736,6 +737,35 @@ static void testRecordsOfManyLayoutsOfValidatingBuild()
     });
 }
 
+static Vector<uint32_t> ranksOfEveryThirdFunction(size_t numberOfFunctions)
+{
+    return Vector<uint32_t>(numberOfFunctions, [&](size_t index) {
+        return index % 3 ? noStartRank : static_cast<uint32_t>(numberOfFunctions - index);
+    });
+}
+
+static Vector<uint8_t> bytesOfImageWithManyLayoutsInStartOrder(unsigned threadCount, const HostThreadPool* hostPool)
+{
+    TestBuild build(textOfProgramWithManyLayouts(), { .threadCount = threadCount, .hostPool = hostPool });
+    build.context().setStartRanks(ranksOfEveryThirdFunction(build.program().functions.size()));
+    TestImage image = builtImage(build, bodies(plainBody(1)));
+    checkLayoutRecordsReadBack(build, image.image->programTables());
+    return copyBytes(image);
+}
+
+static void testRecordsOfManyLayoutsInStartOrder()
+{
+    checkSameForAllThreadCounts([](unsigned threadCount, const HostThreadPool* hostPool) {
+        return bytesOfImageWithManyLayoutsInStartOrder(threadCount, hostPool);
+    });
+}
+
+static void testListedNumbersFirst()
+{
+    const uint32_t listed[] { 2, 0, 9, 2 };
+    Vector<uint32_t> order = listedNumbersFirst(listed, 4);
+    AOT_TEST_CHECK(std::ranges::equal(order, std::array<uint32_t, 4> { 2, 0, 1, 3 }));
+}
 static bool isAllZero(std::span<const uint8_t> bytes)
 {
     return std::ranges::all_of(bytes, [](uint8_t byte) {
@@ -904,6 +934,8 @@ std::span<const NativeTest> determinismTests()
         { "image/determinism/lists-longer-than-a-range"_s, testListsLongerThanRange },
         { "image/determinism/records-of-many-layouts"_s, testRecordsOfManyLayouts },
         { "image/determinism/records-of-many-layouts-of-a-validating-build"_s, testRecordsOfManyLayoutsOfValidatingBuild },
+        { "image/start-order/listed-numbers-first"_s, testListedNumbersFirst },
+        { "image/start-order/records-of-many-layouts"_s, testRecordsOfManyLayoutsInStartOrder },
         { "image/determinism/gaps-are-zero"_s, testGapsAreZero },
 #if CPU(ARM64)
         { "image/determinism/veneers"_s, testVeneers },

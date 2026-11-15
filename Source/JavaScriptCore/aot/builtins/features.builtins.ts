@@ -96,5 +96,6 @@ export default b.declarations(
     "DateOperations",
     "ImageDataOperations",
     "DirectEvalOperations",
+    "OrderRecorder",
   ),
 );

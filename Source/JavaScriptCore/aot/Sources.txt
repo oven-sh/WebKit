@@ -176,6 +176,7 @@ aot/image/AOTModuleTables.cpp
 aot/image/AOTNumberConstants.cpp
 aot/image/AOTNumberFunctions.cpp
 aot/image/AOTNumbering.cpp
+aot/image/AOTOrderFile.cpp
 aot/image/AOTPrefixCode.cpp
 aot/image/AOTRegExpCompiler.cpp
 aot/image/AOTRegExpMatchPlan.cpp
@@ -189,6 +190,7 @@ aot/image/AOTRuntimeDescription.cpp
 aot/image/AOTSectionLinker.cpp
 aot/image/AOTSharedCode.cpp
 aot/image/AOTSideTables.cpp
+aot/image/AOTStartOrder.cpp
 aot/image/AOTStaticsLayout.cpp
 aot/image/AOTStaticsTables.cpp
 aot/image/AOTStoredStrings.cpp
@@ -377,6 +379,7 @@ aot/runtime/AOTModuleTable.cpp
 aot/runtime/AOTModules.cpp
 aot/runtime/AOTObjectCopyOperations.cpp
 aot/runtime/AOTOperatorOperations.cpp
+aot/runtime/AOTOrderRecorder.cpp
 aot/runtime/AOTPoisonedCell.cpp
 aot/runtime/AOTPrefetchOperations.cpp
 aot/runtime/AOTProgramIdentifiers.cpp

@@ -16,6 +16,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"

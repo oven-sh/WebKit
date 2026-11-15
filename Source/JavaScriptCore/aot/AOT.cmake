@@ -137,6 +137,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTModules.h
     aot/runtime/AOTNarrowCopy.h
     aot/runtime/AOTOperationData.h
+    aot/runtime/AOTOrderRecorder.h
     aot/runtime/AOTPropertyCachesStringKeys.h
     aot/runtime/AOTPropertyCachesWords.h
     aot/runtime/AOTRealmStartup.h

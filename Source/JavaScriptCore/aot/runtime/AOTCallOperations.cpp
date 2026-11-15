@@ -27,6 +27,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTStubsCallAdapters.h"

@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTTableParts.h"
+#include "AOTStartOrder.h"
 
 #if ENABLE(AOT)
 
@@ -761,13 +762,38 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
         mostBytesOfTables += parts.record.size() + parts.keyOrders.sizeInBytes() + parts.numberOfKeyOrders * (sizeof(uint32_t) + alignof(uint64_t)) + parts.references.sizeInBytes() + mostPaddingOfRecord;
     });
     encoder.part.reserveRoomFor(mostBytesOfTables);
-    forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
+    auto place = [&](LayoutID id, uint32_t shape) {
         const LayoutRecordParts& parts = records[id.index()];
         if (!shape)
             classes[id.index()] = appendObjectLayoutRecord(encoder, id, parts, 0);
         else
             layouts[shape] = shape < shapes.firstEnvironmentShape() ? appendObjectLayoutRecord(encoder, id, parts, shape) : appendEnvironmentRecord(encoder, parts, shape);
-    });
+    };
+    std::span<const uint32_t> listedShapes = encoder.numbers.shapesInStartOrder();
+    std::span<const uint32_t> listedClasses = encoder.numbers.classesInStartOrder();
+    if (listedShapes.empty() && listedClasses.empty())
+        forEachLayoutRecord(encoder.inputs, place);
+    else {
+        struct RecordToPlace {
+            LayoutID id;
+            uint32_t shape;
+        };
+        Vector<RecordToPlace> recordsToPlace;
+        forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
+            recordsToPlace.append({ id, shape });
+        });
+        Vector<uint32_t> ranksOfShapes(FillWith { }, shapes.numberOfShapes() + 1, noStartRank);
+        Vector<uint32_t> ranksOfClasses(FillWith { }, program.layouts.size(), noStartRank);
+        for (uint32_t rank = 0; rank < listedShapes.size(); ++rank)
+            ranksOfShapes[listedShapes[rank]] = rank;
+        for (uint32_t rank = 0; rank < listedClasses.size(); ++rank)
+            ranksOfClasses[listedClasses[rank]] = static_cast<uint32_t>(listedShapes.size()) + rank;
+        std::ranges::stable_sort(recordsToPlace, { }, [&](const RecordToPlace& record) {
+            return record.shape ? ranksOfShapes[record.shape] : ranksOfClasses[record.id.index()];
+        });
+        for (const RecordToPlace& record : recordsToPlace)
+            place(record.id, record.shape);
+    }
 
     size_t numberOfGroupWords = (classes.size() + 31) / 32 * 2;
     Vector<uint32_t> classWords(FillWith { }, numberOfGroupWords, 0);
