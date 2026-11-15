@@ -140,8 +140,8 @@ bool repeatsPropertyAddition(Structure*, UniquedStringImpl*);
 
 Slot slotFor(const PropertyAnswer&, Structure* receiverStructure);
 
-const FieldData* findFieldReadByGetter(const Object&, JSObject* getter);
-void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswer&);
+const FieldData* findFieldReadByGetter(const Object&, JSObject* getter, UniquedStringImpl* name);
+void answerByGetterField(JSValue base, Structure* structureBefore, UniquedStringImpl* name, PropertyAnswer&);
 
 enum class LazyPrototypeReadResult : uint8_t { NotApplicable, Answered, ContinuesAbove };
 

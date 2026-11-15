@@ -677,6 +677,7 @@ void Modules::noteCallOfMock(ModuleID fileOrModule, bool keepsActiveMock)
     call.hadNamespace = !!namespaceIfCreated(moduleWithExportsOf(fileOrModule), ModulePhase::Evaluation);
     call.keepsActiveMock = keepsActiveMock;
     auto earlier = m_pendingMockCalls.find(fileOrModule);
+    call.liesOverPendingMock = earlier != m_pendingMockCalls.end() && (earlier->value.liesOverPendingMock || earlier->value.isInPreload != call.isInPreload || earlier->value.momentOfTestFile != call.momentOfTestFile);
     call.wasStoredDuringImport = isAwaitedByImport(fileOrModule) || !m_importsAwaitingFirstStep.isEmpty() || (earlier != m_pendingMockCalls.end() && earlier->value.wasStoredDuringImport);
     if (call.wasStoredDuringImport)
         noteCompiledOriginal(fileOrModule, OriginalRun::MockedDuringImport);
@@ -1936,10 +1937,27 @@ bool Modules::isOriginalLoadedBySweep(ModuleID mocked)
     return !depthOfRequirer || depth <= depthOfRequirer + 1;
 }
 
-void Modules::rejectRequireInSweep(ModuleID target)
+bool Modules::onlyRequirersBypassMock(ModuleID mocked)
+{
+    listImportersAndRequirers();
+    bool allRequirersBypassMock = !m_requirers[mocked.index()].containsIf([&](uint32_t requirer) {
+        return !isMockBypassedFor(mocked, ModuleID(requirer), LoadKind::Require);
+    });
+    return allRequirersBypassMock && !m_importersByStatement[mocked.index()].containsIf([&](uint32_t importer) {
+        return isMockBypassedFor(mocked, ModuleID(importer), LoadKind::Import);
+    });
+}
+
+void Modules::rejectRequireInSweep(ModuleID target, ModuleID referrer)
 {
     if (!m_rootWhoseLoadIsSwept || !m_modulesWithPendingMock.get(target.index()) || !isMockedByFactoryThatTakesOriginal(target))
         return;
+    if (data(target).isESModuleOfProgram() && isMockBypassedFor(target, referrer, LoadKind::Require)) {
+        auto laid = m_pendingMockCalls.find(target);
+        bool liesOverAnother = activeMock(target) || (laid != m_pendingMockCalls.end() && laid->value.liesOverPendingMock);
+        if (!liesOverAnother && !m_filesWithRejectedRequire.get(fileOf(target).index()) && onlyRequirersBypassMock(target))
+            return;
+    }
     if (data(target).isESModuleOfProgram() ? wasOriginalEvaluated(target) : !data(target).mayRunAsOriginal() || m_filesWithCompiledOriginal.get(fileOf(target).index()))
         return;
     if (!isOriginalLoadedBySweep(target) || !host().shouldBypassMock || !host().shouldBypassMock(m_instance.globalObject, m_table.fullPath(target), String(), false))

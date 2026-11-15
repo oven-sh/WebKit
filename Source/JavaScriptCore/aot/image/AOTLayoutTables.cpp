@@ -941,14 +941,21 @@ static Vector<AddedPrototypeNameData> collectAddedPrototypeNames(const TableEnco
     return names;
 }
 
+static std::optional<uint32_t> nameAnsweredByGetter(const TableEncoder& encoder, FunctionID getter)
+{
+    StringID name = encoder.program.at(getter).name;
+    return name ? encoder.numbers.identifiers().numberOfText(name) : std::optional<uint32_t>(FieldGetterData::answersUnderAnyName);
+}
+
 static Vector<FieldGetterData> collectFieldGetters(const TableEncoder& encoder)
 {
     Vector<FieldGetterData> getters;
     for (const auto& [getter, field] : encoder.inputs.bodyFacts.fieldsReturnedByGetters) {
         std::optional<uint32_t> name = encoder.numbers.identifiers().numberOf(field);
-        std::optional<FunctionID> entrypoint = name ? encoder.findEntrypoint(getter) : std::nullopt;
+        std::optional<uint32_t> answeredName = name ? nameAnsweredByGetter(encoder, getter) : std::nullopt;
+        std::optional<FunctionID> entrypoint = answeredName ? encoder.findEntrypoint(getter) : std::nullopt;
         if (entrypoint)
-            getters.append({ entrypoint->index(), *name });
+            getters.append({ entrypoint->index(), *name, *answeredName });
     }
     AOT::sort(getters);
     return getters;

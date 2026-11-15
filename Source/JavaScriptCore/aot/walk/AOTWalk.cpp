@@ -4795,6 +4795,9 @@ Reference Walker::build(Draft&& draft, const Effects* foundByCaller)
             effects.reads.merge(readsOfOwnKeyLookup(program()));
             break;
         case Opcode::GetValueAtSiteOrAbsent:
+            narrowNamedLookupEffects(program(), draft.key(), effects);
+            effects.reads.add(AbstractHeap::ObjectFields, plan().fieldsReadByGetters().maskUnder(program(), draft.key()));
+            break;
         case Opcode::HasPropertyOrAbsent:
             narrowNamedLookupEffects(program(), draft.key(), effects);
             break;
@@ -10081,7 +10084,7 @@ bool Walker::fillsEmptyPlaceOfLoop(BlockID inputBlock) const
         Reference holder = referenceOf(index.stripCasts(object));
         if (!holder || !holder.isValue())
             return false;
-        if (m_code.isConstant(holder.id()) || isConstantOfFile(program(), m_code, holder.id()))
+        if (m_code.isConstant(holder.id()) || isConstantOfFile(program(), plan(), m_code, holder.id()))
             return true;
         std::optional<uint32_t> loop = innermostOpenLoop();
         return loop && standsInFrontOfOpenLoop(*loop, holder);

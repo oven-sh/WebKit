@@ -14,6 +14,7 @@
 #include "AOTBuiltinTable.h"
 #include "AOTCellFormat.h"
 #include "AOTClosure.h"
+#include "AOTFieldGetters.h"
 #include "AOTFieldsStorage.h"
 #include "AOTIRProgram.h"
 #include "AOTMechanisms.h"
@@ -1032,10 +1033,47 @@ static BitVector namesOfFieldsWrittenAsOneFunctionInPlan(const Program& program)
     return names;
 }
 
+uint64_t FieldsReadByGetters::maskUnder(const Program& program, PropertyKeyID key) const
+{
+    if (liesInThread(key))
+        return LocationMasks::entireHeap;
+    if (program.at(key).kind != PropertyKeyKind::Text)
+        return maskUnderAnyName;
+    StringID name = program.at(key).text;
+    auto found = std::ranges::lower_bound(underNames, name.index(), { }, [](const UnderName& each) { return each.name.index(); });
+    return found != underNames.end() && found->name == name ? found->mask | maskUnderAnyName : maskUnderAnyName;
+}
+
+static FieldsReadByGetters findFieldsReadByGetters(const Program& program)
+{
+    using UnderName = FieldsReadByGetters::UnderName;
+    FieldsReadByGetters fields;
+    Vector<UnderName> all;
+    for (const Function& function : program.functions) {
+        PropertyKeyID field = fieldReturnedByGetter(program, function);
+        if (!field)
+            continue;
+        uint64_t mask = maskOf(program, MemoryLocation::objectField(field));
+        if (function.name)
+            all.append({ function.name, mask });
+        else
+            fields.maskUnderAnyName |= mask;
+    }
+    std::ranges::sort(all, { }, [](const UnderName& each) { return each.name.index(); });
+    for (const UnderName& each : all) {
+        if (!fields.underNames.isEmpty() && fields.underNames.last().name == each.name)
+            fields.underNames.last().mask |= each.mask;
+        else
+            fields.underNames.append(each);
+    }
+    return fields;
+}
+
 static void planWordsOfModulesAndGlobalNames(const Program& program, const Facts& facts, BuildContext& build, PlanParts& parts, const BitVector& functionsThatEndTheirTailCalls)
 {
     chooseModuleWordsOfPlan(program, parts);
     parts.namesOfFieldsWrittenAsOneFunction = namesOfFieldsWrittenAsOneFunctionInPlan(program);
+    parts.fieldsReadByGetters = findFieldsReadByGetters(program);
     Vector<StoredGlobalValue> storedGlobalValues;
     parts.globalNamesNeverStoredByName = globalNamesNeverStoredInPlan(program, facts, storedGlobalValues);
     parts.storedGlobalValues = agreedGlobalValues(WTF::move(storedGlobalValues));
@@ -1816,6 +1854,13 @@ void CheckerOfPlan::check()
 } // anonymous namespace
 
 #undef FOR_EACH_AOT_PLAN_RULE
+
+bool Plan::isImmutable(const Program& program, VariableID id) const
+{
+    if (const PromotedVariable* promoted = promotedEnvironments().find(id))
+        return !!promoted->function;
+    return program.at(id).flags.contains(VariableFlags::IsImmutable);
+}
 
 void Plan::findCallEntriesThatWalkBodies(const Program& program, const Facts& facts)
 {

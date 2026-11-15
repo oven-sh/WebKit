@@ -1326,6 +1326,7 @@ public:
         bool isEntryPairElided { false };
         Reference keyOfPair;
         Reference valueOfPair;
+        Reference pairIsInParts;
         enum class OtherForm : uint8_t {
             None,
             Enumeration,
@@ -1348,7 +1349,7 @@ public:
         LayoutID subclass;
         void forEachValueHeld(NOESCAPE const Invocable<void(Reference)> auto& functor) const
         {
-            for (Reference value : { list, position, table, state, iterator, next, wayToStep, goesByDriver, stepsGenerator, valueBesideKey, keyOfPair, valueOfPair, subject, count, foundAt, keyForAccesses, restList })
+            for (Reference value : { list, position, table, state, iterator, next, wayToStep, goesByDriver, stepsGenerator, valueBesideKey, keyOfPair, valueOfPair, pairIsInParts, subject, count, foundAt, keyForAccesses, restList })
                 functor(value);
             for (Reference value : precomputedSteps)
                 functor(value);
@@ -5680,7 +5681,7 @@ Reference buildReadThatTestsShapeAndSlot(Walker&, const BodyValue& read, Referen
 Reference buildReadThatTestsShapeAndCell(Walker&, const BodyValue& read, Reference object, TypeID guessed);
 bool markOfCellAnswersForRead(Walker&, const BodyValue& read, TypeID typeOfObject);
 ValueID findFirstFill(TypeArena&, const BodyIndex&, BlockID);
-bool isConstantOfFile(const Program&, const Code&, ValueID object);
+bool isConstantOfFile(const Program&, const Plan&, const Code&, ValueID object);
 struct FilledSlot {
     FieldReference place;
     LayoutSetID receivers;

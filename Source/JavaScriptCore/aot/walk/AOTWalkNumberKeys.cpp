@@ -293,6 +293,8 @@ static bool buildListAccessUnderNumberAskedForInt32InNumberKeys(Walker& walker, 
 
 static bool buildIndexStringAccessInNumberKeys(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
 {
+    if (value.opcode() == Opcode::ElemSet && value.valueOperand() == value.propertyOperand())
+        return false;
     static constexpr unsigned mostDigits = 9;
     Reference key = walker.referenceOf(value.propertyOperand());
     if (!key || !key.isConstant() || walker.code().at(key.id()).opcode != Opcode::String)
