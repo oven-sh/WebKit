@@ -5048,6 +5048,7 @@ bool appendMembersInPlaceOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, c
         builder.appendMembersOrWalkAsWritten(array, receiver, tables.span(), block.id(), place, placeBehindSpread);
         walker.recordSpeculation();
     }
+    walkTypesStatedOfOtherValues(walker, callID, callID, spreadID);
     walker.walkStretch(block.id(), placeBehindSpread, placeBehindSpread);
     return true;
 }
@@ -5191,6 +5192,7 @@ static bool takePatternOffCollection(Walker& walker, const BodyValue& read, cons
     });
     if (!walker.isUnreachable())
         walker.bind(open.id(), walker.addIndexedIteration(WTF::move(pattern)));
+    walkTypesStatedOfOtherValues(walker, call.id(), call.id(), open.id());
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }
@@ -5388,6 +5390,7 @@ static bool openLoopOverSpeculatedStringParts(Walker& walker, const BodyValue& r
     walker.count(takesMatches ? StatisticID::MatchIterationsInlined : StatisticID::SplitIterationsInlined);
     if (!walker.isUnreachable())
         walker.bind(openID, walker.addIndexedIteration(WTF::move(iteration)));
+    walkTypesStatedOfOtherValues(walker, read.id(), callID, openID);
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }
@@ -5485,6 +5488,7 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
     }
     if (!walker.isUnreachable())
         walker.bind(openID, walker.addIndexedIteration(WTF::move(iteration)));
+    walkTypesStatedOfOtherValues(walker, callID, callID, openID);
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }

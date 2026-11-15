@@ -26,6 +26,7 @@ bool buildFrameMatchElement(Walker&, const BodyValue& read, const InputsOfTypedO
 bool buildMatchInPartsByCodeOfRegExp(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 Reference buildPlacesReadOfMatch(Walker&, const BodyValue& call, BuiltinOverloadID, const RegExpWrittenForCall&, Reference objectOfCall, Reference string, Origin);
 bool buildSplitInParts(Walker&, const CallByOneRow&);
+void walkTypesStatedOfOtherValues(Walker&, ValueID behind, ValueID call, ValueID taker);
 bool openMatchIteration(Walker&, const CallByOneRow& matchAll);
 bool walkMatchIteration(Walker&, const BodyValue&);
 bool namesMatchAll(Walker&, PropertyKeyID);
