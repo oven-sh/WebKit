@@ -4688,10 +4688,6 @@ bool Modules::wasImportedByStatement(ModuleID file) const
 ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    auto wasRequired = [&](ModuleID form) {
-        const LoadedModule* loaded = loadedIfExists(form);
-        return loaded && (loaded->requiredValue || loaded->wasRequiredByHost);
-    };
     if (wasRequired(target) || isEvicted(target))
         return target;
     Identifier key = keyWithoutForm(target);
@@ -5340,7 +5336,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return loaded.exportsWhileRequired.get();
     }
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.loaderReturnsNamespace();
-    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target))));
+    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target)) && !m_table.fullPath(target).endsWith("?text"_s)));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
         return loaded.requiredValue.get();
     bool wasBeingRequired = false;

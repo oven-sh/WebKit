@@ -1761,7 +1761,13 @@ public:
 
     enum class RequiredBy : uint8_t { Referrer, Program };
     JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, JSObject* staleRequirerObject = nullptr, ReadsExports = ReadsExports::Yes);
+    bool wasRequired(ModuleID form) const
+    {
+        const LoadedModule* loaded = loadedIfExists(form);
+        return loaded && (loaded->requiredValue || loaded->wasRequiredByHost);
+    }
     ModuleID formThatRequireFinds(ModuleID, bool& answersNamespace);
+    ModuleID textRequiredInPlaceOf(ModuleID);
     bool wasImportedByStatement(ModuleID) const;
     bool hasEvaluationPassedImport(ModuleID importer, ModuleID target) const;
     void didMockEvictDataModule(ModuleID);

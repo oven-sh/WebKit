@@ -4617,7 +4617,8 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
                 return importPromiseRejectedByLoader(realm, scope);
             } else
                 noteFormAnsweredFirst(key, *attributes, file);
-        }
+        } else if (m_table.mayHaveAttributeVariants() && !isTestRun()) [[unlikely]]
+            module = textRequiredInPlaceOf(module);
         return start(module);
     }
 
@@ -4644,6 +4645,20 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
     }
     RELEASE_AND_RETURN(scope, importUncompiled(key, *data(module).referrerModule(), WTF::move(*fetchParameters)));
+}
+
+ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (data(file).kind == ModuleKind::Data || !hasNotBegun(file))
+        return module;
+    for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
+        std::optional<ModuleID> form = m_table.findByPath(makeString(m_table.fullPath(file), mark));
+        bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
+        if (sharesEntry && wasRequired(*form))
+            return *form;
+    }
+    return module;
 }
 
 JSPromise* Modules::importModuleItselfWithoutLoader(ModuleID module)
@@ -6894,14 +6909,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRecordRequireWithRequirer, void, (Instance*
     OPERATION_RETURN(scope);
 }
 
-static bool isLoadedWithoutType(const Modules& modules, ModuleID form)
+static std::optional<ModuleID> fileOfForm(const Modules& modules, ModuleID form)
 {
     String path = modules.table().fullPath(form);
     size_t mark = path.reverseFind('?');
     if (modules.data(form).kind != ModuleKind::Data || mark == notFound)
+        return std::nullopt;
+    return modules.table().findByPath(StringView(path).left(mark));
+}
+
+static bool isLoadedWithoutType(const Modules& modules, ModuleID form)
+{
+    std::optional<ModuleID> file = fileOfForm(modules, form);
+    if (!file)
         return false;
-    std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(mark));
-    return file && modules.data(*file).kind == ModuleKind::Data && modules.status(*file) == ModuleStatus::Evaluated;
+    ModuleStatus status = modules.status(*file);
+    return modules.data(*file).kind == ModuleKind::Data ? status == ModuleStatus::Evaluated : status >= ModuleStatus::Evaluating && status != ModuleStatus::Failed;
 }
 
 std::optional<ModuleID> Modules::moduleFormOf(ModuleID file) const
@@ -6943,6 +6966,12 @@ static bool answersRequireOfFile(Modules& modules, ModuleID form)
     return file && modules.loadedModuleForm(*file) == form;
 }
 
+static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
+{
+    std::optional<ModuleID> file = fileOfForm(modules, form);
+    return file && modules.data(*file).kind != ModuleKind::Data && modules.wasRequired(form);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfImported);
@@ -6952,7 +6981,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
-    if (!modules.hasBeenImported(ModuleID(module)) || isLoadedWithoutType(modules, ModuleID(module)))
+    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || isLoadedWithoutType(modules, ModuleID(module)))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
         String path = modules.table().fullPath(ModuleID(module));
