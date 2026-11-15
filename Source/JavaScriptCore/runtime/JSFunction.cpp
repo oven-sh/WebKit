@@ -458,14 +458,6 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
 
-#if ENABLE(AOT)
-    if (vm.mayLockBuiltins() && slot.thisValue() == JSValue(thisObject) && rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]] {
-        slot.disableCaching();
-        bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
-        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
-    }
-#endif
-
     if (propertyName == vm.propertyNames->prototype) {
         slot.disableCaching();
         if (FunctionRareData* rareData = thisObject->rareData())
@@ -485,8 +477,16 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
 
     PropertyStatus propertyType = thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
     RETURN_IF_EXCEPTION(scope, false);
-    if (isLazy(propertyType))
-        slot.disableCaching();
+    if (propertyType != PropertyStatus::Eager) {
+        if (isLazy(propertyType) || slot.thisValue() == JSValue(thisObject))
+            slot.disableCaching();
+#if ENABLE(AOT)
+        if (propertyType == PropertyStatus::Locked && slot.thisValue() == JSValue(thisObject)) {
+            bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+            return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        }
+#endif
+    }
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
 
@@ -512,11 +512,6 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
-#if ENABLE(AOT)
-    if (vm.mayLockBuiltins() && rejectsNewProperty(vm, thisObject, propertyName) && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
-        return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
-#endif
-
     if (propertyName == vm.propertyNames->prototype) {
         if (FunctionRareData* rareData = thisObject->rareData())
             rareData->clear("Store to prototype property of a function");
@@ -533,8 +528,14 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
             thisObject->putDirect(vm, propertyName, constructPrototypeObject(globalObject, thisObject), prototypeAttributesForNonClass);
         }
     } else {
-        thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
+        PropertyStatus propertyType = thisObject->reifyLazyPropertyIfNeeded<>(vm, globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
+#if ENABLE(AOT)
+        if (propertyType == PropertyStatus::Locked && (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName))) [[unlikely]]
+            return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+#else
+        UNUSED_VARIABLE(propertyType);
+#endif
     }
 
     RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, descriptor, throwException));
@@ -668,9 +669,15 @@ template <JSFunction::SetHasModifiedLengthOrName set>
 JSFunction::PropertyStatus JSFunction::reifyLazyPropertyIfNeeded(VM& vm, JSGlobalObject* globalObject, PropertyName propertyName)
 {
     JSFunction::PropertyStatus status;
-    if (isHostOrBuiltinFunction())
+    if (isHostOrBuiltinFunction()) {
         status = reifyLazyPropertyForHostOrBuiltinIfNeeded(vm, globalObject, propertyName);
-    else if (PropertyStatus lazyPrototype = reifyLazyPrototypeIfNeeded(vm, globalObject, propertyName); isLazy(lazyPrototype))
+#if ENABLE(AOT)
+        if constexpr (set == SetHasModifiedLengthOrName::Yes) {
+            if (vm.mayLockBuiltins() && status == PropertyStatus::Eager && rejectsNewProperty(vm, this, propertyName)) [[unlikely]]
+                return PropertyStatus::Locked;
+        }
+#endif
+    } else if (PropertyStatus lazyPrototype = reifyLazyPrototypeIfNeeded(vm, globalObject, propertyName); isLazy(lazyPrototype))
         status = lazyPrototype;
     else if (PropertyStatus lazyLength = reifyLazyLengthIfNeeded(vm, globalObject, propertyName); isLazy(lazyLength))
         status = lazyLength;
