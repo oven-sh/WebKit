@@ -445,7 +445,7 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
 #if ENABLE(AOT)
 static bool rejectsNewProperty(VM& vm, JSFunction* function, PropertyName propertyName)
 {
-    return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->realm(), propertyName) && function->isBuiltinFunction() && !isValidOffset(function->structure()->get(vm, propertyName));
+    return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->realm(), propertyName) && !function->isHostFunction() && function->jsExecutable()->isPrivateBuiltinFunction() && !isValidOffset(function->structure()->get(vm, propertyName));
 }
 #endif
 
