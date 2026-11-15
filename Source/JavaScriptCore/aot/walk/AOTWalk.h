@@ -1705,6 +1705,7 @@ public:
     Reference buildWithInlineLookup(Draft&&);
     bool canThreadBranchAfter(const BodyValue& operation);
     bool canFollowNotTakenEdge(const BodyTerminator&);
+    bool letArmsLeadEdgesOf(BlockID inputBlock);
     void followNotTakenEdge(const BodyTerminator&);
     bool canThreadBranchAfterMatch(const BodyValue& operation);
     bool blockEndKeepsStringBuilders(uint32_t begin);

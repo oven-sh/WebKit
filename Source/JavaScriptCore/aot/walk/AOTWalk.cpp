@@ -10058,7 +10058,9 @@ bool Walker::canFollowNotTakenEdge(const BodyTerminator& terminator)
     BodyTarget target = terminator.targets()[1];
     const BodyIndex& index = currentBodyIndex();
     BlockID to = target.block();
-    return target.proofs().empty() && index.numberOfIncomingEdges(to) > 1 && to != terminator.block() && !index.isLoopHead(to) && !index.isEnteredByHandlerEdge(to) && !index.block(to).isHandlerBlock() && !inputBlock(m_frames.last(), to).head;
+    if (!target.proofs().empty() || index.numberOfIncomingEdges(to) <= 1 || to == terminator.block() || index.isLoopHead(to) || index.isEnteredByHandlerEdge(to) || index.block(to).isHandlerBlock() || inputBlock(m_frames.last(), to).head)
+        return false;
+    return letArmsLeadEdgesOf(terminator.block());
 }
 
 void Walker::followNotTakenEdge(const BodyTerminator& terminator)

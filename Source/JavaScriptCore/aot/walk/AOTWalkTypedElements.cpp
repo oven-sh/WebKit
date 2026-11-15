@@ -988,6 +988,10 @@ static ValueID findRelationFalseForHole(Walker& walker, const BodyValue& read, R
             isStep &= isInteger(operation.operand(operand));
         if (!index.hasOneUse(ValueID(between)) || (operation.opcode() != Opcode::Integer && !isStep && !readsSameList(operation)))
             return { };
+        BodyUser userBehind = *index.onlyUser(ValueID(between));
+        bool isUsedBehindBlock = userBehind.kind == BodyUseKind::Operand ? !block.holds(userBehind.value) : userBehind.block != block.id();
+        if (isUsedBehindBlock && walker.isLiveAtHeadOf(ValueID(between), end.targets()[1].block()))
+            return { };
     }
     BodyValue relation = index.value(user);
     ValueID other = relation.operand(0) == read.id() ? relation.operand(1) : relation.operand(0);
