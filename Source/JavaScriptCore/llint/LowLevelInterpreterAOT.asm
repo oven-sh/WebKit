@@ -541,13 +541,18 @@ end
 # PropertyTable::findImpl() for an atom that is no symbol. t0: the object, t1: the name, which stay. Leaves the offset and the attributes
 # as a compact entry has them in t2.
 macro findInPropertyTable(isAbsent, cannot)
+    loadi StringImpl::m_hashAndFlags[t1], t7
+    findHashInPropertyTable(isAbsent, cannot)
+end
+
+# t7 is StringImpl::existingSymbolAwareHash() above the flags.
+macro findHashInPropertyTable(isAbsent, cannot)
     loadi JSCell::m_structureID[t0], t2
     structureIDToStructureWithScratch(t2, t3)
     loadp (constexpr (Structure::propertyTableUnsafeOffset()))[t2], t2
     btpz t2, cannot
     loadp (constexpr (PropertyTable::offsetOfIndexVector()))[t2], t5
     loadi (constexpr (PropertyTable::offsetOfIndexSize()))[t2], t6
-    loadi StringImpl::m_hashAndFlags[t1], t7
     urshifti constexpr (StringImpl::s_flagCount), t7
     move 0, t3
     btpz t5, (constexpr PropertyTable::flagOfCompactIndexVector), .nextWide
@@ -1000,13 +1005,39 @@ aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
 .isNoIndex:
     btqnz t3, notCellMask, .otherAccess
     bbneq JSCell::m_type[t0], FinalObjectType, .otherAccess
-    bbneq JSCell::m_type[t3], StringType, .otherAccess
+    bbneq JSCell::m_type[t3], StringType, .isNoStringKey
     loadNameOfKey(t3, t1, .otherAccess)
     findInPropertyTable(.otherAccess, .otherAccess)
     btinz t2, constexpr PropertyAttribute::AccessorOrCustomAccessorOrValue, .otherAccess
     urshifti 8, t2
     loadPropertyAtVariableOffset(t2, t0, t1)
     return(t1)
+
+.isNoStringKey:
+    bbneq JSCell::m_type[t3], SymbolType, .otherAccess
+    loadp (constexpr (Symbol::offsetOfSymbolImpl()))[t3], t1
+    loadi (constexpr AOT::Interpreter::offsetOfHashOfSymbol)[t1], t7
+    findHashInPropertyTable(.isNoOwnSymbol, .isNoOwnSymbol)
+    btinz t2, constexpr PropertyAttribute::AccessorOrCustomAccessorOrValue, .isNoOwnSymbol
+    urshifti 8, t2
+    loadPropertyAtVariableOffset(t2, t0, t1)
+    return(t1)
+
+    # What the slow path has filed of objects of this Structure: what stands above them, or nowhere.
+.isNoOwnSymbol:
+    loadTableInstance(t5, .asksForSymbol)
+    move t0, t3
+    loadi JSCell::m_structureID[t3], t2
+    findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .asksForSymbol)
+    loadb SlotKind[t6], t0
+    getFromHashedSlot(t6, .asksForSymbol, .asksForSymbol, .hasValueOfSymbol)
+
+.hasValueOfSymbol:
+    return(t0)
+
+.asksForSymbol:
+    callSlowPath(_llint_slow_path_aot_get_by_symbol)
+    dispatch()
 
 .otherAccess:
     getByVal(size, get, dispatch, metadata, return, macro ()
@@ -1884,9 +1915,11 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
 .isNoIndex:
     btqnz t3, notCellMask, .ordinary
     bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
-    bbneq JSCell::m_type[t3], StringType, .ordinary
+    bbneq JSCell::m_type[t3], StringType, .isNoStringKey
     loadNameOfKey(t3, t1, .ordinary)
-    findInPropertyTable(.ordinary, .ordinary)
+    loadi StringImpl::m_hashAndFlags[t1], t7
+.hasHash:
+    findHashInPropertyTable(.ordinary, .ordinary)
     move constexpr (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue), t3
     btinz t2, t3, .ordinary
     loadi JSCell::m_structureID[t0], t3
@@ -1902,6 +1935,12 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
     btqnz t1, notCellMask, .isDone
     writeBarrierOnCell(t0, t1)
     dispatch()
+
+.isNoStringKey:
+    bbneq JSCell::m_type[t3], SymbolType, .ordinary
+    loadp (constexpr (Symbol::offsetOfSymbolImpl()))[t3], t1
+    loadi (constexpr AOT::Interpreter::offsetOfHashOfSymbol)[t1], t7
+    jmp .hasHash
 
 .propertyIsConstant:
     loadConstantOperand(size, t1, t3, .hasProperty)

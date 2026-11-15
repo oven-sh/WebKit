@@ -634,6 +634,29 @@ void planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
         allocatorWord(profile) = std::bit_cast<uintptr_t>(plan) | ObjectLiteralPlan::allocatorTag;
 }
 
+void checkOffsetOfHash(SymbolImpl& symbol)
+{
+    RELEASE_ASSERT(*reinterpret_cast<const unsigned*>(reinterpret_cast<const uint8_t*>(&symbol) + offsetOfHashOfSymbol) >> StringImpl::s_flagCount == symbol.hashForSymbol());
+}
+
+JSValue getBySymbol(JSGlobalObject* globalObject, JSObject& base, SymbolImpl& symbol)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    checkOffsetOfHash(symbol);
+    Identifier ident = Identifier::fromUid(vm, &symbol);
+    std::optional<JSValue> known = tryGetByName(globalObject, &base, ident, CacheOfOperation::None);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (known)
+        return *known;
+    Structure* structureBefore = WTF::opaque(base.structure());
+    PropertySlot slot(&base, PropertySlot::InternalMethodType::Get);
+    JSValue result = JSValue(&base).get<true>(globalObject, ident, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    didGetById(globalObject, &base, structureBefore, ident, slot, true);
+    return result;
+}
+
 void checkSymbolTableOffsets(SymbolTable& table)
 {
     auto* bytes = reinterpret_cast<uint8_t*>(&table);

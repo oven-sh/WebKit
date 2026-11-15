@@ -36,6 +36,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/SymbolImpl.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
@@ -218,6 +219,10 @@ void checkSymbolTableOffsets(SymbolTable&);
 
 inline constexpr ptrdiff_t offsetOfDoneAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, done);
 inline constexpr ptrdiff_t offsetOfValueAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, value);
+
+inline constexpr ptrdiff_t offsetOfHashOfSymbol = sizeof(StringImpl) + sizeof(StringImpl*);
+void checkOffsetOfHash(SymbolImpl&);
+JSValue getBySymbol(JSGlobalObject*, JSObject& base, SymbolImpl&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);

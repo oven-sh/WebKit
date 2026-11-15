@@ -1211,6 +1211,15 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_get_uncached)
         startWaitForOtherStructure(cache, true);
     LLINT_RETURN(result);
 }
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_by_symbol)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetByVal>();
+    JSObject& base = *asObject(getOperand(callFrame, bytecode.m_base));
+    SymbolImpl& symbol = uncheckedDowncast<Symbol>(getOperand(callFrame, bytecode.m_property).asCell())->uid();
+    LLINT_RETURN(AOT::Interpreter::getBySymbol(globalObject, base, symbol));
+}
 #endif
 
 LLINT_SLOW_PATH_DECL(slow_path_get_length)
