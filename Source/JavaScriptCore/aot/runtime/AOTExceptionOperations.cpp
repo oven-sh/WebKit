@@ -516,7 +516,7 @@ static void askWhatIsHandedToCalleeOfEngine(VM& vm, const State& state, const Ca
         stopIfSaidNeverToReachUnseenCode(vm, state, laid->uncheckedArgument(argument));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function, uint32_t position))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* instance, JSCell* cell, uint32_t function))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTPoisonCell);
     if (function & PoisonedCell::isFrameLaidForCalleeOfEngine) {
@@ -524,10 +524,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPoisonCell, void, (Instance* insta
         return;
     }
     if (function & PoisonedCell::isLentForCallAhead) {
-        PoisonedCell::noteThatCellIsLent(cell, AOT_FRAME_RECORD_OF_THIS_FUNCTION()->callerFrame, function & ~PoisonedCell::isLentForCallAhead, position);
+        PoisonedCell::noteThatCellIsLent(cell, AOT_FRAME_RECORD_OF_THIS_FUNCTION()->callerFrame, function & ~PoisonedCell::isLentForCallAhead);
         return;
     }
-    countEvent(vm, PoisonedCell::tryPoison(vm, cell, function, position) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::UnpoisonableCellsSkipped);
+    countEvent(vm, PoisonedCell::tryPoison(vm, cell, function) ? RuntimeCounterID::CellsPoisoned : RuntimeCounterID::UnpoisonableCellsSkipped);
 }
 
 static ASCIILiteral failedCheckOf(uint32_t source)

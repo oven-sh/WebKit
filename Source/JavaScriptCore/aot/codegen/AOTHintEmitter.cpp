@@ -96,7 +96,7 @@ void HintEmitter::generateReleaseList(const ValueContext& value)
         branch(isCell(list), { normalEdge(isCellHere), normalEdge(goesOn) });
         m_out.appendTo(isCellHere);
         m_out.suspendDeclaredAccesses();
-        callVoidOperation(value, RuntimeOperation::PoisonCell, { unboxCell(list), word32(static_cast<int32_t>(generator().code().inlineFrames()[value->inlineFrame].callee.index())), word32(static_cast<int32_t>(value->position)) });
+        callVoidOperation(value, RuntimeOperation::PoisonCell, { unboxCell(list), word32(static_cast<int32_t>(generator().code().inlineFrames()[value->inlineFrame].callee.index())) });
         m_out.resumeDeclaredAccesses();
         m_out.jump(goesOn);
         m_out.appendTo(goesOn);
@@ -218,7 +218,7 @@ void HintEmitter::emitLifetimeEnd(const OperationContext& context, ValueID cell)
         return;
     FunctionID madeIn = generator().code().inlineFrames()[made.inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
-    callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())), word32(static_cast<int32_t>(made.position)) });
+    callVoidOperation(context, RuntimeOperation::PoisonCell, { in<CellPointer>(cell), word32(static_cast<int32_t>(madeIn.index())) });
     m_out.resumeDeclaredAccesses();
 }
 
@@ -226,7 +226,7 @@ void HintEmitter::noteThatCellIsLent(const ValueContext& made, CellPointer cell)
 {
     FunctionID madeIn = generator().code().inlineFrames()[made->inlineFrame].callee;
     m_out.suspendDeclaredAccesses();
-    callVoidOperation(made, RuntimeOperation::PoisonCell, { cell, word32(static_cast<int32_t>(madeIn.index() | PoisonedCell::isLentForCallAhead)), word32(static_cast<int32_t>(made->position)) });
+    callVoidOperation(made, RuntimeOperation::PoisonCell, { cell, word32(static_cast<int32_t>(madeIn.index() | PoisonedCell::isLentForCallAhead)) });
     m_out.resumeDeclaredAccesses();
 }
 

@@ -214,7 +214,7 @@ runtime StopAtNativeResult : void (EncodedJSValue found, uint32_t written) ; rea
 runtime StopAtHostResult : void (EncodedJSValue found, JSCell* function, uint32_t kinds) ; reads(all) writes(ExternalState)
 runtime StopUnlessNativeResultIsIntegerAsWritten : void (EncodedJSValue found, uint32_t written) ; reads(all) writes(ExternalState)
 runtime CheckFreshResult : void (EncodedJSValue result, uint64_t collectionsBefore, uint32_t builtin, EncodedJSValue receiver, EncodedJSValue firstArgument) ; reads(all) writes(ExternalState)
-runtime PoisonCell : void (JSCell* cell, uint32_t function, uint32_t position) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements, AllocatorState, RuntimeState)
+runtime PoisonCell : void (JSCell* cell, uint32_t function) ; reads(all) writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements, AllocatorState, RuntimeState)
 runtime StopAtFalseProof : void (EncodedJSValue found, uint32_t function, uint32_t position, uint32_t source) ; reads(all) writes(ExternalState)
 runtime StopAtStaleLoad : void (uint32_t function, uint32_t position) ; reads(all) writes(ExternalState)
 runtime StopUnlessValueHasType : void (uint32_t kindsAndSource, uint32_t type, EncodedJSValue value) ; reads(all) writes(AllocatorState, RuntimeState, ExternalState)
