@@ -46,6 +46,9 @@ public:
     JSGlobalObjectDebuggerAgent(JSAgentContext&, InspectorConsoleAgent*);
     ~JSGlobalObjectDebuggerAgent() final;
 
+    // InspectorAgentBase
+    void discardAgent() final;
+
     // JSC::Debugger::Observer
     void breakpointActionLog(JSC::JSGlobalObject*, const String& data) final;
 
@@ -59,7 +62,7 @@ private:
     void muteConsole() final { }
     void unmuteConsole() final { }
 
-    const CheckedPtr<InspectorConsoleAgent> m_consoleAgent;
+    CheckedPtr<InspectorConsoleAgent> m_consoleAgent;
 };
 
 } // namespace Inspector
