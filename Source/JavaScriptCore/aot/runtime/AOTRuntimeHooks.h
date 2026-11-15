@@ -82,6 +82,8 @@ JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
 JSObject* tryMakeSetOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
 JSObject* tryMakeMapOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
 
+JSObject* tryCopyObject(JSGlobalObject*, JSObject* compiledObject);
+
 class NoHelperThreadsScope {
     WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);
 public:

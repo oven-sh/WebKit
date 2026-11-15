@@ -23,6 +23,7 @@
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTPropertyWalkInlines.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
@@ -581,6 +582,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCopyDataPropertiesByFieldMap, void, (Instan
     if (!count && tryCopyByFieldMapWithoutFrame(*instance, target, source, excludedRun)) [[likely]]
         return { nullptr };
     AOT_MUST_TAIL_CALL return copyDataPropertiesFollowingPlan(instance, target, source, excludedRun, count, excludedKeys);
+}
+
+JSObject* RuntimeHooks::tryCopyObject(JSGlobalObject* globalObject, JSObject* compiledObject)
+{
+    return tryCopyAsOrdinaryObject(globalObject->vm(), globalObject, compiledObject, ExcludedRun { });
 }
 
 static JSObject* tryCopyWithoutNames(VM& vm, JSGlobalObject* globalObject, JSObject* source, ExcludedRun excluded)
