@@ -612,11 +612,21 @@ static bool linkSawClassNamedInWalkBuiltins(Walker& walker, TypeID seen, TypeID 
     if (!seen || !named || isNeverType(seen) || isNeverType(named))
         return true;
     TypeArena& types = walker.types();
+    auto isOfBytes = [](BuiltinClassID builtinClass) {
+        return builtinClass == BuiltinClasses::Uint8Array || builtinClass == BuiltinClasses::Buffer;
+    };
+    BuiltinClassID tested = classThatHasTestOfObjectAsMadeInWalkBuiltins(walker, types.withoutNullish(named));
+    if (isOfBytes(tested)) {
+        TypeID objects = types.withOnlyObjects(seen);
+        if (!types.at(objects).hasOnlyClassObjects())
+            return !types.overlap(seen, types.builtinClass(tested == BuiltinClasses::Buffer ? BuiltinClasses::Uint8Array : BuiltinClasses::Buffer));
+        return std::ranges::none_of(classPartsOf(types, types.at(objects)), [&](const ClassPart& part) {
+            return isOfBytes(part.builtinClass) && part.builtinClass != tested;
+        });
+    }
     const ClassPart* classSeen = singleBuiltinClassOf(types, types.at(types.withoutNullish(seen)));
-    if (!classSeen || (classSeen->builtinClass != BuiltinClasses::Uint8Array && classSeen->builtinClass != BuiltinClasses::Buffer))
-        return true;
     const ClassPart* classNamed = singleBuiltinClassOf(types, types.at(types.withoutNullish(named)));
-    return !classNamed || classNamed->builtinClass == classSeen->builtinClass;
+    return !classSeen || !isOfBytes(classSeen->builtinClass) || !classNamed;
 }
 
 static TypeID typeThatLinkSawInWalkBuiltins(Walker& walker, const BodyIndex& index, ValueID operand)
