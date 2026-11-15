@@ -7843,6 +7843,8 @@ void ScanOfBody::returnValue(ValueID operand, uint32_t block)
 {
     if (m_function->isCoroutine()) {
         m_returnsOfCoroutine.append(std::pair { listOf(operand), block });
+        // The host looks at the exports of an entry that awaits as well, once its body has ended.
+        readWhatHostLooksFor(operand);
         return;
     }
 

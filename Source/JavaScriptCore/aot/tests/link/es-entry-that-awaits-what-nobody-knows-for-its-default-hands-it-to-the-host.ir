@@ -1,0 +1,21 @@
+# main.mjs, the entry: export default await globalThis.load(): nobody knows what the promise holds, so the host may find its names on it.
+# The control: es-entry-that-awaits-and-whose-default-has-none-of-the-names-hands-the-host-nothing.ir.
+# OPTIONS: exclude=CodeOutsideImage
+# RUN: link functions modules lookups mechanisms=all
+# CHECK-NOT: lookup entry-hands-host-nothing 0
+# CHECK: lookup name-read "fetch"
+# CHECK-NOT: lookup entry-hands-host-nothing 0
+
+variable g0 name="default" module=m0 declared={type=anything|absent} flags=[IsImmutable]
+module m0 path="/main.mjs" displayPath="main.mjs" flags=[HasTopLevelAwait] body=f0 exports=[{name="default" variable=g0}]
+function f0 module=m0 kind=Module flags=[IsAsync] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="load" [isFreeName]
+    v2 = Call v1, -
+    v3 = Await v2
+    PutModuleVariable v3 variable=g0
+    v5 = Undefined
+    Return v5
+}
+entry module=m0 hostReads=[{exportName="default" builtin=ObjectKeys namesLookedFor=["fetch", "app"]}, {exportName="then"}]
