@@ -1654,6 +1654,13 @@ public:
     BitVector exportsShown;
     BitVector modulesWhoseExportHostTakesByCallInSight;
     void showExport(ModuleID, uint32_t index);
+    struct ExportedLocation {
+        VariableID variable;
+        FieldReference field;
+    };
+    Vector<ExportedLocation, 4> resolveExport(ModuleID, uint32_t index) const;
+    void noteEscapedBuiltins(const LinkType&) const;
+    void forEachContainedNode(const LinkType&, NOESCAPE const ScopedLambda<void(FlowNodeID)>&) const;
     void noteExportRead(ModuleID, uint32_t index);
 
     void callObserved(const FlowObserver&, const LinkType& told, const LinkType& before);

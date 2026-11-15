@@ -3378,19 +3378,16 @@ void LinkFlow::noteExportRead(ModuleID module, uint32_t index)
         showExport(module, index);
 }
 
-void LinkFlow::showExport(ModuleID module, uint32_t index)
+Vector<LinkFlow::ExportedLocation, 4> LinkFlow::resolveExport(ModuleID module, uint32_t index) const
 {
-    auto show = [&](VariableID shown) {
-        note(Note::ExportIsShown, shown.index());
-        addEdge(variable(shown), unseen());
-    };
+    Vector<ExportedLocation, 4> locations;
     bool mayBeDropped = index < program.at(module).exports.size() && program.at(module).exports[index].isHiddenUntilInitialized;
     if (VariableID shown = mayBeDropped ? VariableID() : program.variableBehindExport(module, index)) {
-        show(shown);
-        return;
+        locations.append(ExportedLocation { shown, { } });
+        return locations;
     }
     if (index >= program.at(module).exports.size())
-        return;
+        return locations;
     Vector<std::pair<ModuleID, StringID>, 4> namesThatRunFinds;
     auto leaveToRun = [&](ModuleID barrel, StringID name) {
         if (!namesThatRunFinds.contains(std::pair { barrel, name }))
@@ -3400,9 +3397,9 @@ void LinkFlow::showExport(ModuleID module, uint32_t index)
         for (size_t steps = 0; steps <= program.modules.size(); ++steps) {
             const ModuleExport& entry = program.at(exporter).exports[place];
             if (entry.kind == ModuleExportKind::Variable && entry.variable)
-                show(entry.variable);
+                locations.append(ExportedLocation { entry.variable, { } });
             if (entry.kind == ModuleExportKind::Field && entry.field)
-                addEdge(field({ entry.layout, *entry.field }), unseen());
+                locations.append(ExportedLocation { { }, { entry.layout, *entry.field } });
             if (entry.isHiddenUntilInitialized)
                 leaveToRun(exporter, entry.name);
             if (entry.kind != ModuleExportKind::Indirect || !entry.module || !entry.importName)
@@ -3430,6 +3427,86 @@ void LinkFlow::showExport(ModuleID module, uint32_t index)
             else
                 follow(request.target, listed - exportsOfTarget.begin());
         }
+    }
+    return locations;
+}
+
+void LinkFlow::showExport(ModuleID module, uint32_t index)
+{
+    for (const ExportedLocation& location : resolveExport(module, index)) {
+        if (location.variable) {
+            note(Note::ExportIsShown, location.variable.index());
+            addEdge(variable(location.variable), unseen());
+        } else
+            addEdge(field(location.field), unseen());
+    }
+}
+
+void LinkFlow::noteEscapedBuiltins(const LinkType& type) const
+{
+    LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+    noteLossOf(type.builtin);
+    if (type.builtin)
+        m_builtinsAtUnseen.append(type.builtin);
+    m_lostBuiltinsReachUnseen |= type.holdsLostBuiltins;
+    m_marksThatReachUnseen |= type.marks;
+}
+
+void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedLambda<void(FlowNodeID)>& functor) const
+{
+    auto visitPrototypes = [&](LayoutID layout) {
+        for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+            for (uint32_t record = firstNameOnPrototypeOf(row.current()); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
+                functor(m_namesOnPrototypes[record].stored);
+                functor(m_namesOnPrototypes[record].storedInSight);
+            }
+        }
+    };
+    if (type.objects == LinkType::Objects::Prototype)
+        visitPrototypes(type.layout);
+    forEachLayoutOf(type, [&](LayoutID layout) {
+        if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind))
+            return;
+        visitPrototypes(layout);
+        forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+            if (!isPrivateNameInLink(program, fieldAt(program, reference).key))
+                functor(field(reference));
+        });
+        forEachAppendedName(layout, [&](PropertyKeyID, FlowNodeID node) {
+            functor(node);
+        });
+        if (FlowNodeID stored = findExtraPropertyStoreNode(layout))
+            functor(stored);
+    });
+    if (type.classes != LinkType::Classes::None) {
+        uint32_t family = m_familiesOfSites.representativeWithoutShortening(type.site.index());
+        const Vector<ContentsOfSite>& listed = contentsListedOf(family);
+        for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = listed[index].next)
+            functor(listed[index].node);
+    }
+    auto visitFunction = [&](FunctionID function) {
+        if (!m_newestNameOnClosuresOf.isEmpty()) {
+            for (uint32_t index = m_newestNameOnClosuresOf[function.index()]; index != UINT32_MAX; index = m_namesOnClosures[index].next)
+                functor(m_namesOnClosures[index].laid);
+        }
+        if (LayoutID constructed = program.at(function).constructedClass) {
+            visitPrototypes(constructed);
+            for (const StaticField& staticField : program.at(constructed).staticFields)
+                functor(variable(staticField.variable));
+        }
+    };
+    switch (type.functions) {
+    case LinkType::Functions::Closure:
+        visitFunction(type.function);
+        break;
+    case LinkType::Functions::Set:
+        for (FunctionID member : functionsOfSet(type))
+            visitFunction(member);
+        break;
+    case LinkType::Functions::None:
+    case LinkType::Functions::Constructors:
+    case LinkType::Functions::Lost:
+        break;
     }
 }
 
