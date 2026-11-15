@@ -1,0 +1,50 @@
+DecimalFormat(pattern, const DecimalFormatSymbols&, status) delegated to DecimalFormat(nullptr, status),
+which builds the DecimalFormatSymbols of the default locale, and then put a copy of the caller's symbols
+in their place. It now makes the copy first and delegates with it, so the symbols of the default locale
+are not built. A copy that fails sets U_MEMORY_ALLOCATION_ERROR before the delegation: a nullptr without
+an error would build them again.
+
+NFSubstitution (nfsubs.cpp) calls this constructor for each "#" or "0" substitution of a
+RuleBasedNumberFormat, and SimpleDateFormat makes one of those for a date pattern with a numbering
+override, such as ja with the japanese calendar or he with the hebrew one. Each discarded
+DecimalFormatSymbols read curr/<default locale>.res, an item that `bun build --compile --trim` can remove.
+
+ICU 62.1 and 63.1 delegated with the copy. unicode-org/icu 00596d3027 (ICU-13847, ICU-20381) moved the
+copy behind the nullptr delegation in 64.1 to report a failed allocation, which this patch still does.
+ICU main has the text of 79.1 here, and the change is not reported to ICU yet. Remove this file when the
+bundled ICU has it.
+
+--- a/source/i18n/decimfmt.cpp
++++ b/source/i18n/decimfmt.cpp
+@@ -408,20 +408,20 @@
+     touch(status);
+ }
+ 
++// A nullptr without a failure makes DecimalFormat(const DecimalFormatSymbols*, UErrorCode&) build the
++// symbols of the default locale.
++static const DecimalFormatSymbols* copySymbolsOrFail(const DecimalFormatSymbols& symbols,
++                                                     UErrorCode& status) {
++    if (U_FAILURE(status)) { return nullptr; }
++    const DecimalFormatSymbols* copy = new DecimalFormatSymbols(symbols);
++    if (copy == nullptr) { status = U_MEMORY_ALLOCATION_ERROR; }
++    return copy;
++}
++
+ DecimalFormat::DecimalFormat(const UnicodeString& pattern, const DecimalFormatSymbols& symbols,
+                              UErrorCode& status)
+-        : DecimalFormat(nullptr, status) {
++        : DecimalFormat(copySymbolsOrFail(symbols, status), status) {
+     if (U_FAILURE(status)) { return; }
+-    LocalPointer<DecimalFormatSymbols> dfs(new DecimalFormatSymbols(symbols), status);
+-    if (U_FAILURE(status)) {
+-        // If we failed to allocate DecimalFormatSymbols, then release fields and its members.
+-        // We must have a fully complete fields object, we cannot have partially populated members.
+-        delete fields;
+-        fields = nullptr;
+-        status = U_MEMORY_ALLOCATION_ERROR;
+-        return;
+-    }
+-    fields->symbols.adoptInstead(dfs.orphan());
+     setPropertiesFromPattern(pattern, IGNORE_ROUNDING_IF_CURRENCY, status);
+     touch(status);
+ }
