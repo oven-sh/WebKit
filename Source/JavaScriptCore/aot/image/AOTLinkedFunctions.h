@@ -161,18 +161,7 @@ public:
         return positionOfCodeAt(place);
     }
 
-    void reorder(std::span<const uint32_t> order)
-    {
-        RELEASE_ASSERT(m_newPositions.isEmpty() && order.size() == size());
-        m_newPositions.fill(UINT32_MAX, order.size());
-        Vector<CompiledCode*> code(order.size());
-        for (size_t position = 0; position < order.size(); ++position) {
-            RELEASE_ASSERT(m_newPositions[order[position]] == UINT32_MAX);
-            m_newPositions[order[position]] = static_cast<uint32_t>(position);
-            code[position] = &m_functions[order[position]];
-        }
-        m_functions = ListOfKeptCode(WTF::move(code));
-    }
+    void reorder(std::span<const uint32_t> order);
     std::span<const uint32_t> newPositions() const { return m_newPositions.span(); }
 
     std::optional<uint32_t> positionOfCodeAt(uint32_t place) const

@@ -769,29 +769,14 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
         else
             layouts[shape] = shape < shapes.firstEnvironmentShape() ? appendObjectLayoutRecord(encoder, id, parts, shape) : appendEnvironmentRecord(encoder, parts, shape);
     };
-    std::span<const uint32_t> listedShapes = encoder.numbers.shapesInStartOrder();
-    std::span<const uint32_t> listedClasses = encoder.numbers.classesInStartOrder();
-    if (listedShapes.empty() && listedClasses.empty())
+    if (encoder.numbers.shapesInStartOrder().empty() && encoder.numbers.classesInStartOrder().empty())
         forEachLayoutRecord(encoder.inputs, place);
     else {
-        struct RecordToPlace {
-            LayoutID id;
-            uint32_t shape;
-        };
-        Vector<RecordToPlace> recordsToPlace;
+        Vector<LayoutRecordToPlace> records;
         forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
-            recordsToPlace.append({ id, shape });
+            records.append({ id, shape });
         });
-        Vector<uint32_t> ranksOfShapes(FillWith { }, shapes.numberOfShapes() + 1, noStartRank);
-        Vector<uint32_t> ranksOfClasses(FillWith { }, program.layouts.size(), noStartRank);
-        for (uint32_t rank = 0; rank < listedShapes.size(); ++rank)
-            ranksOfShapes[listedShapes[rank]] = rank;
-        for (uint32_t rank = 0; rank < listedClasses.size(); ++rank)
-            ranksOfClasses[listedClasses[rank]] = static_cast<uint32_t>(listedShapes.size()) + rank;
-        std::ranges::stable_sort(recordsToPlace, { }, [&](const RecordToPlace& record) {
-            return record.shape ? ranksOfShapes[record.shape] : ranksOfClasses[record.id.index()];
-        });
-        for (const RecordToPlace& record : recordsToPlace)
+        for (const LayoutRecordToPlace& record : sortLayoutRecords(WTF::move(records), encoder.numbers, shapes.numberOfShapes(), program.layouts.size()))
             place(record.id, record.shape);
     }
 

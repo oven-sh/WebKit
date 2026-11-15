@@ -664,17 +664,7 @@ void ImageNumbersBuilder::numberSites()
     numbers.m_numbersOfSites.resize(sites.size() + 1);
     const Typed::BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
     uint64_t numberOfNumbersOfSites = 0;
-    Vector<uint32_t> placesInStartOrder;
-    if (std::span<const uint32_t> startRanks = context.startRanks(); !startRanks.empty()) {
-        Vector<uint32_t> listed;
-        forEachMentionOfListedUnits(inputs, startRanks, [&](FunctionID, const Mention& mention, std::span<const uint32_t> key) {
-            if (mention.space != NumberSpace::SiteCache)
-                return;
-            if (std::optional<uint32_t> place = sites.find(key))
-                listed.append(*place);
-        });
-        placesInStartOrder = listedNumbersFirst(listed.span(), sites.size());
-    }
+    Vector<uint32_t> placesInStartOrder = listSitesInStartOrder(inputs, context.startRanks(), sites);
     for (uint32_t index = 0; index < sites.size(); ++index) {
         uint32_t place = placesInStartOrder.isEmpty() ? index : placesInStartOrder[index];
         std::span<const uint32_t> key = sites.keyAt(place);

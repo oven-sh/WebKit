@@ -21,7 +21,6 @@
 #include "AOTImage.h"
 #include "AOTObfuscatedSites.h"
 #include "AOTOrderFile.h"
-#include "AOTStartOrder.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramTables.h"
@@ -183,16 +182,7 @@ static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers, const Bui
     const IdentifierNumbering& identifiers = numbers.identifiers();
     std::span<const uint32_t> numbersOfSites = numbers.numbersOfSites();
     Vector<uint16_t> names(FillWith { }, numbersOfSites.back(), 0);
-    Vector<uint32_t> placesByNumber;
-    if (!context.startRanks().empty()) {
-        placesByNumber = Vector<uint32_t>(sites.size(), [](size_t place) { return static_cast<uint32_t>(place); });
-        std::ranges::sort(placesByNumber, { }, [&](uint32_t place) { return numbersOfSites[place]; });
-    }
-    auto placeAt = [&](uint32_t index) {
-        return index < placesByNumber.size() ? placesByNumber[index] : index;
-    };
-    for (uint32_t index = 0, numberOfPlaces = sites.size(); index < numberOfPlaces; ++index) {
-        uint32_t place = placeAt(index);
+    for (uint32_t place = 0, numberOfPlaces = sites.size(); place < numberOfPlaces; ++place) {
         std::span<const uint32_t> key = sites.keyAt(place);
         if (!ImageNumbers::isPlaceWithSiteAnswers(key))
             continue;
@@ -202,7 +192,7 @@ static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers, const Bui
             names[number] = static_cast<uint16_t>(name);
             continue;
         }
-        RELEASE_ASSERT(numbersOfSites[placeAt(index + 1)] - number == InstanceLayout::numbersOfSiteWhoseNameStandsBehind);
+        RELEASE_ASSERT(!context.startRanks().empty() || numbersOfSites[place + 1] - number == InstanceLayout::numbersOfSiteWhoseNameStandsBehind);
         names[number] = InstanceLayout::nameOfSiteStandsBehind;
         names[number + 1] = static_cast<uint16_t>(name);
         names[number + 2] = static_cast<uint16_t>(name >> 16);
@@ -856,28 +846,6 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     return image;
 }
 
-static std::optional<Vector<FinalJump>> orderCodeByFile(const ImageInputs& inputs, const FunctionNumbers& numbers, LinkedFunctions& functions, ResolvedCallees& callees, BuildContext& context)
-{
-    Vector<uint32_t> listed;
-    BitVector isListed(functions.size());
-    for (const OrderFile& file : OrderFile::parse(context.orderFile())) {
-        for (uint32_t position : findListedUnits(file, inputs.program, inputs.plan, numbers, functions)) {
-            if (!isListed.quickSet(position))
-                listed.append(position);
-        }
-    }
-    Vector<FinalJump> finalJumps = findFinalJumps(functions, callees, context);
-    if (!listed.isEmpty())
-        context.setStartRanks(rankFunctionsByListedUnits(listed.span(), functions, inputs.program.functions.size()));
-    OrderOfUnits order = orderUnits(listed.span(), finalJumps.span(), functions, MB);
-    context.setNumberOfUnitsOfStart(order.numberOfListed);
-    functions.reorder(order.positions.span());
-    callees = reorderCallees(callees, order.positions.span(), functions.newPositions(), context.parallelLoops());
-    return Vector<FinalJump>(order.positions.size(), [&](size_t position) {
-        return finalJumps[order.positions[position]];
-    });
-}
-
 BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
 {
     Diagnostics& diagnostics = context.diagnostics();
@@ -923,11 +891,9 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     if (diagnostics.hasErrors())
         return result;
 
-    std::optional<Vector<FinalJump>> finalJumpsInOrder;
-    if (!context.orderFile().empty()) {
-        finalJumpsInOrder = orderCodeByFile(inputs, numbers.functions(), result.functions, callees, context);
-        times.didFinish("order code by a file"_s);
-    }
+    Vector<FinalJump> finalJumpsInOrder;
+    if (!context.orderFile().empty())
+        finalJumpsInOrder = orderCodeByFiles(inputs.program, inputs.plan, numbers.functions(), result.functions, callees, context);
 
     std::optional<CodeIndex> index;
     unsigned codeGranuleShift = 0;
@@ -997,7 +963,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StepTimes steps(context, nameOfLaneSteps);
             codeGranuleShift = chooseCodeGranuleShift(functions, context);
             steps.didFinish("choose code granules"_s);
-            finalJumps = finalJumpsInOrder ? WTF::move(*finalJumpsInOrder) : findFinalJumps(functions, callees, context);
+            finalJumps = finalJumpsInOrder.isEmpty() ? findFinalJumps(functions, callees, context) : WTF::move(finalJumpsInOrder);
             steps.didFinish("find final jumps"_s);
         },
     });

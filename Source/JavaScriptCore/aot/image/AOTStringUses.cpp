@@ -246,16 +246,9 @@ static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const NumberingInp
     for (size_t index = 0; index < program.functions.size(); ++index)
         lowerTo(program.functions[index].name, FunctionByModule::forFunction(program, FunctionID(index), startRanks));
     if (!startRanks.empty()) {
-        BitVector isVisited(program.data.size());
-        forEachMentionOfListedUnits(inputs, startRanks, [&](FunctionID function, const Mention& mention, std::span<const uint32_t> key) {
-            std::optional<DataID> data = findDataNamedBy(mention, key);
-            if (!data || isVisited.quickSet(data->index()))
-                return;
-            forEachNodeOfData(program.data[data->index()].root, [&](const Typed::DataNode& node) {
-                if (node.kind() == Typed::DataNode::Kind::String)
-                    lowerTo(node.as<Typed::DataNode::String>().value, FunctionByModule::forFunction(program, function, startRanks));
-            });
-        });
+        forEachTextOfListedData(inputs, startRanks, scopedLambda<void(StringID, FunctionID)>([&](StringID text, FunctionID function) {
+            lowerTo(text, FunctionByModule::forFunction(program, function, startRanks));
+        }));
     }
     return firstFunctions;
 }

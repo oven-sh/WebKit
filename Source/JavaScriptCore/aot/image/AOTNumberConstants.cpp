@@ -19,7 +19,6 @@
 #include "AOTPlan.h"
 #include "AOTRuntimeWords.h"
 #include "AOTSort.h"
-#include "AOTStartOrder.h"
 #include "AOTThreads.h"
 #include "AOTTypeArena.h"
 #include <algorithm>
@@ -392,64 +391,6 @@ void ImageNumbersBuilder::numberConstants()
     });
 }
 
-void ImageNumbersBuilder::placeListedRowsFirst(std::span<const uint32_t> startRanks)
-{
-    constexpr uint32_t smallestCountWithHashIndex = 64;
-    const Typed::ShapeTable& shapes = inputs.plan.shapes();
-    NumberedKeys& allocations = numbers.m_allocations;
-    Vector<uint32_t> rows;
-    BitVector isListedShape;
-    auto listShape = [&](uint32_t shape) {
-        if (isListedShape.get(shape))
-            return;
-        isListedShape.ensureSize(shape + 1);
-        isListedShape.quickSet(shape);
-        numbers.m_shapesInStartOrder.append(shape);
-    };
-    auto listShapesOf = [&](LayoutID layout) {
-        Typed::ShapeRange range = shapes.shapesOf(layout);
-        for (uint32_t shape = range.first; shape < range.end(); ++shape)
-            listShape(shape);
-    };
-    BitVector isListedClass(inputs.program.layouts.size());
-    BitVector isListedData(inputs.program.data.size());
-    forEachMentionOfListedUnits(inputs, startRanks, [&](FunctionID, const Mention& mention, std::span<const uint32_t> key) {
-        if (mention.space == NumberSpace::Allocation) {
-            listShape(decodeAllocationKey(key).allocation.shape);
-            if (std::optional<uint32_t> number = allocations.find(key))
-                rows.append(*number);
-            return;
-        }
-        if (std::optional<DataID> data = findDataNamedBy(mention, key)) {
-            if (!isListedData.quickSet(data->index())) {
-                forEachNodeOfData(inputs.program.data[data->index()].root, [&](const Typed::DataNode& node) {
-                    if (node.kind() == Typed::DataNode::Kind::Object)
-                        listShapesOf(node.as<Typed::DataNode::Object>().layout);
-                });
-            }
-            return;
-        }
-        if (mention.space == NumberSpace::Request && static_cast<RequestKind>(key[0]) == RequestKind::NewClass) {
-            LayoutID classLayout(key[1]);
-            if (isListedClass.quickSet(classLayout.index()))
-                return;
-            numbers.m_classesInStartOrder.append(classLayout.index());
-            listShapesOf(classLayout);
-        }
-    });
-    if (allocations.size() < smallestCountWithHashIndex)
-        return;
-    NumberedKeys reordered;
-    reordered.words.reserveInitialCapacity(allocations.words.size());
-    reordered.firstWord.reserveInitialCapacity(allocations.firstWord.size());
-    reordered.firstWord.append(0);
-    for (uint32_t number : listedNumbersFirst(rows.span(), allocations.size())) {
-        reordered.words.append(allocations.keyAt(number));
-        reordered.firstWord.append(static_cast<uint32_t>(reordered.words.size()));
-    }
-    reordered.buildHashIndex(context.parallelLoops());
-    allocations = WTF::move(reordered);
-}
 void ImageNumbersBuilder::numberRows()
 {
     const Typed::Program& program = inputs.program;
