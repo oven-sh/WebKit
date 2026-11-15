@@ -1613,6 +1613,30 @@ auto Modules::collectStarExports(ModuleID module, Environment* instance) -> Vect
     return result;
 }
 
+auto Modules::sourceBehindLink(ModuleID module, ModuleID target, Environment* instance) const -> SourceBehindLink
+{
+    const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, target) : nullptr;
+    if (!link)
+        return { };
+    if (ModuleNamespace* word = mockWord(*link, instance))
+        return { word };
+    return { nullptr, link->hasLink ? readLink(instance, link->link) : nullptr };
+}
+
+ModuleNamespace* Modules::wordThatHoldsName(ModuleID module, UniquedStringImpl* name, Environment* instance, ModuleNamespace* wordOfReexport, bool isFromStarExport)
+{
+    if (!wordOfReexport || !isFromStarExport)
+        return wordOfReexport;
+    VM& vm = *m_instance.vm;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    BindingSearch search;
+    LinkedBinding binding = resolveBinding(module, Identifier::fromUid(vm, name), instance ? instance : currentInstance(module), search);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (binding.type != LinkedBinding::Type::Resolved || !binding.isOfMock)
+        return nullptr;
+    return binding.holder ? static_cast<ModuleNamespace*>(const_cast<void*>(binding.holder)) : wordOfReexport;
+}
+
 std::optional<Modules::StarResolution> Modules::resolveThroughStars(ModuleID module, const Identifier& name, Environment* instance, BitVector& seen)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);

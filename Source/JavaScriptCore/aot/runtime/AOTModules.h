@@ -218,12 +218,22 @@ public:
     bool isBypassingMocks() const { return m_isBypassingMocks; }
     JSValue readExportIfInitialized(ModuleID, unsigned index, Environment* instance = nullptr) const;
     bool isExportAmbiguous(ModuleID, unsigned index) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr, bool isReadThroughLink = false);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
-    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
+    struct ReplaceWalk {
+        using Step = std::tuple<uint32_t, const Environment*, UniquedStringImpl*>;
+
+        UncheckedKeyHashSet<Step> seenBehindStars;
+        bool isHeldByMock { false };
+        std::optional<ModuleID> readsOriginalOf;
+        JSValue keptValue;
+    };
+    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, ReplaceWalk&, Environment* instance = nullptr, bool isReadThroughLink = false);
+    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, ReplaceWalk&, Environment* instance);
+    bool tryReplaceExportInWord(ModuleNamespace* word, const Identifier& name, JSValue, ReplaceWalk&);
+    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue, bool isReadThroughLink = false);
+    JSValue capturedExportBeforeMock(ModuleID, const Identifier& name);
     bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
@@ -1387,6 +1397,12 @@ public:
     bool hasNameInMock(ModuleNamespace* word, const Identifier& name);
     bool hasNameInMockOutsideCycles(ModuleNamespace* word, const Identifier& name);
     std::optional<StarResolution> resolveThroughStars(ModuleID, const Identifier& name, Environment* instance, BitVector& seen);
+    struct SourceBehindLink {
+        ModuleNamespace* word { nullptr };
+        Environment* instance { nullptr };
+    };
+    SourceBehindLink sourceBehindLink(ModuleID, ModuleID target, Environment* instance) const;
+    ModuleNamespace* wordThatHoldsName(ModuleID, UniquedStringImpl* name, Environment* instance, ModuleNamespace* wordOfReexport, bool isFromStarExport);
     std::optional<StarResolution> followStars(ModuleID, const Identifier& name, Environment* instance);
     bool hasOutdatedStarLink(ModuleID, Environment* instance) const;
     void didChangeLinkState() const { ++m_linkStateVersion; }

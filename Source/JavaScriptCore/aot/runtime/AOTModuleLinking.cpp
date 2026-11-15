@@ -1695,61 +1695,6 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
         return { };
     JSObject* variables = isLaidOver ? loaded->variablesBeforeMock.get() : nullptr;
 
-    auto keptBy = [&](ModuleID holder, const Identifier& name) -> JSValue {
-        LoadedModule* held = isLaidOver ? loadedIfExists(holder) : nullptr;
-        JSObject* before = held ? held->exportsBeforeMock.get() : nullptr;
-        if (!before)
-            return { };
-        JSValue value = storedValue(realm, before, name);
-        if (value != JSValue(before))
-            return value;
-        JSObject* source = held->deferredExportsSource;
-        RELEASE_AND_RETURN(scope, source ? source->get(realm, name) : jsUndefined());
-    };
-    BitVector seenBehindStars;
-    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name) -> JSValue {
-        for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
-            std::optional<unsigned> index = m_table.findExport(module, name);
-            if (!index) {
-                if (!isLaidOver)
-                    return { };
-                JSValue value = keptBy(module, Identifier::fromUid(vm, name));
-                RETURN_IF_EXCEPTION(scope, { });
-                if (value || !data(module).hasDynamicStarExport() || standsForWholeModule(module))
-                    return value;
-                if (name == vm.propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
-                    return { };
-                for (ModuleRequestData request : m_table.dynamicStars(module)) {
-                    value = self(self, request.targetModule(), name);
-                    RETURN_IF_EXCEPTION(scope, { });
-                    if (value)
-                        return value;
-                }
-                return { };
-            }
-            const ModuleExportData& moduleExport = m_table.exports(module)[*index];
-            switch (moduleExport.kind()) {
-            case ModuleExportKind::Variable:
-                if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
-                    return keptBy(origin->module, identifier(origin->name));
-                return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
-            case ModuleExportKind::Field: {
-                ResolvedField field = variables ? resolveField(module, *index, nullptr) : ResolvedField { };
-                return field.instance ? loaded->fieldsBeforeMock.get(std::pair { field.instance, field.slot.encoded() }) : JSValue();
-            }
-            case ModuleExportKind::Namespace:
-                return { };
-            case ModuleExportKind::Indirect: {
-                const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
-                module = moduleLoadedUnder(indirectExport.targetModule());
-                name = identifier(indirectExport.importName).impl();
-                break;
-            }
-            }
-        }
-        return { };
-    };
-
     JSObject* namespaceObject = moduleNamespace(file, ModulePhase::Evaluation);
     RETURN_IF_EXCEPTION(scope, { });
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
@@ -1763,9 +1708,13 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
     for (const Identifier& name : names) {
         if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
             continue;
-        seenBehindStars.clearAll();
-        JSValue value = keptValueOf(keptValueOf, file, name.impl());
-        RETURN_IF_EXCEPTION(scope, { });
+        JSValue value;
+        if (isLaidOver) {
+            ReplaceWalk walk { .readsOriginalOf = file };
+            tryReplaceExport(file, name.impl(), JSValue(), walk);
+            RETURN_IF_EXCEPTION(scope, { });
+            value = walk.keptValue;
+        }
         if (variables && value == JSValue(variables))
             continue;
         if (!value) {
