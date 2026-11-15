@@ -93,6 +93,7 @@ static constexpr int64_t fewestColumns = 4;
 static constexpr int64_t mostColumns = 1 << 20;
 static constexpr int64_t fewestTerms = 8;
 static constexpr int64_t mostTerms = 1 << 20;
+static constexpr int64_t greatestStep = int64_t { 1 } << 32;
 static constexpr size_t mostSums = 2;
 static constexpr size_t mostReads = 4;
 static constexpr unsigned mostDepth = 16;
@@ -186,6 +187,22 @@ private:
         Range range = m_generator.typeOf(value).integers;
         if (m_checksProofs || range.minimum < std::numeric_limits<int32_t>::min() || range.maximum > std::numeric_limits<int32_t>::max())
             wrapped.append(linear);
+    }
+    std::optional<LinearInteger> multiplyInt32s(const Operation& product, const LinearInteger& left, const LinearInteger& right)
+    {
+        std::optional<LinearInteger> result = multiply(left, right);
+        auto isLongStep = [](const KnownInteger& integer) { return integer.isConstant && std::abs(integer.constant) >= int64_t { 1 } << 32; };
+        if (!result || isLongStep(result->first) || isLongStep(result->inner) || isLongStep(result->outer))
+            return std::nullopt;
+        for (auto [factor, linear] : { std::pair(product.leftOperand(), &left), std::pair(product.rightOperand(), &right) }) {
+            if (m_code.isConstant(factor) || m_generator.representationOf(factor) == Representation::Int32)
+                continue;
+            if (m_generator.typeOf(factor).isInteger())
+                requireInt32(*linear, factor);
+            else
+                wrapped.append(*linear);
+        }
+        return result;
     }
     std::optional<LinearInteger> findAnew(ValueID, unsigned depth);
 
@@ -329,6 +346,8 @@ std::optional<LinearInteger> LinearIntegers::find(ValueID value, unsigned depth)
             return linear;
     }
     std::optional<LinearInteger> linear = findAnew(value, depth);
+    if (linear && std::ranges::any_of(std::array { linear->first, linear->inner, linear->outer }, [](const KnownInteger& integer) { return integer.isConstant && std::abs(integer.constant) >= greatestStep; }))
+        return std::nullopt;
     if (linear)
         m_known.append({ value, *linear });
     return linear;
@@ -374,7 +393,7 @@ std::optional<LinearInteger> LinearIntegers::findAnew(ValueID value, unsigned de
         if (const Operation& product = m_code.at(cut); product.opcode == Opcode::Mul && product.form() == OperatorForm::CheckedIntegers && m_generator.representationOf(cut) == Representation::Double && isInNest(cut)) {
             std::optional<LinearInteger> left = operandAt(product.leftOperand());
             std::optional<LinearInteger> right = operandAt(product.rightOperand());
-            std::optional<LinearInteger> linear = left && right ? multiply(*left, *right) : std::nullopt;
+            std::optional<LinearInteger> linear = left && right ? multiplyInt32s(product, *left, *right) : std::nullopt;
             if (linear)
                 wrapped.append(*linear);
             return linear;
@@ -400,7 +419,7 @@ std::optional<LinearInteger> LinearIntegers::findAnew(ValueID value, unsigned de
             return std::nullopt;
         LinearInteger result;
         if (operation.opcode == Opcode::Mul) {
-            std::optional<LinearInteger> product = multiply(*left, *right);
+            std::optional<LinearInteger> product = isChecked ? multiplyInt32s(operation, *left, *right) : multiply(*left, *right);
             if (!product)
                 return std::nullopt;
             result = *product;
@@ -1528,7 +1547,6 @@ std::pair<LValue, LValue> SumNestEmitter::extremesOf(const LinearInteger& linear
             moved = m_out.add(moved, distance);
             continue;
         }
-        static constexpr int64_t greatestStep = int64_t { 1 } << 32;
         leaveUnless(m_out.below(m_out.add(m_integers.valueOf(*step), greatestStep), m_out.constInt64(2 * greatestStep)), m_out.int64Zero);
         LValue isNegative = m_out.lessThan(distance, m_out.int64Zero);
         least = m_out.add(least, m_out.select(isNegative, distance, m_out.int64Zero));
@@ -1561,6 +1579,8 @@ LValue SumNestEmitter::columnsWithAnswer(const SumNest::ColumnTest& test, LValue
     leaveUnless(m_out.greaterThan(columnsInRoom, m_out.int64Zero), m_out.int64Zero);
     if (step.isConstant && step.constant >= 0)
         return columns;
+    if (!step.isConstant)
+        leaveUnless(m_out.below(m_out.add(m_integers.valueOf(step), greatestStep), m_out.constInt64(2 * greatestStep)), m_out.int64Zero);
     LValue roomOfLast = m_out.add(columnsInRoom, m_out.mul(m_integers.valueOf(step), m_out.sub(columns, m_out.constInt64(1))));
     leaveUnless(m_out.greaterThan(roomOfLast, m_out.int64Zero), m_out.int64Zero);
     return columns;
@@ -1729,10 +1749,11 @@ void SumNestEmitter::emitFront()
         if (m_generator.m_hasFailed)
             return;
     }
+    columns = m_out.select(m_out.lessThan(columns, m_out.constInt64(mostColumns)), columns, m_out.constInt64(mostColumns));
     for (const SumNest::ColumnTest& test : m_nest.columnTests)
         columns = columnsWithAnswer(test, columns);
     leaveUnless(m_out.greaterThanOrEqual(columns, m_out.constInt64(fewestColumns)), m_out.int64Zero);
-    m_columns = m_out.select(m_out.lessThan(columns, m_out.constInt64(mostColumns)), columns, m_out.constInt64(mostColumns));
+    m_columns = columns;
     std::optional<LinearInteger> firstTerm = m_integers.find(m_nest.innerEntry[indexOfCounter]);
     RELEASE_ASSERT(firstTerm);
     m_terms = numberOfIterations(m_nest.terms, m_integers.valueOf(firstTerm->first));
