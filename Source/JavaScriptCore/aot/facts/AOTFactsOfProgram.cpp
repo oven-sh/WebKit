@@ -4660,6 +4660,8 @@ private:
     BuiltinID inheritedFunctionUnder(BuiltinID function, PropertyKeyID) const;
     BuiltinID functionReadByPath(const BodyIndex&, ValueID) const;
     std::optional<bool> replacesInheritedFunction(const BodyIndex&, ValueID descriptor, BuiltinID inherited) const;
+    bool isExtendedByClasses(BuiltinID function) const;
+    bool makesReadOnlyProperty(const BodyIndex&, ValueID descriptor) const;
     bool holdsNoCodeOfProgram(const BodyIndex&, ValueID) const;
     bool namesBuiltinThatEndsProcess(const BodyIndex&, const BodyValue&) const;
     bool codeThatNobodyNamesMayLeave();
@@ -6950,6 +6952,33 @@ BuiltinID BuilderOfProgramFacts::functionReadByPath(const BodyIndex& index, Valu
     return function ? inheritedFunctionUnder(m_builtins.canonicalID(function), read.key()) : BuiltinID();
 }
 
+bool BuilderOfProgramFacts::isExtendedByClasses(BuiltinID function) const
+{
+    for (uint32_t number = 1; number < m_builtins.builtinCount(); ++number) {
+        const Builtin& entry = m_builtins.at(BuiltinID(number));
+        if (entry.prototypeLink == BuiltinPrototypeLink::Builtin && entry.inheritsFrom && m_builtins.canonicalID(entry.inheritsFrom) == function)
+            return true;
+    }
+    return std::ranges::any_of(m_source.layouts, [&](const Layout& layout) {
+        BuiltinID constructor = layout.writtenBuiltinBase ? m_builtins.at(layout.writtenBuiltinBase).constructor : BuiltinID();
+        return constructor && m_builtins.canonicalID(constructor) == function;
+    });
+}
+
+bool BuilderOfProgramFacts::makesReadOnlyProperty(const BodyIndex& index, ValueID descriptor) const
+{
+    descriptor = descriptor ? index.stripCasts(descriptor) : ValueID();
+    if (!descriptor || index.isParameter(descriptor))
+        return false;
+    ValueID writable;
+    bool isAsWritten = forEachPropertyOfWrittenLiteral(index, descriptor, { }, [&](PropertyKeyID part, ValueID brought) {
+        if (part == m_source.keyOf(BuiltinNames::writable))
+            writable = brought;
+    });
+    writable = writable ? index.stripCasts(writable) : ValueID();
+    return isAsWritten && !(writable && !index.isParameter(writable) && index.opcodeOf(writable) == Opcode::Boolean && index.value(writable).as<Opcode::Boolean>().boolean());
+}
+
 std::optional<bool> BuilderOfProgramFacts::replacesInheritedFunction(const BodyIndex& index, ValueID descriptor, BuiltinID inherited) const
 {
     descriptor = descriptor ? index.stripCasts(descriptor) : ValueID();
@@ -7015,7 +7044,7 @@ std::optional<UserDiagnosticKind> BuilderOfProgramFacts::refusalOf(const BodyInd
         if (BuiltinID inherited = member ? BuiltinID() : inheritedFunctionUnder(holder, key)) {
             std::optional<bool> replaces = replacesInheritedFunction(index, brought, inherited);
             if (!replaces)
-                return std::nullopt;
+                return makesReadOnlyProperty(index, brought) && isExtendedByClasses(holder) ? std::optional(UserDiagnosticKind::InheritedValueIsMadeReadOnly) : std::nullopt;
             isCertain = *replaces;
         }
         break;
