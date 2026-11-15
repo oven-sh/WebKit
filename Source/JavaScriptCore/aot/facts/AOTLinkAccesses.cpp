@@ -326,6 +326,7 @@ private:
     const BuiltinHostObject* findHostObjectThatSubjectIsReadAs() const;
     bool giveWhatOtherNamesHold(const BuiltinHostObject&);
     bool tellsWhatMayAnswerFrom(BuiltinID start);
+    void letGoOfMembersFoundFrom(BuiltinID start);
     bool tellsWhatMayAnswerUnderAnyNameBelow(BuiltinClassID);
     bool isServedByLightFormOf(BuiltinID) const;
     bool tellsMemberThatTableFindsFrom(BuiltinID) const;
@@ -4957,6 +4958,8 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
             cannotTell(isStoredGlobalName ? UnknownIs::ByEscapeAlone : UnknownIs::InSight, TellsName::No);
             return;
         }
+        if (isUnknown)
+            letGoOfMembersFoundFrom(builtin);
         giveWhatIsFoundFrom(builtin, EngineMayDefineInheritedNames::Yes);
         return;
     }
@@ -5245,6 +5248,21 @@ bool AccessInLinkAccesses::tellsWhatMayAnswerFrom(BuiltinID start)
             holder = m_table.canonicalID(object.inheritsFrom);
             break;
         }
+    }
+}
+
+void AccessInLinkAccesses::letGoOfMembersFoundFrom(BuiltinID start)
+{
+    MembersUnderKey members(m_program, m_access.key);
+    BuiltinID holder = m_table.canonicalID(start);
+    while (!compiledModuleWithObject(m_program, holder) && m_table.at(m_table.rootOf(holder)).scope == BuiltinScope::Realm) {
+        if (BuiltinID member = members.findOwnMember(holder)) {
+            m_flow.note(LinkFlow::Note::BuiltinRead, member.index());
+            m_flow.noteLossOf(m_table.canonicalID(member));
+        }
+        if (m_table.at(holder).prototypeLink != BuiltinPrototypeLink::Builtin)
+            return;
+        holder = m_table.canonicalID(m_table.at(holder).inheritsFrom);
     }
 }
 
