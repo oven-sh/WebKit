@@ -817,7 +817,7 @@ static void fillAssignedMembers(const Program& program, const LinkTables& held, 
         if (isConstructorFunction(name.layout)) {
             AssignedMember assigned;
             assigned.holdsValue = !name.expected && !name.expectedGetter && !name.expectedSetter && !name.mayHoldAccessor;
-            bool holdsClosure = name.expected && !name.expectedGetter && !name.expectedSetter && !name.mayHoldAccessor && !program.at(name.expected).captures.isEmpty();
+            bool holdsClosure = name.expected && !name.expectedGetter && !name.expectedSetter && (name.isDefinedAsValue || (!name.mayHoldAccessor && !program.at(name.expected).captures.isEmpty()));
             if (holdsClosure)
                 assigned.method = name.expected;
             if (assigned.holdsValue || holdsClosure)

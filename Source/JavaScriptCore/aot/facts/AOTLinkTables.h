@@ -198,6 +198,7 @@ struct LinkedNameOnPrototype {
     TypeID seen;
     bool mayBeReadOnly { true };
     bool isLaidFirst { false };
+    bool isDefinedAsValue { false };
     FunctionID getter;
     FunctionID setter;
 };

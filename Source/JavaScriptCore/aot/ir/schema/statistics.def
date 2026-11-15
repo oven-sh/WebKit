@@ -23,7 +23,7 @@ enum StatisticID (stage: StatisticStage) {
     StoresKeepingPrototypes
     ListedValuesStoredByName
     AccessesUnderPassedNames
-    RewrittenMethodsSpeculated
+    RewrittenMethodsSpeculated MethodsExpectedByDescriptors TreeNodesExpected GettersCalledByClass
     InnerMethodsSpeculated
     CallbackResultsConverted
     InstancesCopiedByLoops

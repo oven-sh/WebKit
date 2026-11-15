@@ -10114,6 +10114,11 @@ void WriterOfLinkLayouts::writeMembers()
         if (held == oneClosure && !name.mayHoldAccessor() && !hasEscaped(name.layout.index()))
             linked.function = held.function;
         oneClosure.function = m_flow.typeAt(name.storedInSight).function;
+        linked.isDefinedAsValue = name.key && name.mayHoldAccessor() && name.isDefinedInSight && !name.isAccessorAsWritten && !name.isDefinedUnderSomeSymbol && m_flow.isOfConstructorFunction(name.layout) && m_flow.typeAt(name.storedInSight) == oneClosure;
+        if (linked.isDefinedAsValue) {
+            linked.expected = oneClosure.function;
+            m_flow.build.statistics().count(StatisticID::MethodsExpectedByDescriptors);
+        }
         if (m_flow.typeAt(name.storedInSight) == oneClosure && !name.mayHoldAccessor())
             linked.expected = oneClosure.function;
         if (m_flow.hasOnlyPrimitives(name) && !hasEscaped(name.layout.index()))
