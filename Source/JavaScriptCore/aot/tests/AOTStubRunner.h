@@ -70,10 +70,13 @@ class CageMemory {
     WTF_MAKE_NONCOPYABLE(CageMemory);
 public:
     static constexpr size_t atomSize = 16;
+    // A test lays the base of structures so far below a structure that the ID of its objects leads to it. Its other cells have the ID 0, which leads to the base.
+    static constexpr size_t emptyBytesBelowCells = 16 * KB;
 
-    explicit CageMemory(size_t size)
+    explicit CageMemory(size_t sizeOfCells)
     {
         constexpr uintptr_t firstOffsetInCage = static_cast<uintptr_t>(minCell32) << cell32Shift;
+        const size_t size = emptyBytesBelowCells + sizeOfCells;
         m_memory.grow(2 * size + firstOffsetInCage + atomSize);
         m_start = WTF::roundUpToMultipleOf<atomSize>(std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()));
         uintptr_t offsetInCage = m_start - cageBase();
@@ -81,8 +84,10 @@ public:
             m_start += firstOffsetInCage - offsetInCage;
         else if (offsetInCage + size > MarkedBlockCage::maxSize)
             m_start += MarkedBlockCage::maxSize - offsetInCage + firstOffsetInCage;
+        zeroSpan(std::span(std::bit_cast<uint8_t*>(m_start), emptyBytesBelowCells));
+        m_start += emptyBytesBelowCells;
         m_next = m_start;
-        m_end = m_start + size;
+        m_end = m_start + sizeOfCells;
         AOT_TEST_CHECK(m_end <= std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()) + m_memory.size());
         AOT_TEST_CHECK(MarkedBlockCage::baseOf(std::bit_cast<void*>(m_end - 1)) == cageBase());
     }
