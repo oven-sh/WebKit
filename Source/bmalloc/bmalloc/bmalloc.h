@@ -45,6 +45,7 @@ BALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #endif
 
 #if BUSE(MIMALLOC)
+#include "MimallocPrimitiveHeap.h"
 #include "mimalloc.h"
 #endif
 
@@ -120,7 +121,8 @@ BINLINE void* tryMalloc(size_t size, CompactAllocationMode mode, HeapKind kind =
     return tagged_bmalloc_try_allocate(size);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
+    if (kind == HeapKind::PrimitiveGigacage)
+        return MimallocPrimitiveHeap::tryMalloc(size);
     return mi_malloc(size);
 #else
     BUNUSED(mode);
@@ -144,8 +146,7 @@ BINLINE void* malloc(size_t size, CompactAllocationMode mode, HeapKind kind = He
     return tagged_bmalloc_allocate(size);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
-    void* memory = mi_malloc(size);
+    void* memory = kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::tryMalloc(size) : mi_malloc(size);
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -171,7 +172,8 @@ BINLINE void* tryZeroedMalloc(size_t size, CompactAllocationMode mode, HeapKind 
     return tagged_bmalloc_try_allocate_zeroed(size);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
+    if (kind == HeapKind::PrimitiveGigacage)
+        return MimallocPrimitiveHeap::tryZeroedMalloc(size);
     return mi_zalloc(size);
 #else
     BUNUSED(mode);
@@ -195,8 +197,7 @@ BINLINE void* zeroedMalloc(size_t size, CompactAllocationMode mode, HeapKind kin
     return tagged_bmalloc_allocate_zeroed(size);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
-    void* memory = mi_zalloc(size);
+    void* memory = kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::tryZeroedMalloc(size) : mi_zalloc(size);
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -228,7 +229,8 @@ BINLINE void* tryMemalign(size_t alignment, size_t size, CompactAllocationMode m
     return tagged_bmalloc_try_allocate_with_alignment(size, alignment);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
+    if (kind == HeapKind::PrimitiveGigacage)
+        return MimallocPrimitiveHeap::tryMemalign(alignment, size);
     return mi_malloc_aligned(size, alignment);
 #else
     BUNUSED(mode);
@@ -255,8 +257,7 @@ BINLINE void* memalign(size_t alignment, size_t size, CompactAllocationMode mode
     return tagged_bmalloc_allocate_with_alignment(size, alignment);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
-    void* memory = mi_malloc_aligned(size, alignment);
+    void* memory = kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::tryMemalign(alignment, size) : mi_malloc_aligned(size, alignment);
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -286,7 +287,8 @@ BINLINE void* tryZeroedMemalign(size_t alignment, size_t size, CompactAllocation
     return tagged_bmalloc_try_allocate_zeroed_with_alignment(size, alignment);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
+    if (kind == HeapKind::PrimitiveGigacage)
+        return MimallocPrimitiveHeap::tryZeroedMemalign(alignment, size);
     return mi_zalloc_aligned(size, alignment);
 #else
     BUNUSED(mode);
@@ -316,8 +318,7 @@ BINLINE void* zeroedMemalign(size_t alignment, size_t size, CompactAllocationMod
     return tagged_bmalloc_allocate_zeroed_with_alignment(size, alignment);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
-    void* memory = mi_zalloc_aligned(size, alignment);
+    void* memory = kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::tryZeroedMemalign(alignment, size) : mi_zalloc_aligned(size, alignment);
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -350,7 +351,8 @@ BINLINE void* tryRealloc(void* object, size_t newSize, CompactAllocationMode mod
     return tryReallocOutOfLine(object, newSize);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
+    if (kind == HeapKind::PrimitiveGigacage)
+        return MimallocPrimitiveHeap::tryRealloc(object, newSize);
     return mi_realloc(object, newSize);
 #else
     BUNUSED(mode);
@@ -375,8 +377,7 @@ BINLINE void* realloc(void* object, size_t newSize, CompactAllocationMode mode, 
     return reallocOutOfLine(object, newSize);
 #elif BUSE(MIMALLOC)
     BUNUSED(mode);
-    BUNUSED(kind);
-    void* memory = mi_realloc(object, newSize);
+    void* memory = kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::tryRealloc(object, newSize) : mi_realloc(object, newSize);
     RELEASE_BASSERT(memory);
     return memory;
 #else
@@ -412,6 +413,11 @@ BINLINE void free(void* object, HeapKind kind = HeapKind::Primary)
 }
 
 BEXPORT void freeLargeVirtual(void* object, size_t, HeapKind kind = HeapKind::Primary);
+
+// Whether the address lies in a range that only allocations of this kind come from.
+BEXPORT bool isInDedicatedRange(const void*, HeapKind);
+// How many allocations of this kind got memory elsewhere although the kind has such ranges.
+BEXPORT size_t allocationsOutsideDedicatedRange(HeapKind);
 
 BEXPORT void scavengeThisThread(bool force = true);
 
