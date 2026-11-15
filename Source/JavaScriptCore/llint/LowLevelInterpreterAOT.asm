@@ -5319,6 +5319,38 @@ _llint_aot_array_push_thunk:
 
 .pushHostFunction:
     jmp _llint_native_call_trampoline
+
+macro addInThunk(collectionType, fewestArguments, loadValue, hostFunction)
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bib t0, fewestArguments + 1, hostFunction
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], a0
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], a1
+    move constexpr JSValue::NotCellMask, t5
+    btqnz a0, t5, hostFunction
+    bbneq JSCell::m_type[a0], collectionType, hostFunction
+    btqz a1, t5, .isNumberOrCell
+    move constexpr JSValue::NumberTag, t5
+    btqz a1, t5, hostFunction
+.isNumberOrCell:
+    loadValue(a2)
+    preserveCallerPCAndCFR()
+    cCall3(_llint_aot_collection_add)
+    restoreCallerPCAndCFR()
+    btqz r0, hostFunction
+    ret
+end
+
+global _llint_aot_map_set_thunk
+_llint_aot_map_set_thunk:
+    addInThunk(constexpr JSMapType, 2, macro (value) loadq CalleeFrameAtEntry + FirstArgumentOffset + SlotSize[sp], value end, .mapSetHostFunction)
+.mapSetHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_add_thunk
+_llint_aot_set_add_thunk:
+    addInThunk(constexpr JSSetType, 1, macro (value) move ValueEmpty, value end, .setAddHostFunction)
+.setAddHostFunction:
+    jmp _llint_native_call_trampoline
 end
 
 if not C_LOOP

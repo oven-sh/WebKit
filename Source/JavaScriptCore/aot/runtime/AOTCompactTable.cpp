@@ -272,6 +272,11 @@ void CompactTable::setKey(uint32_t entry, JSValue key)
 
 void CompactTable::setValue(uint32_t entry, JSValue value)
 {
+    setValueInline(entry, value);
+}
+
+void CompactTable::setValueInline(uint32_t entry, JSValue value)
+{
     switch (m_valueWidth) {
     case Width::None:
         return;
@@ -795,8 +800,7 @@ ALWAYS_INLINE bool CompactTable::addNumber(VM& vm, JSValue key, JSValue value)
     if (!found && m_used == m_capacity)
         return false;
     uint32_t entry = found.value_or(m_used);
-    if (m_valueWidth != Width::None)
-        setValue(entry, value);
+    setValueInline(entry, value);
     if (!found) {
         keys[entry] = word;
         addToIndex(entry, hash);
@@ -808,7 +812,7 @@ ALWAYS_INLINE bool CompactTable::addNumber(VM& vm, JSValue key, JSValue value)
     return true;
 }
 
-bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
+ALWAYS_INLINE bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
 {
     ASSERT(key.isNumber());
     if (!isLive() || isInImage() || keyWidth() != Width::Wide || !canHold(vm, m_valueWidth, value))
@@ -930,6 +934,11 @@ ALWAYS_INLINE_INTO_OTHER_FILES void CompactTable::resolveSubstringKey(JSRopeStri
         resolve(base.span16().subspan(offset, length));
 }
 
+static NEVER_INLINE bool tryAddNumber(CompactTable* table, VM& vm, JSValue key, JSValue value)
+{
+    return table->tryAddNumberQuickly(vm, key, value);
+}
+
 bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue key, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -957,7 +966,7 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
     auto tryAddWithoutSearch = [&] {
         if (table->tryAddQuickly(globalObject, key, value))
             return true;
-        if (key.isNumber() && table->tryAddNumberQuickly(vm, key, value))
+        if (key.isNumber() && tryAddNumber(table, vm, key, value))
             return true;
         uint32_t count = table->m_used;
         if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value))
@@ -2266,6 +2275,25 @@ JSValue find(JSGlobalObject* globalObject, JSCell* storage, JSValue key)
     if (!entry)
         return { };
     return table->hasValues() ? table->valueAt(*entry) : table->keyAt(*entry);
+}
+
+static NEVER_INLINE bool tryAddCellToWideKeys(CompactTable* table, VM& vm, JSValue key, JSValue value)
+{
+    return table->tryAddCellToWideKeys(vm, key, value);
+}
+
+extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_add(JSObject* collection, EncodedJSValue encodedKey, EncodedJSValue encodedValue)
+{
+    if (!static_cast<JSOrderedHashTable<MapTraits>*>(collection)->hasCompactStorage())
+        return encodedJSValue();
+    CompactTable* table = CompactTable::tableOf(collection);
+    JSValue key = JSValue::decode(encodedKey);
+    JSValue value = JSValue::decode(encodedValue);
+    JSGlobalObject* globalObject = collection->realm();
+    bool isAdded = key.isNumber() ? table->tryAddNumberQuickly(globalObject->vm(), normalizeMapKey(key), value)
+        : table->answersByCharacters() ? table->tryAddQuickly(globalObject, key, value)
+        : tryAddCellToWideKeys(table, globalObject->vm(), key, value);
+    return isAdded ? JSValue::encode(collection) : encodedJSValue();
 }
 
 void add(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage, JSValue key, JSValue value)

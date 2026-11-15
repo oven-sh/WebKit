@@ -54,6 +54,8 @@ extern "C" {
     void llint_aot_map_delete_thunk();
     void llint_aot_set_delete_thunk();
     void llint_aot_char_at_thunk();
+    void llint_aot_map_set_thunk();
+    void llint_aot_set_add_thunk();
     void llint_aot_from_char_code_thunk();
     void llint_aot_has_own_property_thunk();
     void llint_aot_math_floor_thunk();

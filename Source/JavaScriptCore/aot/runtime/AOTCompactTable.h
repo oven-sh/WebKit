@@ -584,7 +584,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     bool tryAddQuickly(JSGlobalObject*, JSValue key, JSValue);
-    bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
+    ALWAYS_INLINE bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
     bool tryAddCellToWideKeys(VM&, JSValue key, JSValue);
 
 private:
@@ -624,6 +624,7 @@ private:
 
     void setKey(uint32_t entry, JSValue);
     void setValue(uint32_t entry, JSValue);
+    ALWAYS_INLINE void setValueInline(uint32_t entry, JSValue);
     template<typename Matches>
     ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
