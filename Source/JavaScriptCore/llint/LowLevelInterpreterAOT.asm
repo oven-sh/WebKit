@@ -1012,9 +1012,80 @@ aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     subq numberTag, t0
     return(t0)
 
+    # loadTypedArrayVector(), where an index that the array lacks is undefined. What has no number of its own here, a NaN and a resizable one are left.
+.mayBeTypedArray:
+    subi FirstTypedArrayType, t2
+    biaeq t2, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, .otherAccess
+    btbnz JSArrayBufferView::m_mode[t0], (constexpr isResizableOrGrowableSharedMode), .otherAccess
+    sxi2q t3, t3
+    if LARGE_TYPED_ARRAYS
+        bqaeq t3, JSArrayBufferView::m_length[t0], .isNoElement
+    else
+        biaeq t3, JSArrayBufferView::m_length[t0], .isNoElement
+    end
+    loadp JSArrayBufferView::m_vector[t0], t1
+    cagedPrimitive(t1, t0)
+    bia t2, Uint32ArrayType - FirstTypedArrayType, .holdsFloats
+    bia t2, Uint16ArrayType - FirstTypedArrayType, .holdsWords
+    bia t2, Uint8ClampedArrayType - FirstTypedArrayType, .holdsHalfwords
+    bieq t2, Int8ArrayType - FirstTypedArrayType, .holdsSignedBytes
+    loadb [t1, t3], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsSignedBytes:
+    loadbsi [t1, t3], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsHalfwords:
+    bieq t2, Int16ArrayType - FirstTypedArrayType, .holdsSignedHalfwords
+    loadh [t1, t3, 2], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsSignedHalfwords:
+    loadhsi [t1, t3, 2], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsWords:
+    loadi [t1, t3, 4], t0
+    bieq t2, Uint32ArrayType - FirstTypedArrayType, .holdsUnsignedWords
+.isInt32Element:
+    orq numberTag, t0
+    return(t0)
+
+.holdsUnsignedWords:
+    bigteq t0, 0, .isInt32Element
+    cq2ds t0, ft0
+    fd2q ft0, t0
+    subq numberTag, t0
+    return(t0)
+
+.holdsFloats:
+    bineq t2, Float64ArrayType - FirstTypedArrayType, .holdsNoDoubles
+    loadd [t1, t3, 8], ft0
+.isDoubleElement:
+    bdnequn ft0, ft0, .otherAccess
+    fd2q ft0, t0
+    subq numberTag, t0
+    return(t0)
+
+.holdsNoDoubles:
+    bineq t2, Float32ArrayType - FirstTypedArrayType, .otherAccess
+    loadf [t1, t3, 4], ft0
+    cf2d ft0, ft0
+    jmp .isDoubleElement
+
+.isNoElement:
+    move ValueUndefined, t0
+    return(t0)
+
     # A character of a whole string, as a string.
 .holdsNoValues:
-    bbneq JSCell::m_type[t0], StringType, .otherAccess
+    loadb JSCell::m_type[t0], t2
+    bineq t2, StringType, .mayBeTypedArray
     loadp JSString::m_fiber[t0], t1
     btpnz t1, isRopeInPointer, .otherAccess
     biaeq t3, StringImpl::m_length[t1], .otherAccess
@@ -1943,8 +2014,49 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
     storei t5, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t2]
     jmp .hasRoomForInt32
 
+    # A number of the kind that the array holds. The index and the value of what is left are loaded anew.
+.isNoArray:
+    sxi2q t3, t3
+    loadTypedArrayVector(t0, t3, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, macro (scratch) end, t1, .ordinary)
+    loadConstantOrVariable(size, t5, t0)
+    bia t2, Uint32ArrayType - FirstTypedArrayType, .storesFloat
+    bqb t0, numberTag, .ordinary
+    bia t2, Uint8ClampedArrayType - FirstTypedArrayType, .storesMoreThanByte
+    bineq t2, Uint8ClampedArrayType - FirstTypedArrayType, .storesByte
+    bibeq t0, 255, .storesByte
+    bilt t0, 0, .clampsToZero
+    move 255, t0
+    jmp .storesByte
+.clampsToZero:
+    move 0, t0
+.storesByte:
+    storeb t0, [t1, t3]
+    dispatch()
+
+.storesMoreThanByte:
+    bia t2, Uint16ArrayType - FirstTypedArrayType, .storesWord
+    storeh t0, [t1, t3, 2]
+    dispatch()
+
+.storesWord:
+    storei t0, [t1, t3, 4]
+    dispatch()
+
+.storesFloat:
+    btqz t0, numberTag, .ordinary
+    numberToDouble(t0, ft0)
+    bineq t2, Float64ArrayType - FirstTypedArrayType, .storesNoDouble
+    stored ft0, [t1, t3, 8]
+    dispatch()
+
+.storesNoDouble:
+    bineq t2, Float32ArrayType - FirstTypedArrayType, .ordinary
+    cd2f ft0, ft0
+    storef ft0, [t1, t3, 4]
+    dispatch()
+
 .isNotInt32:
-    bineq t2, DoubleShape, .ordinary
+    bineq t2, DoubleShape, .isNoArray
     loadp JSObjectWithButterfly::m_butterfly[t0], t2
     biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t2], .ordinary
     loadConstantOrVariable(size, t5, t1)
