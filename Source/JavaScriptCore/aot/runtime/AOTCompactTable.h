@@ -581,6 +581,10 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    bool tryAddQuickly(JSGlobalObject*, JSValue key, JSValue);
+    bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
+    bool tryAddCellToWideKeys(VM&, JSValue key, JSValue);
+
 private:
     CompactTable(VM& vm, Structure* structure)
         : Base(vm, structure)
@@ -643,8 +647,7 @@ private:
     template<SlotKind> uint32_t fillWithIdentities(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
     void resolveSubstringKey(JSRopeString*) const;
-    bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
-    bool tryAddNumberQuickly(VM&, JSValue key, JSValue value);
+    template<SlotKind> ALWAYS_INLINE bool addNumber(VM&, JSValue normalizedNumber, JSValue);
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
     std::optional<unsigned> hashIfNumberAbsent(JSValue normalizedNumber) const;

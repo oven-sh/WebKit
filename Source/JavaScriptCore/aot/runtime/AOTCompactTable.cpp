@@ -783,17 +783,17 @@ std::optional<unsigned> CompactTable::hashIfNumberAbsent(JSValue key) const
     return found ? std::nullopt : std::optional(hash);
 }
 
-bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
+template<CompactTable::SlotKind kind>
+ALWAYS_INLINE bool CompactTable::addNumber(VM& vm, JSValue key, JSValue value)
 {
-    ASSERT(m_used != m_capacity);
-    if (keyWidth() != Width::Wide || !canHold(vm, m_valueWidth, value))
-        return false;
     EncodedJSValue word = JSValue::encode(key);
     EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
-    unsigned hash = hashOfStoredKey(key);
-    std::optional<uint32_t> found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+    unsigned hash = hashOfKeyBits(word);
+    std::optional<uint32_t> found = probeIndex<kind>(at<uint8_t>(offsetOfIndex()), kind == SlotKind::Tag ? 0 : indexBits(), m_used, hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
         return keys[entry] == word;
     });
+    if (!found && m_used == m_capacity)
+        return false;
     uint32_t entry = found.value_or(m_used);
     if (m_valueWidth != Width::None)
         setValue(entry, value);
@@ -808,9 +808,50 @@ bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
     return true;
 }
 
+bool CompactTable::tryAddNumberQuickly(VM& vm, JSValue key, JSValue value)
+{
+    ASSERT(key.isNumber());
+    if (!isLive() || isInImage() || keyWidth() != Width::Wide || !canHold(vm, m_valueWidth, value))
+        return false;
+    return withSlotKind(slotKind(), [&](auto kind) ALWAYS_INLINE_LAMBDA {
+        return addNumber<kind()>(vm, key, value);
+    });
+}
+
+bool CompactTable::tryAddCellToWideKeys(VM& vm, JSValue key, JSValue value)
+{
+    if (!key.isCell() || key.isHeapBigInt() || !isLive() || isInImage() || keyWidth() != Width::Wide || !canHold(vm, m_valueWidth, value))
+        return false;
+    EncodedJSValue word = JSValue::encode(key);
+    const EncodedJSValue* keys = at<EncodedJSValue>(offsetOfKeys());
+    unsigned hash = hashOfKeyBits(word);
+    const StringImpl* impl = nullptr;
+    if (key.isString()) {
+        impl = asString(key)->tryGetValueImpl();
+        if (!impl)
+            return false;
+        hash = impl->hash();
+    }
+    std::optional<uint32_t> found = findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+        if (keys[entry] == word)
+            return true;
+        JSValue candidate = JSValue::decode(keys[entry]);
+        const StringImpl* other = impl && candidate && candidate.isString() ? asString(candidate)->tryGetValueImpl() : nullptr;
+        return other && (other == impl || (other->existingHash() == hash && equal(*other, *impl)));
+    });
+    if (!found && m_used == m_capacity)
+        return false;
+    if (found) {
+        setValue(*found, value);
+        vm.writeBarrier(this);
+    } else
+        append(vm, key, hash, value);
+    return true;
+}
+
 ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* globalObject, JSValue key, JSValue value)
 {
-    if (!hasNarrowKeys() || m_used == m_capacity || !key.isCell() || !narrowColumnHolds(key) || (m_valueWidth == Width::Narrow && !narrowColumnHolds(value)))
+    if (!hasNarrowKeys() || !key.isCell() || !narrowColumnHolds(key) || (m_valueWidth == Width::Narrow && !narrowColumnHolds(value)))
         return false;
     VM& vm = globalObject->vm();
     uintptr_t base = cageBaseOf(this);
@@ -838,6 +879,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool CompactTable::tryAddQuickly(JSGlobalObject* 
             return keys[entry] == narrowKey;
         });
     }
+    if (!found && m_used == m_capacity)
+        return false;
     uint32_t entry = found.value_or(m_used);
     switch (m_valueWidth) {
     case Width::None:
@@ -914,7 +957,7 @@ bool CompactTable::add(JSGlobalObject* globalObject, JSObject* owner, JSValue ke
     auto tryAddWithoutSearch = [&] {
         if (table->tryAddQuickly(globalObject, key, value))
             return true;
-        if (table->m_used != table->m_capacity && key.isNumber() && table->tryAddNumberQuickly(vm, key, value))
+        if (key.isNumber() && table->tryAddNumberQuickly(vm, key, value))
             return true;
         uint32_t count = table->m_used;
         if (count != table->m_capacity || count != table->m_alive || count >= maxCountWithGrowthPlan || !canHold(vm, table->m_valueWidth, value))
@@ -1391,6 +1434,16 @@ std::optional<uint32_t> CompactTable::findString(JSGlobalObject* globalObject, J
 
     if (Lookup lookup = tryFindQuickly(key); lookup.result != QuickLookup::Unknown)
         return lookup.result == QuickLookup::Found ? std::optional { lookup.entry } : std::nullopt;
+    if (const StringImpl* impl = key->tryGetValueImpl()) {
+        unsigned hash = impl->hash();
+        return findWithHash(hash, [&](uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            JSValue candidate = uncheckedKeyAt(entry);
+            if (candidate == JSValue(key))
+                return true;
+            const StringImpl* other = stringImplOrNull(candidate);
+            return other && (other == impl || (other->existingHash() == hash && equal(*other, *impl)));
+        });
+    }
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     tryResolveLongText(*Instance::of(globalObject), key);
@@ -2196,8 +2249,11 @@ JSValue find(JSGlobalObject* globalObject, JSCell* storage, JSValue key)
 void add(JSGlobalObject* globalObject, JSObject* owner, JSCell* storage, JSValue key, JSValue value)
 {
     VM& vm = globalObject->vm();
+    ASSERT(CompactTable::tableOf(owner) == storage);
+    auto* table = uncheckedDowncast<CompactTable>(storage);
+    if (key.isNumber() ? table->tryAddNumberQuickly(vm, normalizeMapKey(key), value) : table->tryAddQuickly(globalObject, key, value) || table->tryAddCellToWideKeys(vm, key, value))
+        return;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT_UNUSED(storage, CompactTable::tableOf(owner) == storage);
     bool isAdded = CompactTable::add(globalObject, owner, key, value);
     RETURN_IF_EXCEPTION(scope, void());
     RELEASE_ASSERT(isAdded);
