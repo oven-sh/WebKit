@@ -371,6 +371,7 @@ static void checkModuleTables(const JoinedTables& check)
             return step.operand() < numberOfModules;
         case ModuleStartStepData::Operation::ReturnIfLoadingStops:
         case ModuleStartStepData::Operation::AbandonOnThrow:
+        case ModuleStartStepData::Operation::ResumeLoadOnThrow:
             return step.operand() < numberOfModules && !step.hasFlag();
         }
         return false;

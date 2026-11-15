@@ -11,6 +11,7 @@ enum UserDiagnosticKind (severity: DiagnosticSeverity, stage: Stage, code: UInt3
     LockedBuiltinWriteAlwaysRuns(Error, AnalyzeFlow, 100014, "this assignment always throws: built-in objects are read-only in a compiled executable")
     LockedBuiltinWriteMayRun(Warning, AnalyzeFlow, 100014, "this assignment throws if it runs: built-in objects are read-only in a compiled executable")
     LockedBuiltinWriteIsIgnored(Warning, AnalyzeFlow, 100014, "this assignment has no effect: built-in objects are read-only in a compiled executable")
+    InheritedValueIsMadeReadOnly(Warning, AnalyzeFlow, 100014, "this assignment fails if it makes a read-only property of a function that a class already extends: built-in objects are read-only in a compiled executable")
     LockedBuiltinWriteWithUnknownKey(Warning, AnalyzeFlow, 100014, "the compiler can't read the property name here. This assignment throws if the name is an existing member, or one that compiled code relies on being absent: a compiled executable keeps both as they are on built-in objects")
     NonConstantImportPath(Warning, AnalyzeFlow, 100064, "this import path isn't a constant, so it throws at run time if the file isn't in the executable. Add the file as an entry point, or build with --aot-allow-code-from-disk")
     NonConstantModuleName(Warning, AnalyzeFlow, 100064, "this call loads a module whose name isn't a constant, so it throws at run time if the module isn't in the executable. Import the module by name, or build with --aot-allow-code-from-disk")

@@ -1090,6 +1090,7 @@ void VMState::attachImage(VM& vm)
     caches = makeUnique<CacheRegistry>();
     caches->add(CacheKind::WeakByKey, "structures with fast indexing"_s, structuresWithFastIndexing);
     hasCompiledCode = true;
+    mayLockBuiltins = true;
     vm.setMayHaveUncacheableTransitions();
 
     vm.heap.setValidatesCellVisits(Options::verifyGC());

@@ -254,7 +254,7 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
                 break;
             case StubFrameKind::ModuleStart:
                 if (!isTermination && abandonsModuleOnThrow(callFrame)) {
-                    wordOfModuleStartFrame(callFrame, ModuleStartFrame::offsetOfNextStep) = 0;
+                    wordOfModuleStartFrame(callFrame, ModuleStartFrame::offsetOfNextStep) |= ModuleStartFrame::hasThrownBit;
                     finishAtHandler(result, *instance, { callFrame, const_cast<void*>(pc), CompiledHandlerKind::Finally, callFrame }, ModuleStartFrame::size);
                     result.siteOfHandler = place;
                     return result;

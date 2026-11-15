@@ -988,6 +988,10 @@ static ValueID findRelationFalseForHole(Walker& walker, const BodyValue& read, R
             isStep &= isInteger(operation.operand(operand));
         if (!index.hasOneUse(ValueID(between)) || (operation.opcode() != Opcode::Integer && !isStep && !readsSameList(operation)))
             return { };
+        BodyUser userBehind = *index.onlyUser(ValueID(between));
+        bool isUsedBehindBlock = userBehind.kind == BodyUseKind::Operand ? !block.holds(userBehind.value) : userBehind.block != block.id();
+        if (isUsedBehindBlock && walker.isLiveAtHeadOf(ValueID(between), end.targets()[1].block()))
+            return { };
     }
     BodyValue relation = index.value(user);
     ValueID other = relation.operand(0) == read.id() ? relation.operand(1) : relation.operand(0);
@@ -6606,7 +6610,7 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         bool onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase)) || classified.typedArrayType == NotTypedArray || classOfViewBesideInstancesBelowIt(walker, typeOfBase);
         bool isFoundAboveByNote = onlyClass && !isOnlyAskedAbout && base && base.isValue() && walker.program().nameClassOf(value.key()) == NameClass::Length && findKnown(walker, KnownNote::LengthOfViewIsFoundAbove, base);
         bool isSeenToFindGetter = onlyClass && !isOnlyAskedAbout && (findConstantMemberReadOff(walker, base, value.key()) || isFoundAboveByNote);
-        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value);
+        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value, typeOfBase);
         if (!isSeenToFindGetter && !isSaidByLinkToFindGetter)
             return false;
         if (isOnlyAskedAbout)

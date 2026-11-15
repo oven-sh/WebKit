@@ -133,6 +133,7 @@ struct LinkContext {
     macro(JSObject*, exportsWhileRequired) \
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
+    macro(JSObject*, namespaceOfBoundCapture) \
     macro(JSCellButterfly*, capturedFields) \
     macro(JSCellButterfly*, capturedStars) \
     macro(JSObject*, sourceOfCapturedFields) \
@@ -224,6 +225,7 @@ public:
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
     bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
     bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
+    bool tryReplaceBoundExport(ModuleID, UniquedStringImpl* name, JSValue);
     bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
@@ -1582,6 +1584,7 @@ public:
     }
     void admitCodeNamedBy(JSValue specifier);
     void abandonEvaluation(ModuleID, JSValue error);
+    void resumeLoadAfterThrow(ModuleID root, ModuleStartStepData failedStep, Exception*);
     template<typename Visitor> void visitRoots(Visitor&);
 
     bool loadRuntimeModules(ModuleID root);
@@ -1758,7 +1761,13 @@ public:
 
     enum class RequiredBy : uint8_t { Referrer, Program };
     JSValue require(ModuleID, ModuleID referrer = { }, RequiredBy = RequiredBy::Referrer, JSObject* staleRequirerObject = nullptr, ReadsExports = ReadsExports::Yes);
+    bool wasRequired(ModuleID form) const
+    {
+        const LoadedModule* loaded = loadedIfExists(form);
+        return loaded && (loaded->requiredValue || loaded->wasRequiredByHost);
+    }
     ModuleID formThatRequireFinds(ModuleID, bool& answersNamespace);
+    ModuleID textRequiredInPlaceOf(ModuleID);
     bool wasImportedByStatement(ModuleID) const;
     bool hasEvaluationPassedImport(ModuleID importer, ModuleID target) const;
     void didMockEvictDataModule(ModuleID);
@@ -2033,6 +2042,7 @@ private:
         std::optional<uint32_t> synchronousLoadCountAtStart;
         bool beganInsideSynchronousLoad { false };
         uint32_t throwAfterFetchLoad { 0 };
+        bool failedInSynchronousLoad { false };
     };
 
     struct WaysToModule {
@@ -2111,6 +2121,7 @@ private:
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);
     void bindLatestCapture(ModuleID);
+    void forgetEarlierCapture(LoadedModule&);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfLibraryModules(ModuleID root);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
@@ -3345,6 +3356,7 @@ private:
     mutable std::optional<UncheckedKeyHashMap<uint32_t, Vector<ModuleID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_modulesWithSyntheticExport;
     std::optional<ModuleID> m_moduleWithDeferredJobs;
     std::optional<ModuleID> m_rootWhoseFilesRun;
+    std::optional<ModuleID> m_moduleStartedByRuntime;
     struct DeferredRequest {
         ModuleID file;
         Strong<JSCell> context;

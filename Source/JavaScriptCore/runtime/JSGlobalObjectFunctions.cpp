@@ -25,6 +25,7 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
+#include "AOTRuntimeHooks.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -1057,6 +1058,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return JSValue::encode(cloned);
     }
+
+#if ENABLE(AOT)
+    if (vm.hasCompiledCode() && sourceStructure->isCompiledStructure()) {
+        if (JSObject* copy = AOT::RuntimeHooks::tryCopyObject(globalObject, source))
+            return JSValue::encode(copy);
+    }
+#endif
 
     JSObject* target = constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });

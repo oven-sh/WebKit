@@ -443,7 +443,7 @@ static void testReachability()
 static void testStartOfModule()
 {
     StubCatalog catalog(StubOptions { });
-    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTThrow }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTResumeLoadAfterThrow, Entry::operationAOTThrow }));
     AOT_TEST_CHECK(std::ranges::count(catalog.recordingOf(startModule()).returnLabels, StubFrameKind::ModuleStart) == 1);
     AOT_TEST_CHECK(refersToBody(catalog, startModule(), bodyOf(handleException(false))));
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, startModule()));

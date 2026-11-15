@@ -26,6 +26,7 @@
 #include "AOTStaticFields.h"
 #include "DeferTermination.h"
 #include "ExceptionHelpers.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumericStrings.h"
 #include "ProxyObject.h"

@@ -1705,6 +1705,7 @@ public:
     Reference buildWithInlineLookup(Draft&&);
     bool canThreadBranchAfter(const BodyValue& operation);
     bool canFollowNotTakenEdge(const BodyTerminator&);
+    bool letArmsLeadEdgesOf(BlockID inputBlock);
     void followNotTakenEdge(const BodyTerminator&);
     bool canThreadBranchAfterMatch(const BodyValue& operation);
     bool blockEndKeepsStringBuilders(uint32_t begin);
@@ -2350,6 +2351,7 @@ public:
     bool hasStringsInBuilders() const { return !m_stringsInBuilders.isEmpty(); }
     bool exitsLoopBeingVersioned(BlockID to) const { return exitsLoopBeingVersioned(m_frames.size() - 1, to); }
     bool canRestartIteration() const;
+    bool restartsAtUnknownCode() const { return canRestartIteration() && isUncaughtIterationEffectFree() && !looksAtLoopsAroundHaveSeen(Effects::unknownCode()); }
     bool isInCopyOfAccessor() const;
     bool isIterationQuiet() const;
     bool buildGrowthOfList(Draft&& growth);
@@ -5558,7 +5560,7 @@ bool buildOwnPropertyTest(Walker&, const BodyValue& question, Reference object, 
 bool dispatchOwnPropertyTest(Walker&, const BodyValue& question, Reference object, Reference key);
 BuiltinID findMemberAboveHeirsOfBuiltinClass(const Walker&, BuiltinClassID, PropertyKeyID);
 TypedForm buildReadOfMemberAboveHeirOfBuiltinClass(Walker&, const BodyValue& read, TypeID typeOfObject, Reference object, BuiltinID location);
-bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access);
+bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access, TypeID named);
 bool someThreadMayGrowSharedMemory(const Walker&);
 bool isViewOverUnsharedMemory(const Walker&, Reference view);
 bool viewMayFollowSharedMemoryThatGrows(const Walker&, Reference view);
@@ -5824,6 +5826,8 @@ void storePendingElements(Walker&);
 bool isArithmeticReadInReadArm(Walker&, const BodyValue& read);
 inline constexpr OpcodeSet opcodesThatTryReadAtSiteTakes { Opcode::PropGet, Opcode::ElemGet, Opcode::PropHas };
 AOT_LINK_OF_WALK(tryReadAtSite, opcodesThatTryReadAtSiteTakes)
+inline constexpr OpcodeSet opcodesThatLookUpVaryingKeyTakes { Opcode::ElemGet };
+AOT_LINK_OF_WALK(lookUpVaryingKey, opcodesThatLookUpVaryingKeyTakes)
 bool shouldOpenGuess(const Walker&, Reference value, TypeID expected, bool isDeclaredInSource, uint32_t numberOfTypedOperations);
 void openGuess(Walker&, Reference value, TypeID expected, BlockID inputBlock, uint32_t begin, uint32_t end, TypeID expectedNext = { });
 uint32_t limitOfStretchOfArms(Walker&, const BodyBlock&);

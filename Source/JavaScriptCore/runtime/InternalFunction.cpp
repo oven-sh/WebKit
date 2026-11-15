@@ -40,7 +40,7 @@ const ClassInfo InternalFunction::s_info = { "Function"_s, &Base::s_info, nullpt
 
 #if ENABLE(AOT)
 // Function.prototype is an InternalFunction too and has these names as own properties. Its own lock decides what happens to them.
-static bool rejectsNewProperty(VM& vm, InternalFunction* function, PropertyName propertyName)
+static NEVER_INLINE bool rejectsNewProperty(VM& vm, InternalFunction* function, PropertyName propertyName)
 {
     return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->globalObject(), propertyName) && !isValidOffset(function->structure()->get(vm, propertyName));
 }
@@ -49,7 +49,7 @@ bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
 {
     VM& vm = globalObject->vm();
     InternalFunction* function = uncheckedDowncast<InternalFunction>(cell);
-    if (slot.thisValue() == JSValue(function) && rejectsNewProperty(vm, function, propertyName)) [[unlikely]] {
+    if (vm.mayLockBuiltins() && slot.thisValue() == JSValue(function) && rejectsNewProperty(vm, function, propertyName)) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         // Function.prototype[Symbol.hasInstance] is read-only, so the specification already rejects that store, silently in sloppy mode.
         bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
@@ -61,22 +61,24 @@ bool InternalFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyN
 bool InternalFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
     VM& vm = globalObject->vm();
-    if (rejectsNewProperty(vm, uncheckedDowncast<InternalFunction>(object), propertyName)) [[unlikely]] {
+    if (vm.mayLockBuiltins() && rejectsNewProperty(vm, uncheckedDowncast<InternalFunction>(object), propertyName)) [[unlikely]] {
         if (AOT::RuntimeHooks::acceptsHasInstanceOfHost(uncheckedDowncast<InternalFunction>(object), propertyName, descriptor.value())) {
             AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
             object->putDirect(vm, propertyName, descriptor.value(), PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
             return true;
         }
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        if (!AOT::RuntimeHooks::definesInheritedValue(object, propertyName, descriptor) || !AOT::RuntimeHooks::closeNamesOfFunction(vm, object, propertyName)) {
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+        }
     }
     return Base::defineOwnProperty(object, globalObject, propertyName, descriptor, shouldThrow);
 }
 
 bool InternalFunction::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
-    if (object->getPrototypeDirect() != prototype && AOT::RuntimeHooks::locksNativeConstructorPrototypes(uncheckedDowncast<InternalFunction>(object)->globalObject())) [[unlikely]] {
-        VM& vm = globalObject->vm();
+    VM& vm = globalObject->vm();
+    if (vm.mayLockBuiltins() && object->getPrototypeDirect() != prototype && AOT::RuntimeHooks::locksNativeConstructorPrototypes(uncheckedDowncast<InternalFunction>(object)->globalObject())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         return typeError(globalObject, scope, shouldThrowIfCantSet, AOT::RuntimeHooks::lockedBuiltinPrototypeErrorMessage());
     }
@@ -101,7 +103,7 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
 
 #if ENABLE(AOT)
     // Not Function.prototype, which uses the ordinary object's put.
-    if (structure->classInfoForCells()->methodTable.put == InternalFunction::put && AOT::RuntimeHooks::locksNativeConstructorPrototypes(structure->realm())) [[unlikely]]
+    if (vm.mayLockBuiltins() && structure->classInfoForCells()->methodTable.put == InternalFunction::put && AOT::RuntimeHooks::locksNativeConstructorPrototypes(structure->realm())) [[unlikely]]
         structure->setOverridesPut();
 #endif
 }

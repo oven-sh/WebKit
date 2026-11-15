@@ -1,0 +1,22 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include "JSExportMacros.h"
+#include <wtf/text/ASCIILiteral.h>
+
+namespace JSC { namespace AOT {
+
+JS_EXPORT_PRIVATE bool recordsOrder();
+JS_EXPORT_PRIVATE ASCIILiteral startOrderRecording(const char* path);
+JS_EXPORT_PRIVATE void finishOrderRecording();
+JS_EXPORT_PRIVATE bool isRecordingOrder();
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

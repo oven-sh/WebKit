@@ -617,9 +617,19 @@ String deletionOfFoldedMemberMessage(const String& property, LockedIn lockedIn)
     return deletionFromLockedBuiltinMessage(property);
 }
 
+static String nameOfBuiltinFunction(UniquedStringImpl* uid)
+{
+    return makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s);
+}
+
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
 {
-    return assignmentToLockedBuiltinMessage(makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s));
+    return assignmentToLockedBuiltinMessage(nameOfBuiltinFunction(uid));
+}
+
+String deletionOfInheritedNameMessage(UniquedStringImpl* uid)
+{
+    return deletionFromLockedBuiltinMessage(nameOfBuiltinFunction(uid));
 }
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lockedIn)

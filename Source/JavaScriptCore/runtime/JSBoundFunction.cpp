@@ -343,9 +343,11 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     String terminal;
     while (true) {
 #if ENABLE(AOT)
-        if (isSlimClosureType(cursor->type())) {
-            terminal = AOT::CompiledCallee::name(cursor);
-            break;
+        if (vm.hasCompiledCode()) [[unlikely]] {
+            if (String declaredName = AOT::closureDeclaredName(cursor); !declaredName.isNull()) {
+                terminal = declaredName;
+                break;
+            }
         }
 #endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.

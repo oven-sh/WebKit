@@ -1305,6 +1305,17 @@ void generateGetByValRunningNoCode(StubAssembler& jit)
     jit.jump().linkTo(read.readFieldByPlace, &jit);
 
     isNotField.link(&jit);
+    Jump isNotExtraProperty = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::ExtraProperty);
+    rememberExtraPropertyOfKey(jit, registers, read.slot);
+    readExtraPropertyAndReturn(jit, slotOf(Slot::Kind::ExtraProperty), { .object = base, .extraProperties = registers.uid, .wordIndex = registers.structureID, .scratch = registers.entry }, base, asksOperation);
+
+    isNotExtraProperty.link(&jit);
+    Jump isNotAbsent = branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::Absent);
+    rememberAbsenceOfKey(jit, key, read.slot.header, registers.entry, registers.structureID);
+    jit.move(TrustedImm64(JSValue::ValueUndefined), base);
+    jit.returnToCaller();
+
+    isNotAbsent.link(&jit);
     asksOperation.append(branchIfKeyedSlotKindDiffers(jit, registers, Slot::Kind::InheritedField));
     slotOf(Slot::Kind::InheritedField).loadHolder(jit, base);
     jit.jump().linkTo(hasHolder, &jit);

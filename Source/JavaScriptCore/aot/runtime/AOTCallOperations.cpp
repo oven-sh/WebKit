@@ -27,6 +27,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTStubsCallAdapters.h"
@@ -284,13 +285,24 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     return true;
 }
 
+static bool isNativeConstructor(JSValue parent)
+{
+    JSObject* object = parent.getObject();
+    if (!object)
+        return false;
+    if (object->type() == InternalFunctionType)
+        return true;
+    return object->type() == JSFunctionType && uncheckedDowncast<JSFunction>(object)->isHostFunction() && !object->inherits<JSBoundFunction>();
+}
+
 class SuperCallScope {
     WTF_MAKE_NONCOPYABLE(SuperCallScope);
 public:
     SuperCallScope(VM& vm, JSValue parent, JSValue newTarget)
         : m_state(vm.aotState())
     {
-        if (!parent.isCell() || !newTarget.isCell())
+        m_state.newTargetOfSuperCall = nullptr;
+        if (!isNativeConstructor(parent) || !newTarget.isCell())
             return;
         m_state.parentOfSuperCall = parent.asCell();
         m_state.newTargetOfSuperCall = newTarget.asCell();

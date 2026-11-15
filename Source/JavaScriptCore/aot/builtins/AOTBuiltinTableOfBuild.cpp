@@ -158,6 +158,7 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
             m_lockedMembers.append(member);
     }
     for (BuiltinID member : m_unlockedMembers) {
+        m_isUnlocked.set(member.index());
         m_builtins[member.index()].mutability = BuiltinMutability::ConstantUnlessWritten;
         lockByNames(m_builtins[member.index()].holder);
     }

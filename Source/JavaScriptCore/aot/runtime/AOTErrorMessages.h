@@ -90,6 +90,7 @@ String deletionFromLockedBuiltinMessage(VM&, BuiltinID holder, UniquedStringImpl
 String assignmentToFoldedMemberMessage(const String& property, LockedIn);
 String deletionOfFoldedMemberMessage(const String& property, LockedIn);
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl*);
+String deletionOfInheritedNameMessage(UniquedStringImpl*);
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn = LockedIn::Executable);
 String makeSpyOnExportErrorMessage(UniquedStringImpl* name, const String& path, LockedIn, const String& uncompiledCaller);
 String makeMockModuleErrorMessage(const String& path, LockedIn, const String& uncompiledCaller);

@@ -227,7 +227,7 @@ static void recordOrderAfterRemoval(Instance& instance, Object& object, UniquedS
     if (object.structureID() != structureBefore || orderWordBefore & orderWordIntegrityBits || object.orderWord() == orderWordBefore || object.compiledStructure().hasOutOfLineKeyOrder())
         return;
     const FieldData* field = object.fieldNamed(object.state(), uid);
-    if (!field || field->isOutOfLine() || field->isPrivate() || !absentPatternOf(field->slot.representation()) || field->slot.offset > UINT16_MAX)
+    if (!field || field->isOutOfLine() || field->isPrivate() || field->attributes() & PropertyAttribute::DontDelete || !absentPatternOf(field->slot.representation()) || field->slot.offset > UINT16_MAX)
         return;
     uint64_t key = removalRunKey(static_cast<uint16_t>(field->slot.offset));
     instance.objects.keyOrderRuns[indexOfKeyOrderRun(wordsBefore, key)] = { wordsBefore, key, object.orderWord(), 0 };

@@ -292,6 +292,41 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewMapFromEntries, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, constructed.asCell());
 }
 
+static bool isCalledByInterpreter(VM& vm, CallFrame* constructor)
+{
+    return constructor->callerFrameOrEntryFrame() != vm.topEntryFrame;
+}
+
+JSObject* RuntimeHooks::tryMakeSetOfIterable(JSGlobalObject* globalObject, CallFrame* constructor, Structure* structure, JSValue iterable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (structure != globalObject->setStructure() || !Instance::of(globalObject) || !isCalledByInterpreter(vm, constructor))
+        return nullptr;
+    JSCell* set = tryNewSetFromIterable(globalObject, structure, iterable);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!set && isIteratorOfTable(iterable)) {
+        set = tryNewSetFromIterator(globalObject, structure, iterable);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return set ? uncheckedDowncast<JSSet>(set) : nullptr;
+}
+
+JSObject* RuntimeHooks::tryMakeMapOfIterable(JSGlobalObject* globalObject, CallFrame* constructor, Structure* structure, JSValue iterable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (structure != globalObject->mapStructure() || !Instance::of(globalObject) || !isCalledByInterpreter(vm, constructor))
+        return nullptr;
+    JSCell* map = tryNewMapFromPairs(globalObject, structure, iterable);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!map && isIteratorOfTable(iterable)) {
+        map = tryNewMapFromIterator(globalObject, structure, iterable);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return map ? uncheckedDowncast<JSMap>(map) : nullptr;
+}
+
 static ALWAYS_INLINE UGPRPair hasEntryAndIndex(bool hasEntry, uint32_t entry)
 {
     return makeUGPRPair(hasEntry, entry);

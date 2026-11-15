@@ -20,6 +20,7 @@
 #include "AOTRegExpRequests.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
+#include "AOTStartOrder.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -225,8 +226,9 @@ static BitVector collectNumberedStringConstants(const Typed::Program& program, c
     return constants;
 }
 
-static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const Typed::Program& program, const GatheredMentions& mentions, std::span<const NameCandidate> names)
+static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const NumberingInputs& inputs, const GatheredMentions& mentions, std::span<const NameCandidate> names, std::span<const uint32_t> startRanks)
 {
+    const Typed::Program& program = inputs.program;
     Vector<FunctionByModule> firstFunctions(FillWith { }, program.strings.size(), FunctionByModule { });
     auto lowerTo = [&](StringID text, FunctionByModule function) {
         if (text)
@@ -242,7 +244,12 @@ static Vector<FunctionByModule> findFirstFunctionsNamingTexts(const Typed::Progr
             lowerTo(name.identifier.text, mentions.firstFunctionMentioning(NumberSpace::KeyCell, name.identifier.key.index()));
     }
     for (size_t index = 0; index < program.functions.size(); ++index)
-        lowerTo(program.functions[index].name, FunctionByModule::forFunction(program, FunctionID(index)));
+        lowerTo(program.functions[index].name, FunctionByModule::forFunction(program, FunctionID(index), startRanks));
+    if (!startRanks.empty()) {
+        forEachTextOfListedData(inputs, startRanks, scopedLambda<void(StringID, FunctionID)>([&](StringID text, FunctionID function) {
+            lowerTo(text, FunctionByModule::forFunction(program, function, startRanks));
+        }));
+    }
     return firstFunctions;
 }
 
@@ -359,7 +366,7 @@ void ImageNumbersBuilder::collectNamesAndStringsWithText()
                 numbers.m_otherStringsWithText.quickClear(id.index());
         },
         [&] {
-            toNumber->firstFunctionsNamingTexts = findFirstFunctionsNamingTexts(program, mentions, names);
+            toNumber->firstFunctionsNamingTexts = findFirstFunctionsNamingTexts(inputs, mentions, names, context.startRanks());
         },
     });
     numbers.m_namesAndStringsToNumber = WTF::move(toNumber);
@@ -434,7 +441,8 @@ void ImageNumbersBuilder::numberIdentifiersAndStrings()
         },
         [&] {
             constants.m_strings = sortStringsByFirstFunction(context.parallelLoops(), toNumber->numberedConstants, [&](size_t string) {
-                return mentions.firstFunctionMentioning(NumberSpace::StringCell, static_cast<uint32_t>(string));
+                FunctionByModule first = mentions.firstFunctionMentioning(NumberSpace::StringCell, static_cast<uint32_t>(string));
+                return context.startRanks().empty() ? first : std::min(first, firstFunctionNamingText(string));
             });
             if (fitsConstantSlots()) {
                 auto others = std::ranges::stable_partition(constants.m_strings, [&](StringID string) {

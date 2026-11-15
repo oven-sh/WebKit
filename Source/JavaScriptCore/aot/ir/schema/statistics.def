@@ -23,7 +23,7 @@ enum StatisticID (stage: StatisticStage) {
     StoresKeepingPrototypes
     ListedValuesStoredByName
     AccessesUnderPassedNames
-    RewrittenMethodsSpeculated
+    RewrittenMethodsSpeculated MethodsExpectedByDescriptors TreeNodesExpected GettersCalledByClass
     InnerMethodsSpeculated
     CallbackResultsConverted
     InstancesCopiedByLoops
@@ -82,7 +82,7 @@ enum StatisticID (stage: StatisticStage) {
     CallsEvaluated
     RowStoresMaybeAppending
     ContentsCheckedByGuards
-    InvariantKeyBoundsChecks
+    InvariantKeyBoundsChecks VaryingKeyLookups
     ComparedSumsStayBoxed PushedSumsStayBoxed SumsSpecializedAsNumbers
     SiteCachedReadsHoisted SiteCachedReadsBesideCalls GettersExpectedInLoops SettersExpectedInLoops MethodsExpectedUnderKeys ArgumentSpeculationsPassedToInlinees PartialInlinesAfterDominatingTests PredicatesTestedAtCalls ComparatorsInlinedForNumbers InlineeGuardsHoistedPastStores InlineeSpeculationsHoistedPastStores CapturedVariableReadsHoisted InvariantKeyReadsHoisted KeyedAddressesHoisted InvariantStringSwitchesHoisted KeyedRowLookupsHoisted KeyedRowLookupsRevalidated StaticFieldGuardsHoisted StaticFieldGuardsReused InvariantBasesGuardedAsArrays
     UnsupportedElementAccessesDemoted
@@ -291,6 +291,7 @@ enum RuntimeCounterID {
     FieldMovePlansCreated AssignmentPlansCreated PropertyListsCreated CopiesCollectedByName CopiesByOrdinaryLookups CopiesNotRepeated SlowPropertyAdditionsReplayed AbsenceFiltersFilled AccessorDefinitionsReplayed AccessorsShared
     CompiledStructuresCreated InstanceTemplatesCached DynamicSubclassInstances StructuresPassingStores CreateThisSlowPaths
     StarsRecorded StarsCarriedOutLate
+    InheritedValuesDefined
     FieldsDescribed
     CompiledModulesWalkedByLoader FilesComparedWithDisk
     ConstructPrototypeLookups SiteCacheRefills SiteCacheEntriesAllocated SiteCacheRoutingEntriesStored SiteCacheProxyEntriesStored SitesWithoutFurtherAnswers StructuresInheritingBuiltinMethods BuiltinSubclassStructuresAccepted BuiltinSubclassStructuresRejected BuiltinSubclassStructuresExamined

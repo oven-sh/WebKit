@@ -2766,7 +2766,21 @@ static TypeID hierarchyWithNamesUsedFirst(Walker& walker, ValueID input, LayoutI
     return withoutLayoutsThatStayWithCompiledCodeForGuesses(walker, input, input, walker.types().forLayouts(found), [] { return TypeID(); });
 }
 
+static std::optional<TypeID> nodesOfTreeWalker(Walker&, ValueID input, TypeID expected);
+
+static DetailedExpectation expectationOfClassesByNames(Walker&, ValueID input, PropertyKeyID firstUsed);
+
 static DetailedExpectation expectationByNamesUsedForGuesses(Walker& walker, ValueID input, PropertyKeyID firstUsed)
+{
+    DetailedExpectation found = expectationOfClassesByNames(walker, input, firstUsed);
+    if (std::optional<TypeID> nodes = found.type ? nodesOfTreeWalker(walker, input, found.type) : std::nullopt) {
+        walker.count(StatisticID::TreeNodesExpected);
+        return *nodes ? DetailedExpectation { *nodes, false, false, true } : DetailedExpectation();
+    }
+    return found;
+}
+
+static DetailedExpectation expectationOfClassesByNames(Walker& walker, ValueID input, PropertyKeyID firstUsed)
 {
     const LayoutsByNames& layouts = walker.facts().layoutsByNames();
     bool isInLoop = walker.isInLoop() || walker.facts().linked().functionsCalledByComparators.get(walker.unit().function.index());
@@ -4822,6 +4836,126 @@ static bool holdsInstancesAlone(Walker& walker, TypeID type)
     });
 }
 
+static BlockID successorOfDiscriminant(const BodyIndex& index, const BodyValue& access)
+{
+    if (access.opcode() != Opcode::PropGet)
+        return { };
+    std::optional<BodyUser> user = index.firstUser(access.id());
+    if (!user || user->kind != BodyUseKind::Operand || (index.opcodeOf(user->value) != Opcode::StrictEq && index.opcodeOf(user->value) != Opcode::Eq))
+        return { };
+    std::optional<BodyUser> asker = index.onlyUser(user->value);
+    if (asker && asker->kind == BodyUseKind::Operand && index.opcodeOf(asker->value) == Opcode::ToBoolean)
+        asker = index.onlyUser(asker->value);
+    if (!asker || asker->kind != BodyUseKind::TerminatorOperand || !index.terminator(asker->block).isConditionalBranch())
+        return { };
+    BlockID holds = index.terminator(asker->block).taken().block();
+    return index.numberOfIncomingEdges(holds) == 1 ? holds : BlockID();
+}
+
+static bool isReadOffRoot(const BodyIndex& index, BodySpeculationCache& kept, ValueID value, uint32_t root)
+{
+    static constexpr unsigned longestChain = 4;
+    for (unsigned steps = 0; steps < longestChain; ++steps) {
+        value = index.stripCasts(value);
+        if (!value)
+            return false;
+        if (kept.rootOf(value.index()) == root)
+            return steps;
+        if (index.isParameter(value) || (index.opcodeOf(value) != Opcode::PropGet && index.opcodeOf(value) != Opcode::ElemGet))
+            return false;
+        value = index.value(value).objectOperand();
+    }
+    return false;
+}
+
+static std::optional<TypeID> nodesOfTreeWalker(Walker& walker, ValueID input, TypeID expected)
+{
+    static constexpr size_t maxClasses = 64;
+    const BodyIndex& index = walker.currentBodyIndex();
+    const Program& program = walker.program();
+    TypeArena& types = walker.types();
+    FunctionID function = walker.currentFunction();
+    if (!index.isParameter(input) || types.isUninformative(expected))
+        return std::nullopt;
+    std::span<const LinkedCall> calls = walker.facts().linked().callsOf(function);
+    if (!std::ranges::contains(calls, function, &LinkedCall::callee))
+        return std::nullopt;
+    if (!index.isInBlock(input, entryBlock) || program.at(function).has(FunctionFlags::IsChecked) || !holdsInstancesAlone(walker, expected))
+        return std::nullopt;
+    BodySpeculationCache& kept = usesOfValues(walker, index);
+    if (kept.rootsOfValuesWithMarks.isEmpty())
+        return std::nullopt;
+    uint32_t root = kept.rootOf(input.index());
+    std::span<const uint64_t> accesses = namedAccessesOfRoot(index, kept, root);
+    BlockID leaf;
+    for (uint64_t listed : accesses) {
+        BlockID successor = successorOfDiscriminant(index, index.value(ValueID(static_cast<uint32_t>(listed))));
+        if (successor && (!leaf || index.dominates(successor, leaf)))
+            leaf = successor;
+    }
+    if (!leaf)
+        return std::nullopt;
+    Vector<PropertyKeyID, 16> everywhere;
+    Vector<PropertyKeyID, 16> ofLeaf;
+    for (uint64_t listed : accesses) {
+        BodyValue access = index.value(ValueID(static_cast<uint32_t>(listed)));
+        (index.dominates(leaf, index.blockOf(access.id())) ? ofLeaf : everywhere).appendIfNotContains(access.key());
+    }
+    ofLeaf.removeAllMatching([&](PropertyKeyID name) { return everywhere.contains(name); });
+    if (ofLeaf.isEmpty() || everywhere.isEmpty())
+        return std::nullopt;
+    const bool walksChildren = std::ranges::any_of(calls, [&](const LinkedCall& linked) {
+        if (linked.callee != function || index.dominates(leaf, index.blockOf(linked.site)))
+            return false;
+        BodyValue call = index.value(linked.site);
+        if (call.opcode() != Opcode::CallDirect && call.opcode() != Opcode::Call)
+            return false;
+        std::span<const ValueID> passed = call.opcode() == Opcode::CallDirect ? call.as<Opcode::CallDirect>().argumentsOperands() : call.as<Opcode::Call>().argumentsOperands();
+        return std::ranges::any_of(passed, [&](ValueID argument) { return isReadOffRoot(index, kept, argument, root); });
+    });
+    if (!walksChildren)
+        return std::nullopt;
+    const LayoutsByNames& byNames = walker.facts().layoutsByNames();
+    auto topmostClassOf = [&](LayoutID layout) {
+        LayoutID topmost = declaredLayoutOf(program, layout);
+        while (LayoutID above = topmost ? program.at(topmost).base : LayoutID())
+            topmost = above;
+        return topmost;
+    };
+    LayoutID topmost;
+    bool isOneHierarchy = true;
+    Vector<LayoutID, 8> leaves;
+    for (LayoutID layout : membersOf(types, types.at(types.withOnlyObjects(expected)))) {
+        leaves.append(layout);
+        LayoutID above = topmostClassOf(layout);
+        isOneHierarchy &= above && (!topmost || topmost == above);
+        topmost = above;
+    }
+    everywhere.removeAllMatching([&](PropertyKeyID name) {
+        return liesInThread(name) || !std::ranges::all_of(leaves, [&](LayoutID layout) { return byNames.hasAll(layout, singleElementSpan(name)); });
+    });
+    if (everywhere.isEmpty())
+        return std::nullopt;
+    std::ranges::sort(everywhere, { }, &PropertyKeyID::index);
+    Vector<LayoutID, 16> nodes;
+    bool hasInnerNodes = false;
+    for (uint32_t holder : byNames.holdersOfRarestOf(everywhere.span())) {
+        LayoutID layout(holder);
+        if (!byNames.isInstance(layout) || !byNames.isInUse(layout) || !byNames.hasAll(layout, everywhere.span()))
+            continue;
+        const bool isLeaf = types.overlap(expected, types.forLayout(layout));
+        const bool isInHierarchy = isOneHierarchy && topmostClassOf(layout) == topmost;
+        hasInnerNodes |= !isLeaf;
+        if (isInHierarchy && nodes.size() <= maxClasses)
+            nodes.append(layout);
+    }
+    if (!hasInnerNodes)
+        return std::nullopt;
+    if (nodes.size() <= leaves.size() || nodes.size() > maxClasses)
+        return TypeID();
+    return withoutLayoutsThatStayWithCompiledCodeForGuesses(walker, input, input, types.forLayouts(nodes.span()), [] { return TypeID(); });
+}
+
 static void removeNamesUsedOnSomePathsAlone(Walker& walker, ValueID input, Vector<PropertyKeyID, 16>& names)
 {
     const BodyIndex& index = walker.currentBodyIndex();
@@ -5091,6 +5225,10 @@ static DetailedExpectation findExpectationAnewForGuesses(Walker& walker, ValueID
             if (types.isUninformative(expectation.type)) {
                 if (TypeID own = findMethodClassByNames(walker, input))
                     expectation = { own, false, false, true };
+            }
+            if (std::optional<TypeID> nodes = isHanded || !expectation.type ? std::nullopt : nodesOfTreeWalker(walker, input, expectation.type)) {
+                walker.count(StatisticID::TreeNodesExpected);
+                expectation = *nodes ? DetailedExpectation { *nodes, false, false, true } : DetailedExpectation();
             }
         } else if (ValueID tested = index.valueNarrowedInto(input))
             behind = tested;
@@ -13241,6 +13379,123 @@ static bool receiverHasFieldForGuesses(Walker& walker, const BodyValue& access)
     return appended && walker.plan().slot(layout, *appended).holdsAccessor;
 }
 
+static FunctionID findGetterOfClass(Walker& walker, LayoutID layout, PropertyKeyID key)
+{
+    const Program& program = walker.program();
+    for (LayoutID current = declaredLayoutOf(program, layout); current; current = program.at(current).base) {
+        std::span<const ClassMember> members = walker.facts().membersOf(current);
+        for (uint32_t place : walker.facts().placesOfMembersUnder(current, ClassSide::Prototype, key)) {
+            if (members[place].kind == MethodKind::Getter)
+                return members[place].function;
+        }
+    }
+    return { };
+}
+
+static bool callGetterByClass(Walker& walker, const BodyValue& read, bool isGuessed = false)
+{
+    static constexpr size_t maxGetters = 3;
+    const Program& program = walker.program();
+    PropertyKeyID key = read.key();
+    if (!key || liesInThread(key))
+        return false;
+    Reference object = walker.referenceOf(read.objectOperand());
+    if (!object || !object.isValue())
+        return false;
+    TypeArena& types = walker.types();
+    TypeID classes = walker.typeOf(object);
+    if (isGuessed) {
+        classes = classes && types.isUninformative(classes) ? expectationOfOperandForGuesses(walker, read, read.objectOperand()).type : TypeID();
+        classes = classes && !isNeverType(classes) ? types.withOnlyObjects(classes) : TypeID();
+    }
+    if (!classes || !types.at(classes).isJavaScriptValue() || types.at(classes).primitives || !types.at(classes).hasOnlyLayouts() || types.at(classes).hasOnlyClosures() || holdsOneMember(types.at(classes).layouts))
+        return false;
+    if (!(walker.isInRepeatedCode() || walker.isInHotFunction() || isReachedByLoops(walker)))
+        return false;
+    if (!walker.opensGuesses() || walker.isNestedTooDeeply() || walker.isBuildingInPlace() || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::DirectCalls) || !walker.has(Mechanism::TypedOperations) || walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Normal)
+        return false;
+    Vector<std::pair<FunctionID, TypeID>, maxGetters> arms;
+    for (LayoutID layout : membersOf(types, types.at(classes))) {
+        if (!walker.plan().isInUse(layout))
+            continue;
+        if (program.at(layout).kind != LayoutKind::Instance || !walker.plan().slots().holdsCompiledObjects(layout) || findField(program, layout, key))
+            return false;
+        FunctionID getter = findGetterOfClass(walker, layout, key);
+        if (!getter || getter == walker.currentFunction())
+            return false;
+        auto same = std::ranges::find(arms, getter, &std::pair<FunctionID, TypeID>::first);
+        if (same != arms.end())
+            same->second = types.unionOf(same->second, types.forLayout(layout));
+        else if (arms.size() == maxGetters)
+            return false;
+        else
+            arms.append({ getter, types.forLayout(layout) });
+    }
+    if (arms.size() < 2)
+        return false;
+    if (!isGuessed && readBehindTestsOfShape(walker, read))
+        return true;
+
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(index.blockOf(read.id()));
+    uint32_t place = read.id().index() - block.firstValue().index();
+    if (place + 1 > walker.endOfStretchBeingWalked())
+        return false;
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    BlockID asWritten = walker.addBlock(BlockFrequency::Rare);
+    BlockID meeting = walker.addBlock();
+    walker.recordSpeculation();
+    walker.count(StatisticID::GettersCalledByClass);
+    Walker::StretchInArms stretch = walker.stretchInArms(block.id(), place, place + 1);
+    Walker::ArmsThatMeet built;
+    auto narrowedBy = [&](Reference value, Reference test, bool isOnTakenEdge) {
+        Draft narrowed(Opcode::Narrowed, origin);
+        narrowed.setValueOperand(value);
+        narrowed.setTestOperand(test);
+        narrowed.setOperandIndex(OperandIndex::ShapeTest::object);
+        narrowed.setIsOnTakenEdge(isOnTakenEdge);
+        return walker.build(WTF::move(narrowed));
+    };
+    walker.letGuessFailUnasked(asWritten, origin);
+    Reference left = object;
+    for (size_t number = 0; number < arms.size() && left && !walker.isUnreachable() && !walker.hasFailed(); ++number) {
+        Draft test(Opcode::ShapeTest, origin);
+        test.setObjectOperand(left);
+        test.setLayouts(types.at(arms[number].second).layouts);
+        Reference passes = walker.build(WTF::move(test));
+        if (!passes || walker.hasFailed())
+            return true;
+        const bool isLast = number + 1 == arms.size();
+        BlockID passed = walker.addBlock();
+        BlockID failed = isLast ? asWritten : walker.addBlock();
+        walker.branch(passes, passed, failed);
+        walker.continueIn(passed);
+        if (Reference narrowed = walker.isUnreachable() ? Reference() : narrowedBy(left, passes, true)) {
+            walker.state().noteShape(narrowed, walker.typeOf(narrowed));
+            Reference boundBefore = walker.referenceBoundTo(read.objectOperand());
+            walker.bind(read.objectOperand(), narrowed);
+            walker.bind(read.id(), Reference());
+            walker.walkStretch(block.id(), place, place + 1);
+            if (walker.hasFailed())
+                return true;
+            walker.listArm(stretch, built);
+            walker.bind(read.objectOperand(), boundBefore);
+            walker.bind(read.id(), Reference());
+        }
+        if (walker.hasFailed())
+            return true;
+        if (!isLast) {
+            walker.continueIn(failed);
+            left = walker.isUnreachable() ? Reference() : narrowedBy(left, passes, false);
+        }
+    }
+    walker.walkClosedArm(asWritten, stretch, built);
+    if (!walker.hasFailed())
+        walker.joinArms(stretch, built, meeting);
+    return true;
+}
+
 static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValue& operation, bool shouldSpeculateSoleHolder)
 {
     Opcode opcode = operation.opcode();
@@ -13279,6 +13534,8 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
     if (opcode == Opcode::PropSet && mayBeProvenAccessor && isInLoop && callSetterExpectedAtStore(walker, operation))
         return GuessOpened::WithArms;
     if (opcode == Opcode::PropGet && ((!walker.program().moduleInstances.isEmpty() && callSingleInstanceGetter(walker, operation)) || callGetterExpectedAtRead(walker, operation) || (isInLoop && callMethodsBehindTestsOfShape(walker, operation)) || takeApartCallThatFindsBuiltinForGuesses(walker, operation) || askGuardOfNameReadOffConstructorFunction(walker, operation) || checkClosureOfForwardedCall(walker, operation) || askGuardsOfMethodReadOffPrototypeOfClass(walker, operation)))
+        return GuessOpened::WithArms;
+    if (opcode == Opcode::PropGet && !operation.isFreeName() && callGetterByClass(walker, operation))
         return GuessOpened::WithArms;
     if ((isInLoop ? callsToldApartByCalleeForGuesses.contains(opcode) : (opcode == Opcode::Construct && mayConstructOneOfSeveral(walker, operation)) || methodsWithArgumentsInMemory(walker, operation)) && callEachFunctionOfProvenSetForGuesses(walker, operation))
         return GuessOpened::WithArms;
@@ -13648,6 +13905,8 @@ static GuessOpened openGuessAtOperationForGuesses(Walker& walker, const BodyValu
         opened = GuessOpened::WithArms;
     });
     if (opened == GuessOpened::None && isInLoop && isCalleeRead && callMethodsOfExpectedReceiversBehindTestsOfShape(walker, operation))
+        return GuessOpened::WithArms;
+    if (opened == GuessOpened::None && opcode == Opcode::PropGet && !operation.isFreeName() && (isInLoop || walker.isCurrentFrameRecursive()) && callGetterByClass(walker, operation, true))
         return GuessOpened::WithArms;
     return opened;
 }
@@ -15111,6 +15370,95 @@ bool tryReadAtSiteOfItsOpcodes(Walker& walker, const BodyValue& read)
     return true;
 }
 
+static bool holdsOnlyStringsForGuesses(Walker& walker, ValueID input)
+{
+    TypeArena& types = walker.types();
+    for (TypeID held : { provenTypeOfInputForGuesses(walker, input), findDetailedExpectation(walker, input).type }) {
+        TypeID present = held && !isNeverType(held) ? types.withoutNullish(held) : TypeID();
+        if (present && !isNeverType(present) && types.at(present).hasOnlyPrimitives(Primitive::AnyString))
+            return true;
+    }
+    return false;
+}
+
+static bool isKeyComparedWithString(Walker& walker, ValueID key)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!key || index.isParameter(key) || index.opcodeOf(key) != Opcode::PropGet)
+        return false;
+    BodySpeculationCache& kept = usesOfValues(walker, index);
+    if (kept.rootsOfValuesWithMarks.isEmpty())
+        return false;
+    PropertyKeyID name = index.value(key).key();
+    for (uint64_t listed : namedAccessesOfRoot(index, kept, kept.rootOf(index.stripCasts(index.value(key).objectOperand()).index()))) {
+        BodyValue access = index.value(ValueID(static_cast<uint32_t>(listed)));
+        ValueID user = access.opcode() == Opcode::PropGet && access.key() == name ? index.onlyUsingValue(access.id()) : ValueID();
+        if (!user || index.isParameter(user) || (index.opcodeOf(user) != Opcode::StrictEq && index.opcodeOf(user) != Opcode::Eq))
+            continue;
+        BodyValue comparison = index.value(user);
+        if (holdsOnlyStringsForGuesses(walker, comparison.operand(index.stripCasts(comparison.operand(0)) == access.id() ? 1 : 0)))
+            return true;
+    }
+    return false;
+}
+
+bool lookUpVaryingKeyOfItsOpcodes(Walker& walker, const BodyValue& read)
+{
+    if (!walker.opensGuesses() || walker.isBuildingInPlace() || walker.hasUninlinedCallInIterations() || !walker.restartsAtUnknownCode() || !walker.canBuildIterationGuard() || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::TypedOperations))
+        return false;
+    if (walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Normal)
+        return false;
+    Reference object = walker.referenceOf(read.objectOperand());
+    Reference key = walker.referenceOf(read.propertyOperand());
+    if (!object || !object.isValue() || !key || !key.isValue() || !walker.types().isUninformative(walker.typeOf(object)))
+        return false;
+    if (!(walker.types().at(walker.typeOf(key)).primitives & Primitive::AnyString))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID user = index.onlyUsingValue(read.id());
+    if (user && callsOfValuesForGuesses.contains(index.opcodeOf(user)))
+        return false;
+    ValueID keyOfRead = index.stripCasts(read.propertyOperand());
+    if (!keyOfRead || index.isParameter(keyOfRead) || index.opcodeOf(keyOfRead) != Opcode::PropGet)
+        return false;
+    if (!holdsOnlyStringsForGuesses(walker, read.propertyOperand()) && !isKeyComparedWithString(walker, index.stripCasts(read.propertyOperand())))
+        return false;
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    Draft lookup(Opcode::GetValueUnderKeyOrAbsent, origin);
+    walker.chooseConservativeFields(lookup);
+    lookup.setObjectOperand(object);
+    lookup.setPropertyOperand(key);
+    lookup.setValueType(TypeTable::anythingOrAbsent);
+    Reference found = walker.build(WTF::move(lookup));
+    if (!found || walker.hasFailed())
+        return true;
+    Draft question(Opcode::TypeTest, origin);
+    question.setValueOperand(found);
+    question.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+    Reference test = walker.build(WTF::move(question));
+    if (!test || walker.hasFailed())
+        return true;
+    walker.recordSpeculation();
+    walker.count(StatisticID::VaryingKeyLookups);
+    BlockID restarts = walker.addBlock(BlockFrequency::Rare);
+    BlockID continues = walker.addBlock();
+    walker.branch(test, restarts, continues);
+    walker.continueIn(restarts);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(continues);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(found);
+    proof.setTestOperand(test);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(false);
+    walker.bind(read.id(), walker.build(WTF::move(proof)));
+    return true;
+}
+
 static bool standsInReadArm(Walker& walker, const BodyValue& operation)
 {
     const Walker::ReadArm* arm = walker.readArm();
@@ -15960,7 +16308,9 @@ static bool loadElementsInArm(Walker& walker, const BodyValue& read, Reference l
                     break;
                 load.setIsPresent(*present);
             }
+            TypeID typeOfReadBeingWalked = walker.exchangeResultOfReadBeingTyped({ });
             Reference number = walker.build(WTF::move(load));
+            walker.exchangeResultOfReadBeingTyped(typeOfReadBeingWalked);
             if (!number)
                 break;
             brought.append(number);

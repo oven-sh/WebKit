@@ -20,6 +20,7 @@
 #include "AOTIdentifierNumbering.h"
 #include "AOTImage.h"
 #include "AOTObfuscatedSites.h"
+#include "AOTOrderFile.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramTables.h"
@@ -175,7 +176,7 @@ static Vector<uint8_t> encodeSlotHandlers(const StubBlob& blob)
     return bytesOf(offsets);
 }
 
-static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers)
+static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers, const BuildContext& context)
 {
     const NumberedKeys& sites = numbers.siteCaches();
     const IdentifierNumbering& identifiers = numbers.identifiers();
@@ -191,7 +192,7 @@ static Vector<uint8_t> encodeNamesOfSites(const ImageNumbers& numbers)
             names[number] = static_cast<uint16_t>(name);
             continue;
         }
-        RELEASE_ASSERT(numbersOfSites[place + 1] - number == InstanceLayout::numbersOfSiteWhoseNameStandsBehind);
+        RELEASE_ASSERT(!context.startRanks().empty() || numbersOfSites[place + 1] - number == InstanceLayout::numbersOfSiteWhoseNameStandsBehind);
         names[number] = InstanceLayout::nameOfSiteStandsBehind;
         names[number + 1] = static_cast<uint16_t>(name);
         names[number + 2] = static_cast<uint16_t>(name >> 16);
@@ -608,6 +609,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     header.address = 0;
     header.executableSize = layout.executableSize;
     header.formatVersion = imageFormatVersion;
+    if (uint32_t units = context.numberOfUnitsOfStart())
+        header.sizeOfCodeOfStart = units < layout.bodyStarts.size() ? layout.bodyStarts[units] : layout.functionsEnd;
     header.options = context.recordedOptions();
     header.heap = { context.options().sizeClassProgression, MarkedBlockCage::shift, 0 };
     std::ranges::copy(extent.sections, header.sections);
@@ -627,6 +630,8 @@ static void writeHeader(ImageHeader& header, const ImageWriterInputs& parts, con
     OptionSet<ImageFlag> flags = flagsForUnseenCode(parts.facts, context.options());
     if (context.options().obfuscates())
         flags.add(ImageFlag::IsObfuscated);
+    if (context.options().recordsOrder())
+        flags.add(ImageFlag::RecordsOrder);
     header.numbers = {
         .lastShape = parts.plan.shapes().numberOfShapes(),
         .endOfClosureNumbers = functionNumbers.endOfClosureFunctions().index() - functionNumbers.firstClosureFunction().index(),
@@ -886,6 +891,10 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     if (diagnostics.hasErrors())
         return result;
 
+    Vector<FinalJump> finalJumpsInOrder;
+    if (!context.orderFile().empty())
+        finalJumpsInOrder = orderCodeByFiles(inputs.program, inputs.plan, numbers.functions(), result.functions, callees, context);
+
     std::optional<CodeIndex> index;
     unsigned codeGranuleShift = 0;
     FFIStubs ffiStubs;
@@ -954,7 +963,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             StepTimes steps(context, nameOfLaneSteps);
             codeGranuleShift = chooseCodeGranuleShift(functions, context);
             steps.didFinish("choose code granules"_s);
-            finalJumps = findFinalJumps(functions, callees, context);
+            finalJumps = finalJumpsInOrder.isEmpty() ? findFinalJumps(functions, callees, context) : WTF::move(finalJumpsInOrder);
             steps.didFinish("find final jumps"_s);
         },
     });
@@ -975,7 +984,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
             steps.didFinish("compile WebAssembly modules"_s);
             farInstanceWords = findFarInstanceWords(functions, numbers, context);
             steps.didFinish("find far words of the instance"_s);
-            namesOfSites = encodeNamesOfSites(numbers);
+            namesOfSites = encodeNamesOfSites(numbers, context);
             steps.didFinish("encode names of sites"_s);
             if (checksImageWhileBuilding(context)) {
                 checkUncheckedStackUsage(functions, callees, context);

@@ -517,11 +517,13 @@ public:
     using AOTState = AOT::VMState;
     AOTState& aotState() LIFETIME_BOUND { return m_aotState; }
     bool hasCompiledCode() const { return m_aotState.hasCompiledCode; }
+    bool mayLockBuiltins() const { return m_aotState.mayLockBuiltins; }
     bool runsOnlyStaticCode() const { return Options::disallowNonStaticCode() && (hasCompiledCode() || !Options::disallowNonStaticCodeOnlyWithCompiledCode()); }
     static constexpr ptrdiff_t offsetOfAOTState() { return OBJECT_OFFSETOF(VM, m_aotState); }
     AOTState m_aotState;
 #else
     static constexpr bool hasCompiledCode() { return false; }
+    static constexpr bool mayLockBuiltins() { return false; }
     static bool runsOnlyStaticCode() { return Options::disallowNonStaticCode(); }
 #endif
     ArrayStoragePolicy arrayStoragePolicy() const { return hasCompiledCode() || Options::keepDenseArraysDense() ? ArrayStoragePolicy::KeepsDenseArraysDense : ArrayStoragePolicy::UsesArrayStorageForSpeed; }

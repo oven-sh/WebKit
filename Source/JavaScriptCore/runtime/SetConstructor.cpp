@@ -31,6 +31,9 @@
 #include "JSCInlines.h"
 #include "JSSetInlines.h"
 #include "SetPrototype.h"
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
 
 namespace JSC {
 
@@ -79,6 +82,15 @@ JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame*
         if (canPerformFastAdd && iterableSet->isIteratorProtocolFastAndNonObservable()) 
             RELEASE_AND_RETURN(scope, JSValue::encode(iterableSet->clone(globalObject, vm, setStructure)));
     }
+
+#if ENABLE(AOT)
+    if (canPerformFastAdd && vm.hasCompiledCode()) [[unlikely]] {
+        JSObject* made = AOT::RuntimeHooks::tryMakeSetOfIterable(globalObject, callFrame, setStructure, iterable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (made)
+            return JSValue::encode(made);
+    }
+#endif
 
     JSSet* set = JSSet::create(vm, setStructure);
 

@@ -59,8 +59,10 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
     m_builtins = Vector<Builtin>(m_data.builtins);
     m_lockedObjects = Vector<BuiltinID>(m_data.runtime.lockedObjects);
     m_closedKeys = Vector<BuiltinClosedKeys>(m_data.runtime.closedKeys);
-    for (BuiltinID member : m_unlockedMembers)
+    for (BuiltinID member : m_unlockedMembers) {
+        m_isUnlocked.set(member.index());
         m_builtins[member.index()].mutability = BuiltinMutability::ConstantUnlessWritten;
+    }
 
     for (uint32_t index = 0; index < m_builtins.size(); ++index) {
         BuiltinID member(index);
@@ -68,6 +70,7 @@ void BuiltinTableOfBuild::unlockForTestRun(std::span<const BuiltinID> members, s
             continue;
         m_builtins[index].mutability = BuiltinMutability::ConstantUnlessWritten;
         m_membersWhoseLockIsLeftToProgram.append(member);
+        m_isLockLeftToProgram.set(index);
     }
     for (BuiltinID member : m_data.runtime.lockedMembers) {
         if (!std::ranges::binary_search(m_unlockedMembers, member) && !std::ranges::binary_search(m_membersWhoseLockIsLeftToProgram, member))

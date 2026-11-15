@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTTableParts.h"
+#include "AOTStartOrder.h"
 
 #if ENABLE(AOT)
 
@@ -761,13 +762,23 @@ static void encodeLayoutRecords(TableEncoder& encoder, std::span<const LayoutRec
         mostBytesOfTables += parts.record.size() + parts.keyOrders.sizeInBytes() + parts.numberOfKeyOrders * (sizeof(uint32_t) + alignof(uint64_t)) + parts.references.sizeInBytes() + mostPaddingOfRecord;
     });
     encoder.part.reserveRoomFor(mostBytesOfTables);
-    forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
+    auto place = [&](LayoutID id, uint32_t shape) {
         const LayoutRecordParts& parts = records[id.index()];
         if (!shape)
             classes[id.index()] = appendObjectLayoutRecord(encoder, id, parts, 0);
         else
             layouts[shape] = shape < shapes.firstEnvironmentShape() ? appendObjectLayoutRecord(encoder, id, parts, shape) : appendEnvironmentRecord(encoder, parts, shape);
-    });
+    };
+    if (encoder.numbers.shapesInStartOrder().empty() && encoder.numbers.classesInStartOrder().empty())
+        forEachLayoutRecord(encoder.inputs, place);
+    else {
+        Vector<LayoutRecordToPlace> records;
+        forEachLayoutRecord(encoder.inputs, [&](LayoutID id, uint32_t shape) {
+            records.append({ id, shape });
+        });
+        for (const LayoutRecordToPlace& record : sortLayoutRecords(WTF::move(records), encoder.numbers, shapes.numberOfShapes(), program.layouts.size()))
+            place(record.id, record.shape);
+    }
 
     size_t numberOfGroupWords = (classes.size() + 31) / 32 * 2;
     Vector<uint32_t> classWords(FillWith { }, numberOfGroupWords, 0);

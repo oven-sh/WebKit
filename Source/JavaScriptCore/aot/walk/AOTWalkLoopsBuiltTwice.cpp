@@ -2922,25 +2922,27 @@ bool Walker::mergeUndoableElementStores(MergedUndoableStores& merged, std::span<
     auto isBuiltBeforePaths = [&](Reference reference) {
         return reference.isConstant() || (reference.isValue() && (m_code.isConstant(reference.id()) || reference.id().index() < firstRecordBehindParting));
     };
+    BlockID headOfVersion = this->inputBlock(m_versionedLoops.last().frameIndex, m_versionedLoops.last().inputHead).head;
     auto dominatesPaths = [&](Reference name) {
         BlockID home = m_code.blockOf(name.id());
-        return home && std::ranges::all_of(edges, [&](uint32_t place) {
-            for (BlockID block = m_code.at(m_openEdges[place].edge).from; block;) {
-                if (block == home)
-                    return true;
-                const Block& passed = m_code.at(block);
-                EdgeID entering = passed.firstEdgeIn();
-                if (passed.isLoopHead || passed.isEntry || passed.isHandlerBlock() || !entering || m_code.at(entering).nextInto())
-                    return false;
-                block = m_code.at(entering).from;
-            }
+        if (!home)
             return false;
-        });
+        Vector<BlockID, 16> pending;
+        for (uint32_t place : edges)
+            pending.append(m_code.at(m_openEdges[place].edge).from);
+        BitVector isPassed;
+        while (!pending.isEmpty()) {
+            BlockID block = pending.takeLast();
+            if (block == home || isPassed.set(block.index()))
+                continue;
+            const Block& passed = m_code.at(block);
+            if (block == headOfVersion || passed.isEntry || passed.isHandlerBlock() || !passed.firstEdgeIn())
+                return false;
+            for (EdgeID entering = passed.firstEdgeIn(); entering; entering = m_code.at(entering).nextInto())
+                pending.append(m_code.at(entering).from);
+        }
+        return true;
     };
-    LoopID loopOfParting = currentBodyIndex().loopOf(dominator);
-    bool partsInOpenLoop = !loopOfParting;
-    for (size_t place = 0; place < m_openLoops.size() && !partsInOpenLoop; ++place)
-        partsInOpenLoop = m_openLoops[place].frame == m_frames.size() - 1 && m_openLoops[place].loop == loopOfParting;
     auto nameBeforePaths = [&](Reference reference, bool isArray) {
         Vector<Reference, 4> names { reference };
         while (names.last().isValue() && !m_code.isConstant(names.last().id()) && valuePreservingOpcodes.contains(m_code.at(names.last().id()).opcode))
@@ -2950,7 +2952,7 @@ bool Walker::mergeUndoableElementStores(MergedUndoableStores& merged, std::span<
             bool isTyped = isArray ? hasKind(m_types, ownTypeOf(name), OperandKind::Array) : m_types.at(ownTypeOf(name)).isInteger();
             if (!isTyped || !isBuiltBeforePaths(name))
                 continue;
-            if ((place + 1 == names.size() && partsInOpenLoop) || name.isConstant() || m_code.isConstant(name.id()) || isInvariantInVersionedLoop(name) || dominatesPaths(name))
+            if (name.isConstant() || m_code.isConstant(name.id()) || isInvariantInVersionedLoop(name) || dominatesPaths(name))
                 return name;
         }
         return Reference();
@@ -5061,7 +5063,16 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
             m_state.clear();
         }
     }
+    Vector<BlockID, 1> headsEntered;
+    for (const auto& [place, entered] : steppedAtHead.asTheyEntered)
+        headsEntered.append(std::as_const(m_indexedIterations)[place].head);
     putBackIterationsSteppedAt(steppedAtHead);
+    for (size_t number = 0; number < headsEntered.size(); ++number) {
+        if (!headsEntered[number])
+            continue;
+        m_indexedIterations[steppedAtHead.asTheyEntered[number].first].head = headsEntered[number];
+        --m_numberOfIterationsInFrontOfTheirLoops;
+    }
     m_everyTurnOfTypedBuildLeaves = !turnsOfSomeCopyComeRound;
     m_sharedGenericVersions.removeLast();
     forgetWhatWasBelievedAt(genericVersionEntry);
