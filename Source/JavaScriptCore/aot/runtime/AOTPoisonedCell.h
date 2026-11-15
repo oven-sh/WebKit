@@ -9,8 +9,10 @@
 
 #include "CollectionScope.h"
 #include "JSObject.h"
-#include <wtf/HashMap.h>
+#include <optional>
 #include <wtf/Noncopyable.h>
+#include <wtf/Packed.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC { namespace AOT {
@@ -21,20 +23,22 @@ class PoisonedCellSites {
     WTF_MAKE_NONCOPYABLE(PoisonedCellSites);
     WTF_MAKE_TZONE_ALLOCATED(PoisonedCellSites);
 public:
-    struct Site {
-        uint32_t function { 0 };
-        uint32_t position { 0 };
-    };
-
     explicit PoisonedCellSites(CacheRegistry&);
 
-    void set(const JSCell* cell, Site site) { m_sites.set(cell, site); }
-    Site get(const JSCell* cell) const { return m_sites.get(cell); }
+    void append(const JSCell* cell, uint32_t function) { m_sites.append(Site { cell, function }); }
+    std::optional<uint32_t> findFunction(const JSCell*) const;
     size_t size() const { return m_sites.size(); }
     size_t removeDeadEntries(VM&, CollectionScope);
 
 private:
-    UncheckedKeyHashMap<const JSCell*, Site> m_sites;
+    struct Site {
+        PackedPtr<const JSCell> cell;
+        Packed<uint32_t> function;
+    };
+    static_assert(sizeof(Site) == 10);
+
+    using Sites = SegmentedVector<Site, 128>;
+    Sites m_sites;
 };
 
 class PoisonedCell final : public JSObject {
@@ -52,10 +56,10 @@ public:
 
     static Structure* createStructure(VM&);
 
-    static bool tryPoison(VM&, JSCell*, uint32_t function, uint32_t position);
+    static bool tryPoison(VM&, JSCell*, uint32_t function);
     static constexpr uint32_t isLentForCallAhead = 1u << 31;
     static constexpr uint32_t isFrameLaidForCalleeOfEngine = 1u << 30;
-    static void noteThatCellIsLent(JSCell*, const void* frame, uint32_t function, uint32_t position);
+    static void noteThatCellIsLent(JSCell*, const void* frame, uint32_t function);
     static bool someCellIsLent() { return s_numberOfCellsLent; }
     static uint32_t poisonCellsLentBelow(VM&, const void* frame, bool andByThatFrame);
     [[noreturn]] static void stop(const JSCell*);

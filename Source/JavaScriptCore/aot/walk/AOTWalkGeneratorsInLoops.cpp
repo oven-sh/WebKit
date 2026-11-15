@@ -1442,6 +1442,14 @@ Reference Walker::makeGeneratorAgain(Reference generator)
     return buildCallThatMayBorrowScopes(WTF::move(again), &effects);
 }
 
+bool Walker::callMakesGenerator(const Frame& caller, const BodyValue& call, Reference generator) const
+{
+    const Operation& made = m_code.at(generator.id());
+    Origin origin = made.origin();
+    FunctionID linked = facts().linked().calleeAt(caller.function, call.id());
+    return origin.inlineFrame == caller.inlineFrame && origin.position == call.position() && (linked ? linked == made.function() : made.hasPosition());
+}
+
 bool Walker::isOnlyPassedToCopy(Reference generator)
 {
     const Frame& leaving = frameLeftForCall();
@@ -1460,7 +1468,7 @@ bool Walker::isOnlyPassedToCopy(Reference generator)
         if (referenceBoundIn(caller, creation) != generator)
             continue;
         ValueID name = creation;
-        return !index.isParameter(creation) && index.opcodeOf(creation) == Opcode::Call && index.blockOf(creation) == index.blockOf(call) && followCastsToOnlyTaker(index, name) == call;
+        return !index.isParameter(creation) && index.opcodeOf(creation) == Opcode::Call && index.blockOf(creation) == index.blockOf(call) && followCastsToOnlyTaker(index, name) == call && callMakesGenerator(caller, index.value(creation), generator);
     }
     return false;
 }
@@ -1643,6 +1651,10 @@ Reference Walker::findPassedGenerator(ValueID taker, ValueID iterable, ValueID& 
         ValueID nameInCaller = call;
         if (index.isParameter(call) || index.opcodeOf(call) != Opcode::Call || index.blockOf(call) != index.blockOf(callOfCopy) || followCastsToOnlyTaker(index, nameInCaller) != callOfCopy)
             return { };
+        if (!callMakesGenerator(caller, index.value(call), generator)) {
+            count(StatisticID::GeneratorsHandedOnByCalls);
+            return { };
+        }
         creatingCall = call;
         frameOfCall = frameOfCaller;
         return generator;

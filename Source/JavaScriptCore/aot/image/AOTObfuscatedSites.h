@@ -8,8 +8,10 @@
 #if ENABLE(AOT)
 
 #include "AOTImageForward.h"
+#include "AOTImageFormat.h"
 #include "AOTVector.h"
 #include "AOTWire.h"
+#include <wtf/BitVector.h>
 
 namespace JSC { namespace AOT {
 
@@ -21,6 +23,7 @@ struct ObfuscatedSites {
 };
 
 ObfuscatedSites collectObfuscatedSites(const LinkedFunctions&, const Typed::Program&, BuildContext&);
+Vector<ModuleOfRuntimeFunctions> listModulesOfRuntimeFunctions(const Typed::Program&, const Typed::CallingConventions&, const BitVector& functionsWithFrames);
 
 } } // namespace JSC::AOT
 

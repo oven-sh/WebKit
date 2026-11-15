@@ -910,6 +910,9 @@ void Options::notifyOptionsChanged()
 #endif
 #endif
 
+    if (isX86_64() && !isX86_64_AVX())
+        Options::useWasmSIMD() = false;
+
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
@@ -979,9 +982,6 @@ void Options::notifyOptionsChanged()
 
         ASSERT((static_cast<int64_t>(Options::thresholdForOptimizeAfterLongWarmUp()) << Options::reoptimizationRetryCounterMax()) > 0);
         ASSERT((static_cast<int64_t>(Options::thresholdForOptimizeAfterLongWarmUp()) << Options::reoptimizationRetryCounterMax()) <= static_cast<int64_t>(std::numeric_limits<int32_t>::max()));
-
-        if (isX86_64() && !isX86_64_AVX())
-            Options::useWasmSIMD() = false;
 
         if (Options::forceAllFunctionsToUseSIMD() && !Options::useWasmSIMD())
             Options::forceAllFunctionsToUseSIMD() = false;

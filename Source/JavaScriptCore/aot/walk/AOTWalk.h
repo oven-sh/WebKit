@@ -4688,6 +4688,7 @@ private:
     void closeByChangedReturn(Reference holder, IteratorCompletion, bool leavesAtOnce, BlockID inPlace, BlockID after, Origin);
     bool runsNothingSinceCall(Reference generator) const;
     bool isOnlyPassedToCopy(Reference generator);
+    bool callMakesGenerator(const Frame& caller, const BodyValue& call, Reference generator) const;
     Reference functionOfGenerator(Reference generator) const;
     Reference makeGeneratorAgain(Reference generator);
     Frame& frameLeftForCall();

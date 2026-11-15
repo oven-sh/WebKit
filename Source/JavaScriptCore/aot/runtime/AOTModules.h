@@ -892,6 +892,7 @@ public:
     bool forgetLoadThatFailed(ModuleID file);
     bool importsModuleWithPendingMock(ModuleID root);
     bool evaluateLinkedModuleBeforeMock(ModuleID, bool keepsOriginalIntact);
+    bool isFetchedByRunningTestFile(ModuleID) const;
     JSPromise* pendingEvaluation(ModuleID, bool hasAlreadyWaited);
     JSPromise* pendingEvaluationInGraph(ModuleID file);
     bool isImportedByGraphUnderEvaluation(ModuleID, bool forIntactOriginal = false);
@@ -1052,6 +1053,8 @@ public:
     static const MockOperations& mockOperations();
     JSObject* capturedExports(ModuleID);
     JSValue capturedValue(ModuleID, const Identifier&, MockMode = MockMode::Use);
+    JSValue capturedValueIfInitialized(ModuleID, const Identifier&, JSValue ifDeferred) const;
+    JSValue readDeferredExport(ModuleID, const Identifier&);
     bool hasCapturedExport(ModuleID, const Identifier&);
     bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);

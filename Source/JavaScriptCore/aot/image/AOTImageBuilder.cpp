@@ -19,6 +19,7 @@
 #include "AOTIRProgram.h"
 #include "AOTIdentifierNumbering.h"
 #include "AOTImage.h"
+#include "AOTObfuscatedSites.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramTables.h"
@@ -1137,7 +1138,7 @@ BuiltImage buildImage(ImageInputs&& inputs, BuildContext& context)
     context.statistics().count(StatisticID::FrameMapBytesEmitted, sections[ImageSection::FrameMaps].size());
     sections[ImageSection::ClosureWords] = WTF::move(functionTables.closureWords);
     sections[ImageSection::MethodTable] = WTF::move(functionTables.methodTable);
-    sections[ImageSection::Positions] = WTF::move(sideTables.positions);
+    sections[ImageSection::Positions] = hasPositions ? WTF::move(sideTables.positions) : bytesOf(listModulesOfRuntimeFunctions(program, inputs.plan.conventions(), inputs.bodyFacts.functionsWithFrames));
     sections[ImageSection::SideTables] = WTF::move(sideTables.bytes);
     sections[ImageSection::SharedCodeCopies] = bytesOf(Vector<uint32_t>(result.layout.sharedCodeCopies));
     sections[ImageSection::Strings] = WTF::move(text.strings);

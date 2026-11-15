@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltinTable.h"
+#include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
@@ -194,6 +195,11 @@ static bool isShownByName(const TableInputs& inputs, FunctionID id)
     return inputs.bodyFacts.functionsWithFrames.get(id.index());
 }
 
+static bool hidesNameOfFunction(const TableInputs& inputs, FunctionID id)
+{
+    return inputs.options.hidesFunctionNames() && !Typed::functionObjectsLieInRuntimeModule(inputs.program, inputs.program.at(id));
+}
+
 static StringID nameShownForFunction(const Typed::Program& program, FunctionID id, std::optional<BuiltinID> implemented)
 {
     const Typed::Function& function = program.at(id);
@@ -225,14 +231,12 @@ void nameWhatFunctionTablesName(const TableInputs& inputs, const GatheredMention
 {
     const Typed::Program& program = inputs.program;
     names.strings.set(program.strings.emptyString().index());
-    if (inputs.options.hidesFunctionNames())
-        return;
     const Typed::CallingConventions& conventions = inputs.plan.conventions();
 
     auto nameFunctions = [&](size_t first, size_t end, Vector<StringID>& named) {
         for (size_t index = first; index < end; ++index) {
             FunctionID id(index);
-            if (!isShownByName(inputs, id))
+            if (!isShownByName(inputs, id) || hidesNameOfFunction(inputs, id))
                 continue;
             const Typed::Function& function = program.at(id);
             if (!function.name)
@@ -387,7 +391,7 @@ void FunctionTablesByRange::collectName(uint32_t index, std::optional<BuiltinID>
         group[1] = static_cast<uint32_t>(names.size());
     if (!m_numbersOfStringsFit || !isShownByName(m_encoder.inputs, FunctionID(index)))
         return;
-    StringID name = m_encoder.build.options().hidesFunctionNames() ? StringID() : nameShownForFunction(m_encoder.program, FunctionID(index), implemented);
+    StringID name = hidesNameOfFunction(m_encoder.inputs, FunctionID(index)) ? StringID() : nameShownForFunction(m_encoder.program, FunctionID(index), implemented);
     if (!name || name == m_encoder.program.strings.emptyString())
         return;
     group[0] |= 1u << index % functionsInGroupOfNames;

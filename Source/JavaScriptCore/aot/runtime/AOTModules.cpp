@@ -3730,6 +3730,28 @@ JSValue Modules::capturedValue(ModuleID module, const Identifier& name, MockMode
     return value;
 }
 
+JSValue Modules::capturedValueIfInitialized(ModuleID module, const Identifier& name, JSValue ifDeferred) const
+{
+    const LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded)
+        return { };
+    JSObject* captured = loaded->capturedExports;
+    if (!captured)
+        return loaded->capturedFields ? capturedField(*loaded, name.impl()) : JSValue();
+    JSValue value = storedValue(m_instance.globalObject, captured, name);
+    return value == JSValue(captured) ? ifDeferred : value;
+}
+
+JSValue Modules::readDeferredExport(ModuleID module, const Identifier& name)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    const LoadedModule* loaded = loadedIfExists(module);
+    JSObject* source = loaded ? loaded->deferredExportsSource.get() : nullptr;
+    if (!source)
+        return { };
+    RELEASE_AND_RETURN(scope, source->get(m_instance.globalObject, name));
+}
+
 bool Modules::hasCapturedExport(ModuleID module, const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -8862,10 +8884,22 @@ bool tryReplaceExportOfRecord(JSGlobalObject* realm, AbstractModuleRecord* recor
     return modules->tryReplaceExport(module, name, value, instance);
 }
 
-JSValue readExportOfRecord(AbstractModuleRecord* record, const Identifier& name)
+JSValue readExportOfRecord(AbstractModuleRecord* record, const Identifier& name, JSValue ifDeferred)
 {
+    auto scope = DECLARE_THROW_SCOPE(record->vm());
     auto* compiled = dynamicDowncast<ModuleRecord>(record);
-    return compiled ? compiled->readExportIfInitialized(name) : JSValue();
+    if (!compiled)
+        return { };
+    RELEASE_AND_RETURN(scope, compiled->readExportIfInitialized(name, ifDeferred));
+}
+
+JSValue readDeferredExportOfRecord(AbstractModuleRecord* record, const Identifier& name)
+{
+    auto scope = DECLARE_THROW_SCOPE(record->vm());
+    auto* compiled = dynamicDowncast<ModuleRecord>(record);
+    if (!compiled)
+        return { };
+    RELEASE_AND_RETURN(scope, compiled->readDeferredExport(name));
 }
 
 bool mayBeMocked(JSGlobalObject* realm, ModuleID module)
@@ -10739,13 +10773,20 @@ JSValue ModuleRecord::readExport(JSGlobalObject* globalObject, const Identifier&
     RELEASE_AND_RETURN(scope, namespaceObject->get(globalObject, exportName));
 }
 
-JSValue ModuleRecord::readExportIfInitialized(const Identifier& name)
+JSValue ModuleRecord::readExportIfInitialized(const Identifier& name, JSValue ifDeferred)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm());
     if (std::optional<unsigned> index = modules().table().findExport(m_module, name.impl()))
-        return modules().readExportIfInitialized(m_module, *index, m_moduleInstance ? uncheckedDowncast<Environment>(m_moduleInstance.get()) : nullptr);
+        RELEASE_AND_RETURN(scope, modules().readExportIfInitialized(m_module, *index, m_moduleInstance ? uncheckedDowncast<Environment>(m_moduleInstance.get()) : nullptr));
     if (!takesNamesFromValue(modules().data(m_module)))
         return { };
-    return modules().capturedValue(modules().moduleWithNamesOf(m_module), name);
+    RELEASE_AND_RETURN(scope, modules().capturedValueIfInitialized(modules().moduleWithNamesOf(m_module), name, ifDeferred));
+}
+
+JSValue ModuleRecord::readDeferredExport(const Identifier& name)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm());
+    RELEASE_AND_RETURN(scope, modules().readDeferredExport(modules().moduleWithNamesOf(m_module), name));
 }
 
 JSObject* ModuleRecord::moduleNamespaceObject(JSGlobalObject*, ModulePhase phase)
