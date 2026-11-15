@@ -1036,9 +1036,10 @@ public:
         unsigned matchBegin = output[(subpatternId << 1)];
         unsigned matchEnd = output[(subpatternId << 1) + 1];
 
-        // If the end position of the referenced match hasn't set yet then the backreference in the same parentheses where it references to that.
-        // In this case the result of match is empty string like when it references to a parentheses with zero-width match.
-        // Eg.: /(a\1)/
+        // A group that holds no capture has an unset offset: it did not match in this attempt, or matching went back out of it,
+        // or a lookaround or a new turn of a loop cleared it. The reference then matches the empty string.
+        // No backreference runs inside the group it reads (YarrPatternConstructor makes that a forward reference), so these
+        // offsets are never those of a group that is still open.
         if (matchEnd == offsetNoMatch)
             return true;
 
@@ -1067,9 +1068,9 @@ public:
                 ++matchAmount;
             backTrack->matchAmount = matchAmount;
             // Every repetition took this many characters, and nothing else reaches the
-            // capture while this loop runs. Record it: by the time this term backtracks
-            // the capture can say something else, and the backtrack gives back what was
-            // taken here. The JIT keeps the same value in the same slot.
+            // capture while this loop runs. Record it: the backtrack gives back what was
+            // taken here, and it reads this slot for that, not the capture. The JIT keeps
+            // the same value in the same slot.
             backTrack->backReferenceSize = matchEnd - matchBegin;
             return true;
         }
@@ -1087,11 +1088,10 @@ public:
         ASSERT(term.type == ByteTerm::Type::BackReference);
         BackTrackInfoBackReference* backTrack = reinterpret_cast<BackTrackInfoBackReference*>(context->frame + term.frameLocation);
 
-        // The capture this term read is not the capture it reads now. A backreference to
-        // a duplicate named group reads whichever group of that name matched last, and a
-        // group that holds this term writes its own when it completes, so what output[]
-        // says here can differ in length from what this term took, or say nothing at all.
-        // What this term took is in its frame, so undo the frame, not the capture.
+        // Undo what this term took. The frame holds that, so the capture is not read again
+        // and the undo is right whatever output[] says by now. A group that held this term
+        // would write its capture between the match and this backtrack, but no group holds
+        // a backreference to itself: YarrPatternConstructor makes that a forward reference.
         switch (term.atom.quantityType) {
         case QuantifierType::FixedCount:
             // for quantityMaxCount == 1, could rewind.
