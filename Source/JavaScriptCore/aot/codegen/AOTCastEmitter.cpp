@@ -146,6 +146,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES ValueID CastEmitter::unboxingBehindTestForInt32(c
             continue;
         if (isInLoop && user && user != id && !followsChecks(m_code.blockOf(user)))
             continue;
+        if (user && generator().leavesTurnLaidOut(m_code.blockOf(user)))
+            continue;
         const Operation& narrowed = m_code.at(unboxing.valueOperand());
         if (narrowed.opcode == Opcode::Narrowed && narrowed.isOnTakenEdge() && narrowed.testOperand() == test.id() && narrowed.valueOperand() == test->valueOperand())
             return user ? user : id;
@@ -226,7 +228,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES ValueID CastEmitter::unboxingToDoubleBehindTestFo
         if (narrowed.opcode != Opcode::Narrowed || !narrowed.isOnTakenEdge() || narrowed.testOperand() != test.id() || narrowed.valueOperand() != test->valueOperand())
             continue;
         ValueID user = m_code.onlyUserOf(id);
-        if (!user || m_code.at(user).opcode != Opcode::Unbox || m_code.at(user).representation != Representation::Double)
+        if (!user || m_code.at(user).opcode != Opcode::Unbox || m_code.at(user).representation != Representation::Double || generator().leavesTurnLaidOut(m_code.blockOf(user)))
             continue;
         if (generator().keepsValuesInHeapFrame()) {
             if (m_code.blockOf(user) != taken.to)
