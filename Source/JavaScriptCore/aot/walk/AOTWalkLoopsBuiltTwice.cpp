@@ -5061,7 +5061,16 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
             m_state.clear();
         }
     }
+    Vector<BlockID, 1> headsEntered;
+    for (const auto& [place, entered] : steppedAtHead.asTheyEntered)
+        headsEntered.append(std::as_const(m_indexedIterations)[place].head);
     putBackIterationsSteppedAt(steppedAtHead);
+    for (size_t number = 0; number < headsEntered.size(); ++number) {
+        if (!headsEntered[number])
+            continue;
+        m_indexedIterations[steppedAtHead.asTheyEntered[number].first].head = headsEntered[number];
+        --m_numberOfIterationsInFrontOfTheirLoops;
+    }
     m_everyTurnOfTypedBuildLeaves = !turnsOfSomeCopyComeRound;
     m_sharedGenericVersions.removeLast();
     forgetWhatWasBelievedAt(genericVersionEntry);
