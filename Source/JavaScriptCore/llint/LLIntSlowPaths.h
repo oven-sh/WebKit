@@ -102,6 +102,7 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_by_id_with_this);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_uncached);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_put_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_get_by_val);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_property_enumerator);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_empty_array);
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame*, const JSInstruction*, const AOT::CustomAccessorRecord*, JSCell* base) REFERENCED_FROM_ASM WTF_INTERNAL;

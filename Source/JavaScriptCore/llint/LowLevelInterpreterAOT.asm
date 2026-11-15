@@ -1179,7 +1179,7 @@ aotOp(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dis
     return(t0)
 
 .slow:
-    callSlowPath(_slow_path_get_property_enumerator)
+    callSlowPath(_llint_slow_path_aot_get_property_enumerator)
     dispatch()
 end)
 

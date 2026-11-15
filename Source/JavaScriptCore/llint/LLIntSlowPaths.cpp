@@ -28,6 +28,7 @@
 
 #include "AOTInterpreterSlowPaths.h"
 #include "AOTMembersLeftOut.h"
+#include "AOTPropertyCachesAnswers.h"
 #include "AOTRemovableFeature.h"
 #include "AOTRuntimeHooks.h"
 #include "AbortReason.h"
@@ -1932,6 +1933,15 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_instanceof)
     if (result)
         LLINT_RETURN(jsBoolean(*result));
     RELEASE_AND_RETURN(throwScope, llint_slow_path_instanceof(callFrame, pc));
+}
+
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_property_enumerator)
+{
+    LLINT_BEGIN();
+    JSValue baseValue = getOperand(callFrame, pc->as<OpGetPropertyEnumerator>().m_base);
+    if (vm.aotState().hasObjectsBeingFilled && baseValue.isCell() && baseValue.asCell()->type() == FinalObjectType && baseValue.asCell()->structure()->isDictionary())
+        AOT::flattenOnce(vm, asObject(baseValue));
+    RELEASE_AND_RETURN(throwScope, slow_path_get_property_enumerator(callFrame, pc));
 }
 
 LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
