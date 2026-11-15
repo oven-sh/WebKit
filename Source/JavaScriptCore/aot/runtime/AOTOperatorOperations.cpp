@@ -494,6 +494,12 @@ AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLess, == JSBigInt::Comparison
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareLessEq, != JSBigInt::ComparisonResult::GreaterThan, <=, jsLessEq<true>(globalObject, left, right))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreater, == JSBigInt::ComparisonResult::GreaterThan, >, jsLess<false>(globalObject, right, left))
 AOT_DEFINE_COMPARISON_OPERATION(operationAOTCompareGreaterEq, != JSBigInt::ComparisonResult::LessThan, >=, jsLessEq<false>(globalObject, right, left))
+
+static ALWAYS_INLINE bool isBigIntInFrame(JSValue value)
+{
+    return value.isHeapBigInt() && BigIntArithmetic::isInFrame(value.asHeapBigInt());
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
 {
     JSValue left = JSValue::decode(encodedLeft);
@@ -514,6 +520,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance* instance, Enc
             OPERATION_RETURN(scope, false);
         function = textIfFunction(globalObject, function);
         OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    }
+    if (isBigIntInFrame(left) || isBigIntInFrame(right)) [[unlikely]] {
+        JSValue& other = isBigIntInFrame(left) ? right : left;
+        if (other.isObject()) {
+            other = other.toPrimitive(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+        }
+        if (other.isUndefinedOrNull())
+            OPERATION_RETURN(scope, false);
     }
     OPERATION_RETURN(scope, JSValue::equal(globalObject, left, right));
 }
