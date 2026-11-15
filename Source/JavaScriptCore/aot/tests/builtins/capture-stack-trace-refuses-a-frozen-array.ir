@@ -1,0 +1,22 @@
+# const list = Object.freeze([1, 2]); Error.captureStackTrace(list); report(list)
+# Error.captureStackTrace() defines nothing on an object that takes no new properties: it throws, and report() is not reached.
+# RUN: run-in-shell globalThis.report = list => { print("reached", Reflect.ownKeys(list).join()); };
+# CHECK: Exception: TypeError: Cannot define property stack, object is not extensible
+# CHECK-NOT: reached
+# CHECK: exited with 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = Integer integer=2
+    v2 = NewArray v0, v1 contents=anything
+    v3 = Builtin builtin=ObjectFreeze
+    v4 = Call v3, -, v2
+    v5 = Builtin builtin=ErrorCaptureStackTrace
+    v6 = Call v5, -, v2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="report" [isFreeName]
+    v9 = Call v8, -, v2
+    Return
+}

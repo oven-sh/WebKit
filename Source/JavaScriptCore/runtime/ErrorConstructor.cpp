@@ -84,7 +84,9 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!callFrame->argument(0).isObject()) {
+    // A Proxy keeps its properties on its target: the define below would land on the Proxy's own cell, where nothing reads it.
+    // V8 takes no Proxy either.
+    if (!callFrame->argument(0).isObject() || callFrame->argument(0).asCell()->type() == ProxyObjectType) {
         throwTypeError(globalObject, scope, "captureStackTrace expects the first argument to be an object"_s);
         return { };
     }
@@ -94,6 +96,21 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
     // is refused, and an ErrorInstance would be left without the stack it has yet to materialize.
     if (object->hasImmutableProperties() && !object->hasFrozenElementsInPlace()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, ImmutablePropertyDefineError);
+    // putDirect() does not ask whether the object is extensible, or whether its stack property is configurable. V8 asks both before
+    // it captures a frame, and it refuses an object that is not extensible even if that object has a stack property.
+    Structure* structure = object->structure();
+    if (structure->isNonExtensibleOrHasNonConfigurableProperties()) {
+        // A class that answers isExtensible() itself is asked, because its Structure does not say: that of globalThis says "not
+        // extensible" from the start, and that of an object of compiled code never says it. Of those classes only a Proxy runs a
+        // trap.
+        bool isExtensible = structure->typeInfo().overridesIsExtensible() ? object->isExtensible(globalObject) : structure->isStructureExtensible();
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isExtensible)
+            return throwVMTypeError(globalObject, scope, "Cannot define property stack, object is not extensible"_s);
+        unsigned attributes;
+        if (object->getDirect(vm, vm.propertyNames->stack, attributes) && (attributes & PropertyAttribute::DontDelete))
+            return throwVMTypeError(globalObject, scope, "Cannot redefine property: stack"_s);
+    }
     JSValue callerArg = callFrame->argument(1);
     JSCell* caller = callerArg.isCallable() ? callerArg.asCell() : nullptr;
 

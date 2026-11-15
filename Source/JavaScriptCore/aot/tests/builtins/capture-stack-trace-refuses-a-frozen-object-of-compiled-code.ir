@@ -1,0 +1,22 @@
+# const box = Object.freeze({ x: 1 }); Error.captureStackTrace(box); report(box)
+# An object of compiled code keeps its integrity level in itself: its Structure never says "not extensible". Error.captureStackTrace() asks the object, and throws.
+# RUN: run-in-shell globalThis.report = box => { print("reached", Reflect.ownKeys(box).join()); };
+# CHECK: Exception: TypeError: Cannot define property stack, object is not extensible
+# CHECK-NOT: reached
+# CHECK: exited with 3
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+layout L0 name="Box" fields=[{key="x" declared={type=anything} flags=[IsRequired]}]
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Integer integer=1
+    v1 = NewObject -, v0 layout=L0 fields=[0]
+    v2 = Builtin builtin=ObjectFreeze
+    v3 = Call v2, -, v1
+    v4 = Builtin builtin=ErrorCaptureStackTrace
+    v5 = Call v4, -, v1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="report" [isFreeName]
+    v8 = Call v7, -, v1
+    Return
+}
