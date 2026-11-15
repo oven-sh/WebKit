@@ -2036,6 +2036,7 @@ private:
         std::optional<uint32_t> synchronousLoadCountAtStart;
         bool beganInsideSynchronousLoad { false };
         uint32_t throwAfterFetchLoad { 0 };
+        bool failedInSynchronousLoad { false };
     };
 
     struct WaysToModule {

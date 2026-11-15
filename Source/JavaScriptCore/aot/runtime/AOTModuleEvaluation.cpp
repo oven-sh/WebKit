@@ -842,6 +842,11 @@ bool Modules::hasSynchronousLoadFetched(ModuleID file)
 
 bool Modules::tryDiscardFailureDuringFetch(ModuleID file)
 {
+    LoadedModule* loaded = loadedIfExists(file);
+    if (!loaded || !loaded->failedInSynchronousLoad)
+        return false;
+    if (!data(file).runsAgainAfterThrow() && !mayBeEvicted(file) && !mayBeMocked(file))
+        return false;
     std::optional<ModuleID> facade = data(file).kind == ModuleKind::CommonJs ? m_table.facadeOf(file) : std::nullopt;
     ModuleRegistryEntry* entry = facade ? loader()->registryEntry(moduleKey(*facade)) : nullptr;
     if (!entry || entry->status() != ModuleRegistryEntry::Status::Fetching)
@@ -954,6 +959,11 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
             discardFailedEvaluation(module);
         }
         return;
+    }
+    if (data(module).kind == ModuleKind::CommonJs) {
+        bool isSynchronous = m_instance.vm->synchronousModuleQueue();
+        if (LoadedModule* loaded = isSynchronous ? &ensureLoaded(module) : loadedIfExists(module))
+            loaded->failedInSynchronousLoad = isSynchronous;
     }
     JSValue cachedByLoader = errorCachedByLoader(module);
     if (data(module).cachesEvaluationError())
