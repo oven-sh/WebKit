@@ -247,6 +247,10 @@ inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
     // (which set their length/name at bind time, not via FunctionRareData tracking) and any
     // function whose length or name has since been user-mutated.
     //
+    // Bun: and any function that got its name while the program ran (a key in brackets, a custom
+    // accessor's function). originalName() cannot make that name again, so
+    // FunctionRareData::setHasReifiedName() counts it as modified from the start.
+    //
     // This must be synced with JSBoundFunction::canSkipNameAndLengthMaterialization().
     if (this->inherits<JSBoundFunction>())
         return false;
@@ -258,6 +262,19 @@ inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
     if (rareData->hasModifiedLengthForBoundOrNonHostFunction())
         return false;
     return true;
+}
+
+// Bun: the name for Function.prototype.bind() to give its result without a Get(), or null. A name means:
+// canAssumeNameAndLengthAreOriginal() is false for the name alone (FunctionRareData::ReifiedName::AssignedAtRunTime,
+// or a name that the program defined later), the name is a string in a plain data property, which is what
+// Get() answers then, and the length is the original one, so that bind() can leave it for originalLength().
+// Null for every other function. The bits decide here whether the two slots are worth a look.
+inline JSString* JSFunction::ownNameIfOnlyNameIsNotOriginal(VM& vm)
+{
+    FunctionRareData* rareData = this->rareData();
+    if (!rareData || !rareData->hasModifiedNameForBoundOrNonHostFunction() || rareData->hasModifiedLengthForBoundOrNonHostFunction())
+        return nullptr;
+    return ownNameIfOnlyNameIsNotOriginalSlow(vm);
 }
 
 inline bool JSFunction::mayHaveNonReifiedPrototype()

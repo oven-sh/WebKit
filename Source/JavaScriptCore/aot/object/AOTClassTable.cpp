@@ -1955,8 +1955,7 @@ static void didPutFieldInPlaceOfFunctionProperty(VM& vm, Closure& classObject, U
     const CommonIdentifiers& names = *vm.propertyNames;
     if (uid == names.name.impl()) {
         FunctionRareData* rareData = classObject.ensureRareData(vm);
-        rareData->setHasReifiedName();
-        rareData->setHasModifiedNameForBoundOrNonHostFunction();
+        rareData->setHasReifiedName(FunctionRareData::ReifiedName::AssignedAtRunTime);
     } else if (uid == names.length.impl()) {
         FunctionRareData* rareData = classObject.ensureRareData(vm);
         rareData->setHasReifiedLength();

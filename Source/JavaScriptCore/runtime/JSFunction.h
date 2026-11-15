@@ -190,6 +190,7 @@ public:
     PropertyStatus reifyLazyPropertyIfNeeded(VM&, JSGlobalObject*, PropertyName);
 
     bool canAssumeNameAndLengthAreOriginal(VM&);
+    JSString* ownNameIfOnlyNameIsNotOriginal(VM&);
     double originalLength(VM&);
     JSString* originalName(JSGlobalObject*);
 
@@ -237,7 +238,8 @@ private:
     bool hasReifiedName() const;
     void reifyLength(VM&);
     PropertyStatus reifyName(VM&, JSGlobalObject*);
-    PropertyStatus reifyName(VM&, JSGlobalObject*, String name);
+    PropertyStatus reifyName(VM&, JSGlobalObject*, String name, FunctionRareData::ReifiedName);
+    JSString* ownNameIfOnlyNameIsNotOriginalSlow(VM&);
 
     static bool isLazy(PropertyStatus property) { return property == PropertyStatus::Lazy || property == PropertyStatus::Reified; }
     static bool isReified(PropertyStatus property) { return property == PropertyStatus::Reified; }

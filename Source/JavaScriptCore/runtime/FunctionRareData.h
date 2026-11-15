@@ -132,7 +132,17 @@ public:
     bool hasReifiedLength() const { return m_hasReifiedLength; }
     void setHasReifiedLength() { m_hasReifiedLength = true; }
     bool hasReifiedName() const { return m_hasReifiedName; }
-    void setHasReifiedName() { m_hasReifiedName = true; }
+    // Bun: what the reified "name" property holds. JSFunction::originalName() makes an Original name again at any time, which is
+    // why Function.prototype.bind() can leave the name of its result for later. Only the property holds a name that was
+    // AssignedAtRunTime (a key in brackets, the "get " of a custom accessor's function), so that one counts as modified from the
+    // start and bind() reads it. Upstream has one setter without the argument, and ({ [key]() {} })[key].bind().name is "bound ".
+    enum class ReifiedName : bool { Original, AssignedAtRunTime };
+    void setHasReifiedName(ReifiedName name)
+    {
+        m_hasReifiedName = true;
+        if (name == ReifiedName::AssignedAtRunTime)
+            m_hasModifiedNameForBoundOrNonHostFunction = true;
+    }
 
     bool hasModifiedLengthForBoundOrNonHostFunction() const { return m_hasModifiedLengthForBoundOrNonHostFunction; }
     void setHasModifiedLengthForBoundOrNonHostFunction()

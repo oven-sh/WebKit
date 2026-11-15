@@ -178,6 +178,13 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
         // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
         // at the time of creation of JSBoundFunction.
         length = PNaN; // Defer computation.
+    } else if (JSString* ownName = function ? function->ownNameIfOnlyNameIsNotOriginal(vm) : nullptr) {
+        // Bun: only the name of the target is not original (FunctionRareData::ReifiedName::AssignedAtRunTime, or a name
+        // that the program defined), and ownName is what the Get() below would answer for it. The length is the
+        // original one and stays deferred. Upstream takes every such target through the steps below.
+        // operationFunctionBind has the same text.
+        length = PNaN;
+        name = ownName;
     } else {
         bool found = target->hasOwnProperty(globalObject, vm.propertyNames->length);
         RETURN_IF_EXCEPTION(scope, { });

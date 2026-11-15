@@ -295,8 +295,7 @@ void setComputedFunctionName(VM& vm, JSObject* closure, const Identifier& key, M
     closure->putDirect(vm, vm.propertyNames->name, nameString, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     if (isCompiledClosure(closure)) {
         FunctionRareData* rareData = uncheckedDowncast<Closure>(closure)->ensureRareData(vm);
-        rareData->setHasReifiedName();
-        rareData->setHasModifiedNameForBoundOrNonHostFunction();
+        rareData->setHasReifiedName(FunctionRareData::ReifiedName::AssignedAtRunTime);
     }
 }
 

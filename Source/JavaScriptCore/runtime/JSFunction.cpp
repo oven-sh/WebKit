@@ -591,7 +591,25 @@ void JSFunction::setFunctionName(JSGlobalObject* globalObject, JSValue value)
         name = asString(value)->value(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
     }
-    RELEASE_AND_RETURN(scope, (void)reifyName(vm, globalObject, name));
+    RELEASE_AND_RETURN(scope, (void)reifyName(vm, globalObject, name, FunctionRareData::ReifiedName::AssignedAtRunTime));
+}
+
+// Bun: the second half of ownNameIfOnlyNameIsNotOriginal(). The two bits only know what went through JSFunction's own
+// defineOwnProperty(), put() and deleteProperty(). A property that was written past those (putDirectAccessor() and the
+// like) leaves them as they were, and for a bound function nothing keeps them. So the two slots decide: the length is
+// the original one where the property is not made yet, or holds originalLength() as reifyLength() puts it.
+JSString* JSFunction::ownNameIfOnlyNameIsNotOriginalSlow(VM& vm)
+{
+    unsigned attributes;
+    if (JSValue length = getDirect(vm, vm.propertyNames->length, attributes)) {
+        if (attributes != (PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum) || !length.isNumber() || length.asNumber() != originalLength(vm))
+            return nullptr;
+    } else if (hasReifiedLength())
+        return nullptr;
+    JSValue name = getDirect(vm, vm.propertyNames->name, attributes);
+    if (!name || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) || !name.isString())
+        return nullptr;
+    return asString(name);
 }
 
 void JSFunction::reifyLength(VM& vm)
@@ -619,10 +637,10 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
         name = vm.propertyNames->defaultKeyword.string();
     else
         name = ecmaName.string();
-    return reifyName(vm, globalObject, name);
+    return reifyName(vm, globalObject, name, FunctionRareData::ReifiedName::Original);
 }
 
-JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalObject, String name)
+JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalObject, String name, FunctionRareData::ReifiedName reifiedName)
 {
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     FunctionRareData* rareData = this->ensureRareData(vm);
@@ -638,7 +656,7 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
         name = makeNameWithOutOfMemoryCheck(globalObject, throwScope, "Setter "_s, "set "_s, name);
     RETURN_IF_EXCEPTION(throwScope, PropertyStatus::Lazy);
 
-    rareData->setHasReifiedName();
+    rareData->setHasReifiedName(reifiedName);
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
     putDirect(vm, propID, jsString(vm, WTF::move(name)), initialAttributes);
     return PropertyStatus::Reified;
@@ -750,7 +768,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         JSString* string = jsString(globalObject, vm.smallStrings.boundPrefixString(), name);
         RETURN_IF_EXCEPTION(scope, PropertyStatus::Lazy);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
+        rareData->setHasReifiedName(FunctionRareData::ReifiedName::Original);
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, string, initialAttributes);
     } else if (this->inherits<JSRemoteFunction>()) {
@@ -759,14 +777,14 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         if (!name)
             name = jsEmptyString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
+        rareData->setHasReifiedName(FunctionRareData::ReifiedName::Original);
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        rareData->setHasReifiedName();
+        rareData->setHasReifiedName(FunctionRareData::ReifiedName::Original);
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         if (uncheckedDowncast<NativeExecutable>(executable())->isNamedAsBound()) {
             // A custom value: what looks for a name that the program gave the function finds none.

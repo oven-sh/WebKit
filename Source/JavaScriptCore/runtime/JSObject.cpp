@@ -2302,9 +2302,13 @@ bool JSObject::setPrototype(VM&, JSGlobalObject* globalObject, JSValue prototype
 }
 
 // llint_aot_op_new_object may have made a compiled object of the literal's first members.
+// Bun: and a class is a function. JSFunction::defineOwnProperty() records that a static accessor took the place of its
+// "name" or "length", which Function.prototype.bind() asks before it leaves the two of its result for later. Upstream
+// defines the accessor with JSObject::defineOwnProperty() on every object: a class with `static get name()` in front of
+// a member under a key in brackets then binds under the name that is in the code.
 static bool defineAccessorOfLiteral(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor)
 {
-    if (object->structure()->isCompiledStructure()) [[unlikely]]
+    if (object->structure()->isCompiledStructure() || object->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) [[unlikely]]
         return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, true);
     return JSObject::defineOwnProperty(object, globalObject, propertyName, descriptor, true);
 }
