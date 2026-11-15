@@ -12,6 +12,7 @@
 
 namespace JSC {
 
+class CallFrame;
 class InlineWatchpointSet;
 class JSArray;
 class JSCell;
@@ -78,6 +79,8 @@ JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
 JSObject* proxyOwnKeysTarget(VM&, JSObject* proxy, bool asksDescriptors);
 
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
+JSObject* tryMakeSetOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
+JSObject* tryMakeMapOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
 
 class NoHelperThreadsScope {
     WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);
