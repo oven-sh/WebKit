@@ -1502,13 +1502,26 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
             name = m_code.at(name).operand(0);
         return m_code.at(name).isOnTakenEdge();
     };
+    BitVector isBehindFailingEdge(m_code.numberOfBlocks());
+    const BlockID blockOfTest = m_code.blockOf(test);
+    if (EdgeID fails = findAnswerEdge(test, false, blockOfTest)) {
+        Vector<BlockID, 16> waiting { m_code.at(fails).to };
+        while (!waiting.isEmpty()) {
+            BlockID block = waiting.takeLast();
+            if (!isReached(block) || dominates(headOf(block), headOf(blockOfTest)) || isBehindFailingEdge.set(block.index()))
+                continue;
+            m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                waiting.append(edge.to);
+            });
+        }
+    }
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             const Operation& user = m_code.at(id);
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
                 if (user.operand(operandIndex) == test && (user.opcode != Opcode::Narrowed || user.valueOperand() == test))
                     return false;
-                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame)
+                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame && isBehindFailingEdge.get(block.index()))
                     isUsedOnFailure = true;
                 if (!user.operand(operandIndex) || !names.get(user.operand(operandIndex).index()) || names.get(id.index()))
                     continue;
