@@ -176,6 +176,7 @@ public:
     bool isReplacedByMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
+    JSValue readExportIfInitialized(const Identifier& exportName);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
     static bool throwIfExportWasOmitted(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);

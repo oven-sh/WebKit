@@ -729,7 +729,7 @@ bool Walker::isQuietOnceUnswitched(LoopID loop, std::span<const ValueID> ranOthe
 ValueID Walker::siteReadBehind(ValueID record) const
 {
     const Operation& narrowed = m_code.at(record);
-    if (narrowed.opcode != Opcode::Narrowed || m_code.isConstant(narrowed.operand(0)) || m_code.at(narrowed.operand(0)).opcode != Opcode::GetValueAtSiteOrAbsent || m_code.isConstant(narrowed.testOperand()))
+    if (narrowed.opcode != Opcode::Narrowed || m_code.isConstant(narrowed.operand(0)) || m_code.at(narrowed.operand(0)).opcode != Opcode::GetValueAtSiteOrAbsent || !narrowed.testOperand() || m_code.isConstant(narrowed.testOperand()))
         return { };
     const Operation& test = m_code.at(narrowed.testOperand());
     bool asksForAbsence = test.opcode == Opcode::TypeTest && test.testedType() == TypeArena::fromPrimitives(Primitive::Absent) && test.valueOperand() == narrowed.operand(0);
@@ -748,7 +748,7 @@ Reference Walker::lookupThatAnswers(Reference value) const
     };
     for (; isNameOfOperand(m_code.at(record)); record = m_code.at(record).operand(0)) {
         const Operation& narrowed = m_code.at(record);
-        if (narrowed.isOnTakenEdge() || m_code.isConstant(narrowed.testOperand()))
+        if (narrowed.isOnTakenEdge() || !narrowed.testOperand() || m_code.isConstant(narrowed.testOperand()))
             continue;
         const Operation& test = m_code.at(narrowed.testOperand());
         Reference lookup = Reference::value(narrowed.operand(0));

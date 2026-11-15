@@ -384,6 +384,7 @@ void Modules::makeCallAgain(BatchedFetch& text)
         return;
     }
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
+    didRefetchFile(text.file);
     AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, text.asyncContext.get());
     ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get());
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
