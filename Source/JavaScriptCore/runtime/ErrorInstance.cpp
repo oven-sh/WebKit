@@ -138,6 +138,12 @@ String appendSourceToErrorMessage(CodeBlock* codeBlock, BytecodeIndex bytecodeIn
 
 void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames)
 {
+    // materializeErrorInfoIfNeeded() is formatting m_stackTrace right now: it set the flag and the host's
+    // formatter still reads the frames. A capture from inside the formatter's callback (Error.prepareStackTrace)
+    // on the error being formatted keeps the frames the callback was given.
+    if (m_errorInfoMaterialized && m_stackTrace)
+        return;
+
     std::unique_ptr<Vector<StackFrame>> stackTrace = makeUnique<Vector<StackFrame>>(WTF::move(stackFrames));
 
     Locker locker { cellLock() };
@@ -149,6 +155,10 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 #if USE(BUN_JSC_ADDITIONS)
     m_stackStringIsFramesOnly = false;
 #endif
+    // New frames arm the lazy error info again: the next lookup of stack, line, column or sourceURL formats
+    // them, with the name, message and Error.prepareStackTrace of that moment, even if an earlier lookup
+    // already materialized the old frames.
+    m_errorInfoMaterialized = false;
     vm.writeBarrier(this);
     locker.unlockEarly();
     reportStackTraceMemory(vm);
@@ -621,11 +631,15 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
 #if USE(BUN_JSC_ADDITIONS)
 
+    // The host formats a trace with no frame too: V8 gives every error whose stackTraceLimit is a number a
+    // `stack`, "name: message" alone when there is no frame (a limit of 0, or an error made on the event loop
+    // with no JavaScript running). A null trace is a limit that is not a number, and leaves `stack` unset.
     auto& fn = vm.onComputeErrorInfoJSValue();
-    if (fn && m_stackTrace && !m_stackTrace->isEmpty()) {
+    if (fn && m_stackTrace) {
         m_errorInfoMaterialized = true;
         DeferGCForAWhile deferGC(vm);
 
+        bool hasFrames = !m_stackTrace->isEmpty();
         JSValue stack;
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             stack = fn(vm, *m_stackTrace.get(), m_lineColumn.line, m_lineColumn.column, m_sourceURL, this);
@@ -642,10 +656,13 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 
         // An error has these from the start, so one with immutable properties still gets them. No JavaScript runs from here on.
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
-        putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
-        if (!m_sourceURL.isEmpty())
-            putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        // A position comes from a frame, or from the parser (addErrorInfo). With neither there is none to report.
+        if (hasFrames || m_lineColumn.line || !m_sourceURL.isEmpty()) {
+            putDirect(vm, vm.propertyNames->line, jsNumber(m_lineColumn.line), attributes);
+            putDirect(vm, vm.propertyNames->column, jsNumber(m_lineColumn.column), attributes);
+            if (!m_sourceURL.isEmpty())
+                putDirect(vm, vm.propertyNames->sourceURL, jsString(vm, WTF::move(m_sourceURL)), attributes);
+        }
 
         if (!m_stackPropertyProvidedByCapturedStackTrace)
             putDirect(vm, vm.propertyNames->stack, stack, attributes);
