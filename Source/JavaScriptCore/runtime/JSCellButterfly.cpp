@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSCellButterfly.h"
 
+#include "AOTCompactTable.h"
 #include "ButterflyInlines.h"
 #include "ClonedArguments.h"
 #include "DirectArguments.h"
@@ -248,15 +249,14 @@ JSCellButterfly* JSCellButterfly::createFromString(JSGlobalObject* globalObject,
 #if ENABLE(AOT)
 static NEVER_INLINE void copyKeysFromCompactStorage(VM& vm, JSCell& storage, JSCellButterfly* result)
 {
-    using Helper = JSSet::Helper;
+    unsigned length = result->length();
     unsigned index = 0;
-    for (Helper::Entry entry = 0;; ++entry) {
-        auto transitionResult = Helper::transitAndNext(vm, storage, entry);
-        if (!transitionResult.storage)
-            break;
-        result->setIndex(vm, index++, transitionResult.key);
-        entry = transitionResult.entry;
-    }
+    WriteBarrier<Unknown>* copies = result->toButterfly()->contiguous().data();
+    AOT::CompactTable::forEachInColumn(vm, &storage, 0, true, [&](JSValue key) ALWAYS_INLINE_LAMBDA {
+        RELEASE_ASSERT(index < length);
+        copies[index++].setWithoutWriteBarrier(key);
+    });
+    vm.writeBarrier(result);
 }
 #endif
 
