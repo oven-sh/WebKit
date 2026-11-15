@@ -800,6 +800,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
             if (change.setterInSight && !accessorIsKnown) {
                 std::optional<FieldReference> field = findField(flow.program, layout, change.key);
                 flow.addEdge(field ? flow.field(*field) : flow.appendedField(layout, change.key), flow.unseen());
+                flow.addEdge(flow.extraPropertyStoreNode(layout), flow.unseen());
             }
             if (!change.descriptorLaysNoAccessor && !accessorIsKnown) {
                 std::optional<FieldReference> field = findField(flow.program, layout, change.key);
