@@ -1420,6 +1420,7 @@ public:
     void branchOnTest(Reference test, BlockID taken, BlockID notTaken) { branch(test, taken, notTaken, true); }
     std::optional<PassedTest> continueIfCheckPasses(Reference test, BlockID whereItFails, bool passesWithYes = true);
     std::optional<PassedTest> findPassedTest(Reference test, bool passesWithYes = true);
+    std::optional<PassedTest> findTestPassedOnPath(Reference test, bool passesWithYes = true);
     bool stillHolds(const PassedTest&);
     std::optional<PassedTest> findUpperBoundProof(Reference value, Reference bound);
     std::optional<PassedTest> findNonNegativeProof(Reference value);
@@ -2676,6 +2677,7 @@ private:
     void findSlotsOfObjectsThatComeRound(BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<FieldOfScope, 4>&);
     Reference valueCarriedByLoop(const FieldOfScope&, std::span<const Reference> arguments);
     bool mayBeInDeadZone(const FieldOfScope&) const;
+    bool isBeforeFirstStore(const FieldOfScope&) const;
     TypeID backEdgeTypeOfVariable(BlockID inputHead, const FieldOfScope&) const;
     bool namesFreshCell(const WalkState&, Reference) const;
     bool isEnvironmentAllocation(Reference) const;

@@ -7846,14 +7846,16 @@ static bool buildCopyBehindTestsForTypedAccess(Walker& walker, const BodyValue& 
 
     if (slotsAreAlikeForCopyInTypedAccess(walker, layoutOfSource, copied.span(), layout, fields->span())) {
         if (Reference empty = walker.isUnreachable() ? Reference() : buildTargetOfCopyForTypedAccess(walker, origin, layout, { }, { })) {
-            Draft words(Opcode::TryCopyFields, origin);
-            words.setObjectOperand(empty);
-            words.setSourceOperand(ofLayoutWritten);
-            words.setLayout(layout);
-            words.setSourceLayout(layoutOfSource);
-            words.setFields(copied.span());
-            walker.build(WTF::move(words));
-            checkWordsBehindCopyForTypedAccess(walker, origin, empty, layout, fields->span());
+            if (!copied.isEmpty()) {
+                Draft words(Opcode::TryCopyFields, origin);
+                words.setObjectOperand(empty);
+                words.setSourceOperand(ofLayoutWritten);
+                words.setLayout(layout);
+                words.setSourceLayout(layoutOfSource);
+                words.setFields(copied.span());
+                walker.build(WTF::move(words));
+                checkWordsBehindCopyForTypedAccess(walker, origin, empty, layout, fields->span());
+            }
             walker.state().noteOrderWord(empty, plan.keyOrders().findOrderWord(layout, fields->span()));
             walker.jumpTo(behindCopy, singleElementSpan(empty));
         }
