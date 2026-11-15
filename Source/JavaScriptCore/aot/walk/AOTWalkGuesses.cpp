@@ -15111,6 +15111,92 @@ bool tryReadAtSiteOfItsOpcodes(Walker& walker, const BodyValue& read)
     return true;
 }
 
+static bool holdsOnlyStringsForGuesses(Walker& walker, ValueID input)
+{
+    TypeArena& types = walker.types();
+    for (TypeID held : { provenTypeOfInputForGuesses(walker, input), findDetailedExpectation(walker, input).type }) {
+        TypeID present = held && !isNeverType(held) ? types.withoutNullish(held) : TypeID();
+        if (present && !isNeverType(present) && types.at(present).hasOnlyPrimitives(Primitive::AnyString))
+            return true;
+    }
+    return false;
+}
+
+static bool isKeyComparedWithString(Walker& walker, ValueID key)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    if (!key || index.isParameter(key) || index.opcodeOf(key) != Opcode::PropGet)
+        return false;
+    BodySpeculationCache& kept = usesOfValues(walker, index);
+    if (kept.rootsOfValuesWithMarks.isEmpty())
+        return false;
+    PropertyKeyID name = index.value(key).key();
+    for (uint64_t listed : namedAccessesOfRoot(index, kept, kept.rootOf(index.stripCasts(index.value(key).objectOperand()).index()))) {
+        BodyValue access = index.value(ValueID(static_cast<uint32_t>(listed)));
+        ValueID user = access.opcode() == Opcode::PropGet && access.key() == name ? index.onlyUsingValue(access.id()) : ValueID();
+        if (!user || index.isParameter(user) || (index.opcodeOf(user) != Opcode::StrictEq && index.opcodeOf(user) != Opcode::Eq))
+            continue;
+        BodyValue comparison = index.value(user);
+        if (holdsOnlyStringsForGuesses(walker, comparison.operand(index.stripCasts(comparison.operand(0)) == access.id() ? 1 : 0)))
+            return true;
+    }
+    return false;
+}
+
+bool lookUpVaryingKeyOfItsOpcodes(Walker& walker, const BodyValue& read)
+{
+    if (!walker.opensGuesses() || walker.isBuildingInPlace() || walker.hasUninlinedCallInIterations() || !walker.restartsAtUnknownCode() || !walker.canBuildIterationGuard() || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::TypedOperations))
+        return false;
+    if (walker.code().at(walker.currentBlock()).frequency != BlockFrequency::Normal)
+        return false;
+    Reference object = walker.referenceOf(read.objectOperand());
+    Reference key = walker.referenceOf(read.propertyOperand());
+    if (!object || !object.isValue() || !key || !key.isValue() || !walker.types().isUninformative(walker.typeOf(object)))
+        return false;
+    if (!(walker.types().at(walker.typeOf(key)).primitives & Primitive::AnyString))
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID user = index.onlyUsingValue(read.id());
+    if (user && callsOfValuesForGuesses.contains(index.opcodeOf(user)))
+        return false;
+    if (!holdsOnlyStringsForGuesses(walker, read.propertyOperand()) && !isKeyComparedWithString(walker, index.stripCasts(read.propertyOperand())))
+        return false;
+    Origin origin = walker.originOf(read);
+    origin.isTailCall = false;
+    Draft lookup(Opcode::GetValueUnderKeyOrAbsent, origin);
+    walker.chooseConservativeFields(lookup);
+    lookup.setObjectOperand(object);
+    lookup.setPropertyOperand(key);
+    lookup.setValueType(TypeTable::anythingOrAbsent);
+    Reference found = walker.build(WTF::move(lookup));
+    if (!found || walker.hasFailed())
+        return true;
+    Draft question(Opcode::TypeTest, origin);
+    question.setValueOperand(found);
+    question.setTestedType(TypeArena::fromPrimitives(Primitive::Absent));
+    Reference test = walker.build(WTF::move(question));
+    if (!test || walker.hasFailed())
+        return true;
+    walker.recordSpeculation();
+    walker.count(StatisticID::VaryingKeyLookups);
+    BlockID restarts = walker.addBlock(BlockFrequency::Rare);
+    BlockID continues = walker.addBlock();
+    walker.branch(test, restarts, continues);
+    walker.continueIn(restarts);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(continues);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(found);
+    proof.setTestOperand(test);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(false);
+    walker.bind(read.id(), walker.build(WTF::move(proof)));
+    return true;
+}
+
 static bool standsInReadArm(Walker& walker, const BodyValue& operation)
 {
     const Walker::ReadArm* arm = walker.readArm();

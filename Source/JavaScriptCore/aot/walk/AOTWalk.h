@@ -2350,6 +2350,7 @@ public:
     bool hasStringsInBuilders() const { return !m_stringsInBuilders.isEmpty(); }
     bool exitsLoopBeingVersioned(BlockID to) const { return exitsLoopBeingVersioned(m_frames.size() - 1, to); }
     bool canRestartIteration() const;
+    bool restartsAtUnknownCode() const { return canRestartIteration() && isUncaughtIterationEffectFree() && !looksAtLoopsAroundHaveSeen(Effects::unknownCode()); }
     bool isInCopyOfAccessor() const;
     bool isIterationQuiet() const;
     bool buildGrowthOfList(Draft&& growth);
@@ -5824,6 +5825,8 @@ void storePendingElements(Walker&);
 bool isArithmeticReadInReadArm(Walker&, const BodyValue& read);
 inline constexpr OpcodeSet opcodesThatTryReadAtSiteTakes { Opcode::PropGet, Opcode::ElemGet, Opcode::PropHas };
 AOT_LINK_OF_WALK(tryReadAtSite, opcodesThatTryReadAtSiteTakes)
+inline constexpr OpcodeSet opcodesThatLookUpVaryingKeyTakes { Opcode::ElemGet };
+AOT_LINK_OF_WALK(lookUpVaryingKey, opcodesThatLookUpVaryingKeyTakes)
 bool shouldOpenGuess(const Walker&, Reference value, TypeID expected, bool isDeclaredInSource, uint32_t numberOfTypedOperations);
 void openGuess(Walker&, Reference value, TypeID expected, BlockID inputBlock, uint32_t begin, uint32_t end, TypeID expectedNext = { });
 uint32_t limitOfStretchOfArms(Walker&, const BodyBlock&);

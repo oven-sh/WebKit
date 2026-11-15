@@ -82,7 +82,7 @@ enum StatisticID (stage: StatisticStage) {
     CallsEvaluated
     RowStoresMaybeAppending
     ContentsCheckedByGuards
-    InvariantKeyBoundsChecks
+    InvariantKeyBoundsChecks VaryingKeyLookups
     ComparedSumsStayBoxed PushedSumsStayBoxed SumsSpecializedAsNumbers
     SiteCachedReadsHoisted SiteCachedReadsBesideCalls GettersExpectedInLoops SettersExpectedInLoops MethodsExpectedUnderKeys ArgumentSpeculationsPassedToInlinees PartialInlinesAfterDominatingTests PredicatesTestedAtCalls ComparatorsInlinedForNumbers InlineeGuardsHoistedPastStores InlineeSpeculationsHoistedPastStores CapturedVariableReadsHoisted InvariantKeyReadsHoisted KeyedAddressesHoisted InvariantStringSwitchesHoisted KeyedRowLookupsHoisted KeyedRowLookupsRevalidated StaticFieldGuardsHoisted StaticFieldGuardsReused InvariantBasesGuardedAsArrays
     UnsupportedElementAccessesDemoted

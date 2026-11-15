@@ -9332,6 +9332,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         return false;
     if (!isBuilt && callThroughTargetResolvedOnce(*this, value))
         return false;
+    if (!isBuilt && known == Opcode::ElemGet && !m_versionedLoops.isEmpty())
+        isBuilt = lookUpVaryingKey(*this, value);
     if (!isBuilt && !replaceOperation(*this, value))
         copy(value);
     return false;
