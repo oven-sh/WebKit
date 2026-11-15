@@ -28,6 +28,7 @@
 
 #include "AOTCompiledCallee.h"
 #include "AOTBuiltinModules.h"
+#include "AOTRuntimeHooks.h"
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -441,6 +442,13 @@ void JSFunction::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObject* gl
     }
 }
 
+#if ENABLE(AOT)
+static bool rejectsNewProperty(VM& vm, JSFunction* function, PropertyName propertyName)
+{
+    return AOT::RuntimeHooks::rejectsNativeConstructorProperty(function->realm(), propertyName) && function->isBuiltinFunction() && !isValidOffset(function->structure()->get(vm, propertyName));
+}
+#endif
+
 bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     if (!isThisValueAltered(slot, asObject(cell)) && cell->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]]
@@ -449,6 +457,14 @@ bool JSFunction::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName pr
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(cell);
+
+#if ENABLE(AOT)
+    if (slot.thisValue() == JSValue(thisObject) && rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]] {
+        slot.disableCaching();
+        bool shouldThrow = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && propertyName != vm.propertyNames->hasInstanceSymbol);
+        return typeError(globalObject, scope, shouldThrow, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+    }
+#endif
 
     if (propertyName == vm.propertyNames->prototype) {
         slot.disableCaching();
@@ -496,6 +512,10 @@ bool JSFunction::defineOwnProperty(JSObject* object, JSGlobalObject* globalObjec
 
     JSFunction* thisObject = uncheckedDowncast<JSFunction>(object);
 
+#if ENABLE(AOT)
+    if (rejectsNewProperty(vm, thisObject, propertyName)) [[unlikely]]
+        return typeError(globalObject, scope, throwException, AOT::RuntimeHooks::lockedBuiltinPropertyErrorMessage(propertyName));
+#endif
 
     if (propertyName == vm.propertyNames->prototype) {
         if (FunctionRareData* rareData = thisObject->rareData())
