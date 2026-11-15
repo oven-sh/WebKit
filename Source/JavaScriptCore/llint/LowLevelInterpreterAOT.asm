@@ -1560,12 +1560,26 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
     loadb SlotKind[t6], t1
     bbeq t1, constexpr AOT::Slot::Kind::Field, .field
+    bbeq t1, constexpr AOT::Slot::Kind::ExtraProperty, .extraProperty
     bbeq t1, constexpr AOT::Slot::Kind::ExtraPropertyAddition, .addsExtraProperty
     bbneq t1, constexpr AOT::Slot::Kind::FieldCreation, .slow
     # In place of the type such a slot holds an order word.
     btbnz SlotFlags[t6], constexpr AOT::Slot::remembersOrder, .slow
 .field:
     btinz (constexpr AOT::offsetOfOrderWord)[t0], constexpr AOT::orderWordIsFrozen, .slow
+    btbz SlotFlags[t6], constexpr AOT::Slot::fieldTakesAnyValue, .fieldHasType
+    # SlotRepresentation::JSValue adds no bits to the offset. An absent field is the run time's.
+    loadi SlotPayload[t6], t1
+    get(m_value, t5)
+    loadConstantOrVariable(size, t5, t3)
+    btqz [t0, t1, 1], .slow
+    storeq t3, [t0, t1, 1]
+    btqnz t3, notCellMask, .storedAnyValue
+    writeBarrierOnCell(t0, t1)
+.storedAnyValue:
+    dispatch()
+
+.fieldHasType:
     locateField(t5, t6, t0, t1, t2, t3, t7, .slow)
     loadi SlotSecondPayloadWord[t6], t6
     addp InstanceTables[t5], t6
@@ -1710,6 +1724,22 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .storeBoxedPrimitive:
     btqz [t1], .slow
     storeq t3, [t1]
+    dispatch()
+
+    # storeExtraProperty() in the stubs. t2: the StructureID of the object.
+.extraProperty:
+    loadExtraProperties(t5, t0, t2, t1, t3, .slow)
+    get(m_value, t3)
+    loadConstantOrVariable(size, t3, t5)
+    loadis SlotSecondPayloadWord[t6], t3
+    move t1, t2
+    bigteq t3, 0, .extraPropertyIsInCell
+    loadp JSObjectWithButterfly::m_butterfly[t1], t2
+.extraPropertyIsInCell:
+    storeq t5, [t2, t3, 8]
+    btqnz t5, notCellMask, .storedExtraProperty
+    writeBarrierOnCell(t1, t3)
+.storedExtraProperty:
     dispatch()
 
     # addExtraProperty() in the stubs, for a property that lies in the cell of the extra properties. t2: the StructureID of the object.
