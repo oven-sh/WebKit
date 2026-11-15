@@ -6937,7 +6937,7 @@ BuiltinID BuilderOfProgramFacts::inheritedFunctionUnder(BuiltinID function, Prop
     BuiltinID inherited = memberFoundOnInProgramFacts(m_source, function, key);
     if (!inherited || m_builtins.at(inherited).kind == BuiltinKind::Accessor || !isObjectKind(m_builtins.at(inherited).kind))
         return { };
-    return isLockedLocation(m_source, m_builtins.canonicalID(m_builtins.at(inherited).holder), key) ? inherited : BuiltinID();
+    return isLockedLocation(m_source, m_builtins.canonicalID(m_builtins.at(inherited).holder), key) || isConstantLocation(inherited) ? inherited : BuiltinID();
 }
 
 BuiltinID BuilderOfProgramFacts::functionReadByPath(const BodyIndex& index, ValueID value) const
