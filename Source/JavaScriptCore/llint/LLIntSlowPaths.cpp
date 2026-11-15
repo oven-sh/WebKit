@@ -1199,6 +1199,56 @@ LLINT_SLOW_PATH_DECL(slow_path_get_by_id)
 }
 
 #if ENABLE(AOT)
+extern "C" uintptr_t SYSV_ABI llint_aot_put_to_dictionary(CallFrame* callFrame, JSObject* object, UniquedStringImpl* uid, EncodedJSValue encodedValue)
+{
+    VM& vm = callFrame->codeBlock()->vm();
+    StructureID structureID = object->structureID();
+    Structure* structure = structureID.decode();
+    ASSERT(object->type() == FinalObjectType && structure->isUncacheableDictionary());
+    if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || structure->didPreventExtensions() || !object->canPerformFastPutInline(vm, uid) || parseIndex(*uid)) [[unlikely]]
+        return 0;
+    SlowPathFrameTracer tracer(vm, callFrame);
+    auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, uid, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+        unsigned oldCapacity = structure->outOfLineCapacity();
+        unsigned newCapacity = Structure::outOfLineCapacity(newMaxOffset);
+        if (newCapacity == oldCapacity) {
+            structure->setMaxOffset(vm, newMaxOffset);
+            return;
+        }
+        Butterfly* butterfly = object->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+        object->nukeStructureAndSetButterfly(vm, structureID, butterfly);
+        structure->setMaxOffset(vm, newMaxOffset);
+        WTF::storeStoreFence();
+        object->setStructureIDDirectly(structureID);
+    });
+    if (!isAdded) {
+        if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue)) [[unlikely]]
+            return 0;
+        structure->didReplaceProperty(offset);
+    }
+    object->putDirectOffset(vm, offset, JSValue::decode(encodedValue));
+    return 1;
+}
+
+extern "C" uintptr_t SYSV_ABI llint_aot_delete_from_dictionary(CallFrame* callFrame, JSObject* object, UniquedStringImpl* uid)
+{
+    VM& vm = callFrame->codeBlock()->vm();
+    Structure* structure = object->structure();
+    ASSERT(object->type() == FinalObjectType && structure->isUncacheableDictionary());
+    if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || vm.aotState().hasObjectsBeingFilled || vm.deletePropertyMode() != VM::DeletePropertyMode::Default || parseIndex(*uid)) [[unlikely]]
+        return 0;
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, uid, attributes);
+    if (offset == invalidOffset)
+        return 1;
+    if (attributes & PropertyAttribute::DontDelete) [[unlikely]]
+        return 0;
+    SlowPathFrameTracer tracer(vm, callFrame);
+    structure->removePropertyWithoutTransition(vm, uid, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
+    object->locationForOffset(offset)->clear();
+    return 1;
+}
+
 // The base is not a compiled object, and the property table has no entry for its Structure and the name.
 LLINT_SLOW_PATH_DECL(slow_path_aot_get_uncached)
 {

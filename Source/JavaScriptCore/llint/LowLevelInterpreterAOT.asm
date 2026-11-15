@@ -593,6 +593,30 @@ macro findHashInPropertyTable(isAbsent, cannot)
 .isFound:
 end
 
+# What a cacheable one has is filed.
+macro branchIfUncacheableDictionary(structureID, scratch, isDictionary)
+    structureIDToStructureWithScratch(structureID, scratch)
+    btinz (constexpr (Structure::bitFieldOffset()))[structureID], constexpr (Structure::s_dictionaryKindBits - 1), isDictionary
+end
+
+# The name is in a2, the value in a3.
+macro putToDictionary(object)
+    move object, a1
+    storePC()
+    move cfr, a0
+    cCall4(_llint_aot_put_to_dictionary)
+    loadPC()
+end
+
+# The name is in a2.
+macro deleteFromDictionary(object)
+    move object, a1
+    storePC()
+    move cfr, a0
+    cCall3(_llint_aot_delete_from_dictionary)
+    loadPC()
+end
+
 # The kinds that any object may have. t3: the object, t5: the instance, t0: the kind of the slot in entry. Leaves the value in t0.
 # Goes to callsCustomGetter with the AOT::CustomAccessorRecord in t0.
 macro getFromHashedSlot(entry, slow, callsCustomGetter, done)
@@ -1489,7 +1513,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     loadTableInstance(t5, .ordinary)
     loadIdentifier(size, OpPutById, m_property, t1, t2)
     loadi JSCell::m_structureID[t0], t2
-    findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .ordinary)
+    findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .isNotFiled)
     loadb SlotKind[t6], t1
     bbeq t1, constexpr AOT::Slot::Kind::Value, .storesValue
     bbeq t1, constexpr AOT::Slot::Kind::Transition, .addsByTransition
@@ -1498,6 +1522,25 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     end
 .ordinary:
     jumpToOrdinaryHandler(size, op_put_by_id)
+
+    # The ordinary handler would compare the Structure with the site's once more.
+.isNotFiled:
+    if X86_64 or ARM64
+        branchIfUncacheableDictionary(t2, t3, .isDictionary)
+    .asksForStore:
+        callSlowPath(_llint_slow_path_put_by_id)
+        dispatch()
+
+    .isDictionary:
+        loadIdentifier(size, OpPutById, m_property, t2, t5)
+        get(m_value, t5)
+        loadConstantOrVariable(size, t5, t3)
+        putToDictionary(t0)
+        btpz r0, .asksForStore
+        dispatch()
+    else
+        jmp .ordinary
+    end
 
 .addsByTransition:
     btbnz SlotFlags[t6], constexpr AOT::Slot::growsStorage, .growsStorage
@@ -1948,6 +1991,47 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
 .ordinary:
     jumpToOrdinaryHandler(size, op_put_by_val)
 end)
+
+if X86_64 or ARM64
+aotOp(op_del_by_id, OpDelById, macro (size, get, dispatch, metadata, return)
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .ordinary)
+    btqnz t0, notCellMask, .ordinary
+    bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
+    loadi JSCell::m_structureID[t0], t2
+    branchIfUncacheableDictionary(t2, t5, .isDictionary)
+.ordinary:
+    jumpToOrdinaryHandler(size, op_del_by_id)
+
+.isDictionary:
+    loadIdentifier(size, OpDelById, m_property, t2, t5)
+    deleteFromDictionary(t0)
+    btpz r0, .ordinary
+    move ValueTrue, t0
+    return(t0)
+end)
+
+aotOp(op_del_by_val, OpDelByVal, macro (size, get, dispatch, metadata, return)
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .ordinary)
+    btqnz t0, notCellMask, .ordinary
+    bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
+    loadi JSCell::m_structureID[t0], t2
+    branchIfUncacheableDictionary(t2, t5, .isDictionary)
+.ordinary:
+    jumpToOrdinaryHandler(size, op_del_by_val)
+
+.isDictionary:
+    get(m_property, t1)
+    loadConstantOrVariable(size, t1, t3)
+    btqnz t3, notCellMask, .ordinary
+    loadNameOfKey(t3, t2, .ordinary)
+    deleteFromDictionary(t0)
+    btpz r0, .ordinary
+    move ValueTrue, t0
+    return(t0)
+end)
+end
 
 macro allocateCell(allocator, result, scratch, slow)
     loadp LocalAllocatorIntervalStart[allocator], result
@@ -5095,6 +5179,10 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpEnumeratorNext, op_enumerator_next)
     setEntryAddresses(OpEnumeratorPutByVal, op_enumerator_put_by_val)
     setEntryAddresses(OpBitand, op_bitand)
+    if X86_64 or ARM64
+        setEntryAddresses(OpDelById, op_del_by_id)
+        setEntryAddresses(OpDelByVal, op_del_by_val)
+    end
     setEntryAddresses(OpDiv, op_div)
     if X86_64 or ARM64
         setEntryAddresses(OpMod, op_mod)
