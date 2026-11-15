@@ -1314,6 +1314,12 @@ bool Modules::forgetCapturedExports(ModuleID moduleOrFacade)
     return true;
 }
 
+void Modules::forgetEarlierCapture(LoadedModule& loaded)
+{
+    loaded.bindsEarlierCapture = false;
+    loaded.namespaceOfBoundCapture.set(*this, nullptr);
+}
+
 void Modules::endMockOfLibraryModule(ModuleID module)
 {
     if (!m_libraryModulesWithMock.get(module.index()))
@@ -1804,7 +1810,7 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
         if (!m_facadesCapturedForMock.get(module.index()) || loaded.loadWord || loaded.hasLinkedImporter || wasLoadedByImport(file))
             return;
         forgetCapturedExports(module);
-        loaded.bindsEarlierCapture = false;
+        forgetEarlierCapture(loaded);
         m_facadesCapturedForMock.clear(module.index());
         if (status(module) == ModuleStatus::Evaluated) {
             startLoadingModulesIndividually();
@@ -1872,7 +1878,7 @@ void Modules::bindLatestCapture(ModuleID module)
     LoadedModule* loaded = loadedIfExists(module);
     if (!loaded || !loaded->bindsEarlierCapture) [[likely]]
         return;
-    loaded->bindsEarlierCapture = false;
+    forgetEarlierCapture(*loaded);
     if (m_modulesWithEarlierNamespaceInValue.get(module.index())) {
         JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
         RETURN_IF_EXCEPTION(scope, void());

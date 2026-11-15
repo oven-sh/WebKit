@@ -2114,6 +2114,7 @@ private:
     JSObject* generateNativeModuleExports(ModuleID, WTF::Vector<Identifier, 4>& names, MarkedArgumentBuffer& values);
     JSValue requireNativeModule(ModuleID);
     void bindLatestCapture(ModuleID);
+    void forgetEarlierCapture(LoadedModule&);
     void captureExportsBehindEvaluation(ModuleID);
     void captureExportsOfLibraryModules(ModuleID root);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
