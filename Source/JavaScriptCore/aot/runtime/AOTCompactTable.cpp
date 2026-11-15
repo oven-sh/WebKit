@@ -1049,6 +1049,23 @@ void CompactTable::reserveForAdditions(JSGlobalObject* globalObject, JSObject* o
     setStorage(vm, owner, replacement);
 }
 
+ALWAYS_INLINE void CompactTable::removeEntry(VM& vm, uint32_t entry)
+{
+    removeFromIndex(entry, hashOfStoredKey(uncheckedKeyAt(entry)));
+    setKey(entry, JSValue());
+    setValue(entry, JSValue());
+    --m_alive;
+    ++vm.aotState().movesOfEntriesInCollections;
+}
+
+bool CompactTable::tryRemoveEntry(JSObject* owner, uint32_t entry)
+{
+    if (isInImage() || isMostlyDeleted(m_alive - 1, m_used))
+        return false;
+    removeEntry(owner->vm(), entry);
+    return true;
+}
+
 bool CompactTable::remove(JSGlobalObject* globalObject, JSObject* owner, JSValue key)
 {
     VM& vm = globalObject->vm();
@@ -1062,11 +1079,7 @@ bool CompactTable::remove(JSGlobalObject* globalObject, JSObject* owner, JSValue
         table = tryMoveToHeap(globalObject, owner);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    table->removeFromIndex(*entry, hashOfStoredKey(table->uncheckedKeyAt(*entry)));
-    table->setKey(*entry, JSValue());
-    table->setValue(*entry, JSValue());
-    --table->m_alive;
-    ++vm.aotState().movesOfEntriesInCollections;
+    table->removeEntry(vm, *entry);
     if (isMostlyDeleted(table->m_alive, table->m_used))
         shrink(globalObject, owner);
     return true;
@@ -2375,6 +2388,15 @@ extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_has(JSObject* collection
 {
     CompactTable::Lookup lookup = tryFindWithoutFrame(collection, JSValue::decode(key));
     return lookup.result == CompactTable::QuickLookup::Unknown ? encodedJSValue() : JSValue::encode(jsBoolean(lookup.result == CompactTable::QuickLookup::Found));
+}
+
+extern "C" EncodedJSValue SYSV_ABI llint_aot_remove_from_collection(JSObject* collection, EncodedJSValue key)
+{
+    CompactTable::Lookup lookup = tryFindWithoutFrame(collection, JSValue::decode(key));
+    if (lookup.result == CompactTable::QuickLookup::Absent)
+        return JSValue::encode(jsBoolean(false));
+    bool isRemoved = lookup.result == CompactTable::QuickLookup::Found && CompactTable::tableOf(collection)->tryRemoveEntry(collection, lookup.entry);
+    return isRemoved ? JSValue::encode(jsBoolean(true)) : encodedJSValue();
 }
 
 } // namespace AOT::CompactStorage

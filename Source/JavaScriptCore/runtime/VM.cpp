@@ -1095,6 +1095,10 @@ static void (*thunkBesideCompiledCode(Intrinsic intrinsic))()
         return llint_aot_map_has_thunk;
     case JSSetHasIntrinsic:
         return llint_aot_set_has_thunk;
+    case JSMapDeleteIntrinsic:
+        return llint_aot_map_delete_thunk;
+    case JSSetDeleteIntrinsic:
+        return llint_aot_set_delete_thunk;
     case CharAtIntrinsic:
         return llint_aot_char_at_thunk;
     case FromCharCodeIntrinsic:

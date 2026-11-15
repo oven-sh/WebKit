@@ -485,6 +485,7 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    bool tryRemoveEntry(JSObject* owner, uint32_t entry);
     JS_EXPORT_PRIVATE static uint32_t& deletedPrefixOf(JSObject* owner);
     JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
@@ -639,6 +640,7 @@ private:
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void removeFromIndex(uint32_t entry, unsigned hash);
+    void removeEntry(VM&, uint32_t entry);
     void fillIndex(uint32_t count);
     template<SlotKind kind> void fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;

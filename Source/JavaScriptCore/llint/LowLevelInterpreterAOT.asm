@@ -5233,6 +5233,18 @@ _llint_aot_set_has_thunk:
 .setHasHostFunction:
     jmp _llint_native_call_trampoline
 
+global _llint_aot_map_delete_thunk
+_llint_aot_map_delete_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_remove_from_collection, .mapDeleteHostFunction)
+.mapDeleteHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_delete_thunk
+_llint_aot_set_delete_thunk:
+    findInThunk(constexpr JSSetType, _llint_aot_remove_from_collection, .setDeleteHostFunction)
+.setDeleteHostFunction:
+    jmp _llint_native_call_trampoline
+
 # Array.prototype.push() of one value that fits behind the elements of an array of int32s or of values: JSArray::pushInline().
 global _llint_aot_array_push_thunk
 _llint_aot_array_push_thunk:
