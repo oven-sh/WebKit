@@ -507,6 +507,7 @@ struct LookupsPastProgramObjects {
     BitVector builtinsCalledWithoutRow;
     BitVector builtinsCalledWithOperandsNobodyRead;
     BitVector holdersReadUnderKeysNobodyKnows;
+    BitVector prototypesAboveOtherObjects;
     BitVector rowsApplied;
     BitVector builtinsWithCallsLeftToUnseen;
     BitVector builtinsWithCallsThatMayRunCode;

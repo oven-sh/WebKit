@@ -91,6 +91,7 @@ public:
     void noteNameSpelledByProgram(PropertyKeyID);
     void noteReadUnderKeyNobodyKnows();
     void noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder);
+    void notePrototypeAboveOtherObjects(BuiltinID canonicalPrototype);
     void noteReadUnderNameThatLoopGave();
     void noteReadOfProgramUnderKeyNobodyKnows(FunctionID, ValueID);
     void noteRead(BuiltinID);

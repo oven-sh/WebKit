@@ -4530,6 +4530,9 @@ void AccessInLinkAccesses::resolveOnClasses(const LinkType& instances)
             m_flow.addEdge(m_flow.unseen(), elements);
         });
         m_flow.addEdge(m_subject, m_flow.unseen());
+        m_flow.noteInstancesChangePrototype(instances);
+        if (m_value)
+            m_flow.layAbovePrototype(m_value);
         cannotTell();
         return;
     }
@@ -4660,6 +4663,8 @@ void AccessInLinkAccesses::resolveUnderNameOnClass(const LinkType& instances)
             tableSpeaksOfObject &= other == builtinClass || !m_table.isSameOrSubclassOf(other, builtinClass);
     }
     if (isRead() && tableSpeaksOfObject) {
+        if (name && !m_flow.isInLibraryCode())
+            m_flow.note(LinkFlow::Note::NameReadOffInstance, m_access.key.bits(), builtinClass.index());
         giveFrom(m_flow.contentsOf(instances, SlotOfContents::underUnknownNames()));
         BuiltinID member;
         bool onlyProgramLaysName = lookUpFrom(prototype, member) == LookupInLinkAccesses::Unknown && isKeyAbsentFromChain(prototype) && areListsThatOnlyProgramNames(instances);

@@ -3134,6 +3134,16 @@ bool LinkFlow::onlyLooksAtBuiltinsLostAtJoins(const FlowObserver& observer) cons
     return observer.kind != FlowObserver::Kind::SubjectOfAccess || !answerOfReadStaysInSight(summaries.at(observer.function).accesses[observer.record].key);
 }
 
+void LinkFlow::noteInstancesChangePrototype(const LinkType& instances)
+{
+    if (instances.classes == LinkType::Classes::None || !namesClassesOf(instances))
+        return;
+    forEachClassOf(instances, [&](const LinkType& instancesOfOneClass) {
+        if (BuiltinClassID builtinClass = instancesOfOneClass.builtinClass)
+            note(Note::InstancesChangePrototype, builtinClass.index());
+    });
+}
+
 void LinkFlow::noteAccessorMayBeLaidOn(const LinkType& subject, PropertyKeyID key, FunctionID writer)
 {
     if (everyMarkIsUsed() || (!subject.builtin && !subject.holdsLostBuiltins && (!subject.hasUnknownObjects || m_isFunctionOfLibrary.quickGet(writer.index()))))
@@ -3577,6 +3587,22 @@ void LinkFlow::applyNote(Note note, uint32_t number, uint32_t more)
         if (more)
             builtinsInReach().noteNameSpelledByProgram(PropertyKeyID::fromBits(number));
         return;
+    case Note::NameReadOffInstance:
+        if (m_classesWhoseInstancesChangePrototype.get(more))
+            builtinsInReach().noteNameRead(PropertyKeyID::fromBits(number));
+        else
+            m_namesReadOffInstances.add(static_cast<uint64_t>(more) << 32 | number);
+        return;
+    case Note::InstancesChangePrototype:
+        if (m_classesWhoseInstancesChangePrototype.set(number))
+            return;
+        m_namesReadOffInstances.removeIf([&](uint64_t classAndKey) {
+            if (classAndKey >> 32 != number)
+                return false;
+            builtinsInReach().noteNameRead(PropertyKeyID::fromBits(static_cast<uint32_t>(classAndKey)));
+            return true;
+        });
+        return;
     case Note::BuiltinsLostAtJoinsAreUsed:
         m_marksThatAreUsed |= LinkType::BuiltinsLostAtJoins;
         return;
@@ -3706,6 +3732,11 @@ void LinkFlow::applyNote(Note note, uint32_t number, uint32_t more)
         return;
     case Note::PrototypeLaidAboveOtherObjects:
         prototypesLaidAboveOtherObjects.quickSet(number);
+        for (LayoutID current(number); current; current = program.at(current).base) {
+            BuiltinClassID above = program.at(current).writtenBuiltinBase;
+            if (BuiltinID prototype = above ? program.builtins().at(above).prototype : BuiltinID())
+                builtinsInReach().notePrototypeAboveOtherObjects(program.builtins().canonicalID(prototype));
+        }
         return;
     case Note::WriteOnBuiltin:
         builtinsInReach().noteWrite(BuiltinID(more & 0xffff), PropertyKeyID::fromBits(number), !!(more & onlyDeletes));

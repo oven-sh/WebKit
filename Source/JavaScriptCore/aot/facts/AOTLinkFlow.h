@@ -1448,7 +1448,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, WriteThroughUnseenInSight, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldWithUnseenAccessor, LayoutGetsNullAbove, LayoutDeletedUnderUnknownKey, FieldDeletedByName, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, WriteThroughUnseenInSight, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldWithUnseenAccessor, LayoutGetsNullAbove, LayoutDeletedUnderUnknownKey, FieldDeletedByName, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, NameReadOffInstance, InstancesChangePrototype, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
     void noteFieldWithUnseenAccessor(FieldReference);
@@ -1559,6 +1559,7 @@ public:
     bool everyMarkIsUsed() const { return m_marksThatAreUsed == LinkType::everyMark; }
     bool answerOfReadStaysInSight(PropertyKeyID) const;
     void noteAccessorMayBeLaidOn(const LinkType& subject, PropertyKeyID, FunctionID writer);
+    void noteInstancesChangePrototype(const LinkType& instances);
     LinkType anythingBeside(BuiltinID canonical, FunctionID reader) const;
     LinkType unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const;
     enum class WhatIsStored : uint8_t { Anything, TextsNumbersAndBooleans, Nothing };
@@ -2880,6 +2881,8 @@ private:
     mutable uint8_t m_marksThatReachUnseen { 0 };
     uint8_t m_marksThatAreUsed { 0 };
     Vector<PropertyKeyID, 2> m_namesReadWithAnswersInSight;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesReadOffInstances;
+    BitVector m_classesWhoseInstancesChangePrototype;
 
     struct TestOfEdge {
         enum class Passes : uint8_t { Everything, PrimitivesAlone, EveryObject, SomeObjects };

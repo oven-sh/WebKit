@@ -905,6 +905,7 @@ static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const Observed
         handToUnseenCodeInLinkLayouts(flow, change.otherNode, change.other);
     handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
     addChangesToLayoutsNamedInLinkLayouts(flow, change.subject, changesMadeByInLinkLayouts(SummaryChange::Kind::ChangesPrototype));
+    flow.noteInstancesChangePrototype(change.subject);
     notePrototypesLaidAboveOtherObjects(flow, change.other);
     LinkType anything = LinkType::anything();
     forEachElementsNodeInLinkLayouts(flow, change.subject, [&](FlowNodeID elements) {

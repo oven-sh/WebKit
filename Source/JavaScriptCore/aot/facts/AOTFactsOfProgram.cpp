@@ -4465,6 +4465,7 @@ public:
         m_isLookedThrough.quickSet(canonicalHolder.index());
         m_holdersToLookThrough.append(canonicalHolder);
     }
+    void notePrototypeAboveOtherObjects(BuiltinID canonicalPrototype) { lookThrough(canonicalPrototype); }
     void noteReadUnderNameThatLoopGave() { m_readsUnderNamesThatLoopsGave = true; }
     void noteInstancesAnswerEveryNameWithObjects() { m_objectsMayHaveMethodCalledWithStartupLoads = true; }
     std::span<const FunctionID> functionsThatAnswerEveryNameOnInstances() const { return m_functionsThatAnswerEveryNameOnInstances.span(); }
@@ -5599,6 +5600,8 @@ void BuilderOfProgramFacts::take(const LookupsPastProgramObjects& lookups)
         noteConstruction(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.holdersReadUnderKeysNobodyKnows)
         noteReadUnderKeyNobodyKnowsOff(BuiltinID(static_cast<uint32_t>(index)));
+    for (size_t index : lookups.prototypesAboveOtherObjects)
+        notePrototypeAboveOtherObjects(BuiltinID(static_cast<uint32_t>(index)));
     for (size_t index : lookups.builtinsCalledWithoutRow)
         noteCallWithoutRow(BuiltinID(static_cast<uint32_t>(index)));
     m_rowsThatLinkApplies.merge(lookups.rowsApplied);
@@ -7749,6 +7752,14 @@ void BuiltinsInReach::noteReadUnderKeyNobodyKnowsOff(BuiltinID canonicalHolder)
         return;
     m_wasToldSomethingNew = true;
     m_builder->noteReadUnderKeyNobodyKnowsOff(canonicalHolder);
+}
+
+void BuiltinsInReach::notePrototypeAboveOtherObjects(BuiltinID canonicalPrototype)
+{
+    if (m_linked->lookups.prototypesAboveOtherObjects.set(canonicalPrototype.index()))
+        return;
+    m_wasToldSomethingNew = true;
+    m_builder->notePrototypeAboveOtherObjects(canonicalPrototype);
 }
 
 void BuiltinsInReach::noteReadUnderKeyNobodyKnows()
