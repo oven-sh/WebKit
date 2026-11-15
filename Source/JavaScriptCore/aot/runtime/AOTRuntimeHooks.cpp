@@ -108,8 +108,13 @@ bool definesInheritedValue(JSObject* function, PropertyName name, const Property
     JSValue value = descriptor.value();
     if (!value || !isFunctionType(function->type()) || function->inherits<FunctionPrototype>())
         return false;
-    if (function->mayBePrototype() && (descriptor.attributes() & PropertyAttribute::ReadOnly))
-        return false;
+    if (function->mayBePrototype()) {
+        unsigned attributes = descriptor.attributes();
+        if (!descriptor.writablePresent() && !isValidOffset(function->structure()->get(function->vm(), name, attributes)))
+            attributes = descriptor.attributes();
+        if (attributes & PropertyAttribute::ReadOnly)
+            return false;
+    }
     return findFixedValueAbove(function->vm(), function, name) == value;
 }
 
