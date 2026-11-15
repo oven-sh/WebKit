@@ -3361,8 +3361,7 @@ auto LinkFlow::lockPartOfWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words)
 std::optional<uint32_t> LinkFlow::findWhatSomeLaneWasGiven(MadeOnDemand kind, uint64_t words) const
 {
     PartOfWhatSomeLaneWasGiven& part = lockPartOfWhatSomeLaneWasGiven(kind, words);
-    auto found = part.given.find(words);
-    std::optional<uint32_t> known = found == part.given.end() ? std::nullopt : std::optional<uint32_t>(found->value);
+    std::optional<uint32_t> known = part.given.getOptional(words);
     part.isLocked.store(false, std::memory_order_release);
     return known;
 }
@@ -8836,23 +8835,28 @@ SiteID LinkFlow::siteOf(MakerOfSite maker, uint32_t number, uint32_t part, Built
         while (table.isLocked.load(std::memory_order_relaxed) || table.isLocked.exchange(true, std::memory_order_acquire))
             simde_mm_pause();
     }
-    auto added = table.sites.add(words, 0);
-    if (added.isNewEntry) {
-        Site site;
-        site.builtinClass = builtinClass;
-        site.onlyWaitRightBehindSeesIt = onlyWaitRightBehindSeesIt;
-        site.isOfClassItself = isOfClassItself;
-        site.holdsFunctionsAlone = builtinClass == BuiltinClasses::Function;
-        site.isCreatedWithoutHoles = isCreatedWithoutHoles;
-        site.isCreatedWithoutEngineNames = isCreatedWithoutEngineNames;
-        added.iterator->value = m_sites.append(site);
+    SiteID id;
+    bool isNewEntry;
+    {
+        auto added = table.sites.add(words, 0);
+        isNewEntry = added.isNewEntry;
+        if (isNewEntry) {
+            Site site;
+            site.builtinClass = builtinClass;
+            site.onlyWaitRightBehindSeesIt = onlyWaitRightBehindSeesIt;
+            site.isOfClassItself = isOfClassItself;
+            site.holdsFunctionsAlone = builtinClass == BuiltinClasses::Function;
+            site.isCreatedWithoutHoles = isCreatedWithoutHoles;
+            site.isCreatedWithoutEngineNames = isCreatedWithoutEngineNames;
+            added.iterator->value = m_sites.append(site);
+        }
+        id = SiteID(added.iterator->value);
     }
-    SiteID site(added.iterator->value);
     if (severalThreadsAsk)
         table.isLocked.store(false, std::memory_order_release);
-    if (added.isNewEntry)
-        fillSiteJustMade(site);
-    return site;
+    if (isNewEntry)
+        fillSiteJustMade(id);
+    return id;
 }
 
 SiteID LinkFlow::siteOfSummary(FunctionID function, uint32_t rank, BuiltinClassID builtinClass)
