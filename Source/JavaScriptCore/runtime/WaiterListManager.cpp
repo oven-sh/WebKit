@@ -133,23 +133,27 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         syncWaiter->setParkedList(list.copyRef());
 
 #if USE(MIMALLOC)
-        // Only the owning thread can return the memory its thread-local heap holds, so do that once in a wait that
-        // takes a while. A wait that is notified soon pays nothing.
-        MonotonicTime releaseFreeMemoryTime = MonotonicTime::now() + 100_ms;
-        bool didReleaseFreeMemory = false;
+        // Only the owning thread can return the memory its thread-local heap holds, so do that in a wait that takes a
+        // while. A wait that is notified soon pays nothing. One release does not return the large blocks that the
+        // thread used a moment ago, so the thread releases again an interval later while one is due.
+        static constexpr Seconds releaseFreeMemoryInterval = Seconds::fromMilliseconds(WTF::IdleFreeMemoryRelease::intervalInMilliseconds);
+        WTF::IdleFreeMemoryRelease freeMemoryRelease;
+        MonotonicTime releaseFreeMemoryTime = MonotonicTime::now() + releaseFreeMemoryInterval;
 #endif
         while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm)) {
 #if USE(MIMALLOC)
-            if (!didReleaseFreeMemory && releaseFreeMemoryTime < time) {
+            if (freeMemoryRelease.isDue() && releaseFreeMemoryTime < time) {
                 if (MonotonicTime::now() < releaseFreeMemoryTime) {
                     syncWaiter->condition().waitUntil(list->lock, releaseFreeMemoryTime.approximate<WallTime>());
                     continue;
                 }
-                didReleaseFreeMemory = true;
                 // A notification in the meantime takes us off the list, and the loop tests for that (and for a
                 // termination request) under the lock again before it waits.
-                DropLockForScope dropLock { listLocker };
-                WTF::releaseFastMallocFreeMemoryForIdleThread();
+                {
+                    DropLockForScope dropLock { listLocker };
+                    freeMemoryRelease.release();
+                }
+                releaseFreeMemoryTime = MonotonicTime::now() + releaseFreeMemoryInterval;
                 continue;
             }
 #endif
