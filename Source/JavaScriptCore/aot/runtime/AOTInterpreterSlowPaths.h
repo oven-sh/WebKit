@@ -129,6 +129,7 @@ inline unsigned storeSiteOffset(PropertyOffset offset, StoreSiteKind kind)
 {
     return isInlineOffset(offset) ? offset | static_cast<unsigned>(kind) << storeSiteKindShift : offset;
 }
+inline constexpr int32_t replacingSiteAboveWordIndex = static_cast<int32_t>(static_cast<unsigned>(StoreSiteKind::Replaces) << storeSiteKindShift) - static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
 std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
 
 bool isClassWithLazyMembers(VM&, JSCell* closure);

@@ -240,6 +240,17 @@ macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
     loadp (constexpr (IdentifierFixedVector::Storage::offsetOfData()))[uid, scratch, PtrSize], uid
 end
 
+macro loadTableInstanceAndIdentifier(size, opcodeStruct, fieldName, instance, uid, scratch, hasNone)
+    loadp CodeBlock[cfr], uid
+    loadp CodeBlock::m_globalObject[uid], instance
+    loadp JSGlobalObject::m_aotTableInstance[instance], instance
+    btpz instance, hasNone
+    getu(size, opcodeStruct, fieldName, scratch)
+    loadp CodeBlock::m_unlinkedCode[uid], uid
+    loadp UnlinkedCodeBlock::m_identifiers + IdentifierFixedVector::m_storage[uid], uid
+    loadp (constexpr (IdentifierFixedVector::Storage::offsetOfData()))[uid, scratch, PtrSize], uid
+end
+
 # AOT::HashedSlotTable::findEntry(). The sets of the table are aligned to their size, so the ways of a set differ in the same bits of
 # the address as of the offset. The key is AOT::HashedSlot::keyFor(), which for a read is the uid.
 macro findHashedSlot(instance, structureID, uid, makeKey, entry, scratch, miss)
@@ -1581,12 +1592,11 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .ordinary
-    loadTableInstance(t5, .ordinary)
-    loadIdentifier(size, OpPutById, m_property, t1, t2)
-    loadi JSCell::m_structureID[t0], t2
-    findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .isNotFiled)
+    loadTableInstanceAndIdentifier(size, OpPutById, m_property, t5, t1, t3, .ordinary)
+    loadi JSCell::m_structureID[t0], t7
+    findHashedSlot(t5, t7, t1, makeKeyOfStore, t6, t3, .isNotFiled)
     loadb SlotKind[t6], t1
-    bbeq t1, constexpr AOT::Slot::Kind::Value, .storesValue
+    bbeq t1, constexpr AOT::Slot::Kind::Value, .storesFiledValue
     bbeq t1, constexpr AOT::Slot::Kind::Transition, .addsByTransition
     if X86_64 or ARM64
         bbeq t1, constexpr AOT::Slot::Kind::Setter, .setter
@@ -1597,7 +1607,7 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     # The ordinary handler would compare the Structure with the site's once more.
 .isNotFiled:
     if X86_64 or ARM64
-        branchIfUncacheableDictionary(t2, t3, .isDictionary)
+        branchIfUncacheableDictionary(t7, t3, .isDictionary)
     .asksForStore:
         callSlowPath(_llint_slow_path_put_by_id)
         dispatch()
@@ -1613,12 +1623,25 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
         jmp .ordinary
     end
 
+.storesFiledValue:
+    loadhsq SlotLocation[t6], t1
+    btinz t2, .hasPlaceOfValue
+    bilt t1, 0, .hasPlaceOfValue
+    locateSite(size, OpPutById, t5, t3)
+    makeSiteAddress(t5)
+    btinz OpPutById::Metadata::m_offset[t5], .hasPlaceOfValue
+    move t1, t3
+    addi constexpr AOT::Interpreter::replacingSiteAboveWordIndex, t3
+    storei t3, OpPutById::Metadata::m_offset[t5]
+    storei t7, OpPutById::Metadata::m_oldStructureID[t5]
+    jmp .hasPlaceOfValue
+
 .addsByTransition:
     btbnz SlotFlags[t6], constexpr AOT::Slot::growsStorage, .growsStorage
     loadi SlotPayload[t6], t2
     storei t2, JSCell::m_structureID[t0]
-.storesValue:
     loadhsq SlotLocation[t6], t1
+.hasPlaceOfValue:
     get(m_value, t2)
     loadConstantOrVariable(size, t2, t3)
     move t0, t6
