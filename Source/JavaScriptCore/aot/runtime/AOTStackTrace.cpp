@@ -625,6 +625,12 @@ static std::optional<RunStart> findRunBelowEntry(VM& vm)
     return RunStart { callerStackPointer(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
 }
 
+static ALWAYS_INLINE bool returnsIntoImage(VM& vm, CallFrame* frame)
+{
+    std::span<const uint8_t> code = vm.aotState().image->code();
+    return std::bit_cast<uintptr_t>(removeCodePtrTag(frame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy topFramePolicy)
 {
     CallFrame* top = vm.topCallFrame;
@@ -639,6 +645,8 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy t
     if (top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
         return findRunBelowEntry(vm);
     }
+    if (!returnsIntoImage(vm, top))
+        return std::nullopt;
     const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
@@ -654,8 +662,10 @@ static bool isOnlyTopFrame(VM& vm)
     return !entry->prevTopCallFrame() && !entry->prevTopEntryFrame();
 }
 
-static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy)
+static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy, JSCell* lastConstructorToSkip)
 {
+    if (lastConstructorToSkip && topFramePolicy == TopFramePolicy::Include)
+        return std::nullopt;
     auto isShownInterpretedFrame = [&](CallFrame* frame) {
         if (frame->isZombieFrame() || frame->isNativeCalleeFrame() || vm.aotState().classCalledWithoutNew == frame)
             return false;
@@ -686,11 +696,18 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm
         if (frames.size() == maxFrames)
             return std::nullopt;
         frame = frame->callerFrame();
+        if (lastConstructorToSkip) {
+            if (frame->isZombieFrame() || frame->isNativeCalleeFrame() || !frame->codeBlock() || vm.aotState().classCalledWithoutNew == frame)
+                return std::nullopt;
+            if (frame->callee().asCell() == lastConstructorToSkip)
+                lastConstructorToSkip = nullptr;
+            continue;
+        }
         if (!isShownInterpretedFrame(frame))
             return std::nullopt;
         frames.append(frame);
     }
-    if (!start || frames.isEmpty())
+    if (!start || lastConstructorToSkip || frames.isEmpty())
         return std::nullopt;
 
     framesOnTop.reserveInitialCapacity(frames.size());
@@ -782,21 +799,26 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
         return nullptr;
 
     FramesAboveRun framesAbove;
-    if (topFramePolicy == TopFramePolicy::Skip && isTopFrameCompiled(vm))
-        return nullptr;
-    std::optional<RunStart> start = topFramePolicy == TopFramePolicy::Include ? findRunAtTop(vm) : findRunBelowHostFunction(vm, topFramePolicy);
-    if (!start) {
-        if (lastConstructorToSkip)
+    std::optional<RunStart> start;
+    if (topFramePolicy == TopFramePolicy::Include)
+        start = findRunAtTop(vm);
+    else if (CallFrame* top = vm.topCallFrame; returnsIntoImage(vm, top) || top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
+        if (isTopFrameCompiled(vm))
             return nullptr;
-        if (topFramePolicy == TopFramePolicy::Include && maxStackSize >= 2)
+        start = findRunBelowHostFunction(vm, topFramePolicy);
+    }
+    if (!start) {
+        if (topFramePolicy == TopFramePolicy::Include && maxStackSize >= 2 && !lastConstructorToSkip)
             start = findRunBelowHostFunction(vm, topFramePolicy);
         if (start) {
             if (!otherFrames.capacity())
                 otherFrames.reserveInitialCapacity(1);
             otherFrames.append(StackFrame(vm, owner, vm.topCallFrame->callee().asCell()));
         } else {
-            start = findRunBelowInterpretedFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
-            if (!start && !isOnlyTopFrame(vm))
+            start = findRunBelowInterpretedFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy, lastConstructorToSkip);
+            if (start)
+                lastConstructorToSkip = nullptr;
+            else if (!lastConstructorToSkip && !isOnlyTopFrame(vm))
                 start = findRunBelowOtherFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
         }
         if (!start)
