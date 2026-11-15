@@ -436,6 +436,22 @@ void Modules::forgetFailuresOfExportsThatBuildFoundAbsent()
     ensureStillAliveHere(kept);
 }
 
+bool Modules::isFetchedByRunningTestFile(ModuleID module) const
+{
+    auto isFetchedBy = [&](ModuleID root) {
+        return isStartedByHost(root) && status(root) <= ModuleStatus::Linked && std::ranges::any_of(m_table.imports(root), [&](const ModuleRequestData& request) {
+            return !request.isHoisted && !request.isRequire && moduleLoadedBy(request) == module;
+        });
+    };
+    if (m_rootWhoseFilesRun && isFetchedBy(*m_rootWhoseFilesRun))
+        return true;
+    for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
+        if (!files->loadQueue && isFetchedBy(files->root))
+            return true;
+    }
+    return false;
+}
+
 bool Modules::evaluateLinkedModuleBeforeMock(ModuleID module, bool keepsOriginalIntact)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -445,6 +461,11 @@ bool Modules::evaluateLinkedModuleBeforeMock(ModuleID module, bool keepsOriginal
         ModuleStatus current = status(each);
         return current == ModuleStatus::Unlinked || current == ModuleStatus::Linked;
     };
+    if (data(module).kind == ModuleKind::Data && !data(module).isOfLibrary() && isUnevaluated(module) && !isMocked(module) && !m_modulesWithPendingMock.get(module.index()) && (isFetchedByRunningTestFile(module) || isImportedByGraphUnderEvaluation(module, keepsOriginalIntact))) {
+        scope.release();
+        evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+        return false;
+    }
     if (!data(module).isESModuleOfProgram() || data(module).isFacade() || !isUnevaluated(module) || isMocked(module) || m_modulesWithPendingMock.get(module.index()))
         return false;
     bool endsBeforeLink = m_table.hasLoadFailures() && loadFailure(module);
