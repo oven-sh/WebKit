@@ -848,7 +848,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     # The slow path sees whether the cache of a site that holds nothing yet can hold the property, and takes a site that cannot out of the default mode.
 .holdsNothing:
     bbeq JSCell::m_type[t3], CompiledObjectType, .slow
-    bbeq JSCell::m_type[t3], constexpr ProxyObjectType, .slow
+    bbeq JSCell::m_type[t3], constexpr ProxyObjectType, .proxy
 
     # What the cache of the site does not hold.
 .probe:
@@ -936,6 +936,10 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
 
 .isAbsentFromTable:
     callSlowPath(_llint_slow_path_aot_get_uncached)
+    dispatch()
+
+.proxy:
+    callSlowPath(_llint_slow_path_aot_get_from_proxy)
     dispatch()
 
 .baseIsNotObject:

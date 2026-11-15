@@ -2003,6 +2003,13 @@ LLINT_SLOW_PATH_DECL(slow_path_aot_get_property_enumerator)
     RELEASE_AND_RETURN(throwScope, slow_path_get_property_enumerator(callFrame, pc));
 }
 
+LLINT_SLOW_PATH_DECL(slow_path_aot_get_from_proxy)
+{
+    LLINT_BEGIN();
+    auto bytecode = pc->as<OpGetById>();
+    LLINT_RETURN(getOperand(callFrame, bytecode.m_base).get(globalObject, codeBlock->identifier(bytecode.m_property)));
+}
+
 LLINT_SLOW_PATH_DECL(slow_path_aot_enumerator_get_by_val)
 {
     LLINT_BEGIN();
