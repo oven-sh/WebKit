@@ -303,6 +303,10 @@ String CompiledFrame::sourceURL() const
 {
     if (FunctionDescription(function).isHelperOfCompiler()) [[unlikely]]
         return compilerHelpersModule;
+    if (instance->vm->aotState().image->isObfuscated()) {
+        ModuleID module = moduleShownByObfuscatedImage(function);
+        return module ? sourceURLOf(module) : String();
+    }
     auto position = findPosition(*this);
     return position && position->source ? sourceURLOf(position->shown()) : String();
 }

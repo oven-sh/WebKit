@@ -12,6 +12,7 @@
 #include "AOTClassGuards.h"
 #include "AOTClassMemberTable.h"
 #include "AOTFieldTable.h"
+#include "AOTFunctionKinds.h"
 #include "AOTGlobalBindings.h"
 #include "AOTIRProgram.h"
 #include "AOTObjectVisiting.h"
@@ -1175,9 +1176,13 @@ static void checkObfuscationOfProgramTables(const JoinedTables& check)
     const ProgramTables& tables = check.tables;
     uint32_t emptyString = check.encoder.stringNumber(StringID());
     std::span<const ModuleData> modules = tables.modules();
-    bool hasFunctionName = check.encoder.build.options().hidesFunctionNames() && std::ranges::any_of(tables.functionNames(), [&](uint32_t name) {
-        return name != emptyString;
-    });
+    bool hasFunctionName = false;
+    if (check.encoder.build.options().hidesFunctionNames()) {
+        for (uint32_t index = 0; index < check.program.functions.size(); ++index) {
+            std::optional<uint32_t> name = tables.nameOfFunction(index);
+            hasFunctionName |= name && *name != emptyString && !Typed::functionObjectsLieInRuntimeModule(check.program, check.program.functions[index]);
+        }
+    }
     bool hasDisplayPath = false;
     for (size_t index = 0; index < std::min<size_t>(modules.size(), check.program.modules.size()); ++index)
         hasDisplayPath |= modules[index].charactersInFrontOfDisplayPath != ModuleData::hasNoDisplayPath && !check.program.modules[index].runtimeModule;

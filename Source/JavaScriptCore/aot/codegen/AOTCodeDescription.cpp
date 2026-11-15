@@ -298,7 +298,7 @@ static bool isDefaultConstructor(const Program& program, const Function& functio
     return function.constructedClass && program.at(function.constructedClass).position == function.position;
 }
 
-static std::optional<LineColumn> positionInBuiltin(const Program& program, const CallingConventions& conventions, FunctionID shown)
+std::optional<LineColumn> positionInBuiltin(const Program& program, const CallingConventions& conventions, FunctionID shown)
 {
     const Function& owner = program.at(shown);
     if (isDefaultConstructor(program, owner))

@@ -136,18 +136,28 @@ bool FunctionDescription::isOfCalledBuiltin() const
     return m_record == &traceOfCalledHostFunction || m_record == &traceOfCalledJSBuiltin;
 }
 
+bool FunctionDescription::isOfProgram() const
+{
+    return !isOfCalledBuiltin() && !functionKindData(m_function).isInRuntimeModule;
+}
+
+bool FunctionDescription::hasHiddenName() const
+{
+    return Image::current()->isObfuscated() && isOfProgram();
+}
+
 String FunctionDescription::name(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(*this, NameForm::AsWritten);
+    return hasHiddenName() ? emptyString() : functionName(*this, NameForm::AsWritten);
 }
 
 String FunctionDescription::stackTraceName(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    if (Image::current()->isObfuscated())
+    if (hasHiddenName())
         return emptyString();
     String name = functionName(*this, NameForm::InFrames);
     return name.isEmpty() ? computedNameInFrames(vm, *this) : name;
@@ -157,7 +167,7 @@ String FunctionDescription::calculatedDisplayName(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    if (Image::current()->isObfuscated())
+    if (hasHiddenName())
         return emptyString();
     if (isNamedByComputedKey())
         return emptyString();
@@ -1267,10 +1277,10 @@ std::optional<SourcePosition> definitionOf(const TraceFrame& frame)
 std::optional<SourcePosition> positionOf(const TraceFrame& frame)
 {
     const Image& image = *Image::current();
-    if (image.isObfuscated())
-        return SourcePosition { obfuscatedPositionOf(frame), ModuleID() };
     if (builtinOfFunctionInFrames(frame.function) && FunctionDescription(frame.function).builtinKind() == StackTraceBuiltinKind::JSBuiltin) [[unlikely]]
         return SourcePosition { startOfBuiltinFunction, ModuleID() };
+    if (image.isObfuscated())
+        return SourcePosition { obfuscatedPositionOf(frame), moduleShownByObfuscatedImage(frame.function) };
     std::optional<SourcePosition> position = image.positionOf(frame.code.index(), frame.callSite);
     if (position)
         position = position->shown();
@@ -1285,6 +1295,17 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
         position->startIsWhereWritten = false;
     }
     return position;
+}
+
+ModuleID moduleShownByObfuscatedImage(FunctionID function)
+{
+    FunctionDescription description(function);
+    if (!description.isInRuntimeModule())
+        return ModuleID();
+    std::span modules = Image::current()->section<ModuleOfRuntimeFunctions>(ImageSection::Positions);
+    auto next = std::ranges::upper_bound(modules, description.sourceFunction().index(), { }, &ModuleOfRuntimeFunctions::firstFunction);
+    uint32_t module = next == modules.begin() ? ModuleOfRuntimeFunctions::none : std::prev(next)->module;
+    return module == ModuleOfRuntimeFunctions::none ? ModuleID() : ModuleID(module);
 }
 
 LineColumn obfuscatedPositionOf(const TraceFrame& frame)

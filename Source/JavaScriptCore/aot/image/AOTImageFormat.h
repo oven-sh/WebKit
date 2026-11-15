@@ -112,6 +112,13 @@ private:
     const uint32_t* m_groups;
 };
 
+struct ModuleOfRuntimeFunctions {
+    static constexpr uint32_t none = UINT32_MAX;
+
+    uint32_t firstFunction;
+    uint32_t module;
+};
+
 #define FOR_EACH_AOT_IMAGE_SECTION(macro) \
     macro(Functions, uint32_t) \
     macro(FunctionStarts, uint32_t) \
