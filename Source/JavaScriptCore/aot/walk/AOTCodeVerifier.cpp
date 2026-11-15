@@ -1508,6 +1508,8 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
                 if (user.operand(operandIndex) == test && (user.opcode != Opcode::Narrowed || user.valueOperand() == test))
                     return false;
+                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame)
+                    isUsedOnFailure = true;
                 if (!user.operand(operandIndex) || !names.get(user.operand(operandIndex).index()) || names.get(id.index()))
                     continue;
                 if (user.position != asked.position || user.inlineFrame != asked.inlineFrame)
