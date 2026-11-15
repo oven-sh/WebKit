@@ -16049,7 +16049,9 @@ static bool loadElementsInArm(Walker& walker, const BodyValue& read, Reference l
                     break;
                 load.setIsPresent(*present);
             }
+            TypeID typeOfReadBeingWalked = walker.exchangeResultOfReadBeingTyped({ });
             Reference number = walker.build(WTF::move(load));
+            walker.exchangeResultOfReadBeingTyped(typeOfReadBeingWalked);
             if (!number)
                 break;
             brought.append(number);
