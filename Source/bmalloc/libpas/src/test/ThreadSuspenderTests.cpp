@@ -86,7 +86,7 @@ void testInstallAndHandleStorage()
 
     void* observedHandle = nullptr;
     thread t([&] {
-        void* p = iso_allocate_common_primitive(64, pas_non_compact_allocation_mode);
+        void* p = iso_allocate_common_primitive(64);
         CHECK(p);
         pas_thread_local_cache* cache = pas_thread_local_cache_try_get();
         CHECK(cache);
@@ -150,7 +150,7 @@ void testForceStopUsesEmbedder()
 
     thread t([&] {
         for (unsigned i = 0; i < 4; ++i) {
-            void* p = iso_allocate_common_primitive(64u << i, pas_non_compact_allocation_mode);
+            void* p = iso_allocate_common_primitive(64u << i);
             CHECK(p);
         }
         threadReady.store(true);

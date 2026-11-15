@@ -34,6 +34,10 @@
 // pas_segregated_heap_ensure_allocator_index from DFG worker threads since
 // af63dbd0b5d enabled the libpas JIT heap on Windows. Keep it disabled there
 // until the assertion failure is understood.
+// That function now returns before it checks the heap ref and the lookup tables
+// when the heap does not map the index to the directory it was given. If one of
+// those assertions was the failure, a run without it does not show that the
+// cause is gone.
 #if BENABLE(LIBPAS) && (OS(DARWIN) || OS(LINUX) || (OS(WINDOWS) && !CPU(ARM64)))
 #define ENABLE_LIBPAS_JIT_HEAP 1
 #endif
