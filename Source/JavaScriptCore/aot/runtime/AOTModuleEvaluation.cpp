@@ -6073,7 +6073,7 @@ void Modules::recordRequire(ModuleID target, ModuleID referrer, bool isFromCreat
         return;
     case RecordedRequire::Begun:
     case RecordedRequire::BegunForEvictedModule: {
-        if (status(target) == ModuleStatus::Failed)
+        if (status(target) == ModuleStatus::Failed && !isListedBeforeItHasRun(target))
             return;
         bool isListedByHost = recorded.iterator->value == RecordedRequire::BegunForEvictedModule;
         recorded.iterator->value = RecordedRequire::Returned;
