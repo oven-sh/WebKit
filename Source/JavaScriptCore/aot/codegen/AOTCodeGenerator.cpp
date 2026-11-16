@@ -6825,7 +6825,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     LValue counterBehindTurns = valuesBehindTurns[indexOfCounter];
     RELEASE_ASSERT(counterBehindTurns->type() != Machine::Int32 || Machine::clearsUpperHalf(counterBehindTurns->opcode()));
     auto goingRound = [&](LValue nextEndOfStretch) {
-        return blockHandingOver(phisOfTurns, turns, [&](size_t index) {
+        size_t numberOfNumbersKnown = m_numbersOfIntegers.size();
+        LBasicBlock handsOver = blockHandingOver(phisOfTurns, turns, [&](size_t index) {
             if (index == indexOfCounter && endOfStretch)
                 m_out.upsilon(nextEndOfStretch ? nextEndOfStretch : endOfStretchFrom(m_out.opaque(counterBehindTurns), lastStart), endOfStretch);
             const SumOfIntegers* sum = sumAt(index);
@@ -6836,6 +6837,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             }
             return sum ? sum->added : asCarriedByLoop(index, valuesBehindTurns[index]);
         });
+        m_numbersOfIntegers.shrink(numberOfNumbersKnown);
+        return handsOver;
     };
     if (pollsBetweenStretches) {
         LBasicBlock stretchHasEnded = m_out.newBlock();

@@ -213,6 +213,7 @@ public:
     Environment* currentInstance(ModuleID) const;
     Environment* ensureInstance(ModuleID);
     Environment* lastInstance(ModuleID) const;
+    Environment* instanceBeforePendingMock(ModuleID) const;
     void noteCachedForeignInstance(ModuleID reexporter) { m_modulesCachingInstances.set(reexporter.index()); }
     enum class MockMode : bool { Use, Bypass };
     JSValue readExport(ModuleID, unsigned index, MockMode = MockMode::Use, Environment* instance = nullptr);
@@ -648,9 +649,11 @@ public:
     void finishDetachedLoadsOfRemovedMocks(ModuleID required);
     Vector<ModuleID, 2> m_modulesToEvictOnceLoaded;
     BitVector m_modulesEvictedOnceLoaded;
+    bool hasBegunTestFile() const { return m_hasBegunTestFile; }
     BitVector m_modulesToReleaseAfterEvaluation;
     BitVector m_modulesToReleaseAtNextTestFile;
     bool wasReleasedByLoader(ModuleID module) const { return m_modulesReleasedByLoader.get(module.index()); }
+    void letGoUntilEndOfTestFile(ModuleID module) { m_modulesReleasedByLoader.set(module.index()); }
     void releaseFailedESModules(std::optional<ModuleID> patched);
     void clearFailedCommonJSFiles();
     void willFetchESModules(ModuleID root);
@@ -1028,12 +1031,15 @@ public:
     void didTakeFirstHostImportStep(JSPromise*);
     bool isMockUnseen(ModuleID module) const { return m_unseenMocks.get(fileOf(module).index()); }
     bool isEvictedWithOriginal(ModuleID) const;
+    bool wasActualKeyFetched(ModuleID file) const;
     void willEndMocksOfTestFile() { m_originalsRestoredAfterPass.emplace(); }
     void didEndMocksOfTestFile() { m_originalsRestoredAfterPass = std::nullopt; }
     void willRestoreOriginal(ModuleID module)
     {
         if (m_originalsRestoredAfterPass && hasIntactOriginal(module) && !isEvictedWithOriginal(module))
             m_originalsRestoredAfterPass->set(module.index());
+        if (m_originalsRestoredAfterPass && !wasActualKeyFetched(fileOf(module)))
+            m_stashesRestoredByPass.set(fileOf(module).index());
     }
     bool takeUnseenMock(ModuleID module) { return m_unseenMocks.clear(fileOf(module).index()); }
     bool takeReleaseUnderPendingPatch(ModuleID);
@@ -1071,6 +1077,9 @@ public:
     JSValue capturedValue(ModuleID, const Identifier&, MockMode = MockMode::Use);
     JSValue capturedValueIfInitialized(ModuleID, const Identifier&, JSValue ifDeferred) const;
     JSValue readDeferredExport(ModuleID, const Identifier&);
+    bool isDeferredExportOfBuiltinModule(ModuleID, const Identifier&) const;
+    static uint64_t bitOfHash(const Identifier& name) { return 1ULL << (name.impl()->symbolAwareHash() & 63); }
+    bool mayNameDeferredExport(const Identifier& name) const { return m_hashesOfDeferredExports & bitOfHash(name); }
     bool hasCapturedExport(ModuleID, const Identifier&);
     bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
@@ -1266,6 +1275,7 @@ public:
     Vector<ModuleID, 16> linkInstances(ModuleID root);
     void unlinkInstances(ModuleID root, std::span<const ModuleID>);
     BitVector findModulesLinkedBefore(ModuleID root, ModuleID importer) const;
+    void noteFetchOfFailedLoad(ModuleID root);
     void noteLinkFailure(ModuleID root, ModuleID importer);
     void tellOfFailedLoad(ModuleID module, ModuleID target);
     bool wasLinkedBeforeTestFile(ModuleID) const;
@@ -1672,6 +1682,10 @@ public:
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID moduleOrFacade);
     void recaptureExports(ModuleID);
+    void takeExportsAnew(ModuleID moduleOrFacade);
+    void didChangeFilesMadeAndNotStored(bool hasOneMore) { m_filesMadeAndNotStored += hasOneMore ? 1 : -1; }
+    bool isFileYetToBeEvaluated(ModuleID moduleOrFacade) const { return isCommonJSModuleOrFacade(moduleOrFacade) && (status(moduleOrFacade) != ModuleStatus::Evaluated || facadeYetToBeEvaluated(moduleOrFacade)); }
+    std::optional<ModuleID> facadeYetToBeEvaluated(ModuleID file) const;
     void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID facade);
     void captureExportsAgainKeepingWhatGettersGave(ModuleID facade);
     JSObject* standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies);
@@ -1781,6 +1795,7 @@ public:
     bool wasImportedDuringEvaluation(ModuleID file) const;
     bool loaderHasFileThatThrew(ModuleID file);
     bool isAwaitedByImport(ModuleID file);
+    bool isAwaitedByPendingImport(ModuleID file);
     bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID moduleOrFacade);
     void didDiscardModuleError(const Identifier& key);
@@ -2675,6 +2690,7 @@ private:
     BitVector m_mocksWhoseFactoriesRanInsideTheirFetch;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
+    uint64_t m_hashesOfDeferredExports { 0 };
     BitVector m_libraryModulesThatStatementsReached;
     mutable BitVector m_libraryModulesWithCheckedName;
     mutable BitVector m_libraryModulesKeptInRequireCache;
@@ -3313,6 +3329,7 @@ private:
             m_originalsFetchedByTestFiles.set(fileOf(module).index());
     }
     std::optional<BitVector> m_originalsRestoredAfterPass;
+    BitVector m_stashesRestoredByPass;
     BitVector m_requirersOfOwnOriginals;
     BitVector m_originalsRequiredByFactories;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;
@@ -3553,6 +3570,7 @@ private:
     BitVector m_modulesWithOriginalRestored;
     BitVector m_modulesWithoutTestFile;
     uint32_t m_loaderStepCount { 0 };
+    uint32_t m_filesMadeAndNotStored { 0 };
     UncheckedKeyHashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
     uint64_t m_numberOfNextLoadToGoThrough { 0 };
     void goThroughLoadsOfEarlierJobs(uint64_t endNumber);

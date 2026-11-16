@@ -466,7 +466,6 @@ void BuilderOfEntries::returnWhatWasConstructed(Reference returned, Reference ob
     finish.setObjectOperand(object);
     if (lookMayFinishBirthOf(m_walker, object))
         build(WTF::move(finish));
-    showWhatIsHeldFilledWhereConstructionEnds(m_walker, m_unit.function, object, m_origin);
     if (m_walker.isUnreachable())
         return;
 
@@ -481,7 +480,9 @@ void BuilderOfEntries::returnWhatWasConstructed(Reference returned, Reference ob
     continueIn(takesReturned);
     returnValue(returned);
     continueIn(takesThis);
-    returnValue(object);
+    showWhatIsHeldFilledWhereConstructionEnds(m_walker, m_unit.function, object, m_origin);
+    if (!m_walker.isUnreachable())
+        returnValue(object);
 }
 
 bool BuilderOfEntries::buildGenericEntry()

@@ -153,7 +153,12 @@ bool Modules::isEvictedWithOriginal(ModuleID module) const
 {
     if (!currentInstance(module) || !isUnderActualKey(module) || status(module) != ModuleStatus::Evaluated || m_loadedInPreload.get(module.index()))
         return false;
-    return m_originalsFetchedByTestFiles.get(module.index()) || (host().wasFetchedByTestFile && host().wasFetchedByTestFile(m_instance.globalObject, makeString(m_table.fullPath(module), "?actual"_s)));
+    return wasActualKeyFetched(module);
+}
+
+bool Modules::wasActualKeyFetched(ModuleID file) const
+{
+    return m_originalsFetchedByTestFiles.get(file.index()) || (host().wasFetchedByTestFile && host().wasFetchedByTestFile(m_instance.globalObject, makeString(m_table.fullPath(file), "?actual"_s)));
 }
 
 bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::optional<ModuleID> patched)
@@ -258,6 +263,8 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
         auto releaseRequirer = [&](ModuleID requirer) {
             bool wasLoadedByThisTestFile = data(requirer).kind == ModuleKind::CommonJs ? wasFileLoadedByTest(requirer) : wasLoadedByTestFile(requirer);
             if ((asImported.quickGet(imported) && keepsImportersOfTestFile && wasLoadedByThisTestFile) || seen.quickGet(requirer.index()))
+                return;
+            if (m_stashesRestoredByPass.get(requirer.index()))
                 return;
             if (asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer)))
                 return;
@@ -1056,6 +1063,12 @@ bool wasReleasedByLoader(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasReleasedByLoader(module);
+}
+
+void letGoUntilEndOfTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->letGoUntilEndOfTestFile(module);
 }
 
 bool willReloadAfterMockRemoval(JSGlobalObject* realm, ModuleID module)
