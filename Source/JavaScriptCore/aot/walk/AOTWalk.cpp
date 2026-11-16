@@ -9000,6 +9000,9 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         TypeID recorded = m_code.at(judged).type;
         if (!givenByRow || !recorded || !m_types.at(recorded).isJavaScriptValue() || m_types.isSubset(recorded, givenByRow))
             continue;
+        bool isStringOfOperand = draft.opcode == Opcode::Add && draft.form() == OperatorForm::Strings && m_code.at(judged).opcode == Opcode::ToString && m_types.isSubset(m_code.at(m_code.at(judged).operand(0)).type, givenByRow);
+        if (isStringOfOperand)
+            continue;
         bool isFillerOfHeldSlot = draft.opcode == Opcode::NewObject && m_code.isConstant(judged) && !m_types.overlap(recorded, givenByRow);
         if (isFillerOfHeldSlot)
             continue;

@@ -6551,6 +6551,8 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         std::optional<uint32_t> known = lengthOfFreshList(walker, base);
         if (!known)
             known = lengthOfListMadeInSight(walker, base);
+        if (known && walker.checksProofs() && walker.isInLoop() && walker.has(Mechanism::Folding))
+            checkLengthOfListMadeInSight(walker, base, *known, walker.originOf(value));
         if (!known && walker.has(Mechanism::Folding) && walker.facts().linked().nobodyChangesReceiverAt(walker.currentFunction(), value.id())) {
             if (WrittenListOfVariable written = writtenListReadBy(walker, value.objectOperand())) {
                 known = written.length;

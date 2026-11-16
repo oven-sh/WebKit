@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeDescription.h"
+#include "AOTCompileUnit.h"
 #include "AOTCurrentWork.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionKinds.h"
@@ -69,6 +70,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .shouldAssumeClearUpperHalves = hasFlag(build.options().injectedFaults, Wire::FaultInjection::AssumeClearUpperHalves),
         .shouldIgnoreCollectorSpillReads = hasFlag(build.options().injectedFaults, Wire::FaultInjection::IgnoreCollectorSpillReads),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
+        .checksProofs = !!sourcesOfProofsCheckedUnder(build.options().testing),
         .features = build.targetFeatures(),
     };
 }

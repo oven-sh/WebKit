@@ -118,7 +118,9 @@ void ArrayBuiltinEmitter::generateArrayConcat(const InlineCall& call)
         Vector<std::optional<Operand>, maxConcatenatedArrays> rawItems;
         for (unsigned i = 0; i < arrays.size(); ++i) {
             rawItems.append(arrays[i] ? std::nullopt : elements().rawElementToStore(made, call.argument(i - 1), miss));
-            if (!arrays[i] && !rawItems.last()) {
+            if (rawItems.last())
+                elements().stopWhereHoleWouldBeStored(call.context(), made, *rawItems.last());
+            else if (!arrays[i]) {
                 m_out.jump(miss);
                 m_out.appendTo(newBlock());
             }
@@ -181,6 +183,7 @@ Integer ArrayBuiltinEmitter::clampToLength(Integer relative, Integer length)
 void ArrayBuiltinEmitter::storeItem(const InlineCall& call, const ArrayStorageForm& form, ArrayElements target, Integer position, ValueID item)
 {
     if (std::optional<Operand> rawElement = elements().rawElementToStore(form, item, missBlockOf(call))) {
+        elements().stopWhereHoleWouldBeStored(call.context(), form, *rawElement);
         elements().storeRawElement(form, target, position, *rawElement);
         return;
     }
@@ -279,6 +282,7 @@ std::optional<ArrayBuiltinEmitter::RawItems> ArrayBuiltinEmitter::rawItemsToInse
             m_out.jump(doesNotFit);
             return std::nullopt;
         }
+        elements().stopWhereHoleWouldBeStored(call.context(), form, *rawElement);
         inserted.append(*rawElement);
     }
     return inserted;

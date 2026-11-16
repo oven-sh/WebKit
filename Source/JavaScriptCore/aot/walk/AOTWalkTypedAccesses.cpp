@@ -6102,7 +6102,9 @@ void askWhatLookupLeansOn(Walker& walker, const Draft& lookup)
                 guardsLeftOut.append(condition);
         }
     }
-    if (!guardsLeftOut.isEmpty())
+    if (isProvenStore && !guardsLeftOut.isEmpty() && findKnown(walker, KnownNote::StoresPassAbove, { }, lookup.objectOperand(), 0))
+        walker.checkPassedStores(lookup.objectOperand(), lookup.origin());
+    else if (!guardsLeftOut.isEmpty())
         walker.askGuardsAgainWhereTheyAreLeanedOn(guardsLeftOut.span(), lookup.origin());
     if (!findsNothing || walker.isUnreachable())
         return;
