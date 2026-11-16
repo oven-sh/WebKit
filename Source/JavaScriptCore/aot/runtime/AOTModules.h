@@ -1059,6 +1059,7 @@ public:
             m_requirersOfOwnOriginals.set(module.index());
     }
     bool tryEvictRequirerOfOriginal(ModuleID);
+    bool wasOriginalRunForStatement(ModuleID file) const { return m_originalsRunForStatements.get(file.index()); }
     bool takeRequirerOfOwnOriginal(ModuleID module) { return m_requirersOfOwnOriginals.clear(module.index()); }
     bool takeEvictedOriginal(ModuleID module) { return m_evictedOriginals.clear(fileOf(module).index()); }
     void forgetMockRegisteredAfter(ModuleID, uint32_t moment);
@@ -3335,6 +3336,7 @@ private:
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;
     BitVector m_unseenMocks;
     BitVector m_evictedOriginals;
+    BitVector m_originalsRunForStatements;
     BitVector m_originalsFetchedByTestFiles;
     void didEvaluateOriginalUnderMock(ModuleID module)
     {

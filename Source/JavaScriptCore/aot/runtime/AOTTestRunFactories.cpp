@@ -2549,6 +2549,7 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
                 if (!m_modulesWithPendingMock.get(module.index()))
                     continue;
             }
+            m_originalsRunForStatements.set(fileOf(module).index(), rootOfLoad == LoadRootKind::StatementOfCompiledFile && data(module).isESModuleOfProgram() && needsOriginalBeforeFactory(module));
             m_mocksCalledAgain.set(module.index(), m_mocksCalledInTestFile.set(module.index()));
             FactoryCaller caller { root, module, m_innermostFactoryCaller };
             bool isCalledByRequire = vm.aotState().requireRunsMocks || m_evaluatesSynchronously;

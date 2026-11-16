@@ -461,6 +461,7 @@ JS_EXPORT_PRIVATE void didEndMocksOfTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didRequireOwnOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool takeRequirerOfOwnOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool tryEvictRequirerOfOriginal(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasOriginalRunForStatement(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID, bool evenIfEvaluationFailed, bool* didExportReadThrow = nullptr);
 JS_EXPORT_PRIVATE JSValue retainedOriginalExports(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSValue revalidateRetainedOriginalExports(JSGlobalObject*, ModuleID file);

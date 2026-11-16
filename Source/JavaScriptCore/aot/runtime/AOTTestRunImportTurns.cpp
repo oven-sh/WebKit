@@ -870,6 +870,12 @@ bool tryEvictRequirerOfOriginal(JSGlobalObject* realm, ModuleID module)
     return modules && modules->tryEvictRequirerOfOriginal(module);
 }
 
+bool wasOriginalRunForStatement(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasOriginalRunForStatement(file);
+}
+
 bool takeRequirerOfOwnOriginal(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
