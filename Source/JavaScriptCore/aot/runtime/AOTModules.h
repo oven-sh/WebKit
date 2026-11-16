@@ -1071,6 +1071,9 @@ public:
     JSValue capturedValue(ModuleID, const Identifier&, MockMode = MockMode::Use);
     JSValue capturedValueIfInitialized(ModuleID, const Identifier&, JSValue ifDeferred) const;
     JSValue readDeferredExport(ModuleID, const Identifier&);
+    bool isDeferredExportOfBuiltinModule(ModuleID, const Identifier&) const;
+    static uint64_t bitOfHash(const Identifier& name) { return 1ULL << (name.impl()->symbolAwareHash() & 63); }
+    bool mayNameDeferredExport(const Identifier& name) const { return m_hashesOfDeferredExports & bitOfHash(name); }
     bool hasCapturedExport(ModuleID, const Identifier&);
     bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
@@ -2678,6 +2681,7 @@ private:
     BitVector m_mocksWhoseFactoriesRanInsideTheirFetch;
     Vector<ModuleID> m_libraryModulesInRequireCache;
     BitVector m_libraryModulesTakenFromLoader;
+    uint64_t m_hashesOfDeferredExports { 0 };
     BitVector m_libraryModulesThatStatementsReached;
     mutable BitVector m_libraryModulesWithCheckedName;
     mutable BitVector m_libraryModulesKeptInRequireCache;

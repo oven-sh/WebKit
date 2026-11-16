@@ -3839,6 +3839,12 @@ JSObject* Modules::capturedExports(ModuleID module)
     return loaded.capturedExports;
 }
 
+bool Modules::isDeferredExportOfBuiltinModule(ModuleID module, const Identifier& name) const
+{
+    const LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->deferredExportsSource && isDeferredExport(*loaded, name);
+}
+
 JSValue Modules::capturedValue(ModuleID module, const Identifier& name, MockMode mode)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -11002,6 +11008,15 @@ JSValue ModuleRecord::readDeferredExport(const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
     RELEASE_AND_RETURN(scope, modules().readDeferredExport(modules().moduleWithNamesOf(m_module), name));
+}
+
+void ModuleRecord::readDeferredExportForBinding(JSGlobalObject* globalObject, const Resolution& resolution)
+{
+    auto* compiled = dynamicDowncast<ModuleRecord>(resolution.moduleRecord);
+    if (!compiled || resolution.compiledExportIndex || !compiled->modules().mayNameDeferredExport(resolution.localName))
+        return;
+    if (compiled->modules().isDeferredExportOfBuiltinModule(compiled->m_module, resolution.localName) && !compiled->isReplacedByMock())
+        compiled->readExport(globalObject, resolution.localName, std::nullopt);
 }
 
 JSObject* ModuleRecord::moduleNamespaceObject(JSGlobalObject*, ModulePhase phase)

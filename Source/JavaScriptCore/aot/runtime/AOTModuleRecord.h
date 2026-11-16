@@ -181,6 +181,7 @@ public:
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSValue readExportIfInitialized(const Identifier& exportName, JSValue ifDeferred);
     JSValue readDeferredExport(const Identifier& exportName);
+    static void readDeferredExportForBinding(JSGlobalObject*, const Resolution&);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
     static bool throwIfExportWasOmitted(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);
