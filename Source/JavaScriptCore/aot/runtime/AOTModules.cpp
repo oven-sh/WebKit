@@ -5405,7 +5405,8 @@ void Modules::fulfillFirstQueuedFetch()
 bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader();
+    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && m_loadsInFlight.numberBeingLoaded() > 1;
+    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
     if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
         return false;
