@@ -904,7 +904,7 @@ public:
     void restoreLibraryOriginal(ModuleID, LibraryMock);
     bool doesMockReplaceLibraryModule(ModuleID module) const { return m_libraryModulesThatMockReplaces.get(module.index()); }
     bool isLibraryOriginalDisplaced(ModuleID module) const { return m_displacedLibraryModules.get(module.index()); }
-    enum class LoadRootKind : bool { StartsLoad, ImportStatement };
+    enum class LoadRootKind : uint8_t { StartsLoad, ImportStatement, StatementOfCompiledFile };
     bool runMocksInGraph(ModuleID root, LoadRootKind = LoadRootKind::StartsLoad);
     bool runMocksInGraphSlow(ModuleID root, LoadRootKind);
     bool wasLoadedWhenMockWasMade(ModuleID);
@@ -987,6 +987,12 @@ public:
     JSValue mockLoadError(ModuleID module) const { return m_modulesWithMockLoadError.get(module.index()) ? loadedIfExists(module)->cachedLoadError.get() : JSValue(); }
     bool didMockFailForImportStatement(ModuleID);
     void willFetchAfterTick(ModuleID);
+    void noteImporterOfFetch(ModuleID, ModuleID importer);
+    bool importsAbsentNameThroughLoader(ModuleID importer);
+    bool evaluateStatementsInFrontOf(ModuleID importer, ModuleID);
+    void evaluateStatementsBehind(ModuleID importer, ModuleID);
+    std::optional<ModuleID> fileOfStatement(const ModuleRequestData&);
+    bool mayEvaluateInFrontOfMocks(ModuleID);
     std::optional<ModuleID> loadOfFetch(ModuleID fetched);
     JSPromise* pendingFactoryForFetch(ModuleID fetched, JSValue& state);
     std::optional<ModuleID> currentLoadTarget() const { return m_currentImportTarget ? std::optional(fileOf(m_currentImportTarget)) : m_moduleBeingFetched; }
@@ -2676,6 +2682,12 @@ private:
     void didCallFactoryOfLoad(ModuleID file);
     bool shouldRunMocksAtFetch(ModuleID);
     BitVector m_statementFetchesDelayedByTick;
+    struct FetchForStatement {
+        ModuleID importer;
+        bool walksInFrontOfMocks { false };
+    };
+    UncheckedKeyHashMap<ModuleID, FetchForStatement> m_fetchesForStatements;
+    std::optional<ModuleID> m_importerOfWalkedStatement;
     struct FactoryCaller {
         ModuleID root;
         ModuleID mocked;

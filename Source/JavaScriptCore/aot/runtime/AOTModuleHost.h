@@ -410,6 +410,7 @@ JS_EXPORT_PRIVATE void noteOriginalRequiredFromSource(JSGlobalObject*, ModuleID)
 JS_EXPORT_PRIVATE JSPromise* pendingFactoryInGraph(JSGlobalObject*, ModuleID, JSValue& state);
 JS_EXPORT_PRIVATE bool didMockFailForImportStatement(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willFetchAfterTick(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void noteImporterOfFetch(JSGlobalObject*, ModuleID, ModuleID importer);
 JS_EXPORT_PRIVATE void didResumeFetchAfterFactory(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool wasReleasedByLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void letGoUntilEndOfTestFile(JSGlobalObject*, ModuleID);
