@@ -81,6 +81,10 @@ void FlowGraphOfVerifiedBody::build(const BodyIndex& index)
 
 namespace {
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 struct DifferenceInBodyIndex {
     ASCIILiteral part;
     BlockID block;
@@ -555,6 +559,10 @@ static void setPlaceOfErrorWithoutBodyIndex(InternalError& error, const Function
         error.operation = nameOf(value.opcode());
     });
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 static uint32_t numberOfCasesListedInBody(const BodyTerminator& terminator)
 {
@@ -1196,6 +1204,9 @@ void BodyVerifier::verifyEntryParameters()
     }
 }
 
+#if COMPILER(CLANG)
+__attribute__((minsize))
+#endif
 void BodyVerifier::verifyIndexAgainstPlainComputation()
 {
     if (!m_comparesIndexWithPlainComputation)

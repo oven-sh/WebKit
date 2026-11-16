@@ -5312,6 +5312,10 @@ void LinkFlow::flow()
     }
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 void LinkFlow::noteBreachOfClosure(BreachOfClosure&& breach)
 {
     breach.told = m_observerToldOnceMore;
@@ -5415,6 +5419,10 @@ Vector<BreachOfClosure> LinkFlow::findBreachesOfClosure()
     m_breachesOfClosure = nullptr;
     return breaches;
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 void LinkType::dump(PrintStream& out) const
 {

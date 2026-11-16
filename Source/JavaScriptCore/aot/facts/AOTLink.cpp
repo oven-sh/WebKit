@@ -5275,6 +5275,10 @@ void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const P
     held.firstReferrer.fill(0, numberOfFunctions + 1);
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 static void printBreachOfClosureInLink(PrintStream& out, LinkFlow& flow, const BreachOfClosure& breach)
 {
     if (breach.node) {
@@ -5335,6 +5339,10 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, const Thin
         }
     }
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 namespace {
 
