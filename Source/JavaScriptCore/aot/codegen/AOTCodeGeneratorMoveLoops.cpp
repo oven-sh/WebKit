@@ -24,6 +24,10 @@ namespace JSC { namespace AOT { namespace Typed {
 static constexpr OpcodeSet namesOfMovedValues { Opcode::Narrowed, Opcode::Unbox, Opcode::Box, Opcode::WidenInteger, Opcode::NarrowInteger, Opcode::IntegerToNumber, Opcode::NumberToInteger };
 
 struct MoveLoop {
+    static constexpr uint8_t int32s = 1;
+    static constexpr uint8_t doubles = 2;
+    static constexpr uint8_t values = 4;
+    static constexpr uint8_t everyKind = int32s | doubles | values;
     struct Key {
         ValueID base;
         std::optional<unsigned> read;
@@ -41,6 +45,7 @@ struct MoveLoop {
         bool isStoredInto { false };
         bool holdsNumbers { false };
         bool hasTestedNames { false };
+        uint8_t kindsAllowed { everyKind };
     };
     struct Read {
         ValueID value;
@@ -101,6 +106,11 @@ struct MoveLoop {
     Vector<std::pair<ValueID, unsigned>, 8> readsOfValues;
     Vector<std::pair<unsigned, unsigned>, 4> distinct;
 
+    bool holdsElementsOfGroup(unsigned group) const
+    {
+        return std::ranges::any_of(reads, [&](const Read& read) { return arrays[read.array].group == group && !read.isRow; }) || std::ranges::any_of(stores, [&](const Store& store) { return arrays[store.array].group == group; });
+    }
+
     bool isOnPath(const Code& code, ValueID value) const { return !code.isConstant(value) && path.contains(code.blockOf(value)); }
     ValueID resolve(const Code& code, ValueID value) const
     {
@@ -149,6 +159,7 @@ private:
     std::optional<Key> keyOf(ValueID);
     bool addRead(ValueID, ValueID array, ValueID position);
     bool askElement(ValueID test);
+    bool askStorage(ValueID test);
     bool addStore(BlockID, ValueID, ValueID array, ValueID position, ValueID stored);
     bool addNumber(ValueID, unsigned depth = 0);
     bool isCarriedNumber(ValueID value) const { return std::ranges::contains(m_found.carriedNumbers, value, &MoveLoop::CarriedNumber::parameter); }
@@ -309,6 +320,30 @@ bool MoveLoopFinder::askElement(ValueID test)
     read.isOnlyAsked = true;
     read.isNumber = storage == ArrayStorage::Double;
     m_found.reads.append(read);
+    return true;
+}
+
+bool MoveLoopFinder::askStorage(ValueID test)
+{
+    const Operation& operation = at(test);
+    std::optional<unsigned> array = addArray(operation.arrayOperand());
+    if (!array)
+        return false;
+    uint8_t kinds = operation.admitsInt32Storage() ? MoveLoop::int32s : 0;
+    switch (operation.arrayStorage()) {
+    case ArrayStorage::Int32:
+        kinds |= MoveLoop::int32s;
+        break;
+    case ArrayStorage::Double:
+        kinds |= MoveLoop::doubles;
+        break;
+    case ArrayStorage::Contiguous:
+        kinds |= MoveLoop::values;
+        break;
+    default:
+        return false;
+    }
+    m_found.arrays[*array].kindsAllowed &= kinds;
     return true;
 }
 
@@ -604,6 +639,8 @@ bool MoveLoopFinder::followBody()
         static constexpr OpcodeSet testsOfArrays { Opcode::HasArrayStorage, Opcode::IsPristine, Opcode::IsElementPresent };
         if (!isOnPath(condition) || !isPlainBlock(taken.to) || isPlainBlock(notTaken.to) || (!testsOfArrays.contains(at(condition).opcode) && !addComparison(condition)))
             return false;
+        if (at(condition).opcode == Opcode::HasArrayStorage && !askStorage(condition))
+            return false;
         if (at(condition).opcode == Opcode::IsElementPresent)
             m_presenceTests.append(condition);
         edge = &taken;
@@ -710,8 +747,20 @@ bool MoveLoopFinder::finish()
         unsigned group = groupOf(place);
         m_found.arrays[group].holdsNumbers |= m_found.arrays[place].holdsNumbers;
     }
-    for (unsigned place = 0; place < m_found.arrays.size(); ++place)
-        m_found.arrays[place].group = groupOf(place);
+    for (unsigned place = 0; place < m_found.arrays.size(); ++place) {
+        MoveLoop::Array& array = m_found.arrays[place];
+        array.group = groupOf(place);
+        uint8_t& ofGroup = m_found.arrays[array.group].kindsAllowed;
+        if (array.holdsRows ? !(array.kindsAllowed & MoveLoop::values) : !(ofGroup &= array.kindsAllowed))
+            return false;
+    }
+    for (unsigned place = 0; place < m_found.arrays.size(); ++place) {
+        const MoveLoop::Array& array = m_found.arrays[place];
+        if (array.group != place || array.kindsAllowed == MoveLoop::everyKind)
+            continue;
+        if (!m_found.holdsElementsOfGroup(place) ? !array.holdsRows : array.holdsNumbers && !(array.kindsAllowed & MoveLoop::doubles))
+            return false;
+    }
     return true;
 }
 
@@ -787,6 +836,7 @@ private:
     void requireKind(unsigned array, bool asksGroup);
     void requireNames(unsigned array);
     void requirePlainKind(LValue kind);
+    void requireKindsAllowed(Group&, uint8_t kinds);
     void requireCell(LValue word);
     void findRow(unsigned read, LValue word);
     void requireDistinct(bool areFoundBefore);
@@ -948,6 +998,34 @@ void MoveLoopEmitter::requirePlainKind(LValue kind)
 {
     leaveUnless(m_out.belowOrEqual(m_out.sub(kind, m_out.constInt32(kindWith(ArrayWithInt32))), m_out.constInt32(ArrayWithContiguous - ArrayWithInt32)));
     leaveUnless(m_out.notZero32(m_out.bitAnd(kind, m_out.constInt32(IsArray))));
+}
+
+void MoveLoopEmitter::requireKindsAllowed(Group& group, uint8_t kinds)
+{
+    auto requireOne = [&](IndexingType type) {
+        LValue kind = m_out.constInt32(kindWith(type));
+        leaveUnless(m_out.equal(group.kind, kind));
+        group.kind = kind;
+    };
+    switch (kinds) {
+    case MoveLoop::everyKind:
+        break;
+    case MoveLoop::int32s:
+        requireOne(ArrayWithInt32);
+        break;
+    case MoveLoop::doubles:
+        requireOne(ArrayWithDouble);
+        break;
+    case MoveLoop::values:
+        requireOne(ArrayWithContiguous);
+        break;
+    case MoveLoop::int32s | MoveLoop::doubles:
+        leaveUnless(m_out.belowOrEqual(group.kind, m_out.constInt32(kindWith(ArrayWithDouble))));
+        break;
+    default:
+        leaveUnless(m_out.notEqual(group.kind, m_out.constInt32(kindWith(ArrayWithDouble))));
+        break;
+    }
 }
 
 LValue MoveLoopEmitter::loadWord(unsigned read, LValue counter)
@@ -1238,9 +1316,7 @@ void MoveLoopEmitter::emit(std::span<const LValue> firsts, LBasicBlock written, 
         limitByLength(store.array, store.key);
     leaveUnless(isBeforeEnd(first, limit));
 
-    auto isOfElements = [&](unsigned group) {
-        return std::ranges::any_of(m_loop.reads, [&](const MoveLoop::Read& read) { return m_loop.arrays[read.array].group == group && !read.isRow; }) || std::ranges::any_of(m_loop.stores, [&](const MoveLoop::Store& store) { return m_loop.arrays[store.array].group == group; });
-    };
+    auto isOfElements = [&](unsigned group) { return m_loop.holdsElementsOfGroup(group); };
     for (unsigned place = 0; place < m_loop.reads.size(); ++place) {
         const MoveLoop::Read& read = m_loop.reads[place];
         if (!read.isRow || read.isHoisted || !read.key.hasCounter || !m_arrays[read.array].isFoundBefore)
@@ -1276,6 +1352,7 @@ void MoveLoopEmitter::emit(std::span<const LValue> firsts, LBasicBlock written, 
             leaveUnless(m_out.equal(found.kind, m_out.constInt32(kindWith(ArrayWithDouble))));
         else
             requirePlainKind(found.kind);
+        requireKindsAllowed(found, m_loop.arrays[group].kindsAllowed);
         found.hole = m_out.select(m_out.equal(found.kind, m_out.constInt32(kindWith(ArrayWithDouble))), m_out.constInt64(std::bit_cast<int64_t>(PNaN)), m_out.int64Zero);
         found.isBoxed = m_out.equal(found.kind, m_out.constInt32(kindWith(ArrayWithContiguous)));
     }

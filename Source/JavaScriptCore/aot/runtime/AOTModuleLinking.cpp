@@ -1206,6 +1206,8 @@ void Modules::captureExports(ModuleID module)
         RELEASE_ASSERT(exported || deferredExportsSource);
         captured->putDirectMayBeIndex(realm, names[i], exported ? exported : JSValue(captured));
         RETURN_IF_EXCEPTION(scope, void());
+        if (!exported)
+            m_hashesOfDeferredExports |= bitOfHash(names[i]);
     }
     loaded.capturedExports.set(*this, captured);
     loaded.deferredExportsSource.set(*this, deferredExportsSource);
