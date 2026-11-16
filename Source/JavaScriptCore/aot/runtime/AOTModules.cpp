@@ -9154,6 +9154,12 @@ void releaseEndedTestFiles(JSGlobalObject* realm)
         modules->releaseEndedTestFiles();
 }
 
+bool hasBegunTestFile(JSGlobalObject* realm)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasBegunTestFile();
+}
+
 void didBeginTestFile(JSGlobalObject* realm)
 {
     VMState& state = realm->vm().aotState();

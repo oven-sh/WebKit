@@ -648,6 +648,7 @@ public:
     void finishDetachedLoadsOfRemovedMocks(ModuleID required);
     Vector<ModuleID, 2> m_modulesToEvictOnceLoaded;
     BitVector m_modulesEvictedOnceLoaded;
+    bool hasBegunTestFile() const { return m_hasBegunTestFile; }
     BitVector m_modulesToReleaseAfterEvaluation;
     BitVector m_modulesToReleaseAtNextTestFile;
     bool wasReleasedByLoader(ModuleID module) const { return m_modulesReleasedByLoader.get(module.index()); }
