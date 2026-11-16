@@ -68,6 +68,7 @@ static constexpr bool isMoveOfConstant(uint32_t word) { return matches(word, 0x3
 static constexpr bool isComparisonOfRegisters(uint32_t word) { return matches(word, 0xffe0fc1f, 0xeb00001f); }
 static constexpr bool isBranchIfEqual(uint32_t word) { return matches(word, 0xff00001f, 0x54000000); }
 static constexpr bool isBranchUnlessEqual(uint32_t word) { return matches(word, 0xff00001f, 0x54000001); }
+static constexpr bool isHintForOtherKeyOrNoModifier(uint32_t word) { return word == hint(8) || word == hint(12) || (matches(word, ~(7u << 5), hint(24)) && word != pacibsp && word != autibsp); }
 static constexpr bool isLoadOrStore(uint32_t word) { return matches(word, 0x0a000000, 0x08000000); }
 static constexpr bool isLoadOfByteIntoNothing(uint32_t word) { return matches(word, 0xfffffc1f, 0x3940001f); }
 static constexpr int64_t displacementOfAddress(uint32_t word) { return signedField(word, 5, 19) * 4 + field(word, 29, 2); }
@@ -83,6 +84,16 @@ static constexpr std::optional<int64_t> offsetWhoseAddressIsTaken(uint32_t offse
     if (isAddressOfPage(word) && goesOn)
         return (offset & -page) + displacementOfAddress(word) * page + added;
     return std::nullopt;
+}
+
+static constexpr uint32_t storedAsReturnAddressOfFrameRecord(uint32_t word)
+{
+    bool isStoreOfPair = matches(word, 0xfe400000, 0xa8000000);
+    if (isStoreOfPair && (rd(word) == fp || matches(word, 0xffff83e0, 0xa9000000 | fp << 5))) // stp fp, x, [..] and stp .., x, [fp]
+        return 1u << rt2(word);
+    if (matches(word, 0xffffffe0, 0xf9000400 | fp << 5) || matches(word, 0xffffffe0, 0xf8008000 | fp << 5)) // str and stur x, [fp, #8]
+        return 1u << rd(word);
+    return 0;
 }
 
 struct RegistersOfInstruction {
@@ -331,6 +342,9 @@ void ReturnAddressCheck::noteAddressOfLabel(uint32_t index, int64_t offsetOfLabe
 auto ReturnAddressCheck::step(uint32_t word, State& state) const -> std::optional<Rule>
 {
     using namespace A64;
+    if (isHintForOtherKeyOrNoModifier(word))
+        return Rule::UsesOneKeyAndModifier;
+    uint32_t mayBeUnsigned = state.isUnsignedOnSomePath | state.wasStrippedOnSomePath;
     if (word == pacibsp || word == pacib1716) {
         unsigned reg = word == pacibsp ? lr : ip1;
         if (!state.isPlain(reg))
@@ -338,7 +352,7 @@ auto ReturnAddressCheck::step(uint32_t word, State& state) const -> std::optiona
         state.set(reg, true, false, true);
     } else if (word == autibsp || word == autib1716) {
         unsigned reg = word == autibsp ? lr : ip1;
-        if (bit(state.isUnsignedOnSomePath, reg))
+        if (bit(mayBeUnsigned, reg))
             return Rule::AuthenticatesOnlyWhatIsSigned;
         state.set(reg, false, true, false);
     } else if (word == xpaclri) {
@@ -355,12 +369,11 @@ auto ReturnAddressCheck::step(uint32_t word, State& state) const -> std::optiona
         state.setPlain(rd(word));
     else if (isMove(word))
         state.copy(rm(word), rd(word));
-    else if (isAddOrSubtractImmediate(word) && (state.isPlain(rn(word)) || bit(state.wasStrippedOnSomePath, rn(word))))
+    else if (isAddOrSubtractImmediate(word) && bit(mayBeUnsigned, rn(word)))
         state.copy(rn(word), rd(word));
     else {
         RegistersOfInstruction registers = registersOf(word);
-        uint32_t returnAddresses = bit(registers.stored, fp) ? ~0u : 1u << lr;
-        if (registers.stored & returnAddresses & state.isUnsignedOnSomePath)
+        if (registers.stored & (1u << lr | storedAsReturnAddressOfFrameRecord(word)) & mayBeUnsigned)
             return Rule::SavesOnlyWhatIsSigned;
         state = state.keeping(~registers.written);
     }
@@ -476,6 +489,8 @@ ASCIILiteral nameOf(ReturnAddressCheck::Rule rule)
         return "what is returned to may have come out of memory, or still has its signature"_s;
     case Rule::LeavesNothingUncheckedInLinkRegister:
         return "other code gets a link register that may have come out of memory"_s;
+    case Rule::UsesOneKeyAndModifier:
+        return "an address is signed or authenticated with the other key, or without a modifier"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

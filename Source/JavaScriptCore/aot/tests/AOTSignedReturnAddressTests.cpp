@@ -13,6 +13,7 @@
 #include "AOTReturnAddressCheck.h"
 #include "AOTSavedCodeAddresses.h"
 #include "AOTShellProgramTestSupport.h"
+#include "AOTStubFrontEnds.h"
 #include "AOTStubTestSupport.h"
 #include <sys/auxv.h>
 #include <wtf/UnalignedAccess.h>
@@ -156,9 +157,35 @@ static void testCheckFindsSaveWithoutSignature()
     AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
         jit.storePtr(linkRegister, CCallHelpers::BaseIndex(ARM64Registers::x0, ARM64Registers::x1, CCallHelpers::TimesEight));
     }));
+    static constexpr void (*storesInFrameRecord[])(CCallHelpers&) = {
+        [](CCallHelpers& jit) { jit.pushPair(framePointer, otherRegister); },
+        [](CCallHelpers& jit) { jit.storePair64(framePointer, otherRegister, ARM64Registers::x0, CCallHelpers::TrustedImm32(16)); },
+        [](CCallHelpers& jit) { jit.storePair64(framePointer, otherRegister, CCallHelpers::PostIndexAddress(ARM64Registers::x0, 16)); },
+        [](CCallHelpers& jit) { jit.storePair64WithNonTemporalAccess(framePointer, otherRegister, ARM64Registers::x0); },
+        [](CCallHelpers& jit) { jit.storePair64(ARM64Registers::x0, otherRegister, framePointer); },
+        [](CCallHelpers& jit) { jit.m_assembler.stur<64>(otherRegister, framePointer, CallFrame::returnPCOffset()); },
+        [](CCallHelpers& jit) { jit.m_assembler.str<64>(otherRegister, framePointer, static_cast<unsigned>(CallFrame::returnPCOffset())); },
+    };
+    for (auto store : storesInFrameRecord) {
+        AOT_TEST_CHECK(rule == ruleBrokenBy([&](CCallHelpers& jit) {
+            jit.move(linkRegister, otherRegister);
+            store(jit);
+        }));
+        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
+            jit.tagReturnAddress();
+            jit.move(linkRegister, otherRegister);
+            store(jit);
+        }));
+    }
     AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(linkRegister, otherRegister);
-        jit.pushPair(framePointer, otherRegister);
+        jit.popPair(framePointer, linkRegister);
+        jit.removeTagAfterSavingReturnAddress();
+        jit.pushPair(framePointer, linkRegister);
+    }));
+    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
+        emitPopLinkRegister(jit, LoadedLinkRegister::IsOnlyReturnedTo);
+        jit.add64(CCallHelpers::TrustedImm32(4), linkRegister);
+        jit.pushPair(framePointer, linkRegister);
     }));
     AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
         jit.emitFunctionPrologue();
@@ -168,6 +195,35 @@ static void testCheckFindsSaveWithoutSignature()
     checkRuleBrokenBehindJoinWhereOnePathSigned(rule, [](CCallHelpers& jit) {
         jit.pushPair(framePointer, linkRegister);
     });
+    checkRuleBrokenBehindJoinWhereOnePathSigned(rule, [](CCallHelpers& jit) {
+        jit.removeTagAfterSavingReturnAddress();
+        jit.pushPair(framePointer, linkRegister);
+    });
+}
+
+static void testCheckTakesSavedRegistersForNoFrameRecord()
+{
+    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
+        jit.emitFunctionPrologue();
+        jit.m_assembler.movz<64>(otherRegister, 10);
+        CCallHelpers::Jump differs = jit.branch64(CCallHelpers::NotEqual, otherRegister, GPRInfo::notCellMaskRegister);
+        CCallHelpers::Call call = jit.nearCall();
+        differs.link(&jit);
+        jit.breakpoint();
+        CCallHelpers::Label savesEveryRegister = jit.label();
+        jit.emitFunctionPrologue();
+        jit.storePair64(GPRInfo::notCellMaskRegister, framePointer, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(224));
+        jit.addLinkTask([=](LinkBuffer& linkBuffer) {
+            linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(savesEveryRegister));
+        });
+    }));
+    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
+        jit.move(linkRegister, otherRegister);
+        jit.storePair64(ARM64Registers::x8, otherRegister, framePointer, CCallHelpers::TrustedImm32(-16));
+        jit.storePair64(otherRegister, ARM64Registers::x8, framePointer);
+        jit.storePtr(otherRegister, CCallHelpers::Address(framePointer, -8));
+        jit.storePtr(otherRegister, CCallHelpers::Address(ARM64Registers::x0, CallFrame::returnPCOffset()));
+    }));
 }
 
 static void testCheckFindsReturnWithoutAuthentication()
@@ -267,9 +323,23 @@ static void testCheckFindsAuthenticationWithoutSignature()
     AOT_TEST_CHECK(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned == ruleBrokenBy([](CCallHelpers& jit) {
         jit.ret();
     }, AssemblerPolicy::forImage(CPUFeatureSet::buildTarget()).withLinkRegisterSignedUntilReturn()));
+    AOT_TEST_CHECK(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned == ruleBrokenBy([](CCallHelpers& jit) {
+        jit.popPair(framePointer, linkRegister);
+        jit.removeTagAfterSavingReturnAddress();
+        jit.untagAfterLoadingReturnAddress();
+    }));
     checkRuleBrokenBehindJoinWhereOnePathSigned(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned, [](CCallHelpers& jit) {
         jit.untagAfterLoadingReturnAddress();
     });
+}
+
+static void testCheckFindsOtherKeyOrNoModifier()
+{
+    for (unsigned hint : { 8, 12, 24, 25, 26, 28, 29, 30 }) {
+        AOT_TEST_CHECK(RuleOfReturnAddresses::UsesOneKeyAndModifier == ruleBrokenBy([&](CCallHelpers& jit) {
+            jit.m_assembler.hint(hint);
+        }));
+    }
 }
 
 static void testCheckFindsFaultThatSignsWhatWasInMemory()
@@ -364,12 +434,21 @@ static String nameOfStubAt(const StubBlob& blob, uint32_t offset)
 
 static void testEveryStubKeepsTheRules()
 {
+    Vector<StubKey> keys = stubKeysWithLinkage(StubLinkage::CalledByCode);
+    forEachKeyWithoutImmediate([&](StubKey key) {
+        if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
+            return;
+        for (const OperationPrelude& prelude : operationPreludes()) {
+            if (StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation)); exists(head))
+                keys.append(head);
+        }
+    });
     for (const StubOptions& options : stubOptionVariants()) {
         StubCatalog catalog(options);
         WTF::BitSet<numberOfEntries> everyEntry;
         everyEntry.setAll();
         BuildContext context(makeDefaultCompileOptions());
-        auto blob = buildStubBlob(context, catalog, stubKeysWithLinkage(StubLinkage::CalledByCode).span(), everyEntry);
+        auto blob = buildStubBlob(context, catalog, keys.span(), everyEntry);
         AOT_TEST_CHECK(blob.has_value());
 
         std::span<const uint8_t> code = blob->code.bytes.span();
@@ -416,8 +495,9 @@ function f0 name="main" kind=Module results=[{type=anything}] {
     v16 = NewClosure function=f16
     v17 = NewClosure function=f17
     v18 = NewClosure function=f19
-    v19 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18 contents=anything
-    v20 = Call v1, -, v19
+    v19 = NewClosure function=f20
+    v20 = NewArray v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12, v13, v14, v15, v16, v17, v18, v19 contents=anything
+    v21 = Call v1, -, v20
     Return
 }
 function f1 name="calls" parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
@@ -671,6 +751,16 @@ function f19 name="readsNothing" flags=[IsChecked] parameters=[{type=anything}] 
     v12 = Call v10, -, v11
     Return
 }
+function f20 name="throwsAtOnce" flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    InitialYield v0
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="Error" [isFreeName]
+    v5 = Convert v4 declared={type=builtin(Error) flags=[IsExpected]}
+    v6 = String string="thrown"
+    v7 = Construct v5, -, v6 calleeName="Error"
+    Throw v7
+}
 )IR"_s;
 
 static bool processorSignsAddresses()
@@ -694,7 +784,7 @@ public:
         Vector<String> arguments {
             makeString("--aotImagePath="_s, m_image.path()),
             String("-e"_s),
-            makeString("globalThis.depth = "_s, depth, "; globalThis.register = ([calls, returns, catches, throws, leaves, isEntered, waits, yields, steps, stays, catchesRejection, breaks, yieldsToLoop, awaitsCall, cleansUp, counts, readsNothing]) => Promise.resolve().then(() => {"_s, statements, "; print('done'); });"_s,
+            makeString("globalThis.depth = "_s, depth, "; globalThis.register = ([calls, returns, catches, throws, leaves, isEntered, waits, yields, steps, stays, catchesRejection, breaks, yieldsToLoop, awaitsCall, cleansUp, counts, readsNothing, throwsAtOnce]) => Promise.resolve().then(() => {"_s, statements, "; print('done'); });"_s,
                 "runCompiledEntryPoint("_s, m_compiled->records<uint32_t>(Wire::ResultSection::EntryModuleIds)[0], ");"_s),
         };
         return ChildProcessLauncher(shellPath(), { }).run(arguments.span());
@@ -822,9 +912,11 @@ std::span<const NativeTest> signedReturnAddressTests()
     static constexpr NativeTest tests[] = {
         { "signed-return-addresses/check/accepts-what-the-assembler-offers"_s, testCheckAcceptsWhatTheAssemblerOffers },
         { "signed-return-addresses/check/finds-save-without-signature"_s, testCheckFindsSaveWithoutSignature },
+        { "signed-return-addresses/check/takes-saved-registers-for-no-frame-record"_s, testCheckTakesSavedRegistersForNoFrameRecord },
         { "signed-return-addresses/check/finds-return-without-authentication"_s, testCheckFindsReturnWithoutAuthentication },
         { "signed-return-addresses/check/finds-signature-for-what-was-in-memory"_s, testCheckFindsSignatureForWhatWasInMemory },
         { "signed-return-addresses/check/finds-authentication-without-signature"_s, testCheckFindsAuthenticationWithoutSignature },
+        { "signed-return-addresses/check/finds-other-key-or-no-modifier"_s, testCheckFindsOtherKeyOrNoModifier },
         { "signed-return-addresses/check/finds-fault-that-signs-what-was-in-memory"_s, testCheckFindsFaultThatSignsWhatWasInMemory },
         { "signed-return-addresses/check/finds-link-register-handed-on"_s, testCheckFindsLinkRegisterHandedOn },
         { "signed-return-addresses/check/enters-label-whose-address-is-taken"_s, testCheckEntersLabelWhoseAddressIsTaken },
@@ -836,6 +928,7 @@ std::span<const NativeTest> signedReturnAddressTests()
         { "signed-return-addresses/spoiled-resume-address-of-generator"_s, testSpoiledResumeAddressOfGenerator },
         { "signed-return-addresses/fault-in-function-without-frame"_s, [] { checkOutputInEveryWay("readsNothing(true)"_s, "in handler\ndone\n"_s); } },
         { "signed-return-addresses/adapter-frame-moved-above-long-list"_s, [] { checkOutputInEveryWay("counts(...Array(5000))"_s, "5000\ndone\n"_s); } },
+        { "signed-return-addresses/generator-throws-at-once"_s, [] { checkOutputInEveryWay("try { throwsAtOnce().next(); } catch { print('caught'); }"_s, "caught\ndone\n"_s); } },
         { "signed-return-addresses/throw-after-cleanup-leaves-compiled-code"_s, [] { checkOutputInEveryWay("try { cleansUp(1); } catch { print('caught'); }"_s, "cleaned up\ncaught\ndone\n"_s); } },
     };
     return tests;

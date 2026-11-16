@@ -31,6 +31,7 @@ public:
         AuthenticatesOnlyWhatIsSigned,
         ReturnsOnlyToWhatIsAuthenticated,
         LeavesNothingUncheckedInLinkRegister,
+        UsesOneKeyAndModifier,
     };
 
     struct Violation {
