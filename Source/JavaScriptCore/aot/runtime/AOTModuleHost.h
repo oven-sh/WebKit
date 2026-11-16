@@ -311,6 +311,7 @@ JS_EXPORT_PRIVATE void willSetExtensionLoader(JSGlobalObject*, StringView extens
 
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 JS_EXPORT_PRIVATE bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue);
+JS_EXPORT_PRIVATE JSObject* mockBehindExport(JSCell* moduleNamespace, const Identifier& name);
 bool tryReplaceExportOfRecord(JSGlobalObject*, AbstractModuleRecord*, UniquedStringImpl* name, JSValue);
 JS_EXPORT_PRIVATE JSValue readExportOfRecord(AbstractModuleRecord*, const Identifier& name, JSValue ifDeferred);
 JS_EXPORT_PRIVATE JSValue readDeferredExportOfRecord(AbstractModuleRecord*, const Identifier& name);

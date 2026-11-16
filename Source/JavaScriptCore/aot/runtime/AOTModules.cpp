@@ -557,11 +557,9 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
         if (!data(request.targetModule()).isUncompiledCode())
             continue;
         importsByLoader = true;
-        if (LoadedModule* external = loadedIfExists(request.targetModule())) {
-            external->uncompiledRecord.set(*this, nullptr);
+        if (LoadedModule* external = loadedIfExists(request.targetModule()))
             external->resolvedKey = Identifier();
-        }
-        discardNamespace(request.targetModule());
+        m_modulesWithRecordOfReleasedImporter.set(request.target());
     }
     setStoredStatus(module, importsByLoader ? StoredModuleStatus::Unlinked : StoredModuleStatus::Linked);
     if (LoadedModule* loaded = loadedIfExists(module))
@@ -1444,30 +1442,64 @@ bool Modules::wasLoadedWithImporter(ModuleID module) const
 bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, Environment* instance)
 {
     BitVector seenBehindStars;
-    return tryReplaceExport(module, name, value, seenBehindStars, instance);
+    return replaceExport(module, name, value, seenBehindStars, instance) == ExportReplacement::Replaced;
 }
 
-bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars, Environment* instance)
+bool Modules::isCapturedExportReplaceable(ModuleID module, UniquedStringImpl* name) const
 {
+    for (const SyntheticExportData& syntheticExport : m_table.syntheticExports(module)) {
+        if (identifier(syntheticExport.name).impl() == name)
+            return syntheticExport.isReplaceable;
+    }
+    return data(m_table.moduleBehindFacade(module).value_or(module)).mayBeMocked();
+}
+
+bool Modules::tryReplaceExport(ModuleNamespace* object, UniquedStringImpl* name, JSValue value, Environment* instance)
+{
+    if (object->isReleasedLoad() && object->hasExport(name)) {
+        if (!isCapturedExportReplaceable(object->module(), name))
+            return false;
+        object->replaceCapturedValue(m_instance.globalObject, Identifier::fromUid(*m_instance.vm, name), value);
+        return true;
+    }
+    const LoadedModule* loaded = loadedIfExists(object->module());
+    bool isOfFileItself = loaded && loaded->namespaceBeforeMockInPlace.get() == object;
+    BitVector seenBehindStars;
+    return replaceExport(object->module(), name, value, seenBehindStars, instance, isOfFileItself ? CapturedTable::OfOriginal : CapturedTable::Current) == ExportReplacement::Replaced;
+}
+
+auto Modules::replaceExport(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars, Environment* instance, CapturedTable table) -> ExportReplacement
+{
+    auto replacement = [](bool isReplaced) {
+        return isReplaced ? ExportReplacement::Replaced : ExportReplacement::NotFound;
+    };
     for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
         std::optional<unsigned> index = m_table.findExport(module, name);
         if (!index) {
             auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
             if (data(module).hasDynamicStarExport() && !standsForWholeModule(module)) {
-                bool isReplaced = tryReplaceExportBehindStars(module, name, value, seenBehindStars);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (isReplaced)
-                    return true;
+                ExportReplacement behindStars = replaceExportBehindStars(module, name, value, seenBehindStars, instance);
+                RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
+                if (behindStars != ExportReplacement::NotFound)
+                    return behindStars;
             }
-            RELEASE_AND_RETURN(scope, tryReplaceBoundExport(module, name, value));
+            RELEASE_AND_RETURN(scope, replacement(tryReplaceBoundExport(module, name, value, table)));
         }
         const ModuleExportData& moduleExport = m_table.exports(module)[*index];
         switch (moduleExport.kind()) {
         case ModuleExportKind::Variable:
             if (!moduleExport.isReplaceable)
-                return false;
-            if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable))
-                return tryReplaceBoundExport(origin->module, identifier(origin->name).impl(), value);
+                return ExportReplacement::NotFound;
+            if (const SyntheticExportPlace* origin = syntheticExportKeptIn(moduleExport.variable)) {
+                ResolvedVariable resolved = hasInstances(module) ? resolveVariable(module, *index, instance) : ResolvedVariable { };
+                if (resolved.mockWord && resolved.mockWord->isReleasedLoad() && !m_moduleBeingPatched) {
+                    resolved.mockWord->replaceCapturedValue(m_instance.globalObject, identifier(resolved.nameInMock), value);
+                    return ExportReplacement::Replaced;
+                }
+                bool isOfFileItself = origin->module == module && table == CapturedTable::OfOriginal;
+                CapturedTable tableOfOrigin = isOfFileItself || (resolved.isFollowed && !resolved.mockWord) ? CapturedTable::OfOriginal : CapturedTable::Current;
+                return replacement(tryReplaceBoundExport(origin->module, identifier(origin->name).impl(), value, tableOfOrigin));
+            }
             if (m_moduleBeingPatched) {
                 LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
                 if (!mocked.variablesBeforeMock)
@@ -1478,14 +1510,20 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
                     storeValue(m_instance.globalObject, mocked.variablesBeforeMock.get(), moduleExport.variable.encoded(), replaced ? replaced : JSValue(mocked.variablesBeforeMock.get()));
             }
             ProgramStatics::writeVariable(m_instance, moduleExport.variable, value);
-            return true;
+            return ExportReplacement::Replaced;
         case ModuleExportKind::Field: {
             if (!moduleExport.isReplaceable)
-                return false;
+                return ExportReplacement::NotFound;
             ResolvedField field = resolveField(module, *index, instance);
             instance = field.instance;
-            if (!instance)
-                return false;
+            if (!instance) {
+                if (!field.mockWord || seenBehindStars.isEmpty())
+                    return ExportReplacement::NotFound;
+                auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+                bool hasName = hasNameInMock(field.mockWord, identifier(field.nameInMock));
+                RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
+                return hasName ? ExportReplacement::IsBehindMock : ExportReplacement::NotFound;
+            }
             if (m_moduleBeingPatched) {
                 LoadedModule& mocked = ensureLoaded(*m_moduleBeingPatched);
                 if (!mocked.variablesBeforeMock)
@@ -1495,12 +1533,15 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
                 m_storedReferences.recordAll();
             }
             writeField(instance, field.slot, value);
-            return true;
+            return ExportReplacement::Replaced;
         }
         case ModuleExportKind::Namespace:
-            return tryReplaceNamespaceHandedOn(moduleExport.targetModule(), value);
+            return replacement(tryReplaceNamespaceHandedOn(moduleExport.targetModule(), value));
         case ModuleExportKind::Indirect: {
             const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
+            if (!instance)
+                instance = currentInstance(module);
+            table = isLinkedToFileItself(module, indirectExport.targetModule(), instance) ? CapturedTable::OfOriginal : CapturedTable::Current;
             module = moduleLoadedUnder(indirectExport.targetModule());
             name = identifier(indirectExport.importName).impl();
             instance = nullptr;
@@ -1508,34 +1549,102 @@ bool Modules::tryReplaceExport(ModuleID module, UniquedStringImpl* name, JSValue
         }
         }
     }
-    return false;
+    return ExportReplacement::NotFound;
 }
 
-bool Modules::tryReplaceExportBehindStars(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars)
+bool Modules::isLinkedToFileItself(ModuleID module, ModuleID target, const Environment* instance) const
+{
+    const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, target) : nullptr;
+    return link && link->hasMock && !mockWord(*link, instance);
+}
+
+JSObject* Modules::mockBehindExport(ModuleID module, const Identifier& name, Environment* instance)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!instance)
+        instance = currentInstance(module);
+    if (!isLinkedInstance(module, instance))
+        return nullptr;
+    ModuleNamespace* word = nullptr;
+    std::optional<uint32_t> nameInMock;
+    if (std::optional<unsigned> index = m_table.findExport(module, name.impl())) {
+        switch (m_table.exports(module)[*index].kind()) {
+        case ModuleExportKind::Variable: {
+            ResolvedVariable resolved = resolveVariable(module, *index, instance);
+            word = resolved.mockWord;
+            nameInMock = resolved.nameInMock;
+            break;
+        }
+        case ModuleExportKind::Field: {
+            ResolvedField resolved = resolveField(module, *index, instance);
+            word = resolved.mockWord;
+            nameInMock = resolved.nameInMock;
+            break;
+        }
+        case ModuleExportKind::Namespace:
+        case ModuleExportKind::Indirect:
+            return nullptr;
+        }
+    } else if (data(module).hasDynamicStarExport()) {
+        std::optional<StarResolution> resolution = followStars(module, name, instance);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        word = resolution ? resolution->mockWord : nullptr;
+    }
+    if (!word || word->isReleasedLoad() || (nameInMock && identifier(*nameInMock) != name))
+        return nullptr;
+    return word->linkedExports();
+}
+
+JSObject* Modules::capturedExportsBesideMock(ModuleID module) const
+{
+    LoadedModule* loaded = isLibraryOriginalDisplaced(module) ? nullptr : loadedIfExists(module);
+    return loaded ? loaded->capturedExportsBeforeMockInPlace.get() : nullptr;
+}
+
+auto Modules::replaceExportBehindStars(ModuleID module, UniquedStringImpl* name, JSValue value, BitVector& seenBehindStars, Environment* instance) -> ExportReplacement
 {
     if (name == m_instance.vm->propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
-        return false;
+        return ExportReplacement::NotFound;
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
+    Identifier key = Identifier::fromUid(vm, name);
+    if (!instance)
+        instance = currentInstance(module);
     for (ModuleRequestData request : m_table.dynamicStars(module)) {
         ModuleID target = request.targetModule();
+        const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, target) : nullptr;
+        if (ModuleNamespace* word = link ? mockWord(*link, instance) : nullptr) {
+            bool hasName = hasNameInMock(word, key);
+            RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
+            if (!hasName)
+                continue;
+            if (!word->isReleasedLoad() || m_moduleBeingPatched)
+                return ExportReplacement::IsBehindMock;
+            scope.release();
+            word->replaceCapturedValue(m_instance.globalObject, key, value);
+            return ExportReplacement::Replaced;
+        }
+        CapturedTable table = isLinkedToFileItself(module, target, instance) ? CapturedTable::OfOriginal : CapturedTable::Current;
+        JSObject* capturedByOriginal = table == CapturedTable::OfOriginal ? capturedExportsBesideMock(target) : nullptr;
         bool hasName = true;
-        if (data(target).capturesExports())
-            hasName = hasCapturedExport(target, Identifier::fromUid(vm, name));
+        if (capturedByOriginal)
+            hasName = !!storedValue(m_instance.globalObject, capturedByOriginal, key);
+        else if (data(target).capturesExports())
+            hasName = hasCapturedExport(target, key);
         else if (data(target).isUncompiledCode()) {
             JSObject* namespaceObject = uncompiledNamespace(target, ModulePhase::Evaluation, NamespaceUse::CarriesBindings);
-            RETURN_IF_EXCEPTION(scope, false);
-            hasName = namespaceObject->hasProperty(m_instance.globalObject, Identifier::fromUid(vm, name));
+            RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
+            hasName = namespaceObject->hasProperty(m_instance.globalObject, key);
         }
-        RETURN_IF_EXCEPTION(scope, false);
+        RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
         if (!hasName)
             continue;
-        bool isReplaced = tryReplaceExport(target, name, value, seenBehindStars);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (isReplaced)
-            return true;
+        ExportReplacement replacement = replaceExport(target, name, value, seenBehindStars, link && link->hasLink ? readLink(instance, link->link) : nullptr, table);
+        RETURN_IF_EXCEPTION(scope, ExportReplacement::NotFound);
+        if (replacement != ExportReplacement::NotFound)
+            return replacement;
     }
-    return false;
+    return ExportReplacement::NotFound;
 }
 
 bool Modules::hasStartedLoading(ModuleID module) const
@@ -3437,6 +3546,14 @@ bool Modules::reachesStarCycle(ModuleID root) const
     return false;
 }
 
+bool Modules::displacesEarlierModule(ModuleID module)
+{
+    auto mock = m_mocksWithIntactOriginal.find(module);
+    if (mock == m_mocksWithIntactOriginal.end() || mock->value.wasLoadedByTestFile || m_loadedInPreload.get(module.index()) || m_filesThatRanInPreload.get(module.index()))
+        return false;
+    return !hasInstances(module) || hasEvaluatedImporterWithoutInstances(module);
+}
+
 void Modules::removeMockWithIntactOriginal(ModuleID module)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -3643,10 +3760,10 @@ bool Modules::mayBeMocked(ModuleID module) const
     return data(module).mayBeMocked();
 }
 
-bool Modules::tryReplaceBoundExport(ModuleID module, UniquedStringImpl* name, JSValue value)
+bool Modules::tryReplaceBoundExport(ModuleID module, UniquedStringImpl* name, JSValue value, CapturedTable table)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
-    bool isReplaced = tryReplaceCapturedExport(module, name, value);
+    bool isReplaced = tryReplaceCapturedExport(module, name, value, table);
     RETURN_IF_EXCEPTION(scope, false);
     const LoadedModule* loaded = isReplaced && !m_moduleBeingPatched ? loadedIfExists(module) : nullptr;
     auto* bound = loaded && loaded->bindsEarlierCapture ? dynamicDowncast<ModuleNamespace>(loaded->namespaceOfBoundCapture.get()) : nullptr;
@@ -3656,7 +3773,7 @@ bool Modules::tryReplaceBoundExport(ModuleID module, UniquedStringImpl* name, JS
     return isReplaced;
 }
 
-bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value)
+bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name, JSValue value, CapturedTable table)
 {
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
@@ -3673,15 +3790,20 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
         RELEASE_AND_RETURN(scope, tryReplaceExportAddedByMock(module, name, value));
 
     Identifier key = Identifier::fromUid(vm, name);
-    JSObject* captured = capturedExports(module);
+    JSObject* capturedBesideMock = capturedExportsBesideMock(module);
+    JSObject* capturedByOriginal = table == CapturedTable::OfOriginal ? capturedBesideMock : nullptr;
+    JSObject* captured = capturedByOriginal ? capturedByOriginal : capturedExports(module);
     RETURN_IF_EXCEPTION(scope, false);
     LoadedModule& loaded = ensureLoaded(module);
-    bool hasItsNames = loaded.exportsWhatMockNamesAlone ? loaded.wasLoadedBehindMock : !m_libraryModulesThatMockReplaces.get(module.index());
+    bool exportsWhatMockNamesAlone = !capturedByOriginal && loaded.exportsWhatMockNamesAlone;
+    bool hasItsNames = exportsWhatMockNamesAlone ? loaded.wasLoadedBehindMock : !m_libraryModulesThatMockReplaces.get(module.index());
     if (hasItsNames && !storedValue(realm, captured, key))
         return false;
-    if ((m_libraryModulesWithMock.get(module.index()) || m_moduleBeingPatched) && !loaded.exportsWhatMockNamesAlone) {
-        if (!loaded.exportsBeforeMock)
+    if ((m_libraryModulesWithMock.get(module.index()) || m_moduleBeingPatched) && !exportsWhatMockNamesAlone) {
+        if (!loaded.exportsBeforeMock) {
             loaded.exportsBeforeMock.set(*this, createTableOfExports());
+            loaded.namespaceOfPatchedCapture.set(*this, nullptr);
+        }
         JSObject* before = loaded.exportsBeforeMock;
         JSValue replaced = storedValue(realm, captured, key);
         if (replaced && !storedValue(realm, before, key)) {
@@ -3693,12 +3815,14 @@ bool Modules::tryReplaceCapturedExport(ModuleID module, UniquedStringImpl* name,
     RETURN_IF_EXCEPTION(scope, false);
     for (ModulePhase phase : { ModulePhase::Evaluation, ModulePhase::Defer }) {
         JSObject* namespaceObject = namespaceIfCreated(module, phase);
+        if (capturedByOriginal && phase == ModulePhase::Evaluation)
+            namespaceObject = dynamicDowncast<ModuleNamespace>(loaded.namespaceBeforeMockInPlace.get());
         if (!namespaceObject)
             continue;
         uncheckedDowncast<ModuleNamespace>(namespaceObject)->replaceCapturedValue(realm, key, value);
         RETURN_IF_EXCEPTION(scope, false);
     }
-    if (isListed && found->hasVariable && !isLibraryOriginalDisplaced(module))
+    if (isListed && found->hasVariable && !isLibraryOriginalDisplaced(module) && capturedByOriginal == capturedBesideMock)
         ProgramStatics::writeVariable(m_instance, found->variable, value);
     return true;
 }
@@ -6789,6 +6913,15 @@ ModuleRecord* Modules::registerWithLoader(ModuleID module, RecordHolder holder)
     return record;
 }
 
+AbstractModuleRecord* Modules::linkUncompiledRecord(ModuleID external)
+{
+    if (m_modulesWithRecordOfReleasedImporter.clear(external.index())) [[unlikely]] {
+        ensureLoaded(external).uncompiledRecord.set(*this, nullptr);
+        discardNamespace(external);
+    }
+    return uncompiledRecord(external);
+}
+
 AbstractModuleRecord* Modules::uncompiledRecord(ModuleID external)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -8921,7 +9054,16 @@ bool tryReplaceExport(JSCell* moduleNamespace, UniquedStringImpl* name, JSValue 
     auto scope = DECLARE_THROW_SCOPE(object->vm());
     Environment* instance = object->bindModuleInstance();
     RETURN_IF_EXCEPTION(scope, false);
-    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->tryReplaceExport(object->module(), name, value, instance));
+    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->tryReplaceExport(object, name, value, instance));
+}
+
+JSObject* mockBehindExport(JSCell* moduleNamespace, const Identifier& name)
+{
+    auto* object = uncheckedDowncast<ModuleNamespace>(moduleNamespace);
+    auto scope = DECLARE_THROW_SCOPE(object->vm());
+    Environment* instance = object->bindModuleInstance();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, modulesOf(object->realm())->mockBehindExport(object->module(), name, instance));
 }
 
 bool tryReplaceExportOfRecord(JSGlobalObject* realm, AbstractModuleRecord* record, UniquedStringImpl* name, JSValue value)
@@ -9656,7 +9798,7 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
             modules->releaseMockedCycleMember(module);
     });
     if (modules->hasIntactOriginal(module)) {
-        if (wasLoadedAsMock)
+        if (wasLoadedAsMock || (!restoresDisplacedModule && modules->displacesEarlierModule(module)))
             modules->letGoOfModuleLoadedAsMock(module, restoresDisplacedModule);
         bool hadFailed = modules->wasMockedAfterFailure(module) && !modules->isOfPackage(module);
         bool wasEvicted = modules->takeEvictedOriginal(module);

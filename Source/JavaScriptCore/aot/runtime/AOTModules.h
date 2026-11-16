@@ -134,6 +134,7 @@ struct LinkContext {
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
     macro(JSObject*, namespaceOfBoundCapture) \
+    macro(JSObject*, namespaceOfPatchedCapture) \
     macro(JSCellButterfly*, capturedFields) \
     macro(JSCellButterfly*, capturedStars) \
     macro(JSObject*, sourceOfCapturedFields) \
@@ -222,10 +223,17 @@ public:
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
-    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceBoundExport(ModuleID, UniquedStringImpl* name, JSValue);
+    enum class ExportReplacement : uint8_t { NotFound, Replaced, IsBehindMock };
+    enum class CapturedTable : bool { Current, OfOriginal };
+    bool tryReplaceExport(ModuleNamespace*, UniquedStringImpl* name, JSValue, Environment* instance);
+    bool isCapturedExportReplaceable(ModuleID, UniquedStringImpl* name) const;
+    ExportReplacement replaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr, CapturedTable = CapturedTable::Current);
+    ExportReplacement replaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance);
+    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue, CapturedTable = CapturedTable::Current);
+    bool tryReplaceBoundExport(ModuleID, UniquedStringImpl* name, JSValue, CapturedTable = CapturedTable::Current);
+    JSObject* capturedExportsBesideMock(ModuleID) const;
+    JSObject* mockBehindExport(ModuleID, const Identifier& name, Environment* instance);
+    bool isLinkedToFileItself(ModuleID, ModuleID target, const Environment*) const;
     bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
@@ -451,6 +459,7 @@ public:
         auto mock = m_mocksWithIntactOriginal.find(module);
         return mock != m_mocksWithIntactOriginal.end() && mock->value.isDisplaced;
     }
+    bool displacesEarlierModule(ModuleID);
     bool setMockWithIntactOriginal(ModuleID, JSObject* mock, JSValue requireReturnValue, bool keepsEarlierMockForImporters = false);
     bool reachesStarCycle(ModuleID) const;
     void removeMockWithIntactOriginal(ModuleID);
@@ -1942,6 +1951,7 @@ public:
     ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
     void retireRecordsOfSettledLoads();
     AbstractModuleRecord* uncompiledRecord(ModuleID);
+    AbstractModuleRecord* linkUncompiledRecord(ModuleID);
     AbstractModuleRecord* recordForResolution(ModuleID);
     enum class NamespaceUse : uint8_t { IsShownToProgram, CarriesBindings };
     JSObject* uncompiledNamespace(ModuleID, ModulePhase, NamespaceUse, bool shouldPreventExtensions = true);
@@ -2568,6 +2578,7 @@ private:
     Vector<uint32_t> m_marksOfEvaluationsUnderOthers;
     Box<MockedModules> m_mocks;
     std::optional<ModuleID> m_moduleBeingPatched;
+    std::optional<ModuleID> m_moduleReadBeforeItsPatch;
     OptionSet<RequireOverride> m_storedLoaderFunctions;
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;
@@ -2990,6 +3001,7 @@ private:
     };
     LoadsInFlight m_loadsInFlight;
     BitVector m_modulesWithUncompiledRecord;
+    BitVector m_modulesWithRecordOfReleasedImporter;
     Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
     Vector<ModuleID, 4> m_modulesToRetireAfterAsyncEvaluation;
     BitVector m_modulesBelowWalkedRoots;

@@ -25,7 +25,17 @@ JSValue Modules::handedOnInPlaceOfNamespace(const ModuleExportData& moduleExport
     if (m_namespacesReplacedByMock.isEmpty()) [[likely]]
         return { };
     LoadedModule* reexportedModule = loadedIfExists(moduleExport.targetModule());
-    return reexportedModule ? reexportedModule->handedOnInPlaceOfNamespace.get() : JSValue();
+    if (!reexportedModule)
+        return { };
+    if (!m_moduleReadBeforeItsPatch || !reexportedModule->mocksThatReplaceNamespace.contains(*m_moduleReadBeforeItsPatch)) [[likely]]
+        return reexportedModule->handedOnInPlaceOfNamespace.get();
+    JSValue earlier;
+    for (ModuleID mocked : reexportedModule->mocksThatReplaceNamespace) {
+        if (mocked == *m_moduleReadBeforeItsPatch)
+            break;
+        earlier = storedValue(m_instance.globalObject, reexportedModule->handedOnByMocks, Identifier::from(*m_instance.vm, mocked.index()));
+    }
+    return earlier;
 }
 
 bool Modules::tryReplaceNamespaceHandedOn(ModuleID reexportedModule, JSValue value)
