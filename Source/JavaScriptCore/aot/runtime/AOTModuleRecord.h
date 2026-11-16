@@ -128,6 +128,7 @@ public:
     void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
     void bindModuleInstance(VM& vm, JSCell* instance) { m_moduleInstance.set(vm, this, instance); }
     bool belongsToReleasedInstance() const { return !!m_moduleInstance; }
+    bool isOfReleasedFile() const;
     JSCell* moduleInstance() const { return m_moduleInstance.get(); }
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }

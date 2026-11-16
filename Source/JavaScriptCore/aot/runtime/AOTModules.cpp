@@ -8709,7 +8709,12 @@ bool isCompiledModuleRecord(AbstractModuleRecord* record)
 bool isReleasedModuleRecord(AbstractModuleRecord* record)
 {
     auto* compiled = dynamicDowncast<ModuleRecord>(record);
-    return compiled && compiled->belongsToReleasedInstance();
+    return compiled && (compiled->belongsToReleasedInstance() || compiled->isOfReleasedFile());
+}
+
+bool ModuleRecord::isOfReleasedFile() const
+{
+    return modules().isCommonJSModuleOrFacade(m_module) && status() < Status::Evaluating && !m_keepsToModule && modules().recordIfExists(m_module) != this;
 }
 
 std::optional<ModuleID> compiledModuleForRecord(JSGlobalObject* realm, AbstractModuleRecord* record)
