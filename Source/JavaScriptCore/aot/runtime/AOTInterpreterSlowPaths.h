@@ -109,7 +109,7 @@ inline constexpr ptrdiff_t offsetOfExecutablesInStorage = FixedVector<WriteBarri
 void rememberSwitchTarget(JSGlobalObject*, const JSInstruction*, const StringImpl& atom, int32_t offset);
 
 void didGetById(JSGlobalObject*, JSCell* base, Structure* structureBefore, const Identifier&, const PropertySlot&, bool isStoredInTable);
-void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PutPropertySlot&);
+void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, PutPropertySlot&);
 
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;

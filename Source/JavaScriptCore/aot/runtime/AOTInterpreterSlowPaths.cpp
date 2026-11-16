@@ -282,7 +282,7 @@ std::optional<JSValue> tryGetById(JSGlobalObject* globalObject, JSCell* base, co
     return tryGetByName(globalObject, base, ident, CacheOfOperation::HoldsOwnValues);
 }
 
-void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PutPropertySlot& slot)
+void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, PutPropertySlot& slot)
 {
     Instance* instance = instanceOfTables(globalObject);
     UniquedStringImpl* uid = ident.impl();
@@ -292,10 +292,14 @@ void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structu
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
     if ((isAddition || structure != structureBefore) && (structureBefore->isDictionary() || structure->isDictionary() || (structureBefore->outOfLineCapacity() && structure->outOfLineCapacity() != structureBefore->outOfLineCapacity())))
         return;
+    const bool keepsOffset = structureBefore->propertyAccessesAreCacheable() && structure->propertyAccessesAreCacheable();
     PropertyCaches& caches = *instance->state->propertyCaches;
     if (!caches.findByKey(structureBefore, uid, SlotAccess::Store) && caches.shouldFile(structureBefore->id(), uid, SlotAccess::Store))
         caches.cache({ structureBefore, { uid, std::nullopt }, SlotAccess::Store }, classifyStore({ instance->globalObject, base, structureBefore, uid, slot, slot.isStrictMode() ? PutMode::Strict : PutMode::Sloppy, std::nullopt }));
-    if (!slot.isCacheableSetter())
+    const bool isSetter = slot.isCacheableSetter();
+    if (!keepsOffset)
+        slot.disableCaching();
+    if (!isSetter)
         return;
     if (const Slot* filed = caches.findByKey(base->structure(), uid, SlotAccess::Store); filed && filed->kind == Slot::Kind::Setter) {
         if (GetterSetter* pair = accessorPairInStorage(*filed, base))
