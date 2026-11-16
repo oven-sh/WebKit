@@ -1492,7 +1492,7 @@ public:
     bool isRequiredModulePatchPending(ModuleID);
     std::optional<JSPromise*> importOriginalUnderPatch(ModuleID, ModuleID referrer, const RefPtr<ScriptFetchParameters>&);
     bool isPatchPending(ModuleID file) const;
-    bool isEvaluatedUnderPendingPatch(ModuleID);
+    bool isEvaluatedUnderPendingPatch(ModuleID, ModuleID requirer);
     void tellIfFactoryIsRunning(ModuleID requested, LoadKind);
     void tellIfPatchIsPending(ModuleID required);
     bool isRequireUnderPendingMock(ModuleID required, ModuleID requirer);

@@ -3469,14 +3469,15 @@ void Modules::reportImportersWithoutInstances(ModuleID module)
     }
 }
 
-bool Modules::isEvaluatedUnderPendingPatch(ModuleID module)
+bool Modules::isEvaluatedUnderPendingPatch(ModuleID module, ModuleID requirer)
 {
     ModuleID file = fileOf(module);
     if (!host().isPatchPending || status(file) != ModuleStatus::Evaluated || !m_table.hasFilePath(file)) [[likely]]
         return false;
     if (!isPatchPending(file)) [[likely]]
         return false;
-    if (activeMock(file) || hasIntactOriginal(file) || isPatchedByMock(file) || m_originalsEvaluatedUnderMock.get(file.index()) || hasRunBesideMockAlone(file))
+    bool isPatchedForRequirer = isPatchedByMock(file) && !(requirer && data(requirer).isEntryPoint());
+    if (activeMock(file) || hasIntactOriginal(file) || isPatchedForRequirer || m_originalsEvaluatedUnderMock.get(file.index()) || hasRunBesideMockAlone(file))
         return false;
     return data(file).kind == ModuleKind::CommonJs ? wasLoadedByImport(file) : !!currentInstance(file);
 }

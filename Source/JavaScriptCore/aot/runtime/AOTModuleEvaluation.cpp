@@ -5285,7 +5285,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         tellOfFilesThatStayedLoadedBelow(target);
     if (m_modulesReleasedByLoader.get(target.index()) && !hasInstances(target)) [[unlikely]]
         bringBackWhatLoaderLetGoBelow(target);
-    if (isEvaluatedUnderPendingPatch(target)) [[unlikely]]
+    if (isEvaluatedUnderPendingPatch(target, referrer)) [[unlikely]]
         tellThatFileDidNotRunAgain(fileOf(target));
     if (!m_modulesWithRunningFactory.isEmpty()) [[unlikely]]
         tellIfFactoryIsRunning(target, LoadKind::Require);
