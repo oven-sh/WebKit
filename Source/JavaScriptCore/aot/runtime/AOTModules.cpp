@@ -3842,6 +3842,12 @@ JSObject* Modules::capturedExports(ModuleID module)
     return loaded.capturedExports;
 }
 
+bool Modules::isDeferredExportOfBuiltinModule(ModuleID module, const Identifier& name) const
+{
+    const LoadedModule* loaded = loadedIfExists(module);
+    return loaded && loaded->deferredExportsSource && isDeferredExport(*loaded, name);
+}
+
 JSValue Modules::capturedValue(ModuleID module, const Identifier& name, MockMode mode)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -5402,7 +5408,8 @@ void Modules::fulfillFirstQueuedFetch()
 bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader();
+    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && m_loadsInFlight.numberBeingLoaded() > 1;
+    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
     if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
         return false;
@@ -8729,7 +8736,12 @@ bool isCompiledModuleRecord(AbstractModuleRecord* record)
 bool isReleasedModuleRecord(AbstractModuleRecord* record)
 {
     auto* compiled = dynamicDowncast<ModuleRecord>(record);
-    return compiled && compiled->belongsToReleasedInstance();
+    return compiled && (compiled->belongsToReleasedInstance() || compiled->isOfReleasedFile());
+}
+
+bool ModuleRecord::isOfReleasedFile() const
+{
+    return modules().isCommonJSModuleOrFacade(m_module) && status() < Status::Evaluating && !m_keepsToModule && modules().recordIfExists(m_module) != this;
 }
 
 std::optional<ModuleID> compiledModuleForRecord(JSGlobalObject* realm, AbstractModuleRecord* record)
@@ -9166,6 +9178,12 @@ void releaseEndedTestFiles(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
         modules->releaseEndedTestFiles();
+}
+
+bool hasBegunTestFile(JSGlobalObject* realm)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->hasBegunTestFile();
 }
 
 void didBeginTestFile(JSGlobalObject* realm)
@@ -10267,7 +10285,25 @@ void ModuleRecord::didDiscardModuleError(JSGlobalObject* globalObject, const Ide
 
 void ModuleRecord::didReplaceRecordInRegistry()
 {
-    modules().recaptureExports(m_module);
+    modules().takeExportsAnew(m_module);
+}
+
+void ModuleRecord::setIsMadeAndNotStored(bool isMadeAndNotStored)
+{
+    if (std::exchange(m_isMadeAndNotStored, isMadeAndNotStored) != isMadeAndNotStored)
+        modules().didChangeFilesMadeAndNotStored(isMadeAndNotStored);
+}
+
+bool ModuleRecord::takeIsMadeAndNotStored()
+{
+    bool wasMadeAndNotStored = m_isMadeAndNotStored;
+    setIsMadeAndNotStored(false);
+    return wasMadeAndNotStored;
+}
+
+bool ModuleRecord::isFileYetToBeEvaluated()
+{
+    return modules().isFileYetToBeEvaluated(m_module);
 }
 
 void ModuleRecord::willBeLoadedByImport()
@@ -11010,6 +11046,15 @@ JSValue ModuleRecord::readDeferredExport(const Identifier& name)
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
     RELEASE_AND_RETURN(scope, modules().readDeferredExport(modules().moduleWithNamesOf(m_module), name));
+}
+
+void ModuleRecord::readDeferredExportForBinding(JSGlobalObject* globalObject, const Resolution& resolution)
+{
+    auto* compiled = dynamicDowncast<ModuleRecord>(resolution.moduleRecord);
+    if (!compiled || resolution.compiledExportIndex || !compiled->modules().mayNameDeferredExport(resolution.localName))
+        return;
+    if (compiled->modules().isDeferredExportOfBuiltinModule(compiled->m_module, resolution.localName) && !compiled->isReplacedByMock())
+        compiled->readExport(globalObject, resolution.localName, std::nullopt);
 }
 
 JSObject* ModuleRecord::moduleNamespaceObject(JSGlobalObject*, ModulePhase phase)

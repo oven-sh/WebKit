@@ -4741,6 +4741,7 @@ void AccessInLinkAccesses::resolveContents(const LinkType& subject)
 
     LinkType others = subject;
     others.primitives = 0;
+    others.counts = LinkType::Counts::BelowTwoTo31;
     others.dropInstances();
     LinkType othersBefore = m_before;
     othersBefore.primitives = 0;

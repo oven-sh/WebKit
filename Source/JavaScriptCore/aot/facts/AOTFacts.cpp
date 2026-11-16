@@ -1435,26 +1435,40 @@ static void narrowToNumberStoredOnce(Program& program, const BodyIndexTable& bod
     }
 }
 
-static void fillBeforeEvaluation(Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const LinkFlow& flow, BeforeEvaluation& before)
+static std::unique_ptr<LinkFlow> fillBeforeEvaluation(Program& program, const BodyIndexTable& bodies, const ThinSummaries& summaries, const LinkFlow& flow, BeforeEvaluation& before)
 {
     if (!flow.mechanisms.containsAll({ Mechanism::ParameterGuards, Mechanism::TypedOperations, Mechanism::Guesses }) || program.admitsInspector)
-        return;
+        return nullptr;
     for (uint32_t index = 0; index < program.variables.size(); ++index) {
         if (program.variables[index].flags.contains(VariableFlags::MarksEvaluation))
             before.marks.append(VariableID(index));
     }
     static constexpr size_t mostMarks = 2;
     if (before.marks.isEmpty() || before.marks.size() > mostMarks)
-        return;
-    LinkTables linked = linkBeforeEvaluation(flow, WrappedBodies::StoreLikeModuleBodies);
+        return nullptr;
+    FunctionsThatEvaluate functionsThatEvaluate;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        FunctionID id(index);
+        bool isBodyOfEntry = std::ranges::any_of(program.entries, [&](const Entry& entry) { return program.at(entry.module).body == id; });
+        if (!summaries.at(id).has(SummaryTrait::HasDirectEval) || isBodyOfEntry)
+            continue;
+        if (isEnteredByCallsAlone(program.at(id)) && !isClassConstructorOf(program.at(id).kind))
+            functionsThatEvaluate.enteredByCallsAlone.append(id);
+        else
+            functionsThatEvaluate.others.append(id);
+    }
+    LinkBeforeEvaluation firstLink = linkBeforeEvaluation(flow, WrappedBodies::StoreLikeModuleBodies, WTF::move(functionsThatEvaluate));
+    if (!firstLink.tables)
+        return WTF::move(firstLink.flow);
+    LinkTables linked = WTF::move(*firstLink.tables);
     std::optional<BitVector> leadToEvaluation = findFunctionsReachingEvaluation(program, summaries, linked);
     if (!leadToEvaluation)
-        return;
+        return nullptr;
     bool someClaimHasNoHolder = std::ranges::any_of(linked.variablesStoredFirst, [&](const LinkedVariableStoredFirst& claim) {
         return isBodyOfWrappedModule(program, claim.body) && leadToEvaluation->quickGet(claim.body.index());
     });
     if (someClaimHasNoHolder)
-        linked = linkBeforeEvaluation(flow, WrappedBodies::AreFunctions);
+        linked = *linkBeforeEvaluation(flow, WrappedBodies::AreFunctions, { }).tables;
     before.firstStores = LinkedFirstStores { linked.variablesStoredFirst, linked.classesInVariables, linked.methodsOnPrototypes };
     before.variables.fill(TypeID(), program.variables.size());
     bool someVariableIsTyped = false;
@@ -1472,7 +1486,7 @@ static void fillBeforeEvaluation(Program& program, const BodyIndexTable& bodies,
     std::ranges::sort(before.fields, compareFields);
     before.fields.shrink(std::ranges::unique(before.fields, { }, &std::pair<FieldReference, TypeID>::first).begin() - before.fields.begin());
     if (!someVariableIsTyped && before.fields.isEmpty())
-        return;
+        return nullptr;
     narrowToNumberStoredOnce(program, bodies, linked, before);
     before.results.fill(TypeID(), program.functions.size());
     before.functions = BitVector(program.functions.size());
@@ -1499,6 +1513,7 @@ static void fillBeforeEvaluation(Program& program, const BodyIndexTable& bodies,
         if (readsTypedVariable || holdsClaims)
             before.functions.quickSet(number);
     }
+    return nullptr;
 }
 
 std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const FactsRequest& request, std::unique_ptr<BodyIndexTable>&& indexesOfVerifier)
@@ -1572,7 +1587,8 @@ std::unique_ptr<Facts> computeFacts(Program& program, BuildContext& build, const
         },
     });
     flow->setsDeclaredInProgram = &setsDeclaredInProgram;
-    fillBeforeEvaluation(program, *parts.bodies, *parts.summaries, *flow, parts.tables.beforeEvaluation);
+    if (std::unique_ptr<LinkFlow> continued = fillBeforeEvaluation(program, *parts.bodies, *parts.summaries, *flow, parts.tables.beforeEvaluation))
+        flow = WTF::move(continued);
     times.didFinish("families"_s);
     steps.didFinish("the flow beside the look at bodies and the sets declared for families"_s);
     TurnsOfReadings turns;

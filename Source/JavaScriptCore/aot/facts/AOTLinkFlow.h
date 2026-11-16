@@ -668,6 +668,10 @@ public:
     const Vector<DeclaredSetForFamilies>* setsDeclaredInProgram { nullptr };
     bool leavesOutDirectEvals { false };
     bool listsStoresOfWrappedBodies { false };
+    Vector<FunctionID> functionsToKeepInSight;
+    Vector<FunctionID> functionsNotToReach;
+    bool hasLetGoOfOneToKeepInSight() const;
+    bool hasComeToRest { false };
     const LooksAtBodies& looks;
     Mechanisms mechanisms;
     BuildContext& build;
@@ -1332,6 +1336,7 @@ public:
     void noteConstructed(LayoutID);
     void noteAllocatedWithRowAbove(LayoutID);
     void reachEntries();
+    void admitDirectEvals();
     bool enterLibraryInReach();
     void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     BuiltinsInReach& builtinsInReach();
@@ -1662,11 +1667,19 @@ public:
     Vector<ExportedLocation, 4> resolveExport(ModuleID, uint32_t index) const;
     void noteEscapedBuiltins(const LinkType&) const;
     struct ContainersVisited {
+        bool addObjectsOf(const LinkFlow&, const LinkType&);
+        bool addFunctionsOf(const LinkType&);
+
         BitVector layouts;
+        BitVector holdersOfNames;
+        BitVector setsOfLayouts;
+        BitVector families;
+        BitVector lostFamilies;
         BitVector familiesOfSites;
         BitVector functions;
+        BitVector setsOfFunctions;
     };
-    void forEachContainedNode(const LinkType&, ContainersVisited&, NOESCAPE const ScopedLambda<void(FlowNodeID)>&) const;
+    void forEachContainedNode(const LinkType&, ContainersVisited&, NOESCAPE const ScopedLambda<void(LayoutID)>& visitLayout, NOESCAPE const ScopedLambda<void(FlowNodeID)>&) const;
     void noteExportRead(ModuleID, uint32_t index);
 
     void callObserved(const FlowObserver&, const LinkType& told, const LinkType& before);
@@ -3197,7 +3210,15 @@ struct TurnsOfReadings {
 };
 LinkTables link(std::unique_ptr<LinkFlow>&&, TurnsOfReadings* = nullptr);
 enum class WrappedBodies : bool { StoreLikeModuleBodies, AreFunctions };
-LinkTables linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies);
+struct FunctionsThatEvaluate {
+    Vector<FunctionID> enteredByCallsAlone;
+    Vector<FunctionID> others;
+};
+struct LinkBeforeEvaluation {
+    std::optional<LinkTables> tables;
+    std::unique_ptr<LinkFlow> flow;
+};
+LinkBeforeEvaluation linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies, FunctionsThatEvaluate&&);
 void finishReadingsOfLink(Program&, Mechanisms, TurnsOfReadings&, LinkTables& proven, LinkTables& held);
 NamesAskedOfContentsOfFields gatherNamesAskedOfContentsOfFields(const Program&, const LinkFlow&, const LinkTables& held);
 void expectContentsOfFieldsByNamesAsked(Program&, const LinkFlow&, const NamesAskedOfContentsOfFields&, const LayoutsByNames&, LinkTables& held);

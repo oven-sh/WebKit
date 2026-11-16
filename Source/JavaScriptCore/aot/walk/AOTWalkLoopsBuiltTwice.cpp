@@ -5420,9 +5420,11 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
     if (sharedCopyIsPlainWalk)
         m_sharedGenericVersions.removeLast();
 
-    auto forgetOperatorsMadeInFront = makeScopeExit([this, kept = m_operatorsMadeInFrontOfLoops.size()] {
+    size_t operatorsMadeAroundLoop = m_operatorsMadeInFrontOfLoops.size();
+    auto forgetOperatorsMadeInFront = makeScopeExit([this, kept = operatorsMadeAroundLoop] {
         m_operatorsMadeInFrontOfLoops.shrink(kept);
     });
+    Vector<Reference, 8> operatorsProvenInFront;
     std::span<const UnswitchCandidate> unswitchCandidates = m_unswitchCandidates;
     SetForScope noNestedCandidates(m_unswitchCandidates, std::span<const UnswitchCandidate>());
     bool unswitches = !unswitchCandidates.empty() && !shared && !m_isVersioningDryRun;
@@ -7391,8 +7393,10 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             for (ValueID name : guesses[place].names) {
                 boundBefore.append({ name, referenceBoundTo(name) });
                 bind(name, proofs[place]);
-                if (isMadeInFrontOfLoop(name))
+                if (isMadeInFrontOfLoop(name)) {
                     noteOperatorMadeInFrontOfLoop(name, proofs[place]);
+                    operatorsProvenInFront.append(proofs[place]);
+                }
             }
             noteFieldArrayHolder(guesses[place].value, proofs[place]);
             if (guesses[place].unknownFieldInPreheader)
@@ -7727,6 +7731,7 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             enterWithFieldsOfScopes(sharedEntry, entering);
         else if (!isUnreachable()) {
             count(StatisticID::GenericLoopVersionsDuplicated);
+            m_operatorsMadeInFrontOfLoops.removeAllMatching([&](const OperatorMadeInFrontOfLoop& made) { return operatorsProvenInFront.contains(made.name); }, operatorsMadeAroundLoop);
             {
                 ClosedArm closedArm(*this);
                 SetForScope coldCopyScope(m_coldCopyDepth, m_coldCopyDepth + 1);
