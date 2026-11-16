@@ -515,6 +515,23 @@ Reference buildSearchInWrittenList(Walker& walker, DataID data, Reference sought
     return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
 
+static void checkConstantElements(Walker& walker, Reference list, std::span<const Reference> elements, Origin origin)
+{
+    if (!walker.checksProofs())
+        return;
+    origin.isTailCall = false;
+    for (size_t position = 0; position < elements.size() && !walker.isUnreachable(); ++position) {
+        Draft index(Opcode::Integer, origin);
+        index.setInteger(position);
+        Draft read(Opcode::GetArrayElement, origin);
+        walker.chooseConservativeFields(read);
+        read.setArrayOperand(list);
+        read.setPositionOperand(walker.constant(WTF::move(index)));
+        read.setKeyIsIntegral(true);
+        walker.checkThatMemoryAnswersAsBelieved(elements[position], WTF::move(read));
+    }
+}
+
 Reference buildSearchInKnownArray(Walker& walker, Reference list, Reference sought, AnswerOfSearch answer, Origin origin)
 {
     if (!list || !list.isValue() || !sought || walker.isUnreachable())
@@ -532,6 +549,7 @@ Reference buildSearchInKnownArray(Walker& walker, Reference list, Reference soug
     }
 
     checkLengthOfListMadeInSight(walker, list, *length, origin);
+    checkConstantElements(walker, list, elements.span(), origin);
     origin.isTailCall = false;
     return buildSearchAmong(walker, elements.span(), sought, answer, origin);
 }
