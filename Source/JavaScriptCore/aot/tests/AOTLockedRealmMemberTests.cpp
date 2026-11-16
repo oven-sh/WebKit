@@ -10,10 +10,12 @@
 #include "AOTBuiltinTableRealm.h"
 #include "AOTChildProcess.h"
 #include "AOTLoadedProgramTestSupport.h"
+#include "AOTModuleHost.h"
 #include "AOTRealmTestSupport.h"
 #include "AOTTemporaryFile.h"
 #include "AOTVector.h"
 #include "FunctionPrototype.h"
+#include "GlobalObjectMethodTable.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
 #include "Options.h"
@@ -985,6 +987,40 @@ void checkStatementsOf(Realms& realms)
     checkStatements(realms, statements);
 }
 
+void checkRuntimeFlagsHideGlobals(Realms& realms)
+{
+    static GlobalObjectMethodTable methodTable = *realms.plain()->globalObjectMethodTable();
+    methodTable.javaScriptRuntimeFlags = [](const JSGlobalObject*) {
+        return RuntimeFlags { RuntimeFlags::SharedArrayBufferHidden, RuntimeFlags::ShadowRealmHidden };
+    };
+    JSGlobalObject* realm = JSGlobalObject::createWithCustomMethodTable(realms.vm(), JSGlobalObject::createStructure(realms.vm(), jsNull()), &methodTable);
+    AOT_TEST_CHECK(realms.evaluate(realms.plain(), "'SharedArrayBuffer' in globalThis"_s).isTrue());
+    AOT_TEST_CHECK(realms.evaluate(realm, "'SharedArrayBuffer' in globalThis || 'ShadowRealm' in globalThis"_s).isFalse());
+}
+
+void checkGlobalsKeptAside(Realms& realms)
+{
+    VM& vm = realms.vm();
+    static JSObject* aside;
+    static ModuleHost host { };
+    host.holderOfGlobal = [](JSGlobalObject* realm, UniquedStringImpl* name) -> JSObject* {
+        return WTF::equal(name, "console"_s) ? aside : realm;
+    };
+    host.tableOfGlobals = JSGlobalObject::info()->staticPropHashTable;
+    static GlobalObjectMethodTable methodTable = *realms.plain()->globalObjectMethodTable();
+    methodTable.moduleHost = &host;
+    JSGlobalObject* realm = JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructure(vm, jsNull()), &methodTable);
+    JSObject* holder = aside = realms.object(realm, "({ console })"_s);
+    JSObject* console = realms.object(realm, "console"_s);
+    realms.evaluate(realm, "console = { log() { } }"_s);
+
+    AOT_TEST_CHECK(findInRealm(realm, BuiltinCellKey::object(Builtins::Console)).value_or(nullptr) == console);
+    AOT_TEST_CHECK(findExistingBuiltin(realm, Builtins::Console) == console);
+    AOT_TEST_CHECK(getByPath(realm, Builtins::Console) == console);
+    AOT_TEST_CHECK(findInRealm(realm, BuiltinCellKey::object(Builtins::JSON)).value_or(nullptr) == realms.object(realm, "JSON"_s));
+    ensureStillAliveHere(holder);
+}
+
 using RealmsCheck = void (*)(Realms&);
 
 template<RealmsCheck check>
@@ -1047,6 +1083,8 @@ std::span<const NativeTest> lockedRealmMemberTests()
         { "locked-realm-members/objects-with-locked-members"_s, withoutImage<checkObjectsWithLockedMembers> },
         { "locked-realm-members/function-prototype"_s, withoutImage<checkFunctionPrototype> },
         { "locked-realm-members/prototypes-of-function-kinds"_s, withoutImage<checkPrototypesOfFunctionKinds> },
+        { "locked-realm-members/runtime-flags-hide-globals"_s, withoutImage<checkRuntimeFlagsHideGlobals> },
+        { "locked-realm-members/globals-kept-aside"_s, withoutImage<checkGlobalsKeptAside> },
         { "locked-realm-members/names-given-twice"_s, withoutImage<checkNamesGivenTwice> },
         { "locked-realm-members/a-write-is-told-of-once-for-each-member"_s, withoutImage<checkWriteIsToldOfOnceForEachMember> },
         { "locked-realm-members/a-store-through-a-prototype-is-no-write"_s, withoutImage<checkStoreThroughPrototypeDoesNotWrite> },

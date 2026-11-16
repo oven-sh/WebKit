@@ -1651,7 +1651,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_iteratorConstructor.set(vm, this, iteratorConstructor);
     putDirectWithoutTransition(vm, vm.propertyNames->Iterator, iteratorConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    if (Options::alwaysUseSharedArrayBuffer())
+    if (Options::alwaysUseSharedArrayBuffer() && !m_runtimeFlags.isSharedArrayBufferHidden())
         putDirectWithoutTransition(vm, vm.propertyNames->SharedArrayBuffer, m_sharedArrayBufferStructure.constructor(this), static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     if (Options::useExplicitResourceManagement()) {
@@ -1927,7 +1927,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
 #if ENABLE(SHADOW_REALM)
-    if (Options::useShadowRealm())
+    if (Options::useShadowRealm() && !m_runtimeFlags.isShadowRealmHidden())
         putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 #endif
 

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableRealm.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
@@ -314,7 +315,7 @@ static bool tryFileRead(const BindingAccess& access, const PropertySlot& slot, J
     int64_t location;
     const bool filesConstants = !access.bindings.filesLocationAlone(access.number);
     if (slot.isCacheableValue()) {
-        if (filesConstants && (isFixed(slot, access.name) || globalObject->structure()->isImmutablePropertyForReader(access.uid())))
+        if (filesConstants && ((isFixed(slot, access.name) && !keepsGlobalsAside(globalObject)) || globalObject->structure()->isImmutablePropertyForReader(access.uid())))
             return access.bindings.fileConstant(access.vm, access.number, nullptr, value);
         if (filesConstants && access.bindings.fileConstant(access.vm, access.number, globalObject, value))
             return true;
