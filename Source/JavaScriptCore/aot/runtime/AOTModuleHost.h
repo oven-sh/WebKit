@@ -442,6 +442,7 @@ JS_EXPORT_PRIVATE bool fulfillDeferredFetches(VM&, uint64_t completedDiskReads =
 JS_EXPORT_PRIVATE void didDrainDeferredFetchJobs(VM&);
 JS_EXPORT_PRIVATE std::optional<uint32_t> firstDeferredBatchNumber(VM&);
 JS_EXPORT_PRIVATE bool shouldDeferFetchFulfillment(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isImportedByLoad(JSGlobalObject*, ModuleID root, ModuleID file);
 JS_EXPORT_PRIVATE void deferFetchFulfillment(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void didFetch(JSGlobalObject*, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void noteHostImportInFlight(JSGlobalObject*, ModuleID, JSPromise*, bool isFromOwnFactory);

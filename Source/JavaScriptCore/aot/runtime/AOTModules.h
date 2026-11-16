@@ -1929,6 +1929,7 @@ public:
     void fulfillQueuedFetch(JSPromise*);
     void fulfillQueuedFetchAfterJobs(JSPromise*);
     bool isOriginalLoaded(ModuleID);
+    bool isImportedByLoad(ModuleID root, ModuleID file) const;
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
     bool hasTextAtHand() const;

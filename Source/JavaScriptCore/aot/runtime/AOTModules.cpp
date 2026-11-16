@@ -5602,6 +5602,10 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories = pendingFactoryInGraph(module, askedBy, importWaitState);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
+    if (!factories && text != ImportSourceState::MayArriveLater && askedBy == PendingFactoryRequester::ImportCall) [[unlikely]] {
+        factories = pendingFactoryInGraph(module, PendingFactoryRequester::ImportCallAfterSource, importWaitState);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     if (!factories && needsOriginal) [[unlikely]] {
         factories = ensureActualKeyLoad(fileOf(module));
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
