@@ -3374,7 +3374,7 @@ void Modules::clearUnmockedInstance(ModuleID module)
 bool Modules::tryEvictRequirerOfOriginal(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    if (!hasInstances(file) || !activeMock(file) || !m_requirersOfOwnOriginals.clear(file.index()))
+    if (!activeMock(file) || (!hasInstances(file) && !data(file).isESModuleOfProgram()) || !m_requirersOfOwnOriginals.clear(file.index()))
         return false;
     releaseImportersOf(file, ReleasedImporters::All);
     forgetUnmockedOriginal(file);
