@@ -2277,13 +2277,17 @@ bool CallInLinkCalls::callWhatGetterAtReturns(FlowNodeID member, const Passed& p
     LinkType held = heldAt(member);
     if (held.isNever())
         return true;
-    if (held.functions != LinkType::Functions::Closure || held != closuresForLinkCalls(held.function))
+    LinkType inSight = held.directPart();
+    inSight.primitives = 0;
+    if (held.functions != LinkType::Functions::Closure || inSight != closuresForLinkCalls(held.function))
         return false;
     FunctionID getter = held.function;
     const Function& function = m_program.at(getter);
     if (function.kind != FunctionKind::Getter || !function.hasBody() || function.isCoroutine() || function.results.size() != 1)
         return false;
 
+    if (held.hasUnknownObjects)
+        callUnseen(UnknownIs::ByEscapeAlone);
     m_flow.reach(getter);
     m_flow.addEdge(m_flow.thrown(getter), thrownNode());
     uint32_t firstPositional = function.firstParameterIndex();

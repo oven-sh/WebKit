@@ -2590,7 +2590,7 @@ void StateOfLinkReach::arriveFromSource(FlowNodeID node, LinkType type)
     if (type.objects == LinkType::Objects::Layout && m_program.at(type.layout).kind != LayoutKind::ModuleNamespace) {
         uint32_t layout = type.layout.index();
         if (m_flow.escapedLayouts.get(layout)) {
-            type.isUnknownEscapeOnly = !type.hasUnknownObjects;
+            type.isUnknownEscapeOnly = !type.hasDirectUnknownObjects();
             type.hasUnknownObjects = true;
         }
         else if (!m_flow.listsSourceOfObjectsBehindPass(node, type.layout))

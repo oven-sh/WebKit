@@ -5280,6 +5280,8 @@ static void printBreachOfClosureInLink(PrintStream& out, LinkFlow& flow, const B
     if (breach.node) {
         flow.describe(out, breach.node);
         out.print(" climbs from ", breach.before, " to ", breach.after);
+        if (breach.before == breach.after)
+            out.print(" (in its shadows: marks ", RawHex(breach.before.marks), " to ", RawHex(breach.after.marks), ", unknown objects in sight ", breach.before.hasDirectUnknownObjects(), " to ", breach.after.hasDirectUnknownObjects(), ", primitives in sight ", RawHex(breach.before.directPrimitives()), " to ", RawHex(breach.after.directPrimitives()), ", counts ", static_cast<unsigned>(breach.before.counts), " to ", static_cast<unsigned>(breach.after.counts), ")");
     } else {
         out.print(breach.set, " grows");
         if (breach.layout)
