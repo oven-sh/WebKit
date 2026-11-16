@@ -4274,6 +4274,91 @@ void Modules::noteLoadsOfEndedTestFile()
     }
 }
 
+bool Modules::canReleaseLoads(ModuleID testFile)
+{
+    bool handsOnNames = data(testFile).hasDynamicStarExport();
+    for (const ModuleExportData& entry : m_table.exports(testFile))
+        handsOnNames |= entry.kind() == ModuleExportKind::Indirect;
+    bool holdsLoads = false;
+    for (const ModuleRequestData& request : m_table.imports(testFile))
+        holdsLoads |= data(request.targetModule()).isUncompiledCode();
+    return holdsLoads && !handsOnNames;
+}
+
+void Modules::releaseLoadsOfEndedTestFiles()
+{
+    if (m_resetWithReleasedLoads == m_momentOfModuleReset || m_testFilesHoldingLoads.isEmpty() || isSomeLoadUnderWay()) [[likely]]
+        return;
+    m_resetWithReleasedLoads = m_momentOfModuleReset;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    for (size_t index : BitVector(m_testFilesHoldingLoads)) {
+        ModuleID testFile(index);
+        if (!isEvicted(testFile) || m_momentOfModuleReset <= m_startMoments.getOptional(testFile).value_or(0) || isMocked(testFile))
+            continue;
+        if (data(testFile).kind == ModuleKind::CommonJs) {
+            m_testFilesHoldingLoads.clear(index);
+            if (m_filesToLoadAgain.get(index))
+                discardModuleObject(testFile);
+            continue;
+        }
+        ModuleStatus current = status(testFile);
+        if (current != ModuleStatus::Evaluated && current != ModuleStatus::Failed)
+            continue;
+        m_testFilesHoldingLoads.clear(index);
+        releaseLoads(testFile);
+        ensureInstance(testFile);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+    }
+}
+
+void Modules::releaseLoads(ModuleID testFile)
+{
+    Environment* released = currentInstance(testFile);
+    if (released) {
+        releaseInstance(testFile);
+        m_releasedTestFiles.clear(testFile.index());
+    }
+    if (ModuleRecord* record = m_records.get(testFile)) {
+        if (released)
+            record->bindModuleInstance(*m_instance.vm, released);
+        loader()->removeEntriesForRecord(record);
+        takeOutRecord(testFile);
+    }
+    setStoredStatus(testFile, StoredModuleStatus::Evaluated);
+    for (const ModuleRequestData& request : m_table.imports(testFile)) {
+        ModuleID external = request.targetModule();
+        if (!data(external).isUncompiledCode())
+            continue;
+        if (LoadedModule* loaded = loadedIfExists(external))
+            loaded->uncompiledRecord.set(*this, nullptr);
+        discardNamespace(external);
+    }
+    if (LoadedModule* loaded = loadedIfExists(testFile))
+        loaded->importMeta.set(*this, nullptr);
+}
+
+void Modules::releaseInstancesOfEndedTestFiles()
+{
+    if (m_releasedTestFiles.isEmpty()) [[likely]]
+        return;
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
+    for (size_t index : std::exchange(m_releasedTestFiles, { })) {
+        ModuleID testFile(index);
+        if (!hasInstances(testFile) || status(testFile) == ModuleStatus::Evaluating || data(testFile).isImportedByModule())
+            continue;
+        if (currentInstance(testFile)) {
+            if (!m_table.exports(testFile).empty() || data(testFile).hasDynamicStarExport())
+                continue;
+            releaseInstance(testFile);
+        }
+        ensureInstance(testFile);
+        if (scope.exception()) [[unlikely]]
+            (void)scope.tryClearException();
+        m_releasedTestFiles.clear(index);
+    }
+}
+
 void Modules::endStaleDetachedLoads(ModuleID mocked)
 {
     if (m_detachedLoads.isEmpty()) [[likely]]
@@ -6282,6 +6367,8 @@ bool Modules::isOfKindWhoseTextHostKeeps(ModuleID file) const
 bool Modules::delegatesToStartingHost(ModuleID module)
 {
     m_instance.vm->aotState().filesStartedByHost.set(fileOf(module).index());
+    if (data(module).kind == ModuleKind::CommonJs || (hasInstances(module) && canReleaseLoads(module)))
+        m_testFilesHoldingLoads.set(module.index());
     if (m_hasBegunTestFile)
         m_startMoments.set(fileOf(module), m_instance.vm->aotState().momentOfLoads);
         m_evictedTestFiles.clear(fileOf(module).index());

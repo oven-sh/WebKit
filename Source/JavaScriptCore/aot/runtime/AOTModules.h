@@ -251,6 +251,11 @@ public:
     void didFinishTests();
     void markFactoryAbandoned(ModuleID module) { m_modulesWithAbandonedFactory.set(module.index()); }
     void markMockPassthrough(ModuleID module) { m_modulesWithPassthroughMock.set(fileOf(module).index()); }
+    void releaseEndedTestFiles()
+    {
+        releaseLoadsOfEndedTestFiles();
+        releaseInstancesOfEndedTestFiles();
+    }
     void didBeginTestFile()
     {
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
@@ -1330,7 +1335,12 @@ public:
     bool isLinkedAndUnevaluated(ModuleID) const;
     void resetLinkedInstances(const WTF::Function<bool(const String&)>& isKept);
     bool releaseModuleWithImporters(ModuleID);
-    void setReplacedTestFile(std::optional<ModuleID> testFile) { m_replacedTestFile = testFile; }
+    void setReplacedTestFile(std::optional<ModuleID> testFile)
+    {
+        m_replacedTestFile = testFile;
+        if (testFile)
+            m_releasedTestFiles.set(testFile->index());
+    }
     void setRestoredAtUnmock(ModuleID module, bool isRestored) { m_originalsRestoredAtUnmock.set(module.index(), isRestored); }
     bool isLinkedInstance(ModuleID, const Environment*) const;
     bool reexportsFrom(ModuleID, ModuleID importer, ModuleID imported) const;
@@ -1338,6 +1348,10 @@ public:
     bool areReadByImportersWithoutInstances(std::span<const ModuleID>);
     bool isAwaitedByDetachedLoad(ModuleID) const;
     void noteLoadsOfEndedTestFile();
+    void releaseLoadsOfEndedTestFiles();
+    void releaseInstancesOfEndedTestFiles();
+    void releaseLoads(ModuleID testFile);
+    bool canReleaseLoads(ModuleID testFile);
     bool hasFixedNamespace(ModuleID module) const { return m_linkedInstances.get(module.index()) && hasInstances(module); }
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target) const;
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target, Environment* instance) const;
@@ -3365,6 +3379,9 @@ private:
     UncheckedKeyHashMap<ModuleID, ModuleID> m_parentsOfPreloadMocks;
     UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 1>> m_testFilesRequiringESModules;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_startMoments;
+    BitVector m_testFilesHoldingLoads;
+    BitVector m_releasedTestFiles;
+    uint32_t m_resetWithReleasedLoads { 0 };
     BitVector m_evictedTestFiles;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_mockEndMoments;
     UncheckedKeyHashMap<ModuleID, ModuleID> m_displacedEntryParents;

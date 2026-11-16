@@ -506,6 +506,7 @@ JS_EXPORT_PRIVATE void didDisplaceIntactOriginal(JSGlobalObject*, ModuleID, bool
 JS_EXPORT_PRIVATE bool isDisplacedByMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE AbstractModuleRecord* originalModuleRecord(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
+JS_EXPORT_PRIVATE void releaseEndedTestFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasActiveMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
 JS_EXPORT_PRIVATE bool tryKeepActiveMock(JSGlobalObject*, ModuleID, bool remainsOriginal, bool keepsCurrentTestFileLoads);

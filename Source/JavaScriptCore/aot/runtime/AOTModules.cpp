@@ -9136,6 +9136,12 @@ bool isDisplacedByMock(JSGlobalObject* realm, ModuleID module)
     return modules && modules->isDisplacedByMock(module);
 }
 
+void releaseEndedTestFiles(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->releaseEndedTestFiles();
+}
+
 void didBeginTestFile(JSGlobalObject* realm)
 {
     VMState& state = realm->vm().aotState();
