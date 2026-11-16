@@ -922,7 +922,16 @@ bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID imp
         return false;
     auto waiting = m_pendingMockCalls.find(fileOrModule);
     uint32_t linked = momentLinked(importer);
-    return waiting != m_pendingMockCalls.end() && waiting->value.keepsActiveMock && linked && linked < waiting->value.moment;
+    if (waiting == m_pendingMockCalls.end() || !linked || linked >= waiting->value.moment)
+        return false;
+    if (waiting->value.keepsActiveMock)
+        return true;
+    bool hasRunInPreload = m_loadedInPreload.get(importer.index()) && data(importer).isESModuleOfProgram() && status(importer) == ModuleStatus::Evaluated && !isEvicted(importer) && (!hasInstances(importer) || currentInstance(importer));
+    bool isTestFileLoading = false;
+    m_instance.vm->aotState().filesStartedByHost.forEachSetBit([&](size_t index) {
+        isTestFileLoading |= status(ModuleID(index)) < ModuleStatus::Evaluated;
+    });
+    return hasRunInPreload && (waiting->value.isInPreload || !isTestFileLoading) && !hasRemovedMock(fileOrModule) && activeMock(fileOrModule) == loadedIfExists(fileOrModule)->preloadMock.get();
 }
 
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool keepsEarlierMockForImporters)
