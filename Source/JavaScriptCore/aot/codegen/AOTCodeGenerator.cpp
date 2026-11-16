@@ -3304,6 +3304,7 @@ NEVER_INLINE void CodeGenerator::endScheduledLifetimes(const ValueContext& conte
 NEVER_INLINE void CodeGenerator::generateWatched(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
+    const bool userDeclaresAccesses = user && m_out.hasDeclaredAccesses();
     Machine::Origin originOfUser = m_out.origin();
     m_out.setOrigin(machineOriginOf(context.id()));
     bool userOwesFenceBehindStores = std::exchange(m_owesFenceBehindStores, false);
@@ -3323,7 +3324,7 @@ NEVER_INLINE void CodeGenerator::generateWatched(const ValueContext& context)
     if (m_looksBehindEachOperation) [[unlikely]] {
         if (barrierIsCountedOn(context.id()) && !m_storesBehindWhichOwnerIsRemembered.get(context.id().index()) && !m_hasFailed)
             fail(context, InternalErrorKind::OpcodeNotInForm, "the barrier of an earlier store is left to this one, and the code of this one does not remember its owner"_s);
-        if (m_checksAllocation && user)
+        if (m_checksAllocation && userDeclaresAccesses)
             declareAccessesSlow(*user);
         else if (m_checksAllocation)
             m_out.clearDeclaredAccesses();
