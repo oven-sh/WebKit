@@ -79,9 +79,11 @@ public:
     StraightEmitter(BuildContext&, TypeArena&, const CodeGenerationInputs&, CodeUnit, const BodyIndex&, CodeRecords&, Machine::Arena&);
 
     static bool covers(const CodeGenerationInputs&, CodeUnit, const BodyIndex&);
+    static bool isResumeBody(const CodeGenerationInputs&, CodeUnit);
 
     uint32_t numberOfSlots() const { return m_numberOfSlots; }
-    bool entersUnits() const { return m_entersUnits; }
+    bool entersUnits() const { return m_entersUnits || m_generatorFrame; }
+    bool resumesGenerator() const { return !!m_generatorFrame; }
     uint32_t wordsOfScratchArea() const { return m_wordsOfScratchArea; }
     void generate(CCallHelpers&, const ArgumentLocations&, unsigned bytesBelowFrameRecord);
     bool hasFailed() const { return m_hasFailed; }
@@ -199,6 +201,7 @@ public:
     static std::optional<StraightTest> testOfWordAlone(TypeID);
     void testType(GPRReg boxed, TypeID tested, GPRReg zeroOrOne);
     void trapUnlessOfType(ValueID, TypeID tested, ProofSource, Origin);
+    void trapOnFalseProof(GPRReg boxed, TypeID tested, ProofSource, Origin);
 
     void loadSlot(GPRReg cell, const PlacedSlot&, GPRReg boxedResult);
     void storeSlot(GPRReg cell, const PlacedSlot&, GPRReg boxed);
@@ -245,6 +248,7 @@ public:
     bool classRecordCreatesMemberDefinedBy(const BodyValue&);
     void generateCollectionIntrinsic(const BodyValue&);
     void generateEngineIntrinsic(const BodyValue&);
+    void generateYield(const BodyValue&);
     void generateEval(const BodyValue&);
     void generateException(const BodyValue&);
     void generateForIn(const BodyValue&);
@@ -290,6 +294,14 @@ private:
     static constexpr uint32_t mostWordsOfFrame = 512;
 
     void takeParameters(const ArgumentLocations&);
+    void emitResumeDispatch(const ArgumentLocations&);
+    void findResumableBlocks();
+    TypeID testableTypeOfCell(const LinkedCell&);
+    void checkStoredValueProofs(const BodyValue&);
+    void checkScopeReadProof(const BodyValue&);
+    void checkEscapingScopeSlots(uint32_t position, bool isAtTerminator);
+    bool isNeverResumed(BlockID block) const { return m_generatorFrame && !m_blocksAfterYields.quickGet(block.index()) && !m_yieldBlocks.quickGet(block.index()); }
+    CCallHelpers::Address addressOfGeneratorSlot(uint32_t slot) const { return CCallHelpers::Address(GPRInfo::callFrameRegister, -static_cast<int32_t>(sizeof(EncodedJSValue) * (slot + 1))); }
     void generateBlock(BodyBlock);
 
     struct ImportCheck {
@@ -322,6 +334,7 @@ private:
     bool isCopiedInRegister(ValueID) const;
     std::optional<BodyUser> onlyReader(ValueID) const;
     void findProofsNobodyReads(const BodyTerminator&);
+    void storeValueReadBySeveralArguments(std::span<const StraightArgument>);
     void bringAll(std::span<const StraightArgument>, NOESCAPE const Invocable<GPRReg(size_t)> auto& registerOf, ArgumentMoves* leftToThunk = nullptr);
     bool leavesArgumentsToThunk(StubKey, const StraightCallOptions&) const;
     void branchOnCondition(ValueID condition, bool jumpsIfTrue, BlockID);
@@ -340,6 +353,16 @@ private:
     BodyBlock m_block;
     static constexpr uint32_t slotWasGivenBack = std::numeric_limits<uint32_t>::max();
 
+    static constexpr uint32_t generatorFrameSlot = 0;
+    static constexpr uint32_t sentValueSlot = 1;
+    static constexpr uint32_t resumeModeSlot = 2;
+    static constexpr uint32_t foundValueSlot = 3;
+    static constexpr uint32_t numberOfGeneratorSlots = 4;
+
+    std::optional<GeneratorFrameLayout> m_generatorFrame;
+    BitVector m_blocksAfterYields;
+    BitVector m_yieldBlocks;
+    CCallHelpers::JumpList m_resumeJumps;
     Vector<uint32_t, 128> m_roots;
     Vector<uint32_t, 128> m_slots;
     Vector<uint32_t, 16> m_freeSlots;

@@ -352,7 +352,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::NewGenerator: case Opcode::NewGeneratorOfLibrary: case Opcode::NewAsyncGenerator: case Opcode::TakeGeneratorPrototype: case Opcode::GetGeneratorPrototype: case Opcode::TakeGeneratorLeftInPlace:
     case Opcode::IsCallDelegated: case Opcode::GiveDelegatedResult: case Opcode::CallDelegate:
     case Opcode::StepAsyncGenerator: case Opcode::AwaitMayContinue: case Opcode::AwaitBySavingFrame:
-    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::NewHeapWords:
+    case Opcode::AwaitCallBySavingFrame: case Opcode::YieldBySavingFrame: case Opcode::GetHeapFrameWord: case Opcode::PutHeapFrameWord: case Opcode::PutHeapFrameScope: case Opcode::NewHeapWords: case Opcode::NewSuspendedIteration: case Opcode::NewSuspendedEnumeration:
     case Opcode::AsyncGeneratorYield: case Opcode::ReturnAsyncResult: case Opcode::PromiseAllOfElements: case Opcode::StartReactionChain:
     case Opcode::HasInPrototypeChain: case Opcode::TryFindInPrototypeChain: case Opcode::HasDefaultHasInstance:
     case Opcode::BeginModuleEvaluation: case Opcode::FinishModuleEvaluation: case Opcode::EvaluateRequiredModule: case Opcode::EnterBodyThatRunsOnce:

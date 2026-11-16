@@ -364,7 +364,7 @@ void StraightEmitter::generateConstant(const BodyValue& value)
         return;
     case Opcode::Builtin: {
         BuiltinCellKey key = BuiltinCellKey::object(program().builtins().canonicalID(value.builtin()));
-        if (!key.hasCell(program().builtins()) || value.isNotReadFromHolder()) {
+        if (!key.hasCell(program().builtins()) || (value.isNotReadFromHolder() && !resumesGenerator())) {
             fail(value);
             return;
         }

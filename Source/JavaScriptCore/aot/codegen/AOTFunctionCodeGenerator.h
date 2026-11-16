@@ -27,6 +27,7 @@ public:
 
     CompiledCode run();
     std::optional<CompiledCode> runStraight(const BodyIndex&);
+    bool canEmitStraight(const BodyIndex&);
     CompiledCode runEntryWrittenByHand(std::span<const QuestionOfEntry>, bool nobodyEnters);
 
 private:

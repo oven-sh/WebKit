@@ -1,6 +1,7 @@
 enum BuiltinCallForm { | engine Whole AnyReceiver }
 enum QuotientRounding { | engine Floor Ceil Truncate Round ToInt32 }
 enum AsyncGeneratorStepStatus { | engine Result Yielded Completed }
+enum SuspendedIterationKind { | engine Keys Values Entries Protocol State }
 
 parameters SlotStamp (key: PropertyKey, receivers: LayoutSet, level: KnowledgeLevel)
 
@@ -194,7 +195,7 @@ operation NewGenerator (function: Function(Dispatch), callee?: Callable/inspects
 operation NewGeneratorOfLibrary (function: Function(Dispatch), callee: Callable/inspects+runs(Named(prototype))) -> allocation(Generator) ; Allocates UsesRuntime reads(NamedProperties) writes(ShapeWords, NamedProperties) throws ; runtime = NewGeneratorOfLibrary ; form = Open
 operation NewAsyncGenerator (function: Function(Dispatch), callee: Callable/inspects+runs(Named(prototype))) -> allocation(AsyncGenerator) ; Allocates UsesRuntime reads(NamedProperties) writes(ShapeWords, NamedProperties) throws ; runtime = NewAsyncGenerator ; form = Closed
 engine operation GetGeneratorPrototype (function: Object/inspects) -> natural(object) ; Allocates UsesRuntime reads(NamedProperties, PrototypeLinks) ; runtime = GetGeneratorPrototype ; form = Open
-engine operation TakeGeneratorLeftInPlace (holder: Object/inspects) [| engine leavesAtOnce] -> unknown ; Allocates UsesRuntime reads(NamedProperties, PrototypeLinks) writes(ShapeWords, InternalFields) ; runtime = TakeGeneratorLeftInPlace ; form = Open
+engine operation TakeGeneratorLeftInPlace (holder?: Object/inspects, words?: Any/retains, function?: Function(Dispatch)) [| engine leavesAtOnce isHeldByIteration] -> unknown ; Allocates UsesRuntime reads(NamedProperties, PrototypeLinks) writes(ShapeWords, InternalFields) ; runtime = TakeGeneratorLeftInPlace ; form = Open
 engine operation IsCallDelegated (callee: Callable/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks, ShapeWords, InternalFields, RuntimeState) ; boundTo = Frame ; branches = May ; form = Open
 engine operation GiveDelegatedResult (value: Any/retains) -> unknown ; writes(RuntimeState) ; form = Open
 engine operation CallDelegate (callee: Any/calls, thisValue?: Any/retains, arguments...: Any/retains, calleeName?: String) -> results(DelegatedCallResult: unknown, natural(boolean)) ; unknownCode ; form = Closed
@@ -206,7 +207,10 @@ operation AwaitCallBySavingFrame (function: Function(Call), promise: Any/inspect
 operation YieldBySavingFrame (generator: Object/inspects, value: Any/retains, held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Yield, InitialYield ; form = Closed
 operation GetHeapFrameWord (frame: Any/inspects, index: UInt32, valueType: Type) -> declared(valueType) ; reads(InternalFields) ; form = Open
 operation PutHeapFrameWord (frame: Any/inspects, index: UInt32, value: Any/retains) [remembersFrame] -> none ; writes(InternalFields) ; form = Open
+engine operation PutHeapFrameScope (frame: Any/inspects, index: UInt32, scope: Environment/retains) -> none ; writes(InternalFields) ; form = Open
 operation NewHeapWords (numberOfWords: UInt32) -> unknown ; AllocatesCells UsesRuntime writes(InternalFields) ; runtime = NewHeapFrame ; form = Closed
+engine operation NewSuspendedIteration (subject: Any/retains, position: Any/retains, table: Any/retains, suspendedKind: SuspendedIterationKind) [| engine positionIsBeforeStep] -> unknown ; Allocates UsesRuntime reads(Elements, ArrayStorage, InternalFields) writes(ShapeWords, InternalFields) ; runtime = NewSuspendedIteration ; form = Open
+engine operation NewSuspendedEnumeration (enumerator: Enumerator/retains, position: Any/retains) -> unknown ; Allocates UsesRuntime reads(Elements, ArrayStorage, InternalFields) writes(ShapeWords, InternalFields) ; runtime = NewSuspendedEnumeration ; form = Open
 operation AsyncGeneratorYield (generator: Object/inspects, value: Any/retains+runs(Thenable), held...: Convertible/retains) -> results(YieldResult: unknown, natural(ResumeMode)) ; unknownCode suspends ; runtime = SaveFrameAndYield ; boundTo = Frame ; replaces = Await, Yield ; form = Closed
 operation ReturnAsyncResult (promise: Any/inspects+returns+writesContents, value: Any/retains+returns+runs(Thenable)) -> unknown ; Allocates UsesRuntime reads(PromiseState, NamedProperties, ObjectFields, PrototypeLinks) writes(PromiseState) ; runtime = ResolvePromiseOrReturnResult ; boundTo = Frame ; form = Closed
 engine operation StartReactionChain (receiver: Any/retains, promise: Object/retains, handlers: List<UInt32>, captures...: Convertible/retains) [| engine receiverIsValue] -> none ; Allocates UsesRuntime reads(PromiseState) writes(PromiseState, ExternalState) ; runtime = StartReactionChain ; replaces = CallBuiltin ; form = Closed
