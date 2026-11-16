@@ -58,7 +58,7 @@ struct RequiredText {
 };
 
 // The rarest first. A second one is nearer to the start of a match: its distance has a bound, the first one's has none.
-using RequiredTexts = Vector<RequiredText>;
+using RequiredTexts = Vector<RequiredText, 0, CrashOnOverflow, 1>;
 inline constexpr unsigned maxRequiredTexts = 2;
 
 // Of the body's alternatives that are tried at one place after another. None for a sticky pattern, whose one attempt costs less than a search.

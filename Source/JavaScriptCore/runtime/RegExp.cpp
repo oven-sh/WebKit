@@ -38,6 +38,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/text/MakeString.h>
 
+#include "AOTOrderRecorder.h"
 #include "AOTRegExpInProcessLoader.h"
 #include "AOTRegExpRecords.h"
 #include "AOTRuntimeReporter.h"
@@ -480,6 +481,8 @@ void RegExp::countBytecodeCompilation(VM& vm, BytecodeIsFor purpose) const
     AOT::countEvent(vm, AOT::RuntimeCounterID::RegExpsCompiledToBytecode);
     if (const AOT::ImageRegExp* record = imageRecord())
         AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsCompiledToBytecode : AOT::RuntimeCounterID::PredictedRegExpsCompiledToBytecode);
+    if (AOT::isRecordingOrder()) [[unlikely]]
+        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &AOT::recordUseOfRegExp>(StringView(m_patternString), AOT::ImageRegExp::significantFlags(m_flags).toRaw());
 }
 #endif
 

@@ -48,6 +48,7 @@ struct OrderFile {
 
     Vector<std::span<const uint8_t>> files;
     Vector<Unit> units;
+    Vector<std::span<const uint8_t>> regExps;
     uint32_t numberOfFunctions { absentUnit };
 
 private:
@@ -92,6 +93,10 @@ void OrderFile::addLine(std::span<const uint8_t> line)
         numberOfFunctions = parseOrderNumber(takeWord(line));
         return;
     }
+    if (kind[0] == 'R') {
+        regExps.append(std::span<const uint8_t> { line });
+        return;
+    }
     if (kind[0] != 'F')
         return;
     std::span<const uint8_t> file = takeWord(line);
@@ -119,6 +124,7 @@ bool OrderFile::takeNext(std::span<const uint8_t>& rest)
     constexpr auto head = "aot-order v1"_s;
     files.shrink(0);
     units.shrink(0);
+    regExps.shrink(0);
     numberOfFunctions = absentUnit;
     bool hasHead = false;
     while (!rest.empty()) {
@@ -141,6 +147,26 @@ bool OrderFile::takeNext(std::span<const uint8_t>& rest)
     }
     rest = { };
     return hasHead;
+}
+
+std::optional<RegExpOfOrderFile> parseRegExpOfOrderFile(std::span<const uint8_t> line)
+{
+    uint32_t flags = parseOrderNumber(takeWord(line));
+    if (flags > std::numeric_limits<uint16_t>::max())
+        return std::nullopt;
+    RegExpOfOrderFile regExp { { }, static_cast<uint16_t>(flags) };
+    while (!line.empty()) {
+        if (line[0] != '%') {
+            regExp.pattern.append(line[0]);
+            line = line.subspan(1);
+            continue;
+        }
+        if (line.size() < 5 || !std::ranges::all_of(line.subspan(1, 4), isASCIIHexDigit<uint8_t>))
+            return std::nullopt;
+        regExp.pattern.append(toASCIIHexValue(line[1], line[2]) << 8 | toASCIIHexValue(line[3], line[4]));
+        line = line.subspan(5);
+    }
+    return regExp;
 }
 
 class OrderIndex {
@@ -492,6 +518,18 @@ void LinkedFunctions::reorder(std::span<const uint32_t> order)
         code[position] = &m_functions[order[position]];
     }
     m_functions = ListOfKeptCode(WTF::move(code));
+}
+
+Vector<RegExpOfOrderFile> regExpsOfOrderFiles(std::span<const uint8_t> rest)
+{
+    Vector<RegExpOfOrderFile> regExps;
+    for (OrderFile file; file.takeNext(rest);) {
+        for (std::span<const uint8_t> line : file.regExps) {
+            if (auto regExp = parseRegExpOfOrderFile(line))
+                regExps.append(WTF::move(*regExp));
+        }
+    }
+    return regExps;
 }
 
 Vector<FinalJump> orderCodeByFiles(const Typed::Program& program, const Typed::Plan& plan, const FunctionNumbers& numbers, LinkedFunctions& functions, ResolvedCallees& callees, BuildContext& context)

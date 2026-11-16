@@ -152,6 +152,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTState.h
     aot/runtime/AOTStringBuilderStorage.h
     aot/runtime/AOTStringBuilderWords.h
+    aot/runtime/AOTTimingOfModuleLoads.h
     aot/runtime/AOTTraceFrame.h
     aot/runtime/AOTVMState.h
     aot/runtime/AOTWatchpoints.h

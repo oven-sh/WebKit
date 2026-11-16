@@ -128,7 +128,7 @@ CellPointer GuessedAccessEmitter::receiverOrElse(const ValueContext& value, Boxe
         *baseOfSlot = emitter<SlotAccessEmitter>().baseOfSlotWhereOneTableTellsShapeAndDistance(cell, *readBehindTest, receivers, marked != MarkedObjects::Pass, failure);
     if (!baseOfSlot || !*baseOfSlot)
         branchUnless(emitter<ShapeTestEmitter>().hasShapeIn(cell, receivers, known, marked), failure);
-    if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known))
+    if (emitter<GuardEmitter>().asksForInstance(known, receivers))
         branchUnless(emitter<GuardEmitter>().belongsToInstance(cell), failure);
     return cell;
 }

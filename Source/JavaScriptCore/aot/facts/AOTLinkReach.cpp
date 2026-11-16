@@ -970,6 +970,7 @@ void StateOfLinkReach::escapeExportedBuiltins()
 {
     BitVector visitedNodes(m_flow.numberOfNodes());
     BitVector visitedModules(m_program.modules.size());
+    LinkFlow::ContainersVisited visitedContainers;
     Vector<FlowNodeID, 16> nodes;
     Vector<ModuleID, 8> modules;
     auto addNode = [&](FlowNodeID node) {
@@ -979,6 +980,18 @@ void StateOfLinkReach::escapeExportedBuiltins()
     auto addModule = [&](ModuleID id) {
         if (id && !visitedModules.set(id.index()))
             modules.append(id);
+    };
+    BitVector visitedSets;
+    BitVector visitedFamilies;
+    BitVector visitedLostFamilies;
+    auto wereLayoutsVisitedAsGroup = [&](const LinkType& type) {
+        if (type.objects == LinkType::Objects::Set)
+            return visitedSets.set(type.layout.index());
+        if (type.objects == LinkType::Objects::Family)
+            return visitedFamilies.set(type.family.index());
+        if (type.objects == LinkType::Objects::Lost && type.layout)
+            return visitedLostFamilies.set(m_flow.unitedLayouts.representativeWithoutShortening(type.layout.index()));
+        return false;
     };
     for (const Entry& entry : m_program.entries) {
         if (hostReadsNamesAloneOff(entry.module))
@@ -1018,11 +1031,13 @@ void StateOfLinkReach::escapeExportedBuiltins()
         if (type.isNever())
             continue;
         m_flow.noteEscapedBuiltins(type);
+        if (wereLayoutsVisitedAsGroup(type))
+            type.objects = LinkType::Objects::None;
         m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
             if (m_program.at(layout).kind == LayoutKind::ModuleNamespace)
                 addModule(m_program.at(layout).namespaceOf);
         });
-        m_flow.forEachContainedNode(type, scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
+        m_flow.forEachContainedNode(type, visitedContainers, scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
             addNode(node);
         }));
     }

@@ -24,6 +24,7 @@
 #include "AOTState.h"
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTStubEntrypoints.h"
+#include "AOTTimingOfModuleLoads.h"
 #include "AOTVMState.h"
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
@@ -1878,7 +1879,7 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
         if (hasNotBegunAsFile(requests[place].targetModule()))
             placesOfFiles.append(place);
     }
-    Vector<uint32_t, 16> placesInOrder = placesOfFiles.size() > 1 ? placesOfFilesAsSynchronousLoadMakesThem(root, placesOfFiles) : placesOfFiles;
+    Vector<uint32_t, 16> placesInOrder = placesOfFiles.size() > 1 && !isTimingOfModuleLoadsRelaxed() ? placesOfFilesAsSynchronousLoadMakesThem(root, placesOfFiles) : placesOfFiles;
     size_t nextFile = 0;
     for (size_t place = 0; place < requests.size(); ++place) {
         size_t index = place;
@@ -2043,6 +2044,17 @@ void Modules::transferGraphToLoader(EagerLoad& files, std::optional<ModuleID> fi
     Ref<MicrotaskQueue> jobsOfFile = MicrotaskQueue::create(vm);
     queue.moveTasksAfter(files.jobCountBeforeModule, jobsOfFile.get());
     m_canJobsOfFileTellWhenTextsCome |= !jobsOfFile->isEmpty() && isTestRun();
+    Ref<MicrotaskQueue> jobsOfProgram = MicrotaskQueue::create(vm);
+    if (isTimingOfModuleLoadsRelaxed()) {
+        Ref<MicrotaskQueue> earlierJobs = MicrotaskQueue::create(vm);
+        queue.moveTasksAfter(0, earlierJobs.get());
+        earlierJobs->allOf([&](const QueuedTask& job) {
+            bool runsNow = isStepOfLoader(job) && job.globalObject() == m_instance.globalObject;
+            (runsNow ? queue : jobsOfProgram.get()).enqueue(QueuedTask(job));
+            return true;
+        });
+        earlierJobs->clear();
+    }
     m_rootAwaitingLoader = files.root;
     files.transferredModule = running;
     {
@@ -2058,6 +2070,8 @@ void Modules::transferGraphToLoader(EagerLoad& files, std::optional<ModuleID> fi
         runStepsOfLoaderInFrontOf(fileOf(*running));
         scope.assertNoException();
     }
+    queue.moveTasksAfter(0, jobsOfProgram.get());
+    jobsOfProgram->moveTasksAfter(0, queue);
     jobsOfFile->moveTasksAfter(0, queue);
 }
 
@@ -2357,6 +2371,8 @@ Modules::LoaderForRequire Modules::loaderForRequire(ModuleID module)
         return LoaderForRequire::IsNeeded;
     if (numberOfGraphsBeingLoaded() && (m_rootAwaitingLoader || comesToLoadInFlight(module)))
         return LoaderForRequire::IsNeeded;
+    if (isTimingOfModuleLoadsRelaxed())
+        return LoaderForRequire::IsNotNeeded;
     for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
         if (files->moduleOrFacade == files->root)
             return LoaderForRequire::ComesBehindImportedFiles;
@@ -4372,7 +4388,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     }
 
     bool hasEagerLoadCycle = reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && importsEagerlyEvaluatingModule(module);
-    if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->runsBeforeLoaderSteps && (hasEagerLoadCycle || reachesEagerLoadGraph(*m_innermostEagerLoad, module))) [[unlikely]] {
+    if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->runsBeforeLoaderSteps && (hasEagerLoadCycle || (!isTimingOfModuleLoadsRelaxed() && reachesEagerLoadGraph(*m_innermostEagerLoad, module)))) [[unlikely]] {
         transferSynchronousLoad(*m_innermostEagerLoad);
         RETURN_IF_EXCEPTION(scope, void());
     }

@@ -32,6 +32,7 @@
 #include "AOTSlotAccess.h"
 #include "AOTSort.h"
 #include "AOTState.h"
+#include "AOTTimingOfModuleLoads.h"
 #include "AOTVMState.h"
 #include "AbstractSlotVisitorInlines.h"
 #include "AsyncContextSwapScope.h"
@@ -6336,12 +6337,24 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
     RELEASE_AND_RETURN(scope, appendRequestsOfUncompiledCode(module, record));
 }
 
+static bool timingOfModuleLoadsIsRelaxed;
+
+void relaxTimingOfModuleLoads()
+{
+    timingOfModuleLoadsIsRelaxed = true;
+}
+
+bool isTimingOfModuleLoadsRelaxed()
+{
+    return timingOfModuleLoadsIsRelaxed;
+}
+
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
     if (data(root).isLoadedByLoader() || m_moduleWithDeferredJobs || m_rootAwaitingLoader == root || !m_queuedFetches.isEmpty())
         return true;
-    if (isEntryPointOfRealm(root))
+    if (isEntryPointOfRealm(root) || isTimingOfModuleLoadsRelaxed())
         return false;
     if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
@@ -6350,14 +6363,19 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
             return true;
     }
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
-        if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
-            return true;
-        if (task.job() != InternalMicrotask::PromiseResolveThenableJobFast)
-            return false;
-        auto* promise = dynamicDowncast<JSPromise>(task.arguments()[0]);
-        const LoadInFlight* load = promise ? m_loadsInFlight.find(promise) : nullptr;
-        return load && !load->isLoaded;
+        return isStepOfLoader(task);
     });
+}
+
+bool Modules::isStepOfLoader(const QueuedTask& task)
+{
+    if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
+        return true;
+    if (task.job() != InternalMicrotask::PromiseResolveThenableJobFast)
+        return false;
+    auto* promise = dynamicDowncast<JSPromise>(task.arguments()[0]);
+    const LoadInFlight* load = promise ? m_loadsInFlight.find(promise) : nullptr;
+    return load && !load->isLoaded;
 }
 
 bool Modules::isBuiltinModuleOfLoader(ModuleID module) const

@@ -124,6 +124,7 @@ struct CompiledRegExp {
     std::optional<RegExpDeclineReason> reason { };
     std::array<std::unique_ptr<RegExpCode>, 2> code { };
     std::unique_ptr<RegExpCode> matcher { };
+    bool isListedInOrderFile { false };
 };
 
 enum class RegExpCodeFor16BitSubjects : uint8_t {

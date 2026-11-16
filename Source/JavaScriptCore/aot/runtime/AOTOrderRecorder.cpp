@@ -18,6 +18,7 @@
 #include <atomic>
 #include <optional>
 #include <span>
+#include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -87,6 +88,7 @@ public:
     bool didTrapAt(uintptr_t pc);
     void write();
     void runWriter();
+    void appendLineForRegExp(StringView pattern, uint16_t significantFlags);
 
     static OrderRecorder* s_current;
     static struct sigaction s_previousAction;
@@ -427,6 +429,22 @@ void OrderRecorder::appendLineForUnit(Vector<uint8_t>& out, const ModuleTable& m
     out.append('\n');
 }
 
+void OrderRecorder::appendLineForRegExp(StringView pattern, uint16_t significantFlags)
+{
+    Locker locker { m_lock };
+    appendTextToOrder(m_bytesToWrite, toString("R ", significantFlags, " "));
+    for (char16_t unit : pattern.codeUnits()) {
+        if (unit >= ' ' && unit <= '~' && unit != '%') {
+            m_bytesToWrite.append(static_cast<uint8_t>(unit));
+            continue;
+        }
+        m_bytesToWrite.append('%');
+        for (unsigned shift : { 12, 8, 4, 0 })
+            m_bytesToWrite.append(lowerNibbleToASCIIHexDigit(static_cast<uint8_t>(unit >> shift)));
+    }
+    m_bytesToWrite.append('\n');
+}
+
 void OrderRecorder::write()
 {
     Locker locker { m_lock };
@@ -497,6 +515,11 @@ bool isRecordingOrder()
     return OrderRecorder::s_current;
 }
 
+void recordUseOfRegExp(StringView pattern, uint16_t significantFlags)
+{
+    OrderRecorder::s_current->appendLineForRegExp(pattern, significantFlags);
+}
+
 #else // AOT_CAN_RECORD_ORDER
 
 ASCIILiteral startOrderRecording(const char*)
@@ -511,6 +534,10 @@ void finishOrderRecording()
 bool isRecordingOrder()
 {
     return false;
+}
+
+void recordUseOfRegExp(StringView, uint16_t)
+{
 }
 
 #endif

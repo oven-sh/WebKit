@@ -140,6 +140,9 @@ struct CompileOptions {
     bool hidesFunctionNames() const { return obfuscates() && !hasFlag(output, OutputOptions::KeepsFunctionNames); }
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
     bool recordsOrder() const { return hasFlag(output, OutputOptions::RecordsOrder); }
+    bool assumesSeparateRealms() const { return hasFlag(output, OutputOptions::AssumesSeparateRealms); }
+    bool assumesCompleteOrder() const { return hasFlag(output, OutputOptions::AssumesCompleteOrder); }
+    bool assumesLockedBuiltins() const { return hasFlag(output, OutputOptions::AssumesLockedBuiltins); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);
 };

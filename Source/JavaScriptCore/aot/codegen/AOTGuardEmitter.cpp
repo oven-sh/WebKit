@@ -128,6 +128,28 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
     return untestedCell(context, id);
 }
 
+bool GuardEmitter::mayMeetObjectOfOtherInstance(LayoutSetID tested)
+{
+    if (!build().options().assumesSeparateRealms() || isLibraryCode(m_program, function()))
+        return true;
+    auto topDirectoryOf = [&](ModuleID id) {
+        StringID path = m_program.at(id).displayPath;
+        std::span<const uint8_t> text = path ? m_program.string(path) : std::span<const uint8_t> { };
+        auto slash = std::ranges::find(text, '/');
+        return text.first(slash == text.end() ? 0 : slash - text.begin());
+    };
+    std::span<const uint8_t> topDirectory = topDirectoryOf(function().module);
+    return types().layoutSets().at(tested).anyOf([&](LayoutID id) {
+        ModuleID module = m_program.at(id).module;
+        return !module || m_program.at(module).kind == ModuleKind::RuntimeSource || m_program.at(module).flags.contains(ModuleFlags::IsLibrary) || !equalSpans(topDirectoryOf(module), topDirectory);
+    });
+}
+
+bool GuardEmitter::asksForInstance(const Type& known, LayoutSetID tested)
+{
+    return !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known) && mayMeetObjectOfOtherInstance(tested);
+}
+
 void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::SkipUnrolledShapeChecks) && generator().isLayingOutTurns()) {
@@ -137,7 +159,7 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
     ValueID object = value->objectOperand();
     std::optional<TruthinessEmitter::DeferredTruthTest> deferred = emitter<TruthinessEmitter>().takeTruthTestOf(value.id());
     const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(deferred ? deferred->source : object);
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known);
+    bool asksForInstance = this->asksForInstance(known, value->layouts());
     MarkedObjects marked = value->rejectsMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
@@ -797,7 +819,7 @@ void GuardEmitter::defineWhetherDeclaredMemberIsFound(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
     LayoutSetID receivers = value->receivers();
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    bool asksForInstance = this->asksForInstance(typeOf(object), value->receivers());
     defineTestByBranching(value, [&](BranchTargets targets) {
         CellPointer cell = cellOrElse(value, object, targets.notTaken);
         auto continueIf = [&](Condition holds) {
@@ -882,7 +904,7 @@ std::optional<GuardEmitter::RowOfCountsOfDoor> GuardEmitter::rowOfCountsOfDoor(c
 void GuardEmitter::defineWhetherObjectIsPlainInstance(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    bool asksForInstance = this->asksForInstance(typeOf(object), value->receivers());
     std::optional<RowOfCountsOfDoor> row = rowOfCountsOfDoor(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
         CellPointer cell = cellOrElse(value, object, targets.notTaken);
@@ -948,7 +970,7 @@ void GuardEmitter::defineWhetherNoMemberIsFound(const ValueContext& value)
             LBasicBlock hasShape = newBlock();
             emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->receivers(), typeOf(value->objectOperand()), { normalEdge(hasShape), targets.notTaken });
             m_out.appendTo(hasShape);
-            if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(value->objectOperand())))
+            if (asksForInstance(typeOf(value->objectOperand()), value->receivers()))
                 continueIf(belongsToInstance(cell));
         }
         uint32_t bits = (value->asksForNoExtraPropertyUnderKey() ? orderWordHasExtraProperties : 0) | (value->asksForNoFieldOutsideSlot() ? orderWordHasFieldOutsideSlot : 0);

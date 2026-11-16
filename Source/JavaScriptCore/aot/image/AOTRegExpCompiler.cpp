@@ -469,6 +469,7 @@ static void countRegExpResult(Statistics& statistics, const CompiledRegExp& resu
 
 CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpRequests& requests, BuildContext& context)
 {
+    static constexpr size_t mostBytesOfUnlistedRegExp = 2 * KB;
     std::span<const RegExpRequest> allRequests = requests.all();
     RegExpSummaries& summaries = context.regExpSummaries();
 
@@ -481,6 +482,11 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         auto compile = [&] {
             const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
             compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject });
+            compiled.results[index].isListedInOrderFile = request.isListedInOrderFile;
+            bool isTooLarge = context.options().assumesCompleteOrder() && !request.isListedInOrderFile && compiled.results[index].codeSize() > mostBytesOfUnlistedRegExp;
+            // The recorder sees what the interpreter runs.
+            if (compiled.results[index].form == RegExpRecordForm::Code && (isTooLarge || context.options().recordsOrder()))
+                compiled.results[index] = { .form = RegExpRecordForm::NoCode };
             if (!request.needsMatcher)
                 return;
             if (const RegExpCode* matcher = summaries.matcherOf(request.pattern, request.flags, pattern, context))

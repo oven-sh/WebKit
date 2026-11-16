@@ -78,7 +78,7 @@ flags TestingSwitch { IgnoreBranchHints IgnoreExpectedTypes DelayFlowRules Delay
 flags FaultInjection { IgnoreCollectorSpillReads MisplaceHoistedArrayStorage AssumeLaterValuesUnaliased AssumeLocalArrayReceivers IgnoreLoopArrayStores OverstateBoundArgumentCount AssumeNumericAddends AssumePermanentlyPristineIterables SkipSuperMethodGuard SkipSuperPrototypeGuard SkipBoundsProof SkipHierarchyGuards IgnoreSiblingPrototypes SkipPrototypeChecks AssumeLayoutPrototype SkipSuperclassCheck SkipClassGuards AssumePristineDestructuring AssumeIterationsRestartable AssumeInBoundsElementsPresent IgnoreLoopEscapes IgnoreLoopWrites IgnoreLoopUses DropLastCase SkipPairGuard AllowMarkedObjects SkipCapacityChecks DropLargeCountEntries MisnumberFunctionRecords OverstateClosureNumberRuns SwapClosureNumbers SwapBuiltinCellNumbers ReverseFusedCallEntries ReverseFunctionSourceEntries AssumeInvariantOperands AssumeEnumeratorCurrent AssumePristineReceivers SkipStorageChecks AssumeVariablesInitialized IgnoreVariableChecks SkipLengthChecks IgnoreLengthStores IgnorePrototypeReads AssumeSlotsInitialized AssumeArithmeticElementUsers AssumeClearUpperHalves MisstateFact }
 flags AdmittedCode { Inspector ReplacedBuiltins }
 flags ExcludedCode { EvaluatedText FunctionSource CodeOutsideImage HostEvaluatedText ForeignCalls ForeignCallsOfUnseenCode LibraryText FeaturesNamedAtRunTime UnlistedGlobals }
-flags OutputOptions { Obfuscate RunsInSeveralRealms KeepsFunctionNames RecordsOrder }
+flags OutputOptions { Obfuscate RunsInSeveralRealms KeepsFunctionNames RecordsOrder AssumesSeparateRealms AssumesLockedBuiltins AssumesCompleteOrder }
 record TargetOptions abi { features: UInt64 featuresRetainedByName: UInt64[8] architecture: Architecture referenceWidth: ReferenceWidth imageForm: ImageForm reserved: UInt32 }
 record CompileOptions abi {
     target: TargetOptions sizeClassProgression: Double removedFeatures: UInt64[8] executableIdentity: UInt8[16] size: UInt32
@@ -103,5 +103,8 @@ word "admit" "<name>,.." "admitted code" names admittedCode
 word "exclude" "<name>,.." "excluded code" names excludedCode
 word "obfuscate" sets output Obfuscate
 word "several-realms" sets output RunsInSeveralRealms
+word "separate-realms" sets output AssumesSeparateRealms
+word "locked-builtins" sets output AssumesLockedBuiltins
+word "complete-order" sets output AssumesCompleteOrder
 word "erase-types" frontEnd
 word "out" "<file>" frontEnd

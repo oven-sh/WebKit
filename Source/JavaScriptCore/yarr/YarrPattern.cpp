@@ -85,8 +85,7 @@ public:
         return m_matches8.size() + m_ranges8.size() + m_matches32.size() + m_ranges32.size();
     }
 
-    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size(). A set operation
-    // goes through every code point of both sets: a million steps for [\S].
+    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size().
     void appendDifference(const CharacterClass& characterClass, const CharacterClassConstructor& excluded)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default);
@@ -958,166 +957,76 @@ private:
         m_ranges8.swap(resultRanges);
     }
 
+    static Vector<CharacterRange> disjointRanges(const Vector<char32_t>& sortedMatches, const Vector<CharacterRange>& sortedRanges)
+    {
+        Vector<CharacterRange> result;
+        result.reserveInitialCapacity(sortedMatches.size() + sortedRanges.size());
+        size_t matchIndex = 0;
+        size_t rangeIndex = 0;
+        while (matchIndex < sortedMatches.size() || rangeIndex < sortedRanges.size()) {
+            bool takesMatch = rangeIndex == sortedRanges.size() || (matchIndex < sortedMatches.size() && sortedMatches[matchIndex] < sortedRanges[rangeIndex].begin);
+            CharacterRange next = takesMatch ? CharacterRange(sortedMatches[matchIndex], sortedMatches[matchIndex]) : sortedRanges[rangeIndex];
+            ++(takesMatch ? matchIndex : rangeIndex);
+            if (!result.isEmpty() && next.begin <= result.last().end + 1)
+                result.last().end = std::max(result.last().end, next.end);
+            else
+                result.append(next);
+        }
+        return result;
+    }
+
     void nonLatin1OpSorted(const Vector<char32_t>& rhsMatches32, const Vector<CharacterRange>& rhsRanges32)
     {
+        Vector<CharacterRange> lhs = disjointRanges(m_matches32, m_ranges32);
+        Vector<CharacterRange> rhs = disjointRanges(rhsMatches32, rhsRanges32);
         Vector<char32_t> resultMatches;
         Vector<CharacterRange> resultRanges;
-
-        constexpr size_t chunkSize = 2048;
-        WTF::BitSet<chunkSize> lhsChunkBitSet;
-        WTF::BitSet<chunkSize> rhsChunkBitSet;
-
-        char32_t chunkLo = INT_MAX, chunkHi;
-
-        size_t lhsMatchIndex = 0;
-        size_t lhsRangeIndex = 0;
-        size_t rhsMatchIndex = 0;
-        size_t rhsRangeIndex = 0;
-
-        auto lhsHasMore = [&] {
-            return lhsMatchIndex < m_matches32.size() || lhsRangeIndex < m_ranges32.size();
-        };
-        auto rhsHasMore = [&] {
-            return rhsMatchIndex < rhsMatches32.size() || rhsRangeIndex < rhsRanges32.size();
-        };
-        auto canProduceMore = [&] {
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                return lhsHasMore() || rhsHasMore();
-            case CharacterClassSetOp::Intersection:
-                return lhsHasMore() && rhsHasMore();
-            case CharacterClassSetOp::Subtraction:
-                return lhsHasMore();
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-            return false;
+        auto append = [&](char32_t begin, char32_t end) {
+            if (begin == end)
+                resultMatches.append(begin);
+            else
+                resultRanges.append(CharacterRange(begin, end));
         };
 
-        if (!m_matches32.isEmpty())
-            chunkLo = std::min(chunkLo, m_matches32[0]);
+        switch (m_setOp) {
+        case CharacterClassSetOp::Default:
+        case CharacterClassSetOp::Union: {
+            Vector<CharacterRange> both;
+            both.fill(CharacterRange(0, 0), lhs.size() + rhs.size());
+            std::ranges::merge(lhs, rhs, both.begin(), { }, &CharacterRange::begin, &CharacterRange::begin);
+            for (CharacterRange range : disjointRanges({ }, both))
+                append(range.begin, range.end);
+            break;
+        }
 
-        if (!m_ranges32.isEmpty())
-            chunkLo = std::min(chunkLo, m_ranges32[0].begin);
-
-        if (!rhsMatches32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsMatches32[0]);
-
-        if (!rhsRanges32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsRanges32[0].begin);
-
-        while (canProduceMore()) {
-            chunkHi = chunkLo + chunkSize - 1;
-
-            for (; lhsMatchIndex < m_matches32.size(); ++lhsMatchIndex) {
-                char32_t ch = m_matches32[lhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                lhsChunkBitSet.set(ch - chunkLo);
+        case CharacterClassSetOp::Intersection:
+            for (size_t left = 0, right = 0; left < lhs.size() && right < rhs.size();) {
+                char32_t begin = std::max(lhs[left].begin, rhs[right].begin);
+                char32_t end = std::min(lhs[left].end, rhs[right].end);
+                if (begin <= end)
+                    append(begin, end);
+                ++(lhs[left].end < rhs[right].end ? left : right);
             }
+            break;
 
-            for (; lhsRangeIndex < m_ranges32.size(); ++lhsRangeIndex) {
-                auto range = m_ranges32[lhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    lhsChunkBitSet.set(ch - chunkLo);
+        case CharacterClassSetOp::Subtraction: {
+            size_t right = 0;
+            for (CharacterRange range : lhs) {
+                char32_t begin = range.begin;
+                while (right < rhs.size() && rhs[right].end < begin)
+                    ++right;
+                for (; right < rhs.size() && rhs[right].begin <= range.end; ++right) {
+                    if (rhs[right].begin > begin)
+                        append(begin, rhs[right].begin - 1);
+                    begin = rhs[right].end + 1;
+                    if (begin > range.end)
+                        break;
                 }
-
-                if (range.end > chunkHi)
-                    break;
+                if (begin <= range.end)
+                    append(begin, range.end);
             }
-
-            for (; rhsMatchIndex < rhsMatches32.size(); ++rhsMatchIndex) {
-                char32_t ch = rhsMatches32[rhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                rhsChunkBitSet.set(ch - chunkLo);
-            }
-
-            for (; rhsRangeIndex < rhsRanges32.size(); ++rhsRangeIndex) {
-                auto range = rhsRanges32[rhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    rhsChunkBitSet.set(ch - chunkLo);
-                }
-
-                if (range.end > chunkHi)
-                    break;
-            }
-
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                lhsChunkBitSet.merge(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Intersection:
-                lhsChunkBitSet.filter(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Subtraction:
-                lhsChunkBitSet.exclude(rhsChunkBitSet);
-                break;
-            }
-
-            bool firstCharUnset = true;
-            char32_t lo = 0;
-            char32_t hi = 0;
-
-            auto addCharToResults = [&]() {
-                if (lo == hi)
-                    resultMatches.append(lo);
-                else {
-                    // Coalesce the prior range with the new (lo, hi) range if they are adjacent.
-                    if (resultRanges.size() > 0) {
-                        auto lastIndex = resultRanges.size() - 1;
-                        if (resultRanges[lastIndex].end + 1 == lo) {
-                            resultRanges[lastIndex].end = hi;
-                            return;
-                        }
-                    }
-
-                    resultRanges.append(CharacterRange(lo, hi));
-                }
-            };
-
-            for (auto setVal : lhsChunkBitSet) {
-                char32_t ch = static_cast<char32_t>(setVal) + chunkLo;
-                if (firstCharUnset) {
-                    lo = hi = ch;
-                    firstCharUnset = false;
-                } else {
-                    if (ch == hi + 1)
-                        hi = ch;
-                    else {
-                        addCharToResults();
-                        lo = hi = ch;
-                    }
-                }
-            }
-
-            if (!firstCharUnset)
-                addCharToResults();
-
-            chunkLo = chunkHi + 1;
-            lhsChunkBitSet.clearAll();
-            rhsChunkBitSet.clearAll();
+            break;
+        }
         }
 
         m_matches32.swap(resultMatches);

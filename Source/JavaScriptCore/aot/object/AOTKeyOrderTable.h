@@ -49,6 +49,13 @@ struct PlacesOfPositionedKeys {
     uint32_t keyAskedForIsExtraKey;
 };
 
+struct LastExtraKeyFound {
+    const Object* object;
+    const PropertyTable* table;
+    uint32_t numberOfEntriesSearched;
+    uint32_t entry;
+};
+
 struct EnumeratorBelowCompiledObjects {
     static constexpr uint32_t mostPrototypes = 6;
     struct Prototype {
@@ -130,6 +137,7 @@ public:
         m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] = key;
     }
     EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> enumeratorHashShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
+    LastExtraKeyFound& lastExtraKeyFound() LIFETIME_BOUND { return m_lastExtraKeyFound; }
     PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
 
 private:
@@ -173,6 +181,7 @@ private:
     std::array<ListedField, 128> m_listedFields { };
     std::array<FieldFoundLast, 64> m_fieldsFoundLast { };
     std::array<PlacesOfPositionedKeys, 8> m_placesOfPositionedKeys { };
+    LastExtraKeyFound m_lastExtraKeyFound { };
     std::array<EnumeratorBelowCompiledObjects, 32> m_enumeratorsBelowCompiledObjects { };
     static constexpr size_t numberOfFinishedBirths = 128;
     static uint64_t keyOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) { return (static_cast<uint64_t>(layout.index) + 1) << 32 | orderWord; }

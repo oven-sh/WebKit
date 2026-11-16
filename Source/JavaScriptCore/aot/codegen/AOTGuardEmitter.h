@@ -55,6 +55,8 @@ public:
 
     Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name);
     Condition guardsWereBegun(LayoutID constructorFunction);
+    bool mayMeetObjectOfOtherInstance(LayoutSetID tested);
+    bool asksForInstance(const Type& known, LayoutSetID tested);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
     bool testsMayAddNamesToObjectPrototype() const;
     Condition noNameWasAddedToObjectPrototype();

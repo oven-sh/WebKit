@@ -4049,7 +4049,7 @@ Vector<FeatureUseRecord> FeaturesOfProgramFacts::run(std::span<const BuiltinUseR
 class WritesOnBuiltinsInProgramFacts {
     WTF_MAKE_NONCOPYABLE(WritesOnBuiltinsInProgramFacts);
 public:
-    WritesOnBuiltinsInProgramFacts(const Program&, RefusedCode, const LookupsPastProgramObjects&);
+    WritesOnBuiltinsInProgramFacts(const Program&, RefusedCode, const LookupsPastProgramObjects&, bool assumesLocks);
 
     void take(const FindingOfProgramFacts&);
     void settle();
@@ -4084,6 +4084,7 @@ private:
     const BuiltinTable& m_builtins;
     const RefusedCode m_refused;
     const LookupsPastProgramObjects& m_lookups;
+    const bool m_assumesLocks;
 
     BitVector m_isWritten;
     BitVector m_isCarriedOutByProgram;
@@ -4097,11 +4098,12 @@ private:
     bool m_locksAreLaid { true };
 };
 
-WritesOnBuiltinsInProgramFacts::WritesOnBuiltinsInProgramFacts(const Program& program, RefusedCode refused, const LookupsPastProgramObjects& lookups)
+WritesOnBuiltinsInProgramFacts::WritesOnBuiltinsInProgramFacts(const Program& program, RefusedCode refused, const LookupsPastProgramObjects& lookups, bool assumesLocks)
     : m_source(program)
     , m_builtins(program.builtins())
     , m_refused(refused)
     , m_lookups(lookups)
+    , m_assumesLocks(assumesLocks)
     , m_isWritten(m_builtins.builtinCount())
     , m_isCarriedOutByProgram(m_builtins.builtinCount())
     , m_isCarriedOutBesideProduct(m_builtins.builtinCount())
@@ -4377,7 +4379,11 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonNoLockHolds() const
 
 ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const
 {
-    if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None)
+    const Builtin& value = m_builtins.at(m_builtins.canonicalID(member));
+    bool isAssumedLocked = m_assumesLocks && m_builtins.at(member).origin == BuiltinOrigin::Engine && value.origin == BuiltinOrigin::Engine
+        && !m_builtins.isUnder(member, Builtins::Console) && m_builtins.canonicalID(member) != m_builtins.canonicalID(Builtins::Console)
+        && (value.kind == BuiltinKind::Function || value.kind == BuiltinKind::Method || value.kind == BuiltinKind::Constructor || value.kind == BuiltinKind::Namespace);
+    if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None && !isAssumedLocked)
         return reason;
     BuiltinID canonical = m_builtins.canonicalID(member);
     if (m_source.isUnlocked(member) || m_source.isUnlocked(canonical))
@@ -4386,6 +4392,8 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
     if (m_isWritten.quickGet(member.index()) || m_isWritten.quickGet(canonical.index()) || m_lookups.membersWritten.get(member.index()))
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
+    if (isAssumedLocked)
+        return ReasonBuiltinStaysOpen::None;
     return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost);
 }
 
@@ -4857,7 +4865,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isCalledByCodeInSight(m_builtins.builtinCount())
     , m_isSpelledInTexts(m_builtins.builtinCount())
     , m_modulesImportedByProgram(m_builtins.builtinCount())
-    , m_writes(inputs.program, m_refused, inputs.linked.lookups)
+    , m_writes(inputs.program, m_refused, inputs.linked.lookups, inputs.build.options().assumesLockedBuiltins())
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_keysReadOnlyByRowsThatNameThem(m_builtins.nameCount())
     , m_keysNamedByRowsThatMayRun(m_builtins.nameCount())

@@ -3462,7 +3462,7 @@ void LinkFlow::noteEscapedBuiltins(const LinkType& type) const
     m_marksThatReachUnseen |= type.marks;
 }
 
-void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedLambda<void(FlowNodeID)>& functor) const
+void LinkFlow::forEachContainedNode(const LinkType& type, ContainersVisited& visited, NOESCAPE const ScopedLambda<void(FlowNodeID)>& functor) const
 {
     auto visitPrototypes = [&](LayoutID layout) {
         for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
@@ -3475,7 +3475,7 @@ void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedL
     if (type.objects == LinkType::Objects::Prototype)
         visitPrototypes(type.layout);
     forEachLayoutOf(type, [&](LayoutID layout) {
-        if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind))
+        if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind) || visited.layouts.set(layout.index()))
             return;
         visitPrototypes(layout);
         forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
@@ -3490,11 +3490,15 @@ void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedL
     });
     if (type.classes != LinkType::Classes::None) {
         uint32_t family = m_familiesOfSites.representativeWithoutShortening(type.site.index());
-        const Vector<ContentsOfSite>& listed = contentsListedOf(family);
-        for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = listed[index].next)
-            functor(listed[index].node);
+        if (!visited.familiesOfSites.set(family)) {
+            const Vector<ContentsOfSite>& listed = contentsListedOf(family);
+            for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = listed[index].next)
+                functor(listed[index].node);
+        }
     }
     auto visitFunction = [&](FunctionID function) {
+        if (visited.functions.set(function.index()))
+            return;
         if (!m_newestNameOnClosuresOf.isEmpty()) {
             for (uint32_t index = m_newestNameOnClosuresOf[function.index()]; index != UINT32_MAX; index = m_namesOnClosures[index].next)
                 functor(m_namesOnClosures[index].laid);

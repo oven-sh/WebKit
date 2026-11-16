@@ -414,6 +414,42 @@ String languageTagForLocaleID(const char* localeID, bool isImmortal)
     return createResult(canonicalizeUnicodeExtensionsAfterICULocaleCanonicalization(WTF::move(buffer)));
 }
 
+// ICU replaces deprecated subtags one by one: what it left alone in one ID it leaves alone in the next.
+static String languageTagForAvailableLocale(const char* localeID)
+{
+    static Lock lock;
+    static NeverDestroyed<UncheckedKeyHashSet<uint64_t>> subtagsLeftAlone;
+
+    std::span<const char> id = unsafeSpan(localeID);
+    Vector<char, 32> tag(id);
+    Vector<uint64_t, 3> subtags;
+    size_t start = 0;
+    for (size_t end = 0; end <= id.size(); ++end) {
+        if (end < id.size() && isASCIIAlphanumeric(id[end]))
+            continue;
+        if ((end < id.size() && id[end] != '_') || end - start < 2 || end - start > 4 || subtags.size() == 3)
+            return languageTagForLocaleID(localeID);
+        uint64_t subtag = subtags.size() + 1;
+        for (char character : id.subspan(start, end - start))
+            subtag = subtag << 8 | static_cast<uint8_t>(character);
+        subtags.append(subtag);
+        if (end < id.size())
+            tag[end] = '-';
+        start = end + 1;
+    }
+
+    String plain = String::fromLatin1(tag.span());
+    Locker locker { lock };
+    if (std::ranges::all_of(subtags, [&](uint64_t subtag) { return subtagsLeftAlone->contains(subtag); })) {
+        ASSERT(languageTagForLocaleID(localeID) == plain);
+        return plain;
+    }
+    String result = languageTagForLocaleID(localeID);
+    if (result == plain)
+        subtagsLeftAlone->addAll(subtags);
+    return result;
+}
+
 // Ensure we have xx-ZZ whenever we have xx-Yyyy-ZZ.
 static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView locale)
 {
@@ -450,10 +486,9 @@ const LocaleSet& intlAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = uloc_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(uloc_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(uloc_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             // addScriptlessLocaleIfNeeded() may have added it already. A static StringImpl is never freed, so do not create one that the set would not keep.
@@ -590,10 +625,9 @@ const LocaleSet& intlCollatorAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = ucol_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(ucol_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(ucol_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             if (!availableLocales->contains(locale))
@@ -612,10 +646,9 @@ const LocaleSet& intlSegmenterAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = ubrk_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(ubrk_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(ubrk_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             if (!availableLocales->contains(locale))

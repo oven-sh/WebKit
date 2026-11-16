@@ -38,6 +38,7 @@ class JSCellButterfly;
 class JSModuleLoader;
 class ModuleLoadingContext;
 class ModuleRegistryEntry;
+class QueuedTask;
 class ScriptFetchParameters;
 class ThrowScope;
 
@@ -1699,6 +1700,7 @@ public:
     enum class LoaderForRequire : uint8_t { IsNotNeeded, ComesBehindImportedFiles, IsNeeded };
     LoaderForRequire loaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
+    bool isStepOfLoader(const QueuedTask&);
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
     bool wasAbandonedByFailedLoad(ModuleID) const;
