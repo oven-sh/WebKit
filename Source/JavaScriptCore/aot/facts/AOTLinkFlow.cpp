@@ -4022,11 +4022,25 @@ bool LinkFlow::addListedReturnResults()
     return hasLaid;
 }
 
+bool LinkFlow::hasLetGoOfOneToKeepInSight() const
+{
+    bool letsGo = std::ranges::any_of(functionsToKeepInSight, [&](FunctionID id) {
+        size_t index = id.index();
+        return reached.get(index) && (lostFunctions.get(index) || escapedFunctions.get(index));
+    });
+    return letsGo || std::ranges::any_of(functionsNotToReach, [&](FunctionID id) { return reached.get(id.index()); });
+}
+
 void LinkFlow::run()
 {
     flow();
+    if (hasLetGoOfOneToKeepInSight())
+        return;
+    hasComeToRest = true;
     while (layMembersThatCopiesBring() || copyAppendedFields() || tellAccessesUnderNewNames() || fillParametersThatUnseenCodeAlonePasses() || builtinsInReach().allowRuntimeNames() || addListedReturnResults())
         flow();
+    if (hasLetGoOfOneToKeepInSight())
+        return;
     noteLostLayoutsGainingProperties();
     countAllocatedMembersOfFamilies();
     for (const PoolOfLostFunctions& pool : m_poolsOfLostFunctions) {
@@ -5212,6 +5226,8 @@ void LinkFlow::flow()
     Vector<uint64_t> numbers;
     Vector<uint64_t> roomToSort;
     while (true) {
+        if (hasLetGoOfOneToKeepInSight()) [[unlikely]]
+            return;
         goAlongEdges();
 
         size_t numberOfNodesToTell = 0;

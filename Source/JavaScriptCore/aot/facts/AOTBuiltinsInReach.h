@@ -78,6 +78,7 @@ public:
     ~BuiltinsInReach();
 
     void leaveOutDirectEvals();
+    void admitDirectEvals();
     void noteFindingsIn(FunctionID);
     void noteFindingsIn(std::span<const FunctionID>);
     void noteWhatBodyMakes(FunctionID);

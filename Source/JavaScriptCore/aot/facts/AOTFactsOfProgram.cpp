@@ -4439,6 +4439,7 @@ public:
 
     void noteReached(FunctionID);
     void leaveOutDirectEvals() { m_leavesOutDirectEvals = true; }
+    void admitDirectEvals();
     void noteFindingsIn(FunctionID id) { take(m_inputs.looks.of(id)); }
     void noteFindingsIn(std::span<const FunctionID>);
     void noteObjectsThatBodyMakes(FunctionID id) { noteWhatBodyMakes(id); }
@@ -4549,6 +4550,7 @@ public:
         });
     }
     bool m_leavesOutDirectEvals { false };
+    Vector<Witness> m_evaluationsLeftOut;
     void deferRuntimeNames() { m_defersRuntimeNames = true; }
     bool defersRuntimeNames() const { return m_defersRuntimeNames; }
     bool defersMembersOf(BuiltinID canonicalHolder) const { return m_defersRuntimeNames && (canonicalHolder == m_globalObject); }
@@ -4920,6 +4922,13 @@ void BuilderOfProgramFacts::add(Vector<UnseenCodeRecord>& records, UnseenCodeCau
     records.append(UnseenCodeRecord { cause, number, witness });
 }
 
+void BuilderOfProgramFacts::admitDirectEvals()
+{
+    m_leavesOutDirectEvals = false;
+    for (const Witness& evaluation : std::exchange(m_evaluationsLeftOut, { }))
+        add(m_program.unseenCode, UnseenCodeCause::EvaluatesText, { }, evaluation);
+}
+
 void BuilderOfProgramFacts::forEachCallInTextOfProgram(BuiltinID canonicalCallee, NOESCAPE const Invocable<void(const Witness&)> auto& functor) const
 {
     for (const LinkedCallOfBuiltin& listed : m_inputs.linked.lookups.callsOfBuiltinsAtSites) {
@@ -5148,8 +5157,10 @@ void BuilderOfProgramFacts::take(std::span<const Finding> findings)
                 m_functionsThatAnswerEveryNameOnInstances.append(FunctionID(finding.key));
             break;
         case Finding::Kind::UnseenCode:
-            if (m_leavesOutDirectEvals && static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::EvaluatesText)
+            if (m_leavesOutDirectEvals && static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::EvaluatesText) {
+                m_evaluationsLeftOut.append(finding.witness);
                 break;
+            }
             add(m_program.unseenCode, static_cast<UnseenCodeCause>(finding.detail), { }, finding.witness);
             if (static_cast<UnseenCodeCause>(finding.detail) == UnseenCodeCause::LoadsModuleByName)
                 m_loadsOfProgramByName.append(finding.witness);
@@ -7681,6 +7692,12 @@ BuiltinsInReach::~BuiltinsInReach() = default;
 void BuiltinsInReach::leaveOutDirectEvals()
 {
     m_builder->leaveOutDirectEvals();
+}
+
+void BuiltinsInReach::admitDirectEvals()
+{
+    m_wasToldSomethingNew = true;
+    m_builder->admitDirectEvals();
 }
 
 bool BuiltinsInReach::hasNoFindingsIn(FunctionID id) const
