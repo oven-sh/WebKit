@@ -605,7 +605,6 @@ heap/GigacageAlignedMemoryAllocator.cpp
 heap/Heap.cpp
 heap/HeapCell.cpp
 heap/HeapCellType.cpp
-heap/HeapCompaction.cpp
 heap/HeapHelperPool.cpp
 heap/HeapProfiler.cpp
 heap/HeapSnapshot.cpp

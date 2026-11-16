@@ -27,7 +27,6 @@
 #include "PreciseAllocation.h"
 
 #include "AlignedMemoryAllocator.h"
-#include "FastMallocAlignedMemoryAllocator.h"
 #include "IsoCellSetInlines.h"
 #include "JSCInlines.h"
 #include "MarkedBlockCage.h"
@@ -293,9 +292,6 @@ void PreciseAllocation::destroy()
 {
     AlignedMemoryAllocator* allocator = m_subspace->alignedMemoryAllocator();
     void* basePointer = this->basePointer();
-    // HeapCompaction takes what it finds in the memory of the allocator for references.
-    if (Options::useHeapCompaction() && allocator == heap()->fastMallocAllocator.get())
-        zeroSpan(std::span { reinterpret_cast<uint8_t*>(cell()), m_cellSize });
     this->~PreciseAllocation();
     allocator->freeMemory(basePointer);
 }

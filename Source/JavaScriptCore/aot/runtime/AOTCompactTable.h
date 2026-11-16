@@ -583,7 +583,6 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
-    void didMoveKeys();
     bool tryAddQuickly(JSGlobalObject*, JSValue key, JSValue);
     ALWAYS_INLINE bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
     bool tryAddCellToWideKeys(VM&, JSValue key, JSValue);

@@ -78,7 +78,6 @@
 #include "IntlObject.h"
 #include "JSAsyncGenerator.h"
 #include "JSBoundFunction.h"
-#include "HeapCompactionSlots.h"
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSCustomGetterFunction.h"
@@ -1428,18 +1427,6 @@ static std::pair<uint8_t*, size_t> takePagesOfThread() { return { }; }
 #endif
 #endif
 
-void HeapHooks::forEachTableSpan(VM& vm, NOESCAPE const ScopedLambda<void(const void* begin, const void* end)>& scan)
-{
-    for (Instance* instance : vm.aotState().instances) {
-        auto* middle = reinterpret_cast<const uint8_t*>(instance);
-        auto [below, above] = reservationSizes(*instance->program);
-        scan(middle - below, middle + InstanceLayout::offsetOfLoopPollPage());
-        scan(middle + InstanceLayout::offsetOfLoopPollPage() + InstanceLayout::bytesReservedForLoopPollPage, middle + above);
-        for (auto [pages, size] : instance->state->pages.ranges())
-            scan(pages, static_cast<const uint8_t*>(pages) + size);
-    }
-}
-
 void* tryReserveGuardedPages(size_t bytes, OSAllocator::Usage usage)
 {
 #if ENABLE(AOT_GUARDED_PAGES) && OS(LINUX) && CPU(ADDRESS64)
@@ -1927,7 +1914,7 @@ void ProgramStatics::analyzeVariablesOfModule(JSCell* standIn, uint32_t module, 
 }
 
 template<typename Word, typename Functor>
-static ALWAYS_INLINE void forEachRootInRegion(uint8_t* statics, std::span<const StaticsRange> roots, size_t begin, size_t end, const Functor& functor)
+static ALWAYS_INLINE void forEachRootInRegion(const uint8_t* statics, std::span<const StaticsRange> roots, size_t begin, size_t end, const Functor& functor)
 {
     auto first = std::ranges::partition_point(roots, [&](const StaticsRange& range) {
         return range.end() <= begin;
@@ -1937,14 +1924,14 @@ static ALWAYS_INLINE void forEachRootInRegion(uint8_t* statics, std::span<const 
             break;
         size_t endInRange = std::min<size_t>(range.end(), end);
         for (size_t offset = std::max<size_t>(range.offset, begin); offset < endInRange; offset += sizeof(Word))
-            functor(*reinterpret_cast<Word*>(statics + offset));
+            functor(*reinterpret_cast<const Word*>(statics + offset));
     }
 }
 
 template<typename Appender>
 ALWAYS_INLINE void ProgramStatics::visitRegion(Appender& appender, size_t begin, size_t end)
 {
-    uint8_t* statics = m_instance.statics();
+    const uint8_t* statics = m_instance.statics();
     forEachRootInRegion<EncodedJSValue>(statics, m_tables.staticsRoots(), begin, end, [&](EncodedJSValue value) ALWAYS_INLINE_LAMBDA {
         appender.appendUnbarriered(JSValue::decode(value));
     });
@@ -1959,19 +1946,6 @@ template<typename Visitor>
 void ProgramStatics::visitRoots(Visitor& visitor)
 {
     visitor.appendUnbarriered(JSValue::decode(m_instance.runtime.exceptions.thrownValue));
-    if constexpr (std::is_same_v<Visitor, AbstractSlotVisitor>) {
-        if (HeapCompactionSlots::areRecordedBy(visitor)) {
-            m_slots.forEachRegionToVisit(visitor, [&](size_t begin, size_t end) {
-                forEachRootInRegion<EncodedJSValue>(m_instance.statics(), m_tables.staticsRoots(), begin, end, [&](EncodedJSValue& slot) {
-                    HeapCompactionSlots::record(visitor, &slot);
-                });
-                forEachRootInRegion<uint32_t>(m_instance.statics(), m_tables.staticsNarrowRoots(), begin, end, [&](uint32_t& slot) {
-                    HeapCompactionSlots::recordNarrow(visitor, &slot);
-                });
-            });
-            return;
-        }
-    }
     bool isDeferred = m_slots.tryDeferFullVisit(visitor, [](SlotVisitor& visitor, void* owner, size_t begin, size_t end) {
         appendRoots(visitor, [&](auto& appender) ALWAYS_INLINE_LAMBDA {
             static_cast<ProgramStatics*>(owner)->visitRegion(appender, begin, end);

@@ -903,8 +903,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/HeapCell.h
     heap/HeapCellInlines.h
     heap/HeapCellType.h
-    heap/HeapCompaction.h
-    heap/HeapCompactionInterrupt.h
     heap/HeapHelperPool.h
     heap/HeapInlines.h
     heap/HeapIterationScope.h

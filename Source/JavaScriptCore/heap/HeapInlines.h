@@ -29,7 +29,6 @@
 #include "GCDeferralContext.h"
 #include "Heap.h"
 #include "HeapCellInlines.h"
-#include "HeapCompaction.h"
 #include "IndexingHeader.h"
 #include "JSCast.h"
 #include "Structure.h"
@@ -64,8 +63,6 @@ ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
     HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
     // The marking version must come from the cell's own heap's object space.
     ASSERT(cell->heap() == this);
-    if (HeapCompaction::isActive()) [[unlikely]]
-        HeapCompaction::didAskWhetherMarked(cell);
     if (cell->isPreciseAllocation())
         return cell->preciseAllocation().isMarked();
     MarkedBlock& block = cell->markedBlock();
@@ -74,8 +71,6 @@ ALWAYS_INLINE bool Heap::isMarked(const void* rawCell)
 
 ALWAYS_INLINE bool Heap::isMarked(HeapVersion markingVersion, const void* rawCell)
 {
-    if (HeapCompaction::isActive()) [[unlikely]]
-        HeapCompaction::didAskWhetherMarked(rawCell);
     HeapCell* cell = std::bit_cast<HeapCell*>(rawCell);
     if (cell->isPreciseAllocation())
         return cell->preciseAllocation().isMarked();

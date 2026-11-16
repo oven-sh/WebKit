@@ -26,7 +26,6 @@
 #pragma once
 
 #include "GCSegmentedArray.h"
-#include "Options.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -50,12 +49,6 @@ GCSegmentedArray<T>::~GCSegmentedArray()
     m_numberOfSegments--;
     ASSERT(!m_numberOfSegments);
     ASSERT(!m_segments.size());
-}
-
-template <typename T>
-void GCSegmentedArray<T>::zeroUnusedCapacity()
-{
-    zeroSpan(std::span { m_segments.head()->data() + m_top, s_segmentCapacity - m_top });
 }
 
 template <typename T>
@@ -149,9 +142,6 @@ inline GCArraySegment<T>* GCArraySegment<T>::create()
 template <typename T>
 inline void GCArraySegment<T>::destroy(GCArraySegment* segment)
 {
-    // HeapCompaction takes what it finds in the memory of the allocator for references.
-    if (Options::useHeapCompaction())
-        zeroSpan(std::span { reinterpret_cast<uint8_t*>(segment->data()), blockSize - sizeof(GCArraySegment) });
     segment->~GCArraySegment();
     GCSegmentedArrayMalloc::free(segment);
 }
