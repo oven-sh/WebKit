@@ -243,7 +243,7 @@ void GuardEmitter::generateIsSlotFilled(const ValueContext& value)
         CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(object, access, value->receivers());
         if (value->holdsDeclaredType() && !isListedOnlyByKeyOrder(access.slot.representation))
             return slots.holdsDeclaredType(base, access.slot, location, &access.extensionWord);
-        return slots.isFilled(base, access.slot, location, &access.extensionWord);
+        return slots.isFilled(object, base, access.slot, location, &access.extensionWord);
     };
 
     switch (access.coverage) {
@@ -1064,7 +1064,7 @@ void GuardEmitter::branchOnOwnPropertyByCell(const ValueContext& value, BranchTa
     }
     continueIf(hasNoBits(orderWord, orderWordHasFieldOutsideSlot));
     CellPointer base = emitter<SlotAccessEmitter>().baseOfSlot(cell, access);
-    branch(emitter<SlotEmitter>().isFilled(base, access.slot, MemoryLocation::objectField(value->key()), &access.extensionWord), targets);
+    branch(emitter<SlotEmitter>().isFilled(cell, base, access.slot, MemoryLocation::objectField(value->key()), &access.extensionWord), targets);
 }
 
 void GuardEmitter::generateIsClosureOf(const ValueContext& value)

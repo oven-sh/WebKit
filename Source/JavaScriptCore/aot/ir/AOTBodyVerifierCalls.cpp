@@ -383,6 +383,8 @@ void BodyVerifier::verifyModuleEvaluation(const BodyBlock& block, const BodyValu
         return;
     if (!canBeEvaluatedBySite(program().at(target)))
         return failRule(EvaluationSiteRule::TargetIsFileThatEndsAtOnce);
+    if (value.opcode() == Opcode::RecordRequire && referrer == function().module)
+        return;
 
     bool isBare = value.opcode() == Opcode::EvaluateModule && value.as<Opcode::EvaluateModule>().isBare();
     m_moduleEvaluations.append(ModuleEvaluationInBody { referrer, target, block.id(), value.id(), isBare });

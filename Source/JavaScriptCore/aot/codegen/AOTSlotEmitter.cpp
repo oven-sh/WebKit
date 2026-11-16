@@ -658,16 +658,16 @@ Condition SlotEmitter::holdsValue(CellPointer cell, const PlacedSlot& slot, cons
     return logicalNot(isAbsent(loadOutOfLine(cell, slot, location, *extensionWord), slot.representation));
 }
 
-Condition SlotEmitter::isFilled(CellPointer cell, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
+Condition SlotEmitter::isFilled(CellPointer object, CellPointer baseOfSlot, const PlacedSlot& slot, const MemoryLocation& location, const PlacedSlot* extensionWord)
 {
-    Condition slotHoldsValue = holdsValue(cell, slot, location, extensionWord);
+    Condition slotHoldsValue = holdsValue(baseOfSlot, slot, location, extensionWord);
     if (!isListedOnlyByKeyOrder(slot.representation) && (!slot.isOutOfLine() || !slot.mayExistWithoutStorage))
         return slotHoldsValue;
     RELEASE_ASSERT(!location.isEntireHeap());
     return either<Condition>(slotHoldsValue, [&] {
         return boolean(true);
     }, [&] {
-        return callWithoutSite<Condition>(RuntimeOperation::HasExtraProperty, { cell, identifierNumber(location.key()) }, { .isOnRarePath = true });
+        return callWithoutSite<Condition>(RuntimeOperation::HasExtraProperty, { object, identifierNumber(location.key()) }, { .isOnRarePath = true });
     });
 }
 

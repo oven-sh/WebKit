@@ -25,8 +25,10 @@
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSPropertyNameEnumerator.h"
+#include "JSRegExpStringIterator.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
+#include "RegExpObject.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -202,6 +204,78 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStepIteration, UGPRPair, (Instance* instanc
     OPERATION_RETURN(scope, resultOfStraightStep(false, value));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTOpenDelegation, JSCell*, (Instance* instance, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTOpenDelegation);
+    JSValue iterable = JSValue::decode(encodedIterable);
+    if (iterable.isUndefinedOrNull()) [[unlikely]] {
+        throwException(globalObject, scope, createIterationOfNullishError(globalObject, iterable));
+        OPERATION_RETURN(scope, nullptr);
+    }
+    JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    JSValue iterator = callMethodOfStraightIteration(globalObject, method, iterable);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    JSValue next = iterator.get(globalObject, vm.propertyNames->next);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!iterator.isObject()) [[unlikely]] {
+        callMethodOfStraightIteration(globalObject, next, iterator);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorNotObject, nullptr));
+        OPERATION_RETURN(scope, nullptr);
+    }
+    SavedFrame* state = SavedFrame::createHeapFrame(vm, *instance, numberOfWordsOfStraightIteration, nullptr);
+    storeWordOfStraightState(state, WordOfStraightIteration::Iterator, iterator);
+    storeWordOfStraightState(state, WordOfStraightIteration::Next, next);
+    storeWordOfStraightState(state, WordOfStraightIteration::Stepper, jsNumber(static_cast<int32_t>(StepperOfStraightIteration::Protocol)));
+    storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
+    vm.mutatorFence();
+    OPERATION_RETURN(scope, state);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStepDelegation, UGPRPair, (Instance* instance, JSCell* cell, EncodedJSValue encodedSent, uint32_t encodedMode))
+{
+    constexpr Entry entry = Entry::operationAOTStepDelegation;
+    AOT_OPERATION_BEGIN(instance, entry);
+    SavedFrame* state = cellArgument<SavedFrame>(cell, entry);
+    JSValue sent = JSValue::decode(encodedSent);
+    JSValue iterator = readWordOfStraightState(state, WordOfStraightIteration::Iterator);
+    auto mode = static_cast<Typed::ResumeMode>(encodedMode);
+    JSValue method = readWordOfStraightState(state, WordOfStraightIteration::Next);
+    if (mode != Typed::ResumeMode::Next) {
+        method = iterator.get(globalObject, mode == Typed::ResumeMode::Throw ? vm.propertyNames->throwKeyword : vm.propertyNames->returnKeyword);
+        OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+        if (method.isUndefinedOrNull()) {
+            if (mode == Typed::ResumeMode::Return)
+                OPERATION_RETURN(scope, resultOfStraightStep(true, sent));
+            closeStraightIterationUnlessDone(globalObject, state, ResultOfReturnInStraightIteration::MustBeObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+            throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorWithoutThrowMethod, nullptr));
+            OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+        }
+    }
+    auto callData = JSC::getCallData(method);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        throwNotAFunctionError(globalObject, scope, method);
+        OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+    }
+    MarkedArgumentBuffer arguments;
+    arguments.append(sent);
+    ASSERT(!arguments.hasOverflowed());
+    JSValue result = call(globalObject, method, callData, iterator, arguments);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+    if (!result.isObject()) [[unlikely]] {
+        throwException(globalObject, scope, createRuntimeError(globalObject, Typed::RuntimeErrorKind::IteratorResultNotObject, nullptr));
+        OPERATION_RETURN(scope, makeUGPRPair(0, 0));
+    }
+    JSValue done = asObject(result)->get(globalObject, vm.propertyNames->done);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+    bool isDone = done.toBoolean(globalObject);
+    JSValue value = asObject(result)->get(globalObject, vm.propertyNames->value);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+    OPERATION_RETURN(scope, resultOfStraightStep(isDone, value));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCloseIteration, void, (Instance* instance, JSCell* cell))
 {
     constexpr Entry entry = Entry::operationAOTCloseIteration;
@@ -217,6 +291,116 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloseIterationAfterThrow, void, (Instance* 
     closeStraightIterationUnlessDone(globalObject, cellArgument<SavedFrame>(cell, entry), ResultOfReturnInStraightIteration::IsIgnored);
     TRY_CLEAR_EXCEPTION(scope, makeOperationResult(scope));
     OPERATION_RETURN(scope);
+}
+
+static BuiltinID nextMethodOfBuiltinIterator(JSCell* iterator)
+{
+    switch (iterator->type()) {
+    case JSArrayIteratorType:
+        return Builtins::ArrayIteratorPrototypeNext;
+    case JSMapIteratorType:
+        return Builtins::MapIteratorPrototypeNext;
+    case JSSetIteratorType:
+        return Builtins::SetIteratorPrototypeNext;
+    case JSStringIteratorType:
+        return Builtins::StringIteratorPrototypeNext;
+    case JSRegExpStringIteratorType:
+        return Builtins::RegExpStringIteratorPrototypeNext;
+    default:
+        return Builtins::GeneratorPrototypeNext;
+    }
+}
+
+static JSObject* iteratorAtPosition(VM& vm, JSGlobalObject* globalObject, JSValue collection, JSValue position, JSValue table, IterationKind kind)
+{
+    JSCell* cell = collection.asCell();
+    if (auto* map = dynamicDowncast<JSMap>(cell)) {
+        auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, kind);
+        if (table.isCell())
+            iterator->setStorage(vm, table.asCell());
+        iterator->setEntry(vm, static_cast<JSMap::Helper::Entry>(position.asNumber()));
+        return iterator;
+    }
+    if (auto* set = dynamicDowncast<JSSet>(cell)) {
+        auto* iterator = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set, kind);
+        if (table.isCell())
+            iterator->setStorage(vm, table.asCell());
+        iterator->setEntry(vm, static_cast<JSSet::Helper::Entry>(position.asNumber()));
+        return iterator;
+    }
+    if (collection.isString()) {
+        auto* iterator = JSStringIterator::create(vm, globalObject->stringIteratorStructure(), asString(collection));
+        iterator->setIndex(static_cast<int32_t>(position.asNumber()));
+        return iterator;
+    }
+    auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asObject(collection), kind);
+    iterator->setIndex(static_cast<int64_t>(position.asNumber()));
+    return iterator;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (Instance* instance, EncodedJSValue encodedSubject, EncodedJSValue encodedPosition, EncodedJSValue encodedTable, uint32_t encodedKind, uint32_t positionIsBeforeStep))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewSuspendedIteration);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSValue iterator = JSValue::decode(encodedSubject);
+    JSValue next = JSValue::decode(encodedPosition);
+    if (positionIsBeforeStep)
+        next = jsNumber(next.asNumber() + 1);
+    auto kind = static_cast<Typed::SuspendedIterationKind>(encodedKind);
+    switch (kind) {
+    case Typed::SuspendedIterationKind::Keys:
+        iterator = iteratorAtPosition(vm, globalObject, iterator, next, JSValue::decode(encodedTable), IterationKind::Keys);
+        next = jsBoolean(true);
+        break;
+    case Typed::SuspendedIterationKind::Values:
+        iterator = iteratorAtPosition(vm, globalObject, iterator, next, JSValue::decode(encodedTable), IterationKind::Values);
+        next = jsBoolean(true);
+        break;
+    case Typed::SuspendedIterationKind::Entries:
+        iterator = iteratorAtPosition(vm, globalObject, iterator, next, JSValue::decode(encodedTable), IterationKind::Entries);
+        next = jsBoolean(true);
+        break;
+    case Typed::SuspendedIterationKind::State:
+        next = jsBoolean(false);
+        if (auto* words = dynamicDowncast<JSArray>(iterator.asCell())) {
+            next = words->getIndexQuickly(1);
+            iterator = words->getIndexQuickly(0);
+        }
+        break;
+    case Typed::SuspendedIterationKind::Matches: {
+        auto* matcher = uncheckedDowncast<RegExpObject>(next.asCell());
+        auto* matches = JSRegExpStringIterator::createWithInitialValues(vm, globalObject->regExpStringIteratorStructure());
+        matches->setRegExp(vm, matcher);
+        matches->setString(vm, iterator);
+        matches->setFlags(true, matcher->regExp()->eitherUnicode());
+        iterator = matches;
+        next = jsBoolean(true);
+        break;
+    }
+    case Typed::SuspendedIterationKind::Protocol:
+        break;
+    }
+    if (next.isNumber() || next.isBoolean())
+        next = instance->state->builtinCells->findObject(nextMethodOfBuiltinIterator(iterator.asCell()));
+    SavedFrame* state = SavedFrame::createHeapFrame(vm, *instance, numberOfWordsOfStraightIteration, nullptr);
+    storeWordOfStraightState(state, WordOfStraightIteration::Iterator, iterator);
+    storeWordOfStraightState(state, WordOfStraightIteration::Next, next);
+    storeWordOfStraightState(state, WordOfStraightIteration::Stepper, jsNumber(static_cast<int32_t>(stepperOfStraightIteration(*instance, asObject(iterator), next))));
+    storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
+    vm.mutatorFence();
+    return state;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedEnumeration, JSCell*, (Instance* instance, JSCell* enumerator, EncodedJSValue position))
+{
+    constexpr Entry entry = Entry::operationAOTNewSuspendedEnumeration;
+    AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
+    SavedFrame* state = SavedFrame::createHeapFrame(vm, *instance, numberOfWordsOfStraightEnumeration, nullptr);
+    storeWordOfStraightState(state, WordOfStraightEnumeration::Enumerator, cellArgument<JSPropertyNameEnumerator>(enumerator, entry));
+    storeWordOfStraightState(state, WordOfStraightEnumeration::Position, JSValue::decode(position));
+    vm.mutatorFence();
+    return state;
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTOpenEnumeration, JSCell*, (Instance* instance, EncodedJSValue object))

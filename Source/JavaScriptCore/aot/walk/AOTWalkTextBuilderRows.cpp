@@ -528,7 +528,7 @@ static bool isConvertedByJoinInTextBuilderRows(Walker& walker, Reference list)
         && finds(Builtins::ObjectPrototypeValueOf) && finds(Builtins::ArrayPrototypeToString) && finds(Builtins::ArrayPrototypeJoin);
 }
 
-bool takePartsOfConvertedList(Walker& walker, Reference list, Vector<Reference, 8>& parts)
+bool takePartsOfConvertedList(Walker& walker, Reference list, Origin origin, Vector<Reference, 8>& parts)
 {
     if (!list || !list.isValue() || !walker.has(Mechanism::TypedOperations) || walker.isUnreachable() || !walker.types().at(walker.typeOf(list)).isObject())
         return false;
@@ -537,6 +537,7 @@ bool takePartsOfConvertedList(Walker& walker, Reference list, Vector<Reference, 
         parts.shrink(numberOfParts);
         return false;
     }
+    walker.checkWhatIsInSightOfList(list, origin);
     if (parts.size() == numberOfParts)
         parts.append(writtenTextInTextBuilderRows(walker, walker.program().strings.emptyString()));
     return true;
@@ -660,6 +661,7 @@ static bool joinStringAndArrayInTextBuilderRows(Walker& walker, const BodyValue&
     }
     if (!textIsLeft)
         parts.append(text);
+    walker.checkWhatIsInSightOfList(list, walker.originOf(sum));
     if (parts.size() == 1) {
         walker.bind(sum.id(), text);
         return true;

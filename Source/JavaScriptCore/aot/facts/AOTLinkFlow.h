@@ -414,8 +414,8 @@ public:
         while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
             simde_mm_pause();
         uint32_t next = m_size.load(std::memory_order_relaxed);
-        auto added = m_numbers.add(key, next);
-        if (added.isNewEntry) {
+        uint32_t number = next;
+        if (auto added = m_numbers.add(key, next); added.isNewEntry) {
             auto [part, position] = placeOf(next);
             Members* records = m_parts[part].load(std::memory_order_relaxed);
             if (!records) {
@@ -424,8 +424,8 @@ public:
             }
             records[position] = members;
             m_size.store(next + 1, std::memory_order_release);
-        }
-        uint32_t number = added.iterator->value;
+        } else
+            number = added.iterator->value;
         m_isLocked.store(false, std::memory_order_release);
         return number;
     }

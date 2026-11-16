@@ -135,6 +135,7 @@ struct LinkContext {
     macro(JSObject*, capturedExports) \
     macro(JSObject*, deferredExportsSource) \
     macro(JSObject*, namespaceOfBoundCapture) \
+    macro(JSObject*, namespaceOfPatchedCapture) \
     macro(JSCellButterfly*, capturedFields) \
     macro(JSCellButterfly*, capturedStars) \
     macro(JSObject*, sourceOfCapturedFields) \
@@ -223,10 +224,17 @@ public:
     bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, Environment* instance = nullptr);
     void fillExportsOfBodyThatNeverRuns(ModuleID);
     bool wasLoadedWithImporter(ModuleID) const;
-    bool tryReplaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr);
-    bool tryReplaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars);
-    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue);
-    bool tryReplaceBoundExport(ModuleID, UniquedStringImpl* name, JSValue);
+    enum class ExportReplacement : uint8_t { NotFound, Replaced, IsBehindMock };
+    enum class CapturedTable : bool { Current, OfOriginal };
+    bool tryReplaceExport(ModuleNamespace*, UniquedStringImpl* name, JSValue, Environment* instance);
+    bool isCapturedExportReplaceable(ModuleID, UniquedStringImpl* name) const;
+    ExportReplacement replaceExport(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance = nullptr, CapturedTable = CapturedTable::Current);
+    ExportReplacement replaceExportBehindStars(ModuleID, UniquedStringImpl* name, JSValue, BitVector& seenBehindStars, Environment* instance);
+    bool tryReplaceCapturedExport(ModuleID, UniquedStringImpl* name, JSValue, CapturedTable = CapturedTable::Current);
+    bool tryReplaceBoundExport(ModuleID, UniquedStringImpl* name, JSValue, CapturedTable = CapturedTable::Current);
+    JSObject* capturedExportsBesideMock(ModuleID) const;
+    JSObject* mockBehindExport(ModuleID, const Identifier& name, Environment* instance);
+    bool isLinkedToFileItself(ModuleID, ModuleID target, const Environment*) const;
     bool tryReplaceExportAddedByMock(ModuleID, UniquedStringImpl* name, JSValue);
     struct SyntheticExportPlace {
         ModuleID module;
@@ -244,6 +252,11 @@ public:
     void didFinishTests();
     void markFactoryAbandoned(ModuleID module) { m_modulesWithAbandonedFactory.set(module.index()); }
     void markMockPassthrough(ModuleID module) { m_modulesWithPassthroughMock.set(fileOf(module).index()); }
+    void releaseEndedTestFiles()
+    {
+        releaseLoadsOfEndedTestFiles();
+        releaseInstancesOfEndedTestFiles();
+    }
     void didBeginTestFile()
     {
         m_filesThatRanBeforeTestFile = filesThatHaveRun();
@@ -452,6 +465,7 @@ public:
         auto mock = m_mocksWithIntactOriginal.find(module);
         return mock != m_mocksWithIntactOriginal.end() && mock->value.isDisplaced;
     }
+    bool displacesEarlierModule(ModuleID);
     bool setMockWithIntactOriginal(ModuleID, JSObject* mock, JSValue requireReturnValue, bool keepsEarlierMockForImporters = false);
     bool reachesStarCycle(ModuleID) const;
     void removeMockWithIntactOriginal(ModuleID);
@@ -1322,7 +1336,12 @@ public:
     bool isLinkedAndUnevaluated(ModuleID) const;
     void resetLinkedInstances(const WTF::Function<bool(const String&)>& isKept);
     bool releaseModuleWithImporters(ModuleID);
-    void setReplacedTestFile(std::optional<ModuleID> testFile) { m_replacedTestFile = testFile; }
+    void setReplacedTestFile(std::optional<ModuleID> testFile)
+    {
+        m_replacedTestFile = testFile;
+        if (testFile)
+            m_releasedTestFiles.set(testFile->index());
+    }
     void setRestoredAtUnmock(ModuleID module, bool isRestored) { m_originalsRestoredAtUnmock.set(module.index(), isRestored); }
     bool isLinkedInstance(ModuleID, const Environment*) const;
     bool reexportsFrom(ModuleID, ModuleID importer, ModuleID imported) const;
@@ -1330,6 +1349,10 @@ public:
     bool areReadByImportersWithoutInstances(std::span<const ModuleID>);
     bool isAwaitedByDetachedLoad(ModuleID) const;
     void noteLoadsOfEndedTestFile();
+    void releaseLoadsOfEndedTestFiles();
+    void releaseInstancesOfEndedTestFiles();
+    void releaseLoads(ModuleID testFile);
+    bool canReleaseLoads(ModuleID testFile);
     bool hasFixedNamespace(ModuleID module) const { return m_linkedInstances.get(module.index()) && hasInstances(module); }
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target) const;
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target, Environment* instance) const;
@@ -1628,7 +1651,12 @@ public:
     bool beginModuleInRecord(ModuleID);
     bool evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy = EagerLoadJobPolicy::KeepQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, PendingFactoryModules = PendingFactoryModules::Evaluate);
     bool wasRequestedByOuterLoad(ModuleID);
-    Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
+    struct FileOfSynchronousLoad {
+        uint32_t place;
+        uint32_t creationStep { 0 };
+        uint32_t storeStep { 0 };
+    };
+    Vector<FileOfSynchronousLoad, 16> filesInOrderOfSynchronousLoad(ModuleID root, const Vector<uint32_t, 16>& places);
     AbstractModuleRecord* recordForRequestedModule(ModuleID);
     void resumeDeferredJobs();
     void transferGraphsToLoader();
@@ -1939,6 +1967,7 @@ public:
     ModuleRecord* exposeRecord(ModuleID, RecordHolder = RecordHolder::Anyone);
     void retireRecordsOfSettledLoads();
     AbstractModuleRecord* uncompiledRecord(ModuleID);
+    AbstractModuleRecord* linkUncompiledRecord(ModuleID);
     AbstractModuleRecord* recordForResolution(ModuleID);
     enum class NamespaceUse : uint8_t { IsShownToProgram, CarriesBindings };
     JSObject* uncompiledNamespace(ModuleID, ModulePhase, NamespaceUse, bool shouldPreventExtensions = true);
@@ -2508,6 +2537,11 @@ private:
         BitVector requestedByOuterLoads { };
         bool hasCollectedOuterRequests { false };
         const VM::SynchronousModuleQueue* loadQueue { nullptr };
+        struct FileNotStored {
+            ModuleID file;
+            uint32_t storeStep;
+        };
+        Vector<FileNotStored> filesNotStored { };
     };
     std::optional<ModuleID> evaluatingModuleOrFacade(const EagerLoad&) const;
     bool isBegunForStatement(ModuleID moduleOrFacade) const;
@@ -2523,6 +2557,8 @@ private:
     void transferGraphToLoader(EagerLoad&, std::optional<ModuleID> finishedFile = std::nullopt);
     void transferSynchronousLoad(EagerLoad&);
     bool reachesEagerLoadGraph(EagerLoad&, ModuleID required);
+    void recaptureFilesNotStoredByLoads(ModuleID root);
+    void rerunBodyOfFacade(ModuleID facade);
     void runSynchronousStepsInFrontOf(ModuleID file);
     struct TransferredLoad {
         ModuleID root;
@@ -2558,6 +2594,7 @@ private:
     Vector<uint32_t> m_marksOfEvaluationsUnderOthers;
     Box<MockedModules> m_mocks;
     std::optional<ModuleID> m_moduleBeingPatched;
+    std::optional<ModuleID> m_moduleReadBeforeItsPatch;
     OptionSet<RequireOverride> m_storedLoaderFunctions;
     std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
     UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;
@@ -2980,6 +3017,7 @@ private:
     };
     LoadsInFlight m_loadsInFlight;
     BitVector m_modulesWithUncompiledRecord;
+    BitVector m_modulesWithRecordOfReleasedImporter;
     Vector<ModuleID, 4> m_modulesWhoseRecordsLoaderHolds;
     Vector<ModuleID, 4> m_modulesToRetireAfterAsyncEvaluation;
     BitVector m_modulesBelowWalkedRoots;
@@ -3343,6 +3381,9 @@ private:
     UncheckedKeyHashMap<ModuleID, ModuleID> m_parentsOfPreloadMocks;
     UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 1>> m_testFilesRequiringESModules;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_startMoments;
+    BitVector m_testFilesHoldingLoads;
+    BitVector m_releasedTestFiles;
+    uint32_t m_resetWithReleasedLoads { 0 };
     BitVector m_evictedTestFiles;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_mockEndMoments;
     UncheckedKeyHashMap<ModuleID, ModuleID> m_displacedEntryParents;

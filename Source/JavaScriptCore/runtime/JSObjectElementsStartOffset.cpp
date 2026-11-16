@@ -117,9 +117,11 @@ bool JSObject::tryMoveElementsStartBackward(VM& vm, unsigned count)
 
     bool hasRoom = structure->hasElementsStartOffset() && butterfly()->indexingHeader()->elementsStartOffset(propertyCapacity) > count;
     if (!hasRoom) {
-        size_t numberOfFreeSlots = static_cast<size_t>(count) + std::max<unsigned>(publicLength / 2, 16) + 1;
+        const unsigned slack = std::max<unsigned>(publicLength / 2, 16);
+        size_t numberOfFreeSlots = static_cast<size_t>(count) + slack + 1;
         if (numberOfFreeSlots + publicLength > MAX_STORAGE_VECTOR_LENGTH)
             return false;
+        vectorLength = std::min(vectorLength, publicLength + slack);
         if (!tryReallocateWithElementsStartOffset(vm, vectorLength, numberOfFreeSlots))
             return false;
     }

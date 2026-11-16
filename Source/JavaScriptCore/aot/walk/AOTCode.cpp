@@ -638,16 +638,41 @@ void Code::turnBranchIntoJump(BlockID block, EdgeID lastOnWay)
     terminator.numberOfEdges = 1;
 }
 
+void Code::retargetSweptEdge(EdgeID edgeID, BlockID to, std::span<const ValueID> arguments)
+{
+    RELEASE_ASSERT(m_isSwept);
+    Edge& edge = m_edges[checkedIndexInCode(edgeID, m_edges.size())];
+    Block& left = m_blocks[checkedIndexInCode(edge.to, m_blocks.size())];
+    EdgeID previous;
+    for (EdgeID each = left.m_firstEdgeIn; each != edgeID; each = m_edges[each.index()].m_nextInto)
+        previous = each;
+    (previous ? m_edges[previous.index()].m_nextInto : left.m_firstEdgeIn) = edge.m_nextInto;
+    if (left.m_lastEdgeIn == edgeID)
+        left.m_lastEdgeIn = previous;
+    Block& entered = m_blocks[checkedIndexInCode(to, m_blocks.size())];
+    (entered.m_firstEdgeIn ? m_edges[entered.m_lastEdgeIn.index()].m_nextInto : entered.m_firstEdgeIn) = edgeID;
+    entered.m_lastEdgeIn = edgeID;
+    std::span<const ValueID> kept = m_sideWords.copy(arguments);
+    edge.to = to;
+    edge.m_nextInto = EdgeID();
+    edge.m_arguments = kept.data();
+    edge.m_numberOfArguments = static_cast<uint32_t>(kept.size());
+}
+
 void Code::leadJumpPastBlockThatJumps(BlockID block)
 {
     Terminator& terminator = m_blocks[checkedIndexInCode(block, m_blocks.size())].terminator;
     RELEASE_ASSERT(m_isSwept && terminator.kind == TerminatorKind::Jump);
-    Edge& left = m_edges[terminator.firstEdge.index()];
-    const Terminator& passed = m_blocks[left.to.index()].terminator;
+    const EdgeID entering = terminator.firstEdge;
+    const BlockID passedBlock = m_edges[entering.index()].to;
+    Terminator& passed = m_blocks[passedBlock.index()].terminator;
     RELEASE_ASSERT(passed.kind == TerminatorKind::Jump);
-    left.to = BlockID();
-    m_edges[passed.firstEdge.index()].from = block;
-    terminator.firstEdge = passed.firstEdge;
+    const EdgeID leaving = passed.firstEdge;
+    retargetSweptEdge(entering, m_edges[leaving.index()].to, m_edges[leaving.index()].arguments());
+    m_edges[entering.index()].from = passedBlock;
+    m_edges[leaving.index()].from = block;
+    terminator.firstEdge = leaving;
+    passed.firstEdge = entering;
 }
 
 void Code::layClosureInFrame(ValueID closure, LoanOfClosure loan)

@@ -51,9 +51,16 @@ void SetConstructor::finishCreation(VM& vm, SetPrototype* setPrototype)
 
 static JSC_DECLARE_HOST_FUNCTION(callSet);
 static JSC_DECLARE_HOST_FUNCTION(constructSet);
+#if ENABLE(AOT)
+static JSC_DECLARE_HOST_FUNCTION(constructSetWithCompiledCode);
+#endif
 
 SetConstructor::SetConstructor(VM& vm, Structure* structure)
+#if ENABLE(AOT)
+    : Base(vm, structure, callSet, Options::runsCompiledImage() ? constructSetWithCompiledCode : constructSet)
+#else
     : Base(vm, structure, callSet, constructSet)
+#endif
 {
 }
 
@@ -64,7 +71,8 @@ JSC_DEFINE_HOST_FUNCTION(callSet, (JSGlobalObject* globalObject, CallFrame*))
     return JSValue::encode(throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Set"_s));
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame* callFrame))
+template<bool runsCompiledImage>
+static ALWAYS_INLINE EncodedJSValue constructSetImpl(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -84,7 +92,7 @@ JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame*
     }
 
 #if ENABLE(AOT)
-    if (canPerformFastAdd && vm.hasCompiledCode()) [[unlikely]] {
+    if (runsCompiledImage && canPerformFastAdd && vm.hasCompiledCode()) {
         JSObject* made = AOT::RuntimeHooks::tryMakeSetOfIterable(globalObject, callFrame, setStructure, iterable);
         RETURN_IF_EXCEPTION(scope, { });
         if (made)
@@ -120,6 +128,18 @@ JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame*
 
     return JSValue::encode(set);
 }
+
+JSC_DEFINE_HOST_FUNCTION(constructSet, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return constructSetImpl<false>(globalObject, callFrame);
+}
+
+#if ENABLE(AOT)
+JSC_DEFINE_HOST_FUNCTION(constructSetWithCompiledCode, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return constructSetImpl<true>(globalObject, callFrame);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(setPrivateFuncSetStorage, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

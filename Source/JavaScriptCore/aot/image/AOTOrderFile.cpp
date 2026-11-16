@@ -11,10 +11,12 @@
 #include "AOTBuildContext.h"
 #include "AOTIRProgram.h"
 #include "AOTNumbering.h"
+#include "AOTOrderRecorder.h"
 #include "AOTPlan.h"
 #include "AOTStartOrder.h"
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <wtf/ASCIICType.h>
 #include <wtf/BitVector.h>
 #include <wtf/MathExtras.h>
@@ -39,6 +41,8 @@ struct OrderFile {
     struct Unit {
         uint32_t file;
         uint32_t number;
+        uint32_t column;
+        uint32_t hashOfNames;
         uint32_t rank;
         uint8_t kind;
         std::span<const uint8_t> name;
@@ -49,16 +53,17 @@ struct OrderFile {
     Vector<std::span<const uint8_t>> files;
     Vector<Unit> units;
     Vector<std::span<const uint8_t>> regExps;
+    std::span<const uint8_t> entry;
     uint32_t numberOfFunctions { absentUnit };
 
 private:
     void addLine(std::span<const uint8_t>);
 };
 
-std::span<const uint8_t> takeWord(std::span<const uint8_t>& rest)
+std::span<const uint8_t> takeWord(std::span<const uint8_t>& rest, uint8_t separator = ' ')
 {
     size_t end = 0;
-    while (end < rest.size() && rest[end] != ' ')
+    while (end < rest.size() && rest[end] != separator)
         ++end;
     std::span<const uint8_t> word = rest.first(end);
     rest = rest.subspan(std::min(end + 1, rest.size()));
@@ -89,6 +94,10 @@ void OrderFile::addLine(std::span<const uint8_t> line)
             files.append(std::span<const uint8_t> { line });
         return;
     }
+    if (kind[0] == 'E') {
+        entry = line;
+        return;
+    }
     if (kind[0] == 'P') {
         numberOfFunctions = parseOrderNumber(takeWord(line));
         return;
@@ -103,12 +112,15 @@ void OrderFile::addLine(std::span<const uint8_t> line)
     Unit unit;
     unit.number = parseOrderNumber(takeWord(line));
     std::span<const uint8_t> kindAndRank = takeWord(line);
-    takeWord(line);
-    if (takeWord(line).empty() || kindAndRank.size() < 2 || (kindAndRank[0] != 'b' && kindAndRank[0] != 'e' && kindAndRank[0] != 'o'))
+    unit.hashOfNames = parseOrderNumber(takeWord(line));
+    std::span<const uint8_t> position = takeWord(line);
+    if (position.empty() || kindAndRank.size() < 2 || (kindAndRank[0] != 'b' && kindAndRank[0] != 'e' && kindAndRank[0] != 'o'))
         return;
     unit.kind = kindAndRank[0];
     unit.rank = parseOrderNumber(kindAndRank.subspan(1));
     unit.name = line;
+    takeWord(position, ':');
+    unit.column = parseOrderNumber(position);
     if (file.size() == 1 && file[0] == '=')
         unit.file = wholeProgram;
     else if (file.size() == 1 && file[0] == '-')
@@ -126,6 +138,7 @@ bool OrderFile::takeNext(std::span<const uint8_t>& rest)
     units.shrink(0);
     regExps.shrink(0);
     numberOfFunctions = absentUnit;
+    entry = { };
     bool hasHead = false;
     while (!rest.empty()) {
         size_t length = 0;
@@ -196,6 +209,16 @@ private:
     Vector<uint32_t> m_values;
 };
 
+constexpr uint32_t indexOfUnit(uint64_t unit)
+{
+    return unit & ((1u << bitsOfIndexOfUnit) - 1);
+}
+
+constexpr uint64_t placeOfFunction(uint32_t number, uint32_t column)
+{
+    return static_cast<uint64_t>(number) << 32 | column;
+}
+
 struct FunctionsOfFile {
     uint32_t first;
     uint32_t end;
@@ -221,7 +244,7 @@ public:
         , m_conventions(plan.conventions())
         , m_numbers(numbers)
         , m_functions(functions)
-        , m_index(file.files.size() + program.modules.size() + 2 * program.functions.size() + 2 * file.units.size())
+        , m_index(2 * (file.files.size() + program.modules.size() + program.functions.size() + file.units.size()))
     {
     }
 
@@ -230,15 +253,23 @@ public:
 private:
     static constexpr uint64_t saltOfPaths = 1ull << 62;
     static constexpr uint64_t saltOfNamesOfFiles = 1ull << 61;
+    static constexpr uint64_t saltOfPathsFromEntry = 1ull << 60;
+    static constexpr uint64_t saltOfHashes = 1ull << 59;
 
     ModuleID moduleOf(uint32_t function) const;
     std::span<const uint8_t> nameOf(uint32_t function) const;
     DerivedUnits collectDerivedUnits(uint32_t begin, uint32_t end) const;
+    std::span<const uint8_t> pathFrom(std::span<const uint8_t> folder, std::span<const uint8_t> path);
+    void indexFiles();
+    uint32_t findFile(const Typed::Module&);
     void indexProgram();
-    uint32_t findFunction(const OrderFile::Unit&, int64_t shift, unsigned numberOfFilesToSkip) const;
-    uint32_t findFunctionByName(const OrderFile::Unit&);
+    std::span<const uint8_t> nameInFile(std::span<const uint8_t> name, std::span<const uint8_t> path, unsigned numberOfNames);
+    void indexNewFiles();
+    uint32_t findNewFile(uint32_t recordedFile, std::span<const uint64_t> units);
+    uint32_t findFunction(const OrderFile::Unit&, uint32_t file, int64_t shift, unsigned numberOfFilesToSkip) const;
+    uint32_t findFunctionByName(const OrderFile::Unit&, uint32_t file);
     uint32_t findFunctionWithoutFile(const OrderFile::Unit&);
-    void findFunctionsOfFile(std::span<const uint64_t> unitsOfFile, std::span<uint32_t> functions);
+    void findFunctionsOfFile(std::span<const uint64_t> unitsOfFile, uint32_t file, std::span<uint32_t> functions);
     uint32_t findPosition(const OrderFile::Unit&, uint32_t function) const;
 
     const OrderFile& m_file;
@@ -247,10 +278,15 @@ private:
     const FunctionNumbers& m_numbers;
     const LinkedFunctions& m_functions;
     OrderIndex m_index;
+    std::span<const uint8_t> m_folderOfEntry;
+    bool m_comparesPathsFromEntry { false };
+    Vector<uint8_t> m_path;
     Vector<uint32_t> m_positionOfBody;
     Vector<uint32_t> m_positionOfNumber;
     Vector<FunctionsOfFile> m_functionsOfFiles;
     Vector<uint32_t> m_firstOfFile;
+    Vector<std::span<const uint8_t>> m_pathsOfNewFiles;
+    std::optional<OrderIndex> m_newFilesByFunction;
     BitVector m_hasNamesOfFile;
     DerivedUnits m_entries;
     DerivedUnits m_otherUnits;
@@ -287,6 +323,87 @@ DerivedUnits ListedUnitFinder::collectDerivedUnits(uint32_t begin, uint32_t end)
     return result;
 }
 
+bool isListableFile(const Typed::Module& module)
+{
+    return module.displayPath && Typed::isProgramModuleOf(module.kind) && !module.flags.contains(Typed::ModuleFlags::IsLibrary);
+}
+
+size_t startOfLastNames(std::span<const uint8_t> path, unsigned numberOfNames)
+{
+    size_t start = path.size();
+    while (start && (path[start - 1] != '/' || --numberOfNames))
+        --start;
+    return start;
+}
+
+std::span<const uint8_t> folderOf(std::span<const uint8_t> path)
+{
+    size_t start = startOfLastNames(path, 1);
+    return path.first(start ? start - 1 : 0);
+}
+
+std::span<const uint8_t> ListedUnitFinder::pathFrom(std::span<const uint8_t> folder, std::span<const uint8_t> path)
+{
+    m_path.shrink(0);
+    while (!folder.empty()) {
+        std::span<const uint8_t> restOfFolder = folder;
+        std::span<const uint8_t> restOfPath = path;
+        if (!equalSpans(takeWord(restOfFolder, '/'), takeWord(restOfPath, '/')))
+            break;
+        folder = restOfFolder;
+        path = restOfPath;
+    }
+    while (!folder.empty()) {
+        takeWord(folder, '/');
+        m_path.append("../"_span8);
+    }
+    m_path.append(path);
+    return m_path.span();
+}
+
+void ListedUnitFinder::indexFiles()
+{
+    for (uint32_t number = 0; number < m_file.files.size(); ++number)
+        m_index.valueOf(m_file.files[number], saltOfPaths) = number;
+    for (size_t index : Typed::modulesThatHostAsksFor(m_program)) {
+        const Typed::Module& module = m_program.modules[index];
+        if (isListableFile(module)) {
+            m_folderOfEntry = folderOf(m_program.string(module.displayPath));
+            break;
+        }
+    }
+    std::span<const uint8_t> folderOfRecordedEntry = folderOf(m_file.entry);
+    if (equalSpans(folderOfRecordedEntry, m_folderOfEntry))
+        return;
+    for (uint32_t number = 0; number < m_file.files.size(); ++number)
+        m_index.valueOf(pathFrom(folderOfRecordedEntry, m_file.files[number]), saltOfPathsFromEntry) = number;
+    int64_t numberGained = 0;
+    for (const auto& module : m_program.modules) {
+        if (!isListableFile(module))
+            continue;
+        std::span<const uint8_t> path = m_program.string(module.displayPath);
+        numberGained += m_index.valueOf(pathFrom(m_folderOfEntry, path), saltOfPathsFromEntry) != absentUnit;
+        numberGained -= m_index.valueOf(path, saltOfPaths) != absentUnit;
+    }
+    m_comparesPathsFromEntry = numberGained > 0;
+}
+
+uint32_t ListedUnitFinder::findFile(const Typed::Module& module)
+{
+    if (!module.displayPath)
+        return absentUnit;
+    std::span<const uint8_t> path = m_program.string(module.displayPath);
+    if (!isListableFile(module))
+        return m_index.valueOf(path, saltOfPaths);
+    uint32_t& file = m_comparesPathsFromEntry ? m_index.valueOf(pathFrom(m_folderOfEntry, path), saltOfPathsFromEntry) : m_index.valueOf(path, saltOfPaths);
+    if (file == absentUnit) {
+        file = m_firstOfFile.size();
+        m_firstOfFile.append(absentUnit);
+        m_pathsOfNewFiles.append(std::span<const uint8_t> { path });
+    }
+    return file;
+}
+
 void ListedUnitFinder::indexProgram()
 {
     const uint32_t numberOfFunctions = m_numbers.firstDerived();
@@ -302,11 +419,9 @@ void ListedUnitFinder::indexProgram()
     m_entries = collectDerivedUnits(m_numbers.firstDerived(), m_numbers.endOfClosureFunctions().index());
     m_otherUnits = collectDerivedUnits(m_numbers.endOfClosureFunctions().index(), m_numbers.numberOfFunctions());
 
-    for (uint32_t number = 0; number < m_file.files.size(); ++number)
-        m_index.valueOf(m_file.files[number], saltOfPaths) = number;
+    indexFiles();
     m_firstOfFile.fill(absentUnit, m_file.files.size());
-    m_hasNamesOfFile.ensureSize(m_file.files.size());
-    Vector<uint32_t> lastOfFile(FillWith { }, m_file.files.size(), absentUnit);
+    Vector<uint32_t> lastOfFile;
     Vector<uint32_t> namesakes(FillWith { }, m_program.strings.size() + 1, 0);
     ModuleID module;
     uint32_t current = absentUnit;
@@ -319,11 +434,12 @@ void ListedUnitFinder::indexProgram()
         }
         if (definedIn && definedIn != module) {
             module = definedIn;
-            StringID path = m_program.modules[module.index()].displayPath;
-            uint32_t file = path ? m_index.valueOf(m_program.string(path), saltOfPaths) : absentUnit;
+            uint32_t file = findFile(m_program.modules[module.index()]);
             current = absentUnit;
             if (file != absentUnit) {
                 current = m_functionsOfFiles.size();
+                while (lastOfFile.size() < m_firstOfFile.size())
+                    lastOfFile.append(absentUnit);
                 (lastOfFile[file] == absentUnit ? m_firstOfFile[file] : m_functionsOfFiles[lastOfFile[file]].next) = current;
                 lastOfFile[file] = current;
                 m_functionsOfFiles.append({ function, function, absentUnit });
@@ -332,11 +448,82 @@ void ListedUnitFinder::indexProgram()
         if (current != absentUnit)
             m_functionsOfFiles[current].end = function + 1;
     }
+    m_hasNamesOfFile.ensureSize(m_firstOfFile.size());
 }
 
-uint32_t ListedUnitFinder::findFunction(const OrderFile::Unit& unit, int64_t shift, unsigned numberOfFilesToSkip) const
+std::span<const uint8_t> ListedUnitFinder::nameInFile(std::span<const uint8_t> name, std::span<const uint8_t> path, unsigned numberOfNames)
 {
-    for (uint32_t index = m_firstOfFile[unit.file]; index != absentUnit; index = m_functionsOfFiles[index].next) {
+    m_path.shrink(0);
+    m_path.append(name);
+    m_path.append('/');
+    m_path.append(path.subspan(startOfLastNames(path, numberOfNames)));
+    return m_path.span();
+}
+
+void ListedUnitFinder::indexNewFiles()
+{
+    size_t numberOfKeys = m_file.units.size();
+    for (uint32_t file = m_file.files.size(); file < m_firstOfFile.size(); ++file) {
+        for (uint32_t index = m_firstOfFile[file]; index != absentUnit; index = m_functionsOfFiles[index].next)
+            numberOfKeys += m_functionsOfFiles[index].end - m_functionsOfFiles[index].first;
+    }
+    m_newFilesByFunction.emplace(3 * numberOfKeys);
+    for (uint32_t file = m_file.files.size(); file < m_firstOfFile.size(); ++file) {
+        auto add = [&](std::span<const uint8_t> name, uint64_t place) {
+            uint32_t& known = m_newFilesByFunction->valueOf(name, place);
+            known = known == absentUnit || known == file ? file : ambiguousUnit;
+        };
+        for (uint32_t index = m_firstOfFile[file]; index != absentUnit; index = m_functionsOfFiles[index].next) {
+            HashOfNames hash;
+            for (uint32_t function = m_functionsOfFiles[index].first; function < m_functionsOfFiles[index].end; ++function) {
+                if (moduleOf(function) && function != m_functionsOfFiles[index].first)
+                    hash.add(nameOf(function));
+                for (unsigned numberOfNames : { 2, 1 })
+                    add(nameInFile(nameOf(function), m_pathsOfNewFiles[file - m_file.files.size()], numberOfNames), numberOfNames);
+                uint32_t number = function - m_functionsOfFiles[index].first;
+                if (number && moduleOf(function))
+                    add(nameOf(function), placeOfFunction(number, m_functions[m_positionOfBody[function]].sites.positions[0].column));
+            }
+            if (!hash.isEmpty())
+                add({ }, saltOfHashes + hash.value());
+        }
+    }
+}
+
+uint32_t ListedUnitFinder::findNewFile(uint32_t recordedFile, std::span<const uint64_t> units)
+{
+    if (m_pathsOfNewFiles.isEmpty())
+        return absentUnit;
+    if (!m_newFilesByFunction)
+        indexNewFiles();
+    size_t numberOfKnownUnits = 0;
+    Vector<uint64_t> found;
+    for (uint64_t keyOfUnit : units) {
+        const OrderFile::Unit& unit = m_file.units[indexOfUnit(keyOfUnit)];
+        uint32_t file = absentUnit;
+        if (unit.number)
+            file = m_newFilesByFunction->valueOf(unit.name, placeOfFunction(unit.number, unit.column));
+        else if (unit.hashOfNames != absentUnit)
+            file = m_newFilesByFunction->valueOf({ }, saltOfHashes + unit.hashOfNames);
+        for (unsigned numberOfNames : { 2, 1 }) {
+            if (file >= ambiguousUnit)
+                file = std::min(file, m_newFilesByFunction->valueOf(nameInFile(unit.name, m_file.files[recordedFile], numberOfNames), numberOfNames));
+        }
+        numberOfKnownUnits += file != ambiguousUnit;
+        if (file < ambiguousUnit)
+            found.append(file);
+    }
+    sortKeys(found.mutableSpan());
+    for (size_t index = 0; index + numberOfKnownUnits / 2 < found.size(); ++index) {
+        if (found[index] == found[index + numberOfKnownUnits / 2])
+            return static_cast<uint32_t>(found[index]);
+    }
+    return absentUnit;
+}
+
+uint32_t ListedUnitFinder::findFunction(const OrderFile::Unit& unit, uint32_t file, int64_t shift, unsigned numberOfFilesToSkip) const
+{
+    for (uint32_t index = m_firstOfFile[file]; index != absentUnit; index = m_functionsOfFiles[index].next) {
         const FunctionsOfFile& functions = m_functionsOfFiles[index];
         int64_t function = static_cast<int64_t>(functions.first) + unit.number + shift;
         if (function < functions.first || function >= functions.end)
@@ -347,19 +534,19 @@ uint32_t ListedUnitFinder::findFunction(const OrderFile::Unit& unit, int64_t shi
     return absentUnit;
 }
 
-uint32_t ListedUnitFinder::findFunctionByName(const OrderFile::Unit& unit)
+uint32_t ListedUnitFinder::findFunctionByName(const OrderFile::Unit& unit, uint32_t file)
 {
     if (unit.name.empty())
         return absentUnit;
-    if (!m_hasNamesOfFile.quickSet(unit.file)) {
-        for (uint32_t index = m_firstOfFile[unit.file]; index != absentUnit; index = m_functionsOfFiles[index].next) {
+    if (!m_hasNamesOfFile.quickSet(file)) {
+        for (uint32_t index = m_firstOfFile[file]; index != absentUnit; index = m_functionsOfFiles[index].next) {
             for (uint32_t function = m_functionsOfFiles[index].first; function < m_functionsOfFiles[index].end; ++function) {
-                uint32_t& named = m_index.valueOf(nameOf(function), saltOfNamesOfFiles + unit.file);
+                uint32_t& named = m_index.valueOf(nameOf(function), saltOfNamesOfFiles + file);
                 named = named == absentUnit ? function : ambiguousUnit;
             }
         }
     }
-    uint32_t function = m_index.valueOf(unit.name, saltOfNamesOfFiles + unit.file);
+    uint32_t function = m_index.valueOf(unit.name, saltOfNamesOfFiles + file);
     return function < ambiguousUnit && equalSpans(unit.name, nameOf(function)) ? function : absentUnit;
 }
 
@@ -371,23 +558,23 @@ uint32_t ListedUnitFinder::findFunctionWithoutFile(const OrderFile::Unit& unit)
     return function < ambiguousUnit && equalSpans(unit.name, nameOf(function)) ? function : absentUnit;
 }
 
-void ListedUnitFinder::findFunctionsOfFile(std::span<const uint64_t> unitsOfFile, std::span<uint32_t> functions)
+void ListedUnitFinder::findFunctionsOfFile(std::span<const uint64_t> unitsOfFile, uint32_t file, std::span<uint32_t> functions)
 {
     int64_t shift = 0;
     unsigned numberOfEqualUnits = 0;
     const OrderFile::Unit* previous = nullptr;
     for (uint64_t unitOfFile : unitsOfFile) {
-        uint32_t index = unitOfFile & ((1u << bitsOfIndexOfUnit) - 1);
+        uint32_t index = indexOfUnit(unitOfFile);
         const OrderFile::Unit& unit = m_file.units[index];
         numberOfEqualUnits = previous && previous->number == unit.number && previous->kind == unit.kind && previous->rank == unit.rank ? numberOfEqualUnits + 1 : 0;
         previous = &unit;
-        uint32_t function = findFunction(unit, shift, numberOfEqualUnits);
+        uint32_t function = findFunction(unit, file, shift, numberOfEqualUnits);
         if (function == absentUnit && shift)
-            function = findFunction(unit, 0, numberOfEqualUnits);
+            function = findFunction(unit, file, 0, numberOfEqualUnits);
         if (function == absentUnit && !numberOfEqualUnits)
-            function = findFunctionByName(unit);
+            function = findFunctionByName(unit, file);
         functions[index] = function;
-        for (uint32_t candidate = function == absentUnit ? absentUnit : m_firstOfFile[unit.file]; candidate != absentUnit; candidate = m_functionsOfFiles[candidate].next) {
+        for (uint32_t candidate = function == absentUnit ? absentUnit : m_firstOfFile[file]; candidate != absentUnit; candidate = m_functionsOfFiles[candidate].next) {
             if (function >= m_functionsOfFiles[candidate].first && function < m_functionsOfFiles[candidate].end) {
                 shift = static_cast<int64_t>(function) - m_functionsOfFiles[candidate].first - unit.number;
                 break;
@@ -430,7 +617,16 @@ void ListedUnitFinder::findInto(Vector<uint32_t>& listed, BitVector& isListed)
         }
         std::span<uint64_t> unitsOfFile = units.mutableSpan().subspan(first, end - first);
         sortKeys(unitsOfFile);
-        findFunctionsOfFile(unitsOfFile, functions.mutableSpan());
+        findFunctionsOfFile(unitsOfFile, file, functions.mutableSpan());
+        size_t numberOfMissing = 0;
+        for (uint64_t unit : unitsOfFile) {
+            if (functions[indexOfUnit(unit)] == absentUnit)
+                unitsOfFile[numberOfMissing++] = unit;
+        }
+        if (2 * numberOfMissing > unitsOfFile.size()) {
+            if (uint32_t newFile = findNewFile(file, unitsOfFile.first(numberOfMissing)); newFile != absentUnit)
+                findFunctionsOfFile(unitsOfFile.first(numberOfMissing), newFile, functions.mutableSpan());
+        }
         first = end;
     }
     for (uint32_t index = 0; index < count; ++index) {
@@ -539,8 +735,10 @@ Vector<FinalJump> orderCodeByFiles(const Typed::Program& program, const Typed::P
     OrderFile file;
     for (std::span<const uint8_t> rest = context.orderFile(); file.takeNext(rest);)
         ListedUnitFinder(file, program, plan, numbers, functions).findInto(listed, isListed);
-    if (listed.isEmpty())
+    if (listed.isEmpty()) {
+        context.diagnostics().add(UserDiagnostic { .kind = UserDiagnosticKind::UnmatchedOrderFiles });
         return { };
+    }
     context.setStartRanks(rankFunctionsByListedUnits(listed.span(), functions, program.functions.size()));
     Vector<FinalJump> finalJumps = findFinalJumps(functions, callees, context);
     OrderOfUnits order = orderUnits(listed.span(), finalJumps.span(), functions);

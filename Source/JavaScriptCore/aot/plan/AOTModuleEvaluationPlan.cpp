@@ -214,6 +214,8 @@ static bool asksWhoRequiredWhom(const Program& program, const Facts& facts)
         return true;
     if (isUsedInModuleEvaluationPlan(facts, Builtins::ModuleRequireMain) || isUsedInModuleEvaluationPlan(facts, Builtins::ProcessMainModule))
         return true;
+    if (namesModuleObjects(program) && isUsedInModuleEvaluationPlan(facts, Builtins::ModuleRequire))
+        return true;
     const BuiltinTable& builtins = program.builtins();
     for (ASCIILiteral name : { "parent"_s, "children"_s, "id"_s }) {
         BuiltinID member = builtins.findOwnMember(Builtins::ModuleObject, builtins.nameOf(byteCast<uint8_t>(name.span())));
@@ -499,10 +501,7 @@ bool ModuleEvaluationPlanner::canSkipRecordRequire(uint32_t index) const
 {
     if (somebodyAsksWhoRequiredWhom || factoryOfMockMayRequire)
         return false;
-    const Module& module = program.modules[index];
-    if (module.kind != ModuleKind::SourceText || std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
-        return true;
-    return false;
+    return program.modules[index].kind != ModuleKind::SourceText;
 }
 
 template<typename Functor>

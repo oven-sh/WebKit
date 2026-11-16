@@ -1751,7 +1751,10 @@ Reference Walker::readCarriedField(const Draft& read, FieldReference field, bool
     m_state = WTF::move(stateOfIteration);
     if (hasFailed() || isUnreachable())
         return { };
-    return enterWithCarriedField(*slot, read.objectOperand(), first);
+    Reference carried = enterWithCarriedField(*slot, read.objectOperand(), first);
+    if (carried && checksProofs())
+        checkThatMemoryAnswersAsBelieved(carried, Draft(read));
+    return carried;
 }
 
 Reference Walker::readCarriedStaticField(Reference object, VariableID variable, PropertyKeyID key, Reference before, Reference isAbsentBefore, Origin origin)

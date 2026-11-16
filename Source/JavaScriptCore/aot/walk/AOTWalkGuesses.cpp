@@ -15141,6 +15141,51 @@ static bool readAtSiteInFusedChain(Walker& walker, const BodyValue& read)
     return true;
 }
 
+static bool askForNumberInFront(Walker& walker, const BodyValue& behind, Reference object)
+{
+    Origin origin = walker.originOf(behind);
+    origin.isTailCall = false;
+    Draft lookup(Opcode::GetValueAtSiteOrAbsent, origin);
+    lookup.setObjectOperand(object);
+    lookup.setKey(behind.key());
+    lookup.setReceiverIsNoObjectOfCompiledCode(isShapedLikeLayoutsThatItCanNeverBe(walker, behind.objectOperand()));
+    lookup.setValueType(TypeTable::anythingOrAbsent);
+    Reference found = walker.build(WTF::move(lookup));
+    if (!found || walker.hasFailed() || walker.isUnreachable())
+        return false;
+    while (Reference checked = found.isValue() ? walker.state().checkedNameOf(found) : Reference())
+        found = checked;
+    if (walker.types().isSubset(walker.typeOf(found), TypeTable::number))
+        return true;
+    Draft question(Opcode::TypeTest, origin);
+    question.setValueOperand(found);
+    question.setTestedType(TypeTable::number);
+    Reference isNumber = walker.build(WTF::move(question));
+    if (!isNumber || walker.hasFailed() || walker.isUnreachable())
+        return false;
+    walker.recordSpeculation();
+    BlockID leaves = walker.addBlock(BlockFrequency::Rare);
+    BlockID goesOn = walker.addBlock();
+    walker.branch(isNumber, goesOn, leaves);
+    walker.continueIn(leaves);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(goesOn);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return false;
+    Draft proof(Opcode::Narrowed, origin);
+    proof.setValueOperand(found);
+    proof.setTestOperand(isNumber);
+    proof.setOperandIndex(OperandIndex::TypeTest::value);
+    proof.setIsOnTakenEdge(true);
+    Reference number = walker.build(WTF::move(proof));
+    if (!number || walker.hasFailed() || walker.isUnreachable())
+        return false;
+    if (found.isValue() && number != found)
+        walker.state().noteCheckedName(found, number);
+    return true;
+}
+
 bool tryReadAtSiteOfItsOpcodes(Walker& walker, const BodyValue& read)
 {
     if (read.opcode() == Opcode::PropHas)
@@ -15314,7 +15359,11 @@ bool tryReadAtSiteOfItsOpcodes(Walker& walker, const BodyValue& read)
             walker.holdValueRememberedAgainstValueAtSite(shown, WTF::move(*readAgain));
         return true;
     }
-    if (opensGuesses && asksForNumber && !asksForKey && !speculatesWord && isFoundInIteration && !isByKey && !isByIndex && !walker.isBuildingInPlace() && walker.has(Mechanism::UnboxedNumbers) && isConvertedToNumber(walker, read) && bindNumberOfNullish(walker, read, found, origin)) {
+    ValueID askedInFront;
+    const bool takesNumberOfNullish = opensGuesses && asksForNumber && !asksForKey && !speculatesWord && isFoundInIteration && !isByKey && !isByIndex && !walker.isBuildingInPlace() && walker.has(Mechanism::UnboxedNumbers) && isConvertedToNumber(walker, read, askedInFront);
+    if (askedInFront && !askForNumberInFront(walker, index.value(askedInFront), object))
+        return true;
+    if (takesNumberOfNullish && bindNumberOfNullish(walker, read, found, origin)) {
         if (walker.hasUninlinedCallInIterations())
             walker.count(StatisticID::SiteCachedReadsBesideCalls);
         if (readAgain)

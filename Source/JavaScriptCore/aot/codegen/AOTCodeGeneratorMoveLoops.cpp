@@ -690,7 +690,7 @@ bool MoveLoopFinder::finish()
             return false;
     }
     for (MoveLoop::Read& read : m_found.reads) {
-        if ((read.isReadAgain && (read.isMoved || read.isKey || read.isNumber)) || (read.isRow && read.isNumber))
+        if ((read.isReadAgain && (read.isMoved || read.isKey || read.isNumber)) || (read.isRow && (read.isNumber || read.isKey)))
             return false;
         if (!read.isRow)
             continue;

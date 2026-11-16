@@ -4597,16 +4597,16 @@ static bool definesInheritedValue(JSObject* object, PropertyName propertyName, c
 #endif
 }
 
-static ALWAYS_INLINE void putNewProperty(JSGlobalObject* globalObject, VM& vm, JSObject* object, PropertyName propertyName, const PropertyDescriptor& descriptor)
+static NEVER_INLINE bool tryDefineInheritedValue(VM& vm, JSObject* object, PropertyName propertyName, const PropertyDescriptor& descriptor)
 {
-    if (descriptor.isAccessorDescriptor()) {
-        unsigned attributes = (descriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly;
-        object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
-    } else {
-        ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
-        JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
-        object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
-    }
+    if (!definesInheritedValue(object, propertyName, descriptor))
+        return false;
+    AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
+#if ENABLE(AOT)
+    AOT::countEvent(vm, AOT::RuntimeCounterID::InheritedValuesDefined);
+#endif
+    object->putDirect(vm, propertyName, descriptor.value(), descriptor.attributes() & ~PropertyAttribute::Accessor);
+    return true;
 }
 
 // https://tc39.es/ecma262/#sec-validateandapplypropertydescriptor
@@ -4627,18 +4627,21 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
         if (object && object->structure()->isImmutableProperty(propertyName.uid())) [[unlikely]] {
-            if (!definesInheritedValue(object, propertyName, descriptor))
+            if (!tryDefineInheritedValue(vm, object, propertyName, descriptor))
                 return rejectWriteToLockedProperty(globalObject, scope, throwException, WriteOrigin::Reflect, object, propertyName, ImmutablePropertyDefineError);
-            AllowLazyMaterializationOfImmutableProperties allowDefinition(vm);
-#if ENABLE(AOT)
-            AOT::countEvent(vm, AOT::RuntimeCounterID::InheritedValuesDefined);
-#endif
-            putNewProperty(globalObject, vm, object, propertyName, descriptor);
             return true;
         }
 
-        if (object)
-            putNewProperty(globalObject, vm, object, propertyName, descriptor);
+        if (object) {
+            if (descriptor.isAccessorDescriptor()) {
+                unsigned attributes = (descriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly;
+                object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
+            } else {
+                ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
+                JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
+                object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
+            }
+        }
 
         return true;
     }

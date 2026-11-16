@@ -4206,7 +4206,8 @@ void Walker::noteOperationBuiltWhereCodeIsVerified(ValueID id, const Draft& draf
         m_code.recordSyntheticVariableRead(id);
     if (draft.opcode == Opcode::GetEnvironmentField && !draft.inputValueGiven && draft.isKnownInitialized())
         m_code.recordSyntheticVariableRead(id);
-    if (!isWrittenInTopFrame(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
+    bool isMadeOnceAtItsSite = draft.opcode == Opcode::NewTemplateObject;
+    if (!isWrittenInTopFrame(draft) || isMadeOnceAtItsSite || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
         return;
     const Frame& frame = m_frames.last();
     Reference earlier = referenceBoundIn(frame, draft.inputValueGiven);
@@ -8998,6 +8999,9 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         }
         TypeID recorded = m_code.at(judged).type;
         if (!givenByRow || !recorded || !m_types.at(recorded).isJavaScriptValue() || m_types.isSubset(recorded, givenByRow))
+            continue;
+        bool isStringOfOperand = draft.opcode == Opcode::Add && draft.form() == OperatorForm::Strings && m_code.at(judged).opcode == Opcode::ToString && m_types.isSubset(m_code.at(m_code.at(judged).operand(0)).type, givenByRow);
+        if (isStringOfOperand)
             continue;
         bool isFillerOfHeldSlot = draft.opcode == Opcode::NewObject && m_code.isConstant(judged) && !m_types.overlap(recorded, givenByRow);
         if (isFillerOfHeldSlot)

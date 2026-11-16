@@ -3915,10 +3915,14 @@ void Walker::checkFactsRememberedOfCell(Reference object, Origin origin, OptionS
 
 void Walker::checkWhatIsInSightOfList(Reference list, Origin origin)
 {
-    if (!checksProofs() || isUnreachable() || isInLoop() || !list || !list.isValue())
+    if (!checksProofs() || isUnreachable() || !list || !list.isValue())
         return;
     TypeID type = typeOf(list);
-    std::optional<uint32_t> inSight = type && hasKind(m_types, type, OperandKind::Array) ? lengthOfListInSight(*this, list) : std::nullopt;
+    if (!type || !hasKind(m_types, type, OperandKind::Array))
+        return;
+    Reference made = Reference::value(underlyingCellOf(m_code, list.id()));
+    std::optional<uint32_t> inSight = lengthOfListInSight(*this, list);
+    bool isConstantList = !inSight && (inSight = lengthOfListMadeInSight(*this, made));
     if (!inSight)
         return;
     origin.isTailCall = false;
@@ -3933,7 +3937,11 @@ void Walker::checkWhatIsInSightOfList(Reference list, Origin origin)
     length.setArrayOperand(list);
     checkThatMemoryAnswersAsBelieved(integer(*inSight), WTF::move(length));
     Vector<std::pair<uint32_t, Reference>, 8> noted;
-    for (const WalkState::ElementOfObject& element : m_state.listElementsOf(Reference::value(underlyingCellOf(m_code, list.id())))) {
+    for (uint32_t position = 0; isConstantList && position < *inSight; ++position) {
+        if (Reference element = elementWrittenInListMadeInSight(*this, made, position))
+            noted.append({ position, element });
+    }
+    for (const WalkState::ElementOfObject& element : m_state.listElementsOf(made)) {
         const Operation* index = element.index.isConstant() ? &m_code.at(element.index.id()) : nullptr;
         if (index && index->opcode == Opcode::Integer && index->integer() >= 0 && index->integer() < static_cast<int64_t>(*inSight))
             noted.append({ static_cast<uint32_t>(index->integer()), element.value });
@@ -6094,7 +6102,9 @@ void askWhatLookupLeansOn(Walker& walker, const Draft& lookup)
                 guardsLeftOut.append(condition);
         }
     }
-    if (!guardsLeftOut.isEmpty())
+    if (isProvenStore && !guardsLeftOut.isEmpty() && findKnown(walker, KnownNote::StoresPassAbove, { }, lookup.objectOperand(), 0))
+        walker.checkPassedStores(lookup.objectOperand(), lookup.origin());
+    else if (!guardsLeftOut.isEmpty())
         walker.askGuardsAgainWhereTheyAreLeanedOn(guardsLeftOut.span(), lookup.origin());
     if (!findsNothing || walker.isUnreachable())
         return;

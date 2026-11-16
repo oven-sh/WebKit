@@ -61,31 +61,12 @@ class FakeHeap {
     WTF_MAKE_NONCOPYABLE(FakeHeap);
 public:
     FakeHeap()
+        : m_memory(usableBytes)
     {
-        constexpr uintptr_t firstOffsetInCage = static_cast<uintptr_t>(minCell32) << cell32Shift;
-        m_memory.grow(2 * usableBytes + firstOffsetInCage + MarkedBlock::atomSize);
-        uintptr_t start = WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()));
-        uintptr_t offsetInCage = start - MarkedBlockCage::baseOf(std::bit_cast<void*>(start));
-        if (offsetInCage < firstOffsetInCage)
-            start += firstOffsetInCage - offsetInCage;
-        else if (offsetInCage + usableBytes > MarkedBlockCage::maxSize)
-            start += MarkedBlockCage::maxSize - offsetInCage + firstOffsetInCage;
-        m_next = start;
-        m_end = start + usableBytes;
-        AOT_TEST_CHECK(m_end <= std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()) + m_memory.size());
-        AOT_TEST_CHECK(MarkedBlockCage::baseOf(std::bit_cast<void*>(m_next)) == MarkedBlockCage::baseOf(std::bit_cast<void*>(m_end - 1)));
     }
 
-    uintptr_t cageBase() const { return MarkedBlockCage::baseOf(std::bit_cast<void*>(m_next)); }
-
-    uint8_t* allocate(size_t size)
-    {
-        uintptr_t result = m_next;
-        m_next += WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size);
-        AOT_TEST_CHECK(m_next <= m_end);
-        zeroSpan(std::span(std::bit_cast<uint8_t*>(result), size));
-        return std::bit_cast<uint8_t*>(result);
-    }
+    uintptr_t cageBase() const { return m_memory.cageBase(); }
+    uint8_t* allocate(size_t size) { return m_memory.allocate(size); }
 
     uint64_t createCell(JSType type, uint64_t payload = 0)
     {
@@ -114,10 +95,8 @@ public:
 private:
     static constexpr size_t usableBytes = MB;
 
-    Vector<uint8_t> m_memory;
+    CageMemory m_memory;
     Vector<String> m_texts;
-    uintptr_t m_next { 0 };
-    uintptr_t m_end { 0 };
 };
 
 class FakeTable {
