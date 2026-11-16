@@ -86,6 +86,16 @@ Environment* Modules::ensureInstance(ModuleID module)
     return currentInstance(module);
 }
 
+Environment* Modules::instanceBeforePendingMock(ModuleID module) const
+{
+    ModuleID file = m_table.moduleBehindFacade(module).value_or(module);
+    if (currentInstance(module) || !isMockPending(file)) [[likely]]
+        return nullptr;
+    if (cyclesOfImports().find(file) && !m_filesVisibleToOwnFactories.get(file.index()))
+        return nullptr;
+    return lastInstance(module);
+}
+
 bool Modules::isLinkedInstance(ModuleID module, const Environment* instance) const
 {
     return instance && (instance != currentInstance(module) || m_linkedInstances.get(module.index()));
@@ -603,7 +613,7 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         ensureInstance(module);
         RETURN_IF_EXCEPTION(scope, void());
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
-            if (!link.hasLink)
+            if (!link.hasLink || instanceBeforePendingMock(link.targetModule()))
                 continue;
             ensureInstance(link.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
@@ -611,6 +621,8 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         if (hasInstances(module))
             continue;
         for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (instanceBeforePendingMock(request.targetModule())) [[unlikely]]
+                continue;
             ensureInstance(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -619,8 +631,10 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         Environment* instance = currentInstance(module);
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
             ModuleID target = link.targetModule();
-            if (link.hasLink)
-                writeField(instance, link.link, currentInstance(target));
+            if (link.hasLink) {
+                Environment* earlier = instanceBeforePendingMock(target);
+                writeField(instance, link.link, earlier ? earlier : currentInstance(target));
+            }
             if (!link.hasMock || link.isResolved)
                 continue;
             if (data(target).isUncompiledCode()) [[unlikely]] {
@@ -717,13 +731,18 @@ BitVector Modules::findModulesLinkedBefore(ModuleID root, ModuleID importer) con
     return linked;
 }
 
-void Modules::noteLinkFailure(ModuleID root, ModuleID importer)
+void Modules::noteFetchOfFailedLoad(ModuleID root)
 {
     for (size_t index : staticImportClosure(root, MockTraversal::Stop)) {
         ModuleID module(index);
         if (hasInstances(module) && status(module) <= ModuleStatus::Linked && !isMocked(module) && !wasLoadedWithGraph(module))
             m_failedLoadTestFiles.add(module, m_instance.vm->aotState().momentOfTestFile);
     }
+}
+
+void Modules::noteLinkFailure(ModuleID root, ModuleID importer)
+{
+    noteFetchOfFailedLoad(root);
     BitVector linkedBefore = findModulesLinkedBefore(root, importer);
     m_modulesBeforeLinkFailures.merge(linkedBefore);
     for (size_t index : linkedBefore) {
@@ -2325,6 +2344,7 @@ std::optional<bool> Modules::isLinkedToCurrentEntry(ModuleID importer, ModuleID 
 
 void Modules::releaseEndedMockImporters()
 {
+    m_stashesRestoredByPass.clearAll();
     if (!std::exchange(m_hasMockEnded, false)) [[likely]]
         return;
     Vector<ModuleID, 16> modules;
@@ -2555,7 +2575,7 @@ bool Modules::mayReleaseCommonJSFile(ModuleID file)
     if (!data(file).isReloadable() || status(file) != ModuleStatus::Evaluated || isEvicted(file) || isMocked(file) || activeMock(file) || hasIntactOriginal(file) || isPatchedByMock(file))
         return false;
     ModuleID facade = moduleWithExportsOf(file);
-    if (m_filesThatRanInPreload.get(file.index()) || m_loadedInPreload.get(file.index()) || m_loadedInPreload.get(facade.index()) || isAwaitedByImport(file))
+    if (m_filesThatRanInPreload.get(file.index()) || m_loadedInPreload.get(file.index()) || m_loadedInPreload.get(facade.index()) || isAwaitedByPendingImport(file))
         return false;
     if (const LoadedModule* loaded = loadedIfExists(file); loaded && loaded->isLinkedWithoutNotice)
         return false;
@@ -3354,7 +3374,7 @@ void Modules::clearUnmockedInstance(ModuleID module)
 bool Modules::tryEvictRequirerOfOriginal(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    if (!hasInstances(file) || !activeMock(file) || !m_requirersOfOwnOriginals.clear(file.index()))
+    if (!activeMock(file) || (!hasInstances(file) && !data(file).isESModuleOfProgram()) || !m_requirersOfOwnOriginals.clear(file.index()))
         return false;
     releaseImportersOf(file, ReleasedImporters::All);
     forgetUnmockedOriginal(file);

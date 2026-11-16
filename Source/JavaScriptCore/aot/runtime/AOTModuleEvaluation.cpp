@@ -928,6 +928,21 @@ bool Modules::isAwaitedByImportFromBeforeItRan(ModuleID file)
     return isAwaitedByImport(file) && !(loaded && loaded->isAwaitedByCallThatComesInLaterJob);
 }
 
+bool Modules::isAwaitedByPendingImport(ModuleID file)
+{
+    for (ModuleID moduleOrFacade : { file, m_table.facadeOf(file).value_or(file) }) {
+        if (m_modulesOfQueuedImports.get(moduleOrFacade.index()) || m_batchedFetches.containsCallOf(moduleOrFacade, fileOf(moduleOrFacade)))
+            return true;
+        bool isPending = false;
+        m_loadsInFlight.forEachOfRoot(moduleOrFacade, [&](LoadInFlight& load) {
+            isPending |= !load.isKnownToBeSettled && load.promise->status() == JSPromise::Status::Pending;
+        });
+        if (isPending)
+            return true;
+    }
+    return false;
+}
+
 bool Modules::isAwaitedByImport(ModuleID file)
 {
     for (ModuleID moduleOrFacade : { file, m_table.facadeOf(file).value_or(file) }) {
@@ -1765,8 +1780,22 @@ auto Modules::filesInOrderOfSynchronousLoad(ModuleID root, const Vector<uint32_t
 void Modules::recaptureFilesNotStoredByLoads(ModuleID root)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (const ModuleRequestData& request : m_filesMadeAndNotStored ? m_table.requests(root) : std::span<const ModuleRequestData> { }) {
+        ModuleID target = request.targetModule();
+        if (request.isRequire || request.isDeferred || !isCommonJSModuleOrFacade(target) || isMocked(fileOf(target)))
+            continue;
+        bool isMadeAndNotStored = false;
+        for (ModuleID made : { target, fileOf(target) }) {
+            ModuleRecord* record = recordIfExists(made);
+            isMadeAndNotStored |= record && record->takeIsMadeAndNotStored();
+        }
+        if (!isMadeAndNotStored)
+            continue;
+        takeExportsAnew(target);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     for (EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
-        if (load->filesNotStored.isEmpty())
+        if (load->filesNotStored.isEmpty() || load->transferredModule)
             continue;
         for (const ModuleRequestData& request : m_table.requests(root)) {
             ModuleID file = fileOf(request.targetModule());
@@ -1777,14 +1806,20 @@ void Modules::recaptureFilesNotStoredByLoads(ModuleID root)
             });
             if (!isNotStored)
                 continue;
-            if (data(request.targetModule()).isFacade()) {
-                rerunBodyOfFacade(request.targetModule());
-                RETURN_IF_EXCEPTION(scope, void());
-            }
-            recaptureExports(request.targetModule());
+            takeExportsAnew(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
+}
+
+void Modules::takeExportsAnew(ModuleID moduleOrFacade)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (data(moduleOrFacade).isFacade() && !isMocked(fileOf(moduleOrFacade))) {
+        rerunBodyOfFacade(moduleOrFacade);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, recaptureExports(moduleOrFacade));
 }
 
 void Modules::rerunBodyOfFacade(ModuleID facade)
@@ -2147,6 +2182,11 @@ void Modules::transferSynchronousLoad(EagerLoad& files)
     m_transferredSynchronousLoads.append({ files.root, Strong<JSPromise>(vm, promise) });
     runSynchronousStepsInFrontOf(fileOf(running));
     scope.assertNoException();
+    for (const EagerLoad::FileNotStored& made : files.filesNotStored) {
+        ModuleRecord* record = recordIfExists(moduleWithExportsOf(made.file));
+        if (record && made.file != fileOf(running) && isBeingFetched(moduleWithExportsOf(made.file)))
+            record->setIsMadeAndNotStored(true);
+    }
     VM::SynchronousModuleQueue* innermost = vm.synchronousModuleQueue();
     VM::SynchronousModuleQueue* queue = innermost->prev;
     while (queue && queue != files.loadQueue)
@@ -3104,6 +3144,14 @@ void Modules::runFileThatWaitsForItsTurn(ModuleID module)
     }
 }
 
+std::optional<ModuleID> Modules::facadeYetToBeEvaluated(ModuleID file) const
+{
+    if (!isCommonJSModuleOrFacade(file) || status(file) != ModuleStatus::Evaluated || isEvicted(file) || isMocked(file))
+        return std::nullopt;
+    std::optional<ModuleID> facade = m_table.facadeOf(file);
+    return facade && hasNotBegun(*facade) ? facade : std::nullopt;
+}
+
 void Modules::evaluateLoadedCommonJSFile(ModuleID module)
 {
     VM& vm = *m_instance.vm;
@@ -3129,8 +3177,13 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
     if (statusAtStart == ModuleStatus::Failed && loader()->isMakingModuleInline(moduleKey(module)))
         return;
-    if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
+    if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed) {
+        if (std::optional<ModuleID> facade = facadeYetToBeEvaluated(module)) {
+            m_filesLoadedWithoutLoader.set(facade->index());
+            RELEASE_AND_RETURN(scope, evaluateLoadedCommonJSFile(*facade));
+        }
         return;
+    }
     {
         EagerLoad eagerLoad { module, module, m_innermostEagerLoad };
         SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);
@@ -4522,14 +4575,18 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         RETURN_IF_EXCEPTION(scope, void());
         break;
     }
+    auto noteFailedRequire = makeScopeExit([&] {
+        if (reason == SynchronousEvaluationReason::Require && m_instance.vm->exceptionForInspection() && m_table.anyModuleHasInstances() && status(module) <= ModuleStatus::Linked) [[unlikely]]
+            noteFetchOfFailedLoad(module);
+    });
 
-    if (reason == SynchronousEvaluationReason::Require) {
-        recaptureFilesNotStoredByLoads(module);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
     bool hasEagerLoadCycle = reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && importsEagerlyEvaluatingModule(module);
     if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->runsBeforeLoaderSteps && (hasEagerLoadCycle || reachesEagerLoadGraph(*m_innermostEagerLoad, module))) [[unlikely]] {
         transferSynchronousLoad(*m_innermostEagerLoad);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (reason == SynchronousEvaluationReason::Require) {
+        recaptureFilesNotStoredByLoads(module);
         RETURN_IF_EXCEPTION(scope, void());
     }
     hasEagerLoadCycle &= !m_rootAwaitingLoader;

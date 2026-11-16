@@ -5275,11 +5275,17 @@ void layReferrersOfHeldReadingOver(LinkTables& tables, LinkTables& held, const P
     held.firstReferrer.fill(0, numberOfFunctions + 1);
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 static void printBreachOfClosureInLink(PrintStream& out, LinkFlow& flow, const BreachOfClosure& breach)
 {
     if (breach.node) {
         flow.describe(out, breach.node);
         out.print(" climbs from ", breach.before, " to ", breach.after);
+        if (breach.before == breach.after)
+            out.print(" (in its shadows: marks ", RawHex(breach.before.marks), " to ", RawHex(breach.after.marks), ", unknown objects in sight ", breach.before.hasDirectUnknownObjects(), " to ", breach.after.hasDirectUnknownObjects(), ", primitives in sight ", RawHex(breach.before.directPrimitives()), " to ", RawHex(breach.after.directPrimitives()), ", counts ", static_cast<unsigned>(breach.before.counts), " to ", static_cast<unsigned>(breach.after.counts), ")");
     } else {
         out.print(breach.set, " grows");
         if (breach.layout)
@@ -5333,6 +5339,10 @@ void printBreachesOfClosureOfLink(PrintStream& out, Program& program, const Thin
         }
     }
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 namespace {
 
@@ -5617,17 +5627,23 @@ static ProgramAsItIsInLink linkProgramAsItIs(Program& program, const ThinSummari
     return asItIs;
 }
 
-LinkTables linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies wrappedBodies)
+LinkBeforeEvaluation linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies wrappedBodies, FunctionsThatEvaluate&& functionsThatEvaluate)
 {
     std::unique_ptr<LinkFlow> flow = makeUniqueWithoutFastMallocCheck<LinkFlow>(flowAtStart.program, flowAtStart.summaries, flowAtStart.families, flowAtStart.looks, flowAtStart.mechanisms, flowAtStart.build, flowAtStart.orderOfWorklist());
     flow->setsDeclaredInProgram = flowAtStart.setsDeclaredInProgram;
     flow->leavesOutDirectEvals = true;
     flow->listsStoresOfWrappedBodies = wrappedBodies == WrappedBodies::StoreLikeModuleBodies;
+    flow->functionsToKeepInSight = WTF::move(functionsThatEvaluate.enteredByCallsAlone);
+    flow->functionsNotToReach = WTF::move(functionsThatEvaluate.others);
     flow->reachEntries();
     seedCellsSharedWithUnseenCode(*flow);
     flow->run();
+    if (flow->hasLetGoOfOneToKeepInSight()) {
+        bool mayContinue = !flow->hasComeToRest && !flowAtStart.build.options().checksFlowMonotonicity;
+        return { .tables = std::nullopt, .flow = mayContinue ? WTF::move(flow) : nullptr };
+    }
     flow->forgetWaysOfFlow();
-    return writeTablesOfProvingReading(flowAtStart.program, flowAtStart.mechanisms, flow);
+    return { .tables = writeTablesOfProvingReading(flowAtStart.program, flowAtStart.mechanisms, flow), .flow = nullptr };
 }
 
 static void stopWhereLinkFindsLessFromMore(Program& program, BuildContext& build, const ProgramAsItIsInLink& linkedAsItIs, const LinkTables& givenMore)
@@ -5754,8 +5770,12 @@ LinkTables link(std::unique_ptr<LinkFlow>&& flowAtStart, TurnsOfReadings* turns)
     if (asItIs && givesMoreToRunOnProgramAsItIs(build)) [[unlikely]]
         flow.isGivenMore = false;
     StepTimes steps(build, "facts"_s);
-    flow.reachEntries();
-    seedCellsSharedWithUnseenCode(flow);
+    if (flow.leavesOutDirectEvals)
+        flow.admitDirectEvals();
+    else {
+        flow.reachEntries();
+        seedCellsSharedWithUnseenCode(flow);
+    }
     steps.didFinish("Link: entries are reached"_s);
     flow.run();
     steps.didFinish("Link: the flow runs"_s);

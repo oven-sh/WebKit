@@ -1231,12 +1231,13 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     walker.chooseConservativeFields(finish);
     if (lookMayFinishBirthOf(walker, object))
         walker.build(WTF::move(finish));
-    showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
     if (walker.isUnreachable())
         return true;
 
     if (givesThis) {
-        walker.bind(call.id(), object);
+        showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
+        if (!walker.isUnreachable())
+            walker.bind(call.id(), object);
         return true;
     }
     if (ofWhatCameBack && types.isSubset(ofWhatCameBack, TypeTable::object))
@@ -1267,7 +1268,9 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     }
     walker.jumpTo(behind, singleElementSpan(objectReturned));
     walker.continueIn(takesThis);
-    walker.jumpTo(behind, singleElementSpan(object));
+    showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
+    if (!walker.isUnreachable())
+        walker.jumpTo(behind, singleElementSpan(object));
     walker.continueIn(behind);
     walker.bind(call.id(), result);
     return true;

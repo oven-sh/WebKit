@@ -1242,11 +1242,19 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
             }
         }
 #endif
+#if ENABLE(AOT)
+        auto* compiledData = dynamicDowncast<AOT::ModuleRecord>(moduleData);
+        bool mayBeMade = compiledData && compiledData->isFileYetToBeEvaluated();
+#endif
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
             modulePromise->rejectWithCaughtException(vm, scope);
             return;
         }
+#if ENABLE(AOT)
+        if (mayBeMade && modulePromise->status() == JSPromise::Status::Pending && makeModulePromise->status() == JSPromise::Status::Fulfilled && makeModulePromise->result() == JSValue(compiledData))
+            compiledData->setIsMadeAndNotStored(true);
+#endif
         makeModulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryModuleSettled, modulePromise, entry);
     } else {
         JSValue errorValue = argument1;
@@ -1265,6 +1273,10 @@ static void runModuleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm,
     auto* entry = uncheckedDowncast<ModuleRegistryEntry>(argument2);
     auto* modulePromise = uncheckedDowncast<JSPromise>(argument0);
     auto status = static_cast<JSPromise::Status>(payload);
+#if ENABLE(AOT)
+    if (auto* compiled = status == JSPromise::Status::Fulfilled ? dynamicDowncast<AOT::ModuleRecord>(argument1) : nullptr)
+        compiled->setIsMadeAndNotStored(false);
+#endif
 #if USE(BUN_JSC_ADDITIONS)
     // hostLoadImportedModule's synchronous-replay path (JSModuleLoader.cpp
     // branch `fetchPromise is Fulfilled`) may have already called

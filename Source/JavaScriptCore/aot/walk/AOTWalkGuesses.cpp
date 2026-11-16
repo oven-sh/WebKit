@@ -23242,6 +23242,10 @@ Vector<ParameterGuardPlan> planParameterGuards(Program& program, const Facts& fa
     return joinChunks<ParameterGuardPlan>(loops, WTF::move(guardsInChunks));
 }
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 static ASCIILiteral whereValueComesFromForExplanation(Walker& walker, const BodyIndex& index, ValueID source)
 {
     while (!index.isParameter(source) && inputPassThroughOpcodes.contains(index.opcodeOf(source)))
@@ -23509,6 +23513,10 @@ void explainClosedAccess(Walker& walker, const BodyValue& operation, PrintStream
         printType(line, types, key);
     out.println(line.toString());
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 bool isElementUsedInArithmetic(Walker& walker, const BodyValue& read)
 {
