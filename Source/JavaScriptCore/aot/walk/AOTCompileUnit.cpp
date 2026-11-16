@@ -402,8 +402,10 @@ static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, std
         if (parameter.opcode != Opcode::Parameter || !parameter.block() || !code.at(parameter.block()).isEntry)
             return false;
         size_t place = code.at(parameter.block()).placeOfParameter(cell);
-        TypeID arrives = place < parameters.size() ? parameters[place].seenToArrive : TypeID();
-        return arrives && !types.overlap(code.at(operand).type, arrives);
+        if (place >= parameters.size())
+            return false;
+        TypeID arrives = parameters[place].seenToArrive;
+        return parameters[place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
     });
 }
 

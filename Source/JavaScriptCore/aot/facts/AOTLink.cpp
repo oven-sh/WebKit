@@ -4305,6 +4305,7 @@ ALWAYS_INLINE void WriterOfLink::writeParameters(FunctionID id, const LinkedFunc
             TypeID seenToArrive = typeIDOf(seen);
             parameter.written = written;
             parameter.seenToArrive = typesAtHand().isUninformative(seenToArrive) ? TypeID() : seenToArrive;
+            parameter.nothingArrives = !isThis && index != restParameter && held.isNever();
             if (TypeID callbacks = !isThis && !parameter.seenToArrive && m_functionsWithNamedCallbacks.get(id.index()) ? callbackTypeByName(id, index) : TypeID()) {
                 parameter.seenToArrive = callbacks;
                 if (written && typesAtHand().isSubset(callbacks, written))

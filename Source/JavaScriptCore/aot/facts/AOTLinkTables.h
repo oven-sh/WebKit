@@ -32,6 +32,7 @@ struct LinkedParameter {
     TypeID seenToArrive;
     TypeID proven;
     bool staysAsItsClassMakesIt { false };
+    bool nothingArrives { false };
     bool isOnlyCalled { false };
     bool isCapturedWhereOnlyCalled { false };
     bool isOnlyLookedAt { false };
