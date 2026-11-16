@@ -93,6 +93,9 @@ public:
     void didLoad();
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
+    bool isFileYetToBeEvaluated();
+    void setIsMadeAndNotStored(bool);
+    bool takeIsMadeAndNotStored();
     static std::optional<ModuleID> findEvaluatingCommonJSModule(JSGlobalObject*, const Identifier& key);
     static bool isModuleBeingTransferred(JSGlobalObject*, const Identifier& key);
     static bool tryDeferLinkStep(JSGlobalObject*, const VM::SynchronousModuleTask&);
@@ -215,6 +218,7 @@ private:
     bool m_hasUnresolvableRequest { false };
     bool m_keepsToModule { false };
     bool m_wasRequireRefused { false };
+    bool m_isMadeAndNotStored { false };
     WriteBarrier<JSCell> m_moduleInstance;
 };
 

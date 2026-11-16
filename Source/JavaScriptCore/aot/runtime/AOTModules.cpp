@@ -10241,7 +10241,25 @@ void ModuleRecord::didDiscardModuleError(JSGlobalObject* globalObject, const Ide
 
 void ModuleRecord::didReplaceRecordInRegistry()
 {
-    modules().recaptureExports(m_module);
+    modules().takeExportsAnew(m_module);
+}
+
+void ModuleRecord::setIsMadeAndNotStored(bool isMadeAndNotStored)
+{
+    if (std::exchange(m_isMadeAndNotStored, isMadeAndNotStored) != isMadeAndNotStored)
+        modules().didChangeFilesMadeAndNotStored(isMadeAndNotStored);
+}
+
+bool ModuleRecord::takeIsMadeAndNotStored()
+{
+    bool wasMadeAndNotStored = m_isMadeAndNotStored;
+    setIsMadeAndNotStored(false);
+    return wasMadeAndNotStored;
+}
+
+bool ModuleRecord::isFileYetToBeEvaluated()
+{
+    return modules().isFileYetToBeEvaluated(m_module);
 }
 
 void ModuleRecord::willBeLoadedByImport()

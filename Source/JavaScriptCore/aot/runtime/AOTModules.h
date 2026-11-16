@@ -1672,6 +1672,9 @@ public:
     void runFileThatWaitsForItsTurn(ModuleID);
     bool isAskedForBehindLoadInFlight(ModuleID moduleOrFacade);
     void recaptureExports(ModuleID);
+    void takeExportsAnew(ModuleID moduleOrFacade);
+    void didChangeFilesMadeAndNotStored(bool hasOneMore) { m_filesMadeAndNotStored += hasOneMore ? 1 : -1; }
+    bool isFileYetToBeEvaluated(ModuleID moduleOrFacade) const { return isCommonJSModuleOrFacade(moduleOrFacade) && status(moduleOrFacade) != ModuleStatus::Evaluated; }
     void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID facade);
     void captureExportsAgainKeepingWhatGettersGave(ModuleID facade);
     JSObject* standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies);
@@ -3553,6 +3556,7 @@ private:
     BitVector m_modulesWithOriginalRestored;
     BitVector m_modulesWithoutTestFile;
     uint32_t m_loaderStepCount { 0 };
+    uint32_t m_filesMadeAndNotStored { 0 };
     UncheckedKeyHashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
     uint64_t m_numberOfNextLoadToGoThrough { 0 };
     void goThroughLoadsOfEarlierJobs(uint64_t endNumber);
