@@ -872,9 +872,14 @@ bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinO
     return buildMatchOnTwoWaysInResultsInParts(walker, call, WTF::move(match), WTF::move(whole), { string, *mentions, WTF::move(*groups), keepsItsPattern ? summary.groupsPresentInEveryMatch : 0, summary.numSubpatterns + 1, storesLastIndex && keepsItsPattern ? regExpObject : Reference() });
 }
 
+static uint64_t keyOfOpen(FunctionID function, ValueID open)
+{
+    return static_cast<uint64_t>(function.index()) << 32 | open.index();
+}
+
 static uint64_t keyOfOpen(const Walker& walker, ValueID open)
 {
-    return static_cast<uint64_t>(walker.currentFunction().index()) << 32 | open.index();
+    return keyOfOpen(walker.currentFunction(), open);
 }
 
 static bool isConstantMemberOf(Walker& walker, BuiltinID holder, BuiltinName name)
@@ -1323,6 +1328,21 @@ static bool stepMatchIteration(Walker& walker, const BodyValue& step, const Matc
     if (!walker.threadBranchAfter(step))
         walker.fail("a step of an iteration over matches does not walk the end of its block"_s);
     return true;
+}
+
+Reference stringOfMatchIteration(Walker& walker, FunctionID function, ValueID open, Reference regExpObject)
+{
+    std::unique_ptr<Walker::KeptForBuild>& keptByStrings = walker.keptByStrings();
+    if (!keptByStrings)
+        return { };
+    std::unique_ptr<Walker::KeptForBuild>& kept = static_cast<NotesOfStrings&>(*keptByStrings).looksAtResultsInParts;
+    if (!kept)
+        return { };
+    for (const MatchIteration& iteration : static_cast<LooksAtResultsInParts&>(*kept).matchIterations.get(keyOfOpen(function, open))) {
+        if (iteration.regExpObject == regExpObject)
+            return iteration.string;
+    }
+    return { };
 }
 
 bool walkMatchIteration(Walker& walker, const BodyValue& operation)

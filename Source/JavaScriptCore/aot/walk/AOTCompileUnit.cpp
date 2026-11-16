@@ -402,8 +402,10 @@ static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, std
         if (parameter.opcode != Opcode::Parameter || !parameter.block() || !code.at(parameter.block()).isEntry)
             return false;
         size_t place = code.at(parameter.block()).placeOfParameter(cell);
-        TypeID arrives = place < parameters.size() ? parameters[place].seenToArrive : TypeID();
-        return arrives && !types.overlap(code.at(operand).type, arrives);
+        if (place >= parameters.size())
+            return false;
+        TypeID arrives = parameters[place].seenToArrive;
+        return parameters[place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
     });
 }
 
@@ -909,20 +911,22 @@ static bool notesAreTakenOfCompileUnit(CodeRole role)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static WalkInputs withRealmOfCompileWorker(const WalkInputs& inputs, ScratchRealm* realm)
+static WalkInputs inputsOfCompileWorker(const WalkInputs& inputs, ScratchRealm* realm, CompileWorker* worker)
 {
     WalkInputs ofWorker = inputs;
     ofWorker.scratchRealm = realm;
+    ofWorker.worker = worker;
     return ofWorker;
 }
 
 CompileWorker::CompileWorker(const CompileInputs& inputs, BuildContext& build, TypeTable& types)
     : m_inputs(inputs)
     , m_build(build)
+    , m_table(types)
     , m_types(types, ArenaKeeps::UntilReset)
     , m_arena(makeUniqueWithoutFastMallocCheck<Machine::Arena>())
     , m_scratchRealm(makeUniqueWithoutFastMallocCheck<ScratchRealm>())
-    , m_walkInputs(withRealmOfCompileWorker(inputs.walk, m_scratchRealm.get()))
+    , m_walkInputs(inputsOfCompileWorker(inputs.walk, m_scratchRealm.get(), this))
     , m_keptBetweenUnits(makeUnique<KeptBetweenUnits>(m_walkInputs, m_types))
     , m_walker(makeWalker(RoomOfFormerWalker::IsLeft))
 {
@@ -1296,10 +1300,13 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         return false;
     if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function) || storesMirroredFunctionName(inputs, unit.function))
         return false;
-    if (readsScopesWhoseLivesMayHaveEnded(inputs, index))
+    bool isResumeBody = unit.role == CodeRole::SlowBody && inputs.plan.conventions().hasResumeBody(unit.function);
+    if (!isResumeBody && readsScopesWhoseLivesMayHaveEnded(inputs, index))
         return false;
-    if (inputs.options.forcesStraightCompilation)
+    if (inputs.options.forcesStraightCompilation && !isResumeBody)
         return true;
+    if (isResumeBody)
+        return !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
     if (hasReadsVerifiedAtRunTime(inputs, index))
         return false;
     if (unit.role != CodeRole::Body)
@@ -1309,15 +1316,35 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
 }
 
+static bool hasStraightStores(const WalkInputs& inputs, TypeArena& types, CodeUnit unit, const BodyIndex& index)
+{
+    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(inputs, unit, index) || readsVariableOfAnotherFileStoredFirst(inputs, unit, index))
+        return false;
+    if (unit.role == CodeRole::SlowBody && inputs.plan.conventions().hasResumeBody(unit.function))
+        return true;
+    return storesOnlyWhatFitsByItsMaking(inputs, types, index) && inputs.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty();
+}
+
+bool CompileWorker::canEmitResumeBody(FunctionID function)
+{
+    const BodyIndex* index = m_inputs.walk.facts.bodies().find(function);
+    CodeUnit unit { function, CodeRole::SlowBody };
+    if (!index || !m_inputs.walk.plan.conventions().hasResumeBody(function) || !isWrittenStraight(m_inputs.walk, unit, *index))
+        return false;
+    TypeArena types(m_table, ArenaKeeps::UntilReset);
+    if (!hasStraightStores(m_inputs.walk, types, unit, *index))
+        return false;
+    Machine::Arena arena;
+    return Typed::canEmitResumeBody(CodeGenerationWorker { m_build, types, arena }, m_inputs.generation, function, *index, m_totals);
+}
+
 std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
 {
     const BodyIndex* index = m_inputs.walk.facts.bodies().find(unit.function);
     if (!index || !isWrittenStraight(m_inputs.walk, unit, *index) || !hasStraightForm(m_inputs.generation, unit, *index))
         return std::nullopt;
     m_types.reset();
-    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index) || readsVariableOfAnotherFileStoredFirst(m_inputs.walk, unit, *index))
-        return std::nullopt;
-    if (!storesOnlyWhatFitsByItsMaking(m_inputs.walk, m_types, *index) || !m_inputs.walk.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty())
+    if (!hasStraightStores(m_inputs.walk, m_types, unit, *index))
         return std::nullopt;
     Code code;
     code.reset(unit);
@@ -1389,6 +1416,10 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     if (std::optional<CompiledCode> entry = compileEntryByHand(unit))
         return entry;
     std::optional<uint64_t> instructionsAtStart = instructionsOfCompileThreadSoFar(m_build);
+    if (unit.role == CodeRole::SlowBody && m_inputs.walk.plan.conventions().hasResumeBody(unit.function)) {
+        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::OpcodeWithoutCode, .function = unit.function });
+        return std::nullopt;
+    }
     if (!walkAndSweep(unit))
         return std::nullopt;
     std::optional<uint64_t> instructionsAfterSweep = instructionsOfCompileThreadSoFar(m_build);

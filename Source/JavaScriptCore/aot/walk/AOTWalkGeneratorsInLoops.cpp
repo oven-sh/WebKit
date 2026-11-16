@@ -55,6 +55,7 @@ struct GeneratorFunctionDescribed {
     bool isQuietBeforeInitialYield { false };
     BlockID blockOfInitialYield;
     bool hasOneWay { false };
+    std::optional<bool> isResumable;
 };
 
 struct KeptByGeneratorsInLoops final : Walker::KeptForBuild {
@@ -1807,6 +1808,25 @@ bool Walker::findReadsAfterRegion(std::span<const BlockID> region, ValueID first
         }
     }
     return true;
+}
+
+static bool isStorableInGeneratorFrame(const Type& type)
+{
+    return type.isJavaScriptValue() || (type.environment && !type.primitives);
+}
+
+bool Walker::isResumableGenerator(FunctionID generatorFunction)
+{
+    auto& functions = keptByGeneratorsInLoops(m_keptByGeneratorsInLoops).functions;
+    auto found = functions.find(generatorFunction.index());
+    const LinkTables& linked = facts().linked();
+    if (found == functions.end() || !found->value.bodyMayBeWalkedInConsumer || !m_inputs.worker || linked.standsOutsideCycles(unit()) || !linked.leadsTo(unit().function, generatorFunction))
+        return false;
+    if (found->value.isResumable)
+        return *found->value.isResumable;
+    bool isResumable = m_inputs.worker->canEmitResumeBody(generatorFunction);
+    functions.find(generatorFunction.index())->value.isResumable = isResumable;
+    return isResumable;
 }
 
 static bool mayOverrideReturnByName(const Walker& walker)
@@ -4137,11 +4157,10 @@ bool Walker::closeGeneratorTaken(const BodyValue& close)
     m_calleeAccountedFor = facts().linked().calleeAt(currentFunction(), close.id());
     IteratorCompletion completion = close.as<Opcode::IteratorClose>().completion();
     BlockID after;
-    if (const GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place]; Reference holder = walked.holderOfReturn) {
-        bool leavesAtOnce = returnsAtOnceAtYield(*m_frames[walked.frameOfGenerator].index, walked.yieldStoodAt);
+    if (m_generatorsWalkedInConsumers[place].holderOfReturn) {
         BlockID inPlace = addBlock();
         after = addBlock();
-        closeByChangedReturn(holder, completion, leavesAtOnce, inPlace, after, origin);
+        closeByChangedReturn(place, completion, inPlace, after, origin);
         continueIn(inPlace);
     }
     buildFirstReadThatCloseOfGeneratorLeavesOut(*this, origin);
@@ -4152,8 +4171,173 @@ bool Walker::closeGeneratorTaken(const BodyValue& close)
     return true;
 }
 
-void Walker::closeByChangedReturn(Reference holder, IteratorCompletion completion, bool leavesAtOnce, BlockID inPlace, BlockID after, Origin origin)
+static bool opensIteration(const BodyIndex& body, ValueID value)
 {
+    return !body.isParameter(value) && (body.opcodeOf(value) == Opcode::IteratorOpen || body.opcodeOf(value) == Opcode::ForInOpen);
+}
+
+Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, Reference state, Origin origin)
+{
+    const BodyValue opened = suspended.index->value(open);
+    const bool isEnumeration = opened.opcode() == Opcode::ForInOpen;
+    if (!isEnumeration && (opened.as<Opcode::IteratorOpen>().isDestructuring() || opened.as<Opcode::IteratorOpen>().iteratorKind() != IteratorKind::Sync))
+        return { };
+    BuilderForGenerators builder(*this, origin);
+    auto suspend = [&](SuspendedIterationKind kind, Reference subject, Reference position, Reference table = { }, bool positionIsBeforeStep = false) -> Reference {
+        if (!subject || !subject.isRecord() || !position || !position.isRecord() || (table && !table.isRecord()))
+            return { };
+        Draft operation = builder.draft(Opcode::NewSuspendedIteration);
+        operation.setSubjectOperand(subject);
+        operation.setPositionOperand(position);
+        operation.setTableOperand(table ? table : builder.undefined());
+        operation.setSuspendedKind(kind);
+        operation.setPositionIsBeforeStep(positionIsBeforeStep);
+        return builder.build(WTF::move(operation));
+    };
+    if (!state.isVirtual()) {
+        if (isEnumeration || !state.isValue())
+            return { };
+        if (loopsOverGenerators().statesOpened.contains(state.bits()))
+            return suspend(SuspendedIterationKind::State, state, builder.undefined());
+        if (Reference string = stringOfMatchIteration(*this, suspended.function, open, state))
+            return suspend(SuspendedIterationKind::Matches, string, state);
+        if (m_code.at(state.id()).opcode != Opcode::NewHeapWords)
+            return { };
+        auto word = [&](uint32_t index) {
+            Draft read = builder.draft(Opcode::GetHeapFrameWord);
+            read.setFrameOperand(state);
+            read.setIndex(index);
+            read.setValueType(TypeTable::anything);
+            return builder.build(WTF::move(read));
+        };
+        Reference iterator = word(0);
+        return suspend(SuspendedIterationKind::Protocol, iterator, word(1));
+    }
+    for (size_t place = m_generatorsWalkedInConsumers.size(); place--;) {
+        if (m_generatorsWalkedInConsumers[place].state != state)
+            continue;
+        Reference words = m_generatorsWalkedInConsumers[place].yieldStoodAt ? buildSuspendedGeneratorFrame(place, origin) : Reference();
+        if (!words)
+            return { };
+        Draft take = builder.draft(Opcode::TakeGeneratorLeftInPlace);
+        if (Reference holder = m_generatorsWalkedInConsumers[place].holderOfReturn)
+            take.setHolderOperand(holder);
+        take.setWordsOperand(words);
+        take.setFunction(m_frames[m_generatorsWalkedInConsumers[place].frameOfGenerator].function);
+        take.setIsHeldByIteration(true);
+        return suspend(SuspendedIterationKind::State, builder.build(WTF::move(take)), builder.undefined());
+    }
+    const IndexedIteration iteration = indexedIteration(state);
+    if (isEnumeration != (iteration.otherForm == IndexedIteration::OtherForm::Enumeration) || iteration.hasPrecomputedSteps || !iteration.precomputedSteps.isEmpty())
+        return { };
+    if (isEnumeration) {
+        if (!iteration.list || !iteration.list.isRecord() || !iteration.position || !iteration.position.isRecord())
+            return { };
+        Draft operation = builder.draft(Opcode::NewSuspendedEnumeration);
+        operation.setEnumeratorOperand(iteration.list);
+        operation.setPositionOperand(iteration.position);
+        return builder.build(WTF::move(operation));
+    }
+    const bool takesMatches = iteration.otherForm == IndexedIteration::OtherForm::MatchesOfRegExp;
+    if ((iteration.otherForm != IndexedIteration::OtherForm::None && !takesMatches) || iteration.isOverFlatEntries || iteration.isAsync)
+        return { };
+    auto byProtocol = [&] {
+        return iteration.state ? suspend(SuspendedIterationKind::State, iteration.state, builder.undefined()) : suspend(SuspendedIterationKind::Protocol, iteration.iterator, iteration.next);
+    };
+    auto byIndex = [&] {
+        static_assert(static_cast<uint32_t>(SuspendedIterationKind::Keys) == static_cast<uint32_t>(JSC::IterationKind::Keys) && static_cast<uint32_t>(SuspendedIterationKind::Values) == static_cast<uint32_t>(JSC::IterationKind::Values) && static_cast<uint32_t>(SuspendedIterationKind::Entries) == static_cast<uint32_t>(JSC::IterationKind::Entries));
+        if (takesMatches)
+            return suspend(SuspendedIterationKind::Matches, iteration.list, iteration.subject);
+        ValueID stepped = iteration.position && iteration.position.isValue() && m_code.at(iteration.position.id()).opcode == Opcode::Increment ? m_code.at(iteration.position.id()).operand(0) : ValueID();
+        const bool positionIsBeforeStep = stepped && !m_code.isConstant(stepped);
+        return suspend(static_cast<SuspendedIterationKind>(iteration.kind), iteration.list, positionIsBeforeStep ? Reference::value(stepped) : iteration.position, iteration.table, positionIsBeforeStep);
+    };
+    if (iteration.isProtocolOnly)
+        return byProtocol();
+    if (!iteration.hasProtocolFallback)
+        return byIndex();
+    if (!iteration.list || !iteration.list.isRecord() || !iteration.position || !iteration.position.isRecord())
+        return { };
+    BlockID steppedByProtocol = addBlock(BlockFrequency::Rare);
+    BlockID steppedByIndex = addBlock(BlockFrequency::Rare);
+    BlockID after = addBlock(BlockFrequency::Rare);
+    Reference suspendedState = addParameter(after, { }, Representation::JSValue);
+    builder.branch(builder.testType(iteration.list, TypeTable::undefined), steppedByProtocol, steppedByIndex);
+    bool isBuilt = true;
+    auto endWith = [&](Reference built) {
+        isBuilt &= !!built;
+        builder.jumpTo(after, { built ? built : builder.undefined() });
+    };
+    builder.continueIn(steppedByProtocol);
+    endWith(byProtocol());
+    builder.continueIn(steppedByIndex);
+    endWith(byIndex());
+    builder.continueIn(after);
+    return isBuilt ? suspendedState : Reference();
+}
+
+Reference Walker::buildSuspendedGeneratorFrame(size_t place, Origin origin)
+{
+    const GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place];
+    const Frame& suspended = m_frames[walked.frameOfGenerator];
+    if (!isResumableGenerator(suspended.function)) {
+        count(StatisticID::GeneratorFramesNotBuilt);
+        return { };
+    }
+    const GeneratorFrameLayout layout(facts().bodies().at(suspended.function));
+    const GeneratorFrameLayout::Suspension* suspension = layout.find(walked.yieldStoodAt);
+    RELEASE_ASSERT(suspension);
+    Vector<std::pair<uint32_t, Reference>, 8> held;
+    for (ValueID value : suspension->values) {
+        Reference reference = referenceBoundIn(suspended, value);
+        if (reference && opensIteration(*suspended.index, value)) {
+            reference = buildSuspendedIteration(suspended, value, reference, origin);
+            if (isUnreachable())
+                return { };
+        }
+        if (!reference || !reference.isRecord() || !isStorableInGeneratorFrame(m_types.at(typeOf(reference)))) {
+            count(StatisticID::GeneratorFramesNotBuilt);
+            return { };
+        }
+        held.append({ layout.wordOf(value), reference });
+    }
+
+    BuilderForGenerators builder(*this, origin);
+    Draft allocation = builder.draft(Opcode::NewHeapWords);
+    allocation.setNumberOfWords(layout.numberOfWords());
+    Reference words = builder.build(WTF::move(allocation));
+    auto store = [&](uint32_t word, Reference value) {
+        bool isScope = !!m_types.at(typeOf(value)).environment;
+        Draft put = builder.draft(isScope ? Opcode::PutHeapFrameScope : Opcode::PutHeapFrameWord);
+        put.setFrameOperand(words);
+        put.setIndex(word);
+        if (isScope)
+            put.setScopeOperand(value);
+        else {
+            put.setValueOperand(value);
+            put.setRemembersFrame(true);
+        }
+        builder.build(WTF::move(put));
+    };
+    if (words)
+        store(GeneratorFrameLayout::yieldWord, builder.integer(static_cast<int64_t>(suspension - layout.suspensions.begin())));
+    for (auto [word, value] : held) {
+        if (words && !isUnreachable())
+            store(word, value);
+    }
+    if (isUnreachable())
+        return { };
+    count(StatisticID::GeneratorFramesBuilt);
+    return words;
+}
+
+void Walker::closeByChangedReturn(size_t place, IteratorCompletion completion, BlockID inPlace, BlockID after, Origin origin)
+{
+    const GeneratorWalkedInConsumer& walked = m_generatorsWalkedInConsumers[place];
+    const Frame& suspended = m_frames[walked.frameOfGenerator];
+    const FunctionID function = suspended.function;
+    const Reference holder = walked.holderOfReturn;
+    const bool leavesAtOnce = returnsAtOnceAtYield(*suspended.index, walked.yieldStoodAt);
     BuilderForGenerators builder(*this, origin);
     Draft test(m_code.at(holder.id()).opcode == Opcode::GetGeneratorPrototype ? Opcode::IsPlainGeneratorPrototype : Opcode::IsUnmodifiedGenerator, builder.origin());
     test.setOperand(0, holder);
@@ -4161,8 +4345,13 @@ void Walker::closeByChangedReturn(Reference holder, IteratorCompletion completio
     BlockID changed = addBlock(BlockFrequency::Rare);
     builder.branch(isPlain, inPlace, changed);
     builder.continueIn(changed);
+    Reference words = buildSuspendedGeneratorFrame(place, builder.origin());
     Draft take(Opcode::TakeGeneratorLeftInPlace, builder.origin());
     take.setHolderOperand(holder);
+    if (words) {
+        take.setWordsOperand(words);
+        take.setFunction(function);
+    }
     take.setLeavesAtOnce(leavesAtOnce);
     Reference generator = builder.build(WTF::move(take));
     BlockID called = addBlock(BlockFrequency::Rare);
@@ -4171,9 +4360,11 @@ void Walker::closeByChangedReturn(Reference holder, IteratorCompletion completio
     if (completion == IteratorCompletion::Throw)
         builder.beginToDropWhatIsThrown();
     Reference method = builder.read(generator, BuiltinNames::returnKeyword);
-    BlockID isOther = addBlock(BlockFrequency::Rare);
-    builder.branch(builder.testType(method, m_types.forBuiltin(program().builtins().canonicalID(Builtins::GeneratorPrototypeReturn))), inPlace, isOther);
-    builder.continueIn(isOther);
+    if (!words) {
+        BlockID isOther = addBlock(BlockFrequency::Rare);
+        builder.branch(builder.testType(method, m_types.forBuiltin(program().builtins().canonicalID(Builtins::GeneratorPrototypeReturn))), inPlace, isOther);
+        builder.continueIn(isOther);
+    }
     BlockID isPresent = addBlock(BlockFrequency::Rare);
     builder.branch(builder.testType(method, TypeTable::nullish), after, isPresent);
     builder.continueIn(isPresent);

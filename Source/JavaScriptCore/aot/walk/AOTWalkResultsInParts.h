@@ -29,6 +29,7 @@ bool buildSplitInParts(Walker&, const CallByOneRow&);
 void walkTypesStatedOfOtherValues(Walker&, ValueID behind, ValueID call, ValueID taker);
 bool openMatchIteration(Walker&, const CallByOneRow& matchAll);
 bool walkMatchIteration(Walker&, const BodyValue&);
+Reference stringOfMatchIteration(Walker&, FunctionID, ValueID open, Reference regExpObject);
 bool namesMatchAll(Walker&, PropertyKeyID);
 bool matchesAreSteppedByExec(Walker&, StringID pattern, OptionSet<RegExpFlags>);
 bool loopTakesMatchesApart(Walker&, ValueID step);

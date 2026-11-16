@@ -2360,7 +2360,7 @@ void Modules::resetLinkedInstances(const WTF::Function<bool(const String&)>& isK
     m_modulesLinkedBeforeFailures.clear();
     m_modulesBeforeLinkFailures.clearAll();
     m_modulesWithPrivateCopy.clearAll();
-    for (uint32_t index = 0; index < m_table.size(); ++index) {
+    for (size_t index : BitVector(m_linkedInstances)) {
         ModuleID module(index);
         if (currentInstance(module) && m_linkedInstances.get(index) && status(module) <= ModuleStatus::Linked && !isKept(m_table.fullPath(module)))
             tryReleaseModule(module);
@@ -2416,6 +2416,8 @@ void Modules::releaseInstance(ModuleID module)
     }
     discardNamespace(module);
     ProgramStatics::writeVariable(m_instance, *m_table.instanceGuard(module), jsBoolean(false));
+    if (m_instance.vm->aotState().filesStartedByHost.get(module.index()))
+        m_releasedTestFiles.set(module.index());
     ++m_numberOfReleases;
     didChangeLinkState();
     m_linkedInstances.clear(module.index());

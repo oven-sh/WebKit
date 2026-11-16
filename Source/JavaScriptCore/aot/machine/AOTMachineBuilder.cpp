@@ -1069,6 +1069,8 @@ Operation* Builder::load(Opcode opcode, Type type, Operation* base, ptrdiff_t of
     result->m_payload.memory.offset = address.offset;
     result->m_payload.memory.heap = heap.index();
     result->m_flags |= machineBuilderFlagsOfLoadFrom(heap);
+    if (m_proc.traits().checksProofs && !address.base->isArgumentReg(instanceGPR) && !result->has(OperationFlag::NamesPermanentCell) && !result->has(OperationFlag::ReadsWordFilledOnce))
+        result->m_flags &= static_cast<uint16_t>(~static_cast<uint16_t>(OperationFlag::ReadsImmutableHeap));
     if (traps)
         result->m_flags |= static_cast<uint16_t>(OperationFlag::Traps);
     else {

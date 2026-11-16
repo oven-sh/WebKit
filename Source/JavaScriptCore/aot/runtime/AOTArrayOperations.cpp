@@ -114,7 +114,7 @@ static ALWAYS_INLINE bool tryFillEmptyTarget(VM& vm, JSArray* target, unsigned l
             vm.writeBarrier(target);
             return true;
         }
-        unsigned vectorLength = length | 1;
+        unsigned vectorLength = std::min<unsigned>(length | 1, MAX_STORAGE_VECTOR_LENGTH);
         StructureID oldStructureID = target->structureID();
         Structure* oldStructure = oldStructureID.decode();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);

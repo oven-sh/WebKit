@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeDescription.h"
+#include "AOTCompileUnit.h"
 #include "AOTCurrentWork.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionKinds.h"
@@ -69,6 +70,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .shouldAssumeClearUpperHalves = hasFlag(build.options().injectedFaults, Wire::FaultInjection::AssumeClearUpperHalves),
         .shouldIgnoreCollectorSpillReads = hasFlag(build.options().injectedFaults, Wire::FaultInjection::IgnoreCollectorSpillReads),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
+        .checksProofs = !!sourcesOfProofsCheckedUnder(build.options().testing),
         .features = build.targetFeatures(),
     };
 }
@@ -256,6 +258,14 @@ std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& 
     return code;
 }
 
+bool FunctionCodeGenerator::canEmitStraight(const BodyIndex& index)
+{
+    StraightEmitter emitter(m_worker.build, m_worker.types, m_inputs, m_code.unit(), index, m_records, m_worker.arena);
+    ArgumentLocations locations = m_inputs.plan.conventions().locationsOf(m_inputs.program, m_code.unit());
+    emitter.generate(m_jit, locations, 0);
+    return !emitter.hasFailed();
+}
+
 CompiledCode FunctionCodeGenerator::runEntryWrittenByHand(std::span<const QuestionOfEntry> questions, bool nobodyEnters)
 {
     CodeUnit unit = m_code.unit();
@@ -409,6 +419,17 @@ std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorke
 bool hasStraightForm(const CodeGenerationInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     return StraightEmitter::covers(inputs, unit, index);
+}
+
+bool canEmitResumeBody(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID function, const BodyIndex& index, CodeGenerationTotals& totals)
+{
+    CodeUnit unit { function, CodeRole::SlowBody };
+    if (!StraightEmitter::covers(inputs, unit, index))
+        return false;
+    Code code;
+    code.reset(unit);
+    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    return generator.canEmitStraight(index);
 }
 
 std::optional<CompiledCode> generateStraightCode(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, const BodyIndex& index, CodeGenerationTotals& totals)

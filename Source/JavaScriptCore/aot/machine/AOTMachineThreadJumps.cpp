@@ -1007,7 +1007,7 @@ ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const O
         if (isLoad(first->opcode()) && test->useCount() == 1) {
             static_assert(Load - Load8Z < 7);
             constexpr int32_t endOfOffsets = 1 << 12;
-            bool mayBeWritten = !first->has(OperationFlag::ReadsImmutableHeap);
+            bool mayBeWritten = !first->has(OperationFlag::ReadsImmutableHeap) || m_proc.traits().checksProofs;
             const Block* block = branch->owner();
             if (!first->traps() && !first->child(0)->has(OperationFlag::IsInnerPointer) && first->offset() >= 0 && first->offset() < endOfOffsets && (!mayBeWritten || (first->owner() == block && !block->writesMemory()))) {
                 wordRead = static_cast<uint16_t>(first->offset() << 4 | (first->opcode() - Load8Z + 1) << 1 | static_cast<int32_t>(mayBeWritten));
@@ -1150,6 +1150,8 @@ bool JumpThreader::storesMayWriteWordReadBy(const Block* asked, uint32_t depth) 
     constexpr unsigned mostStoresLookedAt = 32;
     if (m_storesOnWay.isEmpty() || m_storesOnWay.last().depth < depth)
         return false;
+    if (m_proc.traits().checksProofs)
+        return true;
     const Operation* word = simplifyPredicateOfBranch(asked->last()->child(0)).predicate->child(0);
     RELEASE_ASSERT(isLoad(word->opcode()));
     const HeapTree& heapTree = m_proc.heapTree();

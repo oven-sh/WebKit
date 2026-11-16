@@ -1176,7 +1176,7 @@ void Walker::mirrorStoredFunctionName(const BodyValue& store)
             continue;
         Reference object = referenceOf(store.objectOperand());
         Reference stored = referenceOf(store.valueOperand());
-        if (!object || !stored)
+        if (!object || !stored || isNeverType(m_types.withOnlyObjects(typeOf(object))))
             return;
         auto mirror = [&](Reference holder) {
             Draft put(Opcode::PutStaticField, origin);

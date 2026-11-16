@@ -112,6 +112,7 @@ private:
     uint32_t numberAmongNamesakes(uint32_t function) const WTF_REQUIRES_LOCK(m_lock);
     uint32_t numberOfFile(Vector<uint8_t>&, const ModuleTable&, ModuleID) WTF_REQUIRES_LOCK(m_lock);
     uint32_t firstFunctionOfFile(uint32_t function, ModuleID) WTF_REQUIRES_LOCK(m_lock);
+    HashOfNames hashNamesOfFile(uint32_t first, ModuleID) const WTF_REQUIRES_LOCK(m_lock);
 
     const Image& m_image;
     uint8_t* const m_code;
@@ -368,8 +369,22 @@ uint32_t OrderRecorder::numberAmongNamesakes(uint32_t function) const
     return number;
 }
 
+static void appendEntryToOrder(Vector<uint8_t>& out, const ModuleTable& modules)
+{
+    for (unsigned index = 0; index < modules.size(); ++index) {
+        const ModuleData& module = modules.data(ModuleID(index));
+        if (!module.isEntryPoint() || module.isOfLibrary() || (module.kind != ModuleKind::SourceText && module.kind != ModuleKind::CommonJs && module.kind != ModuleKind::Data))
+            continue;
+        appendTextToOrder(out, toString("E ", modules.displayPathText(ModuleID(index))));
+        out.append('\n');
+        return;
+    }
+}
+
 uint32_t OrderRecorder::numberOfFile(Vector<uint8_t>& out, const ModuleTable& modules, ModuleID module)
 {
+    if (m_numbersOfFiles.isEmpty())
+        appendEntryToOrder(out, modules);
     String path = modules.displayPathText(module);
     auto added = m_numbersOfFiles.add(path, m_numbersOfFiles.size());
     if (added.isNewEntry) {
@@ -397,6 +412,19 @@ uint32_t OrderRecorder::firstFunctionOfFile(uint32_t function, ModuleID module)
     return first;
 }
 
+HashOfNames OrderRecorder::hashNamesOfFile(uint32_t first, ModuleID module) const
+{
+    HashOfNames hash;
+    for (uint32_t function = first + 1; function < m_bodies.size(); ++function) {
+        std::optional<SourcePosition> definition = definitionOf(function);
+        if (definition && definition->source != module)
+            break;
+        if (definition)
+            hash.add(byteCast<uint8_t>(writtenFunctionName(FunctionID(function)).utf8().span()));
+    }
+    return hash;
+}
+
 void OrderRecorder::appendLineForUnit(Vector<uint8_t>& out, const ModuleTable& modules, uint32_t unit)
 {
     UnitName name = nameUnit(unit);
@@ -416,8 +444,18 @@ void OrderRecorder::appendLineForUnit(Vector<uint8_t>& out, const ModuleTable& m
         definition = definitionOf(--other);
 
     StringPrintStream line;
-    if (definition)
-        line.print("F ", numberOfFile(out, modules, definition->source), " ", function - firstFunctionOfFile(function, definition->source), " ", name.kind, name.rank, " - ", definition->lineColumn.line, ":", definition->lineColumn.column, " ");
+    if (definition) {
+        uint32_t number = function - firstFunctionOfFile(function, definition->source);
+        line.print("F ", numberOfFile(out, modules, definition->source), " ", number, " ", name.kind, name.rank, " ");
+        HashOfNames hash;
+        if (!number)
+            hash = hashNamesOfFile(function, definition->source);
+        if (hash.isEmpty())
+            line.print("-");
+        else
+            line.print(hash.value());
+        line.print(" ", definition->lineColumn.line, ":", definition->lineColumn.column, " ");
+    }
     else if (hasBody(function))
         line.print("F - ", numberAmongNamesakes(function), " ", name.kind, name.rank, " - 0:0 ");
     else
