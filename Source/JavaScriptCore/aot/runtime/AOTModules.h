@@ -1028,12 +1028,15 @@ public:
     void didTakeFirstHostImportStep(JSPromise*);
     bool isMockUnseen(ModuleID module) const { return m_unseenMocks.get(fileOf(module).index()); }
     bool isEvictedWithOriginal(ModuleID) const;
+    bool wasActualKeyFetched(ModuleID file) const;
     void willEndMocksOfTestFile() { m_originalsRestoredAfterPass.emplace(); }
     void didEndMocksOfTestFile() { m_originalsRestoredAfterPass = std::nullopt; }
     void willRestoreOriginal(ModuleID module)
     {
         if (m_originalsRestoredAfterPass && hasIntactOriginal(module) && !isEvictedWithOriginal(module))
             m_originalsRestoredAfterPass->set(module.index());
+        if (m_originalsRestoredAfterPass && !wasActualKeyFetched(fileOf(module)))
+            m_stashesRestoredByPass.set(fileOf(module).index());
     }
     bool takeUnseenMock(ModuleID module) { return m_unseenMocks.clear(fileOf(module).index()); }
     bool takeReleaseUnderPendingPatch(ModuleID);
@@ -3322,6 +3325,7 @@ private:
             m_originalsFetchedByTestFiles.set(fileOf(module).index());
     }
     std::optional<BitVector> m_originalsRestoredAfterPass;
+    BitVector m_stashesRestoredByPass;
     BitVector m_requirersOfOwnOriginals;
     BitVector m_originalsRequiredByFactories;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;

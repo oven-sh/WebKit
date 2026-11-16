@@ -2325,6 +2325,7 @@ std::optional<bool> Modules::isLinkedToCurrentEntry(ModuleID importer, ModuleID 
 
 void Modules::releaseEndedMockImporters()
 {
+    m_stashesRestoredByPass.clearAll();
     if (!std::exchange(m_hasMockEnded, false)) [[likely]]
         return;
     Vector<ModuleID, 16> modules;
