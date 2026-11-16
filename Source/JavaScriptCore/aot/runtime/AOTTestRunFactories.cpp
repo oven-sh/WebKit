@@ -1347,9 +1347,14 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
         return false;
     evaluateModulesOwedBelow(module);
     RETURN_IF_EXCEPTION(scope, false);
-    scope.release();
-    if (m_modulesWithPendingMock.isEmpty()) [[likely]]
+    auto noteRequest = [&] {
+        if (data(module).isESModuleOfProgram() && wasActiveMockEntryRemoved(module))
+            noteImportUnderMockInPlace(module);
+    };
+    if (m_modulesWithPendingMock.isEmpty()) [[likely]] {
+        noteRequest();
         return false;
+    }
     bool isAskedForByImportCall = m_instance.vm->aotState().importFrameInLoader;
     if (isAskedForByImportCall)
         clearCachedMockError(module);
@@ -1357,7 +1362,11 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
     SetForScope moduleBeingFetched(m_moduleBeingFetched, loadOfFetch(module));
     bool wasFetchedForStatement = m_statementFetchesDelayedByTick.get(module.index());
     m_statementFetchesDelayedByTick.clear(module.index());
-    return runMocksInGraph(module, wasFetchedForStatement || (!isAskedForByImportCall && isFetchedForImportStatement(module)) ? LoadRootKind::ImportStatement : LoadRootKind::StartsLoad);
+    bool hasCalledWaitingFactory = runMocksInGraph(module, wasFetchedForStatement || (!isAskedForByImportCall && isFetchedForImportStatement(module)) ? LoadRootKind::ImportStatement : LoadRootKind::StartsLoad);
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!hasCalledWaitingFactory)
+        noteRequest();
+    return hasCalledWaitingFactory;
 }
 
 void Modules::willFetchAfterTick(ModuleID module)
