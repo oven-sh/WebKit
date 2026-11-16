@@ -1787,6 +1787,7 @@ public:
     bool wasImportedDuringEvaluation(ModuleID file) const;
     bool loaderHasFileThatThrew(ModuleID file);
     bool isAwaitedByImport(ModuleID file);
+    bool isAwaitedByPendingImport(ModuleID file);
     bool isAwaitedByImportFromBeforeItRan(ModuleID file);
     void dropErrorOfFile(ModuleID moduleOrFacade);
     void didDiscardModuleError(const Identifier& key);

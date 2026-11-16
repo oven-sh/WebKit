@@ -2555,7 +2555,7 @@ bool Modules::mayReleaseCommonJSFile(ModuleID file)
     if (!data(file).isReloadable() || status(file) != ModuleStatus::Evaluated || isEvicted(file) || isMocked(file) || activeMock(file) || hasIntactOriginal(file) || isPatchedByMock(file))
         return false;
     ModuleID facade = moduleWithExportsOf(file);
-    if (m_filesThatRanInPreload.get(file.index()) || m_loadedInPreload.get(file.index()) || m_loadedInPreload.get(facade.index()) || isAwaitedByImport(file))
+    if (m_filesThatRanInPreload.get(file.index()) || m_loadedInPreload.get(file.index()) || m_loadedInPreload.get(facade.index()) || isAwaitedByPendingImport(file))
         return false;
     if (const LoadedModule* loaded = loadedIfExists(file); loaded && loaded->isLinkedWithoutNotice)
         return false;

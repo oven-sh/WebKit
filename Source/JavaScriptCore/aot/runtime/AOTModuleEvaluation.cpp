@@ -927,6 +927,21 @@ bool Modules::isAwaitedByImportFromBeforeItRan(ModuleID file)
     return isAwaitedByImport(file) && !(loaded && loaded->isAwaitedByCallThatComesInLaterJob);
 }
 
+bool Modules::isAwaitedByPendingImport(ModuleID file)
+{
+    for (ModuleID moduleOrFacade : { file, m_table.facadeOf(file).value_or(file) }) {
+        if (m_modulesOfQueuedImports.get(moduleOrFacade.index()) || m_batchedFetches.containsCallOf(moduleOrFacade, fileOf(moduleOrFacade)))
+            return true;
+        bool isPending = false;
+        m_loadsInFlight.forEachOfRoot(moduleOrFacade, [&](LoadInFlight& load) {
+            isPending |= !load.isKnownToBeSettled && load.promise->status() == JSPromise::Status::Pending;
+        });
+        if (isPending)
+            return true;
+    }
+    return false;
+}
+
 bool Modules::isAwaitedByImport(ModuleID file)
 {
     for (ModuleID moduleOrFacade : { file, m_table.facadeOf(file).value_or(file) }) {
