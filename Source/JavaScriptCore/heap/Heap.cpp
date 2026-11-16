@@ -49,6 +49,7 @@
 #include "GCSegmentedArrayInlines.h"
 #include "GCTypeMap.h"
 #include "GigacageAlignedMemoryAllocator.h"
+#include "HeapCompactionSlots.h"
 #include "HasOwnPropertyCache.h"
 #include "HeapIterationScope.h"
 #include "HeapProfiler.h"
@@ -829,10 +830,13 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     }
     reconcileWeakReferencesInMarkedCells<StructureRareData>(structureRareDataSpace, collectionScope);
     reconcileWeakReferencesInMarkedCells<UnlinkedFunctionExecutable>(unlinkedFunctionExecutableSpaceAndSet.set, collectionScope);
-    if (m_weakSetSpace)
-        reconcileWeakReferencesInMarkedCells<JSWeakSet>(*m_weakSetSpace, collectionScope);
-    if (m_weakMapSpace)
-        reconcileWeakReferencesInMarkedCells<JSWeakMap>(*m_weakMapSpace, collectionScope);
+    {
+        HeapCompactionSlots::WillBeRecorded willBeRecorded;
+        if (m_weakSetSpace)
+            reconcileWeakReferencesInMarkedCells<JSWeakSet>(*m_weakSetSpace, collectionScope);
+        if (m_weakMapSpace)
+            reconcileWeakReferencesInMarkedCells<JSWeakMap>(*m_weakMapSpace, collectionScope);
+    }
     if (m_weakObjectRefSpace)
         reconcileWeakReferencesInMarkedCells<JSWeakObjectRef>(*m_weakObjectRefSpace, collectionScope);
     if (m_errorInstanceSpace)

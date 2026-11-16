@@ -137,6 +137,7 @@ public:
 private:
     class CollectorThread;
     friend class Heap;
+    friend class HeapCompaction;
     friend class MarkStackMergingConstraint;
     friend class SlotVisitor;
     friend class VerifierSlotVisitor;

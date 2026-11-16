@@ -92,6 +92,7 @@ public:
 
     void fillVector(Vector<T>&);
     void clear();
+    void zeroUnusedCapacity();
 
     typedef GCSegmentedArrayIterator<T> iterator;
     iterator begin() const { return GCSegmentedArrayIterator<T>(m_segments.head(), m_top); }

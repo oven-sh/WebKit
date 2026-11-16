@@ -314,6 +314,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, evacuateAuxiliaryBlocksAfterEveryFullCollection, false, Normal, "testing: evacuate every Auxiliary block after each full collection, wherever the mutator happens to be, and scribble the old copies"_s) \
     v(Bool, poisonDecommittedMarkedBlockPages, false, Normal, "testing: make any read of a decommitted MarkedBlock page before the block's next sweep to a free list fail (ASan poison; without ASan a 0xbd fill)"_s) \
     v(Bool, decommitUnusedMarkedBlockPagesAfterEdenCollections, false, Normal, "also do it for blocks swept after an eden collection (mostly young blocks that are refilled straight away)") \
+    v(Bool, useHeapCompaction, false, Normal, "HeapCompaction::collectAndCompact moves cells"_s) \
+    v(Bool, verboseHeapCompaction, false, Normal, "testing: say what keeps blocks in place, and scribble the ones that were emptied"_s) \
+    v(Double, secondsBetweenForcedHeapCompactions, 0, Normal, "testing: the embedder compacts this often, whether or not the program is idle"_s) \
+    v(Double, maximumOccupancyForHeapCompaction, 0.97, Normal, "a block that is fuller than this is not emptied"_s) \
     v(Bool, releaseIdleRegExpCodeWhenShrinkingFootprint, false, Normal, "VM::shrinkFootprintNow(KeepCodeInUse) also drops the compiled code of RegExps that have not matched since the last full collection began"_s) \
     v(Double, sizeClassProgression, 1.4, Normal, nullptr) \
     v(Unsigned, preciseAllocationCutoff, 100000, Normal, nullptr) \

@@ -27,6 +27,7 @@
 #include "config.h"
 #include "WeakMapImpl.h"
 
+#include "HeapCompactionSlots.h"
 #include "AuxiliaryBarrierInlines.h"
 #include "JSCJSValueInlines.h"
 #include "SlotVisitorInlines.h"
@@ -89,6 +90,11 @@ template<typename Visitor>
 ALWAYS_INLINE void WeakMapImpl<BucketType>::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 {
     static_assert(std::is_same<BucketType, WeakMapBucket<WeakMapBucketDataKeyValue>>::value);
+
+    if constexpr (std::is_same_v<Visitor, AbstractSlotVisitor>) {
+        if (HeapCompactionSlots::areRecordedBy(visitor))
+            return;
+    }
 
     auto* thisObject = uncheckedDowncast<WeakMapImpl>(cell);
     auto* buffer = thisObject->buffer();

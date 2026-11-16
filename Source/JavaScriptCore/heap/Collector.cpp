@@ -29,6 +29,7 @@
 #include "CodeBlock.h"
 #include "CodeBlockSetInlines.h"
 #include "CollectorInlines.h"
+#include "HeapCompaction.h"
 #include "HeapHelperPool.h"
 #include "HeapInlines.h"
 #include "HeapVerifier.h"
@@ -851,7 +852,9 @@ void Collector::endCollectionInEachHeap(GCConductor conn)
     forEachHeap([&](Heap& heap) {
         assertIsConductorWithWorldStopped(conn);
         heap.verifyHeapAfterMarking();
+        HeapCompaction::willPruneDeadReferences(*this, heap, conn == GCConductor::Mutator);
         heap.pruneDeadReferences();
+        HeapCompaction::didPruneDeadReferences(*this, heap);
         heap.prepareForAllocation();
         heap.didFinishCollection();
     });

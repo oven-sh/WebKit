@@ -128,20 +128,37 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
     return untestedCell(context, id);
 }
 
+static std::span<const uint8_t> topDirectoryOfProgramFile(const Program& program, ModuleID id)
+{
+    if (!id || program.at(id).kind == ModuleKind::RuntimeSource || program.at(id).flags.contains(ModuleFlags::IsLibrary) || !program.at(id).displayPath)
+        return { };
+    std::span<const uint8_t> path = program.string(program.at(id).displayPath);
+    auto slash = std::ranges::find(path, '/');
+    return slash == path.end() || path[0] == '.' ? std::span<const uint8_t> { } : path.first(slash - path.begin());
+}
+
 bool GuardEmitter::mayMeetObjectOfOtherInstance(LayoutSetID tested)
 {
-    if (!build().options().assumesSeparateRealms() || isLibraryCode(m_program, function()))
+    if (!build().options().assumesSeparateRealms())
         return true;
-    auto topDirectoryOf = [&](ModuleID id) {
-        StringID path = m_program.at(id).displayPath;
-        std::span<const uint8_t> text = path ? m_program.string(path) : std::span<const uint8_t> { };
-        auto slash = std::ranges::find(text, '/');
-        return text.first(slash == text.end() ? 0 : slash - text.begin());
-    };
-    std::span<const uint8_t> topDirectory = topDirectoryOf(function().module);
-    return types().layoutSets().at(tested).anyOf([&](LayoutID id) {
-        ModuleID module = m_program.at(id).module;
-        return !module || m_program.at(module).kind == ModuleKind::RuntimeSource || m_program.at(module).flags.contains(ModuleFlags::IsLibrary) || !equalSpans(topDirectoryOf(module), topDirectory);
+    if (!m_topDirectoryOfUnit) {
+        std::span<const uint8_t> directory = isLibraryCode(m_program, function()) ? std::span<const uint8_t> { } : topDirectoryOfProgramFile(m_program, function().module);
+        std::span<const InlineFrame> frames = m_code.inlineFrames();
+        bool holdsCodeFromElsewhere = std::ranges::any_of(frames, [&](const InlineFrame& frame) {
+            if (!frame.callee)
+                return true;
+            const Function& callee = m_program.at(frame.callee);
+            if (!isLibraryCode(m_program, callee))
+                return !equalSpans(topDirectoryOfProgramFile(m_program, callee.module), directory);
+            const InlineFrame* outer = &frame;
+            while (!outer->calledBuiltin && outer != frames.data())
+                outer = &frames[outer->parent];
+            return !outer->calledBuiltin || m_program.builtins().at(outer->calledBuiltin).origin != BuiltinOrigin::Engine;
+        });
+        m_topDirectoryOfUnit = holdsCodeFromElsewhere ? std::span<const uint8_t> { } : directory;
+    }
+    return m_topDirectoryOfUnit->empty() || types().layoutSets().at(tested).anyOf([&](LayoutID id) {
+        return !equalSpans(topDirectoryOfProgramFile(m_program, m_program.at(id).module), *m_topDirectoryOfUnit);
     });
 }
 

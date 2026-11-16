@@ -14,6 +14,7 @@
 #include <span>
 #include <wtf/Forward.h>
 #include <wtf/Noncopyable.h>
+#include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -32,6 +33,7 @@ struct Instance;
 namespace HeapHooks {
 
 void finalize(VM&, CollectionScope);
+void forEachTableSpan(VM&, NOESCAPE const ScopedLambda<void(const void* begin, const void* end)>&);
 void willWorkOnThisThread(VM&);
 void didChangeBarrierThreshold(VM&, unsigned threshold, bool mutatorShouldBeFenced);
 void willAnalyzeHeap(VM&);

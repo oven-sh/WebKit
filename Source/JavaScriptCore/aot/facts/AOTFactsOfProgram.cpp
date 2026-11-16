@@ -4072,7 +4072,8 @@ public:
 private:
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const;
     ReasonBuiltinStaysOpen reasonNoLockHolds() const;
-    ReasonBuiltinStaysOpen reasonToLeaveOpenUnder(BuiltinID canonicalHolder, PropertyKeyID, bool isLockedForProduct, const BitVector& lost) const;
+    enum class WritesUnderAnyName : bool { MayHit, Miss };
+    ReasonBuiltinStaysOpen reasonToLeaveOpenUnder(BuiltinID canonicalHolder, PropertyKeyID, bool isLockedForProduct, const BitVector& lost, WritesUnderAnyName = WritesUnderAnyName::MayHit) const;
     void closeOverNamesReadThroughLostBuiltins(BitVector&) const;
     void carryOut(BuiltinID canonical, bool onlyWhatLiesOnIt, bool isByFileOfProduct);
     bool runsCodeThatNoLockIsLaidBeside(BuiltinID canonical, bool mayPassOptionThatRunsCode) const;
@@ -4383,7 +4384,7 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
     bool isAssumedLocked = m_assumesLocks && m_builtins.at(member).origin == BuiltinOrigin::Engine && value.origin == BuiltinOrigin::Engine
         && !m_builtins.isUnder(member, Builtins::Console) && m_builtins.canonicalID(member) != m_builtins.canonicalID(Builtins::Console)
         && (value.kind == BuiltinKind::Function || value.kind == BuiltinKind::Method || value.kind == BuiltinKind::Constructor || value.kind == BuiltinKind::Namespace);
-    if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None && !isAssumedLocked)
+    if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None)
         return reason;
     BuiltinID canonical = m_builtins.canonicalID(member);
     if (m_source.isUnlocked(member) || m_source.isUnlocked(canonical))
@@ -4392,9 +4393,7 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
     if (m_isWritten.quickGet(member.index()) || m_isWritten.quickGet(canonical.index()) || m_lookups.membersWritten.get(member.index()))
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
-    if (isAssumedLocked)
-        return ReasonBuiltinStaysOpen::None;
-    return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost);
+    return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost, isAssumedLocked ? WritesUnderAnyName::Miss : WritesUnderAnyName::MayHit);
 }
 
 bool WritesOnBuiltinsInProgramFacts::canLockAbsentName(BuiltinID canonicalHolder, PropertyKeyID key) const
@@ -4405,15 +4404,16 @@ bool WritesOnBuiltinsInProgramFacts::canLockAbsentName(BuiltinID canonicalHolder
     return isLockedAtStartUp && isPrototypeWithTrackedNames(m_builtins, canonicalHolder) && isTextThatIsNoIndex && !m_source.admitsReplacedBuiltins && m_locksAreLaid && m_refused.codeOutsideImage;
 }
 
-ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(BuiltinID holder, PropertyKeyID key, bool isLockedForProduct, const BitVector& lost) const
+ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(BuiltinID holder, PropertyKeyID key, bool isLockedForProduct, const BitVector& lost, WritesUnderAnyName writesUnderAnyName) const
 {
-    if (m_isWrittenUnderAnyName.quickGet(holder.index()) || m_lookups.holdersWrittenUnderAnyName.get(holder.index()))
+    const bool anyNameMayHit = writesUnderAnyName == WritesUnderAnyName::MayHit;
+    if (anyNameMayHit && (m_isWrittenUnderAnyName.quickGet(holder.index()) || m_lookups.holdersWrittenUnderAnyName.get(holder.index())))
         return ReasonBuiltinStaysOpen::HolderIsWrittenUnderAnyName;
     bool isWrittenThroughLostBuiltins = isLockedForProduct
-        ? m_lookups.writesUnderAnyNameThroughLostBuiltinsBesideProduct || (key && m_lookups.namesWrittenThroughLostBuiltinsBesideProduct.get(key.index()))
-        : m_lookups.writesUnderAnyNameThroughLostBuiltins || (key && m_lookups.namesWrittenThroughLostBuiltins.get(key.index()));
+        ? (anyNameMayHit && m_lookups.writesUnderAnyNameThroughLostBuiltinsBesideProduct) || (key && m_lookups.namesWrittenThroughLostBuiltinsBesideProduct.get(key.index()))
+        : (anyNameMayHit && m_lookups.writesUnderAnyNameThroughLostBuiltins) || (key && m_lookups.namesWrittenThroughLostBuiltins.get(key.index()));
     bool isNamedThroughUnseen = key && (isLockedForProduct ? m_lookups.namesWrittenThroughUnseenBesideProduct : m_lookups.namesWrittenThroughUnseenByProgram).get(key.index());
-    bool isWrittenThroughUnseen = isNamedThroughUnseen || (isLockedForProduct ? m_lookups.writesUnderAnyNameThroughUnseenBesideProduct : m_lookups.writesUnderAnyNameThroughUnseenByProgram);
+    bool isWrittenThroughUnseen = isNamedThroughUnseen || (anyNameMayHit && (isLockedForProduct ? m_lookups.writesUnderAnyNameThroughUnseenBesideProduct : m_lookups.writesUnderAnyNameThroughUnseenByProgram));
     if (lost.quickGet(holder.index())) {
         if (isWrittenThroughLostBuiltins)
             return ReasonBuiltinStaysOpen::IsWrittenThroughLostBuiltins;
@@ -4424,7 +4424,7 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(Bu
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
     if (!isLockedForProduct && key && m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) && m_builtins.at(holder).origin == BuiltinOrigin::Host && m_builtins.at(holder).kind == BuiltinKind::Prototype)
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
-    if ((isLockedForProduct ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
+    if (anyNameMayHit && (isLockedForProduct ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
         return ReasonBuiltinStaysOpen::HolderIsLetGoByProgram;
     return ReasonBuiltinStaysOpen::None;
 }

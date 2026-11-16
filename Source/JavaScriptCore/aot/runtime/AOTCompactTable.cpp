@@ -437,6 +437,18 @@ void CompactTable::fillIndex(uint32_t count)
     });
 }
 
+void CompactTable::didMoveKeys()
+{
+    if (!isLive() || isInImage())
+        return;
+    if (slotKind() != SlotKind::Tag)
+        zeroSpan(std::span { at<uint8_t>(offsetOfIndex()), offsetOfKeys() - offsetOfIndex() });
+    for (uint32_t entry = 0; entry < m_used; ++entry) {
+        if (JSValue key = uncheckedKeyAt(entry))
+            addToIndex(entry, hashOfStoredKey(key));
+    }
+}
+
 template<typename KeyWord, typename Word>
 static uint32_t copyColumnOfAliveEntries(const KeyWord* keys, uint32_t used, const Word* from, Word* to)
 {

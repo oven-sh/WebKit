@@ -21,10 +21,12 @@
 #include "AOTModuleNamespace.h"
 #include "AOTOperationArguments.h"
 #include "AOTOperationScope.h"
+#include "AOTOrderRecorder.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
 #include "AOTProgramStrings.h"
 #include "AOTRealmStartup.h"
+#include "AOTRemovableFeature.h"
 #include "AOTRuntimeCheckFailure.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTRuntimeTable.h"
@@ -6354,7 +6356,7 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
     VM& vm = *m_instance.vm;
     if (data(root).isLoadedByLoader() || m_moduleWithDeferredJobs || m_rootAwaitingLoader == root || !m_queuedFetches.isEmpty())
         return true;
-    if (isEntryPointOfRealm(root) || isTimingOfModuleLoadsRelaxed())
+    if (isEntryPointOfRealm(root) || (isTimingOfModuleLoadsRelaxed() && !m_rootAwaitingLoader))
         return false;
     if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
@@ -6896,18 +6898,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsNamespaceOfModule, size_t, (JSCe
 JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* instance, uint32_t module, EncodedJSValue options, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTImportModule);
+    if (isRecordingOrder()) [[unlikely]]
+        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &recordRequestOfModule>(module);
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer), JSValue::decode(options))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireModule);
+    if (isRecordingOrder()) [[unlikely]]
+        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &recordRequestOfModule>(module);
     OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).require(ModuleID(module), ModuleID(referrer))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireModuleWithRequirer, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer, EncodedJSValue requirerObject))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireModuleWithRequirer);
+    if (isRecordingOrder()) [[unlikely]]
+        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &recordRequestOfModule>(module);
     Modules& modules = modulesOf(*instance);
     OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer), Modules::RequiredBy::Referrer, modules.findStaleRequirerObject(ModuleID(referrer), JSValue::decode(requirerObject)))));
 }

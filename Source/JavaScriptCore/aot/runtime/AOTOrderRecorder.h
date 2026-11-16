@@ -17,7 +17,8 @@ JS_EXPORT_PRIVATE bool recordsOrder();
 JS_EXPORT_PRIVATE ASCIILiteral startOrderRecording(const char* path);
 JS_EXPORT_PRIVATE void finishOrderRecording();
 JS_EXPORT_PRIVATE bool isRecordingOrder();
-void recordUseOfRegExp(StringView pattern, uint16_t significantFlags);
+void recordUseOfRegExp(StringView pattern, uint16_t significantFlags, bool isInImage);
+void recordRequestOfModule(uint32_t module);
 
 } } // namespace JSC::AOT
 

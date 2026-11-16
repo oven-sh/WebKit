@@ -97,6 +97,8 @@ private:
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);
     void branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTargets);
+
+    std::optional<std::span<const uint8_t>> m_topDirectoryOfUnit;
 };
 
 } } } // namespace JSC::AOT::Typed

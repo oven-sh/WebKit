@@ -28,6 +28,7 @@
 
 #include "AlignedMemoryAllocator.h"
 #include "FreeListInlines.h"
+#include "FastMallocAlignedMemoryAllocator.h"
 #include "JSCJSValueInlines.h"
 #include "MarkedBlockInlines.h"
 #include "StructureAlignedMemoryAllocator.h"
@@ -95,6 +96,9 @@ MarkedBlock::Handle::~Handle()
 #if ASAN_ENABLED
     unpoisonCells();
 #endif
+    // HeapCompaction takes what it finds in the memory of the allocator for references.
+    if (Options::useHeapCompaction() && m_alignedMemoryAllocator == heap.fastMallocAllocator.get())
+        zeroSpan(std::span { static_cast<uint8_t*>(start()), static_cast<uint8_t*>(end()) });
     m_block->~MarkedBlock();
     m_alignedMemoryAllocator->freeAlignedMemory(m_block);
     heap.didFreeBlock(blockSize);
@@ -507,6 +511,26 @@ size_t MarkedBlock::markCount()
 void MarkedBlock::clearHasAnyMarked()
 {
     header().m_biasedMarkCount = header().m_markCountBias;
+}
+
+void MarkedBlock::didMoveCellIn(const void* cell)
+{
+    header().m_marks.set(atomNumber(cell));
+    noteMarked();
+}
+
+void MarkedBlock::didMoveEveryCellOut()
+{
+    header().m_marks.clearAll();
+    clearHasAnyMarked();
+    // The next cell to be marked here has to tell the directory.
+    header().m_markingVersion = MarkedSpace::nullVersion;
+    BlockDirectory* directory = handle().directory();
+    directory->assertWorldIsStopped();
+    directory->setIsMarkingNotEmpty(handle().index(), false);
+    directory->setIsMarkingRetired(handle().index(), false);
+    directory->setIsEmpty(handle().index(), true);
+    directory->setIsCanAllocate(handle().index(), true);
 }
 
 void MarkedBlock::noteMarkedSlow()

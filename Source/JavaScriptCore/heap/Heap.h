@@ -770,6 +770,7 @@ private:
     friend class Collector;
     friend class DeferGC;
     friend class DeferGCForAWhile;
+    friend class HeapCompaction;
     friend class HeapUtil;
     friend class MarkStackMergingConstraint;
     friend class MarkedSpace;

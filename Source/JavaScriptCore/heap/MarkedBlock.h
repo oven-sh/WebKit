@@ -446,6 +446,10 @@ public:
     size_t cellSizeInHeader();
     CellAttributes attributes() const;
 
+    // For HeapCompaction: after marking, with the world stopped.
+    void didMoveCellIn(const void*);
+    void didMoveEveryCellOut();
+
     bool hasAnyMarked() const;
     inline void noteMarked();
 #if ASSERT_ENABLED

@@ -139,6 +139,7 @@ struct RegExpCompilerInputs {
     const AssemblerPolicy& assemblerPolicy;
     BuildContext* context;
     RegExpCodeFor16BitSubjects codeFor16BitSubjects { RegExpCodeFor16BitSubjects::Always };
+    bool isLeftToInterpreter { false }; // Which is where the recorder of an order file sees it.
 };
 
 JS_EXPORT_PRIVATE CompiledRegExp compileRegExp(const RegExpCompilerInputs&);

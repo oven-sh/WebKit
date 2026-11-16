@@ -482,7 +482,7 @@ void RegExp::countBytecodeCompilation(VM& vm, BytecodeIsFor purpose) const
     if (const AOT::ImageRegExp* record = imageRecord())
         AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsCompiledToBytecode : AOT::RuntimeCounterID::PredictedRegExpsCompiledToBytecode);
     if (AOT::isRecordingOrder()) [[unlikely]]
-        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &AOT::recordUseOfRegExp>(StringView(m_patternString), AOT::ImageRegExp::significantFlags(m_flags).toRaw());
+        callRemovable<RemovableFeature::OrderRecorder, RemovedFeatureStub::Abort, &AOT::recordUseOfRegExp>(StringView(m_patternString), AOT::ImageRegExp::significantFlags(m_flags).toRaw(), !!imageRecord());
 }
 #endif
 
