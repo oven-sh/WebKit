@@ -652,6 +652,7 @@ public:
     BitVector m_modulesToReleaseAfterEvaluation;
     BitVector m_modulesToReleaseAtNextTestFile;
     bool wasReleasedByLoader(ModuleID module) const { return m_modulesReleasedByLoader.get(module.index()); }
+    void letGoUntilEndOfTestFile(ModuleID module) { m_modulesReleasedByLoader.set(module.index()); }
     void releaseFailedESModules(std::optional<ModuleID> patched);
     void clearFailedCommonJSFiles();
     void willFetchESModules(ModuleID root);

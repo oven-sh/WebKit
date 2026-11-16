@@ -411,6 +411,7 @@ JS_EXPORT_PRIVATE bool didMockFailForImportStatement(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willFetchAfterTick(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didResumeFetchAfterFactory(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool wasReleasedByLoader(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void letGoUntilEndOfTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasInstances(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void tellIfMockedBelowImport(JSGlobalObject*, ModuleID file, std::optional<ModuleID> caller);
 JS_EXPORT_PRIVATE bool isReloadableImport(JSGlobalObject*, ModuleID);

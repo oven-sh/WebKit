@@ -1065,6 +1065,12 @@ bool wasReleasedByLoader(JSGlobalObject* realm, ModuleID module)
     return modules && modules->wasReleasedByLoader(module);
 }
 
+void letGoUntilEndOfTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->letGoUntilEndOfTestFile(module);
+}
+
 bool willReloadAfterMockRemoval(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
