@@ -974,6 +974,7 @@ void StateOfLinkReach::escapeExportedBuiltins()
 {
     BitVector visitedNodes(m_flow.numberOfNodes());
     BitVector visitedModules(m_program.modules.size());
+    LinkFlow::ContainersVisited visitedContainers;
     Vector<FlowNodeID, 16> nodes;
     Vector<ModuleID, 8> modules;
     auto addNode = [&](FlowNodeID node) {
@@ -1022,11 +1023,10 @@ void StateOfLinkReach::escapeExportedBuiltins()
         if (type.isNever())
             continue;
         m_flow.noteEscapedBuiltins(type);
-        m_flow.forEachLayoutOf(type, [&](LayoutID layout) {
+        m_flow.forEachContainedNode(type, visitedContainers, scopedLambda<void(LayoutID)>([&](LayoutID layout) {
             if (m_program.at(layout).kind == LayoutKind::ModuleNamespace)
                 addModule(m_program.at(layout).namespaceOf);
-        });
-        m_flow.forEachContainedNode(type, scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
+        }), scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
             addNode(node);
         }));
     }

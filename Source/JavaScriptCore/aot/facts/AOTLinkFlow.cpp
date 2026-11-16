@@ -3461,10 +3461,33 @@ void LinkFlow::noteEscapedBuiltins(const LinkType& type) const
     m_marksThatReachUnseen |= type.marks;
 }
 
-void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedLambda<void(FlowNodeID)>& functor) const
+bool LinkFlow::ContainersVisited::addObjectsOf(const LinkFlow& flow, const LinkType& type)
+{
+    switch (type.objects) {
+    case LinkType::Objects::None:
+    case LinkType::Objects::Layout:
+    case LinkType::Objects::Prototype:
+    case LinkType::Objects::Prototypes:
+        return true;
+    case LinkType::Objects::Set:
+        return setsOfLayouts.add(type.layout.index());
+    case LinkType::Objects::Family:
+        return families.add(type.family.index());
+    case LinkType::Objects::Lost:
+        return !type.layout || lostFamilies.add(flow.unitedLayouts.representativeWithoutShortening(type.layout.index()));
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool LinkFlow::ContainersVisited::addFunctionsOf(const LinkType& type)
+{
+    return type.functions != LinkType::Functions::Set || setsOfFunctions.add(type.function.index());
+}
+
+void LinkFlow::forEachContainedNode(const LinkType& type, ContainersVisited& visited, NOESCAPE const ScopedLambda<void(LayoutID)>& visitLayout, NOESCAPE const ScopedLambda<void(FlowNodeID)>& functor) const
 {
     auto visitPrototypes = [&](LayoutID layout) {
-        for (RowOfBasesInLinkFlow row(program, layout); row.current(); row.advance()) {
+        for (RowOfBasesInLinkFlow row(program, layout); row.current() && visited.holdersOfNames.add(row.current().index()); row.advance()) {
             for (uint32_t record = firstNameOnPrototypeOf(row.current()); record != UINT32_MAX; record = m_namesOnPrototypes[record].nextOfLayout) {
                 functor(m_namesOnPrototypes[record].stored);
                 functor(m_namesOnPrototypes[record].storedInSight);
@@ -3473,27 +3496,36 @@ void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedL
     };
     if (type.objects == LinkType::Objects::Prototype)
         visitPrototypes(type.layout);
-    forEachLayoutOf(type, [&](LayoutID layout) {
-        if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind))
-            return;
-        visitPrototypes(layout);
-        forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
-            if (!isPrivateNameInLink(program, fieldAt(program, reference).key))
-                functor(field(reference));
+    if (visited.addObjectsOf(*this, type)) {
+        forEachLayoutOf(type, [&](LayoutID layout) {
+            if (!visited.layouts.add(layout.index()))
+                return;
+            visitLayout(layout);
+            if (!keepsValuesInFieldsInLinkFlow(program.at(layout).kind))
+                return;
+            visitPrototypes(layout);
+            forEachFieldListedInLinkFlow(program, layout, [&](FieldReference reference) {
+                if (!isPrivateNameInLink(program, fieldAt(program, reference).key))
+                    functor(field(reference));
+            });
+            forEachAppendedName(layout, [&](PropertyKeyID, FlowNodeID node) {
+                functor(node);
+            });
+            if (FlowNodeID stored = findExtraPropertyStoreNode(layout))
+                functor(stored);
         });
-        forEachAppendedName(layout, [&](PropertyKeyID, FlowNodeID node) {
-            functor(node);
-        });
-        if (FlowNodeID stored = findExtraPropertyStoreNode(layout))
-            functor(stored);
-    });
+    }
     if (type.classes != LinkType::Classes::None) {
         uint32_t family = m_familiesOfSites.representativeWithoutShortening(type.site.index());
-        const Vector<ContentsOfSite>& listed = contentsListedOf(family);
-        for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = listed[index].next)
-            functor(listed[index].node);
+        if (visited.familiesOfSites.add(family)) {
+            const Vector<ContentsOfSite>& listed = contentsListedOf(family);
+            for (uint32_t index = m_sites[family].newestContents; index != UINT32_MAX; index = listed[index].next)
+                functor(listed[index].node);
+        }
     }
     auto visitFunction = [&](FunctionID function) {
+        if (!visited.functions.add(function.index()))
+            return;
         if (!m_newestNameOnClosuresOf.isEmpty()) {
             for (uint32_t index = m_newestNameOnClosuresOf[function.index()]; index != UINT32_MAX; index = m_namesOnClosures[index].next)
                 functor(m_namesOnClosures[index].laid);
@@ -3509,8 +3541,10 @@ void LinkFlow::forEachContainedNode(const LinkType& type, NOESCAPE const ScopedL
         visitFunction(type.function);
         break;
     case LinkType::Functions::Set:
-        for (FunctionID member : functionsOfSet(type))
-            visitFunction(member);
+        if (visited.addFunctionsOf(type)) {
+            for (FunctionID member : functionsOfSet(type))
+                visitFunction(member);
+        }
         break;
     case LinkType::Functions::None:
     case LinkType::Functions::Constructors:
