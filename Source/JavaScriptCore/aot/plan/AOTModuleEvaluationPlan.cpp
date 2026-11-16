@@ -501,10 +501,7 @@ bool ModuleEvaluationPlanner::canSkipRecordRequire(uint32_t index) const
 {
     if (somebodyAsksWhoRequiredWhom || factoryOfMockMayRequire)
         return false;
-    const Module& module = program.modules[index];
-    if (module.kind != ModuleKind::SourceText || std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
-        return true;
-    return false;
+    return program.modules[index].kind != ModuleKind::SourceText;
 }
 
 template<typename Functor>
