@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include "VM.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
@@ -223,6 +224,12 @@ private:
     bool m_isMadeAndNotStored { false };
     WriteBarrier<JSCell> m_moduleInstance;
 };
+
+template<typename T>
+ALWAYS_INLINE ModuleRecord* compiledModule(const VM& vm, T module)
+{
+    return vm.hasCompiledCode() ? dynamicDowncast<ModuleRecord>(module) : nullptr;
+}
 
 void tryBindOriginal(JSGlobalObject*, JSModuleRecord*);
 void noteOriginalsRequestedBySource(JSGlobalObject*, JSModuleRecord* importer);

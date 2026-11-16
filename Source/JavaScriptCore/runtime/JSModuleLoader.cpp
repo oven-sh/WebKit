@@ -936,7 +936,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                 if (fetchPromise->status() == JSPromise::Status::Pending) {
 #if ENABLE(AOT)
                     // A compiled module already has the record for each of its requests, so there is nothing to fetch.
-                    auto* compiled = record && !moduleRequest.m_attributes ? dynamicDowncast<AOT::ModuleRecord>(record) : nullptr;
+                    auto* compiled = record && !moduleRequest.m_attributes ? AOT::compiledModule(vm, record) : nullptr;
                     AbstractModuleRecord* requested = compiled ? compiled->findRequestedRecord(resolved) : nullptr;
                     if (Exception* exception = scope.exception()) [[unlikely]] {
                         TRY_CLEAR_EXCEPTION(scope, nullptr);
@@ -1036,7 +1036,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         JSPromise* promise = nullptr;
 #if ENABLE(AOT)
         // A compiled module already knows the record of each compiled module it requests. This promise replaces the one the host would return.
-        if (auto* compiled = record && !moduleRequest.m_attributes ? dynamicDowncast<AOT::ModuleRecord>(record) : nullptr) {
+        if (auto* compiled = record && !moduleRequest.m_attributes ? AOT::compiledModule(vm, record) : nullptr) {
             AbstractModuleRecord* requested = compiled->nextRequestedRecord(globalObject, resolved);
             if (scope.exception()) [[unlikely]] {
                 promise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1149,7 +1149,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                 // 2.a. Append module to state.[[Visited]].
                 state->appendVisited(vm, cyclic);
 #if ENABLE(AOT)
-                if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic)) {
+                if (auto* compiled = AOT::compiledModule(vm, cyclic)) {
                     compiled->willLoadRequests(*state);
                     RETURN_IF_EXCEPTION(scope, void());
                     // A CommonJS module that this module imports ran inside willLoadRequests() and already resumed this load.
@@ -1195,7 +1195,7 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                     unsigned loadedModulesCountBefore = module->loadedModules().size();
                     bool useImportMap = true;
 #if ENABLE(AOT)
-                    auto* compiled = dynamicDowncast<AOT::ModuleRecord>(cyclic);
+                    auto* compiled = AOT::compiledModule(vm, cyclic);
                     useImportMap = !compiled;
                     uint8_t flagsBefore = compiled ? compiled->willLoadImportedModule(request.m_specifier) : 0;
 #endif

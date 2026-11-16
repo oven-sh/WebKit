@@ -113,7 +113,7 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
                 }
 #endif
 #if ENABLE(AOT)
-                if (importedRecord->inherits<AOT::ModuleRecord>()) {
+                if (AOT::compiledModule(vm, importedRecord)) {
                     op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
                     return true;
                 }

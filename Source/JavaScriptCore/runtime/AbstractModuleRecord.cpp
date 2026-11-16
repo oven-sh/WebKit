@@ -1354,7 +1354,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         frames[0] = firstLiveRecordViaStarExport;
 #endif
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
+    if (auto* compiled = AOT::compiledModule(vm, root.moduleRecord); compiled && frames[0].type == Resolution::Type::Resolved) {
         if (compiled->hasAnyActiveMock() || compiled->mayOutlive(frames[0].moduleRecord) || frames[0].moduleRecord->hasLiveExports() || wasAmbiguityResolvedByMock || wasResolvedByRemovedMock) {
             if (!wasAmbiguityResolvedByMock && !wasResolvedByRemovedMock)
                 compiled->storeResolution(root.exportName.get(), frames[0]);
@@ -1416,7 +1416,7 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 #endif
 
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+    if (auto* compiled = AOT::compiledModule(vm, this)) {
         if (!compiled->hasAnyActiveMock()) {
             if (std::optional<Resolution> cachedResolution = tryGetCachedResolution(exportName.impl()))
                 return *cachedResolution;
@@ -1456,7 +1456,7 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 JSObject* AbstractModuleRecord::moduleNamespaceObject(JSGlobalObject* globalObject, ModulePhase phase)
 {
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(globalObject->vm(), this))
         return compiled->moduleNamespaceObject(globalObject, phase);
 #endif
     return getModuleNamespace(globalObject, phase);
@@ -1464,10 +1464,10 @@ JSObject* AbstractModuleRecord::moduleNamespaceObject(JSGlobalObject* globalObje
 
 JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions)
 {
-#if ENABLE(AOT)
-    RELEASE_ASSERT(!inherits<AOT::ModuleRecord>());
-#endif
     VM& vm = globalObject->vm();
+#if ENABLE(AOT)
+    RELEASE_ASSERT(!AOT::compiledModule(vm, this));
+#endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ASSERT_ENABLED
@@ -1526,7 +1526,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 #endif
 
 #if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleRecord)) {
+        if (auto* compiled = AOT::compiledModule(vm, moduleRecord)) {
             Vector<Identifier> names;
             compiled->collectExportedNames(globalObject, names, pendingModules);
             RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1886,7 +1886,7 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
     }
 #endif
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+    if (auto* compiled = AOT::compiledModule(vm, this)) {
         compiled->adoptStatusIfNeeded();
         // A linked module stays linked no matter how this step ends. The loader is done with the graph.
         if (compiled->status() >= CyclicModuleRecord::Status::Linked) {
@@ -1951,7 +1951,7 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
     };
 
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this)) {
+    if (auto* compiled = AOT::compiledModule(vm, this)) {
         compiled->adoptStatusIfNeeded();
         // An importer of a CommonJS module that is still evaluating gets whatever the module has exported so far.
         if (compiled->isEvaluatingCommonJSModule())
@@ -2162,7 +2162,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(vm, this))
         RELEASE_AND_RETURN(scope, compiled->innerModuleEvaluation(globalObject, stack, index, referrerAsyncOrder, dynamicImportPromise));
 #endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);
@@ -2365,7 +2365,7 @@ void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* glob
     if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
         RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(vm, this))
         RELEASE_AND_RETURN(scope, compiled->generateDeferredSyntheticModules(globalObject, visited));
 #endif
 
@@ -2397,7 +2397,7 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(vm, this))
         RELEASE_AND_RETURN(scope, compiled->innerModuleLinking(globalObject, stack, index, WTF::move(scriptFetcher)));
 #endif
     auto* module = dynamicDowncast<CyclicModuleRecord>(this);

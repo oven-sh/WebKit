@@ -158,7 +158,7 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
         }
 #endif
 #if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(resolution.moduleRecord)) {
+        if (auto* compiled = AOT::compiledModule(vm, resolution.moduleRecord)) {
             bool isRead = slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty;
             JSValue value = jsUndefined();
             if (isRead) {
