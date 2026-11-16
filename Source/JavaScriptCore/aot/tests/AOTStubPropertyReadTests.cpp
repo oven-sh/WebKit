@@ -107,7 +107,7 @@ public:
         instance.image.lazyStringHeaderOffsets = m_identifierOffsets.data();
         instance.lazyStrings.headers = reinterpret_cast<uint8_t*>(m_identifiers.data());
         instance.image.programSymbols = &m_symbols;
-        instance.cellCageBase = MarkedBlockCage::baseOf(this);
+        instance.cellCageBase = memoryOfFakeObjects().cageBase();
     }
 
     UniquedStringImpl* uid() { return reinterpret_cast<UniquedStringImpl*>(&m_identifiers[name]); }
@@ -129,7 +129,7 @@ public:
             m_identifiers[i].length = i != nameMadeAtRunTime;
         instance.image.programIdentifiers = reinterpret_cast<UniquedStringImpl*>(m_identifiers.data());
         instance.image.programSymbols = &m_symbols;
-        instance.cellCageBase = MarkedBlockCage::baseOf(this);
+        instance.cellCageBase = memoryOfFakeObjects().cageBase();
     }
 
     UniquedStringImpl* uid() { return runner.instance().image.programIdentifiers + name; }
@@ -2082,7 +2082,7 @@ static void testFieldsReadOutOfExtension()
         StubCatalog catalog(options);
         FakeObject<offsetOfFirstField + sizeof(uint64_t)> object;
         FakeObject<maxExtensionSize> extension;
-        uintptr_t cageBase = MarkedBlockCage::baseOf(&extension);
+        uintptr_t cageBase = memoryOfFakeObjects().cageBase();
         runner.instance().cellCageBase = cageBase;
         if (usesWideReferences)
             object.at<uint64_t>(offsetOfFirstField) = extension.address();
@@ -2467,7 +2467,8 @@ enum class HitAtPlace : uint8_t {
     extension.granule() = bitsOf(jsNumber(7));
     OrdinaryObjectWithTwoValues receiver(PropertyReads::structureID, 1, 2);
     OrdinaryObjectWithTwoValues holder(PropertyReads::structureIDOfHolder, 3, 4);
-    uint64_t wordThatHoldsUndefined = bitsOf(jsUndefined());
+    FakeObject<sizeof(EncodedJSValue)> wordThatHoldsUndefined;
+    wordThatHoldsUndefined.at<uint64_t>(0) = bitsOf(jsUndefined());
     auto wordsFromCage = [&](uint64_t address) { return static_cast<uint32_t>((address - cageBase) / sizeof(EncodedJSValue)); };
     auto inTypedSlot = [&](SlotRepresentation representation, uint64_t bits) {
         place.answers().first = *SiteAnswers::tryByShapeInTypedSlot(shapeWordOf(1), representation, FakeTypedObject::offsetOfField);
@@ -2526,14 +2527,14 @@ enum class HitAtPlace : uint8_t {
         expected = jsNumber(4);
         break;
     case HitAtPlace::NoProperty:
-        byStructure(Form::ValueInWordOfCage, wordsFromCage(std::bit_cast<uintptr_t>(&wordThatHoldsUndefined)));
+        byStructure(Form::ValueInWordOfCage, wordsFromCage(wordThatHoldsUndefined.address()));
         object = receiver.address();
         expected = jsUndefined();
         break;
     }
     reads.runner.setCountsInstructions(true);
     if (presence) {
-        reads.runner.instance().propertyCaches.wordOfCageThatHoldsUndefined = wordsFromCage(std::bit_cast<uintptr_t>(&wordThatHoldsUndefined));
+        reads.runner.instance().propertyCaches.wordOfCageThatHoldsUndefined = wordsFromCage(wordThatHoldsUndefined.address());
         bool standsAbove = hit == HitAtPlace::ValueInCellOfHolder || hit == HitAtPlace::ValueInStorageOfHolder;
         bool isThere = hit != HitAtPlace::NoProperty && (*presence == PresenceQuestion::In || !standsAbove);
         StubRun run = reads.runner.run(findsNameAtSite(*presence, !readAtPlaceAsksStructureFirst), { object }, AnswersAtOnePlace::distance);

@@ -43,6 +43,8 @@
 #include <optional>
 #include <span>
 #include <wtf/HashFunctions.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/StdLibExtras.h>
 
 #if CPU(X86_64) && OS(LINUX)
 #include <signal.h>
@@ -63,8 +65,104 @@ inline constexpr auto markedFPRs = [] {
     return registers;
 }();
 
-template<size_t size>
-struct alignas(16) FakeObject {
+// Memory for cells of tests. A word below minCell32 names no cell, and all cells of a program have one base. A stack may lie in the first megabytes above a base, or on both sides of one.
+class CageMemory {
+    WTF_MAKE_NONCOPYABLE(CageMemory);
+public:
+    static constexpr size_t atomSize = 16;
+    // A test lays the base of structures so far below a structure that the ID of its objects leads to it. Its other cells have the ID 0, which leads to the base.
+    static constexpr size_t emptyBytesBelowCells = 16 * KB;
+
+    explicit CageMemory(size_t sizeOfCells)
+    {
+        constexpr uintptr_t firstOffsetInCage = static_cast<uintptr_t>(minCell32) << cell32Shift;
+        const size_t size = emptyBytesBelowCells + sizeOfCells;
+        m_memory.grow(2 * size + firstOffsetInCage + atomSize);
+        m_start = WTF::roundUpToMultipleOf<atomSize>(std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()));
+        uintptr_t offsetInCage = m_start - cageBase();
+        if (offsetInCage < firstOffsetInCage)
+            m_start += firstOffsetInCage - offsetInCage;
+        else if (offsetInCage + size > MarkedBlockCage::maxSize)
+            m_start += MarkedBlockCage::maxSize - offsetInCage + firstOffsetInCage;
+        zeroSpan(std::span(std::bit_cast<uint8_t*>(m_start), emptyBytesBelowCells));
+        m_start += emptyBytesBelowCells;
+        m_next = m_start;
+        m_end = m_start + sizeOfCells;
+        AOT_TEST_CHECK(m_end <= std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()) + m_memory.size());
+        AOT_TEST_CHECK(MarkedBlockCage::baseOf(std::bit_cast<void*>(m_end - 1)) == cageBase());
+    }
+
+    uintptr_t cageBase() const { return MarkedBlockCage::baseOf(std::bit_cast<void*>(m_start)); }
+
+    uint8_t* allocate(size_t size)
+    {
+        uintptr_t result = m_next;
+        m_next += WTF::roundUpToMultipleOf<atomSize>(size);
+        AOT_TEST_CHECK(m_next <= m_end);
+        zeroSpan(std::span(std::bit_cast<uint8_t*>(result), size));
+        return std::bit_cast<uint8_t*>(result);
+    }
+
+    // Only the newest cell makes room for others.
+    void free(uint8_t* cell, size_t size)
+    {
+        if (std::bit_cast<uintptr_t>(cell) + WTF::roundUpToMultipleOf<atomSize>(size) == m_next)
+            m_next = std::bit_cast<uintptr_t>(cell);
+    }
+
+private:
+    Vector<uint8_t> m_memory;
+    uintptr_t m_start { 0 };
+    uintptr_t m_next { 0 };
+    uintptr_t m_end { 0 };
+};
+
+inline CageMemory& memoryOfFakeObjects()
+{
+    static NeverDestroyed<CageMemory> memory(4 * MB);
+    return memory;
+}
+
+template<size_t numberOfBytes>
+class CageBytes {
+public:
+    CageBytes()
+        : m_data(memoryOfFakeObjects().allocate(numberOfBytes))
+    {
+    }
+
+    CageBytes(const CageBytes& other)
+        : CageBytes()
+    {
+        *this = other;
+    }
+
+    ~CageBytes() { memoryOfFakeObjects().free(m_data, numberOfBytes); }
+
+    CageBytes& operator=(const CageBytes& other)
+    {
+        memmoveSpan(span(), other.span());
+        return *this;
+    }
+
+    uint8_t* data() { return m_data; }
+    const uint8_t* data() const { return m_data; }
+    static constexpr size_t size() { return numberOfBytes; }
+    uint8_t* begin() { return m_data; }
+    uint8_t* end() { return m_data + numberOfBytes; }
+    uint8_t& operator[](size_t index) { return span()[index]; }
+    void fill(uint8_t byte) { memsetSpan(span(), byte); }
+    friend bool operator==(const CageBytes& a, const CageBytes& b) { return equalSpans(a.span(), b.span()); }
+
+private:
+    std::span<uint8_t> span() { return { m_data, numberOfBytes }; }
+    std::span<const uint8_t> span() const { return { m_data, numberOfBytes }; }
+
+    uint8_t* m_data;
+};
+
+template<typename Bytes>
+struct alignas(16) FakeMemory {
     template<typename T> T& at(ptrdiff_t offset) { return *reinterpret_cast<T*>(bytes.data() + offset); }
     uint64_t address() const { return std::bit_cast<uintptr_t>(bytes.data()); }
 
@@ -74,8 +172,10 @@ struct alignas(16) FakeObject {
         at<uint8_t>(JSCell::typeInfoTypeOffset()) = type;
     }
 
-    std::array<uint8_t, size> bytes { };
+    Bytes bytes { };
 };
+
+template<size_t size> using FakeObject = FakeMemory<CageBytes<size>>;
 
 struct FakeBigInt : FakeObject<JSBigInt::offsetOfData() + 4 * sizeof(JSBigInt::Digit)> {
     explicit FakeBigInt(std::initializer_list<JSBigInt::Digit> digits, bool isNegative = false)
@@ -87,7 +187,7 @@ struct FakeBigInt : FakeObject<JSBigInt::offsetOfData() + 4 * sizeof(JSBigInt::D
     }
 };
 
-struct FakeAllocator : FakeObject<sizeof(LocalAllocator)> {
+struct FakeAllocator : FakeMemory<std::array<uint8_t, sizeof(LocalAllocator)>> {
     static constexpr uintptr_t noNextInterval = 1;
 
     explicit FakeAllocator(uint32_t cellSize)

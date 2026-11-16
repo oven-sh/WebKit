@@ -1719,6 +1719,22 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         }
         return true;
     };
+    auto releasePath = [&](BitVector&& heldBefore) {
+        held = WTF::move(heldBefore);
+        knowWhatIsHeld = false;
+        for (Entered& each : path) {
+            each.isHeld = held.quickGet(each.module.index());
+            if (each.isHeld)
+                continue;
+            for (ImportersEnteredAboveMock& above : m_importersEnteredAboveMocks) {
+                if (above.root != root)
+                    continue;
+                above.entered.quickClear(each.module.index());
+                if (above.passed.quickClear(each.module.index()) && status(each.module) == ModuleStatus::Evaluating)
+                    setStatus(each.module, ModuleStatus::Linked);
+            }
+        }
+    };
     auto fail = [&] {
         leaveImportersWhere([&](const ImportersEnteredAboveMock& above) { return above.root == root; });
         return false;
@@ -1789,6 +1805,7 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
         bool isSeen = seen.quickSet(imported.index());
         if (needsOriginalBeforeFactory(mocked)) {
             noteMock(mocked);
+            BitVector heldBefore = held;
             bool hasRun = holdPath();
             if (scope.exception())
                 return fail();
@@ -1818,6 +1835,8 @@ bool Modules::sweepAheadOfFactories(ModuleID root)
                 return fail();
             }
             hasPassedMock = true;
+            if (!hasPendingMock(fileOf(mocked)) && !m_modulesWithPendingMock.get(mocked.index()) && !m_modulesWithRunningFactory.get(mocked.index()))
+                releasePath(WTF::move(heldBefore));
             continue;
         }
         if (isSeen) {
