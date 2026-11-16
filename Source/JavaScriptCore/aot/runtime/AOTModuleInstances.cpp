@@ -731,13 +731,18 @@ BitVector Modules::findModulesLinkedBefore(ModuleID root, ModuleID importer) con
     return linked;
 }
 
-void Modules::noteLinkFailure(ModuleID root, ModuleID importer)
+void Modules::noteFetchOfFailedLoad(ModuleID root)
 {
     for (size_t index : staticImportClosure(root, MockTraversal::Stop)) {
         ModuleID module(index);
         if (hasInstances(module) && status(module) <= ModuleStatus::Linked && !isMocked(module) && !wasLoadedWithGraph(module))
             m_failedLoadTestFiles.add(module, m_instance.vm->aotState().momentOfTestFile);
     }
+}
+
+void Modules::noteLinkFailure(ModuleID root, ModuleID importer)
+{
+    noteFetchOfFailedLoad(root);
     BitVector linkedBefore = findModulesLinkedBefore(root, importer);
     m_modulesBeforeLinkFailures.merge(linkedBefore);
     for (size_t index : linkedBefore) {

@@ -4569,6 +4569,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         RETURN_IF_EXCEPTION(scope, void());
         break;
     }
+    auto noteFailedRequire = makeScopeExit([&] {
+        if (reason == SynchronousEvaluationReason::Require && m_instance.vm->exceptionForInspection() && m_table.anyModuleHasInstances() && status(module) <= ModuleStatus::Linked) [[unlikely]]
+            noteFetchOfFailedLoad(module);
+    });
 
     bool hasEagerLoadCycle = reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && importsEagerlyEvaluatingModule(module);
     if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->runsBeforeLoaderSteps && (hasEagerLoadCycle || reachesEagerLoadGraph(*m_innermostEagerLoad, module))) [[unlikely]] {

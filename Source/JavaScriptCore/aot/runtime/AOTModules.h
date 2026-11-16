@@ -1275,6 +1275,7 @@ public:
     Vector<ModuleID, 16> linkInstances(ModuleID root);
     void unlinkInstances(ModuleID root, std::span<const ModuleID>);
     BitVector findModulesLinkedBefore(ModuleID root, ModuleID importer) const;
+    void noteFetchOfFailedLoad(ModuleID root);
     void noteLinkFailure(ModuleID root, ModuleID importer);
     void tellOfFailedLoad(ModuleID module, ModuleID target);
     bool wasLinkedBeforeTestFile(ModuleID) const;
