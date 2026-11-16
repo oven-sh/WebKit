@@ -297,7 +297,7 @@ DerivedUnits ListedUnitFinder::collectDerivedUnits(uint32_t begin, uint32_t end)
     return result;
 }
 
-bool isFileOfProgram(const Typed::Module& module)
+bool isListableFile(const Typed::Module& module)
 {
     return module.displayPath && Typed::isProgramModuleOf(module.kind) && !module.flags.contains(Typed::ModuleFlags::IsLibrary);
 }
@@ -341,7 +341,7 @@ void ListedUnitFinder::indexFiles()
         m_index.valueOf(m_file.files[number], saltOfPaths) = number;
     for (size_t index : Typed::modulesThatHostAsksFor(m_program)) {
         const Typed::Module& module = m_program.modules[index];
-        if (isFileOfProgram(module)) {
+        if (isListableFile(module)) {
             m_folderOfEntry = folderOf(m_program.string(module.displayPath));
             break;
         }
@@ -353,7 +353,7 @@ void ListedUnitFinder::indexFiles()
         m_index.valueOf(pathFrom(folderOfRecordedEntry, m_file.files[number]), saltOfPathsFromEntry) = number;
     int64_t numberGained = 0;
     for (const auto& module : m_program.modules) {
-        if (!isFileOfProgram(module))
+        if (!isListableFile(module))
             continue;
         std::span<const uint8_t> path = m_program.string(module.displayPath);
         numberGained += m_index.valueOf(pathFrom(m_folderOfEntry, path), saltOfPathsFromEntry) != absentUnit;
@@ -367,7 +367,7 @@ uint32_t ListedUnitFinder::findFile(const Typed::Module& module)
     if (!module.displayPath)
         return absentUnit;
     std::span<const uint8_t> path = m_program.string(module.displayPath);
-    if (!isFileOfProgram(module))
+    if (!isListableFile(module))
         return m_index.valueOf(path, saltOfPaths);
     uint32_t& file = m_comparesPathsFromEntry ? m_index.valueOf(pathFrom(m_folderOfEntry, path), saltOfPathsFromEntry) : m_index.valueOf(path, saltOfPaths);
     if (file == absentUnit) {
