@@ -154,6 +154,7 @@ private:
     void verifyUsersOfReadNumbers();
     bool treatsUndefinedAsNaN(ValueID, const Operation& user, uint32_t operandIndex) const;
     bool isOperatorSpecializationCheck(ValueID test) const;
+    bool failingEdgeLeavesScope(ValueID test) const;
     void verifyTestsPassed();
     void verifyLengthsHeldAgainst();
     void verifyDataViewAccesses();
@@ -1487,6 +1488,10 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
     BitVector names(m_code.numberOfValues());
     bool isUsedOnPass = false;
     bool isUsedOnFailure = false;
+    bool isUsedByOtherOperator = false;
+    const bool isAtInlinedCall = std::ranges::any_of(m_code.inlineFrames().subspan(1), [&](const InlineFrame& copied) {
+        return copied.parent == asked.inlineFrame && copied.callPosition == asked.position;
+    });
     for (bool someNameIsNew = true; std::exchange(someNameIsNew, false);) {
         for (BlockID block : m_reachedBlocks) {
             for (ValueID id : operationsOf(block)) {
@@ -1502,32 +1507,52 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
             name = m_code.at(name).operand(0);
         return m_code.at(name).isOnTakenEdge();
     };
-    BitVector isBehindFailingEdge(m_code.numberOfBlocks());
-    const BlockID blockOfTest = m_code.blockOf(test);
-    if (EdgeID fails = findAnswerEdge(test, false, blockOfTest)) {
-        Vector<BlockID, 16> waiting { m_code.at(fails).to };
-        while (!waiting.isEmpty()) {
-            BlockID block = waiting.takeLast();
-            if (!isReached(block) || dominates(headOf(block), headOf(blockOfTest)) || isBehindFailingEdge.set(block.index()))
-                continue;
-            m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
-                waiting.append(edge.to);
-            });
+    auto arrivesIn = [](const BitVector& found, ValueID value) { return value && found.get(value.index()); };
+    auto followThroughParameters = [&](BitVector& found, const auto& isFirst) {
+        for (bool someArrivesFurther = true; std::exchange(someArrivesFurther, false);) {
+            for (BlockID block : m_reachedBlocks) {
+                for (ValueID id : operationsOf(block)) {
+                    const Operation& record = m_code.at(id);
+                    if (valuePreservingOpcodes.contains(record.opcode) && !names.get(id.index()) && arrivesIn(found, record.operand(0)) && !found.set(id.index()))
+                        someArrivesFurther = true;
+                }
+                m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                    std::span<const ValueID> parameters = m_code.at(edge.to).parameters();
+                    std::span<const ValueID> arguments = edge.arguments();
+                    for (size_t place = 0; place < std::min(arguments.size(), parameters.size()); ++place) {
+                        if (arguments[place] && (arrivesIn(found, arguments[place]) || isFirst(arguments[place])) && !found.set(parameters[place].index()))
+                            someArrivesFurther = true;
+                    }
+                });
+            }
         }
-    }
+    };
+    BitVector arrivals(m_code.numberOfValues());
+    followThroughParameters(arrivals, [&](ValueID argument) { return names.get(argument.index()) && isOnPassingEdge(argument); });
+    BitVector arrivalsOfValue(m_code.numberOfValues());
+    arrivalsOfValue.set(asked.valueOperand().index());
+    followThroughParameters(arrivalsOfValue, [&](ValueID argument) { return names.get(argument.index()) && !isOnPassingEdge(argument); });
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
             const Operation& user = m_code.at(id);
             for (uint32_t operandIndex = 0; operandIndex < user.numberOfOperands(); ++operandIndex) {
+                const bool isOperator = (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame;
+                isUsedOnPass |= isOperator && arrivesIn(arrivals, user.operand(operandIndex));
+                isUsedOnFailure |= isOperator && arrivesIn(arrivalsOfValue, user.operand(operandIndex));
                 if (user.operand(operandIndex) == test && (user.opcode != Opcode::Narrowed || user.valueOperand() == test))
                     return false;
-                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame && isBehindFailingEdge.get(block.index()))
+                if (user.operand(operandIndex) == asked.valueOperand() && (allRelations | arithmeticOnTwoNumbersInCodeVerifier).contains(user.opcode) && user.position == asked.position && user.inlineFrame == asked.inlineFrame)
                     isUsedOnFailure = true;
                 if (!user.operand(operandIndex) || !names.get(user.operand(operandIndex).index()) || names.get(id.index()))
                     continue;
-                if (user.position != asked.position || user.inlineFrame != asked.inlineFrame)
-                    return false;
-                (isOnPassingEdge(user.operand(operandIndex)) ? isUsedOnPass : isUsedOnFailure) = true;
+                bool isOnPass = isOnPassingEdge(user.operand(operandIndex));
+                if (user.position != asked.position || user.inlineFrame != asked.inlineFrame) {
+                    bool isArithmetic = user.opcode != Opcode::TypeTest && treatsUndefinedAsNaN(id, user, operandIndex);
+                    if (!isArithmetic || !isOnPass || !isAtInlinedCall)
+                        return false;
+                    isUsedByOtherOperator = true;
+                }
+                (isOnPass ? isUsedOnPass : isUsedOnFailure) = true;
             }
         }
         const Terminator& end = m_code.at(block).terminator;
@@ -1542,7 +1567,27 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
         if (isEdgeArgument)
             return false;
     }
-    return isUsedOnPass && isUsedOnFailure;
+    return isUsedOnPass && ((isUsedOnFailure && !isUsedByOtherOperator) || failingEdgeLeavesScope(test));
+}
+
+bool CodeVerifier::failingEdgeLeavesScope(ValueID test) const
+{
+    ValueID value = m_code.at(test).valueOperand();
+    bool leavesScope = false;
+    for (BlockID block : m_reachedBlocks) {
+        EdgeID edge = findAnswerEdge(test, false, block);
+        if (!edge)
+            continue;
+        BlockID to = m_code.at(edge).to;
+        for (uint32_t step = 0; isDefinedWhereBlockMayThrow(value, to); ++step) {
+            const Terminator& end = m_code.at(to).terminator;
+            if (step == m_code.numberOfBlocks() || end.kind != TerminatorKind::Jump || !std::ranges::all_of(operationsOf(to), [&](ValueID id) { return m_code.at(id).traits().isPure(); }))
+                return false;
+            to = m_code.at(end.next()).to;
+        }
+        leavesScope = true;
+    }
+    return leavesScope;
 }
 
 bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint32_t operandIndex) const
