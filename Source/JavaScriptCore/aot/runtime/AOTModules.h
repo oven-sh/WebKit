@@ -919,6 +919,7 @@ public:
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasRegisteredByFailedLoad(ModuleID) const;
     bool wasLinkedByFailedGraph(ModuleID, bool byEarlierTestFile);
+    bool failedWithImportInEarlierTestFile(ModuleID);
     bool isImportedByFailedRoot(ModuleID, bool ofEarlierTestFile = false) const;
     bool wasReachedByFailedGraph(ModuleID) const;
     bool isFailedLoadRoot(ModuleID module) const { return m_loadRoots.get(module.index()) && status(module) == ModuleStatus::Failed; }

@@ -9340,6 +9340,12 @@ bool wasLinkedByFailedGraph(JSGlobalObject* realm, ModuleID module, bool byEarli
     return modules && modules->wasLinkedByFailedGraph(module, byEarlierTestFile);
 }
 
+bool failedWithImportInEarlierTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->failedWithImportInEarlierTestFile(module);
+}
+
 bool hasImporterLinkedBeforeFailure(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);

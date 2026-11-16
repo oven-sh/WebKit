@@ -329,6 +329,7 @@ JS_EXPORT_PRIVATE bool wasDisplacedDuringEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRegisteredByFailedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedByFailedGraph(JSGlobalObject*, ModuleID, bool byEarlierTestFile = false);
+JS_EXPORT_PRIVATE bool failedWithImportInEarlierTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeLinkFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasImporterLinkedBeforeFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isLinkedForPendingImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);

@@ -326,6 +326,17 @@ bool Modules::wasLinkedByFailedGraph(ModuleID module, bool byEarlierTestFile)
     return data(module).isESModuleOfProgram() && !data(module).isFacade() && status(module) <= ModuleStatus::Linked && !hasRun(module) && !didCaptureExports(module) && (!byEarlierTestFile || !wasLoadedByTestFile(module)) && isImportedByFailedRoot(module, byEarlierTestFile);
 }
 
+bool Modules::failedWithImportInEarlierTestFile(ModuleID module)
+{
+    if (!isFailedESModule(module) || isMocked(module) || activeMock(module) || m_loadedInPreload.get(module.index()) || wasLoadedByTestFile(module))
+        return false;
+    for (size_t index : staticImportClosure(module, MockTraversal::Continue)) {
+        if (ModuleID imported(index); imported != module && isFailedESModule(imported) && !isMocked(imported))
+            return true;
+    }
+    return false;
+}
+
 bool Modules::wasReachedByFailedGraph(ModuleID module) const
 {
     for (uint32_t index = 0; index < m_table.size(); ++index) {
