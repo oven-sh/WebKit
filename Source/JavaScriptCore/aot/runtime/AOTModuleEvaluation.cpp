@@ -1783,8 +1783,12 @@ void Modules::recaptureFilesNotStoredByLoads(ModuleID root)
         ModuleID target = request.targetModule();
         if (request.isRequire || request.isDeferred || !isCommonJSModuleOrFacade(target) || isMocked(fileOf(target)))
             continue;
-        ModuleRecord* record = recordIfExists(target);
-        if (!record || !record->takeIsMadeAndNotStored())
+        bool isMadeAndNotStored = false;
+        for (ModuleID made : { target, fileOf(target) }) {
+            ModuleRecord* record = recordIfExists(made);
+            isMadeAndNotStored |= record && record->takeIsMadeAndNotStored();
+        }
+        if (!isMadeAndNotStored)
             continue;
         takeExportsAnew(target);
         RETURN_IF_EXCEPTION(scope, void());
@@ -3134,6 +3138,14 @@ void Modules::runFileThatWaitsForItsTurn(ModuleID module)
     }
 }
 
+std::optional<ModuleID> Modules::facadeYetToBeEvaluated(ModuleID file) const
+{
+    if (!isCommonJSModuleOrFacade(file) || status(file) != ModuleStatus::Evaluated || isEvicted(file) || isMocked(file))
+        return std::nullopt;
+    std::optional<ModuleID> facade = m_table.facadeOf(file);
+    return facade && hasNotBegun(*facade) ? facade : std::nullopt;
+}
+
 void Modules::evaluateLoadedCommonJSFile(ModuleID module)
 {
     VM& vm = *m_instance.vm;
@@ -3159,8 +3171,13 @@ void Modules::evaluateLoadedCommonJSFile(ModuleID module)
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, void());
     if (statusAtStart == ModuleStatus::Failed && loader()->isMakingModuleInline(moduleKey(module)))
         return;
-    if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed)
+    if (statusAtStart != ModuleStatus::Unlinked && statusAtStart != ModuleStatus::Linked && statusAtStart != ModuleStatus::Failed) {
+        if (std::optional<ModuleID> facade = facadeYetToBeEvaluated(module)) {
+            m_filesLoadedWithoutLoader.set(facade->index());
+            RELEASE_AND_RETURN(scope, evaluateLoadedCommonJSFile(*facade));
+        }
         return;
+    }
     {
         EagerLoad eagerLoad { module, module, m_innermostEagerLoad };
         SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);

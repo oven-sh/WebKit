@@ -1677,7 +1677,8 @@ public:
     void recaptureExports(ModuleID);
     void takeExportsAnew(ModuleID moduleOrFacade);
     void didChangeFilesMadeAndNotStored(bool hasOneMore) { m_filesMadeAndNotStored += hasOneMore ? 1 : -1; }
-    bool isFileYetToBeEvaluated(ModuleID moduleOrFacade) const { return isCommonJSModuleOrFacade(moduleOrFacade) && status(moduleOrFacade) != ModuleStatus::Evaluated; }
+    bool isFileYetToBeEvaluated(ModuleID moduleOrFacade) const { return isCommonJSModuleOrFacade(moduleOrFacade) && (status(moduleOrFacade) != ModuleStatus::Evaluated || facadeYetToBeEvaluated(moduleOrFacade)); }
+    std::optional<ModuleID> facadeYetToBeEvaluated(ModuleID file) const;
     void takeCopiesAnewWhereMockCallAloneTookThem(ModuleID facade);
     void captureExportsAgainKeepingWhatGettersGave(ModuleID facade);
     JSObject* standInWhoseGettersAreTheirCopies(JSValue exports, JSObject* copies);
