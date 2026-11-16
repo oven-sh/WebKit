@@ -86,6 +86,16 @@ Environment* Modules::ensureInstance(ModuleID module)
     return currentInstance(module);
 }
 
+Environment* Modules::instanceBeforePendingMock(ModuleID module) const
+{
+    ModuleID file = m_table.moduleBehindFacade(module).value_or(module);
+    if (currentInstance(module) || !isMockPending(file)) [[likely]]
+        return nullptr;
+    if (cyclesOfImports().find(file) && !m_filesVisibleToOwnFactories.get(file.index()))
+        return nullptr;
+    return lastInstance(module);
+}
+
 bool Modules::isLinkedInstance(ModuleID module, const Environment* instance) const
 {
     return instance && (instance != currentInstance(module) || m_linkedInstances.get(module.index()));
@@ -603,7 +613,7 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         ensureInstance(module);
         RETURN_IF_EXCEPTION(scope, void());
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
-            if (!link.hasLink)
+            if (!link.hasLink || instanceBeforePendingMock(link.targetModule()))
                 continue;
             ensureInstance(link.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
@@ -611,6 +621,8 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         if (hasInstances(module))
             continue;
         for (const ModuleRequestData& request : m_table.imports(module)) {
+            if (instanceBeforePendingMock(request.targetModule())) [[unlikely]]
+                continue;
             ensureInstance(request.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
         }
@@ -619,8 +631,10 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         Environment* instance = currentInstance(module);
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
             ModuleID target = link.targetModule();
-            if (link.hasLink)
-                writeField(instance, link.link, currentInstance(target));
+            if (link.hasLink) {
+                Environment* earlier = instanceBeforePendingMock(target);
+                writeField(instance, link.link, earlier ? earlier : currentInstance(target));
+            }
             if (!link.hasMock || link.isResolved)
                 continue;
             if (data(target).isUncompiledCode()) [[unlikely]] {

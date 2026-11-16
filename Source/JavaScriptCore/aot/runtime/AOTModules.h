@@ -213,6 +213,7 @@ public:
     Environment* currentInstance(ModuleID) const;
     Environment* ensureInstance(ModuleID);
     Environment* lastInstance(ModuleID) const;
+    Environment* instanceBeforePendingMock(ModuleID) const;
     void noteCachedForeignInstance(ModuleID reexporter) { m_modulesCachingInstances.set(reexporter.index()); }
     enum class MockMode : bool { Use, Bypass };
     JSValue readExport(ModuleID, unsigned index, MockMode = MockMode::Use, Environment* instance = nullptr);
