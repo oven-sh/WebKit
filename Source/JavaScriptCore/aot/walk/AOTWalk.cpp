@@ -4206,7 +4206,8 @@ void Walker::noteOperationBuiltWhereCodeIsVerified(ValueID id, const Draft& draf
         m_code.recordSyntheticVariableRead(id);
     if (draft.opcode == Opcode::GetEnvironmentField && !draft.inputValueGiven && draft.isKnownInitialized())
         m_code.recordSyntheticVariableRead(id);
-    if (!isWrittenInTopFrame(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
+    bool isMadeOnceAtItsSite = draft.opcode == Opcode::NewTemplateObject;
+    if (!isWrittenInTopFrame(draft) || isMadeOnceAtItsSite || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
         return;
     const Frame& frame = m_frames.last();
     Reference earlier = referenceBoundIn(frame, draft.inputValueGiven);
