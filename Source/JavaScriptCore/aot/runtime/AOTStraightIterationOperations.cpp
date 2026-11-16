@@ -25,8 +25,10 @@
 #include "JSCInlines.h"
 #include "JSMapIterator.h"
 #include "JSPropertyNameEnumerator.h"
+#include "JSRegExpStringIterator.h"
 #include "JSSetIterator.h"
 #include "JSStringIteratorInlines.h"
+#include "RegExpObject.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -365,6 +367,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (I
             iterator = words->getIndexQuickly(0);
         }
         break;
+    case Typed::SuspendedIterationKind::Matches: {
+        auto* matcher = uncheckedDowncast<RegExpObject>(next.asCell());
+        auto* matches = JSRegExpStringIterator::createWithInitialValues(vm, globalObject->regExpStringIteratorStructure());
+        matches->setRegExp(vm, matcher);
+        matches->setString(vm, iterator);
+        matches->setFlags(true, matcher->regExp()->eitherUnicode());
+        iterator = matches;
+        next = jsBoolean(true);
+        break;
+    }
     case Typed::SuspendedIterationKind::Protocol:
         break;
     }

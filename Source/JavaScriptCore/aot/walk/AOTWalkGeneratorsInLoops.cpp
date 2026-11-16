@@ -4199,6 +4199,8 @@ Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, 
             return { };
         if (loopsOverGenerators().statesOpened.contains(state.bits()))
             return suspend(SuspendedIterationKind::State, state, builder.undefined());
+        if (Reference string = stringOfMatchIteration(*this, suspended.function, open, state))
+            return suspend(SuspendedIterationKind::Matches, string, state);
         if (m_code.at(state.id()).opcode != Opcode::NewHeapWords)
             return { };
         auto word = [&](uint32_t index) {
@@ -4236,13 +4238,16 @@ Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, 
         operation.setPositionOperand(iteration.position);
         return builder.build(WTF::move(operation));
     }
-    if (iteration.otherForm != IndexedIteration::OtherForm::None || iteration.isOverFlatEntries || iteration.isAsync)
+    const bool takesMatches = iteration.otherForm == IndexedIteration::OtherForm::MatchesOfRegExp;
+    if ((iteration.otherForm != IndexedIteration::OtherForm::None && !takesMatches) || iteration.isOverFlatEntries || iteration.isAsync)
         return { };
     auto byProtocol = [&] {
         return iteration.state ? suspend(SuspendedIterationKind::State, iteration.state, builder.undefined()) : suspend(SuspendedIterationKind::Protocol, iteration.iterator, iteration.next);
     };
     auto byIndex = [&] {
         static_assert(static_cast<uint32_t>(SuspendedIterationKind::Keys) == static_cast<uint32_t>(JSC::IterationKind::Keys) && static_cast<uint32_t>(SuspendedIterationKind::Values) == static_cast<uint32_t>(JSC::IterationKind::Values) && static_cast<uint32_t>(SuspendedIterationKind::Entries) == static_cast<uint32_t>(JSC::IterationKind::Entries));
+        if (takesMatches)
+            return suspend(SuspendedIterationKind::Matches, iteration.list, iteration.subject);
         ValueID stepped = iteration.position && iteration.position.isValue() && m_code.at(iteration.position.id()).opcode == Opcode::Increment ? m_code.at(iteration.position.id()).operand(0) : ValueID();
         const bool positionIsBeforeStep = stepped && !m_code.isConstant(stepped);
         return suspend(static_cast<SuspendedIterationKind>(iteration.kind), iteration.list, positionIsBeforeStep ? Reference::value(stepped) : iteration.position, iteration.table, positionIsBeforeStep);

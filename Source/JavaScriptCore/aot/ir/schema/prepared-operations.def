@@ -1,7 +1,7 @@
 enum BuiltinCallForm { | engine Whole AnyReceiver }
 enum QuotientRounding { | engine Floor Ceil Truncate Round ToInt32 }
 enum AsyncGeneratorStepStatus { | engine Result Yielded Completed }
-enum SuspendedIterationKind { | engine Keys Values Entries Protocol State }
+enum SuspendedIterationKind { | engine Keys Values Entries Protocol State Matches }
 
 parameters SlotStamp (key: PropertyKey, receivers: LayoutSet, level: KnowledgeLevel)
 
