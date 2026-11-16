@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTCoroutineWords.h"
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "CallFrame.h"
 #include "FunctionRareData.h"
@@ -100,7 +101,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     std::optional<AssemblyHelpers::FreeListRefill> refill;
     JumpList isNotAllocatedHere;
     if (consumerKind == StepConsumer::AsyncFunction) {
-        jit.loadPtr(Address(fp, sizeof(void*)), word);
+        emitLoadReturnAddressOfFrameRecord(jit, fp, word);
         Jump hasNoSavedFrame = jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
         jit.loadPtr(Address(fp), word);
         jit.loadPtr(Address(word, static_cast<int>(CallFrameSlot::callee) * static_cast<int>(sizeof(Register))), driver);
@@ -280,7 +281,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     emitFinishOnlyRequestAtYield(jit, generator, word);
     emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Yielded)), status);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     emitSiteContinuationNote(jit);
     jit.returnToCaller();
 
@@ -290,7 +291,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     emitFinishOnlyRequest(jit, generator, static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorState::Completed), word);
     emitNoteAwaitPassedOnStack(jit, consumer, word);
     jit.move(TrustedImm32(static_cast<int32_t>(AsyncGeneratorStepStatus::Completed)), status);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     emitSiteContinuationNote(jit);
     jit.returnToCaller();
 
@@ -313,7 +314,7 @@ void generateRunAsyncGeneratorStep(StubAssembler& jit)
     static_assert(!static_cast<int32_t>(AsyncGeneratorStepStatus::Result));
     suspendsConsumer.append(jit.branchTest32(CCallHelpers::Zero, status));
     emitNoteAwaitPassedOnStack(jit, consumer, word);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     emitSiteContinuationNote(jit);
     jit.returnToCaller();
 

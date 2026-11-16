@@ -310,7 +310,11 @@ CodeInImage::CodeInImage(const ModuleInformation& info, const IPIntCallees& ipin
     m_pointers[ImagePointerTable::defaultJSCall] = LLInt::defaultCall().code().taggedPtr();
     m_pointers[ImagePointerTable::wasmToJSCallee] = CalleeBits::boxNativeCallee(&WasmToJSCallee::singleton());
     m_pointers[ImagePointerTable::restoreFrameCallee] = CalleeBits::boxNativeCallee(&RestoreFrameCallee::singleton());
-    m_pointers[ImagePointerTable::restoreFrameReturnAddress] = reinterpret_cast<void*>(untagCodePtr<CFunctionPtrTag>(wasm_restore_frame_return));
+    void* restoreFrameReturnAddress = reinterpret_cast<void*>(untagCodePtr<CFunctionPtrTag>(wasm_restore_frame_return));
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    restoreFrameReturnAddress = signReturnAddress(restoreFrameReturnAddress, std::bit_cast<const void*>(ImagePointerTable::modifierOfRestoreFrameReturnAddress));
+#endif
+    m_pointers[ImagePointerTable::restoreFrameReturnAddress] = restoreFrameReturnAddress;
     m_pointers[ImagePointerTable::structureIDBase] = std::bit_cast<void*>(structureIDBase());
     m_pointers[ImagePointerTable::throwFromFaultHandler] = LLInt::getCodePtr<CFunctionPtrTag>(wasm_throw_from_fault_handler_trampoline_reg_instance).taggedPtr();
 #if GIGACAGE_ENABLED

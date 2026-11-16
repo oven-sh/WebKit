@@ -265,7 +265,7 @@ void generateMakeClosureOfField(StubAssembler& jit)
     jit.move(object, cell);
     jit.callStub(writeBarrier());
     jit.move(header, cell);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
     jit.ret();
 }
 

@@ -111,7 +111,7 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     ThrowSiteSource source = !code.site.b && !valueIsInThrowWordRegister ? ThrowSiteSource::WordInRegister : ThrowSiteSource::WordsAfterCall;
     StubKey key = throwAtSite(source, CallerFrame::HasFrame);
     if (!params.frameIsSetUp())
-        jit.emitFunctionPrologue();
+        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     if (source == ThrowSiteSource::WordInRegister) {
         RELEASE_ASSERT(words.size() <= 2);
         ArgumentMoves moves;

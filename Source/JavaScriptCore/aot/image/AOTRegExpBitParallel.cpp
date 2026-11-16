@@ -400,16 +400,14 @@ void BitParallelEmitter::emitMatch()
     }
     m_jit.move(indexGPR, Registers::returnRegister2);
     m_jit.move(startGPR, Registers::returnRegister);
-    m_jit.tagReturnAddress();
-    m_jit.ret();
+    m_jit.m_assembler.ret();
 }
 
 void BitParallelEmitter::emitFailure()
 {
     m_jit.move(TrustedImm64(static_cast<int64_t>(WTF::notFound)), Registers::returnRegister);
     m_jit.move(TrustedImm32(0), Registers::returnRegister2);
-    m_jit.tagReturnAddress();
-    m_jit.ret();
+    m_jit.m_assembler.ret();
 }
 
 void BitParallelEmitter::emit()

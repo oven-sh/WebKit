@@ -1019,7 +1019,7 @@ struct ReadAtSiteInWork {
         jit.emitFunctionPrologue();
         jit.callStub(next.withCallerFrame(CallerFrame::StubFrame));
         jit.bindReturnLabel(StubFrameKind::MethodRead);
-        jit.emitFunctionEpilogue();
+        jit.emitFunctionEpilogueToReturn();
         jit.returnToCaller();
     }
 

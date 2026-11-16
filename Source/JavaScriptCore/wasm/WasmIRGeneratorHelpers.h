@@ -255,6 +255,19 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
     static constexpr unsigned restoreFrameSize = RestoreFrameCallee::restoreFrameSizeInBytes;
     Checked<int32_t> restoreFrameBase = callerStackSize - Checked<int32_t>(restoreFrameSize);
     bool needsCopy = topSourceOffsetFromFP != -frameSize;
+    auto moveRestoreFrameReturnAddress = [&](GPRReg dest) {
+        if (!isForImage(jit)) {
+            jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), dest);
+            return;
+        }
+        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, dest);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        GPRReg modifier = jit.scratchRegister();
+        jit.move(CCallHelpers::TrustedImm64(ImagePointerTable::modifierOfRestoreFrameReturnAddress), modifier);
+        jit.untagPtr(modifier, dest);
+        jit.validateUntaggedPtr(dest);
+#endif
+    };
 
     JIT_COMMENT(jit, "Check for existing restore frame");
     jit.loadPtr(CCallHelpers::Address(MacroAssembler::framePointerRegister, CallFrame::returnPCOffset()), scratch1);
@@ -263,7 +276,7 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
 #endif
     CCallHelpers::Jump hasExistingThunk;
     if (isForImage(jit)) {
-        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
+        moveRestoreFrameReturnAddress(scratch2);
         hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, scratch2);
     } else
         hasExistingThunk = jit.branchPtr(CCallHelpers::Equal, scratch1, CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress));
@@ -342,14 +355,11 @@ inline void emitRestoreInstanceFrameIfNeeded(CCallHelpers& jit, GPRReg currentIn
 #if CPU(ARM64E) || ENABLE(RETURN_ADDRESS_SIGNING)
     // Move to where callFrameRegister will be when actually untagging.
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize - sizeof(CallerFrameAndPC)), GPRInfo::callFrameRegister);
-    jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), ARM64Registers::lr);
+    moveRestoreFrameReturnAddress(ARM64Registers::lr);
     jit.tagPtr(GPRInfo::callFrameRegister, ARM64Registers::lr);
     jit.storePair64(scratch1, ARM64Registers::lr, CCallHelpers::PreIndexAddress(GPRInfo::callFrameRegister, -static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC))));
 #else
-    if (isForImage(jit))
-        loadImagePointer(jit, currentInstanceReg, ImagePointerTable::restoreFrameReturnAddress, scratch2);
-    else
-        jit.move(CCallHelpers::TrustedImmPtr(restoreFrameReturnAddress), scratch2);
+    moveRestoreFrameReturnAddress(scratch2);
     jit.subPtr(CCallHelpers::TrustedImm32(restoreFrameSize), GPRInfo::callFrameRegister);
     jit.storePairPtr(scratch1, scratch2, GPRInfo::callFrameRegister);
 #endif

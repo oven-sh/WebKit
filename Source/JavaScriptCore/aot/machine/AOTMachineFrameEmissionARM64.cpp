@@ -90,9 +90,7 @@ void emitFrameSetup(CCallHelpers& jit, const Procedure& procedure)
 
     AllowMacroScratchRegisterUsage allowScratch(jit);
 
-    jit.tagReturnAddress();
-    jit.pushPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
-    jit.move(CCallHelpers::stackPointerRegister, CCallHelpers::framePointerRegister);
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
 
     bool allocatesBeforeCheck = bytesBelowFrameRecord <= maxBytesAllocatedBeforeStackCheck;
     bool pushesSaves = allocatesBeforeCheck && frameHoldsNothingButSavedGPRs(frame);
@@ -152,7 +150,7 @@ void emitCalleeSaveRestore(CCallHelpers& jit, const Frame& frame)
     });
 }
 
-void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
+void emitFrameTeardown(CCallHelpers& jit, const Frame& frame, LoadedLinkRegister loadedLinkRegister)
 {
     if (frameHoldsNothingButSavedGPRs(frame)) {
         forEachPairOfSavedGPRs(frame, false, [&](GPRReg lower, GPRReg upper) {
@@ -163,7 +161,7 @@ void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
         if (frame.bytesBelowFrameRecord())
             jit.move(CCallHelpers::framePointerRegister, CCallHelpers::stackPointerRegister);
     }
-    jit.popPair(CCallHelpers::framePointerRegister, CCallHelpers::linkRegister);
+    jit.emitFunctionEpilogueWithEmptyFrame(loadedLinkRegister);
 }
 
 } } } // namespace JSC::AOT::Machine

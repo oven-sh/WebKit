@@ -206,7 +206,7 @@ public:
     void storeToSpill(const Operation*);
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
-    void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
+    void leaveFrameIfSetUp(LoadedLinkRegister, std::span<const GPRReg> registersPoppedOutOfWords = { });
     ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;

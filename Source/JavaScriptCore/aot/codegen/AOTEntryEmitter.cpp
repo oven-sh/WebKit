@@ -556,7 +556,7 @@ void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& input
     if (nobodyEnters) {
         uint32_t site = records.sites.addSite({ .origin = Origin { .position = inputs.program.at(unit.function).position, .inlineFrame = 0, .isTailCall = false, .isPartOfConstruction = false } });
         if (!frameIsSetUp)
-            jit.emitFunctionPrologue();
+            jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
         emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter }, std::nullopt, 0, site);
         jit.breakpoint();
         return;
@@ -582,7 +582,7 @@ void emitEntryWrittenByHand(CCallHelpers& jit, const CodeGenerationInputs& input
         }
         ways[index].misfits.link(&jit);
         if (!frameIsSetUp)
-            jit.emitFunctionPrologue();
+            jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
         emitStraightThrowSite(jit, records, ThrowSite { .kind = ThrowKind::ErrorWithMessage, .a = ThrowSiteWord::none, .b = std::nullopt, .sourceOfFalseProof = ProofSource::EntryParameter, .expectedProofType = FalseProofWord::summarize(questions[index].passingPrimitives, questions[index].everyObjectPasses || questions[index].shapeWord || !questions[index].cellTypes.isEmpty()) }, questions[index].value, 0, site);
         jit.breakpoint();
     }

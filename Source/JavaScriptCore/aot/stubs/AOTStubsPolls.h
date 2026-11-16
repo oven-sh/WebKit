@@ -12,6 +12,8 @@
 namespace JSC { namespace AOT {
 
 constexpr StubKey pollAtPrologue(bool functionMayCollect) { return StubKey(functionMayCollect ? StubFamily::PollAtPrologue : StubFamily::PollAtPrologueWithoutCollecting); }
+// Otherwise it returns to where a table says that the function goes on, which saves the function a jump.
+inline constexpr bool pollAtPrologueReturnsBehindItsCall = ENABLE_RETURN_ADDRESS_SIGNING;
 constexpr bool isPollAtPrologue(StubKey key) { return key.family() == StubFamily::PollAtPrologue || key.family() == StubFamily::PollAtPrologueWithoutCollecting; }
 constexpr StubKey pollAtLoop(CallerFrame callerFrame) { return StubKey(StubFamily::PollAtLoop).withCallerFrame(callerFrame); }
 enum class PollBeforeEnteringForm : uint8_t { Plain, FunctionObject };

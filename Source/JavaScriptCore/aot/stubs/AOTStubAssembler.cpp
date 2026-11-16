@@ -351,7 +351,7 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
-StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep, unsigned bytesLeftFreeAbove)
+StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, SavedAreaIsLeftBy isLeftBy, std::span<const std::optional<GPRReg>> cellsToKeep, unsigned bytesLeftFreeAbove)
 {
     Vector<Reg, 48> registers;
     registersClobberedBy(callee).forEach([&](Reg reg) {
@@ -370,8 +370,15 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
     subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
 #else
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 1);
-    subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
-    storePtr(linkRegister, Address(stackPointerRegister));
+    const bool savesLinkRegister = isLeftBy == SavedAreaIsLeftBy::MovingStackPointerBack;
+    RELEASE_ASSERT(!bytesLeftFreeAbove);
+    if (savesLinkRegister)
+        tagReturnAddress();
+    subPtr(TrustedImm32(bytes), stackPointerRegister);
+    if (savesLinkRegister) {
+        storePtr(linkRegister, Address(stackPointerRegister));
+        removeTagAfterSavingReturnAddress();
+    }
 #endif
     for (unsigned i = 0; i < registers.size(); ++i) {
         Address address(stackPointerRegister, (i + 1) * sizeof(CPURegister));
@@ -391,10 +398,10 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
             storeDouble(registers[i].fpr(), address);
     }
     registers.shrink(numberToRestore);
-    return { WTF::move(registers), bytes };
+    return { WTF::move(registers), bytes, isLeftBy };
 }
 
-void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPointerAfterLoads stackPointer)
+void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area)
 {
     auto& registers = area.registers;
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -414,11 +421,13 @@ void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPoint
         else
             loadDouble(address, registers[i].fpr());
     }
+    if (area.isLeftBy == SavedAreaIsLeftBy::Epilogue)
+        return;
 #if !CPU(X86_64)
     loadPtr(Address(stackPointerRegister), linkRegister);
 #endif
-    if (stackPointer == StackPointerAfterLoads::IsMovedBack)
-        addPtr(TrustedImm32(area.bytes), stackPointerRegister);
+    addPtr(TrustedImm32(area.bytes), stackPointerRegister);
+    untagAfterLoadingReturnAddress();
 }
 
 void StubAssembler::recordCall(Entry entry)
@@ -686,6 +695,11 @@ void StubAssembler::returnToCaller()
     ret();
 }
 
+void StubAssembler::emitFunctionEpilogueToReturn()
+{
+    emitFunctionEpilogue(m_stubBehindEveryReturn ? LoadedLinkRegister::MayBeSavedAgain : LoadedLinkRegister::IsOnlyReturnedTo);
+}
+
 void StubAssembler::returnFlags32(RelationalCondition, GPRReg left, GPRReg right)
 {
     compareOnFlags32(left, right);
@@ -825,6 +839,7 @@ void StubAssembler::pollIfBelow(Address limit, StubKey poll)
 void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
 {
 #if CPU(ARM64)
+    validateLoadedReturnAddress();
     move(linkRegister, ARM64Registers::x16);
 #endif
     emitStubCall(poll, kind);

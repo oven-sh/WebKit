@@ -133,7 +133,7 @@ static void callConstructorAndReturn(StubAssembler& jit, ConstructSyntax syntax,
         madeNoObject.append(jit.branchIfNotCell(GPRInfo::returnValueGPR));
         madeNoObject.append(jit.branchIfNotObject(GPRInfo::returnValueGPR));
     }
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
     if (syntax == ConstructSyntax::NewExpression)
@@ -162,7 +162,7 @@ static void emitConstructFrontEnd(StubAssembler& jit, ConstructSyntax syntax, En
     genericPath.append(jit.branchIfNotCell(newTarget));
     loadNativeConstructor(jit, syntax, callee, newTarget, function, globalObject, scratch, genericPath);
 
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     JumpList overflowsStack = checkHostFrameCapacity(jit, count, scratch);
     callConstructorAndReturn(jit, syntax, { callee, newTarget, count, values }, function, globalObject);
 

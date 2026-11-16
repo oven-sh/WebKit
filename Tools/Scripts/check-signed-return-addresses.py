@@ -18,8 +18,6 @@ binary = sys.argv[1]
 objdump = 'llvm-objdump'
 
 unsigned_by_nature = re.compile('|'.join([
-    # Whatever jumps to one of these has signed the link register: jsTrampoline*Prologue and ipint_trampoline, or the thunk that takes their place with the JIT.
-    r'llint_\w+_(?:prologue|arity_check)', r'ipint_entry',
     # The inline assembly of MacroAssemblerARM64.cpp.
     r'ctiMasmProbeTrampoline',
     # The C library's start-up code, libgcc, and what the linker writes.

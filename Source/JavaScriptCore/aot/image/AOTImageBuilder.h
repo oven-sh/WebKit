@@ -43,6 +43,7 @@ struct WebAssemblyImageInputs {
     Vector<uint8_t> code;
     size_t codeAlignment { 1 };
     Vector<uint8_t> directory;
+    Vector<uint32_t> targetsOfJumpTables;
     uint32_t numberOfModules { 0 };
 };
 

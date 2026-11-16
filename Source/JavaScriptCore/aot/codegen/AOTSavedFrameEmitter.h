@@ -80,6 +80,7 @@ private:
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
+    Pointer returnAddressAtThisPoint();
     enum class RunsCodeOfAwaited : bool { InFrameOfFunction, BehindFunction };
     bool awaitsOnlyResultOfCall(const ValueContext& await) const;
     StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver, RunsCodeOfAwaited = RunsCodeOfAwaited::InFrameOfFunction);
@@ -113,11 +114,12 @@ private:
     void storeIntoHeapFrame(LValue frame, ValueID kept);
     LValue readOutOfHeapFrame(LValue frame, ValueID kept);
     LValue addressOfEntrypoint(unsigned index);
+    void storeResumeAddress(unsigned entrypoint, LValue frame);
     LValue addressOfLeafStep(const LeafStepOfGenerator*);
     void findLeafSteps();
     const LeafStepOfGenerator* leafStepOf(ValueID yield) const;
     void storeLeafStep(ValueID yield);
-    void makeHeapFrame(const ValueContext& firstYield, CellPointer generator, LValue resumeAddress);
+    void makeHeapFrame(const ValueContext& firstYield, CellPointer generator, unsigned entrypoint);
     void yieldOutOfHeapFrame(const ValueContext&);
     bool mayBeSetInHeapFrame(ValueID traced) const { return m_wordsThatMayBeSet.get(m_wordsOfKeptValues[traced.index()] - 1); }
     void followWordsThatMayBeSetInto(BlockID);

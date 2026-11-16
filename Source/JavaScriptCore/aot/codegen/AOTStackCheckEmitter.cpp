@@ -129,6 +129,8 @@ void emitStackOverflowPaths(CCallHelpers& jit, CodeRecords& records, StackCheckS
             CCallHelpers::Label call = jit.label();
             records.stubCalls.call(jit, pollAtPrologue(mayCollect), OptionalIndex { });
             records.traps.stackChecks.append({ call, check.resume });
+            if (pollAtPrologueReturnsBehindItsCall)
+                jit.jump().linkTo(check.resume, &jit);
             break;
         }
         }

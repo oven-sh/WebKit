@@ -735,6 +735,7 @@ bool RTT::emitJSToWasmICEntrypoint(CCallHelpers& jit, const RegisterAtOffsetList
         jit.loadPtr(CCallHelpers::Address(scratchGPR, safeCast<int32_t>(pointersInImage->genericEntrypoint * sizeof(void*))), scratchGPR);
         jit.emitRestore(registersToSpill, GPRInfo::callFrameRegister);
         jit.emitFunctionEpilogue();
+        jit.untagReturnAddress();
         jit.farJump(scratchGPR, JSEntryPtrTag);
         return true;
     }

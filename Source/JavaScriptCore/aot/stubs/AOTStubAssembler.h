@@ -213,6 +213,8 @@ public:
     Label bindReturnLabel(StubFrameKind);
 
     void returnToCaller();
+    // What follows leaves by returnToCaller() or for the handler of an exception, and calls nothing but a poll.
+    void emitFunctionEpilogueToReturn();
     void boxBooleanAtEveryReturn() { m_boxesBooleanAtEveryReturn = true; }
     void goOnAtEveryReturnIn(std::optional<StubKey> stub) { m_stubBehindEveryReturn = stub; }
 #if CPU(X86_64)
@@ -270,9 +272,11 @@ public:
 private:
     using CalledOperation = Variant<Entry, GPRReg>;
 
+    enum class SavedAreaIsLeftBy : bool { MovingStackPointerBack, Epilogue };
     struct SavedRegisterArea {
         Vector<Reg, 48> registers;
         unsigned bytes;
+        SavedAreaIsLeftBy isLeftBy;
     };
     struct PendingJump {
         Jump jump;
@@ -313,9 +317,8 @@ private:
 
     void storePreservedRegisters(std::span<const GPRReg>);
     void loadPreservedRegisters(std::span<const GPRReg>);
-    enum class StackPointerAfterLoads : bool { IsMovedBack, IsLeftToEpilogue };
-    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { }, unsigned bytesLeftFreeAbove = 0);
-    void loadSavedRegisters(const SavedRegisterArea&, StackPointerAfterLoads = StackPointerAfterLoads::IsMovedBack);
+    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, SavedAreaIsLeftBy = SavedAreaIsLeftBy::MovingStackPointerBack, std::span<const std::optional<GPRReg>> cellsToKeep = { }, unsigned bytesLeftFreeAbove = 0);
+    void loadSavedRegisters(const SavedRegisterArea&);
 
     void loadEntry(Entry, GPRReg);
     void loadCalledOperation(const CalledOperation&, GPRReg function);
@@ -329,8 +332,8 @@ private:
     void prepareCallOperation();
     void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead);
     bool resultsInFPRsComeFromOperation(const OperationCall&) const;
-    void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
-    void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
+    void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister);
+    void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister);
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
 
     void emitStubCall(StubKey, StubReference::Kind = StubReference::Kind::Call);

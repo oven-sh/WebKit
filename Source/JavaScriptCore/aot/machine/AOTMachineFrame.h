@@ -113,7 +113,7 @@ Frame* planFrame(Procedure&);
 bool plannedBlockOnlyReturns(const Procedure&, const Block*);
 
 JS_EXPORT_PRIVATE void emitFrameSetup(CCallHelpers&, const Procedure&);
-JS_EXPORT_PRIVATE void emitFrameTeardown(CCallHelpers&, const Frame&);
+JS_EXPORT_PRIVATE void emitFrameTeardown(CCallHelpers&, const Frame&, LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain);
 JS_EXPORT_PRIVATE void emitCalleeSaveRestore(CCallHelpers&, const Frame&);
 
 } } } // namespace JSC::AOT::Machine

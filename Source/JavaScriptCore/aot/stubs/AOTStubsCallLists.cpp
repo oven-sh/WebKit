@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubFrames.h"
 #include "AOTStubsExceptions.h"
 #include "Butterfly.h"
@@ -216,7 +217,7 @@ void generateTailCallWithList(StubAssembler& jit)
 
     jit.move(fp, frame);
     Label nextFrame = jit.label();
-    jit.loadPtr(Address(frame, CallFrame::returnPCOffset()), returnPC);
+    emitLoadReturnAddressOfFrameRecord(jit, frame, returnPC);
     Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, returnPC, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::ArgumentList)));
     jit.loadPtr(Address(frame, CallFrame::callerFrameOffset()), frame);
     jit.move(TrustedImm32(0), bytesAboveFrameRecord);
@@ -235,7 +236,7 @@ void generateTailCallWithList(StubAssembler& jit)
     isAboveStackPointer.link(&jit);
     emitCopyListBelowFrame(jit, count, list, destination, countGPR, bytesAboveFrameRecord);
     jit.storePtr(callerFrame, Address(frame, CallFrame::callerFrameOffset()));
-    jit.storePtr(returnPC, Address(frame, CallFrame::returnPCOffset()));
+    emitStoreReturnAddressInFrameRecord(jit, returnPC, frame);
     jit.move(frame, fp);
     jit.zeroExtend32ToWord(count, countGPR);
 
@@ -563,7 +564,7 @@ void generateCallFromArgumentListFrame(StubAssembler& jit)
     jit.call(valueEntryGPR, JSEntryPtrTag);
     jit.bindEntry(returnFromArgumentListFrame());
     jit.bindReturnLabel(StubFrameKind::ArgumentList);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.returnToCaller();
 }
 

@@ -222,6 +222,25 @@ inline void* authenticateReturnAddress(void* signedReturnAddress, const void* st
     RELEASE_ASSERT(pointer == removeReturnAddressSignature(signedReturnAddress));
     return pointer;
 }
+
+// In one piece, so that the compiler has nowhere to spill the address while it has no signature.
+inline void* resignReturnAddress(void* signedReturnAddress, const void* oldModifier, const void* newModifier)
+{
+    register void* pointer asm("x17") = signedReturnAddress;
+    register const void* modifier asm("x16") = oldModifier;
+    asm volatile(
+        "mov x30, x17\n"
+        "hint #7\n" // XPACLRI
+        "hint #14\n" // AUTIB1716
+        "cmp x17, x30\n"
+        "b.eq 1f\n"
+        WTF_FATAL_CRASH_INST "\n"
+        "1:\n"
+        "mov x16, %2\n"
+        "hint #10" // PACIB1716
+        : "+&r"(pointer), "+&r"(modifier) : "r"(newModifier) : "x30", "cc");
+    return pointer;
+}
 #endif
 
 template<typename PtrType>

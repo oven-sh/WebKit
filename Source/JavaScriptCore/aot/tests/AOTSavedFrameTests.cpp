@@ -32,6 +32,7 @@
 #include "AOTVector.h"
 #include "HeapIterationScope.h"
 #include "JSCInlines.h"
+#include "JSCPtrTag.h"
 #include "JSMicrotask.h"
 #include "MachineStackMarker.h"
 #include "MarkedSpaceInlines.h"
@@ -439,10 +440,15 @@ static SavedFrame* saveHandMadeFrame(LoadedProgram& program, HandMadeFrame& fram
 {
     VM& vm = program.vm();
     SuspensionWords words { frame.siteWord, HandMadeFrame::integerWord };
+    void* resumeAddress = const_cast<uint8_t*>(Image::current()->codeOf(function)) + 1;
     SuspendedMachineFrame machineFrame {
         frame.stack.mutableSpan().data() + frame.numberOfWords,
         frame.stack.span().data(),
-        const_cast<uint8_t*>(Image::current()->codeOf(function)) + 1,
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        signReturnAddress(resumeAddress, frame.stack.span().data()),
+#else
+        resumeAddress,
+#endif
         &words,
     };
     AOT_TEST_CHECK(machineFrame.numberOfWords() == frame.lastKeptLocation() - frame.firstKeptLocation() + 1);
@@ -450,7 +456,7 @@ static SavedFrame* saveHandMadeFrame(LoadedProgram& program, HandMadeFrame& fram
 
     SavedFrame* saved = SavedFrame::create(vm, program.instance(), CoroutineKind::AsyncFunction, machineFrame);
     saved->save(vm, machineFrame, SuspensionKind::Await);
-    AOT_TEST_CHECK(!saved->isOnStack() && saved->suspensionKind() == SuspensionKind::Await && saved->resumeAddress() == machineFrame.resumeAddress);
+    AOT_TEST_CHECK(!saved->isOnStack() && saved->suspensionKind() == SuspensionKind::Await && saved->resumeAddress() == resumeAddress);
     return saved;
 }
 
@@ -649,7 +655,7 @@ static NEVER_INLINE void readFramesThatCollectionScans()
     static constexpr size_t largestCapturingFunction = KB;
     auto* frame = static_cast<const uint64_t*>(__builtin_frame_address(0));
     unsigned numberOfFramesBelow = 0;
-    while (std::bit_cast<uintptr_t>(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))) - std::bit_cast<uintptr_t>(&callWithCurrentThreadState) >= largestCapturingFunction) {
+    while (std::bit_cast<uintptr_t>(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]))) - std::bit_cast<uintptr_t>(&callWithCurrentThreadState) >= largestCapturingFunction) {
         frame = *reinterpret_cast<const uint64_t* const*>(frame);
         AOT_TEST_CHECK(++numberOfFramesBelow < 40 && frame < frameOfCollectionCaller);
     }
@@ -662,7 +668,7 @@ static NEVER_INLINE void readFramesThatCollectionScans()
             if (*word != wordOfDeadStack)
                 continue;
             ++numberOfUnwrittenWords;
-            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeCodePtrTag(std::bit_cast<const void*>(frame[1]))));
+            dataLogLn("unwritten word ", (frameOfCaller - word) * sizeof(uint64_t), " bytes below frame record ", numberOfFrames + 1, " of ", (frameOfCaller - frame - 2) * sizeof(uint64_t), " bytes, in ", describeCodeAddress(removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]))));
         }
         frame = frameOfCaller;
         AOT_TEST_CHECK(++numberOfFrames < 16);

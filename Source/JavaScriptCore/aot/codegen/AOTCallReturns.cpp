@@ -186,7 +186,7 @@ void CallEmitter::emitTailCall(const OperationContext& context, const CallTarget
         callFromArgumentListFrame(target, placed);
 }
 
-Machine::PatchOperation* CallEmitter::leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord> stackWords, const Invocable<void(CCallHelpers&)> auto& leave)
+Machine::PatchOperation* CallEmitter::leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord> stackWords, LoadedLinkRegister loadedLinkRegister, const Invocable<void(CCallHelpers&)> auto& leave)
 {
     static_assert(std::is_trivially_copyable_v<std::remove_cvref_t<decltype(leave)>>);
 
@@ -201,13 +201,13 @@ Machine::PatchOperation* CallEmitter::leaveAfterFrameTeardown(std::span<const Ma
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->effects.terminal = true;
     patchpoint->setRunsWithoutFrame(stackIndices.empty());
-    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices = std::span<const uint32_t>(stackIndices), leave](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    patchpoint->setGenerator([numberInRegisters = static_cast<unsigned>(inRegisters.size()), stackIndices = std::span<const uint32_t>(stackIndices), loadedLinkRegister, leave](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg scratch = jit.scratchRegister();
         for (unsigned i = 0; i < stackIndices.size(); ++i)
             emitStoreToStackWord(jit, params.frame(), params[numberInRegisters + i], scratch, stackIndices[i]);
         if (params.frameIsSetUp())
-            Machine::emitFrameTeardown(jit, params.frame());
+            Machine::emitFrameTeardown(jit, params.frame(), loadedLinkRegister);
         else if (params.value()->followsFrameSetup()) {
             RELEASE_ASSERT(params.value()->testsStackAheadOfFramedPart());
             emitStackTestAheadOfFramedPart(jit, params);
@@ -230,7 +230,7 @@ void CallEmitter::jumpAfterFrameTeardown(const CallTarget& target, const PlacedA
     if (target.kind == TargetKind::Address)
         inRegisters.append(Machine::ConstrainedValue(target.calledAddress, Machine::ValueRep::reg(valueEntryGPR)));
 
-    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [records = &m_records, destination = target, spilledBytes](CCallHelpers& jit) {
+    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), LoadedLinkRegister::MayBeSavedAgain, [records = &m_records, destination = target, spilledBytes](CCallHelpers& jit) {
         if (spilledBytes)
             emitDropSpilledArgumentRegisters(jit);
         emitJumpTo(jit, *records, destination);
@@ -495,7 +495,7 @@ void CallEmitter::enterBodyAfterNewPromise(const ValueContext& value, CodeUnit b
         arguments.append(locations.parameters[index].kind == ArgumentLocation::Kind::None ? Operand { } : generator().getIn(ids[index], locations.parameters[index].representation));
     arguments.append(Operand { });
     const StubKey stub = newPromiseBeforeBody(*findArgumentForPromiseBefore(body));
-    leaveAfterFrameTeardown(placeArguments(body, locations, arguments.span()).inRegisters.span(), { }, [records = &m_records, stub, body](CCallHelpers& jit) {
+    leaveAfterFrameTeardown(placeArguments(body, locations, arguments.span()).inRegisters.span(), { }, LoadedLinkRegister::MayBeSavedAgain, [records = &m_records, stub, body](CCallHelpers& jit) {
         records->stubCalls.callWithoutReturnSite(jit, stub);
         records->stubCalls.jumpToFunction(jit, body, primaryEntry);
     });
@@ -505,7 +505,7 @@ void CallEmitter::returnFulfilledPromise(Boxed value)
 {
     const StubKey stub = AOT::returnFulfilledPromise();
     const Machine::ConstrainedValue operand(value.value(), Machine::ValueRep::reg(signatureOf(stub).operands[0]));
-    leaveAfterFrameTeardown(singleElementSpan(operand), { }, [records = &m_records, stub](CCallHelpers& jit) {
+    leaveAfterFrameTeardown(singleElementSpan(operand), { }, LoadedLinkRegister::MayBeSavedAgain, [records = &m_records, stub](CCallHelpers& jit) {
         records->stubCalls.tailCall(jit, stub);
     });
 }
@@ -583,7 +583,7 @@ void CallEmitter::returnValues(std::span<const Operand> operands)
         }
     }
     RELEASE_ASSERT(stackWords.isEmpty() || !spillsArgumentRegisters);
-    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), [spillsArgumentRegisters](CCallHelpers& jit) {
+    Machine::PatchOperation* patchpoint = leaveAfterFrameTeardown(inRegisters.span(), stackWords.span(), LoadedLinkRegister::IsOnlyReturnedTo, [spillsArgumentRegisters](CCallHelpers& jit) {
         if (spillsArgumentRegisters)
             emitReturnDroppingSpilledArgumentRegisters(jit);
         else

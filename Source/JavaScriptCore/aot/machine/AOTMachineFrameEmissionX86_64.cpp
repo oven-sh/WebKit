@@ -135,7 +135,7 @@ void emitCalleeSaveRestore(CCallHelpers& jit, const Frame& frame)
     }
 }
 
-void emitFrameTeardown(CCallHelpers& jit, const Frame& frame)
+void emitFrameTeardown(CCallHelpers& jit, const Frame& frame, LoadedLinkRegister)
 {
     if (!frame.hasFrameRecord() || frame.savesLieAtBottom()) {
         emitTeardownOfFrameInOtherForm(jit, frame);

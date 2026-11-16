@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTInstance.h"
 #include "AOTRelocation.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
 #include "CallFrame.h"
@@ -237,7 +238,7 @@ static void emitBranchUnlessCallersAwait(StubAssembler& jit, const AwaitingCalle
     jit.loadStubAddress(awaitCallBySavingFrame(), awaitStub);
     jit.move(fp, frame);
     Label nextFrame = jit.label();
-    jit.loadPtr(Address(frame, sizeof(void*)), returnAddress);
+    emitLoadReturnAddressOfFrameRecord(jit, frame, returnAddress);
     emitBranchUnlessCallIsAwaited(jit, returnAddress, awaitStub, scratch, otherwise);
     jit.loadPtr(Address(frame), frame);
     jit.branchPtr(CCallHelpers::NotEqual, resumableFrameAddress, frame).linkTo(nextFrame, &jit);
@@ -318,7 +319,7 @@ void emitSiteContinuationNote(StubAssembler& jit)
 static Label emitFunctionReturn(StubAssembler& jit)
 {
     Label returnToCallerOfFunction = jit.label();
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
     jit.ret();
     return returnToCallerOfFunction;
 }
@@ -362,7 +363,7 @@ static void emitLeaveFunctionOfJob(StubAssembler& jit, GPRReg siteWord, GPRReg s
     jit.sub64(scratch, jobs);
 #endif
     Jump fewJobsWait = jit.branch64(CCallHelpers::BelowOrEqual, jobs, TrustedImm32(jobsWorthUnexpectedReturns));
-    jit.loadPtr(Address(fp, sizeof(void*)), scratch);
+    emitLoadReturnAddressOfFrameRecord(jit, fp, scratch);
     Jump isNotJob = jit.branchPtr(CCallHelpers::NotEqual, scratch, loopOfJobs);
     jit.emitFunctionEpilogue();
 #if CPU(X86_64)
@@ -433,6 +434,7 @@ static void emitSuspend(StubAssembler& jit, Entry operation, GPRReg siteWord, La
     jit.move(sp, bottom);
 #endif
     jit.loadCallerReturnAddress(0, resumeAddress);
+    jit.tagPtr(bottom, resumeAddress);
     emitCallOperationAndLeaveFunction(jit, operation, siteWord, returnToCallerOfFunction, valueToReturn);
 }
 
@@ -520,7 +522,7 @@ static void emitSaveRegisterAndResumeAddress(StubAssembler& jit, GPRReg saved, G
     jit.store64(SavedFrame::preservedRegister, Address(saved, SavedFrame::offsetOfPreservedRegister()));
 #endif
     jit.loadCallerReturnAddress(0, scratch);
-    jit.storePtr(scratch, Address(saved, SavedFrame::offsetOfResumeAddress()));
+    emitStoreResumeAddress(jit, scratch, saved);
 }
 
 static void emitSaveLiveSlotMapOffset(StubAssembler& jit, GPRReg siteWord, GPRReg saved, GPRReg scratch)
@@ -976,7 +978,7 @@ void generateAwaitBySavingFrame(StubAssembler& jit)
     }
 
     mustSuspend.link(&jit);
-    jit.loadPtr(Address(fp, sizeof(void*)), word);
+    emitLoadReturnAddressOfFrameRecord(jit, fp, word);
     Jump isFirstSave = jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
     jit.loadPtr(Address(fp), word);
     jit.loadPtr(Address(word, static_cast<int>(CallFrameSlot::callee) * static_cast<int>(sizeof(Register))), savedFrame);

@@ -152,6 +152,7 @@ inline constexpr bool framesAreThoseOfAddressSanitizer = ASAN_ENABLED;
     v(requiredNameTests) \
     v(savedFrameTests) \
     v(sharingModeAndNamespaceTests) \
+    v(signedReturnAddressTests) \
     v(sparseElementProgramTests) \
     v(startupTests) \
     v(staticMembersNamedLikeBuiltinsTests) \

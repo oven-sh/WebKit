@@ -1352,7 +1352,7 @@ bool Interpreter::isCaughtByInterpretedTopFrame()
     VM& vm = this->vm();
     CallFrame* top = vm.topCallFrame;
     auto compiledCode = AOT::compiledCodeOf(vm);
-    const void* returnPC = removeCodePtrTag(top->rawReturnPC());
+    const void* returnPC = top->returnPCForInspection();
     if (std::bit_cast<uintptr_t>(returnPC) - std::bit_cast<uintptr_t>(compiledCode.data()) < compiledCode.size() && !AOT::isCallStubReturnSite(vm, returnPC))
         return false;
     if (top->isZombieFrame() || top->isNativeCalleeFrame())

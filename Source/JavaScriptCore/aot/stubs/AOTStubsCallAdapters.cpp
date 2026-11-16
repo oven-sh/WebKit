@@ -15,6 +15,7 @@
 #include "AOTImageFormat.h"
 #include "AOTInstance.h"
 #include "AOTProgramTables.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubFrames.h"
 #include "AOTStubHelpers.h"
@@ -127,7 +128,7 @@ void emitEnterAdapter(StubAssembler& jit, unsigned extraBytes)
         jit.jump().linkTo(hasInstance, &jit);
     });
 
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     static_assert(!(AdapterFrame::saveAreaSize % stackAlignmentBytes()));
     jit.subPtr(TrustedImm32(AdapterFrame::saveAreaSize + extraBytes), sp);
     emitSaveRegistersInAdapter(jit, instance);
@@ -154,7 +155,7 @@ void emitRestoreAdapterCallerRegisters(StubAssembler& jit, GPRReg adapterFrame)
 void emitAdapterEpilogue(StubAssembler& jit)
 {
     emitRestoreAdapterCallerRegisters(jit, fp);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.returnToCaller();
 }
 
@@ -259,6 +260,9 @@ static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall
     const GPRReg numberOfStackWords = countGPR;
     RELEASE_ASSERT(!(frameSize % stackAlignmentBytes()));
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    emitLoadReturnAddressOfFrameRecord(jit, fp, CCallHelpers::linkRegister);
+#endif
     jit.sub32(TrustedImm32(numberOfRegisters), numberOfStackWords);
     jit.getEffectiveAddress(BaseIndex(copy.source, numberOfStackWords, CCallHelpers::TimesEight, sizeof(Register)), copy.destination);
     jit.andPtr(TrustedImm32(~static_cast<int32_t>(stackAlignmentBytes() - 1)), copy.destination);
@@ -282,6 +286,9 @@ static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall
     jit.move(frameSizeInWords, copy.index);
     emitCopyFromLastWord(jit, Address(sp), Address(frame), copy.index, copy.value);
     jit.addPtr(TrustedImm32(bytesBelowFramePointer), frame, fp);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    emitStoreReturnAddressInFrameRecord(jit, CCallHelpers::linkRegister, fp);
+#endif
     jit.move(copy.destination, sp);
     if (argumentBase != fp)
         jit.addPtr(fp, argumentBase);
@@ -607,7 +614,7 @@ void generateStartModule(StubAssembler& jit)
 
     returns.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), jit.result());
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.returnToCaller();
 
     hasBegunBeforeCall.link(&jit);
@@ -865,7 +872,7 @@ void emitConstructWithPlainFunction(StubAssembler& jit, GPRReg word, JumpList& i
 
     EntryCall entryCall = emitLoadArgumentsAndCallEntry(jit, word, Address(base), StubFrameKind::PlainFunctionConstruct);
     emitSelectConstructResult(jit, offsetOfThis, StubFrameKind::PlainFunctionConstructMakesThis);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     emitDropSpilledArgumentRegisters(jit);
     jit.returnToCaller();
 

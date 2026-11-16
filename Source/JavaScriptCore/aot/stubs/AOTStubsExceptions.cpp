@@ -94,6 +94,7 @@ void emitUnwind(StubAssembler& jit)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
     jit.loadOperation(Entry::operationAOTLookupExceptionHandler, T11);
+    jit.validateLoadedReturnAddress();
     jit.emitFunctionPrologue();
     callLookupExceptionHandler(jit);
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
@@ -141,6 +142,7 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
         if (reg != Reg(landingPad))
             registers.append(reg);
     });
+    jit.validateLoadedReturnAddress();
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(registers.size() * sizeof(CPURegister))), sp);
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -228,17 +230,20 @@ void generateRejectAwaitedCall(StubAssembler& jit)
 #if CPU(X86_64)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), T9);
     jit.push(T9);
-#else
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), CCallHelpers::linkRegister);
-#endif
     jit.emitFunctionPrologue();
+#else
+    // The unwinder has signed it for this frame record.
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtime.exceptions.returnAddressOfAwaitedCall)), T9);
+    jit.pushPair(GPRInfo::callFrameRegister, T9);
+    jit.move(sp, GPRInfo::callFrameRegister);
+#endif
     jit.subPtr(TrustedImm32(stackAlignmentBytes()), sp);
     jit.storePtr(GPRInfo::callFrameRegister, Address(sp));
     jit.storePtr(GPRInfo::callFrameRegister, Address(sp, sizeof(void*)));
     jit.move(instanceGPR, A0);
     jit.move(sp, A1);
     jit.callOperation(Entry::operationAOTRejectWithException, T9);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
     jit.ret();
 }
 

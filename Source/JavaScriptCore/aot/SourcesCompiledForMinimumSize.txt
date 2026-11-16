@@ -74,6 +74,7 @@ aot/image/AOTProgramTableCheck.cpp
 aot/image/AOTProgramTablesDriver.cpp
 aot/image/AOTRegExpBitParallel.cpp
 aot/image/AOTRegExpInProcessLoader.cpp
+aot/image/AOTReturnAddressCheck.cpp
 aot/image/AOTSectionWriter.cpp
 aot/image/AOTShapeSetTable.cpp
 aot/image/AOTStackUsageCheck.cpp
@@ -89,6 +90,7 @@ aot/machine/AOTMachineFrameChecker.cpp
 aot/machine/AOTMachinePrinter.cpp
 aot/plan/AOTNumberMethodSelectors.cpp
 aot/runtime/AOTOrderRecorder.cpp
+aot/stubs/AOTSavedCodeAddresses.cpp
 aot/stubs/AOTStubArgumentThunks.cpp
 aot/stubs/AOTStubAssemblerCalls.cpp
 aot/stubs/AOTStubFrontEnds.cpp

@@ -1331,6 +1331,9 @@ end)
 
 op(ipint_entry, macro()
 if WEBASSEMBLY and (ARM64 or ARM64E or X86_64)
+    if RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     preserveCallerPCAndCFR()
     saveIPIntRegisters()
     storep wasmInstance, CodeBlock[cfr]
@@ -1530,7 +1533,9 @@ end)
 # Trampoline entrypoints
 
 op(ipint_trampoline, macro ()
-    tagReturnAddress sp
+    if not RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     jmp _ipint_entry
 end)
 

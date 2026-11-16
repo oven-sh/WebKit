@@ -18,6 +18,7 @@
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
 #include "AOTImageFormat.h"
+#include "AOTOptionWords.h"
 #include "AOTProgramFile.h"
 #include "AOTShellProcess.h"
 #include "AOTTemporaryFile.h"
@@ -116,7 +117,9 @@ static void checkImageHoldsCodeOfItsWebAssemblyModule(std::span<const uint8_t> i
 
 static std::unique_ptr<CompileOutput> compileProgramWithModule(std::span<const uint8_t> module)
 {
-    BuildContext build(makeDefaultCompileOptions());
+    Wire::CompileOptions options = makeDefaultCompileOptions();
+    AOT_TEST_CHECK(!applyOptionWord(options, "check=VerifyEachStage"_s));
+    BuildContext build(options);
     std::unique_ptr<Typed::Program> program = Typed::parseProgram(programText, build);
     if (!program) {
         build.diagnostics().finish(nullptr);

@@ -71,7 +71,7 @@ void generateCallDirectFunction(StubAssembler& jit)
     static_assert(noOverlap(gprOf(StubRegister::T11), gprOf(stubImmediateRegister), operationArgumentGPR(0), operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), operationArgumentGPR(4)));
 
     if (form == DirectFunctionCall::WithHostFrame) {
-        jit.emitFunctionPrologue();
+        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
         emitHostCallFrame(jit, { directCalleeGPR, directThisGPR, 0u, std::nullopt });
     }
 
@@ -85,7 +85,7 @@ void generateCallDirectFunction(StubAssembler& jit)
 
     const GPRReg vm = jit.clobberRegister(stubImmediateRegister);
     if (form == DirectFunctionCall::WithFrame)
-        jit.emitFunctionPrologue();
+        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
     GPRReg topCallFrame = form == DirectFunctionCall::WithHostFrame ? CCallHelpers::stackPointerRegister : GPRInfo::callFrameRegister;
 #if CPU(ARM64)
@@ -97,7 +97,7 @@ void generateCallDirectFunction(StubAssembler& jit)
 #endif
     jit.storePtr(topCallFrame, Address(vm, VM::offsetOfTopCallFrame()));
     jit.call(function, HostFunctionPtrTag);
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     Jump exception = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
     jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
@@ -205,7 +205,7 @@ void generateCallHostFunction(StubAssembler& jit)
         pushManyWithinCapacity(jit, registers, count);
     emitLoadExecutable(jit, executable);
     hasNoBoxedCall.link(&jit);
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
 }
@@ -219,7 +219,7 @@ void generateCallHostFunctionThatMayBeUnfetchedCheckingResult(StubAssembler& jit
     fetchFunctionLeftUnfetched(jit, executable, count);
     jit.bindEntry(callHostFunctionCheckingResult(result, count));
     emitLoadExecutable(jit, executable);
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     emitHostCallFrame(jit, { calleeGPR, thisGPR, count, std::nullopt });
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), Address(executable, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall)), result);
 }
@@ -232,7 +232,7 @@ void generateCallHostGetter(StubAssembler& jit)
     jit.loadRuntimePointer(Entry::CustomGetterClassInfo, registers.scratch);
     jit.linkToStub(jit.branchPtr(CCallHelpers::NotEqual, registers.word, registers.scratch), callHostFunctionWithoutBoxedCall(0));
 
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     const GPRReg function = registers.word;
     const GPRReg realmArgument = jit.reuseScratch(StubRegister::A0);
     const GPRReg receiverArgument = jit.reuseScratch(StubRegister::A1);
@@ -247,7 +247,7 @@ void generateCallHostGetter(StubAssembler& jit)
     jit.call(function, CustomAccessorPtrTag);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), registers.scratch);
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(registers.scratch, VM::exceptionOffset()));
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 
@@ -307,7 +307,7 @@ void generateCallHostFunctionWithCount(StubAssembler& jit)
     pushManyWithinCapacity(jit, registers, count);
     fitsInRegisters.link(&jit);
 
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     emitHostCallFrameOfCallWithCount(jit, calleeGPR, thisGPR, count, doesNotFitOnStack);
     emitLoadExecutable(jit, executable);
     callNativeFunctionAndReturn(jit, CodeSpecializationKind::CodeForCall, registers.word, Address(calleeGPR, JSCallee::offsetOfScopeChain()), nativeFunction);
@@ -389,7 +389,7 @@ void generateCallInternalFunction(StubAssembler& jit)
     } else if (jit.key().count() == 2)
         emitConstructOfProxy(jit, scratch);
 
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     emitHostCallFrame(jit, { calleeGPR, thisGPR, jit.key().count(), std::nullopt });
     callNativeFunctionAndReturn(jit, kind, scratch, Address(calleeGPR, InternalFunction::offsetOfGlobalObject()), Address(calleeGPR, InternalFunction::offsetOfNativeFunctionFor(kind)));
 }

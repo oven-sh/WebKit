@@ -235,6 +235,9 @@ struct ImagePointerTable {
     static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7;
 #endif
 
+    // What restoreFrameReturnAddress is signed with. No stack pointer has these bits.
+    static constexpr uint64_t modifierOfRestoreFrameReturnAddress = 0x3c91ull << 48;
+
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
     JS_EXPORT_PRIVATE static std::optional<uint32_t> slotOfOperation(const void* taggedOperation);
     JS_EXPORT_PRIVATE static ImagePointerTable forModule(const ModuleInformation&, uint32_t numberOfJSEntrypoints);
@@ -261,6 +264,7 @@ struct ModuleForImage {
     Vector<JSEntrypointInImage> jsEntrypoints;
     WTF::Vector<SavedRegistersInImage> savedRegisters;
     WTF::Vector<FramelessRangeInImage> framelessRanges;
+    Vector<uint32_t> targetsOfJumpTables;
     uint32_t catchRunway { 0 };
     uint32_t faultWithoutFrame { 0 };
 };
@@ -284,6 +288,7 @@ struct CodeForImage {
     uint32_t pointerSpace { 0 };
     unsigned threadedJumps { 0 };
     unsigned firstStateTests { 0 };
+    Vector<uint32_t> targetsOfJumpTables { };
     static constexpr GPRReg passedGlobalGPR = GPRInfo::wasmScratchGPR0;
     std::optional<uint32_t> passedGlobal { };
 };

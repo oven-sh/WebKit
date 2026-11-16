@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubAssembler.h"
 #include "AOTStubFrames.h"
 #include "CallFrame.h"
@@ -116,11 +117,11 @@ static void emitFindListFrameRecord(CCallHelpers& jit, unsigned bytesAboveFrameR
 {
     jit.move(fp, frameRecordGPR);
     jit.loadPtr(argumentListReturnAddress(), listReturnAddressGPR);
-    jit.loadPtr(Address(frameRecordGPR, CallFrame::returnPCOffset()), stackWordGPR);
+    emitLoadReturnAddressOfFrameRecord(jit, frameRecordGPR, stackWordGPR);
     Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, stackWordGPR, listReturnAddressGPR);
     Label nextFrame = jit.label();
     jit.loadPtr(Address(frameRecordGPR, CallFrame::callerFrameOffset()), frameRecordGPR);
-    jit.loadPtr(Address(frameRecordGPR, CallFrame::returnPCOffset()), stackWordGPR);
+    emitLoadReturnAddressOfFrameRecord(jit, frameRecordGPR, stackWordGPR);
     jit.branchPtr(CCallHelpers::Equal, stackWordGPR, listReturnAddressGPR).linkTo(nextFrame, &jit);
     Jump reusesListFrame = jit.jump();
 
@@ -130,7 +131,7 @@ static void emitFindListFrameRecord(CCallHelpers& jit, unsigned bytesAboveFrameR
         jit.loadPtr(Address(frameRecordGPR, CallFrame::callerFrameOffset()), callerFrame);
         jit.addPtr(TrustedImm32(bytesAboveFrameRecord), frameRecordGPR);
         jit.storePtr(callerFrame, Address(frameRecordGPR, CallFrame::callerFrameOffset()));
-        jit.storePtr(stackWordGPR, Address(frameRecordGPR, CallFrame::returnPCOffset()));
+        emitStoreReturnAddressInFrameRecord(jit, stackWordGPR, frameRecordGPR);
     }
     jit.move(TrustedImm32(0), listReturnAddressGPR);
     reusesListFrame.link(&jit);

@@ -349,7 +349,7 @@ void emitFrameSetup(CCallHelpers& jit, GenerationContext& context, const Inst& e
     }
 #endif
     RELEASE_ASSERT(layout.slotArea == SlotArea::BelowFrameRecord);
-    jit.emitFunctionPrologue();
+    jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
     unsigned pushedBytes = 0;
 #if CPU(X86_64)
     unsigned bytesOfSaves = static_cast<unsigned>(saves.registerCount() * sizeof(CPURegister));
@@ -436,6 +436,7 @@ void emitFrameTeardown(CCallHelpers& jit, const Code& code, std::optional<GPRReg
     if (layout.slotArea == SlotArea::AboveFrameRecord) {
         popCalleeSaves(jit, saves);
         jit.m_assembler.ldp<64>(GPRInfo::callFrameRegister, CCallHelpers::linkRegister, CCallHelpers::stackPointerRegister, PairPostIndex(static_cast<int>(layout.bytesAboveFrameRecord + sizeof(CallerFrameAndPC))));
+        jit.untagAfterLoadingReturnAddress();
         return;
     }
 #endif
@@ -484,7 +485,7 @@ unsigned maxBytesOfFrameTeardown(const Code& code)
     return numberOfSaves * (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom ? maxBytesOfPop : maxBytesOfLoad) + bytesOfLeave;
 #elif CPU(ARM64)
     constexpr unsigned bytesPerInstruction = 4;
-    constexpr unsigned maxEpilogueInstructions = 2;
+    constexpr unsigned maxEpilogueInstructions = ENABLE_RETURN_ADDRESS_SIGNING ? 4 : 2;
     return (numberOfSaves + maxEpilogueInstructions) * bytesPerInstruction;
 #else
     UNUSED_VARIABLE(numberOfSaves);

@@ -76,7 +76,7 @@ namespace JSC { namespace AOT {
 
 SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* callerStackPointer)
 {
-    return removeCodePtrTag(static_cast<void* const*>(callerStackPointer)[isX86() ? -1 : -2]);
+    return removeReturnAddressSignature(static_cast<void* const*>(callerStackPointer)[isX86() ? -1 : -2]);
 }
 
 static bool hasCollectedInPolledCall(VM& vm, void* callerStackPointer, CallFrame* frameOfPollStub)
@@ -182,7 +182,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
         OPERATION_RETURN(scope);
     }
     instance->runtime.exceptions.thrownValue = value;
-    instance->state->returnAddressOfThrowAfterCleanup = removeCodePtrTag(callFrame->rawReturnPC());
+    instance->state->returnAddressOfThrowAfterCleanup = callFrame->returnPCForInspection();
     instance->state->keptByCleanup = kept;
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
@@ -1196,7 +1196,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessValueHasType, void, (Ins
     const RuntimeLayoutTable& layouts = instance->state->objects->layouts;
     const RuntimeType& expected = layouts.typeAt(type);
     if (!layouts.valueHasType(expected, JSValue::decode(value))) [[unlikely]]
-        stopAtFalseProofBehind(*instance, static_cast<const uint32_t*>(std::bit_cast<const CallerFrameAndPC*>(callFrame)->returnPC), value, kindsAndSource >> KindsOfProof::shiftOfSource, FalseProofWord::summarize(expected.primitiveSet().toRaw(), expected.numberOfCellTests));
+        stopAtFalseProofBehind(*instance, static_cast<const uint32_t*>(callFrame->returnPCForInspection()), value, kindsAndSource >> KindsOfProof::shiftOfSource, FalseProofWord::summarize(expected.primitiveSet().toRaw(), expected.numberOfCellTests));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))

@@ -31,6 +31,7 @@
 #include "AOTUnwinding.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
+#include "JSCPtrTag.h"
 #include "MachineContext.h"
 #include "VM.h"
 #include <algorithm>
@@ -560,6 +561,16 @@ static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
     return reinterpret_cast<uintptr_t&>(reg == ARM64Registers::sp ? registers.machineContext.sp : registers.machineContext.regs[number]);
 #endif
 }
+
+static uintptr_t linkRegisterAsCalleeSavesIt(PlatformRegisters& registers)
+{
+    uintptr_t link = registerOf(registers, ARM64Registers::lr);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    return std::bit_cast<uintptr_t>(signReturnAddress(std::bit_cast<void*>(link), std::bit_cast<const void*>(registerOf(registers, ARM64Registers::sp))));
+#else
+    return link;
+#endif
+}
 #elif CPU(X86_64)
 static uintptr_t& registerOf(PlatformRegisters& registers, GPRReg reg)
 {
@@ -597,7 +608,7 @@ static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
 #if CPU(ARM64)
     registerBeforeFault = registerOf(registers, faultCallerLinkGPR);
     if (fault.callerFrame == CallerFrame::Frameless)
-        registerOf(registers, faultCallerLinkGPR) = registerOf(registers, ARM64Registers::lr);
+        registerOf(registers, faultCallerLinkGPR) = linkRegisterAsCalleeSavesIt(registers);
     registerOf(registers, ARM64Registers::lr) = returnAddress;
 #elif CPU(X86_64)
     registerBeforeFault = registerOf(registers, registerWrittenAtFaults);
@@ -625,16 +636,15 @@ static bool handleLoopPoll(const Fault& fault, PlatformRegisters& registers)
 
     uintptr_t returnAddress = fault.pc + sizeOfLoopPoll;
 #if CPU(ARM64)
-    uintptr_t& link = registerOf(registers, ARM64Registers::lr);
     if (isFrameless) {
         uintptr_t& stackPointer = registerOf(registers, ARM64Registers::sp);
         uintptr_t& framePointer = registerOf(registers, ARM64Registers::fp);
         auto* top = std::bit_cast<uintptr_t*>(stackPointer);
-        *--top = link;
+        *--top = linkRegisterAsCalleeSavesIt(registers);
         *--top = framePointer;
         framePointer = stackPointer = std::bit_cast<uintptr_t>(top);
     }
-    link = returnAddress;
+    registerOf(registers, ARM64Registers::lr) = returnAddress;
 #else
     void*& stackPointer = MachineContext::stackPointerImpl(registers);
     auto* top = static_cast<uintptr_t*>(stackPointer);

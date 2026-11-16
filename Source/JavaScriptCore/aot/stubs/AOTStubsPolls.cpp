@@ -10,6 +10,7 @@
 
 #include "AOTInstance.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
@@ -102,10 +103,11 @@ static void generatePollAtPrologue(StubAssembler& jit, Entry operation)
         jit.loadCallerReturnAddress(bytes, A1);
         jit.move(instanceGPR, A0);
         jit.callOperation(operation, T11);
-        jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
+        jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR), handleExceptionAtPrologue());
+        jit.linkToStub(jit.branch64(CCallHelpers::Equal, GPRInfo::returnValueGPR, TrustedImm32(pollAtPrologueMustThrow)), throwStackOverflow(true));
+        if (!pollAtPrologueReturnsBehindItsCall)
+            jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
     });
-    jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, CCallHelpers::linkRegister), handleExceptionAtPrologue());
-    jit.linkToStub(jit.branch64(CCallHelpers::Equal, CCallHelpers::linkRegister, TrustedImm32(pollAtPrologueMustThrow)), throwStackOverflow(true));
     jit.ret();
 #endif
 }
@@ -173,16 +175,20 @@ void generatePollBeforeEntering(StubAssembler& jit)
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
 #else
     constexpr GPRReg siteReturnAddress = ARM64Registers::x16;
-    constexpr GPRReg scratch = ARM64Registers::x17;
+    constexpr GPRReg ownReturnAddress = ARM64Registers::x17;
     Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::softStackLimitWord());
-    jit.pushPair(siteReturnAddress, CCallHelpers::linkRegister);
+    jit.move(CCallHelpers::linkRegister, ownReturnAddress);
+    jit.move(siteReturnAddress, CCallHelpers::linkRegister);
+    emitPushLinkRegister(jit);
+    jit.move(ownReturnAddress, CCallHelpers::linkRegister);
     callPollBeforeEntering(jit, 2 * sizeof(void*));
     constexpr GPRReg exception = siteReturnAddress;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
-    jit.popPair(CCallHelpers::linkRegister, scratch);
+    jit.move(CCallHelpers::linkRegister, ownReturnAddress);
+    emitPopLinkRegister(jit);
     Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, exception);
-    jit.m_assembler.ret(scratch);
+    jit.m_assembler.ret(ownReturnAddress);
 
     hasThrown.link(&jit);
     jit.jumpToStub(handleException(false));

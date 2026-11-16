@@ -5681,6 +5681,30 @@ public:
         validateUntaggedPtr(ARM64Registers::lr);
     }
 
+    // Only behind tagReturnAddress() and a store: on what came out of memory it would skip the authentication.
+    ALWAYS_INLINE void removeTagAfterSavingReturnAddress()
+    {
+        if (m_policy.keepsLinkRegisterUnsigned)
+            m_assembler.hint(7); // XPACLRI
+    }
+
+    // With the stack pointer that tagReturnAddress() had.
+    ALWAYS_INLINE void untagAfterLoadingReturnAddress(LoadedLinkRegister loadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    {
+        if (!m_policy.keepsLinkRegisterUnsigned)
+            return;
+        m_assembler.hint(31); // AUTIBSP
+        if (loadedLinkRegister == LoadedLinkRegister::MayBeSavedAgain)
+            validateLoadedReturnAddress();
+    }
+
+    // A return faults by itself on what failed to authenticate. A rare path that leaves in another way has this in front.
+    ALWAYS_INLINE void validateLoadedReturnAddress()
+    {
+        if (m_policy.keepsLinkRegisterUnsigned)
+            validateUntaggedPtr(ARM64Registers::lr);
+    }
+
     ALWAYS_INLINE void tagPtr(PtrTag tag, RegisterID target)
     {
         if (tag)
@@ -5741,7 +5765,8 @@ public:
     ALWAYS_INLINE void ret()
     {
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-        m_assembler.hint(31); // AUTIBSP
+        if (!m_policy.keepsLinkRegisterUnsigned)
+            m_assembler.hint(31); // AUTIBSP
 #endif
         m_assembler.ret();
     }

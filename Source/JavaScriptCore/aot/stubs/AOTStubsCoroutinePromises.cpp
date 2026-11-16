@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsOperations.h"
@@ -597,7 +598,7 @@ void generateResolveReturnedPromise(StubAssembler& jit)
     needsBarrier.link(&jit);
     jit.emitFunctionPrologue();
     jit.callStub(writeBarrier());
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogueToReturn();
     jit.returnToCaller();
 
     needsOperation.link(&jit);
@@ -670,7 +671,7 @@ static void emitReturnAsyncResult(StubAssembler& jit, std::optional<RegistersSav
     Jump hasPromise = jit.branchIfCell(promise);
     jit.move(TrustedImm32(0), promise);
     branchIfMayBeThenable();
-    jit.loadPtr(Address(fp, sizeof(void*)), scratch);
+    emitLoadReturnAddressOfFrameRecord(jit, fp, scratch);
     Jump hasBeenSuspended = jit.branchPtr(CCallHelpers::Equal, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
     Label returnsValue = jit.label();
     jit.move(value, result);
@@ -710,7 +711,7 @@ static void emitReturnAsyncResult(StubAssembler& jit, std::optional<RegistersSav
         leaveFrame();
         jit.emitFunctionPrologue();
         jit.callStub(writeBarrier());
-        jit.emitFunctionEpilogue();
+        jit.emitFunctionEpilogueToReturn();
         jit.returnToCaller();
     }
 

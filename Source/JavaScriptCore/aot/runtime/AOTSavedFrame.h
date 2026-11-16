@@ -21,6 +21,7 @@
 #include <span>
 #include <wtf/Atomics.h>
 #include <wtf/MathExtras.h>
+#include <wtf/PtrTag.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -45,7 +46,7 @@ struct SuspendedMachineFrame {
 
     uint64_t* frame;
     const uint64_t* bottom;
-    void* resumeAddress;
+    void* resumeAddress; // As in the frame record of a callee of the frame.
     const SuspensionWords* words;
 };
 
@@ -132,7 +133,7 @@ public:
     static SavedFrame* createHeapFrame(VM&, Instance&, size_t numberOfWords, void* resumeAddress);
     static SavedFrame* forFrame(const Instance&, const uint64_t* frame);
     static constexpr uint32_t generatorWord = 1;
-    void suspendAtYield(VM&, JSCell* generator, void* resumeAddress);
+    void suspendAtYield(VM&, JSCell* generator, void* resumeAddress); // The caller has signed the address for this frame.
     void save(VM&, const SuspendedMachineFrame&, SuspensionKind);
     void willBeRestoredToStack()
     {
@@ -157,7 +158,8 @@ public:
     void setStepStatus(AsyncGeneratorStepStatus status) { m_flags = (m_flags & ~stepStatusMask) | static_cast<uint8_t>(status) << stepStatusShift; }
     AsyncGeneratorStepStatus stepStatus() const { return static_cast<AsyncGeneratorStepStatus>((m_flags & stepStatusMask) >> stepStatusShift); }
     bool liesOnHeap() const { return m_numberOfSavedRegisterPairs & liesOnHeapBit; }
-    const void* resumeAddress() const { return m_resumeAddress; }
+    const void* resumeAddress() const { return removeReturnAddressSignature(m_resumeAddress); }
+    const void* modifierOfResumeAddress() const;
     std::optional<uint64_t> wordAt(uint32_t location) const;
 
     enum class Continuation : uint8_t { None, Promise, Waiter, CombinatorElement };
@@ -185,6 +187,9 @@ public:
     static constexpr unsigned throwsIntoAwaitShift = 8;
     static constexpr uint32_t minWordsForStringMove = 32;
     static constexpr size_t maxWordsAllocatedInStub = (MarkedSpace::largeCutoff - 64) / sizeof(uint64_t);
+    // The resume address is signed with the address of its word and these bits on top, which no stack pointer has.
+    static constexpr uint16_t discriminatorOfResumeAddress = 0x7a5e;
+    static constexpr unsigned discriminatorShift = 48;
     static constexpr ptrdiff_t offsetOfNumberOfWords() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWords); }
     static constexpr ptrdiff_t offsetOfNumberOfWordsSkippedAtBottom() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfWordsSkippedAtBottom); }
     static constexpr ptrdiff_t offsetOfVersion() { return OBJECT_OFFSETOF(SavedFrame, m_version); }
@@ -251,6 +256,12 @@ static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::
 static_assert(SavedFrame::offsetOfKind() + 1 == SavedFrame::offsetOfContinuation() && SavedFrame::offsetOfContinuation() + 1 == SavedFrame::offsetOfNumberOfSavedRegisterPairs() && SavedFrame::offsetOfNumberOfSavedRegisterPairs() + 1 == SavedFrame::offsetOfFlags());
 static_assert(static_cast<uint32_t>(SavedFrame::Continuation::CombinatorElement) + SavedFrame::maxCombinatorElements <= UINT8_MAX + 1);
 static_assert(!static_cast<unsigned>(AsyncGeneratorStepStatus::Result) && numberOfEnumerators<AsyncGeneratorStepStatus> <= (SavedFrame::stepStatusMask >> SavedFrame::stepStatusShift) + 1);
+
+inline const void* SavedFrame::modifierOfResumeAddress() const
+{
+    constexpr uintptr_t bitsOfAddress = (1ull << discriminatorShift) - 1;
+    return std::bit_cast<const void*>((std::bit_cast<uintptr_t>(&m_resumeAddress) & bitsOfAddress) | static_cast<uintptr_t>(discriminatorOfResumeAddress) << discriminatorShift);
+}
 
 inline size_t SuspendedMachineFrame::numberOfWords() const
 {

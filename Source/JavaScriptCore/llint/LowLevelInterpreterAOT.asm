@@ -4522,6 +4522,7 @@ end
 if X86_64 or ARM64
 # The prologue and op_enter in one. Every test stands in front of the first store into the frame, so a rare case gives the frame back and enters the ordinary prologue.
 macro aotFunctionPrologue(ordinaryPrologue, checkArity)
+    tagReturnAddress sp
     preserveCallerPCAndCFR()
     loadp CodeBlock[cfr], t1
     loadp CodeBlock::m_vm[t1], t2
@@ -4594,6 +4595,7 @@ macro aotFunctionPrologue(ordinaryPrologue, checkArity)
 
 .ordinary:
     restoreCallerPCAndCFR()
+    untagReturnAddress sp
     jmp ordinaryPrologue
 end
 
@@ -4646,6 +4648,23 @@ op(llint_aot_virtual_call_trampoline, macro ()
 end)
 
 if not C_LOOP
+# The thunks below leave the return address in the link register as the call put it there. They sign it only while it is on the stack.
+macro returnToLinkRegister()
+    if RETURN_ADDRESS_SIGNING
+        emit "ret"
+    else
+        ret
+    end
+end
+
+macro callInFrameOfThunk(makeCall)
+    tagReturnAddress sp
+    preserveCallerPCAndCFR()
+    makeCall()
+    restoreCallerPCAndCFR()
+    untagReturnAddress sp
+end
+
 # What a call enters in place of llint_native_call_trampoline where the callee is String.prototype.charCodeAt: VM::getHostFunction(). A string that is whole, or a piece of one that is, at an int32
 # inside it: text that is made at run time to compare strings is made of these. It makes no frame, so the arguments lie where the caller has put them. Everything else is the host function's.
 if X86_64
@@ -4675,12 +4694,12 @@ _llint_aot_char_code_at_thunk:
     btiz t3, HashFlags8BitBuffer, .hasWideCharacters
     loadb [t1, t2], r0
     orq t5, r0
-    ret
+    returnToLinkRegister()
 
 .hasWideCharacters:
     loadh [t1, t2, 2], r0
     orq t5, r0
-    ret
+    returnToLinkRegister()
 
     # A piece of another string stays a rope: the host function reads it through its base as well.
 .rope:
@@ -4744,7 +4763,7 @@ _llint_aot_string_index_of_thunk:
     move constexpr JSValue::NumberTag, t5
     move t1, r0
     orq t5, r0
-    ret
+    returnToLinkRegister()
 
 .indexOfFindsFourth:
     addi 1, t1
@@ -4765,10 +4784,8 @@ _llint_aot_string_index_of_thunk:
     lshiftq 32, t1
     orq t0, t1
     move t3, a0
-    preserveCallerPCAndCFR()
-    cCall3(_llint_aot_index_of_character)
-    restoreCallerPCAndCFR()
-    ret
+    callInFrameOfThunk(macro () cCall3(_llint_aot_index_of_character) end)
+    returnToLinkRegister()
 
 .indexOfMayHaveStart:
     bib t0, 2, .indexOfIsHostFunctions
@@ -4844,10 +4861,10 @@ _llint_aot_is_nan_thunk:
     bdnequn ft0, ft0, .isNaN
 .isNoNaN:
     move ValueFalse, r0
-    ret
+    returnToLinkRegister()
 .isNaN:
     move ValueTrue, r0
-    ret
+    returnToLinkRegister()
 .isNaNHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4864,10 +4881,10 @@ _llint_aot_is_finite_thunk:
     bqeq t0, t1, .isNotFinite
 .isFinite:
     move ValueTrue, r0
-    ret
+    returnToLinkRegister()
 .isNotFinite:
     move ValueFalse, r0
-    ret
+    returnToLinkRegister()
 .isFiniteHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4878,7 +4895,7 @@ _llint_aot_is_integer_thunk:
     move constexpr JSValue::NumberTag, t1
     bqb t0, t1, .isIntegerHostFunction
     move ValueTrue, r0
-    ret
+    returnToLinkRegister()
 .isIntegerHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4894,10 +4911,10 @@ _llint_aot_is_array_thunk:
     bbeq t1, constexpr ProxyObjectType, .isArrayHostFunction
 .isNoArray:
     move ValueFalse, r0
-    ret
+    returnToLinkRegister()
 .isArray:
     move ValueTrue, r0
-    ret
+    returnToLinkRegister()
 .isArrayHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4925,7 +4942,7 @@ _llint_aot_char_at_thunk:
     loadStringCharacter(t1, t2, t0, .charAtHostFunction)
     loadThunkVM(t1, t2, t3)
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, PtrSize], r0
-    ret
+    returnToLinkRegister()
 .charAtHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4941,7 +4958,7 @@ _llint_aot_from_char_code_thunk:
     zxi2q t0, t0
     loadThunkVM(t1, t2, t3)
     loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t0, PtrSize], r0
-    ret
+    returnToLinkRegister()
 .fromCharCodeHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4973,7 +4990,7 @@ _llint_aot_has_own_property_thunk:
     loadb (constexpr (HasOwnPropertyCache::Entry::offsetOfResult()))[t5], t1
     orq ValueFalse, t1
     move t1, r0
-    ret
+    returnToLinkRegister()
 .hasOwnPropertyHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -4984,7 +5001,7 @@ _llint_aot_math_floor_thunk:
     move constexpr JSValue::NumberTag, t1
     bqb t0, t1, .floorOfNonInt32
     move t0, r0
-    ret
+    returnToLinkRegister()
 .floorOfNonInt32:
     btqz t0, t1, .floorHostFunction
     addq t1, t0
@@ -5006,7 +5023,7 @@ _llint_aot_math_floor_thunk:
     zxi2q t2, t2
     orq t1, t2
     move t2, r0
-    ret
+    returnToLinkRegister()
 .floorHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -5026,7 +5043,7 @@ _llint_aot_math_imul_thunk:
     muli t2, t0
     orq t1, t0
     move t0, r0
-    ret
+    returnToLinkRegister()
 .imulHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -5061,7 +5078,7 @@ macro minMaxThunk(keepsFirstInt32, keepsFirstDouble, hostFunction)
     jmp .next
 .isLast:
     move t0, r0
-    ret
+    returnToLinkRegister()
 
 .isNoInt32:
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t2
@@ -5098,7 +5115,7 @@ _llint_aot_math_abs_thunk:
     orq t1, t0
 .isAbsolute:
     move t0, r0
-    ret
+    returnToLinkRegister()
 .absOfNonInt32:
     btqz t0, t1, .absHostFunction
     addq t1, t0
@@ -5106,7 +5123,7 @@ _llint_aot_math_abs_thunk:
     urshiftq 1, t0
     subq t1, t0
     move t0, r0
-    ret
+    returnToLinkRegister()
 .absHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -5120,13 +5137,13 @@ _llint_aot_math_sqrt_thunk:
     bcd2i ft0, t0, .rootIsNotInt32
     orq t1, t0
     move t0, r0
-    ret
+    returnToLinkRegister()
 .rootIsNotInt32:
     bdnequn ft0, ft0, .sqrtHostFunction
     fd2q ft0, t0
     subq t1, t0
     move t0, r0
-    ret
+    returnToLinkRegister()
 .sqrtHostFunction:
     jmp _llint_native_call_trampoline
 
@@ -5136,7 +5153,7 @@ macro roundingThunk(correct, hostFunction)
     move constexpr JSValue::NumberTag, t1
     bqb t0, t1, .isNoInt32
     move t0, r0
-    ret
+    returnToLinkRegister()
 .isNoInt32:
     btqz t0, t1, hostFunction
     addq t1, t0
@@ -5154,7 +5171,7 @@ macro roundingThunk(correct, hostFunction)
     zxi2q t2, t2
     orq t1, t2
     move t2, r0
-    ret
+    returnToLinkRegister()
 end
 
 global _llint_aot_math_ceil_thunk
@@ -5214,7 +5231,7 @@ _llint_aot_math_clz32_thunk:
     end
     orq t1, t2
     move t2, r0
-    ret
+    returnToLinkRegister()
 .clz32HostFunction:
     jmp _llint_native_call_trampoline
 
@@ -5235,11 +5252,9 @@ macro findInThunk(collectionType, helper, hostFunction)
     move constexpr JSValue::NumberTag, t5
     btqz a1, t5, hostFunction
 .asks:
-    preserveCallerPCAndCFR()
-    cCall2(helper)
-    restoreCallerPCAndCFR()
+    callInFrameOfThunk(macro () cCall2(helper) end)
     btqz r0, hostFunction
-    ret
+    returnToLinkRegister()
 end
 
 global _llint_aot_map_get_thunk
@@ -5307,7 +5322,7 @@ _llint_aot_array_push_thunk:
     storei t1, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t5]
     move constexpr JSValue::NumberTag, r0
     orq t1, r0
-    ret
+    returnToLinkRegister()
 
 .pushesSeveral:
     bib t0, 2, .pushHostFunction
@@ -5342,7 +5357,7 @@ _llint_aot_array_push_thunk:
     storei t2, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t5]
     move constexpr JSValue::NumberTag, r0
     orq t2, r0
-    ret
+    returnToLinkRegister()
 
 .pushHostFunction:
     jmp _llint_native_call_trampoline
@@ -5360,11 +5375,9 @@ macro addInThunk(collectionType, fewestArguments, loadValue, hostFunction)
     btqz a1, t5, hostFunction
 .isNumberOrCell:
     loadValue(a2)
-    preserveCallerPCAndCFR()
-    cCall3(_llint_aot_collection_add)
-    restoreCallerPCAndCFR()
+    callInFrameOfThunk(macro () cCall3(_llint_aot_collection_add) end)
     btqz r0, hostFunction
-    ret
+    returnToLinkRegister()
 end
 
 global _llint_aot_map_set_thunk

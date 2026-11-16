@@ -30,6 +30,7 @@
 #include "IteratorOperations.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSCPtrTag.h"
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSSentinel.h"
@@ -141,7 +142,7 @@ CallData SavedFrame::getCallData(JSCell* cell)
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
 {
-    if (std::bit_cast<const void*>(frame[1]) != instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter))
+    if (removeReturnAddressSignature(std::bit_cast<const void*>(frame[1])) != instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter))
         return nullptr;
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
@@ -219,7 +220,11 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
         words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    m_resumeAddress = resignReturnAddress(machineFrame.resumeAddress, machineFrame.bottom, modifierOfResumeAddress());
+#else
     m_resumeAddress = machineFrame.resumeAddress;
+#endif
     m_flags = kind == SuspensionKind::Yield ? isSuspendedAtYieldFlag : 0;
     m_liveSlotMapOffsetPlusOne = liveSlotMapOffsetOf(siteWord) + 1;
     didWrite();
@@ -228,7 +233,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
-    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(m_resumeAddress), offsetPlusOne - 1);
+    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(resumeAddress()), offsetPlusOne - 1);
 }
 
 template<typename Visitor>

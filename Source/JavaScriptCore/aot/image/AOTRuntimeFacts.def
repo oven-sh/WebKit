@@ -5,6 +5,7 @@ AOT_RUNTIME_FACT("the number of entries in the table of the run time", numberOfE
 AOT_RUNTIME_FACT("the number of operations of the run time", numberOfRuntimeOperations)
 AOT_RUNTIME_FACT("the names of the entries in the table of the run time in the order of their numbers", hashOfNamesOfEntries)
 AOT_RUNTIME_FACT("isHardenedBuild", isHardenedBuild)
+AOT_RUNTIME_FACT("ENABLE(RETURN_ADDRESS_SIGNING)", ENABLE_RETURN_ADDRESS_SIGNING)
 AOT_RUNTIME_FACT("sizeOfLoopPoll", sizeOfLoopPoll)
 
 AOT_RUNTIME_FACT("the built-ins that the engine names (low word)", static_cast<uint32_t>(engineListStamp))

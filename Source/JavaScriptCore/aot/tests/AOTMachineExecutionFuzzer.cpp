@@ -23,6 +23,7 @@
 #include "CPUFeatureSet.h"
 #include "ExecutableAllocator.h"
 #include "ExecutableMemoryHandle.h"
+#include "JSCPtrTag.h"
 #include "LinkBuffer.h"
 #include <algorithm>
 #include <array>
@@ -348,6 +349,10 @@ extern "C" void didReachPatch(PatchSite* site)
             memset(reinterpret_cast<uint8_t*>(area.stackPointer), 0xc7, bytes);
             area.stackPointer -= distance;
             framePointer -= distance;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointer);
+            record->returnPC = resignReturnAddress(record->returnPC, reinterpret_cast<uint8_t*>(record + 1) + distance, record + 1);
+#endif
             currentRun.stackDistance += distance;
         }
     }
@@ -557,6 +562,7 @@ static void compileEntryTrampoline()
     GPRReg base = scratchGPR;
     auto loadBase = [&] { jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(registerArea)), base); };
     auto addressOfSlot = [&](size_t offset, unsigned i) { return CCallHelpers::Address(base, static_cast<int32_t>(offset + i * 8)); };
+    jit.tagReturnAddress();
     loadBase();
     auto eachG = [&](auto functor) {
         for (unsigned i = 0; i < numberOfGPRs; ++i) {

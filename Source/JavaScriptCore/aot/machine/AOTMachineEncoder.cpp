@@ -910,7 +910,7 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
     if (frame.isTornDownAtEnd) {
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump());
         ASSERT(m_frameIsSetUp);
-        leaveFrameIfSetUp(registersPoppedAtTeardown);
+        leaveFrameIfSetUp(frame.returnsInPlaceOfJump ? LoadedLinkRegister::IsOnlyReturnedTo : LoadedLinkRegister::MayBeSavedAgain, registersPoppedAtTeardown);
     }
 
     noteOrigin(terminator.operation->origin(), terminator.operation->index());
@@ -1461,7 +1461,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::setUpFrame(const Block* block)
     noteFrameState(true);
 }
 
-void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords)
+void Encoder::leaveFrameIfSetUp(LoadedLinkRegister loadedLinkRegister, std::span<const GPRReg> registersPoppedOutOfWords)
 {
     if (!m_frameIsSetUp)
         return;
@@ -1472,7 +1472,7 @@ void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWord
     uint32_t operationOfUser = m_operationOfOrigin;
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameTeardown));
     if (registersPoppedOutOfWords.empty())
-        emitFrameTeardown(m_jit, m_frame);
+        emitFrameTeardown(m_jit, m_frame, loadedLinkRegister);
     else
         emitTeardownOfFrameThatPopsWords(m_jit, m_frame, registersPoppedOutOfWords);
     noteOrigin(originOfUser, operationOfUser);

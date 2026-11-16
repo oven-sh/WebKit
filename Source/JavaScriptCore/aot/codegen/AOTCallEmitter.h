@@ -144,7 +144,7 @@ private:
 
     void emitTailCall(const OperationContext&, const CallTarget&, const PlacedArguments&, const ArgumentLocations* locationsOfCalledUnit = nullptr);
     void enterBodyAfterNewPromise(const ValueContext&, CodeUnit body, const ArgumentLocations&);
-    Machine::PatchOperation* leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord>, const Invocable<void(CCallHelpers&)> auto& leave);
+    Machine::PatchOperation* leaveAfterFrameTeardown(std::span<const Machine::ConstrainedValue> inRegisters, std::span<const StackWord>, LoadedLinkRegister, const Invocable<void(CCallHelpers&)> auto& leave);
     void jumpAfterFrameTeardown(const CallTarget&, const PlacedArguments&);
     void callFromArgumentListFrame(const CallTarget&, const PlacedArguments&);
     void tailCallValue(const ValueContext&, const ValueCall&);

@@ -1172,6 +1172,10 @@ public:
     ALWAYS_INLINE void tagReturnAddress() { }
     ALWAYS_INLINE void untagReturnAddress(RegisterID = RegisterID::InvalidGPRReg) { }
 
+    ALWAYS_INLINE void removeTagAfterSavingReturnAddress() { }
+    ALWAYS_INLINE void untagAfterLoadingReturnAddress(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain) { }
+    ALWAYS_INLINE void validateLoadedReturnAddress() { }
+
     ALWAYS_INLINE void tagPtr(PtrTag, RegisterID) { }
     ALWAYS_INLINE void tagPtr(RegisterID, RegisterID) { }
     ALWAYS_INLINE void untagPtr(PtrTag, RegisterID) { }

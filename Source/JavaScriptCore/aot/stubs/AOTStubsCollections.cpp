@@ -116,7 +116,7 @@ static void emitBarrierAndReturnOwner(StubAssembler& jit, const HashTableRegiste
     jit.move(cell, gprOf(firstStubOperandRegister));
     jit.callStub(writeBarrier());
     jit.move(registers.owner, jit.result());
-    jit.emitFunctionEpilogue();
+    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
     jit.ret();
 }
 

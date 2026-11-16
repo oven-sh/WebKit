@@ -152,11 +152,19 @@ Lock crashLock;
         CRASH(); \
     } while (false)
 
+void setPolicyAndGenerate(Code& code, CCallHelpers& jit)
+{
+    AssemblerPolicy policy = jit.policy();
+    policy.keepsLinkRegisterUnsigned = code.policy().frame.emitsFrame;
+    jit.setPolicy(policy);
+    generate(code, jit);
+}
+
 std::unique_ptr<Compilation> compile(B3::Procedure& proc)
 {
     prepareForGeneration(proc.code());
     CCallHelpers jit;
-    generate(proc.code(), jit);
+    setPolicyAndGenerate(proc.code(), jit);
     LinkBuffer linkBuffer(jit, nullptr);
 
     return makeUnique<Compilation>(

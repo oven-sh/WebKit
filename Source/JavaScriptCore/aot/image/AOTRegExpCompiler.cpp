@@ -248,7 +248,6 @@ RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy& policy, B
 {
     CCallHelpers jit;
     ImageCodeAddressing addressing(jit, PCRelativeReach::Far, policy, context);
-    jit.tagReturnAddress();
     jit.move(MacroAssembler::TrustedImm64(static_cast<int64_t>(Yarr::JSRegExpResult::JITCodeFailure)), GPRInfo::returnValueGPR);
     jit.move(MacroAssembler::TrustedImm32(0), GPRInfo::returnValueGPR2);
     jit.ret();
@@ -349,7 +348,7 @@ static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& 
         .codeBlock = &codeBlock,
         .policy = policy,
         .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
-            auto addressing = makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy, inputs.context);
+            auto addressing = makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy.withLinkRegisterSignedUntilReturn(), inputs.context);
             if (bitParallel)
                 emitBitParallelRegExp(jit, *addressing, *bitParallel);
             return addressing;

@@ -215,13 +215,14 @@ public:
 
     bool isOutOfReach() const { return m_isOutOfReach; }
 
-    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer)
+    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer, Vector<uint32_t>& targetsOfAllTables)
     {
         std::span<uint8_t> bytes = buffer.bytes();
         for (auto& [table, start] : m_tables) {
             uint32_t place = buffer.linkBuffer().offsetOf(*start);
             const Vector<uint32_t>& targets = procedure.jumpTable(table).targetOffsets;
             RELEASE_ASSERT(place + targets.size() * sizeof(int32_t) <= bytes.size());
+            targetsOfAllTables.appendVector(targets);
             for (size_t entry = 0; entry < targets.size(); ++entry) {
                 int32_t distance = static_cast<int32_t>(targets[entry]) - static_cast<int32_t>(place);
                 memcpySpan(bytes.subspan(place + entry * sizeof(int32_t), sizeof(int32_t)), asByteSpan(distance));
@@ -474,7 +475,7 @@ struct WasmModuleCompiler {
             return { .wasRefusedByGenerator = true };
         if (lowering.isOutOfReach())
             return { .failure = Wasm::ImageCodeFailure::OutOfPCRelativeReach };
-        lowering.fillJumpTables(*context.procedure, buffer);
+        lowering.fillJumpTables(*context.procedure, buffer, result.targetsOfJumpTables);
         auto relocations = recorder.link(buffer, &buildContext);
         if (!relocations)
             return { .failure = codeFailureFor(relocations.error()) };
@@ -518,7 +519,7 @@ struct WasmModuleCompiler {
         Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
         Wasm::CompilationContext context;
         context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
-        AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
+        AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy().withLinkRegisterSignedUntilReturn();
 #if CPU(X86_64)
         if (result.usesVectors)
             assemblerPolicy.features = assemblerPolicy.features.with(CPUFeature::AVX);
@@ -558,6 +559,7 @@ struct WasmModuleCompiler {
 
         result.code = RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
         result.savedRegisters = *savedRegisters;
+        result.targetsOfJumpTables = WTF::move(codeForImage.targetsOfJumpTables);
         result.dependsOnFlavor = codeForImage.dependsOnFlavor;
         for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
             result.directCallees.set(directCallee);
@@ -584,7 +586,7 @@ struct WasmModuleCompiler {
         bool isComplete = true;
         auto generate = [&](ASCIILiteral what, uint32_t index, const auto& emit) -> RelocatableCode {
             CCallHelpers jit;
-            RelocationRecorder recorder(jit, context.assemblerPolicy());
+            RelocationRecorder recorder(jit, context.assemblerPolicy().withLinkRegisterSignedUntilReturn());
             emit(jit, recorder);
             auto stub = recorder.finalize(LinkBuffer::Profile::WasmThunk, &context);
             if (stub)
@@ -990,6 +992,8 @@ WasmModuleOrDecline linkWasmModule(WasmModuleCode&& module, const CodeTemplates&
         }
         for (Wasm::FramelessRangeInImage range : function.framelessRanges)
             result.framelessRanges.append({ entry + range.begin, entry + range.end });
+        for (uint32_t target : function.targetsOfJumpTables)
+            result.targetsOfJumpTables.append(entry + target);
         return Wasm::FunctionInImage { entry, static_cast<uint32_t>(function.code.bytes.size()), firstHandler, static_cast<uint32_t>(function.handlers.size()), function.savedRegistersIndex, function.usesVectors, 0 };
     };
     auto& trapping = result.functions[static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping)];
@@ -1134,6 +1138,8 @@ WebAssemblyImageInputs WasmSectionBuilder::finish(BuildContext& context)
     appendToDirectory(section.directory, asBytes(m_declinedModules.span()));
     for (size_t index = 0; index < m_modules.size(); ++index) {
         countFunctions(m_modules[index].module, context.statistics());
+        for (uint32_t target : m_modules[index].module.targetsOfJumpTables)
+            section.targetsOfJumpTables.append(m_modules[index].base + target);
         Wasm::ModuleInImage record = appendModule(section.code, section.directory, m_modules[index].module, m_modules[index].base);
         memcpySpan(section.directory.mutableSpan().subspan(recordsOffset + index * sizeof(record)), asByteSpan(record));
     }
