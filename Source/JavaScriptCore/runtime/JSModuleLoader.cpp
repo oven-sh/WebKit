@@ -1451,7 +1451,7 @@ JSPromise* JSModuleLoader::loadRequestedModules(JSGlobalObject* globalObject, Ab
     RETURN_IF_EXCEPTION(scope, nullptr);
 #if ENABLE(AOT)
     // A module that the loader loads step by step behaves like an uncompiled record: each state visits every record that is still New.
-    if (auto* compiled = parentState ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && !compiled->isLoadedByLoader())
+    if (auto* compiled = parentState ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && !vm.synchronousModuleQueue() && !compiled->isLoadedByLoader())
         state->setRootState(vm, parentState);
 #else
     UNUSED_PARAM(parentState);

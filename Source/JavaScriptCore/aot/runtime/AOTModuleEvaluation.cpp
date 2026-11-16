@@ -1640,13 +1640,24 @@ bool Modules::isBeingFetched(ModuleID module) const
     return entry && entry->status() == ModuleRegistryEntry::Status::Fetching && !entry->record();
 }
 
-Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places)
+auto Modules::filesInOrderOfSynchronousLoad(ModuleID root, const Vector<uint32_t, 16>& places) -> Vector<FileOfSynchronousLoad, 16>
 {
+    Vector<FileOfSynchronousLoad, 16> inOrder;
+    for (uint32_t place : places)
+        inOrder.append({ place });
+    if (inOrder.size() <= 1)
+        return inOrder;
     enum class State : uint8_t { Unrequested, Requested, Fetched, Made, Recorded, Settled };
     enum class Job : uint8_t { SettleFetch, MakeRecord, StoreRecord, LoadRequests };
     UncheckedKeyHashMap<uint32_t, State, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> states;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lastWalks;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> ranks;
+    constexpr uint32_t hasNoRank = std::numeric_limits<uint32_t>::max();
+    struct StepsOfFile {
+        uint32_t rank { std::numeric_limits<uint32_t>::max() };
+        uint32_t make { 0 };
+        uint32_t store { 0 };
+    };
+    UncheckedKeyHashMap<uint32_t, StepsOfFile, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stepsOfFiles;
     auto stateOf = [&](ModuleID module) {
         if (auto found = states.find(module.index()); found != states.end())
             return found->value;
@@ -1659,13 +1670,16 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
     Vector<ModuleID, 32> toWalk;
     Vector<ModuleID, 32> walked;
     std::span<const ModuleRequestData> requests = m_table.requests(root);
-    constexpr uint32_t hasNoRank = std::numeric_limits<uint32_t>::max();
     for (uint32_t place : places)
-        ranks.add(requests[place].target(), hasNoRank);
+        stepsOfFiles.add(requests[place].target(), StepsOfFile { });
     uint32_t numberOfRanks = 0;
-    auto make = [&](ModuleID file) {
-        if (auto rank = ranks.find(file.index()); rank != ranks.end() && rank->value == hasNoRank)
-            rank->value = numberOfRanks++;
+    auto make = [&](ModuleID file, uint32_t step) {
+        if (auto found = stepsOfFiles.find(file.index()); found != stepsOfFiles.end() && found->value.rank == hasNoRank)
+            found->value = { numberOfRanks++, step, std::numeric_limits<uint32_t>::max() };
+    };
+    auto store = [&](ModuleID file, uint32_t step) {
+        if (auto found = stepsOfFiles.find(file.index()); found != stepsOfFiles.end())
+            found->value.store = std::min(found->value.store, step);
     };
     states.set(root.index(), State::Recorded);
     jobs.append({ Job::LoadRequests, root });
@@ -1677,7 +1691,8 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
             jobs.append({ Job::MakeRecord, file });
         } else if (job == Job::MakeRecord && state == State::Fetched) {
             states.set(file.index(), State::Made);
-            make(file);
+            make(file, next);
+            store(file, jobs.size());
             jobs.append({ Job::StoreRecord, file });
         } else if (job == Job::StoreRecord && state == State::Made) {
             states.set(file.index(), State::Recorded);
@@ -1710,9 +1725,10 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
                         isAllRecorded = false;
                         break;
                     case State::Fetched:
-                        make(target);
+                        make(target, next);
                         [[fallthrough]];
                     case State::Made:
+                        store(target, next);
                         states.set(target.index(), State::Recorded);
                         if (isFile)
                             break;
@@ -1734,11 +1750,50 @@ Vector<uint32_t, 16> Modules::placesOfFilesAsSynchronousLoadMakesThem(ModuleID r
             }
         }
     }
-    Vector<uint32_t, 16> inOrder = places;
-    AOT::stableSort(inOrder, { }, [&](uint32_t place) {
-        return ranks.get(requests[place].target());
+    for (FileOfSynchronousLoad& file : inOrder) {
+        StepsOfFile steps = stepsOfFiles.get(requests[file.place].target());
+        file.creationStep = steps.make;
+        file.storeStep = steps.store;
+    }
+    AOT::stableSort(inOrder, { }, [&](const FileOfSynchronousLoad& file) {
+        return stepsOfFiles.get(requests[file.place].target()).rank;
     });
     return inOrder;
+}
+
+void Modules::recaptureFilesNotStoredByLoads(ModuleID root)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    for (EagerLoad* load = m_innermostEagerLoad; load; load = load->outer) {
+        if (load->filesNotStored.isEmpty())
+            continue;
+        for (const ModuleRequestData& request : m_table.requests(root)) {
+            ModuleID file = fileOf(request.targetModule());
+            if (request.isRequire || request.isDeferred || isMocked(file) || (load->moduleOrFacade && fileOf(*load->moduleOrFacade) == file))
+                continue;
+            bool isNotStored = load->filesNotStored.removeFirstMatching([&](const EagerLoad::FileNotStored& candidate) {
+                return candidate.file == file;
+            });
+            if (!isNotStored)
+                continue;
+            if (data(request.targetModule()).isFacade()) {
+                rerunBodyOfFacade(request.targetModule());
+                RETURN_IF_EXCEPTION(scope, void());
+            }
+            recaptureExports(request.targetModule());
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+}
+
+void Modules::rerunBodyOfFacade(ModuleID facade)
+{
+    if (status(facade) != ModuleStatus::Evaluated)
+        return;
+    bool evaluatesItself = data(facade).evaluatesItself();
+    if (evaluatesItself && storedStatus(facade) == StoredModuleStatus::Evaluated)
+        setStoredStatus(facade, StoredModuleStatus::Linked);
+    callBodyUnderOwnMark(facade, evaluatesItself);
 }
 
 bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy jobs, ErrorOfImportedFile error, ModuleGraphLoadingState* load, PendingFactoryModules pendingFactoryModules)
@@ -1878,12 +1933,18 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
         if (hasNotBegunAsFile(requests[place].targetModule()))
             placesOfFiles.append(place);
     }
-    Vector<uint32_t, 16> placesInOrder = placesOfFiles.size() > 1 ? placesOfFilesAsSynchronousLoadMakesThem(root, placesOfFiles) : placesOfFiles;
+    Vector<FileOfSynchronousLoad, 16> filesInOrder = filesInOrderOfSynchronousLoad(root, placesOfFiles);
     size_t nextFile = 0;
     for (size_t place = 0; place < requests.size(); ++place) {
         size_t index = place;
-        if (nextFile < placesOfFiles.size() && placesOfFiles[nextFile] == place)
-            index = placesInOrder[nextFile++];
+        if (nextFile < placesOfFiles.size() && placesOfFiles[nextFile] == place) {
+            const FileOfSynchronousLoad& file = filesInOrder[nextFile++];
+            index = file.place;
+            eagerLoad.filesNotStored.removeAllMatching([&](const EagerLoad::FileNotStored& earlier) {
+                return earlier.storeStep <= file.creationStep;
+            });
+            eagerLoad.filesNotStored.append({ fileOf(requests[index].targetModule()), file.storeStep });
+        }
         const ModuleRequestData& request = requests[index];
         if (request.isHoisted && m_storedStatuses[request.target()] == static_cast<uint8_t>(StoredModuleStatus::Evaluated) && !activeMock(request.targetModule()))
             continue;
@@ -4371,6 +4432,10 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
         break;
     }
 
+    if (reason == SynchronousEvaluationReason::Require) {
+        recaptureFilesNotStoredByLoads(module);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     bool hasEagerLoadCycle = reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && importsEagerlyEvaluatingModule(module);
     if (reason == SynchronousEvaluationReason::Require && m_innermostEagerLoad && m_innermostEagerLoad->runsBeforeLoaderSteps && (hasEagerLoadCycle || reachesEagerLoadGraph(*m_innermostEagerLoad, module))) [[unlikely]] {
         transferSynchronousLoad(*m_innermostEagerLoad);

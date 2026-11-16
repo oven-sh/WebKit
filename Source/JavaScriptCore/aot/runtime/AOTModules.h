@@ -1627,7 +1627,12 @@ public:
     bool beginModuleInRecord(ModuleID);
     bool evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy = EagerLoadJobPolicy::KeepQueued, ErrorOfImportedFile = ErrorOfImportedFile::IsThrown, ModuleGraphLoadingState* = nullptr, PendingFactoryModules = PendingFactoryModules::Evaluate);
     bool wasRequestedByOuterLoad(ModuleID);
-    Vector<uint32_t, 16> placesOfFilesAsSynchronousLoadMakesThem(ModuleID root, const Vector<uint32_t, 16>& places);
+    struct FileOfSynchronousLoad {
+        uint32_t place;
+        uint32_t creationStep { 0 };
+        uint32_t storeStep { 0 };
+    };
+    Vector<FileOfSynchronousLoad, 16> filesInOrderOfSynchronousLoad(ModuleID root, const Vector<uint32_t, 16>& places);
     AbstractModuleRecord* recordForRequestedModule(ModuleID);
     void resumeDeferredJobs();
     void transferGraphsToLoader();
@@ -2506,6 +2511,11 @@ private:
         BitVector requestedByOuterLoads { };
         bool hasCollectedOuterRequests { false };
         const VM::SynchronousModuleQueue* loadQueue { nullptr };
+        struct FileNotStored {
+            ModuleID file;
+            uint32_t storeStep;
+        };
+        Vector<FileNotStored> filesNotStored { };
     };
     std::optional<ModuleID> evaluatingModuleOrFacade(const EagerLoad&) const;
     bool isBegunForStatement(ModuleID moduleOrFacade) const;
@@ -2521,6 +2531,8 @@ private:
     void transferGraphToLoader(EagerLoad&, std::optional<ModuleID> finishedFile = std::nullopt);
     void transferSynchronousLoad(EagerLoad&);
     bool reachesEagerLoadGraph(EagerLoad&, ModuleID required);
+    void recaptureFilesNotStoredByLoads(ModuleID root);
+    void rerunBodyOfFacade(ModuleID facade);
     void runSynchronousStepsInFrontOf(ModuleID file);
     struct TransferredLoad {
         ModuleID root;
