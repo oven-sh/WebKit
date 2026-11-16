@@ -195,7 +195,8 @@ public:
         }
 
         Butterfly* butterfly = thisObject->toButterfly();
-        visitor.appendValuesHidden(butterfly->contiguous().data(), butterfly->publicLength());
+        // Expose references held by Map/Set storage to heap snapshots, not just the GC.
+        visitor.appendValues(butterfly->contiguous().data(), butterfly->publicLength());
     }
 
     NODELETE void copyToArguments(JSGlobalObject*, JSValue* firstElementDest, unsigned offset, unsigned length);
