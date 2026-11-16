@@ -4330,7 +4330,7 @@ void reserveRoomOfListsThatLoopFills(Walker& walker, BlockID inputHead, std::spa
                 && pushesWithUnusedResult.containsIf([&](const auto& push) { return push.first == lists[place]; }) && isElementUsedInArithmetic(walker, index.value(invariantArrayReads[placeOfRead].second))
                 && std::ranges::all_of(invariantArrayReads, [&](const auto& known) {
                        Reference holder = walker.referenceOf(known.first);
-                       return isProvenArray(walker, holder) || types.at(walker.typeOf(holder)).hasOnlyPrimitives(Primitive::AnyString);
+                       return holder && (isProvenArray(walker, holder) || types.at(walker.typeOf(holder)).hasOnlyPrimitives(Primitive::AnyString));
                    });
             SetForScope requestedLiteralStorageScope(walker.requestedLiteralStorage(), hasMergedNumberStore || hasPushesAndArithmeticUsers ? ArrayStorage::Double : !isNumeric ? ArrayStorage::Other : types.at(seenByLink).isInt32OrNullish() ? ArrayStorage::Int32 : types.at(seenByLink).primitives & Primitive::FractionalNumber ? ArrayStorage::Double : ArrayStorage::Other);
             if (Reference again = bearLiteralAgainBehindItsRoom(walker, index, namesOfLists[place], list, inputHead))
