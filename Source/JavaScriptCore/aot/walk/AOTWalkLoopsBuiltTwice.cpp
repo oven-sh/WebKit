@@ -2611,6 +2611,13 @@ bool Walker::tryBranchInPreheader(Reference test, bool passesWithYes, IterationP
         BlockID behind = earlier + 1 < loop.earlierPreheaderBlocks.size() ? loop.earlierPreheaderBlocks[earlier + 1] : front;
         if (behind != front && !testsWithoutNarrowedValue.contains(m_code.at(test.id()).opcode))
             continue;
+        if (behind == front && checksProofs() && !testsWithoutNarrowedValue.contains(m_code.at(test.id()).opcode)) {
+            bool holdsMore = false;
+            for (ValueID id = m_code.lastOperationOf(front); id && !holdsMore; id = m_code.at(id).previous)
+                holdsMore = m_code.at(id).opcode != Opcode::Narrowed && !operationsThatStandAmongNarrowedValues.contains(m_code.at(id).opcode);
+            if (holdsMore)
+                continue;
+        }
         if (m_code.at(passesWithYes ? end.taken() : end.notTaken()).to == behind) {
             count(StatisticID::PreheaderChecksEliminated);
             return true;
