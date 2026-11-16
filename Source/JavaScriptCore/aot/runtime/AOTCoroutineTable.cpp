@@ -174,6 +174,14 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     return saved;
 }
 
+void SavedFrame::suspendAtYield(VM& vm, JSCell* generator, void* resumeAddress)
+{
+    RELEASE_ASSERT(liesOnHeap() && m_numberOfWords > generatorWord);
+    words()[generatorWord] = static_cast<uint64_t>(JSValue::encode(generator));
+    m_resumeAddress = resumeAddress;
+    vm.writeBarrier(this);
+}
+
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
 {
     SavedFrame* saved = create(vm, instance, CoroutineKind::AsyncFunction, machineFrame);

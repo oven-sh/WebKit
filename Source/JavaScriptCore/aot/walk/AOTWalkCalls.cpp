@@ -533,6 +533,8 @@ static bool argumentsPassGuards(Walker& walker, FunctionID callee, std::span<con
     return true;
 }
 
+bool directEntryTakesArguments(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
+
 Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction, bool entersAsCallWould)
 {
     Draft direct(Opcode::CallDirect, site.origin());
@@ -541,6 +543,8 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.inputValueGiven = site.inputValueGiven;
     direct.setFunction(callee);
     bool hasSlowVersion = walker.plan().conventions().hasParameterGuard(callee);
+    if (entersAsCallWould && hasSlowVersion)
+        entersAsCallWould = directEntryTakesArguments(walker, callee, entryArguments);
     bool entersBody = !entersAsCallWould && (!hasSlowVersion || (!isConstruction && argumentsPassGuards(walker, callee, entryArguments)));
     direct.setRole(entersAsCallWould ? walker.plan().conventions().directEntryOf(callee).role : entersBody ? CodeRole::Body : CodeRole::SlowBody);
     if (site.opcode == Opcode::Call)
@@ -554,8 +558,6 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
         walker.leaveArrivals(callee, entryArguments);
     return walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
 }
-
-bool directEntryTakesArguments(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
 
 bool unitTakesWhatCopyIsHanded(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {

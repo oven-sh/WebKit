@@ -152,7 +152,7 @@ static void appendNullishArms(Walker& walker, Reference value, Origin origin, Ve
         walker.restartIteration();
 }
 
-bool isConvertedToNumber(Walker& walker, const BodyValue& read)
+bool isConvertedToNumber(Walker& walker, const BodyValue& read, ValueID& askedInFront)
 {
     static constexpr OpcodeSet products { Opcode::Mul, Opcode::Div, Opcode::Sub };
     const BodyIndex& index = walker.currentBodyIndex();
@@ -178,7 +178,15 @@ bool isConvertedToNumber(Walker& walker, const BodyValue& read)
     if (!other || index.isParameter(other) || index.opcodeOf(other) != Opcode::PropGet || index.blockOf(other) != index.blockOf(read.id()))
         return false;
     BodyValue otherRead = index.value(other);
-    return !otherRead.isFreeName() && otherRead.key() != read.key() && index.stripCasts(otherRead.objectOperand()) == index.stripCasts(read.objectOperand()) && siteMayAnswerReadWithoutOtherCode(walker, otherRead) && index.onlyUsingValue(other);
+    if (otherRead.isFreeName() || otherRead.key() == read.key() || index.stripCasts(otherRead.objectOperand()) != index.stripCasts(read.objectOperand()) || !siteMayAnswerReadWithoutOtherCode(walker, otherRead) || !index.onlyUsingValue(other) || other.index() < read.id().index())
+        return false;
+    static constexpr OpcodeSet runNoCode = opcodesThatStateTypes | OpcodeSet { Opcode::Integer, Opcode::Double, Opcode::String, Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::GetEnvironmentField, Opcode::GetModuleVariable, Opcode::CheckInitialized };
+    for (uint32_t between = read.id().index() + 1; between < other.index(); ++between) {
+        if (!runNoCode.contains(index.opcodeOf(ValueID(between))))
+            return false;
+    }
+    askedInFront = other;
+    return true;
 }
 
 bool bindNumberOfNullish(Walker& walker, const BodyValue& read, Reference found, Origin origin)

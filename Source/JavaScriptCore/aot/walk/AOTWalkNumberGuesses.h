@@ -47,7 +47,7 @@ struct NumberReadBeforeArms {
 };
 bool walkStretchBehindTestsOfNumbers(Walker&, std::span<const TestOfNumber>, BlockID inputBlock, uint32_t begin, uint32_t end, BlockFrequency ofOtherArm, EndOfNumberArms = EndOfNumberArms::Meet, std::span<const NumberReadBeforeArms> = { });
 uint32_t limitOfStretchOfNumbers(const Walker&, const BodyBlock&);
-bool isConvertedToNumber(Walker&, const BodyValue& read);
+bool isConvertedToNumber(Walker&, const BodyValue& read, ValueID& askedInFront);
 bool bindNumberOfNullish(Walker&, const BodyValue& read, Reference found, Origin);
 bool isTakenByBitOperator(Walker&, ValueID);
 bool bindBitsOfPrimitive(Walker&, const BodyValue& read, Reference found, std::optional<Draft>&& readAgain, Origin);

@@ -2055,9 +2055,8 @@ bool CodeVerifier::isLengthOfView(ValueID length, ValueID view, BlockID block)
     bool isListBornWithLength = maker.opcode == Opcode::NewArrayLike;
     if (!isListBornWithLength && (maker.opcode != Opcode::CallInline || maker.inlineBuiltin() != InlineBuiltin::TypedArrayWithLength || !maker.numberOfOperands()))
         return false;
-    ValueID given = valueBeforeConversions(isListBornWithLength ? maker.lengthOperand() : maker.operand(maker.numberOfOperands() - 1));
-    ValueID counted = valueBeforeConversions(length);
-    return given == counted || (m_code.at(given).opcode == Opcode::Integer && m_code.at(counted).opcode == Opcode::Integer && m_code.at(given).integer() == m_code.at(counted).integer());
+    ValueID given = underlyingCell(isListBornWithLength ? maker.lengthOperand() : maker.operand(maker.numberOfOperands() - 1));
+    return given == length || (m_code.at(given).opcode == Opcode::Integer && m_code.at(length).opcode == Opcode::Integer && m_code.at(given).integer() == m_code.at(length).integer());
 }
 
 EdgeID CodeVerifier::findAnswerEdge(ValueID test, bool testResult, BlockID from) const

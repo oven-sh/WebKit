@@ -151,6 +151,8 @@ GenerationResult CodeGenerator::run()
 
     m_generatesWatched = m_watchesOperations || m_looksBehindEachOperation;
     definePinnedValues(m_out, m_pinned);
+    if (!m_checksEffects && code().opcodesOfValues().contains(Opcode::TakeGeneratorLeftInPlace))
+        emitter<OperatorEmitter>().bigIntValues();
     if (!m_checksEffects && BigIntValues::mayGoAroundLoops(code(), order()))
         emitter<OperatorEmitter>().bigIntValues();
     emitter<EntryEmitter>().generateEntries();
@@ -2135,8 +2137,11 @@ bool CodeGenerator::isJoinWithRareCode(BlockID join) const
     unsigned edges = 0;
     unsigned rareEdges = 0;
     for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
-        const Block& from = code().at(code().at(id).from);
-        if (from.terminator.kind != TerminatorKind::Jump || !code().isReached(code().at(id).from))
+        BlockID source = code().at(id).from;
+        if (!code().isReached(source))
+            continue;
+        const Block& from = code().at(source);
+        if (from.terminator.kind != TerminatorKind::Jump)
             return false;
         ++edges;
         rareEdges += from.frequency == BlockFrequency::Rare;
@@ -2153,7 +2158,9 @@ bool CodeGenerator::isBackEdgeOfSimpleLoop(BlockID from, BlockID head)
     BlockID entering;
     for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
         BlockID source = code().at(id).from;
-        if (code().at(source).terminator.kind != TerminatorKind::Jump || !code().isReached(source))
+        if (!code().isReached(source))
+            continue;
+        if (code().at(source).terminator.kind != TerminatorKind::Jump)
             return false;
         ++edges;
         if (source != from)
@@ -2166,7 +2173,8 @@ bool CodeGenerator::isKnownAtEveryEdgeInto(BlockID block, ValueID list)
 {
     BlockID home = code().blockOf(list);
     for (EdgeID id = code().at(block).firstEdgeIn(); id; id = code().at(id).nextInto()) {
-        if (!blockDominates(home, code().at(id).from))
+        BlockID source = code().at(id).from;
+        if (code().isReached(source) && !blockDominates(home, source))
             return false;
     }
     return true;

@@ -131,6 +131,8 @@ public:
     static SavedFrame* createForAsyncFunction(VM&, Instance&, const SuspendedMachineFrame&);
     static SavedFrame* createHeapFrame(VM&, Instance&, size_t numberOfWords, void* resumeAddress);
     static SavedFrame* forFrame(const Instance&, const uint64_t* frame);
+    static constexpr uint32_t generatorWord = 1;
+    void suspendAtYield(VM&, JSCell* generator, void* resumeAddress);
     void save(VM&, const SuspendedMachineFrame&, SuspensionKind);
     void willBeRestoredToStack()
     {

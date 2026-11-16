@@ -1056,6 +1056,7 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
     JSValue result = baseValue.get<true>(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(throwScope, { });
 #if ENABLE(AOT)
+    const bool keepsOffset = !structureBefore || baseValue.asCell()->structure()->propertyAccessesAreCacheable();
     if (structureBefore) {
         bool isStoredInTable = handlerReadsTable && cacheServesOtherStructures(metadata) && !(structureBefore->isDictionary() && structureBefore->hasBeenFlattenedBefore());
         AOT::Interpreter::didGetById(globalObject, baseValue.asCell(), structureBefore, ident, slot, isStoredInTable);
@@ -1107,7 +1108,11 @@ static ALWAYS_INLINE JSValue performLLIntGetByIDImpl(BytecodeIndex bytecodeIndex
             // Prevent the prototype cache from ever happening.
             metadata.hitCountForLLIntCaching = 0;
         
-            if (structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint()) {
+            bool isCacheable = structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint();
+#if ENABLE(AOT)
+            isCacheable = isCacheable && keepsOffset;
+#endif
+            if (isCacheable) {
                 metadata.defaultMode.structureID = structure->id();
                 metadata.defaultMode.cachedOffset = slot.cachedOffset();
 #if ENABLE(AOT)

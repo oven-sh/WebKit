@@ -28,6 +28,7 @@ enum UserDiagnosticKind (severity: DiagnosticSeverity, stage: Stage, code: UInt3
     WasmCodeTooLarge(Error, BuildImage, 100058, "the compiled code of the WebAssembly module is too large ({limit})")
     WasmFunctionNotCompiled(Error, BuildImage, 100058, "the compiler can't compile function {count} of the WebAssembly module")
     WasmDisabledInBuild(Warning, BuildImage, 100058, "the WebAssembly module can't run: this build of Bun has no WebAssembly")
+    UnmatchedOrderFiles(Warning, BuildImage, 100058, "--aot-order: the program has none of the functions that the order files list. Nothing is placed by them")
 }
 
 enum InternalErrorKind (stage: Stage, message: Text) {
