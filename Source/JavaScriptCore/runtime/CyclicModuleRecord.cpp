@@ -352,8 +352,12 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                     RETURN_IF_EXCEPTION(scope, void());
 #endif
 #if ENABLE(AOT)
-                    if (importedModule->inherits<AOT::ModuleRecord>())
-                        recordLinkedImport(in.localName.impl(), resolution);
+                    if (vm.hasCompiledCode()) {
+                        if (importedModule->inherits<AOT::ModuleRecord>())
+                            recordLinkedImport(in.localName.impl(), resolution);
+                        AOT::ModuleRecord::readDeferredExportForBinding(globalObject, resolution);
+                        RETURN_IF_EXCEPTION(scope, void());
+                    }
 #endif
                 }
                 break;
