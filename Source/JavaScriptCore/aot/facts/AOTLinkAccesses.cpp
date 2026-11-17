@@ -3140,21 +3140,26 @@ void AccessInLinkAccesses::resolve()
     if (!m_shared && m_access.isCopySpelledByLoop) {
         FlowNodeID source = m_flow.nodeOf(m_function, m_flow.sourceOfCopySpelledByLoop(m_function, m_access.site));
         tellAgainOnceClimbs(source);
-        if (m_flow.followsCopySpelledByLoop(subject, m_flow.typeAt(source)) && !m_flow.hasNameMadeEnumerable(m_flow.typeAt(source))) {
+        const LinkType copied = m_flow.typeAt(source);
+        if (m_flow.followsCopySpelledByLoop(subject, copied)) {
             bool copiesInstances = false;
-            m_flow.forEachLayoutOf(m_flow.typeAt(source), [&](LayoutID copied) {
-                if (m_program.at(copied).kind != LayoutKind::Instance)
-                    return;
-                copiesInstances = true;
-                m_flow.build.statistics().count(StatisticID::InstancesCopiedByLoops);
-                tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(copied));
+            m_flow.forEachLayoutOf(copied, [&](LayoutID layout) {
+                copiesInstances = copiesInstances || m_program.at(layout).kind == LayoutKind::Instance;
             });
             if (copiesInstances)
                 m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), source);
-            mayThrow();
-            return;
+            if (!copiesInstances || !m_flow.hasNameMadeEnumerable(copied)) {
+                m_flow.forEachLayoutOf(copied, [&](LayoutID layout) {
+                    if (m_program.at(layout).kind != LayoutKind::Instance)
+                        return;
+                    m_flow.build.statistics().count(StatisticID::InstancesCopiedByLoops);
+                    tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(layout));
+                });
+                mayThrow();
+                return;
+            }
         }
-        if (storesCopiedNamesOnPrototype(subject, m_flow.typeAt(source)))
+        if (storesCopiedNamesOnPrototype(subject, copied))
             return;
     }
     if (!isNamed() && !readKey())
