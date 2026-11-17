@@ -926,7 +926,7 @@ bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID imp
         return false;
     if (waiting->value.keepsActiveMock)
         return true;
-    bool hasRunInPreload = !isOfPackage(fileOrModule) && m_loadedInPreload.get(importer.index()) && data(importer).isESModuleOfProgram() && status(importer) == ModuleStatus::Evaluated && !isEvicted(importer) && (!hasInstances(importer) || currentInstance(importer));
+    bool hasRunInPreload = m_loadedInPreload.get(importer.index()) && data(importer).isESModuleOfProgram() && status(importer) == ModuleStatus::Evaluated && !isEvicted(importer) && (!hasInstances(importer) || currentInstance(importer));
     bool isTestFileLoading = false;
     m_instance.vm->aotState().filesStartedByHost.forEachSetBit([&](size_t index) {
         isTestFileLoading |= status(ModuleID(index)) < ModuleStatus::Evaluated;
