@@ -1947,6 +1947,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             }
             if (base.m_hasOpaquePath && *c == '#') {
                 copyURLPartsUntil(base, URLPart::QueryEnd, c, nonUTF8QueryEncoding);
+                m_url.m_hasOpaquePath = true;
                 state = State::Fragment;
                 appendToASCIIBuffer('#');
                 ++c;

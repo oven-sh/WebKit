@@ -1184,4 +1184,19 @@ TEST_F(WTF_URLParser, DotSegmentsInLongPaths)
             "http://host/aaaaaaaaaaaaaaaa/cccccccccccccccc"_s });
 }
 
+TEST_F(WTF_URLParser, FragmentOnOpaquePath)
+{
+    // The URL that the parser makes from a fragment and a base URL with an opaque path has that opaque path.
+    for (auto base : { "mailto:a@b.c"_s, "about:blank"_s, "foo:"_s, "foo:a/b?q#f"_s }) {
+        URL url { URL { String { base } }, "#x"_s };
+        EXPECT_TRUE(url.isValid());
+        EXPECT_TRUE(url.hasOpaquePath());
+        EXPECT_TRUE(WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+        URL relativeToIt { url, "y"_s };
+        EXPECT_FALSE(relativeToIt.isValid());
+    }
+    URL withPath { URL { "foo:/a/b"_s }, "#x"_s };
+    EXPECT_FALSE(withPath.hasOpaquePath());
+}
+
 } // namespace TestWebKitAPI
