@@ -1401,7 +1401,8 @@ static TypedForm buildReadOffHeirOfBuiltinForTypedAccess(Walker&, const BodyValu
 static TypedForm buildReadsOfMethodOffPrototypeOfClassForTypedAccess(Walker&, const BodyValue&, const OperandsOfTypedAccess&);
 static TypedForm buildClassPrototypeReadForTypedAccess(Walker&, const BodyValue&, const OperandsOfTypedAccess&);
 static bool orderWordShowsThatCellLacksFieldForTypedAccess(Walker&, Reference object, const ReceiversOfTypedAccess&, PropertyKeyID);
-static FunctionID findMethodForEmptyField(const Walker&, const ReceiversOfTypedAccess&, const FieldOfTypedAccess&, PropertyKeyID);
+static FunctionID findMethodForEmptyField(const Walker&, const BodyValue& access, const ReceiversOfTypedAccess&, const FieldOfTypedAccess&, PropertyKeyID);
+static FunctionID findMethodDeclaredAboveObjectsOf(const Walker&, LayoutID member, PropertyKeyID, LayoutID& classLayout, ASCIILiteral* whyNone = nullptr);
 static bool shouldReadMethodUnderField(const Walker&);
 static TypedForm buildFieldOverMethodRead(Walker&, const BodyValue&, Reference object, const ReceiversOfTypedAccess&, const FieldOfTypedAccess&, PropertyKeyID, FunctionID method);
 static bool closureTableHoldsMethodForTypedAccess(const Walker&, FunctionID method);
@@ -1831,7 +1832,7 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
     bool looksAboveEmptySlot = !mayFindSlotEmpty && !isFilledByConstructions && value.opcode() == Opcode::PropGet && !slotHoldsMarkForTypedAccess(walker, *receivers, key) && emptySlotTakesPrimitiveAbove(walker, *receivers, field, key);
     if (operands.areOnlyTypes && looksAboveEmptySlot)
         return TypedForm::Built;
-    if (operands.areOnlyTypes && !mayFindSlotEmpty && !isFilledByConstructions && value.opcode() == Opcode::PropGet && shouldReadMethodUnderField(walker) && findMethodForEmptyField(walker, *receivers, field, key))
+    if (operands.areOnlyTypes && !mayFindSlotEmpty && !isFilledByConstructions && value.opcode() == Opcode::PropGet && shouldReadMethodUnderField(walker) && findMethodForEmptyField(walker, value, *receivers, field, key))
         return TypedForm::Built;
     if (operands.areOnlyTypes) {
         if (mayFindSlotEmpty || isFilledByConstructions) {
@@ -1891,7 +1892,7 @@ static TypedForm buildReadForTypedAccess(Walker& walker, const BodyValue& value,
         mayFindSlotEmpty = mayFindSlotEmptyBehindLooksInTypedRead(walker, *receivers, field, key, knownCellFacts(walker, object), &walker.state());
     if (!isFilled && mayFindSlotEmpty)
         askAgainGuardsAboveReceiversForTypedAccess(walker, *receivers, key, false, walker.originOf(value));
-    if (FunctionID method = !isFilled && !mayFindSlotEmpty ? findMethodForEmptyField(walker, *receivers, field, key) : FunctionID()) {
+    if (FunctionID method = !isFilled && !mayFindSlotEmpty ? findMethodForEmptyField(walker, value, *receivers, field, key) : FunctionID()) {
         if (TypedForm form = buildFieldOverMethodRead(walker, value, object, *receivers, field, key, method); form != TypedForm::None)
             return form;
     }
@@ -2799,7 +2800,15 @@ static bool storePassesAboveWithoutGuards(const Walker& walker, const ReceiversO
     return nothingAnswersAboveReceiversForTypedAccess(walker, receivers, key) || storePassesPrimitivesAbove(walker, receivers, key) || storePassesMethodAbove(walker, receivers, key);
 }
 
-static FunctionID findMethodForEmptyField(const Walker& walker, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key)
+static bool someClassMakesItsMethodsAgain(const Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key)
+{
+    return !std::ranges::all_of(receivers.members, [&](LayoutID member) {
+        LayoutID classLayout;
+        return findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout) && walker.facts().isEvaluatedAtMostOnce(classLayout);
+    });
+}
+
+static FunctionID findMethodForEmptyField(const Walker& walker, const BodyValue& access, const ReceiversOfTypedAccess& receivers, const FieldOfTypedAccess& field, PropertyKeyID key)
 {
     const LinkTables& link = linkTablesForTypedAccesses(walker);
     if (link.methodsUnderFields.isEmpty() || !key || liesInThread(key) || !link.keysOfFieldsOverMethods.get(key.index()) || !walker.has(Mechanism::Folding) || slotHoldsMarkForTypedAccess(walker, receivers, key))
@@ -2807,7 +2816,7 @@ static FunctionID findMethodForEmptyField(const Walker& walker, const ReceiversO
     if (field.coverage != CoverageOfTypedAccess::EveryReceiver || !field.liesInOneSlot || !field.isMovedOutByNoStore || possibleChangesForbid(changesThatMayReachFieldForTypedAccess(receivers, field), TypedAccess::ReadsSlotThatMayBeEmpty))
         return { };
     FunctionID method = methodUnderAppendedField(walker, receivers, key);
-    return method && closureTableHoldsMethodForTypedAccess(walker, method) && link.mayBeMentionedBy(walker.unit(), method) ? method : FunctionID();
+    return method && closureTableHoldsMethodForTypedAccess(walker, method) && link.mayBeMentionedBy(walker.unit(), method) && (access.opcode() == Opcode::PropSet || !someClassMakesItsMethodsAgain(walker, receivers, key)) ? method : FunctionID();
 }
 
 static bool shouldReadMethodUnderField(const Walker& walker)
@@ -2860,7 +2869,7 @@ bool testsOnlyFieldOverMethod(Walker& walker, const BodyValue& access)
     if (!receivers)
         return false;
     FieldOfTypedAccess field = describeFieldOfTypedAccess(walker, *receivers, access.key(), { }, true);
-    if (!findMethodForEmptyField(walker, *receivers, field, access.key()))
+    if (!findMethodForEmptyField(walker, access, *receivers, field, access.key()))
         return false;
     if (access.opcode() == Opcode::PropGet && shouldReadMethodUnderField(walker))
         return true;
@@ -3326,7 +3335,7 @@ static ALWAYS_INLINE AssignedMember findChosenAssignedAccessor(const Walker& wal
 
 static FunctionID findMethodInRow(const Walker&, LayoutID classLayout, PropertyKeyID, ASCIILiteral* whyNone);
 
-static FunctionID findMethodDeclaredAboveObjectsOf(const Walker& walker, LayoutID member, PropertyKeyID key, LayoutID& classLayout, ASCIILiteral* whyNone = nullptr)
+static FunctionID findMethodDeclaredAboveObjectsOf(const Walker& walker, LayoutID member, PropertyKeyID key, LayoutID& classLayout, ASCIILiteral* whyNone)
 {
     auto none = [&](ASCIILiteral why) {
         if (whyNone)
