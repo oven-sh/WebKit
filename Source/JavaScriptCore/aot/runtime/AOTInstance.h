@@ -286,6 +286,9 @@ struct IterationWords {
 
 struct CollationWords {
     const uint8_t* ducetLevel1Weights;
+};
+
+struct DefaultCollationWords {
     const uint8_t* knownLevel1Weights;
 };
 
@@ -323,6 +326,7 @@ struct NumberWords {
     v(shortArrays, ShortArrayWords) \
     writtenOnce(emptyTable, EmptyTableWords) \
     writtenOnce(collation, CollationWords) \
+    v(defaultCollation, DefaultCollationWords) \
     v(effectsNet, EffectsNetWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
@@ -493,6 +497,7 @@ FOR_EACH_AOT_INSTANCE_PART(AOT_CHECK_INSTANCE_PART)
 static_assert(OBJECT_OFFSETOF(InstanceHeader, vm) == 16, "JSWebAssemblyInstance::offsetOfVM()");
 #if defined(BUN_HARDENED)
 static_assert(AOT_INSTANCE_OFFSET(runtimeTable) == InstanceLayout::offsetOfWordsWrittenOnce);
+static_assert(AOT_INSTANCE_OFFSET(defaultCollation) < InstanceLayout::offsetOfWordsWrittenOnce);
 #else
 static_assert(!OBJECT_OFFSETOF(InstanceHeader, runtimeTable));
 #endif
