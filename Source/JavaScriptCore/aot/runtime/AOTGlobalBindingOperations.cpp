@@ -43,9 +43,10 @@ static bool isConstantVariable(const SymbolTableEntry::Fast& entry, const Identi
     return !entry.isNull() && (entry.isReadOnly() || identifier.isPrivateName());
 }
 
+// For a name that was looked up, and that is absent or held by an object which lists it.
 static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStringImpl* uid, ChainWalkMode mode = ChainWalkMode::MayAllocate)
 {
-    return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
+    return walkChain({ globalObject, globalObject->structure(), globalObject, mode, ChainWalkUse::KeptForReads, true }, uid);
 }
 
 static ALWAYS_INLINE void putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
@@ -101,6 +102,14 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
     return PropertyAnswer::above(isValue ? PropertyAnswerKind::Value : PropertyAnswerKind::Accessor, SlotAccess::Read, WTF::move(walk));
 }
 
+static PropertyAnswer classifyCustomAccessorOfGlobalObject(const ReadQuery& query)
+{
+    if (!(query.slot.attributes() & PropertyAttribute::CustomAccessor) || query.slot.domAttribute())
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    CustomAccessorRecord record { std::bit_cast<void*>(query.slot.customGetter().taggedPtr()), nullptr, query.globalObject, 0, 0 };
+    return answerForCustomAccessor(query.globalObject->vm(), SlotAccess::Read, query.mode, record, false, { });
+}
+
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery& query)
 {
     JSGlobalObject* globalObject = query.globalObject;
@@ -109,8 +118,13 @@ PropertyAnswer classifyGlobalProxyRead(const ReadQuery& query)
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         unsigned attributes = 0;
         PropertyOffset offset = globalObject->structure()->get(globalObject->vm(), query.uid, attributes);
+        if (isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Read, globalObject, offset);
+        bool isStillCustom = isValidOffset(offset) ? attributes & PropertyAttribute::CustomAccessor : globalObject->structure()->hasNonReifiedStaticProperties();
+        if (isStillCustom && query.slot.isCacheableCustom() && query.slot.slotBase() == globalObject)
+            return classifyCustomAccessorOfGlobalObject(query);
         if (isValidOffset(offset))
-            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? PropertyAnswer::uncacheable(SlotAccess::Read) : answerInStorage(PropertyAnswerKind::Value, SlotAccess::Read, globalObject, offset);
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
         if (query.slot.isUnset())
             return classifyAbsentRead(globalObject, query.uid);
         if (query.slot.slotBase() == globalObject || query.slot.isAccessor())
@@ -127,7 +141,7 @@ ChainWalk walkChainThroughGlobalProxy(JSGlobalObject* globalObject, const Slot& 
     ChainWalk walk;
     if (slot.structureID.decode()->realm() != globalObject)
         return walk;
-    if (slot.kind == Slot::Kind::Value && slot.holder == globalObject)
+    if (slot.kind == Slot::Kind::CustomGetter || (slot.kind == Slot::Kind::Value && slot.holder == globalObject))
         walk.result = ChainWalkResult::Found;
     else
         walk = walkAboveGlobalObject(globalObject, uid, ChainWalkMode::AllocatesNothing);
@@ -388,7 +402,8 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
     RETURN_IF_EXCEPTION(scope, { });
     if (!found) {
         if (access.bindings.answersUndefinedWhereAbsent(number)) {
-            tryFileAbsence(access);
+            if (!slot.isTaintedByOpaqueObject())
+                tryFileAbsence(access);
             return jsUndefined();
         }
         throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));

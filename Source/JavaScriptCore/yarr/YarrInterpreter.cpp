@@ -1905,6 +1905,9 @@ public:
             return JSRegExpResult::ErrorHitLimit;
         }
 
+        if (m_remainingSteps && !spendSteps(disjunction->m_frameSize + disjunction->m_numSubpatterns)) [[unlikely]]
+            return JSRegExpResult::ErrorHitLimit;
+
         ByteTermDumper termDumper(compileMode);
 
         if (btrack)
@@ -1915,6 +1918,9 @@ public:
 
     matchAgain:
         ASSERT(context->term < static_cast<int>(disjunction->terms.size()));
+
+        if (m_remainingSteps && !spendStepsOn(currentTerm())) [[unlikely]]
+            return JSRegExpResult::ErrorHitLimit;
 
         DUMP_TERM();
 
@@ -2214,6 +2220,9 @@ public:
     backtrack:
         ASSERT(context->term < static_cast<int>(disjunction->terms.size()));
 
+        if (m_remainingSteps && !spendStepsOn(currentTerm())) [[unlikely]]
+            return JSRegExpResult::ErrorHitLimit;
+
         DUMP_TERM();
 
         switch (currentTerm().type) {
@@ -2433,6 +2442,12 @@ public:
     JSRegExpResult result() const { return m_result; }
     unsigned remainingTurns() const { return remainingMatchCount; }
 
+    void setBudget(size_t& remainingSteps)
+    {
+        m_remainingSteps = &remainingSteps;
+        m_positionOfLastStep = input.getPos();
+    }
+
     Interpreter(BytecodePattern* pattern, unsigned* output, std::span<const CharType> input, unsigned start, bool triesEveryPlace = false)
         : pattern(pattern)
         , compileMode(pattern->compileMode())
@@ -2473,6 +2488,35 @@ private:
         return !btrack && disjunction->m_jitCountsTurns;
     }
 
+    bool spendSteps(size_t steps)
+    {
+        *m_remainingSteps -= std::min(steps, *m_remainingSteps);
+        return *m_remainingSteps;
+    }
+
+    // One for the term, one for each character that the last term has passed, and one for each that this term may read without passing it.
+    NEVER_INLINE bool spendStepsOn(const ByteTerm& term)
+    {
+        unsigned position = input.getPos();
+        unsigned last = std::exchange(m_positionOfLastStep, position);
+        size_t steps = 1 + std::max(position, last) - std::min(position, last);
+        switch (term.type) {
+        case ByteTerm::Type::PatternCharacterFixed:
+        case ByteTerm::Type::PatternCasedCharacterFixed:
+        case ByteTerm::Type::CharacterClass:
+            if (term.atom.quantityType == QuantifierType::FixedCount)
+                steps += std::min(term.atom.quantityMaxCount, input.end());
+            break;
+        case ByteTerm::Type::BackReference:
+        case ByteTerm::Type::DotStarEnclosure:
+            steps += input.end();
+            break;
+        default:
+            break;
+        }
+        return spendSteps(steps);
+    }
+
     BytecodePattern* pattern;
     CompileMode compileMode;
     unsigned* output;
@@ -2483,6 +2527,8 @@ private:
     static constexpr unsigned bolUnsatisfiable = std::numeric_limits<unsigned>::max();
     unsigned noNewlineBefore; // see matchDotStarEnclosure
     unsigned remainingMatchCount;
+    unsigned m_positionOfLastStep { 0 };
+    size_t* m_remainingSteps { nullptr };
     JSRegExpResult m_result { JSRegExpResult::NoMatch };
     RequiredTextPlaces m_requiredTextPlaces { };
     bool m_usesRequiredTexts;
@@ -3695,6 +3741,18 @@ NEVER_INLINE unsigned interpret(BytecodePattern* bytecode, StringView input, uns
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
+}
+
+NEVER_INLINE unsigned interpretWithinBudget(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, size_t& remainingSteps)
+{
+    JSC_REMOVABLE_DEFINITION(RegExp, interpretWithinBudget);
+    RELEASE_ASSERT(bytecode->m_body);
+    auto run = [&](auto characters) {
+        Interpreter interpreter(bytecode, output, characters, start);
+        interpreter.setBudget(remainingSteps);
+        return interpreter.interpret();
+    };
+    return input.is8Bit() ? run(input.span8()) : run(input.span16());
 }
 
 // These should be the same for both char16_t & Latin1Character.

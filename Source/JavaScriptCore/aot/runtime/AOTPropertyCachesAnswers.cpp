@@ -196,11 +196,18 @@ static bool isLastIndexOfRegExp(VM& vm, JSCell* base, UniquedStringImpl* uid)
     return base->type() == RegExpObjectType && uid == vm.propertyNames->lastIndex.impl();
 }
 
-bool structureProvesOwnAbsence(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid, ChainWalkMode mode)
+// What GetOwnPropertySlotIsImpureForPropertyAbsence means for a platform object: https://webidl.spec.whatwg.org/#dfn-named-property-visibility
+static bool makesUpOnlyNamesThatItsChainLacks(JSCell* cell)
+{
+    return cell->type() > LastJSCObjectType;
+}
+
+bool structureProvesOwnAbsence(VM& vm, JSCell* base, Structure* structure, UniquedStringImpl* uid, ChainWalkMode mode, NameAboveReceiver above)
 {
     if (structure->isDictionary() || !structure->propertyAccessesAreCacheable() || isModuleNamespace(base))
         return false;
-    if (!structure->propertyAccessesAreCacheableForAbsence() && (mode == ChainWalkMode::AllocatesNothing || mayHaveLazyProperty(vm, base, uid, LookupPosition::Receiver)))
+    bool mayMakeNameUp = !structure->propertyAccessesAreCacheableForAbsence() && !(above == NameAboveReceiver::WasFound && makesUpOnlyNamesThatItsChainLacks(base));
+    if (mayMakeNameUp && (mode == ChainWalkMode::AllocatesNothing || mayHaveLazyProperty(vm, base, uid, LookupPosition::Receiver)))
         return false;
     unsigned attributes = 0;
     std::optional<PropertyOffset> offset = findOffset(vm, structure, uid, mode, attributes);
@@ -210,7 +217,7 @@ bool structureProvesOwnAbsence(VM& vm, JSCell* base, Structure* structure, Uniqu
     return !((isJSFunctionType(type) || type == SlimClosureType) && isFunctionOwnName(vm, uid));
 }
 
-static PropertyAnswer answerForCustomAccessor(VM& vm, SlotAccess access, ChainWalkMode mode, const CustomAccessorRecord& record, bool isOwn, ChainObjects&& changeableObjects)
+PropertyAnswer answerForCustomAccessor(VM& vm, SlotAccess access, ChainWalkMode mode, const CustomAccessorRecord& record, bool isOwn, ChainObjects&& changeableObjects)
 {
     CustomAccessorTable& table = vm.aotState().propertyCaches->customAccessors();
     std::optional<uint32_t> index = mode == ChainWalkMode::MayAllocate ? table.add(record) : table.find(record);
@@ -232,7 +239,7 @@ static PropertyAnswer classifyCustomGetter(const ReadQuery& query)
     ChainWalk walk;
     if (holder != base) {
         auto* closure = base ? dynamicDowncast<Closure>(base) : nullptr;
-        if ((closure && closure->isLazyClassObject()) || (base && !structureProvesOwnAbsence(vm, base, query.structureBefore, query.uid, query.mode)))
+        if ((closure && closure->isLazyClassObject()) || (base && !structureProvesOwnAbsence(vm, base, query.structureBefore, query.uid, query.mode, NameAboveReceiver::WasFound)))
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         walk = walkChain({ query.globalObject, query.structureBefore, base, query.mode }, query.uid);
         if (walk.result != ChainWalkResult::Found || walk.holder != holder || !(walk.attributes & PropertyAttribute::CustomAccessorOrValue))
@@ -629,7 +636,7 @@ PropertyAnswer classifyRead(const ReadQuery& query)
         }
     }
     if (!isOwn) {
-        if (!structureProvesOwnAbsence(vm, receiver, structure, uid, query.mode))
+        if (!structureProvesOwnAbsence(vm, receiver, structure, uid, query.mode, slot.isUnset() ? NameAboveReceiver::MayBeAbsent : NameAboveReceiver::WasFound))
             return PropertyAnswer::uncacheable(access);
         ASSERT(!isCompiledClosure(receiver) || !uncheckedDowncast<Closure>(receiver)->isLazyClassObject());
         return classifyReadAboveReceiver(query);

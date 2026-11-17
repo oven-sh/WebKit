@@ -991,11 +991,19 @@ void checkRuntimeFlagsHideGlobals(Realms& realms)
 {
     static GlobalObjectMethodTable methodTable = *realms.plain()->globalObjectMethodTable();
     methodTable.javaScriptRuntimeFlags = [](const JSGlobalObject*) {
-        return RuntimeFlags { RuntimeFlags::SharedArrayBufferHidden, RuntimeFlags::ShadowRealmHidden };
+        return RuntimeFlags { RuntimeFlags::SharedArrayBufferHidden, RuntimeFlags::ShadowRealmHidden, RuntimeFlags::CallerOfOtherRealmHidden };
     };
     JSGlobalObject* realm = JSGlobalObject::createWithCustomMethodTable(realms.vm(), JSGlobalObject::createStructure(realms.vm(), jsNull()), &methodTable);
     AOT_TEST_CHECK(realms.evaluate(realms.plain(), "'SharedArrayBuffer' in globalThis"_s).isTrue());
     AOT_TEST_CHECK(realms.evaluate(realm, "'SharedArrayBuffer' in globalThis || 'ShadowRealm' in globalThis"_s).isFalse());
+
+    auto callerSeenIn = [&](JSGlobalObject* realmOfCallee, JSGlobalObject* realmOfCaller) {
+        realmOfCaller->putDirect(realms.vm(), Identifier::fromString(realms.vm(), "callee"_s), realms.evaluate(realmOfCallee, "(function callee() { return callee.caller; })"_s));
+        return realms.evaluate(realmOfCaller, "(function () { return [callee()]; })()[0]"_s);
+    };
+    AOT_TEST_CHECK(callerSeenIn(realm, realms.plain()).isNull());
+    AOT_TEST_CHECK(callerSeenIn(realm, realm).isCallable());
+    AOT_TEST_CHECK(callerSeenIn(realms.plain(), realm).isCallable());
 }
 
 void checkGlobalsKeptAside(Realms& realms)

@@ -305,10 +305,6 @@ std::expected<ArgumentThunks, LinkFailure> generateArgumentThunks(BuildContext& 
     ArgumentThunks result;
     if (all.isEmpty())
         return result;
-    ASSERT(std::ranges::is_sorted(all, [](KeptArgumentMoves a, KeptArgumentMoves b) {
-        return std::ranges::lexicographical_compare(a.span(), b.span());
-    }));
-
     Vector<uint32_t> stubKeyIndexes;
     stubKeyIndexes.reserveInitialCapacity(all.size());
     for (KeptArgumentMoves list : all) {

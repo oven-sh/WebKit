@@ -363,6 +363,8 @@ ObjectPropertyConditionSet generateConditionsForPropertyMiss(
     return generateConditions(
         globalObject, headStructure, nullptr, uid,
         [&](auto& conditions, JSObject* object, Structure* structure) -> bool {
+            if (!structure->propertyAccessesAreCacheableForAbsence())
+                return false;
             ObjectPropertyCondition result =
                 generateCondition(vm, owner, object, structure, uid, PropertyCondition::Absence, Concurrency::MainThread);
             if (!result)

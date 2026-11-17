@@ -145,6 +145,11 @@ public:
         appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
     }
 
+    size_t sizeWithStrings() const { return size() + m_strings.size(); }
+
+    // A union moves the members behind the new one. The other operations make the class anew.
+    size_t costOfInsertion() { return isUnionSetOp() ? size() / 256 : sizeWithStrings(); }
+
     NODELETE void combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
@@ -1235,9 +1240,10 @@ class YarrPatternConstructor {
     };
 
 public:
-    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags)
+    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags, size_t expansionLimit)
         : m_pattern(pattern)
         , m_baseCharacterClassConstructor(pattern.ignoreCase(), pattern.compileMode())
+        , m_remainingExpansion(expansionLimit)
         , m_initialFlags(flags)
     {
         m_currentCharacterClassConstructor = &m_baseCharacterClassConstructor;
@@ -1600,17 +1606,24 @@ public:
 
     void atomCharacterClassAtom(char32_t ch)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
         m_currentCharacterClassConstructor->putChar(ch);
     }
 
     void atomCharacterClassRange(char32_t begin, char32_t end)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
         m_currentCharacterClassConstructor->putRange(begin, end);
     }
 
     void atomCharacterClassBuiltIn(BuiltInCharacterClassID classID, bool invert)
     {
         ASSERT(classID != BuiltInCharacterClassID::DotClassID);
+
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
 
         switch (classID) {
         case BuiltInCharacterClassID::DigitClassID:
@@ -1637,6 +1650,8 @@ public:
                 } else if (CharacterClass* core = ignoreCaseInvertedUnicodePropertyCore(classID))
                     characterClass = core; // and still inverted below: [^K] == closure(complement(X))
             }
+            if (!mayExpandBy(characterClass->m_strings.size() + characterClass->m_matches8.size() + characterClass->m_ranges8.size() + characterClass->m_matches32.size() + characterClass->m_ranges32.size()))
+                return;
             if (!invert)
                 m_currentCharacterClassConstructor->append(characterClass);
             else
@@ -1647,6 +1662,8 @@ public:
 
     void atomClassStringDisjunction(Vector<Vector<char32_t>>& utf32Strings)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->sizeWithStrings()))
+            return;
         m_currentCharacterClassConstructor->atomClassStringDisjunction(utf32Strings);
     }
 
@@ -1671,7 +1688,8 @@ public:
             m_currentCharacterClassConstructor->invertMatches();
 
         CharacterClassConstructor* priorCharacterClassConstructor = m_characterClassStack.size() == 1 ? &m_baseCharacterClassConstructor : &m_characterClassStack[m_characterClassStack.size() - 2];
-        priorCharacterClassConstructor->performSetOpWith(m_currentCharacterClassConstructor);
+        if (mayExpandBy(priorCharacterClassConstructor->sizeWithStrings() + m_currentCharacterClassConstructor->sizeWithStrings()))
+            priorCharacterClassConstructor->performSetOpWith(m_currentCharacterClassConstructor);
         m_characterClassStack.removeLast();
         m_currentCharacterClassConstructor = priorCharacterClassConstructor;
         m_invertCharacterClass = invert;
@@ -1762,6 +1780,8 @@ public:
             ++stringCount;
             totalStringLength += string.size();
         }
+        if (!mayExpandBy(stringCount + totalStringLength))
+            return;
         bool dispatchGroup = parenthesisMatchDirection() == Forward && !ignoreCase() && !hasEmptyMember
             && stringCount >= alternationDispatchMinAlternatives && totalStringLength >= alternationDispatchMinTotalSize;
         if (dispatchGroup)
@@ -2046,6 +2066,8 @@ public:
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
     std::optional<PatternTermList> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
+        if (!mayExpandBy(1 + alternative->m_terms.size()))
+            return std::nullopt;
         PatternTermList copiedTerms(ReserveCapacityTag { }, alternative->m_terms.size());
         for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
             auto& term = alternative->m_terms[termIndex];
@@ -4428,6 +4450,17 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    bool mayExpandBy(size_t amount)
+    {
+        if (amount >= m_remainingExpansion) [[unlikely]] {
+            m_remainingExpansion = 0;
+            m_error = ErrorCode::PatternTooLarge;
+            return false;
+        }
+        m_remainingExpansion -= amount;
+        return true;
+    }
+
     CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
     {
         ASSERT(!characterClass->hasStrings());
@@ -4460,6 +4493,7 @@ private:
     std::optional<PatternTerm> m_shortCharacterClassTerm;
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
+    size_t m_remainingExpansion;
     ErrorCode m_error { ErrorCode::NoError };
     bool m_invertCharacterClass;
     ParenthesisContext m_parenthesisContext;
@@ -4469,9 +4503,12 @@ private:
 };
 static_assert(YarrSyntaxCheckable<YarrPatternConstructor>);
 
-ErrorCode YarrPattern::compile(StringView patternString)
+ErrorCode YarrPattern::compile(StringView patternString, size_t expansionLimit)
 {
-    YarrPatternConstructor constructor(*this, m_flags);
+    YarrPatternConstructor constructor(*this, m_flags, expansionLimit);
+
+    if (patternString.length() > expansionLimit)
+        return ErrorCode::PatternTooLarge;
 
     {
         ErrorCode error = parse(constructor, patternString, compileMode());
@@ -4519,7 +4556,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     return ErrorCode::NoError;
 }
 
-YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, PatternAnalysis analysis)
+YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, PatternAnalysis analysis, size_t expansionLimit)
     : m_containsBackreferences(false)
     , m_containsBOL(false)
     , m_containsLookbehinds(false)
@@ -4533,7 +4570,7 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
     , m_flags(flags)
 {
     ASSERT(m_flags != Flags::DeletedValue);
-    error = compile(pattern);
+    error = compile(pattern, expansionLimit);
 }
 
 YarrPattern::~YarrPattern() = default;

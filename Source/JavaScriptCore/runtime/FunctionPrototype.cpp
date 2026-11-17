@@ -365,6 +365,10 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     if (function->jsExecutable()->isInStrictContext())
         return JSValue::encode(jsNull());
 
+    // 13. If caller.[[Realm]] is not currentRealm, return null.
+    if (function->realm() != globalObject && globalObject->runtimeFlags().isCallerOfOtherRealmHidden())
+        return JSValue::encode(jsNull());
+
     // Prevent bodies (private implementations) of generator / async functions from being exposed.
     // They expect to be called by @generatorResume() & friends with certain arguments, and crash otherwise.
     // 14. If caller.[[ECMAScriptCode]] is a GeneratorBody, an AsyncFunctionBody, an AsyncGeneratorBody, or an AsyncConciseBody, return null.

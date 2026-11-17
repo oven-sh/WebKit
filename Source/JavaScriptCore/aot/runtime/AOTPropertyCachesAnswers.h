@@ -185,7 +185,9 @@ private:
     UniquedStringImpl* m_previousSymbol { nullptr };
 };
 std::optional<PropertyOffset> findOffset(VM&, Structure*, UniquedStringImpl*, ChainWalkMode, unsigned& attributes);
-bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode);
+enum class NameAboveReceiver : bool { MayBeAbsent, WasFound };
+bool structureProvesOwnAbsence(VM&, JSCell* base, Structure*, UniquedStringImpl*, ChainWalkMode, NameAboveReceiver = NameAboveReceiver::MayBeAbsent);
+PropertyAnswer answerForCustomAccessor(VM&, SlotAccess, ChainWalkMode, const CustomAccessorRecord&, bool isOwn, ChainObjects&& changeableObjects);
 bool hasOrdinaryDefineForName(VM&, JSCell* base, Structure*, UniquedStringImpl*);
 bool isHostObjectOverridingPut(Structure*);
 bool isWriteJudgedByWriter(Structure*, UniquedStringImpl*);

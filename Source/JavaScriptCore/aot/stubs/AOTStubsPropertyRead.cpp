@@ -456,8 +456,8 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     };
 
     isUnknown.append(jit.branchIfNotCell(r.receiver));
-    isUnknown.append(jit.branchIfNotObject(r.receiver));
     isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.uid, StringImpl::lengthMemoryOffset())));
+    Jump isNoObject = jit.branchIfNotObject(r.receiver);
     jit.move(r.receiver, r.object);
 
     Label askObject = jit.label();
@@ -511,6 +511,18 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     hasElements.link(&jit);
     isUnknown.append(branchIfNameBeginsWithDigit());
     jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+
+    if (question == ObjectLookupQuestion::Read && name == ObjectLookupName::IsGivenByNumber && !jit.options().hasOneInstance) {
+        isNoObject.link(&jit);
+        isUnknown.append(jit.branchIfNotString(r.receiver));
+        isUnknown.append(jit.branchPtr(CCallHelpers::Equal, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lengthUID)), r.uid));
+        isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
+        isUnknown.append(branchIfNameBeginsWithDigit());
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.object);
+        jit.loadPtr(Address(r.object, JSGlobalObject::offsetOfStringPrototype()), r.object);
+        jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+    } else
+        isUnknown.append(isNoObject);
 
     isNotCompiledObject.link(&jit);
     if (jit.options().useWideReferences) {

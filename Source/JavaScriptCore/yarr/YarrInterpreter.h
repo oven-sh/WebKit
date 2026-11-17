@@ -609,6 +609,8 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr, const String& source = { });
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+// For a pattern that was made with PatternAnalysis::Skipped. The time it takes is in proportion to what it takes off remainingSteps. With none left it gives up: offsetNoMatch.
+JS_EXPORT_PRIVATE unsigned interpretWithinBudget(BytecodePattern*, StringView input, unsigned start, unsigned* output, size_t& remainingSteps);
 bool collectMatchesOfOneSetOrRun(BytecodePattern*, StringView input, Vector<unsigned, 128>& matches);
 
 } } // namespace JSC::Yarr

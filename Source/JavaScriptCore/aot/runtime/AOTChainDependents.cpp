@@ -14,6 +14,7 @@
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTHost.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -378,6 +379,31 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
     tellOfChangeOfChainObject(vm, changed, uidOrNull, ChangeOfChainObject::IsOfAnyKind);
 }
 
+static bool announcesNames(Structure* structure)
+{
+    return structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence() && structure->typeInfo().newImpurePropertyFiresWatchpoints();
+}
+
+static size_t bitOfUnannouncedName(VM& vm, UniquedStringImpl* uid)
+{
+    return uid->existingSymbolAwareHash() % vm.aotState().hashesOfNamesTakenAsUnannounced.size();
+}
+
+void didAnnounceNameAboveGlobalObject(VM& vm, UniquedStringImpl* uidOrNull)
+{
+    auto& hashes = vm.aotState().hashesOfNamesTakenAsUnannounced;
+    if (uidOrNull ? !hashes.get(bitOfUnannouncedName(vm, uidOrNull)) : hashes.isEmpty()) [[likely]]
+        return;
+    for (Instance* instance : vm.aotState().instances) {
+        for (JSObject* object = instance->globalObject->getPrototypeDirect().getObject(); object; object = object->getPrototypeDirect().getObject()) {
+            if (announcesNames(object->structure()))
+                didChangeChainObject(vm, object, uidOrNull);
+        }
+    }
+    if (!uidOrNull)
+        hashes.clearAll();
+}
+
 void didSetPrototypeOfChainObject(VM& vm, JSObject* changed)
 {
     if (changed && changed == vm.aotState().unobservedClassHolder)
@@ -740,7 +766,10 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, invalidOffset, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     }
-    if (!hasOrdinaryLookupForName(start, object, structure, uid))
+    const bool mayAnnounceName = start.isNameThatNoObjectHasAnnounced && announcesNames(structure);
+    if (mayAnnounceName)
+        vm.aotState().hashesOfNamesTakenAsUnannounced.set(bitOfUnannouncedName(vm, uid));
+    else if (!hasOrdinaryLookupForName(start, object, structure, uid))
         return stopAt(object, walk);
 
     unsigned attributes = 0;
@@ -766,7 +795,7 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         }
     }
     bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
-    if (canGainProperty || !structure->hasImmutablePrototype())
+    if (canGainProperty || mayAnnounceName || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);
     return StepResult::Continue;
 }

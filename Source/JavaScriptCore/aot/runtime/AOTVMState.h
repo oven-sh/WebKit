@@ -13,6 +13,7 @@
 #include <JavaScriptCore/Weak.h>
 #include <JavaScriptCore/WriteBarrier.h>
 #include <memory>
+#include <wtf/BitSet.h>
 #include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
@@ -228,6 +229,7 @@ public:
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;
+    WTF::BitSet<2048> hashesOfNamesTakenAsUnannounced;
     Vector<JSGlobalObject*> realmsWithBorrowedTables;
     StructuresWithFastIndexing structuresWithFastIndexing;
     PolledInstances polledInstances;
