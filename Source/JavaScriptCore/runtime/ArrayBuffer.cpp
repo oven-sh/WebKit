@@ -275,7 +275,9 @@ void ArrayBufferContents::shareWith(ArrayBufferContents& other) const
 #if USE(BUN_JSC_ADDITIONS)
 void ArrayBufferContents::shareOwnershipOf(ArrayBufferContents& other)
 {
+#if CPU(ADDRESS64)
     static_assert(OBJECT_OFFSETOF(ArrayBufferContents, m_borrowCount) - OBJECT_OFFSETOF(ArrayBufferContents, m_hasMaxByteLength) < static_cast<ptrdiff_t>(sizeof(void*)), "It takes no room of its own");
+#endif
     ASSERT(!m_data && !m_destructor);
     ASSERT(!other.m_shared);
     // One owner for all the buffers that these bytes pass through. An owner for each would be a chain that is destroyed recursively.
@@ -621,6 +623,12 @@ std::expected<int64_t, GrowFailReason> ArrayBuffer::resize(VM& vm, size_t newByt
     auto oldPageCount = PageCount::fromBytes(memoryHandle->size()); // MemoryHandle's size is always page-size aligned.
     if (newPageCount.bytes() > MAX_ARRAY_BUFFER_SIZE)
         return makeUnexpected(GrowFailReason::WouldExceedMaximum);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A later resize trims these pages.
+    if (newPageCount < oldPageCount && m_contents.hasBorrowedBytes()) [[unlikely]]
+        newPageCount = oldPageCount;
+#endif
 
     if (newPageCount != oldPageCount) {
         ASSERT(memoryHandle->maximum() >= newPageCount);

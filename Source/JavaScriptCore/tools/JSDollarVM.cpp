@@ -182,6 +182,10 @@ public:
 
     static void setOwnerIsDead(GCAwareJITStubRoutine& stub) { stub.m_ownerIsDead = true; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static BufferMemoryHandle* memoryHandle(ArrayBuffer& buffer) { return buffer.m_contents.m_memoryHandle.get(); }
+#endif
+
     VM& m_vm;
 };
 
@@ -6293,6 +6297,16 @@ JSC_DEFINE_HOST_FUNCTION(functionHasArrayBuffer, (JSGlobalObject*, CallFrame* ca
     auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
     return JSValue::encode(jsBoolean(view && view->hasArrayBuffer()));
 }
+
+// How much of a resizable ArrayBuffer's address range can be read and written.
+static JSC_DECLARE_HOST_FUNCTION(functionMappedByteLength);
+JSC_DEFINE_HOST_FUNCTION(functionMappedByteLength, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    auto* handle = buffer ? JSDollarVMHelper::memoryHandle(*buffer->impl()) : nullptr;
+    return JSValue::encode(handle ? jsNumber(handle->size()) : jsUndefined());
+}
 #endif // USE(BUN_JSC_ADDITIONS)
 
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
@@ -6570,6 +6584,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "createExternalArrayBuffer"_s, functionCreateExternalArrayBuffer, 1);
     addFunction(vm, allowIfNotFuzz, "externalArrayBufferStatistics"_s, functionExternalArrayBufferStatistics, 0);
     addFunction(vm, alwaysAllow, "hasArrayBuffer"_s, functionHasArrayBuffer, 1);
+    addFunction(vm, alwaysAllow, "mappedByteLength"_s, functionMappedByteLength, 1);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)

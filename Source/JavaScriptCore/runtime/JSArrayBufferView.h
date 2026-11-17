@@ -358,10 +358,11 @@ public:
     bool isIteratorProtocolFastAndNonObservable();
 
 #if USE(BUN_JSC_ADDITIONS)
-    // See ArrayBuffer::beginBorrow(). The borrower keeps this view alive. An OversizeTypedArray stays one. A FastTypedArray
-    // gets its ArrayBuffer, which moves the bytes, so read vector() afterwards. False if there is no memory for that.
+    // See ArrayBuffer::beginBorrow(). An OversizeTypedArray stays one. A FastTypedArray gets its ArrayBuffer, which
+    // moves the bytes, so read vector() afterwards. False if there is no memory for that.
     [[nodiscard]] inline bool beginBorrow();
-    // Can be called while the heap is being swept.
+    // The view has to be alive until this returns. A cell that does it in its destructor needs a root for the view: with
+    // a WriteBarrier they die in the same collection. The borrows of a dead view are gone with it.
     inline void endBorrow();
     inline bool isBorrowed();
 #endif

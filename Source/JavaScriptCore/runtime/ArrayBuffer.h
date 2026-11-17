@@ -238,6 +238,9 @@ private:
     }
 
     friend class ArrayBuffer;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class JSDollarVMHelper;
+#endif
 
     enum class InitializationPolicy : uint8_t {
         ZeroInitialize,
@@ -250,6 +253,8 @@ private:
     void copyTo(ArrayBufferContents&);
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE void shareOwnershipOf(ArrayBufferContents&);
+    // Through this buffer, or through one that had the bytes before.
+    bool hasBorrowedBytes() const { return m_borrowCount || (m_hasSharedOwner && !m_destructor->hasOneRef()); }
 #endif
 
     using DataType = CagedPtr<Gigacage::Primitive, void>;
@@ -341,7 +346,7 @@ public:
     // For native code that goes on using data() while script runs. A borrowed buffer can be detached: the bytes
     // move to their new owner, and are freed when that owner and the last borrow are both gone, so endBorrow() can
     // run the destructor function. The borrower keeps this object alive, and calls both functions on its thread.
-    // As with pin(), resize() still trims pages and a WebAssembly.Memory that grows can still replace its block.
+    // resize() leaves the pages mapped. As with pin(), a WebAssembly.Memory that grows can still replace its block.
     inline void beginBorrow(unsigned count = 1);
     inline void endBorrow();
     bool isBorrowed() const { return !!m_contents.m_borrowCount; }
@@ -383,6 +388,10 @@ private:
     NODELETE static inline size_t clampValue(double x, size_t left, size_t right);
 
     void notifyDetaching(VM&);
+
+#if USE(BUN_JSC_ADDITIONS)
+    friend class JSDollarVMHelper;
+#endif
 
     ArrayBufferContents m_contents;
     InlineWatchpointSet m_detachingWatchpointSet { IsWatched };

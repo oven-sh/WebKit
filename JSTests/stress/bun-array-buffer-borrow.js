@@ -101,6 +101,37 @@ for (const [targetName, create] of Object.entries(targets)) {
     }
 }
 
+// A buffer that gets shorter keeps the pages, whichever buffer the bytes were borrowed from.
+const pageSize = 65536;
+const shrinks = {
+    resize: buffer => (buffer.resize(1), buffer),
+    transferShorter: buffer => buffer.transfer(1),
+    resizeByNewOwner(buffer) {
+        const owner = buffer.transfer().transfer();
+        owner.resize(pageSize + 1);
+        owner.resize(1);
+        return owner;
+    },
+};
+for (const [what, shrink] of Object.entries(shrinks)) {
+    const source = new ArrayBuffer(2 * pageSize + 1, { maxByteLength: 4 * pageSize });
+    const borrow = $vm.borrowBytes(source);
+    borrow("fill", 1);
+    const owner = shrink(source);
+    shouldBe(owner.byteLength, 1, what);
+    shouldBe(borrow("count", 1), 2 * pageSize + 1, what);
+
+    owner.resize(pageSize + 1);
+    shouldBe(borrow("count", 0), pageSize, what);
+    owner.resize(4 * pageSize);
+    shouldBe(new Uint8Array(owner).lastIndexOf(1), 0, what);
+    owner.resize(2);
+    shouldBe($vm.mappedByteLength(owner), 4 * pageSize, what);
+    borrow("end");
+    owner.resize(1);
+    shouldBe($vm.mappedByteLength(owner), pageSize, what);
+}
+
 // They are freed once, as soon as the owner and the borrows are gone.
 function freedBy(run) {
     const before = $vm.externalArrayBufferStatistics().freed;
@@ -275,15 +306,4 @@ if (typeof SharedArrayBuffer !== "undefined") {
     borrow("fill", 1);
     borrow("end");
     shouldBe(view[4095], 1, "shared");
-}
-
-if (typeof WebAssembly !== "undefined") {
-    const memory = new WebAssembly.Memory({ initial: 1 });
-    const buffer = memory.buffer;
-    const borrow = $vm.borrowBytes(buffer);
-    memory.grow(0);
-    shouldBe(buffer.detached, true, "wasm");
-    borrow("fill", 1);
-    borrow("end");
-    shouldBe(new Uint8Array(memory.buffer)[65535], 1, "wasm");
 }

@@ -99,12 +99,13 @@ inline bool JSArrayBufferView::beginBorrow()
 
 inline void JSArrayBufferView::endBorrow()
 {
+    ASSERT(!isPendingDestruction());
     if (m_mode == OversizeTypedArray) {
         --m_borrowCount;
         return;
     }
     RELEASE_ASSERT(hasArrayBuffer());
-    // Not possiblySharedBuffer(): its cast asks for classInfo().
+    // Not possiblySharedBuffer(): its cast asks for classInfo(), which is not allowed in another cell's destructor.
     ArrayBuffer* buffer = isWastefulTypedArray(m_mode) ? existingBufferInButterfly() : static_cast<JSDataView*>(this)->possiblySharedBuffer();
     buffer->endBorrow();
 }
