@@ -41,7 +41,7 @@ private:
     const CodeGenerationInputs& m_inputs;
     const Code& m_code;
     const Statistics::CountersOfThread m_statistics;
-    CCallHelpers m_jit;
+    ImageAssembler m_jit;
     RelocationRecorder m_relocations;
     CodeRecords m_records;
     StackCheckState m_stackChecks;

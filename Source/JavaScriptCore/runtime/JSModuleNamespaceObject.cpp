@@ -212,7 +212,7 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     case PropertySlot::InternalMethodType::GetOwnProperty:
     case PropertySlot::InternalMethodType::Get: {
 #if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(exportEntry.moduleRecord.get())) {
+        if (auto* compiled = AOT::compiledModule(vm, exportEntry.moduleRecord.get())) {
             JSValue value = exportEntry.localName == vm.propertyNames->starNamespacePrivateName
                 ? JSValue(compiled->moduleNamespaceObject(globalObject, AbstractModuleRecord::ModulePhase::Evaluation))
                 : compiled->readExport(globalObject, exportEntry.localName, exportEntry.compiledExportIndex);

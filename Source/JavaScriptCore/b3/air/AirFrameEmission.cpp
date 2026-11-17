@@ -484,7 +484,7 @@ unsigned maxBytesOfFrameTeardown(const Code& code)
     return numberOfSaves * (layout.calleeSaveForm == CalleeSaveForm::PushedAtFrameBottom ? maxBytesOfPop : maxBytesOfLoad) + bytesOfLeave;
 #elif CPU(ARM64)
     constexpr unsigned bytesPerInstruction = 4;
-    constexpr unsigned maxEpilogueInstructions = 2;
+    constexpr unsigned maxEpilogueInstructions = ENABLE_RETURN_ADDRESS_SIGNING ? 8 : 2;
     return (numberOfSaves + maxEpilogueInstructions) * bytesPerInstruction;
 #else
     UNUSED_VARIABLE(numberOfSaves);

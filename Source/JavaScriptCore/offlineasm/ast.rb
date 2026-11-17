@@ -1002,6 +1002,7 @@ class Instruction < Node
         when "section"
             $asm.putsSection(operands[0].value)
         when "tagCodePtr", "tagReturnAddress", "untagReturnAddress", "removeCodePtrTag", "untagArrayPtr", "removeArrayPtrTag"
+        when "beginSigningLinkRegister", "endSigningLinkRegister"
         else
             raise "Unhandled opcode #{opcode} at #{codeOriginString}"
         end

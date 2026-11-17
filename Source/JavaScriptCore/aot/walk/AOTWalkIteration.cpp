@@ -681,23 +681,50 @@ static uint32_t endOfRowOfAppendsInIteration(const BodyIndex& index, const BodyB
 
 static FunctionID functionWrittenUnderNextOfIteratorOf(Walker&, ValueID iterated);
 
-static bool returnsFreshIterator(const Walker& walker, FunctionID function)
+static ValueID callHandedBack(const Walker& walker, FunctionID function)
 {
     const BodyIndex* body = walker.facts().bodies().find(function);
     if (!body || walker.program().at(function).isCoroutine())
-        return false;
+        return { };
     ValueID returned;
     for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
         BodyTerminator end = body->terminator(BlockID(number));
         if (!body->isReachable(BlockID(number)) || (end.kind() != TerminatorKind::Return && end.kind() != TerminatorKind::ReturnCall))
             continue;
         if (returned || !end.operand(0))
-            return false;
+            return { };
         returned = end.operand(0);
         while (!body->isParameter(returned) && inputPassThroughOpcodes.contains(body->opcodeOf(returned)) && body->useCount(returned) == 1)
             returned = body->value(returned).operand(0);
     }
-    return returned && !body->isParameter(returned) && body->opcodeOf(returned) == Opcode::Call && body->useCount(returned) == 1 && body->value(returned).as<Opcode::Call>().argumentsOperands().empty();
+    bool isFresh = returned && !body->isParameter(returned) && body->opcodeOf(returned) == Opcode::Call && body->useCount(returned) == 1 && body->value(returned).as<Opcode::Call>().argumentsOperands().empty();
+    return isFresh ? returned : ValueID();
+}
+
+static bool returnsFreshIterator(const Walker& walker, FunctionID function)
+{
+    return !!callHandedBack(walker, function);
+}
+
+static bool isHandedBackUntouched(const Walker& walker, Reference value, uint32_t firstFrame)
+{
+    const auto& frames = walker.code().inlineFrames();
+    const Operation& made = walker.code().at(underlyingCellOf(walker.code(), value.id()));
+    if (made.inlineFrame < firstFrame)
+        return false;
+    uint32_t position = made.position;
+    for (uint32_t frame = made.inlineFrame; frame != walker.inlineFrameAtWork(); frame = frames[frame].parent) {
+        if (!frame || !frames[frame].callee)
+            return false;
+        if (!frames[frame].calledBuiltin) {
+            const FunctionID function(frames[frame].callee);
+            ValueID call = callHandedBack(walker, function);
+            if (!call || walker.facts().bodies().find(function)->value(call).origin().position != position)
+                return false;
+        }
+        position = frames[frame].callPosition;
+    }
+    return true;
 }
 
 static std::optional<ClassSteppedUnseen> findCollectionOfIterator(Walker& walker, Reference iterator, Reference& collection)
@@ -1315,12 +1342,13 @@ public:
             return m_walker.isUnreachable() ? std::optional(Walker::IndexedIteration()) : std::nullopt;
 
         m_walker.count(StatisticID::IteratorMethodsCalledDirectly);
+        const uint32_t firstFrameOfCall = static_cast<uint32_t>(m_walker.code().inlineFrames().size());
         Reference iterator = call(method, iterable);
         if (m_walker.isUnreachable())
             return Walker::IndexedIteration();
         Reference collection;
         std::optional<ClassSteppedUnseen> stepped = findCollectionOfIterator(m_walker, iterator, collection);
-        if (!stepped)
+        if (!stepped || !isHandedBackUntouched(m_walker, iterator, firstFrameOfCall))
             return openByProtocolAlone(iterable, iterator);
         m_walker.count(StatisticID::IteratorAllocationsElidedInInlinees);
         if (stepped->contents == ContentsStepped::List) {

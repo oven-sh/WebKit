@@ -259,6 +259,9 @@ static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall
     const GPRReg numberOfStackWords = countGPR;
     RELEASE_ASSERT(!(frameSize % stackAlignmentBytes()));
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    jit.loadPtr(Address(fp, CallFrame::returnPCOffset()), CCallHelpers::linkRegister);
+#endif
     jit.sub32(TrustedImm32(numberOfRegisters), numberOfStackWords);
     jit.getEffectiveAddress(BaseIndex(copy.source, numberOfStackWords, CCallHelpers::TimesEight, sizeof(Register)), copy.destination);
     jit.andPtr(TrustedImm32(~static_cast<int32_t>(stackAlignmentBytes() - 1)), copy.destination);
@@ -282,6 +285,9 @@ static void emitRelocateFrameAboveStackWords(StubAssembler& jit, const EntryCall
     jit.move(frameSizeInWords, copy.index);
     emitCopyFromLastWord(jit, Address(sp), Address(frame), copy.index, copy.value);
     jit.addPtr(TrustedImm32(bytesBelowFramePointer), frame, fp);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    jit.storePtr(CCallHelpers::linkRegister, Address(fp, CallFrame::returnPCOffset()));
+#endif
     jit.move(copy.destination, sp);
     if (argumentBase != fp)
         jit.addPtr(fp, argumentBase);

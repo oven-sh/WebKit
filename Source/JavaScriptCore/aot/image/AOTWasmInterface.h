@@ -20,6 +20,8 @@
 
 namespace JSC {
 
+class CCallHelpers;
+
 namespace AOT {
 class RelocationRecorder;
 }
@@ -230,9 +232,12 @@ struct ImagePointerTable {
 #if GIGACAGE_ENABLED
     static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 7;
     static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 8;
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9 + ENABLE_RETURN_ADDRESS_SIGNING;
 #else
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7 + ENABLE_RETURN_ADDRESS_SIGNING;
+#endif
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    static constexpr uint32_t signedRestoreFrameReturnAddress = numberOfSharedPointers - 1;
 #endif
 
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
@@ -274,6 +279,7 @@ struct CodeForImage {
     const ImagePointerTable& pointers;
     const UncheckedKeyHashMap<const RTT*, uint32_t>& typeIndices;
     const Vector<StructLayoutInImage>& structLayouts;
+    CCallHelpers& jit;
     AOT::RelocationRecorder& recorder;
     ImageCodeFlavor flavor;
 

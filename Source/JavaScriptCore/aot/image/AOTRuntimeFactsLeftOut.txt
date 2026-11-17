@@ -27,6 +27,7 @@ OBJECT_OFFSETOF(Plan::FastField, acceptedValues) | a name that a function gives 
 OBJECT_OFFSETOF(Plan::FastField, offset) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
 OBJECT_OFFSETOF(Plan::FastField, representation) | a name that a function gives to ObjectBuilderPlan; spelled in a static_assert alone, which holds it to a number
 OBJECT_OFFSETOF(SlimClosure, m_word) | the body of the accessor of that member, which is among the facts wherever compiled code asks it
+SavedFrame::offsetOfResumeAddress() | private; a static_assert in AOTSavedCodeAddresses.cpp holds it to the word in front of offsetOfPromiseOrWaiter(), which is among the facts
 SetBucket::offsetOfKey() | a name that a function gives to WeakMapBucket<WeakMapBucketDataKey>; spelled in static_asserts alone, which hold it to MapBucket's
 Storage::offsetOfCharacters() | a name that a function gives to StringBuilderStorage, whose offsetOfCharacters() is among the facts
 Storage::offsetOfLengthOutsideBuffer() | a name that a function gives to StringBuilderStorage, whose offsetOfLengthOutsideBuffer() is among the facts

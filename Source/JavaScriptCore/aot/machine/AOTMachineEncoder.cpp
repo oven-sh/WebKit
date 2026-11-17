@@ -765,8 +765,11 @@ void Encoder::run()
 
     linkPendingJumps();
     runLatePaths();
-    if (!m_proc.m_rangesOfOrigins.isEmpty())
-        m_proc.m_rangesOfOrigins.last().end = m_jit.labelIgnoringWatchpoints();
+    MacroAssembler::Label endOfRange = m_jit.labelIgnoringWatchpoints();
+    for (uint32_t index = m_beginsOfRangesOfOrigins.size(); index--;) {
+        m_proc.m_rangesOfOrigins[index].end = endOfRange;
+        endOfRange = m_proc.m_rangesOfOrigins[index].begin = m_jit.labelAt(m_beginsOfRangesOfOrigins[index]);
+    }
     ASSERT(m_pendingJumps.isEmpty());
 
     for (const JumpTableRecord& table : m_proc.m_jumpTables) {
@@ -1498,10 +1501,8 @@ void Encoder::noteOriginInRanges(Origin origin, uint32_t operation)
     ArenaVector<RangeOfOrigin>& ranges = m_proc.m_rangesOfOrigins;
     if (!ranges.isEmpty() && ranges.last().origin == origin && ranges.last().operation == operation && !isOriginOfBackEnd(origin))
         return;
-    MacroAssembler::Label here = m_jit.labelIgnoringWatchpoints();
-    if (!ranges.isEmpty())
-        ranges.last().end = here;
-    ranges.append(m_arena, RangeOfOrigin { here, MacroAssembler::Label(), origin, operation });
+    ranges.append(m_arena, RangeOfOrigin { MacroAssembler::Label(), MacroAssembler::Label(), origin, operation });
+    m_beginsOfRangesOfOrigins.append(m_arena, m_jit.m_assembler.buffer().placeToDescribe());
 }
 
 bool Encoder::blockRunsInFrame(const Block* block) const
