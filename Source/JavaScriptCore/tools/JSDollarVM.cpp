@@ -2355,6 +2355,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithScopeExtension);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapExtraMemorySize);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionHeapTotalBytesAllocated);
+static JSC_DECLARE_HOST_FUNCTION(functionHeapAllocationBudgetThisCycle);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionCodeBlockCensus);
 #if ENABLE(JIT)
@@ -5251,6 +5252,12 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapTotalBytesAllocated, (JSGlobalObject* globa
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.totalBytesAllocated()));
 }
+// The eden that the concurrent collector paces a cycle against: the smaller of the limit for all bytes and the limit for cells.
+JSC_DEFINE_HOST_FUNCTION(functionHeapAllocationBudgetThisCycle, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.allocationBudgetThisCycle()));
+}
 #endif
 
 #if ENABLE(JIT)
@@ -6429,6 +6436,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "heapTotalBytesAllocated"_s, functionHeapTotalBytesAllocated, 0);
+    addFunction(vm, alwaysAllow, "heapAllocationBudgetThisCycle"_s, functionHeapAllocationBudgetThisCycle, 0);
 #endif
     addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
