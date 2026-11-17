@@ -40,6 +40,7 @@ DEFAULT_SECTION = "trampolines"
 
 class Assembler
     attr_reader :section
+    attr_accessor :rewriteInstruction
 
     def initialize(outp)
         @outp = outp
@@ -63,6 +64,7 @@ class Assembler
         @newlineSpacerState = :none
         @lastlabel = ""
         @section = DEFAULT_SECTION
+        @rewriteInstruction = nil
     end
 
     def enterAsm
@@ -197,7 +199,9 @@ class Assembler
 
     def puts(*line)
         raise unless @state == :asm
-        @outp.puts(formatDump("    \"" + line.join('') + " \\n\"", lastComment))
+        texts = [line.join('')]
+        texts = texts.flat_map(&@rewriteInstruction) if @rewriteInstruction
+        texts.each { | text | @outp.puts(formatDump("    \"" + text + " \\n\"", lastComment)) }
     end
     
     def print(line)

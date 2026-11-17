@@ -80,7 +80,7 @@ private:
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
-    Pointer returnAddressAtThisPoint();
+    Word32 wordBehindReturnAddress(int32_t offset);
     enum class RunsCodeOfAwaited : bool { InFrameOfFunction, BehindFunction };
     bool awaitsOnlyResultOfCall(const ValueContext& await) const;
     StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver, RunsCodeOfAwaited = RunsCodeOfAwaited::InFrameOfFunction);

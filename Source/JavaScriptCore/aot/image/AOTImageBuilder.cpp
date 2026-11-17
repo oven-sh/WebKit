@@ -24,7 +24,6 @@
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
 #include "AOTProgramTables.h"
-#include "AOTReturnAddressCheck.h"
 #include "AOTRuntimeTable.h"
 #include "AOTSectionWriter.h"
 #include "AOTSort.h"
@@ -840,12 +839,6 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
     times.didFinish("link code"_s);
 
     checkImageIsReadOnly(image.subspan(extent->codeOffset, layout.codeSize), parts.ffiStubs, layout, context);
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-    if (!context.diagnostics().hasErrors()) {
-        checkReturnAddresses(linker, { parts.sections[ImageSection::WebAssemblyDirectory].span(), parts.webAssembly.places }, parts.ffiStubs, image.subspan(extent->codeOffset, layout.codeSize), context);
-        times.didFinish("check return addresses"_s);
-    }
-#endif
     if (context.diagnostics().hasErrors())
         return { };
     context.statistics().count(StatisticID::TableBytesEmitted, extent->tablesEnd);

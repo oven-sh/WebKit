@@ -9,6 +9,7 @@
 
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
@@ -135,7 +136,7 @@ RegisterSet floatingPointRegistersLostToAccessors(StubCallee);
 
 enum class SavedRegistersAreRead : bool { ByCallerAlone, BeforeReturnToo };
 
-class StubAssembler final : public CCallHelpers {
+class StubAssembler final : public ImageAssembler {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     StubAssembler(const StubOptions&, const StubCatalog&, PCRelativeReach addressReach = PCRelativeReach::Near);
@@ -213,16 +214,16 @@ public:
     Label bindReturnLabel(StubFrameKind);
 
     void returnToCaller();
-    // What follows leaves by returnToCaller() or for the handler of an exception, and calls nothing but a poll.
-    void emitFunctionEpilogueToReturn();
     void boxBooleanAtEveryReturn() { m_boxesBooleanAtEveryReturn = true; }
     void goOnAtEveryReturnIn(std::optional<StubKey> stub) { m_stubBehindEveryReturn = stub; }
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
 #else
-    void emitFramelessCallerEpilogueAndReturn(GPRReg scratch);
+    void emitFramelessCallerEpilogueAndReturn();
 #endif
+    // As a callee would save it here: for C++, which takes the signature off.
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
+    void jumpToResumeAddress(GPRReg asStored, GPRReg savedFrame);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
     void pollBeforeReturningFromNativeCode();
@@ -272,11 +273,9 @@ public:
 private:
     using CalledOperation = Variant<Entry, GPRReg>;
 
-    enum class SavedAreaIsLeftBy : bool { MovingStackPointerBack, Epilogue };
     struct SavedRegisterArea {
         Vector<Reg, 48> registers;
         unsigned bytes;
-        SavedAreaIsLeftBy isLeftBy;
     };
     struct PendingJump {
         Jump jump;
@@ -317,8 +316,9 @@ private:
 
     void storePreservedRegisters(std::span<const GPRReg>);
     void loadPreservedRegisters(std::span<const GPRReg>);
-    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, SavedAreaIsLeftBy = SavedAreaIsLeftBy::MovingStackPointerBack, std::span<const std::optional<GPRReg>> cellsToKeep = { }, unsigned bytesLeftFreeAbove = 0);
-    void loadSavedRegisters(const SavedRegisterArea&);
+    enum class StackPointerAfterLoads : bool { IsMovedBack, IsLeftToEpilogue };
+    SavedRegisterArea storeRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep = { }, unsigned bytesLeftFreeAbove = 0);
+    void loadSavedRegisters(const SavedRegisterArea&, StackPointerAfterLoads = StackPointerAfterLoads::IsMovedBack);
 
     void loadEntry(Entry, GPRReg);
     void loadCalledOperation(const CalledOperation&, GPRReg function);
@@ -332,8 +332,8 @@ private:
     void prepareCallOperation();
     void emitOperationCallAndReturn(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, SavedRegistersAreRead);
     bool resultsInFPRsComeFromOperation(const OperationCall&) const;
-    void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister);
-    void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister);
+    void emitOperationCallSavingNothing(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
+    void emitOperationCallSavingRegisters(const CalledOperation&, const OperationCall&, const ScopedLambda<void()>& beforeReturn);
     void emitOperationTailCall(const CalledOperation&, OperationCall::FirstArgument);
 
     void emitStubCall(StubKey, StubReference::Kind = StubReference::Kind::Call);
@@ -453,11 +453,20 @@ void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const Registe
 template<typename Functor>
 void StubAssembler::preservingRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, const Functor& functor)
 {
+#if CPU(ARM64)
+    constexpr unsigned bytesPushed = 2 * sizeof(CPURegister);
+    emitPushLinkRegister(*this);
+#else
+    constexpr unsigned bytesPushed = 0;
+#endif
     SavedRegisterArea area = storeRegistersClobberedBy(callee, hasResult, lostAnyway);
     withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
-        functor(area.bytes);
+        functor(area.bytes + bytesPushed);
     });
     loadSavedRegisters(area);
+#if CPU(ARM64)
+    emitPopLinkRegister(*this);
+#endif
 }
 
 inline constexpr GPRReg sp = CCallHelpers::stackPointerRegister;

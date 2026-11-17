@@ -346,18 +346,18 @@ public:
     }
 
 #if CPU(X86_64)
-    void emitFunctionPrologue(SavedLinkRegister = SavedLinkRegister::MayBeRead)
+    void emitFunctionPrologue()
     {
         push(framePointerRegister);
         move(stackPointerRegister, framePointerRegister);
     }
 
-    void emitFunctionEpilogueWithEmptyFrame(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogueWithEmptyFrame()
     {
         pop(framePointerRegister);
     }
 
-    void emitFunctionEpilogue(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogue()
     {
         move(framePointerRegister, stackPointerRegister);
         pop(framePointerRegister);
@@ -411,25 +411,22 @@ public:
 #endif // CPU(X86_64)
 
 #if CPU(ARM64)
-    void emitFunctionPrologue(SavedLinkRegister savedLinkRegister = SavedLinkRegister::MayBeRead)
+    void emitFunctionPrologue()
     {
         tagReturnAddress();
         pushPair(framePointerRegister, linkRegister);
         move(stackPointerRegister, framePointerRegister);
-        if (savedLinkRegister == SavedLinkRegister::MayBeRead)
-            removeTagAfterSavingReturnAddress();
     }
 
-    void emitFunctionEpilogueWithEmptyFrame(LoadedLinkRegister loadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogueWithEmptyFrame()
     {
         popPair(framePointerRegister, linkRegister);
-        untagAfterLoadingReturnAddress(loadedLinkRegister);
     }
 
-    void emitFunctionEpilogue(LoadedLinkRegister loadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogue()
     {
         move(framePointerRegister, stackPointerRegister);
-        emitFunctionEpilogueWithEmptyFrame(loadedLinkRegister);
+        emitFunctionEpilogueWithEmptyFrame();
     }
 
     ALWAYS_INLINE void preserveReturnAddressAfterCall(RegisterID reg)
@@ -459,18 +456,18 @@ public:
 #endif
 
 #if CPU(RISCV64)
-    void emitFunctionPrologue(SavedLinkRegister = SavedLinkRegister::MayBeRead)
+    void emitFunctionPrologue()
     {
         pushPair(framePointerRegister, linkRegister);
         move(stackPointerRegister, framePointerRegister);
     }
 
-    void emitFunctionEpilogueWithEmptyFrame(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogueWithEmptyFrame()
     {
         popPair(framePointerRegister, linkRegister);
     }
 
-    void emitFunctionEpilogue(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain)
+    void emitFunctionEpilogue()
     {
         move(framePointerRegister, stackPointerRegister);
         emitFunctionEpilogueWithEmptyFrame();

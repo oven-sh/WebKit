@@ -94,7 +94,6 @@ void emitUnwind(StubAssembler& jit)
 {
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), T10);
     jit.loadOperation(Entry::operationAOTLookupExceptionHandler, T11);
-    jit.validateLoadedReturnAddress();
     jit.emitFunctionPrologue();
     callLookupExceptionHandler(jit);
     Jump isNotInCompiledCallers = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
@@ -142,7 +141,6 @@ void generateHandleExceptionPreservingRegisters(StubAssembler& jit)
         if (reg != Reg(landingPad))
             registers.append(reg);
     });
-    jit.validateLoadedReturnAddress();
     jit.emitFunctionPrologue();
     jit.subPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(registers.size() * sizeof(CPURegister))), sp);
     for (unsigned i = 0; i < registers.size(); ++i) {
@@ -243,7 +241,7 @@ void generateRejectAwaitedCall(StubAssembler& jit)
     jit.move(instanceGPR, A0);
     jit.move(sp, A1);
     jit.callOperation(Entry::operationAOTRejectWithException, T9);
-    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
+    jit.emitFunctionEpilogue();
     jit.ret();
 }
 

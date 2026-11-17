@@ -1,4 +1,3 @@
-aot/image/AOTReturnAddressCheck.cpp
 aot/stubs/AOTStubAssemblerOperationCalls.cpp
 aot/stubs/AOTStubBlob.cpp
 aot/stubs/AOTStubsFieldReads.cpp

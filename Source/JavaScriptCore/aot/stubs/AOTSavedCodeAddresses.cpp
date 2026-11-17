@@ -8,118 +8,207 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConvention.h"
+#include "AOTInstance.h"
 #include "AOTSavedFrame.h"
+#include "AOTStubWords.h"
 #include "CallFrame.h"
 
 namespace JSC { namespace AOT {
 
 struct ResumeAddressWord {
     static constexpr ptrdiff_t offset = SavedFrame::offsetOfResumeAddress();
+    static CCallHelpers::Address in(GPRReg savedFrame) { return CCallHelpers::Address(savedFrame, offset); }
 };
 static_assert(SavedFrame::offsetOfPromiseOrWaiter() == ResumeAddressWord::offset + sizeof(void*));
 
+struct ReturnAddressWord {
+    static CCallHelpers::Address in(GPRReg record) { return CCallHelpers::Address(record, CallFrame::returnPCOffset()); }
+    static CCallHelpers::Address ofStub(StubFrameKind kind) { return CCallHelpers::Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind)); }
+};
+
+CCallHelpers::Jump emitBranchOnCallerReturnAddress(CCallHelpers& jit, CCallHelpers::RelationalCondition condition, StubFrameKind kind, GPRReg scratch)
+{
+#if CPU(ARM64)
+    jit.loadPtr(ReturnAddressWord::ofStub(kind), scratch);
+    return jit.branchPtr(condition, CCallHelpers::linkRegister, scratch);
+#else
+    jit.loadPtr(CCallHelpers::Address(CCallHelpers::stackPointerRegister), scratch);
+    return jit.branchPtr(condition, scratch, ReturnAddressWord::ofStub(kind));
+#endif
+}
+
+CCallHelpers::Jump HeldReturnAddress::branch(CCallHelpers& jit, CCallHelpers::RelationalCondition condition, StubFrameKind kind) const
+{
+    return jit.branchPtr(condition, m_gpr, ReturnAddressWord::ofStub(kind));
+}
+
 #if ENABLE(RETURN_ADDRESS_SIGNING)
 
-static constexpr GPRReg modifierOfSavedAddressGPR = CCallHelpers::dataTempRegister;
-static constexpr GPRReg savedAddressGPR = CCallHelpers::memoryTempRegister;
+static constexpr GPRReg modifierGPR = CCallHelpers::dataTempRegister;
+static constexpr GPRReg pointerGPR = CCallHelpers::memoryTempRegister;
 
-static void emitModifierOfReturnAddress(CCallHelpers& jit, GPRReg record)
+static void emitAddressInModifier(CCallHelpers& jit, GPRReg base, int32_t offset)
 {
-    jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), record, modifierOfSavedAddressGPR);
+    (void)jit.getCachedMemoryTempRegisterIDAndInvalidate();
+    jit.addPtr(CCallHelpers::TrustedImm32(offset), base, jit.getCachedDataTempRegisterIDAndInvalidate());
 }
 
-static void emitModifierOfResumeAddress(CCallHelpers& jit, GPRReg savedFrame)
+static CCallHelpers::Address emitModifierOfReturnAddress(CCallHelpers& jit, GPRReg record)
 {
-    jit.addPtr(CCallHelpers::TrustedImm32(ResumeAddressWord::offset), savedFrame, modifierOfSavedAddressGPR);
-    jit.m_assembler.movk<64>(modifierOfSavedAddressGPR, SavedFrame::discriminatorOfResumeAddress, SavedFrame::discriminatorShift);
+    emitAddressInModifier(jit, record, sizeof(CallerFrameAndPC));
+    return CCallHelpers::Address(modifierGPR, -static_cast<int32_t>(sizeof(void*)));
 }
 
-static void emitLoadSavedAddress(CCallHelpers& jit, CCallHelpers::Address word, GPRReg result)
+static void emitDiscriminatorOfResumeAddress(CCallHelpers& jit)
 {
-    RELEASE_ASSERT(noOverlap(word.base, modifierOfSavedAddressGPR, savedAddressGPR));
-    jit.loadPtr(word, savedAddressGPR);
-    jit.untagPtr(modifierOfSavedAddressGPR, savedAddressGPR);
-    jit.validateUntaggedPtr(savedAddressGPR);
-    jit.move(savedAddressGPR, result);
+    jit.m_assembler.movk<64>(modifierGPR, SavedFrame::discriminatorOfResumeAddress, SavedFrame::discriminatorShift);
 }
 
-static void emitSignSavedAddress(CCallHelpers& jit, GPRReg address)
+void emitModifierOfResumeAddress(CCallHelpers& jit, GPRReg savedFrame)
 {
-    RELEASE_ASSERT(address != modifierOfSavedAddressGPR);
-    jit.move(address, savedAddressGPR);
-    jit.tagPtr(modifierOfSavedAddressGPR, savedAddressGPR);
+    emitAddressInModifier(jit, savedFrame, ResumeAddressWord::offset);
+    emitDiscriminatorOfResumeAddress(jit);
 }
 
-static void emitStoreSavedAddress(CCallHelpers& jit, GPRReg address, CCallHelpers::Address word)
+CCallHelpers::Jump emitBranchOnReturnAddressOfFrameRecord(CCallHelpers& jit, CCallHelpers::RelationalCondition condition, GPRReg record, StubFrameKind kind, GPRReg scratch)
 {
-    RELEASE_ASSERT(noOverlap(word.base, modifierOfSavedAddressGPR, savedAddressGPR));
-    emitSignSavedAddress(jit, address);
-    jit.storePtr(savedAddressGPR, word);
+    RELEASE_ASSERT(noOverlap(scratch, modifierGPR, pointerGPR));
+    CCallHelpers::Address word = emitModifierOfReturnAddress(jit, record);
+    jit.loadPtr(ReturnAddressWord::ofStub(kind), scratch);
+    jit.loadPtr(word, pointerGPR);
+    jit.m_assembler.authenticateX17AndCompare(scratch);
+    return jit.branchOnFlags(condition);
 }
 
-void emitSignResumeAddress(CCallHelpers& jit, GPRReg resumeAddress, GPRReg savedFrame, GPRReg result)
+HeldReturnAddress HeldReturnAddress::loadLosingLinkRegister(CCallHelpers& jit, GPRReg record, GPRReg)
 {
+    jit.loadPtr(emitModifierOfReturnAddress(jit, record), pointerGPR);
+    jit.m_assembler.authenticateX17IntoLinkRegister();
+    return inLinkRegister();
+}
+
+void HeldReturnAddress::storeInFrameRecord(CCallHelpers& jit, GPRReg record) const
+{
+    CCallHelpers::Address word = emitModifierOfReturnAddress(jit, record);
+    jit.m_assembler.signLinkRegisterInX17();
+    jit.storePtr(pointerGPR, word);
+}
+
+ReturnAddressToLookAt ReturnAddressToLookAt::load(CCallHelpers& jit, GPRReg record, GPRReg result)
+{
+    jit.loadPtr(emitModifierOfReturnAddress(jit, record), pointerGPR);
+    jit.m_assembler.authenticateX17ToLookAt(result);
+    return ReturnAddressToLookAt(result);
+}
+
+GPRReg emitLoadResumeAddressLosingLinkRegister(CCallHelpers& jit, GPRReg savedFrame, GPRReg)
+{
+    emitAddressInModifier(jit, savedFrame, ResumeAddressWord::offset);
+    jit.loadPtr(CCallHelpers::Address(modifierGPR), pointerGPR);
+    emitDiscriminatorOfResumeAddress(jit);
+    jit.m_assembler.authenticateX17IntoLinkRegister();
+    return CCallHelpers::linkRegister;
+}
+
+void emitJumpToResumeAddress(CCallHelpers& jit, GPRReg asStored, GPRReg savedFrame)
+{
+    RELEASE_ASSERT(asStored != modifierGPR);
     emitModifierOfResumeAddress(jit, savedFrame);
-    emitSignSavedAddress(jit, resumeAddress);
-    jit.move(savedAddressGPR, result);
+    jit.move(asStored, pointerGPR);
+    jit.m_assembler.authenticateX17AndJump();
 }
 
-void emitTargetOfUnsignedJump(CCallHelpers& jit)
+void emitStoreLinkRegisterAsResumeAddress(CCallHelpers& jit, GPRReg savedFrame)
 {
-    jit.m_assembler.hint(hintAtTargetOfUnsignedJump);
+    RELEASE_ASSERT(noOverlap(savedFrame, modifierGPR, pointerGPR));
+    emitModifierOfResumeAddress(jit, savedFrame);
+    jit.m_assembler.signLinkRegisterInX17();
+    emitStoreResumeAddressThatCallerHasSigned(jit, pointerGPR, savedFrame);
+}
+
+void emitPopLinkRegisterAndReturnToOldOne(CCallHelpers& jit)
+{
+    (void)jit.getCachedMemoryTempRegisterIDAndInvalidate();
+    jit.m_assembler.popLinkRegisterAndReturnToOldOne(ARM64Assembler::FirstOfPoppedPair::Nothing);
+}
+
+void emitPopFrameRecordAndReturnToOldLinkRegister(CCallHelpers& jit)
+{
+    (void)jit.getCachedMemoryTempRegisterIDAndInvalidate();
+    jit.m_assembler.popLinkRegisterAndReturnToOldOne(ARM64Assembler::FirstOfPoppedPair::FramePointer);
 }
 
 #else
+
+CCallHelpers::Jump emitBranchOnReturnAddressOfFrameRecord(CCallHelpers& jit, CCallHelpers::RelationalCondition condition, GPRReg record, StubFrameKind kind, GPRReg scratch)
+{
+    return HeldReturnAddress::loadLosingLinkRegister(jit, record, scratch).branch(jit, condition, kind);
+}
+
+HeldReturnAddress HeldReturnAddress::loadLosingLinkRegister(CCallHelpers& jit, GPRReg record, GPRReg scratch)
+{
+    jit.loadPtr(ReturnAddressWord::in(record), scratch);
+    return HeldReturnAddress(scratch);
+}
+
+void HeldReturnAddress::storeInFrameRecord(CCallHelpers& jit, GPRReg record) const
+{
+    jit.storePtr(m_gpr, ReturnAddressWord::in(record));
+}
+
+ReturnAddressToLookAt ReturnAddressToLookAt::load(CCallHelpers& jit, GPRReg record, GPRReg result)
+{
+    jit.loadPtr(ReturnAddressWord::in(record), result);
+    return ReturnAddressToLookAt(result);
+}
+
+GPRReg emitLoadResumeAddressLosingLinkRegister(CCallHelpers& jit, GPRReg savedFrame, GPRReg scratch)
+{
+    emitLoadResumeAddressAsStored(jit, savedFrame, scratch);
+    return scratch;
+}
+
+CCallHelpers::Address returnAddressOfStubWithoutSignature(StubFrameKind kind)
+{
+    return ReturnAddressWord::ofStub(kind);
+}
 
 ptrdiff_t offsetOfResumeAddressWithoutSignature()
 {
     return ResumeAddressWord::offset;
 }
 
-void emitTargetOfUnsignedJump(CCallHelpers&) { }
-
-static void emitModifierOfReturnAddress(CCallHelpers&, GPRReg) { }
-static void emitModifierOfResumeAddress(CCallHelpers&, GPRReg) { }
-
-static void emitLoadSavedAddress(CCallHelpers& jit, CCallHelpers::Address word, GPRReg result)
+#if CPU(ARM64)
+static void emitPopPairAndReturnToOldLinkRegister(CCallHelpers& jit, GPRReg first)
 {
-    jit.loadPtr(word, result);
+    GPRReg returnAddress = jit.getCachedMemoryTempRegisterIDAndInvalidate();
+    jit.move(CCallHelpers::linkRegister, returnAddress);
+    jit.popPair(first, CCallHelpers::linkRegister);
+    jit.m_assembler.ret(returnAddress);
 }
 
-static void emitStoreSavedAddress(CCallHelpers& jit, GPRReg address, CCallHelpers::Address word)
+void emitPopLinkRegisterAndReturnToOldOne(CCallHelpers& jit)
 {
-    jit.storePtr(address, word);
+    emitPopPairAndReturnToOldLinkRegister(jit, ARM64Registers::zr);
 }
+
+void emitPopFrameRecordAndReturnToOldLinkRegister(CCallHelpers& jit)
+{
+    emitPopPairAndReturnToOldLinkRegister(jit, GPRInfo::callFrameRegister);
+}
+#endif
 
 #endif
 
-void emitLoadReturnAddressOfFrameRecord(CCallHelpers& jit, GPRReg record, GPRReg result)
+void emitLoadResumeAddressAsStored(CCallHelpers& jit, GPRReg savedFrame, GPRReg result)
 {
-    emitModifierOfReturnAddress(jit, record);
-    emitLoadSavedAddress(jit, CCallHelpers::Address(record, CallFrame::returnPCOffset()), result);
-}
-
-void emitStoreReturnAddressInFrameRecord(CCallHelpers& jit, GPRReg returnAddress, GPRReg record)
-{
-    emitModifierOfReturnAddress(jit, record);
-    emitStoreSavedAddress(jit, returnAddress, CCallHelpers::Address(record, CallFrame::returnPCOffset()));
-}
-
-void emitLoadResumeAddress(CCallHelpers& jit, GPRReg savedFrame, GPRReg result)
-{
-    emitModifierOfResumeAddress(jit, savedFrame);
-    emitLoadSavedAddress(jit, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset), result);
-}
-
-void emitStoreResumeAddress(CCallHelpers& jit, GPRReg resumeAddress, GPRReg savedFrame)
-{
-    emitModifierOfResumeAddress(jit, savedFrame);
-    emitStoreSavedAddress(jit, resumeAddress, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+    jit.loadPtr(ResumeAddressWord::in(savedFrame), result);
 }
 
 void emitStoreResumeAddressThatCallerHasSigned(CCallHelpers& jit, GPRReg signedOrNull, GPRReg savedFrame)
 {
-    jit.store64(signedOrNull, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+    jit.store64(signedOrNull, ResumeAddressWord::in(savedFrame));
 }
 
 void emitClearResumeAddressAndStorePromiseOrWaiter(CCallHelpers& jit, GPRReg promiseOrWaiter, GPRReg savedFrame)
@@ -127,24 +216,10 @@ void emitClearResumeAddressAndStorePromiseOrWaiter(CCallHelpers& jit, GPRReg pro
 #if CPU(ARM64)
     jit.storePair64(ARM64Registers::zr, promiseOrWaiter, savedFrame, CCallHelpers::TrustedImm32(ResumeAddressWord::offset));
 #else
-    jit.store64(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+    jit.store64(CCallHelpers::TrustedImm32(0), ResumeAddressWord::in(savedFrame));
     jit.store64(promiseOrWaiter, CCallHelpers::Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()));
 #endif
 }
-
-#if CPU(ARM64)
-void emitPushLinkRegister(CCallHelpers& jit)
-{
-    jit.tagReturnAddress();
-    jit.pushToSave(CCallHelpers::linkRegister);
-}
-
-void emitPopLinkRegister(CCallHelpers& jit, LoadedLinkRegister loadedLinkRegister)
-{
-    jit.popToRestore(CCallHelpers::linkRegister);
-    jit.untagAfterLoadingReturnAddress(loadedLinkRegister);
-}
-#endif
 
 } } // namespace JSC::AOT
 

@@ -1355,7 +1355,7 @@ void StraightEmitter::generateYield(const BodyValue& yield)
         m_jit->store32(CCallHelpers::TrustedImm32(static_cast<int32_t>(Generator::State::SuspendedAtYield)), CCallHelpers::Address(word, Generator::offsetOfState()));
         barrierAfterStore(frame);
         loadIntoResultRegister(yield.valueOperand());
-        tearDownFrame(LoadedLinkRegister::IsOnlyReturnedTo);
+        tearDownFrame();
         m_jit->ret();
     }
     m_valueCopiedInRegister = { };
@@ -1726,14 +1726,13 @@ void StraightEmitter::jumpTo(CCallHelpers::Jump jump, BlockID to)
     m_jumps.append({ jump, to });
 }
 
-void StraightEmitter::tearDownFrame(LoadedLinkRegister loadedLinkRegister)
+void StraightEmitter::tearDownFrame()
 {
     RELEASE_ASSERT(!m_valueInRegister);
 #if CPU(X86_64)
-    UNUSED_PARAM(loadedLinkRegister);
     m_jit->m_assembler.leave();
 #else
-    m_jit->emitFunctionEpilogue(loadedLinkRegister);
+    m_jit->emitFunctionEpilogue();
 #endif
 }
 
@@ -1793,7 +1792,7 @@ void StraightEmitter::returnToCaller(ValueID returned, Origin origin)
         unboxNumber(resultGPR, resultFPR);
     else
         unboxIntoForm(representation, resultGPR);
-    tearDownFrame(LoadedLinkRegister::IsOnlyReturnedTo);
+    tearDownFrame();
     m_jit->ret();
 }
 

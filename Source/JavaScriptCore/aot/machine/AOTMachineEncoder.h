@@ -206,7 +206,8 @@ public:
     void storeToSpill(const Operation*);
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
-    void leaveFrameIfSetUp(LoadedLinkRegister, std::span<const GPRReg> registersPoppedOutOfWords = { });
+    void tearDownFrame(std::span<const GPRReg> registersPoppedOutOfWords);
+    void leaveFrameAndReturn(Origin, uint32_t operation, std::span<const GPRReg> registersPoppedOutOfWords = { });
     ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
@@ -219,7 +220,7 @@ public:
         if (m_notesRangesOfOrigins) [[unlikely]]
             noteOriginInRanges(origin, operation);
     }
-    void noteOriginInRanges(Origin, uint32_t operation);
+    void noteOriginInRanges(Origin, uint32_t operation, int bytesAlreadyEmitted = 0);
     bool blockRunsInFrame(const Block*) const;
     void runLatePaths();
     void linkPendingJumps();

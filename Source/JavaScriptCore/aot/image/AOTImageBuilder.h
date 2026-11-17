@@ -12,7 +12,6 @@
 #include "AOTConstantPool.h"
 #include "AOTFFIStubs.h"
 #include "AOTImageFormat.h"
-#include "AOTPlacesInWebAssemblyCode.h"
 #include "AOTPrefixCode.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTNumbering.h"
@@ -44,7 +43,6 @@ struct WebAssemblyImageInputs {
     Vector<uint8_t> code;
     size_t codeAlignment { 1 };
     Vector<uint8_t> directory;
-    PlacesInWebAssemblyCode places;
     uint32_t numberOfModules { 0 };
 };
 

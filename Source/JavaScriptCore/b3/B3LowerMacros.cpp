@@ -1359,11 +1359,9 @@ private:
             [record, handledIndices](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 jit.farJump(params[0].gpr(), NoPtrTag);
-                CCallHelpers::Label behindJump = jit.labelIgnoringWatchpoints();
                 Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
                 jit.addLinkTask(
                     [=](LinkBuffer& linkBuffer) {
-                        record->offsetBehindJump = linkBuffer.offsetOf(behindJump);
                         record->targetOffsets.fill(linkBuffer.offsetOf(*labels.last()));
                         unsigned labelIndex = 0;
                         for (size_t entry : handledIndices)

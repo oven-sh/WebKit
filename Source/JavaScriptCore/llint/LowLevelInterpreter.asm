@@ -2319,7 +2319,9 @@ end
 include LowLevelInterpreter64
 
 if AOT
+    beginSigningLinkRegister
     include LowLevelInterpreterAOT
+    endSigningLinkRegister
 end
 
 

@@ -1056,9 +1056,69 @@ def emitARM64MoveImmediate(value, target)
     }
 end
 
+# ARM64Assembler::putSigningLinkRegister() for what lies between the quotes of a string of C.
+def arm64SigningLinkRegister(text)
+    lines = text.gsub("\\t", " ").gsub(%r{/\*.*?\*/}, " ").split(/\\[nr]/)
+    lines.flat_map { | line | line.sub(%r{//.*}, "").split(";") }.map(&:strip).reject(&:empty?).flat_map { | instruction | arm64InstructionSigningLinkRegister(instruction) }
+end
+
+def arm64InstructionSigningLinkRegister(instruction)
+    sign, authenticate, strip, validate = "hint #27", "hint #31", "hint #7", "ldrb wzr, [x30]" # PACIBSP, AUTIBSP, XPACLRI
+    linkRegister = /\b(?:[wx]30|lr)\b/i
+    numberIn = lambda { | text | text =~ /\A[,\s]*#?(-?(?:0x\h+|0|[1-9]\d*))\z/i && Integer($1) }
+    return [$1, *arm64SigningLinkRegister($2)] if instruction =~ /\A([^\s:,#\[]+\s*:)\s*(\S.*)\z/
+    mnemonic, operands = instruction.split(nil, 2)
+    hint = numberIn[operands] if mnemonic =~ /\Ahint\z/i
+    return [] if mnemonic =~ /\A(?:pac|aut|xpac)/i or [7, 8, 10, 12, 14, *24..31].include? hint or instruction == validate
+    return [instruction] if operands !~ linkRegister or mnemonic =~ /\A(?:br|blr|ret|cbn?z|tbn?z|cc?m[pn]|tst|prfu?m)\z/i
+
+    registersIn = lambda { | text | text.scan(/\b(?:[wx]\d+|[bhsdqvz]\d+|w?sp|fp|lr)\b/i) }
+    data, address, behind = operands.match(/\A(.*?)(?:,\s*\[(.*)\](.*))?\z/).captures
+    unless address
+        compares = mnemonic =~ /\A(?:add|sub|and|bic)s\z/i && data =~ /\A[wx]zr\b/i
+        isMadeOfItselfAndConstants = mnemonic !~ /\A(?:ldr|mrs|msr|sys)/i && registersIn[data].all?(linkRegister)
+        return compares || isMadeOfItselfAndConstants ? [instruction] : [sign, instruction, authenticate, validate]
+    end
+    return [instruction] if data !~ linkRegister and registersIn[behind].empty?
+
+    isLoad = mnemonic =~ /\Ald/i
+    isIt = data.split(/,\s*/).map { | register | register.match?(/\A(?:x30|lr)\z/i) }
+    base, offset = address.split(/,\s*/, 2)
+    index = offset if offset =~ /\A(?:[wx]|fp|lr)/i
+    offsetBefore = offset && !index ? numberIn[offset] : 0
+    step = behind.empty? ? 0 : behind.strip == "!" ? offsetBefore : numberIn[behind]
+    unless mnemonic =~ /\A(?:ld|st)(?:[ut]?r|n?p)\z/i and isIt.any? and offsetBefore and step and not (isLoad and address =~ linkRegister)
+        return [sign, instruction, *(mnemonic =~ /\Ast(?:[ut]?r[bh]?|n?p)\z/i ? [strip] : [authenticate, validate])]
+    end
+    offsetAfter = offsetBefore - step
+    baseIsStackPointer = base =~ /\Asp\z/i
+    if baseIsStackPointer and not index and isIt.index(true) == isIt.size - 1 and (isLoad ? offsetAfter : offsetBefore) + 8 * isIt.size == 0
+        return isLoad ? [instruction, authenticate, validate] : [sign, instruction, strip]
+    end
+
+    add = lambda {
+        | to, from, distance |
+        next ["#{distance < 0 ? "sub" : "add"} #{to}, #{from}, ##{distance.abs}"] if distance < 0x1000
+        ["add #{to}, #{from}, ##{distance >> 12}, lsl #12", "add #{to}, #{to}, ##{distance & 0xfff}"]
+    }
+    withAddressBehindWordInX16 = lambda {
+        | offsetOfWord, *middle |
+        ["stp x16, x17, [sp, #-16]!", *("add x16, #{base}, #{index}" if index), *add["x16", index ? "x16" : base, offsetOfWord + 8 + (baseIsStackPointer ? 16 : 0)], *middle, "ldp x16, x17, [sp], #16"]
+    }
+    rest = "#{mnemonic} #{data.gsub(linkRegister, "xzr")}, [#{address}]#{behind}"
+    if isLoad
+        rest = step.zero? ? [] : add[base, base, step] if registersIn[data].all?(linkRegister)
+        return [*withAddressBehindWordInX16[offsetBefore + 8 * isIt.index(true), "ldur x17, [x16, #-8]", "hint #14", "mov x30, x17"], *rest, validate] # AUTIB1716
+    end
+    [rest, *isIt.each_index.select { | i | isIt[i] }.flat_map { | i | withAddressBehindWordInX16[offsetAfter + 8 * i, "mov x17, x30", "hint #10", "stur x17, [x16, #-8]"] }] # PACIB1716
+end
+
 class Instruction
     def lowerARM64
         case opcode
+        when "beginSigningLinkRegister", "endSigningLinkRegister"
+            isOn = opcode == "beginSigningLinkRegister" && $currentSettings["RETURN_ADDRESS_SIGNING"]
+            $asm.rewriteInstruction = isOn ? method(:arm64SigningLinkRegister) : nil
         when 'addi'
             emitARM64Add("add", operands, :word)
         when 'addis'
@@ -1468,7 +1528,7 @@ class Instruction
         when "tagReturnAddress", "untagReturnAddress"
             # What arm64e.rb does, in hints. The ones that take a modifier other than sp have it in x16 and the pointer in
             # x17, which hold nothing between two instructions (ARM64_EXTRA_GPRS).
-            if $currentSettings["RETURN_ADDRESS_SIGNING"]
+            if $currentSettings["RETURN_ADDRESS_SIGNING"] and not $asm.rewriteInstruction
                 raise unless operands.size == 1 and operands[0].is_a? RegisterID
                 sign = opcode == "tagReturnAddress"
                 if operands[0].name == "sp"

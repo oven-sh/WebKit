@@ -39,8 +39,8 @@ FFIStubs generateFFIStubs(BuildContext& context)
 {
     constexpr unsigned numberOfCallbackEntries = 256;
 
-    CCallHelpers jit;
-    RelocationRecorder recorder(jit, context.assemblerPolicy().withLinkRegisterSignedUntilReturn());
+    ImageAssembler jit;
+    RelocationRecorder recorder(jit, context.assemblerPolicy());
     CCallHelpers::Label invoke = jit.label();
     FFI::emitInvokeStub(jit);
     auto moveContextAddress = [&](CCallHelpers&, GPRReg destination) {

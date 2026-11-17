@@ -64,6 +64,8 @@ class OptimizingJITCallee;
 class TierUpCount;
 
 struct CompilationContext {
+    CCallHelpers& entrypointJIT() { return codeForImage ? codeForImage->jit : *wasmEntrypointJIT; }
+
     std::unique_ptr<CCallHelpers> jsToWasmJIT;
     std::unique_ptr<CCallHelpers> wasmEntrypointJIT;
     std::unique_ptr<OpaqueByproducts> wasmEntrypointByproducts;

@@ -12,12 +12,9 @@
 
 #include "AOTBodyFactsForTables.h"
 #include "AOTCodeLayout.h"
-#include "AOTFFIStubs.h"
 #include "AOTImageTestSupport.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
-#include "AOTPlacesInWebAssemblyCode.h"
-#include "AOTReturnAddressCheck.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsOperations.h"
@@ -56,7 +53,7 @@ static constexpr uint32_t linkedRegExpMention = 2;
 template<typename Emit>
 static uint32_t appendRelocated(CodeSketch& sketch, const Emit& emit)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, testAssemblerPolicy());
     emit(recorder);
     auto unit = recorder.finalize(LinkBuffer::Profile::FTL, nullptr);
@@ -772,58 +769,6 @@ static void testFarInstanceWordsLink()
     AOT_TEST_CHECK(equalSpans(code.span(), expected.span()));
 }
 
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-static void testDistancesOfFarInstanceWordsAreNoCodeToCheck()
-{
-    constexpr int32_t distanceThatIsNoInstruction = static_cast<int32_t>(0xd6800000);
-    CodeSketch sketch(1);
-    appendRelocated(sketch, [](RelocationRecorder& recorder) {
-        recorder.loadInstanceWord({ SymbolSpace::InstanceWord, 0 }, InstanceWordWidth::Word32, instanceGPR, GPRInfo::regT0);
-    });
-    sketch.end();
-    Steps steps(bodies(sketch.take()));
-    MentionList mentions;
-    mentions.add(NumberSpace::StringCell, steps.build.program().strings.intern(StringView { "far"_s }), distanceThatIsNoInstruction);
-    mentions.moveTo(steps.functions[positionOfLinkedBody(steps, 1)].body);
-    ImageNumbers numbers;
-    numberMentionsOfLinkedBodies(steps, numbers);
-    steps.farInstanceWords = findFarInstanceWords(steps.functions, numbers, steps.build.context());
-    steps.removeJumps();
-    AOT_TEST_CHECK(!steps.farInstanceWords.isEmpty());
-
-    Vector<uint8_t> code = link(steps, numbers);
-    CodeLayoutInputs layoutInputs = steps.layoutInputs();
-    checkReturnAddresses({ layoutInputs, steps.layout, steps.constants, numbers }, { { }, PlacesInWebAssemblyCode { } }, FFIStubs { }, code.span(), steps.build.context());
-    AOT_TEST_CHECK(!steps.build.context().diagnostics().hasErrors());
-}
-
-static void testWhatVeneerCutsOffInCopyOfStubsIsNoCodeToCheck()
-{
-    for (bool isInCopy : { false, true }) {
-        CodeSketch sketch(1);
-        sketch.withFrame();
-        sketch.callStub(writeBarrier());
-        sketch.end();
-        Steps steps(bodies(sketch.take()));
-        steps.removeJumps();
-        ImageNumbers numbers;
-        Vector<uint8_t> code = link(steps, numbers);
-
-        const uint32_t original = steps.layout.sharedCodeCopies[0];
-        const uint32_t copy = code.size();
-        code.appendVector(Vector<uint8_t>(code.span().subspan(original, steps.sharedCode.veneersOffset)));
-        steps.layout.sharedCodeCopies.append(copy);
-        steps.layout.executableSize = steps.layout.constantsOffset = code.size();
-        constexpr uint32_t returnInFrontOfNoInstruction[] = { 0xd65f03c0, 0xd6800000 };
-        memcpySpan(code.mutableSpan().subspan((isInCopy ? copy : original) + *steps.sharedCode.blob.offsetOf(writeBarrier())), asByteSpan(returnInFrontOfNoInstruction));
-
-        CodeLayoutInputs layoutInputs = steps.layoutInputs();
-        checkReturnAddresses({ layoutInputs, steps.layout, steps.constants, numbers }, { { }, PlacesInWebAssemblyCode { } }, FFIStubs { }, code.span(), steps.build.context());
-        AOT_TEST_CHECK(steps.build.context().diagnostics().hasErrors() == !isInCopy);
-    }
-}
-#endif
-
 static void testFarInstanceWordWithoutRoomIsReported()
 {
     Steps steps(bodies(bodyWithFarInstanceWords(1), calleeOfLinkedBody(2)));
@@ -878,7 +823,7 @@ static void testFarInstanceWordsAreReached()
     auto symbol = [](uint32_t index) {
         return CodeSymbol { SymbolSpace::InstanceWord, index };
     };
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, testAssemblerPolicy());
     recorder.loadInstanceWord(symbol(0), InstanceWordWidth::Word64, instance, sum);
     recorder.moveInstanceAddress(symbol(1), instance, word);
@@ -954,10 +899,6 @@ std::span<const NativeTest> codeLinkerTests()
 #if CPU(ARM64)
         { "image/linker/far-calls-go-through-veneers"_s, testFarCallsGoThroughVeneers },
         { "image/linker/far-instance-words-link"_s, testFarInstanceWordsLink },
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-        { "image/linker/distances-of-far-instance-words-are-no-code-to-check"_s, testDistancesOfFarInstanceWordsAreNoCodeToCheck },
-        { "image/linker/what-veneer-cuts-off-in-copy-of-stubs-is-no-code-to-check"_s, testWhatVeneerCutsOffInCopyOfStubsIsNoCodeToCheck },
-#endif
         { "image/linker/far-instance-word-without-room-is-reported"_s, testFarInstanceWordWithoutRoomIsReported },
         { "image/linker/body-with-far-instance-words-keeps-its-final-jump"_s, testBodyWithFarInstanceWordsKeepsItsFinalJump },
         { "image/linker/far-instance-words-are-reached"_s, whenExecutable<testFarInstanceWordsAreReached> },

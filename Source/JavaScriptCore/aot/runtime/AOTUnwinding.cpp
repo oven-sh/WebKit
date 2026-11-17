@@ -507,7 +507,7 @@ const void* returnAddressOfInnermostCompiledCall(VM& vm)
 static bool isAddressInCompiledCode(uint64_t word)
 {
     std::span<const uint8_t> code = Image::current()->code();
-    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return removeReturnAddressSignature<uintptr_t>(std::bit_cast<const void*>(word)) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
@@ -515,7 +515,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
-        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeReturnAddressSignature(exit.returnPC))))
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(exit.returnPC)))
             return false;
         if (void* taker = vm.aotState().exceptionCatcherStackPointer; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
@@ -544,7 +544,7 @@ Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
 NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledUnwindResult* runWithoutHandler)
 {
     using Action = Exception::StackCaptureAction;
-    if (frameRecordOfOperation->callerFrame->returnPCForInspection() == instance.state->returnAddressOfThrowAfterCleanup) {
+    if (frameRecordOfOperation->callerFrame->returnPCForInspection() == instance.state->returnAddressOfThrowAfterCleanup()) {
         uint64_t kept = instance.state->keptByCleanup;
         if (!isAddressInCompiledCode(kept))
             return Action::CaptureStack;

@@ -267,7 +267,7 @@ public:
     void passArguments(const BodyTerminator&, uint32_t targetIndex, BodyTarget);
     void jumpTo(BlockID);
     void jumpTo(CCallHelpers::Jump, BlockID);
-    void tearDownFrame(LoadedLinkRegister = LoadedLinkRegister::MayBeSavedAgain);
+    void tearDownFrame();
     void returnToCaller(ValueID returned, Origin);
 
 private:

@@ -182,7 +182,7 @@ void callNativeFunctionAndReturn(StubAssembler& jit, CodeSpecializationKind kind
     JumpList isOther;
     if (expected)
         branchUnlessResultIs(jit, *expected, GPRInfo::returnValueGPR, scratch, isOther);
-    jit.emitFunctionEpilogueToReturn();
+    jit.emitFunctionEpilogue();
     jit.pollBeforeReturningFromNativeCode();
     jit.returnToCaller();
 

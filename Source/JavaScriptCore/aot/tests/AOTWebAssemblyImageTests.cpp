@@ -19,7 +19,6 @@
 #include "AOTImageBuilder.h"
 #include "AOTImageTestSupport.h"
 #include "AOTProgramFile.h"
-#include "AOTReturnAddressCheck.h"
 #include "AOTWasmModules.h"
 #include "JSCPtrTag.h"
 #include "JSLock.h"
@@ -32,7 +31,6 @@
 #include <bmalloc/Gigacage.h>
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
-#include <wtf/UnalignedAccess.h>
 
 namespace JSC { namespace AOT {
 
@@ -75,35 +73,6 @@ constexpr uint8_t indirectCallModule[] = {
     0x09, 0x07, 0x01, 0x00, 0x41, 0x00, 0x0b, 0x01, 0x00,
     0x0a, 0x1a, 0x02, 0x04, 0x00, 0x20, 0x00, 0x0b, 0x13, 0x00, 0x20, 0x00, 0x20, 0x01, 0x20, 0x02, 0x20, 0x03, 0x20, 0x04, 0x20, 0x05, 0x20, 0x06, 0x11, 0x00, 0x00, 0x0b,
 };
-
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-// One function. It has a br_table of nine ways, and each loads, calls and returns.
-constexpr uint8_t switchModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
-    0x03, 0x02, 0x01, 0x00,
-    0x05, 0x03, 0x01, 0x00, 0x01,
-    0x0a, 0x90, 0x01, 0x01, 0x8d, 0x01, 0x00, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x02, 0x40, 0x20, 0x00, 0x0e, 0x08, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x00, 0x10, 0x00, 0x41, 0x03, 0x6a, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x04, 0x10, 0x00, 0x41, 0x04, 0x6b, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x08, 0x10, 0x00, 0x41, 0x05, 0x6c, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x0c, 0x10, 0x00, 0x41, 0x06, 0x71, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x10, 0x10, 0x00, 0x41, 0x07, 0x72, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x14, 0x10, 0x00, 0x41, 0x08, 0x73, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x18, 0x10, 0x00, 0x41, 0x09, 0x74, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x1c, 0x10, 0x00, 0x41, 0x0a, 0x75, 0x0f,
-    0x0b, 0x20, 0x00, 0x28, 0x02, 0x20, 0x10, 0x00, 0x41, 0x0b, 0x77, 0x0f,
-    0x0b,
-};
-
-// One function. It adds the number whose halves are the instruction RETAB.
-constexpr uint8_t constantModule[] = {
-    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
-    0x01, 0x06, 0x01, 0x60, 0x01, 0x7c, 0x01, 0x7c,
-    0x03, 0x02, 0x01, 0x00,
-    0x0a, 0x10, 0x01, 0x0e, 0x00, 0x20, 0x00, 0x44, 0xff, 0x0f, 0x5f, 0xd6, 0xff, 0x0f, 0x5f, 0xd6, 0xa0, 0x0b,
-};
-#endif
 
 constexpr uint8_t moduleWithoutFunctions[] = {
     0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
@@ -258,124 +227,6 @@ static void testSectionWithDifferentModules()
     AOT_TEST_CHECK(context.diagnostics().userDiagnostics().isEmpty());
 }
 
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-static void testCheckOfReturnAddressesReachesEveryCall()
-{
-    BuildContext context(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(catchModule, switchModule, context);
-    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
-    AOT_TEST_CHECK(section.numberOfModules == 2);
-
-    ReturnAddressCheck check(section.code.span());
-    check.addWebAssembly({ section.directory.span(), section.places }, 0);
-    AOT_TEST_CHECK(!check.run());
-
-    for (const Wasm::ModuleInImage& module : modulesOf(section)) {
-        for (uint32_t functions : module.functions) {
-            for (const auto& function : spanReinterpretCast<const Wasm::FunctionInImage>(section.directory.span().subspan(functions, module.numberOfFunctions * sizeof(Wasm::FunctionInImage)))) {
-                unsigned numberOfCalls = 0;
-                for (uint32_t offset = function.entry; offset < function.entry + function.size; offset += sizeof(uint32_t)) {
-                    bool isCall = WTF::unalignedLoad<uint32_t>(section.code.span().subspan(offset).data()) >> 26 == 0b100101;
-                    AOT_TEST_CHECK(!isCall || check.hasReachedFromEntry(offset));
-                    numberOfCalls += isCall;
-                }
-                AOT_TEST_CHECK(module.sourceSize != sizeof(switchModule) || numberOfCalls >= 9);
-            }
-        }
-    }
-}
-
-static void testCheckOfReturnAddressesKnowsWhatIsData()
-{
-    BuildContext context(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(constantModule, switchModule, context);
-    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
-    AOT_TEST_CHECK(section.numberOfModules == 2);
-
-    constexpr uint32_t retab = 0xd65f0fff;
-    size_t halvesOfConstant = 0;
-    for (PlacesInWebAssemblyCode::Data data : section.places.data) {
-        for (uint32_t offset = data.offset; offset < data.offset + data.size; offset += sizeof(uint32_t))
-            halvesOfConstant += WTF::unalignedLoad<uint32_t>(section.code.span().subspan(offset).data()) == retab;
-    }
-    AOT_TEST_CHECK(halvesOfConstant == 2);
-    AOT_TEST_CHECK(!section.places.jumpsThroughTables.isEmpty());
-    for (PlacesInWebAssemblyCode::JumpThroughTable jump : section.places.jumpsThroughTables) {
-        AOT_TEST_CHECK(section.places.data.containsIf([&](PlacesInWebAssemblyCode::Data data) {
-            return data.offset == jump.offsetOfTable && data.size == jump.numberOfEntries * sizeof(int32_t);
-        }));
-    }
-
-    ReturnAddressCheck check(section.code.span());
-    check.addWebAssembly({ section.directory.span(), section.places }, 0);
-    AOT_TEST_CHECK(!check.run());
-}
-
-static void testCheckOfReturnAddressesFollowsJumpsThroughTables()
-{
-    BuildContext context(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(catchModule, switchModule, context);
-    const WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
-    AOT_TEST_CHECK(section.places.jumpsThroughTables.size() >= 2);
-
-    constexpr uint32_t addressOfSlotInLinkRegister = 0x910043be; // add lr, fp, #16
-    constexpr uint32_t returnToCaller = 0xd65f03c0;
-    for (PlacesInWebAssemblyCode::JumpThroughTable jump : section.places.jumpsThroughTables) {
-        Vector<uint8_t> code = section.code;
-        auto check = [&] {
-            ReturnAddressCheck check(code.span());
-            check.addWebAssembly({ section.directory.span(), section.places }, 0);
-            return check.run();
-        };
-        memcpySpan(code.mutableSpan().subspan(jump.offsetBehindJump - 2 * sizeof(uint32_t)), asByteSpan(addressOfSlotInLinkRegister));
-        AOT_TEST_CHECK(!check());
-
-        uint32_t lastTarget = jump.offsetOfTable + WTF::unalignedLoad<uint32_t>(code.span().subspan(jump.offsetOfTable + (jump.numberOfEntries - 1) * sizeof(int32_t)).data());
-        memcpySpan(code.mutableSpan().subspan(lastTarget), asByteSpan(returnToCaller));
-        std::optional<ReturnAddressCheck::Violation> violation = check();
-        AOT_TEST_CHECK(violation && violation->offset == lastTarget);
-    }
-}
-
-static void testCheckOfReturnAddressesKnowsWhereFunctionBegins()
-{
-    BuildContext context(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(callModule, callModule, context);
-    const WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
-    auto functions = spanReinterpretCast<const Wasm::FunctionInImage>(section.directory.span().subspan(modulesOf(section)[0].functions[0], 2 * sizeof(Wasm::FunctionInImage)));
-    auto [first, second] = std::minmax(functions[0].entry, functions[1].entry);
-
-    constexpr uint32_t addressOfNextWord = 0x10000029; // adr x9, .+4
-    Vector<uint8_t> code = section.code;
-    fillWithNops(code.mutableSpan().subspan(first, second - first));
-    memcpySpan(code.mutableSpan().subspan(first), asByteSpan(addressOfNextWord));
-    ReturnAddressCheck check(code.span());
-    check.addWebAssembly({ section.directory.span(), section.places }, 0);
-    std::optional<ReturnAddressCheck::Violation> violation = check.run();
-    AOT_TEST_CHECK(violation && violation->rule == ReturnAddressCheck::Rule::KeepsAddressOfLabelInSight && violation->offset == second);
-}
-
-static void testCheckOfReturnAddressesLetsFunctionJumpToWhatItSpilled()
-{
-    BuildContext context(makeDefaultCompileOptions());
-    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(callModule, callModule, context);
-    const WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
-    uint32_t function = reinterpretCastSpanStartTo<const Wasm::FunctionInImage>(section.directory.span().subspan(modulesOf(section)[0].functions[0])).entry;
-    uint32_t stub = reinterpretCastSpanStartTo<const Wasm::DirectoryInImage>(section.directory.span()).faultWithoutFrame;
-
-    constexpr uint32_t loadOffStackAndJump[] = { 0xf94003e9, 0xd61f0120 }; // ldr x9, [sp] and br x9
-    for (uint32_t place : { function, stub }) {
-        Vector<uint8_t> code = section.code;
-        memcpySpan(code.mutableSpan().subspan(place), asByteSpan(loadOffStackAndJump));
-        ReturnAddressCheck check(code.span());
-        check.addWebAssembly({ section.directory.span(), section.places }, 0);
-        std::optional<ReturnAddressCheck::Violation> violation = check.run();
-        AOT_TEST_CHECK(violation.has_value() == (place == stub));
-        AOT_TEST_CHECK(!violation || violation->rule == ReturnAddressCheck::Rule::JumpsToNothingOffTheStack);
-    }
-}
-#endif
-
 static void testModuleImportedTwiceIsCompiledOnce()
 {
     BuildContext context(makeDefaultCompileOptions());
@@ -476,7 +327,7 @@ static void testSameBytesEachTime()
 static RelocatableCode codeThatCalls(std::optional<uint32_t> symbol)
 {
     BuildContext context(makeDefaultCompileOptions());
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, context.assemblerPolicy());
     if (symbol)
         recorder.call({ SymbolSpace::WebAssembly, *symbol });
@@ -556,6 +407,9 @@ static void testPointerTableSlots()
     slots.append(Wasm::ImagePointerTable::primitiveGigacageDisableRequest);
     slots.append(Wasm::ImagePointerTable::primitiveGigacageBase);
 #endif
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    slots.append(Wasm::ImagePointerTable::signedRestoreFrameReturnAddress);
+#endif
     for (uint32_t function = 0; function < table.numberOfFunctions; ++function)
         slots.append(table.callee(Wasm::FunctionCodeIndex(function)));
     for (uint32_t type = 0; type < table.numberOfTypes; ++type)
@@ -630,13 +484,6 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/module-without-memory-has-one-flavor"_s, testModuleWithoutMemoryHasOneFlavor },
         { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
-#if ENABLE(RETURN_ADDRESS_SIGNING)
-        { "webassembly-image/check-of-return-addresses-reaches-every-call"_s, testCheckOfReturnAddressesReachesEveryCall },
-        { "webassembly-image/check-of-return-addresses-knows-what-is-data"_s, testCheckOfReturnAddressesKnowsWhatIsData },
-        { "webassembly-image/check-of-return-addresses-follows-jumps-through-tables"_s, testCheckOfReturnAddressesFollowsJumpsThroughTables },
-        { "webassembly-image/check-of-return-addresses-knows-where-function-begins"_s, testCheckOfReturnAddressesKnowsWhereFunctionBegins },
-        { "webassembly-image/check-of-return-addresses-lets-function-jump-to-what-it-spilled"_s, testCheckOfReturnAddressesLetsFunctionJumpToWhatItSpilled },
-#endif
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
         { "webassembly-image/call-goes-to-copy-of-its-flavor"_s, testCallGoesToCopyOfItsFlavor },
         { "webassembly-image/call-of-unknown-symbol-is-refused"_s, testCallOfUnknownSymbolIsRefused },

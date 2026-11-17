@@ -1358,8 +1358,7 @@ static void generateCanonicalEquivalence(CCallHelpers& jit, const SharedRoutine:
 void generateSharedRoutine(CCallHelpers& jit, const SharedRoutine& routine, CodeAddressing& addressing)
 {
     RELEASE_ASSERT(canGenerateSharedRoutine(routine));
-    if (!jit.policy().keepsLinkRegisterUnsigned)
-        jit.tagReturnAddress();
+    jit.tagReturnAddress();
     WTF::switchOn(routine.payload,
         [&](const SharedRoutine::MatchSet& payload) { generateMatchSet(jit, payload); },
         [&](const SharedRoutine::ReadCodePoint&) { generateReadCodePoint(jit); },

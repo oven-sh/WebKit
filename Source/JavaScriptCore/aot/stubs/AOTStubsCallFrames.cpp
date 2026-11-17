@@ -56,11 +56,6 @@ static_assert([] {
 }());
 #endif
 
-static Address argumentListReturnAddress()
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::ArgumentList));
-}
-
 void emitSpillArgumentRegisters(CCallHelpers& jit)
 {
 #if CPU(X86_64)
@@ -101,13 +96,7 @@ void emitDropArgumentListFrames(CCallHelpers& jit, GPRReg scratch)
 {
     ASSERT(scratch != instanceGPR);
     Label again = jit.label();
-#if CPU(ARM64)
-    jit.loadPtr(argumentListReturnAddress(), scratch);
-    Jump isNotArgumentListFrame = jit.branchPtr(CCallHelpers::NotEqual, CCallHelpers::linkRegister, scratch);
-#else
-    jit.loadPtr(Address(sp), scratch);
-    Jump isNotArgumentListFrame = jit.branchPtr(CCallHelpers::NotEqual, scratch, argumentListReturnAddress());
-#endif
+    Jump isNotArgumentListFrame = emitBranchOnCallerReturnAddress(jit, CCallHelpers::NotEqual, StubFrameKind::ArgumentList, scratch);
     jit.emitFunctionEpilogue();
     jit.jump().linkTo(again, &jit);
     isNotArgumentListFrame.link(&jit);
@@ -116,13 +105,22 @@ void emitDropArgumentListFrames(CCallHelpers& jit, GPRReg scratch)
 static void emitFindListFrameRecord(CCallHelpers& jit, unsigned bytesAboveFrameRecord)
 {
     jit.move(fp, frameRecordGPR);
-    jit.loadPtr(argumentListReturnAddress(), listReturnAddressGPR);
-    emitLoadReturnAddressOfFrameRecord(jit, frameRecordGPR, stackWordGPR);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    const HeldReturnAddress returnAddress = HeldReturnAddress::loadLosingLinkRegister(jit, frameRecordGPR, stackWordGPR);
+    Jump isNotOnListFrame = returnAddress.branch(jit, CCallHelpers::NotEqual, StubFrameKind::ArgumentList);
+    Label nextFrame = jit.label();
+    jit.loadPtr(Address(frameRecordGPR, CallFrame::callerFrameOffset()), frameRecordGPR);
+    emitBranchOnReturnAddressOfFrameRecord(jit, CCallHelpers::Equal, frameRecordGPR, StubFrameKind::ArgumentList, stackWordGPR).linkTo(nextFrame, &jit);
+    jit.move(TrustedImm32(1), listReturnAddressGPR);
+#else
+    jit.loadPtr(returnAddressOfStubWithoutSignature(StubFrameKind::ArgumentList), listReturnAddressGPR);
+    const HeldReturnAddress returnAddress = HeldReturnAddress::loadLosingLinkRegister(jit, frameRecordGPR, stackWordGPR);
     Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, stackWordGPR, listReturnAddressGPR);
     Label nextFrame = jit.label();
     jit.loadPtr(Address(frameRecordGPR, CallFrame::callerFrameOffset()), frameRecordGPR);
-    emitLoadReturnAddressOfFrameRecord(jit, frameRecordGPR, stackWordGPR);
+    jit.loadPtr(Address(frameRecordGPR, CallFrame::returnPCOffset()), stackWordGPR);
     jit.branchPtr(CCallHelpers::Equal, stackWordGPR, listReturnAddressGPR).linkTo(nextFrame, &jit);
+#endif
     Jump reusesListFrame = jit.jump();
 
     isNotOnListFrame.link(&jit);
@@ -131,7 +129,7 @@ static void emitFindListFrameRecord(CCallHelpers& jit, unsigned bytesAboveFrameR
         jit.loadPtr(Address(frameRecordGPR, CallFrame::callerFrameOffset()), callerFrame);
         jit.addPtr(TrustedImm32(bytesAboveFrameRecord), frameRecordGPR);
         jit.storePtr(callerFrame, Address(frameRecordGPR, CallFrame::callerFrameOffset()));
-        emitStoreReturnAddressInFrameRecord(jit, stackWordGPR, frameRecordGPR);
+        returnAddress.storeInFrameRecord(jit, frameRecordGPR);
     }
     jit.move(TrustedImm32(0), listReturnAddressGPR);
     reusesListFrame.link(&jit);
@@ -175,7 +173,7 @@ Jump emitMoveStackWordsKeepingReturnAddress(CCallHelpers& jit, unsigned numberOf
     Jump isNewListFrame = jit.branchTestPtr(CCallHelpers::Zero, listReturnAddressGPR);
 #if CPU(X86_64)
     jit.push(listReturnAddressGPR);
-#else
+#elif !ENABLE(RETURN_ADDRESS_SIGNING)
     jit.move(listReturnAddressGPR, CCallHelpers::linkRegister);
 #endif
     emitRestoreParkedRegisters(jit);

@@ -858,7 +858,7 @@ static void emitObjectSetPrototypeOf(StubAssembler& jit, GPRReg scratch, JumpLis
     jit.move(object, gprOf(firstStubOperandRegister));
     jit.callStub(writeBarrier());
     jit.move(object, jit.result());
-    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
+    jit.emitFunctionEpilogue();
     jit.ret();
 }
 
@@ -2638,7 +2638,7 @@ static void emitAddToWeakTable(StubAssembler& jit, bool isMap)
     jit.move(map, gprOf(firstStubOperandRegister));
     jit.callStub(writeBarrier());
     jit.move(map, jit.result());
-    jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
+    jit.emitFunctionEpilogue();
     jit.ret();
 
     hasNoRoom.link(&jit);

@@ -98,8 +98,7 @@ const uint64_t* frameWithAwaitingCallers(const Instance& instance)
     const uint64_t* frame = withoutBit(instance.coroutines.resumableFrame);
     if (!frame) [[likely]]
         return nullptr;
-    const void* returnAddress = removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]));
-    if (returnAddress == instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter) || returnAddress == instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
+    if (instance.stubs.isReturnAddress(StubFrameKind::SavedFrameAdapter, frame[1]) || instance.stubs.isReturnAddress(StubFrameKind::AsyncGeneratorBody, frame[1]))
         return nullptr;
     return frame;
 }
@@ -438,7 +437,7 @@ JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejecte
 
 static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance& instance, const uint64_t* frame)
 {
-    if (removeReturnAddressSignature(std::bit_cast<const void*>(frame[1])) != instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
+    if (!instance.stubs.isReturnAddress(StubFrameKind::AsyncGeneratorBody, frame[1]))
         return nullptr;
     return std::bit_cast<JSAsyncGenerator* const*>(frame[0])[asyncGeneratorSlotInStubFrame];
 }

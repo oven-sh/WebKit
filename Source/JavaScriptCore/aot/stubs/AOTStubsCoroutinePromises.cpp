@@ -598,7 +598,7 @@ void generateResolveReturnedPromise(StubAssembler& jit)
     needsBarrier.link(&jit);
     jit.emitFunctionPrologue();
     jit.callStub(writeBarrier());
-    jit.emitFunctionEpilogueToReturn();
+    jit.emitFunctionEpilogue();
     jit.returnToCaller();
 
     needsOperation.link(&jit);
@@ -671,8 +671,7 @@ static void emitReturnAsyncResult(StubAssembler& jit, std::optional<RegistersSav
     Jump hasPromise = jit.branchIfCell(promise);
     jit.move(TrustedImm32(0), promise);
     branchIfMayBeThenable();
-    emitLoadReturnAddressOfFrameRecord(jit, fp, scratch);
-    Jump hasBeenSuspended = jit.branchPtr(CCallHelpers::Equal, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
+    Jump hasBeenSuspended = emitBranchOnReturnAddressOfFrameRecord(jit, CCallHelpers::Equal, fp, StubFrameKind::SavedFrameAdapter, scratch);
     Label returnsValue = jit.label();
     jit.move(value, result);
     leaveFrame();
@@ -711,7 +710,7 @@ static void emitReturnAsyncResult(StubAssembler& jit, std::optional<RegistersSav
         leaveFrame();
         jit.emitFunctionPrologue();
         jit.callStub(writeBarrier());
-        jit.emitFunctionEpilogueToReturn();
+        jit.emitFunctionEpilogue();
         jit.returnToCaller();
     }
 

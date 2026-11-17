@@ -366,6 +366,7 @@ namespace JSC {
 
         bool isAligned(int alignment) const
         {
+            pinWhatIsWritten();
             return !(m_index & (alignment - 1));
         }
 
@@ -382,6 +383,7 @@ namespace JSC {
 
         size_t codeSize() const
         {
+            pinWhatIsWritten();
             return m_index;
         }
 
@@ -398,10 +400,37 @@ namespace JSC {
 
         AssemblerLabel label() const
         {
+            pinWhatIsWritten();
             return AssemblerLabel(m_index);
         }
 
-        unsigned debugOffset() { return m_index; }
+        unsigned debugOffset()
+        {
+            pinWhatIsWritten();
+            return m_index;
+        }
+
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        unsigned putRemovableInt(int32_t value)
+        {
+            putInt(value);
+            return m_index - sizeof(value);
+        }
+
+        void removeIntUnlessPinned(unsigned offset, bool (*mayMoveUp)(uint32_t))
+        {
+            if (offset < m_sizeOfWhatIsPinned || offset >= m_index)
+                return;
+            char* removed = m_storage.buffer() + offset;
+            const unsigned sizeBehind = m_index - offset - sizeof(uint32_t);
+            for (unsigned distance = sizeof(uint32_t); distance <= sizeBehind; distance += sizeof(uint32_t)) {
+                if (!mayMoveUp(WTF::unalignedLoad<uint32_t>(removed + distance)))
+                    return;
+            }
+            memmove(removed, removed + sizeof(uint32_t), sizeBehind);
+            m_index -= sizeof(uint32_t);
+        }
+#endif
 
         AssemblerData&& releaseAssemblerData()
         {
@@ -506,6 +535,14 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
 
     private:
+        // Somebody knows where it ends.
+        void pinWhatIsWritten() const
+        {
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            m_sizeOfWhatIsPinned = m_index;
+#endif
+        }
+
         void grow(int extraCapacity = 0)
         {
             m_storage.grow(extraCapacity);
@@ -533,6 +570,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
         AssemblerData m_storage;
         unsigned m_index { 0 };
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        mutable unsigned m_sizeOfWhatIsPinned { 0 };
+#endif
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
         ARM64EHash<ShouldSign::Yes> m_hash;
         AssemblerHashes m_hashes;

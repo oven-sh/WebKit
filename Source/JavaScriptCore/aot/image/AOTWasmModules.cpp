@@ -215,18 +215,13 @@ public:
 
     bool isOutOfReach() const { return m_isOutOfReach; }
 
-    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer, PlacesInWebAssemblyCode& places)
+    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer)
     {
         std::span<uint8_t> bytes = buffer.bytes();
-        for (auto& [section, start] : m_constants)
-            places.data.append({ buffer.linkBuffer().offsetOf(*start), safeCast<uint32_t>(procedure.dataSections()[section].size) });
         for (auto& [table, start] : m_tables) {
             uint32_t place = buffer.linkBuffer().offsetOf(*start);
             const Vector<uint32_t>& targets = procedure.jumpTable(table).targetOffsets;
             RELEASE_ASSERT(place + targets.size() * sizeof(int32_t) <= bytes.size());
-            if (std::optional<uint32_t> behindJump = procedure.jumpTable(table).offsetBehindJump)
-                places.jumpsThroughTables.append({ *behindJump, place, safeCast<uint32_t>(targets.size()) });
-            places.data.append({ place, safeCast<uint32_t>(targets.size() * sizeof(int32_t)) });
             for (size_t entry = 0; entry < targets.size(); ++entry) {
                 int32_t distance = static_cast<int32_t>(targets[entry]) - static_cast<int32_t>(place);
                 memcpySpan(bytes.subspan(place + entry * sizeof(int32_t), sizeof(int32_t)), asByteSpan(distance));
@@ -414,10 +409,10 @@ struct WasmModuleCompiler {
         Ref<Wasm::IPIntCallee> profiledCallee = group->ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
         Ref<Wasm::OMGCallee> callee = Wasm::OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { profiledCallee });
         Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
+        ImageAssembler jit;
         Wasm::CompilationContext context;
-        context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
         AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
-        RelocationRecorder recorder(*context.wasmEntrypointJIT, assemblerPolicy);
+        RelocationRecorder recorder(jit, assemblerPolicy);
         WasmRelocationLowering lowering;
         B3::Policy policy;
         policy.upstream.allowsSIMD = true;
@@ -453,7 +448,7 @@ struct WasmModuleCompiler {
         policy.air.peepholes.emitsShufflesInPairOrder = true;
         policy.air.peepholes.reusesConditionFlags = true;
         policy.targetFeatures = assemblerPolicy.features;
-        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, recorder, flavor };
+        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, jit, recorder, flavor };
         codeForImage.dependsOnFlavor = true;
         codeForImage.policy = &policy;
         codeForImage.pointerSpace = static_cast<uint32_t>(WasmRelocationSpace::Pointers);
@@ -471,7 +466,7 @@ struct WasmModuleCompiler {
         if (codeForImage.failure != Wasm::ImageCodeFailure::None)
             return { .failure = codeForImage.failure };
 
-        ImageLinkBuffer buffer(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmOMG);
+        ImageLinkBuffer buffer(jit, LinkBuffer::Profile::WasmOMG);
         if (buffer.didFailToAllocate())
             return { .failure = Wasm::ImageCodeFailure::OutOfMemory };
         buffer.finalize(false, "WebAssembly function"_s);
@@ -479,7 +474,7 @@ struct WasmModuleCompiler {
             return { .wasRefusedByGenerator = true };
         if (lowering.isOutOfReach())
             return { .failure = Wasm::ImageCodeFailure::OutOfPCRelativeReach };
-        lowering.fillJumpTables(*context.procedure, buffer, result.places);
+        lowering.fillJumpTables(*context.procedure, buffer);
         auto relocations = recorder.link(buffer, &buildContext);
         if (!relocations)
             return { .failure = codeFailureFor(relocations.error()) };
@@ -521,15 +516,15 @@ struct WasmModuleCompiler {
         Ref<Wasm::IPIntCallee> profiledCallee = group->ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
         Ref<Wasm::BBQCallee> callee = Wasm::BBQCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { profiledCallee });
         Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
+        ImageAssembler jit;
         Wasm::CompilationContext context;
-        context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
-        AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy().withLinkRegisterSignedUntilReturn();
+        AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
 #if CPU(X86_64)
         if (result.usesVectors)
             assemblerPolicy.features = assemblerPolicy.features.with(CPUFeature::AVX);
 #endif
-        RelocationRecorder recorder(*context.wasmEntrypointJIT, assemblerPolicy);
-        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, recorder, flavor };
+        RelocationRecorder recorder(jit, assemblerPolicy);
+        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, jit, recorder, flavor };
         context.codeForImage = &codeForImage;
         MemoryMode mode = flavor == Wasm::ImageCodeFlavor::Trapping ? MemoryMode::Signaling : MemoryMode::BoundsChecking;
         auto compiled = Wasm::parseAndCompileBBQ(context, profiledCallee.get(), callee.get(), info.functions[functionIndex], signature, unlinkedCalls, module.get(), group.get(), info, mode, functionIndex);
@@ -539,7 +534,7 @@ struct WasmModuleCompiler {
         if (codeForImage.failure != Wasm::ImageCodeFailure::None)
             return { .failure = codeForImage.failure };
 
-        ImageLinkBuffer buffer(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmBBQ);
+        ImageLinkBuffer buffer(jit, LinkBuffer::Profile::WasmBBQ);
         if (buffer.didFailToAllocate())
             return { .failure = Wasm::ImageCodeFailure::OutOfMemory };
         buffer.finalize(false, "WebAssembly function"_s);
@@ -563,7 +558,6 @@ struct WasmModuleCompiler {
 
         result.code = RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
         result.savedRegisters = *savedRegisters;
-        result.places = WTF::move(codeForImage.places);
         result.dependsOnFlavor = codeForImage.dependsOnFlavor;
         for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
             result.directCallees.set(directCallee);
@@ -589,8 +583,8 @@ struct WasmModuleCompiler {
     {
         bool isComplete = true;
         auto generate = [&](ASCIILiteral what, uint32_t index, const auto& emit) -> RelocatableCode {
-            CCallHelpers jit;
-            RelocationRecorder recorder(jit, context.assemblerPolicy().withLinkRegisterSignedUntilReturn());
+            ImageAssembler jit;
+            RelocationRecorder recorder(jit, context.assemblerPolicy());
             emit(jit, recorder);
             auto stub = recorder.finalize(LinkBuffer::Profile::WasmThunk, &context);
             if (stub)
@@ -996,7 +990,6 @@ WasmModuleOrDecline linkWasmModule(WasmModuleCode&& module, const CodeTemplates&
         }
         for (Wasm::FramelessRangeInImage range : function.framelessRanges)
             result.framelessRanges.append({ entry + range.begin, entry + range.end });
-        result.places.append(function.places, entry);
         return Wasm::FunctionInImage { entry, static_cast<uint32_t>(function.code.bytes.size()), firstHandler, static_cast<uint32_t>(function.handlers.size()), function.savedRegistersIndex, function.usesVectors, 0 };
     };
     auto& trapping = result.functions[static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping)];
@@ -1141,7 +1134,6 @@ WebAssemblyImageInputs WasmSectionBuilder::finish(BuildContext& context)
     appendToDirectory(section.directory, asBytes(m_declinedModules.span()));
     for (size_t index = 0; index < m_modules.size(); ++index) {
         countFunctions(m_modules[index].module, context.statistics());
-        section.places.append(m_modules[index].module.places, m_modules[index].base);
         Wasm::ModuleInImage record = appendModule(section.code, section.directory, m_modules[index].module, m_modules[index].base);
         memcpySpan(section.directory.mutableSpan().subspan(recordsOffset + index * sizeof(record)), asByteSpan(record));
     }

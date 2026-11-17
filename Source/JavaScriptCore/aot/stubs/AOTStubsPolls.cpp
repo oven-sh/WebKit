@@ -106,7 +106,7 @@ static void generatePollAtPrologue(StubAssembler& jit, Entry operation)
         jit.linkToStub(jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR), handleExceptionAtPrologue());
         jit.linkToStub(jit.branch64(CCallHelpers::Equal, GPRInfo::returnValueGPR, TrustedImm32(pollAtPrologueMustThrow)), throwStackOverflow(true));
         if (!pollAtPrologueReturnsBehindItsCall)
-            jit.storePtr(GPRInfo::returnValueGPR, Address(sp));
+            jit.storePtr(GPRInfo::returnValueGPR, Address(sp, bytes - sizeof(void*)));
     });
     jit.ret();
 #endif
@@ -148,7 +148,7 @@ void generatePollAtLoop(StubAssembler& jit)
     jit.emitFunctionEpilogue();
     jit.linkToStub(jit.branchTestPtr(CCallHelpers::NonZero, scratch), handleException(true));
     if (jit.key().callerFrame() == CallerFrame::Frameless)
-        jit.emitFramelessCallerEpilogueAndReturn(scratch);
+        jit.emitFramelessCallerEpilogueAndReturn();
     else
         jit.returnToCaller();
 #endif
@@ -175,22 +175,17 @@ void generatePollBeforeEntering(StubAssembler& jit)
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
 #else
     constexpr GPRReg siteReturnAddress = ARM64Registers::x16;
-    constexpr GPRReg ownReturnAddress = ARM64Registers::x17;
     Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::softStackLimitWord());
-    jit.move(CCallHelpers::linkRegister, ownReturnAddress);
-    jit.move(siteReturnAddress, CCallHelpers::linkRegister);
-    emitPushLinkRegister(jit);
-    jit.move(ownReturnAddress, CCallHelpers::linkRegister);
+    jit.pushPair(ARM64Registers::zr, siteReturnAddress);
     callPollBeforeEntering(jit, 2 * sizeof(void*));
     constexpr GPRReg exception = siteReturnAddress;
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), exception);
     jit.loadPtr(Address(exception, VM::exceptionOffset()), exception);
-    jit.move(CCallHelpers::linkRegister, ownReturnAddress);
-    emitPopLinkRegister(jit);
     Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, exception);
-    jit.m_assembler.ret(ownReturnAddress);
+    emitPopLinkRegisterAndReturnToOldOne(jit);
 
     hasThrown.link(&jit);
+    emitPopLinkRegister(jit);
     jit.jumpToStub(handleException(false));
 
     doesNotFit.link(&jit);

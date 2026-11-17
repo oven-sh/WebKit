@@ -253,8 +253,8 @@ static void testStubWords()
 
     for (unsigned kind = 0; kind < numberOfStubFrameKinds; ++kind) {
         StubFrameKind frameKind = static_cast<StubFrameKind>(kind);
-        AOT_TEST_CHECK(words.returnAddress(frameKind) == words.returnAddresses[kind]);
-        AOT_TEST_CHECK(wordAt(words, StubWords::offsetOfReturnAddress(frameKind)) == words.returnAddresses[kind]);
+        AOT_TEST_CHECK(words.isReturnAddress(frameKind, std::bit_cast<uint64_t>(words.returnAddresses[kind])));
+        AOT_TEST_CHECK(wordAt(words, StubWords::offsetOfReturnAddressForTesting(frameKind)) == words.returnAddresses[kind]);
     }
     AOT_TEST_CHECK(wordAt(entry, BoxedCallEntry::offsetOfNativeFunction()) == entry.nativeFunction);
     for (unsigned count = BoxedCallEntry::minArgumentCount; count <= BoxedCallEntry::maxArgumentCount; ++count)
@@ -435,7 +435,7 @@ static constexpr uint32_t nameOfSecondStubCall = 6;
 template<typename Emit>
 static Vector<uint8_t> assemble(const Emit& emit, const AssemblerPolicy& policy = AssemblerPolicy::forImage(StubOptions { }.targetFeatures))
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder relocations(jit, policy);
     emit(jit);
     std::expected<RelocatableCode, LinkFailure> code = relocations.finalize(LinkBuffer::Profile::Thunk, nullptr);
@@ -446,7 +446,7 @@ static Vector<uint8_t> assemble(const Emit& emit, const AssemblerPolicy& policy 
 template<typename Emit>
 static AssembledCalls assembleCalls(const StubCatalog& catalog, const Emit& emit)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder relocations(jit, AssemblerPolicy::forImage(catalog.options().targetFeatures));
     StubCalls calls(catalog, relocations);
     WTF::Vector<CCallHelpers::Label> labels;

@@ -9,7 +9,6 @@
 
 #if ENABLE(WEBASSEMBLY)
 
-#include "AOTPlacesInWebAssemblyCode.h"
 #include "AOTVector.h"
 #include "WasmFormat.h"
 #include <array>
@@ -20,6 +19,8 @@
 #include <wtf/StdLibExtras.h>
 
 namespace JSC {
+
+class CCallHelpers;
 
 namespace AOT {
 class RelocationRecorder;
@@ -231,13 +232,13 @@ struct ImagePointerTable {
 #if GIGACAGE_ENABLED
     static constexpr uint32_t primitiveGigacageDisableRequest = numberOfOperations + 7;
     static constexpr uint32_t primitiveGigacageBase = numberOfOperations + 8;
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 9 + ENABLE_RETURN_ADDRESS_SIGNING;
 #else
-    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7;
+    static constexpr uint32_t numberOfSharedPointers = numberOfOperations + 7 + ENABLE_RETURN_ADDRESS_SIGNING;
 #endif
-
-    // What restoreFrameReturnAddress is signed with. No stack pointer has these bits.
-    static constexpr uint64_t modifierOfRestoreFrameReturnAddress = 0x3c91ull << 48;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    static constexpr uint32_t signedRestoreFrameReturnAddress = numberOfSharedPointers - 1;
+#endif
 
     static constexpr uint32_t slotOf(ImageCodeOperation operation) { return static_cast<uint32_t>(operation); }
     JS_EXPORT_PRIVATE static std::optional<uint32_t> slotOfOperation(const void* taggedOperation);
@@ -265,7 +266,6 @@ struct ModuleForImage {
     Vector<JSEntrypointInImage> jsEntrypoints;
     WTF::Vector<SavedRegistersInImage> savedRegisters;
     WTF::Vector<FramelessRangeInImage> framelessRanges;
-    AOT::PlacesInWebAssemblyCode places;
     uint32_t catchRunway { 0 };
     uint32_t faultWithoutFrame { 0 };
 };
@@ -279,6 +279,7 @@ struct CodeForImage {
     const ImagePointerTable& pointers;
     const UncheckedKeyHashMap<const RTT*, uint32_t>& typeIndices;
     const Vector<StructLayoutInImage>& structLayouts;
+    CCallHelpers& jit;
     AOT::RelocationRecorder& recorder;
     ImageCodeFlavor flavor;
 
@@ -289,7 +290,6 @@ struct CodeForImage {
     uint32_t pointerSpace { 0 };
     unsigned threadedJumps { 0 };
     unsigned firstStateTests { 0 };
-    AOT::PlacesInWebAssemblyCode places { };
     static constexpr GPRReg passedGlobalGPR = GPRInfo::wasmScratchGPR0;
     std::optional<uint32_t> passedGlobal { };
 };

@@ -270,7 +270,7 @@ static RandomTestBuild buildForRandomTest(const RandomTestCase& testCase, size_t
     auto program = buildRandomProcedure(test, testCase.options);
     AOT_RANDOM_TEST_CHECK(testCase, test, test.prepare());
 
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, AssemblerPolicy::forImage(test.procedure().traits().features));
     readTagsFromInstance(jit);
     generate(test.procedure(), jit, recorder);

@@ -566,6 +566,7 @@ static uintptr_t linkRegisterAsCalleeSavesIt(PlatformRegisters& registers)
 {
     uintptr_t link = registerOf(registers, ARM64Registers::lr);
 #if ENABLE(RETURN_ADDRESS_SIGNING)
+    RELEASE_ASSERT(link == removeReturnAddressSignature<uintptr_t>(std::bit_cast<void*>(link)));
     return std::bit_cast<uintptr_t>(JSC::signReturnAddress(std::bit_cast<void*>(link), std::bit_cast<const void*>(registerOf(registers, ARM64Registers::sp))));
 #else
     return link;

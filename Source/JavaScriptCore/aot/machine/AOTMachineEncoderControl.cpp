@@ -820,8 +820,7 @@ void Encoder::encodeReturn(const Step& step)
     }
     MacroAssembler::Label teardown = m_jit.label();
     unsigned offsetOfTeardown = m_jit.debugOffset();
-    leaveFrameIfSetUp(LoadedLinkRegister::IsOnlyReturnedTo);
-    m_jit.ret();
+    leaveFrameAndReturn(m_origin, m_operationOfOrigin);
     if (!m_teardownSharedByReturns.isSet() && m_jit.debugOffset() - offsetOfTeardown >= minBytesOfTeardownSharedByReturns)
         m_teardownSharedByReturns = teardown;
 }

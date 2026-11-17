@@ -76,7 +76,7 @@ namespace JSC { namespace AOT {
 
 SUPPRESS_ASAN static const void* returnAddressOfPolledCall(void* callerStackPointer)
 {
-    return removeReturnAddressSignature(static_cast<void* const*>(callerStackPointer)[isX86() ? -1 : -2]);
+    return removeReturnAddressSignature(static_cast<void* const*>(callerStackPointer)[-1]);
 }
 
 static bool hasCollectedInPolledCall(VM& vm, void* callerStackPointer, CallFrame* frameOfPollStub)
@@ -182,7 +182,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAfterCleanup, void, (Instance* instanc
         OPERATION_RETURN(scope);
     }
     instance->runtime.exceptions.thrownValue = value;
-    instance->state->returnAddressOfThrowAfterCleanup = callFrame->returnPCForInspection();
+    instance->state->rawReturnAddressOfThrowAfterCleanup = callFrame->rawReturnPC();
     instance->state->keptByCleanup = kept;
     return { std::bit_cast<Exception*>(static_cast<uintptr_t>(1)) };
 }
@@ -1202,6 +1202,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStopUnlessValueHasType, void, (Ins
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, const uint64_t* registers, const uint32_t* site, uint32_t source))
 {
     AOT_OPERATION_BEGIN_WITHOUT_COLLECTION(instance, Entry::operationAOTThrowAtSite);
+    site = removeReturnAddressSignature(site);
     if (static_cast<ThrowSiteSource>(source) == ThrowSiteSource::FaultSite)
         const_cast<uint64_t*>(registers)[static_cast<unsigned>(registerWrittenAtFaults)] = instance->state->registerBeforeFault;
     DecodedThrowSite decoded = decodeThrowSite(registers, site, static_cast<ThrowSiteSource>(source));

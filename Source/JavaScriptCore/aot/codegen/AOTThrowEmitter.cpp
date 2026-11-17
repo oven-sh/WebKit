@@ -83,7 +83,6 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
         words.append(site.a);
     if (site.b)
         words.append(*site.b);
-    RELEASE_ASSERT(words.size() == word.numberOfWordsOfSite());
     return words;
 }
 
@@ -112,7 +111,7 @@ static void emitThrowSiteCode(CCallHelpers& jit, CodeRecords& records, const Thr
     ThrowSiteSource source = !code.site.b && !valueIsInThrowWordRegister ? ThrowSiteSource::WordInRegister : ThrowSiteSource::WordsAfterCall;
     StubKey key = throwAtSite(source, CallerFrame::HasFrame);
     if (!params.frameIsSetUp())
-        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
+        jit.emitFunctionPrologue();
     if (source == ThrowSiteSource::WordInRegister) {
         RELEASE_ASSERT(words.size() <= 2);
         ArgumentMoves moves;

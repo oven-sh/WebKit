@@ -530,6 +530,7 @@ jobs:
               *) timeout 300 "$root/bin/testaot" native "$name" ;;
             esac
           done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
+          if [ "$SIGNS_RETURN_ADDRESSES" = true ]; then ruby Tools/Scripts/aot/test-offlineasm-signing.rb || status=1; fi
           if [ "$lacks_authentication" = true ]; then exit 1; fi
           exit "$status"
       - name: Summary

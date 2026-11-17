@@ -5486,11 +5486,9 @@ MacroAssembler::Label BBQJIT::emitJumpThroughTableInImage(unsigned numberOfEntri
 
 void BBQJIT::linkTableInImage(MacroAssembler::Label table, Vector<Box<CCallHelpers::Label>>&& targets)
 {
-    m_jit.addLinkTask([table, targets = WTF::move(targets), codeForImage = m_codeForImage](LinkBuffer& linkBuffer) {
+    m_jit.addLinkTask([table, targets = WTF::move(targets)](LinkBuffer& linkBuffer) {
         auto* entries = static_cast<uint8_t*>(linkBuffer.locationOf<JSSwitchPtrTag>(table).dataLocation());
         int64_t start = linkBuffer.offsetOf(table);
-        codeForImage->places.jumpsThroughTables.append({ safeCast<uint32_t>(start), safeCast<uint32_t>(start), safeCast<uint32_t>(targets.size()) });
-        codeForImage->places.data.append({ safeCast<uint32_t>(start), safeCast<uint32_t>(targets.size() * sizeof(int32_t)) });
         for (unsigned index = 0; index < targets.size(); ++index) {
             int32_t distance = safeCast<int32_t>(static_cast<int64_t>(linkBuffer.offsetOf(*targets[index])) - start);
             memcpy(entries + index * sizeof(distance), &distance, sizeof(distance));

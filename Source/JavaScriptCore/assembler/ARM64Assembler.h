@@ -241,6 +241,10 @@ struct ARM64BranchIslands {
     Vector<FarBranch> farBranches;
 };
 
+namespace ARM64LinkRegister {
+struct AccessOfWords;
+}
+
 class ARM64Assembler {
 public:
     static constexpr size_t instructionSize = sizeof(unsigned);
@@ -3784,6 +3788,27 @@ public:
         insn(exoticAtomicCAS(MEMOPSIZE, ExoticLoadFence_Acquire, ExoticStoreFence_Release, rs, rt, rn));
     }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // Whatever instruction is asked for, what leaves the link register for memory or another register is signed, and what comes from
+    // there is authenticated. A word of memory has the address behind it for its modifier, a register the stack pointer. Hints that
+    // sign, authenticate or strip are left out, but for those below, which take any operand: x16 has the modifier.
+    void signLinkRegisterFromHereOn() { m_signsLinkRegister = true; }
+    bool signsLinkRegister() const { return m_signsLinkRegister; }
+
+    enum class FirstOfPoppedPair : bool { Nothing, FramePointer };
+    // No instruction starts there, so a jump to it faults.
+    static constexpr int distanceInFrontOfAddressToLookAt = 1;
+
+    JS_EXPORT_PRIVATE void popLinkRegisterAndReturnToOldOne(FirstOfPoppedPair);
+    JS_EXPORT_PRIVATE void signLinkRegisterInX17();
+    JS_EXPORT_PRIVATE void signNearPCRelativeAddressInX17();
+    JS_EXPORT_PRIVATE void signFarPCRelativeAddressInX17();
+    JS_EXPORT_PRIVATE void authenticateX17IntoLinkRegister();
+    JS_EXPORT_PRIVATE void authenticateX17AndJump();
+    JS_EXPORT_PRIVATE void authenticateX17AndCompare(RegisterID);
+    JS_EXPORT_PRIVATE void authenticateX17ToLookAt(RegisterID dest);
+#endif
+
     // Admin methods:
 
     AssemblerLabel labelIgnoringWatchpoints()
@@ -4756,8 +4781,20 @@ protected:
 
     ALWAYS_INLINE void insn(int instruction)
     {
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        if (m_signsLinkRegister)
+            return putSigningLinkRegister(instruction);
+#endif
         m_buffer.putInt(instruction);
     }
+
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    JS_EXPORT_PRIVATE void putSigningLinkRegister(int instruction);
+    void loadThroughAuthenticatedLinkRegister();
+    void saveX16AndX17AndMoveAddressBehindWordToX16(uint32_t instruction, const ARM64LinkRegister::AccessOfWords&, int offsetOfWord);
+    void storeLinkRegister(uint32_t instruction, const ARM64LinkRegister::AccessOfWords&);
+    void loadLinkRegister(uint32_t instruction, const ARM64LinkRegister::AccessOfWords&);
+#endif
 
     ALWAYS_INLINE static int addSubtractExtendedRegister(Datasize sf, AddOp op, SetFlags S, RegisterID rm, ExtendType option, int imm3, RegisterID rn, RegisterID rd)
     {
@@ -5238,6 +5275,10 @@ protected:
     ARM64BranchIslands* m_branchIslands { nullptr };
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    bool m_signsLinkRegister { false };
+    unsigned m_offsetOfLoadThroughLinkRegister { UINT_MAX };
+#endif
     AssemblerBuffer m_buffer;
 
 public:

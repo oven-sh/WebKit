@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
-#include "AOTSavedCodeAddresses.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsOperations.h"
@@ -105,10 +104,9 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
         RELEASE_ASSERT(!operationCall.constantArguments[0] && !operationCall.constantArguments[1]);
         RELEASE_ASSERT(operationCall.spilledArguments->count < numberOfOperationArgumentGPRs);
     }
-    const LoadedLinkRegister loadedLinkRegister = savedRegistersAreRead == SavedRegistersAreRead::ByCallerAlone ? LoadedLinkRegister::IsOnlyReturnedTo : LoadedLinkRegister::MayBeSavedAgain;
     switch (operationCall.saves) {
     case OperationCall::Saves::Nothing:
-        emitOperationCallSavingNothing(operation, operationCall, beforeReturn, loadedLinkRegister);
+        emitOperationCallSavingNothing(operation, operationCall, beforeReturn);
         return;
     case OperationCall::Saves::CallerSavedGPRs:
     case OperationCall::Saves::CallerSavedGPRsAndFewFPRs:
@@ -116,7 +114,7 @@ void StubAssembler::emitOperationCallAndReturn(const CalledOperation& operation,
         [[fallthrough]];
     case OperationCall::Saves::CallerSavedRegisters:
         RELEASE_ASSERT(operationCall.returns != OperationCall::Returns::Pair);
-        emitOperationCallSavingRegisters(operation, operationCall, beforeReturn, loadedLinkRegister);
+        emitOperationCallSavingRegisters(operation, operationCall, beforeReturn);
         return;
     }
 }
@@ -217,7 +215,7 @@ static constexpr GPRReg scratchAfterOperation = CCallHelpers::s_scratchRegister;
 static constexpr GPRReg scratchAfterOperation = ARM64Registers::x16;
 #endif
 
-void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister loadedLinkRegister)
+void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless && !operationCall.spilledArguments);
     const bool callerIsStub = key().callerFrame() == CallerFrame::StubFrame;
@@ -229,19 +227,19 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
         subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
     } else
-        emitFunctionPrologue(SavedLinkRegister::IsDead);
+        emitFunctionPrologue();
     prepareCallOperation();
     call(function, OperationPtrTag);
     if (!callerIsStub)
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     if (callerIsStub) {
 #if CPU(ARM64)
-        emitPopLinkRegister(*this, loadedLinkRegister);
+        emitPopLinkRegister(*this);
 #else
         addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
     } else
-        emitFunctionEpilogueWithEmptyFrame(loadedLinkRegister);
+        emitFunctionEpilogueWithEmptyFrame();
     const bool polls = operationCall.pollsBeforeReturning && !callerIsStub;
     static_assert(noOverlap(scratchAfterOperation, GPRInfo::returnValueGPR, GPRInfo::returnValueGPR2, instanceGPR));
     JumpList exceptionOrPoll;
@@ -312,7 +310,7 @@ static void forEachFPRSavedAroundOperation(OperationCall::Saves saves, const Fun
     }
 }
 
-void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister)
+void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
     constexpr GPRReg sp = stackPointerRegister;
@@ -444,16 +442,14 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     pollBeforeReturningFromOperation(afterPoll);
 }
 #else
-void StubAssembler::emitFramelessCallerEpilogueAndReturn(GPRReg scratch)
+void StubAssembler::emitFramelessCallerEpilogueAndReturn()
 {
     RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless && m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
-    move(linkRegister, scratch);
-    emitFunctionEpilogueWithEmptyFrame();
-    m_assembler.ret(scratch);
+    emitPopFrameRecordAndReturnToOldLinkRegister(*this);
 }
 
-void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn, LoadedLinkRegister loadedLinkRegister)
+void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)
 {
     RELEASE_ASSERT(key().callerFrame() != CallerFrame::Frameless);
     constexpr GPRReg sp = stackPointerRegister;
@@ -488,7 +484,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     }
     restored.add(ARM64Registers::x18);
 
-    emitFunctionPrologue(SavedLinkRegister::IsDead);
+    emitFunctionPrologue();
     subPtr(TrustedImm32(numberOfSlots * 8), sp);
     for (unsigned i = 0; i < numberOfGPRs; i += 2)
         storePair64(gpr(i), gpr(i + 1), sp, TrustedImm32(i * 8));
@@ -535,7 +531,7 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
         if (savesFPR(i))
             loadPairDouble(Address(sp, slotOfFPR[i] * 8), fpr(i), fpr(i + 1));
     }
-    emitFunctionEpilogue(loadedLinkRegister);
+    emitFunctionEpilogue();
     Jump exceptionOrPoll;
     if (testsException || polls)
         exceptionOrPoll = branchTestPtr(NonZero, scratch);

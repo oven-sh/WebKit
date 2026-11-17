@@ -9,7 +9,6 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
-#include "AOTSavedCodeAddresses.h"
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStubsExceptions.h"
 #include "AOTVector.h"
@@ -69,7 +68,7 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
 #endif
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty() && key().callerFrame() != CallerFrame::Frameless);
     checkHasNoBorrowedFPRs();
-    emitFunctionPrologue(SavedLinkRegister::IsDead);
+    emitFunctionPrologue();
     if (!preservingCall.registersThatCalleeLoses.empty()) {
         RELEASE_ASSERT(!preservingCall.cellsToKeep[0]);
         preserving(preservingCall.registersThatCalleeLoses, [&] {
@@ -79,13 +78,13 @@ void StubAssembler::callAndReturnPreservingRegisters(const PreservingCall& prese
         RegisterSet lostAnyway = m_recording.clobbered();
         lostAnyway.merge(RegisterSet::macroClobberedGPRs());
         lostAnyway.merge(floatingPointRegistersLostToAccessors(preservingCall.callee));
-        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, SavedAreaIsLeftBy::Epilogue, preservingCall.cellsToKeep, isX86_64() ? sizeof(CPURegister) : 0);
+        SavedRegisterArea area = storeRegistersClobberedBy(preservingCall.callee, preservingCall.returnsValue, lostAnyway, preservingCall.cellsToKeep, isX86_64() ? sizeof(CPURegister) : 0);
         withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
             emitCall();
         });
-        loadSavedRegisters(area);
+        loadSavedRegisters(area, StackPointerAfterLoads::IsLeftToEpilogue);
     }
-    emitFunctionEpilogue(preservingCall.emitBeforeReturn ? LoadedLinkRegister::MayBeSavedAgain : LoadedLinkRegister::IsOnlyReturnedTo);
+    emitFunctionEpilogue();
     if (!preservingCall.checksException) {
         RELEASE_ASSERT(!preservingCall.emitBeforeReturn);
         ret();

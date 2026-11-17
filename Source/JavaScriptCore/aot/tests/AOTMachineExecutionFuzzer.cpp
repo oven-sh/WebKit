@@ -226,6 +226,11 @@ extern "C" void didReachPatch(PatchSite* site)
     auto trash = [&](RegisterMask mask) {
         forEachRegister(mask, [&](Reg reg) {
             savedRegister(reg) = nextGarbage();
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            // It has to get through the authentication, and is no code.
+            if (reg == Reg(ARM64Registers::lr))
+                savedRegister(reg) = std::bit_cast<uint64_t>(JSC::signReturnAddress(registerArea, &savedRegister(reg) + 1));
+#endif
         });
     };
     bool inTrace = site->isCheck || hasObservableEffects(description);
@@ -511,7 +516,7 @@ struct CompiledProgram {
     bool compile(int branchReach)
     {
         CPUFeatureSet features = procedure.traits().features;
-        CCallHelpers jit;
+        ImageAssembler jit;
         AssemblerPolicy policy = AssemblerPolicy::forImage(features);
         if (branchReach > 0)
             policy.branchReach = static_cast<uint32_t>(branchReach);

@@ -142,7 +142,7 @@ CallData SavedFrame::getCallData(JSCell* cell)
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
 {
-    if (removeReturnAddressSignature(std::bit_cast<const void*>(frame[1])) != instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter))
+    if (!instance.stubs.isReturnAddress(StubFrameKind::SavedFrameAdapter, frame[1]))
         return nullptr;
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }

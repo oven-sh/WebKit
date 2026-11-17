@@ -217,8 +217,8 @@ void generateTailCallWithList(StubAssembler& jit)
 
     jit.move(fp, frame);
     Label nextFrame = jit.label();
-    emitLoadReturnAddressOfFrameRecord(jit, frame, returnPC);
-    Jump isNotOnListFrame = jit.branchPtr(CCallHelpers::NotEqual, returnPC, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::ArgumentList)));
+    const HeldReturnAddress returnAddress = HeldReturnAddress::loadLosingLinkRegister(jit, frame, returnPC);
+    Jump isNotOnListFrame = returnAddress.branch(jit, CCallHelpers::NotEqual, StubFrameKind::ArgumentList);
     jit.loadPtr(Address(frame, CallFrame::callerFrameOffset()), frame);
     jit.move(TrustedImm32(0), bytesAboveFrameRecord);
     jit.jump().linkTo(nextFrame, &jit);
@@ -236,7 +236,7 @@ void generateTailCallWithList(StubAssembler& jit)
     isAboveStackPointer.link(&jit);
     emitCopyListBelowFrame(jit, count, list, destination, countGPR, bytesAboveFrameRecord);
     jit.storePtr(callerFrame, Address(frame, CallFrame::callerFrameOffset()));
-    emitStoreReturnAddressInFrameRecord(jit, returnPC, frame);
+    returnAddress.storeInFrameRecord(jit, frame);
     jit.move(frame, fp);
     jit.zeroExtend32ToWord(count, countGPR);
 
@@ -390,16 +390,8 @@ void generateCallWithArray(StubAssembler& jit)
     jit.jump().linkTo(usesListFrame, &jit);
 
     isEngineCallee.link(&jit);
-    for (StubFrameKind kind : { StubFrameKind::Adapter, StubFrameKind::ArgumentList }) {
-        Address returnAddressOfKind(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind));
-#if CPU(ARM64)
-        jit.loadPtr(returnAddressOfKind, element);
-        jit.branchPtr(CCallHelpers::Equal, CCallHelpers::linkRegister, element).linkTo(usesListFrame, &jit);
-#else
-        jit.loadPtr(Address(sp), element);
-        jit.branchPtr(CCallHelpers::Equal, element, returnAddressOfKind).linkTo(usesListFrame, &jit);
-#endif
-    }
+    for (StubFrameKind kind : { StubFrameKind::Adapter, StubFrameKind::ArgumentList })
+        emitBranchOnCallerReturnAddress(jit, CCallHelpers::Equal, kind, element).linkTo(usesListFrame, &jit);
     ASSERT(noOverlap(operationArgumentGPR(1), operationArgumentGPR(2), operationArgumentGPR(3), calleeGPR, thisGPR, preservedList));
     jit.move(calleeGPR, operationArgumentGPR(1));
     jit.move(thisGPR, operationArgumentGPR(2));
@@ -564,7 +556,7 @@ void generateCallFromArgumentListFrame(StubAssembler& jit)
     jit.call(valueEntryGPR, JSEntryPtrTag);
     jit.bindEntry(returnFromArgumentListFrame());
     jit.bindReturnLabel(StubFrameKind::ArgumentList);
-    jit.emitFunctionEpilogueToReturn();
+    jit.emitFunctionEpilogue();
     jit.returnToCaller();
 }
 

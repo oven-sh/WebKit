@@ -10,1307 +10,881 @@
 #include "AOTNativeTest.h"
 
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-#include "AOTCallingConventions.h"
 #include "AOTConvention.h"
 #include "AOTImageTestSupport.h"
-#include "AOTOperationData.h"
-#include "AOTReturnAddressCheck.h"
 #include "AOTSavedCodeAddresses.h"
+#include "AOTSavedFrame.h"
 #include "AOTShellProgramTestSupport.h"
-#include "AOTStubFrontEnds.h"
 #include "AOTStubTestSupport.h"
-#include "AOTStubsBarriers.h"
-#include "AOTStubsOperations.h"
-#include "AOTStubsRegExp.h"
+#include "AOTStubWords.h"
+#include "ARM64LinkRegisterUse.h"
+#include "JSCPtrTag.h"
 #include <sys/auxv.h>
-#include <wtf/UnalignedAccess.h>
+#include <sys/syscall.h>
 #endif
 
 namespace JSC { namespace AOT {
 
 #if ENABLE(RETURN_ADDRESS_SIGNING)
 
-using RuleOfReturnAddresses = ReturnAddressCheck::Rule;
+using namespace ARM64Registers;
+using Address = CCallHelpers::Address;
+using Emit = void (*)(CCallHelpers&);
 
-static constexpr GPRReg framePointer = CCallHelpers::framePointerRegister;
-static constexpr GPRReg linkRegister = CCallHelpers::linkRegister;
-static constexpr GPRReg otherRegister = ARM64Registers::x9;
+static constexpr uint32_t signWithStackPointer = 0xd503237f;
+static constexpr uint32_t authenticateWithStackPointer = 0xd50323ff;
+static constexpr uint32_t signWithX16 = 0xd503215f;
+static constexpr uint32_t authenticateWithX16 = 0xd50321df;
+static constexpr uint32_t strip = 0xd50320ff;
+static constexpr uint32_t loadThroughLinkRegister = 0x394003df;
+static constexpr uint32_t supervisorCall = 0xd4000001;
 
-template<typename Emit>
-static Vector<uint8_t> codeEmittedBy(const Emit& emit, const AssemblerPolicy& policy = AssemblerPolicy::forImage(CPUFeatureSet::buildTarget()))
+static bool processorSignsAddresses()
+{
+    constexpr unsigned long hwcapPACA = 1UL << 30;
+    return getauxval(AT_HWCAP) & hwcapPACA;
+}
+
+static Vector<uint32_t> wordsIn(CCallHelpers& jit)
+{
+    return Vector<uint32_t>(unsafeMakeSpan(static_cast<const uint32_t*>(jit.m_assembler.buffer().readOnlyData()), jit.m_assembler.codeSize() / sizeof(uint32_t)));
+}
+
+static Vector<uint32_t> wordsForJIT(const Invocable<void(CCallHelpers&)> auto& emit)
 {
     CCallHelpers jit;
-    RelocationRecorder relocations(jit, policy);
     emit(jit);
-    emitPadding(jit);
+    return wordsIn(jit);
+}
+
+static Vector<uint32_t> wordsForImage(const Invocable<void(CCallHelpers&)> auto& emit)
+{
+    ImageAssembler jit;
+    RelocationRecorder relocations(jit, ImageTests::testAssemblerPolicy());
+    emit(jit);
+    return wordsIn(jit);
+}
+
+static ImageTests::ExecutableCopy codeForImage(const Invocable<void(CCallHelpers&)> auto& emit)
+{
+    ImageAssembler jit;
+    RelocationRecorder relocations(jit, ImageTests::testAssemblerPolicy());
+    emit(jit);
     std::expected<RelocatableCode, LinkFailure> code = relocations.finalize(LinkBuffer::Profile::Thunk, nullptr);
     AOT_TEST_CHECK(code.has_value() && code->relocations.isEmpty());
-    return WTF::move(code->bytes);
+    return ImageTests::ExecutableCopy(code->bytes.span());
 }
 
-template<typename Emit>
-static std::optional<RuleOfReturnAddresses> ruleBrokenBy(const Emit& emit, const AssemblerPolicy& policy = AssemblerPolicy::forImage(CPUFeatureSet::buildTarget()))
-{
-    Vector<uint8_t> code = codeEmittedBy(emit, policy);
-    ReturnAddressCheck check(code.span());
-    check.addCalledEntry(0);
-    std::optional<ReturnAddressCheck::Violation> violation = check.run();
-    return violation ? std::optional(violation->rule) : std::nullopt;
-}
+#define INSTRUCTION(...) [](CCallHelpers& jit) { jit.m_assembler.__VA_ARGS__; }
 
-template<typename Emit>
-static std::optional<RuleOfReturnAddresses> ruleBrokenIn(ReturnAddressCheck::Piece piece, const Emit& emit)
+static void testWhatLeavesNoTraceIsEmittedAsItIs()
 {
-    Vector<uint8_t> code = codeEmittedBy(emit);
-    ReturnAddressCheck check(code.span());
-    check.addCalledEntry(0);
-    check.addPiece(0, code.size(), piece);
-    std::optional<ReturnAddressCheck::Violation> violation = check.run();
-    return violation ? std::optional(violation->rule) : std::nullopt;
-}
-
-template<typename Emit>
-static void checkRuleBrokenBehindJoinWhereOnePathSigned(RuleOfReturnAddresses rule, const Emit& emit)
-{
-    for (bool signsOnFallThrough : { false, true }) {
-        AOT_TEST_CHECK(rule == ruleBrokenBy([&](CCallHelpers& jit) {
-            CCallHelpers::JumpList join;
-            CCallHelpers::Jump isTaken = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-            if (signsOnFallThrough)
-                jit.tagReturnAddress();
-            join.append(jit.jump());
-            isTaken.link(&jit);
-            if (!signsOnFallThrough)
-                jit.tagReturnAddress();
-            join.append(jit.jump());
-            emitPadding(jit);
-            join.link(&jit);
-            emit(jit);
-        }));
-    }
-}
-
-static void callUnknownCode(CCallHelpers& jit)
-{
-    jit.call(ARM64Registers::x8, NoPtrTag);
-}
-
-static void storeInObject(CCallHelpers& jit, GPRReg reg)
-{
-    jit.storePtr(reg, CCallHelpers::Address(ARM64Registers::x0));
-}
-
-static void jumpToUnknownCode(CCallHelpers& jit)
-{
-    jit.farJump(ARM64Registers::x8, NoPtrTag);
-}
-
-static void testCheckAcceptsWhatTheAssemblerOffers()
-{
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy(jumpToUnknownCode));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        CCallHelpers::Jump needsNoFrame = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
-        needsNoFrame.link(&jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        jit.move(linkRegister, ARM64Registers::x1);
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue();
-        jit.emitFunctionPrologue();
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue();
-        jumpToUnknownCode(jit);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue(SavedLinkRegister::IsDead);
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
-        CCallHelpers::Jump isRare = jit.branchTest64(CCallHelpers::NonZero, ARM64Registers::x1);
-        jit.ret();
-        isRare.link(&jit);
-        jit.validateLoadedReturnAddress();
-        jumpToUnknownCode(jit);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitPushLinkRegister(jit);
-        callUnknownCode(jit);
-        emitPopLinkRegister(jit);
-        jit.add64(CCallHelpers::TrustedImm32(4), linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitLoadReturnAddressOfFrameRecord(jit, framePointer, otherRegister);
-        emitStoreReturnAddressInFrameRecord(jit, otherRegister, ARM64Registers::x1);
-        emitStoreResumeAddress(jit, linkRegister, ARM64Registers::x2);
-        emitLoadResumeAddress(jit, ARM64Registers::x2, otherRegister);
-        jit.m_assembler.ret(otherRegister);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        CCallHelpers::Jump differs = jit.branchPtr(CCallHelpers::NotEqual, otherRegister, linkRegister);
-        jit.m_assembler.ret(otherRegister);
-        differs.link(&jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue();
-        jit.ret();
-    }, AssemblerPolicy::forImage(CPUFeatureSet::buildTarget()).withLinkRegisterSignedUntilReturn()));
-}
-
-static void testCheckFindsSaveWithoutSignature()
-{
-    constexpr auto rule = RuleOfReturnAddresses::SavesOnlyWhatIsSigned;
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.pushPair(framePointer, linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.pushToSave(linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.storePtr(linkRegister, CCallHelpers::BaseIndex(ARM64Registers::x0, ARM64Registers::x1, CCallHelpers::TimesEight));
-    }));
-    static constexpr void (*storesInFrameRecord[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { jit.pushPair(framePointer, otherRegister); },
-        [](CCallHelpers& jit) { jit.storePair64(framePointer, otherRegister, ARM64Registers::x0, CCallHelpers::TrustedImm32(16)); },
-        [](CCallHelpers& jit) { jit.storePair64(framePointer, otherRegister, CCallHelpers::PostIndexAddress(ARM64Registers::x0, 16)); },
-        [](CCallHelpers& jit) { jit.storePair64WithNonTemporalAccess(framePointer, otherRegister, ARM64Registers::x0); },
-        [](CCallHelpers& jit) { jit.storePair64(ARM64Registers::x0, otherRegister, framePointer); },
-        [](CCallHelpers& jit) { jit.m_assembler.stur<64>(otherRegister, framePointer, CallFrame::returnPCOffset()); },
-        [](CCallHelpers& jit) { jit.m_assembler.str<64>(otherRegister, framePointer, static_cast<unsigned>(CallFrame::returnPCOffset())); },
+    static constexpr Emit instructions[] = {
+        INSTRUCTION(adr(lr, 8)),
+        INSTRUCTION(adrp(lr, 4 * KB)),
+        INSTRUCTION(movz<64>(lr, 1)),
+        INSTRUCTION(movk<64>(lr, 1, 16)),
+        INSTRUCTION(add<64>(lr, lr, UInt12(4))),
+        INSTRUCTION(sub<64>(lr, lr, UInt12(4))),
+        INSTRUCTION(and_<64>(lr, lr, LogicalImmediate::create64(~3ull))),
+        INSTRUCTION(movi<64>(lr, LogicalImmediate::create64(0xff))),
+        INSTRUCTION(ubfx<64>(lr, lr, 0, 48)),
+        INSTRUCTION(extr<64>(lr, lr, zr, 1)),
+        INSTRUCTION(mov<64>(lr, zr)),
+        INSTRUCTION(add<64>(lr, lr, zr, ARM64Assembler::UXTX, 0)),
+        INSTRUCTION(adc<64>(lr, lr, zr)),
+        INSTRUCTION(csel<64>(lr, lr, zr, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(rbit<64>(lr, lr)),
+        INSTRUCTION(cmp<64>(lr, x9)),
+        INSTRUCTION(cmp<64>(x9, lr)),
+        INSTRUCTION(cmp<64>(lr, UInt12(1))),
+        INSTRUCTION(cmp<64>(sp, lr)),
+        INSTRUCTION(tst<64>(lr, x9)),
+        INSTRUCTION(tst<64>(lr, LogicalImmediate::create64(3))),
+        INSTRUCTION(ccmp<64>(lr, x9, 0, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(ccmp<64>(x9, UInt5(30), 14, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(cbz<64>(lr, 8)),
+        INSTRUCTION(tbz(lr, 1, 8)),
+        INSTRUCTION(b_cond(ARM64Assembler::ConditionAL, 30 * 4)),
+        INSTRUCTION(br(lr)),
+        INSTRUCTION(blr(lr)),
+        INSTRUCTION(ret()),
+        INSTRUCTION(brk(30)),
+        INSTRUCTION(ldr<32>(x9, lr, 4u)),
+        INSTRUCTION(ldr<32>(x9, lr, PostIndex(4))),
+        INSTRUCTION(ldr<64>(x9, x10, lr)),
+        INSTRUCTION(ldp<32>(x9, x10, lr, 4)),
+        INSTRUCTION(str<64>(x9, lr, 8u)),
+        INSTRUCTION(ldar<64>(x9, lr)),
+        INSTRUCTION(ldr<64>(x9, x10, 30u * 8)),
+        INSTRUCTION(ldr<64>(x9, x10, (30u << 6) * 8)),
+        INSTRUCTION(ldur<64>(x9, x10, -32)),
+        INSTRUCTION(stp<64>(x9, x10, x11, PairPreIndex(-32))),
+        INSTRUCTION(add<64>(x9, x10, UInt12(30))),
+        INSTRUCTION(add<64>(x9, x10, x11, ARM64Assembler::LSL, 30)),
+        INSTRUCTION(ubfx<64>(x9, x10, 30, 1)),
+        INSTRUCTION(movz<64>(x9, 30)),
+        INSTRUCTION(ldr<64>(q30, x9, 8u)),
+        INSTRUCTION(str<64>(q30, x9, x10)),
+        INSTRUCTION(stp<64>(q29, q30, x9)),
+        INSTRUCTION(ldr_literal<64>(q30, 8)),
+        INSTRUCTION(ld1r<64>(q30, lr)),
+        INSTRUCTION(fmov<64>(q30, x9)),
+        INSTRUCTION(fmov<64>(x9, q30)),
+        INSTRUCTION(fmov<64>(q30, q30)),
+        INSTRUCTION(scvtf<64, 64>(q30, x9)),
+        INSTRUCTION(fcvtzs<64, 64>(x9, q30)),
+        INSTRUCTION(fadd<64>(q30, q30, q30)),
+        INSTRUCTION(ins(q30, x9, SIMDLane::i64x2, 1)),
+        INSTRUCTION(umov(x9, q30, SIMDLane::i64x2, 1)),
+        INSTRUCTION(dupElement(q30, q30, SIMDLane::i64x2, 1)),
     };
-    for (auto store : storesInFrameRecord) {
-        AOT_TEST_CHECK(rule == ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.move(linkRegister, otherRegister);
-            store(jit);
-        }));
-        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.tagReturnAddress();
-            jit.move(linkRegister, otherRegister);
-            store(jit);
-        }));
+    for (Emit emit : instructions)
+        AOT_TEST_CHECK(wordsForImage(emit) == wordsForJIT(emit));
+}
+
+static void testWhatIsCopiedOutIsSigned()
+{
+    static constexpr Emit instructions[] = {
+        INSTRUCTION(mov<64>(x9, lr)),
+        INSTRUCTION(mov<32>(x9, lr)),
+        INSTRUCTION(mov<64>(sp, lr)),
+        INSTRUCTION(add<64>(x9, lr, UInt12(0))),
+        INSTRUCTION(add<64, ARM64Assembler::S>(x9, lr, UInt12(0))),
+        INSTRUCTION(and_<64>(x9, lr, LogicalImmediate::create64(~3ull))),
+        INSTRUCTION(and_<64>(sp, lr, LogicalImmediate::create64(~15ull))),
+        INSTRUCTION(ubfx<64>(x9, lr, 0, 48)),
+        INSTRUCTION(bfi<64>(x9, lr, 0, 48)),
+        INSTRUCTION(extr<64>(x9, lr, x10, 1)),
+        INSTRUCTION(extr<64>(x9, x10, lr, 1)),
+        INSTRUCTION(add<64>(x9, lr, x10)),
+        INSTRUCTION(add<64>(x9, x10, lr)),
+        INSTRUCTION(add<64>(x9, sp, lr)),
+        INSTRUCTION(add<64>(sp, lr, x10, ARM64Assembler::UXTX, 0)),
+        INSTRUCTION(adc<64>(x9, lr, zr)),
+        INSTRUCTION(csel<64>(x9, lr, x10, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(csel<64>(x9, x10, lr, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(rbit<64>(x9, lr)),
+        INSTRUCTION(lslv<64>(x9, lr, zr)),
+        INSTRUCTION(udiv<64>(x9, x10, lr)),
+        INSTRUCTION(madd<64>(x9, lr, x10, zr)),
+        INSTRUCTION(madd<64>(x9, x10, lr, zr)),
+        INSTRUCTION(madd<64>(x9, zr, zr, lr)),
+        INSTRUCTION(fmov<64>(q0, lr)),
+        INSTRUCTION(fmov_top(q0, lr)),
+        INSTRUCTION(scvtf<64, 64>(q0, lr)),
+        INSTRUCTION(ucvtf<64, 64>(q0, lr)),
+        INSTRUCTION(ins(q0, lr, SIMDLane::i64x2, 1)),
+        INSTRUCTION(dupGeneral(q0, lr, SIMDLane::i64x2)),
+        INSTRUCTION(str<32>(lr, x9, 0u)),
+        INSTRUCTION(strh(lr, x9, x10)),
+        INSTRUCTION(stp<32>(x10, lr, x9)),
+        INSTRUCTION(stp<64>(fp, lr, sp, PairPreIndex(-16))),
+        INSTRUCTION(stp<64>(zr, lr, sp, PairPreIndex(-16))),
+    };
+    for (Emit emit : instructions)
+        AOT_TEST_CHECK(wordsForImage(emit) == (Vector<uint32_t> { signWithStackPointer, wordsForJIT(emit)[0], strip }));
+}
+
+static void testWhatOverwritesIsAuthenticated()
+{
+    static constexpr Emit instructions[] = {
+        INSTRUCTION(mov<64>(lr, x9)),
+        INSTRUCTION(mov<64>(lr, sp)),
+        INSTRUCTION(add<64>(lr, fp, UInt12(16))),
+        INSTRUCTION(and_<64>(lr, x9, LogicalImmediate::create64(~3ull))),
+        INSTRUCTION(ubfx<64>(lr, x9, 0, 48)),
+        INSTRUCTION(bfi<64>(lr, x9, 0, 16)),
+        INSTRUCTION(extr<64>(lr, lr, x9, 1)),
+        INSTRUCTION(extr<64>(lr, x9, lr, 1)),
+        INSTRUCTION(add<64>(lr, lr, x9)),
+        INSTRUCTION(add<64>(lr, x9, lr)),
+        INSTRUCTION(add<64>(lr, sp, lr)),
+        INSTRUCTION(add<64>(lr, lr, x9, ARM64Assembler::SXTW, 2)),
+        INSTRUCTION(adc<64>(lr, lr, x9)),
+        INSTRUCTION(csel<64>(lr, lr, x9, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(csel<64>(lr, x9, lr, ARM64Assembler::ConditionEQ)),
+        INSTRUCTION(rbit<64>(lr, x9)),
+        INSTRUCTION(lslv<64>(lr, lr, x9)),
+        INSTRUCTION(madd<64>(lr, x9, x10, lr)),
+        INSTRUCTION(fmov<64>(lr, q0)),
+        INSTRUCTION(fmov_top(lr, q0)),
+        INSTRUCTION(fcvtzs<64, 64>(lr, q0)),
+        INSTRUCTION(fjcvtzs(lr, q0)),
+        INSTRUCTION(umov(lr, q0, SIMDLane::i64x2, 1)),
+        INSTRUCTION(smov(lr, q0, SIMDLane::i8x16, 1)),
+        INSTRUCTION(ldr<32>(lr, x9, 0u)),
+        INSTRUCTION(ldrsw<64>(lr, x9, 0u)),
+        INSTRUCTION(ldrb(lr, x9, x10)),
+        INSTRUCTION(ldp<32>(x10, lr, x9)),
+        INSTRUCTION(ldr_literal<64>(lr, 8)),
+        INSTRUCTION(ldr<64>(lr, lr, 8u)),
+        INSTRUCTION(ldr<64>(lr, x9, lr)),
+        INSTRUCTION(ldp<64>(fp, lr, sp, PairPostIndex(16))),
+        INSTRUCTION(ldp<64>(zr, lr, sp, PairPostIndex(16))),
+    };
+    for (Emit emit : instructions)
+        AOT_TEST_CHECK(wordsForImage(emit) == (Vector<uint32_t> { wordsForJIT(emit)[0], authenticateWithStackPointer, loadThroughLinkRegister }));
+}
+
+static void testAtomicAccessIsSignedAndAuthenticated()
+{
+    static constexpr Emit instructions[] = {
+        INSTRUCTION(ldar<64>(lr, x9)),
+        INSTRUCTION(stlr<64>(lr, x9)),
+        INSTRUCTION(ldxr<64>(lr, x9)),
+        INSTRUCTION(stxr<64>(x10, lr, x9)),
+        INSTRUCTION(stxr<64>(lr, x10, x9)),
+        INSTRUCTION(swpal<64>(lr, x10, x9)),
+        INSTRUCTION(swpal<64>(x10, lr, x9)),
+        INSTRUCTION(casal<64>(lr, x10, x9)),
+        INSTRUCTION(casal<64>(x10, lr, x9)),
+        INSTRUCTION(ldaddal<64>(lr, x10, x9)),
+    };
+    for (Emit emit : instructions)
+        AOT_TEST_CHECK(wordsForImage(emit) == (Vector<uint32_t> { signWithStackPointer, wordsForJIT(emit)[0], authenticateWithStackPointer, loadThroughLinkRegister }));
+}
+
+static void testPlainAddressIsNotStoredForAMoment()
+{
+    static constexpr std::pair<Emit, Emit> instructions[] = {
+        { INSTRUCTION(str<64>(lr, sp, PreIndex(-16))), INSTRUCTION(str<64>(zr, sp, PreIndex(-16))) },
+        { INSTRUCTION(stp<64>(lr, x9, x10)), INSTRUCTION(stp<64>(zr, x9, x10)) },
+        { INSTRUCTION(stp<64>(x9, lr, x10)), INSTRUCTION(stp<64>(x9, zr, x10)) },
+        { INSTRUCTION(stp<64>(lr, lr, x10)), INSTRUCTION(stp<64>(zr, zr, x10)) },
+    };
+    for (auto [asked, emittedFirst] : instructions)
+        AOT_TEST_CHECK(wordsForImage(asked)[0] == wordsForJIT(emittedFirst)[0]);
+}
+
+#undef INSTRUCTION
+
+static void testInstructionsThatTheAssemblerLacks()
+{
+    using ARM64LinkRegister::Use;
+    static constexpr Use nothing { };
+    static constexpr Use copiedOut { .isCopiedOut = true };
+    static constexpr Use overwritten { .isOverwritten = true };
+    static constexpr Use both { true, true };
+    static constexpr std::pair<uint32_t, Use> instructions[] = {
+        { 0xd53bd05e, overwritten }, // mrs x30, tpidr_el0
+        { 0xd51bd05e, copiedOut }, // msr tpidr_el0, x30
+        { 0xd58003c9, both }, // tchangef x9, x30
+        { 0x918003c9, copiedOut }, // addg x9, x30, #0, #0
+        { 0x9180013e, overwritten }, // addg x30, x9, #0, #0
+        { 0x9a0923c9, copiedOut }, // addpt x9, x30, x9
+        { 0xba0007c1, nothing }, // rmif x30, #0, #1
+        { 0x3a000bcd, nothing }, // setf8 w30
+        { 0xbac903df, nothing }, // cmpp x30, x9
+        { 0x9e59fc1e, overwritten }, // fcvtzu x30, d0, #1
+        { 0x9e43ffc0, copiedOut }, // ucvtf d0, x30, #1
+        { 0x4cdf7fc0, nothing }, // ld1 { v0.2d }, [x30], #16
+        { 0x4cc97fc0, overwritten }, // ld1 { v0.2d }, [x30], x9
+        { 0x4cde7d20, copiedOut }, // ld1 { v0.2d }, [x9], x30
+        { 0xc87f7949, both }, // ldxp x9, x30, [x10]
+        { 0xd800001e, nothing }, // prfm #30, .
+        { 0xf980013e, nothing }, // prfm #30, [x9]
+        { 0xd940013e, overwritten }, // ldapur x30, [x9]
+        { 0xd900013e, copiedOut }, // stlur x30, [x9]
+        { 0xd95e0149, nothing }, // ldapur x9, [x10, #-32]
+        { 0xd920093e, both }, // stg x30, [x9]
+        { 0xd93e0949, nothing }, // stg x9, [x10, #-512]
+        { 0x190a07c9, both }, // cpyfp [x9]!, [x10]!, x30!
+        { 0xf820053e, overwritten }, // ldraa x30, [x9]
+        { 0x05e03bc0, both }, // mov z0.d, x30
+        { 0x0000001e, nothing }, // udf #30
+    };
+    for (auto [instruction, use] : instructions)
+        AOT_TEST_CHECK(ARM64LinkRegister::useBy(instruction) == use);
+
+    for (uint32_t instruction : { 0xdac10549, 0xdac11549, 0xdac143e9, 0xf3a0001f }) // pacib x9, x10; autib x9, x10; xpaci x9; autibsppc .
+        AOT_TEST_CHECK(ARM64LinkRegister::signsAuthenticatesOrStrips(instruction) && !ARM64LinkRegister::onlyComputesWithoutIt(instruction));
+}
+
+static void testNothingElseSignsAuthenticatesOrStrips()
+{
+    for (int number = 0; number < 128; ++number) {
+        bool isOnPointer = number == 7 || number == 8 || number == 10 || number == 12 || number == 14 || (number >= 24 && number <= 31);
+        AOT_TEST_CHECK(wordsForImage([&](CCallHelpers& jit) { jit.m_assembler.hint(number); }).size() == !isOnPointer);
     }
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popPair(framePointer, linkRegister);
-        jit.removeTagAfterSavingReturnAddress();
-        jit.pushPair(framePointer, linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.adr(otherRegister, 0);
-        jit.pushPair(framePointer, otherRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.adr(otherRegister, 0);
+    AOT_TEST_CHECK(wordsForImage([](CCallHelpers& jit) {
         jit.tagReturnAddress();
-        CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-        jit.move(otherRegister, linkRegister);
-        keepsIt.link(&jit);
-        jit.pushPair(framePointer, linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.tagReturnAddress();
-        CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-        jit.m_assembler.movz<64>(linkRegister, 8);
-        keepsIt.link(&jit);
-        jit.pushPair(framePointer, linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        emitPopLinkRegister(jit, LoadedLinkRegister::IsOnlyReturnedTo);
-        jit.add64(CCallHelpers::TrustedImm32(4), linkRegister);
-        jit.pushPair(framePointer, linkRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        callUnknownCode(jit);
-        jit.pushToSave(linkRegister);
-    }));
-    checkRuleBrokenBehindJoinWhereOnePathSigned(rule, [](CCallHelpers& jit) {
-        jit.pushPair(framePointer, linkRegister);
-    });
-    checkRuleBrokenBehindJoinWhereOnePathSigned(rule, [](CCallHelpers& jit) {
-        jit.removeTagAfterSavingReturnAddress();
-        jit.pushPair(framePointer, linkRegister);
-    });
+        jit.untagReturnAddress();
+        jit.tagPtr(NoPtrTag, lr);
+        jit.untagPtr(NoPtrTag, lr);
+        jit.validateUntaggedPtr(lr);
+        for (GPRReg pointer : { x9, lr }) {
+            jit.tagPtr(x10, pointer);
+            jit.untagPtr(x10, pointer);
+        }
+        jit.removePtrTag(x9);
+    }).isEmpty());
 }
 
-static void testCheckTakesSavedRegistersForNoFrameRecord()
+static_assert(!std::is_constructible_v<ImageLinkBuffer, CCallHelpers&, LinkBuffer::Profile> && !std::is_constructible_v<RelocationRecorder, CCallHelpers&, const AssemblerPolicy&>);
+
+static void testNoPolicySwitchesSigningOff()
 {
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        jit.m_assembler.movz<64>(otherRegister, 10);
-        CCallHelpers::Jump differs = jit.branch64(CCallHelpers::NotEqual, otherRegister, GPRInfo::notCellMaskRegister);
-        CCallHelpers::Call call = jit.nearCall();
-        differs.link(&jit);
-        jit.breakpoint();
-        CCallHelpers::Label savesEveryRegister = jit.label();
-        jit.emitFunctionPrologue();
-        jit.storePair64(GPRInfo::notCellMaskRegister, framePointer, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(224));
-        jit.addLinkTask([=](LinkBuffer& linkBuffer) {
-            linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(savesEveryRegister));
-        });
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(linkRegister, otherRegister);
-        jit.storePair64(ARM64Registers::x8, otherRegister, framePointer, CCallHelpers::TrustedImm32(-16));
-        jit.storePair64(otherRegister, ARM64Registers::x8, framePointer);
-        jit.storePtr(otherRegister, CCallHelpers::Address(framePointer, -8));
-        jit.storePtr(otherRegister, CCallHelpers::Address(ARM64Registers::x0, CallFrame::returnPCOffset()));
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.movz<64>(otherRegister, 8);
-        jit.storePair64(framePointer, otherRegister, ARM64Registers::x0);
-    }));
+    ImageAssembler jit;
+    AOT_TEST_CHECK(jit.m_assembler.signsLinkRegister());
+    jit.setPolicy(AssemblerPolicy::forJIT());
+    AOT_TEST_CHECK(jit.m_assembler.signsLinkRegister());
 }
 
-static void testCheckFindsReturnWithoutAuthentication()
+static void testLoadBehindAuthenticationStaysUnlessJumpFollows()
 {
-    constexpr auto rule = RuleOfReturnAddresses::ReturnsOnlyToWhatIsAuthenticated;
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        jit.popPair(framePointer, linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popPair(framePointer, linkRegister);
-        jit.removeTagAfterSavingReturnAddress();
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        jit.move(otherRegister, linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        jit.m_assembler.ret(otherRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        CCallHelpers::Jump isSame = jit.branchPtr(CCallHelpers::Equal, otherRegister, linkRegister);
-        jit.m_assembler.ret(otherRegister);
-        isSame.link(&jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        CCallHelpers::Jump hasOtherFlags = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x1);
-        jit.m_assembler.cmp<64>(otherRegister, linkRegister);
-        hasOtherFlags.link(&jit);
-        CCallHelpers::Jump differs = jit.branch(CCallHelpers::NonZero);
-        jit.m_assembler.ret(otherRegister);
-        differs.link(&jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(linkRegister, ARM64Registers::x19);
-        callUnknownCode(jit);
-        jit.move(ARM64Registers::x19, linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.moveDoubleTo64(ARM64Registers::q0, linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-        jit.popToRestore(linkRegister);
-        keepsIt.link(&jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        CCallHelpers::Label head = jit.label();
-        CCallHelpers::Jump goesOn = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-        jit.ret();
-        goesOn.link(&jit);
-        jit.popToRestore(linkRegister);
-        jit.jump().linkTo(head, &jit);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.tagReturnAddress();
-        jit.ret();
-    }));
-    for (auto leave : { jumpToUnknownCode, callUnknownCode }) {
-        AOT_TEST_CHECK(rule == ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.loadPtr(CCallHelpers::Address(framePointer, CallFrame::returnPCOffset()), otherRegister);
-            jit.removePtrTag(otherRegister);
-            jit.add64(CCallHelpers::TrustedImm32(4), otherRegister, ARM64Registers::x8);
+    auto keepsLoad = [](Emit inBetween, Emit leave = [](CCallHelpers& jit) { jit.ret(); }) {
+        return wordsForImage([&](CCallHelpers& jit) {
+            jit.emitFunctionEpilogue();
+            inBetween(jit);
             leave(jit);
-        }));
+        }).contains(loadThroughLinkRegister);
+    };
+    constexpr Emit nothing = [](CCallHelpers&) { };
+    AOT_TEST_CHECK(!keepsLoad(nothing));
+    AOT_TEST_CHECK(!keepsLoad(nothing, [](CCallHelpers& jit) { jit.farJump(lr, NoPtrTag); }));
+    AOT_TEST_CHECK(keepsLoad(nothing, nothing));
+    AOT_TEST_CHECK(keepsLoad(nothing, [](CCallHelpers& jit) { jit.farJump(x9, NoPtrTag); }));
+    AOT_TEST_CHECK(keepsLoad(nothing, [](CCallHelpers& jit) { jit.m_assembler.ret(x9); }));
+    AOT_TEST_CHECK(keepsLoad(nothing, [](CCallHelpers& jit) { jit.nearTailCall(); }));
+
+    static constexpr Emit whatKeepsIt[] = {
+        [](CCallHelpers& jit) { (void)jit.label(); },
+        [](CCallHelpers& jit) { (void)jit.labelIgnoringWatchpoints(); },
+        [](CCallHelpers& jit) { (void)jit.m_assembler.codeSize(); },
+        [](CCallHelpers& jit) { (void)jit.debugOffset(); },
+        [](CCallHelpers& jit) { (void)jit.m_assembler.buffer().isAligned(16); },
+        [](CCallHelpers& jit) { jit.load64(Address(x9), x9); },
+        [](CCallHelpers& jit) { jit.store64(x9, Address(x9)); },
+        [](CCallHelpers& jit) { jit.m_assembler.cbz<64>(x9, 8); },
+        [](CCallHelpers& jit) { jit.m_assembler.b_cond(ARM64Assembler::ConditionEQ, 8); },
+        [](CCallHelpers& jit) { jit.m_assembler.adr(x9, 8); },
+        [](CCallHelpers& jit) { jit.m_assembler.adrp(x9, 4 * KB); },
+        [](CCallHelpers& jit) { jit.m_assembler.buffer().putInt(0); },
+        [](CCallHelpers& jit) { jit.move(lr, x9); },
+        [](CCallHelpers& jit) { jit.add64(CCallHelpers::TrustedImm32(4), lr); },
+    };
+    for (Emit emit : whatKeepsIt) {
+        AOT_TEST_CHECK(keepsLoad(emit));
+        AOT_TEST_CHECK(wordsForImage([&](CCallHelpers& jit) {
+            jit.emitFunctionEpilogue();
+            jit.add64(x1, x0);
+            emit(jit);
+            jit.add64(x1, x0);
+            jit.ret();
+        }).contains(loadThroughLinkRegister));
     }
-}
 
-static void testCheckFindsSignatureForWhatWasInMemory()
-{
-    constexpr auto rule = RuleOfReturnAddresses::SignsOnlyWhatWasNeverInMemory;
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popToRestore(linkRegister);
-        jit.emitFunctionPrologue();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
-        jit.emitFunctionPrologue();
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        emitStoreReturnAddressInFrameRecord(jit, otherRegister, framePointer);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), otherRegister);
-        emitStoreResumeAddress(jit, otherRegister, ARM64Registers::x1);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.adr(otherRegister, 0);
-        emitStoreResumeAddress(jit, otherRegister, ARM64Registers::x1);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.tagReturnAddress();
-        jit.tagReturnAddress();
-    }));
-}
-
-static void testCheckFindsAuthenticationWithoutSignature()
-{
-    AOT_TEST_CHECK(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned == ruleBrokenBy([](CCallHelpers& jit) {
+    constexpr Emit computes = [](CCallHelpers& jit) {
+        jit.addPtr(CCallHelpers::TrustedImm32(64), sp);
+        jit.add64(x1, x0);
+        jit.addDouble(q1, q0);
+    };
+    Vector<uint32_t> expected = wordsForJIT([](CCallHelpers& jit) { jit.emitFunctionEpilogue(); });
+    expected.append(authenticateWithStackPointer);
+    expected.appendVector(wordsForImage(computes));
+    expected.appendVector(wordsForImage([](CCallHelpers& jit) { jit.ret(); }));
+    AOT_TEST_CHECK(expected == wordsForImage([&](CCallHelpers& jit) {
+        jit.emitFunctionEpilogue();
+        computes(jit);
         jit.ret();
-    }, AssemblerPolicy::forImage(CPUFeatureSet::buildTarget()).withLinkRegisterSignedUntilReturn()));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popPair(framePointer, linkRegister);
-        jit.removeTagAfterSavingReturnAddress();
-        jit.untagAfterLoadingReturnAddress();
     }));
-    checkRuleBrokenBehindJoinWhereOnePathSigned(RuleOfReturnAddresses::AuthenticatesOnlyWhatIsSigned, [](CCallHelpers& jit) {
-        jit.untagAfterLoadingReturnAddress();
+
+    AOT_TEST_CHECK(wordsForImage([](CCallHelpers& jit) {
+        jit.emitFunctionEpilogue();
+        jit.ret();
+        jit.add64(x1, x0);
+        jit.ret();
+    }).size() == 6);
+}
+
+namespace {
+
+struct Visit {
+    void** word;
+    const void* modifier;
+    bool spoils;
+    const void* returnAddress { nullptr };
+    bool wasSigned { false };
+    std::array<uint64_t, 3> behindStore { };
+    std::array<uint64_t, 3> behindLoad { };
+};
+
+} // anonymous namespace
+
+static constexpr GPRReg visitGPR = x19;
+static constexpr GPRReg wordGPR = x20;
+static constexpr GPRReg neighbourGPR = x9;
+static constexpr std::array<GPRReg, 3> watchedGPRs { x16, x17, neighbourGPR };
+static constexpr std::array<uint64_t, 3> watchedValues { 0x1616, 0x1717, 0x0909 };
+
+static void visitSavedWord(Visit* visit, void** wordOnStack)
+{
+    void** word = visit->word ? visit->word : wordOnStack;
+    void* address = removeReturnAddressSignature(*word);
+    visit->returnAddress = address;
+    visit->wasSigned = *word == JSC::signReturnAddress(address, visit->modifier ? visit->modifier : word + 1);
+    if (!visit->spoils)
+        return;
+    constexpr uintptr_t bitOfSignature = 1ULL << 54;
+    *word = *word != address ? address : std::bit_cast<void*>(std::bit_cast<uintptr_t>(address) ^ bitOfSignature);
+}
+
+static void emitVisit(CCallHelpers& jit)
+{
+    jit.move(visitGPR, x0);
+    jit.move(wordGPR, x1);
+    jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(&visitSavedWord)), x2);
+    jit.call(x2, NoPtrTag);
+}
+
+static ImageTests::ExecutableCopy codeThatVisits(int32_t distanceOfWordOnStack, const Invocable<void(CCallHelpers&)> auto& save, const Invocable<void(CCallHelpers&)> auto& restore)
+{
+    return codeForImage([&](CCallHelpers& jit) {
+        auto watch = [&](size_t offset, const auto& emit) {
+            for (size_t i = 0; i < watchedGPRs.size(); ++i)
+                jit.move(CCallHelpers::TrustedImm64(watchedValues[i]), watchedGPRs[i]);
+            emit(jit);
+            for (size_t i = 0; i < watchedGPRs.size(); ++i)
+                jit.m_assembler.str<64>(watchedGPRs[i], visitGPR, offset + i * sizeof(uint64_t));
+        };
+        jit.pushPair(visitGPR, wordGPR);
+        jit.pushPair(fp, zr);
+        jit.move(x0, visitGPR);
+        if (distanceOfWordOnStack)
+            jit.subPtr(sp, CCallHelpers::TrustedImm32(distanceOfWordOnStack), wordGPR);
+        else
+            jit.loadPtr(Address(visitGPR, OBJECT_OFFSETOF(Visit, word)), wordGPR);
+        watch(OBJECT_OFFSETOF(Visit, behindStore), save);
+        emitVisit(jit);
+        watch(OBJECT_OFFSETOF(Visit, behindLoad), restore);
+        jit.popPair(fp, zr);
+        jit.popPair(visitGPR, wordGPR);
+        jit.ret();
     });
 }
 
-static void testCheckFindsOtherKeyOrNoModifier()
+static void checkThatSpoiledWordEndsProcess(const ImageTests::ExecutableCopy& code, void** word, const void* modifier = nullptr)
 {
-    for (unsigned hint : { 8, 12, 24, 25, 26, 28, 29, 30 }) {
-        AOT_TEST_CHECK(RuleOfReturnAddresses::UsesOneKeyAndModifier == ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.m_assembler.hint(hint);
-        }));
+    if (!processorSignsAddresses())
+        return;
+    AOT_TEST_CHECK(ChildOutcome::Crashed == runInChild([&] {
+        Visit visit { word, modifier, true };
+        code.call<void>(0, &visit);
+    }));
+}
+
+namespace {
+
+// The base is x10 unless the way says otherwise. The neighbour of a pair is what neighbourGPR holds.
+struct WayToReachWord {
+    Emit store;
+    Emit load;
+    GPRReg lost { GPRReg::InvalidGPRReg };
+    GPRReg alsoLost { GPRReg::InvalidGPRReg };
+};
+
+} // anonymous namespace
+
+template<int offset, GPRReg base = x10>
+static constexpr WayToReachWord atOffset()
+{
+    return {
+        [](CCallHelpers& jit) { jit.m_assembler.sub<64>(base, wordGPR, UInt12(offset & 0xfff)); jit.m_assembler.sub<64>(base, base, UInt12(offset >> 12), 12); jit.m_assembler.str<64>(lr, base, static_cast<unsigned>(offset)); },
+        [](CCallHelpers& jit) { jit.m_assembler.sub<64>(base, wordGPR, UInt12(offset & 0xfff)); jit.m_assembler.sub<64>(base, base, UInt12(offset >> 12), 12); jit.m_assembler.ldr<64>(lr, base, static_cast<unsigned>(offset)); },
+        base,
+    };
+}
+
+template<ARM64Assembler::ExtendType extend, int shift, int64_t index, int distance, GPRReg base = x10, GPRReg indexGPR = x11>
+static constexpr WayToReachWord atIndex()
+{
+    static constexpr Emit prepare = [](CCallHelpers& jit) {
+        jit.addPtr(CCallHelpers::TrustedImm32(-distance), wordGPR, base);
+        jit.move(CCallHelpers::TrustedImm64(index), indexGPR);
+    };
+    return {
+        [](CCallHelpers& jit) { prepare(jit); jit.m_assembler.str<64>(lr, base, indexGPR, extend, shift); },
+        [](CCallHelpers& jit) { prepare(jit); jit.m_assembler.ldr<64>(lr, base, indexGPR, extend, shift); },
+        base,
+        indexGPR,
+    };
+}
+
+// Traps unless the base is where the instruction has to leave it.
+static void emitCheckOfBase(CCallHelpers& jit, int32_t distanceFromWord)
+{
+    jit.addPtr(CCallHelpers::TrustedImm32(distanceFromWord), wordGPR, x11);
+    CCallHelpers::Jump isRight = jit.branchPtr(CCallHelpers::Equal, x10, x11);
+    jit.breakpoint();
+    isRight.link(&jit);
+}
+
+template<typename Index, int step>
+static constexpr WayToReachWord withWriteBack()
+{
+    static constexpr int before = std::is_same_v<Index, PreIndex> ? -step : 0;
+    return {
+        [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(before), wordGPR, x10); jit.m_assembler.str<64>(lr, x10, Index(step)); emitCheckOfBase(jit, before + step); },
+        [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(before), wordGPR, x10); jit.m_assembler.ldr<64>(lr, x10, Index(step)); emitCheckOfBase(jit, before + step); },
+    };
+}
+
+template<typename Index, int step, GPRReg first, GPRReg second>
+static constexpr WayToReachWord inPair()
+{
+    static constexpr int before = (std::is_same_v<Index, PairPostIndex> ? 0 : -step) - (first == lr ? 0 : 8);
+    static constexpr int after = before + (std::is_same_v<Index, int> ? 0 : step);
+    static constexpr GPRReg other = first == lr ? second : first;
+    static constexpr int placeOfOther = first == lr ? 8 : -8;
+    static constexpr Emit checkOther = [](CCallHelpers& jit) {
+        jit.load64(Address(wordGPR, placeOfOther), x11);
+        CCallHelpers::Jump isRight = jit.branch64(CCallHelpers::Equal, x11, other);
+        jit.breakpoint();
+        isRight.link(&jit);
+    };
+    return {
+        [](CCallHelpers& jit) {
+            jit.addPtr(CCallHelpers::TrustedImm32(before), wordGPR, x10);
+            jit.m_assembler.stp<64>(first, second, x10, Index(step));
+            checkOther(jit);
+            emitCheckOfBase(jit, after);
+        },
+        [](CCallHelpers& jit) {
+            jit.addPtr(CCallHelpers::TrustedImm32(before), wordGPR, x10);
+            jit.store64(wordGPR, Address(wordGPR, placeOfOther));
+            jit.m_assembler.ldp<64>(first, second, x10, Index(step));
+            if (other != zr)
+                checkOther(jit);
+            emitCheckOfBase(jit, after);
+        },
+        other,
+    };
+}
+
+static void checkEveryStoreWithEveryLoad(std::span<const WayToReachWord> ways, void** word, int32_t distanceOfWordOnStack)
+{
+    auto keeps = [](const WayToReachWord& way, const std::array<uint64_t, 3>& found) {
+        for (size_t i = 0; i < watchedGPRs.size(); ++i) {
+            if (watchedGPRs[i] != way.lost && watchedGPRs[i] != way.alsoLost && found[i] != watchedValues[i])
+                return false;
+        }
+        return true;
+    };
+    for (const WayToReachWord& stored : ways) {
+        for (const WayToReachWord& loaded : ways) {
+            Visit visit { word, nullptr, false };
+            codeThatVisits(distanceOfWordOnStack, stored.store, loaded.load).call<void>(0, &visit);
+            AOT_TEST_CHECK(visit.returnAddress && visit.wasSigned);
+            AOT_TEST_CHECK(keeps(stored, visit.behindStore) && keeps(loaded, visit.behindLoad));
+        }
+        checkThatSpoiledWordEndsProcess(codeThatVisits(distanceOfWordOnStack, stored.store, stored.load), word);
     }
 }
 
-static void testCheckFindsFaultThatSignsWhatWasInMemory()
+static void testEveryStoreAgreesWithEveryLoad()
 {
-    for (LoadedLinkRegister loaded : { LoadedLinkRegister::MayBeSavedAgain, LoadedLinkRegister::IsOnlyReturnedTo }) {
-        Vector<uint8_t> code = codeEmittedBy([&](CCallHelpers& jit) {
-            jit.emitFunctionEpilogueWithEmptyFrame(loaded);
-            jit.loadPtr(CCallHelpers::Address(ARM64Registers::x0), ARM64Registers::x0);
+    static constexpr WayToReachWord ways[] = {
+        atOffset<0>(),
+        atOffset<8>(),
+        atOffset<4080>(),
+        atOffset<4088>(),
+        atOffset<32760>(),
+        atOffset<8, x16>(),
+        atOffset<8, x17>(),
+        atOffset<8, fp>(),
+        {
+            [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(256), wordGPR, x10); jit.m_assembler.stur<64>(lr, x10, -256); },
+            [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(8), wordGPR, x10); jit.m_assembler.ldur<64>(lr, x10, -8); },
+        },
+        atIndex<ARM64Assembler::UXTX, 0, 24, 24>(),
+        atIndex<ARM64Assembler::UXTX, 3, 5, 40>(),
+        atIndex<ARM64Assembler::UXTW, 3, 0x7700000002, 16>(),
+        atIndex<ARM64Assembler::SXTW, 3, 0xfffffffe, -16>(),
+        atIndex<ARM64Assembler::UXTX, 0, 24, 24, x10, x17>(),
+        atIndex<ARM64Assembler::UXTX, 0, 24, 24, x16, x17>(),
+        atIndex<ARM64Assembler::UXTX, 0, 24, 24, x17, x16>(),
+        {
+            [](CCallHelpers& jit) { jit.m_assembler.str<64>(lr, wordGPR, zr); },
+            [](CCallHelpers& jit) { jit.m_assembler.ldr<64>(lr, wordGPR, zr); },
+        },
+        withWriteBack<PreIndex, 16>(),
+        withWriteBack<PreIndex, -16>(),
+        withWriteBack<PreIndex, -8>(),
+        withWriteBack<PostIndex, 8>(),
+        withWriteBack<PostIndex, -256>(),
+        inPair<int, 0, neighbourGPR, lr>(),
+        inPair<int, 0, lr, neighbourGPR>(),
+        inPair<int, -512, neighbourGPR, lr>(),
+        inPair<int, 504, lr, neighbourGPR>(),
+        inPair<int, 16, x16, lr>(),
+        inPair<int, 16, lr, x17>(),
+        inPair<PairPreIndex, -16, neighbourGPR, lr>(),
+        inPair<PairPreIndex, 32, lr, neighbourGPR>(),
+        inPair<PairPreIndex, -16, zr, lr>(),
+        inPair<PairPostIndex, 16, neighbourGPR, lr>(),
+        inPair<PairPostIndex, -512, lr, neighbourGPR>(),
+        inPair<PairPostIndex, 16, zr, lr>(),
+        {
+            [](CCallHelpers& jit) { jit.m_assembler.stp<64>(lr, lr, wordGPR); },
+            [](CCallHelpers& jit) { jit.m_assembler.ldnp<64>(lr, x10, wordGPR); },
+        },
+        {
+            [](CCallHelpers& jit) { jit.m_assembler.stp<64>(lr, lr, wordGPR, -8); },
+            [](CCallHelpers& jit) { jit.m_assembler.ldnp<64>(x10, lr, wordGPR, -8); },
+        },
+        {
+            [](CCallHelpers& jit) { jit.subPtr(wordGPR, CCallHelpers::TrustedImm32(8), x10); HeldReturnAddress::inLinkRegister().storeInFrameRecord(jit, x10); },
+            [](CCallHelpers& jit) { jit.subPtr(wordGPR, CCallHelpers::TrustedImm32(8), x10); HeldReturnAddress::loadLosingLinkRegister(jit, x10, x11); },
+            x16,
+            x17,
+        },
+    };
+    std::array<void*, 4> words { };
+    checkEveryStoreWithEveryLoad(ways, &words[1], 0);
+    checkEveryStoreWithEveryLoad(std::span { ways }.first(2), &words[2], 0);
+}
+
+static void testEveryPushAgreesWithEveryPop()
+{
+    static constexpr WayToReachWord waysToUpperWord[] = {
+        { [](CCallHelpers& jit) { jit.emitFunctionPrologue(); }, [](CCallHelpers& jit) { jit.emitFunctionEpilogueWithEmptyFrame(); } },
+        { [](CCallHelpers& jit) { jit.emitFunctionPrologue(); }, [](CCallHelpers& jit) { jit.restoreReturnAddressBeforeReturn(Address(sp, 8)); jit.addPtr(CCallHelpers::TrustedImm32(16), sp); } },
+        { emitPushLinkRegister, emitPopLinkRegister },
+        { [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.storePtr(lr, Address(sp, 8)); }, [](CCallHelpers& jit) { jit.loadPair64(sp, x10, lr); jit.addPtr(CCallHelpers::TrustedImm32(16), sp); } },
+        { [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.storePair64(fp, lr, sp); }, [](CCallHelpers& jit) { jit.loadPtr(Address(wordGPR), lr); jit.addPtr(CCallHelpers::TrustedImm32(16), sp); } },
+        { [](CCallHelpers& jit) { jit.move(lr, x10); jit.pushPair(fp, x10); }, [](CCallHelpers& jit) { jit.popPair(x11, x10); jit.move(x10, lr); } },
+        { [](CCallHelpers& jit) { jit.move64ToDouble(lr, q0); jit.moveDoubleTo64(q0, x10); jit.pushPair(fp, x10); }, [](CCallHelpers& jit) { jit.popPair(x11, x10); jit.move64ToDouble(x10, q0); jit.moveDoubleTo64(q0, lr); } },
+        { [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.move(CCallHelpers::TrustedImm32(1), x10); jit.store64(lr, CCallHelpers::BaseIndex(sp, x10, CCallHelpers::TimesEight)); },
+            [](CCallHelpers& jit) { jit.move(CCallHelpers::TrustedImm32(1), x10); jit.load64(CCallHelpers::BaseIndex(sp, x10, CCallHelpers::TimesEight), lr); jit.addPtr(CCallHelpers::TrustedImm32(16), sp); } },
+    };
+    checkEveryStoreWithEveryLoad(waysToUpperWord, nullptr, 8);
+
+    static constexpr WayToReachWord waysToLowerWord[] = {
+        { [](CCallHelpers& jit) { jit.pushToSave(lr); }, [](CCallHelpers& jit) { jit.popToRestore(lr); } },
+        { [](CCallHelpers& jit) { jit.pushPair(lr, neighbourGPR); }, [](CCallHelpers& jit) { jit.popPair(lr, x10); } },
+        { [](CCallHelpers& jit) { jit.pushPair(lr, lr); }, [](CCallHelpers& jit) { jit.popPair(lr, zr); } },
+        { [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.storePtr(lr, Address(sp)); }, [](CCallHelpers& jit) { jit.loadPtr(Address(sp), lr); jit.addPtr(CCallHelpers::TrustedImm32(16), sp); } },
+    };
+    checkEveryStoreWithEveryLoad(waysToLowerWord, nullptr, 16);
+
+    static constexpr WayToReachWord waysToRecordBelowSlots[] = {
+        { [](CCallHelpers& jit) { jit.m_assembler.stp<64>(fp, lr, sp, PairPreIndex(-64)); }, [](CCallHelpers& jit) { jit.m_assembler.ldp<64>(x10, lr, sp, PairPostIndex(64)); } },
+        { [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(48), sp); jit.emitFunctionPrologue(); }, [](CCallHelpers& jit) { jit.popPair(x10, lr); jit.addPtr(CCallHelpers::TrustedImm32(48), sp); } },
+    };
+    checkEveryStoreWithEveryLoad(waysToRecordBelowSlots, nullptr, 56);
+}
+
+static void testLinkRegisterIsPlainBehindSave()
+{
+    static constexpr Emit saves[] = {
+        [](CCallHelpers& jit) { jit.pushPair(x9, lr); },
+        [](CCallHelpers& jit) { jit.pushToSave(lr); },
+        [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.move(lr, x9); },
+        [](CCallHelpers& jit) { jit.subPtr(CCallHelpers::TrustedImm32(16), sp); jit.move(sp, x9); jit.storeRel64(lr, Address(x9)); },
+    };
+    for (Emit save : saves) {
+        // A signature of zero bits would hide the mistake, and it depends on the stack pointer.
+        for (int32_t depth = 0; depth < 8 * 16; depth += 16) {
+            AOT_TEST_CHECK(7 == codeForImage([&](CCallHelpers& jit) {
+                jit.subPtr(CCallHelpers::TrustedImm32(depth), sp);
+                save(jit);
+                jit.addPtr(CCallHelpers::TrustedImm32(depth + 16), sp);
+                jit.move(CCallHelpers::TrustedImm32(7), x0);
+                jit.ret();
+            }).call<uint64_t>(0));
+        }
+    }
+}
+
+static void testWordThatIsCopiedElsewhereIsNotReturnedTo()
+{
+    if (!processorSignsAddresses())
+        return;
+    // Two places have the same signature once in 128 times.
+    unsigned crashes = 0;
+    constexpr unsigned numberOfPlaces = 4;
+    for (unsigned place = 1; place <= numberOfPlaces; ++place) {
+        ImageTests::ExecutableCopy code = codeForImage([&](CCallHelpers& jit) {
+            jit.storePtr(lr, Address(x0));
+            jit.loadPtr(Address(x0), x9);
+            jit.storePtr(x9, Address(x0, place * sizeof(void*)));
+            jit.loadPtr(Address(x0, place * sizeof(void*)), lr);
             jit.ret();
         });
-        ReturnAddressCheck check(code.span());
-        check.addEntryInsideFrame(0);
-        check.addCodeWhoseFaultsSignLinkRegister(0, code.size());
-        std::optional<ReturnAddressCheck::Violation> violation = check.run();
-        if (loaded == LoadedLinkRegister::MayBeSavedAgain)
-            AOT_TEST_CHECK(!violation);
-        else
-            AOT_TEST_CHECK(violation && violation->rule == RuleOfReturnAddresses::SignsOnlyWhatWasNeverInMemory);
+        std::array<void*, numberOfPlaces + 1> words { };
+        crashes += runInChild([&] { code.call<void>(0, words.data()); }) == ChildOutcome::Crashed;
+    }
+    AOT_TEST_CHECK(crashes);
+}
+
+static void testReturnToOldLinkRegister()
+{
+    using EmitPair = std::pair<Emit, Emit>;
+    for (auto [push, popAndReturn] : { EmitPair { emitPushLinkRegister, emitPopLinkRegisterAndReturnToOldOne }, EmitPair { [](CCallHelpers& jit) { jit.emitFunctionPrologue(); }, emitPopFrameRecordAndReturnToOldLinkRegister } }) {
+        // Nothing uses the popped address in front of the write.
+        ImageTests::ExecutableCopy code = codeThatVisits(8, push, [&](CCallHelpers& jit) {
+            CCallHelpers::Label site = jit.movePCRelativeAddress(lr, PCRelativeReach::Near);
+            popAndReturn(jit);
+            CCallHelpers::Label goesOn = jit.label();
+            jit.addLinkTask([=](LinkBuffer& linkBuffer) { AOT_TEST_CHECK(linkBuffer.link(site, addressKindFor(PCRelativeReach::Near), goesOn)); });
+            jit.move(CCallHelpers::TrustedImm32(0), x0);
+            jit.move(CCallHelpers::TrustedImm32(__NR_exit_group), x8);
+            jit.load8(Address(visitGPR, OBJECT_OFFSETOF(Visit, spoils)), x10);
+            CCallHelpers::Jump returns = jit.branchTest32(CCallHelpers::Zero, x10);
+            jit.m_assembler.buffer().putInt(supervisorCall);
+            returns.link(&jit);
+        });
+        Visit visit { nullptr, nullptr, false };
+        code.call<void>(0, &visit);
+        AOT_TEST_CHECK(visit.wasSigned);
+        checkThatSpoiledWordEndsProcess(code, nullptr);
     }
 }
 
-static void testCheckLetsLinkRegisterHoldAddressInFrame()
+static void testAddressThatFailedIsNotSignedAgain()
 {
-    constexpr GPRReg stackPointer = CCallHelpers::stackPointerRegister;
-    for (GPRReg base : { stackPointer, framePointer, ARM64Registers::x0 }) {
-        auto emitAddress = [&](CCallHelpers& jit) {
-            jit.m_assembler.movz<64>(linkRegister, 8);
-            jit.m_assembler.movk<64>(linkRegister, 1, 16);
-            jit.m_assembler.add<64>(linkRegister, base, linkRegister, ARM64Assembler::UXTX, 0);
-        };
-        Vector<uint8_t> code = codeEmittedBy([&](CCallHelpers& jit) {
-            emitAddress(jit);
+    static constexpr Emit loads[] = {
+        [](CCallHelpers& jit) { jit.emitFunctionEpilogue(); },
+        [](CCallHelpers& jit) { jit.loadPtr(Address(fp, 8), lr); },
+        [](CCallHelpers& jit) { HeldReturnAddress::loadLosingLinkRegister(jit, fp, x10); },
+        [](CCallHelpers& jit) { jit.popPair(fp, x10); jit.move(x10, lr); },
+        [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(16), fp, x16); jit.loadPtr(Address(fp, 8), x17); jit.m_assembler.authenticateX17AndCompare(x10); },
+        [](CCallHelpers& jit) { ReturnAddressToLookAt::load(jit, fp, x10); },
+    };
+    for (Emit load : loads) {
+        checkThatSpoiledWordEndsProcess(codeThatVisits(8, [](CCallHelpers& jit) { jit.emitFunctionPrologue(); }, [&](CCallHelpers& jit) {
+            load(jit);
+            jit.move(CCallHelpers::TrustedImm32(0), x0);
+            jit.move(CCallHelpers::TrustedImm32(__NR_exit_group), x8);
+            jit.m_assembler.buffer().putInt(supervisorCall);
+        }), nullptr);
+    }
+}
+
+static void testAddressToLookAtIsReadAndNotJumpedTo()
+{
+    constexpr uint32_t wordBehindCall = 0xd503201f; // NOP
+    auto codeThatCalls = [](Emit callee) {
+        return codeForImage([&](CCallHelpers& jit) {
+            jit.emitFunctionPrologue();
+            CCallHelpers::Call call = jit.nearCall();
+            jit.nop();
             jit.emitFunctionEpilogue();
             jit.ret();
+            CCallHelpers::Label entry = jit.label();
+            jit.addLinkTask([=](LinkBuffer& linkBuffer) { linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(entry)); });
+            jit.emitFunctionPrologue();
+            callee(jit);
         });
-        ReturnAddressCheck check(code.span());
-        check.addEntryInsideFrame(0);
-        check.addCodeWhoseFaultsSignLinkRegister(0, code.size());
-        AOT_TEST_CHECK(check.run().has_value() == (base == ARM64Registers::x0));
-
-        AOT_TEST_CHECK(RuleOfReturnAddresses::ReturnsOnlyToWhatIsAuthenticated == ruleBrokenBy([&](CCallHelpers& jit) {
-            emitAddress(jit);
-            jit.ret();
-        }));
-        AOT_TEST_CHECK(RuleOfReturnAddresses::SignsOnlyWhatWasNeverInMemory == ruleBrokenBy([&](CCallHelpers& jit) {
-            emitAddress(jit);
-            jit.tagReturnAddress();
-        }));
-        AOT_TEST_CHECK(RuleOfReturnAddresses::LeavesNothingUncheckedInLinkRegister == ruleBrokenBy([&](CCallHelpers& jit) {
-            emitAddress(jit);
-            jumpToUnknownCode(jit);
-        }));
-        AOT_TEST_CHECK(RuleOfReturnAddresses::LeavesNothingUncheckedInLinkRegister == ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.move(linkRegister, otherRegister);
-            emitAddress(jit);
-            jit.m_assembler.ret(otherRegister);
-        }));
-    }
-
-    static constexpr void (*accessesWhoseFaultsSignIt[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { jit.addPtr(CCallHelpers::TrustedImm32(16), framePointer, linkRegister); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.popToRestore(framePointer); jit.add64(framePointer, linkRegister); jit.popToRestore(otherRegister); },
-        [](CCallHelpers& jit) { jit.popToRestore(framePointer); callUnknownCode(jit); jit.addPtr(CCallHelpers::TrustedImm32(16), framePointer, linkRegister); jit.popToRestore(otherRegister); },
     };
-    for (auto access : accessesWhoseFaultsSignIt) {
-        Vector<uint8_t> code = codeEmittedBy(access);
-        ReturnAddressCheck check(code.span());
-        check.addEntryInsideFrame(0);
-        check.addCodeWhoseFaultsSignLinkRegister(0, code.size());
-        AOT_TEST_CHECK(check.run());
-    }
-    Vector<uint8_t> code = codeEmittedBy([](CCallHelpers& jit) {
-        jit.addPtr(CCallHelpers::TrustedImm32(16), framePointer, linkRegister);
-        jit.loadPtr(CCallHelpers::Address(framePointer, -8), ARM64Registers::x19);
+    AOT_TEST_CHECK(wordBehindCall == codeThatCalls([](CCallHelpers& jit) {
+        jit.load32(ReturnAddressToLookAt::load(jit, fp, x9).at(), x0);
+        jit.emitFunctionEpilogue();
+        jit.ret();
+    }).call<uint32_t>(0));
+
+    ImageTests::ExecutableCopy jumps = codeThatCalls([](CCallHelpers& jit) {
+        GPRReg address = ReturnAddressToLookAt::load(jit, fp, x9).gpr();
+        jit.emitFunctionEpilogue();
+        jit.farJump(address, NoPtrTag);
     });
-    ReturnAddressCheck check(code.span());
-    check.addEntryInsideFrame(0);
-    check.addCodeWhoseFaultsSignLinkRegister(0, code.size());
-    AOT_TEST_CHECK(!check.run());
+    AOT_TEST_CHECK(ChildOutcome::Crashed == runInChild([&] { jumps.call<void>(0); }));
 }
 
-static void testCheckFindsLinkRegisterHandedOn()
+static void testResumeAddressComesBackInEveryWay()
 {
-    constexpr auto rule = RuleOfReturnAddresses::LeavesNothingUncheckedInLinkRegister;
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popPair(framePointer, linkRegister);
-        jumpToUnknownCode(jit);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
-        jumpToUnknownCode(jit);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(linkRegister, otherRegister);
-        jit.popPair(framePointer, linkRegister);
-        jit.m_assembler.ret(otherRegister);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popPair(framePointer, linkRegister);
-        jit.m_assembler.adr(otherRegister, 0);
-        jit.add64(ARM64Registers::x1, otherRegister);
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-    static constexpr void (*movesOfNull[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { jit.m_assembler.movz<32>(otherRegister, 0); },
-        [](CCallHelpers& jit) { jit.m_assembler.mov<64>(otherRegister, ARM64Registers::zr); },
+    alignas(SavedFrame) std::array<uint8_t, sizeof(SavedFrame)> bytesOfFrame { };
+    void** word = std::bit_cast<void**>(bytesOfFrame.data() + SavedFrame::offsetOfResumeAddressForTesting());
+    const void* modifier = std::bit_cast<const SavedFrame*>(bytesOfFrame.data())->modifierOfResumeAddress();
+    constexpr GPRReg frame = x10;
+    auto findFrame = [](CCallHelpers& jit) { jit.subPtr(wordGPR, CCallHelpers::TrustedImm32(SavedFrame::offsetOfResumeAddressForTesting()), frame); };
+
+    static constexpr Emit jumps[] = {
+        [](CCallHelpers& jit) { jit.farJump(emitLoadResumeAddressLosingLinkRegister(jit, frame, x11), NoPtrTag); },
+        [](CCallHelpers& jit) { emitLoadResumeAddressAsStored(jit, frame, x11); emitJumpToResumeAddress(jit, x11, frame); },
     };
-    for (auto moveNull : movesOfNull) {
-        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.move(linkRegister, otherRegister);
-            CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-            moveNull(jit);
-            keepsIt.link(&jit);
-            jit.move(otherRegister, linkRegister);
-            jumpToUnknownCode(jit);
-        }));
-    }
-}
-
-static void testCheckEntersLabelWhoseAddressIsTaken()
-{
-    constexpr unsigned wordsOfSeveralPages = 3000;
-    for (PCRelativeReach reach : { PCRelativeReach::Near, PCRelativeReach::Far }) {
-        for (bool labelComesFirst : { false, true }) {
-            Vector<uint8_t> code = codeEmittedBy([&](CCallHelpers& jit) {
-                CCallHelpers::Label site;
-                CCallHelpers::Label label;
-                auto takeAddress = [&] {
-                    site = jit.movePCRelativeAddress(linkRegister, reach);
-                    jit.ret();
-                };
-                auto breakRule = [&] {
-                    label = jit.label();
-                    jit.pushToSave(linkRegister);
-                };
-                CCallHelpers::Jump skip = jit.jump();
-                if (labelComesFirst)
-                    breakRule();
-                else {
-                    skip.link(&jit);
-                    takeAddress();
+    for (std::optional<PCRelativeReach> reachOfSignedAddress : { std::optional<PCRelativeReach>(), std::optional(PCRelativeReach::Near) }) {
+        for (Emit jump : jumps) {
+            CCallHelpers::Label site;
+            ImageTests::ExecutableCopy code = codeThatVisits(0, [&](CCallHelpers& jit) {
+                jit.emitFunctionPrologue();
+                findFrame(jit);
+                if (reachOfSignedAddress) {
+                    emitModifierOfResumeAddress(jit, frame);
+                    site = jit.moveSignedPCRelativeAddress(*reachOfSignedAddress);
+                    emitStoreResumeAddressThatCallerHasSigned(jit, x17, frame);
+                    return;
                 }
-                for (unsigned index = 0; index < wordsOfSeveralPages; ++index)
-                    jit.breakpoint();
-                if (labelComesFirst) {
-                    skip.link(&jit);
-                    takeAddress();
-                } else
-                    breakRule();
-                jit.addLinkTask([=](LinkBuffer& linkBuffer) {
-                    AOT_TEST_CHECK(linkBuffer.link(site, addressKindFor(reach), label));
-                });
+                site = jit.movePCRelativeAddress(lr, PCRelativeReach::Near);
+                emitStoreLinkRegisterAsResumeAddress(jit, frame);
+            }, [&](CCallHelpers& jit) {
+                findFrame(jit);
+                jump(jit);
+                CCallHelpers::Label resumes = jit.label();
+                jit.addLinkTask([=](LinkBuffer& linkBuffer) { AOT_TEST_CHECK(linkBuffer.link(site, addressKindFor(PCRelativeReach::Near), resumes)); });
+                jit.emitFunctionEpilogue();
             });
-            ReturnAddressCheck check(code.span());
-            check.addCalledEntry(0);
-            std::optional<ReturnAddressCheck::Violation> violation = check.run();
-            AOT_TEST_CHECK(violation && violation->rule == RuleOfReturnAddresses::SavesOnlyWhatIsSigned);
+            Visit visit { word, modifier, false };
+            code.call<void>(0, &visit);
+            AOT_TEST_CHECK(visit.wasSigned);
+            checkThatSpoiledWordEndsProcess(code, word, modifier);
         }
     }
+    AOT_TEST_CHECK(wordsForImage([](CCallHelpers& jit) { jit.moveSignedPCRelativeAddress(PCRelativeReach::Far); }) == [] {
+        Vector<uint32_t> words = wordsForImage([](CCallHelpers& jit) { jit.movePCRelativeAddress(x17, PCRelativeReach::Far); });
+        words.append(signWithX16);
+        return words;
+    }());
 }
 
-enum class LabelIs : bool { Ordinary, TargetOfUnsignedJump };
-
-static void emitUseOfLabel(CCallHelpers& jit, GPRReg address, void (*use)(CCallHelpers&), LabelIs labelIs = LabelIs::Ordinary)
+static void testWordOfInstanceHoldsSignedAddress()
 {
-    CCallHelpers::Label site = jit.movePCRelativeAddress(address, PCRelativeReach::Far);
-    use(jit);
-    jit.breakpoint();
-    CCallHelpers::Label label = jit.label();
-    if (labelIs == LabelIs::TargetOfUnsignedJump)
-        emitTargetOfUnsignedJump(jit);
+    constexpr size_t indexOfWord = 600;
+    constexpr CodeSymbol symbol { SymbolSpace::InstanceWord, 0 };
+    ImageAssembler jit;
+    RelocationRecorder relocations(jit, ImageTests::testAssemblerPolicy());
+    relocations.storeInstanceWord(symbol, InstanceWordWidth::Word64, lr, x0);
+    jit.move(zr, lr);
+    relocations.loadInstanceWord(symbol, InstanceWordWidth::Word64, x0, lr);
     jit.ret();
-    jit.addLinkTask([=](LinkBuffer& linkBuffer) {
-        AOT_TEST_CHECK(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), label));
-    });
+    std::expected<RelocatableCode, LinkFailure> code = relocations.finalize(LinkBuffer::Profile::Thunk, nullptr);
+    AOT_TEST_CHECK(code.has_value() && code->relocations.size() == 2);
+    for (const Relocation& relocation : code->relocations)
+        AOT_TEST_CHECK(applyRelocation(code->bytes.mutableSpan(), 0, relocation, indexOfWord * sizeof(void*)));
+
+    std::array<void*, indexOfWord + 1> instance { };
+    ImageTests::ExecutableCopy(code->bytes.span()).call<void>(0, instance.data());
+    void* address = removeReturnAddressSignature(instance.back());
+    AOT_TEST_CHECK(address && instance.back() == JSC::signReturnAddress(address, &instance.back() + 1));
 }
 
-static void testCheckFindsAddressOfLabelThatGoesOutOfSight()
+static void testNoPlainAddressIsLeftInX17()
 {
-    using Piece = ReturnAddressCheck::Piece;
-    constexpr auto rule = RuleOfReturnAddresses::KeepsAddressOfLabelInSight;
-    constexpr GPRReg made = ARM64Registers::x10;
-    static constexpr void (*losses[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.pushToSave(otherRegister); },
-        [](CCallHelpers& jit) { jit.storePair64(ARM64Registers::x1, otherRegister, ARM64Registers::x0); },
-        [](CCallHelpers& jit) { jit.move(otherRegister, made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.sub64(otherRegister, ARM64Registers::x1, made); jit.store32(made, CCallHelpers::Address(ARM64Registers::x0)); },
-        [](CCallHelpers& jit) { jit.sub64(ARM64Registers::x1, otherRegister, made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.sub32(otherRegister, ARM64Registers::x1, made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.urshift64(otherRegister, CCallHelpers::TrustedImm32(2), made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.or64(CCallHelpers::TrustedImm32(1), otherRegister, made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.m_assembler.movk<64>(otherRegister, 1, 48); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.bfi<64>(otherRegister, ARM64Registers::x1, 48, 8); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.extr<64>(made, ARM64Registers::x1, otherRegister, 8); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.m_assembler.madd<64>(made, ARM64Registers::x1, ARM64Registers::x2, otherRegister); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.m_assembler.csel<64>(made, ARM64Registers::x1, otherRegister, ARM64Assembler::ConditionEQ); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.m_assembler.fmov<64>(ARM64Registers::q0, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.scvtf<64, 64>(ARM64Registers::q0, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.dupGeneral(ARM64Registers::q0, otherRegister, SIMDLane::i64x2); },
-        [](CCallHelpers& jit) { jit.m_assembler.ins(ARM64Registers::q0, otherRegister, SIMDLane::i64x2, 1); },
-        [](CCallHelpers& jit) { jit.load64(CCallHelpers::PostIndexAddress(otherRegister, 8), made); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.ccmp<64>(ARM64Registers::x1, UInt5(otherRegister), 0, ARM64Assembler::ConditionEQ); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.ccmp<64>(otherRegister, UInt5(1), 0, ARM64Assembler::ConditionEQ); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.cmp<64>(otherRegister, UInt12(0)); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.tst<64>(otherRegister, ARM64Registers::x1); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.tagReturnAddress(); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.cmp<64>(ARM64Registers::x1, ARM64Registers::x2); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) {
-            CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x1);
-            jit.m_assembler.movz<64>(otherRegister, 1);
-            keepsIt.link(&jit);
-            storeInObject(jit, otherRegister);
-        },
-        callUnknownCode,
-        jumpToUnknownCode,
-        [](CCallHelpers& jit) { jit.ret(); },
+    static constexpr Emit uses[] = {
+        [](CCallHelpers& jit) { jit.m_assembler.authenticateX17IntoLinkRegister(); },
+        [](CCallHelpers& jit) { jit.m_assembler.authenticateX17AndCompare(zr); },
+        [](CCallHelpers& jit) { jit.m_assembler.authenticateX17ToLookAt(x9); },
     };
-    for (auto loss : losses) {
-        for (Piece piece : { Piece::Function, Piece::Stubs, Piece::WebAssembly }) {
-            AOT_TEST_CHECK(rule == ruleBrokenIn(piece, [&](CCallHelpers& jit) {
-                emitUseOfLabel(jit, otherRegister, loss);
-            }));
-            AOT_TEST_CHECK(!ruleBrokenIn(piece, [&](CCallHelpers& jit) {
-                emitUseOfLabel(jit, otherRegister, loss, LabelIs::TargetOfUnsignedJump);
-            }));
-        }
-        AOT_TEST_CHECK(!ruleBrokenIn(Piece::RegExp, [&](CCallHelpers& jit) {
-            emitUseOfLabel(jit, otherRegister, loss);
-        }));
-    }
-
-    static constexpr void (*uses[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { emitStoreResumeAddress(jit, otherRegister, ARM64Registers::x0); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.move(otherRegister, linkRegister); jumpToUnknownCode(jit); },
-        [](CCallHelpers& jit) { jit.m_assembler.cmp<64>(ARM64Registers::x1, otherRegister); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.ccmp<64>(ARM64Registers::x1, otherRegister, 0, ARM64Assembler::ConditionEQ); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.m_assembler.movz<64>(otherRegister, 1); storeInObject(jit, otherRegister); },
-        [](CCallHelpers& jit) { jit.load32(CCallHelpers::Address(otherRegister), made); storeInObject(jit, made); },
-        [](CCallHelpers& jit) { jit.m_assembler.fmov<64>(made, ARM64Registers::q9); },
-        [](CCallHelpers& jit) { jit.m_assembler.fmov<64>(ARM64Registers::q0, ARM64Registers::q9); },
-        [](CCallHelpers& jit) { jit.m_assembler.umov(made, ARM64Registers::q9, SIMDLane::i64x2, 1); },
-        [](CCallHelpers& jit) { jit.m_assembler.ret(otherRegister); },
-        [](CCallHelpers& jit) { jit.farJump(otherRegister, NoPtrTag); },
-        [](CCallHelpers& jit) { jit.call(otherRegister, NoPtrTag); },
-    };
-    for (auto use : uses) {
-        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
-            emitUseOfLabel(jit, otherRegister, use);
-        }));
-    }
-
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-            emitUseOfLabel(jit, made, [](CCallHelpers& jit) {
-                jit.m_assembler.cmp<64>(ARM64Registers::x1, made);
-                storeInObject(jit, otherRegister);
-            });
-        });
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, linkRegister, jumpToUnknownCode);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.adr(linkRegister, 2 * sizeof(uint32_t));
-        jumpToUnknownCode(jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        constexpr GPRReg numberInFieldOfSecondSource = ARM64Registers::x0;
-        emitUseOfLabel(jit, numberInFieldOfSecondSource, [](CCallHelpers& jit) {
-            jit.m_assembler.clz<64>(made, ARM64Registers::x1);
-            storeInObject(jit, made);
-        });
-    }));
-
-    static constexpr auto callWhatFollows = [](CCallHelpers& jit, void (*callee)(CCallHelpers&)) {
-        CCallHelpers::Call call = jit.nearCall();
-        jit.breakpoint();
-        CCallHelpers::Label entry = jit.label();
-        callee(jit);
-        jit.addLinkTask([=](LinkBuffer& linkBuffer) {
-            linkBuffer.link(call, linkBuffer.locationOf<NoPtrTag>(entry));
-        });
-    };
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-            callWhatFollows(jit, [](CCallHelpers& jit) { storeInObject(jit, otherRegister); });
-        });
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, ARM64Registers::x19, [](CCallHelpers& jit) {
-            callWhatFollows(jit, [](CCallHelpers&) { });
-        });
-    }));
-}
-
-static uint32_t offsetOfFirstReturn(std::span<const uint8_t> code)
-{
-    constexpr uint32_t ret = 0xd65f03c0;
-    uint32_t offset = 0;
-    while (WTF::unalignedLoad<uint32_t>(code.subspan(offset, sizeof(uint32_t)).data()) != ret)
-        offset += sizeof(uint32_t);
-    return offset;
-}
-
-static void testCheckTellsWhereFunctionResumesFromWhereItIsCalled()
-{
-    constexpr uint16_t entryOfResumption = 1;
-    for (uint16_t entry : { entryOfResumption, Typed::fusedCallEntry }) {
-        CodeBody body;
-        body.bytes = codeEmittedBy([](CCallHelpers& jit) {
-            emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) { storeInObject(jit, otherRegister); });
-        });
-        body.entries.append(CodeEntry { 0, primaryEntry });
-        body.entries.append(CodeEntry { offsetOfFirstReturn(body.bytes.span()), entry });
-        ReturnAddressCheck check(body.bytes.span());
-        check.addFunction(body, 0);
-        AOT_TEST_CHECK(check.run().has_value() == (entry == entryOfResumption));
-    }
-}
-
-static void testCheckTellsReturnSiteOfStubFromMark()
-{
-    for (StubFrameKind kind : { StubFrameKind::HandlerOfJob, StubFrameKind::HostCall }) {
-        StubBlob blob;
-        blob.code.bytes = codeEmittedBy([](CCallHelpers& jit) {
-            emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) { storeInObject(jit, otherRegister); });
-        });
-        uint32_t label = offsetOfFirstReturn(blob.code.bytes.span());
-        blob.placements.append({ writeBarrier(), 0 });
-        blob.placements.append({ writeBarrier(), label });
-        blob.returnSites.append({ label, kind });
-        ReturnAddressCheck check(blob.code.bytes.span());
-        check.addStubs(blob, 0);
-        AOT_TEST_CHECK(check.run().has_value() == (kind != StubFrameKind::HostCall));
-    }
-}
-
-static void testCheckFindsAddressOfLabelHandedToFunction()
-{
-    static constexpr void (*ways[])(CCallHelpers&) = {
-        [](CCallHelpers& jit) { auto jump = jit.jump(); jit.breakpoint(); jump.link(&jit); },
-        [](CCallHelpers& jit) { auto jump = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0); jit.breakpoint(); jump.link(&jit); },
-        [](CCallHelpers& jit) { jit.nop(); jit.nop(); },
-    };
-    for (auto goToEntry : ways) {
-        static void (*way)(CCallHelpers&);
-        way = goToEntry;
-        CodeBody body;
-        body.bytes = codeEmittedBy([](CCallHelpers& jit) {
-            emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-                way(jit);
-                jit.m_assembler.movz<64>(otherRegister, 1);
-            });
-        });
-        constexpr uint32_t sizeOfAddressAndWay = 4 * sizeof(uint32_t);
-        body.entries.append(CodeEntry { 0, primaryEntry });
-        body.entries.append(CodeEntry { sizeOfAddressAndWay, Typed::fusedCallEntry });
-        ReturnAddressCheck check(body.bytes.span());
-        check.addFunction(body, 0);
-        std::optional<ReturnAddressCheck::Violation> violation = check.run();
-        AOT_TEST_CHECK(violation && violation->rule == RuleOfReturnAddresses::KeepsAddressOfLabelInSight);
-    }
-}
-
-static void testCheckFollowsVeneer()
-{
-    static constexpr auto emitVeneer = [](CCallHelpers& jit) {
-        CCallHelpers::Label site = jit.movePCRelativeAddress(ARM64Registers::ip0, PCRelativeReach::Far);
-        jit.farJump(ARM64Registers::ip0, NoPtrTag);
-        CCallHelpers::Label target = jit.label();
-        jit.addLinkTask([=](LinkBuffer& linkBuffer) {
-            AOT_TEST_CHECK(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), target));
-        });
-    };
-    static constexpr auto emitFrameThenVeneer = [](CCallHelpers& jit) {
-        jit.emitFunctionPrologue();
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue(LoadedLinkRegister::IsOnlyReturnedTo);
-        emitVeneer(jit);
-    };
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitFrameThenVeneer(jit);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::SignsOnlyWhatWasNeverInMemory == ruleBrokenBy([](CCallHelpers& jit) {
-        emitFrameThenVeneer(jit);
-        jit.emitFunctionPrologue();
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.tagReturnAddress();
-        emitVeneer(jit);
-        jit.pushToSave(linkRegister);
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::ReturnsOnlyToWhatIsAuthenticated == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(linkRegister, ARM64Registers::ip0);
-        emitVeneer(jit);
-        jit.m_assembler.ret(ARM64Registers::ip0);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-            emitVeneer(jit);
-            emitStoreResumeAddress(jit, otherRegister, ARM64Registers::x0);
-        });
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::KeepsAddressOfLabelInSight == ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-            emitVeneer(jit);
-            storeInObject(jit, otherRegister);
-        });
-    }));
-}
-
-static void testCheckTellsVeneerFromOtherJumps()
-{
-    constexpr auto rule = RuleOfReturnAddresses::JumpsToNothingOffTheStack;
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.popToRestore(otherRegister);
-        emitUseOfLabel(jit, ARM64Registers::ip0, [](CCallHelpers& jit) { jit.farJump(otherRegister, NoPtrTag); }, LabelIs::TargetOfUnsignedJump);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        jit.m_assembler.adr(otherRegister, 0);
-        jit.popToRestore(otherRegister);
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-}
-
-static void testCheckEndsWhereFunctionsJumpIntoEachOther()
-{
-    constexpr uint32_t sizeOfFunction = 2 * sizeof(uint32_t);
-    Vector<uint8_t> code = codeEmittedBy([](CCallHelpers& jit) {
-        jit.nop();
-        CCallHelpers::Label insideFirst = jit.label();
-        CCallHelpers::Jump toSecond = jit.jump();
-        jit.ret();
-        toSecond.link(&jit);
-        jit.jump().linkTo(insideFirst, &jit);
-    });
-    ReturnAddressCheck check(code.span());
-    for (uint32_t function : { 0u, sizeOfFunction }) {
-        check.addPiece(function, sizeOfFunction, ReturnAddressCheck::Piece::Function);
-        check.addCalledEntry(function);
-    }
-    AOT_TEST_CHECK(!check.run());
-}
-
-static void testCheckFindsJumpToWhatCameOffTheStack()
-{
-    using Address = CCallHelpers::Address;
-    using Piece = ReturnAddressCheck::Piece;
-    constexpr auto rule = RuleOfReturnAddresses::JumpsToNothingOffTheStack;
-    constexpr GPRReg stackPointer = CCallHelpers::stackPointerRegister;
-    constexpr GPRReg pointer = ARM64Registers::x20;
-    static constexpr void (*loads[])(CCallHelpers&, GPRReg) = {
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popPair(ARM64Registers::x0, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.loadPtr(Address(stackPointer, 16), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.loadPtr(Address(framePointer, -8), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.loadPtr(CCallHelpers::BaseIndex(framePointer, ARM64Registers::x0, CCallHelpers::TimesEight), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.loadPtr(CCallHelpers::BaseIndex(ARM64Registers::x0, framePointer, CCallHelpers::TimesOne), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(stackPointer, pointer); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(framePointer, pointer); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.m_assembler.add<64>(pointer, stackPointer, ARM64Registers::x0, ARM64Assembler::UXTX, 3); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.add64(ARM64Registers::x0, framePointer, pointer); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(stackPointer, pointer); callUnknownCode(jit); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(stackPointer, pointer); jit.load64(CCallHelpers::PostIndexAddress(pointer, 8), ARM64Registers::x0); jit.loadPtr(Address(pointer), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.move(ARM64Registers::x0, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.add64(CCallHelpers::TrustedImm32(4), ARM64Registers::x0, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.add64(ARM64Registers::x1, ARM64Registers::x0, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.and64(CCallHelpers::TrustedImm64((1ll << 48) - 1), ARM64Registers::x0, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.m_assembler.ubfx<64>(result, ARM64Registers::x0, 0, 48); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x19); callUnknownCode(jit); jit.move(ARM64Registers::x19, result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(linkRegister, ARM64Registers::x19); callUnknownCode(jit); jit.move(ARM64Registers::x19, result); },
-        [](CCallHelpers& jit, GPRReg result) {
-            jit.popPair(framePointer, linkRegister);
-            jit.removeTagAfterSavingReturnAddress();
-            jit.move(linkRegister, ARM64Registers::x19);
-            callUnknownCode(jit);
-            jit.move(ARM64Registers::x19, result);
-        },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(linkRegister, result); callUnknownCode(jit); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(result); callUnknownCode(jit); },
-        [](CCallHelpers& jit, GPRReg result) { jit.move(stackPointer, result); callUnknownCode(jit); jit.loadPtr(Address(result), result); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(ARM64Registers::x0); jit.m_assembler.csel<64>(result, ARM64Registers::x1, ARM64Registers::x0, ARM64Assembler::ConditionEQ); },
-        [](CCallHelpers& jit, GPRReg result) {
-            jit.popPair(framePointer, linkRegister);
-            jit.removeTagAfterSavingReturnAddress();
-            jit.m_assembler.csel<64>(result, linkRegister, ARM64Registers::x1, ARM64Assembler::ConditionEQ);
-            jit.m_assembler.movz<64>(linkRegister, 0);
-        },
-        [](CCallHelpers& jit, GPRReg result) { jit.m_assembler.fmov<64>(result, ARM64Registers::q8); },
-        [](CCallHelpers& jit, GPRReg result) { jit.popToRestore(valueEntryGPR); jit.popToRestore(result); jit.jump().link(&jit); },
-        [](CCallHelpers& jit, GPRReg result) {
-            CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-            jit.popToRestore(result);
-            keepsIt.link(&jit);
-        },
-        [](CCallHelpers& jit, GPRReg result) {
-            CCallHelpers::Jump keepsIt = jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0);
-            jit.move(stackPointer, pointer);
-            keepsIt.link(&jit);
-            jit.loadPtr(Address(pointer), result);
-        },
-    };
-    for (auto load : loads) {
-        auto ruleBrokenByJumpThrough = [&](GPRReg target, Piece piece) {
-            return ruleBrokenIn(piece, [&](CCallHelpers& jit) {
-                load(jit, target);
-                jit.farJump(target, NoPtrTag);
-            });
-        };
-        AOT_TEST_CHECK(rule == ruleBrokenByJumpThrough(otherRegister, Piece::Stubs));
-        AOT_TEST_CHECK(rule == ruleBrokenByJumpThrough(valueEntryGPR, Piece::Stubs));
-        AOT_TEST_CHECK(rule == ruleBrokenByJumpThrough(valueEntryGPR, Piece::ArgumentThunks));
-        AOT_TEST_CHECK(rule == ruleBrokenByJumpThrough(otherRegister, Piece::Function));
-        AOT_TEST_CHECK(!ruleBrokenByJumpThrough(valueEntryGPR, Piece::Function));
-        AOT_TEST_CHECK(!ruleBrokenByJumpThrough(otherRegister, Piece::RegExp));
-        AOT_TEST_CHECK(!ruleBrokenByJumpThrough(otherRegister, Piece::WebAssembly));
-        AOT_TEST_CHECK(rule == ruleBrokenBy([&](CCallHelpers& jit) {
-            load(jit, otherRegister);
-            jit.farJump(otherRegister, NoPtrTag);
-        }));
-        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
-            load(jit, otherRegister);
-            jit.loadPtr(Address(otherRegister, 8), otherRegister);
-            jit.farJump(otherRegister, NoPtrTag);
-        }));
-    }
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        emitLoadReturnAddressOfFrameRecord(jit, framePointer, otherRegister);
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-    for (GPRReg setByCallee : { ARM64Registers::x0, ARM64Registers::x1, ARM64Registers::ip0, ARM64Registers::ip1 }) {
-        AOT_TEST_CHECK(!ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.popToRestore(setByCallee);
-            callUnknownCode(jit);
-            jit.farJump(setByCallee, NoPtrTag);
-        }));
-    }
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.sub64(framePointer, ARM64Registers::x1, ARM64Registers::x2);
-        jit.loadPtr(CCallHelpers::BaseIndex(ARM64Registers::x0, ARM64Registers::x2, CCallHelpers::TimesEight), otherRegister);
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-    AOT_TEST_CHECK(rule == ruleBrokenBy([](CCallHelpers& jit) {
-        emitUseOfLabel(jit, otherRegister, [](CCallHelpers& jit) {
-            jit.m_assembler.cmp<64>(ARM64Registers::x1, otherRegister);
-            callUnknownCode(jit);
-            jit.farJump(otherRegister, NoPtrTag);
-        });
-    }));
-    for (bool isFoundByComparison : { false, true }) {
-        for (GPRReg known : { ARM64Registers::x10, linkRegister }) {
-            AOT_TEST_CHECK((known == linkRegister) == ruleBrokenBy([&](CCallHelpers& jit) {
-                jit.m_assembler.adr(ARM64Registers::x10, 0);
-                CCallHelpers::JumpList differs;
-                if (isFoundByComparison)
-                    differs.append(jit.branchPtr(CCallHelpers::NotEqual, known, otherRegister));
-                else
-                    jit.move(known, otherRegister);
-                callUnknownCode(jit);
-                jit.farJump(otherRegister, NoPtrTag);
-                differs.link(&jit);
-            }).has_value());
-        }
-    }
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.move(stackPointer, ARM64Registers::x0);
-        callUnknownCode(jit);
-        jit.loadPtr(Address(ARM64Registers::x0), otherRegister);
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        constexpr int wordsInFieldOfBase = 31;
-        jit.m_assembler.ldr_literal<64>(otherRegister, wordsInFieldOfBase * sizeof(uint32_t));
-        jit.farJump(otherRegister, NoPtrTag);
-    }));
-
-    for (GPRReg target : { otherRegister, valueEntryGPR }) {
-        for (bool jumpIsEntry : { false, true }) {
-            CodeBody body;
-            body.bytes = codeEmittedBy([&](CCallHelpers& jit) {
-                jit.popToRestore(target);
-                jit.farJump(target, NoPtrTag);
-            });
-            body.entries.append(CodeEntry { 0, primaryEntry });
-            if (jumpIsEntry)
-                body.entries.append(CodeEntry { sizeof(uint32_t), Typed::fusedCallEntry });
-            ReturnAddressCheck check(body.bytes.span());
-            check.addFunction(body, 0);
-            AOT_TEST_CHECK(check.run().has_value() == (target != valueEntryGPR && !jumpIsEntry));
-        }
-    }
-
-    for (Piece caller : { Piece::Function, Piece::ArgumentThunks, Piece::Stubs, Piece::RegExp, Piece::WebAssembly }) {
-        for (GPRReg target : { otherRegister, linkRegister }) {
-            Vector<uint8_t> code = codeEmittedBy([&](CCallHelpers& jit) {
-                CCallHelpers::Label stub = jit.label();
-                jit.farJump(target, NoPtrTag);
-                jit.popToRestore(target);
-                jit.jump().linkTo(stub, &jit);
-            });
-            constexpr uint32_t startOfCaller = sizeof(uint32_t);
-            ReturnAddressCheck check(code.span());
-            check.addPiece(0, startOfCaller, Piece::Stubs);
-            check.addPiece(startOfCaller, code.size() - startOfCaller, caller);
-            check.addCalledEntry(startOfCaller);
-            std::optional<ReturnAddressCheck::Violation> violation = check.run();
-            AOT_TEST_CHECK(violation.has_value() == (caller == Piece::Stubs || target == linkRegister));
-            AOT_TEST_CHECK(!violation || violation->rule == rule);
-        }
-        for (GPRReg holder : { pointer, linkRegister }) {
-            for (bool jumpHasCondition : { false, true }) {
-                Vector<uint8_t> code = codeEmittedBy([&](CCallHelpers& jit) {
-                    CCallHelpers::Label stub = jit.label();
-                    jit.loadPtr(Address(holder), otherRegister);
-                    jit.farJump(otherRegister, NoPtrTag);
-                    jit.move(stackPointer, holder);
-                    (jumpHasCondition ? jit.branchTest64(CCallHelpers::Zero, ARM64Registers::x0) : jit.jump()).linkTo(stub, &jit);
-                });
-                constexpr uint32_t startOfCaller = 2 * sizeof(uint32_t);
-                ReturnAddressCheck check(code.span());
-                check.addPiece(0, startOfCaller, Piece::Stubs);
-                check.addPiece(startOfCaller, code.size() - startOfCaller, caller);
-                check.addCalledEntry(startOfCaller);
-                std::optional<ReturnAddressCheck::Violation> violation = check.run();
-                AOT_TEST_CHECK(violation.has_value() == (caller == Piece::Stubs || holder == linkRegister));
-                AOT_TEST_CHECK(!violation || violation->rule == rule);
-            }
-        }
-    }
-}
-
-static void testCheckLooksAtCodeThatNothingLeadsTo()
-{
-    auto ruleBrokenBehindReturn = [](void (*emit)(CCallHelpers&)) {
-        return ruleBrokenBy([&](CCallHelpers& jit) {
+    for (Emit use : uses) {
+        AOT_TEST_CHECK(codeForImage([&](CCallHelpers& jit) {
+            jit.m_assembler.signLinkRegisterInX17();
+            use(jit);
+            jit.compare64(CCallHelpers::NotEqual, lr, x17, x0);
             jit.ret();
-            emit(jit);
-        });
-    };
-    AOT_TEST_CHECK(RuleOfReturnAddresses::ReturnsOnlyToWhatIsAuthenticated == ruleBrokenBehindReturn([](CCallHelpers& jit) {
-        jit.pushPair(framePointer, linkRegister);
-        callUnknownCode(jit);
-        jit.popPair(framePointer, linkRegister);
-        jit.ret();
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::SavesOnlyWhatIsSigned == ruleBrokenBehindReturn([](CCallHelpers& jit) {
-        jit.breakpoint();
-        jit.nop();
-        callUnknownCode(jit);
-        jit.pushToSave(linkRegister);
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::SavesOnlyWhatIsSigned == ruleBrokenBehindReturn([](CCallHelpers& jit) {
-        jit.removeTagAfterSavingReturnAddress();
-        jit.pushToSave(linkRegister);
-    }));
-    AOT_TEST_CHECK(RuleOfReturnAddresses::ReturnsOnlyToWhatIsAuthenticated == ruleBrokenBy([](CCallHelpers& jit) {
-        CCallHelpers::Label entry = jit.label();
-        jit.ret();
-        jit.popPair(framePointer, linkRegister);
-        jit.jump().linkTo(entry, &jit);
-    }));
-    AOT_TEST_CHECK(!ruleBrokenBehindReturn([](CCallHelpers& jit) {
-        jit.ret();
-        jit.emitFunctionEpilogue();
-        jit.ret();
-        jit.emitFunctionPrologue();
-        callUnknownCode(jit);
-        jit.emitFunctionEpilogue();
-        jit.ret();
-        jit.pushPair(framePointer, linkRegister);
-        jit.removeTagAfterSavingReturnAddress();
-        jit.ret();
-        jit.m_assembler.ret(otherRegister);
-        jumpToUnknownCode(jit);
-        jit.add64(CCallHelpers::TrustedImm32(4), otherRegister);
-        emitStoreResumeAddress(jit, otherRegister, ARM64Registers::x0);
-        jit.ret();
-        jit.move(otherRegister, linkRegister);
-        jit.pushPair(framePointer, linkRegister);
-    }));
-
-    Vector<uint8_t> code = codeEmittedBy([](CCallHelpers& jit) {
-        jit.ret();
-        jit.popPair(framePointer, linkRegister);
-        jit.ret();
-    });
-    ReturnAddressCheck check(code.span());
-    check.addCalledEntry(0);
-    check.addCalledEntry(sizeof(uint32_t));
-    check.addData(sizeof(uint32_t), sizeof(uint32_t));
-    AOT_TEST_CHECK(!check.run());
-    AOT_TEST_CHECK(check.hasReachedFromEntry(0) && !check.hasReachedFromEntry(2 * sizeof(uint32_t)));
-
-    for (uint32_t entry : { 0u, static_cast<uint32_t>(sizeof(uint32_t)) }) {
-        ReturnAddressCheck checkOfCopy(code.span());
-        checkOfCopy.addCalledEntry(entry);
-        checkOfCopy.addCopyOfOtherCode(0, code.size());
-        AOT_TEST_CHECK(checkOfCopy.run().has_value() == !!entry);
+        }).call<uint64_t>(0));
     }
 }
 
-static constexpr uint32_t retab = 0xd65f0fff;
-
-static void testCheckTakesWordsBehindCallsForData()
+static void testWhatOnlyLooksTakesSignatureOff()
 {
-    constexpr uint32_t trap = 0;
-    constexpr uint32_t callOfWordInFront = 0x97ffffff;
-    constexpr uint32_t ret = 0xd65f03c0;
-    constexpr uint32_t function = sizeof(uint32_t);
-    auto breaksRuleBehindThrow = [&](ThrowSiteSource source, std::initializer_list<uint32_t> behindCall) {
-        Vector<uint32_t> words { trap, callOfWordInFront };
-        words.appendList(behindCall);
-        StubBlob blob;
-        blob.code.bytes = asByteSpan(trap);
-        blob.placements.append({ throwAtSite(source, CallerFrame::HasFrame), 0 });
-        ReturnAddressCheck check(asBytes(words.span()));
-        check.addStubs(blob, 0);
-        check.addCalledEntry(function);
-        return check.run().has_value();
-    };
-    for (unsigned numberOfWords = 1; numberOfWords <= 3; ++numberOfWords) {
-        ThrowSiteWord site { };
-        site.a = 2;
-        site.hasB = numberOfWords > 1;
-        site.hasWideA = numberOfWords > 2;
-        uint32_t first = std::bit_cast<uint32_t>(site);
-        AOT_TEST_CHECK(!breaksRuleBehindThrow(ThrowSiteSource::WordsAfterCall, { first }));
-        AOT_TEST_CHECK(breaksRuleBehindThrow(ThrowSiteSource::WordsAfterCall, { first, retab }) == (numberOfWords < 2));
-        AOT_TEST_CHECK(breaksRuleBehindThrow(ThrowSiteSource::WordsAfterCall, { first, retab, retab }) == (numberOfWords < 3));
-        AOT_TEST_CHECK(breaksRuleBehindThrow(ThrowSiteSource::WordsAfterCall, { first, trap, trap, retab }));
-        AOT_TEST_CHECK(breaksRuleBehindThrow(ThrowSiteSource::WordInRegister, { first }));
-    }
-
-    constexpr uint32_t callOfThirdWordBehind = 0x94000003;
-    constexpr uint32_t jumpToFourthWordInFront = 0x17fffffc;
-    ThrowSiteWord siteOfTwoWords { };
-    siteOfTwoWords.hasB = true;
-    const uint32_t callByWayOfJump[] = { trap, callOfThirdWordBehind, std::bit_cast<uint32_t>(siteOfTwoWords), retab, jumpToFourthWordInFront };
-    StubBlob blob;
-    blob.code.bytes = asByteSpan(trap);
-    blob.placements.append({ throwAtSite(ThrowSiteSource::WordsAfterCall, CallerFrame::HasFrame), 0 });
-    ReturnAddressCheck checkOfLargeFunction(asBytes(std::span(callByWayOfJump)));
-    checkOfLargeFunction.addStubs(blob, 0);
-    checkOfLargeFunction.addCalledEntry(function);
-    AOT_TEST_CHECK(!checkOfLargeFunction.run());
-
-    const uint32_t words[] = { ret, callOfWordInFront, retab, ret };
-    ReturnAddressCheck check(asBytes(std::span(words)));
-    check.addCalledEntry(function);
-    check.addWordBehindCall(function + sizeof(uint32_t));
-    AOT_TEST_CHECK(!check.run());
-}
-
-static void testCheckRefusesInstructionThatItDoesNotKnow()
-{
-    static constexpr uint32_t words[] = {
-        retab,
-        0xd61f0d3f, // brabz x9
-        0xd73f0d2a, // blrab x9, x10
-        0xd69f03e0, // eret
-        0x54000010, // bc.eq
-        0xdac107e9, // pacib x9, sp
-        0xdac117e9, // autib x9, sp
-        0xdac143e9, // xpaci x9
-        0x9ac23029, // pacga x9, x1, x2
-        0xd4000001, // svc #0
-        0xd51bd049, // msr tpidr_el0, x9
-        0xd53bd049, // mrs x9, tpidr_el0
-        0xd50b7429, // dc zva, x9
-        0xf82007fe, // ldraa lr, [sp]
-        0x193e8040, // swpp x0, lr, [x2]
-        0x0420e3e9, // cntb x9
-        0x00010000,
-    };
-    for (uint32_t word : words) {
-        AOT_TEST_CHECK(RuleOfReturnAddresses::HasOnlyKnownInstructions == ruleBrokenBy([&](CCallHelpers& jit) {
-            jit.m_assembler.buffer().putInt(word);
-        }));
-    }
-    AOT_TEST_CHECK(!ruleBrokenBy([](CCallHelpers& jit) {
-        jit.memoryFence();
-        jit.storeFence();
-        jit.m_assembler.hlt(1);
-        jit.m_assembler.brk(1);
-        jit.illegalInstruction();
-    }));
-}
-
-static void testImageIsCheckedWithoutBeingAsked()
-{
-    constexpr uint32_t pacibsp = 0xd503237f;
-    constexpr uint32_t pushFrameRecord = 0xa9bf7bfd;
-    for (bool signs : { false, true }) {
-        ImageTests::TestBuild build(2);
-        ImageTests::CodeSketch sketch(1);
-        if (signs)
-            sketch.plain(pacibsp);
-        sketch.plain(pushFrameRecord);
-        sketch.end();
-        ImageTests::TestImage image = build.build(ImageTests::bodies(sketch.take()));
-        AOT_TEST_CHECK(!!image.image == signs);
-        AOT_TEST_CHECK(build.count(InternalErrorKind::WrongValueInRegister) == !signs);
-    }
-}
-
-static void testConstantsBehindCodeOfImageAreData()
-{
-    const uint32_t words[] = { retab, retab };
-    ImageTests::TestBuild build(2);
-    ImageTests::CodeSketch sketch(1);
-    sketch.end();
-    sketch.code().body.rareLists.ensure().constants = { ConstantData { Vector<uint8_t>(asByteSpan(words)), sizeof(words) } };
-    ImageTests::TestImage image = build.build(ImageTests::bodies(sketch.take()));
-    AOT_TEST_CHECK(image.image);
-    AOT_TEST_CHECK(image.image->header().code.constantsOffset < image.image->header().executableSize);
-}
-
-static void testThunkMayReloadWhatStubJumpsTo()
-{
-    constexpr StubKey jumpsToMatcher = regExpTest(false, false);
-    ArgumentMoves moves;
-    moves.append(jumpsToMatcher.bits());
-    moves.append(0);
-    appendArgumentMove(moves, signatureOf(jumpsToMatcher).operands[1].gpr(), ArgumentSource::Stack64, static_cast<uint64_t>(-8));
-    ImageTests::TestBuild build(2);
-    ImageTests::CodeSketch sketch(1);
-    sketch.withFrame();
-    sketch.callThunk(moves, sketch.addSite());
-    sketch.end();
-    AOT_TEST_CHECK(build.build(ImageTests::bodies(sketch.take())).image);
-}
-
-static void appendCopyAsLinkerDoes(Vector<uint8_t>& code, const StubBlob& blob)
-{
-    const RelocatableCode& veneer = ImageTests::testTemplates().veneer;
-    size_t copy = code.size();
-    code.appendVector(blob.code.bytes);
-    for (const StubEntryRange& entry : blob.entriesInFrontOfSingleReturnSites) {
-        memcpySpan(code.mutableSpan().subspan(copy + entry.offset), veneer.bytes.span());
-        AOT_TEST_CHECK(applyRelocation(code.mutableSpan(), copy + entry.offset, veneer.relocations[0], entry.offset));
-    }
-}
-
-static void appendFunctionThatJumpsToEveryStub(Vector<uint8_t>& code, const StubBlob& blob, uint32_t instructionThatSetsX0)
-{
-    constexpr uint32_t skipsNextUnlessX0IsZero = 0xb5000040;
-    constexpr uint32_t jump = 0x14000000;
-    for (uint32_t reg = ARM64Registers::x0; reg < static_cast<uint32_t>(framePointer); ++reg) {
-        uint32_t word = instructionThatSetsX0 | reg;
-        code.append(asByteSpan(word));
-    }
-    for (const StubPlacement& placement : blob.placements) {
-        if (descriptorOf(placement.key.family()).linkage != StubLinkage::CalledByCode)
-            continue;
-        code.append(asByteSpan(skipsNextUnlessX0IsZero));
-        uint32_t word = jump | ((placement.offset - static_cast<uint32_t>(code.size())) >> 2 & 0x3ffffff);
-        code.append(asByteSpan(word));
-    }
-    code.appendVector(ImageTests::testTemplates().breakpoint);
-}
-
-static void testEveryStubKeepsTheRules()
-{
-    Vector<StubKey> keys = stubKeysWithLinkage(StubLinkage::CalledByCode);
-    forEachKeyWithoutImmediate([&](StubKey key) {
-        if (descriptorOf(key.family()).binding != ImmediateBinding::OperationOffset)
-            return;
-        for (const OperationPrelude& prelude : operationPreludes()) {
-            if (StubKey head = key.withImmediate(offsetInRuntimeTable(prelude.operation)); exists(head))
-                keys.append(head);
-        }
-    });
-    for (const StubOptions& options : stubOptionVariants()) {
-        StubCatalog catalog(options);
-        WTF::BitSet<numberOfEntries> everyEntry;
-        everyEntry.setAll();
-        BuildContext context(makeDefaultCompileOptions());
-        auto blob = buildStubBlob(context, catalog, keys.span(), everyEntry);
-        AOT_TEST_CHECK(blob.has_value());
-
-        const uint32_t sizeOfStubs = blob->code.bytes.size();
-        Vector<uint8_t> code = blob->code.bytes;
-        appendCopyAsLinkerDoes(code, *blob);
-        Vector<uint32_t> functions;
-        for (uint32_t instruction : { 0x910003e0 /* mov x0, sp */, 0xf94003e0 /* ldr x0, [sp] */, 0xd2800000 /* mov x0, #0 */, 0xd2800020 /* mov x0, #1 */, 0x90000000 /* adrp x0, . */ }) {
-            functions.append(code.size());
-            appendFunctionThatJumpsToEveryStub(code, *blob, instruction);
-        }
-
-        ReturnAddressCheck check(code.span());
-        check.addStubs(*blob, 0);
-        check.addStubs(*blob, sizeOfStubs);
-        check.addCopyOfOtherCode(sizeOfStubs, sizeOfStubs);
-        for (uint32_t function : functions) {
-            check.addCalledEntry(function);
-            check.addPiece(function, (code.size() - functions[0]) / functions.size(), ReturnAddressCheck::Piece::Function);
-        }
-        if (std::optional<ReturnAddressCheck::Violation> violation = check.run()) {
-            dataLogLn(nameOfStubAt(*blob, violation->offset % sizeOfStubs), ": ", nameOf(violation->rule));
-            failNativeTest(__FILE__, __LINE__, "no stub breaks a rule");
-        }
-
-        // Some stubs have code behind a jump that nothing jumps to.
-        unsigned reached = 0;
-        unsigned leftOut = 0;
-        for (uint32_t offset = 0; offset < sizeOfStubs; offset += sizeof(uint32_t))
-            ++(check.hasReachedFromEntry(offset) ? reached : leftOut);
-        AOT_TEST_CHECK(leftOut < reached / 20);
+    StubWords words { };
+    void* address = &words;
+    words.returnAddresses[static_cast<unsigned>(StubFrameKind::Adapter)] = address;
+    for (uintptr_t modifier = 0; modifier < 8; ++modifier) {
+        void* signedAddress = JSC::signReturnAddress(address, std::bit_cast<const void*>(modifier));
+        AOT_TEST_CHECK(removeCodePtrTag(signedAddress) == address && removeCodePtrTag<uintptr_t>(signedAddress) == std::bit_cast<uintptr_t>(address));
+        AOT_TEST_CHECK(words.isReturnAddress(StubFrameKind::Adapter, std::bit_cast<uint64_t>(signedAddress)));
     }
 }
 
@@ -1609,12 +1183,6 @@ function f20 name="throwsAtOnce" flags=[IsGenerator, HasThis, TakesCallee] thisT
 }
 )IR"_s;
 
-static bool processorSignsAddresses()
-{
-    constexpr unsigned long hwcapPACA = 1UL << 30;
-    return getauxval(AT_HWCAP) & hwcapPACA;
-}
-
 namespace {
 
 class ProgramWhoseAddressesAreSpoiled {
@@ -1671,7 +1239,7 @@ private:
     {
         std::unique_ptr<CompileOutput> output;
         runOnBuildThread([&] {
-            output = compileForShellOnThisThread(programWhoseAddressesAreSpoiled, { "check=VerifyEachStage"_s }, way);
+            output = compileForShellOnThisThread(programWhoseAddressesAreSpoiled, { }, way);
         });
         return output;
     }
@@ -1710,6 +1278,7 @@ static void testSpoiledReturnAddressIsNotHandedToTailCall()
     checkSpoiledFrameRecords("calls(leaves, isEntered)"_s, "spoiled false\nentered\ncaller goes on\ndone\n"_s, "entered"_s, 1);
     checkSpoiledFrameRecords("calls(leaves, () => print('entered'))"_s, "spoiled false\nentered\ncaller goes on\ndone\n"_s, "entered"_s, 1);
     checkSpoiledFrameRecords("leaves(() => print('entered'))"_s, "spoiled false\nentered\ndone\n"_s, "entered"_s, 1);
+    checkSpoiledFrameRecords("calls(() => { 'use strict'; returns(); return isEntered(); })"_s, "spoiled false\nentered\ncaller goes on\ndone\n"_s, "entered"_s, 3);
 }
 
 using PlaceOfFrameByWay = std::array<ASCIILiteral, std::size(waysToCompilePrograms)>;
@@ -1756,32 +1325,26 @@ static void checkOutputInEveryWay(ASCIILiteral statements, ASCIILiteral expected
 std::span<const NativeTest> signedReturnAddressTests()
 {
     static constexpr NativeTest tests[] = {
-        { "signed-return-addresses/check/accepts-what-the-assembler-offers"_s, testCheckAcceptsWhatTheAssemblerOffers },
-        { "signed-return-addresses/check/finds-save-without-signature"_s, testCheckFindsSaveWithoutSignature },
-        { "signed-return-addresses/check/takes-saved-registers-for-no-frame-record"_s, testCheckTakesSavedRegistersForNoFrameRecord },
-        { "signed-return-addresses/check/finds-return-without-authentication"_s, testCheckFindsReturnWithoutAuthentication },
-        { "signed-return-addresses/check/finds-signature-for-what-was-in-memory"_s, testCheckFindsSignatureForWhatWasInMemory },
-        { "signed-return-addresses/check/finds-authentication-without-signature"_s, testCheckFindsAuthenticationWithoutSignature },
-        { "signed-return-addresses/check/finds-other-key-or-no-modifier"_s, testCheckFindsOtherKeyOrNoModifier },
-        { "signed-return-addresses/check/finds-fault-that-signs-what-was-in-memory"_s, testCheckFindsFaultThatSignsWhatWasInMemory },
-        { "signed-return-addresses/check/lets-link-register-hold-address-in-frame"_s, testCheckLetsLinkRegisterHoldAddressInFrame },
-        { "signed-return-addresses/check/finds-link-register-handed-on"_s, testCheckFindsLinkRegisterHandedOn },
-        { "signed-return-addresses/check/enters-label-whose-address-is-taken"_s, testCheckEntersLabelWhoseAddressIsTaken },
-        { "signed-return-addresses/check/finds-address-of-label-that-goes-out-of-sight"_s, testCheckFindsAddressOfLabelThatGoesOutOfSight },
-        { "signed-return-addresses/check/finds-address-of-label-handed-to-function"_s, testCheckFindsAddressOfLabelHandedToFunction },
-        { "signed-return-addresses/check/follows-veneer"_s, testCheckFollowsVeneer },
-        { "signed-return-addresses/check/tells-veneer-from-other-jumps"_s, testCheckTellsVeneerFromOtherJumps },
-        { "signed-return-addresses/check/ends-where-functions-jump-into-each-other"_s, testCheckEndsWhereFunctionsJumpIntoEachOther },
-        { "signed-return-addresses/check/tells-where-function-resumes-from-where-it-is-called"_s, testCheckTellsWhereFunctionResumesFromWhereItIsCalled },
-        { "signed-return-addresses/check/tells-return-site-of-stub-from-mark"_s, testCheckTellsReturnSiteOfStubFromMark },
-        { "signed-return-addresses/check/finds-jump-to-what-came-off-the-stack"_s, testCheckFindsJumpToWhatCameOffTheStack },
-        { "signed-return-addresses/check/looks-at-code-that-nothing-leads-to"_s, testCheckLooksAtCodeThatNothingLeadsTo },
-        { "signed-return-addresses/check/takes-words-behind-calls-for-data"_s, testCheckTakesWordsBehindCallsForData },
-        { "signed-return-addresses/check/refuses-instruction-that-it-does-not-know"_s, testCheckRefusesInstructionThatItDoesNotKnow },
-        { "signed-return-addresses/image-is-checked-without-being-asked"_s, testImageIsCheckedWithoutBeingAsked },
-        { "signed-return-addresses/constants-behind-code-of-image-are-data"_s, testConstantsBehindCodeOfImageAreData },
-        { "signed-return-addresses/image-whose-thunk-reloads-what-a-stub-jumps-to"_s, testThunkMayReloadWhatStubJumpsTo },
-        { "signed-return-addresses/every-stub-keeps-the-rules"_s, testEveryStubKeepsTheRules },
+        { "signed-return-addresses/assembler/what-leaves-no-trace-is-emitted-as-it-is"_s, testWhatLeavesNoTraceIsEmittedAsItIs },
+        { "signed-return-addresses/assembler/what-is-copied-out-is-signed"_s, testWhatIsCopiedOutIsSigned },
+        { "signed-return-addresses/assembler/what-overwrites-is-authenticated"_s, testWhatOverwritesIsAuthenticated },
+        { "signed-return-addresses/assembler/atomic-access-is-signed-and-authenticated"_s, testAtomicAccessIsSignedAndAuthenticated },
+        { "signed-return-addresses/assembler/plain-address-is-not-stored-for-a-moment"_s, testPlainAddressIsNotStoredForAMoment },
+        { "signed-return-addresses/assembler/instructions-that-it-lacks"_s, testInstructionsThatTheAssemblerLacks },
+        { "signed-return-addresses/assembler/nothing-else-signs-authenticates-or-strips"_s, testNothingElseSignsAuthenticatesOrStrips },
+        { "signed-return-addresses/assembler/no-policy-switches-signing-off"_s, testNoPolicySwitchesSigningOff },
+        { "signed-return-addresses/assembler/load-behind-authentication-stays-unless-jump-follows"_s, testLoadBehindAuthenticationStaysUnlessJumpFollows },
+        { "signed-return-addresses/assembler/every-store-agrees-with-every-load"_s, ImageTests::whenExecutable<testEveryStoreAgreesWithEveryLoad> },
+        { "signed-return-addresses/assembler/every-push-agrees-with-every-pop"_s, ImageTests::whenExecutable<testEveryPushAgreesWithEveryPop> },
+        { "signed-return-addresses/assembler/link-register-is-plain-behind-save"_s, ImageTests::whenExecutable<testLinkRegisterIsPlainBehindSave> },
+        { "signed-return-addresses/assembler/word-that-is-copied-elsewhere-is-not-returned-to"_s, ImageTests::whenExecutable<testWordThatIsCopiedElsewhereIsNotReturnedTo> },
+        { "signed-return-addresses/assembler/return-to-old-link-register"_s, ImageTests::whenExecutable<testReturnToOldLinkRegister> },
+        { "signed-return-addresses/assembler/address-that-failed-is-not-signed-again"_s, ImageTests::whenExecutable<testAddressThatFailedIsNotSignedAgain> },
+        { "signed-return-addresses/assembler/address-to-look-at-is-read-and-not-jumped-to"_s, ImageTests::whenExecutable<testAddressToLookAtIsReadAndNotJumpedTo> },
+        { "signed-return-addresses/assembler/resume-address-comes-back-in-every-way"_s, ImageTests::whenExecutable<testResumeAddressComesBackInEveryWay> },
+        { "signed-return-addresses/assembler/word-of-instance-holds-signed-address"_s, ImageTests::whenExecutable<testWordOfInstanceHoldsSignedAddress> },
+        { "signed-return-addresses/assembler/no-plain-address-is-left-in-x17"_s, ImageTests::whenExecutable<testNoPlainAddressIsLeftInX17> },
+        { "signed-return-addresses/what-only-looks-takes-signature-off"_s, testWhatOnlyLooksTakesSignatureOff },
         { "signed-return-addresses/spoiled-address-is-not-returned-to"_s, testSpoiledReturnAddressIsNotReturnedTo },
         { "signed-return-addresses/spoiled-address-chooses-no-handler"_s, testSpoiledReturnAddressChoosesNoHandler },
         { "signed-return-addresses/spoiled-address-is-not-handed-to-tail-call"_s, testSpoiledReturnAddressIsNotHandedToTailCall },

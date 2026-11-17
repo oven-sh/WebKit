@@ -561,7 +561,7 @@ void testSeveralEntrypoints()
         CHECK(entrypoint.block()->at(0).kind.opcode == EnterFrame);
 
     CCallHelpers jit;
-    setPolicyAndGenerate(graph.code, jit);
+    generate(graph.code, jit);
     LinkBuffer linkBuffer(jit, nullptr);
     std::array<CodeLocationLabel<JITCompilationPtrTag>, numberOfEntrypoints> entrypoints;
     for (unsigned index = 0; index < numberOfEntrypoints; ++index)

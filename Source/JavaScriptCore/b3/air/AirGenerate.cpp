@@ -387,8 +387,10 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     if (emitsFrame) {
         frameStates.emplace(code);
         RELEASE_ASSERT(!frameStates->violation());
+#if ENABLE(RETURN_ADDRESS_SIGNING)
         // A path may return without having set up the frame.
-        RELEASE_ASSERT(!ENABLE_RETURN_ADDRESS_SIGNING || jit.policy().keepsLinkRegisterUnsigned);
+        jit.m_assembler.signLinkRegisterFromHereOn();
+#endif
         context.frameIsSetUp = false;
     }
     context.blockLabels.resize(code.size());
