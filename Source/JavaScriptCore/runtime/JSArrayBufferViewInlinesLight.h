@@ -83,6 +83,40 @@ inline ArrayBuffer* JSArrayBufferView::possiblySharedBuffer()
     return possiblySharedBufferImpl<Mutator>();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+inline bool JSArrayBufferView::beginBorrow()
+{
+    if (m_mode == OversizeTypedArray) {
+        ++m_borrowCount;
+        return true;
+    }
+    ArrayBuffer* buffer = possiblySharedBuffer();
+    if (!buffer) [[unlikely]]
+        return false;
+    buffer->beginBorrow();
+    return true;
+}
+
+inline void JSArrayBufferView::endBorrow()
+{
+    if (m_mode == OversizeTypedArray) {
+        --m_borrowCount;
+        return;
+    }
+    RELEASE_ASSERT(hasArrayBuffer());
+    // Not possiblySharedBuffer(): its cast asks for classInfo().
+    ArrayBuffer* buffer = isWastefulTypedArray(m_mode) ? existingBufferInButterfly() : static_cast<JSDataView*>(this)->possiblySharedBuffer();
+    buffer->endBorrow();
+}
+
+inline bool JSArrayBufferView::isBorrowed()
+{
+    if (hasArrayBuffer())
+        return possiblySharedBuffer()->isBorrowed();
+    return m_mode == OversizeTypedArray && m_borrowCount;
+}
+#endif
+
 inline RefPtr<ArrayBufferView> JSArrayBufferView::unsharedImpl()
 {
     RefPtr<ArrayBufferView> result = possiblySharedImpl();

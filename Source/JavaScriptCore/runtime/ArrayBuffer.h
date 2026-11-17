@@ -204,12 +204,19 @@ public:
         swap(m_sizeInBytes, other.m_sizeInBytes);
         swap(m_maxByteLength, other.m_maxByteLength);
         swap(m_hasMaxByteLength, other.m_hasMaxByteLength);
+#if USE(BUN_JSC_ADDITIONS)
+        swap(m_hasSharedOwner, other.m_hasSharedOwner);
+#endif
     }
 
     ArrayBufferContents detach()
     {
         ArrayBufferContents contents(WTF::move(*this));
         m_hasMaxByteLength = contents.m_hasMaxByteLength; // m_maxByteLength needs to be cleared while we need to keep the information that we had m_hasMaxByteLength.
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_borrowCount) [[unlikely]]
+            shareOwnershipOf(contents);
+#endif
         return contents;
     }
 
@@ -225,6 +232,9 @@ private:
         m_sizeInBytes = 0;
         m_maxByteLength = 0;
         m_hasMaxByteLength = false;
+#if USE(BUN_JSC_ADDITIONS)
+        m_hasSharedOwner = false;
+#endif
     }
 
     friend class ArrayBuffer;
@@ -238,6 +248,9 @@ private:
     
     void makeShared();
     void copyTo(ArrayBufferContents&);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void shareOwnershipOf(ArrayBufferContents&);
+#endif
 
     using DataType = CagedPtr<Gigacage::Primitive, void>;
     DataType m_data { nullptr };
@@ -247,6 +260,12 @@ private:
     size_t m_sizeInBytes { 0 };
     size_t m_maxByteLength { 0 };
     bool m_hasMaxByteLength { false };
+#if USE(BUN_JSC_ADDITIONS)
+    // m_destructor does nothing when it runs. It owns the bytes, and frees them with its last reference.
+    bool m_hasSharedOwner { false };
+    // Belongs to the ArrayBuffer around this object, so it does not move with the bytes. It is here to fill the padding.
+    Checked<unsigned> m_borrowCount { 0 };
+#endif
 };
 
 class ArrayBuffer final : public GCIncomingRefCounted<ArrayBuffer> {
@@ -317,6 +336,16 @@ public:
     // API user fetched m_contents directly from a TypedArray object, the buffer is backed by a
     // WebAssembly.Memory, or is a SharedArrayBuffer.
     inline void pinAndLock();
+
+#if USE(BUN_JSC_ADDITIONS)
+    // For native code that goes on using data() while script runs. A borrowed buffer can be detached: the bytes
+    // move to their new owner, and are freed when that owner and the last borrow are both gone, so endBorrow() can
+    // run the destructor function. The borrower keeps this object alive, and calls both functions on its thread.
+    // As with pin(), resize() still trims pages and a WebAssembly.Memory that grows can still replace its block.
+    inline void beginBorrow(unsigned count = 1);
+    inline void endBorrow();
+    bool isBorrowed() const { return !!m_contents.m_borrowCount; }
+#endif
 
     NODELETE void makeWasmMemory();
     inline bool isWasmMemory();
@@ -427,6 +456,21 @@ void ArrayBuffer::pinAndLock()
 {
     m_pinCount |= s_lockedFlag;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void ArrayBuffer::beginBorrow(unsigned count)
+{
+    m_contents.m_borrowCount += count;
+}
+
+void ArrayBuffer::endBorrow()
+{
+    if (--m_contents.m_borrowCount || !isDetached())
+        return;
+    if (std::exchange(m_contents.m_hasSharedOwner, false))
+        m_contents.m_destructor = nullptr;
+}
+#endif
 
 bool ArrayBuffer::isWasmMemory()
 {

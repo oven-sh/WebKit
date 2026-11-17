@@ -231,6 +231,9 @@ void ArrayBufferContents::makeShared()
 {
     m_shared = SharedArrayBufferContents::create(mutableSpan(), maxByteLength(), m_memoryHandle, WTF::move(m_destructor), SharedArrayBufferContents::Mode::Default);
     m_destructor = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    m_hasSharedOwner = false;
+#endif
 }
 
 SharedArrayBufferContents::~SharedArrayBufferContents()
@@ -268,6 +271,26 @@ void ArrayBufferContents::shareWith(ArrayBufferContents& other) const
     RELEASE_ASSERT(other.m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
     ASSERT(other.m_maxByteLength <= MAX_ARRAY_BUFFER_SIZE);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void ArrayBufferContents::shareOwnershipOf(ArrayBufferContents& other)
+{
+    static_assert(OBJECT_OFFSETOF(ArrayBufferContents, m_borrowCount) - OBJECT_OFFSETOF(ArrayBufferContents, m_hasMaxByteLength) < static_cast<ptrdiff_t>(sizeof(void*)), "It takes no room of its own");
+    ASSERT(!m_data && !m_destructor);
+    ASSERT(!other.m_shared);
+    // One owner for all the buffers that these bytes pass through. An owner for each would be a chain that is destroyed recursively.
+    if (!other.m_hasSharedOwner) {
+        ArrayBufferContents owner;
+        owner.m_data = other.m_data;
+        owner.m_destructor = WTF::move(other.m_destructor);
+        owner.m_memoryHandle = other.m_memoryHandle;
+        other.m_destructor = createSharedTask<void(void*)>([owner = WTF::move(owner)](void*) { });
+        other.m_hasSharedOwner = true;
+    }
+    m_destructor = other.m_destructor;
+    m_hasSharedOwner = true;
+}
+#endif
 
 Ref<ArrayBuffer> ArrayBuffer::create(size_t numElements, unsigned elementByteSize)
 {
