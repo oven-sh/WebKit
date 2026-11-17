@@ -1377,6 +1377,13 @@ bool Modules::runMocksInFetchedGraphSlow(ModuleID module)
     LoadRootKind kind = wasFetchedForStatement || (!isAskedForByImportCall && isFetchedForImportStatement(module)) ? LoadRootKind::ImportStatement : LoadRootKind::StartsLoad;
     std::optional<ModuleID> importerOfStatement;
     auto fetch = m_fetchesForStatements.find(module);
+    if (fetch != m_fetchesForStatements.end()) {
+        ModuleRegistryEntry* importer = loader()->registryEntry(moduleKey(fetch->value.importer));
+        if (importer && importer->loadPromise() && importer->loadPromise()->status() == JSPromise::Status::Rejected) [[unlikely]] {
+            loader()->removeEntry(moduleKey(module));
+            return false;
+        }
+    }
     if (fetch != m_fetchesForStatements.end() && status(fetch->value.importer) <= ModuleStatus::Linked && (kind == LoadRootKind::ImportStatement || fetch->value.walksInFrontOfMocks)) {
         ModuleID importer = fetch->value.importer;
         bool haveRun = fetch->value.walksInFrontOfMocks || evaluateStatementsInFrontOf(importer, module);
@@ -1515,6 +1522,10 @@ void Modules::evaluateStatementsBehind(ModuleID importer, ModuleID module)
         if (!std::exchange(isFound, isFound || *file == fileOf(module)))
             continue;
         if (!*file || isEvicted(*file) || (data(*file).isESModuleOfProgram() && !data(*file).isSynchronous()))
+            return;
+        bool hasFailed = !isMocked(*file) && status(*file) == ModuleStatus::Failed;
+        bool runsOriginal = needsOriginalBeforeFactory(*file) && status(*file) != ModuleStatus::Evaluated && !wasOriginalEvaluated(*file);
+        if (hasFailed || runsOriginal)
             return;
         bool importsUnloaded = importsUnloadedCode(*file);
         RETURN_IF_EXCEPTION(scope, void());
