@@ -36,6 +36,12 @@
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+class AsyncContextOutsideModuleLoaderJobsScope;
+}
+#endif
+
 // RAII helper for Bun's AsyncLocalStorage. A job (microtask, timer, ...)
 // captures the value of JSGlobalObject::m_asyncContextData field 0 when it is
 // scheduled; constructing this scope with that captured value installs it for
@@ -140,6 +146,9 @@ public:
         return wrap(vm, globalObject, userContext, current(vm, globalObject));
     }
 
+    // Whether this scope puts back, at its end, what it found in the slot.
+    bool didEnter() const { return m_asyncContextData; }
+
 protected:
     // For a scope that decides by itself whether it enters: ModuleLoaderAsyncContextScope.
     enum DoNotEnterTag { DoNotEnter };
@@ -148,7 +157,9 @@ protected:
     {
     }
 
-    bool didEnter() const { return m_asyncContextData; }
+#if ENABLE(AOT)
+    VM& vm() const { return m_vm; }
+#endif
 
     // The previous value is put back on exit even when nothing had to be
     // installed, so whatever the job itself leaves in the slot (enterWith())
@@ -166,6 +177,11 @@ protected:
     }
 
 private:
+#if ENABLE(AOT)
+    // It shows what a scope found in the slot to what runs inside that scope and is no part of it.
+    friend class AOT::AsyncContextOutsideModuleLoaderJobsScope;
+#endif
+
     VM& m_vm;
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
@@ -177,7 +193,8 @@ private:
 // the load (ModuleLoadingContext, ModuleLoaderPayload, ModuleGraphLoadingState, and ModuleRegistryEntry until the record
 // is made), and every request that the load makes takes it from there: JSModuleLoader::asyncContextOfLoad(). Where that
 // context is a store, a job of the load is a continuation of the import(): it runs under the store, and what it leaves
-// in the slot ends with it.
+// in the slot ends with it. A store is here whatever the slot held that is not undefined: a frame of AsyncLocalStorage,
+// or another frame that the host keeps there.
 //
 // A load that keeps no store has no scope, and this class changes nothing for it. Its jobs run as they ran before there
 // was this class: under whatever the slot holds when each of them runs, and what they leave there stays until the host
@@ -195,8 +212,11 @@ private:
 // of the synchronous load do. (The job that resumes a module behind its own await is no such job: it has the context
 // of that await, as any await has.)
 //
-// What a job with a store does more is out of line: a load with a store is rare, and the function of each job of the
-// loader (JSMicrotask.cpp) gains a test of its async context and no more.
+// What a job with a store does more is out of line: for a load that keeps none, the function of each job of the loader
+// (JSMicrotask.cpp) gains a test of its async context and no more.
+//
+// This class is for what the loader calls on the way of a job: a hook of the host, a CommonJS file that the AOT run time
+// runs ahead of the loader. The jobs themselves have ModuleLoaderJobAsyncContextScope.
 class ModuleLoaderAsyncContextScope : public AsyncContextSwapScope {
 public:
     ALWAYS_INLINE ModuleLoaderAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
@@ -224,6 +244,74 @@ private:
     NEVER_INLINE void enterOutsideSynchronousDrain(VM&, JSGlobalObject*, JSValue asyncContext);
 };
 
+// For a job of the module loader itself: the function of a job in JSMicrotask.cpp. What such a scope finds in the slot
+// where it enters is what the queue that runs its job has there between two jobs.
+//
+// With ENABLE(AOT) the VM has the scopes of the jobs that entered: VM::m_asyncContextScopeOfModuleLoaderJob is the
+// innermost, and each has the one around it (outerJob()). The AOT run time runs jobs of the queue inside a job of the
+// loader: behind a CommonJS file that ran ahead of the loader, the jobs that were queued in front of the step of that
+// file (AOT::Modules::transferGraphToLoader()). They are of whoever queued them, another load too, and they are no part
+// of the job that ran the file. The queue would run each of them with no job below it, and a job of a load that keeps
+// no context enters nothing: inside a job that entered the context of its load it would read the context of another
+// import().
+//
+// So AOT::AsyncContextOutsideModuleLoaderJobsScope puts into the slot what the outermost job that they are no part of
+// found there, and what they leave in the slot is what that job puts back at its end, as if they had run in front of
+// it. Modules notes which jobs those are where the files of a load begin to run ahead
+// (AOT::Modules::noteJobAroundStepsInFront()): the job of a load that keeps a context runs the files, so the steps in
+// front of them are no part of it. Two such scopes of one job come one after the other, never one inside the other: the
+// second reads what the first left.
+//
+// A ModuleLoaderAsyncContextScope is no job, and the VM never has it. It can enter the context of its load over another
+// value: where its job entered nothing, and inside the steps above. Those steps pass over it, because they take what a
+// job found, and not what the slot holds.
+//
+// A scope that enters nothing writes nothing for this. m_outerJob has no initializer: it is written where the scope
+// enters, and read only of a scope that entered. (A build that zeroes every local, -ftrivial-auto-var-init=zero, zeroes
+// it with the rest of the scope.)
+class ModuleLoaderJobAsyncContextScope : public ModuleLoaderAsyncContextScope {
+public:
+    ALWAYS_INLINE ModuleLoaderJobAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+        : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
+    {
+#if ENABLE(AOT)
+        if (didEnter()) [[unlikely]]
+            m_outerJob = std::exchange(vm.m_asyncContextScopeOfModuleLoaderJob, this);
+#endif
+    }
+
+#if ENABLE(AOT)
+    ALWAYS_INLINE ~ModuleLoaderJobAsyncContextScope()
+    {
+        if (didEnter()) [[unlikely]] {
+            ASSERT(vm().m_asyncContextScopeOfModuleLoaderJob == this);
+            vm().m_asyncContextScopeOfModuleLoaderJob = m_outerJob;
+        }
+    }
+
+    // The VM would keep the scope of a job that put its context back before its end.
+    void restoreEarly() = delete;
+
+    // The job that entered in front of this one, and is still on the stack.
+    ModuleLoaderJobAsyncContextScope* outerJob() const
+    {
+        ASSERT(didEnter());
+        return m_outerJob;
+    }
+#endif
+
+protected:
+    ALWAYS_INLINE ModuleLoaderJobAsyncContextScope(VM& vm, DoNotEnterTag)
+        : ModuleLoaderAsyncContextScope(vm, DoNotEnter)
+    {
+    }
+
+#if ENABLE(AOT)
+private:
+    ModuleLoaderJobAsyncContextScope* m_outerJob;
+#endif
+};
+
 // For a job of the module loader that evaluates modules. A module with a top-level await leaves a job behind that runs
 // the modules that wait for it (CyclicModuleRecord::executeAsync()). That job continues the job that began to evaluate
 // the module: JSModuleLoader::asyncContextOfModulesThatWait() says what it gets.
@@ -239,7 +327,7 @@ private:
 // whichever job of the loader is on the stack. Such a scope enters nothing and puts nothing back: what the module
 // leaves in the slot is the caller's, as behind any call. Where nothing is current at the call, the job gets none, as
 // in a load with no store: it runs under whatever the slot holds then.
-class ModuleEvaluationAsyncContextScope final : public ModuleLoaderAsyncContextScope {
+class ModuleEvaluationAsyncContextScope final : public ModuleLoaderJobAsyncContextScope {
 public:
     enum CalledByScriptTag { CalledByScript };
 

@@ -777,7 +777,7 @@ void ModuleLoaderAsyncContextScope::enterOutsideSynchronousDrain(VM& vm, JSGloba
 }
 
 ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
-    : ModuleLoaderAsyncContextScope(vm, globalObject, asyncContext)
+    : ModuleLoaderJobAsyncContextScope(vm, globalObject, asyncContext)
     , m_vm(vm)
     , m_asyncContextOfLoad(asyncContext)
     , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
@@ -785,7 +785,7 @@ ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, JSG
 }
 
 ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, CalledByScriptTag)
-    : ModuleLoaderAsyncContextScope(vm, DoNotEnter)
+    : ModuleLoaderJobAsyncContextScope(vm, DoNotEnter)
     , m_vm(vm)
     , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
     , m_calledByScript(true)

@@ -1209,7 +1209,7 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
 {
 #if USE(BUN_JSC_ADDITIONS)
     JSValue asyncContext = uncheckedDowncast<ModuleRegistryEntry>(argument2)->takeAsyncContext();
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
+    ModuleLoaderJobAsyncContextScope asyncContextScope(vm, globalObject, asyncContext);
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1333,7 +1333,7 @@ static void runModuleGraphLoadingError(JSGlobalObject* globalObject, VM& vm, Int
 static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+    ModuleLoaderJobAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1477,7 +1477,7 @@ static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicr
 static void runModuleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, InternalMicrotask, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue, MicrotaskCallCache*)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
+    ModuleLoaderJobAsyncContextScope asyncContextScope(vm, globalObject, uncheckedDowncast<ModuleLoadingContext>(argument2)->asyncContext());
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1951,7 +1951,7 @@ static void runDynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm
 {
 #if ENABLE(AOT)
     // argument2 is the module. A compiled module is paired with the async context of the import() where there is one.
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(argument2));
+    ModuleLoaderJobAsyncContextScope asyncContextScope(vm, globalObject, AsyncContextSwapScope::unwrapContextTuple(argument2));
 #endif
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -2000,7 +2000,7 @@ static void runImportModuleNamespace(JSGlobalObject* globalObject, VM& vm, Inter
     // argument1 = module namespace (from dynamic import pipeline) or error
     // argument2 = unused. Bun: the async context of the import()
 #if USE(BUN_JSC_ADDITIONS)
-    ModuleLoaderAsyncContextScope asyncContextScope(vm, globalObject, argument2);
+    ModuleLoaderJobAsyncContextScope asyncContextScope(vm, globalObject, argument2);
 #endif
     auto* resultPromise = uncheckedDowncast<JSPromise>(argument0);
     auto status = static_cast<JSPromise::Status>(payload);

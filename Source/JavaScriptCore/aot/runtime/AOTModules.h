@@ -12,6 +12,7 @@
 #include "AOTModuleRecord.h"
 #include "AOTModuleTable.h"
 #include "AOTModuleWords.h"
+#include "AsyncContextSwapScope.h"
 #include "JSPromise.h"
 #include "MicrotaskQueue.h"
 #include "ModuleMap.h"
@@ -180,6 +181,18 @@ struct MockedModules {
         BitVector reachedBelow;
     };
     std::optional<Hub> hub;
+};
+
+class AsyncContextOutsideModuleLoaderJobsScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextOutsideModuleLoaderJobsScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    AsyncContextOutsideModuleLoaderJobsScope(VM&, ModuleLoaderJobAsyncContextScope* around);
+    ~AsyncContextOutsideModuleLoaderJobsScope();
+
+private:
+    ModuleLoaderJobAsyncContextScope* m_outermostJob { nullptr };
+    JSValue m_asyncContextInsideJobs;
 };
 
 class Modules {
@@ -2555,7 +2568,12 @@ private:
             uint32_t storeStep;
         };
         Vector<FileNotStored> filesNotStored { };
+        ModuleLoaderJobAsyncContextScope* jobAroundStepsInFront { nullptr };
+#if ASSERT_ENABLED
+        bool didNoteJobAroundStepsInFront { false };
+#endif
     };
+    void noteJobAroundStepsInFront(EagerLoad&, JSValue asyncContextOfLoad) const;
     std::optional<ModuleID> evaluatingModuleOrFacade(const EagerLoad&) const;
     bool isBegunForStatement(ModuleID moduleOrFacade) const;
     bool wasRequestedByLoad(EagerLoad&, ModuleID file);
@@ -2585,7 +2603,7 @@ private:
     };
     Vector<DeferredLinkStep, 1> m_deferredLinkSteps;
     void captureNoExports(ModuleID file);
-    void runStepsOfLoaderInFrontOf(ModuleID file);
+    void runStepsOfLoaderInFrontOf(ModuleID file, const AsyncContextOutsideModuleLoaderJobsScope&);
     void finishStepInWhichFileRan(ModuleID moduleOrFacade, JSValue error);
     std::optional<ModuleID> m_moduleBeingTransferred;
     EagerLoad* m_innermostEagerLoad { nullptr };

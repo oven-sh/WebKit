@@ -148,6 +148,7 @@ class MicrotaskQueue;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
 class ModuleEvaluationAsyncContextScope;
+class ModuleLoaderJobAsyncContextScope;
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
 namespace FFI { class CallbackEntryScope; }
@@ -1585,6 +1586,10 @@ public:
 #if ENABLE(AOT)
     // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
     SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
+    // The scope of the innermost job of the module loader on the stack that entered an async context:
+    // ModuleLoaderJobAsyncContextScope. The AOT run time notes it where the files of a load begin to run ahead of the
+    // loader. It points into the stack, and the scope takes itself out at its end.
+    ModuleLoaderJobAsyncContextScope* m_asyncContextScopeOfModuleLoaderJob { nullptr };
 #endif
     // The queue that reactions are diverted to.
     SynchronousModuleQueue* synchronousModuleQueue() const
