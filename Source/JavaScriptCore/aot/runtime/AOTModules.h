@@ -919,6 +919,7 @@ public:
     void forgetLoadsRefusedByCheckOfNames(ModuleID mocked);
     bool wasRegisteredByFailedLoad(ModuleID) const;
     bool wasLinkedByFailedGraph(ModuleID, bool byEarlierTestFile);
+    bool failedWithImportInEarlierTestFile(ModuleID);
     bool isImportedByFailedRoot(ModuleID, bool ofEarlierTestFile = false) const;
     bool wasReachedByFailedGraph(ModuleID) const;
     bool isFailedLoadRoot(ModuleID module) const { return m_loadRoots.get(module.index()) && status(module) == ModuleStatus::Failed; }
@@ -1491,7 +1492,7 @@ public:
     bool isRequiredModulePatchPending(ModuleID);
     std::optional<JSPromise*> importOriginalUnderPatch(ModuleID, ModuleID referrer, const RefPtr<ScriptFetchParameters>&);
     bool isPatchPending(ModuleID file) const;
-    bool isEvaluatedUnderPendingPatch(ModuleID);
+    bool isEvaluatedUnderPendingPatch(ModuleID, ModuleID requirer);
     void tellIfFactoryIsRunning(ModuleID requested, LoadKind);
     void tellIfPatchIsPending(ModuleID required);
     bool isRequireUnderPendingMock(ModuleID required, ModuleID requirer);
@@ -1928,6 +1929,7 @@ public:
     void fulfillQueuedFetch(JSPromise*);
     void fulfillQueuedFetchAfterJobs(JSPromise*);
     bool isOriginalLoaded(ModuleID);
+    bool isImportedByLoad(ModuleID root, ModuleID file) const;
     enum class AskedBy : bool { Loader, Import };
     bool textOfImportComesInLaterTurn(ModuleID, AskedBy);
     bool hasTextAtHand() const;

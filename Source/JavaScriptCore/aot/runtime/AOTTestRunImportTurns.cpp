@@ -82,6 +82,20 @@ bool Modules::isFetchedBesideFactory(ModuleID module)
     return false;
 }
 
+bool Modules::isImportedByLoad(ModuleID root, ModuleID file) const
+{
+    for (size_t index : modulesInLoadGraph(root)) {
+        ModuleID importer(index);
+        if (isCommonJSModuleOrFacade(importer) || status(importer) >= ModuleStatus::Evaluating)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (fileOf(moduleLoadedBy(request)) == file)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 {
     ModuleID file = fileOf(module);
@@ -921,6 +935,12 @@ bool wasOriginalRequiredFirst(JSGlobalObject* realm, ModuleID file)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasOriginalRequiredFirst(file);
+}
+
+bool isImportedByLoad(JSGlobalObject* realm, ModuleID root, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isImportedByLoad(root, file);
 }
 
 bool isMockUnseen(JSGlobalObject* realm, ModuleID mocked)
