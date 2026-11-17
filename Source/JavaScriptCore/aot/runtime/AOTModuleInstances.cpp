@@ -3378,7 +3378,6 @@ bool Modules::tryEvictRequirerOfOriginal(ModuleID module)
         return false;
     releaseImportersOf(file, ReleasedImporters::All);
     forgetUnmockedOriginal(file);
-    m_originalsRunForStatements.clear(file.index());
     didRemoveActiveMockEntry(file);
     return true;
 }
