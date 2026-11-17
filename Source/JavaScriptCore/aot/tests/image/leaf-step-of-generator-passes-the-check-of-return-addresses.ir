@@ -1,0 +1,38 @@
+# function* count() { let i = 0.5; for (;;) { yield i; i += 1.5; } }  hold(count());
+# The place of a leaf step lies in the saved frame without a signature. An engine that signs return addresses lets it, by the mark at its start (aot/README.md, "Signed return addresses")
+# STATISTIC: GeneratorLeafSteps >= 1
+# RUN: image mechanisms=all
+# CHECK: section Functions
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="hold" [isFreeName]
+    v3 = Call v0 calleeName="count"
+    v4 = Call v2, -, v3 calleeName="hold"
+    v5 = Undefined
+    Return v5
+}
+function f1 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: function):
+    InitialYield v0
+    v3 = Double number=0.5
+    Jump -> next b1(v3)
+  b1(v4):
+    LoopHint
+    v6 = Yield v4, v0
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Switch v8 cases=[1, 2] -> case b2(), case b3(), otherwise b4()
+  b2():
+    Throw v7
+  b3():
+    Return v7
+  b4():
+    v9 = Double number=1.5
+    v10 = Add v4, v9
+    Jump -> next b1(v10)
+}

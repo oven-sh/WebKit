@@ -841,8 +841,8 @@ static Vector<uint8_t> writeImage(const ImageWriterInputs& parts, PhaseTimes& ti
 
     checkImageIsReadOnly(image.subspan(extent->codeOffset, layout.codeSize), parts.ffiStubs, layout, context);
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-    if (checksImageWhileBuilding(context) && !context.diagnostics().hasErrors()) {
-        checkReturnAddresses(linker, { parts.sections[ImageSection::WebAssemblyDirectory].span(), parts.webAssembly.targetsOfJumpTables.span() }, parts.ffiStubs, image.subspan(extent->codeOffset, layout.codeSize), context);
+    if (!context.diagnostics().hasErrors()) {
+        checkReturnAddresses(linker, { parts.sections[ImageSection::WebAssemblyDirectory].span(), parts.webAssembly.places }, parts.ffiStubs, image.subspan(extent->codeOffset, layout.codeSize), context);
         times.didFinish("check return addresses"_s);
     }
 #endif

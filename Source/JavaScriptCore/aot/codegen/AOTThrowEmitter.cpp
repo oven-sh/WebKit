@@ -83,6 +83,7 @@ Vector<uint32_t, 3> throwSiteWords(const ThrowSite& site, Representation represe
         words.append(site.a);
     if (site.b)
         words.append(*site.b);
+    RELEASE_ASSERT(words.size() == word.numberOfWordsOfSite());
     return words;
 }
 

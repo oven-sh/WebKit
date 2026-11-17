@@ -284,6 +284,7 @@ public:
     struct JumpTableRecord {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(JumpTableRecord);
         Vector<uint32_t> targetOffsets;
+        std::optional<uint32_t> offsetBehindJump;
     };
 
     JS_EXPORT_PRIVATE unsigned addJumpTable(unsigned numberOfEntries);

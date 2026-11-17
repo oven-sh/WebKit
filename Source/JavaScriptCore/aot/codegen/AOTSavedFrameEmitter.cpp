@@ -507,6 +507,7 @@ static void emitLeafStep(CCallHelpers& jit, StubCalls& stubCalls, const LeafStep
         return scratchOfLeafStep;
     };
     *step.start = jit.label();
+    emitTargetOfUnsignedJump(jit);
     for (const InstructionOfLeafStep& instruction : step.instructions) {
         switch (instruction.kind) {
         case Kind::LoadDouble: jit.loadDouble(frameWord(instruction), leafFPR(instruction.result)); break;
@@ -2561,7 +2562,7 @@ void SavedFrameEmitter::storeResumeAddress(unsigned entrypoint, LValue frame)
         emitStoreResumeAddress(jit, CCallHelpers::memoryTempRegister, params[0].gpr());
     });
 #else
-    m_out.storePtr(addressOfEntrypoint(entrypoint), m_out.address(fields, frame, SavedFrame::offsetOfResumeAddress()));
+    m_out.storePtr(addressOfEntrypoint(entrypoint), m_out.address(fields, frame, offsetOfResumeAddressWithoutSignature()));
 #endif
 }
 

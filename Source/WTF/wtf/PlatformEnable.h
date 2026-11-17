@@ -1108,6 +1108,10 @@
    but nothing else of that ABI: no other pointer is signed. Every instruction is a hint, which a processor without pointer
    authentication ignores. C++ is signed by the compiler (-mbranch-protection=pac-ret), with the other key. What ENABLE(AOT) compiles
    saves the same word in its frame records as the JITs do (aot/README.md, "Signed return addresses"). */
+#if !defined(ENABLE_RETURN_ADDRESS_SIGNING) && defined(BUN_HARDENED) && CPU(ARM64) && !CPU(ARM64E) && OS(LINUX)
+#define ENABLE_RETURN_ADDRESS_SIGNING 1
+#endif
+
 #if !defined(ENABLE_RETURN_ADDRESS_SIGNING)
 #define ENABLE_RETURN_ADDRESS_SIGNING 0
 #endif

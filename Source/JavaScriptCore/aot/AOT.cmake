@@ -74,6 +74,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/image/AOTImageForward.h
     aot/image/AOTImageLoading.h
     aot/image/AOTImageText.h
+    aot/image/AOTPlacesInWebAssemblyCode.h
     aot/image/AOTPrefixCode.h
     aot/image/AOTRegExpMatchPlan.h
     aot/image/AOTRegExpSummary.h

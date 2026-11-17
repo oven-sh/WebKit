@@ -13,6 +13,11 @@
 
 namespace JSC { namespace AOT {
 
+struct ResumeAddressWord {
+    static constexpr ptrdiff_t offset = SavedFrame::offsetOfResumeAddress();
+};
+static_assert(SavedFrame::offsetOfPromiseOrWaiter() == ResumeAddressWord::offset + sizeof(void*));
+
 #if ENABLE(RETURN_ADDRESS_SIGNING)
 
 static constexpr GPRReg modifierOfSavedAddressGPR = CCallHelpers::dataTempRegister;
@@ -25,7 +30,7 @@ static void emitModifierOfReturnAddress(CCallHelpers& jit, GPRReg record)
 
 static void emitModifierOfResumeAddress(CCallHelpers& jit, GPRReg savedFrame)
 {
-    jit.addPtr(CCallHelpers::TrustedImm32(SavedFrame::offsetOfResumeAddress()), savedFrame, modifierOfSavedAddressGPR);
+    jit.addPtr(CCallHelpers::TrustedImm32(ResumeAddressWord::offset), savedFrame, modifierOfSavedAddressGPR);
     jit.m_assembler.movk<64>(modifierOfSavedAddressGPR, SavedFrame::discriminatorOfResumeAddress, SavedFrame::discriminatorShift);
 }
 
@@ -59,7 +64,19 @@ void emitSignResumeAddress(CCallHelpers& jit, GPRReg resumeAddress, GPRReg saved
     jit.move(savedAddressGPR, result);
 }
 
+void emitTargetOfUnsignedJump(CCallHelpers& jit)
+{
+    jit.m_assembler.hint(hintAtTargetOfUnsignedJump);
+}
+
 #else
+
+ptrdiff_t offsetOfResumeAddressWithoutSignature()
+{
+    return ResumeAddressWord::offset;
+}
+
+void emitTargetOfUnsignedJump(CCallHelpers&) { }
 
 static void emitModifierOfReturnAddress(CCallHelpers&, GPRReg) { }
 static void emitModifierOfResumeAddress(CCallHelpers&, GPRReg) { }
@@ -91,13 +108,28 @@ void emitStoreReturnAddressInFrameRecord(CCallHelpers& jit, GPRReg returnAddress
 void emitLoadResumeAddress(CCallHelpers& jit, GPRReg savedFrame, GPRReg result)
 {
     emitModifierOfResumeAddress(jit, savedFrame);
-    emitLoadSavedAddress(jit, CCallHelpers::Address(savedFrame, SavedFrame::offsetOfResumeAddress()), result);
+    emitLoadSavedAddress(jit, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset), result);
 }
 
 void emitStoreResumeAddress(CCallHelpers& jit, GPRReg resumeAddress, GPRReg savedFrame)
 {
     emitModifierOfResumeAddress(jit, savedFrame);
-    emitStoreSavedAddress(jit, resumeAddress, CCallHelpers::Address(savedFrame, SavedFrame::offsetOfResumeAddress()));
+    emitStoreSavedAddress(jit, resumeAddress, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+}
+
+void emitStoreResumeAddressThatCallerHasSigned(CCallHelpers& jit, GPRReg signedOrNull, GPRReg savedFrame)
+{
+    jit.store64(signedOrNull, CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+}
+
+void emitClearResumeAddressAndStorePromiseOrWaiter(CCallHelpers& jit, GPRReg promiseOrWaiter, GPRReg savedFrame)
+{
+#if CPU(ARM64)
+    jit.storePair64(ARM64Registers::zr, promiseOrWaiter, savedFrame, CCallHelpers::TrustedImm32(ResumeAddressWord::offset));
+#else
+    jit.store64(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(savedFrame, ResumeAddressWord::offset));
+    jit.store64(promiseOrWaiter, CCallHelpers::Address(savedFrame, SavedFrame::offsetOfPromiseOrWaiter()));
+#endif
 }
 
 #if CPU(ARM64)

@@ -595,7 +595,7 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     static_assert(SavedFrame::offsetOfNumberOfWordsSkippedAtBottom() == SavedFrame::offsetOfNumberOfWords() + 2);
     static_assert(SavedFrame::offsetOfVersion() == SavedFrame::offsetOfNumberOfWords() + 4 && !(SavedFrame::offsetOfNumberOfWords() % sizeof(uint64_t)));
     static_assert(SavedFrame::offsetOfContinuation() == SavedFrame::offsetOfKind() + 1 && SavedFrame::offsetOfNumberOfSavedRegisterPairs() == SavedFrame::offsetOfKind() + 2 && SavedFrame::offsetOfFlags() == SavedFrame::offsetOfKind() + 3);
-    static_assert(SavedFrame::offsetOfPromiseOrWaiter() == SavedFrame::offsetOfResumeAddress() + 8 && SavedFrame::offsetOfAsyncContext() == SavedFrame::offsetOfPreservedRegister() + 8);
+    static_assert(SavedFrame::offsetOfAsyncContext() == SavedFrame::offsetOfPreservedRegister() + 8);
     static_assert(!static_cast<unsigned>(Continuation::None) && !JSValue::ValueEmpty);
     RELEASE_ASSERT(noOverlap(saved, count, allocator, scratch, siteWord, instanceGPR));
 
@@ -633,13 +633,12 @@ AssemblyHelpers::FreeListRefill emitAllocateSavedFrame(StubAssembler& jit, Corou
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(coroutines.savedFrameHeader)), scratch);
 #if CPU(ARM64)
     jit.storePair64(scratch, ARM64Registers::zr, saved, TrustedImm32(0));
-    jit.storePair64(ARM64Registers::zr, saved, saved, TrustedImm32(SavedFrame::offsetOfResumeAddress()));
+    emitClearResumeAddressAndStorePromiseOrWaiter(jit, saved, saved);
     jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, saved, TrustedImm32(SavedFrame::offsetOfPreservedRegister()));
 #else
     jit.store64(scratch, Address(saved));
     jit.store64(TrustedImm32(0), Address(saved, JSObject::butterflyOffset()));
-    jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfResumeAddress()));
-    jit.store64(saved, Address(saved, SavedFrame::offsetOfPromiseOrWaiter()));
+    emitClearResumeAddressAndStorePromiseOrWaiter(jit, saved, saved);
     jit.store64(TrustedImm32(0), Address(saved, SavedFrame::offsetOfAsyncContext()));
 #endif
     jit.store64(count, Address(saved, SavedFrame::offsetOfNumberOfWords()));

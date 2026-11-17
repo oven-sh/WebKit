@@ -554,7 +554,7 @@ void generateNewHeapFrame(StubAssembler& jit)
     jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfNumberOfWords()));
     jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::liesOnHeapBit) << 48 | static_cast<uint64_t>(SavedFrame::isSuspendedAtYieldFlag) << 56)), scratch);
     jit.store64(scratch, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    jit.store64(resumeAddress, Address(frame, SavedFrame::offsetOfResumeAddress()));
+    emitStoreResumeAddressThatCallerHasSigned(jit, resumeAddress, frame);
     jit.add32(TrustedImm32(1), numberOfWords, index);
     jit.and32(TrustedImm32(~1), index);
     jit.moveZeroToDouble(zeros);

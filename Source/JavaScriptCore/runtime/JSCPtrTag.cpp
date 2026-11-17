@@ -34,6 +34,10 @@
 #include <sys/types.h>
 #endif
 
+#if ENABLE(RETURN_ADDRESS_SIGNING) && !defined(__ARM_FEATURE_PAC_DEFAULT)
+#error "Generated code signs its return addresses and C++ does not. Pass -mbranch-protection=pac-ret, or -DENABLE_RETURN_ADDRESS_SIGNING=0 to sign nothing"
+#endif
+
 namespace JSC {
 
 #if CPU(ARM64E) && (ENABLE(PTRTAG_DEBUGGING) || ENABLE(DISASSEMBLER))

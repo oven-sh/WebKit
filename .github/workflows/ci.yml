@@ -457,13 +457,14 @@ jobs:
           root="$RUNNER_TEMP/bun-webkit"
           results="$RUNNER_TEMP/jsc-results.json"
           platform=()
+          lacks_authentication=false
           case "$RUNNER_OS" in
             Linux)
               echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
               # Without it no function signs the return address that it saves, and the tests of what reads such a word
               # (SIGNED_RETURN_ADDRESSES in lanes.mjs) pass whatever the code does.
               if grep -qw paca /proc/cpuinfo; then echo "pointer authentication"
-              elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::warning::$LABEL signs return addresses, and this runner has no pointer authentication"
+              elif [ "$SIGNS_RETURN_ADDRESSES" = true ]; then echo "::error::$LABEL signs return addresses, and this runner has no pointer authentication"; lacks_authentication=true
               else echo "no pointer authentication"
               fi
               ;;
@@ -529,6 +530,7 @@ jobs:
               *) timeout 300 "$root/bin/testaot" native "$name" ;;
             esac
           done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
+          if [ "$lacks_authentication" = true ]; then exit 1; fi
           exit "$status"
       - name: Summary
         if: always()

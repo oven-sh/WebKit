@@ -306,6 +306,8 @@ static void testJumpTableOffsets()
     const Vector<uint32_t>& offsets = proc.jumpTable(0).targetOffsets;
     CHECK_EQ(offsets.size(), 11u);
     size_t codeSize = code->codeRef().size();
+    CHECK(proc.jumpTable(0).offsetBehindJump);
+    CHECK(*proc.jumpTable(0).offsetBehindJump <= std::ranges::min(offsets));
     for (unsigned i = 0; i < offsets.size(); ++i) {
         CHECK(offsets[i] < codeSize);
         for (unsigned j = i + 1; j < offsets.size(); ++j)

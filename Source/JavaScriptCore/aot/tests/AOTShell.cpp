@@ -383,7 +383,7 @@ static bool spoilSignature([[maybe_unused]] void*& savedAddress, [[maybe_unused]
 {
 #if ENABLE(RETURN_ADDRESS_SIGNING)
     void* address = removeReturnAddressSignature(savedAddress);
-    if (savedAddress != signReturnAddress(address, modifier))
+    if (savedAddress != JSC::signReturnAddress(address, modifier))
         return false;
     // All bits of a signature may be zero. This is one of them however many bits of an address the kernel uses.
     constexpr uintptr_t bitOfSignature = 1ULL << 54;
@@ -417,7 +417,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTSpoilResumeAddresses, (JSGlobalObject* globa
             auto* saved = isJSCellKind(kind) ? dynamicDowncast<SavedFrame>(static_cast<JSCell*>(cell)) : nullptr;
             if (!saved || (!saved->liesOnHeap() && saved->isOnStack()))
                 return IterationStatus::Continue;
-            if (spoilSignature(*std::bit_cast<void**>(std::bit_cast<uint8_t*>(saved) + SavedFrame::offsetOfResumeAddress()), saved->modifierOfResumeAddress()))
+            if (spoilSignature(*std::bit_cast<void**>(std::bit_cast<uint8_t*>(saved) + SavedFrame::offsetOfResumeAddressForTesting()), saved->modifierOfResumeAddress()))
                 places.append(places.isEmpty() ? ""_s : " "_s, saved->liesOnHeap() ? "heap"_s : "stack"_s);
             return IterationStatus::Continue;
         });

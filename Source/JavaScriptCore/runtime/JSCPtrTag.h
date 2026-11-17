@@ -213,6 +213,11 @@ inline void* signReturnAddress(void* returnAddress, const void* stackPointer)
     return pointer;
 }
 
+namespace AOT {
+// An address that was read out of memory is what an attacker wrote there: resignReturnAddress() moves one that is signed.
+void* signReturnAddress(void*, const void*) = delete;
+}
+
 inline void* authenticateReturnAddress(void* signedReturnAddress, const void* stackPointer)
 {
     register void* pointer asm("x17") = signedReturnAddress;

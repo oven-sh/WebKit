@@ -41,7 +41,7 @@ struct WasmFunctionCode {
     BitVector directCallees;
     Wasm::SavedRegistersInImage savedRegisters { 0, 0, 0 };
     Vector<Wasm::FramelessRangeInImage> framelessRanges;
-    Vector<uint32_t> targetsOfJumpTables;
+    PlacesInWebAssemblyCode places;
     uint16_t savedRegistersIndex { 0 };
     bool usesVectors { false };
     bool dependsOnFlavor { false };

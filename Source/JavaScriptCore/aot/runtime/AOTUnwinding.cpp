@@ -152,14 +152,22 @@ static void finishInAwaitedCall(CompiledUnwindResult& result, Instance& instance
 }
 
 // The address decides which handler runs, so it has to be one that the callee could have returned to.
-static ALWAYS_INLINE const void* authenticatedAddressOf(const ReturnSiteInRun& place)
-{
+class AuthenticatedReturnAddress {
+public:
+    ALWAYS_INLINE explicit AuthenticatedReturnAddress(const ReturnSiteInRun& place)
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-    return authenticateReturnAddress(place.rawPC, callerStackPointer(place.callee));
+        : m_address(authenticateReturnAddress(place.rawPC, callerStackPointer(place.callee)))
 #else
-    return removeCodePtrTag(place.rawPC);
+        : m_address(removeCodePtrTag(place.rawPC))
 #endif
-}
+    {
+    }
+
+    const void* address() const { return m_address; }
+
+private:
+    const void* m_address;
+};
 
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
 {
@@ -216,7 +224,8 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
     ImageFrame leftImageFrame { };
 
     for (;;) {
-        const void* pc = authenticatedAddressOf(place);
+        const AuthenticatedReturnAddress authenticated(place);
+        const void* pc = authenticated.address();
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = place.callee == start.callee ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
@@ -239,8 +248,8 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
                     return result;
                 }
                 if (const HandlerRecord* handler = site->exceptionHandler(image)) {
-                    void* code = const_cast<uint8_t*>(image.codeOf(site->code.index())) + handler->codeOffset;
-                    finishAtHandler(result, *instance, { callFrame, code, kindOf(handler->type), place.framePointer }, site->frame.frameSizeInBytes());
+                    void* code = const_cast<uint8_t*>(image.codeOf(site->code.index())) + handler->codeOffset(authenticated);
+                    finishAtHandler(result, *instance, { callFrame, code, kindOf(handler->type()), place.framePointer }, site->frame.frameSizeInBytes());
                     result.siteOfHandler = place;
                     return result;
                 }
@@ -385,7 +394,7 @@ static bool findCatchInRun(CompiledFrameIterator& frames)
             return true;
         const auto& site = frames.callSite();
         const HandlerRecord* handler = frames.exceptionHandler();
-        if (handler && kindOf(handler->type) == CompiledHandlerKind::Catch)
+        if (handler && kindOf(handler->type()) == CompiledHandlerKind::Catch)
             return true;
         if (site.rejectsOnThrow || site.site.isAwaited())
             return true;
@@ -431,8 +440,8 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
             if (site->site.isAwaited())
                 return HandlerType::Catch;
             const HandlerRecord* handler = site->exceptionHandler(*state.image);
-            if (handler && (search == HandlerSearch::Nearest || handler->type != HandlerType::Finally))
-                return handler->type;
+            if (handler && (search == HandlerSearch::Nearest || handler->type() != HandlerType::Finally))
+                return handler->type();
             if (site->rejectsOnThrow)
                 return HandlerType::Catch;
             if (search == HandlerSearch::NearestThatEndsThrow && !--remainingFrames)

@@ -545,7 +545,7 @@ static void testHeapFrameIsBornWithEveryWordZeroAndNothingWrittenBesideIt()
         allocatorOfSize = &allocator;
         StubRun run = runner.run(newHeapFrame(), { numberOfWords, resumeAddress });
         AOT_TEST_CHECK(!run.calledOperation && run.result == room.address() + margin && !allocator.hasRoom());
-        AOT_TEST_CHECK(room.at<uint64_t>(margin) == header && room.at<uint64_t>(margin + SavedFrame::offsetOfResumeAddress()) == resumeAddress);
+        AOT_TEST_CHECK(room.at<uint64_t>(margin) == header && room.at<uint64_t>(margin + SavedFrame::offsetOfResumeAddressForTesting()) == resumeAddress);
         AOT_TEST_CHECK(room.at<uint64_t>(margin + SavedFrame::offsetOfNumberOfWords()) == numberOfWords && room.at<uint64_t>(margin + SavedFrame::offsetOfPromiseOrWaiter()) == run.result);
         for (uint32_t word = 0; word < numberOfWords; ++word)
             AOT_TEST_CHECK(!room.at<uint64_t>(margin + SavedFrame::offsetOfWords() + word * sizeof(uint64_t)));
@@ -587,7 +587,7 @@ static void testReleasedHeapFrameIsReused()
         AOT_TEST_CHECK(releasedHeapFrame == (isBornAgain ? nullptr : cell));
         if (!isBornAgain)
             return false;
-        AOT_TEST_CHECK(run.result == released.address() && released.at<uint64_t>(0) == header && released.at<uint64_t>(SavedFrame::offsetOfResumeAddress()) == resumeAddress);
+        AOT_TEST_CHECK(run.result == released.address() && released.at<uint64_t>(0) == header && released.at<uint64_t>(SavedFrame::offsetOfResumeAddressForTesting()) == resumeAddress);
         AOT_TEST_CHECK(released.at<uint64_t>(SavedFrame::offsetOfNumberOfWords()) == numberOfWords && released.at<uint64_t>(SavedFrame::offsetOfCapacityOfHeapFrame()) == numberOfWords);
         for (uint32_t word = 0; word < numberOfWords; ++word)
             AOT_TEST_CHECK(!released.at<uint64_t>(SavedFrame::offsetOfWords() + word * sizeof(uint64_t)));

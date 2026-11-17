@@ -9,6 +9,7 @@
 
 #if ENABLE(WEBASSEMBLY)
 
+#include "AOTPlacesInWebAssemblyCode.h"
 #include "AOTVector.h"
 #include "WasmFormat.h"
 #include <array>
@@ -264,7 +265,7 @@ struct ModuleForImage {
     Vector<JSEntrypointInImage> jsEntrypoints;
     WTF::Vector<SavedRegistersInImage> savedRegisters;
     WTF::Vector<FramelessRangeInImage> framelessRanges;
-    Vector<uint32_t> targetsOfJumpTables;
+    AOT::PlacesInWebAssemblyCode places;
     uint32_t catchRunway { 0 };
     uint32_t faultWithoutFrame { 0 };
 };
@@ -288,7 +289,7 @@ struct CodeForImage {
     uint32_t pointerSpace { 0 };
     unsigned threadedJumps { 0 };
     unsigned firstStateTests { 0 };
-    Vector<uint32_t> targetsOfJumpTables { };
+    AOT::PlacesInWebAssemblyCode places { };
     static constexpr GPRReg passedGlobalGPR = GPRInfo::wasmScratchGPR0;
     std::optional<uint32_t> passedGlobal { };
 };

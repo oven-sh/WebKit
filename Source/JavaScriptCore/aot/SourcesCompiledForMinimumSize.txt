@@ -74,7 +74,6 @@ aot/image/AOTProgramTableCheck.cpp
 aot/image/AOTProgramTablesDriver.cpp
 aot/image/AOTRegExpBitParallel.cpp
 aot/image/AOTRegExpInProcessLoader.cpp
-aot/image/AOTReturnAddressCheck.cpp
 aot/image/AOTSectionWriter.cpp
 aot/image/AOTShapeSetTable.cpp
 aot/image/AOTStackUsageCheck.cpp

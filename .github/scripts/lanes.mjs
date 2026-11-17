@@ -469,9 +469,12 @@ if (command === "build") {
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
+  // As wtf/PlatformEnable.h decides it.
+  const signsReturnAddresses = ({ defines, package_cpu }) =>
+    defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") || (defines.includes("BUN_HARDENED=") && package_cpu === "arm64" && !defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=0"));
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: signsReturnAddresses(lane) })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

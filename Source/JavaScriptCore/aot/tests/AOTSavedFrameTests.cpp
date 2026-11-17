@@ -445,7 +445,7 @@ static SavedFrame* saveHandMadeFrame(LoadedProgram& program, HandMadeFrame& fram
         frame.stack.mutableSpan().data() + frame.numberOfWords,
         frame.stack.span().data(),
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-        signReturnAddress(resumeAddress, frame.stack.span().data()),
+        JSC::signReturnAddress(resumeAddress, frame.stack.span().data()),
 #else
         resumeAddress,
 #endif

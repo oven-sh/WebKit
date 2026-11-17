@@ -215,14 +215,18 @@ public:
 
     bool isOutOfReach() const { return m_isOutOfReach; }
 
-    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer, Vector<uint32_t>& targetsOfAllTables)
+    void fillJumpTables(B3::Procedure& procedure, ImageLinkBuffer& buffer, PlacesInWebAssemblyCode& places)
     {
         std::span<uint8_t> bytes = buffer.bytes();
+        for (auto& [section, start] : m_constants)
+            places.data.append({ buffer.linkBuffer().offsetOf(*start), safeCast<uint32_t>(procedure.dataSections()[section].size) });
         for (auto& [table, start] : m_tables) {
             uint32_t place = buffer.linkBuffer().offsetOf(*start);
             const Vector<uint32_t>& targets = procedure.jumpTable(table).targetOffsets;
             RELEASE_ASSERT(place + targets.size() * sizeof(int32_t) <= bytes.size());
-            targetsOfAllTables.appendVector(targets);
+            if (std::optional<uint32_t> behindJump = procedure.jumpTable(table).offsetBehindJump)
+                places.jumpsThroughTables.append({ *behindJump, place, safeCast<uint32_t>(targets.size()) });
+            places.data.append({ place, safeCast<uint32_t>(targets.size() * sizeof(int32_t)) });
             for (size_t entry = 0; entry < targets.size(); ++entry) {
                 int32_t distance = static_cast<int32_t>(targets[entry]) - static_cast<int32_t>(place);
                 memcpySpan(bytes.subspan(place + entry * sizeof(int32_t), sizeof(int32_t)), asByteSpan(distance));
@@ -475,7 +479,7 @@ struct WasmModuleCompiler {
             return { .wasRefusedByGenerator = true };
         if (lowering.isOutOfReach())
             return { .failure = Wasm::ImageCodeFailure::OutOfPCRelativeReach };
-        lowering.fillJumpTables(*context.procedure, buffer, result.targetsOfJumpTables);
+        lowering.fillJumpTables(*context.procedure, buffer, result.places);
         auto relocations = recorder.link(buffer, &buildContext);
         if (!relocations)
             return { .failure = codeFailureFor(relocations.error()) };
@@ -559,7 +563,7 @@ struct WasmModuleCompiler {
 
         result.code = RelocatableCode { Vector<uint8_t>(buffer.bytes()), WTF::move(*relocations) };
         result.savedRegisters = *savedRegisters;
-        result.targetsOfJumpTables = WTF::move(codeForImage.targetsOfJumpTables);
+        result.places = WTF::move(codeForImage.places);
         result.dependsOnFlavor = codeForImage.dependsOnFlavor;
         for (size_t directCallee : (*compiled)->outgoingJITDirectCallees)
             result.directCallees.set(directCallee);
@@ -992,8 +996,7 @@ WasmModuleOrDecline linkWasmModule(WasmModuleCode&& module, const CodeTemplates&
         }
         for (Wasm::FramelessRangeInImage range : function.framelessRanges)
             result.framelessRanges.append({ entry + range.begin, entry + range.end });
-        for (uint32_t target : function.targetsOfJumpTables)
-            result.targetsOfJumpTables.append(entry + target);
+        result.places.append(function.places, entry);
         return Wasm::FunctionInImage { entry, static_cast<uint32_t>(function.code.bytes.size()), firstHandler, static_cast<uint32_t>(function.handlers.size()), function.savedRegistersIndex, function.usesVectors, 0 };
     };
     auto& trapping = result.functions[static_cast<size_t>(Wasm::ImageCodeFlavor::Trapping)];
@@ -1138,8 +1141,7 @@ WebAssemblyImageInputs WasmSectionBuilder::finish(BuildContext& context)
     appendToDirectory(section.directory, asBytes(m_declinedModules.span()));
     for (size_t index = 0; index < m_modules.size(); ++index) {
         countFunctions(m_modules[index].module, context.statistics());
-        for (uint32_t target : m_modules[index].module.targetsOfJumpTables)
-            section.targetsOfJumpTables.append(m_modules[index].base + target);
+        section.places.append(m_modules[index].module.places, m_modules[index].base);
         Wasm::ModuleInImage record = appendModule(section.code, section.directory, m_modules[index].module, m_modules[index].base);
         memcpySpan(section.directory.mutableSpan().subspan(recordsOffset + index * sizeof(record)), asByteSpan(record));
     }

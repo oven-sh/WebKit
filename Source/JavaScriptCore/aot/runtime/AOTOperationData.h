@@ -515,6 +515,7 @@ struct ThrowSiteWord {
 
     static constexpr Typed::Representation runtimeErrorRepresentation = Typed::Representation::RawWord;
 
+    unsigned numberOfWordsOfSite() const { return 1 + hasWideA + hasB; }
     bool isUninitializedBinding() const { return static_cast<ThrowKind>(kind) == ThrowKind::UninitializedBinding; }
     uint32_t narrowA() const
     {

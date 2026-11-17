@@ -198,7 +198,7 @@ public:
     static constexpr ptrdiff_t offsetOfNumberOfSavedRegisterPairs() { return OBJECT_OFFSETOF(SavedFrame, m_numberOfSavedRegisterPairs); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(SavedFrame, m_flags); }
     static constexpr ptrdiff_t offsetOfContinuation() { return OBJECT_OFFSETOF(SavedFrame, m_continuation); }
-    static constexpr ptrdiff_t offsetOfResumeAddress() { return OBJECT_OFFSETOF(SavedFrame, m_resumeAddress); }
+    static constexpr ptrdiff_t offsetOfResumeAddressForTesting() { return offsetOfResumeAddress(); }
     static constexpr ptrdiff_t offsetOfPromiseOrWaiter() { return OBJECT_OFFSETOF(SavedFrame, m_promiseOrWaiter); }
     static constexpr ptrdiff_t offsetOfAsyncContext() { return OBJECT_OFFSETOF(SavedFrame, m_asyncContext); }
     static constexpr ptrdiff_t offsetOfPreservedRegister() { return OBJECT_OFFSETOF(SavedFrame, m_preservedRegister); }
@@ -207,6 +207,10 @@ public:
     static constexpr size_t allocationSize(size_t numberOfWords) { return sizeof(SavedFrame) + numberOfWords * sizeof(uint64_t); }
 
 private:
+    // Generated code gets at the word through stubs/AOTSavedCodeAddresses.h.
+    friend struct ResumeAddressWord;
+    static constexpr ptrdiff_t offsetOfResumeAddress() { return OBJECT_OFFSETOF(SavedFrame, m_resumeAddress); }
+
     SavedFrame(VM& vm, Structure* structure, CoroutineKind kind, uint16_t numberOfWords, uint8_t savedRegistersOrPairs, uint16_t skippedAtBottom)
         : Base(vm, structure)
         , m_numberOfWords(numberOfWords)
