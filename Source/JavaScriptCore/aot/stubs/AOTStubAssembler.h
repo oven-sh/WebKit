@@ -9,6 +9,7 @@
 
 #include "AOTRelocation.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubBlob.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
@@ -135,7 +136,7 @@ RegisterSet floatingPointRegistersLostToAccessors(StubCallee);
 
 enum class SavedRegistersAreRead : bool { ByCallerAlone, BeforeReturnToo };
 
-class StubAssembler final : public CCallHelpers {
+class StubAssembler final : public ImageAssembler {
     WTF_FORBID_HEAP_ALLOCATION;
 public:
     StubAssembler(const StubOptions&, const StubCatalog&, PCRelativeReach addressReach = PCRelativeReach::Near);
@@ -218,9 +219,11 @@ public:
 #if CPU(X86_64)
     void emitFramelessCallerEpilogue();
 #else
-    void emitFramelessCallerEpilogueAndReturn(GPRReg scratch);
+    void emitFramelessCallerEpilogueAndReturn();
 #endif
+    // As a callee would save it here: for C++, which takes the signature off.
     void loadCallerReturnAddress(unsigned bytesPushed, GPRReg result);
+    void jumpToResumeAddress(GPRReg asStored, GPRReg savedFrame);
     void jumpToExceptionHandler();
     void checkStackBeforeEntering();
     void pollBeforeReturningFromNativeCode();
@@ -450,11 +453,20 @@ void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const Registe
 template<typename Functor>
 void StubAssembler::preservingRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, const Functor& functor)
 {
+#if CPU(ARM64)
+    constexpr unsigned bytesPushed = 2 * sizeof(CPURegister);
+    emitPushLinkRegister(*this);
+#else
+    constexpr unsigned bytesPushed = 0;
+#endif
     SavedRegisterArea area = storeRegistersClobberedBy(callee, hasResult, lostAnyway);
     withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
-        functor(area.bytes);
+        functor(area.bytes + bytesPushed);
     });
     loadSavedRegisters(area);
+#if CPU(ARM64)
+    emitPopLinkRegister(*this);
+#endif
 }
 
 inline constexpr GPRReg sp = CCallHelpers::stackPointerRegister;

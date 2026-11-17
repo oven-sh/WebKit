@@ -361,6 +361,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSavedFrameTests.cpp
     aot/tests/AOTSharedArrayTests.cpp
     aot/tests/AOTSharingModeAndNamespaceTests.cpp
+    aot/tests/AOTSignedReturnAddressTests.cpp
     aot/tests/AOTSiteAnswersOfGettersTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
     aot/tests/AOTSlotAccessTests.cpp

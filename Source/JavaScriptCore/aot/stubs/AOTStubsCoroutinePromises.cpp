@@ -11,6 +11,7 @@
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsOperations.h"
@@ -670,8 +671,7 @@ static void emitReturnAsyncResult(StubAssembler& jit, std::optional<RegistersSav
     Jump hasPromise = jit.branchIfCell(promise);
     jit.move(TrustedImm32(0), promise);
     branchIfMayBeThenable();
-    jit.loadPtr(Address(fp, sizeof(void*)), scratch);
-    Jump hasBeenSuspended = jit.branchPtr(CCallHelpers::Equal, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
+    Jump hasBeenSuspended = emitBranchOnReturnAddressOfFrameRecord(jit, CCallHelpers::Equal, fp, StubFrameKind::SavedFrameAdapter, scratch);
     Label returnsValue = jit.label();
     jit.move(value, result);
     leaveFrame();

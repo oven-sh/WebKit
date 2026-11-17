@@ -617,7 +617,7 @@ inline void StubRunner::emitLandingThatCountsWordsNobodyWrote(CCallHelpers& jit,
 
 inline void StubRunner::compileLandings()
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     CCallHelpers::Label compiledFunction = jit.label();
     emitLandingInCompiledFunction(jit);
     CCallHelpers::Label engineCallee = jit.label();

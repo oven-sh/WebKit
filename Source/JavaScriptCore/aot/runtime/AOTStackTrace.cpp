@@ -276,7 +276,7 @@ public:
     void findSiteAgain()
     {
         if (m_site)
-            m_site = m_cache.resolve(m_image, removeCodePtrTag(m_rawPC));
+            m_site = m_cache.resolve(m_image, removeReturnAddressSignature(m_rawPC));
     }
     const CompiledFrameExit& exit() const
     {
@@ -383,7 +383,7 @@ private:
     ALWAYS_INLINE void findFunctionFrame()
     {
         for (;;) {
-            const void* pc = removeCodePtrTag(m_rawPC);
+            const void* pc = removeReturnAddressSignature(m_rawPC);
             m_site = m_cache.find(pc);
             if (!m_site) [[unlikely]] {
                 m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
@@ -628,7 +628,7 @@ static std::optional<RunStart> findRunBelowEntry(VM& vm)
 static ALWAYS_INLINE bool returnsIntoImage(VM& vm, CallFrame* frame)
 {
     std::span<const uint8_t> code = vm.aotState().image->code();
-    return std::bit_cast<uintptr_t>(removeCodePtrTag(frame->rawReturnPC())) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return std::bit_cast<uintptr_t>(frame->returnPCForInspection()) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy topFramePolicy)
@@ -647,7 +647,7 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy t
     }
     if (!returnsIntoImage(vm, top))
         return std::nullopt;
-    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(top->returnPCForInspection());
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
     return RunStart { callerStackPointer(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -687,7 +687,7 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm
             start = findRunBelowEntry(vm);
             break;
         }
-        const void* returnPC = removeCodePtrTag(frame->rawReturnPC());
+        const void* returnPC = frame->returnPCForInspection();
         if (std::bit_cast<uintptr_t>(returnPC) - std::bit_cast<uintptr_t>(compiledCode.data()) < compiledCode.size()) {
             if (isCallStubReturnSite(vm, returnPC))
                 start = RunStart { callerStackPointer(frame), frame->callerFrame(), frame->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -1458,7 +1458,7 @@ static ReturnAddresses findAwaitingCallsOnStack(const SavedFrame& saved)
     if (!frame) [[likely]]
         return found;
     for (; SavedFrame::forFrame(instance, frame) != &saved; frame = std::bit_cast<const uint64_t*>(frame[0])) {
-        const void* returnAddress = std::bit_cast<const void*>(frame[1]);
+        const void* returnAddress = removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]));
         const CallSiteCache::Entry* entry = instance.vm->aotState().callSiteCache->resolve(*Image::current(), returnAddress);
         if (!entry || entry->isStubReturnSite())
             return { };

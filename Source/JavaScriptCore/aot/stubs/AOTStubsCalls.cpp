@@ -12,6 +12,7 @@
 #include "AOTCellFormat.h"
 #include "AOTInstance.h"
 #include "AOTPoisonedCell.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSlimClosure.h"
 #include "AOTStubFrames.h"
 #include "AOTStubHelpers.h"
@@ -1252,11 +1253,6 @@ static void emitStoreCodeOwner(StubAssembler& jit, GPRReg scratch)
     jit.store64(TrustedImm32(0), CCallHelpers::addressFor(CallFrameSlot::callee));
 }
 
-static Address returnAddressOf(StubFrameKind kind)
-{
-    return Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(kind));
-}
-
 static void emitReplaceAdapterFrame(StubAssembler& jit, GPRReg target, Label returnSite, Label callsTarget)
 {
     const GPRReg adapter = jit.clobberRegister(StubRegister::A1);
@@ -1267,12 +1263,17 @@ static void emitReplaceAdapterFrame(StubAssembler& jit, GPRReg target, Label ret
 
     jit.move(fp, adapter);
     Label nextFrame = jit.label();
-    jit.loadPtr(Address(adapter, CallFrame::returnPCOffset()), word);
+    const HeldReturnAddress returnAddress = HeldReturnAddress::loadLosingLinkRegister(jit, adapter, word);
     jit.loadPtr(Address(adapter, CallFrame::callerFrameOffset()), adapter);
-    jit.branchPtr(CCallHelpers::Equal, word, returnAddressOf(StubFrameKind::ArgumentList)).linkTo(nextFrame, &jit);
-    jit.branchPtr(CCallHelpers::NotEqual, word, returnAddressOf(StubFrameKind::Adapter)).linkTo(callsTarget, &jit);
+    returnAddress.branch(jit, CCallHelpers::Equal, StubFrameKind::ArgumentList).linkTo(nextFrame, &jit);
+    returnAddress.branch(jit, CCallHelpers::NotEqual, StubFrameKind::Adapter).linkTo(callsTarget, &jit);
     jit.loadLabelAddress(returnSite, word);
+#if CPU(ARM64)
+    jit.loadPtr(Address(adapter, CallFrame::returnPCOffset()), CCallHelpers::linkRegister);
+    jit.branchPtr(CCallHelpers::NotEqual, word, CCallHelpers::linkRegister).linkTo(callsTarget, &jit);
+#else
     jit.branchPtr(CCallHelpers::NotEqual, word, Address(adapter, CallFrame::returnPCOffset())).linkTo(callsTarget, &jit);
+#endif
 
     jit.loadPtr(Address(adapter, CallFrame::callerFrameOffset()), fp);
     emitStoreCodeOwner(jit, word);
@@ -1288,10 +1289,8 @@ static void emitReplaceAdapterFrame(StubAssembler& jit, GPRReg target, Label ret
     jit.move(sp, source);
     emitCopyFromLastWord(jit, Address(source), Address(destination), index, word);
     jit.move(destination, sp);
-#if CPU(ARM64)
-    jit.loadPtr(returnAddressOf(StubFrameKind::EngineCallee), CCallHelpers::linkRegister);
-#else
-    jit.loadPtr(returnAddressOf(StubFrameKind::EngineCallee), word);
+#if CPU(X86_64)
+    jit.loadPtr(returnAddressOfStubWithoutSignature(StubFrameKind::EngineCallee), word);
     jit.push(word);
 #endif
     jit.farJump(target, JSEntryPtrTag);
@@ -1360,13 +1359,12 @@ void generateCallEngineCallee(StubAssembler& jit)
     Label hasTarget = jit.label();
     JumpList mayReplaceAdapterFrame;
 #if CPU(ARM64)
-    constexpr GPRReg returnAddress = CCallHelpers::linkRegister;
+    const HeldReturnAddress returnAddress = HeldReturnAddress::inLinkRegister();
 #else
-    const GPRReg returnAddress = word;
-    jit.loadPtr(Address(fp, CallFrame::returnPCOffset()), returnAddress);
+    const HeldReturnAddress returnAddress = HeldReturnAddress::loadLosingLinkRegister(jit, fp, word);
 #endif
-    mayReplaceAdapterFrame.append(jit.branchPtr(CCallHelpers::Equal, returnAddress, returnAddressOf(StubFrameKind::Adapter)));
-    mayReplaceAdapterFrame.append(jit.branchPtr(CCallHelpers::Equal, returnAddress, returnAddressOf(StubFrameKind::ArgumentList)));
+    mayReplaceAdapterFrame.append(returnAddress.branch(jit, CCallHelpers::Equal, StubFrameKind::Adapter));
+    mayReplaceAdapterFrame.append(returnAddress.branch(jit, CCallHelpers::Equal, StubFrameKind::ArgumentList));
     Label callsTarget = jit.label();
     jit.call(frame, JSEntryPtrTag);
     Label returnSite = jit.bindReturnLabel(StubFrameKind::EngineCallee);

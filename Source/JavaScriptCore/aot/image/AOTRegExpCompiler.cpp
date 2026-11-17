@@ -54,7 +54,7 @@ static Yarr::JITFailureReason toJITFailureReason(LinkFailure failure)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ImageCodeAddressing::ImageCodeAddressing(CCallHelpers& jit, PCRelativeReach reachWithinBody, const AssemblerPolicy& policy, BuildContext* context)
+ImageCodeAddressing::ImageCodeAddressing(ImageAssembler& jit, PCRelativeReach reachWithinBody, const AssemblerPolicy& policy, BuildContext* context)
     : CodeAddressing(jit)
     , m_recorder(jit, policy)
     , m_reach(reachWithinBody)
@@ -231,7 +231,7 @@ RegExpCodeOrFailureReason compileSharedRoutine(const Yarr::SharedRoutine& routin
     if (!Yarr::canGenerateSharedRoutine(routine))
         return makeUnexpected(Yarr::JITFailureReason::UnlistedSharedTable);
 
-    CCallHelpers jit;
+    ImageAssembler jit;
     ImageCodeAddressing addressing(jit, PCRelativeReach::Far, policy, context);
     Yarr::generateSharedRoutine(jit, routine, addressing);
     auto code = addressing.takeCode();
@@ -246,7 +246,7 @@ RegExpCodeOrFailureReason compileSharedRoutine(const Yarr::SharedRoutine& routin
 
 RegExpCodeOrFailureReason compileFailureRoutine(const AssemblerPolicy& policy, BuildContext* context)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     ImageCodeAddressing addressing(jit, PCRelativeReach::Far, policy, context);
     jit.tagReturnAddress();
     jit.move(MacroAssembler::TrustedImm64(static_cast<int64_t>(Yarr::JSRegExpResult::JITCodeFailure)), GPRInfo::returnValueGPR);
@@ -348,7 +348,7 @@ static RegExpCodeOrFailureReason generateRegExpCode(const RegExpCompilerInputs& 
         .sampleString = std::nullopt,
         .codeBlock = &codeBlock,
         .policy = policy,
-        .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
+        .createCodeAddressing = [&](ImageAssembler& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
             auto addressing = makeUnique<ImageCodeAddressing>(jit, reachWithinBody, inputs.assemblerPolicy, inputs.context);
             if (bitParallel)
                 emitBitParallelRegExp(jit, *addressing, *bitParallel);

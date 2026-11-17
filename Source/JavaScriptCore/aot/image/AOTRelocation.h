@@ -7,9 +7,9 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImageAssembler.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
-#include "CCallHelpers.h"
 #include "LinkBuffer.h"
 #include "RelocationKind.h"
 #include <type_traits>
@@ -97,7 +97,7 @@ struct RelocatableCode {
 class JS_EXPORT_PRIVATE ImageLinkBuffer {
     WTF_MAKE_NONCOPYABLE(ImageLinkBuffer);
 public:
-    ImageLinkBuffer(CCallHelpers&, LinkBuffer::Profile);
+    ImageLinkBuffer(ImageAssembler&, LinkBuffer::Profile);
 
     LinkBuffer& linkBuffer() { return m_linkBuffer; }
     bool didFailToAllocate() const { return m_linkBuffer.didFailToAllocate(); }
@@ -202,9 +202,12 @@ ALWAYS_INLINE auto withKindAsConstant(RelocationKind kind, const Functor& functo
 class JS_EXPORT_PRIVATE RelocationRecorder {
     WTF_MAKE_NONCOPYABLE(RelocationRecorder);
 public:
-    RelocationRecorder(CCallHelpers&, const AssemblerPolicy&);
+    RelocationRecorder(ImageAssembler&, const AssemblerPolicy&);
 
     void moveAddress(CodeSymbol, GPRReg dest, PCRelativeReach);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    void moveSignedAddress(CodeSymbol symbol, PCRelativeReach reach) { append(m_jit.moveSignedPCRelativeAddress(reach), addressKindFor(reach), symbol); }
+#endif
     void load64(CodeSymbol, GPRReg dest);
 #if CPU(X86_64)
     void loadDouble(CodeSymbol, FPRReg dest);
@@ -288,6 +291,10 @@ private:
     static constexpr int32_t placeholderOfNumber = 0x23456789;
 #endif
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    CCallHelpers::Address moveInstanceAddressForLinkRegister(CodeSymbol, GPRReg instance);
+#endif
+
     struct PendingRelocation {
         CCallHelpers::Label site;
         uint32_t symbol;
@@ -306,7 +313,7 @@ private:
         return index;
     }
 
-    CCallHelpers& m_jit;
+    ImageAssembler& m_jit;
     Vector<PendingRelocation, 32> m_pending;
 };
 

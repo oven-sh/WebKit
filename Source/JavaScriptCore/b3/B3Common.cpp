@@ -104,7 +104,9 @@ bool shouldSaveIRBeforePhase()
 GPRReg extendedOffsetAddrRegister()
 {
     RELEASE_ASSERT(isARM64() || isRISCV64());
-#if CPU(ARM64) || CPU(RISCV64)
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    return MacroAssembler::memoryTempRegister;
+#elif CPU(ARM64) || CPU(RISCV64)
     return MacroAssembler::linkRegister;
 #elif CPU(X86_64)
     return GPRReg::InvalidGPRReg;
