@@ -1004,6 +1004,7 @@ public:
     void noteCopyOfAppendedFields(FunctionID, uint32_t record);
     void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
     void noteNamesOfRecordsRead(const FlowObserver& access, FlowNodeID records) { noteNamesOfRecordsRead(access, records, countNamesOfRecords(records)); }
+    size_t countNamesOfRecords(FlowNodeID) const;
     void noteNameMadeEnumerable(LayoutID holder, PropertyKeyID);
     template<typename Functor> void forEachNameMadeEnumerable(LayoutID layout, const Functor& functor) const
     {
@@ -1762,7 +1763,7 @@ public:
     bool storesUnderListedNames(FunctionID, ValueID site) const;
     enum class PrototypeNames : bool { Excluded, Included };
     bool appendPrototypeNames(LayoutID, Vector<PropertyKeyID, 16>&) const;
-    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&, size_t* numberOfNames = nullptr) const;
+    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&) const;
     bool isBehindOwnNameTest(FunctionID, const BodyIndex&, ValueID site, ValueID object, ValueID name, const LinkType& objects, Vector<FlowNodeID, 4>& watched) const;
     Vector<PropertyKeyID, 16> findListedNamesOfStore(FunctionID, const SummaryAccess&) const;
     bool iteratesListsAsBuilt() const;
@@ -2472,7 +2473,6 @@ private:
     class CopiesOfMembers;
     bool layMembersThatCopiesBring();
     bool copyAppendedFields();
-    size_t countNamesOfRecords(FlowNodeID) const;
     size_t countPrototypeNames(LayoutID) const;
     FlowNodeID findExtraPropertyStoreNode(LayoutID) const;
     bool tellAccessesUnderNewNames();

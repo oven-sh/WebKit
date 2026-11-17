@@ -6847,7 +6847,7 @@ FlowNodeID LinkFlow::findExtraPropertyStoreNode(LayoutID layout) const
     return node == noNodeInLinkFlow ? FlowNodeID() : FlowNodeID(node);
 }
 
-bool LinkFlow::appendListedNames(const LinkType& objects, PrototypeNames prototypeNames, Vector<PropertyKeyID, 16>& names, size_t* numberOfNames) const
+bool LinkFlow::appendListedNames(const LinkType& objects, PrototypeNames prototypeNames, Vector<PropertyKeyID, 16>& names) const
 {
     if (objects.hasUnknownObjects || objects.holdsLostBuiltins || objects.builtin || objects.functions != LinkType::Functions::None || objects.classes != LinkType::Classes::None || objects.primitives & LinkType::closed(Primitive::AnyString))
         return false;
@@ -6873,8 +6873,6 @@ bool LinkFlow::appendListedNames(const LinkType& objects, PrototypeNames prototy
             listsNames = hasPristinePrototypes(id) || (hasFollowedPrototypes(id) && (prototypeNames == PrototypeNames::Excluded || appendPrototypeNames(id, names)));
         if (layout.kind == LayoutKind::Instance) {
             forEachNameMadeEnumerable(id, [&](PropertyKeyID key) {
-                if (numberOfNames)
-                    ++*numberOfNames;
                 if (prototypeNames == PrototypeNames::Excluded)
                     return;
                 areListed &= std::ranges::none_of(findMembers(id, ClassSide::Prototype, key), [](const FoundMember& found) { return found.kind != MethodKind::Method; });
@@ -6895,11 +6893,7 @@ bool LinkFlow::appendListedNames(const LinkType& objects, PrototypeNames prototy
             if (layout.kind == LayoutKind::Instance && typeAt(node).isNever())
                 return;
             append(key);
-            if (numberOfNames)
-                ++*numberOfNames;
         });
-        if (numberOfNames)
-            *numberOfNames += countPrototypeNames(id);
     });
     return areListed;
 }

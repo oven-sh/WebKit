@@ -195,7 +195,8 @@ private:
     bool readsOrStoresUnderTextsThatBodyWrites();
     bool accessesNamesFromLoop();
     using PrototypeNames = LinkFlow::PrototypeNames;
-    bool appendNamesOfRecords(FlowNodeID, PrototypeNames, Vector<PropertyKeyID, 16>& names);
+    size_t countNamesOfRecords(FlowNodeID);
+    bool appendNamesOfRecords(FlowNodeID, size_t numberOfNames, PrototypeNames, Vector<PropertyKeyID, 16>& names);
     PrototypeNames prototypeNamesAt(const BodyIndex&, ValueID object, ValueID name, const LinkType& objects);
     enum class ListedNames : bool { AreThere, MayBeGone };
     bool storeEachListedValue(const LinkType& listed, PrototypeNames, ListedNames);
@@ -2543,9 +2544,10 @@ bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
             return false;
         FlowNodeID node = isListedObject(*index, index->stripCasts(read.objectOperand()), *listed) ? m_subject : m_flow.nodeOf(listed->function, listed->node);
         tellAgainOnceClimbsWhoeverTells(node);
+        size_t numberOfNames = countNamesOfRecords(node);
         PrototypeNames prototypeNames = listed->isLoop ? prototypeNamesAt(*index, listed->object, index->stripCasts(read.propertyOperand()), m_flow.typeAt(node)) : PrototypeNames::Excluded;
         Vector<PropertyKeyID, 16> names;
-        if (!appendNamesOfRecords(node, prototypeNames, names))
+        if (!appendNamesOfRecords(node, numberOfNames, prototypeNames, names))
             return false;
         resolveUnderNames(names.span());
         return true;
@@ -2559,9 +2561,10 @@ bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
     FlowNodeID node = m_flow.nodeOf(listed->function, listed->node);
     tellAgainOnceClimbsWhoeverTells(node);
     const LinkType records = m_flow.typeAt(node);
+    size_t numberOfNames = countNamesOfRecords(node);
     PrototypeNames prototypeNames = listed->isLoop ? prototypeNamesAt(*index, listed->object, index->stripCasts(store.propertyOperand()), records) : PrototypeNames::Excluded;
     Vector<PropertyKeyID, 16> names;
-    if (!appendNamesOfRecords(node, prototypeNames, names))
+    if (!appendNamesOfRecords(node, numberOfNames, prototypeNames, names))
         return false;
     if (!holdsValueUnderKey(*index, store, *listed) || !storeEachListedValue(records, prototypeNames, listed->givesPairs ? ListedNames::AreThere : ListedNames::MayBeGone))
         resolveUnderNames(names.span());
@@ -2661,20 +2664,24 @@ void AccessInLinkAccesses::resolveUnderNames(std::span<const PropertyKeyID> name
     }
 }
 
-bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, PrototypeNames prototypeNames, Vector<PropertyKeyID, 16>& names)
+size_t AccessInLinkAccesses::countNamesOfRecords(FlowNodeID node)
 {
     const LinkType records = m_flow.typeAt(node);
-    if (records.objects == LinkType::Objects::Layout || records.objects == LinkType::Objects::Set) {
-        m_flow.forEachLayoutOf(records, [&](LayoutID id) {
-            tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(id));
-            tellAgainOnceClimbsWhoeverTells(m_flow.joinedExtraProperties(id));
-            m_flow.trackAppendedNames(id);
-            if (m_program.at(id).kind == LayoutKind::Instance)
-                m_flow.build.statistics().count(StatisticID::InstanceNamesReadByLoops);
-        });
-    }
-    size_t numberOfNames = 0;
-    if (!m_flow.appendListedNames(records, prototypeNames, names, &numberOfNames))
+    if (records.objects != LinkType::Objects::Layout && records.objects != LinkType::Objects::Set)
+        return 0;
+    m_flow.forEachLayoutOf(records, [&](LayoutID id) {
+        tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(id));
+        tellAgainOnceClimbsWhoeverTells(m_flow.joinedExtraProperties(id));
+        m_flow.trackAppendedNames(id);
+        if (m_program.at(id).kind == LayoutKind::Instance)
+            m_flow.build.statistics().count(StatisticID::InstanceNamesReadByLoops);
+    });
+    return m_flow.countNamesOfRecords(node);
+}
+
+bool AccessInLinkAccesses::appendNamesOfRecords(FlowNodeID node, size_t numberOfNames, PrototypeNames prototypeNames, Vector<PropertyKeyID, 16>& names)
+{
+    if (!m_flow.appendListedNames(m_flow.typeAt(node), prototypeNames, names))
         return false;
     m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), node, numberOfNames);
     std::ranges::sort(names, { }, &PropertyKeyID::bits);
@@ -2784,9 +2791,10 @@ bool AccessInLinkAccesses::accessesNamesFromLoop()
 
     tellAgainOnceClimbsWhoeverTells(node);
     const LinkType listed = m_flow.typeAt(node);
+    size_t numberOfNames = countNamesOfRecords(node);
     PrototypeNames prototypeNames = prototypeNamesAt(*index, subject, key, listed);
     Vector<PropertyKeyID, 16> names;
-    if (!appendNamesOfRecords(node, prototypeNames, names))
+    if (!appendNamesOfRecords(node, numberOfNames, prototypeNames, names))
         return false;
     if (!stores || !m_access.isCopySpelledByLoop || !storeEachListedValue(listed, prototypeNames, ListedNames::AreThere))
         resolveUnderNames(names.span());
