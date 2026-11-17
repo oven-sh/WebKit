@@ -37,16 +37,6 @@ constexpr bool jumpsToIt(uint32_t instruction)
     return (instruction & 0xff9fffff) == 0xd61f03c0; // BR, BLR, RET
 }
 
-// Does not fault, leave, or depend on where it lies.
-constexpr bool onlyComputesWithoutIt(uint32_t instruction)
-{
-    if (mayName(instruction) || signsAuthenticatesOrStrips(instruction))
-        return false;
-    if (bitsOf(instruction, 28, 26) == 0b100)
-        return bitsOf(instruction, 25, 24);
-    return bitsOf(instruction, 27, 25) == 0b101 || bitsOf(instruction, 27, 25) == 0b111;
-}
-
 // Neither is set where it is compared, jumped to, used as an address, or made of itself, constants and the program counter.
 struct Use {
     friend constexpr bool operator==(const Use&, const Use&) = default;

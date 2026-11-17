@@ -47,7 +47,7 @@ void ARM64Assembler::putSigningLinkRegister(int word)
     if (!mayName(instruction)) [[likely]]
         return m_buffer.putInt(word);
     if (jumpsToIt(instruction))
-        m_buffer.removeIntUnlessPinned(std::exchange(m_offsetOfLoadThroughLinkRegister, UINT_MAX), onlyComputesWithoutIt);
+        m_buffer.removeLastIntIfRemovable();
     const Use use = useBy(instruction);
     if (use == Use { })
         return m_buffer.putInt(word);
@@ -70,10 +70,10 @@ void ARM64Assembler::putSigningLinkRegister(int word)
 }
 
 // Not every processor faults where it fails to authenticate: MacroAssemblerARM64::validateUntaggedPtr(). A jump to the address faults
-// as well, and takes this out again if nothing can happen in between.
+// as well, and takes the place of this if it follows at once.
 void ARM64Assembler::loadThroughAuthenticatedLinkRegister()
 {
-    m_offsetOfLoadThroughLinkRegister = m_buffer.putRemovableInt(loadThroughLinkRegister);
+    m_buffer.putRemovableInt(loadThroughLinkRegister);
 }
 
 void ARM64Assembler::saveX16AndX17AndMoveAddressBehindWordToX16(uint32_t instruction, const AccessOfWords& access, int offsetOfWord)
@@ -201,8 +201,7 @@ void ARM64Assembler::authenticateX17ToLookAt(RegisterID dest)
         SetForScope asWritten(m_signsLinkRegister, false);
         hint(AUTIB1716);
     }
-    ldrb(zr, x17, 0);
-    sub<64>(x17, x17, UInt12(distanceInFrontOfAddressToLookAt));
+    ldrb(zr, x17, PostIndex(-distanceInFrontOfAddressToLookAt));
     mov<64>(dest, x17);
 }
 

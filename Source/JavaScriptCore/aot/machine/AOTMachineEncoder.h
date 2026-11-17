@@ -206,8 +206,7 @@ public:
     void storeToSpill(const Operation*);
     void storeSpilledValuesDefinedAtHead(Block*, const BlockPlace&);
     void setUpFrame(const Block*);
-    void tearDownFrame(std::span<const GPRReg> registersPoppedOutOfWords);
-    void leaveFrameAndReturn(Origin, uint32_t operation, std::span<const GPRReg> registersPoppedOutOfWords = { });
+    void leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords = { });
     ALWAYS_INLINE void noteFrameState(bool isSetUp)
     {
         m_frameIsSetUp = isSetUp;
@@ -220,7 +219,7 @@ public:
         if (m_notesRangesOfOrigins) [[unlikely]]
             noteOriginInRanges(origin, operation);
     }
-    void noteOriginInRanges(Origin, uint32_t operation, int bytesAlreadyEmitted = 0);
+    void noteOriginInRanges(Origin, uint32_t operation);
     bool blockRunsInFrame(const Block*) const;
     void runLatePaths();
     void linkPendingJumps();
@@ -485,6 +484,7 @@ public:
     ArenaVector<PendingLatePath> m_latePaths;
     ArenaVector<SharedLatePath> m_sharedLatePaths;
     std::span<uint32_t> m_sharedLatePathSlots;
+    ArenaVector<AssemblerBuffer::PlaceToDescribe> m_beginsOfRangesOfOrigins;
     ArenaVector<Block*> m_blocksAsWritten;
     mutable UncheckedSpan<uint32_t> m_indexAsWritten;
     uint32_t m_beginOfRareCodeAsWritten { 0 };

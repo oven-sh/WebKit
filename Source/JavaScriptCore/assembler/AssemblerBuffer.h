@@ -33,6 +33,7 @@
 #include "JITCompilationEffort.h"
 #include "Options.h"
 #include "SecureARM64EHashPinsInlines.h"
+#include <optional>
 #include <stdint.h>
 #include <string.h>
 #include <wtf/Assertions.h>
@@ -411,26 +412,41 @@ namespace JSC {
         }
 
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-        unsigned putRemovableInt(int32_t value)
+        void putRemovableInt(int32_t value)
         {
             putInt(value);
-            return m_index - sizeof(value);
+            m_endOfRemovableInt = m_index;
         }
 
-        void removeIntUnlessPinned(unsigned offset, bool (*mayMoveUp)(uint32_t))
+        void removeLastIntIfRemovable()
         {
-            if (offset < m_sizeOfWhatIsPinned || offset >= m_index)
-                return;
-            char* removed = m_storage.buffer() + offset;
-            const unsigned sizeBehind = m_index - offset - sizeof(uint32_t);
-            for (unsigned distance = sizeof(uint32_t); distance <= sizeBehind; distance += sizeof(uint32_t)) {
-                if (!mayMoveUp(WTF::unalignedLoad<uint32_t>(removed + distance)))
-                    return;
-            }
-            memmove(removed, removed + sizeof(uint32_t), sizeBehind);
-            m_index -= sizeof(uint32_t);
+            if (m_index == m_endOfRemovableInt)
+                m_index -= sizeof(int32_t);
+            pinWhatIsWritten();
         }
 #endif
+
+        // For a map or a report: unlike a label, asking for it leaves the code as it would have been. Make the label when the code is written.
+        struct PlaceToDescribe {
+            unsigned offset;
+            std::optional<int32_t> removableIntInFront;
+        };
+
+        PlaceToDescribe placeToDescribe() const
+        {
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            if (m_index == m_endOfRemovableInt)
+                return { m_index, intInFrontOf(m_index) };
+#endif
+            return { m_index, std::nullopt };
+        }
+
+        AssemblerLabel labelAt(PlaceToDescribe place) const
+        {
+            pinWhatIsWritten();
+            bool hasMovedUp = place.removableIntInFront && place.removableIntInFront != intInFrontOf(place.offset);
+            return AssemblerLabel(hasMovedUp ? place.offset - sizeof(int32_t) : place.offset);
+        }
 
         AssemblerData&& releaseAssemblerData()
         {
@@ -535,11 +551,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
 
     private:
+        int32_t intInFrontOf(unsigned offset) const { return WTF::unalignedLoad<int32_t>(m_storage.buffer() + offset - sizeof(int32_t)); }
+
         // Somebody knows where it ends.
         void pinWhatIsWritten() const
         {
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-            m_sizeOfWhatIsPinned = m_index;
+            m_endOfRemovableInt = UINT_MAX;
 #endif
         }
 
@@ -571,7 +589,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         AssemblerData m_storage;
         unsigned m_index { 0 };
 #if ENABLE(RETURN_ADDRESS_SIGNING)
-        mutable unsigned m_sizeOfWhatIsPinned { 0 };
+        mutable unsigned m_endOfRemovableInt { UINT_MAX };
 #endif
 #if ENABLE(JIT_SIGN_ASSEMBLER_BUFFER)
         ARM64EHash<ShouldSign::Yes> m_hash;

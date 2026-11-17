@@ -298,7 +298,7 @@ static void testInstructionsThatTheAssemblerLacks()
         AOT_TEST_CHECK(ARM64LinkRegister::useBy(instruction) == use);
 
     for (uint32_t instruction : { 0xdac10549, 0xdac11549, 0xdac143e9, 0xf3a0001f }) // pacib x9, x10; autib x9, x10; xpaci x9; autibsppc .
-        AOT_TEST_CHECK(ARM64LinkRegister::signsAuthenticatesOrStrips(instruction) && !ARM64LinkRegister::onlyComputesWithoutIt(instruction));
+        AOT_TEST_CHECK(ARM64LinkRegister::signsAuthenticatesOrStrips(instruction));
 }
 
 static void testNothingElseSignsAuthenticatesOrStrips()
@@ -354,48 +354,46 @@ static void testLoadBehindAuthenticationStaysUnlessJumpFollows()
         [](CCallHelpers& jit) { (void)jit.m_assembler.codeSize(); },
         [](CCallHelpers& jit) { (void)jit.debugOffset(); },
         [](CCallHelpers& jit) { (void)jit.m_assembler.buffer().isAligned(16); },
+        [](CCallHelpers& jit) { (void)jit.labelAt(jit.m_assembler.buffer().placeToDescribe()); },
+        [](CCallHelpers& jit) { jit.add64(x1, x0); },
         [](CCallHelpers& jit) { jit.load64(Address(x9), x9); },
         [](CCallHelpers& jit) { jit.store64(x9, Address(x9)); },
         [](CCallHelpers& jit) { jit.m_assembler.cbz<64>(x9, 8); },
-        [](CCallHelpers& jit) { jit.m_assembler.b_cond(ARM64Assembler::ConditionEQ, 8); },
-        [](CCallHelpers& jit) { jit.m_assembler.adr(x9, 8); },
-        [](CCallHelpers& jit) { jit.m_assembler.adrp(x9, 4 * KB); },
         [](CCallHelpers& jit) { jit.m_assembler.buffer().putInt(0); },
         [](CCallHelpers& jit) { jit.move(lr, x9); },
+        [](CCallHelpers& jit) { jit.pushPair(fp, lr); },
         [](CCallHelpers& jit) { jit.add64(CCallHelpers::TrustedImm32(4), lr); },
     };
-    for (Emit emit : whatKeepsIt) {
+    for (Emit emit : whatKeepsIt)
         AOT_TEST_CHECK(keepsLoad(emit));
-        AOT_TEST_CHECK(wordsForImage([&](CCallHelpers& jit) {
-            jit.emitFunctionEpilogue();
-            jit.add64(x1, x0);
-            emit(jit);
-            jit.add64(x1, x0);
-            jit.ret();
-        }).contains(loadThroughLinkRegister));
-    }
-
-    constexpr Emit computes = [](CCallHelpers& jit) {
-        jit.addPtr(CCallHelpers::TrustedImm32(64), sp);
-        jit.add64(x1, x0);
-        jit.addDouble(q1, q0);
-    };
-    Vector<uint32_t> expected = wordsForJIT([](CCallHelpers& jit) { jit.emitFunctionEpilogue(); });
-    expected.append(authenticateWithStackPointer);
-    expected.appendVector(wordsForImage(computes));
-    expected.appendVector(wordsForImage([](CCallHelpers& jit) { jit.ret(); }));
-    AOT_TEST_CHECK(expected == wordsForImage([&](CCallHelpers& jit) {
-        jit.emitFunctionEpilogue();
-        computes(jit);
-        jit.ret();
-    }));
 
     AOT_TEST_CHECK(wordsForImage([](CCallHelpers& jit) {
         jit.emitFunctionEpilogue();
         jit.ret();
-        jit.add64(x1, x0);
         jit.ret();
-    }).size() == 6);
+    }).size() == 5);
+}
+
+static void testDescriptionDoesNotKeepLoad()
+{
+    static constexpr Emit waysOut[] = {
+        [](CCallHelpers& jit) { jit.ret(); },
+        [](CCallHelpers& jit) { jit.farJump(x9, NoPtrTag); },
+    };
+    for (Emit leave : waysOut) {
+        ptrdiff_t bytesBehindPlace = 0;
+        Vector<uint32_t> words = wordsForImage([&](CCallHelpers& jit) {
+            jit.emitFunctionEpilogue();
+            AssemblerBuffer::PlaceToDescribe place = jit.m_assembler.buffer().placeToDescribe();
+            leave(jit);
+            bytesBehindPlace = CCallHelpers::differenceBetween(jit.labelAt(place), jit.label());
+        });
+        AOT_TEST_CHECK(bytesBehindPlace == sizeof(uint32_t));
+        AOT_TEST_CHECK(words == wordsForImage([&](CCallHelpers& jit) {
+            jit.emitFunctionEpilogue();
+            leave(jit);
+        }));
+    }
 }
 
 namespace {
@@ -1334,6 +1332,7 @@ std::span<const NativeTest> signedReturnAddressTests()
         { "signed-return-addresses/assembler/nothing-else-signs-authenticates-or-strips"_s, testNothingElseSignsAuthenticatesOrStrips },
         { "signed-return-addresses/assembler/no-policy-switches-signing-off"_s, testNoPolicySwitchesSigningOff },
         { "signed-return-addresses/assembler/load-behind-authentication-stays-unless-jump-follows"_s, testLoadBehindAuthenticationStaysUnlessJumpFollows },
+        { "signed-return-addresses/assembler/description-does-not-keep-load"_s, testDescriptionDoesNotKeepLoad },
         { "signed-return-addresses/assembler/every-store-agrees-with-every-load"_s, ImageTests::whenExecutable<testEveryStoreAgreesWithEveryLoad> },
         { "signed-return-addresses/assembler/every-push-agrees-with-every-pop"_s, ImageTests::whenExecutable<testEveryPushAgreesWithEveryPop> },
         { "signed-return-addresses/assembler/link-register-is-plain-behind-save"_s, ImageTests::whenExecutable<testLinkRegisterIsPlainBehindSave> },

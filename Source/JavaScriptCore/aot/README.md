@@ -74,7 +74,7 @@ No generator of code does this. The assembler does, at the one place where it em
 | names it in a way that `ARM64LinkRegisterUse.h` does not know | as if it did the first two |
 | signs, authenticates or strips (`tagReturnAddress()`, `tagPtr()`, `removePtrTag()` and the like) | not at all |
 
-An address is therefore plain in the link register and signed anywhere else. Code that never saves the link register has no instruction for this, and a jump may leave for anything that a call may enter. Without `FEAT_FPAC` a failed authentication only makes the address unusable, and whoever signs it again gives away most of the right signature. So a load through the address follows, which the assembler takes out again where nothing but arithmetic lies in front of a jump to it.
+An address is therefore plain in the link register and signed anywhere else. Code that never saves the link register has no instruction for this, and a jump may leave for anything that a call may enter. Without `FEAT_FPAC` a failed authentication only makes the address unusable, and whoever signs it again gives away most of the right signature. So a load through the address follows, and a jump to the address takes its place where it comes next and no label lies in between. What asks for a place only where a map or a report is wanted takes `AssemblerBuffer::placeToDescribe()`, or the image depends on who looks.
 
 | Word | Signed with the B key and |
 | --- | --- |

@@ -765,8 +765,11 @@ void Encoder::run()
 
     linkPendingJumps();
     runLatePaths();
-    if (!m_proc.m_rangesOfOrigins.isEmpty())
-        m_proc.m_rangesOfOrigins.last().end = m_jit.labelIgnoringWatchpoints();
+    MacroAssembler::Label endOfRange = m_jit.labelIgnoringWatchpoints();
+    for (uint32_t index = m_beginsOfRangesOfOrigins.size(); index--;) {
+        m_proc.m_rangesOfOrigins[index].end = endOfRange;
+        endOfRange = m_proc.m_rangesOfOrigins[index].begin = m_jit.labelAt(m_beginsOfRangesOfOrigins[index]);
+    }
     ASSERT(m_pendingJumps.isEmpty());
 
     for (const JumpTableRecord& table : m_proc.m_jumpTables) {
@@ -909,12 +912,8 @@ ALWAYS_INLINE void Encoder::encodeBlockUnder(Block* block)
     }
     if (frame.isTornDownAtEnd) {
         RELEASE_ASSERT(terminator.operation->isUnconditionalJump());
-        if (frame.returnsInPlaceOfJump) {
-            ++m_numberOfOperationsEncoded;
-            leaveFrameAndReturn(terminator.operation->origin(), terminator.operation->index(), registersPoppedAtTeardown);
-            return;
-        }
-        tearDownFrame(registersPoppedAtTeardown);
+        ASSERT(m_frameIsSetUp);
+        leaveFrameIfSetUp(registersPoppedAtTeardown);
     }
 
     noteOrigin(terminator.operation->origin(), terminator.operation->index());
@@ -1465,26 +1464,21 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::setUpFrame(const Block* block)
     noteFrameState(true);
 }
 
-void Encoder::tearDownFrame(std::span<const GPRReg> registersPoppedOutOfWords)
+void Encoder::leaveFrameIfSetUp(std::span<const GPRReg> registersPoppedOutOfWords)
 {
-    ASSERT(m_frameIsSetUp);
+    if (!m_frameIsSetUp)
+        return;
+
     noteFrameState(false);
     AllowMacroScratchRegisterUsage allowScratch(m_jit);
+    Origin originOfUser = m_origin;
+    uint32_t operationOfUser = m_operationOfOrigin;
     noteOrigin(originOfFrameOrStore(*this, CodeOfBackEnd::FrameTeardown));
     if (registersPoppedOutOfWords.empty())
         emitFrameTeardown(m_jit, m_frame);
     else
         emitTeardownOfFrameThatPopsWords(m_jit, m_frame, registersPoppedOutOfWords);
-}
-
-void Encoder::leaveFrameAndReturn(Origin origin, uint32_t operation, std::span<const GPRReg> registersPoppedOutOfWords)
-{
-    tearDownFrame(registersPoppedOutOfWords);
-    m_jit.ret();
-    // A label in front of the return would keep the load that follows an authentication, and notes must not change the code.
-    constexpr int sizeOfReturn = isX86_64() ? 1 : 4;
-    if (m_notesRangesOfOrigins) [[unlikely]]
-        noteOriginInRanges(origin, operation, sizeOfReturn);
+    noteOrigin(originOfUser, operationOfUser);
 }
 
 ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::startOrEndFrameRange(bool isSetUp)
@@ -1498,7 +1492,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES void Encoder::startOrEndFrameRange(bool isSetUp)
         m_proc.m_frameRanges.last().end = here;
 }
 
-void Encoder::noteOriginInRanges(Origin origin, uint32_t operation, int bytesAlreadyEmitted)
+void Encoder::noteOriginInRanges(Origin origin, uint32_t operation)
 {
     ASSERT(m_notesRangesOfOrigins);
     m_origin = origin;
@@ -1507,10 +1501,8 @@ void Encoder::noteOriginInRanges(Origin origin, uint32_t operation, int bytesAlr
     ArenaVector<RangeOfOrigin>& ranges = m_proc.m_rangesOfOrigins;
     if (!ranges.isEmpty() && ranges.last().origin == origin && ranges.last().operation == operation && !isOriginOfBackEnd(origin))
         return;
-    MacroAssembler::Label here = MacroAssembler::Jump(m_jit.m_assembler.buffer().label().labelAtOffset(-bytesAlreadyEmitted)).label();
-    if (!ranges.isEmpty())
-        ranges.last().end = here;
-    ranges.append(m_arena, RangeOfOrigin { here, MacroAssembler::Label(), origin, operation });
+    ranges.append(m_arena, RangeOfOrigin { MacroAssembler::Label(), MacroAssembler::Label(), origin, operation });
+    m_beginsOfRangesOfOrigins.append(m_arena, m_jit.m_assembler.buffer().placeToDescribe());
 }
 
 bool Encoder::blockRunsInFrame(const Block* block) const

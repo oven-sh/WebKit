@@ -5277,7 +5277,6 @@ protected:
     int m_indexOfTailOfLastWatchpoint;
 #if ENABLE(RETURN_ADDRESS_SIGNING)
     bool m_signsLinkRegister { false };
-    unsigned m_offsetOfLoadThroughLinkRegister { UINT_MAX };
 #endif
     AssemblerBuffer m_buffer;
 

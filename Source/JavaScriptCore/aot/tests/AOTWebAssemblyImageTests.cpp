@@ -324,6 +324,17 @@ static void testSameBytesEachTime()
     }
 }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+static void testReturnFollowsAuthentication()
+{
+    constexpr uint32_t authenticationAndReturn[] = { 0xd50323ff, 0xd65f03c0 }; // AUTIBSP, RET
+    Wasm::ModuleForImage module = compileModuleWithCode(indirectCallModule);
+    AOT_TEST_CHECK(std::ranges::any_of(module.functions[trapping], [&](const Wasm::FunctionInImage& function) {
+        return !std::ranges::search(module.code.span().subspan(function.entry, function.size), asBytes(std::span(authenticationAndReturn))).empty();
+    }));
+}
+#endif
+
 static RelocatableCode codeThatCalls(std::optional<uint32_t> symbol)
 {
     BuildContext context(makeDefaultCompileOptions());
@@ -485,6 +496,9 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        { "webassembly-image/return-follows-authentication"_s, testReturnFollowsAuthentication },
+#endif
         { "webassembly-image/call-goes-to-copy-of-its-flavor"_s, testCallGoesToCopyOfItsFlavor },
         { "webassembly-image/call-of-unknown-symbol-is-refused"_s, testCallOfUnknownSymbolIsRefused },
         { "webassembly-image/pointer-table-slots"_s, testPointerTableSlots },
