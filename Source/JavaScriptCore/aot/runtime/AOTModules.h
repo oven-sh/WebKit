@@ -3347,6 +3347,7 @@ private:
     std::optional<BitVector> m_originalsRestoredAfterPass;
     BitVector m_stashesRestoredByPass;
     BitVector m_requirersOfOwnOriginals;
+    BitVector m_evictedActiveMocks;
     BitVector m_originalsRequiredByFactories;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;

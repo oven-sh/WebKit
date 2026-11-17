@@ -792,6 +792,7 @@ void Modules::tellIfFactoryImportsAbsentExport(ModuleID requested)
 
 void Modules::forgetCallOfMock(ModuleID fileOrModule)
 {
+    m_evictedActiveMocks.clear(fileOrModule.index());
     m_pendingMockCalls.remove(fileOrModule);
 }
 
