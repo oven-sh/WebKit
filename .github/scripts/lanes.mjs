@@ -152,7 +152,7 @@ const platforms = [
     lanes: {
       amd64: [...ALL, ...FUZZING, ...HARDENED],
       // Nothing asks for the others of FUZZING and HARDENED here.
-      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"],
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
