@@ -229,7 +229,7 @@ static void returnConstantOfGlobalBinding(CCallHelpers& jit, const StubSignature
 static std::expected<ArgumentThunks, LinkFailure> generateArgumentThunksOfChunk(BuildContext& context, const StubCatalog& catalog, std::span<const KeptArgumentMoves> lists, std::span<const uint32_t> stubKeyIndexes)
 {
     ArgumentThunks result;
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, context.assemblerPolicy());
     readTagsFromInstance(jit);
     AllowMacroScratchRegisterUsage allowScratch(jit);

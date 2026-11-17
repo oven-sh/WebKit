@@ -28,6 +28,7 @@
 #include <limits>
 #include <wtf/FastMalloc.h>
 #include <wtf/Lock.h>
+#include <wtf/PtrTag.h>
 #include <wtf/StdLibExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -788,7 +789,7 @@ std::optional<PrologueCheck> Image::prologueCheckAt(const void* returnAddress) c
 void* resumeAddressAfterStackCheck(const void* returnAddress)
 {
     const Image* image = Image::current();
-    std::optional<PrologueCheck> check = image->prologueCheckAt(returnAddress);
+    std::optional<PrologueCheck> check = image->prologueCheckAt(removeReturnAddressSignature(returnAddress));
     RELEASE_ASSERT(check);
     return const_cast<uint8_t*>(image->codeOf(check->function)) + check->resumeOffset;
 }

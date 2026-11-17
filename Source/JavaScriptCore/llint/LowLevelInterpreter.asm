@@ -1502,6 +1502,9 @@ end
 # in t1. May also trigger prologue entry OSR.
 macro prologue(osrSlowPath, traceSlowPath)
     # Set up the call frame and check if we should OSR.
+    if RETURN_ADDRESS_SIGNING
+        tagReturnAddress sp
+    end
     preserveCallerPCAndCFR()
 
     if TRACING
@@ -2099,9 +2102,7 @@ if ARM64E
     global _returnFromLLIntTrampoline
     _returnFromLLIntTrampoline:
         ret
-end
 
-if ARM64E or RETURN_ADDRESS_SIGNING
     global _jsTrampolineProgramPrologue
     _jsTrampolineProgramPrologue:
         tagReturnAddress sp
@@ -2318,7 +2319,9 @@ end
 include LowLevelInterpreter64
 
 if AOT
+    beginSigningLinkRegister
     include LowLevelInterpreterAOT
+    endSigningLinkRegister
 end
 
 

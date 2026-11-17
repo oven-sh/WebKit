@@ -740,7 +740,7 @@ void CyclicModuleRecord::execute(JSGlobalObject* globalObject, JSPromise* capabi
     auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(vm, this))
         RELEASE_AND_RETURN(scope, compiled->execute(globalObject, capability));
 #endif
 #if ENABLE(WEBASSEMBLY)
@@ -777,7 +777,7 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 2. Assert: module.[[HasTLA]] is true.
     ASSERT(hasTLA());
 #if ENABLE(AOT)
-    if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(this))
+    if (auto* compiled = AOT::compiledModule(vm, this))
         RELEASE_AND_RETURN(scope, compiled->executeAsync(globalObject));
     if (isCompiledOriginal())
         RELEASE_AND_RETURN(scope, AOT::evaluateOriginalAsync(globalObject, uncheckedDowncast<JSModuleRecord>(this)));
