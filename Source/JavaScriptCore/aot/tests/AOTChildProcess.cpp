@@ -20,6 +20,7 @@
 #include <wtf/MonotonicTime.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
+#include <wtf/PtrTag.h>
 #include <wtf/Seconds.h>
 #include <wtf/Threading.h>
 #include <wtf/text/CString.h>
@@ -496,7 +497,7 @@ static void reportTrap(int signal, siginfo_t*, void* context)
     printToStandardError("\nreturn addresses:");
     for (unsigned count = 0; count < maxFrames && isOnStack(fp) && isOnStack(fp + sizeof(uintptr_t)); ++count) {
         auto* frame = reinterpret_cast<const uintptr_t*>(fp);
-        printToStandardError(" 0x%llx", static_cast<unsigned long long>(frame[1]));
+        printToStandardError(" 0x%llx", removeReturnAddressSignature<unsigned long long>(std::bit_cast<const void*>(frame[1])));
         if (frame[0] <= fp)
             break;
         fp = frame[0];

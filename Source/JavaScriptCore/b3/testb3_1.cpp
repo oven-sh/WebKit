@@ -1679,6 +1679,8 @@ int main(int argc, char** argv)
     WTF::initializeMainThread();
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
+        // A disassembly covers the whole allocation, whose end is not written where branches were compacted.
+        JSC::Options::zeroExecutableMemoryOnFree() = true;
     });
 
 #if ENABLE(JIT_OPERATION_VALIDATION)

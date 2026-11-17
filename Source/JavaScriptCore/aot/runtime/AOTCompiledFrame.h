@@ -113,7 +113,7 @@ public:
     {
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(m_frame.callFrame);
         CallFrame* framePointer = m_frame.hasFrameRecord ? record->callerFrame : m_frame.framePointer;
-        const void* pc = removeCodePtrTag(record->returnPC);
+        const void* pc = removeReturnAddressSignature(record->returnPC);
         CodeLocation code = m_image->locate(pc);
         ImageFrame imageFrame = imageFrameAt(code);
         CallFrame* callFrame = frameAtReturnSite(imageFrame, callerStackPointer(m_frame.callFrame, m_frame.bytesAboveReturnAddress), framePointer);
@@ -295,6 +295,8 @@ public:
     EntryFrame* entryFrame() const { return m_cursor.entryFrame; }
     CallFrame* framePointer() const { return m_cursor.framePointer; }
     void* stackPointer() const { return m_cursor.stackPointer; }
+    void* rawReturnAddress() const { return m_cursor.rawPC; }
+    CallFrame* recordOfReturnAddress() const { return m_cursor.calleeFrame ? m_cursor.calleeFrame : std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(m_cursor.stackPointer) - sizeof(CallerFrameAndPC)); }
     CallFrame* generatorStubFrameLeft() const { return m_cursor.generatorStubFrame; }
     CallFrame* asyncGeneratorStubFrameLeft() const { return m_cursor.asyncGeneratorStubFrame; }
     CallFrame* asyncGeneratorBodyFrameLeft() const { return m_cursor.asyncGeneratorBodyFrame; }

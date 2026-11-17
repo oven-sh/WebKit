@@ -436,6 +436,40 @@ static void testMachineFrameCoversRareBlocksAlone()
     function.checkAnswers();
 }
 
+static void testMachineFrameIsTornDownAlikeWhereOriginsAreNoted()
+{
+    for (bool joinOnlyReturns : { false, true }) {
+        Vector<uint8_t> codeWithoutNotes;
+        for (bool notes : { false, true }) {
+            ProcedureTraits traits;
+            traits.notesRangesOfOrigins = notes;
+            TestProcedure test(traits);
+            Output& out = test.out();
+            LBasicBlock rare = out.newBlock();
+            LBasicBlock join = out.newBlock();
+            LValue a = test.argumentGPR(0);
+            out.branch(out.testNonZero64(a, 1), rareEdge(rare), normalEdge(join));
+            out.appendTo(rare);
+            appendFrameTestCall(test)->setNeedsFrameRecord(true);
+            out.jump(join);
+            out.appendTo(join);
+            out.ret(joinOnlyReturns ? a : out.add(a, 2));
+            compileOrFail(test);
+
+            AOT_FRAME_TEST_CHECK(test, test.procedure().frame().coverage() == FrameCoverage::RareRegions && plannedBlockOnlyReturns(test.procedure(), join) == (joinOnlyReturns && GPRInfo::argumentGPR0 == GPRInfo::returnValueGPR));
+            if (!notes) {
+                codeWithoutNotes = Vector<uint8_t>(test.linkedCode());
+                continue;
+            }
+            AOT_FRAME_TEST_CHECK(test, equalSpans(codeWithoutNotes.span(), test.linkedCode()));
+            ptrdiff_t bytesOfJump = 0;
+            for (const RangeOfOrigin& range : test.procedure().rangesOfOrigins())
+                bytesOfJump += range.operation == rare->last()->index() ? MacroAssembler::differenceBetween(range.begin, range.end) : 0;
+            AOT_FRAME_TEST_CHECK(test, isARM64() ? bytesOfJump == 4 : bytesOfJump > 0);
+        }
+    }
+}
+
 static void testMachineSmallColdBlockStandsNearItsJump(bool isRare)
 {
     constexpr unsigned numberOfSums = 40;
@@ -3753,6 +3787,7 @@ std::span<const NativeTest> machineFrameTests()
 {
     static constexpr NativeTest tests[] = {
         { "machine/frame/rare-blocks-with-calls-have-frames-of-their-own"_s, Machine::testMachineFrameCoversRareBlocksAlone },
+        { "machine/frame/it-is-torn-down-alike-where-origins-are-noted"_s, Machine::testMachineFrameIsTornDownAlikeWhereOriginsAreNoted },
         { "machine/frame/a-head-saves-the-owner-that-the-collector-alone-reads"_s, Machine::testMachineFrameHeadSavesOwnerThatCollectorAloneReads },
         { "machine/frame/a-second-head-saves-the-owner-that-steps-read-under-the-first-alone"_s, Machine::testMachineFrameSecondHeadSavesOwnerThatStepsReadUnderFirstAlone },
         { "machine/frame/patch-that-may-collect-without-a-frame-shows-its-registers-or-ends-the-function"_s, Machine::testMachineFramePatchThatMayCollectWithoutFrameShowsItsRegistersOrEndsFunction },

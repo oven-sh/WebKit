@@ -152,13 +152,25 @@ std::optional<uint32_t> endOfLastReturnSite(const CompiledCode&);
 
 void* resumeAddressAfterStackCheck(const void* returnAddress);
 
-struct HandlerRecord {
+class AuthenticatedReturnAddress;
+
+class HandlerRecord {
+public:
+    constexpr HandlerRecord(uint32_t codeOffset, HandlerType type)
+        : m_codeOffset(codeOffset)
+        , m_type(type)
+    {
+    }
+
     friend bool operator==(const HandlerRecord&, const HandlerRecord&) = default;
 
-    constexpr bool ignoresValue() const { return type == HandlerType::SynthesizedCatch; }
+    constexpr HandlerType type() const { return m_type; }
+    constexpr bool ignoresValue() const { return m_type == HandlerType::SynthesizedCatch; }
+    uint32_t codeOffset(const AuthenticatedReturnAddress& /* thatLedHere */) const { return m_codeOffset; }
 
-    uint32_t codeOffset;
-    HandlerType type;
+private:
+    uint32_t m_codeOffset;
+    HandlerType m_type;
 };
 
 void encodeHandlers(Vector<uint8_t>& bytes, std::span<const SiteHandler>);

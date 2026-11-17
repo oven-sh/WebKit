@@ -348,6 +348,13 @@ void StubCalls::moveAddressOfFunction(Typed::CodeUnit callee, uint16_t entry, GP
     m_relocations.moveAddress({ SymbolSpace::Function, indexOf(callee), entry }, destination, PCRelativeReach::Far);
 }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+void StubCalls::moveSignedAddressOfFunction(Typed::CodeUnit callee, uint16_t entry)
+{
+    m_relocations.moveSignedAddress({ SymbolSpace::Function, indexOf(callee), entry }, PCRelativeReach::Far);
+}
+#endif
+
 void StubCalls::moveAddressOfStub(CCallHelpers& jit, StubKey key, std::optional<uint32_t> immediate, GPRReg destination)
 {
     m_relocations.moveAddress({ SymbolSpace::Stub, indexOf(prepare(jit, key, immediate)) }, destination, PCRelativeReach::Far);

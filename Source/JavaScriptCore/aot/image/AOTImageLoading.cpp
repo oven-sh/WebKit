@@ -582,6 +582,10 @@ static void didPublishImage(const Image& image)
 extern "C" __attribute__((used, retain)) const char JSC__AOT__startsOnlyWhereItsFileCanBeRead[] = "execute-only start: nothing moves the code that the loader mapped";
 #endif
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+extern "C" __attribute__((used, retain)) const char JSC__AOT__savesSignedReturnAddresses[] = "return addresses: what a compiled program saves of them is signed";
+#endif
+
 #if OS(LINUX)
 static void readAheadOfStart(std::span<const uint8_t> bytes, const ImageHeader& header)
 {

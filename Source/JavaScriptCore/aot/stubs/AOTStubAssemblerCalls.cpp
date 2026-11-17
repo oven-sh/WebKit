@@ -38,10 +38,10 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
         addPtr(TrustedImm32(padding), stackPointerRegister);
 #else
     RELEASE_ASSERT(!(bytesPushed % stackAlignmentBytes()));
-    pushToSave(linkRegister);
+    emitPushLinkRegister(*this);
     loadEntry(entry, leafFunctionGPR);
     CCallHelpers::call(leafFunctionGPR, OperationPtrTag);
-    popToRestore(linkRegister);
+    emitPopLinkRegister(*this);
 #endif
 }
 
