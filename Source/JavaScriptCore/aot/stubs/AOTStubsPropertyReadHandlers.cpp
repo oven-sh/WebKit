@@ -269,8 +269,9 @@ void generateReadSlot(StubAssembler& jit)
             const GPRReg accessorIndex = clobberPayloadRegister();
             const GPRReg uid = T10;
             slot.loadFirstPayloadWord(jit, accessorIndex);
-            loadPropertyName(uid);
-            callCustomGetterAndReturn(jit, R0, accessorIndex, uid, origin == SlotOrigin::ByVal ? std::optional<GPRReg>(operands.keyCell) : std::nullopt);
+            callCustomGetterAndReturn(jit, R0, accessorIndex, uid, origin == SlotOrigin::ByVal ? std::optional<GPRReg>(operands.keyCell) : std::nullopt, [&] {
+                loadPropertyName(uid);
+            });
             return;
         }
         case Slot::Kind::Field:

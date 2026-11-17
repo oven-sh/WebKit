@@ -388,7 +388,7 @@ static void callRecordedAccessorAndReturn(StubAssembler& jit, GPRReg receiver, G
     });
 }
 
-void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell)
+void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell, const ScopedLambda<void()>& loadName)
 {
     const GPRReg cachedValue = jit.reuseScratch(StubRegister::T11);
     const GPRReg record = jit.clobberRegister(accessorIndex);
@@ -404,6 +404,7 @@ void callCustomGetterAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg acces
 
     hasNoCachedValue.link(&jit);
     isEmpty.link(&jit);
+    loadName();
     callRecordedAccessorAndReturn(jit, receiver, record, uid, std::nullopt, keyCell);
 }
 

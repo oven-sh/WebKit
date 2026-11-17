@@ -27,6 +27,7 @@
 #include "Butterfly.h"
 #include "CompleteSubspace.h"
 #include "DirectArguments.h"
+#include "EmbedderListItems.h"
 #include "IndexingType.h"
 #include "JSArrayBufferView.h"
 #include "JSCell.h"
@@ -767,6 +768,17 @@ static void generateGetByVal(StubAssembler& jit, RegistersOfCaller registersOfCa
     jit.returnToCaller();
 
     isNotMapped.link(&jit);
+    Jump isNoEmbedderList = jit.branch32(CCallHelpers::NotEqual, registers.type, TrustedImm32(EmbedderListType));
+    jit.loadPtr(Address(base, EmbedderListItems::offsetOfClock()), storage);
+    jit.load64(Address(storage), storage);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, Address(base, EmbedderListItems::offsetOfTime()), storage));
+    jit.loadPtr(Address(base, EmbedderListItems::offsetOfItems()), storage);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, storage));
+    jit.zeroExtend32ToWord(key, index);
+    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, index, Address(storage, JSCellButterfly::offsetOfPublicLength())));
+    returnValueUnlessHole(jit, registers, BaseIndex(storage, index, CCallHelpers::TimesEight, JSCellButterfly::offsetOfData()), slow);
+
+    isNoEmbedderList.link(&jit);
     isOverridden.link(&jit);
     isPastEnd.link(&jit);
     answerWhereNoObjectOfChainHasElements(jit, registers, slow, isAbsent, compiledObjectHasNone, isNoArray);

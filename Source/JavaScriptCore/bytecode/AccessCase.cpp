@@ -98,6 +98,7 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -393,6 +394,7 @@ bool AccessCase::guardedByStructureCheckSkippingConstantIdentifierCheck() const
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -562,6 +564,7 @@ bool AccessCase::requiresIdentifierNameMatch() const
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -726,6 +729,7 @@ bool AccessCase::requiresInt32PropertyCheck() const
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -885,6 +889,7 @@ void AccessCase::forEachDependentCell(VM&, NOESCAPE const Functor& functor) cons
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -1045,6 +1050,7 @@ bool AccessCase::doesCalls(VM&) const
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -1206,6 +1212,7 @@ bool AccessCase::canReplace(const AccessCase& other) const
     case RegExpLastIndexStore:
     case ArrayLengthStore:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -1488,6 +1495,7 @@ inline void AccessCase::runWithDowncast(NOESCAPE const Func& func)
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:
@@ -1692,6 +1700,7 @@ bool AccessCase::canBeShared(const AccessCase& lhs, const AccessCase& rhs)
     case IndexedContiguousLoad:
     case IndexedArrayStorageLoad:
     case IndexedScopedArgumentsLoad:
+    case IndexedEmbedderListLoad:
     case IndexedDirectArgumentsLoad:
     case IndexedTypedArrayInt8Load:
     case IndexedTypedArrayUint8Load:

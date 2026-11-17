@@ -273,9 +273,13 @@ std::optional<BuiltinDispatchTarget> BuiltinTable::dispatchOf(BuiltinID id, Buil
     static constinit RecordsByBuiltin<BuiltinDispatch> dispatchesByBuiltin;
     std::span<const BuiltinDispatch> dispatches = dispatchesByBuiltin.find(keptByThisReader(m_data.dispatches, builtinTableDispatches), m_data.builtins.size(), id);
     auto found = std::ranges::find(dispatches, mode, &BuiltinDispatch::mode);
-    if (found == dispatches.end())
-        return std::nullopt;
-    return found->root;
+    if (found != dispatches.end())
+        return found->root;
+    for (BuiltinOverloadID overload : overloadIDsOf(id)) {
+        if (summaryOf(overload).mode == mode)
+            return BuiltinDispatchTarget { .overload = overload };
+    }
+    return std::nullopt;
 }
 
 const BuiltinParameter* BuiltinTable::parameterFor(const BuiltinOverload& overload, BuiltinOperand position) const

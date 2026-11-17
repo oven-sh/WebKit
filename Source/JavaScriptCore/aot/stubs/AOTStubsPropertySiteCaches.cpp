@@ -1232,7 +1232,7 @@ void generateReadAnswerAtSite(StubAssembler& jit)
         jit.returnToCaller();
         break;
     case Form::OwnFieldInCell:
-        returnFieldUnlessSlotIsEmpty(jit, receiver, operand, value, result, use == SiteUse::ReadUnderNameOfField ? slotOfAnyObjectIsEmpty : slotIsEmpty);
+        returnFieldUnlessSlotIsEmpty(jit, receiver, operand, value, result, slotOfAnyObjectIsEmpty);
         break;
     case Form::OwnValueInCell:
         jit.load64(BaseIndex(receiver, operand, CCallHelpers::TimesOne), result);

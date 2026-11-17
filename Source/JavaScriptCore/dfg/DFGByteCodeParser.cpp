@@ -2473,7 +2473,9 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleCallVariant(Node* c
     }
 
     if (Options::useDOMJIT()) {
-        if (const DOMJIT::Signature* signature = callee.signatureFor(specializationKind)) {
+        const DOMJIT::Signature* signature = callee.signatureFor(specializationKind);
+        // CallDOM passes the global object of the caller. What can do anything can tell it from that of the callee.
+        if (signature && (!signature->effect.isTop() || (callee.function() && callee.function()->realm() == m_graph.globalObjectFor(currentNodeOrigin().semantic)))) {
             if (handleDOMJITCall(callTargetNode, result, signature, registerOffset, argumentCountIncludingThis, prediction, insertChecksWithAccounting)) {
                 endSpecialCase();
                 return CallOptimizationResult::Inlined;

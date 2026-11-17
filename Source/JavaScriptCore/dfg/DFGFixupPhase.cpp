@@ -5300,6 +5300,8 @@ private:
                         shouldConvertToCallDOM = false;
                 } else {
                     switch (signature->arguments[index - 2]) {
+                    case SpecBytecodeTop:
+                        break;
                     case SpecString:
                         if (!edge->shouldSpeculateNotString())
                             shouldConvertToCallDOM = false;
@@ -5433,6 +5435,8 @@ private:
             if (!edge)
                 return;
             switch (signature->arguments[argumentIndex]) {
+            case SpecBytecodeTop:
+                break;
             case SpecString:
                 fixEdge<StringUse>(edge);
                 break;

@@ -22754,6 +22754,9 @@ IGNORE_CLANG_WARNINGS_END
                 case SpecBoolean:
                     operands.append(lowBoolean(edge));
                     break;
+                case SpecBytecodeTop:
+                    operands.append(lowJSValue(edge));
+                    break;
                 case SpecInt8Array: {
                     LValue cell = lowCell(edge);
                     FTL_TYPE_CHECK(jsValueValue(cell), edge, SpecInt8Array, isNotType(cell, Int8ArrayType));
@@ -22849,7 +22852,7 @@ IGNORE_CLANG_WARNINGS_END
     void compileCallDOMGetter()
     {
         DOMJIT::CallDOMGetterSnippet* domJIT = m_node->callDOMGetterData()->snippet;
-        if (!domJIT) {
+        if (!domJIT || !domJIT->generator()) {
             // The following function is not an operation: we directly call a custom accessor getter.
             // Since the getter does not have code setting topCallFrame, As is the same to IC, we should set topCallFrame in caller side.
             // FIXME: Revisit JSGlobalObject.

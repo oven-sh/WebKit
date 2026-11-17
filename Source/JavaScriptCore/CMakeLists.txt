@@ -1296,6 +1296,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DumpContext.h
     runtime/ECMAMode.h
     runtime/EmbedderArrayLike.h
+    runtime/EmbedderListItems.h
     runtime/EncodedValueDescriptor.h
     runtime/EnsureStillAliveHere.h
     runtime/EnumerationMode.h

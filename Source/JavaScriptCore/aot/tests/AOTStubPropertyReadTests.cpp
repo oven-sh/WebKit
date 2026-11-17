@@ -2732,10 +2732,12 @@ static void testEmptyWordInCellOfPlainObjectIsAskedBehindPlace()
     receiver.at<uint64_t>(JSObject::offsetOfInlineStorage()) = 0;
     receiver.at<uint64_t>(JSObject::offsetOfInlineStorage() + sizeof(EncodedJSValue)) = bitsOf(jsNumber(9));
     reads.fileInFrontBesideOthers(Slot::createInStorage(structureID, Slot::Kind::Value, Slot::isOwn, nullptr, 1));
-    place.answers().second = *SiteAnswers::tryByStructure(SiteUse::ReadUnderNameOfField, structureID, SiteAnswers::Form::OwnFieldInCell, JSObject::offsetOfInlineStorage());
-    reads.runner.forgetAccessTable();
-    StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, SiteUse::ReadUnderNameOfField), { receiver.address() }, AnswersAtOnePlace::distance);
-    AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(9)));
+    for (SiteUse use : { SiteUse::Read, SiteUse::ReadUnderNameOfField }) {
+        place.answers().second = *SiteAnswers::tryByStructure(use, structureID, SiteAnswers::Form::OwnFieldInCell, JSObject::offsetOfInlineStorage());
+        reads.runner.forgetAccessTable();
+        StubRun run = reads.runner.run(readAtSiteAskingStructureFirst(ReceiverAtSite::IsAnyValue, use), { receiver.address() }, AnswersAtOnePlace::distance);
+        AOT_TEST_CHECK(!run.calledOperation && run.result == bitsOf(jsNumber(9)));
+    }
 }
 
 static void testStructureFiledWithoutFormIsSentToItsRow()

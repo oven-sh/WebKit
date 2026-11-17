@@ -35,6 +35,7 @@
 #include "DOMJITGetterSetter.h"
 #include "DirectArguments.h"
 #include "ECMAMode.h"
+#include "EmbedderListItems.h"
 #include "ExecutableBaseInlines.h"
 #include "FTLThunks.h"
 #include "FullCodeOrigin.h"
@@ -830,6 +831,8 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
             accessType = AccessCase::IndexedDirectArgumentsLoad;
         else if (base->type() == ScopedArgumentsType)
             accessType = AccessCase::IndexedScopedArgumentsLoad;
+        else if (base->type() == EmbedderListType)
+            accessType = AccessCase::IndexedEmbedderListLoad;
         else if (base->type() == StringType)
             accessType = AccessCase::IndexedStringLoad;
         else if (base->type() == ProxyObjectType)

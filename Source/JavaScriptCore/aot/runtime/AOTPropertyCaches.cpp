@@ -2970,6 +2970,15 @@ static std::optional<AnswersAtSites::AnswerByStructure> getterFieldAnswer(SiteUs
     return answer ? std::optional(AnswersAtSites::AnswerByStructure { *answer, 0 }) : std::nullopt;
 }
 
+static std::optional<AnswersAtSites::AnswerByStructure> cachedValueAnswer(SiteUse use, const Slot& slot, const CustomAccessorTable& accessors)
+{
+    if (slot.kind != Slot::Kind::CustomGetter || !isRead(use))
+        return std::nullopt;
+    uint32_t offset = accessors.at(slot.customAccessor.index).offsetOfCachedValue;
+    std::optional<SiteAnswers::Answer> answer = offset ? SiteAnswers::tryByStructure(use, slot.structureID, SiteAnswers::Form::OwnFieldInCell, offset) : std::nullopt;
+    return answer ? std::optional(AnswersAtSites::AnswerByStructure { *answer, 0 }) : std::nullopt;
+}
+
 static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use, const Slot& slot, uintptr_t cageBase, bool usesWideReferences, JSObject* objectThatHoldsUndefined)
 {
     using Form = SiteAnswers::Form;
@@ -3556,6 +3565,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         slot = std::nullopt;
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !testsForPresence && !readsForOtherReceiver ? getterFieldAnswer(use, *slot) : std::nullopt;
+    if (!answer && slot && !testsForPresence && !readsForOtherReceiver && !compiledObjectStructureOrNull(structure))
+        answer = cachedValueAnswer(use, *slot, m_tables.customAccessors());
     if (!answer && slot && slot->kind == Slot::fieldOfGetter) {
         ChainWalk above = walkChain({ m_state.instance.globalObject, structure, asObject(base), ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
         if (above.result == ChainWalkResult::Found && above.holder && isValidOffset(above.offset) && (above.attributes & PropertyAttribute::Accessor))

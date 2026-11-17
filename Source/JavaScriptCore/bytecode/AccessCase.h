@@ -99,6 +99,7 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AccessCase);
     macro(IndexedContiguousLoad) \
     macro(IndexedArrayStorageLoad) \
     macro(IndexedScopedArgumentsLoad) \
+    macro(IndexedEmbedderListLoad) \
     macro(IndexedDirectArgumentsLoad) \
     macro(IndexedTypedArrayInt8Load) \
     macro(IndexedTypedArrayUint8Load) \

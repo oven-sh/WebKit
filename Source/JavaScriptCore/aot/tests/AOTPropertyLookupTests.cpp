@@ -101,6 +101,23 @@ static constexpr ASCIILiteral programReadingCountText =
     "}\n"
     "entry module=m0\n"_s;
 
+static constexpr ASCIILiteral programReadingAtPlaceText =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "function f0 name=\"main\" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    v0 = Builtin builtin=GlobalThis\n"
+    "    v1 = PropGet v0 key=\"publish\" [isFreeName]\n"
+    "    v2 = NewClosure function=f1\n"
+    "    v3 = Call v1, -, v2\n"
+    "    Return\n"
+    "}\n"
+    "function f1 name=\"read\" module=m0 parameters=[{type=anything}] results=[{type=anything}] {\n"
+    "  b0(v0: anything):\n"
+    "    v1 = PropGet v0 key=\"count\" @10\n"
+    "    Return v1\n"
+    "}\n"
+    "entry module=m0\n"_s;
+
 #define PROGRAM_CREATING_SYMBOL \
     "layout L0 name=\"Tagged\" module=m0 fields=[{key=symbol(\"tag\")@m0:0 declared={type=anything} flags=[IsRequired]}]\n" \
     "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n" \
@@ -634,6 +651,42 @@ static void testMembersOfPlatformObjectWithNames(LoadedProgram& program)
     AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, platformObject, label)));
 }
 
+static void testPlaceReadsCachedValueOfCustomGetter(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    PropertyCaches& caches = *program.state().propertyCaches;
+    Identifier count = Identifier::fromString(vm, "count"_s);
+    CachedName name = caches.nameOf(count.impl());
+    JSObject* prototype = constructEmptyObject(realm);
+    putGetterOfReceiver(vm, prototype, count);
+    JSObject* object = constructEmptyObject(realm, prototype);
+
+    readAndClassify(program, object, count);
+    PropertyAnswer answer = readAndClassify(program, object, count);
+    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::CustomAccessor && name.identifierNumber);
+    CustomAccessorRecord record = caches.tables().customAccessors().at(answer.customAccessor);
+    record.offsetOfCachedValue = JSObject::offsetOfInlineStorage();
+    answer.customAccessor = *caches.tables().customAccessors().add(record);
+    caches.cache({ object->structure(), name, SlotAccess::Read }, answer);
+
+    constexpr uint32_t place = 0;
+    AOT_TEST_CHECK(place < program.state().instance.indicesOfSiteAnswers().size());
+    const SiteAnswers::Answer expected = *SiteAnswers::tryByStructure(SiteUse::Read, object->structureID(), SiteAnswers::Form::OwnFieldInCell, record.offsetOfCachedValue);
+    auto readsCachedValue = [&] {
+        const SiteAnswers* answers = caches.answersAtSites().answersOf(place);
+        return answers && (answers->first == expected || answers->second == expected);
+    };
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, false, true, false);
+    AOT_TEST_CHECK(!readsCachedValue());
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, false, false, true);
+    AOT_TEST_CHECK(!readsCachedValue());
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, true);
+    AOT_TEST_CHECK(readsCachedValue());
+    AOT_TEST_CHECK(prototype->deleteProperty(realm, count));
+    AOT_TEST_CHECK(!readsCachedValue());
+}
+
 static void testCustomAccessorOfGlobalObject(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1062,6 +1115,9 @@ template<LoadedProgramTest body>
 static constexpr void (*withProgramReadingCount)() = runNativeTestWithLoadedProgram<propertyLookupTests, programReadingCountText, changeObjectsUnseen<body>>;
 
 template<LoadedProgramTest body>
+static constexpr void (*withProgramReadingAtPlace)() = runNativeTestWithLoadedProgram<propertyLookupTests, programReadingAtPlaceText, body>;
+
+template<LoadedProgramTest body>
 static constexpr void (*withProgramCreatingSymbol)() = runNativeTestWithLoadedProgram<propertyLookupTests, programCreatingSymbolText, body>;
 
 static void runSymbolOfEachRealmIsNeverFiledInFront()
@@ -1079,6 +1135,7 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/dictionary-on-chain"_s, withProgram<testDictionaryOnChain> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },
         { "property-lookup/members-of-platform-object-with-names"_s, withProgram<testMembersOfPlatformObjectWithNames> },
+        { "property-lookup/place-reads-cached-value-of-custom-getter"_s, withProgramReadingAtPlace<testPlaceReadsCachedValueOfCustomGetter> },
         { "property-lookup/custom-accessor-of-global-object"_s, withProgram<testCustomAccessorOfGlobalObject> },
         { "property-lookup/names-announced-above-global-object"_s, withProgram<testNamesAnnouncedAboveGlobalObject> },
         { "property-lookup/no-conditions-for-miss-below-object-with-names"_s, withProgram<testNoConditionsForMissBelowObjectWithNames> },
