@@ -3838,8 +3838,9 @@ static Reference bearLiteralAgainBehindItsRoom(Walker& walker, const BodyIndex& 
     Reference again = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(written);
     if (!again || !again.isValue() || again == list || walker.code().at(again.id()).opcode != Opcode::NewArray)
         return { };
+    walker.bindForWay(written, again);
     for (ValueID cast : casts)
-        walker.bind(cast, again);
+        walker.bindForWay(cast, again);
     walker.count(StatisticID::ArrayLiteralAllocationsSunk);
     return again;
 }

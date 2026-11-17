@@ -1225,6 +1225,12 @@ public:
             frame.duplicatedValues->noteBoundOnWay(input, reference);
         bound = reference;
     }
+    void bindForWay(ValueID input, Reference reference)
+    {
+        bind(input, reference);
+        if (Frame& frame = m_frames.last(); frame.isDuplicated(input)) [[unlikely]]
+            frame.duplicatedValues->nameOtherwiseOn(frame.duplicatedValues->namesOfWay, input, reference);
+    }
     class StandIn {
         WTF_MAKE_NONCOPYABLE(StandIn);
     public:
