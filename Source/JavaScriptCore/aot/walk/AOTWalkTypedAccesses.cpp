@@ -2800,11 +2800,13 @@ static bool storePassesAboveWithoutGuards(const Walker& walker, const ReceiversO
     return nothingAnswersAboveReceiversForTypedAccess(walker, receivers, key) || storePassesPrimitivesAbove(walker, receivers, key) || storePassesMethodAbove(walker, receivers, key);
 }
 
+static bool recordOfClassCreatesMethod(const Walker&, LayoutID classLayout, PropertyKeyID);
+
 static bool someClassMakesItsMethodsAgain(const Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key)
 {
     return !std::ranges::all_of(receivers.members, [&](LayoutID member) {
         LayoutID classLayout;
-        return findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout) && walker.facts().isEvaluatedAtMostOnce(classLayout);
+        return findMethodDeclaredAboveObjectsOf(walker, member, key, classLayout) && walker.facts().isEvaluatedAtMostOnce(classLayout) && recordOfClassCreatesMethod(walker, classLayout, key);
     });
 }
 
@@ -3367,6 +3369,13 @@ static FunctionID findMethodDeclaredAboveObjectsOf(const Walker& walker, LayoutI
     FunctionID method = findMethodInRow(walker, classLayout, key, nullptr);
     kept.add(place, method);
     return method;
+}
+
+static bool recordOfClassCreatesMethod(const Walker& walker, LayoutID classLayout, PropertyKeyID key)
+{
+    std::span<const uint32_t> places = walker.facts().placesOfMembersUnder(classLayout, ClassSide::Prototype, key);
+    const auto& creations = walker.plan().slots().classCreation(classLayout).members;
+    return places.size() == 1 && places[0] < creations.size() && creations[places[0]] == MemberCreation::ByClassRecord;
 }
 
 static FunctionID findMethodInRow(const Walker& walker, LayoutID classLayout, PropertyKeyID key, ASCIILiteral* whyNone)
