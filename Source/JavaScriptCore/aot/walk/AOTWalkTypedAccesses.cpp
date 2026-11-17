@@ -7551,8 +7551,22 @@ static std::optional<Vector<FieldIndex, 8>> fieldsOfTargetForCopyInTypedAccess(c
     const Program& program = walker.program();
     auto excludedKeys = copy.as<Opcode::CopyDataProperties>().excludedKeys();
     Vector<FieldIndex, 8> fieldsOfTarget;
+    auto hasSymbolKey = [&](FieldIndex index) {
+        PropertyKeyID key = index < program.at(source).fields.size() ? program.at(source).fields[index].key : PropertyKeyID();
+        return key && isSymbolKind(program.at(key).kind);
+    };
+    Vector<FieldIndex, 8> keyByKey;
+    bool isCopiedKeyByKey = accessors == AccessorsAmongOwnKeys::AreCalled && std::ranges::any_of(order, hasSymbolKey) && std::ranges::any_of(order, [&](FieldIndex index) {
+        return isAccessorForCopyInTypedAccess(walker, { source, index });
+    });
+    for (bool takesSymbols : { false, true }) {
+        for (FieldIndex index : isCopiedKeyByKey ? order : std::span<const FieldIndex>()) {
+            if (hasSymbolKey(index) == takesSymbols)
+                keyByKey.append(index);
+        }
+    }
     bool callsGetter = false;
-    for (FieldIndex index : order) {
+    for (FieldIndex index : isCopiedKeyByKey ? keyByKey.span() : order) {
         if (callsGetter && !staysOwnKeyAfterCalls(walker, source, index))
             return std::nullopt;
         bool isAccessor = false;
