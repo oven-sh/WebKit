@@ -128,6 +128,8 @@ struct ModuleHost {
     bool (*wasFetchedByTestFile)(JSGlobalObject*, const String& key);
     bool (*hasSynchronousFactory)(JSGlobalObject*, const String& mocked, bool isOriginalSynchronous);
     bool (*isSpy)(JSGlobalObject*, const String& mocked);
+    bool (*keepsImportersOfPreload)(JSObject* mock);
+    bool (*isRequiringMock)(JSGlobalObject*, const String& mocked);
     JSPromise* (*sourceAfterRelease)(JSGlobalObject*, AbstractModuleRecord*, ModuleID);
     bool (*hasPendingPatch)(JSGlobalObject*, ModuleID);
     bool (*evictOriginal)(JSGlobalObject*, const String& mocked);
@@ -410,6 +412,7 @@ JS_EXPORT_PRIVATE void noteOriginalRequiredFromSource(JSGlobalObject*, ModuleID)
 JS_EXPORT_PRIVATE JSPromise* pendingFactoryInGraph(JSGlobalObject*, ModuleID, JSValue& state);
 JS_EXPORT_PRIVATE bool didMockFailForImportStatement(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willFetchAfterTick(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void noteImporterOfFetch(JSGlobalObject*, ModuleID, ModuleID importer);
 JS_EXPORT_PRIVATE void didResumeFetchAfterFactory(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool wasReleasedByLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void letGoUntilEndOfTestFile(JSGlobalObject*, ModuleID);
@@ -460,6 +463,7 @@ JS_EXPORT_PRIVATE void didEndMocksOfTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didRequireOwnOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool takeRequirerOfOwnOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool tryEvictRequirerOfOriginal(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasOriginalRunForStatement(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE JSValue exportsBeforeMock(JSGlobalObject*, ModuleID, bool evenIfEvaluationFailed, bool* didExportReadThrow = nullptr);
 JS_EXPORT_PRIVATE JSValue retainedOriginalExports(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE JSValue revalidateRetainedOriginalExports(JSGlobalObject*, ModuleID file);
