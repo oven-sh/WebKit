@@ -2716,8 +2716,11 @@ bool AccessInLinkAccesses::storeEachListedValue(const LinkType& listed, Prototyp
                 return m_flow.typeAt(value.node).isNever();
             }, numberOfListedValues);
         }
+        bool listsMembers = false;
+        if (isInstance && prototypeNames == PrototypeNames::Included)
+            m_flow.forEachNameMadeEnumerable(layout, [&](PropertyKeyID) { listsMembers = true; });
         Vector<PropertyKeyID, 16> above;
-        if (isInstance && m_flow.hasFollowedPrototypes(layout) && !m_flow.appendPrototypeNames(layout, above)) {
+        if (listsMembers || (isInstance && m_flow.hasFollowedPrototypes(layout) && !m_flow.appendPrototypeNames(layout, above))) {
             holdsValuesInSight = false;
             return;
         }
@@ -3137,13 +3140,17 @@ void AccessInLinkAccesses::resolve()
     if (!m_shared && m_access.isCopySpelledByLoop) {
         FlowNodeID source = m_flow.nodeOf(m_function, m_flow.sourceOfCopySpelledByLoop(m_function, m_access.site));
         tellAgainOnceClimbs(source);
-        if (m_flow.followsCopySpelledByLoop(subject, m_flow.typeAt(source))) {
+        if (m_flow.followsCopySpelledByLoop(subject, m_flow.typeAt(source)) && !m_flow.hasNameMadeEnumerable(m_flow.typeAt(source))) {
+            bool copiesInstances = false;
             m_flow.forEachLayoutOf(m_flow.typeAt(source), [&](LayoutID copied) {
                 if (m_program.at(copied).kind != LayoutKind::Instance)
                     return;
+                copiesInstances = true;
                 m_flow.build.statistics().count(StatisticID::InstancesCopiedByLoops);
                 tellAgainOnceClimbsWhoeverTells(m_flow.extraPropertyStoreNode(copied));
             });
+            if (copiesInstances)
+                m_flow.noteNamesOfRecordsRead(observerOfWhatWasLookedUp(), source);
             mayThrow();
             return;
         }
@@ -3801,6 +3808,9 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
             storeInto(m_flow.storedOnPrototypeOf(id, m_access.key, isStoreByBodyOfFileInItsOwnText(), isDefinition, isDefinition && m_access.isByDescriptor));
         return;
     }
+    bool laysNewName = m_access.kind == Kind::Store && std::ranges::contains(members, MethodKind::Method, &LinkFlow::FoundMember::kind) && !std::ranges::contains(members, id, &LinkFlow::FoundMember::classLayout);
+    if (laysNewName && m_receiver == m_subject && !isPrivateName)
+        m_flow.noteNameMadeEnumerable(id, m_access.key);
     bool goesOnAboveClasses = members.lookupGoesOnAboveClasses();
     if (goesOnAboveClasses && isRead())
         giveFrom(m_flow.foundBesideFieldsFor(id, m_access.key));

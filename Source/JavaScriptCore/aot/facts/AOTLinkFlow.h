@@ -1003,6 +1003,18 @@ public:
     FlowNodeID joinedExtraProperties(LayoutID);
     void noteCopyOfAppendedFields(FunctionID, uint32_t record);
     void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
+    void noteNamesOfRecordsRead(const FlowObserver& access, FlowNodeID records) { noteNamesOfRecordsRead(access, records, countNamesOfRecords(records)); }
+    void noteNameMadeEnumerable(LayoutID holder, PropertyKeyID);
+    template<typename Functor> void forEachNameMadeEnumerable(LayoutID layout, const Functor& functor) const
+    {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        size_t stepsLeft = m_namesMadeEnumerable.isEmpty() ? 0 : program.layouts.size();
+        for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
+            if (auto names = m_namesMadeEnumerable.find(current.index()); names != m_namesMadeEnumerable.end())
+                std::ranges::for_each(names->value, functor);
+        }
+    }
+    bool hasNameMadeEnumerable(const LinkType& objects) const;
     template<typename Functor> void forEachAppendedField(LayoutID layout, const Functor& functor) const
     {
         LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -2502,6 +2514,7 @@ private:
     Vector<LayoutID> m_nearestConstructorFunctionsFrom;
     BitVector m_prototypesPassedByLookups;
     BitVector m_prototypesWithDefinitions;
+    HashMap<uint32_t, Vector<PropertyKeyID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesMadeEnumerable;
     BitVector m_keysDefinedByDescriptors;
     bool m_someAccessorIsWrittenUnderComputedKey { false };
     bool mayBeDefinedUnderUnknownKeyOnPrototypeOf(LayoutID, PropertyKeyID) const;
