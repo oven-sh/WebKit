@@ -269,7 +269,7 @@ struct MachineOperationsOfStagedBuild {
     {
     }
 
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder relocations;
     CodeRecords records;
     StackCheckState stackChecks;

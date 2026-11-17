@@ -1217,7 +1217,8 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
     if (status == JSPromise::Status::Fulfilled) {
         auto moduleData = argument1;
 #if ENABLE(AOT)
-        if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(moduleData)) {
+        auto* compiled = AOT::compiledModule(vm, moduleData);
+        if (compiled) {
             JSPromise* source = compiled->sourceAfterRelease(globalObject);
             if (scope.exception()) [[unlikely]] {
                 modulePromise->rejectWithCaughtException(vm, scope);
@@ -1228,10 +1229,7 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
                 return;
             }
         }
-#endif
-#if ENABLE(AOT)
-        auto* compiledData = dynamicDowncast<AOT::ModuleRecord>(moduleData);
-        bool mayBeMade = compiledData && compiledData->isFileYetToBeEvaluated();
+        const bool mayBeMade = compiled && compiled->isFileYetToBeEvaluated();
 #endif
         JSPromise* makeModulePromise = entry->loader()->makeModule(globalObject, entry->key(), moduleData);
         if (scope.exception()) {
@@ -1239,8 +1237,8 @@ static void runModuleRegistryFetchSettled(JSGlobalObject* globalObject, VM& vm, 
             return;
         }
 #if ENABLE(AOT)
-        if (mayBeMade && modulePromise->status() == JSPromise::Status::Pending && makeModulePromise->status() == JSPromise::Status::Fulfilled && makeModulePromise->result() == JSValue(compiledData))
-            compiledData->setIsMadeAndNotStored(true);
+        if (mayBeMade && modulePromise->status() == JSPromise::Status::Pending && makeModulePromise->status() == JSPromise::Status::Fulfilled && makeModulePromise->result() == JSValue(compiled))
+            compiled->setIsMadeAndNotStored(true);
 #endif
         makeModulePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleRegistryModuleSettled, modulePromise, entry);
     } else {
@@ -1261,7 +1259,7 @@ static void runModuleRegistryModuleSettled(JSGlobalObject* globalObject, VM& vm,
     auto* modulePromise = uncheckedDowncast<JSPromise>(argument0);
     auto status = static_cast<JSPromise::Status>(payload);
 #if ENABLE(AOT)
-    if (auto* compiled = status == JSPromise::Status::Fulfilled ? dynamicDowncast<AOT::ModuleRecord>(argument1) : nullptr)
+    if (auto* compiled = status == JSPromise::Status::Fulfilled ? AOT::compiledModule(vm, argument1) : nullptr)
         compiled->setIsMadeAndNotStored(false);
 #endif
 #if USE(BUN_JSC_ADDITIONS)
@@ -1358,7 +1356,7 @@ static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicr
             auto* module = downcast<AbstractModuleRecord>(argument1);
             context->module(vm, module);
 #if ENABLE(AOT)
-            if (auto* compiled = context->payload()->inherits<ModuleGraphLoadingState>() ? nullptr : dynamicDowncast<AOT::ModuleRecord>(module))
+            if (auto* compiled = AOT::compiledModule(vm, module); compiled && !context->payload()->inherits<ModuleGraphLoadingState>())
                 compiled->willBeLoadedByImport();
 #endif
             JSPromise* requestedPromise = context->loader()->loadRequestedModules(globalObject, module, context->scriptFetcher(), vm.hasCompiledCode() && context->referrer().getModule() ? dynamicDowncast<ModuleGraphLoadingState>(context->payload()) : nullptr);
@@ -1382,14 +1380,15 @@ static void runModuleLoadStep(JSGlobalObject* globalObject, VM& vm, InternalMicr
         if (status == JSPromise::Status::Fulfilled) {
             auto* module = context->module();
 #if ENABLE(AOT)
-            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && compiled->takeExtraLoadStep()) {
+            auto* compiled = AOT::compiledModule(vm, module);
+            if (compiled && compiled->takeExtraLoadStep()) {
                 JSPromise* delayedLoadPromise = JSPromise::create(vm, globalObject->promiseStructure());
                 delayedLoadPromise->markAsHandled();
                 delayedLoadPromise->fulfill(vm, module);
                 delayedLoadPromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadStep, loadPromise, context);
                 return;
             }
-            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(module); compiled && context->referrer().isRealm() && compiled->takeMainModuleLoadStep()) {
+            if (compiled && context->referrer().isRealm() && compiled->takeMainModuleLoadStep()) {
                 // From here on the entry point counts as loaded for every past and future importer. The caller that loaded the program is notified in the next step.
                 JSPromise* importerLoadPromise = JSPromise::create(vm, globalObject->promiseStructure());
                 importerLoadPromise->markAsHandled();
@@ -1475,7 +1474,7 @@ static void runModuleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, Intern
         // ModuleRegistryEntry::provideModule(): the entry already holds its record, nothing to provide.
 #if ENABLE(AOT)
         // No registry entry holds the record that the fetch hook returns for a compiled module yet. Without one the module would be fetched again.
-        if (!moduleData.inherits<AbstractModuleRecord>() || moduleData.inherits<AOT::ModuleRecord>()) {
+        if (!moduleData.inherits<AbstractModuleRecord>() || AOT::compiledModule(vm, moduleData)) {
 #else
         if (!moduleData.inherits<AbstractModuleRecord>()) {
 #endif
@@ -1695,7 +1694,7 @@ static void runModuleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& v
                 return;
             }
 #if ENABLE(AOT)
-            if (auto* compiled = dynamicDowncast<AOT::ModuleRecord>(record)) {
+            if (auto* compiled = AOT::compiledModule(vm, record)) {
                 evaluatePromise = compiled->evaluateMainModule(evaluatePromise);
                 if (scope.exception()) {
                     resultPromise->rejectWithCaughtException(vm, scope);
@@ -1796,7 +1795,7 @@ static void dynamicImportLoadSettled(JSGlobalObject* globalObject, VM& vm, JSVal
 
     // Step-6 linkAndEvaluateClosure
 #if ENABLE(AOT)
-    if (auto* compiled = vm.hasCompiledCode() ? dynamicDowncast<AOT::ModuleRecord>(module) : nullptr; compiled && compiled->tryDeferForEarlierImports(dynamicPayload, deferred))
+    if (auto* compiled = AOT::compiledModule(vm, module); compiled && compiled->tryDeferForEarlierImports(dynamicPayload, deferred))
         return;
 #endif
     // 6.a. Let link be Completion(module.Link()).

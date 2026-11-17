@@ -59,12 +59,9 @@ const HARDENING =
   " -D_GLIBCXX_ASSERTIONS=1 -fPIE -DBUN_HARDENED=1 -DENABLE_AOT_POSITION_INDEPENDENT_IMAGE=1 -DENABLE_AOT_GUARDED_PAGES=1" +
   " -DBUN_REFUSES_EXECUTE_ONLY_START=1";
 // On top of HARDENING for arm64, which alone has it (clang refuses the flag for x86-64): a function signs the return address
-// that it saves and checks it before it returns. The flag is for what the compiler generates, the definition for LLInt and
-// what the JITs generate (wtf/PlatformEnable.h). The instructions are hints, which a processor without pointer
-// authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
-//
-// Not with the compiler: the run time of compiled programs reads that word in the frame record of its operations
-// (AOT_OPERATION_FRAME_RECORD) as it is, and then finds no handler for what an operation throws.
+// that it saves and checks it before it returns. The flag is for what clang generates, the definition for LLInt, what
+// the JITs generate and compiled programs (wtf/PlatformEnable.h). The instructions are hints, which a processor without
+// pointer authentication ignores. What reads such a word takes the signature off first (WTF::removeReturnAddressSignature).
 //
 // Code with and without the flag runs together. But LLVM inlines no function into one that differs in it, so LTO inlines
 // nothing between these libraries and a bun that is compiled without (for Rust it is -Zbranch-protection=pac-ret), and what
@@ -108,11 +105,11 @@ const variants = {
   "assertions-aot": { buildType: "Release", mimalloc: true, assertions: true },
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, and nothing else changed but for arm64's
-  // -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the compiler, and on arm64 that twin also has
-  // SIGNED_RETURN_ADDRESSES, which the run time of compiled programs is not ready for.
+  // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, on arm64 also with SIGNED_RETURN_ADDRESSES,
+  // and nothing else changed but for arm64's -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the
+  // compiler.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
-  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, signedReturnAddresses: true, aot: false },
+  "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
   // "lto-hardened-aot" with ENABLE_WEBASSEMBLY=0: there is no global of that name, and JavaScriptCore's code for it is not
   // in the libraries.
@@ -137,7 +134,7 @@ const withoutAOT = variant => (variant === "aot" ? "release" : variant.replace(/
 //   tested          per architecture, the variants whose jsc shell the `test` job runs the JavaScriptCore tests with,
 //                   and the runner it does that on: a machine of the lane's own platform and architecture. "lto-aot" is
 //                   what bun ships, "lto" is that without the compiler, and nothing else runs "lto-hardened-aot", nor
-//                   arm64's "lto-hardened", the lane with SIGNED_RETURN_ADDRESSES. The asan lanes are not tested: the
+//                   arm64's "lto-hardened", which is that without the compiler. The asan lanes are not tested: the
 //                   tests take 65 to 100 minutes there on Linux and macOS and do not finish in 275 on Windows. `quick`
 //                   is --quick, for a runner with few cores.
 //   testPrograms    what a tested lane builds besides what it ships, for the `test` job (the Dockerfile's TEST_PROGRAMS)
@@ -155,7 +152,7 @@ const platforms = [
     lanes: {
       amd64: [...ALL, ...FUZZING, ...HARDENED],
       // Nothing asks for the others of FUZZING and HARDENED here.
-      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot"],
+      arm64: [...ALL, "assertions-aot", "assertions-coverage-aot", "lto-hardened", "lto-hardened-aot", "lto-hardened-aot-no-webassembly"],
     },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto", "lto-aot", "lto-hardened-aot"] },
@@ -173,7 +170,7 @@ const platforms = [
       ENABLE_SANITIZERS: v.sanitizers ?? "",
       ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
       ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
-      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" && v.signedReturnAddresses ? SIGNED_RETURN_ADDRESSES : "") : "",
+      HARDENING_FLAGS: v.hardened ? HARDENING + (arch === "arm64" ? SIGNED_RETURN_ADDRESSES : "") : "",
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
@@ -472,9 +469,12 @@ if (command === "build") {
 } else if (command === "plan") {
   const matrix = include => JSON.stringify({ include });
   const build = ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines }) => ({ label, sources, runner, image, package_os, package_cpu, test, programs, aot, defines });
+  // As wtf/PlatformEnable.h decides it.
+  const signsReturnAddresses = ({ defines, package_cpu }) =>
+    defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") || (defines.includes("BUN_HARDENED=") && package_cpu === "arm64" && !defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=0"));
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: lane.defines.includes("ENABLE_RETURN_ADDRESS_SIGNING=1") })))}`);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, signs_return_addresses: signsReturnAddresses(lane) })))}`);
   console.log(`labels=${JSON.stringify([...labels, SOURCES.label])}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

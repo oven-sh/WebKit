@@ -173,6 +173,7 @@ public:
 
     JS_EXPORT_PRIVATE void setDeclaredAccesses(const HeapSet& reads, const HeapSet& writes);
     JS_EXPORT_PRIVATE void clearDeclaredAccesses();
+    bool hasDeclaredAccesses() const { return m_suspensionsOfDeclaredAccesses ? m_hadDeclaredAccessesWhenSuspended : m_hasDeclaredAccesses; }
     void suspendDeclaredAccesses()
     {
         if (!m_suspensionsOfDeclaredAccesses++) {

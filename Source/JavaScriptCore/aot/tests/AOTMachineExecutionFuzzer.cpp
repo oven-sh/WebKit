@@ -23,6 +23,7 @@
 #include "CPUFeatureSet.h"
 #include "ExecutableAllocator.h"
 #include "ExecutableMemoryHandle.h"
+#include "JSCPtrTag.h"
 #include "LinkBuffer.h"
 #include <algorithm>
 #include <array>
@@ -225,6 +226,11 @@ extern "C" void didReachPatch(PatchSite* site)
     auto trash = [&](RegisterMask mask) {
         forEachRegister(mask, [&](Reg reg) {
             savedRegister(reg) = nextGarbage();
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            // It has to get through the authentication, and is no code.
+            if (reg == Reg(ARM64Registers::lr))
+                savedRegister(reg) = std::bit_cast<uint64_t>(JSC::signReturnAddress(registerArea, &savedRegister(reg) + 1));
+#endif
         });
     };
     bool inTrace = site->isCheck || hasObservableEffects(description);
@@ -348,6 +354,10 @@ extern "C" void didReachPatch(PatchSite* site)
             memset(reinterpret_cast<uint8_t*>(area.stackPointer), 0xc7, bytes);
             area.stackPointer -= distance;
             framePointer -= distance;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+            auto* record = reinterpret_cast<CallerFrameAndPC*>(framePointer);
+            record->returnPC = resignReturnAddress(record->returnPC, reinterpret_cast<uint8_t*>(record + 1) + distance, record + 1);
+#endif
             currentRun.stackDistance += distance;
         }
     }
@@ -506,7 +516,7 @@ struct CompiledProgram {
     bool compile(int branchReach)
     {
         CPUFeatureSet features = procedure.traits().features;
-        CCallHelpers jit;
+        ImageAssembler jit;
         AssemblerPolicy policy = AssemblerPolicy::forImage(features);
         if (branchReach > 0)
             policy.branchReach = static_cast<uint32_t>(branchReach);
@@ -557,6 +567,7 @@ static void compileEntryTrampoline()
     GPRReg base = scratchGPR;
     auto loadBase = [&] { jit.move(CCallHelpers::TrustedImm64(std::bit_cast<int64_t>(registerArea)), base); };
     auto addressOfSlot = [&](size_t offset, unsigned i) { return CCallHelpers::Address(base, static_cast<int32_t>(offset + i * 8)); };
+    jit.tagReturnAddress();
     loadBase();
     auto eachG = [&](auto functor) {
         for (unsigned i = 0; i < numberOfGPRs; ++i) {

@@ -5605,6 +5605,10 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
         factories = pendingFactoryInGraph(module, askedBy, importWaitState);
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
     }
+    if (!factories && text != ImportSourceState::MayArriveLater && askedBy == PendingFactoryRequester::ImportCall) [[unlikely]] {
+        factories = pendingFactoryInGraph(module, PendingFactoryRequester::ImportCallAfterSource, importWaitState);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     if (!factories && needsOriginal) [[unlikely]] {
         factories = ensureActualKeyLoad(fileOf(module));
         RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
@@ -9364,6 +9368,12 @@ bool wasLinkedByFailedGraph(JSGlobalObject* realm, ModuleID module, bool byEarli
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasLinkedByFailedGraph(module, byEarlierTestFile);
+}
+
+bool failedWithImportInEarlierTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->failedWithImportInEarlierTestFile(module);
 }
 
 bool hasImporterLinkedBeforeFailure(JSGlobalObject* realm, ModuleID module)

@@ -26,6 +26,7 @@ struct RandomTestCase {
     bool savesFrameOnSuspend { false };
     bool usesFeaturesOfHost { false };
     std::optional<uint32_t> branchReach { };
+    bool notesRangesOfOrigins { false };
 };
 
 static constexpr unsigned numberOfSeedsInRandomTest = 300;
@@ -39,6 +40,7 @@ static ProcedureTraits traitsOfRandomTest(const RandomTestCase& testCase)
     ProcedureTraits traits;
     traits.savesFrameOnSuspend = testCase.savesFrameOnSuspend;
     traits.hasHandlers = testCase.options.withLandingPads;
+    traits.notesRangesOfOrigins = testCase.notesRangesOfOrigins;
     if (testCase.usesFeaturesOfHost)
         traits.features = CPUFeatureSet::host();
     return traits;
@@ -270,7 +272,7 @@ static RandomTestBuild buildForRandomTest(const RandomTestCase& testCase, size_t
     auto program = buildRandomProcedure(test, testCase.options);
     AOT_RANDOM_TEST_CHECK(testCase, test, test.prepare());
 
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, AssemblerPolicy::forImage(test.procedure().traits().features));
     readTagsFromInstance(jit);
     generate(test.procedure(), jit, recorder);
@@ -287,7 +289,7 @@ static void testRandomProceduresAreBuiltTheSameWayTwice()
     RandomTestCase testCase { .options = { .seed = 10001 } };
     for (unsigned count = 0; count < numberOfSeedsInRandomDeterminismTest; ++count, ++testCase.options.seed) {
         RandomTestBuild first = buildForRandomTest(testCase, 0);
-        RandomTestBuild second = buildForRandomTest(testCase, bytesAheadOfSecondBuild);
+        RandomTestBuild second = buildForRandomTest({ .options = testCase.options, .notesRangesOfOrigins = true }, bytesAheadOfSecondBuild);
         auto expectSame = [&](bool isSame, ASCIILiteral what) {
             if (!isSame)
                 dataLogLn("two builds of seed ", testCase.options.seed, " differ in the ", what);

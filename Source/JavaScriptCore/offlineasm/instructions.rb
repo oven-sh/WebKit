@@ -314,6 +314,8 @@ MACRO_INSTRUCTIONS =
      "tagCodePtr",
      "tagReturnAddress",
      "untagReturnAddress",
+     "beginSigningLinkRegister",
+     "endSigningLinkRegister",
      "removeCodePtrTag",
      "untagArrayPtr",
      "removeArrayPtrTag",

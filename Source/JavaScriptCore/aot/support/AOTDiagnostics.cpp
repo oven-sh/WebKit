@@ -22,6 +22,7 @@
 #include <wtf/DataLog.h>
 #include <wtf/EnumSet.h>
 #include <wtf/HexNumber.h>
+#include <wtf/PtrTag.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -422,7 +423,7 @@ NEVER_INLINE size_t collectReturnAddressesOfCallers(std::span<void*> addresses)
     auto* frame = static_cast<void**>(__builtin_frame_address(0));
     size_t count = 0;
     while (count < addresses.size() && frame[1]) {
-        addresses[count++] = frame[1];
+        addresses[count++] = removeReturnAddressSignature(frame[1]);
         auto next = reinterpret_cast<uintptr_t>(frame[0]);
         auto current = reinterpret_cast<uintptr_t>(frame);
         if (next <= current || next - current > largestFrame || next % sizeof(void*))

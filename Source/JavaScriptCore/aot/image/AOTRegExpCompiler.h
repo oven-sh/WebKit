@@ -80,7 +80,7 @@ using RegExpCodeOrFailureReason = std::expected<std::unique_ptr<RegExpCode>, Yar
 class JS_EXPORT_PRIVATE ImageCodeAddressing final : public Yarr::CodeAddressing {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(ImageCodeAddressing);
 public:
-    ImageCodeAddressing(CCallHelpers&, PCRelativeReach, const AssemblerPolicy&, BuildContext*);
+    ImageCodeAddressing(ImageAssembler&, PCRelativeReach, const AssemblerPolicy&, BuildContext*);
 
     void moveAddress(Yarr::SharedTableID, GPRReg dest) final;
     void moveAddress(const Yarr::ClassTable&, GPRReg dest) final;

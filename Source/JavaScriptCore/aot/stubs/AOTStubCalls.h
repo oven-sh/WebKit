@@ -203,6 +203,9 @@ public:
     uint32_t callRegister(CCallHelpers&, GPRReg address, OptionalIndex site);
     void jumpToFunction(CCallHelpers&, Typed::CodeUnit callee, uint16_t entry);
     void moveAddressOfFunction(Typed::CodeUnit callee, uint16_t entry, GPRReg destination);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    void moveSignedAddressOfFunction(Typed::CodeUnit callee, uint16_t entry);
+#endif
     void moveAddressOfStub(CCallHelpers&, StubKey, std::optional<uint32_t> immediate, GPRReg destination);
 
     void routeTransfersThroughEnd();

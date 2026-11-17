@@ -265,7 +265,7 @@ void Matcher::checkAnswers(const LaidOutRegExps& laidOut, const uint8_t* code, s
 static std::unique_ptr<RegExpCode> makeCode(std::span<const RegExpSymbol> symbols, PCRelativeReach reach, size_t fillerSize)
 {
     AssemblerPolicy policy = policyFor(nullptr);
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, policy);
     for (uint32_t index = 0; index < symbols.size(); ++index)
         recorder.moveAddress({ SymbolSpace::RegExp, index }, GPRInfo::regT0, reach);
@@ -715,7 +715,7 @@ template<typename Emit>
 static std::expected<std::unique_ptr<RegExpCode>, Yarr::JITFailureReason> emitForImage(const Emit& emit)
 {
     AssemblerPolicy policy = policyFor(nullptr);
-    CCallHelpers jit;
+    ImageAssembler jit;
     ImageCodeAddressing addressing(jit, PCRelativeReach::Near, policy, nullptr);
     emit(jit, addressing);
     jit.ret();

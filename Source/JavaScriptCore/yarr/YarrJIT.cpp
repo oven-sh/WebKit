@@ -27,6 +27,9 @@
 #include "config.h"
 #include "YarrJIT.h"
 
+#if defined(YARR_FOR_IMAGE)
+#include "AOTImageAssembler.h"
+#endif
 #include "AllowMacroScratchRegisterUsage.h"
 #include "CCallHelpers.h"
 #include "LinkBuffer.h"
@@ -13750,7 +13753,7 @@ struct CodeGenerationAttempt {
 
     CodeGenerationAttempt() = default;
 
-    CCallHelpers jit;
+    AOT::ImageAssembler jit;
     StackCheck stackCheck;
     std::unique_ptr<CodeAddressing> addressing;
     YarrJITDefaultRegisters registers;

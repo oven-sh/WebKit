@@ -333,6 +333,7 @@ JS_EXPORT_PRIVATE bool wasDisplacedDuringEvaluation(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasRegisteredByFailedLoad(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedByFailedGraph(JSGlobalObject*, ModuleID, bool byEarlierTestFile = false);
+JS_EXPORT_PRIVATE bool failedWithImportInEarlierTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool wasLinkedBeforeLinkFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasImporterLinkedBeforeFailure(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isLinkedForPendingImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);
@@ -445,6 +446,7 @@ JS_EXPORT_PRIVATE bool fulfillDeferredFetches(VM&, uint64_t completedDiskReads =
 JS_EXPORT_PRIVATE void didDrainDeferredFetchJobs(VM&);
 JS_EXPORT_PRIVATE std::optional<uint32_t> firstDeferredBatchNumber(VM&);
 JS_EXPORT_PRIVATE bool shouldDeferFetchFulfillment(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isImportedByLoad(JSGlobalObject*, ModuleID root, ModuleID file);
 JS_EXPORT_PRIVATE void deferFetchFulfillment(JSGlobalObject*, ModuleID, JSPromise* fetched, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void didFetch(JSGlobalObject*, AbstractModuleRecord*);
 JS_EXPORT_PRIVATE void noteHostImportInFlight(JSGlobalObject*, ModuleID, JSPromise*, bool isFromOwnFactory);

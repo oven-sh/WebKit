@@ -23,6 +23,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/OSAllocator.h>
 #include <wtf/PageBlock.h>
+#include <wtf/PtrTag.h>
 #include <wtf/TZoneMalloc.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -242,7 +243,8 @@ struct State {
     std::unique_ptr<BuiltinFamilyState> builtinFamilies;
     std::unique_ptr<GlobalBindings> globalBindings;
     uint64_t registerBeforeFault { 0 };
-    const void* returnAddressOfThrowAfterCleanup { nullptr };
+    const void* returnAddressOfThrowAfterCleanup() const { return removeReturnAddressSignature(rawReturnAddressOfThrowAfterCleanup); }
+    const void* rawReturnAddressOfThrowAfterCleanup { nullptr };
     uint64_t keptByCleanup { 0 };
     static constexpr size_t numberOfFieldsUnderDeclaredNames = 64;
     FieldUnderDeclaredName* fieldsUnderDeclaredNames { nullptr };

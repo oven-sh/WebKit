@@ -11,6 +11,7 @@
 #include "AOTConvention.h"
 #include "AOTCoroutineWords.h"
 #include "AOTInstance.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "CallFrame.h"
 #include "FunctionRareData.h"
@@ -100,8 +101,7 @@ void generateStepAsyncGenerator(StubAssembler& jit)
     std::optional<AssemblyHelpers::FreeListRefill> refill;
     JumpList isNotAllocatedHere;
     if (consumerKind == StepConsumer::AsyncFunction) {
-        jit.loadPtr(Address(fp, sizeof(void*)), word);
-        Jump hasNoSavedFrame = jit.branchPtr(CCallHelpers::NotEqual, word, Address(instanceGPR, AOT_INSTANCE_OFFSET(stubs) + StubWords::offsetOfReturnAddress(StubFrameKind::SavedFrameAdapter)));
+        Jump hasNoSavedFrame = emitBranchOnReturnAddressOfFrameRecord(jit, CCallHelpers::NotEqual, fp, StubFrameKind::SavedFrameAdapter, word);
         jit.loadPtr(Address(fp), word);
         jit.loadPtr(Address(word, static_cast<int>(CallFrameSlot::callee) * static_cast<int>(sizeof(Register))), driver);
         Jump hasDriver = jit.jump();
@@ -553,7 +553,7 @@ void generateNewHeapFrame(StubAssembler& jit)
     jit.store64(numberOfWords, Address(frame, SavedFrame::offsetOfNumberOfWords()));
     jit.move(TrustedImm64(static_cast<int64_t>(static_cast<uint64_t>(SavedFrame::liesOnHeapBit) << 48 | static_cast<uint64_t>(SavedFrame::isSuspendedAtYieldFlag) << 56)), scratch);
     jit.store64(scratch, Address(frame, SavedFrame::offsetOfLiveSlotMapOffsetPlusOne()));
-    jit.store64(resumeAddress, Address(frame, SavedFrame::offsetOfResumeAddress()));
+    emitStoreResumeAddressThatCallerHasSigned(jit, resumeAddress, frame);
     jit.add32(TrustedImm32(1), numberOfWords, index);
     jit.and32(TrustedImm32(~1), index);
     jit.moveZeroToDouble(zeros);

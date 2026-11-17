@@ -29,6 +29,7 @@
 #include "HandlerInfo.h"
 #include "Interpreter.h"
 #include "JITExceptions.h"
+#include "JSCPtrTag.h"
 #include "LLIntExceptions.h"
 #include "OwedOutOfMemoryError.h"
 #include "Reg.h"
@@ -136,14 +137,37 @@ static void finishInRejectingStub(CompiledUnwindResult& result, Instance& instan
     finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
 }
 
-static void finishInAwaitedCall(CompiledUnwindResult& result, Instance& instance, CallFrame* callFrame, const CallSiteCache::Entry& site)
+static void finishInAwaitedCall(CompiledUnwindResult& result, Instance& instance, CallFrame* callFrame, const ReturnSiteInRun& place, const ImageFrame& frame)
 {
     void* code = Image::current()->frequentStub(Image::FrequentStub::RejectAwaitedCall, [&] {
         return addressOfStubInCurrentImage(rejectAwaitedCall());
     });
-    instance.runtime.exceptions.returnAddressOfAwaitedCall = site.address;
-    finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, site.frame.frameSizeInBytes());
+    finishAtHandler(result, instance, { callFrame, code, CompiledHandlerKind::RejectPromise, callFrame }, frame.frameSizeInBytes());
+    ExceptionWords& exceptions = instance.runtime.exceptions;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    exceptions.returnAddressOfAwaitedCall = resignReturnAddress(place.rawPC, callerStackPointer(place.callee), exceptions.stackPointerOfHandler);
+#else
+    exceptions.returnAddressOfAwaitedCall = place.rawPC;
+#endif
 }
+
+// The address decides which handler runs, so it has to be one that the callee could have returned to.
+class AuthenticatedReturnAddress {
+public:
+    ALWAYS_INLINE explicit AuthenticatedReturnAddress(const ReturnSiteInRun& place)
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        : m_address(authenticateReturnAddress(place.rawPC, callerStackPointer(place.callee)))
+#else
+        : m_address(removeCodePtrTag(place.rawPC))
+#endif
+    {
+    }
+
+    const void* address() const { return m_address; }
+
+private:
+    const void* m_address;
+};
 
 static CompiledFrameExit leaveRunAt(CallFrame* outermostFrame, EntryFrame* entryFrame)
 {
@@ -159,7 +183,7 @@ static NEVER_INLINE Instance* findInstanceOfRun(VM& vm, const ReturnSiteInRun& s
 {
     if (Instance* known = CompiledFrameIterator::knownInstanceOfRun(vm.aotState(), entryFrame, site.framePointer))
         return known;
-    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, removeCodePtrTag(site.rawPC), entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, site.framePointer, site.rawPC, entryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, site.stackPointer);
     return frames && !frames->isAtEnd() ? frames->instance() : nullptr;
 }
 
@@ -200,7 +224,8 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
     ImageFrame leftImageFrame { };
 
     for (;;) {
-        const void* pc = removeCodePtrTag(place.rawPC);
+        const AuthenticatedReturnAddress authenticated(place);
+        const void* pc = authenticated.address();
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = place.callee == start.callee ? cache.resolve(image, pc) : resolveReturnAddressInRun(cache, image, pc, place.callee);
@@ -219,12 +244,12 @@ static ALWAYS_INLINE CompiledUnwindResult unwindFramesOfRun(VM& vm, const Return
                     return result;
                 }
                 if (site->site.isAwaited() && leftFrame) [[unlikely]] {
-                    finishInAwaitedCall(result, *instance, callFrame, *site);
+                    finishInAwaitedCall(result, *instance, callFrame, place, site->frame);
                     return result;
                 }
                 if (const HandlerRecord* handler = site->exceptionHandler(image)) {
-                    void* code = const_cast<uint8_t*>(image.codeOf(site->code.index())) + handler->codeOffset;
-                    finishAtHandler(result, *instance, { callFrame, code, kindOf(handler->type), place.framePointer }, site->frame.frameSizeInBytes());
+                    void* code = const_cast<uint8_t*>(image.codeOf(site->code.index())) + handler->codeOffset(authenticated);
+                    finishAtHandler(result, *instance, { callFrame, code, kindOf(handler->type()), place.framePointer }, site->frame.frameSizeInBytes());
                     result.siteOfHandler = place;
                     return result;
                 }
@@ -335,7 +360,7 @@ CompiledUnwindResult unwindCompiledFrames(VM& vm, const CompiledFrameIterator& f
     }
     CallFrame* asyncGeneratorBodyFrameLeft = frames.asyncGeneratorStubFrameLeft() ? frames.asyncGeneratorBodyFrameLeft() : nullptr;
     RELEASE_ASSERT(!frames.asyncGeneratorStubFrameLeft() || asyncGeneratorBodyFrameLeft);
-    return unwindRun(vm, { const_cast<void*>(frames.callSite().address), frames.stackPointer(), frames.framePointer(), nullptr }, frames.entryFrame(), record, isTermination, asyncGeneratorBodyFrameLeft);
+    return unwindRun(vm, { frames.rawReturnAddress(), frames.stackPointer(), frames.framePointer(), frames.recordOfReturnAddress() }, frames.entryFrame(), record, isTermination, asyncGeneratorBodyFrameLeft);
 }
 
 void unwindBeyondCompiledFrames(VM& vm, CallFrame* frameRecord, CompiledUnwindStatus status)
@@ -369,7 +394,7 @@ static bool findCatchInRun(CompiledFrameIterator& frames)
             return true;
         const auto& site = frames.callSite();
         const HandlerRecord* handler = frames.exceptionHandler();
-        if (handler && kindOf(handler->type) == CompiledHandlerKind::Catch)
+        if (handler && kindOf(handler->type()) == CompiledHandlerKind::Catch)
             return true;
         if (site.rejectsOnThrow || site.site.isAwaited())
             return true;
@@ -397,13 +422,13 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
     CallFrame* first = callee;
     unsigned remainingFrames = search == HandlerSearch::NearestThatEndsThrow ? Options::exceptionStackTraceLimit() : 0;
     while (framePointer != entryFrame) {
-        const void* pc = removeCodePtrTag(callee->rawReturnPC());
+        const void* pc = callee->returnPCForInspection();
         const CallSiteCache::Entry* site = cache.find(pc);
         if (!site) [[unlikely]]
             site = cache.resolve(*state.image, pc);
         if (!site) {
             if (callee != first)
-                checkReturnAddressInRun(*state.image, removeCodePtrTag(callee->rawReturnPC()), callee);
+                checkReturnAddressInRun(*state.image, callee->returnPCForInspection(), callee);
             return std::nullopt;
         }
         if (site->isStubReturnSite()) {
@@ -415,8 +440,8 @@ static ALWAYS_INLINE std::optional<HandlerType> findHandlerInRun(VM& vm, CallFra
             if (site->site.isAwaited())
                 return HandlerType::Catch;
             const HandlerRecord* handler = site->exceptionHandler(*state.image);
-            if (handler && (search == HandlerSearch::Nearest || handler->type != HandlerType::Finally))
-                return handler->type;
+            if (handler && (search == HandlerSearch::Nearest || handler->type() != HandlerType::Finally))
+                return handler->type();
             if (site->rejectsOnThrow)
                 return HandlerType::Catch;
             if (search == HandlerSearch::NearestThatEndsThrow && !--remainingFrames)
@@ -454,7 +479,7 @@ bool isCaughtAboveCleanup(VM& vm, const ReturnSiteInRun& siteOfCleanup)
 {
     if (findHandlerInRun<HandlerSearch::NearestThatEndsThrow>(vm, siteOfCleanup.callee, siteOfCleanup.stackPointer, siteOfCleanup.framePointer, vm.topEntryFrame))
         return true;
-    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, removeCodePtrTag(siteOfCleanup.rawPC), vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
+    auto frames = CompiledFrameIterator::tryCreate(vm, siteOfCleanup.framePointer, siteOfCleanup.rawPC, vm.topEntryFrame, CompiledFrameIterator::OperationState::MayNotHaveCalled, siteOfCleanup.stackPointer);
     return frames && findCatchInRun(*frames);
 }
 
@@ -482,7 +507,7 @@ const void* returnAddressOfInnermostCompiledCall(VM& vm)
 static bool isAddressInCompiledCode(uint64_t word)
 {
     std::span<const uint8_t> code = Image::current()->code();
-    return word - std::bit_cast<uintptr_t>(code.data()) < code.size();
+    return removeReturnAddressSignature<uintptr_t>(std::bit_cast<const void*>(word)) - std::bit_cast<uintptr_t>(code.data()) < code.size();
 }
 
 static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
@@ -490,7 +515,7 @@ static bool isCaughtByCallersOfNativeCode(VM& vm, CompiledFrameExit exit)
     for (unsigned remainingRuns = Options::exceptionStackTraceLimit(); remainingRuns && exit.callFrame; --remainingRuns) {
         if (exit.callFrame->callerFrameOrEntryFrame() == exit.entryFrame)
             return false;
-        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(removeCodePtrTag(exit.returnPC))))
+        if (exit.returnPC && isAddressInCompiledCode(std::bit_cast<uintptr_t>(exit.returnPC)))
             return false;
         if (void* taker = vm.aotState().exceptionCatcherStackPointer; taker && taker < static_cast<void*>(exit.callFrame))
             return false;
@@ -519,7 +544,7 @@ Exception* exceptionKeptByCleanup(uint64_t kept, JSValue thrown)
 NEVER_INLINE Exception::StackCaptureAction stackCaptureActionOfThrow(VM& vm, const Instance& instance, JSValue thrown, const CallerFrameAndPC* frameRecordOfOperation, const CompiledUnwindResult* runWithoutHandler)
 {
     using Action = Exception::StackCaptureAction;
-    if (removeCodePtrTag(frameRecordOfOperation->callerFrame->rawReturnPC()) == instance.state->returnAddressOfThrowAfterCleanup) {
+    if (frameRecordOfOperation->callerFrame->returnPCForInspection() == instance.state->returnAddressOfThrowAfterCleanup()) {
         uint64_t kept = instance.state->keptByCleanup;
         if (!isAddressInCompiledCode(kept))
             return Action::CaptureStack;
