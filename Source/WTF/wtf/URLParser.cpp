@@ -353,6 +353,7 @@ enum ScanClass : uint16_t {
     NonSpecialHostNotPlain = 1 << 8, // Authority scan of a non-special URL: forbidden host code point, ':', '%', C0 control or non-ASCII.
     HostNotDomainCharacter = 1 << 9, // HostNotPlain other than ASCII upper case: not even a domain character after lowercasing.
     IPv4NumberCharacter = 1 << 10, // Can appear in an IPv4 piece: hex digits and x/X.
+    HostStateStop = 1 << 11, // Host state with a state override: / \ ? # end the host, and : [ ] decide where the port starts.
 };
 
 static constexpr std::array<uint16_t, 256> scanClassTable = [] {
@@ -377,6 +378,8 @@ static constexpr std::array<uint16_t, 256> scanClassTable = [] {
             bits |= HostNotPlain;
         if (isASCIIHexDigit(c) || c == 'x' || c == 'X')
             bits |= IPv4NumberCharacter;
+        if (c == '/' || c == '\\' || c == '?' || c == '#' || c == ':' || c == '[' || c == ']')
+            bits |= HostStateStop;
         if (c > 0x7F || c == '%')
             bits |= HostPercentOrNonASCII;
         if (c > 0x7E || c <= 0x20 || (characterClassTable[c] & ForbiddenHost) || c == '%')
@@ -3884,6 +3887,134 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
 
     m_url.m_portLength = 0;
     return HostParsingResult::DNSNameWithoutPort;
+}
+
+// https://url.spec.whatwg.org/#host-state, #file-host-state and #port-state with a state override, for a URL with
+// `urlScheme`. Only `input` is parsed, and only as a host and a port, so none of it can become other URL structure.
+// Leaves the host in m_asciiBuffer, and after it the port when the port state sets one.
+template<typename CharacterType>
+auto URLParser::parseHostWithStateOverride(StringView urlScheme, std::span<const CharacterType> input, HostStateOverride stateOverride) -> HostStateResult
+{
+    auto schemeType = scheme(urlScheme);
+    m_urlIsSpecial = schemeType != Scheme::NonSpecial;
+    m_urlIsFile = schemeType == Scheme::File;
+
+    // The parser removes tab and newline from its input first. Here, the host starts after them, and
+    // parseHostAndPort skips the rest.
+    auto* hostBegin = input.data();
+    auto* inputEnd = hostBegin + input.size();
+    while (hostBegin != inputEnd && isTabOrNewline(*hostBegin))
+        ++hostBegin;
+    // One '%' or non-ASCII character is enough to know: after it, only the HostStateStop characters matter.
+    uint16_t charactersOfInterest = HostStateStop | HostPercentOrNonASCII;
+    auto* hostEnd = findStopCharacter<HostStateStop | HostPercentOrNonASCII>(hostBegin, inputEnd, [](simde_uint8x16_t bytes) ALWAYS_INLINE_LAMBDA {
+        return SIMD::bitOr(SIMD::greaterThan(bytes, SIMD::splat8(0x7E)), SIMD::equal<'/', '?', '#', '\\', ':', '[', ']', '%', 0>(bytes));
+    });
+    bool insideBrackets = false;
+    bool hasPort = false;
+    for (; hostEnd != inputEnd; ++hostEnd) {
+        auto character = *hostEnd;
+        uint16_t characterClass = scanClass(character);
+        if (!(characterClass & charactersOfInterest)) [[likely]]
+            continue;
+        if (characterClass & HostPercentOrNonASCII) {
+            m_hostHasPercentOrNonASCII = true;
+            charactersOfInterest = HostStateStop;
+            continue;
+        }
+        if (character == '/' || character == '?' || character == '#' || (character == '\\' && m_urlIsSpecial))
+            break;
+        // The file host state has no port: there ':' is a code point of the host.
+        if (character == ':' && !insideBrackets && !m_urlIsFile) {
+            hasPort = true;
+            break;
+        }
+        if (character == '[')
+            insideBrackets = true;
+        else if (character == ']')
+            insideBrackets = false;
+    }
+    bool hostIsEmpty = hostEnd == hostBegin;
+
+    if (hasPort) {
+        if (hostIsEmpty || stateOverride == HostStateOverride::Hostname)
+            return HostStateResult::Failure;
+    } else if (hostIsEmpty && m_urlIsSpecial && !m_urlIsFile)
+        return HostStateResult::Failure;
+
+    // The host parser writes at most nine characters for one code unit of a host (the percent-encoding of three bytes
+    // of UTF-8), or a domain of at most hostnameBufferLength characters. A host that could make m_asciiBuffer grow past
+    // the limit of a Vector does not set the host.
+    uint64_t largestBufferSize = 9 * static_cast<uint64_t>(hostEnd - hostBegin) + hostnameBufferLength + URL::maxPortLength;
+    if (!isValidCapacityForVector<Latin1Character>(VectorBufferMalloc::nextCapacity(largestBufferSize))) [[unlikely]]
+        return HostStateResult::Failure;
+
+    // As after a syntax violation, the parsed text goes to m_asciiBuffer. It starts with the host, and the host of
+    // m_url starts at 0.
+    m_didSeeSyntaxViolation = true;
+    if (!hostIsEmpty) {
+        if (parseHostAndPort(CodePointIterator<CharacterType>(std::span(hostBegin, hostEnd))) == HostParsingResult::InvalidHost)
+            return HostStateResult::Failure;
+        // In the file host state, "localhost" is the empty host.
+        if (m_urlIsFile && isLocalhost(parsedDataView(0, m_asciiBuffer.size())))
+            m_asciiBuffer.shrink(0);
+    }
+
+    // The host is set. With a state override, the port is the digits up to the first other code point. With no digit,
+    // or with a number above 65535, the port state fails and the URL keeps its port.
+    if (!hasPort)
+        return HostStateResult::Host;
+    auto* portEnd = hostEnd + 1;
+    bool hasDigit = false;
+    for (; portEnd != inputEnd && (isASCIIDigit(*portEnd) || isTabOrNewline(*portEnd)); ++portEnd)
+        hasDigit |= isASCIIDigit(*portEnd);
+    CodePointIterator<CharacterType> port(std::span(hostEnd, portEnd));
+    return hasDigit && parsePort(port) ? HostStateResult::HostAndPort : HostStateResult::Host;
+}
+
+auto URLParser::parseHostWithStateOverride(StringView urlScheme, StringView input, HostStateOverride stateOverride) -> HostStateResult
+{
+    return input.is8Bit()
+        ? parseHostWithStateOverride(urlScheme, input.span8(), stateOverride)
+        : parseHostWithStateOverride(urlScheme, input.span16(), stateOverride);
+}
+
+bool URLParser::setHost(URL& url, StringView value, HostStateOverride stateOverride)
+{
+    if (!url.m_isValid || url.m_hasOpaquePath)
+        return false;
+
+    URL scratch;
+    URLParser hostParser(scratch);
+    StringView text { url.m_string };
+    auto hostState = hostParser.parseHostWithStateOverride(text.left(url.m_schemeEnd), value, stateOverride);
+    if (hostState == HostStateResult::Failure)
+        return false;
+
+    // A URL without a host has no "//" after its scheme. A port that the port state does not set stays.
+    bool hasAuthority = url.m_userStart != url.m_schemeEnd + 1U;
+    auto afterHost = text.substring(hostState == HostStateResult::HostAndPort ? url.m_hostEnd + url.m_portLength : url.m_hostEnd);
+    auto string = tryMakeString(text.left(url.hostStart()), hasAuthority ? ""_s : "//"_s, hostParser.m_asciiBuffer.span(), afterHost);
+    if (string.isNull())
+        return false;
+
+    // The parser reads that text and makes the result, so no offset of the result comes from `url`. It refuses an
+    // empty host after credentials or in front of a port.
+    URL result;
+    URLParser(result, WTF::move(string));
+    if (!result.m_isValid)
+        return false;
+    url = WTF::move(result);
+    return true;
+}
+
+std::optional<String> URLParser::maybeCanonicalizeHostname(StringView hostname, StringView scheme)
+{
+    URL scratch;
+    URLParser hostParser(scratch);
+    if (hostParser.parseHostWithStateOverride(scheme, hostname, HostStateOverride::Hostname) == HostStateResult::Failure)
+        return std::nullopt;
+    return String(hostParser.m_asciiBuffer.span());
 }
 
 std::optional<String> URLParser::formURLDecode(StringView input)

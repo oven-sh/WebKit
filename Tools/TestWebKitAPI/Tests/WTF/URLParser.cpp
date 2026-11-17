@@ -27,6 +27,7 @@
 
 #include "Helpers/Test.h"
 #include "Helpers/WTFTestUtilities.h"
+#include <string>
 #include <wtf/MainThread.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
@@ -1197,6 +1198,479 @@ TEST_F(WTF_URLParser, FragmentOnOpaquePath)
     }
     URL withPath { URL { "foo:/a/b"_s }, "#x"_s };
     EXPECT_FALSE(withPath.hasOpaquePath());
+}
+
+// URLParser::setHost parses a string alone, from https://url.spec.whatwg.org/#host-state: with the host state as state
+// override, as the host setter of the URL API does, and with the hostname state, as the hostname setter does. Each
+// expected URL is the result of whatwg-url 14.1.0.
+struct HostStateTestCase {
+    ASCIILiteral url;
+    std::u16string_view value;
+    // Null when the value does not set the host: setHost returns false and leaves the URL as it is.
+    ASCIILiteral afterHostState;
+    ASCIILiteral afterHostnameState;
+};
+
+static constexpr std::array hostStateTestCases {
+    // The port state fails after the host is set: the URL keeps its port.
+    HostStateTestCase { "http://x:8080/"_s, u"newhost:99999", "http://newhost:8080/"_s, { } },
+    HostStateTestCase { "http://x:8080/p"_s, u"a:b:80", "http://a:8080/p"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:", "http://a:8080/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:y", "http://a:8080/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:65536", "http://a:8080/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"[::1]:", "http://[::1]:8080/"_s, { } },
+    // The port is the digits up to the first other code point. The default port of the scheme gives no port.
+    HostStateTestCase { "http://x:8080/p"_s, u"[::1]:9000:80", "http://[::1]:9000/p"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:81y", "http://a:81/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:65535", "http://a:65535/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:80", "http://a/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:00080", "http://a/"_s, { } },
+    HostStateTestCase { "https://x:8080/"_s, u"a:80", "https://a:80/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:80@b", "http://a/"_s, { } },
+    HostStateTestCase { "http://u:p@x:8080/p?q#f"_s, u"a:81", "http://u:p@a:81/p?q#f"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a", "http://a:8080/"_s, "http://a:8080/"_s },
+    // Tab and newline are removed before anything else.
+    HostStateTestCase { "http://x:8080/"_s, u"a:\t8", "http://a:8/"_s, { } },
+    HostStateTestCase { "http://x:8080/"_s, u"a:8\t1", "http://a:81/"_s, { } },
+    HostStateTestCase { "http://x/"_s, u"\t[::1]", "http://[::1]/"_s, "http://[::1]/"_s },
+    HostStateTestCase { "http://x/"_s, u"[:\t:1]", "http://[::1]/"_s, "http://[::1]/"_s },
+    HostStateTestCase { "http://x/"_s, u"\n\ra\t", "http://a/"_s, "http://a/"_s },
+    HostStateTestCase { "https://h/evil.example/p"_s, u"\t", { }, { } },
+    HostStateTestCase { "foo://x/"_s, u"\t:", { }, { } },
+    // The host ends at '/', '?' or '#', and at '\\' in a special URL. An empty host fails in a special URL.
+    HostStateTestCase { "http://x/p?q#f"_s, u"a/b:81", "http://a/p?q#f"_s, "http://a/p?q#f"_s },
+    HostStateTestCase { "http://x/"_s, u"a?b", "http://a/"_s, "http://a/"_s },
+    HostStateTestCase { "http://x/"_s, u"a#b", "http://a/"_s, "http://a/"_s },
+    HostStateTestCase { "http://x/"_s, u"a\\b", "http://a/"_s, "http://a/"_s },
+    HostStateTestCase { "foo://x/"_s, u"a\\b", { }, { } },
+    HostStateTestCase { "foo://x:8080/p"_s, u"a:81\\", "foo://a:81/p"_s, { } },
+    HostStateTestCase { "https://h/evil.example/p"_s, u"", { }, { } },
+    HostStateTestCase { "https://h/evil.example/p"_s, u"/", { }, { } },
+    HostStateTestCase { "https://h/evil.example/p"_s, u"?", { }, { } },
+    HostStateTestCase { "https://h/evil.example/p"_s, u"\\", { }, { } },
+    HostStateTestCase { "ws://x:81/a/b/c"_s, u"#z", { }, { } },
+    HostStateTestCase { "http://x:8080/"_s, u":80", { }, { } },
+    // The host parser refuses the host.
+    HostStateTestCase { "http://x/"_s, u"a@b", { }, { } },
+    HostStateTestCase { "http://x/"_s, u" a", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"a ", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"[::1]a", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"[::1", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"a[b:c]d:80", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"a%2Fb", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"1.2.3.4.5", { }, { } },
+    HostStateTestCase { "http://x/"_s, u"09", { }, { } },
+    HostStateTestCase { "http://u:p@x:8080/p"_s, u"a.09", { }, { } },
+    HostStateTestCase { "foo://x/p"_s, u"09", "foo://09/p"_s, "foo://09/p"_s },
+    HostStateTestCase { "foo://x"_s, u"a ", { }, { } },
+    // The host parser changes the host.
+    HostStateTestCase { "http://x/"_s, u"EX%41mple", "http://example/"_s, "http://example/"_s },
+    HostStateTestCase { "http://x/"_s, u"0x7f.1", "http://127.0.0.1/"_s, "http://127.0.0.1/"_s },
+    HostStateTestCase { "foo://x/p"_s, u"A%41", "foo://A%41/p"_s, "foo://A%41/p"_s },
+    HostStateTestCase { "foo://x/p"_s, u"\u00E9", "foo://%C3%A9/p"_s, "foo://%C3%A9/p"_s },
+    HostStateTestCase { "foo://x"_s, u"a\u0001", "foo://a%01"_s, "foo://a%01"_s },
+    // A file URL has no port, and no Windows drive letter in place of a host. "localhost" and the empty string give the empty host.
+    HostStateTestCase { "file:///a/b"_s, u"h", "file://h/a/b"_s, "file://h/a/b"_s },
+    HostStateTestCase { "file:///a/b"_s, u"h:81", { }, { } },
+    HostStateTestCase { "file:///a/b"_s, u"[::1]", "file://[::1]/a/b"_s, "file://[::1]/a/b"_s },
+    HostStateTestCase { "file:///a/b"_s, u"[::1]:81", { }, { } },
+    HostStateTestCase { "file:///a/b"_s, u"c:", { }, { } },
+    HostStateTestCase { "file:///a/b"_s, u"C|", { }, { } },
+    HostStateTestCase { "file:///a/b"_s, u"a@b", { }, { } },
+    HostStateTestCase { "file://h/a/b"_s, u"", "file:///a/b"_s, "file:///a/b"_s },
+    HostStateTestCase { "file://h/a/b"_s, u"LOCALHOST", "file:///a/b"_s, "file:///a/b"_s },
+    HostStateTestCase { "file://h/a/b"_s, u"\\a", "file:///a/b"_s, "file:///a/b"_s },
+    HostStateTestCase { "file:///C:/a"_s, u"h", "file://h/C:/a"_s, "file://h/C:/a"_s },
+    // A URL that is not special can have the empty host, but not with credentials or a port.
+    HostStateTestCase { "foo://x/p"_s, u"", "foo:///p"_s, "foo:///p"_s },
+    HostStateTestCase { "foo://x?q"_s, u"", "foo://?q"_s, "foo://?q"_s },
+    HostStateTestCase { "foo://x:8080/p"_s, u"", { }, { } },
+    HostStateTestCase { "foo://u@x/p"_s, u"", { }, { } },
+    // A URL without a host gets one. "/." in front of its path is not part of the path.
+    HostStateTestCase { "foo:/p"_s, u"h", "foo://h/p"_s, "foo://h/p"_s },
+    HostStateTestCase { "foo:/p"_s, u"h:81", "foo://h:81/p"_s, { } },
+    HostStateTestCase { "foo:/p"_s, u"", "foo:///p"_s, "foo:///p"_s },
+    HostStateTestCase { "foo:/.//p"_s, u"h", "foo://h//p"_s, "foo://h//p"_s },
+    HostStateTestCase { "foo:/.//p"_s, u"", "foo:////p"_s, "foo:////p"_s },
+    HostStateTestCase { "foo:/.p"_s, u"h:81", "foo://h:81/.p"_s, { } },
+};
+
+static bool setHost(URL& url, const String& value, WTF::URLParser::HostStateOverride stateOverride)
+{
+    return WTF::URLParser::setHost(url, value, stateOverride);
+}
+
+static Vector<String, 2> stringsOfEachWidth(std::u16string_view characters)
+{
+    auto string16Bit = String(std::span { characters });
+    Vector<String, 2> strings { string16Bit };
+    if (string16Bit.containsOnlyLatin1())
+        strings.append(String::make8Bit(std::span { characters }));
+    return strings;
+}
+
+static void testHostState(ASCIILiteral urlString, std::u16string_view value, ASCIILiteral expected, WTF::URLParser::HostStateOverride stateOverride)
+{
+    String urlString16Bit { urlString };
+    urlString16Bit.convertTo16Bit();
+
+    for (auto& value : stringsOfEachWidth(value)) {
+        for (auto& string : { String { urlString }, urlString16Bit }) {
+            SCOPED_TRACE(testing::Message() << urlString << (string.is8Bit() ? " (8-bit) <= " : " (16-bit) <= ") << value << (value.is8Bit() ? " (8-bit)" : " (16-bit)"));
+            URL original { string };
+            EXPECT_EQ(original.string(), urlString);
+            URL url = original;
+            EXPECT_EQ(setHost(url, value, stateOverride), !expected.isNull());
+            EXPECT_TRUE(url.isValid());
+            EXPECT_EQ(url.string(), expected.isNull() ? original.string() : String { expected });
+            EXPECT_TRUE(WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+        }
+    }
+}
+
+// The host of a special URL is parsed once, by the host parser: tab and newline removal, percent-decoding, then
+// domain to ASCII. A value with no ASCII delimiter gives the host that the same text gives inside a URL. Domain to
+// ASCII never sees the value before that parse, so what it maps to a delimiter cannot become URL structure.
+struct InternationalHostTestCase {
+    std::u16string_view value;
+    ASCIILiteral expectedHost; // Null when the value is refused.
+};
+
+static constexpr std::array internationalHostTestCases {
+    InternationalHostTestCase { u"other.example", "other.example"_s },
+    InternationalHostTestCase { u"B\u00FCcher.example", "xn--bcher-kva.example"_s },
+    InternationalHostTestCase { u"\u05D0.example", "xn--4db.example"_s },
+    InternationalHostTestCase { u"\uFF45\uFF58\uFF41\uFF4D\uFF50\uFF4C\uFF45\u3002com", "example.com"_s },
+    InternationalHostTestCase { u"%C3%9F.de", "xn--zca.de"_s },
+    // Percent-decoding comes before domain to ASCII.
+    InternationalHostTestCase { u"\u00DF%41.de", "xn--a-pfa.de"_s },
+    InternationalHostTestCase { u"%C3%BC\u00FC.de", "xn--tdaa.de"_s },
+    InternationalHostTestCase { u"\u00DF%2e.de", "xn--zca..de"_s },
+    InternationalHostTestCase { u"\u00E9.%78n--a", { } },
+    InternationalHostTestCase { u"\u00E9%2Fx", { } },
+    // So does tab and newline removal.
+    InternationalHostTestCase { u"\t\u00DF.de", "xn--zca.de"_s },
+    InternationalHostTestCase { u"\u00DF\n.d\re", "xn--zca.de"_s },
+    // Domain to ASCII maps these to '/', '\\', '?', '#', '@', ':' and '%', which are forbidden in a host.
+    InternationalHostTestCase { u"a\uFF0Fb", { } },
+    InternationalHostTestCase { u"bad.c\u2100.good.com", { } },
+    InternationalHostTestCase { u"a\uFF3Cb", { } },
+    InternationalHostTestCase { u"a\uFF1Fb", { } },
+    InternationalHostTestCase { u"a\uFF03b", { } },
+    InternationalHostTestCase { u"a\uFF20b", { } },
+    InternationalHostTestCase { u"a\uFF1A81", { } },
+    InternationalHostTestCase { u"a\uFF0541", { } },
+    InternationalHostTestCase { u"\u00DF\uFF20b", { } },
+    // An IPv6 address is never mapped: a fullwidth digit or an ignored code point makes it invalid.
+    InternationalHostTestCase { u"[::1]", "[::1]"_s },
+    InternationalHostTestCase { u"[::\uFF11]", { } },
+    InternationalHostTestCase { u"[::\u00B9]", { } },
+    InternationalHostTestCase { u"[::1]\u00AD", { } },
+};
+
+static void testInternationalHost(const InternationalHostTestCase& test, ASCIILiteral portInValue, WTF::URLParser::HostStateOverride stateOverride)
+{
+    auto expectedPort = portInValue.isNull() ? ":444"_s : portInValue;
+    for (auto& host : stringsOfEachWidth(test.value)) {
+        SCOPED_TRACE(testing::Message() << host << (host.is8Bit() ? " (8-bit)" : " (16-bit)"));
+        URL original { "https://user:pass@example.com:444/p?q#f"_s };
+        URL parsed { makeString("https://user:pass@"_s, host, expectedPort, "/p?q#f"_s) };
+        URL url = original;
+        EXPECT_EQ(setHost(url, makeString(host, portInValue), stateOverride), !test.expectedHost.isNull());
+        if (test.expectedHost.isNull()) {
+            EXPECT_FALSE(parsed.isValid());
+            EXPECT_EQ(url.string(), original.string());
+            continue;
+        }
+        EXPECT_EQ(url.string(), makeString("https://user:pass@"_s, test.expectedHost, expectedPort, "/p?q#f"_s));
+        EXPECT_EQ(url.string(), parsed.string());
+    }
+}
+
+TEST_F(WTF_URLParser, SetHost)
+{
+    using enum WTF::URLParser::HostStateOverride;
+    for (auto& test : hostStateTestCases) {
+        testHostState(test.url, test.value, test.afterHostState, Host);
+        testHostState(test.url, test.value, test.afterHostnameState, Hostname);
+    }
+    for (auto& test : internationalHostTestCases) {
+        testInternationalHost(test, { }, Host);
+        testInternationalHost(test, ":8080"_s, Host);
+        testInternationalHost(test, { }, Hostname);
+    }
+
+    // A host that is not special is opaque: percent-encoded, never converted.
+    URL url { "foo://example.com/p"_s };
+    EXPECT_TRUE(setHost(url, utf16String(u"\u00DF%41.de"), Hostname));
+    EXPECT_EQ(url.string(), "foo://%C3%9F%41.de/p"_s);
+
+    // maybeCanonicalizeHostname gives the host that the hostname state sets, without a URL.
+    struct HostnameTestCase {
+        std::u16string_view hostname;
+        ASCIILiteral scheme;
+        ASCIILiteral expected; // Null when the hostname state fails.
+    };
+    for (auto& test : {
+        HostnameTestCase { u"EX%41mple", "https"_s, "example"_s },
+        HostnameTestCase { u"\t[:\n:1]", "https"_s, "[::1]"_s },
+        HostnameTestCase { u"a/b:81", "https"_s, "a"_s },
+        HostnameTestCase { u"a\\b", "https"_s, "a"_s },
+        HostnameTestCase { u"a:81", "https"_s, { } },
+        HostnameTestCase { u"", "https"_s, { } },
+        HostnameTestCase { u"09", "https"_s, { } },
+        HostnameTestCase { u"a\uFF20b", "https"_s, { } },
+        HostnameTestCase { u"\u00DF%41.de", "ws"_s, "xn--a-pfa.de"_s },
+        HostnameTestCase { u"\u00DF%41.de", "foo"_s, "%C3%9F%41.de"_s },
+        HostnameTestCase { u"", "foo"_s, ""_s },
+        HostnameTestCase { u"a\\b", "foo"_s, { } },
+        HostnameTestCase { u"LOCALHOST", "file"_s, ""_s },
+        HostnameTestCase { u"h:81", "file"_s, { } },
+        HostnameTestCase { u"C|", "file"_s, { } },
+    }) {
+        for (auto& hostname : stringsOfEachWidth(test.hostname)) {
+            SCOPED_TRACE(testing::Message() << hostname << (hostname.is8Bit() ? " (8-bit) in " : " (16-bit) in ") << test.scheme);
+            auto host = WTF::URLParser::maybeCanonicalizeHostname(hostname, test.scheme);
+            EXPECT_EQ(host.has_value(), !test.expected.isNull());
+            if (host)
+                EXPECT_EQ(*host, String { test.expected });
+        }
+    }
+
+    for (auto stateOverride : { Host, Hostname }) {
+        URL opaquePath { "mailto:a@b.c"_s };
+        EXPECT_FALSE(setHost(opaquePath, "h"_s, stateOverride));
+        EXPECT_EQ(opaquePath.string(), "mailto:a@b.c"_s);
+
+        URL invalid { "http://"_s };
+        EXPECT_FALSE(setHost(invalid, "h"_s, stateOverride));
+        EXPECT_FALSE(invalid.isValid());
+        EXPECT_EQ(invalid.string(), "http://"_s);
+    }
+
+    // A long host is a host. The parser refuses one that could make its buffer grow past the limit of a Vector: it
+    // writes at most nine characters for one code unit.
+    auto hostOfLength = [](size_t length) {
+        std::span<Latin1Character> characters;
+        auto host = String::createUninitialized(length, characters);
+        memsetSpan(characters, 'a');
+        return host;
+    };
+    size_t tooLong = 1;
+    while (WTF::isValidCapacityForVector<Latin1Character>(WTF::VectorBufferMalloc::nextCapacity(9 * tooLong)))
+        tooLong *= 2;
+    auto tooLongHost = hostOfLength(tooLong);
+    for (auto base : { "https://example.com/p"_s, "foo://example.com/p"_s }) {
+        URL longHost { base };
+        EXPECT_TRUE(setHost(longHost, hostOfLength(70000), Hostname));
+        EXPECT_EQ(longHost.host().length(), 70000u);
+        auto before = longHost.string();
+        EXPECT_FALSE(setHost(longHost, tooLongHost, Hostname));
+        EXPECT_EQ(longHost.string(), before);
+        EXPECT_FALSE(WTF::URLParser::maybeCanonicalizeHostname(tooLongHost, longHost.protocol()));
+    }
+}
+
+// URLs that the parser makes from a reference and a base URL, or that differ from the parse of their own text.
+struct ResolvedHostStateTestCase {
+    ASCIILiteral base;
+    ASCIILiteral reference; // Null for the URL of `base` alone.
+    ASCIILiteral value;
+    ASCIILiteral afterHostState;
+    ASCIILiteral afterHostnameState;
+};
+
+static constexpr std::array resolvedHostStateTestCases {
+    // An opaque path that the parser copies from the base URL.
+    ResolvedHostStateTestCase { "about:blank"_s, "#x"_s, "h"_s, { }, { } },
+    ResolvedHostStateTestCase { "mailto:a@b.c"_s, "#x"_s, "h"_s, { }, { } },
+    ResolvedHostStateTestCase { "mailto:a@b.c"_s, "#x"_s, "h:81"_s, { }, { } },
+    ResolvedHostStateTestCase { "foo:"_s, "#x"_s, "h"_s, { }, { } },
+    ResolvedHostStateTestCase { "foo:a/b"_s, "#x"_s, "h"_s, { }, { } },
+    ResolvedHostStateTestCase { "foo://u@h"_s, "?z"_s, ""_s, { }, { } },
+    ResolvedHostStateTestCase { "foo://h:9"_s, "?z"_s, "h2"_s, "foo://h2:9?z"_s, "foo://h2:9?z"_s },
+    ResolvedHostStateTestCase { "foo://h"_s, "?z"_s, ""_s, "foo://?z"_s, "foo://?z"_s },
+    ResolvedHostStateTestCase { "foo://h/a/b?q#f"_s, "../x"_s, "h2:81"_s, "foo://h2:81/x"_s, { } },
+    ResolvedHostStateTestCase { "foo:/a/b?q#f"_s, "x"_s, "h"_s, "foo://h/a/x"_s, "foo://h/a/x"_s },
+    ResolvedHostStateTestCase { "foo:/a/b"_s, "/.//x"_s, "h"_s, "foo://h//x"_s, "foo://h//x"_s },
+    ResolvedHostStateTestCase { "http://h/a/b?q#f"_s, "?z"_s, "h2"_s, "http://h2/a/b?z"_s, "http://h2/a/b?z"_s },
+    ResolvedHostStateTestCase { "http://h/a/b?q#f"_s, "#x"_s, "h2:81"_s, "http://h2:81/a/b?q#x"_s, { } },
+    ResolvedHostStateTestCase { "http://u:p@h:81/a/b"_s, "//x"_s, "h2"_s, "http://h2/"_s, "http://h2/"_s },
+    ResolvedHostStateTestCase { "file:///a/b"_s, "c"_s, "h"_s, "file://h/a/c"_s, "file://h/a/c"_s },
+    ResolvedHostStateTestCase { "file://h/a/b"_s, "/C:/x"_s, "localhost"_s, "file:///C:/x"_s, "file:///C:/x"_s },
+    // Windows drive letters. The parser reads one at the start of the path of a file URL only when the host is empty.
+    ResolvedHostStateTestCase { "file://C:"_s, { }, "server"_s, "file://server/C:"_s, "file://server/C:"_s },
+    ResolvedHostStateTestCase { "file://C:"_s, { }, ""_s, "file:///C:"_s, "file:///C:"_s },
+    ResolvedHostStateTestCase { "file://C|"_s, { }, "h"_s, "file://h/C:"_s, "file://h/C:"_s },
+    ResolvedHostStateTestCase { "file://h/C|/a"_s, { }, ""_s, "file:///C:/a"_s, "file:///C:/a"_s },
+    ResolvedHostStateTestCase { "file://h/C|/a"_s, { }, "LOCALHOST"_s, "file:///C:/a"_s, "file:///C:/a"_s },
+};
+
+TEST_F(WTF_URLParser, SetHostOfResolvedURL)
+{
+    using enum WTF::URLParser::HostStateOverride;
+    auto resolve = [](ASCIILiteral base, ASCIILiteral reference) {
+        return reference.isNull() ? URL { String { base } } : URL { URL { String { base } }, String { reference } };
+    };
+    for (auto& test : resolvedHostStateTestCases) {
+        for (auto stateOverride : { Host, Hostname }) {
+            SCOPED_TRACE(testing::Message() << test.reference << " on " << test.base << " <= " << test.value << (stateOverride == Host ? " (host)" : " (hostname)"));
+            auto expected = stateOverride == Host ? test.afterHostState : test.afterHostnameState;
+            URL original = resolve(test.base, test.reference);
+            ASSERT_TRUE(original.isValid());
+            URL url = original;
+            EXPECT_EQ(setHost(url, test.value, stateOverride), !expected.isNull());
+            if (expected.isNull()) {
+                EXPECT_TRUE(WTF::URLParser::allValuesEqual(url, original));
+                continue;
+            }
+            EXPECT_EQ(url.string(), expected);
+            EXPECT_TRUE(WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+        }
+    }
+
+    // The parser writes "/" in front of the query when it reads the text of this URL.
+    URL url { URL { "foo://u@h"_s }, "?z"_s };
+    EXPECT_EQ(url.string(), "foo://u@h?z"_s);
+    EXPECT_TRUE(setHost(url, "h2:81"_s, Host));
+    EXPECT_EQ(url.hostAndPort(), "h2:81"_s);
+    EXPECT_TRUE(WTF::URLParser::allValuesEqual(url, URL { url.string() }));
+}
+
+// The state override changes only what the URL Standard says it changes. For every other value, the host that
+// setHost gives is the host that the parser gives for the same text in the place of the host.
+struct HostInURL {
+    ASCIILiteral url;
+    ASCIILiteral beforeHost;
+    ASCIILiteral afterHost;
+};
+
+static constexpr std::array hostsInURLs {
+    HostInURL { "https://user:pass@example.com:444/p?q#f"_s, "https://user:pass@"_s, ":444/p?q#f"_s },
+    HostInURL { "http://x/"_s, "http://"_s, "/"_s },
+    HostInURL { "ws://x/a/b?c"_s, "ws://"_s, "/a/b?c"_s },
+    HostInURL { "file:///a/b"_s, "file://"_s, "/a/b"_s },
+    HostInURL { "file://h/a/b?q#f"_s, "file://"_s, "/a/b?q#f"_s },
+    HostInURL { "foo://x/p"_s, "foo://"_s, "/p"_s },
+    HostInURL { "foo://u:p@x:81/p?q#f"_s, "foo://u:p@"_s, ":81/p?q#f"_s },
+    HostInURL { "foo://x"_s, "foo://"_s, ""_s },
+    HostInURL { "foo://x?q"_s, "foo://"_s, "?q"_s },
+    HostInURL { "foo:/p"_s, "foo://"_s, "/p"_s },
+};
+
+static constexpr std::u16string_view hostAlphabet = u"aB14.-% \t\\|^[]:<\u00E9\uFF0F/?#@";
+
+static constexpr std::array<std::u16string_view, 26> hostWords {
+    u"localhost", u"LOCALHOST", u"loc\talhost", u"localhost.", u"xlocalhost", u"%6Cocalhost",
+    u"[::1]", u"[::1]\n", u"[:\t:1]", u"0x7f.1", u"1.2.3.4.5", u"a.example",
+    u"a\\b.example", u"a.example\\b", u"EX%41mple", u"\u00DF%41.de",
+    u"\t[::1]", u"\n[::1]", u"\r\t[::1]", u"\tlocalhost", u"\n\ta.example",
+    u"09", u"0x", u"a.09", u"1.09", u"0x7f",
+};
+
+// False for a value that the state override treats in another way than the parser. Sets `hasDelimiter` when the
+// host ends before the end of the value.
+static bool parserReadsTheSameHost(std::u16string_view value, const URL& url, bool& hasDelimiter)
+{
+    std::u16string host;
+    char16_t delimiter = 0;
+    for (auto character : value) {
+        if (character == '\t' || character == '\n' || character == '\r')
+            continue;
+        if (character == '/' || character == '?' || character == '#' || (character == '\\' && url.hasSpecialScheme())) {
+            delimiter = character;
+            break;
+        }
+        host.push_back(character);
+    }
+    hasDelimiter = delimiter;
+    // An empty host: the state override returns. The parser does the same in front of '?' or '#'. In front of '/' or
+    // '\\', and at the end of the value, it goes on with what follows.
+    if (host.empty())
+        return delimiter == '?' || delimiter == '#';
+    // '@': the parser reads credentials before it.
+    if (host.find(u'@') != std::u16string::npos)
+        return false;
+    if (!url.protocolIsFile()) {
+        // ':' outside of "[...]": the port state with a state override.
+        bool insideBrackets = false;
+        for (auto character : host) {
+            if (character == '[')
+                insideBrackets = true;
+            else if (character == ']')
+                insideBrackets = false;
+            else if (character == ':' && !insideBrackets)
+                return false;
+        }
+    } else if (host.size() == 2 && isASCIIAlpha(host[0]) && (host[1] == ':' || host[1] == '|')) {
+        // A Windows drive letter: a path to the parser, a host with a state override.
+        return false;
+    }
+    return true;
+}
+
+static void compareHostWithParser(const HostInURL& test, std::u16string_view hostCharacters, std::u16string_view port, WTF::URLParser::HostStateOverride stateOverride, unsigned& comparisons)
+{
+    std::u16string characters { hostCharacters };
+    characters += port;
+    URL original { String { test.url } };
+    ASSERT_EQ(original.string(), test.url);
+    bool hasDelimiter = false;
+    if (!parserReadsTheSameHost(hostCharacters, original, hasDelimiter))
+        return;
+    // With nothing after the host, the parser removes a C0 control or space at the end of the value as the end of its input.
+    if (!test.afterHost.length() && characters.back() <= 0x20)
+        return;
+    // A port after the host: only where the URL has no port there, and the value has no delimiter in front of it.
+    if (!port.empty() && (hasDelimiter || StringView { test.afterHost }.startsWith(':')))
+        return;
+    for (auto& value : stringsOfEachWidth(characters)) {
+        URL parsed { makeString(test.beforeHost, value, test.afterHost) };
+        URL url = original;
+        bool didSetHost = setHost(url, value, stateOverride);
+        ++comparisons;
+        bool agrees = didSetHost == parsed.isValid();
+        if (agrees && didSetHost)
+            agrees = url.host() == parsed.host() && (hasDelimiter || url.string() == parsed.string());
+        else if (agrees)
+            agrees = url.string() == original.string();
+        EXPECT_TRUE(agrees) << test.url << " <= " << value << (value.is8Bit() ? " (8-bit)" : " (16-bit)")
+            << ": setHost gives " << (didSetHost ? url.string() : String { "no host"_s })
+            << ", the parser gives " << (parsed.isValid() ? parsed.string() : String { "no URL"_s });
+        // Without credentials or a port in the URL, maybeCanonicalizeHostname gives the host that setHost sets.
+        if (stateOverride == WTF::URLParser::HostStateOverride::Hostname && !original.hasCredentials() && !original.port()) {
+            auto host = WTF::URLParser::maybeCanonicalizeHostname(value, original.protocol());
+            EXPECT_EQ(host.has_value(), didSetHost) << test.url << " <= " << value;
+            if (host && didSetHost)
+                EXPECT_EQ(*host, url.host()) << test.url << " <= " << value;
+        }
+    }
+}
+
+TEST_F(WTF_URLParser, SetHostAgreesWithParser)
+{
+    using enum WTF::URLParser::HostStateOverride;
+    struct Variant {
+        WTF::URLParser::HostStateOverride stateOverride;
+        std::u16string_view port;
+    };
+    unsigned comparisons = 0;
+    for (auto variant : { Variant { Hostname, { } }, Variant { Host, { } }, Variant { Host, u":81" }, Variant { Host, u":80" } }) {
+        for (auto& test : hostsInURLs) {
+            for (auto word : hostWords)
+                compareHostWithParser(test, word, variant.port, variant.stateOverride, comparisons);
+            for (auto first : hostAlphabet) {
+                compareHostWithParser(test, std::u16string { first }, variant.port, variant.stateOverride, comparisons);
+                for (auto second : hostAlphabet) {
+                    compareHostWithParser(test, std::u16string { first, second }, variant.port, variant.stateOverride, comparisons);
+                    for (auto third : hostAlphabet)
+                        compareHostWithParser(test, std::u16string { first, second, third }, variant.port, variant.stateOverride, comparisons);
+                }
+            }
+        }
+    }
+    // The values that the comparison leaves out do not make it empty.
+    EXPECT_GT(comparisons, 400000u);
 }
 
 } // namespace TestWebKitAPI
