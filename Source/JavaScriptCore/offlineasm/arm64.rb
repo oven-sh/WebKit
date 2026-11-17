@@ -1069,14 +1069,15 @@ def arm64InstructionSigningLinkRegister(instruction)
     return [$1, *arm64SigningLinkRegister($2)] if instruction =~ /\A([^\s:,#\[]+\s*:)\s*(\S.*)\z/
     mnemonic, operands = instruction.split(nil, 2)
     hint = numberIn[operands] if mnemonic =~ /\Ahint\z/i
-    return [] if mnemonic =~ /\A(?:pac|aut|xpac)/i or [7, 8, 10, 12, 14, *24..31].include? hint or instruction == validate
-    return [instruction] if operands !~ linkRegister or mnemonic =~ /\A(?:br|blr|ret|cbn?z|tbn?z|cc?m[pn]|tst|prfu?m)\z/i
+    return [] if mnemonic =~ /\A(?:pac(?!ga)|aut|xpac)/i or [7, 8, 10, 12, 14, *24..31].include? hint or instruction == validate
+    return [instruction] if operands !~ linkRegister or mnemonic =~ /\A(?:br|blr|ret|cb[a-z]+|tbn?z|cc?m[pn]|tst|prfu?m)\z/i
 
-    registersIn = lambda { | text | text.scan(/\b(?:[wx]\d+|[bhsdqvz]\d+|w?sp|fp|lr)\b/i) }
+    registersIn = lambda { | text | text.scan(/\b(?:[wx]\d+|[bhsdqvz]\d+|w?sp|fp|lr|ip[01])\b/i) }
     data, address, behind = operands.match(/\A(.*?)(?:,\s*\[(.*)\](.*))?\z/).captures
     unless address
         compares = mnemonic =~ /\A(?:add|sub|and|bic)s\z/i && data =~ /\A[wx]zr\b/i
-        isMadeOfItselfAndConstants = mnemonic !~ /\A(?:ldr|mrs|msr|sys)/i && registersIn[data].all?(linkRegister)
+        computes = mnemonic =~ /\A(?:adrp?|mov[knz]?|mvn|(?:add|sub|adc|sbc|neg|ngc|and|bic)s?|or[nr]|eo[nr]|ls[lr]|asr|ror|extr|[su]?bf[a-z]+|[su]xt[bhw]|cs?(?:el|etm?|inc|inv|neg)|rbit|rev\d*|cl[sz])\z/i
+        isMadeOfItselfAndConstants = computes && registersIn[data].all?(linkRegister)
         return compares || isMadeOfItselfAndConstants ? [instruction] : [sign, instruction, authenticate, validate]
     end
     return [instruction] if data !~ linkRegister and registersIn[behind].empty?
@@ -1088,7 +1089,9 @@ def arm64InstructionSigningLinkRegister(instruction)
     offsetBefore = offset && !index ? numberIn[offset] : 0
     step = behind.empty? ? 0 : behind.strip == "!" ? offsetBefore : numberIn[behind]
     unless mnemonic =~ /\A(?:ld|st)(?:[ut]?r|n?p)\z/i and isIt.any? and offsetBefore and step and not (isLoad and address =~ linkRegister)
-        return [sign, instruction, *(mnemonic =~ /\Ast(?:[ut]?r[bh]?|n?p)\z/i ? [strip] : [authenticate, validate])]
+        return [sign, instruction, strip] if mnemonic =~ /\Ast(?:[ut]?r[bh]?|n?p)\z/i
+        copiesNothingOut = mnemonic =~ /\Ald(?:(?:ap)?[ut]?r(?:s?[bhw])?|t?n?p|psw|ra[ab])\z/i || (mnemonic =~ /\A(?:ld|st)[1-4]r?\z/i && base =~ linkRegister)
+        return [*(sign unless copiesNothingOut), instruction, authenticate, validate]
     end
     offsetAfter = offsetBefore - step
     baseIsStackPointer = base =~ /\Asp\z/i

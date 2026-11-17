@@ -22,6 +22,7 @@
 #include "AOTWasmModules.h"
 #include "JSCPtrTag.h"
 #include "JSLock.h"
+#include "Options.h"
 #include "VM.h"
 #include "WasmCodeInImage.h"
 #include "WasmHandlerInfo.h"
@@ -31,6 +32,7 @@
 #include <bmalloc/Gigacage.h>
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -324,6 +326,13 @@ static void testSameBytesEachTime()
     }
 }
 
+static void testDumpLeavesCodeAsItIs()
+{
+    Vector<uint8_t> codeWithoutDump = compileModuleWithCode(indirectCallModule).code;
+    SetForScope dumps(Options::dumpOMGDisassembly(), true);
+    AOT_TEST_CHECK(compileModuleWithCode(indirectCallModule).code == codeWithoutDump);
+}
+
 #if ENABLE(RETURN_ADDRESS_SIGNING)
 static void testReturnFollowsAuthentication()
 {
@@ -496,6 +505,7 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
+        { "webassembly-image/dump-leaves-code-as-it-is"_s, testDumpLeavesCodeAsItIs },
 #if ENABLE(RETURN_ADDRESS_SIGNING)
         { "webassembly-image/return-follows-authentication"_s, testReturnFollowsAuthentication },
 #endif

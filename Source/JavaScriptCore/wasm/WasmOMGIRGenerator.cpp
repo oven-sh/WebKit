@@ -8041,7 +8041,11 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     if (shouldDumpIRFor(functionIndex + info.importFunctionCount()))
         procedure.setShouldDumpIR();
 
-    procedure.setNeedsPCToOriginMap();
+    // Nothing reads the map or the disassembly of code for an image, and their labels keep the load behind an authentication.
+    if (compilationContext.codeForImage)
+        procedure.code().forcePreservationOfB3Origins();
+    else
+        procedure.setNeedsPCToOriginMap();
     procedure.setOriginPrinter([](PrintStream& out, Origin origin) {
         if (auto* impl = origin.maybeWasmOrigin())
             out.print("Wasm: ", impl->m_opcodeOrigin, " CallSiteIndex: ", impl->m_callSiteIndex.bits());
@@ -8083,7 +8087,7 @@ std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileOMG(Comp
     dataLogIf(WasmOMGIRGeneratorInternal::verbose, "Post SSA: ", procedure);
 
     {
-        if (shouldDumpDisassemblyFor(compilationMode))
+        if (shouldDumpDisassemblyFor(compilationMode) && !compilationContext.codeForImage)
             procedure.code().setDisassembler(makeUniqueWithoutFastMallocCheck<B3::Air::Disassembler>());
         B3::prepareForGeneration(procedure);
         if (procedure.report().failure) [[unlikely]]

@@ -415,12 +415,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     };
 
     PCToOriginMap& pcToOriginMap = code.proc().pcToOriginMap();
-    bool shouldPreserveB3Origins = code.shouldPreserveB3Origins();
+    bool needsPCToOriginMap = code.proc().needsPCToOriginMap();
     auto addItem = [&] (Inst& inst) {
-        if (!shouldPreserveB3Origins)
-            return;
-        // A label in front of a return would keep the load that follows the authentication.
-        if (ENABLE_RETURN_ADDRESS_SIGNING && context.indexInBlock && context.currentBlock->at(context.indexInBlock - 1).kind.opcode == LeaveFrame)
+        if (!needsPCToOriginMap)
             return;
         if (inst.origin)
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), inst.origin->origin());

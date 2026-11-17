@@ -11,13 +11,14 @@ def stored(address) atAddress(address, ["mov x17, x30", "hint #10", "stur x17, [
 def loaded(address) atAddress(address, ["ldur x17, [x16, #-8]", "hint #14", "mov x30, x17"]) end
 
 expected = {}
-["ret", "br x30", "blr lr", "cbz x30, 1f", "cmp x9, x30", "subs xzr, x30, x9", "adr x30, 1f", "movk x30, #1, lsl #16", "add x30, x30, #4", "ldr w9, [x30, #4]",
+["ret", "br x30", "blr lr", "cbz x30, 1f", "cbgt x30, x9, 1f", "pacga x9, x10, x11", "cmp x9, x30", "subs xzr, x30, x9", "adr x30, 1f",
+    "movk x30, #1, lsl #16", "add x30, x30, #4", "ubfx x30, x30, #0, #48", "csel x30, x30, xzr, eq", "ldr w9, [x30, #4]",
     "ldr x9, [x10, x30]", "ld1 {v0.2d}, [x30], #16", "prfm pldl1keep, [x30]", "stp x9, x10, [sp, #-16]!", "hint #34", "hint #symbol", "1:"].each { | text | expected[text] = [text] }
 ["hint #7", "hint 27", "hint #0x1f // AUTIBSP", "pacibsp", "AUTIB x9, x10", "xpaclri", LOAD].each { | text | expected[text] = [] }
 ["stp x29, x30, [sp, #-16]!", "stp xzr, lr, [sp, #-0x10]!", "stur x30, [sp, #-8]", "str w30, [x9]"].each { | text | expected[text] = [SIGN, text, STRIP] }
-["ldp x29, x30, [sp], #16", "ldr x30, [sp], 8"].each { | text | expected[text] = [text, AUTHENTICATE, LOAD] }
-["mov x9, x30", "mov x30, x9", "mov x30, sp", "fmov x30, d0", "ins v0.d[1], x30", "mrs x30, tpidr_el0", "msr tpidr_el0, x30", "ldr x30, 1f", "ldr x30, [x30, #8]",
-    "ldr w30, [x9]", "ldar x30, [x9]", "stlxr w30, x9, [x10]", "casal x30, x9, [x10]", "ld1 {v0.2d}, [x30], x9"].each { | text | expected[text] = [SIGN, text, AUTHENTICATE, LOAD] }
+["ldp x29, x30, [sp], #16", "ldr x30, [sp], 8", "ldr x30, [x30, #8]", "ldp x9, x30, [x30]", "ldapur x30, [x30, #8]", "ldr w30, [x9]", "ld1 {v0.2d}, [x30], x9"].each { | text | expected[text] = [text, AUTHENTICATE, LOAD] }
+["mov x9, x30", "mov x30, x9", "mov x30, sp", "mov x30, ip0", "fmov x30, d0", "ins v0.d[1], x30", "mrs x30, tpidr_el0", "msr tpidr_el0, x30", "ldr x30, 1f", "ldar x30, [x9]",
+    "stlxr w30, x9, [x10]", "casal x30, x9, [x10]", "ldadd x30, x9, [x10]", "ld1 {v0.2d}, [x9], x30", "incp x30, p0.b", "movt x30, zt0[8]", "gcspopm x30"].each { | text | expected[text] = [SIGN, text, AUTHENTICATE, LOAD] }
 expected.merge!({
     "1: stp x29, x30, [sp, #-16]!" => ["1:", SIGN, "stp x29, x30, [sp, #-16]!", STRIP],
     "1 : stur x30, [sp, #-8]" => ["1 :", SIGN, "stur x30, [sp, #-8]", STRIP],
