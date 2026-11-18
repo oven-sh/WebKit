@@ -36,6 +36,7 @@
 #include "Microtask.h"
 #include "SourceOrigin.h"
 #include "SourceProvider.h"
+#include "TopExceptionScope.h"
 #include "VMEntryScopeInlines.h"
 #include "VMTrapsInlines.h"
 #include "WasmModuleInformation.h"
@@ -1062,7 +1063,7 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
 {
     VM& vm = m_vm;
     DeferTermination deferScope(vm);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (m_isPaused)
         return;
