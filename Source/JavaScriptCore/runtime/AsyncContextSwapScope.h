@@ -206,11 +206,11 @@ private:
 // - a synchronous load (JSModuleLoader::loadModuleSync()): what it runs inside the call of require() runs in the context
 //   of the caller, and what its modules enter is the caller's, as for a CommonJS module.
 //
-// While a synchronous load drains its queue, no job of the loader enters the context of its load. The drain also takes
-// the jobs of other loads that come due meanwhile: of an import() in flight, and of an import() that a module calls
-// during the drain. It runs them inside the call of require(), so they run in the context of its caller, as the steps
-// of the synchronous load do. (The job that resumes a module behind its own await is no such job: it has the context
-// of that await, as any await has.)
+// While a synchronous load drains its queue, no job of the loader enters the context of its load (but see CallMadeAgain
+// at ModuleEvaluationAsyncContextScope). The drain also takes the jobs of other loads that come due meanwhile: of an
+// import() in flight, and of an import() that a module calls during the drain. It runs them inside the call of
+// require(), so they run in the context of its caller, as the steps of the synchronous load do. (The job that resumes a
+// module behind its own await is no such job: it has the context of that await, as any await has.)
 //
 // What a job with a store does more is out of line: for a load that keeps none, the function of each job of the loader
 // (JSMicrotask.cpp) gains a test of its async context and no more.
@@ -244,8 +244,10 @@ private:
     NEVER_INLINE void enterOutsideSynchronousDrain(VM&, JSGlobalObject*, JSValue asyncContext);
 };
 
-// For a job of the module loader itself: the function of a job in JSMicrotask.cpp. What such a scope finds in the slot
-// where it enters is what the queue that runs its job has there between two jobs.
+// For a job of the module loader itself: the function of a job in JSMicrotask.cpp, and a call of import() that the AOT
+// run time makes again where the text of its module has come (ModuleEvaluationAsyncContextScope, CallMadeAgain). What
+// such a scope finds in the slot where it enters is what the queue that runs its job has there between two jobs, or
+// what a job around it entered.
 //
 // With ENABLE(AOT) the VM has the scopes of the jobs that entered: VM::m_asyncContextScopeOfModuleLoaderJob is the
 // innermost, and each has the one around it (outerJob()). The AOT run time runs jobs of the queue inside a job of the
@@ -258,9 +260,15 @@ private:
 // So AOT::AsyncContextOutsideModuleLoaderJobsScope puts into the slot what the outermost job that they are no part of
 // found there, and what they leave in the slot is what that job puts back at its end, as if they had run in front of
 // it. Modules notes which jobs those are where the files of a load begin to run ahead
-// (AOT::Modules::noteJobAroundStepsInFront()): the job of a load that keeps a context runs the files, so the steps in
-// front of them are no part of it. Two such scopes of one job come one after the other, never one inside the other: the
-// second reads what the first left.
+// (AOT::Modules::noteJobsAround()): the job of a load that keeps a context runs the files, so the steps in front of
+// them are no part of it. Two such scopes of one job come one after the other, never one inside the other: the second
+// reads what the first left.
+//
+// A file that ran ahead can wait for the event loop, and a call of import() can be made again there. That call is a
+// job that began behind the file, so what it hands to the loader for the file is no part of it: how the load of the
+// file goes on, and the steps in front of the file, those of a synchronous load too
+// (AOT::Modules::transferSynchronousLoad()). All of this is said of one transfer: a transfer that begins inside
+// another one of the same load takes the jobs as it finds them.
 //
 // A ModuleLoaderAsyncContextScope is no job, and the VM never has it. It can enter the context of its load over another
 // value: where its job entered nothing, and inside the steps above. Those steps pass over it, because they take what a
@@ -276,7 +284,7 @@ public:
     {
 #if ENABLE(AOT)
         if (didEnter()) [[unlikely]]
-            m_outerJob = std::exchange(vm.m_asyncContextScopeOfModuleLoaderJob, this);
+            didEnterAsJob();
 #endif
     }
 
@@ -307,6 +315,13 @@ protected:
     }
 
 #if ENABLE(AOT)
+    // For a scope that enters by itself: ModuleEvaluationAsyncContextScope, CallMadeAgain.
+    ALWAYS_INLINE void didEnterAsJob()
+    {
+        ASSERT(didEnter());
+        m_outerJob = std::exchange(vm().m_asyncContextScopeOfModuleLoaderJob, this);
+    }
+
 private:
     ModuleLoaderJobAsyncContextScope* m_outerJob;
 #endif
@@ -327,12 +342,29 @@ private:
 // whichever job of the loader is on the stack. Such a scope enters nothing and puts nothing back: what the module
 // leaves in the slot is the caller's, as behind any call. Where nothing is current at the call, the job gets none, as
 // in a load with no store: it runs under whatever the slot holds then.
+//
+// CallMadeAgain is for a call of import() that the AOT run time makes again where the text of its module has come
+// (AOT::Modules::startImportWhoseTextHasCome(), AOT::Modules::makeCallAgain()). The AOT run time takes the context of
+// a load, and of what continues a call, from the slot. So such a scope always enters the context of its call, and the
+// slot is the call's own:
+// - For a call with no context it enters none, over what the slot holds. What is current where the text comes is not
+//   the call's: a store that the caller entered behind the call, or the store of a file that waits for the event loop.
+//   One such call is made again with no text to wait for, in a job of the loader in the turn of its caller (an import()
+//   of a module that has run, after a mock was laid anew). A job of the load would read there what a module of that
+//   turn left in the slot, and this scope hides it.
+// - In the drain of a synchronous load it enters too, where no other job of the loader does. This half is there for the
+//   slot alone. What the call runs at once there reads the context of the call (the factory of a mock), where a job of
+//   the load would run it in the context of the caller of require().
 class ModuleEvaluationAsyncContextScope final : public ModuleLoaderJobAsyncContextScope {
 public:
     enum CalledByScriptTag { CalledByScript };
 
     NEVER_INLINE ModuleEvaluationAsyncContextScope(VM&, JSGlobalObject*, JSValue asyncContext);
     JS_EXPORT_PRIVATE ModuleEvaluationAsyncContextScope(VM&, CalledByScriptTag);
+#if ENABLE(AOT)
+    enum CallMadeAgainTag { CallMadeAgain };
+    ModuleEvaluationAsyncContextScope(VM&, JSGlobalObject*, JSValue asyncContext, CallMadeAgainTag);
+#endif
     JS_EXPORT_PRIVATE NEVER_INLINE ~ModuleEvaluationAsyncContextScope();
 
     // Whether the slot is the evaluation's own, so that what is current in it goes to the modules that wait.

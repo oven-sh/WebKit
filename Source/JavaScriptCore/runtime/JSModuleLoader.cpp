@@ -792,6 +792,20 @@ ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, Cal
 {
 }
 
+#if ENABLE(AOT)
+ModuleEvaluationAsyncContextScope::ModuleEvaluationAsyncContextScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext, CallMadeAgainTag)
+    : ModuleLoaderJobAsyncContextScope(vm, DoNotEnter)
+    , m_vm(vm)
+    , m_asyncContextOfLoad(asyncContext)
+    , m_outer(std::exchange(vm.m_moduleEvaluationAsyncContextScope, this))
+{
+    if (!vm.isAsyncContextTrackingEnabled())
+        return;
+    enter(globalObject, asyncContext);
+    didEnterAsJob();
+}
+#endif
+
 ModuleEvaluationAsyncContextScope::~ModuleEvaluationAsyncContextScope()
 {
     m_vm.m_moduleEvaluationAsyncContextScope = m_outer;

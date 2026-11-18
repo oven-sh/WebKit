@@ -1879,7 +1879,7 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
     eagerLoad.runsBeforeLoaderSteps = jobs == EagerLoadJobPolicy::DeferLoaderSteps;
     eagerLoad.loadQueue = vm.synchronousModuleQueue();
     JSValue asyncContextOfLoad = load ? load->asyncContext() : JSValue();
-    noteJobAroundStepsInFront(eagerLoad, asyncContextOfLoad);
+    noteJobsAround(eagerLoad, asyncContextOfLoad);
     SetForScope innermostEagerLoad(m_innermostEagerLoad, &eagerLoad);
     SetForScope modulesWithEagerLoads(vm.aotState().modulesWithEagerLoads, eagerLoad.runsBeforeLoaderJobs ? this : vm.aotState().modulesWithEagerLoads);
     if (jobs == EagerLoadJobPolicy::DeferJobs && data(root).evaluatesItself() && data(root).isEntryPoint() && !doOtherJobsWait() && !m_rootWhoseFilesRun && !ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad)) {
@@ -2119,22 +2119,23 @@ size_t Modules::queuedJobCount(EagerLoadJobPolicy jobs) const
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void Modules::noteJobAroundStepsInFront(EagerLoad& files, JSValue asyncContextOfLoad) const
+void Modules::noteJobsAround(EagerLoad& files, JSValue asyncContextOfLoad) const
 {
     VM& vm = *m_instance.vm;
 #if ASSERT_ENABLED
-    files.didNoteJobAroundStepsInFront = true;
+    files.didNoteJobsAround = true;
 #endif
     for (const EagerLoad* outer = files.outer; files.load && outer; outer = outer->outer) {
         if (outer->load == files.load) {
             ASSERT(m_moduleBeingTransferred);
+            files.jobAroundFiles = outer->jobAroundFiles;
             files.jobAroundStepsInFront = outer->jobAroundStepsInFront;
             return;
         }
     }
-    ModuleLoaderJobAsyncContextScope* innermostJob = vm.m_asyncContextScopeOfModuleLoaderJob;
-    bool isJobOfLoad = innermostJob && ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad);
-    files.jobAroundStepsInFront = isJobOfLoad ? innermostJob->outerJob() : innermostJob;
+    files.jobAroundFiles = vm.m_asyncContextScopeOfModuleLoaderJob;
+    bool isJobOfLoad = files.jobAroundFiles && ModuleLoaderAsyncContextScope::wouldEnter(vm, asyncContextOfLoad);
+    files.jobAroundStepsInFront = isJobOfLoad ? files.jobAroundFiles->outerJob() : files.jobAroundFiles;
 }
 
 AsyncContextOutsideModuleLoaderJobsScope::AsyncContextOutsideModuleLoaderJobsScope(VM& vm, ModuleLoaderJobAsyncContextScope* around)
@@ -2195,10 +2196,12 @@ void Modules::transferGraphToLoader(EagerLoad& files, std::optional<ModuleID> fi
         ModuleRecord* record = recordIfExists(files.root);
         files.load->removeVisited(record);
         files.load->setDrainingInnerLoad(false);
+        ASSERT(files.didNoteJobsAround);
+        std::optional<AsyncContextOutsideModuleLoaderJobsScope> outsideOfLaterJobs(std::in_place, vm, files.jobAroundFiles);
         loader()->innerModuleLoading(m_instance.globalObject, files.load, record);
         record->didResumeLoadReentrantly(*files.load);
         scope.assertNoException();
-        ASSERT(files.didNoteJobAroundStepsInFront);
+        outsideOfLaterJobs.reset();
         AsyncContextOutsideModuleLoaderJobsScope outsideOfJobs(vm, files.jobAroundStepsInFront);
         runStepsOfLoaderInFrontOf(fileOf(*running), outsideOfJobs);
         scope.assertNoException();
@@ -2220,10 +2223,13 @@ void Modules::transferSynchronousLoad(EagerLoad& files)
     SetForScope moduleBeingTransferred(m_moduleBeingTransferred, fileOf(running));
     SetForScope isInHostRequest(m_currentHostRequest, true);
     takeUpWaysOfLoads();
+    ASSERT(files.didNoteJobsAround);
+    AsyncContextOutsideModuleLoaderJobsScope outsideOfJobs(vm, files.jobAroundStepsInFront);
+    SetForScope noEvaluationOfLaterJob(vm.m_moduleEvaluationAsyncContextScope, nullptr);
     JSPromise* promise = loader()->loadModule(m_instance.globalObject, moduleKey(files.root), nullptr, nullptr, { ModuleLoadFlag::Evaluate, ModuleLoadFlag::Synchronous });
     scope.assertNoException();
     m_transferredSynchronousLoads.append({ files.root, Strong<JSPromise>(vm, promise) });
-    runSynchronousStepsInFrontOf(fileOf(running));
+    runSynchronousStepsInFrontOf(fileOf(running), outsideOfJobs);
     scope.assertNoException();
     for (const EagerLoad::FileNotStored& made : files.filesNotStored) {
         ModuleRecord* record = recordIfExists(moduleWithExportsOf(made.file));
@@ -2238,7 +2244,7 @@ void Modules::transferSynchronousLoad(EagerLoad& files)
         queue->tasks.appendVector(std::exchange(innermost->tasks, { }));
 }
 
-void Modules::runSynchronousStepsInFrontOf(ModuleID file)
+void Modules::runSynchronousStepsInFrontOf(ModuleID file, const AsyncContextOutsideModuleLoaderJobsScope&)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);

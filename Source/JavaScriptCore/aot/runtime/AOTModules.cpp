@@ -5368,6 +5368,7 @@ void Modules::fulfillQueuedFetchAfterJobs(JSPromise* fetched)
         job = next;
     }
     JSFunction* fulfill = JSFunction::create(vm, realm, 2, String(), fulfillQueuedFetchInJob, ImplementationVisibility::Private);
+    AsyncContextSwapScope noAsyncContextOfCaller(vm, realm, jsUndefined());
     job->performPromiseThenWithContext(vm, realm, fulfill, jsUndefined(), jsUndefined(), fetched);
 }
 
@@ -5442,8 +5443,7 @@ void Modules::startImportWhoseTextHasCome(JSPromise* importPromise, ModuleID mod
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     m_modulesOfQueuedImports.clear(module.index());
-    AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, asyncContext);
-    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, asyncContext);
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, asyncContext, ModuleEvaluationAsyncContextScope::CallMadeAgain);
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(module);
     bool wasHandled = importPromise->isHandled();
     JSPromise* loaded = startImport(module, referrerAsyncOrder, ImportCaller::Host, ImportSourceState::Arrived, loaderPromise);

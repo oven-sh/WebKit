@@ -2570,12 +2570,13 @@ private:
             uint32_t storeStep;
         };
         Vector<FileNotStored> filesNotStored { };
+        ModuleLoaderJobAsyncContextScope* jobAroundFiles { nullptr };
         ModuleLoaderJobAsyncContextScope* jobAroundStepsInFront { nullptr };
 #if ASSERT_ENABLED
-        bool didNoteJobAroundStepsInFront { false };
+        bool didNoteJobsAround { false };
 #endif
     };
-    void noteJobAroundStepsInFront(EagerLoad&, JSValue asyncContextOfLoad) const;
+    void noteJobsAround(EagerLoad&, JSValue asyncContextOfLoad) const;
     std::optional<ModuleID> evaluatingModuleOrFacade(const EagerLoad&) const;
     bool isBegunForStatement(ModuleID moduleOrFacade) const;
     bool wasRequestedByLoad(EagerLoad&, ModuleID file);
@@ -2592,7 +2593,7 @@ private:
     bool reachesEagerLoadGraph(EagerLoad&, ModuleID required);
     void recaptureFilesNotStoredByLoads(ModuleID root);
     void rerunBodyOfFacade(ModuleID facade);
-    void runSynchronousStepsInFrontOf(ModuleID file);
+    void runSynchronousStepsInFrontOf(ModuleID file, const AsyncContextOutsideModuleLoaderJobsScope&);
     struct TransferredLoad {
         ModuleID root;
         Strong<JSPromise> promise;

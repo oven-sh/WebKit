@@ -399,8 +399,7 @@ void Modules::makeCallAgain(BatchedFetch& text)
     }
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
     didRefetchFile(text.file);
-    AsyncContextSwapScope asyncContextOfCall(vm, m_instance.globalObject, text.asyncContext.get());
-    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get());
+    ModuleEvaluationAsyncContextScope jobOfImport(vm, m_instance.globalObject, text.asyncContext.get(), ModuleEvaluationAsyncContextScope::CallMadeAgain);
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, ImportSourceState::Arrived, promise);
     bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
