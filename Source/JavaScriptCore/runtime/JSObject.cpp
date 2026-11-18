@@ -3259,8 +3259,13 @@ bool JSObject::makePropertiesImmutable(VM& vm)
                 }
             }
         }
-        if (changed)
+        if (changed) {
             global->varReadOnlyWatchpointSet().fireAll(vm, "The global object's properties were made immutable");
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::RuntimeHooks::didMakeGlobalVariableReadOnly(global);
+#endif
+        }
     }
     // The JIT and the quick C++ paths write Int32/Double/Contiguous/ArrayStorage elements in place, slow-put storage included
     // (it only diverts stores to holes). There are two kinds of storage they do not write in place, so that each indexed store,
@@ -3336,8 +3341,13 @@ bool JSObject::makePropertiesImmutable(VM& vm, ImmutablePropertyNames& requested
                 }
             }
         }
-        if (changed)
+        if (changed) {
             global->varReadOnlyWatchpointSet().fireAll(vm, "Some of the global object's properties were made immutable");
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::RuntimeHooks::didMakeGlobalVariableReadOnly(global);
+#endif
+        }
     }
 
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);

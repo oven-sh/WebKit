@@ -27,6 +27,7 @@
 
 #include "JSBoundFunction.h"
 #include "JSCellButterfly.h"
+#include "JSFunctionInlines.h"
 
 namespace JSC {
 
@@ -34,6 +35,16 @@ inline Structure* JSBoundFunction::createStructure(VM& vm, JSGlobalObject* globa
 {
     ASSERT(globalObject);
     return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
+}
+
+inline bool canBindWithoutReadingNameAndLength(VM& vm, JSFunction* target)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    // Whatever reads or changes the two makes them properties first. nameSlow() and lengthSlow() walk through bound functions.
+    if (target->inherits<JSBoundFunction>())
+        return !target->structure()->didTransition();
+#endif
+    return target->canAssumeNameAndLengthAreOriginal(vm);
 }
 
 inline void JSBoundFunction::forEachBoundArg(NOESCAPE const Invocable<IterationStatus(JSValue)> auto& func)

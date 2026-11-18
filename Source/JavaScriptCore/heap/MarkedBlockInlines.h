@@ -623,7 +623,13 @@ inline bool MarkedBlock::Handle::isEmpty()
 
 inline void MarkedBlock::Handle::noteNeedsDestruction()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_directory->assertMayAccessBitsUnlocked();
+    if (m_directory->isDestructible(index())) [[likely]]
+        return;
+#else
     Locker locker { m_directory->bitvectorLock().mutate() };
+#endif
     m_directory->assertMayNotifyNeedsDestruction();
     m_directory->setIsDestructible(index(), true);
 }

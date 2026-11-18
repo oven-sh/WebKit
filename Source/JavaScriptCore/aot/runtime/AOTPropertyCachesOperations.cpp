@@ -158,7 +158,11 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver, S
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     JSValue result = (lazy.firstObjectAbove ? JSValue(lazy.firstObjectAbove) : base).get(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(scope, { });
-    fileRead(access.instance, base, structureBefore, access.name(), slot);
+    if (base.isString() && slot.isUnset() && access.caches().tables().isSharedByInstances()) {
+        JSObject* prototype = globalObject->stringPrototype();
+        fileRead(access.instance, prototype, WTF::opaque(prototype->structure()), { uid, std::nullopt }, slot);
+    } else
+        fileRead(access.instance, base, structureBefore, access.name(), slot);
     return result;
 }
 

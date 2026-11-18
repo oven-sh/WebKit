@@ -358,6 +358,7 @@ public:
     bool hasChainDependentEntry(StructureID, UniquedStringImpl*) const;
     size_t removeChainDependentEntries(StructureID, UniquedStringImpl*);
     void clear();
+    void clearDuringCollection();
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
@@ -412,6 +413,7 @@ public:
 
     bool isSharedByInstances() const { return m_isSharedByInstances; }
     void didCreateInstance(Instance&);
+    void clearTablesDuringCollection();
     void publishWords(Instance&) const;
 
     void set(Structure*, const CachedName&, SlotAccess, const Slot&);

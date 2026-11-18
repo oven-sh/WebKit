@@ -122,7 +122,7 @@ public:
 
     void didChangeInstances();
     Instance* findInstanceThatLendsTables() const;
-    void lendTablesOfLivingInstances();
+    bool lendTablesOfLivingInstances();
 
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VMState, structureIDBase); }
     static constexpr ptrdiff_t offsetOfOnlyInstance() { return OBJECT_OFFSETOF(VMState, onlyInstance); }

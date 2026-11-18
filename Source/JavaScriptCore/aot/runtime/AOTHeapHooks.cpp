@@ -15,6 +15,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTPropertyCaches.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "AOTVMState.h"
@@ -121,11 +122,13 @@ void finalize(VM& vm, CollectionScope scope)
     state.realmsWithBorrowedTables.removeAllMatching([&](JSGlobalObject* realm) {
         return !vm.heap.isMarked(realm);
     });
-    state.lendTablesOfLivingInstances();
+    bool didLoseLender = state.lendTablesOfLivingInstances();
     if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
         state.realmWhoseDatesAreWrittenInPlace = nullptr;
 
     state.caches->finalize(vm, scope);
+    if (didLoseLender)
+        state.propertyCaches->clearTablesDuringCollection();
     for (Instance* instance : state.instances)
         instance->state->caches->finalize(vm, scope);
     if (!std::exchange(state.didFinishCollection, true))

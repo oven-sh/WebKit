@@ -640,9 +640,6 @@ macro getFromHashedSlot(entry, slow, callsCustomGetter, done)
 
     # AOT::callCustomGetterAndReturn(). The object may hold what its getter answered before.
 .customGetter:
-    loadp CodeBlock[cfr], t0
-    loadp CodeBlock::m_globalObject[t0], t0
-    bpneq JSGlobalObject::m_aotInstance[t0], t5, slow
     loadi SlotPayload[entry], t0
     lshiftp constexpr AOT::Interpreter::customAccessorRecordShift, t0
     addp InstanceCustomAccessors[t5], t0

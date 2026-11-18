@@ -645,6 +645,11 @@ static bool isCompleteClassObject(VM& vm, JSObject* object, Structure* structure
     return prototype && isValidOffset(*prototype) && !closure->hasStaticFieldsLeft();
 }
 
+static bool isArrayPrototypeOfAnyRealm(Structure* structure)
+{
+    return structure->classInfoForCells() == ArrayPrototype::info();
+}
+
 static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* object, Structure* structure, UniquedStringImpl* uid)
 {
     VM& vm = start.globalObject->vm();
@@ -660,7 +665,7 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
         return true;
 
     JSType type = typeInfo.type();
-    bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
+    bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || isArrayPrototypeOfAnyRealm(structure);
     if (uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto) {
         return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
     }
@@ -762,7 +767,7 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         return stopAt(object, walk);
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);
-    if (start.use == ChainWalkUse::KeptForStores && uid == vm.propertyNames->length && isArrayPrototypeWithWritableLength(start.globalObject, object)) {
+    if (start.use == ChainWalkUse::KeptForStores && uid == vm.propertyNames->length && isArrayPrototypeOfAnyRealm(structure) && isArrayPrototypeWithWritableLength(structure->realm(), object)) {
         walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, invalidOffset, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     }

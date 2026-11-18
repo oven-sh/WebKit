@@ -244,7 +244,7 @@ inline bool JSFunction::canAssumeNameAndLengthAreOriginal(VM&)
     // Plain host, builtin, and JS functions all reify length/name lazily; the original value is
     // recoverable via originalLength()/originalName() (from NativeExecutable for hosts, from
     // FunctionExecutable for JS), so the only thing we have to refuse is bound functions
-    // (which set their length/name at bind time, not via FunctionRareData tracking) and any
+    // (which have no FunctionRareData tracking, see canBindWithoutReadingNameAndLength()) and any
     // function whose length or name has since been user-mutated.
     //
     // This must be synced with JSBoundFunction::canSkipNameAndLengthMaterialization().

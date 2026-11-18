@@ -664,7 +664,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
 #if ENABLE(AOT)
-                if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+                if (vm.hasCompiledCode() && mayBePrototype() && type() != GlobalObjectType) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
                 else
 #endif
@@ -727,7 +727,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
 #if ENABLE(AOT)
-            if (vm.hasCompiledCode() && mayBePrototype()) [[unlikely]]
+            if (vm.hasCompiledCode() && mayBePrototype() && type() != GlobalObjectType) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change, this, propertyName.uid());
             else
 #endif

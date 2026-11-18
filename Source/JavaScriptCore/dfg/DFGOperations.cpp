@@ -64,7 +64,7 @@
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
 #include "JSBigIntInlines.h"
-#include "JSBoundFunction.h"
+#include "JSBoundFunctionInlines.h"
 #include "JSGenericTypedArrayViewConstructorInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "JSCellButterfly.h"
@@ -4779,9 +4779,9 @@ JSC_DEFINE_JIT_OPERATION(operationFunctionBind, JSBoundFunction*, (JSGlobalObjec
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
+    if (function && canBindWithoutReadingNameAndLength(vm, function)) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
-        // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
+        // And this is totally OK since we know that nothing has changed them in the wrapped functions
         // at the time of creation of JSBoundFunction.
         length = PNaN; // Defer computation.
     } else {

@@ -85,6 +85,16 @@ public:
     // the index of the first one added.
     JS_EXPORT_PRIVATE ScopeOffset addVariables(unsigned numberOfVariablesToAdd, JSValue);
 
+    // FIXME: We could avoid locking here if SegmentedVector was lock-free. It could be made lock-free
+    // relatively easily.
+    template<typename Visitor>
+    void visitVariables(Visitor& visitor)
+    {
+        Locker locker { cellLock() };
+        for (unsigned i = m_variables.size(); i--;)
+            visitor.appendHidden(m_variables[i]);
+    }
+
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
     JS_EXPORT_PRIVATE static void analyzeHeap(JSCell*, HeapAnalyzer&);
     

@@ -1,3 +1,5 @@
+//@ requireOptions("--useExecutableAllocationFuzz=false")
+
 function shouldBe(actual, expected) {
     if (actual !== expected)
         throw new Error(`expected ${String(expected)}, got ${String(actual)}`);

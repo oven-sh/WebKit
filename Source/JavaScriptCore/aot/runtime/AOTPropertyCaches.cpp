@@ -918,11 +918,20 @@ size_t HashedSlotTable::removeChainDependentEntries(StructureID structureID, Uni
 
 void HashedSlotTable::clear()
 {
+    clearDuringCollection();
     releaseNamesErasedDuringCollection();
+}
+
+void HashedSlotTable::clearDuringCollection()
+{
     m_writtenRegions.forEachRegionToClear([&](size_t beginOffset, size_t endOffset) {
         RememberedSlotSet::forEachEntryInRegion(allEntries(), beginOffset, endOffset, [&](Entry& entry) {
-            if (!entry.get().isEmpty())
-                erase(entry);
+            if (entry.get().isEmpty())
+                return;
+            forgetPlacesCopiedFrom(entry.get());
+            m_namesErasedDuringCollection.append(entry.get().uid());
+            entry.clear();
+            --m_numberOfFilledEntries;
         });
     });
     ASSERT(!m_numberOfFilledEntries);
@@ -1115,6 +1124,12 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
     }
     publishWords(instance);
+}
+
+void VMPropertyCaches::clearTablesDuringCollection()
+{
+    m_front.clear();
+    m_hashedTable.clearDuringCollection();
 }
 
 void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull)
@@ -1589,6 +1604,9 @@ bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, Uniq
 {
     ASSERT(uid);
     ASSERT(vm.heap.isDeferred());
+    // Only the entry keeps the name alive.
+    if (!hasChainDependent(vm, structureIDBits, uid))
+        return false;
     unsigned attributes = 0;
     PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
     if (!isValidOffset(offset))
@@ -1801,7 +1819,8 @@ bool PropertyCaches::canCache(Structure* structure, const PropertyAnswer& answer
     bool isVariable = answer.kind == PropertyAnswerKind::Variable;
     if (answer.dependsOnChain() || isVariable) {
         JSGlobalObject* realm = structure->realm();
-        if (realm && Instance::of(realm) != &m_state.instance)
+        // The tables are cleared when a realm outlives the instance that drops its answers.
+        if (realm && (isVariable ? Instance::of(realm) : realm->aotTableInstance()) != &m_state.instance)
             return false;
     }
     return !m_tables.isSharedByInstances() || (!isVariable && structure->typeInfo().isObject());

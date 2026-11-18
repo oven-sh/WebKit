@@ -2573,6 +2573,10 @@ bool JSGlobalObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalO
                 iter->value.setReadOnly();
             }
             thisObject->varReadOnlyWatchpointSet().fireAll(vm, "GlobalVar was redefined as ReadOnly");
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode())
+                AOT::RuntimeHooks::didMakeGlobalVariableReadOnly(thisObject);
+#endif
         }
         return true;
     }
@@ -3279,6 +3283,11 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #endif
 
     visitor.append(thisObject->m_globalLexicalEnvironment);
+#if ENABLE(AOT)
+    // Compiled code runs the barrier of the global object when it stores there.
+    if (auto* lexicalEnvironment = thisObject->m_aotInstance ? thisObject->m_globalLexicalEnvironment.get() : nullptr)
+        lexicalEnvironment->visitVariables(visitor);
+#endif
     visitor.append(thisObject->m_globalScopeExtension);
     visitor.append(thisObject->m_globalCallee);
     visitor.append(thisObject->m_evalCallee);

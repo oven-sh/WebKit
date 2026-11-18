@@ -435,7 +435,7 @@ size_t numberOfRunningInstances(const VMState& state)
 Instance* reserveInstance(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
-    RELEASE_ASSERT(vm.hasCompiledCode() && !realm->aotInstance());
+    RELEASE_ASSERT(vm.hasCompiledCode() && !realm->aotInstance() && !realm->aotTableInstance());
 #if ENABLE(WEBASSEMBLY)
     RELEASE_ASSERT(static_cast<ptrdiff_t>(AOT_INSTANCE_OFFSET(vm)) == JSWebAssemblyInstance::offsetOfVM());
 #endif
@@ -601,12 +601,16 @@ Instance* VMState::findInstanceThatLendsTables() const
     return nullptr;
 }
 
-void VMState::lendTablesOfLivingInstances()
+bool VMState::lendTablesOfLivingInstances()
 {
+    bool didLoseLender = false;
     for (JSGlobalObject* realm : realmsWithBorrowedTables) {
-        if (!realm->aotInstance() && !instances.contains(realm->aotTableInstance()))
-            realm->setAOTTableInstance(findInstanceThatLendsTables());
+        if (realm->aotInstance() || instances.contains(realm->aotTableInstance()))
+            continue;
+        didLoseLender |= !!realm->aotTableInstance();
+        realm->setAOTTableInstance(findInstanceThatLendsTables());
     }
+    return didLoseLender;
 }
 
 void Instance::destroy(Instance* instance)
@@ -1137,6 +1141,7 @@ void VMState::releaseImage(VM& vm)
     pages->willReleaseEverything();
     Instance::destroyAll(vm);
     RELEASE_ASSERT(instances.isEmpty() && instancesToDestroy.isEmpty());
+    realmsWithBorrowedTables.clear();
 
     regExpLiterals = nullptr;
     regExpMatchOutput = nullptr;

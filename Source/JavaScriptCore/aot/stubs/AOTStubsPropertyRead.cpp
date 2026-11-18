@@ -471,7 +471,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     isAbsentHere.link(&jit);
     Jump hasNoStaticTable = jit.branchTest8(CCallHelpers::Zero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(HasStaticPropertyTable));
     loadStructure(jit, r.object, r.structure);
-    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_staticPropertiesReifiedBits)));
+    Jump mayBeInStaticTable = jit.branchTest32(CCallHelpers::Zero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_staticPropertiesReifiedBits));
     hasNoStaticTable.link(&jit);
     Label askObjectAbove = jit.label();
     if (question == ObjectLookupQuestion::HasOwn)
@@ -521,8 +521,16 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.object);
         jit.loadPtr(Address(r.object, JSGlobalObject::offsetOfStringPrototype()), r.object);
         jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
-    } else
+
+        mayBeInStaticTable.link(&jit);
+        jit.load32(Address(r.object, JSCell::structureIDOffset()), r.structure);
+        findHashedSlot(jit, SlotAccess::Read, { r.structure, r.uid, r.vector, r.index, r.size, r.size }, isUnknown);
+        isUnknown.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, r.index }, Slot::Kind::Absent, r.size));
+        returnAnswerOfObjects(jit, question, false);
+    } else {
         isUnknown.append(isNoObject);
+        isUnknown.append(mayBeInStaticTable);
+    }
 
     isNotCompiledObject.link(&jit);
     if (jit.options().useWideReferences) {

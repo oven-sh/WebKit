@@ -37,6 +37,7 @@
 #include "JSCInlines.h"
 #include "JSGlobalProxy.h"
 #include "JSTypedArrayViewPrototypeInternal.h"
+#include "ObjectPrototype.h"
 #include "PropertySlot.h"
 #include "PutPropertySlot.h"
 #include "RegExpObject.h"
@@ -557,7 +558,7 @@ static bool readsPrivateMemberOfString(const ReadQuery& query)
 
 static bool readsPrototypeAccessor(const ReadQuery& query)
 {
-    return query.uid == query.globalObject->vm().propertyNames->underscoreProto.impl() && query.slot.isAccessor() && query.slot.slotBase() == query.globalObject->objectPrototype();
+    return query.uid == query.globalObject->vm().propertyNames->underscoreProto.impl() && query.slot.isAccessor() && query.slot.slotBase()->classInfo() == ObjectPrototype::info();
 }
 
 PropertyAnswer classifyRead(const ReadQuery& query)

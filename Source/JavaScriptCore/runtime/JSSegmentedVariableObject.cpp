@@ -69,12 +69,7 @@ void JSSegmentedVariableObject::visitChildrenImpl(JSCell* cell, Visitor& visitor
     JSSegmentedVariableObject* thisObject = uncheckedDowncast<JSSegmentedVariableObject>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    
-    // FIXME: We could avoid locking here if SegmentedVector was lock-free. It could be made lock-free
-    // relatively easily.
-    Locker locker { thisObject->cellLock() };
-    for (unsigned i = thisObject->m_variables.size(); i--;)
-        visitor.appendHidden(thisObject->m_variables[i]);
+    thisObject->visitVariables(visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, JSSegmentedVariableObject);
