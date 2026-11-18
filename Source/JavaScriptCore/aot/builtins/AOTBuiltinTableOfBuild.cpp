@@ -102,6 +102,44 @@ BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
 {
 }
 
+void BuiltinTableOfBuild::leaveOutOptionalEntries()
+{
+    RELEASE_ASSERT(m_builtins.isEmpty() && !m_data.leavesOutOptionalEntries);
+    if (m_table.marked(BuiltinMark::IsOptional).empty())
+        return;
+    auto isOptional = [&](BuiltinID builtin) {
+        return builtin && m_table.has(BuiltinMark::IsOptional, m_table.rootOf(builtin));
+    };
+    m_builtinsWithoutOptionalEntries = Vector<Builtin>(m_data.builtins);
+    for (uint32_t index = 0; index < m_data.builtins.size(); ++index) {
+        if (!isOptional(BuiltinID(index)))
+            continue;
+        m_builtinsWithoutOptionalEntries[index] = Builtin {
+            .origin = BuiltinOrigin::Host,
+            .prototypeLink = BuiltinPrototypeLink::Null,
+            .flags = { BuiltinFlag::ListsAllMembers },
+            .name = m_table.at(m_table.rootOf(BuiltinID(index))).name,
+        };
+    }
+    m_classesWithoutOptionalEntries = Vector<BuiltinClass>(m_data.classes);
+    for (BuiltinClass& builtinClass : m_classesWithoutOptionalEntries) {
+        if (!isOptional(builtinClass.prototype))
+            continue;
+        builtinClass.parent = { };
+        builtinClass.constructor = { };
+        builtinClass.prototype = { };
+    }
+    for (const BuiltinMarkedEntry& marked : m_data.runtime.marks) {
+        if (!isOptional(marked.builtin))
+            m_marksWithoutOptionalEntries.append(marked);
+    }
+    RELEASE_ASSERT(std::ranges::none_of(m_data.runtime.lockedObjects, isOptional) && std::ranges::none_of(m_data.runtime.lockedMembers, isOptional));
+    m_data.builtins = m_builtinsWithoutOptionalEntries.span();
+    m_data.classes = m_classesWithoutOptionalEntries.span();
+    m_data.runtime.marks = m_marksWithoutOptionalEntries.span();
+    m_data.leavesOutOptionalEntries = true;
+}
+
 void BuiltinTableOfBuild::answerQuestionsAboutClasses()
 {
     RELEASE_ASSERT(m_data.answersAboutClasses.empty() && m_answersAboutClasses.isEmpty());

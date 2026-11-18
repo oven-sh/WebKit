@@ -6128,7 +6128,7 @@ void BuilderOfProgramFacts::listBuiltinUses()
         OptionSet<BuiltinUse> uses = m_uses[index];
         if (someAreNamedAtRunTime && !usedByCodeInSight.quickGet(index) && !usedByCodeInSight.quickGet(m_builtins.canonicalID(BuiltinID(index)).index()))
             uses.add(BuiltinUse::NamedAtRunTime);
-        if (!m_uses[index].isEmpty())
+        if (!m_uses[index].isEmpty() && !m_builtins.isLeftOut(BuiltinID(index)))
             m_tables.builtinUses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(uses.toRaw()), m_witnesses[index] });
     }
 }

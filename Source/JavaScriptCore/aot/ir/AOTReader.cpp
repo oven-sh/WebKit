@@ -35,6 +35,8 @@ Reader::Reader(Program& program, BuildContext& build)
 
 bool Reader::run()
 {
+    if (!m_build.options().admitsOptionalBuiltins() && !m_build.options().admitsUnseenCode())
+        m_program.leaveOutOptionalBuiltins();
     m_program.admitsReplacedBuiltins = m_build.options().admitsReplacedBuiltins();
     m_program.shouldAssumeNullishHostResults = AOT::hasFlag(m_build.options().testing, Wire::TestingSwitch::AssumeNullishHostResults);
     UnderstatedEffects understatedEffects = UnderstatedEffects::decode(m_build.options().understatedEffects);

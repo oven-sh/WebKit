@@ -766,8 +766,9 @@ enum class BuiltinMark : uint8_t {
     MayLayListenerForUncaughtExceptions,
     IsReportedAsReadOnly,
     AppliesMethodDecorators,
+    IsOptional,
 };
-static_assert(static_cast<unsigned>(BuiltinMark::AppliesMethodDecorators) < 64);
+static_assert(static_cast<unsigned>(BuiltinMark::IsOptional) < 64);
 constexpr uint64_t bitOfMark(BuiltinMark mark) { return 1ull << static_cast<unsigned>(mark); }
 
 struct BuiltinMarkedEntry {
@@ -850,6 +851,7 @@ struct BuiltinTableNames {
     std::span<const BuiltinSymbolConstant> symbolConstants { };
     std::span<const BuiltinNameClasses> classesByMemberName { };
     std::span<const BuiltinProtocolKeys> protocolKeys { };
+    std::span<const BuiltinName> namesOfOptionalEntries { };
     std::span<const uint32_t> textNameSlots { };
 };
 
@@ -905,6 +907,7 @@ struct BuiltinTableData {
     BuiltinTableAttachments attachments { };
     BuiltinTableRuntime runtime { };
     std::span<const OptionSet<AnswerAboutBuiltinClass>> answersAboutClasses { };
+    bool leavesOutOptionalEntries { false };
 };
 
 extern const BuiltinTableData builtinTableData;
@@ -1022,6 +1025,8 @@ public:
     BuiltinID canonicalID(BuiltinID id) const { return at(id).sameObjectAs ? at(id).sameObjectAs : id; }
     BuiltinID namespaceOf(RuntimeModuleID id) const { return at(id).namespaceObject; }
     bool existsOn(BuiltinID id, BuiltinPlatform platform) const { return at(id).platforms.contains(platform); }
+    bool isLeftOut(BuiltinID id) const { return m_data.leavesOutOptionalEntries && contains(id) && at(id).platforms.isEmpty(); }
+    std::span<const BuiltinName> namesLeftOut() const { return m_data.leavesOutOptionalEntries ? m_data.names.namesOfOptionalEntries : std::span<const BuiltinName>(); }
     bool isLocationOfLockedObject(BuiltinID) const;
     JS_EXPORT_PRIVATE bool canBeReplacedInTestRuns(BuiltinID) const;
     JS_EXPORT_PRIVATE bool canTakeNameInTestRuns(BuiltinID holder, BuiltinName) const;
@@ -1128,6 +1133,8 @@ public:
     explicit BuiltinTableOfBuild(const BuiltinTable&);
 
     const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
+    // The host answers for it that a program which is built so never comes by one of them.
+    void leaveOutOptionalEntries();
     void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
     bool isUnlocked(BuiltinID member) const { return m_isUnlocked.get(member.index()); }
@@ -1141,6 +1148,9 @@ private:
     void answerQuestionsAboutClasses();
 
     BuiltinTableData m_data;
+    Vector<Builtin> m_builtinsWithoutOptionalEntries;
+    Vector<BuiltinClass> m_classesWithoutOptionalEntries;
+    Vector<BuiltinMarkedEntry> m_marksWithoutOptionalEntries;
     Vector<Builtin> m_builtins;
     Vector<BuiltinID> m_lockedMembers;
     Vector<BuiltinID> m_lockedObjects;
