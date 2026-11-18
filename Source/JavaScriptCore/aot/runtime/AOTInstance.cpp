@@ -205,7 +205,7 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
         instance.typeStrings[type] = vm.smallStrings.typeString(static_cast<TypeofType>(type));
     static constexpr uint8_t unknownLevel1Weights[256] { };
     instance.collation.ducetLevel1Weights = ducetLevel1Weights;
-    instance.defaultCollation.knownLevel1Weights = unknownLevel1Weights;
+    instance.defaultCollator.knownLevel1Weights = unknownLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
     prefix.structureIDBase = JSC::structureIDBase();

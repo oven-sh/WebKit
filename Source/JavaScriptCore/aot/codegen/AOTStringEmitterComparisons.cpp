@@ -213,7 +213,7 @@ void StringEmitter::generateLocaleCompareToWord(const ValueContext& value)
         auto byteOf = [&](LValue bytes) { return m_out.bitAnd(m_out.castToInt32(m_out.lShr(bytes, firstBit)), m_out.constInt32(0xff)); };
         LValue byte = byteOf(word);
         LValue otherByte = byteOf(text.word.value());
-        LValue weights = m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(defaultCollation.knownLevel1Weights)));
+        LValue weights = m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(defaultCollator.knownLevel1Weights)));
         auto weightOf = [&](LValue byte) { return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.AOTInstance_fixedFields, weights, m_out.zeroExtPtr(byte), ScaleOne))); };
         return FirstDifference { firstBit, Word32(byte), Word32(otherByte), weightOf(byte), weightOf(otherByte) };
     };
@@ -594,7 +594,7 @@ void StringEmitter::addOrderByFirstDifference(ValueID left, ValueID right, LBasi
     Pointer xAddress(m_out.phi(machineTypeOf(Pointer::representation), xAddresses));
     Pointer yAddress(m_out.phi(machineTypeOf(Pointer::representation), yAddresses));
     LValue firstByte = m_out.lShr(countTrailingZerosOfNonZero(zeroExtended(difference).value()), 3);
-    Pointer weights(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(defaultCollation.knownLevel1Weights))));
+    Pointer weights(m_out.loadPtr(mutableInstanceField(AOT_INSTANCE_OFFSET(defaultCollator.knownLevel1Weights))));
     auto byteAt = [&](Pointer bytes, LValue index) { return Word32(m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, bytes.value(), index))); };
     Word32 xByte = byteAt(xAddress, firstByte);
     Word32 yByte = byteAt(yAddress, firstByte);

@@ -1698,7 +1698,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTStringLocaleCompare, size_t, (Instance* ins
     auto otherCharacters = otherString->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     if (globalObject->canDoASCIIUCADUCETLocaleCompare()) {
-        instance->defaultCollation.knownLevel1Weights = ducetLevel1Weights;
+        instance->defaultCollator.knownLevel1Weights = ducetLevel1Weights;
         if (wasRope)
             keepTextInCellOfResolvedRope(vm, string);
         if (otherWasRope)

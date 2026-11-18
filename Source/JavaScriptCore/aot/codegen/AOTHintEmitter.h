@@ -11,6 +11,9 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+enum class StopRequest : bool { IsAbsent, IsPending };
+CCallHelpers::Jump branchIfStopRequest(CCallHelpers&, StopRequest);
+
 class HintEmitter final : public OperationEmitter {
 public:
     explicit HintEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }

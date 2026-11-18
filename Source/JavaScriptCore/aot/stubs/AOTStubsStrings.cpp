@@ -813,7 +813,7 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
 void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& registers, CollatorCheck check, const ScopedLambda<void(int32_t)>& returnOrder, JumpList& callsOperation)
 {
     constexpr int32_t wordSize = sizeof(uint64_t);
-    const ptrdiff_t weightsOffset = check == CollatorCheck::ByWeights ? AOT_INSTANCE_OFFSET(defaultCollation.knownLevel1Weights) : AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights);
+    const ptrdiff_t weightsOffset = check == CollatorCheck::ByWeights ? AOT_INSTANCE_OFFSET(defaultCollator.knownLevel1Weights) : AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights);
     auto [left, right, leftCharacters, rightCharacters, remaining, leftUnit, rightUnit, weights] = registers;
     const GPRReg nonASCIIBits = weights;
 

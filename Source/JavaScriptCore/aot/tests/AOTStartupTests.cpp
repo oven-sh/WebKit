@@ -107,7 +107,7 @@ static void testWordsWrittenOnceCannotBeWritten(LoadedProgram& program)
 #undef AOT_CHECK_WRITE_CRASHES
 #undef AOT_CHECK_WRITE_FINISHES
     AOT_TEST_CHECK(write(instance.collation.ducetLevel1Weights) == ChildOutcome::Crashed);
-    AOT_TEST_CHECK(write(instance.defaultCollation.knownLevel1Weights) == ChildOutcome::Finished);
+    AOT_TEST_CHECK(write(instance.defaultCollator.knownLevel1Weights) == ChildOutcome::Finished);
     AOT_TEST_CHECK(write(instance.runtimeTable) == ChildOutcome::Crashed);
     AOT_TEST_CHECK(write(instance.slotHandlers()) == ChildOutcome::Crashed);
     AOT_TEST_CHECK(write(instance.builtinBindings.directFunctions) == ChildOutcome::Crashed);
