@@ -392,7 +392,7 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
     return held;
 }
 
-static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, std::span<const LinkedParameter> parameters, const Operation& operation)
+static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, const Function& function, std::span<const LinkedParameter> parameters, const Operation& operation)
 {
     return std::ranges::any_of(operation.operands(), [&](ValueID operand) {
         if (!operand)
@@ -405,6 +405,8 @@ static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, std
         if (place >= parameters.size())
             return false;
         TypeID arrives = parameters[place].seenToArrive;
+        if (operation.opcode == Opcode::RequireObjectCoercible && arrives && function.entryParameterKind(place) == EntryParameter::Parameter && !types.at(arrives).hasOnlyClosures() && !(types.at(arrives).primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
+            return true;
         return parameters[place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
     });
 }
@@ -443,7 +445,7 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
             part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
             summary = "Link's effects of the function given its arguments"_s;
         }
-        if (part.isNull() || (unit.role == CodeRole::Body && isBehindTypeThatNeverArrives(types, code, tables.parametersOf(unit.function), operation)))
+        if (part.isNull() || (unit.role == CodeRole::Body && isBehindTypeThatNeverArrives(types, code, inputs.program.at(unit.function), tables.parametersOf(unit.function), operation)))
             continue;
         return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") "_s, part, ", and "_s, summary, " say that it does not"_s);
     }
