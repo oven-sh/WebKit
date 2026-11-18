@@ -852,10 +852,11 @@ static Vector<BytesOfForm> describeBytesByForm(const Program& program, const Cod
         const SiteOfForm& site = sites[index];
         std::optional<Form> named = namedFormOf(site.opcode, site.state, site.place);
         Form form = site.hasSaid ? site.form : named.value_or(formOf(site.opcode));
-        bool isNamed = named == form && !site.hasContradictedItself && describedSiteStandsWhereItSays(code, said, site);
+        bool isNamed = !site.hasSaid || named == form || (hasOneForm(site.opcode) && site.state != StateOfKnowledge::Always);
+        bool showsItsRow = named == form && !site.hasContradictedItself && describedSiteStandsWhereItSays(code, said, site);
         bool looksOtherwise = operation.hasCodeOutsideRareCode && operation.form != form;
         bool isLongerThanCall = form != Form::Open && operation.bytesOutsideRareCode > describedBytesOfCallFor(code.at(site.value));
-        bool differsFromSchema = !isNamed || looksOtherwise || isLongerThanCall;
+        bool differsFromSchema = !showsItsRow || looksOtherwise || isLongerThanCall;
         bytesOfSites.append({ site.opcode, reportedFormOf(form), 1, operation.bytes, site.state, site.place, isNamed, looksOtherwise, isLongerThanCall, differsFromSchema });
         if (operation.hasCodeOutsideRareCode) {
             bytesOfSites.last().countFoundOpen = operation.form == Form::Open;
