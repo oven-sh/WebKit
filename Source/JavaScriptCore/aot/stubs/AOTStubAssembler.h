@@ -72,6 +72,7 @@ constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument first
     case Entry::operationAOTCatch:
     case Entry::operationAOTCatchException:
     case Entry::operationAOTCatchValueAndException:
+    case Entry::operationAOTPollSlow:
         return false;
     default:
         return firstArgument == OperationCall::FirstArgument::Instance && effects.mayCollect;

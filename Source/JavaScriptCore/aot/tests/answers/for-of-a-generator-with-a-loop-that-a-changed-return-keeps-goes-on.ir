@@ -1,0 +1,101 @@
+# A generator that is walked in its consumer's loop and outlives it goes on in a body of its own, which is written straight. That holds for a generator with a loop, however a loop polls.
+# The loop walks the body only where the function has made a generator before.
+# -- source: main.js
+# function* count(limit) { for (let i = 0; i < limit; i++) yield i; }
+# function first(hidden) { for (const value of count(4)) if (hidden.leaves) return value; }
+# globalThis.made = count(0);
+# print(first(globalThis.hidden));
+# globalThis.goOn();
+# -- end of source
+# The program or the shell runs built-ins that are written in JavaScript. They are the engine's own here, and no stand-in answers for them.
+# LIBRARY: own
+# RUN(COUNT): compile GeneratorFramesBuilt GeneratorFramesNotBuilt mechanisms=all
+# COUNT-NOT: statistic GeneratorFramesBuilt 0
+# COUNT: statistic GeneratorFramesNotBuilt 0
+# RUN(KEPT): run-in-shell let kept; globalThis.hidden = { get leaves() { Object.getPrototypeOf(made).return = function () { kept = this; return { }; }; return true; } }; globalThis.goOn = () => print(kept.next().value, kept.next().value, kept.next().value, kept.next().done);
+# KEPT: 0
+# KEPT-NEXT: 1 2 3 true
+# KEPT-NEXT: exited with 0
+# KEPT-NEXT: the source prints the same
+# With the engine's `return` the loop ends it, and there is nothing to go on with.
+# RUN(CLOSED): run-in-shell globalThis.hidden = { leaves: true }; globalThis.goOn = () => print("closed");
+# CLOSED: 0
+# CLOSED-NEXT: closed
+# CLOSED-NEXT: exited with 0
+# CLOSED-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+variable g0 name="count" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable]
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer
+    v3 = Call v1, -, v2 calleeName="count"
+    PropSet v0, v3 key="made"
+    v5 = PropGet v0 key="print" [isFreeName]
+    v6 = NewClosure function=f2
+    v7 = PropGet v0 key="hidden"
+    v8 = Call v6, -, v7 calleeName="first" [isNeverInlined]
+    v9 = Call v5, -, v8 calleeName="print"
+    v10 = PropGet v0 key="goOn"
+    v11 = Call v10, v0 calleeKey="goOn" calleeName="globalThis.goOn"
+    v12 = Undefined
+    Return v12
+}
+function f1 name="count" module=m0 flags=[IsGenerator, HasThis, TakesCallee, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: function, v2: anything):
+    InitialYield v2, v0
+    v4 = Integer
+    Jump -> next b1(v4)
+  b1(v5):
+    LoopHint
+    v7 = Less v5, v2
+    Branch v7 -> taken b2(), notTaken b6()
+  b2():
+    v8 = Yield v5, v2, v0
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Switch v10 cases=[1, 2] -> case b3(), case b4(), otherwise b5()
+  b3():
+    Throw v9
+  b4():
+    Return v9
+  b5():
+    v11 = Increment v5
+    Jump -> next b1(v11)
+  b6():
+    v12 = Undefined
+    Return v12
+}
+function f2 name="first" module=m0 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=4
+    v3 = Call v1, -, v2 calleeName="count"
+    v4 = IteratorOpen v3
+    Jump -> next b1()
+  b1():
+    LoopHint
+    v6 = IteratorResume v4
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v9 = Undefined
+    Return v9
+  b3():
+    Jump -> next b4()
+  b4() handler=b6():
+    v10 = PropGet v0 key="leaves"
+    v11 = ToBoolean v10
+    Branch v11 -> taken b5(), notTaken b1()
+  b5():
+    IteratorClose v4
+    Return v8
+  b6() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}
