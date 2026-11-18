@@ -1,0 +1,110 @@
+# The first localeCompare makes the default collator. The next one that the run time answers tells compiled code the weights of ASCII characters, in a word of the instance that a hardened engine must not have made read-only.
+# The stub in front of the operation reads the word, and so do the two forms that a loop has in line.
+# -- source: main.js
+# function order(a, b) { return a.localeCompare(b); }
+# function sum(left, right) { let total = 0; for (let i = 0; i < left.length; i++) total += left[i].localeCompare(right[i]) * (i + 1); return total; }
+# function countBefore(name, list) { let count = 0; for (let i = 0; i < list.length; i++) if (name.localeCompare(list[i]) > 0) count++; return count; }
+# print(order("a", "B"), order("b", "A"), order("y", "j"), order("a", "A"), order("\xe9", "f"));
+# print(sum(["apple", "Pears", "yards"], ["Berry", "lemon", "jokes"]), countBefore("yam", ["Date", "Zest", "jam", "yam"]));
+# -- end of source
+# RUN(COUNT): compile LocaleComparesToWords mechanisms=all
+# COUNT-NOT: statistic LocaleComparesToWords 0
+# RUN(KNOWN): run-in-shell --useDollarVM=1 $vm.setUserPreferredLanguages(["en"]);
+# KNOWN: -1 1 1 -1 -1
+# KNOWN-NEXT: 4 2
+# KNOWN-NEXT: exited with 0
+# KNOWN-NEXT: the source prints the same
+# In Lithuanian y comes before j: the weights stay unknown, and the collator answers.
+# RUN(UNKNOWN): run-in-shell --useDollarVM=1 $vm.setUserPreferredLanguages(["lt"]);
+# UNKNOWN: -1 1 -1 -1 -1
+# UNKNOWN-NEXT: -2 1
+# UNKNOWN-NEXT: exited with 0
+# UNKNOWN-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="apple"}, String{value="Pears"}, String{value="yards"}]} module=m0
+data d1 root=Array{contents=anything elements=[String{value="Berry"}, String{value="lemon"}, String{value="jokes"}]} module=m0
+data d2 root=Array{contents=anything elements=[String{value="Date"}, String{value="Zest"}, String{value="jam"}, String{value="yam"}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = String string="a"
+    v4 = String string="B"
+    v5 = String string="b"
+    v6 = String string="A"
+    v7 = String string="y"
+    v8 = String string="j"
+    v9 = String string="\u{e9}"
+    v10 = String string="f"
+    v11 = Call v2, -, v3, v4 calleeName="order" [isNeverInlined]
+    v12 = Call v2, -, v5, v6 calleeName="order" [isNeverInlined]
+    v13 = Call v2, -, v7, v8 calleeName="order" [isNeverInlined]
+    v14 = Call v2, -, v3, v6 calleeName="order" [isNeverInlined]
+    v15 = Call v2, -, v9, v10 calleeName="order" [isNeverInlined]
+    v16 = Call v1, -, v11, v12, v13, v14, v15 calleeName="print"
+    v17 = NewClosure function=f2
+    v18 = Data data=d0
+    v19 = Data data=d1
+    v20 = Call v17, -, v18, v19 calleeName="sum" [isNeverInlined]
+    v21 = NewClosure function=f3
+    v22 = String string="yam"
+    v23 = Data data=d2
+    v24 = Call v21, -, v22, v23 calleeName="countBefore" [isNeverInlined]
+    v25 = Call v1, -, v20, v24 calleeName="print"
+    v26 = Undefined
+    Return v26
+}
+function f1 name="order" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="localeCompare"
+    v3 = Call v2, v0, v1 calleeKey="localeCompare" calleeName="a.localeCompare"
+    Return v3
+}
+function f2 name="sum" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v0 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    v8 = ElemGet v0, v4
+    v9 = PropGet v8 key="localeCompare"
+    v10 = ElemGet v1, v4
+    v11 = Call v9, v8, v10 calleeKey="localeCompare" calleeName="left[i].localeCompare"
+    v12 = Increment v4
+    v13 = Mul v11, v12
+    v14 = Add v3, v13
+    Jump -> next b1(v14, v12)
+  b3():
+    Return v3
+}
+function f3 name="countBefore" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = PropGet v1 key="length"
+    v7 = Less v4, v6
+    Branch v7 -> taken b2(), notTaken b5()
+  b2():
+    v8 = PropGet v0 key="localeCompare"
+    v9 = ElemGet v1, v4
+    v10 = Call v8, v0, v9 calleeKey="localeCompare" calleeName="name.localeCompare"
+    v11 = Greater v10, v2
+    Branch v11 -> taken b3(), notTaken b4(v3)
+  b3():
+    v12 = Increment v3
+    Jump -> next b4(v12)
+  b4(v13):
+    v14 = Increment v4
+    Jump -> next b1(v13, v14)
+  b5():
+    Return v3
+}
