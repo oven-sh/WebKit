@@ -286,6 +286,9 @@ struct IterationWords {
 
 struct CollationWords {
     const uint8_t* ducetLevel1Weights;
+};
+
+struct DefaultCollatorWords {
     const uint8_t* knownLevel1Weights;
 };
 
@@ -323,6 +326,7 @@ struct NumberWords {
     v(shortArrays, ShortArrayWords) \
     writtenOnce(emptyTable, EmptyTableWords) \
     writtenOnce(collation, CollationWords) \
+    v(defaultCollator, DefaultCollatorWords) \
     v(effectsNet, EffectsNetWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 
