@@ -196,6 +196,45 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetFreeNameSloppy, void, (Instance* instanc
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckEvaluation, void, (Instance* instance))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTCheckEvaluation);
+    if (instance->state->disallowsEvaluation) [[unlikely]]
+        throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDeclareGlobal, void, (Instance* instance, uint32_t key, uint32_t step, uint32_t isFunction))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeclareGlobal);
+    const Identifier& name = identifierAt(instance, key);
+    switch (static_cast<Typed::GlobalDeclarationStep>(step)) {
+    case Typed::GlobalDeclarationStep::FindDuplicate: {
+        JSValue holder = JSScope::resolveScopeForHoistingFuncDeclInEval(globalObject, globalObject->globalScope(), name);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (holder.isUndefined())
+            throwSyntaxError(globalObject, scope, makeString("Can't create duplicate variable in eval: '"_s, StringView(name.impl()), '\''));
+        break;
+    }
+    case Typed::GlobalDeclarationStep::CheckProperty: {
+        if (!isFunction && globalObject->isStructureExtensible())
+            break;
+        bool canDeclare = isFunction ? globalObject->canDeclareGlobalFunction(name) : globalObject->canDeclareGlobalVar(name);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (!canDeclare)
+            throwException(globalObject, scope, isFunction ? createErrorForInvalidGlobalFunctionDeclaration(globalObject, name) : createErrorForInvalidGlobalVarDeclaration(globalObject, name));
+        break;
+    }
+    case Typed::GlobalDeclarationStep::Create:
+        if (isFunction)
+            globalObject->createGlobalFunctionBinding<BindingCreationContext::Eval>(name);
+        else
+            globalObject->createGlobalVarBinding<BindingCreationContext::Eval>(name);
+        break;
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTDeleteFreeName, size_t, (Instance* instance, uint32_t key))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTDeleteFreeName);

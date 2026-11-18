@@ -99,6 +99,7 @@ void ObjectBuilderPlan::createFastPath()
         m_acceptedByConsecutiveWords &= field.acceptedValues;
     }
     m_acceptedStructureIDs.fill(0, m_fastFields.size());
+    m_numberOfBodyWords = numberOfWords;
     m_namesEveryFieldOfBirth = true;
     for (const FieldData& field : m_layout.fields()) {
         if ((field.isFilledAtBirth || field.holdsRawValueFromBirth) && !namedFields.get(m_layout.indexOf(field)))
@@ -188,6 +189,7 @@ std::unique_ptr<ObjectBuilderPlan> ObjectBuilder::tryCreatePlan(State& state, co
         bool acceptsBooleans = primitives.containsAll({ PrimitiveSet::True, PrimitiveSet::False });
         plan->m_fields.append({ .field = field, .acceptsEveryInt32 = acceptsEveryInt32, .acceptsEveryNumber = acceptsEveryNumber, .acceptsBooleans = acceptsBooleans });
     }
+    plan->m_orderAndCount = *orderAndCount;
     plan->createInitialBody(*orderAndCount);
     plan->createFastPath();
     return plan;

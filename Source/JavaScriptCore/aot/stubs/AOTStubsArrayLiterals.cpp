@@ -64,7 +64,7 @@ static Jump branchIfEitherIsNaN(CCallHelpers& jit, FPRReg first, FPRReg second)
 
 struct ArrayLiteralShape {
     unsigned count { 0 };
-    std::optional<unsigned> emptyCapacity { };
+    std::optional<unsigned> capacity { };
     bool areDoubles { false };
     bool areInt32 { false };
     bool hasPropertyRoom { false };
@@ -88,13 +88,13 @@ static void emitStoreBoxedInt32(StubAssembler& jit, unsigned count, GPRReg base,
 
 static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
 {
-    const auto [count, emptyCapacity, areDoubles, areInt32, hasPropertyRoom, choosesStorage] = shape;
+    const auto [count, capacity, areDoubles, areInt32, hasPropertyRoom, choosesStorage] = shape;
     auto number = [&](unsigned i) { return jit.operandFPR(1 + i); };
     static_assert(maxArrayElementsInRegisters == 4);
     RELEASE_ASSERT(count <= maxArrayElementsInRegisters);
-    RELEASE_ASSERT(!emptyCapacity || (!count && *emptyCapacity & 1));
-    const unsigned vectorLength = emptyCapacity.value_or(arrayLiteralVectorLength(count));
-    const unsigned countAndCapacity = count | emptyCapacity.value_or(0) << capacityShiftInArrayLiteralCount;
+    RELEASE_ASSERT(!capacity || (count <= *capacity && *capacity & 1));
+    const unsigned vectorLength = capacity.value_or(arrayLiteralVectorLength(count));
+    const unsigned countAndCapacity = count | capacity.value_or(0) << capacityShiftInArrayLiteralCount;
     const GPRReg array = jit.result();
     const GPRReg storage = jit.allocateScratch(arrayStorageRegister);
     const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
@@ -131,7 +131,7 @@ static void emitArrayLiteral(StubAssembler& jit, ArrayLiteralShape shape)
         emitStoreValuesAndClear(jit, 1, count, vectorLength, storage, sizeof(IndexingHeader));
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
     jit.load64(Address(instanceGPR, Instance::offsetOfNewArrayHeader(areDoubles ? ArrayWithDouble : areInt32 || choosesStorage ? ArrayWithInt32 : ArrayWithContiguous)), scratch);
-    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -161,6 +161,9 @@ StubSignature signatureOfArrayLiteralWithInt32(StubKey key) { return signatureOf
 void generateArrayLiteralWithInt32(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .areInt32 = true }); }
 StubSignature signatureOfArrayLiteralOfNumbers(StubKey key) { return signatureOfArrayLiteral(arrayLiteral(key.count())); }
 void generateArrayLiteralOfNumbers(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .choosesStorage = true }); }
+StubSignature signatureOfArrayLiteralToGrow(StubKey) { return signatureOfArrayLiteral(arrayLiteral(1)); }
+void generateArrayLiteralToGrow(StubAssembler& jit) { emitArrayLiteral(jit, { .count = 1, .capacity = capacityOfEmptyArrayLiteral }); }
+
 StubSignature signatureOfArrayLiteralWithRoom(StubKey key) { return signatureOfArrayLiteral(arrayLiteral(key.count())); }
 void generateArrayLiteralWithRoom(StubAssembler& jit) { emitArrayLiteral(jit, { .count = jit.key().count(), .areInt32 = !!jit.key().form(), .hasPropertyRoom = true }); }
 
@@ -217,7 +220,7 @@ void generateNewCopyOnWriteArray(StubAssembler& jit)
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(arrayAllocator)), allocator);
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, allocator, scratch, slowPath, sizeof(JSArray));
     jit.load64(header, scratch);
-    jit.storePair64(scratch, firstElement, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, firstElement, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -255,14 +258,16 @@ void generateListOwnKeys(StubAssembler& jit)
     AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, array, entry, order, slowPath, sizeof(JSArray));
     jit.load64(header, order);
     jit.addPtr(TrustedImm32(JSCellButterfly::offsetOfData()), list);
-    jit.storePair64(order, list, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, order, list, array);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
     isCompiledObject.link(&jit);
     auto findList = [&](JumpList& isNotListed) {
         static_assert(sizeof(KeyListCacheEntry) == 16 && hasOneBitSet(numberOfKeyLists));
-        jit.add32(word, order, entry);
+        jit.urshift32(order, TrustedImm32(shiftOfCountInKeyListIndex), entry);
+        jit.add32(order, entry);
+        jit.add32(word, entry);
         jit.and32(TrustedImm32(numberOfKeyLists - 1), entry);
         jit.lshift32(TrustedImm32(getLSBSet(sizeof(KeyListCacheEntry))), entry);
         jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(objects.keyLists)), entry);
@@ -299,19 +304,19 @@ void generateNewEmptyArray(StubAssembler& jit)
     const EmptyArray form = static_cast<EmptyArray>(jit.key().form());
     switch (form) {
     case EmptyArray::ContiguousCapacity1:
-        return emitArrayLiteral(jit, { .emptyCapacity = 1 });
+        return emitArrayLiteral(jit, { .capacity = 1 });
     case EmptyArray::ContiguousCapacity3:
-        return emitArrayLiteral(jit, { .emptyCapacity = 3 });
+        return emitArrayLiteral(jit, { .capacity = 3 });
     case EmptyArray::ContiguousCapacity5:
-        return emitArrayLiteral(jit, { .emptyCapacity = 5 });
+        return emitArrayLiteral(jit, { .capacity = 5 });
     case EmptyArray::ContiguousCapacity7:
-        return emitArrayLiteral(jit, { .emptyCapacity = 7 });
+        return emitArrayLiteral(jit, { .capacity = 7 });
     case EmptyArray::ContiguousCapacity9:
-        return emitArrayLiteral(jit, { .emptyCapacity = 9 });
+        return emitArrayLiteral(jit, { .capacity = 9 });
     case EmptyArray::ContiguousCapacity13:
-        return emitArrayLiteral(jit, { .emptyCapacity = 13 });
+        return emitArrayLiteral(jit, { .capacity = 13 });
     case EmptyArray::ContiguousCapacity17:
-        return emitArrayLiteral(jit, { .emptyCapacity = 17 });
+        return emitArrayLiteral(jit, { .capacity = 17 });
     case EmptyArray::DoubleCapacity1:
     case EmptyArray::DoubleCapacity3:
     case EmptyArray::DoubleDefaultCapacity:

@@ -32,6 +32,8 @@
 #include "JSCInlines.h"
 #include "JSMapInlines.h"
 #include "JSSetInlines.h"
+#include "JSWeakMap.h"
+#include "JSWeakSet.h"
 #include "MarkedBlockCage.h"
 #include "ObjectConstructor.h"
 #include <wtf/DataLog.h>
@@ -217,6 +219,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMoveClosureToHeap, JSCell*, (Insta
     }
 AOT_DEFINE_NEW_COLLECTION(operationAOTNewMap, Map, mapStructure)
 AOT_DEFINE_NEW_COLLECTION(operationAOTNewSet, Set, setStructure)
+AOT_DEFINE_NEW_COLLECTION(operationAOTNewWeakMap, WeakMap, weakMapStructure)
+AOT_DEFINE_NEW_COLLECTION(operationAOTNewWeakSet, WeakSet, weakSetStructure)
 #undef AOT_DEFINE_NEW_COLLECTION
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTBarrierSlow, void, (Instance* instance, JSCell* cell))
@@ -232,6 +236,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberElement, void, (Instance* 
         instance->vm->heap.writeBarrierSlowPath(owner, value.asCell());
     else
         instance->vm->writeBarrierSlowPath(owner);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberObjects, void, (Instance* instance, JSCell* first, JSCell* second))
+{
+    instance->vm->writeBarrier(first);
+    instance->vm->writeBarrier(second);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringConstant, JSCell*, (Instance* instance, uint32_t index))

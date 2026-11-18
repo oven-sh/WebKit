@@ -849,11 +849,107 @@ PromotedEnvironments PlannerOfPromotedEnvironments::run(std::span<const LayoutID
 
 } // anonymous namespace
 
+struct MakersOfFunctionNameHolders {
+    HashMap<uint32_t, FunctionID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> makers;
+    BitVector hoisted;
+};
+
+static MakersOfFunctionNameHolders findMakersOfFunctionNameHolders(const Program& program, const Facts& facts, const BitVector& holders)
+{
+    MakersOfFunctionNameHolders found;
+    BitVector isMade(program.functions.size());
+    BitVector isRefused(program.functions.size());
+    BitVector modules;
+    for (size_t holder : holders)
+        modules.set(program.at(FunctionID(static_cast<uint32_t>(holder))).module.index());
+    for (const Variable& variable : program.variables) {
+        if (variable.initialization != VariableInitialization::Function || !holders.get(variable.function.index()))
+            continue;
+        if (isMade.quickSet(variable.function.index()) || !variable.module || !loaderEntersBodyAtMostOnce(program.at(variable.module)))
+            isRefused.quickSet(variable.function.index());
+        else
+            found.hoisted.set(variable.function.index());
+    }
+    for (uint32_t number = 0; number < program.functions.size(); ++number) {
+        FunctionID id(number);
+        if (!modules.get(program.at(id).module.index()))
+            continue;
+        const BodyIndex* index = facts.bodies().find(id);
+        if (!index || !index->opcodes().contains(Opcode::NewClosure))
+            continue;
+        std::optional<bool> serves;
+        for (uint32_t block = 0; block < index->numberOfBlocks(); ++block) {
+            for (BodyValue value : index->block(BlockID(block)).values()) {
+                if (value.opcode() != Opcode::NewClosure)
+                    continue;
+                FunctionID made = value.as<Opcode::NewClosure>().function();
+                if (!holders.get(made.index()))
+                    continue;
+                if (!serves)
+                    serves = facts.runsAtMostOnce(id) && !program.at(id).isCoroutine() && !facts.summaries().at(id).has(SummaryTrait::HasDirectEval) && !index->hasIrreducibleFlow() && program.at(program.at(id).module).kind != ModuleKind::RuntimeSource;
+                if (isMade.quickSet(made.index()) || !*serves || index->loopOf(BlockID(block)))
+                    isRefused.quickSet(made.index());
+                else
+                    found.makers.add(made.index(), id);
+            }
+        }
+    }
+    for (size_t refused : isRefused) {
+        found.makers.remove(static_cast<uint32_t>(refused));
+        found.hoisted.clear(refused);
+    }
+    return found;
+}
+
+static void planFunctionNameMirrors(const Program& program, const Facts& facts, PromotedEnvironments& promoted)
+{
+    const LinkTables& linked = facts.linked();
+    BitVector holdersWithoutClass(program.functions.size());
+    for (const LinkedNameOnFunction& name : linked.namesOnFunctions) {
+        if (name.isLaidByListedStores && !program.at(name.holder).constructedClass)
+            holdersWithoutClass.quickSet(name.holder.index());
+    }
+    MakersOfFunctionNameHolders ofHolders;
+    if (!holdersWithoutClass.isEmpty())
+        ofHolders = findMakersOfFunctionNameHolders(program, facts, holdersWithoutClass);
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> namesStoredOtherwise;
+    for (const LinkedFunctionNameStore& store : linked.storesOfFunctionNames) {
+        const BodyIndex* index = facts.bodies().find(store.function);
+        bool isCounted = index && !index->isParameter(store.site) && (index->loopOf(index->blockOf(store.site)) || (!program.at(store.holder).constructedClass && linked.isCalledInLoops(store.function)));
+        if (!index || isCounted || index->isParameter(store.site) || index->opcodeOf(store.site) != Opcode::PropSet)
+            namesStoredOtherwise.add(static_cast<uint64_t>(store.holder.index()) << 32 | store.key.bits());
+    }
+    for (const LinkedNameOnFunction& name : linked.namesOnFunctions) {
+        if (!name.isLaidByListedStores || namesStoredOtherwise.contains(static_cast<uint64_t>(name.holder.index()) << 32 | name.key.bits()))
+            continue;
+        LayoutID layout = program.at(name.holder).constructedClass;
+        if (layout ? !program.at(layout).has(LayoutFlags::IsConstructorFunction) || !facts.isEvaluatedAtMostOnce(layout) : name.key == program.keyOf(BuiltinNames::prototype))
+            continue;
+        if (!layout && !ofHolders.hoisted.get(name.holder.index())) {
+            auto maker = ofHolders.makers.find(name.holder.index());
+            if (maker == ofHolders.makers.end())
+                continue;
+            promoted.makers.set(maker->value.index());
+        }
+        if (!promoted.firstVariable)
+            promoted.firstVariable = VariableID(static_cast<uint32_t>(program.variables.size()));
+        VariableID variable(promoted.firstVariable.index() + static_cast<uint32_t>(promoted.variables.size()));
+        PromotedVariable mirror { program.at(name.holder).module, program.at(name.key).text, { }, { }, { }, 0, { }, 0 };
+        mirror.holder = name.holder;
+        mirror.key = name.key;
+        promoted.variables.append(WTF::move(mirror));
+        promoted.functionNameMirrors.append(FunctionNameMirror { name.holder, name.key, variable });
+        promoted.keysOfFunctionNameMirrors.set(name.key.index());
+    }
+}
+
 PromotedEnvironments planPromotedEnvironments(const Program& program, const Facts& facts, const SlotPlanParts& slots, std::span<const LayoutID> scopesTakenByClosuresMadeForCallsAlone)
 {
     if (!facts.mechanisms().contains(Mechanism::PromotedEnvironments))
         return { };
-    return PlannerOfPromotedEnvironments(program, facts, slots).run(scopesTakenByClosuresMadeForCallsAlone);
+    PromotedEnvironments promoted = PlannerOfPromotedEnvironments(program, facts, slots).run(scopesTakenByClosuresMadeForCallsAlone);
+    planFunctionNameMirrors(program, facts, promoted);
+    return promoted;
 }
 
 void appendPromotedVariables(const PromotedEnvironments& promoted, SlotPlanParts& slots)
@@ -863,7 +959,9 @@ void appendPromotedVariables(const PromotedEnvironments& promoted, SlotPlanParts
         if (variable.layout)
             planned.representation = slots.layouts[variable.layout.index()].slots[variable.field].representation;
         SlotTraits traits = traitsOf(planned.representation);
-        if (traits.hasAbsent)
+        if (variable.holder)
+            planned.initialWord = JSValue::encode(jsUndefined());
+        else if (traits.hasAbsent)
             planned.initialWord = traits.absentBits;
         slots.variables.append(planned);
     }

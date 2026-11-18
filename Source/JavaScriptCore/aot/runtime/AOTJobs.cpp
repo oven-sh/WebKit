@@ -27,6 +27,7 @@
 #include "DeferTermination.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionHelpers.h"
+#include "GeneratorPrototype.h"
 #include "InternalFunction.h"
 #include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -97,8 +98,7 @@ const uint64_t* frameWithAwaitingCallers(const Instance& instance)
     const uint64_t* frame = withoutBit(instance.coroutines.resumableFrame);
     if (!frame) [[likely]]
         return nullptr;
-    const void* returnAddress = std::bit_cast<const void*>(frame[1]);
-    if (returnAddress == instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter) || returnAddress == instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
+    if (instance.stubs.isReturnAddress(StubFrameKind::SavedFrameAdapter, frame[1]) || instance.stubs.isReturnAddress(StubFrameKind::AsyncGeneratorBody, frame[1]))
         return nullptr;
     return frame;
 }
@@ -437,7 +437,7 @@ JSValue deliverStepToDriver(JSObject* driver, JSValue resolution, bool isRejecte
 
 static JSAsyncGenerator* asyncGeneratorEnteredByStub(const Instance& instance, const uint64_t* frame)
 {
-    if (std::bit_cast<const void*>(frame[1]) != instance.stubs.returnAddress(StubFrameKind::AsyncGeneratorBody))
+    if (!instance.stubs.isReturnAddress(StubFrameKind::AsyncGeneratorBody, frame[1]))
         return nullptr;
     return std::bit_cast<JSAsyncGenerator* const*>(frame[0])[asyncGeneratorSlotInStubFrame];
 }
@@ -1190,6 +1190,48 @@ static CoroutineKind generatorKind(JSObject* generator, Entry entry)
     if (!generator->inherits<JSAsyncGenerator>()) [[unlikely]]
         crashOnWrongOperand(entry);
     return CoroutineKind::AsyncGenerator;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGetGeneratorPrototype, JSCell*, (Instance* instance, EncodedJSValue closure))
+{
+    constexpr Entry entry = Entry::operationAOTGetGeneratorPrototype;
+    AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
+    Structure* structure = structureOfGenerator(globalObject, *instance, objectArgument(closure, entry), CoroutineKind::Generator);
+    scope.releaseAssertNoException();
+    return structure->storedPrototypeObject();
+}
+
+static bool findsReturnOfEngine(JSGlobalObject* realm, JSObject* prototype)
+{
+    VM& vm = realm->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PropertySlot slot(prototype, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool isFound = prototype->getPropertySlot(realm, vm.propertyNames->returnKeyword, slot);
+    scope.assertNoException();
+    return isFound && !slot.isTaintedByOpaqueObject() && slot.slotBase() == realm->generatorPrototype();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTakeGeneratorLeftInPlace, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* words, void* resumeAddress, uint32_t leavesAtOnce, uint32_t isHeldByIteration))
+{
+    constexpr Entry entry = Entry::operationAOTTakeGeneratorLeftInPlace;
+    AOT_OPERATION_BEGIN(instance, entry);
+    DeferTerminationForAWhile deferTermination(vm);
+    JSObject* holder = cell ? cellArgument<JSObject>(cell, entry) : globalObject->generatorPrototype();
+    auto* generator = dynamicDowncast<Generator>(holder);
+    JSObject* prototype = generator ? generator->structure()->storedPrototypeObject() : holder;
+    if (!isHeldByIteration && findsReturnOfEngine(globalObject, prototype))
+        return JSValue::encode(jsUndefined());
+    if (!generator)
+        generator = Generator::create(vm, Generator::createStructure(vm, globalObject, prototype));
+    if (words) {
+        SavedFrame* frame = cellArgument<SavedFrame>(words, entry);
+        frame->suspendAtYield(vm, generator, resumeAddress);
+        generator->suspendAtYield(vm, frame);
+        return JSValue::encode(generator);
+    }
+    generator->leaveInPlace(leavesAtOnce);
+    return JSValue::encode(generator);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTakeGeneratorPrototype, void, (Instance* instance, JSCell* generator, EncodedJSValue closure))

@@ -49,6 +49,7 @@ namespace AOT {
 
 class Image;
 struct CaseConversions;
+struct DoubleStringCache;
 struct QuotedStringCache;
 struct SortedStorage;
 struct ImageFunction;
@@ -167,6 +168,9 @@ struct ImageWords {
     uint64_t endOfIdentifiers;
     uint64_t numberOfPlacedConstants;
     const uint32_t* hashesOfPlacedConstants;
+    const ReturnedCaptureData* returnedCaptures;
+    uint64_t capacityOfReturnedCaptures;
+    uint8_t* statics;
 };
 
 struct LazyStringWords {
@@ -174,9 +178,9 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject, MapIterator, SetIterator, ArrayIterator };
-static constexpr unsigned numberOfInlineAllocations = 16;
-static_assert(static_cast<unsigned>(InlineAllocation::ArrayIterator) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject, MapIterator, SetIterator, ArrayIterator, Proxy, WeakMap, WeakSet };
+static constexpr unsigned numberOfInlineAllocations = 19;
+static_assert(static_cast<unsigned>(InlineAllocation::WeakSet) + 1 == numberOfInlineAllocations);
 static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
@@ -257,6 +261,7 @@ struct RealmWords {
     MicrotaskQueue* microtaskQueue;
     JSCell* functionOfEngineOverCompiledFunction;
     JSCell* compiledFunctionUnderFunctionOfEngine;
+    DoubleStringCache* doubleStrings;
     static constexpr unsigned numberOfImmediates = JSValue::ValueUndefined + 1;
     JSString* stringsOfImmediates[numberOfImmediates];
 };
@@ -271,10 +276,17 @@ struct IterationWords {
     JSCell* emptyEnumerator;
     JSCell* functionThatAppendsIterable;
     JSCell* functionThatTakesFromIterable;
+    JSCell* structureOfMatchIteratorPrototype;
+    JSCell* structureOfPrototypeAbove;
+    JSCell* nextOfMatchIterator;
+    JSCell* iteratorOfPrototypeAbove;
+    int32_t placeOfNext;
+    int32_t placeOfIterator;
 };
 
 struct CollationWords {
     const uint8_t* ducetLevel1Weights;
+    const uint8_t* knownLevel1Weights;
 };
 
 struct NumberWords {
@@ -424,7 +436,7 @@ struct Instance : InstanceHeader {
     void visitRoots(Visitor& visitor)
     {
         JSCell* const cells[] = { realm.objectPrototype, realm.functionPrototypeCall, realm.boundFunctionExecutable, realm.emptyExtraPropertiesStructure, realm.extraPropertiesWithElementsStructure, realm.emptyArgumentList, realm.functionOfEngineOverCompiledFunction, realm.compiledFunctionUnderFunctionOfEngine };
-        for (JSCell* function : { iteration.functionThatAppendsIterable, iteration.functionThatTakesFromIterable }) {
+        for (JSCell* function : { iteration.functionThatAppendsIterable, iteration.functionThatTakesFromIterable, iteration.structureOfMatchIteratorPrototype, iteration.structureOfPrototypeAbove, iteration.nextOfMatchIterator, iteration.iteratorOfPrototypeAbove }) {
             if (function)
                 visitor.appendUnbarriered(function);
         }

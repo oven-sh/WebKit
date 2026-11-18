@@ -419,7 +419,11 @@ void branchIfHasNamesOrIsNotOfThisRealm(StubAssembler& jit, GPRReg structure, Ju
 
 Jump branchIfNotPristine(StubAssembler& jit, GPRReg cell)
 {
+#if CPU(ARM64)
+    return jit.branchTest32(CCallHelpers::Zero, Address(cell, JSCell::indexingTypeAndMiscOffset()), TrustedImm32(IsPristine << 8 * (JSCell::typeInfoFlagsOffset() - JSCell::indexingTypeAndMiscOffset())));
+#else
     return jit.branchTest8(CCallHelpers::Zero, Address(cell, JSCell::typeInfoFlagsOffset()), TrustedImm32(IsPristine));
+#endif
 }
 
 void loadPristineArrayKind(StubAssembler& jit, GPRReg array, GPRReg kind, unsigned mask)

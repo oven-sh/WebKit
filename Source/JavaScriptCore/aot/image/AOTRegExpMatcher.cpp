@@ -729,7 +729,7 @@ std::unique_ptr<RegExpCode> compileRegExpMatcher(const RegExpMatchPlan& plan, bo
     for (bool keepsStart : { false, true }) {
         if (recordsMatches && !keepsStart)
             continue;
-        CCallHelpers jit;
+        ImageAssembler jit;
         ImageCodeAddressing addressing(jit, PCRelativeReach::Far, policy, context);
         jit.m_assembler.buffer().putInt(plan.isSearched ? maxLengthSearchedByMatcher : std::numeric_limits<uint32_t>::max());
         jit.m_assembler.buffer().putInt(0);

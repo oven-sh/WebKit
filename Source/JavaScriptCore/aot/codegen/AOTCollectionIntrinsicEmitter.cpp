@@ -210,20 +210,36 @@ public:
     Condition hasWideKeys(LValue flags) { return hasBits(Word32(flags), CompactTable::keysAreWide); }
 };
 
-CollectionIntrinsicEmitter::InlineWidths CollectionIntrinsicEmitter::inlineWidthsOf(Collection kind, ValueID collection)
+CollectionIntrinsicEmitter::InlineWidths CollectionIntrinsicEmitter::inlineWidthsOf(Collection kind, const ValueContext& step, ValueID collection)
 {
     const PositionTypes& positions = PositionTypes::knowingNothing();
     TypingContext expecting { m_program, types(), positions, TypeLevel::Expected };
     constexpr uint16_t primitivesOfEitherWidth = Primitive::Undefined | Primitive::Null | Primitive::Boolean;
-    const TypeID typeOfKeys = typeOfContentsRead(expecting, typeIDOf(collection), kind == Collection::Map ? ContentsSlot::Key : ContentsSlot::Element);
+    bool isNarrowedByResults = false;
+    auto typeOfResult = [&](MapNextResult result, TypeID type) {
+        forEachResultRead(step, scopedLambda<void(ValueID)>([&](ValueID read) {
+            TypeID typeRead = typeIDOf(read);
+            if (operationAt(read).index() != static_cast<uint32_t>(result) || types().at(typeRead).isNever())
+                return;
+            if (type != typeRead && (types().at(type).isNever() || types().isSubset(typeRead, type))) {
+                type = typeRead;
+                isNarrowedByResults = true;
+            }
+        }));
+        return type;
+    };
+    static_assert(static_cast<uint32_t>(MapNextResult::Key) == static_cast<uint32_t>(SetNextResult::Element));
+    const TypeID typeOfKeys = typeOfResult(MapNextResult::Key, typeOfContentsRead(expecting, typeIDOf(collection), kind == Collection::Map ? ContentsSlot::Key : ContentsSlot::Element));
     const Type keys = types().at(typeOfKeys);
     InlineWidths widths;
     widths.keysAreWide = (keys.primitives & Primitive::Number) && !(keys.primitives & Primitive::AnyString);
     widths.readsKeysOfBothWidths = keys.isNever() || ((keys.primitives & Primitive::Number) && !types().at(types().withoutPrimitives(typeOfKeys, primitivesOfEitherWidth)).isNumber());
+    if (isNarrowedByResults && !widths.readsKeysOfBothWidths)
+        build().statistics().count(StatisticID::CollectionWidthsByResults);
     if (kind == Collection::Set)
         return widths;
 
-    const TypeID typeOfValues = typeOfContentsRead(expecting, typeIDOf(collection), ContentsSlot::Value);
+    const TypeID typeOfValues = typeOfResult(MapNextResult::Value, typeOfContentsRead(expecting, typeIDOf(collection), ContentsSlot::Value));
     const Type values = types().at(types().withoutPrimitives(typeOfValues, primitivesOfEitherWidth));
     if (values.isNumber())
         widths.valuesAreWide = true;
@@ -242,7 +258,15 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     TableReader reader(generator());
     const bool takesTableReadHere = takesTableReadBeforeStep(value, collection);
     const std::optional<BlockEdge> end = generator().edgeAfterLastStep(value, static_cast<uint32_t>(MapNextResult::HasEntry), CodeGenerator::StepTest::HasEntry);
-    const LValue carriedKeys = generator().keysOfCarriedTable(value->tableOperand());
+    const InlineWidths widths = inlineWidthsOf(kind, value, collection);
+    const CompactTable::Width keyWidth = widths.keysAreWide ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
+    const CompactTable::Width otherWidth = widths.keysAreWide ? CompactTable::Width::Narrow : CompactTable::Width::Wide;
+    const bool readsBothWidths = widths.readsKeysOfBothWidths;
+    LValue carriedKeys = generator().keysOfCarriedTable(value->tableOperand());
+    if (carriedKeys && !generator().claimKeysOfCarriedTable(value->tableOperand(), { widths.keysAreWide, readsBothWidths }))
+        carriedKeys = nullptr;
+    constexpr int64_t otherWidthTag = 1;
+    static_assert(!(CompactTable::offsetOfIndex() & otherWidthTag));
     Vector<ValueFromBlock, 4> tableKeysAfterStep;
     auto addKeysOfTable = [&](LValue keys) {
         if (carriedKeys)
@@ -300,20 +324,26 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
 
     m_out.appendTo(isCurrent);
     LBasicBlock hasExpectedWidth = newBlock();
+    LBasicBlock hasCarriedOtherWidth = carriedKeys && readsBothWidths ? newBlock() : nullptr;
     ValueFromBlock keysCheckedBefore;
     if (carriedKeys) {
         LBasicBlock isUnchecked = newBlock();
-        keysCheckedBefore = m_out.anchor(carriedKeys);
-        m_out.branch(m_out.notZero64(carriedKeys), normalEdge(hasExpectedWidth), unlikelyEdge(isUnchecked));
+        if (hasCarriedOtherWidth) {
+            build().statistics().count(StatisticID::CarriedKeysTaggedByWidth);
+            LBasicBlock isChecked = newBlock();
+            m_out.branch(m_out.notZero64(carriedKeys), normalEdge(isChecked), unlikelyEdge(isUnchecked));
+            m_out.appendTo(isChecked);
+            keysCheckedBefore = m_out.anchor(carriedKeys);
+            m_out.branch(m_out.testNonZero64(carriedKeys, m_out.constInt64(otherWidthTag)), unlikelyEdge(hasCarriedOtherWidth), normalEdge(hasExpectedWidth));
+        } else {
+            keysCheckedBefore = m_out.anchor(carriedKeys);
+            m_out.branch(m_out.notZero64(carriedKeys), normalEdge(hasExpectedWidth), unlikelyEdge(isUnchecked));
+        }
         m_out.appendTo(isUnchecked);
     }
     m_out.branch(hasCellType(CellPointer(storage), JSCellButterflyType).value(), rareEdge(slowPath), normalEdge(isCompact));
 
     m_out.appendTo(isCompact);
-    const InlineWidths widths = inlineWidthsOf(kind, collection);
-    const CompactTable::Width keyWidth = widths.keysAreWide ? CompactTable::Width::Wide : CompactTable::Width::Narrow;
-    const CompactTable::Width otherWidth = widths.keysAreWide ? CompactTable::Width::Narrow : CompactTable::Width::Wide;
-    const bool readsBothWidths = widths.readsKeysOfBothWidths;
     LBasicBlock hasOtherWidth = readsBothWidths ? newBlock() : slowPath;
     LBasicBlock hasCheckedWidth = carriedKeys ? newBlock() : hasExpectedWidth;
     LBasicBlock hasOtherKind = newBlock();
@@ -342,7 +372,8 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     m_out.appendTo(isMarked);
     LBasicBlock whereWide = widths.keysAreWide ? hasCheckedWidth : hasOtherWidth;
     LBasicBlock whereNarrow = widths.keysAreWide ? hasOtherWidth : hasCheckedWidth;
-    m_out.branch(reader.hasWideKeys(flags).value(), unlikelyEdge(whereWide), unlikelyEdge(whereNarrow));
+    auto edgeToWidth = [&](LBasicBlock to) { return to == slowPath ? rareEdge(to) : unlikelyEdge(to); };
+    m_out.branch(reader.hasWideKeys(flags).value(), edgeToWidth(whereWide), edgeToWidth(whereNarrow));
 
     ValueFromBlock keysCheckedHere;
     if (carriedKeys) {
@@ -356,14 +387,17 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     LValue used = loadUsed();
     if (!column)
         column = reader.keysOf(storage, flags);
-    if (carriedKeys && emittersCheckProofs()) {
+    auto requireCheckedKeys = [&](CompactTable::Width width, LValue checkedColumn) {
+        if (!carriedKeys || !emittersCheckProofs())
+            return;
         LValue flagsNow = m_out.load8ZeroExt32(byteWithMark);
-        Condition hasExpectedKind = reader.isWalkedWithKeysOfWidth(keyWidth, m_out.bitAnd(flagsNow, TableReader::kindMask));
+        Condition hasExpectedKind = reader.isWalkedWithKeysOfWidth(width, m_out.bitAnd(flagsNow, TableReader::kindMask));
         Condition isCompactTable = logicalNot(hasCellType(CellPointer(storage), JSCellButterflyType));
         emitter<ThrowEmitter>().requireOrCrash(value, isCompactTable, std::nullopt, ProofSource::RememberedFact);
-        Condition isKeyColumn(m_out.equal(column, reader.keysOf(storage, flagsNow)));
+        Condition isKeyColumn(m_out.equal(checkedColumn, reader.keysOf(storage, flagsNow)));
         emitter<ThrowEmitter>().requireOrCrash(value, logicalAnd(hasExpectedKind, isKeyColumn), std::nullopt, ProofSource::RememberedFact);
-    }
+    };
+    requireCheckedKeys(keyWidth, column);
     TableReader::AliveEntry alive = reader.firstAliveEntry(ownerOfFirstStep, keyWidth, column, start.value(), used, hasNoEntry);
     LValue entryIndex = alive.index;
     Boxed key = reader.decodeKey(keyWidth, alive.keyWord);
@@ -377,16 +411,29 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         m_out.jump(found);
 
         m_out.appendTo(hasOtherWidth);
+        LValue otherColumn = reader.keysOf(storage, flags);
+        LValue taggedColumn = nullptr;
+        if (carriedKeys) {
+            LBasicBlock readsOtherWidth = newBlock();
+            ValueFromBlock otherCheckedHere = m_out.anchor(m_out.add(otherColumn, m_out.constInt64(otherWidthTag)));
+            m_out.jump(readsOtherWidth);
+            m_out.appendTo(hasCarriedOtherWidth);
+            ValueFromBlock otherCheckedBefore = m_out.anchor(carriedKeys);
+            m_out.jump(readsOtherWidth);
+            m_out.appendTo(readsOtherWidth);
+            taggedColumn = m_out.phi(Machine::Int64, otherCheckedHere, otherCheckedBefore);
+            otherColumn = m_out.sub(taggedColumn, m_out.constInt64(otherWidthTag));
+            requireCheckedKeys(otherWidth, otherColumn);
+        }
         LBasicBlock isUsed = newBlock();
         m_out.branch(m_out.below(start.value(), loadUsed()), normalEdge(isUsed), unlikelyEdge(hasNoEntry));
         m_out.appendTo(isUsed);
-        LValue otherColumn = reader.keysOf(storage, flags);
         LValue otherWord = reader.loadKeyWord(otherWidth, otherColumn, start.value());
         branchUnless(Condition(reader.isLiveKeyWord(otherWidth, otherWord)), slowPath);
         ValueFromBlock otherIndex = m_out.anchor(start.value());
         ValueFromBlock otherKey = m_out.anchor(reader.decodeKey(otherWidth, otherWord).value());
         ValueFromBlock otherValues = readsValue ? m_out.anchor(reader.valuesBehind(otherWidth, storage, otherColumn)) : ValueFromBlock();
-        ValueFromBlock noColumn = carriedKeys ? m_out.anchor(m_out.constInt64(0)) : ValueFromBlock();
+        ValueFromBlock otherKeys = carriedKeys ? m_out.anchor(taggedColumn) : ValueFromBlock();
         m_out.jump(found);
 
         m_out.appendTo(found);
@@ -395,7 +442,7 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
         if (readsValue)
             values = m_out.phi(Machine::Int64, expectedValues, otherValues);
         if (carriedKeys)
-            column = m_out.phi(Machine::Int64, expectedColumn, noColumn);
+            column = m_out.phi(Machine::Int64, expectedColumn, otherKeys);
     }
     std::optional<CompactTable::Width> expectedValueWidth;
     if (widths.valuesAreWide)
@@ -436,16 +483,15 @@ void CollectionIntrinsicEmitter::generateNext(Collection kind, const ValueContex
     }
 }
 
-bool CollectionIntrinsicEmitter::mayReadValue(const ValueContext& step)
+uint32_t CollectionIntrinsicEmitter::forEachResultRead(const ValueContext& step, const ScopedLambda<void(ValueID)>& functor)
 {
     uint32_t partsLeft = m_code.useCountOf(step.id());
-    bool readsValue = false;
     auto lookAt = [&](ValueID reader) {
         const Operation& part = operationAt(reader);
         if (part.opcode != Opcode::ResultAt || part.resultsOperand() != step.id())
             return;
         --partsLeft;
-        readsValue |= part.index() == static_cast<uint32_t>(MapNextResult::Value);
+        functor(reader);
     };
     std::ranges::for_each(step.operationsBehind(), lookAt);
     const Terminator& terminator = m_code.at(step.block()).terminator;
@@ -454,7 +500,16 @@ bool CollectionIntrinsicEmitter::mayReadValue(const ValueContext& step)
         if (m_generator.onlyPredecessorOf(to) == step.block())
             std::ranges::for_each(m_code.valuesOf(to), lookAt);
     }
-    return readsValue || partsLeft;
+    return partsLeft;
+}
+
+bool CollectionIntrinsicEmitter::mayReadValue(const ValueContext& step)
+{
+    bool readsValue = false;
+    uint32_t readElsewhere = forEachResultRead(step, scopedLambda<void(ValueID)>([&](ValueID result) {
+        readsValue |= operationAt(result).index() == static_cast<uint32_t>(MapNextResult::Value);
+    }));
+    return readsValue || readElsewhere;
 }
 
 bool CollectionIntrinsicEmitter::takesTableReadBeforeStep(const ValueContext& step, ValueID collection)
@@ -607,8 +662,11 @@ bool CollectionIntrinsicEmitter::isCounterOrSmallNumber(ValueID key) const
     const ValueID counter = strip(key);
     if (m_code.isConstant(counter))
         return false;
-    if (cuts.contains(opcodeOf(counter)))
-        return typeOf(key).integers.isSubsetOf(smallNumbers);
+    if (cuts.contains(opcodeOf(counter))) {
+        static constexpr OpcodeSet scattering { Opcode::Mul, Opcode::MultiplyAddIntegers, Opcode::BitXor, Opcode::LShift, Opcode::RShift, Opcode::URShift };
+        const ValueID cut = strip(operationAt(counter).operand(0));
+        return typeOf(key).integers.isSubsetOf(smallNumbers) && (m_code.isConstant(cut) || !scattering.contains(opcodeOf(cut)));
+    }
     if (opcodeOf(counter) != Opcode::Parameter || !m_code.at(m_code.blockOf(counter)).isLoopHead)
         return false;
     const BlockID head = m_code.blockOf(counter);
@@ -674,6 +732,550 @@ void CollectionIntrinsicEmitter::generateFindKeyInMap(const ValueContext& value)
 Integer CollectionIntrinsicEmitter::movesOfEntriesInCollections()
 {
     return Integer(m_out.load64(m_out.address(m_heaps.entire(AbstractHeap::CollectionStorage), vm().value(), VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, movesOfEntriesInCollections))));
+}
+
+static constexpr int64_t columnIsOfOtherKind = 1;
+static constexpr int64_t columnIsInImage = 2;
+
+static constexpr unsigned numberOfCachedWords = 5;
+
+TypedPointer CollectionIntrinsicEmitter::cachedWord(LValue cache, unsigned index)
+{
+    return m_out.address(m_heaps.frameSlots, cache, index * sizeof(uint64_t));
+}
+
+void CollectionIntrinsicEmitter::cacheColumns(LValue cache, LValue table, KeyOfLookup key, bool readsValues)
+{
+    std::array<Operand, 4> columns = readColumns(table, key, readsValues);
+    m_out.store64(table, cachedWord(cache, 0));
+    for (unsigned column = 0; column < (readsValues ? 4 : 3); ++column)
+        m_out.store64(columns[column].as<Integer>().value(), cachedWord(cache, 1 + column));
+}
+
+void CollectionIntrinsicEmitter::generateCollectionColumns(const ValueContext& value)
+{
+    KeyOfLookup key = value->keysAreStrings() ? KeyOfLookup::String : value->keysAreCells() ? KeyOfLookup::Cell : KeyOfLookup::Number;
+    LValue table = TableReader(generator()).storageOf(in<CellPointer>(value->collectionOperand()));
+    if (value->areCachedInFrame()) {
+        LValue cache = m_out.lockedStackSlot(numberOfCachedWords * sizeof(uint64_t));
+        cache->slot()->setIsDeadAtSuspensions(true);
+        cacheColumns(cache, table, key, value->readsValues());
+        defineResults(value, { Integer(cache), integer(0), integer(0), integer(0) });
+        return;
+    }
+    defineResults(value, readColumns(table, key, value->readsValues()));
+}
+
+std::array<Operand, 4> CollectionIntrinsicEmitter::readColumns(LValue table, KeyOfLookup key, bool readsValues)
+{
+    TableReader reader(generator());
+    const bool keysAreCells = key != KeyOfLookup::Number;
+    LBasicBlock hasTable = newBlock();
+    LBasicBlock hasOtherKeys = newBlock();
+    LBasicBlock isInHeap = newBlock();
+    LBasicBlock isNotHuge = newBlock();
+    LBasicBlock isNotSearchedHere = newBlock();
+    LBasicBlock hasNoTable = newBlock();
+    ResultsJoin<Integer, Integer, Integer, Integer> join(m_out);
+    auto indexBitsOf = [&](LValue table) { return m_out.load8SignExt32(reader.tableField(table, CompactTable::offsetOfIndexBits())); };
+    auto joinColumns = [&](LValue table, bool isInImage) {
+        LValue slots = m_out.shl(m_out.constInt32(1), indexBitsOf(table));
+        LValue capacity = m_out.load32(reader.tableField(table, CompactTable::offsetOfCapacity()));
+        LValue hasLongSlots = m_out.zeroExtPtr(m_out.above(capacity, m_out.constInt32(CompactTable::maxCapacityWithShortSlots)));
+        LValue tags = m_out.add(table, m_out.constInt64(CompactTable::offsetOfIndex()));
+        LValue keys = m_out.add(reader.keysOf(table, reader.flagsOf(table)), m_out.constInt64(CompactTable::offsetOfIndex()));
+        LValue entries = m_out.zeroExtPtr(capacity);
+        LValue values = m_out.constInt64(0);
+        if (isInImage)
+            keys = m_out.bitOr(m_out.add(keys, m_out.shl(entries, m_out.constInt32(2))), m_out.constInt64(columnIsInImage));
+        else if (readsValues) {
+            LValue isNarrow = m_out.equal(m_out.load8ZeroExt32(reader.tableField(table, CompactTable::offsetOfValueWidth())), m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow)));
+            values = m_out.bitOr(m_out.add(keys, m_out.shl(entries, m_out.constInt32(keysAreCells ? 2 : 3))), m_out.zeroExtPtr(isNarrow));
+        }
+        join.add(Integer(tags), Integer(m_out.zeroExtPtr(m_out.sub(slots, m_out.constInt32(1)))), Integer(m_out.bitOr(keys, hasLongSlots)), Integer(values));
+    };
+    m_out.branch(m_out.notNull(table), normalEdge(hasTable), unlikelyEdge(hasNoTable));
+
+    m_out.appendTo(hasNoTable);
+    join.add(integer(0), integer(0), integer(0), integer(0));
+
+    m_out.appendTo(hasTable);
+    LValue flags = reader.flagsOf(table);
+    LValue widthInHeap = m_out.bitAnd(flags, CompactTable::keysAreWide | CompactTable::keysAreInImage);
+    m_out.branch(m_out.equal(widthInHeap, m_out.constInt32(keysAreCells ? 0 : CompactTable::keysAreWide)), normalEdge(isInHeap), normalEdge(hasOtherKeys));
+
+    m_out.appendTo(isInHeap);
+    m_out.branch(m_out.greaterThan(indexBitsOf(table), m_out.constInt32(-1)), normalEdge(isNotHuge), unlikelyEdge(isNotSearchedHere));
+
+    m_out.appendTo(isNotHuge);
+    joinColumns(table, false);
+
+    m_out.appendTo(hasOtherKeys);
+    if (key == KeyOfLookup::String) {
+        LBasicBlock isInImage = newBlock();
+        m_out.branch(hasBits(Word32(flags), CompactTable::keysAreInImage).value(), normalEdge(isInImage), normalEdge(isNotSearchedHere));
+        m_out.appendTo(isInImage);
+        joinColumns(m_out.loadPtr(reader.tableField(table, CompactTable::offsetOfIndex())), true);
+    } else
+        m_out.jump(isNotSearchedHere);
+
+    m_out.appendTo(isNotSearchedHere);
+    join.add(Integer(table), integer(0), integer(0), integer(0));
+    return join.finish();
+}
+
+static LValue trailingZerosOfNonZero(Output& out, LValue word)
+{
+    Machine::PatchOperation* zeros = out.patchpoint(Machine::Int64);
+    zeros->appendSomeRegister(word);
+    zeros->effects = Machine::Effects::none();
+    zeros->setRunsWithoutFrame(true);
+    zeros->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+#if CPU(X86_64)
+        jit.m_assembler.tzcntq_rr(params[1].gpr(), params[0].gpr());
+#else
+        jit.countTrailingZeros64(params[1].gpr(), params[0].gpr());
+#endif
+    });
+    return zeros;
+}
+
+Operand CollectionIntrinsicEmitter::lookUpByTag(CollectionColumns columns, Boxed key, const ScopedLambda<Operand()>& lookUpByHash)
+{
+    build().statistics().count(StatisticID::CollectionLookupsByTag);
+    constexpr int64_t tops = static_cast<int64_t>(CompactTable::onesOfTags << 7);
+    TableReader reader(generator());
+    const Machine::AbstractHeap& storage = m_heaps.entire(AbstractHeap::CollectionStorage);
+    const Machine::AbstractHeap& entriesHeap = m_heaps.entire(AbstractHeap::CollectionEntries);
+    LBasicBlock hasSlots = newBlock();
+    LBasicBlock hasNoSlots = newBlock();
+    LBasicBlock hasFewEntries = newBlock();
+    LBasicBlock isAmongFew = newBlock();
+    LBasicBlock isUsed = newBlock();
+    LBasicBlock hasOtherTag = newBlock();
+    LBasicBlock searchesGroup = newBlock();
+    LBasicBlock isInGroup = newBlock();
+    LBasicBlock isNotInGroup = newBlock();
+    LBasicBlock hasSameTag = newBlock();
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock isFound = newBlock();
+    LBasicBlock liesElsewhere = newBlock();
+    LBasicBlock hasNoColumn = newBlock();
+    const bool searchesToEnd = !columns.keyIsString;
+    OperandJoin join(m_out, columns.readsValues ? Representation::JSValue : Representation::Boolean);
+    LValue hash = nullptr;
+    LValue impl = nullptr;
+    if (columns.cache) {
+        LBasicBlock hasOtherTable = newBlock();
+        LBasicBlock hasCachedTable = newBlock();
+        LValue table = reader.storageOf(*columns.collection);
+        m_out.branch(m_out.equal(table, m_out.load64(cachedWord(columns.cache, 0))), normalEdge(hasCachedTable), unlikelyEdge(hasOtherTable));
+
+        m_out.appendTo(hasOtherTable);
+        cacheColumns(columns.cache, table, columns.keyIsString ? KeyOfLookup::String : columns.keysAreCells ? KeyOfLookup::Cell : KeyOfLookup::Number, columns.readsValues);
+        m_out.jump(hasCachedTable);
+
+        m_out.appendTo(hasCachedTable);
+        columns.tags = m_out.load64(cachedWord(columns.cache, 1));
+        columns.mask = m_out.load64(cachedWord(columns.cache, 2));
+        columns.keys = m_out.load64(cachedWord(columns.cache, 3));
+        if (columns.readsValues)
+            columns.values = m_out.load64(cachedWord(columns.cache, 4));
+    }
+    std::optional<ValueFromBlock> entryAtItsPlace;
+    if (columns.keyMayBeAtItsPlace) {
+        build().statistics().count(StatisticID::NumbersFoundAtHomeSlots);
+        LBasicBlock hasColumn = newBlock();
+        LBasicBlock liesInside = newBlock();
+        LBasicBlock isSought = newBlock();
+        m_out.branch(m_out.notZero64(columns.keys), normalEdge(hasColumn), unlikelyEdge(hasNoColumn));
+
+        m_out.appendTo(hasColumn);
+        LValue place = m_out.zeroExtPtr(m_out.castToInt32(key.value()));
+        LValue used = m_out.zeroExtPtr(m_out.load32(m_out.address(storage, columns.tags, CompactTable::offsetOfUsed() - CompactTable::offsetOfIndex())));
+        m_out.branch(m_out.below(place, used), normalEdge(liesInside), normalEdge(isSought));
+
+        m_out.appendTo(liesInside);
+        LValue column = m_out.bitAnd(columns.keys, m_out.constInt64(~columnIsOfOtherKind));
+        LValue word = m_out.load64(m_out.address(entriesHeap, m_out.add(column, m_out.shl(place, m_out.constInt32(3))), 0));
+        entryAtItsPlace = m_out.anchor(place);
+        m_out.branch(m_out.equal(word, key.value()), normalEdge(isFound), normalEdge(isSought));
+
+        m_out.appendTo(isSought);
+    }
+    if (columns.keyMayBeNullish) {
+        LBasicBlock hasCell = newBlock();
+        m_out.branch(isCell(key).value(), normalEdge(hasCell), unlikelyEdge(liesElsewhere));
+        m_out.appendTo(hasCell);
+    }
+    if (columns.keyIsString) {
+        LBasicBlock isResolved = newBlock();
+        LBasicBlock hasHash = newBlock();
+        impl = m_out.loadPtr(key.value(), m_heaps.JSString_value);
+        m_out.branch(m_out.testNonZeroPtr(impl, JSString::isRopeInPointer), normalEdge(liesElsewhere), normalEdge(isResolved));
+
+        m_out.appendTo(isResolved);
+        hash = m_out.lShr(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::s_flagCount));
+        m_out.branch(m_out.notZero32(hash), normalEdge(hasHash), unlikelyEdge(liesElsewhere));
+        m_out.appendTo(hasHash);
+    } else {
+        LValue multiplier = loadImmutable64(AOT_INSTANCE_OFFSET(numbers.keyMultiplierOfTables)).value();
+        hash = m_out.foldedProduct(multiplier, key.value());
+    }
+    auto bytesOf = [&](LValue byte) { return m_out.mul(m_out.zeroExtPtr(m_out.bitAnd(byte, m_out.constInt32(0xff))), m_out.constInt64(CompactTable::onesOfTags)); };
+    auto placeOfLowest = [&](LValue matches) {
+        return m_out.lShr(trailingZerosOfNonZero(m_out, matches), m_out.constInt32(3));
+    };
+    Vector<ValueFromBlock, 6> foundEntries;
+    if (entryAtItsPlace)
+        foundEntries.append(*entryAtItsPlace);
+    auto branchOnKeyAt = [&](LValue entry, ptrdiff_t offset, BlockEdge otherKey) {
+        if (!columns.keyIsString)
+            foundEntries.append(m_out.anchor(entry));
+        LValue place = m_out.add(columns.keys, m_out.shl(entry, m_out.constInt32(columns.keysAreCells ? 2 : 3)));
+        if (!columns.keysAreCells) {
+            m_out.branch(m_out.equal(m_out.load64(m_out.address(entriesHeap, place, -offset)), key.value()), normalEdge(isFound), otherKey);
+            return;
+        }
+        LValue candidateWord = nullptr;
+        if (columns.keyIsString) {
+            LBasicBlock isInImage = newBlock();
+            LBasicBlock isInHeap = newBlock();
+            LBasicBlock hasCandidate = newBlock();
+            m_out.branch(m_out.notZero64(m_out.bitAnd(columns.keys, m_out.constInt64(columnIsInImage))), normalEdge(isInImage), normalEdge(isInHeap));
+            m_out.appendTo(isInHeap);
+            ValueFromBlock candidateInHeap = m_out.anchor(m_out.load32(m_out.address(entriesHeap, place, -offset)));
+            m_out.jump(hasCandidate);
+
+            m_out.appendTo(isInImage);
+            if (columns.readsValues) {
+                m_out.jump(liesElsewhere);
+                m_out.appendTo(hasCandidate);
+                candidateWord = m_out.phi(Machine::Int32, candidateInHeap);
+            } else {
+                LValue constant = m_out.zeroExtPtr(m_out.load32(m_out.address(entriesHeap, place, -offset - columnIsInImage)));
+                TypedPointer cells = instanceField(m_heaps.AOTInstance_fieldsFilledOnce, InstanceLayout::offsetOfStringCells);
+                ValueFromBlock candidateInImage = m_out.anchor(m_out.load32(m_out.address(m_heaps.AOTInstance_fieldsFilledOnce, m_out.add(cells.base(), m_out.shl(constant, m_out.constInt32(2))), cells.offset())));
+                m_out.jump(hasCandidate);
+                m_out.appendTo(hasCandidate);
+                candidateWord = m_out.phi(Machine::Int32, candidateInHeap, candidateInImage);
+            }
+            foundEntries.append(m_out.anchor(entry));
+        } else
+            candidateWord = m_out.load32(m_out.address(entriesHeap, place, -offset));
+        NarrowReference candidate(candidateWord);
+        LBasicBlock isOtherCell = columns.keyIsString ? newBlock() : nullptr;
+        m_out.branch(m_out.equal(candidate.value(), compress(CellPointer(key.value())).value()), normalEdge(isFound), columns.keyIsString ? normalEdge(isOtherCell) : otherKey);
+        if (!columns.keyIsString)
+            return;
+        LBasicBlock hasOtherCell = newBlock();
+        LBasicBlock hasOtherString = newBlock();
+        m_out.appendTo(isOtherCell);
+        m_out.branch(isCellReferenceAmongAllWords(candidate).value(), normalEdge(hasOtherCell), unlikelyEdge(liesElsewhere));
+        m_out.appendTo(hasOtherCell);
+        CellPointer cell = decode(candidate);
+        m_out.branch(hasCellType(cell, StringType).value(), normalEdge(hasOtherString), unlikelyEdge(liesElsewhere));
+        m_out.appendTo(hasOtherString);
+        foundEntries.append(m_out.anchor(entry));
+        m_out.branch(m_out.equal(m_out.loadPtr(cell.value(), m_heaps.JSString_value), impl), normalEdge(isFound), normalEdge(liesElsewhere));
+    };
+    m_out.branch(m_out.notZero64(columns.mask), normalEdge(hasSlots), normalEdge(hasNoSlots));
+
+    m_out.appendTo(hasNoSlots);
+    m_out.branch(m_out.notZero64(columns.keys), normalEdge(hasFewEntries), searchesToEnd ? unlikelyEdge(hasNoColumn) : normalEdge(hasNoColumn));
+
+    m_out.appendTo(hasNoColumn);
+    m_out.branch(m_out.notZero64(columns.tags), searchesToEnd ? rareEdge(liesElsewhere) : normalEdge(liesElsewhere), normalEdge(isAbsent));
+
+    m_out.appendTo(hasFewEntries);
+    LValue fewDifferences = m_out.bitXor(m_out.load64(m_out.address(storage, columns.tags, 0)), bytesOf(m_out.lShr(hash, m_out.constInt32(CompactTable::tagShiftOfTags))));
+    LValue belowFew = m_out.sub(fewDifferences, m_out.constInt64(CompactTable::onesOfTags));
+    LValue fewMatches = m_out.bitAnd(m_out.bitAnd(belowFew, m_out.bitXor(fewDifferences, m_out.constInt64(-1))), m_out.constInt64(tops));
+    m_out.branch(m_out.notZero64(fewMatches), normalEdge(isAmongFew), normalEdge(isAbsent));
+
+    m_out.appendTo(isAmongFew);
+    LValue fewEntry = placeOfLowest(fewMatches);
+    LValue used = m_out.zeroExtPtr(m_out.load32(m_out.address(storage, columns.tags, CompactTable::offsetOfUsed() - CompactTable::offsetOfIndex())));
+    m_out.branch(m_out.below(fewEntry, used), normalEdge(isUsed), normalEdge(isAbsent));
+
+    m_out.appendTo(isUsed);
+    branchOnKeyAt(fewEntry, 0, searchesToEnd ? rareEdge(liesElsewhere) : unlikelyEdge(liesElsewhere));
+
+    auto branchOnKeyInSlot = [&](LValue slot, BlockEdge otherKey) {
+        LBasicBlock hasShortSlot = newBlock();
+        LBasicBlock hasLongSlot = newBlock();
+        LValue entries = m_out.add(m_out.add(columns.tags, columns.mask), slot);
+        m_out.branch(m_out.notZero64(m_out.bitAnd(columns.keys, m_out.constInt64(columnIsOfOtherKind))), normalEdge(hasLongSlot), normalEdge(hasShortSlot));
+
+        m_out.appendTo(hasShortSlot);
+        LValue shortEntry = m_out.zeroExtPtr(m_out.load8ZeroExt32(m_out.address(storage, entries, 1)));
+        branchOnKeyAt(shortEntry, 0, otherKey);
+
+        m_out.appendTo(hasLongSlot);
+        LValue word = m_out.load32(m_out.address(storage, m_out.add(entries, m_out.shl(slot, m_out.constInt32(1))), 1));
+        LValue longEntry = m_out.zeroExtPtr(m_out.bitAnd(word, m_out.constInt32(0xffffff)));
+        branchOnKeyAt(longEntry, columnIsOfOtherKind, otherKey);
+    };
+    auto slotsWithTagAmong = [&](LValue eightTags, LValue bytesOfTag) {
+        LValue differences = m_out.bitXor(eightTags, bytesOfTag);
+        LValue below = m_out.sub(differences, m_out.constInt64(CompactTable::belowDifferenceOfOtherTags));
+        return m_out.bitAnd(m_out.bitAnd(below, m_out.bitXor(differences, m_out.constInt64(-1))), m_out.constInt64(tops));
+    };
+    auto freeSlotsAmong = [&](LValue eightTags) { return m_out.bitAnd(m_out.bitXor(eightTags, m_out.constInt64(-1)), m_out.constInt64(tops)); };
+
+    m_out.appendTo(hasSlots);
+    LValue home = m_out.bitAnd(m_out.zeroExtPtr(hash), columns.mask);
+    auto tagOfHash = [&](LValue hash) { return m_out.bitOr(m_out.lShr(hash, m_out.constInt32(CompactTable::tagShiftOfSlots - 1)), m_out.constInt32(CompactTable::takenSlot | CompactTable::keyLeftHomeSlot)); };
+    LValue tag = tagOfHash(hash);
+    LValue difference = m_out.bitXor(tag, m_out.load8ZeroExt32(m_out.address(storage, m_out.add(columns.tags, home), 0)));
+    LBasicBlock hasTagAtHome = searchesToEnd ? newBlock() : hasSameTag;
+    ValueFromBlock slotAtHome = searchesToEnd ? ValueFromBlock() : m_out.anchor(home);
+    m_out.branch(m_out.testNonZero32(difference, m_out.constInt32(0xff & ~CompactTable::keyLeftHomeSlot)), normalEdge(hasOtherTag), normalEdge(hasTagAtHome));
+
+    if (searchesToEnd) {
+        m_out.appendTo(hasTagAtHome);
+        branchOnKeyInSlot(home, unlikelyEdge(hasOtherTag));
+    }
+
+    m_out.appendTo(hasOtherTag);
+    m_out.branch(m_out.testNonZero32(difference, m_out.constInt32(CompactTable::keyLeftHomeSlot)), normalEdge(isAbsent), normalEdge(searchesGroup));
+
+    m_out.appendTo(searchesGroup);
+    LValue group = m_out.bitAnd(home, m_out.constInt64(~static_cast<int64_t>(CompactTable::slotsPerGroup - 1)));
+    LValue eightTags = m_out.load64(m_out.address(storage, m_out.add(columns.tags, group), 0));
+    LValue matches = slotsWithTagAmong(eightTags, bytesOf(tag));
+    m_out.branch(m_out.notZero64(matches), normalEdge(isInGroup), normalEdge(isNotInGroup));
+
+    LBasicBlock searchesOn = searchesToEnd ? newBlock() : nullptr;
+    LBasicBlock groupIsFull = searchesToEnd ? newBlock() : liesElsewhere;
+    m_out.appendTo(isNotInGroup);
+    m_out.branch(m_out.notZero64(freeSlotsAmong(eightTags)), normalEdge(isAbsent), searchesToEnd ? rareEdge(groupIsFull) : normalEdge(groupIsFull));
+
+    m_out.appendTo(isInGroup);
+    LValue firstSlotInGroup = m_out.add(group, placeOfLowest(matches));
+    if (!searchesToEnd) {
+        ValueFromBlock slotInGroup = m_out.anchor(firstSlotInGroup);
+        m_out.jump(hasSameTag);
+
+        m_out.appendTo(hasSameTag);
+        branchOnKeyInSlot(m_out.phi(Machine::Int64, slotAtHome, slotInGroup), unlikelyEdge(liesElsewhere));
+    } else {
+        LBasicBlock hasOtherKeyInGroup = newBlock();
+        LBasicBlock isInLaterGroup = newBlock();
+        LBasicBlock hasOtherKeyLater = newBlock();
+        LBasicBlock isNotInLaterGroup = newBlock();
+        LBasicBlock laterGroupIsFull = newBlock();
+        LValue laterGroup = m_out.phiIn(searchesOn, Machine::Int64);
+        LValue allowed = m_out.phiIn(searchesOn, Machine::Int64);
+        LValue bytesOfTag = m_out.phiIn(searchesOn, Machine::Int64);
+        auto tagAgain = [&] { return tagOfHash(m_out.foldedProduct(key.value(), m_out.constInt64(static_cast<int64_t>(CompactTable::keyMultiplier)))); };
+        auto searchBehindSlot = [&](LValue slot, LValue bytes) {
+            LValue bitOfSlot = m_out.add(m_out.shl(m_out.castToInt32(m_out.bitAnd(slot, m_out.constInt64(CompactTable::slotsPerGroup - 1))), m_out.constInt32(3)), m_out.constInt32(7));
+            m_out.upsilon(m_out.bitAnd(slot, m_out.constInt64(~static_cast<int64_t>(CompactTable::slotsPerGroup - 1))), laterGroup);
+            m_out.upsilon(m_out.shl(m_out.constInt64(-2), bitOfSlot), allowed);
+            m_out.upsilon(bytes, bytesOfTag);
+            m_out.jump(searchesOn);
+        };
+        auto searchBehindGroup = [&](LValue group, LValue bytes) {
+            m_out.upsilon(m_out.bitAnd(m_out.add(group, m_out.constInt64(CompactTable::slotsPerGroup)), columns.mask), laterGroup);
+            m_out.upsilon(m_out.constInt64(-1), allowed);
+            m_out.upsilon(bytes, bytesOfTag);
+            m_out.jump(searchesOn);
+        };
+        branchOnKeyInSlot(firstSlotInGroup, rareEdge(hasOtherKeyInGroup));
+
+        m_out.appendTo(hasOtherKeyInGroup);
+        searchBehindSlot(firstSlotInGroup, bytesOf(tagAgain()));
+
+        m_out.appendTo(groupIsFull);
+        searchBehindGroup(group, bytesOf(tagAgain()));
+
+        m_out.appendTo(searchesOn);
+        LValue laterTags = m_out.load64(m_out.address(storage, m_out.add(columns.tags, laterGroup), 0));
+        LValue laterMatches = m_out.bitAnd(slotsWithTagAmong(laterTags, bytesOfTag), allowed);
+        m_out.branch(m_out.notZero64(laterMatches), normalEdge(isInLaterGroup), normalEdge(isNotInLaterGroup));
+
+        m_out.appendTo(isInLaterGroup);
+        LValue laterSlot = m_out.add(laterGroup, placeOfLowest(laterMatches));
+        LValue isLong = m_out.bitAnd(columns.keys, m_out.constInt64(columnIsOfOtherKind));
+        LValue wordOfSlot = m_out.load32(m_out.address(storage, m_out.add(m_out.add(columns.tags, columns.mask), m_out.add(laterSlot, m_out.mul(m_out.shl(isLong, m_out.constInt32(1)), laterSlot))), 1));
+        LValue laterEntry = m_out.bitAnd(m_out.zeroExtPtr(wordOfSlot), m_out.bitOr(m_out.mul(isLong, m_out.constInt64(0xffff00)), m_out.constInt64(0xff)));
+        LValue placeOfLaterKey = m_out.add(m_out.sub(columns.keys, isLong), m_out.shl(laterEntry, m_out.constInt32(columns.keysAreCells ? 2 : 3)));
+        foundEntries.append(m_out.anchor(laterEntry));
+        LValue isLaterKey = columns.keysAreCells ? m_out.equal(m_out.load32(m_out.address(entriesHeap, placeOfLaterKey, 0)), compress(CellPointer(key.value())).value()) : m_out.equal(m_out.load64(m_out.address(entriesHeap, placeOfLaterKey, 0)), key.value());
+        m_out.branch(isLaterKey, normalEdge(isFound), normalEdge(hasOtherKeyLater));
+
+        m_out.appendTo(hasOtherKeyLater);
+        searchBehindSlot(laterSlot, bytesOfTag);
+
+        m_out.appendTo(isNotInLaterGroup);
+        m_out.branch(m_out.notZero64(freeSlotsAmong(laterTags)), normalEdge(isAbsent), normalEdge(laterGroupIsFull));
+
+        m_out.appendTo(laterGroupIsFull);
+        searchBehindGroup(laterGroup, bytesOfTag);
+    }
+
+    m_out.appendTo(isFound);
+    LValue entry = m_out.phi(Machine::Int64, foundEntries);
+    Vector<ValueFromBlock, 3> keptEntries;
+    auto keepEntry = [&](LValue kept) {
+        if (columns.keepsEntry)
+            keptEntries.append(m_out.anchor(kept));
+    };
+    if (columns.readsValues)
+        join.add(valueOfEntry(columns, entry));
+    else {
+        keepEntry(entry);
+        join.add(boolean(true));
+    }
+
+    m_out.appendTo(isAbsent);
+    if (columns.edgeIfAbsent)
+        generator().jumpIfAbsent(*columns.edgeIfAbsent);
+    else if (columns.readsValues)
+        join.add(undefined());
+    else {
+        keepEntry(m_out.constInt64(entryOfAbsentKey));
+        join.add(boolean(false));
+    }
+
+    m_out.appendTo(liesElsewhere);
+    Operand foundByHash = lookUpByHash();
+    keepEntry(m_out.constInt64(unknownEntry));
+    join.add(foundByHash);
+    Operand result = join.finish();
+    m_entryOfTest = columns.keepsEntry ? m_out.phi(Machine::Int64, keptEntries) : nullptr;
+    return result;
+}
+
+Boxed CollectionIntrinsicEmitter::valueOfEntry(const CollectionColumns& columns, LValue entry)
+{
+    TableReader reader(generator());
+    const Machine::AbstractHeap& entries = m_heaps.entire(AbstractHeap::CollectionEntries);
+    return selectByBranch<Boxed>(Condition(m_out.notZero64(m_out.bitAnd(columns.values, m_out.constInt64(columnIsOfOtherKind)))), [&] {
+        return reader.decodeNarrow(NarrowReference(m_out.load32(m_out.address(entries, m_out.add(columns.values, m_out.shl(entry, m_out.constInt32(2))), -columnIsOfOtherKind))));
+    }, [&] {
+        return Boxed(m_out.load64(m_out.address(entries, m_out.add(columns.values, m_out.shl(entry, m_out.constInt32(3))), 0)));
+    });
+}
+
+LValue CollectionIntrinsicEmitter::entryOfTest(ValueID test)
+{
+    if (!test || generator().isLayingOutTurns())
+        return nullptr;
+    for (size_t index = m_entriesOfTests.size(); index--;) {
+        if (m_entriesOfTests[index].first == test)
+            return m_entriesOfTests[index].second;
+    }
+    return nullptr;
+}
+
+Operand CollectionIntrinsicEmitter::valueAtTestedEntry(const ValueContext& value, const CollectionColumns& columns, LValue entry, const ScopedLambda<Operand()>& lookUpByHash)
+{
+    LBasicBlock isFound = newBlock();
+    LBasicBlock isNotFound = newBlock();
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock liesElsewhere = newBlock();
+    OperandJoin join(m_out, Representation::JSValue);
+    if (columns.keyIsString) {
+        LBasicBlock hasColumn = newBlock();
+        m_out.branch(m_out.notZero64(columns.values), normalEdge(hasColumn), unlikelyEdge(liesElsewhere));
+        m_out.appendTo(hasColumn);
+    }
+    m_out.branch(m_out.lessThan(entry, m_out.constInt64(0)), unlikelyEdge(isNotFound), normalEdge(isFound));
+
+    m_out.appendTo(isFound);
+    Boxed found = valueOfEntry(columns, entry);
+    if (emittersCheckProofs())
+        emitter<ThrowEmitter>().requireOrCrash(value, Condition(m_out.equal(found.value(), lookUpByHash().as<Boxed>().value())), std::nullopt, ProofSource::RememberedFact);
+    join.add(found);
+
+    m_out.appendTo(isNotFound);
+    m_out.branch(m_out.equal(entry, m_out.constInt64(entryOfAbsentKey)), normalEdge(isAbsent), rareEdge(liesElsewhere));
+
+    m_out.appendTo(isAbsent);
+    join.add(undefined());
+
+    m_out.appendTo(liesElsewhere);
+    join.add(lookUpByHash());
+    return join.finish();
+}
+
+bool CollectionIntrinsicEmitter::mayBeNullish(ValueID key) const
+{
+    return typeOf(key).primitives & Primitive::UndefinedOrNull;
+}
+
+CollectionIntrinsicEmitter::CollectionColumns CollectionIntrinsicEmitter::columnsOfLookup(const ValueContext& value, ValueID collection, KeyOfLookup key, bool readsValues)
+{
+    CollectionColumns columns;
+    columns.keysAreCells = key != KeyOfLookup::Number;
+    columns.keyIsString = key == KeyOfLookup::String;
+    columns.keyMayBeNullish = mayBeNullish(value->keyOperand());
+    columns.readsValues = readsValues;
+    LValue tags = integerOf(value->tagsOperand()).value();
+    if (!value->maskOperand()) {
+        columns.cache = tags;
+        columns.collection = in<CellPointer>(collection);
+        return columns;
+    }
+    columns.tags = tags;
+    columns.mask = integerOf(value->maskOperand()).value();
+    columns.keys = integerOf(value->keysOperand()).value();
+    if (readsValues)
+        columns.values = integerOf(value->valuesOperand()).value();
+    return columns;
+}
+
+void CollectionIntrinsicEmitter::getMapValue(const ValueContext& value, CollectionColumns columns)
+{
+    auto& tables = emitter<HashTableBuiltinEmitter>();
+    Boxed key = tables.normalizedKey(value, value->keyOperand());
+    auto lookUpByHash = [&]() -> Operand { return tables.lookUpNormalizedKey(value, value->mapOperand(), value->keyOperand(), key, HashTableOwner::Map, LookupAnswer::Value); };
+    if (LValue entry = entryOfTest(value->testOperand())) {
+        Boxed found = valueAtTestedEntry(value, columns, entry, scopedLambda<Operand()>(lookUpByHash)).as<Boxed>();
+        define(value, emitter<ConversionEmitter>().inRepresentation(value, found, typeOf(value.id()), value.representation()));
+        return;
+    }
+    columns.edgeIfAbsent = generator().findEdgeIfAbsent(value);
+    CollectionColumns searched = columns;
+    searched.keyMayBeAtItsPlace = !columns.keysAreCells && isCounterOrSmallNumber(value->keyOperand());
+    Boxed found = lookUpByTag(searched, key, scopedLambda<Operand()>(lookUpByHash)).as<Boxed>();
+    define(value, emitter<ConversionEmitter>().inRepresentation(value, found, typeOf(value.id()), value.representation()));
+}
+
+void CollectionIntrinsicEmitter::testForKey(const ValueContext& value, const CollectionColumns& columns)
+{
+    auto& tables = emitter<HashTableBuiltinEmitter>();
+    Boxed key = tables.normalizedKey(value, value->keyOperand());
+    HashTableOwner owner = value->searchesSet() ? HashTableOwner::Set : HashTableOwner::Map;
+    auto lookUpByHash = [&]() -> Operand { return tables.lookUpNormalizedKey(value, value->collectionOperand(), value->keyOperand(), key, owner, LookupAnswer::IsPresent); };
+    CollectionColumns searched = columns;
+    searched.keyMayBeAtItsPlace = !columns.keysAreCells && isCounterOrSmallNumber(value->keyOperand());
+    searched.keepsEntry = !columns.cache && owner == HashTableOwner::Map && m_code.useCountOf(value.id()) > 1 && !generator().isLayingOutTurns();
+    define(value, lookUpByTag(searched, key, scopedLambda<Operand()>(lookUpByHash)).as<Condition>());
+    if (searched.keepsEntry)
+        m_entriesOfTests.append({ value.id(), m_entryOfTest });
+}
+
+void CollectionIntrinsicEmitter::generateGetMapValueByTag(const ValueContext& value)
+{
+    getMapValue(value, columnsOfLookup(value, value->mapOperand(), value->keysAreCells() ? KeyOfLookup::Cell : KeyOfLookup::Number, true));
+}
+
+void CollectionIntrinsicEmitter::generateHasKeyByTag(const ValueContext& value)
+{
+    testForKey(value, columnsOfLookup(value, value->collectionOperand(), value->keysAreCells() ? KeyOfLookup::Cell : KeyOfLookup::Number, false));
+}
+
+void CollectionIntrinsicEmitter::generateGetMapValueByStringTag(const ValueContext& value)
+{
+    getMapValue(value, columnsOfLookup(value, value->mapOperand(), KeyOfLookup::String, true));
+}
+
+void CollectionIntrinsicEmitter::generateHasStringKeyByTag(const ValueContext& value)
+{
+    testForKey(value, columnsOfLookup(value, value->collectionOperand(), KeyOfLookup::String, false));
 }
 
 void CollectionIntrinsicEmitter::generateMovesOfEntriesInCollections(const ValueContext& value)

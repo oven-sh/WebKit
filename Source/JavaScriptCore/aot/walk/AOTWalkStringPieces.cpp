@@ -663,6 +663,13 @@ static bool buildKeyTestArmsForStringPieces(Walker& walker, const CallByOneRow& 
     return true;
 }
 
+static bool isFoundInLineByTag(Walker& walker, Reference map, Reference key)
+{
+    const Type& type = walker.types().at(walker.typeOf(key));
+    bool hasTag = type.isNumber() || type.isAnyStringOrNullish() || (type.hasObjects() && !(type.primitives & ~Primitive::UndefinedOrNull));
+    return hasTag && key.isValue() && !walker.isInvariantInInnermostLoop(key) && walker.code().at(walker.currentBlock()).frequency == BlockFrequency::Normal && walker.outermostLoopToReadInFrontOf(map, LocationMasks(AbstractHeapSet { AbstractHeap::CollectionStorage }));
+}
+
 bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
 {
     if (!walker.isInLoop() || !walker.opensGuesses() || !walker.has(Mechanism::Folding) || call.isForwarded || !call.receiver || call.arguments.size() != 1 || !call.arguments[0] || call.writtenArguments().size() != 1 || call.call.opcode() != Opcode::Call)
@@ -671,7 +678,7 @@ bool buildTestForKeyLookedUpBehindIt(Walker& walker, const CallByOneRow& call)
     Reference root = rootForStrings(walker, call.arguments[0]);
     bool mayBeRope = root.isValue() && operationsThatJoinTexts.contains(walker.code().at(root.id()).opcode) && (walker.types().at(walker.typeOf(call.arguments[0])).primitives & Primitive::AnyString);
     bool nameReadAgainGivesSameValue = !root.isValue() || !walker.code().at(root.id()).traits().mayCallUnknownCode();
-    if (mayBeRope || !someLaterCallGetsUnderKeyForStringPieces(walker, index, call.call.id(), index.stripCasts(call.writtenArguments()[0]), nameReadAgainGivesSameValue))
+    if (mayBeRope || isFoundInLineByTag(walker, call.receiver, call.arguments[0]) || !someLaterCallGetsUnderKeyForStringPieces(walker, index, call.call.id(), index.stripCasts(call.writtenArguments()[0]), nameReadAgainGivesSameValue))
         return false;
     Draft find(Opcode::FindKeyInMap, call.origin);
     find.setMapOperand(call.receiver);
@@ -798,7 +805,15 @@ bool buildStoreUnderPieceInMap(Walker& walker, const CallByOneRow& call)
     std::optional<PieceOfString> piece = pieceThatIsKeyForStringPieces(walker, call, 2);
     bool mayGoByPlace = piece || (walker.opensGuesses() && !call.isForwarded && call.receiver && call.arguments.size() == 2 && call.arguments[0] && call.writtenArguments().size() == 2);
     std::optional<uint64_t> found = mayGoByPlace ? findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0]) : std::nullopt;
-    if (!found)
+    Reference moves = found ? Reference::fromBits(static_cast<uint32_t>(*found >> 32)) : Reference();
+    if (!found && mayGoByPlace && !piece) {
+        found = findKnown(walker, KnownNote::PlaceOfKeyInMap, call.receiver, call.arguments[0], placeStandsWhileStorageIsNotWritten);
+        if (found) {
+            moves = walker.build(Draft(Opcode::MovesOfEntriesInCollections, call.origin));
+            walker.count(StatisticID::MapEntryIndicesCached);
+        }
+    }
+    if (!moves)
         return false;
 
     Reference foundAgain;
@@ -817,7 +832,7 @@ bool buildStoreUnderPieceInMap(Walker& walker, const CallByOneRow& call)
     Draft store(Opcode::TryPutValueAtPlaceInMap, call.origin);
     store.setMapOperand(call.receiver);
     store.setPlaceOperand(Reference::fromBits(static_cast<uint32_t>(*found)));
-    store.setMovesOperand(Reference::fromBits(static_cast<uint32_t>(*found >> 32)));
+    store.setMovesOperand(moves);
     store.setValueOperand(call.arguments[1]);
     Reference isStored = walker.build(WTF::move(store));
     if (!isStored)

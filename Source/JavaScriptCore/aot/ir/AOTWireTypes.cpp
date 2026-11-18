@@ -293,7 +293,37 @@ void WireTypeReader::readTypes()
     }
 
     findTypesExpectedBesideViews(arenas, types);
+    findTypesOfRecordsMadeForFields(arenas);
     m_program.types.setTypesOfWireIndexes(WTF::move(types));
+}
+
+void WireTypeReader::findTypesOfRecordsMadeForFields(ArenasOfWorkers& arenas)
+{
+    constexpr uint32_t flagsOfInference = static_cast<uint32_t>(PositionFlags::IsFromCompiler) | static_cast<uint32_t>(PositionFlags::IsExpected);
+    Vector<uint32_t> wireIndexes = collectInParallel<uint32_t>(m_build.parallelLoops(), static_cast<unsigned>(m_sections.layouts.size()), [&](unsigned index, Vector<uint32_t>& found) {
+        const Wire::Layout& layout = m_sections.layouts[index];
+        if (layout.kind != static_cast<uint32_t>(LayoutKind::Instance))
+            return;
+        for (const Wire::Field& field : m_sections.fields.subspan(layout.fields.start, layout.fields.count)) {
+            if ((field.declared.flags & flagsOfInference) != flagsOfInference)
+                continue;
+            std::span<const uint32_t> named = wordsListedByWireType(m_sections, m_sections.types[field.declared.type].layouts);
+            if (named.size() == 1 && m_sections.layouts[named[0]].kind == static_cast<uint32_t>(LayoutKind::Record) && m_declaredMembers[named[0]] != LayoutSets::of(LayoutID(named[0])))
+                found.append(field.declared.type);
+        }
+    });
+    for (uint32_t wireIndex : wireIndexes) {
+        auto added = m_typesOfRecordsMadeForFields.add(wireIndex + 1, TypeID());
+        if (!added.isNewEntry)
+            continue;
+        TypeArena& arena = arenas.of(0);
+        TypeParts parts = readPartsWithoutClasses(arena, wireIndex);
+        LayoutID record(wordsListedByWireType(m_sections, m_sections.types[wireIndex].layouts)[0]);
+        if (parts.anyObject || !parts.unnamedLayouts)
+            continue;
+        parts.unnamedLayouts = LayoutSets::of(record);
+        added.iterator->value = arena.intern(parts);
+    }
 }
 
 void WireTypeReader::findTypesExpectedBesideViews(ArenasOfWorkers& arenas, const Vector<TypeID>& typesOfWireIndexes)

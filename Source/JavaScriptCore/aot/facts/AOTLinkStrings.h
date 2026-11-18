@@ -34,6 +34,8 @@ struct KeyAffixes {
     std::span<const uint8_t> ending;
 };
 
+ValueID valueBetweenAffixes(const Program&, const BodyIndex&, ValueID key, KeyAffixes&);
+
 KeyAffixes affixesOfKey(const Program&, const BodyIndex&, ValueID key);
 
 void fillTablesOfStringsForFacts(const Program&, const ThinSummaries&, const LinkTables& linked, const LinkTables& held, FactTables&);

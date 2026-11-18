@@ -194,9 +194,49 @@ void StringBuilderEmitter::generateStackStringBuilderToString(const ValueContext
     define(value, callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderToString, { recordOf(value), in<Pointer>(value->cursorOperand()) }));
 }
 
+Pointer StringBuilderEmitter::bufferOf(Pointer record)
+{
+    return offsetBy(record, OBJECT_OFFSETOF(StackStringBuilder, buffer));
+}
+
+CellPointer StringBuilderEmitter::finishByCall(const OperationContext& context, Pointer record, Pointer cursor)
+{
+    return callOperation<CellPointer>(context, RuntimeOperation::StackStringBuilderFinish, { record, cursor, word32(static_cast<int32_t>(StringBuilderStorage::StringUse::Unknown)) });
+}
+
+bool StringBuilderEmitter::leavesFinishToAppend(BlockID block, ValueID id, const Operation& finish, std::span<const ValueID> operationsBehind)
+{
+    if (m_code.useCountOf(id) != 1 || !m_generator.isInLoop(block))
+        return false;
+    for (ValueID behind : operationsBehind) {
+        const Operation& next = operationAt(behind);
+        if (next.opcode == Opcode::StackStringBuilderAppendString) {
+            if (next.valueOperand() != id || next.builderOperand() == finish.builderOperand())
+                return false;
+            m_finishLeftToAppend = id;
+            return true;
+        }
+        if (next.opcode != Opcode::StackStringBuilderCursor && next.opcode != Opcode::StackStringBuilderStart)
+            return false;
+    }
+    return false;
+}
+
 void StringBuilderEmitter::generateStackStringBuilderFinish(const ValueContext& value)
 {
-    define(value, callOperation<CellPointer>(value, RuntimeOperation::StackStringBuilderFinish, { recordOf(value), in<Pointer>(value->cursorOperand()), word32(static_cast<int32_t>(StringBuilderStorage::StringUse::Unknown)) }));
+    Pointer record = recordOf(value);
+    Pointer cursor = in<Pointer>(value->cursorOperand());
+    if (!m_generator.runsRepeatedly(value.block()) && !m_facts.linked().functionsCalledInLoops.get(m_unit.function.index())) {
+        define(value, finishByCall(value, record, cursor));
+        return;
+    }
+    Pointer buffer = bufferOf(record);
+    Condition holdsOneCharacter = logicalAnd(equal(limitOf(record), limitOnStack(record)), equal(cursor, offsetBy(buffer, 1)));
+    define(value, either<CellPointer>(holdsOneCharacter, [&] {
+        return singleCharacterString(Word32(m_out.load8ZeroExt32(bytesAt(buffer))));
+    }, [&] {
+        return finishByCall(value, record, cursor);
+    }));
 }
 
 void StringBuilderEmitter::generateStackStringBuilderDiscard(const ValueContext& value)

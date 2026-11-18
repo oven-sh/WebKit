@@ -19,6 +19,7 @@ public:
     void generateEndCellLifetime(const ValueContext&);
     void generateReleaseArray(const ValueContext&);
     void generateReleaseList(const ValueContext&);
+    void generatePrefetchElements(const ValueContext&);
     void generateGuessFailsUnasked(const ValueContext&);
     void generateBeginEffectsCheck(const ValueContext&);
     void generateCheckIterationRestart(const ValueContext&);

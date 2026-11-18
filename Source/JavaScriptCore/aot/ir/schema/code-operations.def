@@ -8,6 +8,7 @@ family Hint Placed..Placed
 engine operation EndCellLifetime (cell: Convertible/inspects) -> none ; writes(ShapeWords, OrderWords, NamedProperties, ObjectFields, ArrayStorage, Elements) ; form = Open
 engine operation ReleaseArray (array: Convertible/inspects) -> none ; reads(ArrayStorage, RuntimeState) writes(AllocatorState) ; form = Open
 engine operation ReleaseList (list: Any/inspects+writesContents) [| engine isCopy] -> none ; reads(ArrayStorage, RuntimeState) writes(AllocatorState, ArrayStorage, Elements[Array], ArrayLengths, LoweredArrayLengths) ; form = Open
+engine operation PrefetchElements (list: Any/inspects, position: Integer/inspects, steps: List<UInt32>, minLength: UInt32) -> none ; reads(ArrayStorage, RuntimeState) writes(RuntimeState) ; form = Open
 engine operation GuessFailsUnasked () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
 engine operation BeginEffectsCheck () -> natural(boolean) ; reads(RuntimeState) writes(RuntimeState) ; form = Open
 engine operation CheckIterationRestart (beginning: Convertible/inspects) -> none ; writes(ExternalState) ; form = Open

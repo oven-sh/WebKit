@@ -33,9 +33,6 @@
 #include <algorithm>
 #include <optional>
 #include <span>
-#include <wtf/Lock.h>
-#include <wtf/OSAllocator.h>
-#include <wtf/PageBlock.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/SymbolImpl.h>
@@ -313,87 +310,26 @@ static std::span<const FunctionSourceEntry> findFunctionSourceEntries(const Prog
     return { found.begin(), found.end() };
 }
 
-static std::optional<std::span<const Latin1Character>> decompressSourceBlocks(Image::DecompressedSourceBlocks& decompressedSource, DecompressSourceFunction decompress, const uint8_t* compressed, std::span<const uint32_t> ends, uint32_t sourceSize, uint32_t start, uint32_t end)
+static std::span<const Latin1Character> functionSourceBytes(FunctionID function)
 {
-    RELEASE_ASSERT(start <= end && end <= sourceSize);
-    RELEASE_ASSERT(sourceSize <= static_cast<uint64_t>(ends.size()) * sourceBlockSize);
-    if (!decompress)
-        return std::nullopt;
-    Locker locker { decompressedSource.lock };
-    if (!decompressedSource.bytes) {
-        size_t sizeReserved = roundUpToMultipleOf(WTF::pageSize(), std::max<size_t>(sourceSize, 1));
-        void* text = OSAllocator::tryReserveUncommitted(sizeReserved);
-        void* isDecompressed = nullptr;
-        if (!text)
-            return std::nullopt;
-        if (!tryFastZeroedMalloc(ends.size()).getValue(isDecompressed)) {
-            OSAllocator::releaseDecommitted(text, sizeReserved, 0);
-            return std::nullopt;
-        }
-        decompressedSource.bytes = static_cast<uint8_t*>(text);
-        decompressedSource.isDecompressed = static_cast<uint8_t*>(isDecompressed);
-    }
-    uint8_t* decompressed = decompressedSource.bytes;
-    uint8_t* isDecompressed = decompressedSource.isDecompressed;
-    for (uint32_t block = start / sourceBlockSize; static_cast<uint64_t>(block) * sourceBlockSize < end; ++block) {
-        if (isDecompressed[block])
-            continue;
-        uint32_t first = block ? ends[block - 1] : 0;
-        size_t offset = static_cast<size_t>(block) * sourceBlockSize;
-        size_t sizeOfBlock = std::min<size_t>(sourceBlockSize, sourceSize - offset);
-        OSAllocator::commit(decompressed + offset, roundUpToMultipleOf(WTF::pageSize(), sizeOfBlock), true, false);
-        if (!decompress({ decompressed + offset, sizeOfBlock }, { compressed + first, ends[block] - first }))
-            return std::nullopt;
-        isDecompressed[block] = 1;
-    }
-    return std::span { byteCast<Latin1Character>(decompressed) + start, end - start };
-}
-
-static std::optional<std::span<const Latin1Character>> bytesOf(const Image& image, const FunctionSourceEntry& entry)
-{
-    const ProgramTables& tables = image.programTables();
-    const FunctionSources& sources = tables.functionSources()[0];
-    if (sources.numberOfBlocks)
-        return decompressSourceBlocks(image.decompressedFunctionSources(), image.decompressSource(), tables.at<uint8_t>(sources.sourceOffset), { tables.at<uint32_t>(sources.blockEndsOffset), sources.numberOfBlocks }, sources.sourceSize, entry.start, entry.end);
-    return std::span { tables.at<Latin1Character>(sources.sourceOffset) + entry.start, entry.end - entry.start };
-}
-
-std::optional<std::span<const Latin1Character>> quotedSourceBytes(uint32_t start, uint32_t length)
-{
-    const Image& image = *Image::current();
-    std::span<const uint8_t> text = image.programTables().quotedSourceText();
-    std::span<const uint32_t> blocks = image.programTables().quotedSourceBlocks();
-    if (blocks.empty())
-        return byteCast<Latin1Character>(text.subspan(start, length));
-    return decompressSourceBlocks(image.decompressedQuotedSources(), image.decompressSource(), text.data(), blocks.subspan(1), blocks[0], start, start + length);
-}
-
-std::optional<std::span<const Latin1Character>> functionSourceBytes(FunctionID function)
-{
-    const Image& image = *Image::current();
-    const ProgramTables& tables = image.programTables();
+    const ProgramTables& tables = programTables();
     std::span entries = findFunctionSourceEntries(tables, tables.sourceFunctionOf(function.index()));
     auto entry = std::ranges::find(entries, function.index(), [](const FunctionSourceEntry& entry) -> uint32_t { return entry.function; });
     if (entry == entries.end())
-        return std::span<const Latin1Character> { };
-    return bytesOf(image, *entry);
+        return { };
+    const FunctionSources& sources = tables.functionSources()[0];
+    RELEASE_ASSERT(entry->start <= entry->end && entry->end <= sources.sourceSize);
+    return { tables.at<Latin1Character>(sources.sourceOffset) + entry->start, entry->end - entry->start };
 }
 
-JSString* functionSourceText(JSGlobalObject* globalObject, FunctionID function)
+JSString* functionSourceText(VM& vm, FunctionID function)
 {
-    VM& vm = globalObject->vm();
     FunctionTables::SourceTextMap& answered = FunctionTables::of(vm).sourceTexts;
     if (auto found = answered.find(function); found != answered.end()) {
         if (JSString* text = found->value.get())
             return text;
     }
-    std::optional decompressed = functionSourceBytes(function);
-    if (!decompressed) {
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    std::span bytes = *decompressed;
+    std::span bytes = functionSourceBytes(function);
     if (!bytes.data())
         return nullptr;
     JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
@@ -475,9 +411,7 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     CallableKind callableKind = kindData.callable();
     ASCIILiteral async = kindData.isAsync ? "async "_s : ""_s;
     bool isProgramFunction = !kindData.isInRuntimeModule;
-    JSString* text = isProgramFunction ? functionSourceText(globalObject, function) : nullptr;
-    RETURN_IF_EXCEPTION(scope, { });
-    if (text)
+    if (JSString* text = isProgramFunction ? functionSourceText(globalObject->vm(), function) : nullptr)
         return text;
     JSValue made;
     bool isWrittenWithoutName = callableKind == CallableKind::Arrow || (!isProgramFunction && kindData.hasInferredName);

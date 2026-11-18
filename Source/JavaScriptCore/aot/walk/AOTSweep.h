@@ -37,6 +37,7 @@ struct SweepTotals {
     uint32_t operationsDropped { 0 };
     uint32_t branchesThatDecideNothing { 0 };
     uint32_t doorsDroppedWithTheirValues { 0 };
+    uint32_t overwrittenSlotStoresDropped { 0 };
     uint32_t allocationsSunk { 0 };
 };
 
@@ -44,6 +45,7 @@ inline constexpr uint8_t neededMarkOfSweep = static_cast<uint8_t>(SweepMark::IsN
 inline constexpr uint8_t passedByMarkOfSweep = 1 << 6;
 
 struct RoomsOfSweep;
+class SlotStoresOfBlock;
 
 class Sweep {
     WTF_MAKE_NONCOPYABLE(Sweep);
@@ -204,6 +206,13 @@ private:
     bool m_hasMovedBirths { false };
     bool m_sweepsAgainBehindMovedBirths { false };
     Vector<ValueID, 4> m_overwrittenStores;
+    struct StoreDroppedUnlessRead {
+        ValueID store;
+        ValueID read;
+    };
+    Vector<StoreDroppedUnlessRead> m_storesDroppedUnlessRead;
+    bool isOverwrittenUnread(ValueID store, const Operation&, SlotStoresOfBlock&);
+    void needStoresReadLate();
     Vector<ValueID>& m_birthsThatMayMove;
     struct EnvironmentHandedBack {
         LayoutID layout;

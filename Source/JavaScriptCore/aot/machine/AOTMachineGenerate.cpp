@@ -53,6 +53,7 @@ void prepareForGeneration(Procedure& procedure)
         procedure.letGoOfWhatBuildingLeaves();
 
     procedure.separateShiftsOfSums();
+    procedure.compareTermsOfSums();
     threadJumps(procedure);
     if (procedure.failure())
         return;

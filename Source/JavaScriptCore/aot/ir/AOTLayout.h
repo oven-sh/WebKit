@@ -136,6 +136,17 @@ inline FieldReference declarationOf(const Program&, FieldReference);
 inline std::optional<FieldReference> findField(const Program&, LayoutID, PropertyKeyID);
 std::optional<FieldReference> findFieldAboveInRow(const Program&, LayoutID, PropertyKeyID);
 inline LayoutID writtenBaseOf(const Layout& layout) { return layout.base; }
+inline bool holdsStateOfCollectionsAlone(const Layout& layout)
+{
+    constexpr OptionSet<FieldFlags> flagsOfState { FieldFlags::IsPrivate, FieldFlags::IsHidden };
+    bool holdsState = false;
+    for (const Field& field : layout.fields) {
+        if (field.flags.contains(FieldFlags::IsBrand))
+            return false;
+        holdsState |= field.flags.containsAll(flagsOfState) && !field.form.contains(FieldForm::IsAccessor);
+    }
+    return holdsState;
+}
 inline bool isDefinedByClass(const Layout& layout) { return layout.kind == LayoutKind::Instance && layout.constructor && !layout.has(LayoutFlags::IsConstructorFunction); }
 inline bool isFoundByShapeTest(const Layout& layout)
 {

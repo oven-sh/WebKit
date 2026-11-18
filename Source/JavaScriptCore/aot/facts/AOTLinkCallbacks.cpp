@@ -386,8 +386,8 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
         std::optional<unsigned> ownThis = summary.sitesThatHandOverCaptures.isEmpty() ? std::nullopt : program.at(maker).thisParameterIndex();
         if (!ownThis || *ownThis >= tables.function(maker).numberOfParameters)
             continue;
-        LinkedParameter arriving = tables.parametersOf(maker)[*ownThis];
-        const BodyIndex* index = arriving.written ? bodies.find(maker) : nullptr;
+        TypeID written = tables.parametersOf(maker)[*ownThis].written;
+        const BodyIndex* index = written ? bodies.find(maker) : nullptr;
         if (!index || !index->numberOfBlocks())
             continue;
         ValueID held = index->block(entryBlock).parameter(*ownThis);
@@ -404,7 +404,7 @@ void carryExpectationOfThisIntoCaptures(const Program& program, const BodyIndexT
                 if (!operands[capture] || index->stripCasts(operands[capture]) != held)
                     continue;
                 LinkedParameter& captured = tables.parameters[tables.function(made).firstParameter + capture];
-                captured.written = arriving.written;
+                captured.written = written;
                 captured.seenToArrive = { };
             }
         }

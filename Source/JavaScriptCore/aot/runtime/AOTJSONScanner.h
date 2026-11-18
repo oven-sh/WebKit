@@ -60,8 +60,8 @@ ALWAYS_INLINE const uint8_t* findEndOfPlainJSONCharacters(const uint8_t* cursor,
         for (size_t offset = 0; offset < jsonSourcePadding; offset += SIMD::stride<uint8_t>) {
             auto input = SIMD::load(cursor + offset);
             auto found = SIMD::bitOr(SIMD::equal(input, quotes), SIMD::equal(input, escapes), SIMD::lessThan(input, spaces));
-            if (auto index = SIMD::findFirstNonZeroIndex(found))
-                return cursor + offset + *index;
+            if (uint64_t lanes = SIMD::laneMask(found))
+                return cursor + offset + std::countr_zero(lanes) / SIMD::bitsPerLaneInMask<uint8_t>;
         }
         cursor += jsonSourcePadding;
     } while (cursor < sourceEnd);

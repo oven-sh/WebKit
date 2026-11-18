@@ -20,7 +20,7 @@
 namespace JSC { namespace AOT {
 
 static_assert([] {
-    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterModuleBody, StubFamily::EnterClosureForConstruct }) {
+    for (StubFamily family : { StubFamily::EnterClosure, StubFamily::EnterSlimClosure, StubFamily::EnterModuleBody, StubFamily::EnterClosureWithLoadedArguments, StubFamily::EnterClosureForConstruct }) {
         if (descriptorOf(family).linkage != StubLinkage::EnteredByRuntime)
             return false;
     }
@@ -77,6 +77,7 @@ void initializeStubWords(Instance& instance)
 {
     instance.stubs.closureEntrypoint = closureEntrypoint().taggedPtr();
     instance.stubs.slimClosureEntrypoint = slimClosureEntrypoint().taggedPtr();
+    instance.stubs.closureEntryWithLoadedArguments = addressOfStubInCurrentImage(StubKey(StubFamily::EnterClosureWithLoadedArguments));
     if (std::optional<BuiltinNativeFunction> push = BuiltinBindings::nativeFunctionOf(Builtins::ArrayPrototypePush); push && push->function)
         instance.stubs.arrayPush = TaggedNativeFunction(push->function).taggedPtr();
 

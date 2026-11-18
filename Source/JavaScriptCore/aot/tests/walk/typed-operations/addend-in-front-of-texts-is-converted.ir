@@ -1,0 +1,74 @@
+# A value that nobody knows is added to a text, and nothing but texts is added behind it: it is converted by a sum with the empty string where it is joined, and the row is one Strcat.
+# const told = x => "a " + x + "!" + "?";  sink(told, between, both, object);
+# RUN: walk f1:Body mechanisms=none+TypedOperations
+# CHECK-LABEL: code f1:Body
+# CHECK: string @Cell = Add {{*}}form=MayBeString
+# CHECK: string @Cell = Strcat
+# CHECK-NOT: = Add
+# const between = (x, f) => "a " + x + f() + "!";   A call stands behind the first sum, so x stays where it is written. What the call gives is converted.
+# RUN(CALL): walk f2:Body mechanisms=none+TypedOperations
+# CALL-LABEL: code f2:Body
+# CALL: = Add {{*}}form=Generic
+# CALL: = Call
+# CALL: string @Cell = Add {{*}}form=MayBeString
+# CALL: string @Cell = Strcat
+# const both = (x, y) => x + y + "!";   The first sum may add numbers.
+# RUN(BOTH): walk f3:Body mechanisms=none+TypedOperations
+# BOTH-LABEL: code f3:Body
+# BOTH: = Add {{*}}form=Generic
+# BOTH-NOT: form=MayBeString
+# BOTH-NOT: = Strcat
+# const object = (o, x) => o["a " + x + "!"];   The text of a key is left to the read under it.
+# RUN(KEY): walk f4:Body mechanisms=none+TypedOperations
+# KEY-LABEL: code f4:Body
+# KEY-NOT: form=MayBeString
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return v6
+}
+function f1 name="told" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="a "
+    v2 = Add v1, v0
+    v3 = String string="!"
+    v4 = Add v2, v3
+    v5 = String string="?"
+    v6 = Add v4, v5
+    Return v6
+}
+function f2 name="between" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="a "
+    v3 = Add v2, v0
+    v4 = Call v1, -
+    v5 = Add v3, v4
+    v6 = String string="!"
+    v7 = Add v5, v6
+    Return v7
+}
+function f3 name="both" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Add v0, v1
+    v3 = String string="!"
+    v4 = Add v2, v3
+    Return v4
+}
+function f4 name="object" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = String string="a "
+    v3 = Add v2, v1
+    v4 = String string="!"
+    v5 = Add v3, v4
+    v6 = ElemGet v0, v5
+    Return v6
+}

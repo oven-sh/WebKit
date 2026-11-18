@@ -94,16 +94,26 @@ LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_in_by_val);
 #if ENABLE(AOT)
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_id);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_in_by_val);
+extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_add(JSObject*, EncodedJSValue key, EncodedJSValue) REFERENCED_FROM_ASM WTF_INTERNAL;
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_instanceof);
+extern "C" EncodedJSValue SYSV_ABI llint_aot_index_of_character(const Latin1Character* characters, uint64_t lengthAndStart, uint32_t character) REFERENCED_FROM_ASM WTF_INTERNAL;
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_switch_string);
+extern "C" EncodedJSValue SYSV_ABI llint_aot_map_get(JSObject*, EncodedJSValue key) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" EncodedJSValue SYSV_ABI llint_aot_collection_has(JSObject*, EncodedJSValue key) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" EncodedJSValue SYSV_ABI llint_aot_remove_from_collection(JSObject*, EncodedJSValue key) REFERENCED_FROM_ASM WTF_INTERNAL;
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_add_number_to_string);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_to_string);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_by_id_with_this);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_uncached);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_by_symbol);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_put_by_val);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_enumerator_get_by_val);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_from_proxy);
+LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_get_property_enumerator);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_object);
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_aot_new_empty_array);
+extern "C" uintptr_t SYSV_ABI llint_aot_put_to_dictionary(CallFrame*, JSObject*, UniquedStringImpl*, EncodedJSValue) REFERENCED_FROM_ASM WTF_INTERNAL;
+extern "C" uintptr_t SYSV_ABI llint_aot_delete_from_dictionary(CallFrame*, JSObject*, UniquedStringImpl*) REFERENCED_FROM_ASM WTF_INTERNAL;
 extern "C" UGPRPair SYSV_ABI llint_slow_path_aot_call_custom_getter(CallFrame*, const JSInstruction*, const AOT::CustomAccessorRecord*, JSCell* base) REFERENCED_FROM_ASM WTF_INTERNAL;
 #endif
 LLINT_SLOW_PATH_HIDDEN_DECL(slow_path_has_private_name);

@@ -25,6 +25,8 @@ public:
     void generateNewGeneratorOfLibrary(const ValueContext&);
     void generateNewAsyncGenerator(const ValueContext&);
     void generateTakeGeneratorPrototype(const ValueContext&);
+    void generateGetGeneratorPrototype(const ValueContext&);
+    void generateTakeGeneratorLeftInPlace(const ValueContext&);
     void generateIsCallDelegated(const ValueContext&);
     void generateGiveDelegatedResult(const ValueContext&);
     void generateCallDelegate(const ValueContext&);
@@ -44,8 +46,11 @@ public:
     void branchUnlessUnmodifiedAsyncGenerator(CellPointer generator, LBasicBlock otherwise);
 
     void generateNewHeapWords(const ValueContext&);
+    void generateNewSuspendedIteration(const ValueContext&);
+    void generateNewSuspendedEnumeration(const ValueContext&);
     void generateGetHeapFrameWord(const ValueContext&);
     void generatePutHeapFrameWord(const ValueContext&);
+    void generatePutHeapFrameScope(const ValueContext&);
 
     bool layOutHeapFrame();
     bool standsBehindFirstYield(BlockID block) const { return m_blocksBehindFirstYield.get(block.index()) || (block == m_blockOfFirstYield && m_hasPassedFirstYield); }
@@ -75,6 +80,7 @@ private:
     LValue driverAsPassed(ValueID driver);
     TypedPointer stateOf(CellPointer generator);
     Pointer framePointerAtThisPoint();
+    Word32 wordBehindReturnAddress(int32_t offset);
     enum class RunsCodeOfAwaited : bool { InFrameOfFunction, BehindFunction };
     bool awaitsOnlyResultOfCall(const ValueContext& await) const;
     StubCallResult suspend(const ValueContext&, StubKey, std::initializer_list<LValue> operandsInFrontOfSiteWord, ValueID driver, RunsCodeOfAwaited = RunsCodeOfAwaited::InFrameOfFunction);
@@ -108,11 +114,12 @@ private:
     void storeIntoHeapFrame(LValue frame, ValueID kept);
     LValue readOutOfHeapFrame(LValue frame, ValueID kept);
     LValue addressOfEntrypoint(unsigned index);
+    void storeResumeAddress(unsigned entrypoint, LValue frame);
     LValue addressOfLeafStep(const LeafStepOfGenerator*);
     void findLeafSteps();
     const LeafStepOfGenerator* leafStepOf(ValueID yield) const;
     void storeLeafStep(ValueID yield);
-    void makeHeapFrame(const ValueContext& firstYield, CellPointer generator, LValue resumeAddress);
+    void makeHeapFrame(const ValueContext& firstYield, CellPointer generator, unsigned entrypoint);
     void yieldOutOfHeapFrame(const ValueContext&);
     bool mayBeSetInHeapFrame(ValueID traced) const { return m_wordsThatMayBeSet.get(m_wordsOfKeptValues[traced.index()] - 1); }
     void followWordsThatMayBeSetInto(BlockID);

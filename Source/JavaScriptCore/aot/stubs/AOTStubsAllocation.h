@@ -70,6 +70,7 @@ inline constexpr GPRReg extensionMadeBySlowStub = gprOf(StubRegister::R0);
 
 enum class LengthOfTypedArray : uint8_t { Number, WholeNumber };
 constexpr StubKey newTypedArray(LengthOfTypedArray length) { return StubKey(StubFamily::NewTypedArray).withForm(static_cast<uint8_t>(length)); }
+constexpr StubKey newTypedArrayOfArray() { return StubKey(StubFamily::NewTypedArrayOfArray); }
 constexpr StubKey newDictionary() { return StubKey(StubFamily::NewDictionary); }
 
 void loadAllocationSiteRecord(StubAssembler&, GPRReg allocation, GPRReg record, GPRReg scratch);

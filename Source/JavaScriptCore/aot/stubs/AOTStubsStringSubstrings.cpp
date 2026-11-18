@@ -200,6 +200,7 @@ void generateSubstring(StubAssembler& jit)
     loadSubstringBaseAndOffset(jit, string, base, start);
     jit.add64(from, start);
     jit.loadPtr(Address(base, JSString::offsetOfValue()), fiber);
+    fails.append(jit.branchTest32(CCallHelpers::NonZero, Address(fiber, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(fiber, StringImpl::dataOffset()), fiber);
     jit.load32(BaseIndex(fiber, start, CCallHelpers::TimesTwo), span);
     jit.branchTest32(CCallHelpers::NonZero, span, TrustedImm32(emptyPairBits)).linkTo(isReady, &jit);

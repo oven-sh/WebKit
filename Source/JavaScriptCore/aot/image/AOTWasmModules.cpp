@@ -409,10 +409,10 @@ struct WasmModuleCompiler {
         Ref<Wasm::IPIntCallee> profiledCallee = group->ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
         Ref<Wasm::OMGCallee> callee = Wasm::OMGCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { profiledCallee });
         Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
+        ImageAssembler jit;
         Wasm::CompilationContext context;
-        context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
         AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
-        RelocationRecorder recorder(*context.wasmEntrypointJIT, assemblerPolicy);
+        RelocationRecorder recorder(jit, assemblerPolicy);
         WasmRelocationLowering lowering;
         B3::Policy policy;
         policy.upstream.allowsSIMD = true;
@@ -448,7 +448,7 @@ struct WasmModuleCompiler {
         policy.air.peepholes.emitsShufflesInPairOrder = true;
         policy.air.peepholes.reusesConditionFlags = true;
         policy.targetFeatures = assemblerPolicy.features;
-        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, recorder, flavor };
+        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, jit, recorder, flavor };
         codeForImage.dependsOnFlavor = true;
         codeForImage.policy = &policy;
         codeForImage.pointerSpace = static_cast<uint32_t>(WasmRelocationSpace::Pointers);
@@ -466,7 +466,7 @@ struct WasmModuleCompiler {
         if (codeForImage.failure != Wasm::ImageCodeFailure::None)
             return { .failure = codeForImage.failure };
 
-        ImageLinkBuffer buffer(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmOMG);
+        ImageLinkBuffer buffer(jit, LinkBuffer::Profile::WasmOMG);
         if (buffer.didFailToAllocate())
             return { .failure = Wasm::ImageCodeFailure::OutOfMemory };
         buffer.finalize(false, "WebAssembly function"_s);
@@ -516,15 +516,15 @@ struct WasmModuleCompiler {
         Ref<Wasm::IPIntCallee> profiledCallee = group->ipintCalleeFromFunctionIndexSpace(functionIndexSpace);
         Ref<Wasm::BBQCallee> callee = Wasm::BBQCallee::create(functionIndexSpace, info.nameSection().get(functionIndexSpace), Ref { profiledCallee });
         Vector<Wasm::UnlinkedWasmToWasmCall> unlinkedCalls;
+        ImageAssembler jit;
         Wasm::CompilationContext context;
-        context.wasmEntrypointJIT = makeUnique<CCallHelpers>();
         AssemblerPolicy assemblerPolicy = buildContext.assemblerPolicy();
 #if CPU(X86_64)
         if (result.usesVectors)
             assemblerPolicy.features = assemblerPolicy.features.with(CPUFeature::AVX);
 #endif
-        RelocationRecorder recorder(*context.wasmEntrypointJIT, assemblerPolicy);
-        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, recorder, flavor };
+        RelocationRecorder recorder(jit, assemblerPolicy);
+        Wasm::CodeForImage codeForImage { pointers, typeIndices, structLayouts, jit, recorder, flavor };
         context.codeForImage = &codeForImage;
         MemoryMode mode = flavor == Wasm::ImageCodeFlavor::Trapping ? MemoryMode::Signaling : MemoryMode::BoundsChecking;
         auto compiled = Wasm::parseAndCompileBBQ(context, profiledCallee.get(), callee.get(), info.functions[functionIndex], signature, unlinkedCalls, module.get(), group.get(), info, mode, functionIndex);
@@ -534,7 +534,7 @@ struct WasmModuleCompiler {
         if (codeForImage.failure != Wasm::ImageCodeFailure::None)
             return { .failure = codeForImage.failure };
 
-        ImageLinkBuffer buffer(*context.wasmEntrypointJIT, LinkBuffer::Profile::WasmBBQ);
+        ImageLinkBuffer buffer(jit, LinkBuffer::Profile::WasmBBQ);
         if (buffer.didFailToAllocate())
             return { .failure = Wasm::ImageCodeFailure::OutOfMemory };
         buffer.finalize(false, "WebAssembly function"_s);
@@ -583,7 +583,7 @@ struct WasmModuleCompiler {
     {
         bool isComplete = true;
         auto generate = [&](ASCIILiteral what, uint32_t index, const auto& emit) -> RelocatableCode {
-            CCallHelpers jit;
+            ImageAssembler jit;
             RelocationRecorder recorder(jit, context.assemblerPolicy());
             emit(jit, recorder);
             auto stub = recorder.finalize(LinkBuffer::Profile::WasmThunk, &context);
@@ -629,6 +629,8 @@ struct WasmModuleCompiler {
             code.javaScriptImportStubs.append(generateWithoutRelocations("stub of import from JavaScript"_s, index, [&](CCallHelpers& jit) {
                 Wasm::emitWasmToJS(jit, info, index, &pointers);
             }));
+            if (Wasm::canImportStubCallClosure(info, index))
+                context.statistics().count(StatisticID::WasmImportStubsCallingClosures);
         }
         for (uint32_t entry = 0; entry < jsEntrypointTypes.size(); ++entry) {
             const Wasm::RTT& rtt = info.rtt(Wasm::TypeSignatureIndex(jsEntrypointTypes[entry]));

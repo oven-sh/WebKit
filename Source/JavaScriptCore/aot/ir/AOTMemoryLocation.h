@@ -177,7 +177,7 @@ public:
             add(location.heap(), mask);
     }
 
-    constexpr bool merge(const LocationMasks& other)
+    ALWAYS_INLINE constexpr bool merge(const LocationMasks& other)
     {
         bool changed = other.m_heaps & ~m_heaps;
         m_heaps |= other.m_heaps;
@@ -285,7 +285,7 @@ public:
             functor(heap, maskOf(heap));
     }
 
-    friend constexpr bool operator==(const LocationMasks& first, const LocationMasks& second)
+    friend ALWAYS_INLINE constexpr bool operator==(const LocationMasks& first, const LocationMasks& second)
     {
         return first.m_heaps == second.m_heaps && (!first.containsAny(indexedHeaps) || first.hasMasksOf(second));
     }
@@ -379,6 +379,7 @@ ALWAYS_INLINE uint64_t locationMaskIn(const ProgramWithLocationBits& program, co
     case AbstractHeap::ArrayCapacity:
     case AbstractHeap::LoweredArrayLengths:
     case AbstractHeap::ClassObjects:
+    case AbstractHeap::WrittenTypes:
         break;
     }
     RELEASE_ASSERT_NOT_REACHED();

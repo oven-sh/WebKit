@@ -183,10 +183,10 @@ private:
     bool takeFirstObjectOf(uint32_t allocation);
     void holdUsualStructure(uint32_t shape);
     Variant usualVariantOf(VM&, const LayoutData&);
-    CompiledStructure* createUsual(VM&, const LayoutData&, const Variant&);
-    CompiledStructure* create(VM&, const LayoutData&, const Variant&);
+    CompiledStructure* createUsual(VM&, const LayoutData&, Variant&);
+    CompiledStructure* create(VM&, const LayoutData&, Variant&);
     CompiledStructure* find(const Variant&) const;
-    CompiledStructure* findOrCreate(VM&, const Variant&);
+    CompiledStructure* findOrCreate(VM&, Variant&);
     CompiledStructure* withSpareWord(VM&, const CompiledStructure&);
     static Variant variantOf(const CompiledStructure&);
     static Variant variantWithKeyOrderOf(const CompiledStructure&);

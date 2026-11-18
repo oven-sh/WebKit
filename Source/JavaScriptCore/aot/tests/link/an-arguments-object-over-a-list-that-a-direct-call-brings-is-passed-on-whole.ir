@@ -1,0 +1,44 @@
+# The operands of CallDirect are the entry parameters of the callee, so the caller makes the list of the arguments itself, as long as it likes. If what the list holds did not come out of the arguments object, nobody would see what `take` does to it: the function of the list that `take` is handed would be entered by nobody.
+# RUN: link functions mechanisms=all
+# CHECK: function f2 callers-known {{*}}result=undefined|i32|fractional|string|f3 returns=
+# CHECK-NEXT: parameter 0 expected=undefined|i32|fractional|string|f3 proven=undefined|i32|fractional|string|f3
+# CHECK: function f3 callers-known
+
+variable g0 module=m0 declared={type=function flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f2
+    PutModuleVariable v0 variable=g0
+    v2 = NewClosure function=f1
+    v3 = Integer integer=1
+    v4 = String string="x"
+    v5 = Call v2, -, v3, v4 calleeName="wrap"
+    v6 = Double number=2.5
+    v7 = NewClosure function=f3
+    v8 = NewArray v7, v6 contents=anything
+    v9 = Integer integer=2
+    v10 = CallDirect v9, v8 function=f1
+    v11 = Undefined
+    Return v11
+}
+function f1 name="wrap" module=m0 flags=[HasArgumentCount, HasHiddenRest] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: int[0, 4294967295], v1: Array):
+    v2 = CreateUnmappedArguments v0, v1
+    v3 = GetModuleVariable variable=g0
+    v4 = PropGet v3 key="apply"
+    v5 = Undefined
+    v6 = Call v4, v3, v5, v2 calleeKey="apply"
+    Return v6
+}
+function f2 name="take" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer integer=1
+    v3 = Call v0, -, v2 calleeName="first"
+    Return v1
+}
+function f3 name="first" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    Return v0
+}

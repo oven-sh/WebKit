@@ -214,6 +214,8 @@ static bool asksWhoRequiredWhom(const Program& program, const Facts& facts)
         return true;
     if (isUsedInModuleEvaluationPlan(facts, Builtins::ModuleRequireMain) || isUsedInModuleEvaluationPlan(facts, Builtins::ProcessMainModule))
         return true;
+    if (namesModuleObjects(program) && isUsedInModuleEvaluationPlan(facts, Builtins::ModuleRequire))
+        return true;
     const BuiltinTable& builtins = program.builtins();
     for (ASCIILiteral name : { "parent"_s, "children"_s, "id"_s }) {
         BuiltinID member = builtins.findOwnMember(Builtins::ModuleObject, builtins.nameOf(byteCast<uint8_t>(name.span())));
@@ -241,6 +243,7 @@ struct PlannedStartOfModule {
     uint32_t firstFileRunWhileLoaded { 0 };
     uint32_t numberOfFilesRunWhileLoaded { 0 };
     bool mayBeLeftByCaughtError { false };
+    bool resumesLoadOnThrow { false };
     bool beginsInBody { false };
 };
 
@@ -276,6 +279,7 @@ struct ModuleEvaluationPlanner {
     bool hasLinkWorkItself(uint32_t module) const;
     BitVector filesThatRequireModuleDuringLoad() const;
     bool runsCode(uint32_t module) const { return isEvaluatedWithImporter(module) && has(module, HasCode) && !has(module, BodyOnlyReturns); }
+    bool needsLoaderAfterThrow(uint32_t module) const;
     bool importsCommonJSBeforeItBegins(size_t module) const { return isAskedOfLoader.quickGet(module) && program.modules[module].kind == ModuleKind::SourceText; }
     FoundModuleSiteKind kindInPlanOf(const FoundModuleSite&) const;
 
@@ -324,6 +328,7 @@ struct ModuleEvaluationPlanner {
     BitVector isStart;
     BitVector isRequiredLate;
     BitVector isAskedOfLoader;
+    BitVector resumesLoadOnThrow;
     BitVector isAskedForByHost;
     bool noRequireEvaluatesESModule { false };
     BitVector mayBeLeftByCaughtError;
@@ -496,10 +501,7 @@ bool ModuleEvaluationPlanner::canSkipRecordRequire(uint32_t index) const
 {
     if (somebodyAsksWhoRequiredWhom || factoryOfMockMayRequire)
         return false;
-    const Module& module = program.modules[index];
-    if (module.kind != ModuleKind::SourceText || std::ranges::contains(module.exports, program.stringOf(BuiltinNames::__esModule), &ModuleExport::name))
-        return true;
-    return false;
+    return program.modules[index].kind != ModuleKind::SourceText;
 }
 
 template<typename Functor>
@@ -687,6 +689,22 @@ void ModuleEvaluationPlanner::chooseModulesWalkedByCode()
     componentOfImports = WTF::move(components.componentOf);
 }
 
+bool ModuleEvaluationPlanner::needsLoaderAfterThrow(uint32_t index) const
+{
+    if (program.modules[index].kind != ModuleKind::SourceText)
+        return false;
+    unsigned numberOfFiles = 0;
+    for (const ModuleRequest& request : program.modules[index].requests) {
+        if (!request.isHoisted)
+            break;
+        uint32_t target = request.target.index();
+        bool isCommonJS = program.modules[target].kind == ModuleKind::CommonJs || has(target, IsFacade);
+        if (isCommonJS && startsItself.quickGet(target) && ++numberOfFiles > 1)
+            return true;
+    }
+    return false;
+}
+
 void ModuleEvaluationPlanner::sortSitesByKind()
 {
     firstBareSiteOf.fill(0, numberOfModules);
@@ -694,6 +712,14 @@ void ModuleEvaluationPlanner::sortSitesByKind()
     isStart.ensureSize(numberOfModules);
     isRequiredLate.ensureSize(numberOfModules);
     isAskedOfLoader.ensureSize(numberOfModules);
+    resumesLoadOnThrow.ensureSize(numberOfModules);
+    auto noteRequireFromCode = [&](uint32_t target) {
+        if (resumesLoadOnThrow.quickGet(target) || !needsLoaderAfterThrow(target))
+            return;
+        resumesLoadOnThrow.quickSet(target);
+        isAskedOfLoader.quickSet(target);
+        isStart.quickSet(target);
+    };
     for (const FoundModuleSite& site : sites) {
         uint32_t target = site.target.index();
         switch (kindInPlanOf(site)) {
@@ -705,12 +731,14 @@ void ModuleEvaluationPlanner::sortSitesByKind()
             RELEASE_ASSERT(firstBareSiteOf[referrer.index()] + numberOfBareSitesOf[referrer.index()] == bareSites.size());
             ++numberOfBareSitesOf[referrer.index()];
             bareSites.append(site);
+            noteRequireFromCode(target);
             continue;
         }
         case FoundModuleSiteKind::Late:
-            if (isCalledWhereRequired.quickGet(target))
+            if (isCalledWhereRequired.quickGet(target)) {
                 isRequiredLate.quickSet(target);
-            else
+                noteRequireFromCode(target);
+            } else
                 isAskedOfLoader.quickSet(target);
             break;
         case FoundModuleSiteKind::Required:
@@ -969,6 +997,7 @@ void ModuleEvaluationPlanner::findModulesWithoutState()
 void ModuleEvaluationPlanner::findModulesLeftByCaughtErrors()
 {
     mayBeLeftByCaughtError = isRequiredLate;
+    mayBeLeftByCaughtError.merge(resumesLoadOnThrow);
     Vector<uint32_t, 32> work;
     for (size_t index : mayBeLeftByCaughtError)
         work.append(static_cast<uint32_t>(index));
@@ -1097,6 +1126,7 @@ void ModuleEvaluationPlanner::planStarts()
                 start.numberOfFilesRunWhileLoaded = start.numberOfStepsBeforeItBegins;
             }
         }
+        start.resumesLoadOnThrow = resumesLoadOnThrow.quickGet(index) && start.numberOfStepsBeforeItBegins > 1;
         starts.append(start);
     }
 }
@@ -1209,6 +1239,7 @@ ModuleEvaluationPlan planModuleEvaluation(const Program& program, const Facts& f
         start.numberOfStepsBeforeItBegins = planned.numberOfStepsBeforeItBegins;
         start.filesRunWhileLoaded = plan.filesRunWhileLoaded.subspan(planned.firstFileRunWhileLoaded, planned.numberOfFilesRunWhileLoaded);
         start.mayBeLeftByCaughtError = planned.mayBeLeftByCaughtError;
+        start.resumesLoadOnThrow = planned.resumesLoadOnThrow;
         start.beginsInBody = planned.beginsInBody;
         start.bodyOnlyReturns = planner.has(planned.module, ModuleEvaluationPlanner::BodyOnlyReturns);
         plan.starts.append(start);
@@ -1297,6 +1328,10 @@ Vector<ModuleStartOperation, 8> ModuleEvaluationPlan::operationsOf(const ModuleS
         appendStatusOperation(Kind::Finish, step.moduleThatHasRun);
     };
 
+    if (start.resumesLoadOnThrow) {
+        RELEASE_ASSERT(start.mayBeLeftByCaughtError && !start.beginsInBody);
+        appendStatusOperation(Kind::ResumeLoadOnThrow, start.module);
+    }
     for (uint32_t index = 0; index < start.numberOfStepsBeforeItBegins; ++index) {
         appendStep(start.steps[index]);
         if (!start.filesRunWhileLoaded.empty() && start.filesRunWhileLoaded[index])

@@ -1,5 +1,5 @@
 # Link proves the result a number, so the body returns a double, the direct call takes a double, and the entry by value comes back for it and boxes it
-# function same(n) { return n }  same(1.5) + same(2)  sink(same)
+# function same(n) { return n }  same(globalThis.seed * 1.5) + same(globalThis.seed * 2)  sink(same)
 # RUN: walk f1 mechanisms=all
 # CHECK-LABEL: code f1:Body
 # CHECK: b0([[n]]: {{*}} @Double
@@ -46,19 +46,22 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b0():
     v0 = GetModuleVariable variable=g0
     v1 = Double number=1.5
-    v2 = Call v0, -, v1 calleeName="same" [isNeverInlined]
-    v3 = Integer integer=2
-    v4 = Call v0, -, v3 calleeName="same" [isNeverInlined]
-    v5 = Add v2, v4
-    v6 = GetModuleVariable variable=g1
-    v7 = GetModuleVariable variable=g3
-    v8 = Call v6, -, v7, v3 calleeName="apply" [isNeverInlined]
-    v9 = GetModuleVariable variable=g2
-    v10 = Call v6, -, v9, v1 calleeName="apply" [isNeverInlined]
-    v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="sink" [isFreeName]
-    v13 = Call v12, -, v5, v8, v10
-    Return v13
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="seed"
+    v4 = Mul v3, v1
+    v5 = Call v0, -, v4 calleeName="same" [isNeverInlined]
+    v6 = Integer integer=2
+    v7 = Mul v3, v6
+    v8 = Call v0, -, v7 calleeName="same" [isNeverInlined]
+    v9 = Add v5, v8
+    v10 = GetModuleVariable variable=g1
+    v11 = GetModuleVariable variable=g3
+    v12 = Call v10, -, v11, v6 calleeName="apply" [isNeverInlined]
+    v13 = GetModuleVariable variable=g2
+    v14 = Call v10, -, v13, v1 calleeName="apply" [isNeverInlined]
+    v15 = PropGet v2 key="sink" [isFreeName]
+    v16 = Call v15, -, v9, v12, v14
+    Return v16
 }
 function f1 name="same" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):

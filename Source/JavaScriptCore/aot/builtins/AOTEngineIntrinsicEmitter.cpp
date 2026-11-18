@@ -117,6 +117,12 @@ void EngineIntrinsicEmitter::generateResumeGenerator(const ValueContext& value)
     defineAs(value, iteratorResult, typeOf(value.id()));
 }
 
+void EngineIntrinsicEmitter::generateStepMatchIterator(const ValueContext& value)
+{
+    Boxed iterator = boxedOperand(value, value->iteratorOperand());
+    defineAs(value, callOperation<Boxed>(value, RuntimeOperation::StepMatchIterator, { iterator }), typeOf(value.id()));
+}
+
 void EngineIntrinsicEmitter::generateStepGenerator(const ValueContext& value)
 {
     emitter<SavedFrameEmitter>().generateStepGenerator(value);

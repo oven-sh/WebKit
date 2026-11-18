@@ -106,6 +106,7 @@ JS_EXPORT_PRIVATE ArrayStorage arrayStorageOfData(const Program&, const DataNode
 JS_EXPORT_PRIVATE bool isStorageOfArray(const DataNode::Array&);
 JS_EXPORT_PRIVATE bool isShortStringList(const DataNode::Array&);
 inline constexpr uint32_t mostElementsComparedInLoop = 8;
+inline constexpr uint32_t mostWordsSwitched = 64;
 inline constexpr uint32_t maxNodesOfExpandedData = 16;
 bool canStoreWithoutConversion(const TypeArena&, ArrayStorage, TypeID stored);
 bool canStoreWithoutConversion(ArrayStorage, double stored);

@@ -46,6 +46,19 @@ static bool isReadInsideLoopOutsideRareRegions(const Allocator& allocator, const
     return false;
 }
 
+static bool isReadOnLikelyPath(const Allocator& allocator, const Operation* value, const Loop& loop)
+{
+    const Liveness& liveness = allocator.m_liveness;
+    unsigned stepsLeft = 16;
+    for (uint32_t index = allocator.findReadFrom(value, loop.begin); index && stepsLeft--; index = liveness.use(index).next) {
+        if (liveness.use(index).position >= loop.end)
+            return false;
+        if (!liveness.isUseInUnlikelyPart(index))
+            return true;
+    }
+    return !stepsLeft;
+}
+
 static RegisterMask registersLoopMayTake(const Allocator& allocator, const Block* head, Bank bank)
 {
     RegisterMask registers = allocator.m_file.allocatableIn(bank);
@@ -182,6 +195,8 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
     unsigned numberOfCandidates = 0;
     Operation* valuesInRegistersPatchesTake[64];
     unsigned numberInRegistersPatchesTake = 0;
+    Operation* unlikelyReadValues[64];
+    unsigned numberOfUnlikelyReadValues = 0;
     forEachRegister(m_bound, [&](Reg reg) {
         Operation* value = m_valueIn[reg.index()];
         if (!value || (value->opcode() == Phi && value->owner() == head))
@@ -198,7 +213,9 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
             return;
         }
         if (isReadInsideLoopOutsideRareRegions(*this, value, loop, loopIsRare)) {
-            if (maskOf(reg) & takenByPatches)
+            if (takenByPatches && movesMayWriteRegisters && hasHotBackEdge && !loopIsRare && !isReadOnLikelyPath(*this, value, loop) && mayBeSpilledAheadOfLoop(value))
+                unlikelyReadValues[numberOfUnlikelyReadValues++] = value;
+            else if (maskOf(reg) & takenByPatches)
                 valuesInRegistersPatchesTake[numberInRegistersPatchesTake++] = value;
             return;
         }
@@ -253,6 +270,22 @@ void Allocator::chooseRegistersKeptThroughLoop(const Loop& loop, bool movesMayWr
             Bank bank = bankOf(value->type());
             if (stateOf(value).registers && static_cast<unsigned>(std::popcount(registersLeftAlone(bank))) < numberWanted[static_cast<unsigned>(bank)])
                 spillAheadOfLoop(value);
+        }
+        for (unsigned index = numberOfUnlikelyReadValues; index--;) {
+            Operation* value = unlikelyReadValues[index];
+            RegisterMask held = stateOf(value).registers;
+            if (!held)
+                continue;
+            Bank bank = bankOf(value->type());
+            RegisterMask leftAlone = registersLeftAlone(bank);
+            bool moves = held & takenByPatches;
+            if (static_cast<unsigned>(std::popcount(leftAlone)) < numberWanted[static_cast<unsigned>(bank)] + moves)
+                spillAheadOfLoop(value);
+            else if (moves) {
+                Reg target = takeRegister(bank, leftAlone);
+                unbindAll(value);
+                bind(target, value);
+            }
         }
     }
     for (unsigned index = 0; index < numberInRegistersPatchesTake; ++index) {

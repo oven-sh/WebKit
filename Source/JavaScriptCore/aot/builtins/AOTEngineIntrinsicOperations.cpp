@@ -20,6 +20,7 @@
 #include "JSGenerator.h"
 #include "JSIteratorHelper.h"
 #include "JSIteratorHelperPrototype.h"
+#include "JSRegExpStringIterator.h"
 
 namespace JSC { namespace AOT {
 
@@ -102,8 +103,9 @@ static JSValue resumeBytecodeGenerator(JSGlobalObject* globalObject, VM& vm, JSG
     arguments.append(field(JSGenerator::Field::Frame).get());
     ASSERT(!arguments.hasOverflowed());
     JSValue result = call(globalObject, body, JSC::getCallData(body), field(JSGenerator::Field::This).get(), arguments);
-    if (scope.exception()) [[unlikely]] {
-        setState(JSGenerator::State::Completed);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            setState(JSGenerator::State::Completed);
         return { };
     }
     bool isDone = field(JSGenerator::Field::State).get().asInt32() == static_cast<int32_t>(JSGenerator::State::Executing);
@@ -124,6 +126,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResumeGenerator, EncodedJSValue, (Instance*
         OPERATION_RETURN(scope, JSValue::encode(resumeBytecodeGenerator(globalObject, vm, bytecodeGenerator, engineResumeModeOf(mode), value)));
     throwException(globalObject, scope, createNotAGeneratorError(globalObject));
     OPERATION_RETURN(scope, encodedJSValue());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTStepMatchIterator, EncodedJSValue, (Instance* instance, EncodedJSValue encodedIterator))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTStepMatchIterator);
+    auto* iterator = uncheckedDowncast<JSRegExpStringIterator>(JSValue::decode(encodedIterator).asCell());
+    if (iterator->isDone())
+        OPERATION_RETURN(scope, JSValue::encode(jsNull()));
+    JSValue match = iterator->nextImpl(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(match));
 }
 
 template<ResumeMode mode>

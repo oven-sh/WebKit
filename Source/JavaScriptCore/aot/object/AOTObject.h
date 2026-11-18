@@ -141,7 +141,14 @@ public:
     uint32_t shape() const { return shapeOf(shapeWord()); }
     uint64_t orderAndShapeWords() const { return static_cast<uint64_t>(shapeWord()) << 32 | orderWord(); }
     bool bearsMark() const { return perCellBit() || !(shapeWordWithMark() & shapeWordIsUnmarked); }
-    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = isInBirth && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
+    bool isMarkedByPrototype() const { return (inlineTypeFlags() & IsPristine) && layout().marksOtherPrototypes; }
+    void setIsInBirth(bool isInBirth) { at<uint32_t>(offsetOfShapeWord) = (isInBirth || isMarkedByPrototype()) && mayBearMark() ? shapeWordWithMark() & ~shapeWordIsUnmarked : shapeWord(); }
+    void setVariantOfStructure(VM& vm, Structure* structure)
+    {
+        JSCell::setStructure(vm, structure);
+        if (isMarkedByPrototype()) [[unlikely]]
+            setIsInBirth(true);
+    }
     void setBearsMark(bool bearsMark)
     {
         setPerCellBit(bearsMark);
@@ -200,9 +207,12 @@ public:
     bool tryRepeat(VM&, const FieldReturn&, JSValue);
     bool tryRepeat(VM&, const AddedExtraProperty&, JSValue);
     bool tryDefineAsOnTheLastObject(VM&, PropertyName, const PropertyDescriptor&);
+    bool tryRepeatAccessorDefinition(VM&, JSGlobalObject*, const FieldData*, PropertyName, const PropertyDescriptor&);
+    bool tryRepeatAccessorDefinition(VM&, JSGlobalObject*, const FieldData*, PropertyName, JSObject* getterOrNull, JSObject* setterOrNull, unsigned attributes);
     bool tryMoveFieldBackToSlot(VM&, const FieldData&);
     void deleteField(VM&, const FieldData&);
     bool hasEveryFieldOfBirth() const;
+    bool lacksFieldOfBirth() const;
     bool holdsEveryFieldHeldFilled() const;
     bool mayBearMark() const;
     JS_EXPORT_PRIVATE void tryFinishBirth();
@@ -258,6 +268,7 @@ public:
     void didChangeExtraProperties(VM&);
     bool tryNameHeldStructure(VM&);
     void ensureStructureForExtraProperties(VM&);
+    void finishFillingExtraProperties(VM&);
     static bool ensureStructureForExtraPropertiesIfNeeded(VM&, JSCell*);
     enum class ExtraPropertyStore : uint8_t { NotHandled, Replaced, Added };
     enum class ExtraPropertyStoreFlag : uint8_t {
@@ -266,6 +277,7 @@ public:
         NamesExtraPropertiesStructure = 4,
         IsKnownToBeAbsent = 8,
         IsMadeAtRunTime = 16,
+        BeginsDictionary = 32,
     };
     struct ExtraPropertyStoreResult {
         ExtraPropertyStore kind { ExtraPropertyStore::NotHandled };
@@ -316,6 +328,7 @@ public:
     void didRemoveExtraKey(VM&, State&, const PlaceOfExtraKey&);
     void forgetPlacesOfPositionedKeys(State&);
     void takeKeyOrderOfItsOwn(VM&, State&);
+    bool tryLeaveKeyOrderOfItsOwn(VM&, State&);
 
     bool tryCopyFieldsOf(VM&, const Object& source);
     static Object* tryCreateCopyOfFields(VM&, const Object& source);

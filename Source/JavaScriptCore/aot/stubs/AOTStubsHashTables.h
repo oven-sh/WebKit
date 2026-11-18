@@ -82,6 +82,7 @@ void emitLoadTagOfSlot(StubAssembler&, GPRReg hash);
 void emitMarkThatKeyLeftHomeSlot(StubAssembler&, BaseIndex tagAtHome);
 void emitHashOfBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch, GPRReg scratch2);
 void emitHashOfKeyBits(StubAssembler&, GPRReg key, GPRReg hash, GPRReg scratch);
+void emitLoadKeysOfCompactTable(StubAssembler&, const HashTableRegisters&);
 void emitLoadValuesOfCompactTable(StubAssembler&, const HashTableRegisters&, GPRReg values, JumpList* keysAreNarrow = nullptr, JumpList* keysAreWide = nullptr, bool everyoneKnowsTheWidth = false);
 
 } } // namespace JSC::AOT

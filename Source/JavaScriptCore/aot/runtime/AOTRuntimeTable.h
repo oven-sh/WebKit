@@ -45,6 +45,7 @@ enum class LeafPresence : size_t { TakeSlowPath, Absent, Inherited, Own };
     v(ArrayConstructorClassInfo) \
     v(ObjectConstructorClassInfo) \
     v(BooleanConstructorClassInfo) \
+    v(ProxyConstructorClassInfo) \
     v(CustomGetterClassInfo) \
     v(NumberConstructorClassInfo) \
     v(StringConstructorClassInfo) \
@@ -210,9 +211,12 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ModuleFailureOperations, IsLinkedBelow) \
     v(ModuleFailureOperations, RecordRequire) \
     v(ModuleFailureOperations, RecordRequireWithRequirer) \
+    v(ModuleFailureOperations, ResumeLoadAfterThrow) \
     v(ModuleFailureOperations, SeesMockOf) \
     v(ModuleFailureOperations, StopLoadingBehindFile) \
     v(ModuleFailureOperations, ThrowModuleFailure) \
+    v(GlobalBindingOperations, CheckEvaluation) \
+    v(GlobalBindingOperations, DeclareGlobal) \
     v(GlobalBindingOperations, DeleteFreeName) \
     v(GlobalBindingOperations, GetGlobalBinding) \
     v(GlobalBindingOperations, GetGlobalObjectBinding) \
@@ -228,12 +232,14 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(AsyncIteratorOperations, AsyncIteratorStep) \
     v(AsyncIteratorOperations, CreateAsyncFromSyncIterator) \
     v(AsyncIteratorOperations, FinishAsyncIteratorStep) \
+    v(GeneratorOperations, GetGeneratorPrototype) \
     v(GeneratorOperations, IsGeneratorSuspendedAtStart) \
     v(GeneratorOperations, NewAsyncGenerator) \
     v(GeneratorOperations, NewGenerator) \
     v(GeneratorOperations, NewGeneratorOfLibrary) \
     v(GeneratorOperations, ResumeGenerator) \
     v(GeneratorOperations, SaveFrameAndYield) \
+    v(GeneratorOperations, TakeGeneratorLeftInPlace) \
     v(GeneratorOperations, TakeGeneratorPrototype) \
     v(AwaitOperations, AwaitCallWithSavedFrame) \
     v(AwaitOperations, AwaitWithSavedFrame) \
@@ -259,6 +265,8 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(MapAndSetOperations, NewSet) \
     v(MapAndSetOperations, NewSetFromIterable) \
     v(MapAndSetOperations, NewSetIterator) \
+    v(MapAndSetOperations, NewWeakMap) \
+    v(MapAndSetOperations, NewWeakSet) \
     v(MapAndSetOperations, NextSetElement) \
     v(MapAndSetOperations, ReserveTableCapacity) \
     v(MapAndSetOperations, SetClear) \
@@ -289,6 +297,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(PropertyDescriptorOperations, GetOwnPropertyDescriptor) \
     v(PropertyDescriptorOperations, NewGetterSetter) \
     v(PropertyDescriptorOperations, ObjectCreate) \
+    v(PropertyDescriptorOperations, ObjectDefineProperty) \
     v(PropertyDescriptorOperations, SetLiteralPrototype) \
     v(PropertyDeletionOperations, DeleteById) \
     v(PropertyDeletionOperations, DeleteByIdSloppy) \
@@ -318,6 +327,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, AppendElements) \
     v(ArrayCreationOperations, AppendHole) \
     v(ArrayCreationOperations, AppendIterable) \
+    v(ArrayCreationOperations, ListOfIterable) \
     v(ArrayCreationOperations, AppendMembers) \
     v(ArrayCreationOperations, AppendValuesOfMap) \
     v(ArrayCreationOperations, ArrayPutAtIndex) \
@@ -327,6 +337,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, ConvertToDoubleStorage) \
     v(ArrayCreationOperations, CopyElements) \
     v(ArrayCreationOperations, CopyElementsDown) \
+    v(ArrayCreationOperations, CountCopyableElements) \
     v(ArrayCreationOperations, FillElements) \
     v(ArrayCreationOperations, DestructureIterable) \
     v(ArrayCreationOperations, GrowFilledArray) \
@@ -343,6 +354,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArrayCreationOperations, ReadsIteratorOfListUnseen) \
     v(ArrayCreationOperations, ReserveArrayCapacity) \
     v(ArrayCreationOperations, ReviewArraySite) \
+    v(ArrayCreationOperations, StepMatchIterator) \
     v(ArrayCreationOperations, ThrowIfTooLongForList) \
     v(ArrayCreationOperations, ThrowNotIterable) \
     v(ArrayCreationOperations, TruncateNewArray) \
@@ -365,6 +377,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringCreationOperations, NumberToStringWithRadix) \
     v(StringCreationOperations, ObjectToStringOfAnyValue) \
     v(StringCreationOperations, StringOfAnyValue) \
+    v(StringCreationOperations, NewStringObject) \
     v(StringCreationOperations, StringOfCodeUnits) \
     v(StringCreationOperations, StringPad) \
     v(StringCreationOperations, StringRepeat) \
@@ -372,6 +385,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringComparisonOperations, CompareStrings) \
     v(StringComparisonOperations, NarrowCharactersOfString) \
     v(StringComparisonOperations, StringCodeUnitAt) \
+    v(StringComparisonOperations, StringSwitchCase) \
     v(StringComparisonOperations, TryResolveRope) \
     v(StringComparisonOperations, StringEqualsCharacters) \
     v(StringComparisonOperations, StringEqualsLiteral) \
@@ -429,6 +443,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(CallOperations, LinkTimeConstant) \
     v(CallOperations, NativeBinding) \
     v(CallOperations, ReadArgumentList) \
+    v(CallOperations, NewListOfArguments) \
     v(CallOperations, SetFunctionName) \
     v(CallOperations, ThrowUnlessForwardedCallCanBeMade) \
     v(ErrorOperations, AddressOfThrow) \
@@ -467,6 +482,7 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTRegExpMatchFlatProgram16:
     case Entry::operationAOTRegExpTest:
     case Entry::operationAOTRegExpTestBoxed:
+    case Entry::operationAOTRegExpTestOfObject:
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:
     case Entry::operationAOTRegExpMatchInParts:

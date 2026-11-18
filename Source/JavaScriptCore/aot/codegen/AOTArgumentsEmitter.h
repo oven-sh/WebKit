@@ -19,7 +19,7 @@ public:
     void generateGetRestLength(const ValueContext&);
     void generateCreateRest(const ValueContext&);
 
-private:
+    std::optional<uint32_t> findForwardedRest(ValueID rest) const;
     Word32 restLength(uint32_t firstArgument);
     Pointer restList(uint32_t firstArgument);
 };

@@ -178,6 +178,8 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
     case CellTestKind::IsCallable:
         return isCallable(cell);
     case CellTestKind::CellTypeIs:
+        if (m_arrayHeaderTest)
+            return emitter<ElementAccessEmitter>().passesHeaderTest(cell, *m_arrayHeaderTest);
         return hasCellTypeIn(cell, test.cellTypes);
     case CellTestKind::ShapeIn: {
         Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from, marked);

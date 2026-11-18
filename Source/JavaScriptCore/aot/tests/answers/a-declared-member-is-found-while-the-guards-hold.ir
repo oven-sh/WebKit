@@ -4,7 +4,7 @@
 # function Above(a) { this.a = a; }   Above.prototype.first = function () { return 1; };
 # Object.defineProperties(Above.prototype, { size: { configurable: true, get() { return this.a; }, set(value) { this.a = value; } }, count: { configurable: true, get() { return 2; } } });
 # function Middle(a) { Above.call(this, a); }   Object.setPrototypeOf(Middle.prototype, Above.prototype);   Object.setPrototypeOf(Middle, Above);   Middle.prototype.second = function () { return 2; };
-# const holders = { Parent: undefined };   holders.Parent = Middle;   function makeClass() { const Parent = holders.Parent; return class Lowest extends Parent { third() { return 3; } }; }
+# const holders = { Parent: undefined };   holders.Parent = Middle;   function makeClass() { const Parent = holders.Parent; return class Lowest extends Parent { own = 1; more = 1; third() { return 3; } }; }
 # early(Above, Middle, holders);   const Lowest = makeClass();   const made = new Lowest(5);   print(ask(made));   change(made, Above, Middle, Lowest, makeClass);   print(ask(made));   print(ask(new Lowest(6)));
 # Text that the shell runs itself does the changing. The first line of each run is the green control: without it every other line would pass with an operation that always says no.
 # Without Guesses and TypedOperations the operation says no everywhere, which is right and shows nothing.
@@ -64,22 +64,22 @@
 # RELINKED-NEXT: 5 2
 # RELINKED-NEXT: exited with 0
 # RUN(HOLDER): run-in-shell early = function () { }; change = function (made, Above, Middle) { Object.setPrototypeOf(Middle.prototype, Object.create(Above.prototype, { size: { value: 4 } })); };
-# `third` is declared by Lowest itself. Lookups come to Lowest.prototype before they come to what is above it.
+# `third` is declared by Lowest itself, `second` by Middle's prototype. Lookups come to those before they come to what is above Middle.prototype.
 # HOLDER: size count first second third -
-# HOLDER-NEXT: - - - - third -
-# HOLDER-NEXT: - - - - third -
+# HOLDER-NEXT: - - - second third -
+# HOLDER-NEXT: - - - second third -
 # HOLDER-NEXT: 4 2
 # HOLDER-NEXT: exited with 0
 # RUN(REPLACED): run-in-shell early = function () { }; change = function (made, Above, Middle, Lowest) { Object.setPrototypeOf(Middle.prototype, Object.create(Above.prototype)); Lowest.prototype.third = function () { return 0; }; };
 # REPLACED: size count first second third -
-# REPLACED-NEXT: - - - - - -
-# REPLACED-NEXT: - - - - - -
+# REPLACED-NEXT: - - - second - -
+# REPLACED-NEXT: - - - second - -
 # REPLACED-NEXT: 5 2
 # REPLACED-NEXT: exited with 0
 # RUN(PROXY): run-in-shell early = function () { }; change = function (made, Above, Middle, Lowest) { Object.setPrototypeOf(Lowest.prototype, new Proxy(Middle.prototype, { get(target, key) { return key === "size" ? 3 : target[key]; } })); };
 # PROXY: size count first second third -
-# PROXY-NEXT: - - - - - -
-# PROXY-NEXT: - - - - - -
+# PROXY-NEXT: - - - - third -
+# PROXY-NEXT: - - - - third -
 # PROXY-NEXT: 3 2
 # PROXY-NEXT: exited with 0
 # RUN(AGAIN): run-in-shell early = function () { }; change = function (made, Above, Middle, Lowest, makeClass) { makeClass(); };
@@ -113,7 +113,7 @@ entry module=m0
 layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L1 kind=Instance name="Middle" module=m0 position=271 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L2 module=m0 flags=[IsNeverAllocated]
-layout L3 kind=Instance name="Lowest" module=m0 position=595 constructor=f10 flags=[HasHeritage]
+layout L3 kind=Instance name="Lowest" module=m0 position=595 constructor=f10 fields=[{key="own" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=2
 layout L4 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 layout L5 module=m0 position=480 fields=[{key="Parent" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Object{layout=L5 members=[{key="Parent"}]} module=m0
@@ -396,6 +396,9 @@ function f10 name="Lowest" module=m0 position=595 kind=DerivedConstructor flags=
     v3 = GetSuperBase v0 @595
     v4 = SuperConstructList v3, v1, v2 layout=L3 @595
     v5 = Convert v4 declared={type=L3} @595
+    v6 = Integer integer=1 @595
+    PropDefine v5, v6 key="own" @595
+    PropDefine v5, v6 key="more" @595
     Return v5 @595
 }
 function f11 name="third" module=m0 position=619 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

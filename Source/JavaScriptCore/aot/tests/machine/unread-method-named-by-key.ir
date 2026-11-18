@@ -1,0 +1,91 @@
+# function codes(text, operand) { "use strict"; return text.charCodeAt(operand()); }
+# function slices(value, operand) { "use strict"; return value.slice(operand()); }
+# function has(table, operand) { "use strict"; return table.has(operand()); }      sink(codes, slices, has);
+# Nothing is known of the receivers. The calls stand in tail position and no class of the program has members under these names, so the reads ask the receiver's class: the method of a built-in class stays unread,
+# and the stub that the unit leaves by calls the built-in. Array and String have slice, Map and Set have has: the stubs of the first class go on to those of the second one.
+# RUN(CODES): bytes f1:Body mechanisms=all
+# CODES-LABEL: unit f1:Body
+# CODES: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.StringCharCodeAt
+# CODES: Jump Stub CallMethodThatMayBeUnreadInTailPosition.StringCharCodeAt count 1
+# CODES-NOT: CallValueCell.InTailPosition
+# RUN(SLICES): bytes f2:Body mechanisms=all
+# SLICES-LABEL: unit f2:Body
+# SLICES: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.ArraySlice
+# SLICES: Jump Stub CallMethodThatMayBeUnreadInTailPosition.ArraySlice count 1
+# RUN(HAS): bytes f3:Body mechanisms=all
+# HAS-LABEL: unit f3:Body
+# HAS: Call Stub ReadMethodAtSiteUnlessReceiverFindsIt.MapHas
+# HAS: Jump Stub CallMethodThatMayBeUnreadInTailPosition.MapHas count 1
+# RUN(SHELL): run-in-shell const says = f => { try { print(String(f())); } catch (e) { print(e.name); } }; globalThis.sink = (codes, slices, has) => { const back = { charCodeAt(left) { "use strict"; return left > 0 ? codes(back, () => left - 1) : "back"; }, has(left) { "use strict"; return left > 0 ? has(back, () => left - 1) : "there"; } }; for (let turn = 0; turn < 2; turn++) { says(() => codes("alphabet", () => 1)); says(() => codes(new String("alphabet"), () => 2)); says(() => codes({ charCodeAt: a => a + 5 }, () => 1)); says(() => codes(12, () => 1)); says(() => codes(null, () => { print("ran"); return 1; })); says(() => codes({ get charCodeAt() { print("getter"); return () => "got"; } }, () => { print("operand"); return 1; })); says(() => codes(back, () => 100000)); says(() => slices([1, 2, 3], () => 1)); says(() => slices("alphabet", () => 5)); says(() => slices({ slice: a => a * 2 }, () => 4)); const list = [1, 2]; says(() => slices(list, () => { list.slice = () => "mine"; return 1; })); says(() => slices(list, () => 0)); says(() => has(new Map([[1, 2]]), () => 1)); says(() => has(new Set([3]), () => 4)); says(() => has(new WeakSet(), () => 4)); says(() => has(back, () => 100000)); says(() => has(7, () => 1)); } };
+# SHELL: 108
+# SHELL: 112
+# SHELL: 6
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: got
+# SHELL: back
+# SHELL: 2,3
+# SHELL: bet
+# SHELL: 8
+# SHELL: 2
+# SHELL: mine
+# SHELL: true
+# SHELL: false
+# SHELL: false
+# SHELL: there
+# SHELL: TypeError
+# SHELL: 108
+# SHELL: 112
+# SHELL: 6
+# SHELL: TypeError
+# SHELL: TypeError
+# SHELL: getter
+# SHELL: operand
+# SHELL: got
+# SHELL: back
+# SHELL: 2,3
+# SHELL: bet
+# SHELL: 8
+# SHELL: 2
+# SHELL: mine
+# SHELL: true
+# SHELL: false
+# SHELL: false
+# SHELL: there
+# SHELL: TypeError
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = NewClosure function=f2
+    v2 = NewClosure function=f3
+    v3 = Builtin builtin=GlobalThis
+    v4 = PropGet v3 key="sink" [isFreeName]
+    v5 = Call v4, -, v0, v1, v2
+    Return v5
+}
+function f1 name="codes" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="charCodeAt" @110
+    v3 = Call v1, - @120
+    v4 = Call v2, v0, v3 calleeKey="charCodeAt" calleeName="text.charCodeAt" @130
+    ReturnCall v4
+}
+function f2 name="slices" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="slice" @140
+    v3 = Call v1, - @150
+    v4 = Call v2, v0, v3 calleeKey="slice" calleeName="value.slice" @160
+    ReturnCall v4
+}
+function f3 name="has" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="has" @170
+    v3 = Call v1, - @180
+    v4 = Call v2, v0, v3 calleeKey="has" calleeName="table.has" @190
+    ReturnCall v4
+}

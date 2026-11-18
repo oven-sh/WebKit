@@ -82,11 +82,13 @@ public:
 
     static constexpr uint8_t useIsInRareRegion = 1 << 0;
     static constexpr uint8_t useReadsUpperHalf = 1 << 1;
+    static constexpr uint8_t useIsInUnlikelyPart = 1 << 2;
 
     const Use& use(uint32_t index) const { return m_uses[index]; }
     const Use* uses() const { return m_uses.begin(); }
     uint32_t numberOfUses() const { return m_uses.size(); }
     bool isUseInRareRegion(uint32_t index) const { ASSERT(index < m_uses.size()); return m_traitsOfUses[index] & useIsInRareRegion; }
+    bool isUseInUnlikelyPart(uint32_t index) const { ASSERT(index < m_uses.size()); return m_traitsOfUses[index] & (useIsInRareRegion | useIsInUnlikelyPart); }
     bool isUseOfUpperHalf(uint32_t index) const { ASSERT(index < m_uses.size()); return m_traitsOfUses[index] & useReadsUpperHalf; }
     const LoopFacts& of(const Loop& loop, const Order& order) const { return m_loops[static_cast<uint32_t>(&loop - order.loops().data())]; }
 
@@ -402,7 +404,7 @@ inline bool isLeafOfAddress(const Liveness& liveness, const Operation* user, uns
     return addsScaledIndex(liveness, user);
 }
 
-inline bool standsInInstruction(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
+ALWAYS_INLINE bool standsInInstruction(const Liveness& liveness, const Operation* user, unsigned childIndex, const Operation* leaf)
 {
     if (addsScaledIndex(liveness, user))
         return scaledSumAcceptsBase(*leaf);

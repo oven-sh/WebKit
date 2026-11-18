@@ -44,6 +44,7 @@ enum class AnswerKeptInArena : uint8_t {
     LayoutsThatStayWithCompiledCode,
     FieldOfLayoutsIsStable,
     DeclaredFieldOfLayoutsIsStable,
+    TypeHeldOfSlots,
     ResultOfBuiltinCall,
     FitInBuiltinType,
     NumberOfAnswers,

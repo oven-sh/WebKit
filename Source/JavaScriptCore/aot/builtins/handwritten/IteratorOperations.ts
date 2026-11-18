@@ -56,6 +56,10 @@ export function iteratorStepValue(nextMethod, iterator) {
         }
         return status === $generatorStepStatusCompleted ? $collectionIteratorClosedMark() : value;
     }
+    if (nextMethod === $regExpStringIteratorProtoNext && $isRegExpStringIterator(iterator)) {
+        const match = $stepMatchIterator(iterator);
+        return match === null ? $collectionIteratorClosedMark() : match;
+    }
     const result = $iteratorGenericNext(nextMethod, iterator);
     return result.done ? $collectionIteratorClosedMark() : result.value;
 }

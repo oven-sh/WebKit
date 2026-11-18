@@ -110,9 +110,13 @@ public:
 
     Condition isMultipleOfConstant(ValueID remainder, ValueID comparedWith)
     {
+        if (m_code.useCountOf(remainder) != 1)
+            return { };
         const Operation& divided = operationAt(definitionOf(remainder));
+        if (divided.opcode != Opcode::RemainderOfIntegers)
+            return { };
         const Operation& zero = operationAt(definitionOf(comparedWith));
-        if (divided.opcode != Opcode::RemainderOfIntegers || zero.opcode != Opcode::Integer || zero.integer() || m_code.useCountOf(remainder) != 1)
+        if (zero.opcode != Opcode::Integer || zero.integer())
             return { };
         ValueID dividend = divided.dividendOperand();
         Representation representation = representationOf(dividend);
@@ -282,6 +286,11 @@ public:
             CellPointer x = in<CellPointer>(left);
             return equal(x, in<CellPointer>(right));
         }
+        case Representation::Cell32: {
+            NarrowReference x = in<NarrowReference>(left);
+            build().statistics().count(StatisticID::NarrowReferencesCompared);
+            return equal(x, in<NarrowReference>(right));
+        }
         case Representation::JSValue: {
             Boxed x = in<Boxed>(left);
             return equalityOnBoxedBits(value, x, in<Boxed>(right), isStrict);
@@ -294,7 +303,6 @@ public:
         case Representation::Double:
         case Representation::OptionalInt64:
         case Representation::OptionalDouble:
-        case Representation::Cell32:
         case Representation::RawWord:
             break;
         }
@@ -435,12 +443,42 @@ public:
         return Condition(m_out.castToInt32(callStub(value, stringEqualsValue(), { string.value(), other.value() }).first));
     }
 
-    Condition equalityOnValues(const ValueContext& value, bool isStrict)
+    void generateLooseEqualityOnValues(const ValueContext& value)
     {
         Boxed x = in<Boxed>(value->leftOperand());
         Boxed y = in<Boxed>(value->rightOperand());
-        m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
-        return callEqualStub(value, isStrict, x, y);
+        ComparedKinds kinds = kindsComparedBy(value);
+        bool mayBeAbsent = mayBeEmpty(value->leftOperand()) || mayBeEmpty(value->rightOperand());
+        if (mayBeAbsent || !kinds.mayBothBeStrings || !generator().takesOpenForm(value, StateOfKnowledge::Generic)) {
+            m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
+            defineTest(value, callEqualStub(value, false, x, y));
+            return;
+        }
+        build().statistics().count(StatisticID::LooseEqualitiesOpened);
+        defineTestByBranching(value, [&](BranchTargets targets) {
+            LBasicBlock areCells = newBlock();
+            LBasicBlock areNotBothCells = newBlock();
+            LBasicBlock areDifferentCells = newBlock();
+            LBasicBlock firstIsString = newBlock();
+            LBasicBlock areStrings = newBlock();
+            LBasicBlock callsStub = newBlock();
+            m_out.branch(areBothCells(x, y).value(), normalEdge(areCells), normalEdge(areNotBothCells));
+            m_out.appendTo(areCells);
+            m_out.branch(equal(x, y).value(), targets.taken, normalEdge(areDifferentCells));
+            m_out.appendTo(areDifferentCells);
+            m_out.branch(hasCellType(unboxCell(x), StringType).value(), normalEdge(firstIsString), rareEdge(callsStub));
+            m_out.appendTo(firstIsString);
+            m_out.branch(hasCellType(unboxCell(y), StringType).value(), normalEdge(areStrings), rareEdge(callsStub));
+            m_out.appendTo(areStrings);
+            emitter<StringEmitter>().branchOnEqualityOfDistinctStrings(value, unboxCell(x), unboxCell(y), targets);
+            m_out.appendTo(areNotBothCells);
+            LBasicBlock areInt32s = newBlock();
+            m_out.branch(isInt32(Boxed(m_out.bitAnd(x.value(), y.value()))).value(), normalEdge(areInt32s), rareEdge(callsStub));
+            m_out.appendTo(areInt32s);
+            branch(equal(x, y), targets);
+            m_out.appendTo(callsStub);
+            branch(callEqualStub(value, false, x, y), targets);
+        });
     }
 
     void generateStrictEqualityOnValues(const ValueContext& value)
@@ -765,6 +803,8 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
         return;
     if (emitter<ControlEmitter>().tryGenerateLiteralChain(value))
         return;
+    if (isStrict && value->form() == OperatorForm::Bits && emitter<ControlEmitter>().tryGenerateSymbolChain(value))
+        return;
     EqualityEmitter equality(generator());
     ValueID left = value->leftOperand();
     ValueID right = value->rightOperand();
@@ -802,12 +842,11 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             });
             return;
         }
-        if (isStrict) {
+        if (isStrict)
             equality.generateStrictEqualityOnValues(value);
-            return;
-        }
-        result = equality.equalityOnValues(value, isStrict);
-        break;
+        else
+            equality.generateLooseEqualityOnValues(value);
+        return;
     case OperatorForm::Integers:
         m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
         result = equality.equalityOnIntegers(value);

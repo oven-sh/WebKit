@@ -124,11 +124,12 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits | orderWordHasFieldOutsideSlot))));
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, Address(structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_mayBePrototypeBits)));
     isLeftToStubForAnyField.append(jit.branchTest32(CCallHelpers::NonZero, offset, TrustedImm32(offsetBitsWithoutSlotKey)));
+    JumpList goesByName;
     if (mode != PutMode::Define) {
         const GPRReg nameOfField = T14;
         const GPRReg filter = jit.allocateScratch(StubRegister::A2);
         loadNameOfField(jit, record, nameOfField);
-        branchIfChainMayStopStore(jit, object, structure, nameOfField, filter, T11, isLeftToStubForAnyField);
+        branchIfChainMayStopStore(jit, object, structure, nameOfField, filter, T11, goesByName);
     }
     jit.store64(value, slot);
 
@@ -137,6 +138,13 @@ static void generatePutKnownFieldThatTakesAnyValue(StubAssembler& jit)
     jit.subPtr(offsetOfRecord, layout);
     listCreatedFieldAndReturn(jit, keyOrder, value, FieldOfLayout { layout, offsetOfRecord }, mode == PutMode::Define ? CreationChecksChain::No : CreationChecksChain::Yes);
 
+    if (mode != PutMode::Define) {
+        const GPRReg name = offsetOfRecord;
+        goesByName.link(&jit);
+        loadNameOfField(jit, record, name);
+        jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+        jit.jumpToStub(putByIdBehindFieldTable(mode));
+    }
     jit.linkToStub(isLeftToStubForAnyField, putKnownField(mode));
 }
 
@@ -259,7 +267,7 @@ void generatePutKnownField(StubAssembler& jit)
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     RELEASE_ASSERT(hasNoStorage.empty());
     Label hasAddress = jit.label();
-    auto emitRememberingOfKind = [&](GPRReg) {
+    auto emitRememberingOfKindAs = [&](uint32_t bits) {
         JumpList isNotRemembered;
         const GPRReg nameOfField = registers.field.representation;
         const GPRReg index = structure;
@@ -267,14 +275,16 @@ void generatePutKnownField(StubAssembler& jit)
         isNotRemembered.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine)));
         loadNameOfField(jit, record, nameOfField);
         loadIndexInFieldTable(jit, object, nameOfField, index, record, isNotRemembered);
-        jit.or32(TrustedImm32(static_cast<int32_t>(AcceptedKindOfValue::isEntryOfFieldTable)), index);
+        jit.or32(TrustedImm32(static_cast<int32_t>(bits)), index);
         rememberAcceptedKindOfValue(jit, value, registers.type, index, registers.field.address, registers.scratch, record);
         isNotRemembered.link(&jit);
+    };
+    auto emitRememberingOfKind = [&](GPRReg) {
+        emitRememberingOfKindAs(AcceptedKindOfValue::isEntryOfFieldTable);
     };
     const ScopedLambda<void(GPRReg)> rememberKind(emitRememberingOfKind);
     storeField(jit, registers, FieldStoreEnd::ReturnAfterBarrier, FieldTypeTest::IsEmitted, nullptr, exits, &rememberKind);
     JumpList isRefusedBySlot;
-    isRefusedBySlot.append(exits.wasAbsentAndIsNotAccepted);
     isRefusedBySlot.append(exits.cannot);
 
     isOutOfLine.link(&jit);
@@ -365,6 +375,14 @@ void generatePutKnownField(StubAssembler& jit)
 
     isRemembered.link(&jit);
     jit.store32(orderAfter, orderWord);
+    FieldData fieldWithMarkers { };
+    fieldWithMarkers.slotHoldsUndefinedAndNull = 1;
+    Jump isNoMarker = jit.branchIfNotOther(value, registers.scratch);
+    Jump mayBeMarker = jit.branchTest32(CCallHelpers::NonZero, Address(record), TrustedImm32(static_cast<int32_t>(std::bit_cast<WordsOfField>(fieldWithMarkers)[0])));
+    isNoMarker.link(&jit);
+    loadTypeOfFieldRecord(jit, record, 0, registers.type);
+    emitRememberingOfKind(registers.type);
+    mayBeMarker.link(&jit);
     returnAfterStoring(jit, object, value);
 
     mayComeBack.link(&jit);
@@ -431,6 +449,15 @@ void generatePutKnownField(StubAssembler& jit)
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), registers.field.slotData);
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     jit.jump().linkTo(createsField, &jit);
+
+    exits.wasAbsentAndIsNotAccepted.link(&jit);
+    isRefusedBySlot.append(jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+    isRefusedBySlot.append(jit.branchIfNotCell(value));
+    loadNameOfField(jit, record, name);
+    jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
+    loadTypeOfFieldRecord(jit, record, 0, registers.type);
+    emitRememberingOfKindAs(AcceptedKindOfValue::isEntryOfFieldTable | AcceptedKindOfValue::isRefused);
+    jit.jumpToStub(putValueThatSlotRefuses(mode));
 
     isRefusedBySlot.link(&jit);
     loadNameOfField(jit, record, name);

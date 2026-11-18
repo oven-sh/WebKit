@@ -24,16 +24,23 @@ struct DistinctBounds {
 
 constexpr auto boundsWithRoomForAll = [] {
     DistinctBounds<numberOfOpcodes> result;
+    std::array<uint16_t, 256> lastRowPlusOneOf { };
+    std::array<uint16_t, numberOfOpcodes> previousRowPlusOneOf { };
     for (Opcode member : allMembersOf<Opcode>) {
         EffectBoundBuilder builder;
         forEachDeclaredEffect(member, builder);
         Effects bound = withDeclaredKindOfThrow(member, builder.effects());
-        size_t row = 0;
-        while (row < result.numberOfRows && result.rows[row] != bound)
-            ++row;
-        if (row == result.numberOfRows)
-            result.rows[result.numberOfRows++] = bound;
-        result.rowOf[static_cast<unsigned>(member)] = static_cast<uint8_t>(row);
+        uint32_t hash = static_cast<uint32_t>(bound.reads.heaps().toRaw()) * 0x9E3779B1u + static_cast<uint32_t>(bound.writes.heaps().toRaw()) * 0x85EBCA6Bu;
+        uint16_t& lastRowPlusOne = lastRowPlusOneOf[hash >> 24];
+        uint16_t rowPlusOne = lastRowPlusOne;
+        while (rowPlusOne && result.rows[rowPlusOne - 1] != bound)
+            rowPlusOne = previousRowPlusOneOf[rowPlusOne - 1];
+        if (!rowPlusOne) {
+            result.rows[result.numberOfRows] = bound;
+            previousRowPlusOneOf[result.numberOfRows] = lastRowPlusOne;
+            rowPlusOne = lastRowPlusOne = static_cast<uint16_t>(++result.numberOfRows);
+        }
+        result.rowOf[static_cast<unsigned>(member)] = static_cast<uint8_t>(rowPlusOne - 1);
     }
     return result;
 }();

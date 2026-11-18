@@ -118,7 +118,16 @@ static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference str
     if (walker.hasFailed())
         return { };
     flatten.setIsReadOperands(conditions.span());
-    return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
+    if (flatten.mayStayRope())
+        return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
+    if (Reference flat = walker.flatStringOfOtherVersion(string, conditions.span())) {
+        walker.count(StatisticID::FlatStringsShared);
+        return flat;
+    }
+    Reference flat = walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
+    if (flat && flat.isValue())
+        walker.noteHoistedFlatString(flat);
+    return flat;
 }
 
 Reference flatLiteralBeforeLoop(Walker& walker, Reference literal, Origin origin)

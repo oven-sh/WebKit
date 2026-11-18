@@ -25,7 +25,11 @@ bool buildToStringOfPrimitiveByRows(Walker&, const BodyValue& call);
 bool callLibraryFunctionBehindRows(Walker&, const BodyValue& call);
 inline constexpr OpcodeSet byteLiteralOpcodes { Opcode::Call };
 AOT_LINK_OF_WALK(buildByteLiteral, byteLiteralOpcodes)
-bool isPrivateAliasOfBuiltinMember(const Program&, PropertyKeyID);
+bool isPrivateNameOfBuiltinMember(const Program&, PropertyKeyID);
+ALWAYS_INLINE bool isPrivateAliasOfBuiltinMember(const Program& program, PropertyKeyID key)
+{
+    return key && !liesInThread(key) && program.at(key).kind == PropertyKeyKind::EnginePrivateName && isPrivateNameOfBuiltinMember(program, key);
+}
 
 } } } // namespace JSC::AOT::Typed
 

@@ -471,6 +471,34 @@ static uint32_t encodeRegExpNamedGroups(SectionWriter& details, const RegExpRequ
     return offset;
 }
 
+static std::optional<uint32_t> coverFirstCharacters(const WTF::BitSet<256>& characters)
+{
+    constexpr unsigned maxCovered = 32;
+    const unsigned first = characters.findBit(0, true);
+    if (first >= 256)
+        return std::nullopt;
+    unsigned last = first;
+    unsigned widestGap = 0;
+    unsigned lastOfFirstRange = 0;
+    unsigned firstOfSecondRange = first;
+    while (true) {
+        const unsigned next = characters.findBit(last + 1, true);
+        if (next >= 256)
+            break;
+        if (next - last - 1 > widestGap) {
+            widestGap = next - last - 1;
+            lastOfFirstRange = last;
+            firstOfSecondRange = next;
+        }
+        last = next;
+    }
+    if (!widestGap)
+        lastOfFirstRange = last;
+    if (last - first + 1 - widestGap > maxCovered)
+        return std::nullopt;
+    return first | (lastOfFirstRange - first) << 8 | firstOfSecondRange << 16 | (last - firstOfSecondRange) << 24;
+}
+
 static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& request, const RegExpSummary& summary, const StringNumbers& strings, SectionWriter& details)
 {
     record.numSubpatterns = summary.numSubpatterns;
@@ -489,6 +517,12 @@ static void encodeRegExpMetadata(ImageRegExp& record, const RegExpRequest& reque
         ImageRegExpCharacterSet header { set.bits };
         record.details = details.append(asByteSpan(header), ImageRegExpCharacterSet::alignment);
         details.append(asByteSpan(set.wideRanges.span()), alignof(Yarr::CharacterRange));
+    }
+    if (summary.firstCharacters && !record.hasNamedGroups && !record.hasCharacterSet()) {
+        if (std::optional<uint32_t> ranges = coverFirstCharacters(*summary.firstCharacters)) {
+            record.hasFirstCharacters = true;
+            record.details = *ranges;
+        }
     }
 }
 

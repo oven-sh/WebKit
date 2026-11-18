@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTJSONScanner.h"
 #include "Identifier.h"
 #include "JSArray.h"
@@ -38,6 +39,8 @@ public:
     class LearnedNames;
     struct LearnedString;
     class LearnedStrings;
+    struct RepeatedValue;
+    class RepeatedValues;
 
     uint32_t numberOfRecordsMade() const { return m_numberOfRecordsMade; }
     uint32_t numberOfOrdinaryObjectsMade() const { return m_numberOfOrdinaryObjectsMade; }
@@ -55,7 +58,7 @@ private:
     struct Members {
         EncodedJSValue values[JSFinalObject::maxInlineCapacity];
         uint8_t kinds[JSFinalObject::maxInlineCapacity];
-        uint8_t kindsOfAll { 0 };
+        uint64_t objects { 0 };
     };
 
     struct NextMember {
@@ -67,19 +70,29 @@ private:
     ParsedJSONValue parseValue(Cursor);
     LearnedString* parseString(Cursor quote);
     LearnedString* unlearnedString(Cursor quote, const ParsedJSONString&);
+    bool isLearnedString(const LearnedString&, Cursor value) const;
     ParsedJSONValue parseNumber(Cursor);
+    ParsedJSONValue parseNumberSlow(Cursor);
     ParsedJSONValue parseObject(Cursor brace);
-    ParsedJSONValue parseArray(Cursor bracket);
+    ParsedJSONValue parseArray(Cursor bracket, uint16_t& missedRepeats);
+    ParsedJSONValue parseNested(Cursor bracket, uint16_t& missedRepeats);
+    ParsedJSONValue parseOrCopy(Cursor bracket, uint16_t& missedRepeats);
+    JSObject* copyOf(JSObject*);
+    JSObject* copyOfObjectWithObjects(JSObject*);
+    JSObject* copyOfOrdinaryObject(JSFinalObject*);
+    JSObject* copyOfArray(JSArray*);
 
     struct LearnedName;
     NextMember findNextMember(Structure*, unsigned index, Cursor quote);
     NextMember findKnownMember(Structure*, unsigned index, Cursor quote);
     NextMember findOrAddMember(Structure*, unsigned index, Cursor quote);
-    JSObject* createObject(Members&, unsigned count, Structure*, LearnedName&);
-    JSObject* createObjectSlow(Members&, unsigned count, Structure*, LearnedName&);
+    JSObject* createRecord(Members&, unsigned count, uint8_t kindsOfAll, LearnedName&);
+    JSObject* createObject(Members&, unsigned count, uint8_t kindsOfAll, Structure*, LearnedName&);
+    JSObject* createObjectSlow(Members&, unsigned count, uint8_t kindsOfAll, Structure*, LearnedName&);
     JSObject* createOrdinaryObject(Members&, unsigned count, Structure*);
     ParsedJSONValue parseRemainingMembers(JSObject*, Cursor quote);
     JSArray* createArray(const JSValue* values, unsigned length);
+    JSArray* createArraySlow(const JSValue* values, unsigned length, Structure*);
 
     Instance& m_instance;
     const JSONWords& m_words;
@@ -89,12 +102,16 @@ private:
     JSONCache::ParsingScope m_parsingScope;
     LearnedNames& m_learnedNames;
     LearnedStrings& m_learnedStrings;
+    uint16_t* const m_predictions;
+    RepeatedValues& m_repeatedValues;
     const Cursor m_sourceEnd;
+    void* const m_stackLimit;
     uint32_t m_sourceNumber;
+    bool m_copiesRepeatedValues;
     MarkedArgumentBufferWithSize<inlineElementCapacity> m_elements;
 };
 
-struct JSONValueParser::LearnedString {
+struct alignas(64) JSONValueParser::LearnedString {
     struct Key {
         static ALWAYS_INLINE Key of(std::span<const uint8_t> text)
         {
@@ -106,14 +123,22 @@ struct JSONValueParser::LearnedString {
             return { head, head, length };
         }
 
-        bool operator==(const Key&) const = default;
-
         uint64_t head;
         uint64_t tail;
         size_t length;
     };
 
-    Key key;
+    static constexpr unsigned headLength = 2 * sizeof(uint64_t);
+
+    ALWAYS_INLINE bool matchesHead(Cursor value) const
+    {
+        uint64_t difference = (WTF::unalignedLoad<uint64_t>(value) | afterText[0]) ^ head[0];
+        difference |= (WTF::unalignedLoad<uint64_t>(value + sizeof(uint64_t)) | afterText[1]) ^ head[1];
+        return !difference;
+    }
+
+    uint64_t head[2];
+    uint64_t afterText[2];
     JSString* string;
     Cursor quote;
     uint32_t textLength;
@@ -125,19 +150,21 @@ class JSONValueParser::LearnedStrings {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(LearnedStrings);
 public:
     static constexpr size_t maxLength = 256;
+    static constexpr unsigned bitsOfIndex = 11;
 
-    LearnedStrings() { m_unlearned.next = &m_unlearned; }
-
-    LearnedString& unlearned() { return m_unlearned; }
-    LearnedString& at(const LearnedString::Key& key) { return m_strings[((key.head * 0x9E3779B97F4A7C15ULL) ^ ((key.tail + key.length) * 0xC2B2AE3D27D4EB4FULL)) >> (64 - WTF::fastLog2(capacity))]; }
-    void set(LearnedString& learned, const LearnedString::Key& key, JSString* string)
+    LearnedString& unlearned() { return m_strings[0]; }
+    static uint64_t hashOf(const LearnedString::Key& key) { return (key.head * 0x9E3779B97F4A7C15ULL) ^ ((key.tail + key.length) * 0xC2B2AE3D27D4EB4FULL); }
+    LearnedString& at(uint64_t hash) { return m_strings.data()[1 + placeOf(hash)]; }
+    bool wasSeen(uint64_t hash)
     {
-        m_isEmpty = false;
-        learned.key = key;
-        learned.string = string;
-        learned.textLength = key.length + 2;
-        learned.next = &m_unlearned;
+        uint16_t tag = hash >> 32;
+        return std::exchange(m_tags.data()[placeOf(hash)], tag) == tag;
     }
+    LearnedString& withIndex(unsigned index) { return m_strings.data()[index]; }
+    unsigned indexOf(const LearnedString& string) const { return &string - m_strings.data(); }
+    uint16_t* predictions(JSONSourceEncoding encoding) { return encoding == JSONSourceEncoding::Latin1 ? m_predictions.data() : m_noPredictions.data(); }
+    static unsigned indexOfPrediction(const LearnedName&);
+    void set(LearnedString&, Cursor quote, size_t textLength, JSString*);
     void clear()
     {
         if (!m_isEmpty)
@@ -147,13 +174,18 @@ public:
 
 private:
     static constexpr unsigned capacity = 1024;
+    static_assert(capacity < 1 << bitsOfIndex);
+    static constexpr unsigned numberOfPredictions = 2048;
+    static size_t placeOf(uint64_t hash) { return hash >> (64 - WTF::fastLog2(capacity)); }
 
     bool m_isEmpty { true };
-    LearnedString m_unlearned { };
-    std::array<LearnedString, capacity> m_strings;
+    std::array<uint16_t, numberOfPredictions> m_predictions;
+    std::array<uint16_t, numberOfPredictions> m_noPredictions;
+    std::array<uint16_t, capacity> m_tags;
+    std::array<LearnedString, 1 + capacity> m_strings;
 };
 
-struct JSONValueParser::LearnedName {
+struct alignas(64) JSONValueParser::LearnedName {
     static constexpr unsigned maxTextLength = 32;
 
     ALWAYS_INLINE bool matches(Cursor cursor) const
@@ -175,8 +207,9 @@ struct JSONValueParser::LearnedName {
     LearnedName* likelyNext;
     Structure* structure;
     uint32_t textLength;
+    uint32_t recentStrings;
     bool completesOrdinaryObject;
-    LearnedString* string;
+    uint16_t missedRepeats;
     const ObjectBuilderPlan* plan;
     Structure* recordStructure;
     LearnedName* firstNext;
@@ -184,16 +217,93 @@ struct JSONValueParser::LearnedName {
     uint64_t tail[2];
 };
 
+ALWAYS_INLINE unsigned JSONValueParser::LearnedStrings::indexOfPrediction(const LearnedName& name)
+{
+    uint64_t context = static_cast<uint64_t>(name.recentStrings) << 32 | static_cast<uint32_t>(std::bit_cast<uintptr_t>(&name));
+    return (context * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfPredictions));
+}
+
+struct JSONValueParser::RepeatedValue {
+    Cursor start;
+    JSObject* object;
+    uint32_t textLength;
+    uint32_t sourceNumber;
+};
+
+class JSONValueParser::RepeatedValues {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(RepeatedValues);
+public:
+    static constexpr size_t minTextLength = 16;
+    static constexpr uint16_t maxMissesInRow = 64;
+    static constexpr uint16_t endOfSkippedRow = 4096;
+
+    ALWAYS_INLINE RepeatedValue& at(Cursor bracket)
+    {
+        auto word = [&](unsigned index) ALWAYS_INLINE_LAMBDA {
+            return WTF::unalignedLoad<uint64_t>(bracket + index * sizeof(uint64_t));
+        };
+        uint64_t hash = word(0) * 0x9E3779B97F4A7C15ULL ^ word(1) * 0xC2B2AE3D27D4EB4FULL ^ word(2) * 0x165667B19E3779F9ULL ^ word(3) * 0xD6E8FEB86659FD93ULL;
+        return m_values.data()[hash >> (64 - WTF::fastLog2(capacity))];
+    }
+    void set(RepeatedValue& value, const RepeatedValue& newValue)
+    {
+        m_isEmpty = false;
+        value = newValue;
+    }
+
+    struct PlanOfRecord {
+        uint64_t key;
+        const ObjectBuilderPlan* plan;
+        uint64_t fieldsWithObjects;
+    };
+    static uint64_t keyOf(StructureID structureID, uint32_t orderAndCount) { return static_cast<uint64_t>(structureID.bits()) << 32 | orderAndCount; }
+    static ALWAYS_INLINE uint64_t keyOf(const JSObject* object)
+    {
+        uint32_t orderWord = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + offsetOfOrderWord);
+        return keyOf(object->structureID(), orderWord & orderAndCountMask);
+    }
+    ALWAYS_INLINE PlanOfRecord* findPlan(uint64_t key)
+    {
+        PlanOfRecord* first = m_plans.data() + indexOf(key);
+        for (unsigned distance = 0; distance < plansTried; ++distance) {
+            if (first[distance].key == key) [[likely]]
+                return first + distance;
+        }
+        return nullptr;
+    }
+    void addPlan(StructureID, const ObjectBuilderPlan&);
+    void addFieldsWithObjects(StructureID, const ObjectBuilderPlan&, uint64_t fields);
+
+    void clear()
+    {
+        if (!m_isEmpty) {
+            m_values.fill({ });
+            m_plans.fill({ });
+        }
+        m_isEmpty = true;
+    }
+
+private:
+    static constexpr unsigned capacity = 512;
+    static constexpr unsigned numberOfPlans = 512;
+    static constexpr unsigned plansTried = 4;
+    static size_t indexOf(uint64_t key) { return (key * 0x9E3779B97F4A7C15ULL) >> (64 - WTF::fastLog2(numberOfPlans)); }
+
+    bool m_isEmpty { true };
+    std::array<PlanOfRecord, numberOfPlans + plansTried - 1> m_plans;
+    std::array<RepeatedValue, capacity> m_values;
+};
+
 class JSONValueParser::LearnedNames {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(LearnedNames);
 public:
-    explicit LearnedNames(LearnedStrings& strings)
+    LearnedNames(LearnedStrings& strings, RepeatedValues& repeatedValues)
         : m_strings(strings)
+        , m_repeatedValues(repeatedValues)
     {
         LearnedName& name = unlearned();
         name.text[0] = 1;
         name.likelyNext = &name;
-        name.string = &m_strings.unlearned();
     }
 
     LearnedName& unlearned() { return m_names[0]; }
@@ -237,6 +347,7 @@ private:
     LearnedName* add(const JSONWords&, Cursor quote, const NextMember&);
 
     LearnedStrings& m_strings;
+    RepeatedValues& m_repeatedValues;
     uint32_t m_epoch { 0 };
     uint32_t m_sourceNumber { 0 };
     uint32_t m_count { 1 };

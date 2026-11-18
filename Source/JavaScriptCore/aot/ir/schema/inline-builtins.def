@@ -22,13 +22,13 @@ inline TypedArrayLength TypedArrayByteLength TypedArrayByteOffset ViewLength Vie
 inline TypedArrayWithLength ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
 inline TypedArraySet ; reads(TypedArrayStorage, TypedArrayElements) writes(TypedArrayElements) ; family ArrayBufferViewBuiltin
 inline ByteLiteral(ByteLiteralKind) ; Allocates throws ; family ArrayBufferViewBuiltin ; optionalSlowPath
-inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ReflectSet ; asOverload ; family OwnPropertyBuiltin
+inline OwnPropertyKeys(OwnKeysKind) ObjectGetOwnPropertyDescriptor ObjectDefineProperty ReflectSet ; asOverload ; family OwnPropertyBuiltin
 inline ObjectHasOwn ObjectIsPrototypeOf ObjectPropertyIsEnumerable ObjectValues ObjectEntries ; asOverload ; family OwnPropertyBuiltin ; optionalSlowPath
 inline GetPrototypeOf(PrototypeQuery) ; reads(ShapeWords, NamedProperties, PrototypeLinks) ; family ObjectBuiltin
 inline ObjectCreate SetPrototypeOf(PrototypeChange) CallObjectConstructor ObjectPrototypeToString ObjectAssign ; asOverload ; family ObjectBuiltin
 inline ObjectIs ReturnThis ; none ; family ObjectBuiltin ; optionalSlowPath
 inline SymbolDescription SymbolToString ; asOverload ; family ObjectBuiltin ; optionalSlowPath
-inline NewMap NewSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
+inline NewMap NewSet NewWeakMap NewWeakSet ; Allocates ; family HashTableBuiltin ; optionalSlowPath
 inline MapGet MapHas SetHas ; CreatesConstant ResolvesRopes reads(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
 inline MapSet SetAdd ; Allocates ResolvesRopes reads(CollectionStorage, CollectionEntries) writes(CollectionStorage, CollectionEntries) ; family HashTableBuiltin ; optionalSlowPath
 inline MapSize SetSize ; reads(CollectionStorage) ; family HashTableBuiltin ; optionalSlowPath

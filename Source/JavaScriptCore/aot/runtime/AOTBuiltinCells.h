@@ -150,6 +150,7 @@ private:
         JSObject* member;
     };
     Vector<MemberMadeAhead> m_membersMadeAhead;
+    std::array<std::pair<BuiltinID, uint32_t>, 16> m_recentObjects { };
     struct AwaitedConstructor {
         JSObject* prototype;
         BuiltinID constructor;

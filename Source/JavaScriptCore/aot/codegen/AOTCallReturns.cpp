@@ -385,6 +385,11 @@ void CallEmitter::tailCallValue(const ValueContext& value, const ValueCall& call
     requireCallableBeforeTailCall(value, call.callee, call.thisValue);
     bool calleeIsCell = call.calleeIsCell || !mayForwardCallToReceiver(value.value());
 
+    if (call.methodOfBuiltinClass && calleeIsCell && !emitter<AccessEmitter>().wasMethodTried(value->calleeOperand()) && servesCallsByName(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())) && cellTypesOfReceiversOf(*call.methodOfBuiltinClass)) {
+        ConventionCall method { .stub = callMethodThatMayBeUnreadInTailPosition(*call.methodOfBuiltinClass, static_cast<unsigned>(values.size())), .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
+        emitTailCall(value, CallTarget::stub(method.stub, std::nullopt), placeConventionArguments(method));
+        return;
+    }
     ConventionCall conventionCall { .callee = call.callee.value(), .thisValue = call.thisValue.value(), .arguments = values.span() };
     LValue countOperand = nullptr;
     chooseStubThatCallsValue(conventionCall, countOperand, calleeIsCell);

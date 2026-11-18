@@ -5,7 +5,7 @@
 # CHECK-COUNT-1: = PopCount
 # CHECK-NOT: = PopCount
 # RUN(SHELL): run-in-shell globalThis.sink = (...all) => { print(all.join(" ")); };
-# SHELL: 1.5 4
+# SHELL: 1.5 4 4
 # SHELL: exited with 0
 
 layout L0 kind=Instance name="P" module=m0 constructor=f3 fields=[{key="x" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
@@ -28,9 +28,11 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v12 = PropGet v8 key="j"
     v13 = Builtin builtin=GlobalThis
     v14 = PropGet v13 key="sink" [isFreeName]
-    v15 = Call v14, -, v12, v11 calleeName="sink"
-    v16 = Undefined
-    Return v16
+    v15 = Construct v6, -, v10 calleeName="P"
+    v16 = PropGet v15 key="x"
+    v17 = Call v14, -, v12, v11, v16 calleeName="sink"
+    v18 = Undefined
+    Return v18
 }
 function f1 name="fill" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):

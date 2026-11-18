@@ -22,6 +22,7 @@
 #include "AOTWasmModules.h"
 #include "JSCPtrTag.h"
 #include "JSLock.h"
+#include "Options.h"
 #include "VM.h"
 #include "WasmCodeInImage.h"
 #include "WasmHandlerInfo.h"
@@ -31,6 +32,7 @@
 #include <bmalloc/Gigacage.h>
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -324,10 +326,28 @@ static void testSameBytesEachTime()
     }
 }
 
+static void testDumpLeavesCodeAsItIs()
+{
+    Vector<uint8_t> codeWithoutDump = compileModuleWithCode(indirectCallModule).code;
+    SetForScope dumps(Options::dumpOMGDisassembly(), true);
+    AOT_TEST_CHECK(compileModuleWithCode(indirectCallModule).code == codeWithoutDump);
+}
+
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+static void testReturnFollowsAuthentication()
+{
+    constexpr uint32_t authenticationAndReturn[] = { 0xd50323ff, 0xd65f03c0 }; // AUTIBSP, RET
+    Wasm::ModuleForImage module = compileModuleWithCode(indirectCallModule);
+    AOT_TEST_CHECK(std::ranges::any_of(module.functions[trapping], [&](const Wasm::FunctionInImage& function) {
+        return !std::ranges::search(module.code.span().subspan(function.entry, function.size), asBytes(std::span(authenticationAndReturn))).empty();
+    }));
+}
+#endif
+
 static RelocatableCode codeThatCalls(std::optional<uint32_t> symbol)
 {
     BuildContext context(makeDefaultCompileOptions());
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, context.assemblerPolicy());
     if (symbol)
         recorder.call({ SymbolSpace::WebAssembly, *symbol });
@@ -407,6 +427,9 @@ static void testPointerTableSlots()
     slots.append(Wasm::ImagePointerTable::primitiveGigacageDisableRequest);
     slots.append(Wasm::ImagePointerTable::primitiveGigacageBase);
 #endif
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    slots.append(Wasm::ImagePointerTable::signedRestoreFrameReturnAddress);
+#endif
     for (uint32_t function = 0; function < table.numberOfFunctions; ++function)
         slots.append(table.callee(Wasm::FunctionCodeIndex(function)));
     for (uint32_t type = 0; type < table.numberOfTypes; ++type)
@@ -482,6 +505,10 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
+        { "webassembly-image/dump-leaves-code-as-it-is"_s, testDumpLeavesCodeAsItIs },
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        { "webassembly-image/return-follows-authentication"_s, testReturnFollowsAuthentication },
+#endif
         { "webassembly-image/call-goes-to-copy-of-its-flavor"_s, testCallGoesToCopyOfItsFlavor },
         { "webassembly-image/call-of-unknown-symbol-is-refused"_s, testCallOfUnknownSymbolIsRefused },
         { "webassembly-image/pointer-table-slots"_s, testPointerTableSlots },

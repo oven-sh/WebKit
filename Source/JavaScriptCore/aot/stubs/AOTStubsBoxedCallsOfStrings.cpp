@@ -152,7 +152,7 @@ void emitStringLocaleCompare(StubAssembler& jit, GPRReg scratch, JumpList& calls
         jit.move(TrustedImm64(JSValue::encode(jsNumber(order))), jit.result());
         jit.returnToCaller();
     };
-    emitLocaleCompareOfASCII(jit, registers, ScopedLambda<void(int32_t)>(returnOrder), callsHostFunction);
+    emitLocaleCompareOfASCII(jit, registers, CollatorCheck::ByRealm, ScopedLambda<void(int32_t)>(returnOrder), callsHostFunction);
 }
 
 void emitStringCharacterAt(StubAssembler& jit, GPRReg scratch, JumpList& callsHostFunction)

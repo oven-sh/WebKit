@@ -12,6 +12,7 @@
 
 namespace JSC {
 
+class CallFrame;
 class InlineWatchpointSet;
 class JSArray;
 class JSCell;
@@ -19,6 +20,7 @@ class InternalFunction;
 class JSFunction;
 class JSValue;
 class ObjectPropertyCondition;
+class PropertyDescriptor;
 class PropertyName;
 struct CallerFrameAndPC;
 
@@ -27,6 +29,7 @@ namespace AOT {
 enum class RejectedWrite : uint8_t { Store, Definition, Deletion, Prototype };
 
 void didChangeChainObject(VM&, JSObject* changed, UniquedStringImpl* uidOrNull);
+void didSetPrototypeOfChainObject(VM&, JSObject* changed);
 
 } // namespace AOT
 
@@ -43,6 +46,8 @@ using AOT::takePreallocatedStaticProperty;
 void willInitializeRealm(JSGlobalObject*);
 Structure* structureForHostFunctions(JSGlobalObject*, Structure*);
 bool rejectsNativeConstructorProperty(JSGlobalObject*, PropertyName);
+bool definesInheritedValue(JSObject* function, PropertyName, const PropertyDescriptor&);
+bool closeNamesOfFunction(VM&, JSObject* function, PropertyName);
 bool acceptsHasInstanceOfHost(InternalFunction*, PropertyName, JSValue method);
 inline bool locksNativeConstructorPrototypes(JSGlobalObject* realm) { return locksBuiltins(realm); }
 String lockedBuiltinPropertyErrorMessage(PropertyName);
@@ -57,6 +62,8 @@ void installDeferredWatchpoints(JSGlobalObject*);
 [[noreturn]] void crashOnHavingABadTime();
 [[noreturn]] void stopAtHostResult(Instance&, CallerFrameAndPC* operationFrameRecord, JSValue found, JSCell* function, uint32_t kinds);
 inline void didChangePrototypeChain(VM& vm, JSObject* changed, UniquedStringImpl* nameOrNull) { didChangeChainObject(vm, changed, nameOrNull); }
+inline void didSetPrototypeOfPrototype(VM& vm, JSObject* changed) { didSetPrototypeOfChainObject(vm, changed); }
+void willAddElementsToPrototype(VM&);
 bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImpl*);
 void didCreateAdditionTransition(VM&, Structure* made);
 Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
@@ -72,6 +79,10 @@ JSObject* proxyDefinePropertyTarget(VM&, JSValue receiver);
 JSObject* proxyOwnKeysTarget(VM&, JSObject* proxy, bool asksDescriptors);
 
 JSArray* tryCreateArrayOfPairs(JSGlobalObject*, JSCell* items);
+JSObject* tryMakeSetOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
+JSObject* tryMakeMapOfIterable(JSGlobalObject*, CallFrame* constructor, Structure*, JSValue iterable);
+
+JSObject* tryCopyObject(JSGlobalObject*, JSObject* compiledObject);
 
 class NoHelperThreadsScope {
     WTF_MAKE_NONCOPYABLE(NoHelperThreadsScope);

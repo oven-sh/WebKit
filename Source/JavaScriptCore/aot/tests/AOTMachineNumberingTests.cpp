@@ -732,7 +732,7 @@ static void testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons()
     AOT_TEST_CHECK(fixture.run(memory, 5) == 1);
 }
 
-static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
+static void testMachineNumberingNarrowReferenceIsLoadedOnce()
 {
     NumberingTestFixture fixture;
     Output& out = fixture.out;
@@ -750,7 +750,7 @@ static void testMachineNumberingOwnCopyOfNarrowReferenceIsMarked()
     out.appendToSuccessor(next, atEnd);
     AOT_TEST_CHECK(requestReference() == reference);
     Operation* widened = out.zeroExtPtr(reference);
-    AOT_TEST_CHECK(widened->opcode() == ZExt32 && widened->child(0)->isNarrowReference() && (widened->child(0) != reference) == isX86_64());
+    AOT_TEST_CHECK(widened->opcode() == ZExt32 && widened->child(0) == reference && reference->isNarrowReference());
     out.ret(widened);
 
     compileOrFail(fixture.test);
@@ -1350,7 +1350,7 @@ static std::span<const NativeTest> listOfMachineNumberingTests()
         { "machine/numbering/block-that-lost-an-edge-starts-empty"_s, testMachineNumberingBlockThatLostAnEdgeStartsEmpty },
         { "machine/numbering/sum-is-found-again-wherever-its-block-alone-leads"_s, testMachineNumberingSumIsFoundAgainWhereverItsBlockAloneLeads },
         { "machine/numbering/successor-reads-its-own-copy-of-two-comparisons"_s, testMachineNumberingSuccessorReadsOwnCopyOfTwoComparisons },
-        { "machine/numbering/own-copy-of-a-narrow-reference-is-marked"_s, testMachineNumberingOwnCopyOfNarrowReferenceIsMarked },
+        { "machine/numbering/narrow-reference-is-loaded-once"_s, testMachineNumberingNarrowReferenceIsLoadedOnce },
         { "machine/numbering/reused-load-is-verified"_s, testMachineNumberingReusedLoadIsVerified },
         { "machine/numbering/store-over-load-that-stands-stops-build"_s, testMachineNumberingStoreOverLoadThatStandsStopsBuild },
         { "machine/numbering/store-over-load-that-stands-is-judged-by-ways-from-entry"_s, testMachineNumberingStoreOverLoadThatStandsIsJudgedByWaysFromEntry },

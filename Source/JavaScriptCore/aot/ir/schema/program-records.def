@@ -3,7 +3,7 @@ enum LayoutKind (| engine isEnvironmentKind: Bool, canHaveExtraKeys: Bool, isObj
     | engine Closure(true, false, false) CoroutineFrame(true, false, false) BuiltinResult(false, false, true) ModuleNamespace(false, false, false)
 }
 flags LayoutFlags { HasHeritage IsConstructorFunction HasMembersWithoutLayout IsTypeParameter IsNeverAllocated IsWrittenUnderDictionaryType IsOfCreatedObject | engine IsDerived }
-flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten IsAlsoInPrototype IsBrandOfMethods WasRequiredAndRead IsReplaceable | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
+flags FieldFlags { IsRequired IsMethod IsPrivate IsImmutable IsBrand IsHidden IsNeverWritten MayBeDefinedAbove IsBrandOfMethods WasRequiredAndRead IsReplaceable | engine IsInherited IsAddedLate IsRemovedAsUnread IsEnforced IsRequiredUntilDeleted }
 flags FieldForm { IsReadOnly IsNotEnumerable IsNotConfigurable IsAccessor }
 enum MethodKind { Method Getter Setter }
 enum ClassSide { Prototype Static }
@@ -33,7 +33,7 @@ flags FunctionFlags {
     IsAsync IsGenerator IsSloppy HasRestParameter HasThis HasNewTarget TakesCallee HasArgumentCount HasHiddenRest IsChecked IsHiddenInStackTraces
     HasExplicitName IsNakedConstructor IsNamedByComputedKey IsAlwaysInlined
 }
-flags FunctionSyntax { HasLiveAwait IsEvaluatedScript IsShownAsNativeCode IsShownInHelperModule MayImportOwnOriginal MayRunAsOriginal IsWrappedModuleBody }
+flags FunctionSyntax { HasLiveAwait IsEvaluatedScript IsShownAsNativeCode IsShownInHelperModule MayImportOwnOriginal MayRunAsOriginal IsWrappedModuleBody RunsOncePerClosure }
 enum EntryParameter (presentWith: FunctionFlags) {
     Capture(none) This(HasThis) Callee(TakesCallee) NewTarget(HasNewTarget) ArgumentCount(HasArgumentCount) Parameter(none) HiddenRest(HasHiddenRest)
 }
@@ -49,6 +49,7 @@ record Function wire extendedEngine {
 }
 
 enum ECMAMode { Strict Sloppy }
+enum GlobalDeclarationStep { FindDuplicate CheckProperty Create }
 flags EvalScopeFlags { IsInFunction IsInArrowFunction IsInFieldInitializer IsInDerivedConstructor AllowsSuperProperty AllowsSuperCall AllowsNewTarget }
 enum EvalBindingKind {
     Variable Constant FunctionName This NewTarget HomeObject ClassObject Arguments PrivateName PrivateMethod PrivateAccessor WithObject EvalVariables

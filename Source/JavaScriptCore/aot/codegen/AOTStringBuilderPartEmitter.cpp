@@ -404,7 +404,11 @@ void StringBuilderPartEmitter::generateStackStringBuilderAppendNumber(const Valu
 void StringBuilderPartEmitter::generateStackStringBuilderAppendString(const ValueContext& value)
 {
     PlaceInFrame place = placeInFrameOf(value);
-    builders().defineCursorBehindPart(value, place.record, appendString(value, place, in<CellPointer>(value->valueOperand())));
+    auto append = [&](CellPointer string) {
+        return appendString(value, place, string);
+    };
+    std::optional<Pointer> behind = builders().tryAppendFinishedBuilder(value, place.record, place.cursor, append);
+    builders().defineCursorBehindPart(value, place.record, behind ? *behind : append(in<CellPointer>(value->valueOperand())));
 }
 
 void StringBuilderPartEmitter::generateStackStringBuilderAppendStringRange(const ValueContext& value)

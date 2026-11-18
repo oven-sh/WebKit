@@ -1,0 +1,62 @@
+# function last(n, limit) { let x = 1, r = "none"; for (let i = 0; i < n; i++) { x = x * 3 + i; if (x > limit) x = 1; r = x; } return r; }
+# A number without a fraction that is boxed is an int32 nearly always: the side of the double lies out of the line.
+# RUN(EMITTED): emit f1 mechanisms=all
+# EMITTED: Branch({{*}}) -> unlikely #
+# EMITTED: Branch({{*}}) -> unlikely #
+# RUN(SHELL): run-in-shell mechanisms=all globalThis.sink = (...all) => { print(all.join(" ")); };
+# SHELL: none 3 22 1539 4358480491 13284
+# SHELL: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Integer
+    v4 = Integer integer=1
+    v5 = Integer integer=20
+    v6 = Integer integer=1000000000
+    v7 = Integer integer=40
+    v8 = Integer integer=9007199254740992
+    v9 = Call v0, -, v3, v6 calleeName="last"
+    v10 = Call v0, -, v4, v6 calleeName="last"
+    v11 = Call v0, -, v5, v6 calleeName="last"
+    v12 = Call v0, -, v7, v6 calleeName="last"
+    v13 = Call v0, -, v5, v8 calleeName="last"
+    v14 = Call v0, -, v7, v8 calleeName="last"
+    v15 = Call v2, -, v9, v10, v11, v12, v13, v14 calleeName="sink"
+    v16 = Undefined
+    Return v16
+}
+function f1 name="last" module=m0 length=2 thisType={type=anything} parameters=[{type=i32 flags=[IsExpected]}, {type=number flags=[IsExpected]}] results=[{type=anything}] {
+  b0(v0: i32, v1: number):
+    v2 = Integer integer=1
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    v6 = String string="none"
+    Jump -> next b1(v3, v5, v6)
+  b1(v7, v8, v9):
+    LoopHint
+    v11 = Less v8, v0
+    Branch v11 -> taken b2(), notTaken b5()
+  b2():
+    v12 = Integer integer=3
+    v13 = Mul v7, v12
+    v14 = Add v13, v8
+    v15 = Convert v14 declared={type=number flags=[IsExpected]}
+    v16 = Greater v15, v1
+    Branch v16 -> taken b3(), notTaken b4(v15)
+  b3():
+    v17 = Integer integer=1
+    v18 = Convert v17 declared={type=number flags=[IsExpected]}
+    Jump -> next b4(v18)
+  b4(v19):
+    v20 = Increment v8
+    v21 = Convert v20 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v19, v21, v19)
+  b5():
+    Return v9
+}

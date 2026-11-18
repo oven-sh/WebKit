@@ -67,6 +67,7 @@ struct ProgramOwner {
     HostFunctionSources functionSources { };
     void (*releaseBytes)(void* owner) { nullptr };
     HostStringEncoders stringEncoders { };
+    std::span<const uint8_t> orderFile { };
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<CompileOutput> compileProgram(std::span<const uint8_t> program, const Wire::CompileOptions&, const HostThreadPool* = nullptr, ProgramOwner = { });

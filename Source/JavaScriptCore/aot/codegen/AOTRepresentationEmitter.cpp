@@ -179,7 +179,19 @@ void RepresentationEmitter::generate(const ValueContext& value)
             return;
         }
     }
+    if (value.opcode() == Opcode::Unbox && generator().readsLowWordInRotatingIteration(value.id())) [[unlikely]] {
+        Boxed boxed = in<Boxed>(converted);
+        define(value, emitter<ConversionEmitter>().lowWordOfBoxedInteger(boxed));
+        return;
+    }
     if (value.opcode() == Opcode::NumberToInteger) {
+        if (generator().isStepOfExactCounter(value.id())) [[unlikely]] {
+            Number number = in<Number>(converted);
+            if (number.value()->opcode() == Machine::IToD && number.value()->child(0)->type() == Machine::Int64) {
+                define(value, heldToWhatConversionGives(value, number, Integer(number.value()->child(0))));
+                return;
+            }
+        }
         if (std::optional<Integer> stepped = integerOfStep(value)) {
             define(value, *stepped);
             return;

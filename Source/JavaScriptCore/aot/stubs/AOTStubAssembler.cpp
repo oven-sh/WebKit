@@ -15,6 +15,7 @@
 #include "AOTStubsExceptions.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPolls.h"
+#include "AOTStubsValues.h"
 #include "AOTVector.h"
 #include "AssemblerPolicy.h"
 #include "LinkBuffer.h"
@@ -350,6 +351,8 @@ void StubAssembler::loadPreservedRegisters(std::span<const GPRReg> saved)
     addPtr(TrustedImm32(alignedSizeOfRegisters(saved.size())), stackPointerRegister);
 }
 
+static constexpr unsigned firstWordOfSavedRegisters = isX86_64();
+
 StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, std::span<const std::optional<GPRReg>> cellsToKeep, unsigned bytesLeftFreeAbove)
 {
     Vector<Reg, 48> registers;
@@ -368,12 +371,11 @@ StubAssembler::SavedRegisterArea StubAssembler::storeRegistersClobberedBy(StubCa
     unsigned bytes = alignedSizeOfRegisters(registers.size() + 2) - sizeof(CPURegister);
     subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
 #else
-    unsigned bytes = alignedSizeOfRegisters(registers.size() + 1);
+    unsigned bytes = alignedSizeOfRegisters(registers.size());
     subPtr(TrustedImm32(bytes + bytesLeftFreeAbove), stackPointerRegister);
-    storePtr(linkRegister, Address(stackPointerRegister));
 #endif
     for (unsigned i = 0; i < registers.size(); ++i) {
-        Address address(stackPointerRegister, (i + 1) * sizeof(CPURegister));
+        Address address(stackPointerRegister, (i + firstWordOfSavedRegisters) * sizeof(CPURegister));
 #if CPU(ARM64)
         if (i + 1 < registers.size() && registers[i].isGPR() == registers[i + 1].isGPR()) {
             if (registers[i].isGPR())
@@ -397,7 +399,7 @@ void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPoint
 {
     auto& registers = area.registers;
     for (unsigned i = 0; i < registers.size(); ++i) {
-        Address address(stackPointerRegister, (i + 1) * sizeof(CPURegister));
+        Address address(stackPointerRegister, (i + firstWordOfSavedRegisters) * sizeof(CPURegister));
 #if CPU(ARM64)
         if (i + 1 < registers.size() && registers[i].isGPR() == registers[i + 1].isGPR()) {
             if (registers[i].isGPR())
@@ -413,9 +415,6 @@ void StubAssembler::loadSavedRegisters(const SavedRegisterArea& area, StackPoint
         else
             loadDouble(address, registers[i].fpr());
     }
-#if !CPU(X86_64)
-    loadPtr(Address(stackPointerRegister), linkRegister);
-#endif
     if (stackPointer == StackPointerAfterLoads::IsMovedBack)
         addPtr(TrustedImm32(area.bytes), stackPointerRegister);
 }
@@ -663,11 +662,30 @@ void StubAssembler::loadCallerReturnAddress(unsigned bytesPushed, GPRReg result)
 #endif
 }
 
+void StubAssembler::jumpToResumeAddress(GPRReg asStored, GPRReg savedFrame)
+{
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    recordFarJump(JSEntryPtrTag);
+    emitJumpToResumeAddress(*this, asStored, savedFrame);
+#else
+    UNUSED_PARAM(savedFrame);
+    farJump(asStored, JSEntryPtrTag);
+#endif
+}
+
 void StubAssembler::returnToCaller()
 {
     RELEASE_ASSERT(m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
     RELEASE_ASSERT(!isARM64() || key().callerFrame() != CallerFrame::Frameless);
+    if (m_stubBehindEveryReturn == valueIsTruthy()) {
+        const GPRReg value = signatureOf(valueIsTruthy()).operands[0].gpr();
+        linkToStub(branch64(Above, value, TrustedImm32(JSValue::ValueUndefined)), largeValueIsTruthy());
+        std::optional<StubKey> stub = std::exchange(m_stubBehindEveryReturn, std::nullopt);
+        returnFlagsTest32(value, TrustedImm32(1));
+        m_stubBehindEveryReturn = stub;
+        return;
+    }
     if (m_stubBehindEveryReturn) {
         jumpToStub(*m_stubBehindEveryReturn);
         return;
@@ -826,7 +844,12 @@ void StubAssembler::pollAtStubEntry(StubKey poll, StubReference::Kind kind)
 
 void StubAssembler::pollBeforeCall(Label returnSite)
 {
-#if CPU(ARM64)
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    move(stackPointerRegister, getCachedDataTempRegisterIDAndInvalidate());
+    m_pendingLabelAddresses.append({ moveSignedPCRelativeAddress(m_addressReach), returnSite });
+    move(memoryTempRegister, ARM64Registers::x16);
+    emitStubCall(pollBeforeEntering(PollBeforeEnteringForm::Plain));
+#elif CPU(ARM64)
     loadLabelAddress(returnSite, ARM64Registers::x16);
     emitStubCall(pollBeforeEntering(PollBeforeEnteringForm::Plain));
 #else

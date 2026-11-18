@@ -36,6 +36,7 @@ public:
     explicit ProgramStatics(State&);
 
     void putBack(uint32_t offset, uint32_t size);
+    void clearCaches();
 
     struct VariableWithViewMirror {
         void refresh();

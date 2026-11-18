@@ -35,6 +35,8 @@ struct TypedArrayElements {
     Pointer vector;
 };
 
+struct ArrayHeaderTest;
+
 class ElementAccessEmitter final : public OperationEmitter {
 public:
     explicit ElementAccessEmitter(CodeGenerator& generator) : OperationEmitter(generator) { }
@@ -59,6 +61,7 @@ public:
     void generateReserveArrayCapacity(const ValueContext&);
     void generateCopyElements(const ValueContext&);
     void generateCopyElementsDown(const ValueContext&);
+    void generateCountCopyableElements(const ValueContext&);
     void generateFillElements(const ValueContext&);
     void generateConvertToDoubleStorage(const ValueContext&);
     void generateGetTypedArrayLength(const ValueContext&);
@@ -93,12 +96,16 @@ public:
     Condition isPristineArray(CellPointer, OptionSet<PristineAspects>);
     Condition isPristineInstance(CellPointer, OptionSet<PristineAspects>);
     Condition hasArrayStorage(CellPointer array, ArrayStorage, bool isWritable = false);
+    Condition passesHeaderTest(CellPointer, const ArrayHeaderTest&);
+    Word32 cellTypeAndIndexing(CellPointer cell) { return Word32(m_out.load16ZeroExt32(m_out.address(cell.value(), m_heaps.JSCell_usefulBytes, 0))); }
+    Word32 cellHeaderBytes(CellPointer cell, uint32_t mask) { return bitAnd(loadField<Word32>(cell, m_heaps.JSCell_usefulBytes), word32(mask)); }
     Condition listHasArrayStorage(ValueID list, ArrayStorage kind) { return hasArrayStorage(in<CellPointer>(list), kind); }
     Condition numericListHoldsDoubles(CellPointer);
     Condition numericListHoldsInt32s(CellPointer);
     Condition numericListHasArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? numericListHoldsDoubles(in<CellPointer>(list)) : numericListHoldsInt32s(in<CellPointer>(list)); }
     Condition listTakesStoresInArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? hasWritableShape(indexingMode(in<CellPointer>(list), IndexingShapeAndWritabilityMask), arrayStorageFormOf(ArrayStorage::Double)) : holdsWritableBoxedElements(in<CellPointer>(list)); }
     Condition viewIsOfKind(ValueID view, TypedArrayType);
+    Condition isRangeInsideView(const ValueContext& access, Integer least, Integer greatest);
     Pointer storageOfList(CellPointer list) { return elementsOf(list).butterfly; }
     Condition areInt32Elements(LValue boxedWordsMet) { return isInt32(Boxed(boxedWordsMet)); }
     Word32 indexingMode(CellPointer array, IndexingType mask);
@@ -154,6 +161,7 @@ public:
     void storeInProvenList(const ValueContext&, const ArrayStorageFormList&);
     bool hasOnlyExpectedArmInLine(const ValueContext& store);
     using ShapeTest = Condition (ElementAccessEmitter::*)(Word32 mode, const ArrayStorageForm&);
+    Condition hasBoxedShape(Word32 mode, ShapeTest);
     enum class FirstForm : bool { IsExpected, IsLikeTheOthers };
     void forEachFormByShape(Word32 mode, ShapeTest, const ArrayStorageFormList&, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>&, FirstForm = FirstForm::IsExpected, ValueID int32ThatArmOfValuesStoresInEitherKind = { });
     ValueID int32ThatArmOfValuesStoresInEitherKind(ValueID stored, const ArrayStorageFormList&);
@@ -163,10 +171,12 @@ public:
     std::optional<Boxed> wordOfPosition(ValueID position);
     Integer wordToIndexOrElse(Boxed, bool keyIsIntegral, LBasicBlock isNotAnIndex, NaNIndexMode);
     Integer indexOfAccessOrElse(const ValueContext& access, LBasicBlock isNotAnIndex, NaNIndexMode = NaNIndexMode::TakeSlowPath);
-    Integer indexInsideLength(ValueID position);
+    enum class PositionUses : bool { One, OneOrSharedIndex };
+    Integer indexInsideLength(ValueID position, PositionUses = PositionUses::One);
     Integer positionOfElementWord(const ValueContext&, const ArrayElements&, StorageIsWritten);
     enum class IndexBesideConstant : bool { IsNotNegative, IsSigned };
-    std::optional<IndexBesideConstant> indexBesideConstant(ValueID position, LValue sum);
+    std::optional<IndexBesideConstant> indexBesideConstant(ValueID position, LValue sum, PositionUses);
+    std::optional<Integer> indexAboveSharedIndex(ValueID position);
     Integer indexFoundBelowLength(Integer index, TypedArrayType);
     Condition isBelowLengthOfView(Integer index, Integer length, TypedArrayType);
     std::optional<Integer> indexBesideWholeNumber(ValueID position, Number, LBasicBlock isNotAnIndex);
@@ -246,11 +256,15 @@ private:
     TestedElement branchOnElementPresence(const ValueContext&, const ArrayStorageForm*, const ArrayElements&, Integer index, BranchTargets);
     ValueID findReadAfterPresenceTest(const ValueContext& test);
     TypedArrayElements typedArrayElementsInsideView(const ValueContext&, CellPointer view);
+    TypedPointer wordOfElementPair(const ValueContext& access, bool isUpper);
+    std::optional<Operand> readElementOfPair(const ValueContext&);
+    bool storeElementOfPair(const ValueContext&);
 public:
     TypedPointer elementInsideView(const ValueContext& access);
     TypedPointer elementBelowNamedLength(const ValueContext& access);
 private:
     std::optional<TypedArrayElements> typedArrayElementsNamedBy(const ValueContext&, CellPointer view);
+    std::optional<TypedArrayElements> findElementsReadBefore(const ValueContext& access, CellPointer view);
     void askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork&, const ValueContext& access, CellPointer view, Integer index, LBasicBlock outside, LBasicBlock otherwise);
     CellPointer viewOnSlowPath(const ValueContext& access, CellPointer view);
     bool becomesIndexWithoutTest(const ValueContext& access);

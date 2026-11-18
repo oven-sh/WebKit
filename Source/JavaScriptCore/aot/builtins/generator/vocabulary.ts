@@ -175,6 +175,7 @@ export const callbackResultUses = [
   "Stored",
   "Flattened",
   "AskedWhetherIterable",
+  "Converted",
 ] as const;
 export type CallbackResultUse = (typeof callbackResultUses)[number];
 

@@ -28,7 +28,7 @@ struct Position {
 };
 
 JS_EXPORT_PRIVATE JSCell* tryCreate(JSGlobalObject*, bool hasValues);
-JS_EXPORT_PRIVATE JSCell* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
+JS_EXPORT_PRIVATE JSCell* tryCreateForFirstEntry(JSGlobalObject*, JSObject* owner, bool hasValues, JSValue key, JSValue value);
 JS_EXPORT_PRIVATE JSCell* copy(JSGlobalObject*, JSCell* storage);
 JS_EXPORT_PRIVATE bool has(JSGlobalObject*, JSCell* storage, JSValue key);
 JS_EXPORT_PRIVATE JSValue find(JSGlobalObject*, JSCell* storage, JSValue key);

@@ -211,10 +211,16 @@ constexpr PtrTag AnyPtrTag = static_cast<PtrTag>(-1); // Only used for assertion
 
 template<typename T, typename PtrType>
     requires (std::is_pointer_v<PtrType> && !std::same_as<T, PtrType>)
+inline T removeReturnAddressSignature(PtrType);
+
+template<typename T, typename PtrType>
+    requires (std::is_pointer_v<PtrType> && !std::same_as<T, PtrType>)
 inline constexpr T removeCodePtrTag(PtrType ptr)
 {
 #if CPU(ARM64E)
     return std::bit_cast<T>(ptrauth_strip(ptr, ptrauth_key_process_dependent_code));
+#elif ENABLE(RETURN_ADDRESS_SIGNING)
+    return removeReturnAddressSignature<T>(ptr);
 #else
     return std::bit_cast<T>(ptr);
 #endif
@@ -226,6 +232,8 @@ inline constexpr PtrType removeCodePtrTag(PtrType ptr)
 {
 #if CPU(ARM64E)
     return ptrauth_strip(ptr, ptrauth_key_process_dependent_code);
+#elif ENABLE(RETURN_ADDRESS_SIGNING)
+    return std::bit_cast<PtrType>(removeReturnAddressSignature<uintptr_t>(ptr));
 #else
     return ptr;
 #endif

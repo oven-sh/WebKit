@@ -131,6 +131,7 @@ public:
         if (!m_root)
             return inlineRecords()[index];
         const Node* node = m_root;
+        #pragma clang loop unroll(disable)
         for (unsigned level = m_height; level; --level)
             node = static_cast<const Branch*>(node)->children[childAt(index >> bitsOfLeaf, level)];
         return static_cast<const Leaf*>(node)->records()[index & (widthOfLeaf - 1)];

@@ -184,16 +184,16 @@ void TruthinessEmitter::branchOnShapeOrTruth(const ValueContext& shapeTest, cons
     emitter<RuntimeCallEmitter>().callStubAndBranch(shapeTest, valueIsTruthy(), operands, { }, { isTruthy, deferred.isFalsy });
 }
 
-void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean)
+void TruthinessEmitter::branchOnTruthiness(const OperationContext& context, Operand operand, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean, bool isOfAnyKind)
 {
     if (operand.is<Boxed>()) {
-        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets, expectsObjectOrNothing, expectsInt32OrNothing, isAnswerOfCall, expectsBoolean);
+        branchOnTruthinessOfAnyValue(context, operand.as<Boxed>(), type, targets, expectsObjectOrNothing, expectsInt32OrNothing, isAnswerOfCall, expectsBoolean, isOfAnyKind);
         return;
     }
     branch(isTruthy(context, operand, type), targets);
 }
 
-void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean)
+void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& context, Boxed value, const Type& type, BranchTargets targets, bool expectsObjectOrNothing, bool expectsInt32OrNothing, bool isAnswerOfCall, bool expectsBoolean, bool isOfAnyKind)
 {
     auto branchInStub = [&] {
         LValue operands[] = { value.value() };
@@ -248,8 +248,17 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
     auto edgeToNextTest = [&](bool hasNextTest) {
         return hasNextTest ? normalEdge(newBlock()) : rareEdge(otherwise);
     };
-    bool isOfLibrary = isLibraryCode(m_program, m_program.at(generator().code().inlineFrames()[context.origin().inlineFrame].callee));
+    isOfAnyKind |= isLibraryCode(m_program, m_program.at(generator().code().inlineFrames()[context.origin().inlineFrame].callee));
     bool asksForBooleansFirst = isAnswerOfCall && expectsObjects && type.primitives & Primitive::Boolean;
+    if (expectsInt32OrNothing && type.primitives & Primitive::Number) {
+        LBasicBlock isInteger = newBlock();
+        LBasicBlock isNoInteger = newBlock();
+        m_out.branch(isInt32(value).value(), normalEdge(isInteger), normalEdge(isNoInteger));
+        m_out.appendTo(isInteger);
+        branch(isNotZero(int32InBox(value)), targets);
+        m_out.appendTo(isNoInteger);
+        asksForBooleansFirst = false;
+    }
     if (asksForBooleansFirst) {
         LBasicBlock isNotFalse = newBlock();
         LBasicBlock isNoBoolean = newBlock();
@@ -270,7 +279,7 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
             m_out.branch(isTruthyObject.value(), targets.taken, normalEdge(isOtherCell));
             m_out.appendTo(isOtherCell);
             branch(isTruthyCell(cell, type), targets);
-        } else if (isOfLibrary && (type.primitives & Primitive::AnyString)) {
+        } else if (isOfAnyKind && (type.primitives & Primitive::AnyString)) {
             LBasicBlock isNoObject = newBlock();
             LBasicBlock isString = newBlock();
             m_out.branch(isTruthyObject.value(), targets.taken, normalEdge(isNoObject));
@@ -288,7 +297,7 @@ void TruthinessEmitter::branchOnTruthinessOfAnyValue(const OperationContext& con
             m_out.branch(equal(value, trueValue).value(), targets.taken, normalEdge(isNotTrue));
             m_out.appendTo(isNotTrue);
         }
-        if (isOfLibrary && (type.primitives & Primitive::Number)) {
+        if (isOfAnyKind && (type.primitives & Primitive::Number)) {
             LBasicBlock isNoSmallValue = newBlock();
             LBasicBlock isInteger = newBlock();
             m_out.branch(belowOrEqual(value, undefined()).value(), targets.notTaken, normalEdge(isNoSmallValue));
@@ -313,6 +322,35 @@ Condition TruthinessEmitter::isTruthyCell(CellPointer cell, const Type& type)
     }, [&] {
         return isNotEmptyString;
     });
+}
+
+Condition TruthinessEmitter::isTruthyOfAnyKind(const OperationContext& context, Boxed value)
+{
+    static_assert(JSValue::ValueTrue & 1 && !(JSValue::ValueFalse & 1) && !(JSValue::ValueNull & 1) && !(JSValue::ValueUndefined & 1) && !(JSValue::ValueEmpty & 1));
+    LBasicBlock isCellCase = newBlock();
+    LBasicBlock isObjectCase = newBlock();
+    LBasicBlock isNoCell = newBlock();
+    LBasicBlock isSmallValue = newBlock();
+    LBasicBlock isNumberCase = newBlock();
+    LBasicBlock isInteger = newBlock();
+    LBasicBlock asksStub = newBlock();
+    Join<Condition> join(m_out);
+    m_out.branch(isCell(value).value(), normalEdge(isCellCase), normalEdge(isNoCell));
+    m_out.appendTo(isCellCase);
+    m_out.branch(isObjectCell(unboxCell(value)).value(), normalEdge(isObjectCase), unlikelyEdge(asksStub));
+    m_out.appendTo(isObjectCase);
+    join.add(boolean(true));
+    m_out.appendTo(isNoCell);
+    m_out.branch(belowOrEqual(value, undefined()).value(), normalEdge(isSmallValue), normalEdge(isNumberCase));
+    m_out.appendTo(isSmallValue);
+    join.add(Condition(m_out.bitAnd(m_out.castToInt32(value.value()), m_out.int32One)));
+    m_out.appendTo(isNumberCase);
+    m_out.branch(isInt32(value).value(), normalEdge(isInteger), unlikelyEdge(asksStub));
+    m_out.appendTo(isInteger);
+    join.add(isNotZero(int32InBox(value)));
+    m_out.appendTo(asksStub);
+    join.add(Condition(m_out.castToInt32(callStub(context, AOT::toBoolean(), { value.value() }).first)));
+    return join.finish();
 }
 
 Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxed value, const Type& type)
@@ -361,11 +399,11 @@ Condition TruthinessEmitter::isTruthyBoxed(const OperationContext& context, Boxe
         return isTruthyCell(unboxCell(value), type);
     if (!(type.primitives & (Primitive::AnyString | Primitive::BigInt))) {
         if (!(type.primitives & Primitive::True))
-            return isCell(value);
+            return isCellAmong(value, type.primitives);
         static_assert(JSValue::ValueTrue & 1 && !(JSValue::ValueFalse & 1) && !(JSValue::ValueNull & 1) && !(JSValue::ValueUndefined & 1));
         return Condition(m_out.notEqual(m_out.bitAnd(value.value(), 3), JSValue::OtherTag));
     }
-    return selectByBranch<Condition>(isCell(value), [&] {
+    return selectByBranch<Condition>(isCellAmong(value, type.primitives), [&] {
         return isTruthyCell(unboxCell(value), type);
     }, isTrue);
 }

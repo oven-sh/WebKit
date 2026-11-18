@@ -94,7 +94,7 @@ bool canConstruct(const Function& constructor, const Layout& layout)
     bool hasClassConstructorFlags = constructor.has(FunctionFlags::HasNewTarget) && !constructor.has(FunctionFlags::HasThis);
     switch (constructor.constructorForm()) {
     case ConstructorForm::Base:
-        return !layout.has(LayoutFlags::HasHeritage) && (constructor.kind == FunctionKind::Plain || hasClassConstructorFlags);
+        return constructor.kind == FunctionKind::Plain || (!layout.has(LayoutFlags::HasHeritage) && hasClassConstructorFlags);
     case ConstructorForm::Derived:
         return layout.has(LayoutFlags::HasHeritage) && hasClassConstructorFlags;
     case ConstructorForm::NotConstructor:

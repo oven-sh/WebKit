@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBitVector.h"
+#include "AOTFieldGetters.h"
 #include "AOTID.h"
 #include "AOTImageForward.h"
 #include "AOTVector.h"
@@ -27,9 +28,21 @@ struct FieldReturnedByGetter {
     Typed::PropertyKeyID field;
 };
 
+struct CaptureReturnedByFunction {
+    FunctionID function;
+    Typed::ReturnedCapture returned;
+};
+
+struct ObjectOfKeyedLookup {
+    FunctionID function;
+    Typed::CapturedVariable object;
+};
+
 struct BodyFactsForTables {
     BitVector functionsThatOnlyReturn;
     Vector<FieldReturnedByGetter> fieldsReturnedByGetters;
+    Vector<CaptureReturnedByFunction> capturesReturnedByFunctions;
+    Vector<ObjectOfKeyedLookup> objectsOfKeyedLookups;
     BitVector functionsWithFrames;
 };
 

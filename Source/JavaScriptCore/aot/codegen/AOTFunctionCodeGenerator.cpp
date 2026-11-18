@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCodeDescription.h"
+#include "AOTCompileUnit.h"
 #include "AOTCurrentWork.h"
 #include "AOTEntryEmitter.h"
 #include "AOTFunctionKinds.h"
@@ -69,6 +70,7 @@ Machine::ProcedureTraits machineTraitsOf(const BuildContext& build, const CodeGe
         .shouldAssumeClearUpperHalves = hasFlag(build.options().injectedFaults, Wire::FaultInjection::AssumeClearUpperHalves),
         .shouldIgnoreCollectorSpillReads = hasFlag(build.options().injectedFaults, Wire::FaultInjection::IgnoreCollectorSpillReads),
         .notesRangesOfOrigins = hasFlag(build.options().reports, ReportSet::Flow) || !build.options().logging.mapFilePath.isNull(),
+        .checksProofs = !!sourcesOfProofsCheckedUnder(build.options().testing),
         .features = build.targetFeatures(),
     };
 }
@@ -256,6 +258,14 @@ std::optional<CompiledCode> FunctionCodeGenerator::runStraight(const BodyIndex& 
     return code;
 }
 
+bool FunctionCodeGenerator::canEmitStraight(const BodyIndex& index)
+{
+    StraightEmitter emitter(m_worker.build, m_worker.types, m_inputs, m_code.unit(), index, m_records, m_worker.arena);
+    ArgumentLocations locations = m_inputs.plan.conventions().locationsOf(m_inputs.program, m_code.unit());
+    emitter.generate(m_jit, locations, 0);
+    return !emitter.hasFailed();
+}
+
 CompiledCode FunctionCodeGenerator::runEntryWrittenByHand(std::span<const QuestionOfEntry> questions, bool nobodyEnters)
 {
     CodeUnit unit = m_code.unit();
@@ -306,8 +316,10 @@ CompiledCode FunctionCodeGenerator::emitCode()
     m_statistics.count(StatisticID::MachineOperationsAppended, m_procedure.numberOfOperations());
     m_statistics.count(StatisticID::MachineOperationsScanned, countMachineOperationsInOrder(m_procedure.order()));
     m_statistics.count(StatisticID::LoopsRotated, m_procedure.order().numberOfLoopsRotated());
+    m_statistics.count(StatisticID::NumbersChosenWithoutBranches, m_procedure.numberOfNumbersChosen());
     m_statistics.count(StatisticID::MachineOperationsAllocated, allocation.numberOfOperationsAllocated());
     m_statistics.count(StatisticID::ValuesSpilled, allocation.spills().size());
+    m_statistics.count(StatisticID::SpilledFirstOperandsRead, allocation.numberOfSpilledFirstOperands());
     m_statistics.count(StatisticID::LaterUsesScannedForLiveness, allocation.laterUsesScanned());
     m_statistics.count(StatisticID::BlocksVisitedByLivenessSearches, allocation.livenessSearchBlocksVisited());
     m_statistics.count(StatisticID::InnerPointersAcrossSafepoints, m_procedure.numberOfInnerPointersAcrossSafepoints());
@@ -318,6 +330,7 @@ CompiledCode FunctionCodeGenerator::emitCode()
     CCallHelpers::Label bodyStart = m_jit.label();
     m_relocations.reserveRoomFor(allocation.numberOfOperationsAllocated());
     Machine::generate(m_procedure, m_jit, m_relocations);
+    m_statistics.count(StatisticID::LoopsEnteredByTest, m_procedure.numberOfLoopsEnteredByTest());
     if (m_straightEmitter && m_straightEmitter->hasFailed())
         return { };
     if (m_procedure.failure()) {
@@ -406,6 +419,17 @@ std::optional<CompiledCode> generateEntryWrittenByHand(const CodeGenerationWorke
 bool hasStraightForm(const CodeGenerationInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     return StraightEmitter::covers(inputs, unit, index);
+}
+
+bool canEmitResumeBody(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, FunctionID function, const BodyIndex& index, CodeGenerationTotals& totals)
+{
+    CodeUnit unit { function, CodeRole::SlowBody };
+    if (!StraightEmitter::covers(inputs, unit, index))
+        return false;
+    Code code;
+    code.reset(unit);
+    FunctionCodeGenerator generator(worker, inputs, code, totals);
+    return generator.canEmitStraight(index);
 }
 
 std::optional<CompiledCode> generateStraightCode(const CodeGenerationWorker& worker, const CodeGenerationInputs& inputs, const Code& code, const BodyIndex& index, CodeGenerationTotals& totals)

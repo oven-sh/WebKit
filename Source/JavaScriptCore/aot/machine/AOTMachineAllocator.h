@@ -183,6 +183,7 @@ public:
         if (!patch->findsOperandsInFrameWithoutRecord())
             m_allocation.m_holdsPatchThatCountsOnFrameRecord = true;
     }
+    void countSpilledFirstOperand() { ++m_allocation.m_numberOfSpilledFirstOperands; }
     ALWAYS_INLINE void noteFrameUse()
     {
         if (isInRareRegion()) {
@@ -341,7 +342,16 @@ public:
     }
     Reg bringIntoRegister(Operation* value, RegisterMask allowed, Reg preferred);
     SpillIndex markSpilled(Operation* value);
-    SpillIndex addSpill(const SpillFacts&);
+    void keepRegisterForFarWords();
+    ALWAYS_INLINE SpillIndex addSpill(const SpillFacts& facts)
+    {
+        ASSERT(facts.value);
+        ASSERT(facts.begin != noPosition && facts.begin <= facts.end);
+        ASSERT(facts.width == Width32 || facts.width == Width64 || facts.width == Width128);
+        SpillIndex index = m_allocation.m_spills.size();
+        m_allocation.m_spills.append(m_arena, facts);
+        return index;
+    }
     ALWAYS_INLINE void noteCalleeSaveUse(Reg reg)
     {
         RegisterMask bit = maskOf(reg) & m_file.calleeSaved;
@@ -423,6 +433,7 @@ public:
     void prepareSuspension(PatchOperation*);
     void findSpillsHeldAtSuspensions();
     void findGapsAheadOfLandingPads();
+    void findGapsAheadOfRarePhis();
 
     RegisterMask registersWhereCallInBlockTakesWhatLiesThere(const Block*) const;
     unsigned numberOfReadsThatWordWouldReload(const Operation*, Position end) const;
@@ -466,7 +477,7 @@ public:
     const Order& m_order;
     const Liveness& m_liveness;
     Allocation& m_allocation;
-    const RegisterFile m_file;
+    RegisterFile m_file;
     const ValueFacts* m_valueFacts { nullptr };
     const Use* m_uses { nullptr };
     uint64_t m_smallestPinnedConstant { UINT64_MAX };
@@ -544,6 +555,8 @@ public:
     ArenaVector<PhisInSpill*> m_phisInSpills;
     PhisInSpill& phisInSpill(SpillIndex);
     SpillIndex findSpillOfDeadSource(const Operation* phi);
+    std::span<const SpillIndex> findSpillsThatPhisAreOnlyHandedOnTo(const Block*);
+    std::span<uint32_t> m_placesHandedOn;
     void letEdgesWritePhi(Operation* phi, SpillIndex, const BlockPlace& placeOfHead);
     ArenaVector<Reg> m_hints;
     ArenaVector<Position> m_knownReadsOutsideRareRegions;

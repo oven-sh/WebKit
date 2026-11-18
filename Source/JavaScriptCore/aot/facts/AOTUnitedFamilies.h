@@ -49,6 +49,14 @@ public:
         }
         return member;
     }
+    ALWAYS_INLINE void prefetch(uint32_t member) const
+    {
+        if (member >= m_parent.size())
+            return;
+        __builtin_prefetch(m_parent.span().data() + member);
+        __builtin_prefetch(m_next.span().data() + member);
+        __builtin_prefetch(m_size.span().data() + member);
+    }
     bool areUnited(uint32_t one, uint32_t other) const { return representativeOf(one) == representativeOf(other); }
     ALWAYS_INLINE uint32_t representativeWithoutShortening(uint32_t member) const
     {

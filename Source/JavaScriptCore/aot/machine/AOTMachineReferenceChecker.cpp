@@ -66,9 +66,11 @@ private:
     bool needsPointerBeside(const Operation*) const;
     bool isFrameAddress(const Operation*) const;
     bool isComputedFromFrameAddress(const Operation*) const;
+    bool isInnerPointer(const Operation* value) const { return value->has(OperationFlag::IsInnerPointer) || (!value->hasNoPosition() && m_joinsInnerPointers.get(value->index())); }
     const Operation* keeperOf(const Operation*) const;
 
     void findFrameAddresses();
+    void findJoinsOfInnerPointers();
     void findWatchedValues();
     void define(const Operation*, const Block*, Position);
     void noteRead(const Operation*, const Block*, Position);
@@ -137,6 +139,7 @@ private:
     ArenaVector<uint32_t> m_rootOfSuspension;
     BitSpan m_isDisplaced;
     BitSpan m_isFrameAddress;
+    BitSpan m_joinsInnerPointers;
     ArenaVector<uint32_t> m_liveRangeIn;
     ArenaVector<uint32_t> m_firstLiveRangeIn;
 
@@ -163,6 +166,7 @@ CollectorRulesChecker::CollectorRulesChecker(Procedure& proc)
     m_rootOfSuspension.fill(m_arena, numberOfOperations, none);
     m_isDisplaced = BitSpan::create(m_arena, numberOfOperations);
     m_isFrameAddress = BitSpan::create(m_arena, numberOfOperations);
+    m_joinsInnerPointers = BitSpan::create(m_arena, numberOfOperations);
     m_liveRangeIn.fill(m_arena, proc.numberOfBlocks(), none);
     m_firstLiveRangeIn.fill(m_arena, proc.numberOfBlocks(), none);
 }
@@ -254,6 +258,30 @@ void CollectorRulesChecker::findFrameAddresses()
     } while (markedPhiAlreadyPassed);
 }
 
+void CollectorRulesChecker::findJoinsOfInnerPointers()
+{
+    if (!m_proc.traits().savesFrameOnSuspend)
+        return;
+
+    bool markedPhiAlreadyPassed;
+    do {
+        markedPhiAlreadyPassed = false;
+        for (const Block* block : m_order.blocksInOrder()) {
+            for (const Operation* operation : block->operations()) {
+                if (operation->opcode() == Select && (isInnerPointer(operation->child(1)) || isInnerPointer(operation->child(2))))
+                    m_joinsInnerPointers.set(operation->index());
+            }
+            for (const Operation* upsilon : block->upsilons()) {
+                const Operation* phi = upsilon->phi();
+                if (!phi || m_liveness.isDropped(upsilon) || m_joinsInnerPointers.get(phi->index()) || !isInnerPointer(upsilon->child(0)))
+                    continue;
+                m_joinsInnerPointers.set(phi->index());
+                markedPhiAlreadyPassed |= m_order.headOf(phi->owner()) <= m_order.headOf(block);
+            }
+        }
+    } while (markedPhiAlreadyPassed);
+}
+
 static bool holdsBitsOfItsChildren(const Operation* value)
 {
     switch (value->opcode()) {
@@ -311,7 +339,7 @@ void CollectorRulesChecker::define(const Operation* value, const Block* block, P
                 m_isDisplaced.set(index);
         }
     }
-    if (!needsPointerBeside(value) && !m_isFrameAddress.get(index) && !keeperOf(value))
+    if (!needsPointerBeside(value) && !m_isFrameAddress.get(index) && !m_joinsInnerPointers.get(index) && !keeperOf(value))
         return;
     m_watchedOf[index] = m_watched.size();
     m_watched.append(m_arena, WatchedValue { value, block, definition });
@@ -529,6 +557,8 @@ bool CollectorRulesChecker::checkAcross(const Operation* value, const Safepoint&
     bool isSuspension = safepoint.patch->isSuspension();
     if (isSuspension && m_isFrameAddress.get(value->index()))
         return fail(FailureKind::FrameAddressAcrossSuspension, value);
+    if (isSuspension && m_joinsInnerPointers.get(value->index()))
+        return fail(FailureKind::InnerPointerWithoutOwner, value);
 
     const Operation* keeper = value;
     while (const Operation* next = keeperOf(keeper))
@@ -590,6 +620,7 @@ bool CollectorRulesChecker::isHeld(const Operation* value, const Safepoint& safe
 bool CollectorRulesChecker::run()
 {
     findFrameAddresses();
+    findJoinsOfInnerPointers();
     findWatchedValues();
     for (uint32_t watched = m_watched.size(); watched--;)
         findLiveRangesOf(watched);

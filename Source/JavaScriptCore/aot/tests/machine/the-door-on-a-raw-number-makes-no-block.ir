@@ -1,4 +1,4 @@
-# function give(at) { for (let turn = 0; turn < 1; turn++) if (at === -1) throw at; return at * 7 + 1; } function mix(sum, value) { for (let turn = 0; turn < 1; turn++) sum = (sum * 33 + value) % 1000003; return sum; } function work() { return mix(give(1), give(2)); }
+# function give(at) { for (let turn = 0; turn < 100; turn++) if (at === -1) throw at; return at * 7 + 1; } function mix(sum, value) { for (let turn = 0; turn < 1; turn++) sum = (sum * 33 + value) % 1000003; return sum; } function work() { return mix(give(1), give(2)); }
 # The door on a raw Double that is held to numbers without a fraction is one rounding and one comparison, and its stop lies behind the code of the function: nothing in work() branches or meets for it.
 # RUN: emit f3 mechanisms=all
 # CHECK: FTrunc
@@ -23,7 +23,7 @@ function f1 name="give" module=m0 length=1 thisType={type=anything} parameters=[
     Jump -> next b1(v2)
   b1(v3: number):
     LoopHint
-    v5 = Integer integer=1
+    v5 = Integer integer=100
     v6 = Less v3, v5
     Branch v6 -> taken b2(), notTaken b5()
   b2():

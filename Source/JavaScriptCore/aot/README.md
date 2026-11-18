@@ -54,11 +54,48 @@ Whole programs need the front end, so they are in oven-sh/bun, under `test/aot`.
 | Build | What it catches | How |
 | --- | --- | --- |
 | musl with assertions, `-O0`, `ninja -k 0` | What libstdc++ on Alpine does not accept, and code inside `ASSERT` that no longer compiles | `--target=x86_64-alpine-linux-musl --sysroot=<an Alpine root>`, `-DENABLE_ASSERTS=ON` |
-| The hardened lanes' defines, syntax only | Code under `BUN_HARDENED`, `ENABLE_AOT_POSITION_INDEPENDENT_IMAGE`, `ENABLE_AOT_GUARDED_PAGES` | the flags are `HARDENING` in `.github/scripts/lanes.mjs`; `clang -fsyntax-only` over the sources of `aot/` |
+| The hardened lanes' defines, syntax only | Code under `BUN_HARDENED`, `ENABLE_AOT_POSITION_INDEPENDENT_IMAGE`, `ENABLE_AOT_GUARDED_PAGES`, and on ARM64 `ENABLE_RETURN_ADDRESS_SIGNING` | the flags are `HARDENING` and `SIGNED_RETURN_ADDRESSES` in `.github/scripts/lanes.mjs`; `clang -fsyntax-only` over the sources of `aot/` |
 | `-DENABLE_AOT=0` among the compiler's flags, `-O0` | Every lane without `-aot` in its label. What the rest of JavaScriptCore calls outside `ENABLE(AOT)` has to be in `JavaScriptCore_AOT_SOURCES_WITHOUT_AOT` (`AOT.cmake`) | |
 | x64 glibc with ThinLTO, then the checks after the link | `Tools/Scripts/check-classinfo-uniqueness.py`, `Tools/Scripts/aot/find-structures-decoded-behind-calls.py` | |
 
 `Tools/Scripts/aot/check-includes.py` needs no whole build.
+
+## Signed return addresses
+
+With `ENABLE(RETURN_ADDRESS_SIGNING)` (ARM64 Linux, on with `BUN_HARDENED`) an image signs the addresses that its code returns to or resumes at. There is no option: such an engine writes no other images, and the description of the run time makes it refuse them. Every instruction is a hint, so an image still runs on a processor without pointer authentication, unprotected.
+
+No generator of code does this. The assembler does, at the one place where it emits an instruction (`ARM64Assembler::putSigningLinkRegister()`), and an image takes code from `ImageAssembler` alone, which cannot be told to stop. So write what you would write without signing: Machine, the stubs, B3, BBQ, Yarr and FFI all do.
+
+| An instruction that | is emitted |
+| --- | --- |
+| copies the link register to memory or to another register | with the address signed |
+| overwrites the link register from memory or from another register | with an authentication behind it |
+| compares it, jumps to it, reads through it, or makes it of itself, constants and the program counter | as it is |
+| names it in a way that `ARM64LinkRegisterUse.h` does not know | as if it did the first two |
+| signs, authenticates or strips (`tagReturnAddress()`, `tagPtr()`, `removePtrTag()` and the like) | not at all |
+
+An address is therefore plain in the link register and signed anywhere else. Code that never saves the link register has no instruction for this, and a jump may leave for anything that a call may enter. Without `FEAT_FPAC` a failed authentication only makes the address unusable, and whoever signs it again gives away most of the right signature. So a load through the address follows, and a jump to the address takes its place where it comes next and no label lies in between. What asks for a place only where a map or a report is wanted takes `AssemblerBuffer::placeToDescribe()`, or the image depends on who looks.
+
+| Word | Signed with the B key and |
+| --- | --- |
+| a word of memory that the link register is stored in | the address behind the word. In a frame record LLInt and the JITs save the same, so their frames and compiled ones mix |
+| a copy in another register, and what an ordered or atomic instruction stores | the stack pointer |
+| the resume address of a `SavedFrame` | `SavedFrame::modifierOfResumeAddress()`, which is made of the address of the word |
+| what the unwinder hands to `RejectAwaitedCall`, and the handler of faults to code without a frame | the address behind the record that is about to hold it |
+
+What this asks of new code:
+
+- Move a return address through the link register. A frame record that is copied as bytes keeps a signature for its old place, and the return ends the process.
+- Do not jump to, read through or compare what was loaded into another register: it has its signature. `stubs/AOTSavedCodeAddresses.h` has the ways to do these.
+- The upper word of a pushed pair costs two more instructions, any other word about six (`emitPushLinkRegister()`).
+- The link register is no scratch register.
+- The unwinder authenticates each return address by which it looks for a handler in a compiled function (`AuthenticatedReturnAddress`, without which a `HandlerRecord` does not say where its code is). C++ that only looks at one takes the signature off (`removeReturnAddressSignature()`, or `removeCodePtrTag()`), and C++ that moves one uses `resignReturnAddress()`.
+
+A mistake in these ends the process or misses a comparison on a processor with pointer authentication. It does not leave an address unsigned.
+
+`llint/LowLevelInterpreterAOT.asm` is included between `beginSigningLinkRegister` and `endSigningLinkRegister`, where offlineasm keeps the same rules (`Tools/Scripts/aot/test-offlineasm-signing.rb`). The rest of LLInt and the JITs sign by hand, as for ARM64E. All of them enter each other with a plain link register.
+
+Not signed: the targets of calls and jumps through memory (the words of closures, the table of the run time, slot handlers, leaf steps of generators, the places that Yarr backtracks to, the handler that the unwinder hands to `Catch`, and any other label whose address is kept without going through the link register), what the unwinder remembers of call sites (`CallSiteCache`), the mark in the place of a return address in the frame that a stub lays out for a host function (nothing returns to it), saved frame pointers and other saved registers, and the registers that the kernel saves for a signal. A signed word can be used again at the same address. The assembler does not look at words that are put in its buffer or in a `RelocatableCode` as data. Nor does it keep anyone from taking the signature off a copy by arithmetic, as keeping only 32 bits of it does, and jumping through that register.
 
 ## Rules
 
@@ -72,4 +109,5 @@ Whole programs need the front end, so they are in oven-sh/bun, under `test/aot`.
 - The walk never merges or removes a call of a host function or getter. `url.href` twice with nothing between stays two calls.
 - A `Structure*` decoded from its id must not be the only thing that keeps a structure alive across a call that may collect.
 - An operation that compiled code calls says in its declaration whether it may collect, throw or enter the VM.
+- An address that code returns to or resumes at goes through the link register, as "Signed return addresses" says. Only `linux-arm64-lto-hardened-aot` runs that code: look at its tests after a change to frames, calls, stubs, coroutines or unwinding.
 - Files that upstream owns are not split or moved. It makes every later merge harder.

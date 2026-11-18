@@ -61,31 +61,12 @@ class FakeHeap {
     WTF_MAKE_NONCOPYABLE(FakeHeap);
 public:
     FakeHeap()
+        : m_memory(usableBytes)
     {
-        constexpr uintptr_t firstOffsetInCage = static_cast<uintptr_t>(minCell32) << cell32Shift;
-        m_memory.grow(2 * usableBytes + firstOffsetInCage + MarkedBlock::atomSize);
-        uintptr_t start = WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()));
-        uintptr_t offsetInCage = start - MarkedBlockCage::baseOf(std::bit_cast<void*>(start));
-        if (offsetInCage < firstOffsetInCage)
-            start += firstOffsetInCage - offsetInCage;
-        else if (offsetInCage + usableBytes > MarkedBlockCage::maxSize)
-            start += MarkedBlockCage::maxSize - offsetInCage + firstOffsetInCage;
-        m_next = start;
-        m_end = start + usableBytes;
-        AOT_TEST_CHECK(m_end <= std::bit_cast<uintptr_t>(m_memory.mutableSpan().data()) + m_memory.size());
-        AOT_TEST_CHECK(MarkedBlockCage::baseOf(std::bit_cast<void*>(m_next)) == MarkedBlockCage::baseOf(std::bit_cast<void*>(m_end - 1)));
     }
 
-    uintptr_t cageBase() const { return MarkedBlockCage::baseOf(std::bit_cast<void*>(m_next)); }
-
-    uint8_t* allocate(size_t size)
-    {
-        uintptr_t result = m_next;
-        m_next += WTF::roundUpToMultipleOf<MarkedBlock::atomSize>(size);
-        AOT_TEST_CHECK(m_next <= m_end);
-        zeroSpan(std::span(std::bit_cast<uint8_t*>(result), size));
-        return std::bit_cast<uint8_t*>(result);
-    }
+    uintptr_t cageBase() const { return m_memory.cageBase(); }
+    uint8_t* allocate(size_t size) { return m_memory.allocate(size); }
 
     uint64_t createCell(JSType type, uint64_t payload = 0)
     {
@@ -114,10 +95,8 @@ public:
 private:
     static constexpr size_t usableBytes = MB;
 
-    Vector<uint8_t> m_memory;
+    CageMemory m_memory;
     Vector<String> m_texts;
-    uintptr_t m_next { 0 };
-    uintptr_t m_end { 0 };
 };
 
 class FakeTable {
@@ -831,29 +810,33 @@ static uint64_t& storageOf(uint64_t owner)
     return *std::bit_cast<uint64_t*>(static_cast<uintptr_t>(owner) + JSMap::offsetOfStorage());
 }
 
-static void checkCreatedTable(Collections& collections, KeyComparison comparison, const TableEntry& entry, Width keyWidth, Width valueWidth)
+static uint32_t& reservedCapacityOf(uint64_t owner) { return *std::bit_cast<uint32_t*>(static_cast<uintptr_t>(owner) + JSMap::offsetOfDeletedPrefix()); }
+
+static void checkCreatedTable(Collections& collections, KeyComparison comparison, const TableEntry& entry, Width keyWidth, Width valueWidth, uint32_t reservedCapacity)
 {
     FakeHeap& heap = collections.heap;
     bool hasValues = entry.value.has_value();
-    size_t size = CompactTable::initialSize(keyWidth, valueWidth);
+    uint32_t capacity = reservedCapacity > CompactTable::initialCapacity ? CompactTable::maxCapacityWithTags : CompactTable::initialCapacity;
+    size_t size = CompactTable::initialSize(keyWidth, valueWidth, capacity);
     uint8_t* room = heap.allocate(size);
     memsetSpan(std::span(room, size), 0xab);
     FakeAllocator allocator(size);
     allocator.makeRoomAt(std::bit_cast<uintptr_t>(room), size);
     collections.setAllocator(size, &allocator);
     uint64_t owner = collections.createOwner(hasValues ? JSMapType : JSSetType, 0);
+    reservedCapacityOf(owner) = reservedCapacity;
 
     StubRun run = runInsertion(collections, insertionStub(comparison, hasValues), owner, entry.key, entry.value);
     collections.setAllocator(size, nullptr);
     AOT_TEST_CHECK(!run.calledOperation && run.result == owner && !allocator.hasRoom());
-    AOT_TEST_CHECK(storageOf(owner) == std::bit_cast<uintptr_t>(room));
+    AOT_TEST_CHECK(storageOf(owner) == std::bit_cast<uintptr_t>(room) && !reservedCapacityOf(owner));
 
-    FakeTable table(heap, CompactTable::initialCapacity, keyWidth, valueWidth, room);
-    AOT_TEST_CHECK(table.header() == Collections::headerOfCreatedTables && table.capacityAndKinds() == CompactTable::initialCapacityAndKinds(keyWidth, valueWidth));
+    FakeTable table(heap, capacity, keyWidth, valueWidth, room);
+    AOT_TEST_CHECK(table.header() == Collections::headerOfCreatedTables && table.capacityAndKinds() == CompactTable::initialCapacityAndKinds(keyWidth, valueWidth, capacity));
     AOT_TEST_CHECK(table.used() == 1 && table.alive() == 1 && table.find(entry.key, entry.hash) == 0u);
     AOT_TEST_CHECK(table.keyAt(0) == entry.key && (!hasValues || table.valueAt(0) == *entry.value));
     AOT_TEST_CHECK(*reinterpret_cast<uint64_t*>(room + CompactTable::offsetOfIndex()) == entry.hash >> CompactTable::tagShiftOfTags);
-    for (uint32_t unused = 1; unused < CompactTable::initialCapacity; ++unused)
+    for (uint32_t unused = 1; unused < capacity; ++unused)
         AOT_TEST_CHECK(!table.keyAt(unused) && (!hasValues || !table.valueAt(unused)));
 
     if (hasValues)
@@ -861,6 +844,12 @@ static void checkCreatedTable(Collections& collections, KeyComparison comparison
     else
         checkAnswer(collections, setHas(comparison), owner, entry.key, bitsOf(jsBoolean(true)));
     checkAppendedEntry(collections, KeyComparison::Bits, owner, table, createEntryComparedByBits(bitsOf(jsBoolean(true)), hasValues ? std::optional(bitsOf(jsNull())) : std::nullopt));
+}
+
+static void checkCreatedTable(Collections& collections, KeyComparison comparison, const TableEntry& entry, Width keyWidth, Width valueWidth)
+{
+    for (uint32_t reservedCapacity : { 0u, CompactTable::initialCapacity - 1, CompactTable::initialCapacity + 1, CompactTable::maxCapacityWithTags })
+        checkCreatedTable(collections, comparison, entry, keyWidth, valueWidth, reservedCapacity);
 }
 
 static void testCreatedTables()
@@ -907,6 +896,9 @@ static void testTablesNotCreatedByStubs()
     uint64_t map = collections.createOwner(JSMapType, 0);
     for (uint64_t key : { heap.createRope(), bitsOf(jsNumber(0.5)), heap.createCell(HeapBigIntType) })
         checkInsertionLeftToOperation(collections, KeyComparison::AnyValue, map, { key, 0, object });
+    reservedCapacityOf(map) = CompactTable::maxCapacityWithTags + 1;
+    checkInsertionLeftToOperation(collections, KeyComparison::Bits, map, createEntryComparedByBits(object, object));
+    AOT_TEST_CHECK(reservedCapacityOf(map) == CompactTable::maxCapacityWithTags + 1);
     AOT_TEST_CHECK(!storageOf(map) && allocator.hasRoom());
 }
 

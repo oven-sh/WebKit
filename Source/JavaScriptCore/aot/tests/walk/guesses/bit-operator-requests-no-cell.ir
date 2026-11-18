@@ -1,0 +1,123 @@
+# class Flags { constructor(flag) { this.flag = flag; } }
+# function known(list) { let s = 0; for (let i = 0; i < list.length; i++) s += list[i].flag | 0; return s; }
+# function site(list) { let s = 0; for (let i = 0; i < list.length; i++) s += list[i].nowhere & 7; return s; }
+# Nothing is known of the elements. A bit operator alone takes what is read: the loops check that it is no cell, and take the bits of undefined, null, booleans and fractions in line. An int32 was asked for, and the first
+# undefined ran the whole loop in its generic version.
+# RUN(KNOWN): walk f1:Body mechanisms=all
+# KNOWN: GetSlot {{*}} key="flag"
+# KNOWN: TypeTest {{*}} testedType=undefined|null|boolean|number
+# KNOWN: BitOr {{*}} form=Numbers
+# KNOWN-NOT: testedType=i32
+# RUN(SITE): walk f2:Body mechanisms=all
+# SITE: GetValueAtSiteOrAbsent {{*}} key="nowhere"
+# SITE: TypeTest {{*}} testedType=undefined|null|boolean|number
+# SITE: BitOr {{*}} form=Numbers
+
+layout L0 kind=Instance name="Flags" module=m0 position=20 constructor=f3 fields=[{key="flag" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+layout L1 fields=[{key="nowhere" declared={type=anything} flags=[IsNeverWritten]}] flags=[IsNeverAllocated] ownFieldCount=1
+layout L2 fields=[{key="flag" declared={type=anything}}] flags=[IsNeverAllocated] ownFieldCount=1
+layout L3 module=m0
+layout L4 module=m0
+variable g0 name="exports" module=m0 declared={type=anything} initialization=Undefined
+variable g1 name="Flags" module=m0 declared={type=absent|f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=f3 flags=[IsFromCompiler]} flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" kind=CommonJs body=f0
+entry module=m0
+function f0 module=m0 kind=CommonJsModule thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewObject layout=L3 @0
+    v1 = FinishObject v0 @0
+    PutModuleVariable v1 variable=g0 @0
+    v3 = NewClosure function=f1 @0
+    v4 = Convert v3 declared={type=f1 flags=[IsFromCompiler]} @0
+    v5 = NewClosure function=f2 @0
+    v6 = Convert v5 declared={type=f2 flags=[IsFromCompiler]} @0
+    v7 = NewClosure function=f3 @14
+    v8 = NewClass v7 layout=L0 @14
+    PutModuleVariable v8 variable=g2 @14
+    v10 = FinishClass v8 layout=L0 @14
+    v11 = Convert v10 declared={type=f3 flags=[IsFromCompiler]} @14
+    v12 = Convert v10 declared={type=f3 flags=[IsFromCompiler]} @14
+    PutModuleVariable v12 variable=g1 @14
+    v14 = Builtin builtin=GlobalThis @286
+    v15 = PropGet v14 key="globalThis" [isFreeName] @286
+    v16 = Convert v15 declared={type=builtin(GlobalThis) flags=[IsExpected]} @286
+    v17 = NewClosure function=f4 @304
+    PropSet v16, v17 key="made" @286
+    v19 = Builtin builtin=GlobalThis @331
+    v20 = PropGet v19 key="globalThis" [isFreeName] @331
+    v21 = Convert v20 declared={type=builtin(GlobalThis) flags=[IsExpected]} @331
+    PropSet v21, v4 key="known" @331
+    v23 = Builtin builtin=GlobalThis @357
+    v24 = PropGet v23 key="globalThis" [isFreeName] @357
+    v25 = Convert v24 declared={type=builtin(GlobalThis) flags=[IsExpected]} @357
+    PropSet v25, v6 key="site" @357
+    v27 = Undefined @357
+    Return v27 @357
+}
+function f1 name="known" module=m0 position=70 sourceRange={start=70 end=176} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = Integer @101
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @101
+    v3 = Integer @117
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @117
+    Jump -> next b1(v2, v4) @113
+  b1(v5, v6):
+    LoopHint @113
+    v8 = PropGet v0 key="length" @124
+    v9 = Less v6, v8 @120
+    Branch v9 -> taken b2(), notTaken b3() @120
+  b2():
+    v10 = ElemGet v0, v6 @147
+    v11 = PropGet v10 key="flag" @152
+    v12 = Integer @162
+    v13 = BitOr v11, v12 @147
+    v14 = Add v5, v13 @147
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @142
+    v16 = Increment v6 @137
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @137
+    Jump -> next b1(v15, v17) @137
+  b3():
+    Return v5 @172
+}
+function f2 name="site" module=m0 position=177 sourceRange={start=177 end=285} flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = Integer @207
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @207
+    v3 = Integer @223
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @223
+    Jump -> next b1(v2, v4) @219
+  b1(v5, v6):
+    LoopHint @219
+    v8 = PropGet v0 key="length" @230
+    v9 = Less v6, v8 @226
+    Branch v9 -> taken b2(), notTaken b3() @226
+  b2():
+    v10 = ElemGet v0, v6 @253
+    v11 = PropGet v10 key="nowhere" @258
+    v12 = Integer integer=7 @271
+    v13 = BitAnd v11, v12 @253
+    v14 = Add v5, v13 @253
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @248
+    v16 = Increment v6 @243
+    v17 = Convert v16 declared={type=i32 flags=[IsExpected]} @243
+    Jump -> next b1(v15, v17) @243
+  b3():
+    Return v5 @281
+}
+function f3 name="Flags" module=m0 position=39 sourceRange={start=14 end=69} kind=BaseConstructor flags=[HasNewTarget, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything, v1: anything):
+    v2 = GetConstructPrototype v0 layout=L0 @39
+    v3 = NewObject v2 layout=L0 @39
+    v4 = Convert v3 declared={type=L0} @39
+    PropSet v4, v1 key="flag" @48
+    v6 = Undefined @48
+    Return v4 @48
+}
+function f4 module=m0 position=304 sourceRange={start=304 end=331} kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @317
+    v2 = CheckInitialized v1 name="Flags" @317
+    v3 = Construct v2, -, v0 calleeName="Flags" @317 @313
+    Return v3 @313
+}

@@ -159,23 +159,42 @@ bool ElementAccessEmitter::hasOnlyExpectedArmInLine(const ValueContext& store)
     return !generator().takesFormOfLoops(store) && !generator().isInRecursion(store.block());
 }
 
+static constexpr uint32_t bitsOutsideInt32AndContiguousShapes = ~static_cast<uint32_t>(ContiguousShape - Int32Shape);
+
+static_assert([] {
+    for (uint32_t mode = 0; mode <= 0xff; ++mode) {
+        for (uint32_t isArray : { 0u, static_cast<uint32_t>(IsArray) }) {
+            if (!((mode - (isArray | Int32Shape)) & bitsOutsideInt32AndContiguousShapes) != (mode == (isArray | Int32Shape) || mode == (isArray | ContiguousShape)))
+                return false;
+        }
+    }
+    return true;
+}());
+
+Condition ElementAccessEmitter::hasBoxedShape(Word32 mode, ShapeTest hasShapeOf)
+{
+    build().statistics().count(StatisticID::BoxedListsTestedOnce);
+    uint32_t lowest = hasShapeOf == &ElementAccessEmitter::hasWritableShape ? IsArray | Int32Shape : Int32Shape;
+    return hasNoBits(sub(mode, word32(lowest)), bitsOutsideInt32AndContiguousShapes);
+}
+
 void ElementAccessEmitter::forEachFormByShape(Word32 mode, ShapeTest hasShapeOf, const ArrayStorageFormList& forms, LBasicBlock hasNoForm, const ScopedLambda<void(const ArrayStorageForm&)>& emitArm, FirstForm firstForm, ValueID int32StoredInEitherKind)
 {
     for (const ArrayStorageForm* form : forms) {
         LBasicBlock hasForm = newBlock();
         LBasicBlock hasOtherForm = newBlock();
         bool othersAreRare = form == forms.last() || (firstForm == FirstForm::IsExpected && form == forms.first());
-        if (int32StoredInEitherKind && form->kind == ArrayStorage::Contiguous) {
+        bool storesInt32InEitherKind = int32StoredInEitherKind && form->kind == ArrayStorage::Contiguous;
+        if (storesInt32InEitherKind && representationOf(int32StoredInEitherKind) != Representation::JSValue)
+            m_out.branch(hasBoxedShape(mode, hasShapeOf).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
+        else if (storesInt32InEitherKind) {
             LBasicBlock holdsNoValues = newBlock();
+            LBasicBlock holdsInt32 = newBlock();
             m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), normalEdge(holdsNoValues));
             m_out.appendTo(holdsNoValues);
-            bool tagIsAsked = representationOf(int32StoredInEitherKind) == Representation::JSValue;
-            LBasicBlock holdsInt32 = tagIsAsked ? newBlock() : hasForm;
             m_out.branch((this->*hasShapeOf)(mode, arrayStorageFormOf(ArrayStorage::Int32)).value(), normalEdge(holdsInt32), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
-            if (tagIsAsked) {
-                m_out.appendTo(holdsInt32);
-                m_out.branch(isInt32(in<Boxed>(int32StoredInEitherKind)).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
-            }
+            m_out.appendTo(holdsInt32);
+            m_out.branch(isInt32(in<Boxed>(int32StoredInEitherKind)).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
         } else
             m_out.branch((this->*hasShapeOf)(mode, *form).value(), normalEdge(hasForm), othersAreRare ? rareEdge(hasOtherForm) : normalEdge(hasOtherForm));
         m_out.appendTo(hasForm);
@@ -638,6 +657,12 @@ void ElementAccessEmitter::generateAppendElements(const ValueContext& value)
         ArrayAllocationEmitter(generator()).bearLiteralHoldingList(value, in<CellPointer>(value->sourceOperand()).value(), appendElements());
         return;
     }
+    if (generator().m_appendOfRestList == value.id()) [[unlikely]] {
+        ArrayAllocationEmitter(generator()).appendRestListUnlessUsedAsLiteral(value);
+        return;
+    }
+    if (const Operation& literal = operationAt(value->arrayOperand()); literal.opcode == Opcode::NewArray && ArrayAllocationEmitter(generator()).isLeftToListCall(value.block(), value->arrayOperand(), literal))
+        return;
     CellPointer array = in<CellPointer>(value->arrayOperand());
     CellPointer source = in<CellPointer>(value->sourceOperand());
     callStub(value, appendElements(), { array.value(), source.value() });

@@ -16,6 +16,7 @@
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTReactionChain.h"
+#include "AOTRuntimeCheckFailure.h"
 #include "AOTSavedFrame.h"
 #include "AOTState.h"
 #include "AOTStubFrames.h"
@@ -29,6 +30,7 @@
 #include "IteratorOperations.h"
 #include "JSAsyncGenerator.h"
 #include "JSCInlines.h"
+#include "JSCPtrTag.h"
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
 #include "JSSentinel.h"
@@ -140,7 +142,7 @@ CallData SavedFrame::getCallData(JSCell* cell)
 
 SavedFrame* SavedFrame::forFrame(const Instance& instance, const uint64_t* frame)
 {
-    if (std::bit_cast<const void*>(frame[1]) != instance.stubs.returnAddress(StubFrameKind::SavedFrameAdapter))
+    if (!instance.stubs.isReturnAddress(StubFrameKind::SavedFrameAdapter, frame[1]))
         return nullptr;
     return uncheckedDowncast<SavedFrame>(std::bit_cast<CallFrame*>(frame[0])->jsCallee());
 }
@@ -171,6 +173,14 @@ SavedFrame* SavedFrame::createHeapFrame(VM& vm, Instance& instance, size_t numbe
     saved->m_preservedRegister = numberOfWords;
     vm.mutatorFence();
     return saved;
+}
+
+void SavedFrame::suspendAtYield(VM& vm, JSCell* generator, void* resumeAddress)
+{
+    RELEASE_ASSERT(liesOnHeap() && m_numberOfWords > generatorWord);
+    words()[generatorWord] = static_cast<uint64_t>(JSValue::encode(generator));
+    m_resumeAddress = resumeAddress;
+    vm.writeBarrier(this);
 }
 
 SavedFrame* SavedFrame::createForAsyncFunction(VM& vm, Instance& instance, const SuspendedMachineFrame& machineFrame)
@@ -210,7 +220,11 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
         words[i] = source[i];
     if constexpr (preservedRegister != InvalidGPRReg)
         m_preservedRegister = machineFrame.words->preservedRegister;
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    m_resumeAddress = resignReturnAddress(machineFrame.resumeAddress, machineFrame.bottom, modifierOfResumeAddress());
+#else
     m_resumeAddress = machineFrame.resumeAddress;
+#endif
     m_flags = kind == SuspensionKind::Yield ? isSuspendedAtYieldFlag : 0;
     m_liveSlotMapOffsetPlusOne = liveSlotMapOffsetOf(siteWord) + 1;
     didWrite();
@@ -219,7 +233,7 @@ void SavedFrame::save(VM& vm, const SuspendedMachineFrame& machineFrame, Suspens
 
 std::optional<SavedFrameMap> SavedFrame::liveSlotMap(uint32_t offsetPlusOne) const
 {
-    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(m_resumeAddress), offsetPlusOne - 1);
+    return SavedFrameMap::tryCreate(Image::current()->frameMapWordsAt(resumeAddress()), offsetPlusOne - 1);
 }
 
 template<typename Visitor>
@@ -373,6 +387,17 @@ JSValue Generator::resume(JSGlobalObject* globalObject, ResumeMode mode, JSValue
     auto scope = DECLARE_THROW_SCOPE(vm);
     switch (m_state) {
     case State::Running:
+        if (!m_savedFrame) [[unlikely]] {
+            if (m_leavesAtOnce && mode != ResumeMode::Next) {
+                didEnd();
+                RELEASE_AND_RETURN(scope, resume(globalObject, mode, value));
+            }
+            RuntimeCheckFailure failure("generator check failed"_s);
+            failure.atTopCall(vm).detail("the generator of a loop is resumed by a return that was defined while the loop ran");
+            failure.report();
+            failure.crashInHost(globalObject);
+            CRASH();
+        }
         throwException(globalObject, scope, createGeneratorIsExecutingError(globalObject));
         return { };
     case State::Completed:

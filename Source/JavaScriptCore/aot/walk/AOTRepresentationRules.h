@@ -79,6 +79,7 @@ enum class OperandsAreTaken : uint8_t {
 };
 extern const std::array<OperandsAreTaken, numberOfOpcodes> howOperandsAreTakenByOpcode;
 inline OperandsAreTaken howOperandsAreTakenBy(Opcode opcode) { return howOperandsAreTakenByOpcode[static_cast<unsigned>(opcode)]; }
+constexpr bool isFormOfTestedCell(Opcode opcode, Representation held) { return held == Representation::Cell || (held == Representation::Cell32 && opcode == Opcode::ShapeTest); }
 ALWAYS_INLINE constexpr Representation formTakenByEveryOperandOf(OperatorForm form, bool isBitwise)
 {
     switch (form) {

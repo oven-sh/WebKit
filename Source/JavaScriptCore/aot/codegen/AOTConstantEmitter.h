@@ -46,6 +46,7 @@ public:
     void generateEmptyArgumentList(const ValueContext& value) { defineCell(value, CellPointer(loadImmutablePointer(AOT_INSTANCE_OFFSET(realm.emptyArgumentList)).value())); }
 
     CellPointer stringConstant(const OperationContext&, StringID);
+    std::optional<CellPointer> stringConstantIfMade(StringID);
     bool loadsStringConstantByStub(const OperationContext&, StringID);
     bool tryStoreStringConstantByStub(const OperationContext&, ValueID string, CellPointer object, uint64_t offset, const TypedPointer& word);
     CellPointer keyConstant(const OperationContext&, PropertyKeyID);

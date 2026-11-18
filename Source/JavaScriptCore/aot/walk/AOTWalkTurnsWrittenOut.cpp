@@ -585,7 +585,26 @@ static bool readsRowsOfUnknownField(Walker& walker, const BodyIndex& index, Loop
     });
 }
 
-static std::optional<uint32_t> numberOfOperationsOfLoopsWrittenOut(Walker& walker, const IntegersByText& integers, LoopID loop, uint32_t stays, bool countsCopies, bool isWrittenOut = true)
+static bool readsRowsOfNumbers(Walker& walker, const BodyIndex& index, LoopID loop)
+{
+    LoopID parent = index.loop(loop).parent;
+    if (!parent || index.loop(loop).numberOfLoopsWithin != 1)
+        return false;
+    return std::ranges::any_of(index.membersOf(loop), [&](BlockID member) {
+        return std::ranges::any_of(index.block(member).values(), [&](BodyValue read) {
+            ValueID row = read.opcode() == Opcode::ElemGet ? index.stripCasts(read.objectOperand()) : ValueID();
+            if (!row || index.isParameter(row) || index.opcodeOf(row) != Opcode::ElemGet || dependsOnIteration(index, loop, row))
+                return false;
+            ValueID key = index.stripCasts(index.value(row).propertyOperand());
+            if (!key || !index.isInLoop(index.blockOf(key), parent))
+                return false;
+            TypeID seen = walker.facts().linked().resultOfReadByKey(walker.currentFunction(), read.id());
+            return seen && walker.types().at(seen).primitives & Primitive::Number && walker.types().at(seen).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined);
+        });
+    });
+}
+
+static std::optional<uint32_t> numberOfOperationsOfLoopsWrittenOut(Walker& walker, const IntegersByText& integers, LoopID loop, uint32_t stays, bool countsCopies)
 {
     const BodyIndex& index = integers.index;
     auto walkedOnce = [&](LoopID walked) {
@@ -614,7 +633,7 @@ static std::optional<uint32_t> numberOfOperationsOfLoopsWrittenOut(Walker& walke
             }
             return entering;
         };
-        std::optional<uint32_t> staysWithin = !isWrittenOut && storesIntoInnerList(walker, index, within) ? std::nullopt : foreseeTurnsByText(integers, within, whatEnters);
+        std::optional<uint32_t> staysWithin = foreseeTurnsByText(integers, within, whatEnters);
         std::optional<uint32_t> ofLoopWithin = staysWithin ? numberOfOperationsOfLoopsWrittenOut(walker, integers, within, *staysWithin, countsCopies) : std::nullopt;
         if (!ofLoopWithin)
             return std::nullopt;
@@ -624,6 +643,17 @@ static std::optional<uint32_t> numberOfOperationsOfLoopsWrittenOut(Walker& walke
     return numberOfOperations > mostOperationsWalkedForTurnsWrittenOut ? std::nullopt : std::optional(numberOfOperations);
 }
 
+static bool callsMethodOfElement(const BodyIndex& index, LoopID loop, const BodyValue& operation)
+{
+    if (operation.opcode() != Opcode::Call)
+        return false;
+    ValueID callee = index.stripCasts(operation.calleeOperand());
+    if (!callee || index.isParameter(callee) || index.opcodeOf(callee) != Opcode::PropGet)
+        return false;
+    ValueID receiver = index.stripCasts(index.value(callee).objectOperand());
+    return receiver && !index.isParameter(receiver) && index.opcodeOf(receiver) == Opcode::ElemGet && index.isInLoop(index.blockOf(receiver), loop);
+}
+
 static bool isOutermostUnrollingTooLarge(Walker& walker, const BodyIndex& index, BlockID inputHead, uint32_t operationsOfIteration, uint32_t numberOfWalks)
 {
     LoopID loop = index.loopOf(inputHead);
@@ -631,6 +661,8 @@ static bool isOutermostUnrollingTooLarge(Walker& walker, const BodyIndex& index,
     for (BlockID member : index.membersOf(loop)) {
         for (BodyValue operation : index.block(member).values()) {
             FunctionID callee = operation.opcode() == Opcode::Call ? walker.facts().linked().calleeAt(walker.currentFunction(), operation.id()) : operation.opcode() == Opcode::CallDirect && !operation.isConstruction() ? operation.function() : FunctionID();
+            if (!callee && callsMethodOfElement(index, loop, operation))
+                return true;
             if (callee && calleeIsCopiedInLoopsAlone(walker, callee, operation.opcode() == Opcode::Call ? operation.as<Opcode::Call>().argumentsOperands().size() : operation.numberOfVariadicOperands()))
                 return true;
             if (operation.opcode() != Opcode::ElemGet && operation.opcode() != Opcode::ElemSet)
@@ -663,7 +695,15 @@ bool Walker::hasUnrolledInnerLoops(BlockID inputHead)
         return std::nullopt;
     };
     IntegersByText integers { index, program().keyOf(BuiltinNames::length), leaf, lengthOf };
-    return has(Mechanism::Folding) && has(Mechanism::LoopInvariants) && numberOfOperationsOfLoopsWrittenOut(*this, integers, loop, 1, !frameIndex, false);
+    return has(Mechanism::Folding) && has(Mechanism::LoopInvariants) && numberOfOperationsOfLoopsWrittenOut(*this, integers, loop, 1, !frameIndex);
+}
+
+Reference Walker::buildConversionBeforeLoop(Draft&& convert, BlockID inputHead)
+{
+    const BodyIndex& index = currentBodyIndex();
+    LoopID enclosing = index.loop(index.loopOf(inputHead)).parent;
+    SetForScope convertingScope(m_isConvertingBeforeUnrolledLoop, enclosing && hasUnrolledInnerLoops(index.loop(enclosing).head));
+    return build(WTF::move(convert));
 }
 
 static bool isLeftAtHeadAlone(const BodyIndex& index, LoopID loop)
@@ -687,6 +727,18 @@ BlockID Walker::blockAroundConstantTrips(size_t frameIndex, BlockID block, LoopI
         block = index.loop(inner).head;
     }
     return block;
+}
+
+BlockID Walker::lastDominatorOfUnrolledLoop(LoopID loop) const
+{
+    size_t place = m_constantTripLoops.findIf([&](const ConstantTripLoop& unrolled) { return unrolled.frameIndex + 1 == m_frames.size() && unrolled.loop == loop; });
+    return place == notFound ? BlockID() : m_constantTripLoops[place].lastDominator;
+}
+
+std::optional<int64_t> Walker::greatestCounterOfUnrolledLoop(LoopID loop, ValueID counter) const
+{
+    size_t place = m_constantTripLoops.findIf([&](const ConstantTripLoop& unrolled) { return unrolled.frameIndex + 1 == m_frames.size() && unrolled.loop == loop; });
+    return place == notFound || (counter && m_constantTripLoops[place].counter != counter) ? std::nullopt : std::optional(m_constantTripLoops[place].greatestCounter);
 }
 
 bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> entering)
@@ -728,11 +780,15 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
         return false;
     BlockID headAround = m_frames[frameIndex].fullyUnrolledHeader;
     bool isInUnrolledNest = headAround && index.loop(loop).parent == index.loopOf(headAround);
-    if (!isInUnrolledNest && storesIntoInnerList(*this, index, loop)) {
+    bool isInEnclosingVersion = !m_versionedLoops.isEmpty() && m_versionedLoops.last().frameIndex == frameIndex && m_versionedLoops.last().canUseIterationGuards && index.loop(loop).parent && index.loop(loop).parent == index.loopOf(m_versionedLoops.last().inputHead);
+    if (!isInUnrolledNest && !isInEnclosingVersion && storesIntoInnerList(*this, index, loop)) {
         count(StatisticID::StoringLoopsNotUnrolled);
         return false;
     }
     if (!isInUnrolledNest && readsRowsOfUnknownField(*this, index, loop))
+        return false;
+    static constexpr uint32_t fewestIterationsThatRepayRowChecks = 5;
+    if (*stays >= fewestIterationsThatRepayRowChecks && !isInUnrolledNest && !isInEnclosingVersion && readsRowsOfNumbers(*this, index, loop))
         return false;
     bool holdsLoops = index.loop(loop).numberOfLoopsWithin != 1;
     bool standsInLoop = m_frames[frameIndex].loopDepthAtCall || index.loopDepthOf(inputHead) >= 2;
@@ -756,6 +812,8 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
         return false;
 
     beginTurnsWrittenOut(inputHead);
+    if (isInEnclosingVersion && storesIntoInnerList(*this, index, loop))
+        count(StatisticID::StoringLoopsUnrolledInVersions);
     if (frameIndex)
         count(StatisticID::InlineeLoopsFullyUnrolled);
     if (holdsLoops)
@@ -764,7 +822,7 @@ bool Walker::writeOutTurnsOfLoop(BlockID inputHead, std::span<const Reference> e
         count(StatisticID::InnerLoopsUnrolledWithNest);
     bool isConstantTrip = !takenByPattern && isLeftAtHeadAlone(index, loop);
     if (isConstantTrip)
-        m_constantTripLoops.append(ConstantTripLoop { frameIndex, loop, BackEdgeDominators(index, loop).lastOf(loop) });
+        m_constantTripLoops.append(ConstantTripLoop { frameIndex, loop, BackEdgeDominators(index, loop).lastOf(loop), counter.name, counter.start + std::max<int64_t>(counter.step * (*stays - 1), 0) });
     walkTurnsWrittenOut(inputHead, entering, *stays + 1, nullptr);
     if (isConstantTrip)
         m_constantTripLoops.removeLast();
@@ -976,6 +1034,8 @@ void Walker::walkTurnsWrittenOut(BlockID inputHead, std::span<const Reference> e
         for (uint32_t waiting : forIn->edgesIntoLoopAsWritten)
             m_openEdges[waiting].next = std::exchange(inputBlock(frameIndex, inputHead).firstOpenEdge, waiting);
         iteration.precomputedSteps.shrink(0);
+        if (forIn->namesCountedByOpen)
+            iteration.count = constant(Draft(Opcode::Integer, m_origin));
         m_frames[frameIndex].stepWhosePositionEdgesBring = forIn->step;
         m_frames[frameIndex].placeOfForInWhosePositionEdgesBring = forIn->place;
     }

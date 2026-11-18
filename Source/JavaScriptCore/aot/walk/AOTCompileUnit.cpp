@@ -392,6 +392,23 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
     return held;
 }
 
+static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, std::span<const LinkedParameter> parameters, const Operation& operation)
+{
+    return std::ranges::any_of(operation.operands(), [&](ValueID operand) {
+        if (!operand)
+            return false;
+        ValueID cell = underlyingCellOf(code, operand);
+        const Operation& parameter = code.at(cell);
+        if (parameter.opcode != Opcode::Parameter || !parameter.block() || !code.at(parameter.block()).isEntry)
+            return false;
+        size_t place = code.at(parameter.block()).placeOfParameter(cell);
+        if (place >= parameters.size())
+            return false;
+        TypeID arrives = parameters[place].seenToArrive;
+        return parameters[place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
+    });
+}
+
 static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeArena& types, const Code& code)
 {
     CodeUnit unit = code.unit();
@@ -426,7 +443,7 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
             part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
             summary = "Link's effects of the function given its arguments"_s;
         }
-        if (part.isNull())
+        if (part.isNull() || (unit.role == CodeRole::Body && isBehindTypeThatNeverArrives(types, code, tables.parametersOf(unit.function), operation)))
             continue;
         return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") "_s, part, ", and "_s, summary, " say that it does not"_s);
     }
@@ -464,31 +481,54 @@ public:
     }
 
 private:
-    TypeID leftByThisUnitAt(FunctionID callee, uint32_t place, bool isPositional) const
+    struct LeftAtCallee {
+        bool isAnything { false };
+        Vector<TypeID> atPlaces;
+    };
+
+    static bool isPositionalPlace(const Function& function, uint32_t place)
     {
-        TypeID left;
+        return place >= function.firstParameterIndex() && place < function.firstParameterIndex() + function.numberOfPositionalParameters();
+    }
+
+    void listWhatThisUnitLeaves()
+    {
         for (const Walker::ArrivalHeld& held : m_held) {
-            if (held.callee != callee)
+            if (held.kind == Walker::ArrivalHeld::Kind::MayBeEnteredByValue)
                 continue;
-            TypeID here;
-            switch (held.kind) {
-            case Walker::ArrivalHeld::Kind::Anything:
-                return TypeTable::anything;
-            case Walker::ArrivalHeld::Kind::MayBeEnteredByValue:
-                break;
-            case Walker::ArrivalHeld::Kind::Proven:
-                if (held.entryParameter == place)
-                    here = held.proven;
-                break;
-            case Walker::ArrivalHeld::Kind::UndefinedFrom:
-                if (held.entryParameter <= place)
-                    here = isPositional ? TypeID(TypeTable::undefined) : TypeID(TypeTable::anything);
-                break;
+            LeftAtCallee& left = m_left.add(held.callee.index(), LeftAtCallee()).iterator->value;
+            left.isAnything |= held.kind == Walker::ArrivalHeld::Kind::Anything;
+            if (left.isAnything)
+                continue;
+            const Function& function = m_inputs.program.at(held.callee);
+            if (left.atPlaces.isEmpty())
+                left.atPlaces.fill(TypeID(), function.numberOfEntryParameters());
+            auto add = [&](uint32_t place, TypeID here) {
+                TypeID& known = left.atPlaces[place];
+                if (here && known != here)
+                    known = known ? m_types.unionOf(known, here) : here;
+            };
+            if (held.kind == Walker::ArrivalHeld::Kind::Proven) {
+                if (held.entryParameter < left.atPlaces.size())
+                    add(held.entryParameter, held.proven);
+                continue;
             }
-            if (here)
-                left = left ? m_types.unionOf(left, here) : here;
+            for (uint32_t place = held.entryParameter; place < left.atPlaces.size(); ++place)
+                add(place, isPositionalPlace(function, place) ? TypeID(TypeTable::undefined) : TypeID(TypeTable::anything));
         }
-        return left;
+        m_hasListedWhatIsLeft = true;
+    }
+
+    TypeID leftByThisUnitAt(FunctionID callee, uint32_t place)
+    {
+        if (!m_hasListedWhatIsLeft)
+            listWhatThisUnitLeaves();
+        auto found = m_left.find(callee.index());
+        if (found == m_left.end())
+            return { };
+        if (found->value.isAnything)
+            return TypeTable::anything;
+        return place < found->value.atPlaces.size() ? found->value.atPlaces[place] : TypeID();
     }
 
     TypeID typeAfterPrecedingChecks(ValueID value, ValueID call) const
@@ -593,10 +633,10 @@ private:
         uint32_t firstPositional = function.firstParameterIndex();
         uint32_t endOfPositional = firstPositional + function.numberOfPositionalParameters();
         for (uint32_t place = 0; place < function.numberOfEntryParameters(); ++place) {
-            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place))
+            if (m_inputs.plan.promotedEnvironments().isRemoved(callee, place) || (call.role() == CodeRole::Body && m_inputs.plan.conventions().isScalarizedParameter(callee, place)))
                 continue;
             bool isPositional = place >= firstPositional && place < endOfPositional;
-            TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place, isPositional);
+            TypeID left = isUnitOfCallee ? m_inputs.arrivals.leftAt(m_types, callee, place) : leftByThisUnitAt(callee, place);
             if (left == TypeTable::anything || (isUnitOfCallee && !left))
                 continue;
             ValueID operand = place < passedOperands.size() ? passedOperands[place] : ValueID();
@@ -656,6 +696,8 @@ private:
     std::span<const Walker::ArrivalHeld> m_held;
     const PositionTypes* m_whatFunctionsHandBack;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_parametersBeingAsked;
+    HashMap<uint32_t, LeftAtCallee, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_left;
+    bool m_hasListedWhatIsLeft { false };
 };
 
 } // anonymous namespace
@@ -869,20 +911,22 @@ static bool notesAreTakenOfCompileUnit(CodeRole role)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static WalkInputs withRealmOfCompileWorker(const WalkInputs& inputs, ScratchRealm* realm)
+static WalkInputs inputsOfCompileWorker(const WalkInputs& inputs, ScratchRealm* realm, CompileWorker* worker)
 {
     WalkInputs ofWorker = inputs;
     ofWorker.scratchRealm = realm;
+    ofWorker.worker = worker;
     return ofWorker;
 }
 
 CompileWorker::CompileWorker(const CompileInputs& inputs, BuildContext& build, TypeTable& types)
     : m_inputs(inputs)
     , m_build(build)
+    , m_table(types)
     , m_types(types, ArenaKeeps::UntilReset)
     , m_arena(makeUniqueWithoutFastMallocCheck<Machine::Arena>())
     , m_scratchRealm(makeUniqueWithoutFastMallocCheck<ScratchRealm>())
-    , m_walkInputs(withRealmOfCompileWorker(inputs.walk, m_scratchRealm.get()))
+    , m_walkInputs(inputsOfCompileWorker(inputs.walk, m_scratchRealm.get(), this))
     , m_keptBetweenUnits(makeUnique<KeptBetweenUnits>(m_walkInputs, m_types))
     , m_walker(makeWalker(RoomOfFormerWalker::IsLeft))
 {
@@ -993,6 +1037,7 @@ bool CompileWorker::walkAndSweep(CodeUnit unit, WalkMode way)
         counters.count(StatisticID::SecondCountersWithdrawn);
     counters.count(StatisticID::BranchesFoldedToJumps, swept.branchesThatDecideNothing);
     counters.count(StatisticID::DeadValueProofChecksRemoved, swept.doorsDroppedWithTheirValues);
+    counters.count(StatisticID::OverwrittenSlotStoresDropped, swept.overwrittenSlotStoresDropped);
     if (swept.allocationsSunk)
         counters.count(StatisticID::AllocationsSunk, swept.allocationsSunk);
     counters.count(StatisticID::ValuesWalked, m_walker->numberOfValuesWalked());
@@ -1235,6 +1280,13 @@ static bool looksUnderKeyThatHasPreparation(const WalkInputs& inputs, FunctionID
     return looks;
 }
 
+static bool storesMirroredFunctionName(const WalkInputs& inputs, FunctionID function)
+{
+    return std::ranges::any_of(inputs.facts.linked().storesOfFunctionNamesIn(function), [&](const LinkedFunctionNameStore& store) {
+        return !!inputs.plan.promotedEnvironments().mirrorOfFunctionName(store.holder, store.key);
+    });
+}
+
 static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const BodyIndex& index)
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputPassThroughOpcodes | OpcodeSet {
@@ -1246,12 +1298,15 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
         return false;
     if (inputs.facts.beforeEvaluation().holdsIn(unit.function))
         return false;
-    if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function))
+    if (inputs.plan.promotedEnvironments().isMaker(unit.function) || inputs.plan.promotedEnvironments().numberOfRemovedCapturesOf(unit.function) || storesMirroredFunctionName(inputs, unit.function))
         return false;
-    if (readsScopesWhoseLivesMayHaveEnded(inputs, index))
+    bool isResumeBody = unit.role == CodeRole::SlowBody && inputs.plan.conventions().hasResumeBody(unit.function);
+    if (!isResumeBody && readsScopesWhoseLivesMayHaveEnded(inputs, index))
         return false;
-    if (inputs.options.forcesStraightCompilation)
+    if (inputs.options.forcesStraightCompilation && !isResumeBody)
         return true;
+    if (isResumeBody)
+        return !looksUnderKeyThatHasPreparation(inputs, unit.function, index);
     if (hasReadsVerifiedAtRunTime(inputs, index))
         return false;
     if (unit.role != CodeRole::Body)
@@ -1261,15 +1316,35 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
     return !index.hasLoops() && (index.opcodes() | operationsThatTypesMakeNoCheaper) == operationsThatTypesMakeNoCheaper;
 }
 
+static bool hasStraightStores(const WalkInputs& inputs, TypeArena& types, CodeUnit unit, const BodyIndex& index)
+{
+    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(inputs, unit, index) || readsVariableOfAnotherFileStoredFirst(inputs, unit, index))
+        return false;
+    if (unit.role == CodeRole::SlowBody && inputs.plan.conventions().hasResumeBody(unit.function))
+        return true;
+    return storesOnlyWhatFitsByItsMaking(inputs, types, index) && inputs.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty();
+}
+
+bool CompileWorker::canEmitResumeBody(FunctionID function)
+{
+    const BodyIndex* index = m_inputs.walk.facts.bodies().find(function);
+    CodeUnit unit { function, CodeRole::SlowBody };
+    if (!index || !m_inputs.walk.plan.conventions().hasResumeBody(function) || !isWrittenStraight(m_inputs.walk, unit, *index))
+        return false;
+    TypeArena types(m_table, ArenaKeeps::UntilReset);
+    if (!hasStraightStores(m_inputs.walk, types, unit, *index))
+        return false;
+    Machine::Arena arena;
+    return Typed::canEmitResumeBody(CodeGenerationWorker { m_build, types, arena }, m_inputs.generation, function, *index, m_totals);
+}
+
 std::optional<CompiledCode> CompileWorker::compileStraight(CodeUnit unit)
 {
     const BodyIndex* index = m_inputs.walk.facts.bodies().find(unit.function);
     if (!index || !isWrittenStraight(m_inputs.walk, unit, *index) || !hasStraightForm(m_inputs.generation, unit, *index))
         return std::nullopt;
     m_types.reset();
-    if (!entryBlockStoresVariablesInFrontOfTheirFirstReaders(m_inputs.walk, unit, *index) || readsVariableOfAnotherFileStoredFirst(m_inputs.walk, unit, *index))
-        return std::nullopt;
-    if (!storesOnlyWhatFitsByItsMaking(m_inputs.walk, m_types, *index) || !m_inputs.walk.facts.summaries().at(unit.function).scopesStoredFirst.isEmpty())
+    if (!hasStraightStores(m_inputs.walk, m_types, unit, *index))
         return std::nullopt;
     Code code;
     code.reset(unit);
@@ -1341,6 +1416,10 @@ std::optional<CompiledCode> CompileWorker::compile(CodeUnit unit)
     if (std::optional<CompiledCode> entry = compileEntryByHand(unit))
         return entry;
     std::optional<uint64_t> instructionsAtStart = instructionsOfCompileThreadSoFar(m_build);
+    if (unit.role == CodeRole::SlowBody && m_inputs.walk.plan.conventions().hasResumeBody(unit.function)) {
+        m_build.diagnostics().add(InternalError { .kind = InternalErrorKind::OpcodeWithoutCode, .function = unit.function });
+        return std::nullopt;
+    }
     if (!walkAndSweep(unit))
         return std::nullopt;
     std::optional<uint64_t> instructionsAfterSweep = instructionsOfCompileThreadSoFar(m_build);

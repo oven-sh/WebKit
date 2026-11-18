@@ -19,6 +19,7 @@ operation StepGenerator (generator: Any/inspects+calls, resumeMode: ResumeMode, 
 operation IsGeneratorSuspendedAtStart (generator: Any/inspects) -> natural(boolean) ; reads(InternalFields) ; runtime = IsGeneratorSuspendedAtStart ; flow = TableProves ; form = Runtime
 operation IsUnmodifiedGenerator (value: Any/inspects) -> natural(boolean) ; reads(NamedProperties, PrototypeLinks) ; proves = UnmodifiedGenerator ; branches = May ; flow = TableProves ; form = Open
 operation CreateIteratorResult (value: Any/retains(result), done: Boolean/inspects) -> allocation(IteratorResult) ; AllocatesCells ; AsRead..AsRead ; flow = Allocates ; flowRule = Heap
+operation StepMatchIterator (iterator: Object/inspects+readsContents+writesContents) -> unknown ; unknownCode ; runtime = StepMatchIterator ; flow = Copies ; flowRule = StepOfLibrary ; form = Runtime
 operation StepArrayIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
 operation StepMapIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary
 operation StepSetIterator (iterator: Object/inspects+readsContents+writesContents) -> results(StepArrayIteratorResult: natural(boolean), unknown) ; unknownCode ; AsRead..AsRead ; flow = Copies ; flowRule = StepOfLibrary

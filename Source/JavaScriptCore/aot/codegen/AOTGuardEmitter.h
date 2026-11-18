@@ -29,6 +29,7 @@ public:
     void generateAreHeldFieldsFilled(const ValueContext&);
     void generateIsNotFrozen(const ValueContext&);
     void generateHasLayoutPrototype(const ValueContext&);
+    void generatePassesStoresAbove(const ValueContext&);
     void generateIsPristine(const ValueContext&);
     void generateHasStructureOfClass(const ValueContext&);
     void generateHasArrayStorage(const ValueContext&);
@@ -39,6 +40,7 @@ public:
     void generateBindsNoTrapAnswer(const ValueContext&);
     void generateHasNumberOfBoundArguments(const ValueContext&);
     void generateMakesPlainGenerators(const ValueContext&);
+    void generateIsPlainGeneratorPrototype(const ValueContext&);
     void generateIsUnmodifiedAsyncGenerator(const ValueContext&);
     void generateGetWordOfBoundFunction(const ValueContext&);
     void generateGetAssignedMember(const ValueContext&);
@@ -69,6 +71,7 @@ private:
     Boxed assignedMember(const MemberConditionRecord&);
     void failAndDefineFalse(const ValueContext&, InternalErrorKind);
     Condition guardInByteHolds(LayoutID classLayout, ClassSide, TypedPointer byteOfGuard);
+    Condition areMembersAssigned(std::span<const MemberConditionRecord>);
     Condition isMemberAssigned(const MemberConditionRecord&);
     struct GuardLeftToAsk {
         LayoutID classLayout;

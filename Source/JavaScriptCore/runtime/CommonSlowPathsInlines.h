@@ -84,7 +84,10 @@ inline void tryCachePutToScopeGlobal(
     case GlobalPropertyWithVarInjectionChecks: {
         // Global Lexical Binding Epoch is changed. Update op_get_from_scope from GlobalProperty to GlobalLexicalVar.
         if (scope->isGlobalLexicalEnvironment()) {
-            cacheGlobalLexicalVar(codeBlock, metadata, uncheckedDowncast<JSGlobalLexicalEnvironment>(scope), ident);
+            auto* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(scope);
+            if (getVM(globalObject).hasCompiledCode() && globalLexicalEnvironment->symbolTable()->get(ident.impl()).isReadOnly())
+                return;
+            cacheGlobalLexicalVar(codeBlock, metadata, globalLexicalEnvironment, ident);
             return;
         }
         break;

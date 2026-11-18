@@ -154,6 +154,8 @@ InlineForm chooseFormOfOwnPropertyBuiltin(const InlineBuiltinQuery& query)
         return query.operandsAreAsWritten ? InlineForm::Whole : rules.formWhereInlineCodeHandlesEveryObject(query.argument(0));
     case InlineBuiltin::ObjectGetOwnPropertyDescriptor:
         return query.numberOfArguments() >= 2 ? rules.formWhereInlineCodeHandlesEveryObject(query.argument(0)) : rules.call();
+    case InlineBuiltin::ObjectDefineProperty:
+        return rules.wholeIfArgumentCountIsAtLeast(3);
     case InlineBuiltin::ObjectHasOwn:
         return rules.wholeIfArgumentCountIsAtLeast(query.overload.receiver ? 1 : 2);
     case InlineBuiltin::ObjectIsPrototypeOf:
@@ -211,6 +213,8 @@ InlineForm chooseFormOfHashTableBuiltin(const InlineBuiltinQuery& query)
     switch (query.builtin) {
     case InlineBuiltin::NewMap:
     case InlineBuiltin::NewSet:
+    case InlineBuiltin::NewWeakMap:
+    case InlineBuiltin::NewWeakSet:
     case InlineBuiltin::MapSize:
     case InlineBuiltin::SetSize:
         return InlineForm::Whole;

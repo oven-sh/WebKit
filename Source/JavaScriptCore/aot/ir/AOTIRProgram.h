@@ -58,14 +58,16 @@ public:
     const BuiltinTable& builtins() const { return m_builtins; }
     void unlockReplaceableBuiltins();
     std::span<const BuiltinID> unlockedBuiltins() const LIFETIME_BOUND { return m_tableOfBuild.unlockedMembers(); }
-    bool isUnlocked(BuiltinID member) const { return std::ranges::binary_search(unlockedBuiltins(), member); }
+    bool isUnlocked(BuiltinID member) const { return m_tableOfBuild.isUnlocked(member); }
     std::span<const BuiltinID> builtinsWhoseLockIsLeftToProgram() const LIFETIME_BOUND { return m_tableOfBuild.membersWhoseLockIsLeftToProgram(); }
-    bool isLockLeftToProgram(BuiltinID member) const { return std::ranges::binary_search(builtinsWhoseLockIsLeftToProgram(), member); }
+    bool isLockLeftToProgram(BuiltinID member) const { return m_tableOfBuild.isLockLeftToProgram(member); }
     void openNameForTestRun(BuiltinID canonicalHolder, StringID name);
     bool isOpened(BuiltinID canonicalHolder, StringID name) const { return m_namesOpened.contains(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index()); }
     bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }
     void noteTakenForAbsent(PropertyKeyID) const;
     Vector<PropertyKeyID> keysTakenForAbsent() const;
+    void noteLockedAbsentName(BuiltinID holder, PropertyKeyID) const;
+    Vector<std::pair<BuiltinID, PropertyKeyID>> lockedAbsentNames() const;
     bool isSomeNameOpenedOn(BuiltinID canonicalHolder) const { return m_holdersOfOpenedNames.get(canonicalHolder.index()); }
     bool testsReplaceBuiltins() const { return m_testsReplaceBuiltins; }
     std::span<const uint8_t> buffer() const { return m_bytes.borrowed; }
@@ -277,6 +279,7 @@ private:
     BitVector m_namesOpenedSomewhere;
     mutable Lock m_keysTakenForAbsentLock;
     mutable BitVector m_keysTakenForAbsent WTF_GUARDED_BY_LOCK(m_keysTakenForAbsentLock);
+    mutable Vector<std::pair<BuiltinID, PropertyKeyID>> m_lockedAbsentNames WTF_GUARDED_BY_LOCK(m_keysTakenForAbsentLock);
     BitVector m_holdersOfOpenedNames;
     HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesOpened;
     bool m_testsReplaceBuiltins { false };
@@ -348,6 +351,11 @@ inline void forEachOfSeveralParents(const Program& program, LayoutID id, NOESCAP
         if (parent != id && isDefinedByClass(program.at(parent)))
             functor(parent);
     }
+}
+
+inline bool isConstructorFunctionBelowValue(const Layout& layout)
+{
+    return layout.has(LayoutFlags::IsConstructorFunction) && layout.has(LayoutFlags::HasHeritage);
 }
 
 inline LayoutID declaredLayoutOf(const Program& program, LayoutID id)

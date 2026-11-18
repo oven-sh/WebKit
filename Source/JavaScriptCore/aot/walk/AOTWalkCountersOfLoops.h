@@ -31,6 +31,7 @@ struct AccessUnderCounterOfLoop {
     Reference fieldView;
     VariableID variable;
     Vector<AddendOfKey, 2> addends;
+    int64_t stepsBeforeAccess { 0 };
     bool isOfList { false };
     bool iterationChecksAddendSign { false };
 };
@@ -59,10 +60,13 @@ struct AccessBesideCounter {
 
 struct AccessesNearCounter {
     uint32_t counter { 0 };
+    int64_t counterStep { 1 };
+    ValueID viewWhoseLengthIsBound;
     ValueID bound;
     bool counterRises { true };
     bool admitsEqual { false };
     Vector<AccessBesideCounter, 4> accesses;
+    Vector<ValueID, 4> operations;
 };
 
 AccessesNearCounter findAccessesNearCounter(Walker&, BlockID inputHead, NOESCAPE const ScopedLambda<TypeID(uint32_t position)>& typeThatEnters, NOESCAPE const ScopedLambda<TypeID(ValueID)>& typeInFront);
@@ -109,10 +113,12 @@ enum class WhatEntersHead : uint8_t { IsInteger, MayBeAskedInFront };
 struct NumberThatDivisionsBringRound {
     Range integers;
     bool isDividedInFront { true };
+    bool hasCarriedDivisor { false };
     Vector<ValueID, 2> remainders;
 };
 std::optional<NumberThatDivisionsBringRound> findNumberThatDivisionsBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering, WhatEntersHead);
 bool operatorsOnBitsAloneBringRound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering);
+bool isBinarySearch(Walker&, BlockID inputHead);
 bool searchesNumbersByHalves(Walker&, BlockID inputHead);
 bool addsFieldsToIndexes(Walker&, BlockID inputHead, const LoopPreview&);
 std::optional<Range> findRangeOfMeetingBound(Walker&, BlockID inputHead, uint32_t position, std::span<const TypeID> entering);
@@ -139,7 +145,10 @@ struct EqualityLoopTest {
     uint32_t exitTarget { 0 };
     bool countsUp { true };
     int64_t largestStep { 1 };
+    bool fallsTowardZero { false };
+    int64_t greatestFallingStart { 0 };
 };
+inline constexpr Range stepsOfFallingCounter { std::numeric_limits<int32_t>::min(), -1 };
 std::optional<EqualityLoopTest> findEqualityLoopTest(Walker&, BlockID inputHead);
 
 struct EndLoopTest {
@@ -163,7 +172,7 @@ struct LoopBoundComparison {
     ValueID number;
     VariableID variable;
 };
-LoopBoundComparison findLoopBoundComparison(Walker&, BlockID inputHead, const Effects& ofTurns, std::span<const Reference> entering, std::span<const HoistedCounterCheck> askedInFront);
+LoopBoundComparison findLoopBoundComparison(Walker&, BlockID inputHead, const Effects& ofTurns, std::span<const Reference> entering, std::span<const HoistedCounterCheck> askedInFront, bool isVersionedAnyway = false);
 
 } } } // namespace JSC::AOT::Typed
 

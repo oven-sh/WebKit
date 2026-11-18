@@ -130,6 +130,10 @@ void MathBuiltinEmitter::generateCallNumberConstructor(const InlineCall& call)
 
 void MathBuiltinEmitter::generateParseInt(const InlineCall& call)
 {
+    if (typeOf(call.argument(0)).isNumber()) {
+        finish(call, callLeaf<Number>(RuntimeOperation::ParseIntNumber, { numberOperand(call.argument(0)) }));
+        return;
+    }
     std::optional<Word32> radix;
     if (ValueID argument = call.argumentOrNull(1))
         radix = int32Operand(argument);

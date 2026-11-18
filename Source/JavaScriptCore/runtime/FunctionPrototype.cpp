@@ -125,10 +125,10 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncSymbolHasInstance, (JSGlobalObject* gl
     JSValue instance = callFrame->argument(0);
 
     // 2. If constructor has a [[BoundTargetFunction]] internal slot, then
-    if (auto* boundFunction = dynamicDowncast<JSBoundFunction>(thisValue)) {
+    if (auto* function = dynamicDowncast<JSFunction>(thisValue); function && !(function->inlineTypeFlags() & ImplementsDefaultHasInstance)) {
         // 2.a. Let boundConstructor be constructor.[[BoundTargetFunction]].
         // 2.b. Return ? InstanceofOperator(instance, boundConstructor).
-        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(boundFunction->targetFunction()->hasInstance(globalObject, instance))));
+        RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(function->methodTable()->customHasInstance(function, globalObject, instance))));
     }
 
     // 3. If instance is not an Object, return false.

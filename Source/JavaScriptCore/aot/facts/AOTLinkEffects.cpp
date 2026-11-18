@@ -132,6 +132,7 @@ static bool rowLooksIntoAnswerInLinkEffects(BuiltinCallbackResultUse use)
     case BuiltinCallbackResultUse::Stored:
     case BuiltinCallbackResultUse::Flattened:
     case BuiltinCallbackResultUse::AskedWhetherIterable:
+    case BuiltinCallbackResultUse::Converted:
         return true;
     }
     RELEASE_ASSERT_NOT_REACHED();
@@ -155,6 +156,11 @@ static bool isFunctionForLinkEffects(BuiltinKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool isUnderComputedKeyForLinkEffects(const SummaryAccess& access)
+{
+    return !access.key && access.keyNode != noSummaryNode && access.subject != noSummaryNode && access.receiver == noSummaryNode && !access.isToContents();
+}
+
 class CalleeSummarizerForLinkEffects {
     WTF_MAKE_NONCOPYABLE(CalleeSummarizerForLinkEffects);
 public:
@@ -164,6 +170,7 @@ public:
 
 private:
     enum class Answer : uint8_t { NotAsked, No, Yes };
+    enum class Belief : uint8_t { Nothing, WhatDoorsAsk, Everything };
 
     struct CodeFound {
         void add(FunctionID function) { functions.append(function); }
@@ -201,6 +208,11 @@ private:
 
     LinkType typeAt(FunctionID function, uint32_t nodeInSummary) const { return typeAt(function, m_flow.summaries.at(function), nodeInSummary); }
     LinkType typeAt(FunctionID, const ThinSummary&, uint32_t nodeInSummary) const;
+    Belief beliefAt(FunctionID, const ThinSummary&, uint32_t nodeInSummary) const;
+    enum class IndexedKind : uint8_t { Unknown, TypedArray, String };
+    IndexedKind indexedKindAt(FunctionID, const ThinSummary&, uint32_t nodeInSummary) const;
+    static bool containsOnlyPrimitives(const LinkType&, uint16_t primitives);
+    IndexedKind findIndexedAccess(FunctionID, const ThinSummary&, const SummaryAccess&) const;
     bool mayHoldFunction(FlowNodeID field) const;
     bool mayFindFunctionInFieldUnder(const LinkType& subject, PropertyKeyID) const;
     static std::span<const uint32_t> argumentsOf(const ThinSummary& summary, const SummaryCall& call) { return summary.arguments.span().subspan(call.firstArgument, call.numberOfArguments); }
@@ -211,11 +223,23 @@ private:
     const CodeEntered& codeOfAccess(FunctionID function, uint32_t access) const LIFETIME_BOUND { return m_codeOfAccesses[m_firstAccessOfFunction[function.index()] + access]; }
 
     void indexHolders();
-    enum class Belief : uint8_t { Nothing, WhatDoorsAsk, Everything };
     static Belief beliefInKindOfNode(SummaryNode::Kind);
+    void findClassesOfVariables();
+    bool holdsClassOfVariable(FlowNodeID) const;
+    bool isSuperConstructorRead(FunctionID, const ThinSummary&, const SummaryAccess&) const;
+    bool isNewTargetPrototypeRead(FunctionID, const ThinSummary&, const SummaryAccess&) const;
+    bool ownsPrototype(FunctionID) const;
+    bool ownPrototypes(const LinkType&) const;
+    bool closuresAreAsMade(FunctionID) const;
+    bool functionPrototypeNeverAnswers(PropertyKeyID) const;
+    void lookOffFunction(FunctionID, PropertyKeyID, MethodKind wanted, bool callsWhatIsFound, CodeFound&);
+    template<typename Functor> bool forEachFunctionOf(const LinkType&, const Functor&) const;
+    template<typename Functor> void forEachStaticFieldFound(FunctionID, PropertyKeyID, const Functor&) const;
+    void addEffectsOfStaticFields(const LinkType& subject, PropertyKeyID, SummaryAccess::Kind, Effects&) const;
     static LinkType asDoorsAsk(LinkType);
     void findBeliefInNodes();
     void findLayoutsThatMayFindAnything();
+    void findNearestClassesAbove();
     bool mayFindAnything(const LinkType& subject) const;
     bool objectPrototypeNeverAnswers(PropertyKeyID);
     void addFunctionsAt(const LinkType& held, CodeFound&) const;
@@ -320,6 +344,7 @@ private:
     Vector<uint32_t> m_membersInRanks;
 
     bool indexesAreAbsentAboveInstancesOf(BuiltinClassID) const;
+    bool indexesAreAbsentAbovePrototype(BuiltinID) const;
     bool instancesAreAsClassMakesThem(const LinkType& instances, PristineAspectSet) const;
     bool surelyTakes(const BuiltinType& accepted, const LinkType&) const;
     bool rowSurelyTakesCall(const BuiltinOverload&, FunctionID, const ThinSummary&, const SummaryCall&) const;
@@ -335,6 +360,9 @@ private:
     uint32_t m_numberOfFunctions;
 
     BitVector m_isSummarized;
+    bool m_stringsHaveNoOtherIndexes { false };
+    BitVector m_variablesOfClasses;
+    BitVector m_classesOfVariables;
 
     Vector<AccessorUnderKey> m_accessors;
     BitVector m_keysOfAccessorFields;
@@ -342,6 +370,9 @@ private:
     BitVector m_layoutsThatMayFindAnything;
     bool m_lostLayoutsMayFindAnything { false };
     BitVector m_familiesThatMayFindAnything;
+    Vector<LayoutID> m_nearestAboveWithStaticFields;
+    Vector<LayoutID> m_nearestAboveWithNamesOnPrototype;
+    BitVector m_classObjectsAreAsMadeFrom;
     Vector<Answer> m_keysThatObjectPrototypeNeverAnswers;
 
     LargeList<CodeEntered> m_codeOfCalls;
@@ -374,6 +405,7 @@ CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& f
     const Effects* keptEffectsOfAnyCode = effectsOfAnyCode.keep(ofAnyCode.all);
     m_blocksOfDistinctEffects.appendVector(effectsOfAnyCode.takeBlocks());
     m_firstAccessOfFunction.fill(0, m_numberOfFunctions + 1);
+    findClassesOfVariables();
     static_assert(!(indicesInRangeOfLoop % 64));
     forEachRangeOfIndicesInParallel(flow.loops, m_numberOfFunctions, [&](size_t first, size_t end) {
         for (size_t index = first; index < end; ++index) {
@@ -393,9 +425,11 @@ CalleeSummarizerForLinkEffects::CalleeSummarizerForLinkEffects(const LinkFlow& f
         }
     });
 
+    m_stringsHaveNoOtherIndexes = indexesAreAbsentAbovePrototype(m_builtins.canonicalID(Builtins::StringPrototype));
     findBeliefInNodes();
     indexHolders();
     findLayoutsThatMayFindAnything();
+    findNearestClassesAbove();
     findCodeEntered();
 }
 
@@ -414,8 +448,103 @@ bool CalleeSummarizerForLinkEffects::isAnyCodeByItsOwnText(FunctionID id, const 
         if (call.callee != SummaryCall::Callee::Value)
             return false;
         SummaryNode::Kind callee = summary.nodes[call.subject].kind;
-        return callee != SummaryNode::Kind::Closure && callee != SummaryNode::Kind::Parameter && !m_flow.typeAt(m_flow.nodeOf(id, call.subject)).isNever();
+        return callee != SummaryNode::Kind::Closure && callee != SummaryNode::Kind::Parameter && !holdsClassOfVariable(m_flow.nodeOf(id, call.subject)) && !m_flow.typeAt(m_flow.nodeOf(id, call.subject)).isNever();
     });
+}
+
+void CalleeSummarizerForLinkEffects::findClassesOfVariables()
+{
+    m_variablesOfClasses.ensureSize(m_program.variables.size());
+    m_classesOfVariables.ensureSize(m_numberOfFunctions);
+    constexpr uint16_t beforeDeclaration = Primitive::Undefined | Primitive::Absent;
+    for (const Module& module : m_program.modules) {
+        if (!module.body || !m_flow.reached.get(module.body.index()))
+            continue;
+        const ThinSummary& summary = m_flow.summaries.at(module.body);
+        for (const SummaryEdge& edge : summary.edges) {
+            if (summary.nodes[edge.to].kind != SummaryNode::Kind::Variable || summary.nodes[edge.from].kind != SummaryNode::Kind::Closure)
+                continue;
+            VariableID variable(summary.nodes[edge.to].first);
+            FunctionID constructor(summary.nodes[edge.from].first);
+            const LinkedCell& cell = m_tables.variables[variable.index()];
+            if (!m_program.at(variable).flags.contains(VariableFlags::IsImmutable) || !cell.everyWriterIsKnown || cell.isWrittenAfterConstruction || !m_flow.classOfConstructor(constructor))
+                continue;
+            LinkType held = m_flow.typeAt(m_flow.variable(variable));
+            if (held.functions != LinkType::Functions::Closure || held.function != constructor || held.objects != LinkType::Objects::None || mayBeOtherCallableForLinkEffects(held) || held.holdsLostBuiltins || (held.primitives & ~beforeDeclaration))
+                continue;
+            m_variablesOfClasses.quickSet(variable.index());
+            m_classesOfVariables.quickSet(constructor.index());
+        }
+    }
+}
+
+bool CalleeSummarizerForLinkEffects::holdsClassOfVariable(FlowNodeID node) const
+{
+    LinkType held = m_flow.typeAt(node);
+    return held.functions == LinkType::Functions::Closure && m_classesOfVariables.quickGet(held.function.index());
+}
+
+bool CalleeSummarizerForLinkEffects::isSuperConstructorRead(FunctionID id, const ThinSummary& summary, const SummaryAccess& access) const
+{
+    if (access.kind != SummaryAccess::Kind::Read || !access.key || access.subject == noSummaryNode || access.receiver != noSummaryNode || access.isToContents() || m_flow.nameClassOf(access.key) != NameClass::Proto)
+        return false;
+    const SummaryNode& subject = summary.nodes[access.subject];
+    if (subject.kind != SummaryNode::Kind::Parameter || m_program.at(id).entryParameterKind(subject.first) != EntryParameter::Callee)
+        return false;
+    LayoutID layout = m_flow.classOfConstructor(id);
+    LayoutID base = layout ? m_program.at(layout).base : LayoutID();
+    return base && m_program.at(base).constructor && m_flow.classOfConstructor(m_program.at(base).constructor) == base;
+}
+
+bool CalleeSummarizerForLinkEffects::ownsPrototype(FunctionID id) const
+{
+    const Function& function = m_program.at(id);
+    return isClassConstructorOf(function.kind) || (function.kind == FunctionKind::Plain && !function.isCoroutine());
+}
+
+template<typename Functor>
+bool CalleeSummarizerForLinkEffects::forEachFunctionOf(const LinkType& type, const Functor& functor) const
+{
+    switch (type.functions) {
+    case LinkType::Functions::None:
+        return true;
+    case LinkType::Functions::Lost:
+        return false;
+    case LinkType::Functions::Closure:
+        functor(type.function);
+        return true;
+    case LinkType::Functions::Constructors:
+        for (LayoutID member : membersOf(m_program, m_flow.families.layoutsOf(type.constructorsOf))) {
+            if (FunctionID constructor = m_program.at(member).constructor)
+                functor(constructor);
+        }
+        return true;
+    case LinkType::Functions::Set:
+        for (FunctionID member : m_flow.functionsOfSet(type))
+            functor(member);
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool CalleeSummarizerForLinkEffects::ownPrototypes(const LinkType& type) const
+{
+    constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
+    if (mayBeOtherCallableForLinkEffects(type) || type.holdsLostBuiltins || type.objects != LinkType::Objects::None || (type.primitives & ~primitivesWithoutMembers) || type.functions == LinkType::Functions::None)
+        return false;
+    bool ownThem = true;
+    return forEachFunctionOf(type, [&](FunctionID function) {
+        ownThem &= ownsPrototype(function);
+    }) && ownThem;
+}
+
+bool CalleeSummarizerForLinkEffects::isNewTargetPrototypeRead(FunctionID id, const ThinSummary& summary, const SummaryAccess& access) const
+{
+    if (access.kind != SummaryAccess::Kind::Read || access.key != m_program.keyOf(BuiltinNames::prototype) || access.subject == noSummaryNode || access.receiver != noSummaryNode || access.isToContents())
+        return false;
+    const SummaryNode& subject = summary.nodes[access.subject];
+    return subject.kind == SummaryNode::Kind::Parameter && m_program.at(id).entryParameterKind(subject.first) == EntryParameter::NewTarget
+        && m_tables.function(id).everyCallerIsKnown && ownPrototypes(m_flow.typeAt(m_flow.nodeOf(id, access.subject)));
 }
 
 auto CalleeSummarizerForLinkEffects::beliefInKindOfNode(SummaryNode::Kind kind) -> Belief
@@ -428,10 +557,10 @@ auto CalleeSummarizerForLinkEffects::beliefInKindOfNode(SummaryNode::Kind kind) 
     case SummaryNode::Kind::Builtin:
     case SummaryNode::Kind::Join:
     case SummaryNode::Kind::ResultOfAccess:
-        return Belief::Everything;
     case SummaryNode::Kind::Parameter:
-    case SummaryNode::Kind::Capture:
     case SummaryNode::Kind::Variable:
+        return Belief::Everything;
+    case SummaryNode::Kind::Capture:
     case SummaryNode::Kind::Field:
     case SummaryNode::Kind::ResultOfCall:
     case SummaryNode::Kind::ResultOfOperator:
@@ -469,12 +598,14 @@ void CalleeSummarizerForLinkEffects::findBeliefInNodes()
         Vector<uint32_t> endOfNodesLedToBy;
         Vector<uint32_t> nodesLedTo;
         Vector<uint32_t> toVisit;
+        Vector<uint32_t> elementReads;
         for (size_t index = first; index < end; ++index) {
             if (!isSummarized(index))
                 continue;
             FunctionID id(static_cast<uint32_t>(index));
             const ThinSummary& summary = m_flow.summaries.at(id);
             uint32_t numberOfNodes = summary.nodes.size();
+            std::optional<unsigned> calleeParameter = m_program.at(id).calleeParameterIndex();
             auto kindOf = [&](uint32_t node) { return summary.nodes[node].kind; };
             auto forEachLink = [&](const auto& functor) {
                 for (const SummaryEdge& edge : summary.edges) {
@@ -517,23 +648,46 @@ void CalleeSummarizerForLinkEffects::findBeliefInNodes()
                 toVisit.append(node);
             };
             toVisit.shrink(0);
+            elementReads.shrink(0);
             for (uint32_t node = 0; node < numberOfNodes; ++node) {
                 if (kindOf(node) == SummaryNode::Kind::ResultOfAccess) {
                     const SummaryAccess& access = summary.accesses[summary.nodes[node].first];
+                    if (access.kind == SummaryAccess::Kind::Read && isUnderComputedKeyForLinkEffects(access)) {
+                        elementReads.append(node);
+                        continue;
+                    }
+                    if (calleeParameter && isSuperConstructorRead(id, summary, access))
+                        continue;
                     bool isReadByName = access.kind == SummaryAccess::Kind::Read && !access.isToContents() && access.receiver == noSummaryNode && access.subject != noSummaryNode;
                     LinkType subject = isReadByName ? asDoorsAsk(m_flow.typeAt(m_flow.nodeOf(id, access.subject))) : LinkType::anything();
                     lower(node, subject.hasUnknownObjects || subject.functions != LinkType::Functions::None ? Belief::Nothing : Belief::WhatDoorsAsk);
+                } else if (kindOf(node) == SummaryNode::Kind::Parameter || kindOf(node) == SummaryNode::Kind::Variable) {
+                    bool holdsOneClass = kindOf(node) == SummaryNode::Kind::Parameter ? summary.nodes[node].first == calleeParameter : m_variablesOfClasses.quickGet(summary.nodes[node].first);
+                    if (!holdsOneClass)
+                        lower(node, Belief::WhatDoorsAsk);
                 } else if (beliefInKindOfNode(kindOf(node)) != Belief::Everything)
                     toVisit.append(node);
             }
-            while (!toVisit.isEmpty()) {
-                uint32_t node = toVisit.takeLast();
-                Belief belief = beliefIn(node);
-                for (uint32_t place = node ? endOfNodesLedToBy[node - 1] : 0; place < endOfNodesLedToBy[node]; ++place) {
-                    uint32_t ledTo = nodesLedTo[place];
-                    if (kindOf(ledTo) == SummaryNode::Kind::Join || belief == Belief::Nothing)
-                        lower(ledTo, belief);
+            auto visitAll = [&] {
+                while (!toVisit.isEmpty()) {
+                    uint32_t node = toVisit.takeLast();
+                    Belief belief = beliefIn(node);
+                    for (uint32_t place = node ? endOfNodesLedToBy[node - 1] : 0; place < endOfNodesLedToBy[node]; ++place) {
+                        uint32_t ledTo = nodesLedTo[place];
+                        if (kindOf(ledTo) == SummaryNode::Kind::Join || belief == Belief::Nothing)
+                            lower(ledTo, belief);
+                    }
                 }
+            };
+            visitAll();
+            for (bool hasChanged = !elementReads.isEmpty(); hasChanged;) {
+                hasChanged = elementReads.removeAllMatching([&](uint32_t read) {
+                    if (findIndexedAccess(id, summary, summary.accesses[summary.nodes[read].first]) != IndexedKind::Unknown)
+                        return false;
+                    lower(read, Belief::Nothing);
+                    return true;
+                });
+                visitAll();
             }
         }
     });
@@ -570,13 +724,56 @@ bool CalleeSummarizerForLinkEffects::mayFindFunctionInFieldUnder(const LinkType&
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-LinkType CalleeSummarizerForLinkEffects::typeAt(FunctionID function, const ThinSummary& summary, uint32_t nodeInSummary) const
+auto CalleeSummarizerForLinkEffects::beliefAt(FunctionID function, const ThinSummary& summary, uint32_t nodeInSummary) const -> Belief
 {
     ASSERT(isSummarized(function.index()));
+    if (m_nodesBelievedForLessThanEverything[function.index()].get(nodeInSummary))
+        return m_nodesBelievedForNothing[function.index()].get(nodeInSummary) ? Belief::Nothing : Belief::WhatDoorsAsk;
+    return beliefInKindOfNode(summary.nodes[nodeInSummary].kind);
+}
+
+bool CalleeSummarizerForLinkEffects::containsOnlyPrimitives(const LinkType& type, uint16_t primitives)
+{
+    return !type.isNever() && !mayBeObjectForLinkEffects(type) && !type.holdsLostBuiltins && !(type.primitives & ~LinkType::closed(primitives));
+}
+
+auto CalleeSummarizerForLinkEffects::indexedKindAt(FunctionID id, const ThinSummary& summary, uint32_t nodeInSummary) const -> IndexedKind
+{
+    if (beliefAt(id, summary, nodeInSummary) == Belief::Nothing)
+        return IndexedKind::Unknown;
+    constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
+    const LinkType& held = m_flow.typeAt(m_flow.nodeOf(id, nodeInSummary));
+    if (containsOnlyPrimitives(held, Primitive::AnyString | primitivesWithoutMembers))
+        return m_stringsHaveNoOtherIndexes && (held.primitives & LinkType::closed(Primitive::AnyString)) ? IndexedKind::String : IndexedKind::Unknown;
+    if ((held.primitives & ~primitivesWithoutMembers) || held.objects != LinkType::Objects::None || held.functions != LinkType::Functions::None || held.hasUnknownObjects || held.holdsLostBuiltins || held.builtin || !m_flow.namesClassesOf(held))
+        return IndexedKind::Unknown;
+    uint32_t numberOfClasses = 0;
+    bool areTypedArrays = true;
+    m_flow.forEachClassOf(held, [&](const LinkType& instances) {
+        TypedArrayType typedArray = m_builtins.typedArrayTypeOf(instances.builtinClass);
+        areTypedArrays &= isTypedView(typedArray) && !isBigInt(typedArray);
+        ++numberOfClasses;
+    });
+    return areTypedArrays && numberOfClasses == 1 ? IndexedKind::TypedArray : IndexedKind::Unknown;
+}
+
+auto CalleeSummarizerForLinkEffects::findIndexedAccess(FunctionID id, const ThinSummary& summary, const SummaryAccess& access) const -> IndexedKind
+{
+    if ((access.kind != SummaryAccess::Kind::Read && access.kind != SummaryAccess::Kind::Store) || !isUnderComputedKeyForLinkEffects(access))
+        return IndexedKind::Unknown;
+    IndexedKind kind = indexedKindAt(id, summary, access.subject);
+    if (kind == IndexedKind::Unknown || !containsOnlyPrimitives(typeAt(id, summary, access.keyNode), Primitive::Number))
+        return IndexedKind::Unknown;
+    if (access.kind == SummaryAccess::Kind::Read)
+        return kind;
+    bool storesNumber = kind == IndexedKind::TypedArray && access.value && access.value != noSummaryNode && containsOnlyPrimitives(typeAt(id, summary, access.value), Primitive::NumberLike);
+    return storesNumber ? kind : IndexedKind::Unknown;
+}
+
+LinkType CalleeSummarizerForLinkEffects::typeAt(FunctionID function, const ThinSummary& summary, uint32_t nodeInSummary) const
+{
     if (nodeInSummary != noSummaryNode) {
-        Belief belief = beliefInKindOfNode(summary.nodes[nodeInSummary].kind);
-        if (m_nodesBelievedForLessThanEverything[function.index()].get(nodeInSummary))
-            belief = m_nodesBelievedForNothing[function.index()].get(nodeInSummary) ? Belief::Nothing : Belief::WhatDoorsAsk;
+        Belief belief = beliefAt(function, summary, nodeInSummary);
         if (belief == Belief::Nothing)
             return LinkType::anything();
         LinkType linked = m_flow.typeAt(m_flow.nodeOf(function, nodeInSummary));
@@ -705,6 +902,28 @@ void CalleeSummarizerForLinkEffects::findLayoutsThatMayFindAnything()
     });
 }
 
+void CalleeSummarizerForLinkEffects::findNearestClassesAbove()
+{
+    uint32_t numberOfLayouts = m_program.layouts.size();
+    auto baseOf = [&](LayoutID id) { return m_program.at(id).base; };
+    m_nearestAboveWithStaticFields = findNearestWantedAbove(numberOfLayouts, baseOf, [&](LayoutID id) { return !m_program.at(id).staticFields.isEmpty(); });
+    m_nearestAboveWithNamesOnPrototype = findNearestWantedAbove(numberOfLayouts, baseOf, [&](LayoutID id) { return m_flow.hasNameOnPrototypeOf(id); });
+    m_classObjectsAreAsMadeFrom = answerAlongRows(numberOfLayouts, true, [&](LayoutID id) -> StepAlongRow {
+        const Layout& layout = m_program.at(id);
+        FunctionID constructor = layout.constructor;
+        if (!constructor || m_flow.classOfConstructor(constructor) != id || !closuresAreAsMade(constructor) || m_tables.layouts[id.index()].possibleChanges.contains(LayoutChange::ChangesPrototype))
+            return { false, { } };
+        if (!layout.base)
+            return { true, { } };
+        return { std::nullopt, layout.base };
+    });
+}
+
+bool CalleeSummarizerForLinkEffects::closuresAreAsMade(FunctionID holder) const
+{
+    return !m_flow.escapedFunctions.get(holder.index()) && m_flow.closuresInheritFunctionPrototype(holder);
+}
+
 bool CalleeSummarizerForLinkEffects::mayFindAnything(const LinkType& subject) const
 {
     switch (subject.objects) {
@@ -735,6 +954,12 @@ bool CalleeSummarizerForLinkEffects::objectPrototypeNeverAnswers(PropertyKeyID k
         answer = neverAnswers ? Answer::Yes : Answer::No;
     }
     return answer == Answer::Yes;
+}
+
+bool CalleeSummarizerForLinkEffects::functionPrototypeNeverAnswers(PropertyKeyID key) const
+{
+    BuiltinID holder = m_builtins.canonicalID(Builtins::FunctionPrototype);
+    return !findOwnMember(m_program, holder, key) && listsEveryMemberUnder(m_program, holder, key) && isClosedKey(m_program, holder, key);
 }
 
 void CalleeSummarizerForLinkEffects::addFunctionsAt(const LinkType& held, CodeFound& found) const
@@ -784,7 +1009,7 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
     for (const LinkFlow::FoundMember& member : m_flow.findMembers(layout, ClassSide::Prototype, key))
         lookAt(m_flow.typeAt(m_flow.member(member.classLayout, ClassSide::Prototype, member.index)), member.kind == wanted);
     uint32_t stepsLeft = m_program.layouts.size();
-    for (LayoutID current = layout; current && stepsLeft; current = m_program.at(current).base, --stepsLeft) {
+    for (LayoutID current = layout; current && stepsLeft; current = m_nearestAboveWithNamesOnPrototype[current.index()], --stepsLeft) {
         const LinkFlow::NameOnPrototype* name = m_flow.findNameOnPrototype(current, key);
         if (!name)
             continue;
@@ -794,11 +1019,71 @@ void CalleeSummarizerForLinkEffects::lookInLayout(LayoutID layout, bool hasOwnFi
     }
 }
 
+template<typename Functor>
+void CalleeSummarizerForLinkEffects::forEachStaticFieldFound(FunctionID function, PropertyKeyID key, const Functor& functor) const
+{
+    uint32_t stepsLeft = m_program.layouts.size();
+    for (LayoutID current = m_flow.classOfConstructor(function); current && stepsLeft; current = m_nearestAboveWithStaticFields[current.index()], --stepsLeft) {
+        m_program.at(current).forEachStaticFieldThatMayMatch(key, [&](const StaticField& field) {
+            functor(field.variable);
+        });
+    }
+}
+
+void CalleeSummarizerForLinkEffects::lookOffFunction(FunctionID function, PropertyKeyID key, MethodKind wanted, bool callsWhatIsFound, CodeFound& found)
+{
+    if (wanted == MethodKind::Getter && !callsWhatIsFound && key == m_program.keyOf(BuiltinNames::prototype) && ownsPrototype(function))
+        return;
+    LayoutID classLayout = m_flow.classOfConstructor(function);
+    bool isOther = !classLayout && (isClassConstructorOf(m_program.at(function).kind) || callsWhatIsFound);
+    if (isOther || m_flow.isDefinedByDescriptorSomewhere(key) || (classLayout && m_flow.namesMayBeIncomplete(classLayout, ClassSide::Static))) {
+        found.mayBeUnseen = true;
+        return;
+    }
+    if (!closuresAreAsMade(function) || (classLayout && !m_classObjectsAreAsMadeFrom.quickGet(classLayout.index()))) {
+        found.mayBeUnseen = true;
+        return;
+    }
+
+    bool findsField = false;
+    forEachStaticFieldFound(function, key, [&](VariableID) {
+        findsField = true;
+    });
+    bool findsMember = false;
+    bool lookupGoesOn = true;
+    if (classLayout) {
+        LinkFlow::FoundMembers members = m_flow.findMembers(classLayout, ClassSide::Static, key);
+        lookupGoesOn = members.lookupGoesOnAboveClasses();
+        for (const LinkFlow::FoundMember& member : members) {
+            findsMember = true;
+            const LinkType& held = m_flow.typeAt(m_flow.member(member.classLayout, ClassSide::Static, member.index));
+            if (member.kind == wanted) {
+                addFunctionsAt(held, found);
+                found.mayBeUnseen |= callsWhatIsFound;
+            } else if (callsWhatIsFound && (member.kind != MethodKind::Method || held.functions != LinkType::Functions::Closure || held.objects != LinkType::Objects::None || mayBeOtherCallableForLinkEffects(held)))
+                found.mayBeUnseen = true;
+        }
+    }
+    if (callsWhatIsFound && (findsField || !findsMember || lookupGoesOn))
+        found.mayBeUnseen = true;
+    if (lookupGoesOn && (!functionPrototypeNeverAnswers(key) || !objectPrototypeNeverAnswers(key)))
+        found.mayBeUnseen = true;
+}
+
 void CalleeSummarizerForLinkEffects::findCodeBehindLookup(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, bool callsWhatIsFound, CodeFound& found)
 {
     if (subject.isNever())
         return;
     constexpr uint16_t primitivesWithoutMembers = Primitive::UndefinedOrNull | Primitive::Absent;
+    if (subject.functions != LinkType::Functions::None) {
+        bool isFunction = subject.objects == LinkType::Objects::None && !mayBeOtherCallableForLinkEffects(subject) && !subject.holdsLostBuiltins && !(subject.primitives & ~primitivesWithoutMembers);
+        MethodKind wanted = kind == SummaryAccess::Kind::Store ? MethodKind::Setter : MethodKind::Getter;
+        bool isLookedUp = isFunction && key && !m_program.isIndexLike(key) && kind != SummaryAccess::Kind::Define && kind != SummaryAccess::Kind::Has && forEachFunctionOf(subject, [&](FunctionID function) {
+            lookOffFunction(function, key, wanted, callsWhatIsFound, found);
+        });
+        found.mayBeUnseen |= !isLookedUp;
+        return;
+    }
     bool isOfProgram = !mayBeOtherCallableForLinkEffects(subject) && subject.functions == LinkType::Functions::None && !(subject.primitives & ~primitivesWithoutMembers);
     bool isFoundByCall = callsWhatIsFound && key && findOwnMember(m_program, m_builtins.canonicalID(Builtins::ObjectPrototype), key);
     if (!isOfProgram || !key || m_program.isIndexLike(key) || mayFindAnything(subject) || (!isFoundByCall && !objectPrototypeNeverAnswers(key))) {
@@ -883,6 +1168,7 @@ Effects CalleeSummarizerForLinkEffects::effectsOfLookupItself(SummaryAccess::Kin
     case SummaryAccess::Kind::Define:
         break;
     }
+    effects.writes.add(AbstractHeap::WrittenTypes);
     if (!key) {
         effects.writes.merge(ofDefinition.writes);
         return effects;
@@ -964,7 +1250,7 @@ bool CalleeSummarizerForLinkEffects::addEffectsOnOperand(const BuiltinOverload& 
     if (parameter->uses.containsAny(usesThatChangeShape))
         effects.writes.add(AbstractHeapSet { AbstractHeap::PrototypeLinks, AbstractHeap::MemberGuards, AbstractHeap::ShapeWords, AbstractHeap::OrderWords });
     if (parameter->uses.contains(OperandUse::DefinesName))
-        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties });
+        effects.writes.add(AbstractHeapSet { AbstractHeap::NamedProperties, AbstractHeap::WrittenTypes });
     return true;
 }
 
@@ -1094,7 +1380,7 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
         break;
     }
     case SummaryCall::Callee::Value: {
-        if (summary.nodes[call.subject].kind != SummaryNode::Kind::Closure) {
+        if (beliefAt(id, summary, call.subject) != Belief::Everything) {
             found.mayBeUnseen = true;
             break;
         }
@@ -1136,9 +1422,12 @@ void CalleeSummarizerForLinkEffects::findCodeEntered()
                 findCodeEnteredByCall(id, summary, call, found);
                 m_codeOfCalls[m_flow.firstCallOfFunction[index] + call] = keep(found, functionsEntered);
             }
+            bool isConstructor = isClassConstructorOf(m_program.at(id).kind);
             for (uint32_t access = 0; access < summary.accesses.size(); ++access) {
                 CodeFound found;
-                if (!summary.accesses[access].isToContents())
+                const SummaryAccess& looked = summary.accesses[access];
+                bool isOfConstruction = isConstructor && (isSuperConstructorRead(id, summary, looked) || isNewTargetPrototypeRead(id, summary, looked));
+                if (!looked.isToContents() && !isOfConstruction && findIndexedAccess(id, summary, looked) == IndexedKind::Unknown)
                     findCodeBehindLookup(typeAt(id, summary, summary.accesses[access].subject), m_flow.keyOf(id, summary.accesses[access]), summary.accesses[access].kind, false, found);
                 m_codeOfAccesses[m_firstAccessOfFunction[index] + access] = keep(found, functionsEntered);
             }
@@ -1462,6 +1751,14 @@ void writePrototypeObjectsThatAreSettled(const LinkFlow& flow, LinkTables& table
             continue;
         const LinkedFunction& function = tables.functions[record.constructor.index()];
         layout.prototypeObjectIsSettledAheadOfEveryObject = function.prototypePropertyStaysAsMade;
+        if (!flow.findsPlainProperties(record.constructor))
+            continue;
+        for (const SummaryStoreOnPrototype& laid : std::ranges::equal_range(flow.storesBeforeInstances, record.constructor, { }, &SummaryStoreOnPrototype::function)) {
+            if (laid.kind == SummaryStoreOnPrototype::Kind::LiteralBeforeInstances)
+                layout.prototypeLiteralIsSettled = function.prototypePropertyStaysAsLiteral;
+            else if (laid.kind == SummaryStoreOnPrototype::Kind::ParentBeforeInstances)
+                layout.parentIsSettled |= record.base && flow.layoutOfConstructorFunction(laid.method) == record.base;
+        }
     }
 }
 

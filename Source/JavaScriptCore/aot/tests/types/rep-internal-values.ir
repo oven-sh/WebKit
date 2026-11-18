@@ -26,6 +26,7 @@
 # CHECK-NEXT: opaque(Reciprocal): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(MatchRecord): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(ElementWord): RawWord legal [RawWord]
+# CHECK-NEXT: opaque(TextWord): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(BuilderCursor): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(ViewVector): RawWord legal [RawWord]
 # CHECK-NEXT: opaque(ArrayStoragePointer): RawWord legal [RawWord]

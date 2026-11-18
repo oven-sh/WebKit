@@ -211,6 +211,13 @@ ALWAYS_INLINE_INTO_OTHER_FILES TypeID Arrivals::askedByDoorsOfCapture(TypeArena&
     return types.unionOf(types.withoutObjects(asked), types.at(asked).hasOnlyClosures() ? TypeTable::function : TypeTable::object);
 }
 
+static std::optional<int32_t> singleInt32Of(const Type& type)
+{
+    if (!type.isInteger() || type.integers.minimum != type.integers.maximum || type.integers.minimum != static_cast<int32_t>(type.integers.minimum))
+        return std::nullopt;
+    return static_cast<int32_t>(type.integers.minimum);
+}
+
 void takeArrivals(Walker& walker)
 {
     FunctionID function = walker.unit().function;
@@ -237,6 +244,13 @@ void takeArrivals(Walker& walker)
             .index = entryParameter,
             .type = given,
         });
+        bool isOwnParameter = walker.unit().role == CodeRole::Body && walker.program().at(function).entryParameterKind(entryParameter) == EntryParameter::Parameter;
+        if (std::optional<int32_t> number = isOwnParameter && walker.has(Mechanism::Folding) ? singleInt32Of(types.at(given)) : std::nullopt) {
+            Draft passed(Opcode::Integer);
+            passed.setInteger(*number);
+            walker.bind(entry.parameter(entryParameter), walker.constant(WTF::move(passed)));
+            walker.count(StatisticID::ParametersReplacedByConstants);
+        }
     }
 }
 

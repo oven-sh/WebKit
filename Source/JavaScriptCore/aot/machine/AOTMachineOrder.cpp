@@ -164,31 +164,105 @@ void Order::makePhiOfTruncationBehindJoin(Block* join, Operation* truncation)
     join->m_upsilons.append(arena, upsilon);
 }
 
+Operation* Order::appendTo(Block* block, ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin)
+{
+    Procedure& procedure = block->procedure();
+    Operation* made = procedure.arena().create<Operation>(opcode, type, origin);
+    made->m_owner = block;
+    made->m_indexInBlock = list.size();
+    procedure.didCreate(made);
+    list.append(procedure.arena(), made);
+    return made;
+}
+
 void Order::passTestToJoin(Block* from, Block* join, const Operation* phi, bool isInverted)
 {
+    RELEASE_ASSERT(phi->type() == Int32);
+    passNumberToJoin(from, join, phi, scopedLambda<Operation*(Operation*)>([&](Operation* test) {
+        if (!isInverted)
+            return test;
+        Operation* number = appendTo(from, from->m_operations, invertedComparison(test->opcode()), Int32, test->origin());
+        number->m_auxiliary = 2;
+        number->m_children[0] = test->m_children[0];
+        number->m_children[1] = test->m_children[1];
+        return number;
+    }));
+}
+
+void Order::passChosenNumberToJoin(Block* from, Block* join, const Operation* phi, Opcode relation, Operation* whenTrue, Operation* whenFalse)
+{
+    RELEASE_ASSERT(phi->type() == Double);
+    ++from->procedure().m_numberOfNumbersChosen;
+    auto isOfWay = [&](const Operation* number) {
+        return number->owner() != from && number->owner() != join && (number->owner() == from->successor(0).block() || number->owner() == from->successor(1).block());
+    };
+    bool negatesWhenTrue = isOfWay(whenTrue);
+    bool negatesWhenFalse = isOfWay(whenFalse);
+    passNumberToJoin(from, join, phi, scopedLambda<Operation*(Operation*)>([&](Operation* test) {
+        auto numberIn = [&](Operation* number, bool isNegated) {
+            if (!isNegated)
+                return number;
+            RELEASE_ASSERT(number->opcode() == Neg);
+            Operation* opposite = appendTo(from, from->m_operations, Neg, Double, number->origin());
+            opposite->m_auxiliary = 1;
+            opposite->m_children[0] = number->m_children[0];
+            return opposite;
+        };
+        std::array<Operation*, 2> numbers { numberIn(whenTrue, negatesWhenTrue), numberIn(whenFalse, negatesWhenFalse) };
+        Operation* comparison = appendTo(from, from->m_operations, relation, Int32, test->origin());
+        comparison->m_auxiliary = 2;
+        comparison->m_flags |= static_cast<uint16_t>(OperationFlag::HasOpaqueReader);
+        Operation* chosen = appendTo(from, from->m_operations, Select, Double, test->origin());
+        chosen->m_auxiliary = 3;
+        chosen->m_children[0] = comparison;
+        for (unsigned index : { 0, 1 }) {
+            comparison->m_children[index] = numbers[index];
+            chosen->m_children[index + 1] = numbers[index];
+        }
+        return chosen;
+    }));
+}
+
+void Order::passDifferenceToJoin(Block* from, Block* join, const Operation* phi, const Operation* difference, Operation* zero, bool isZeroWhenTrue)
+{
+    RELEASE_ASSERT(phi->type() == Int32 && zero->isInt32(0));
+    ++from->procedure().m_numberOfNumbersChosen;
+    passNumberToJoin(from, join, phi, scopedLambda<Operation*(Operation*)>([&](Operation* test) {
+        auto copyWith = [&](const Operation* original, Operation* left) {
+            Operation* copy = appendTo(from, from->m_operations, original->opcode(), Int32, original->origin());
+            copy->m_auxiliary = 2;
+            copy->m_children[0] = left;
+            copy->m_children[1] = original->m_children[1];
+            return copy;
+        };
+        const Operation* subtraction = difference->opcode() == BitAnd ? difference->m_children[0] : difference;
+        RELEASE_ASSERT(subtraction->opcode() == Sub && subtraction->type() == Int32);
+        Operation* copied = copyWith(subtraction, subtraction->m_children[0]);
+        if (difference != subtraction)
+            copied = copyWith(difference, copied);
+        Operation* chosen = appendTo(from, from->m_operations, Select, Int32, test->origin());
+        chosen->m_auxiliary = 3;
+        chosen->m_children[0] = test;
+        chosen->m_children[isZeroWhenTrue ? 1 : 2] = zero;
+        chosen->m_children[isZeroWhenTrue ? 2 : 1] = copied;
+        test->m_flags |= static_cast<uint16_t>(OperationFlag::HasOpaqueReader);
+        return chosen;
+    }));
+}
+
+void Order::passNumberToJoin(Block* from, Block* join, const Operation* phi, NOESCAPE const ScopedLambda<Operation*(Operation* test)>& makeNumber)
+{
     Procedure& procedure = from->procedure();
-    Arena& arena = procedure.arena();
     std::array<Block*, 2> ways { from->successor(0).block(), from->successor(1).block() };
-    RELEASE_ASSERT(from->last()->opcode() == Branch && from->numSuccessors() == 2 && phi->owner() == join && phi->type() == Int32);
+    RELEASE_ASSERT(from->last()->opcode() == Branch && from->numSuccessors() == 2 && phi->owner() == join);
 
     const Block* way = ways[0] == join ? ways[1] : ways[0];
     Operation* branch = from->m_operations.takeLast();
     Operation* test = branch->m_children[0];
     auto append = [&](ArenaVector<Operation*>& list, Opcode opcode, Type type, Origin origin) {
-        Operation* made = arena.create<Operation>(opcode, type, origin);
-        made->m_owner = from;
-        made->m_indexInBlock = list.size();
-        procedure.didCreate(made);
-        list.append(arena, made);
-        return made;
+        return appendTo(from, list, opcode, type, origin);
     };
-    Operation* number = test;
-    if (isInverted) {
-        number = append(from->m_operations, invertedComparison(test->opcode()), Int32, test->origin());
-        number->m_auxiliary = 2;
-        number->m_children[0] = test->m_children[0];
-        number->m_children[1] = test->m_children[1];
-    }
+    Operation* number = makeNumber(test);
     append(from->m_operations, Jump, Void, branch->origin());
 
     Vector<std::pair<Operation*, Operation*>, 4> passed;

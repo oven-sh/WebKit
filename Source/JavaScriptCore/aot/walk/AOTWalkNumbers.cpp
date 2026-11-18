@@ -30,6 +30,8 @@ Representation representationOfNumber(const Walker& walker, TypeID type)
     return numberRepresentations.contains(natural) ? natural : Representation::JSValue;
 }
 
+Reference boxNumber(Walker&, Reference, Origin);
+
 Reference boxNumberIfNeeded(Walker& walker, Reference number, Origin origin)
 {
     if (!number.isValue())
@@ -38,8 +40,12 @@ Reference boxNumberIfNeeded(Walker& walker, Reference number, Origin origin)
     TypeID type = walker.typeOf(number);
     if (!numberRepresentations.contains(held) || representationOfNumber(walker, type) != Representation::JSValue)
         return number;
+    return boxNumber(walker, number, origin);
+}
 
-    std::optional<ConversionPath> path = findConversion(walker.types(), type, held, Representation::JSValue);
+Reference boxNumber(Walker& walker, Reference number, Origin origin)
+{
+    std::optional<ConversionPath> path = number.isValue() ? findConversion(walker.types(), walker.typeOf(number), walker.representationOf(number), Representation::JSValue) : std::nullopt;
     if (!path)
         return number;
     for (ConversionStep step : *path) {
@@ -71,12 +77,22 @@ static Reference convertedForFormNumbers(Walker& walker, Reference operand, Orig
     return walker.build(WTF::move(conversion));
 }
 
+bool takesBitsOfBoxedPrimitive(Walker& walker, Opcode opcode, Reference operand)
+{
+    if (!allBitwiseOperators.contains(opcode) || opcode == Opcode::BitNot || !operand.isValue() || walker.representationOf(operand) != Representation::JSValue || walker.isInvariantInInnermostLoop(operand))
+        return false;
+    const Type& type = walker.types().at(walker.typeOf(operand));
+    return (type.primitives & Primitive::Integer) && (type.primitives & Primitive::Boolean) && type.hasOnlyPrimitives(Primitive::NumberLike);
+}
+
 void prepareOperandsForFormNumbers(Walker& walker, Draft& draft)
 {
     Origin origin = draft.origin();
     for (uint32_t operandIndex = 0; operandIndex < draft.numberOfOperands(); ++operandIndex) {
         Reference operand = draft.operand(operandIndex);
         const Type& type = walker.types().at(walker.typeOf(operand));
+        if (takesBitsOfBoxedPrimitive(walker, draft.opcode, operand))
+            continue;
         bool isConvertedBeforeLoop = (type.primitives & Primitive::Number) && !type.isNumber() && operand.isValue() && walker.has(Mechanism::LoopInvariants) && walker.isInvariantInInnermostLoop(operand);
         if (isConvertedBeforeLoop || !isTakenAsItIsByFormNumbers(type))
             draft.setOperand(operandIndex, convertedForFormNumbers(walker, operand, origin));
@@ -351,6 +367,24 @@ static bool stepsLoopCounter(Walker& walker, const BodyValue& step, Reference re
     return type.isInteger() && type.integers.isSubsetOf(Range::exact());
 }
 
+static bool isExactNumber(Walker& walker, Reference result)
+{
+    if (!result.isValue() || walker.representationOf(result) != Representation::Double)
+        return false;
+    const Type& type = walker.types().at(walker.typeOf(result));
+    return type.isInteger() && type.integers.isSubsetOf(Range::exact());
+}
+
+static bool stepsExactInteger(Walker& walker, const BodyValue& step, const Draft& draft)
+{
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement };
+    Reference stepped = steps.contains(step.opcode()) ? draft.operand(0) : Reference();
+    if (!stepped || !stepped.isValue() || walker.code().isConstant(stepped.id()) || walker.representationOf(stepped) != Representation::Int64)
+        return false;
+    const Type& type = walker.types().at(walker.typeOf(stepped));
+    return type.isInteger() && type.integers.isSubsetOf(Range::exact());
+}
+
 static Reference integerOfSteppedCounter(Walker& walker, Reference stepped, Origin origin)
 {
     origin.isTailCall = false;
@@ -358,6 +392,59 @@ static Reference integerOfSteppedCounter(Walker& walker, Reference stepped, Orig
     conversion.setOperand(0, stepped);
     conversion.representation = Representation::Int64;
     return walker.build(WTF::move(conversion));
+}
+
+static bool guardStepOfCarriedField(Walker& walker, Draft& draft)
+{
+    static constexpr OpcodeSet steps { Opcode::Increment, Opcode::Decrement };
+    static constexpr OpcodeSet sums { Opcode::Add, Opcode::Sub };
+    if (walker.isUnreachable() || walker.hasFailed() || !(steps.contains(draft.opcode) || sums.contains(draft.opcode)))
+        return false;
+    Range step = Range::one(1);
+    if (sums.contains(draft.opcode)) {
+        Reference term = draft.operand(1);
+        TypeID type = term && term.isValue() ? walker.typeOf(term) : TypeID();
+        if (!type || !walker.types().at(type).isInteger() || !walker.types().at(type).integers.isSubsetOf(Walker::shortSteps))
+            return false;
+        step = walker.types().at(type).integers;
+    }
+    if (draft.opcode == Opcode::Decrement || draft.opcode == Opcode::Sub)
+        step = { -step.maximum, -step.minimum };
+    Reference stepped = draft.operand(0);
+    if (!stepped || !walker.isCarriedField(stepped) || walker.representationOf(stepped) != Representation::Int32 || !walker.canBuildIterationGuardAfterStores())
+        return false;
+    if (!walker.canBuildIterationGuard() && walker.isCarriedFieldOfDoubles(stepped))
+        return false;
+    TypeArena& types = walker.types();
+    Origin origin = draft.origin();
+    Draft test(Opcode::TypeTest, origin);
+    walker.chooseConservativeFields(test);
+    test.setValueOperand(stepped);
+    test.setTestedType(types.integer(Range { std::numeric_limits<int32_t>::min() - std::min<int64_t>(step.minimum, 0), std::numeric_limits<int32_t>::max() - std::max<int64_t>(step.maximum, 0) }));
+    Reference isFar = walker.build(WTF::move(test));
+    if (!isFar || !isFar.isValue() || walker.isUnreachable())
+        return false;
+    BlockID passed = walker.addBlock();
+    BlockID failed = walker.addBlock(BlockFrequency::Rare);
+    walker.branch(isFar, passed, failed);
+    walker.continueIn(failed);
+    if (!walker.isUnreachable())
+        walker.restartIteration();
+    walker.continueIn(passed);
+    if (walker.isUnreachable() || walker.hasFailed())
+        return true;
+    walker.recordSpeculation();
+    Draft narrowed(Opcode::Narrowed, origin);
+    narrowed.setValueOperand(stepped);
+    narrowed.setTestOperand(isFar);
+    narrowed.setOperandIndex(OperandIndex::TypeTest::value);
+    narrowed.setIsOnTakenEdge(true);
+    Reference proven = walker.build(WTF::move(narrowed));
+    if (!proven)
+        return false;
+    draft.setOperand(0, proven);
+    walker.count(StatisticID::CarriedFieldStepsGuarded);
+    return true;
 }
 
 bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const InputsOfTypedOperation& inputs)
@@ -377,6 +464,10 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
         prepareOperandsForFormNumbers(walker, draft);
         form = operatorFormFor(walker, draft);
     }
+    if ((form == OperatorForm::Integers || form == OperatorForm::CheckedIntegers) && guardStepOfCarriedField(walker, draft))
+        form = operatorFormFor(walker, draft);
+    if (walker.hasFailed() || walker.isUnreachable())
+        return true;
     if (form == OperatorForm::CheckedIntegers)
         form = operatorFormFor(walker, draft);
     if (form == OperatorForm::CheckedIntegers) {
@@ -388,19 +479,37 @@ bool buildOperatorOnNumbers(Walker& walker, const BodyValue& value, const Inputs
             return true;
         }
     }
+    if (form == OperatorForm::StringAndPrimitive && walker.isInLoop()) {
+        for (uint32_t operandIndex : { 0u, 1u }) {
+            Reference operand = draft.operand(operandIndex);
+            if (!operand || walker.types().at(walker.typeOf(operand)).isAnyString())
+                continue;
+            Reference text = walker.hoistTextOfNumber(operand, draft.origin());
+            if (!text)
+                continue;
+            draft.setOperand(operandIndex, text);
+            walker.count(StatisticID::NumberTextsHoisted);
+        }
+        if (walker.hasFailed() || walker.isUnreachable())
+            return true;
+        form = operatorFormFor(walker, draft);
+    }
     walker.chooseConservativeFields(draft);
     draft.setForm(form);
     if (sumStaysBoxed(walker, value, draft))
         draft.representation = Representation::JSValue;
     Origin origin = draft.origin();
+    const bool keepsInteger = form == OperatorForm::CheckedIntegers && stepsExactInteger(walker, value, draft);
     Reference remainder;
     if (value.opcode() == Opcode::Mod && form == OperatorForm::Integers)
         remainder = buildRemainderByReciprocalMadeInFrontOfLoop(walker, draft);
     else if (value.opcode() == Opcode::Mod && form == OperatorForm::Numbers)
         remainder = buildRemainderByWholeDivisor(walker, draft);
     Reference result = remainder ? remainder : walker.build(WTF::move(draft));
-    if (result && form == OperatorForm::CheckedIntegers && stepsLoopCounter(walker, value, result))
+    if (result && form == OperatorForm::CheckedIntegers && (stepsLoopCounter(walker, value, result) || (keepsInteger && isExactNumber(walker, result)))) {
         result = integerOfSteppedCounter(walker, result, origin);
+        walker.count(StatisticID::StepsKeptAsIntegers);
+    }
     walker.bind(value.id(), boxNumberIfNeeded(walker, result, origin));
     return true;
 }

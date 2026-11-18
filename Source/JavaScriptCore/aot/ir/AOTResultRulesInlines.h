@@ -668,7 +668,8 @@ TypeID ResultRules::declaredContents(const Operation& operation, uint32_t operan
         contents = context.types.withPrimitives(contents, Primitive::Undefined);
     if (!contents)
         contents = context.positions.contentsBeingTyped(context.level);
-    if (contents && opcode == Opcode::GetValueAtPlaceInMap)
+    static constexpr OpcodeSet readsOfMaps { Opcode::GetValueAtPlaceInMap, Opcode::GetMapValueByTag, Opcode::GetMapValueByStringTag };
+    if (contents && readsOfMaps.contains(opcode))
         contents = context.types.withPrimitives(contents, Primitive::Undefined);
     return provenOrUnknown(contents, seed);
 }
@@ -735,9 +736,11 @@ TypeID ResultRules::unknown(const Operation& operation)
     }
     if (constructionsByValue.contains(opcode)) {
         static_assert(OperandIndex::Construct::callee == OperandIndex::Call::callee && OperandIndex::ConstructList::callee == OperandIndex::Call::callee);
-        if (TypeID constructed = tryTypeConstructedByClassInResultRules(context, operands[OperandIndex::Call::callee]))
+        TypeID constructor = operands[OperandIndex::Call::callee];
+        if (TypeID constructed = tryTypeConstructedByClassInResultRules(context, constructor))
             return constructed;
-        return context.level == TypeLevel::Expected ? context.types.object(seed) : context.types.anything(seed);
+        bool constructsObject = context.level == TypeLevel::Expected || onlyCalleeOf(context, constructor);
+        return constructsObject ? context.types.object(seed) : context.types.anything(seed);
     }
     if (!callsByValueInResultRules.contains(opcode))
         return context.types.anything(seed);

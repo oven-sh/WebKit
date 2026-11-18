@@ -205,6 +205,12 @@ void StructureRareData::cacheSpecialPropertySlow(JSGlobalObject* globalObject, V
 
         auto cacheStatus = prepareChainForCaching(globalObject, ownStructure, uid, nullptr);
         if (!cacheStatus) {
+#if ENABLE(AOT)
+            if (vm.hasCompiledCode() && (key == CachedSpecialPropertyKey::ToPrimitive || key == CachedSpecialPropertyKey::ValueOf || key == CachedSpecialPropertyKey::ToString) && ownStructure->isDictionary() && !ownStructure->hasBeenFlattenedBefore() && slot.thisValue().isObject() && asObject(slot.thisValue())->structure() == ownStructure) {
+                ownStructure->flattenDictionaryStructure(vm, asObject(slot.thisValue()));
+                return;
+            }
+#endif
             giveUpOnSpecialPropertyCache(key);
             return;
         }

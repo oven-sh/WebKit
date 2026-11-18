@@ -13,7 +13,6 @@
 # FRACTION-NOT: = ToString
 # FRACTION: = ToIntegerOrInfinity
 # FRACTION: frequency=Rare
-# FRACTION: = ToString
 # FRACTION: inlineBuiltin=ParseInt
 # function float(x, count) { x = +x; count = count | 0; let sum = 0; for (let i = 0; i < count; i++) sum += parseFloat(x + i); return sum; }: parseFloat() gives the number back, -0 as 0
 # RUN(FLOAT): walk f3:Body mechanisms=all

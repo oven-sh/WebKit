@@ -4,7 +4,8 @@
 # print(new A().a() + new B().b() + new C().c());
 # Three more ways to copy the members of a literal onto a prototype object. Which built-in copies, and which describes the properties of its operand, is what the rows of the built-ins say.
 # A store under a key that is worked out copies where what it stores was read under the same key: the same value, or the same place of the same list read twice.
-# The second and the third let the prototype object go or leave a row without a key, so linked() names no function. What the fields of the literals hold is expected under their names.
+# The third leaves a row without a key, so linked() names no function. What the fields of the literal hold is expected under their names.
+# The second stores under the names of a list that is only read, under each what the literal holds there.
 # The first copies out of a literal of the call's own block that has gone nowhere: it spells the store A.prototype.a = a, and linked() names the function as for that store.
 # RUN(ASSIGNED): link held members mechanisms=all
 # ASSIGNED: on-prototype L0 "a" function=f4
@@ -14,8 +15,9 @@
 # MAPPED: on-prototype L2 "c" function=f6
 # RUN(PROOF): link members mechanisms=all
 # PROOF: on-prototype L0 "a" function=f4
+# RUN(PROVEN): link members mechanisms=all
+# PROVEN: on-prototype L1 "b" function=f5
 # RUN(NOPROOF): link members mechanisms=all
-# NOPROOF-NOT: function=f5
 # NOPROOF-NOT: function=f6
 # RUN(ANSWER): run-in-shell
 # ANSWER: 6

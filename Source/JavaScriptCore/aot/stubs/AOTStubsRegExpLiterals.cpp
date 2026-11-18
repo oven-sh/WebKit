@@ -51,13 +51,12 @@ struct MatchFormTraits {
 };
 
 static constexpr unsigned literalRecordSizeShift = 5;
-static constexpr ptrdiff_t offsetOfLiteralRecordBitFields = OBJECT_OFFSETOF(ImageRegExp, rawFlags) + sizeof(ImageRegExp::rawFlags);
+static constexpr ptrdiff_t offsetOfLiteralRecordBitFields = offsetOfRegExpRecordBitFields;
 static_assert(sizeof(ImageRegExp) == 1u << literalRecordSizeShift);
-static_assert(offsetOfLiteralRecordBitFields + 1 == OBJECT_OFFSETOF(ImageRegExp, rawSpecificPattern));
 
 static uint8_t literalRecordBitFields(const ImageRegExp& record)
 {
-    return std::bit_cast<std::array<uint8_t, sizeof(ImageRegExp)>>(record)[offsetOfLiteralRecordBitFields];
+    return regExpRecordBitFields(record);
 }
 
 static uint8_t literalRecordFormBits()
@@ -278,6 +277,11 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
     const GPRReg impl = jit.allocateScratch(StubRegister::T10);
     const GPRReg characters = jit.allocateScratch(StubRegister::A0);
     const GPRReg subjectLength = jit.allocateScratch(StubRegister::T11);
+#if CPU(ARM64)
+    const GPRReg range = jit.allocateScratch(StubRegister::T12);
+#else
+    const GPRReg range = jit.result();
+#endif
     const LiteralMatchRegisters registers { regExpObject, string, recordNumber, scratch, characters, subjectLength };
     JumpList miss;
     JumpList outOfLine;
@@ -296,8 +300,20 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
         miss.append(jit.branch64(CCallHelpers::LessThan, subjectLength, *start));
 
     loadRecordOfLiteral(jit, recordNumber, scratch);
-    if (takesObject && !usesLastIndex)
-        outOfLine.append(jit.branchTest16(CCallHelpers::NonZero, Address(scratch, OBJECT_OFFSETOF(ImageRegExp, rawFlags)), TrustedImm32(stickyFlag)));
+    auto leaveSticky = [&] {
+        if (takesObject && !usesLastIndex)
+            outOfLine.append(jit.branchTest16(CCallHelpers::NonZero, Address(scratch, OBJECT_OFFSETOF(ImageRegExp, rawFlags)), TrustedImm32(stickyFlag)));
+    };
+    const bool leavesLastIndex = !lastIndexUse.isRead && !lastIndexUse.isReset && !lastIndexUse.isStoredAndPutBack;
+    leaveSticky();
+    if (leavesLastIndex) {
+        Jump hasNoFirstCharacters = branchIfHasNoFirstCharacters(jit, scratch);
+        Jump isWide = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+        miss.append(jit.branchTest32(CCallHelpers::Zero, subjectLength));
+        branchUnlessMatchCanBegin(jit, scratch, characters, jit.reuseScratch(StubRegister::A3), range, miss);
+        hasNoFirstCharacters.link(&jit);
+        isWide.link(&jit);
+    }
     JumpList is16Bit;
     loadMatchingCodeOfLiteral(jit, impl, scratch, is16Bit, outOfLine);
     Label hasCode = jit.label();
@@ -314,13 +330,30 @@ void generateRegExpMatchLiteral(StubAssembler& jit)
         finishLiteralMatchAndReturn(jit, form, registers);
 
     miss.link(&jit);
+    Label didMiss = jit.label();
     if (lastIndexUse.isReset)
         resetLastIndex(jit, *regExpObject);
     returnResult(jit, TrustedImm64(JSValue::encode(traitsOfMatchForm(form).miss)));
 
     isRope.link(&jit);
-    loadSubstringCharacters(jit, string, impl, characters, subjectLength, outOfLine);
+    JumpList isNoSubstring;
+    loadSubstringCharacters(jit, string, impl, characters, subjectLength, isNoSubstring);
     jit.jump().linkTo(hasCharacters, &jit);
+
+    if (leavesLastIndex) {
+        const GPRReg word = jit.reuseScratch(StubRegister::A3);
+        isNoSubstring.link(&jit);
+        outOfLine.append(branchIfSurvivedCollection(jit, string));
+        loadRecordOfLiteral(jit, recordNumber, scratch);
+        leaveSticky();
+        outOfLine.append(branchIfHasNoFirstCharacters(jit, scratch));
+        loadFirstCharactersOfRope(jit, string, impl, word, range, outOfLine);
+        JumpList cannotMatch;
+        branchUnlessMatchCanBegin(jit, scratch, range, word, impl, cannotMatch);
+        outOfLine.append(jit.jump());
+        cannotMatch.linkTo(didMiss, &jit);
+    } else
+        outOfLine.append(isNoSubstring);
 
     is16Bit.link(&jit);
     Jump isUnderUnicode = jit.branchTest16(CCallHelpers::NonZero, Address(scratch, OBJECT_OFFSETOF(ImageRegExp, rawFlags)), TrustedImm32(unicodeFlags));

@@ -1,0 +1,78 @@
+# An element of a typed array and a character of a string, under a number, run no code: no prototype is asked. A key that may be a string finds accessors on prototypes, a value that may be an object is converted, and another holder may contain an accessor
+# const view = new Int32Array(8); const text = "text"; function reads(i) { return view[i]; }  function writes(i, v) { view[i] = v; }  function character(i) { return text[i]; }  function named(k) { return view[k]; }  function converts(v) { view[0] = v; }
+# RUN: link functions mechanisms=all
+# CHECK: function f4 {{*}}returns=[{{*}}mayCallUnknownCode
+# CHECK: function f5 {{*}}returns=[{{*}}mayCallUnknownCode
+# CHECK: function f6 {{*}}returns=[{{*}}mayCallUnknownCode
+# RUN(NEVER): link functions mechanisms=all
+# NEVER-NOT: function f1 {{*}}mayCallUnknownCode
+# NEVER-NOT: function f2 {{*}}mayCallUnknownCode
+# NEVER-NOT: function f3 {{*}}mayCallUnknownCode
+
+variable g0 name="view" module=m0 flags=[IsImmutable]
+variable g1 name="text" module=m0 flags=[IsImmutable]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=Int32Array
+    v1 = Integer integer=8
+    v2 = Construct v0, -, v1
+    PutModuleVariable v2 variable=g0
+    v4 = String string="text"
+    PutModuleVariable v4 variable=g1
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="unknown" [isFreeName]
+    v8 = NewClosure function=f1
+    v9 = Call v8, -, v1 calleeName="reads"
+    v10 = NewClosure function=f2
+    v11 = Call v10, -, v1, v1 calleeName="writes"
+    v12 = NewClosure function=f3
+    v13 = Call v12, -, v1 calleeName="character"
+    v14 = NewClosure function=f4
+    v15 = Call v14, -, v7 calleeName="named"
+    v16 = NewClosure function=f5
+    v17 = Call v16, -, v7 calleeName="converts"
+    v18 = NewClosure function=f6
+    v19 = Call v18, -, v7, v1 calleeName="other"
+    v20 = Undefined
+    Return v20
+}
+function f1 name="reads" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    Return v2
+}
+function f2 name="writes" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = GetModuleVariable variable=g0
+    ElemSet v2, v0, v1
+    v4 = Undefined
+    Return v4
+}
+function f3 name="character" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1
+    v2 = ElemGet v1, v0
+    Return v2
+}
+function f4 name="named" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = ElemGet v1, v0
+    Return v2
+}
+function f5 name="converts" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0
+    v2 = Integer integer=0
+    ElemSet v1, v2, v0
+    v4 = Undefined
+    Return v4
+}
+function f6 name="other" module=m0 length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ElemGet v0, v1
+    Return v2
+}

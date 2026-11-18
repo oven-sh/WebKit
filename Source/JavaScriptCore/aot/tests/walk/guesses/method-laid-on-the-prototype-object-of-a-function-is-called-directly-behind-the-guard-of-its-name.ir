@@ -8,7 +8,7 @@
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
 # CHECK: = HasLayoutPrototype
 # CHECK-NEXT: Branch {{*}}notTaken [[closed]]()
-# CHECK: [[closed]]() frequency=Rare isInLoop=true:
+# CHECK: [[closed]]() frequency=Rare isInLoop=true{{*}}:
 # CHECK-NEXT: [[read]]: {{*}} = PropGet {{*}}key="m"
 # CHECK: = Call [[read]],
 # CHECK: = AreMembersUnchanged conditions=[{layout=L0 key="m"}]

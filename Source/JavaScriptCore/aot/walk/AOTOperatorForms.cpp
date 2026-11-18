@@ -72,6 +72,9 @@ struct OperandOfForm : Type {
     bool isNullableNumber() const { return isNumberOrNullish() || isUndefinedOrNull(); }
     bool isObjectOrNullish() const { return !(primitives & ~Primitive::UndefinedOrNull) && isJavaScriptValue(); }
     bool isBooleanOrNullish() const { return hasOnlyPrimitives(Primitive::Boolean | Primitive::UndefinedOrNull); }
+    bool isSymbolOrNullish() const { return hasOnlyPrimitives(Primitive::AnySymbol | Primitive::UndefinedOrNull); }
+    bool isSymbol() const { return primitives & Primitive::AnySymbol && hasOnlyPrimitives(Primitive::AnySymbol); }
+    bool isPrimitiveValue() const { return hasOnlyPrimitives(Primitive::UndefinedOrNull | Primitive::Boolean | Primitive::Number | Primitive::AnyString | Primitive::AnySymbol | Primitive::BigInt); }
     bool isStringOrUndefined() const { return primitives & Primitive::AnyString && hasOnlyPrimitives(Primitive::AnyString | Primitive::Undefined); }
     bool mayBeString() const { return primitives & Primitive::AnyString; }
     bool mayBeMarker() const { return primitives & (Primitive::Absent | Primitive::Unspecified); }
@@ -329,9 +332,11 @@ static OperatorForm chooseLooseEqualityForm(const OperandsOfForm& operands)
         return OperatorForm::Numbers;
     if (operands.areBoth(&Type::isAnyStringOrNullish))
         return OperatorForm::NullableStrings;
-    if (operands.areBoth(&OperandOfForm::isObjectOrNullish) || operands.areBoth(&OperandOfForm::isBooleanOrNullish))
+    if (operands.areBoth(&OperandOfForm::isObjectOrNullish) || operands.areBoth(&OperandOfForm::isBooleanOrNullish) || operands.areBoth(&OperandOfForm::isSymbolOrNullish))
         return OperatorForm::Bits;
     if (operands.isEither(&Type::isUndefinedOrNull) && operands.areBoth(&Type::isJavaScriptValue) && !operands.isEither(&OperandOfForm::mayBeMarker))
+        return OperatorForm::Bits;
+    if (operands.isEither(&OperandOfForm::isSymbol) && operands.areBoth(&OperandOfForm::isPrimitiveValue) && operands.canCompareBits())
         return OperatorForm::Bits;
     return OperatorForm::Generic;
 }

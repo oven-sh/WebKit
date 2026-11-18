@@ -67,14 +67,61 @@ ALWAYS_INLINE std::optional<double> valueOfFewDigits(std::span<const Latin1Chara
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
+ALWAYS_INLINE std::optional<std::span<const Latin1Character>> latin1CharactersWithoutResolving(const JSString* string)
+{
+    if (const StringImpl* impl = string->tryGetValueImpl()) [[likely]]
+        return impl->is8Bit() ? std::optional(impl->span8()) : std::nullopt;
+    if (!string->isSubstring())
+        return std::nullopt;
+    auto* part = static_cast<const JSRopeString*>(string);
+    const StringImpl* base = part->substringBase()->tryGetValueImpl();
+    return base->is8Bit() ? std::optional(base->span8().subspan(part->substringOffset(), part->length())) : std::nullopt;
+}
+
 ALWAYS_INLINE std::optional<double> valueOfTextOfFewDigits(JSValue value)
 {
     if (!value.isString())
         return std::nullopt;
-    const StringImpl* impl = asString(value)->tryGetValueImpl();
-    if (!impl || !impl->is8Bit())
+    auto characters = latin1CharactersWithoutResolving(asString(value));
+    return characters ? valueOfFewDigits(*characters) : std::nullopt;
+}
+
+ALWAYS_INLINE std::optional<double> valueOfShortDecimal(std::span<const Latin1Character> characters)
+{
+    constexpr size_t maxNumberOfDigits = 15;
+    size_t start = !characters.empty() && characters[0] == '-';
+    if (characters.size() > maxNumberOfDigits)
         return std::nullopt;
-    return valueOfFewDigits(impl->span8());
+    int64_t digits = 0;
+    int64_t divisor = 0;
+    size_t numberOfDigits = 0;
+    for (Latin1Character character : characters.subspan(start)) {
+        unsigned digit = character - '0';
+        if (digit > 9) {
+            if (character != '.' || divisor)
+                return std::nullopt;
+            divisor = 1;
+            continue;
+        }
+        digits = digits * 10 + digit;
+        divisor *= 10;
+        ++numberOfDigits;
+    }
+    if (!numberOfDigits)
+        return std::nullopt;
+    double value = divisor ? static_cast<double>(digits) / static_cast<double>(divisor) : static_cast<double>(digits);
+    return start ? -value : value;
+}
+
+ALWAYS_INLINE std::optional<double> numberOfShortText(std::span<const Latin1Character> characters)
+{
+    if (std::optional<double> value = valueOfFewDigits(characters))
+        return value;
+    if (characters.empty())
+        return 0;
+    if (isASCIIAlpha(characters.front()) && characters.front() != 'I')
+        return PNaN;
+    return valueOfShortDecimal(characters);
 }
 
 } } // namespace JSC::AOT

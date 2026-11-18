@@ -663,12 +663,32 @@ static void testFindByCharacters(LoadedProgram& program)
         for (unsigned round = 0; round < 2; ++round) {
             auto answer = callOperationFromTest(vm, operationAOTMapHas, &program.instance(), set.owner(), JSValue::encode(part));
             AOT_TEST_CHECK(!answer.exception && JSValue::decode(answer.value) == jsBoolean(isMember));
-            AOT_TEST_CHECK(part->isSubstring() && part->hashOfSubstring() == hash);
+            AOT_TEST_CHECK(part->isSubstring() && (part->hashOfSubstring() & CompactTable::hashMask) == hash);
         }
         vm.heap.collectSync(CollectionScope::Full);
-        AOT_TEST_CHECK(part->isSubstring() && part->hashOfSubstring() == hash && part->substringOffset() == 4 && part->length() == 5);
+        AOT_TEST_CHECK(part->isSubstring() && (part->hashOfSubstring() & CompactTable::hashMask) == hash && part->substringOffset() == 4 && part->length() == 5);
+        validateShapeWord(part);
+        auto third = callOperationFromTest(vm, operationAOTMapHas, &program.instance(), set.owner(), JSValue::encode(part));
+        AOT_TEST_CHECK(!third.exception && JSValue::decode(third.value) == jsBoolean(isMember) && part->isSubstring() == !isMember);
+        AOT_TEST_CHECK(!isMember || part->tryGetValueImpl() == asString(set.table()->uncheckedKeyAt(0))->tryGetValueImpl());
         AOT_TEST_CHECK(part->getString(program.realm()) == String(isMember ? "alpha"_s : "delta"_s));
     }
+#endif
+
+#if CPU(ADDRESS64)
+    unsigned numberOfHashesThatPass = 0;
+    for (unsigned number = 0; number < 4096 && numberOfHashesThatPass < 3; ++number) {
+        String characters = makeString("key"_s, number);
+        if (!canPassShapeTest(characters.hash()))
+            continue;
+        ++numberOfHashesThatPass;
+        auto* part = uncheckedDowncast<JSRopeString>(jsSubstring(program.realm(), jsString(vm, makeString("a "_s, characters, " b"_s)), 2, characters.length()));
+        for (unsigned round = 0; round < 2; ++round) {
+            auto answer = callOperationFromTest(vm, operationAOTMapHas, &program.instance(), set.owner(), JSValue::encode(part));
+            AOT_TEST_CHECK(!answer.exception && JSValue::decode(answer.value) == jsBoolean(false) && (!part->isSubstring() || !part->hashOfSubstring()));
+        }
+    }
+    AOT_TEST_CHECK(numberOfHashesThatPass == 3);
 #endif
 
     JSString* rope = jsString(program.realm(), jsString(vm, String("al"_s)), jsString(vm, String("pha"_s)));

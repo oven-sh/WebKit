@@ -319,7 +319,7 @@ static void testBodyEntries()
         AOT_TEST_CHECK(exists(sibling) && sibling != key && !siblingUnderNameWithColumn(sibling));
         AOT_TEST_CHECK(catalog.summaryOf(key).clobbered.subsumes(catalog.summaryOf(sibling).clobbered));
     }
-    checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody() });
+    checkEntries(catalog, enterClosure(), { enterClosure(), enterSlimClosure(), enterModuleBody(), enterClosureWithLoadedArguments() });
     checkEntries(catalog, runAsyncGeneratorStep(), { runAsyncGeneratorStep(), stepAsyncIteratorInEngine() });
     for (unsigned count = 0; count <= numberOfArgumentGPRs; ++count) {
         checkEntries(catalog, callValue(count), { callValue(count), callValueWithoutThis(count), callValueCell(count), callValueCellWithoutThis(count), callValueFunctionOfEngine(count) });
@@ -443,7 +443,7 @@ static void testReachability()
 static void testStartOfModule()
 {
     StubCatalog catalog(StubOptions { });
-    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTThrow }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTResumeLoadAfterThrow, Entry::operationAOTThrow }));
     AOT_TEST_CHECK(std::ranges::count(catalog.recordingOf(startModule()).returnLabels, StubFrameKind::ModuleStart) == 1);
     AOT_TEST_CHECK(refersToBody(catalog, startModule(), bodyOf(handleException(false))));
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, startModule()));

@@ -23,7 +23,7 @@ entry module=m0
 layout L0 kind=Instance name="Above" module=m0 constructor=f1 fields=[{key="a" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L1 kind=Instance name="Middle" module=m0 position=271 base=L0 constructor=f2 fields=[{key="a" declared={type=anything}}] flags=[IsConstructorFunction] ownFieldCount=1
 layout L2 module=m0 flags=[IsNeverAllocated]
-layout L3 kind=Instance name="Lowest" module=m0 position=595 constructor=f10 flags=[HasHeritage]
+layout L3 kind=Instance name="Lowest" module=m0 position=595 constructor=f10 fields=[{key="own" declared={type=anything} flags=[IsRequired]}, {key="more" declared={type=anything} flags=[IsRequired]}] flags=[HasHeritage] ownFieldCount=2
 layout L4 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
 layout L5 module=m0 position=480 fields=[{key="Parent" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
 data d0 root=Object{layout=L5 members=[{key="Parent"}]} module=m0
@@ -312,6 +312,9 @@ function f10 name="Lowest" module=m0 position=595 kind=DerivedConstructor flags=
     v3 = GetSuperBase v0 @595
     v4 = SuperConstructList v3, v1, v2 layout=L3 @595
     v5 = Convert v4 declared={type=L3} @595
+    v6 = Integer integer=1 @595
+    PropDefine v5, v6 key="own" @595
+    PropDefine v5, v6 key="more" @595
     Return v5 @595
 }
 function f11 name="third" module=m0 position=619 kind=Method role=Library flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {

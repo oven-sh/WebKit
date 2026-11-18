@@ -219,7 +219,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES bool Walker::leaveBlockAnotherWay(const BodyTermi
         return true;
     }
     case TerminatorKind::Branch: {
-        if (handTurnOverWhereLesserBoundIsReached(terminator) || (m_normalizesLoopTests && (branchOnCounterRelation(terminator) || branchOnEndTest(terminator))))
+        if ((!m_versionedLoops.isEmpty() && handTurnOverWhereLesserBoundIsReached(terminator)) || (m_normalizesLoopTests && (branchOnCounterRelation(terminator) || branchOnEndTest(terminator))))
             return true;
         if (!has(Mechanism::Folding))
             return false;
@@ -326,6 +326,7 @@ bool Walker::branchOnCounterRelation(const BodyTerminator& terminator)
     EdgeToTargetOfBody stay { inputHead, 1 - test->exitTarget };
     BlockID continuing = addBlock();
     BlockID leaving = addBlock();
+    BlockID asked = m_block;
     branch(relation, continuing, leaving, true);
     continueIn(continuing);
     Draft narrowing(Opcode::Narrowed, m_origin);
@@ -335,8 +336,14 @@ bool Walker::branchOnCounterRelation(const BodyTerminator& terminator)
     narrowing.setIsOnTakenEdge(true);
     Reference narrowed = build(WTF::move(narrowing));
     BlockID next = terminator.targets()[stay.targetIndex].block();
-    if (narrowed && narrowed.isValue() && narrowed != counter && !inputBlock(frameIndex, next).head && index.numberOfIncomingEdges(next) == 1 && !index.isLoopHead(next))
+    bool entersNextAlone = !inputBlock(frameIndex, next).head && index.numberOfIncomingEdges(next) == 1 && !index.isLoopHead(next);
+    if (narrowed && narrowed.isValue() && narrowed != counter && entersNextAlone)
         noteNarrowerName(next, counter, narrowed);
+    if (entersNextAlone && !isUnreachable() && !m_hasFailed) {
+        EdgeID noEdge;
+        Vector<Reference, 8> handedOn;
+        narrowSecondCounters(noEdge, asked, next, 0, handedOn);
+    }
     endBlockLeadingTo(TerminatorDraft(TerminatorKind::Jump, m_origin), singleElementSpan(stay));
     if (m_hasFailed)
         return true;

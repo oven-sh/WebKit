@@ -17,14 +17,14 @@
 # OPTIONS: mechanisms=all exclude=CodeOutsideImage
 # RUN: link variables
 # CHECK: variable g0 proven=absent|Uint8Array
-# CHECK: variable g1 proven=int|absent
+# CHECK: variable g1 proven=int{{*}}|absent
 # CHECK: variable g2 proven=absent|Uint8Array
-# CHECK: variable g3 proven=int|absent
+# CHECK: variable g3 proven=int{{*}}|absent
 # CHECK: variable g4 proven=boolean|absent
-# CHECK: variable g5 proven=int|absent
+# CHECK: variable g5 proven=int{{*}}|absent
 # CHECK: variable g6 proven=absent|Uint8Array
 # CHECK: variable g7 proven=absent|Uint8Array
-# CHECK: variable g8 proven=int|absent
+# CHECK: variable g8 proven=int{{*}}|absent
 # CHECK: variable g9 proven=absent|Uint8Array
 module m0 path="chains3.js" displayPath="chains3.js" body=f0 exports=[{name="eitherFilled" variable=g0}, {name="eitherFound" variable=g1}, {name="filled" variable=g2}, {name="found" variable=g3}, {name="has" variable=g4}, {name="last" variable=g5}, {name="sliced" variable=g6}, {name="slicedFilled" variable=g7}, {name="slicedFound" variable=g8}, {name="twice" variable=g9}] namespaceLayout=L(m0)
 module m1 path="/$bun/js/engine/ArrayIteratorPrototype.ts" displayPath="/$bun/js/engine/ArrayIteratorPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)

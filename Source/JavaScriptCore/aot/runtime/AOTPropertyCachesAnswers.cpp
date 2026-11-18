@@ -73,6 +73,8 @@ static bool isFunctionOwnName(VM& vm, UniquedStringImpl* uid)
 
 bool isNeverCachedName(VM& vm, UniquedStringImpl* uid)
 {
+    if (uid->length() == 10 && equal(uid, "4294967295"_s)) [[unlikely]]
+        return true;
     return parseIndex(PropertyName(uid)) || uid == vm.propertyNames->underscoreProto.impl() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies());
 }
 
@@ -675,7 +677,7 @@ LazyPrototypeRead classifyReadThroughLazyPrototypes(JSGlobalObject* globalObject
     return read;
 }
 
-void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswer& answer)
+void answerByGetterField(JSValue base, Structure* structureBefore, UniquedStringImpl* name, PropertyAnswer& answer)
 {
     if (answer.kind != PropertyAnswerKind::Accessor || answer.isOwn || !answer.holder || !answer.dependsOnChain() || !base.isCell())
         return;
@@ -683,7 +685,7 @@ void answerByGetterField(JSValue base, Structure* structureBefore, PropertyAnswe
     if (!object || object == answer.holder || object->structure() != structureBefore || structureBefore->isDictionary())
         return;
     auto* accessor = uncheckedDowncast<GetterSetter>(valueAtOffset(answer.holder, answer.offset).asCell());
-    const FieldData* field = accessor->isGetterNull() ? nullptr : findFieldReadByGetter(*object, accessor->getter());
+    const FieldData* field = accessor->isGetterNull() ? nullptr : findFieldReadByGetter(*object, accessor->getter(), name);
     if (!field)
         return;
     answer.kind = PropertyAnswerKind::FieldOfGetter;
@@ -930,6 +932,16 @@ static std::optional<PropertyAnswer> classifyAddition(const StoreQuery& query)
     return answer;
 }
 
+PropertyAnswer classifyClosureAddition(JSGlobalObject* globalObject, JSObject* closure, UniquedStringImpl* uid)
+{
+    ChainWalk walk = walkChain({ globalObject, closure->structure(), closure, ChainWalkMode::MayAllocate, ChainWalkUse::KeptForStores }, uid);
+    if (storeThroughChain(walk) != StoreThroughChain::CreatesOwnProperty)
+        return PropertyAnswer::uncacheableAfter(SlotAccess::Store, WTF::move(walk));
+    PropertyAnswer answer = PropertyAnswer::own(PropertyAnswerKind::ClosureAddition, SlotAccess::Store);
+    answer.changeableObjects = WTF::move(walk.changeableObjects);
+    return answer;
+}
+
 static std::optional<PropertyAnswer> classifySetterCall(const StoreQuery& query)
 {
     if (query.mode == PutMode::Define || !query.slot.isCacheableSetter())
@@ -1090,9 +1102,11 @@ PropertyAnswer classifyCompiledObjectStore(const StoreQuery& query, Object& obje
 static PropertyAnswer classifyFieldDeletion(const DeletionQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
 {
     constexpr SlotAccess access = SlotAccess::Delete;
+    if (field.attributes() & PropertyAttribute::DontDelete)
+        return PropertyAnswer::uncacheable(access);
     if (before.mayBePrototype() || before.hasOutOfLineKeyOrder() || field.isOutOfLine() || field.isPrivate() || !absentPatternOf(field.slot.representation()) || field.slot.offset > UINT16_MAX)
         return PropertyAnswer::uncacheable(access);
-    if (object.structure() != &before || query.orderWordBefore & (orderWordIntegrityBits | orderWordHasFieldOutsideSlot))
+    if (object.structure() != &before || query.orderWordBefore & orderWordIntegrityBits)
         return uncacheableOnce(access);
     PropertyAnswer answer { .kind = PropertyAnswerKind::FieldRemoval, .access = access, .isOwn = true, .field = &field };
     answer.orderWords = std::pair { query.orderWordBefore, object.orderWord() };
@@ -1129,6 +1143,15 @@ static PropertyAnswer classifyCompiledObjectDeletion(const DeletionQuery& query)
     return answer;
 }
 
+static bool hasOrdinaryDeleteForName(VM& vm, JSObject* base, Structure* structure, UniquedStringImpl* uid)
+{
+    MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
+    if (structure->classInfoForCells()->methodTable.deleteProperty == ordinaryDelete)
+        return true;
+    auto* closure = dynamicDowncast<Closure>(base);
+    return closure && !closure->classData() && !closure->kind().isConstructor && !isFunctionOwnName(vm, uid) && !Closure::isNameThatBuiltinFunctionsRefuse(vm, uid);
+}
+
 PropertyAnswer classifyDeletion(const DeletionQuery& query)
 {
     constexpr SlotAccess access = SlotAccess::Delete;
@@ -1138,8 +1161,7 @@ PropertyAnswer classifyDeletion(const DeletionQuery& query)
         return uncacheableOnce(access);
     if (before->isCompiledStructure())
         return classifyCompiledObjectDeletion(query);
-    MethodTable::DeletePropertyFunctionPtr ordinaryDelete = JSObject::deleteProperty;
-    if (!query.slot.isCacheableDelete() || before->classInfoForCells()->methodTable.deleteProperty != ordinaryDelete || !before->propertyAccessesAreCacheable()
+    if (!query.slot.isCacheableDelete() || !hasOrdinaryDeleteForName(vm, query.base, before, query.uid) || !before->propertyAccessesAreCacheable()
         || before->typeInfo().prohibitsPropertyCaching() || before->needImpurePropertyWatchpoint() || before->isDictionary() || isWriteJudgedByWriter(before, query.uid))
         return PropertyAnswer::uncacheable(access);
     Structure* after = query.base->structure();
@@ -1298,7 +1320,12 @@ static Slot slotForExtraProperty(const PropertyAnswer& answer, StructureID id, S
     return Slot::createExtraPropertyAddition(id, flags, answer.newStructure->id(), answer.offset, *extraPropertiesWordOffset);
 }
 
-const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter)
+static bool answersUnder(const State& state, uint32_t answeredName, UniquedStringImpl* name)
+{
+    return !name || answeredName == FieldGetterData::answersUnderAnyName || identifiersOf(state.instance).uid(answeredName) == name;
+}
+
+const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter, UniquedStringImpl* name)
 {
     State& state = object.state();
     if (getter->structure()->realm() != state.instance.globalObject)
@@ -1312,7 +1339,7 @@ const FieldData* findFieldReadByGetter(const Object& object, JSObject* getter)
         return nullptr;
     auto getters = programTables().fieldGetters();
     auto found = std::ranges::lower_bound(getters, function.index(), { }, &FieldGetterData::function);
-    if (found == getters.end() || found->function != function.index())
+    if (found == getters.end() || found->function != function.index() || !answersUnder(state, found->answeredName, name))
         return nullptr;
     const FieldData* field = object.fieldNamed(state, identifiersOf(state.instance).uid(found->field));
     return field && !field->isAccessor() && object.isInSlot(*field) ? field : nullptr;
@@ -1399,6 +1426,9 @@ Slot slotFor(const PropertyAnswer& answer, Structure* receiverStructure)
         return Slot::createWithoutPayload(id, Kind::ClosureLength, flags);
     case PropertyAnswerKind::ClosureName:
         return Slot::createWithoutPayload(id, Kind::ClosureName, flags);
+    case PropertyAnswerKind::ClosureAddition:
+        RELEASE_ASSERT(answer.access == SlotAccess::Store);
+        return Slot::createWithoutPayload(id, Slot::closureAddition, flags);
     case PropertyAnswerKind::Constant:
         return Slot::createConstant(id, flags, answer.constant);
     }

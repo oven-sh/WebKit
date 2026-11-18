@@ -298,7 +298,7 @@ static bool isDefaultConstructor(const Program& program, const Function& functio
     return function.constructedClass && program.at(function.constructedClass).position == function.position;
 }
 
-static std::optional<LineColumn> positionInBuiltin(const Program& program, const CallingConventions& conventions, FunctionID shown)
+std::optional<LineColumn> positionInBuiltin(const Program& program, const CallingConventions& conventions, FunctionID shown)
 {
     const Function& owner = program.at(shown);
     if (isDefaultConstructor(program, owner))
@@ -422,7 +422,7 @@ static ALWAYS_INLINE LineColumn lineColumnNear(const Program& program, ModuleID 
     return lineColumnInOtherStretch(program, id, position, place);
 }
 
-static SitePosition positionIn(const Program& program, ShownFunction& shown, uint32_t position, uint32_t frame)
+static ALWAYS_INLINE SitePosition positionIn(const Program& program, ShownFunction& shown, uint32_t position, uint32_t frame)
 {
     if (shown.positionInBuiltin)
         return { shown.positionInBuiltin->line, shown.positionInBuiltin->column, ModuleID(), 0, frame };

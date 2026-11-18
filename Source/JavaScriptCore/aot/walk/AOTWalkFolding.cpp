@@ -548,6 +548,165 @@ std::optional<uint32_t> onlyTargetOfWrittenConstants(Walker& walker, const BodyT
     return onlyTargetWith(walker.types(), terminator, known);
 }
 
+static PrimitiveKnownToFolding typeNameInFolding(const Program& program, PrimitiveKnownToFolding primitive)
+{
+    switch (primitive.kind()) {
+    case PrimitiveKnownToFolding::Kind::Undefined:
+        return PrimitiveKnownToFolding::text(program.stringOf(BuiltinNames::undefined));
+    case PrimitiveKnownToFolding::Kind::Null:
+        return PrimitiveKnownToFolding::text(program.stringOf(BuiltinNames::object));
+    case PrimitiveKnownToFolding::Kind::Boolean:
+        return PrimitiveKnownToFolding::text(program.stringOf(BuiltinNames::boolean));
+    case PrimitiveKnownToFolding::Kind::Number:
+        return PrimitiveKnownToFolding::text(program.stringOf(BuiltinNames::number));
+    case PrimitiveKnownToFolding::Kind::Text:
+        return PrimitiveKnownToFolding::text(program.stringOf(BuiltinNames::string));
+    case PrimitiveKnownToFolding::Kind::Unknown:
+        return { };
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static LinkedCell cellOfVariableInFolding(const Walker&, VariableID);
+static bool isStoredBeforeEveryReadInFolding(const LocationFacts&);
+
+static PrimitiveKnownToFolding evaluateOperationOfCallee(Walker& walker, const BodyValue& value, std::span<const PrimitiveKnownToFolding> held)
+{
+    const Program& program = walker.program();
+    auto heldBy = [&](ValueID operand) {
+        return operand ? held[operand.index()] : PrimitiveKnownToFolding();
+    };
+    Opcode opcode = value.opcode();
+    if (castsOfFolding.contains(opcode) || opcode == Opcode::CheckInitialized)
+        return heldBy(value.operand(0));
+    switch (opcode) {
+    case Opcode::Convert: {
+        DeclaredType declared = value.as<Opcode::Convert>().declared();
+        return declared.isEstablished() || declared.has(PositionFlags::IsInt32Promise) ? PrimitiveKnownToFolding() : heldBy(value.operand(0));
+    }
+    case Opcode::NarrowByTest:
+        return heldBy(value.operand(0));
+    case Opcode::PropGet: {
+        PrimitiveKnownToFolding text = heldBy(value.as<Opcode::PropGet>().objectOperand());
+        return text.isText() && !value.isFreeName() && value.key() == program.keyOf(BuiltinNames::length) ? evaluateInFolding(program, walker.types(), &walker.types(), Opcode::GetStringLength, text, { }) : PrimitiveKnownToFolding();
+    }
+    case Opcode::Strcat: {
+        Vector<PrimitiveKnownToFolding, 8> parts;
+        value.forEachOperand([&](ValueID operand, uint32_t) {
+            parts.append(heldBy(operand));
+        });
+        bool areTexts = std::ranges::all_of(parts, [](PrimitiveKnownToFolding part) { return part.isText(); });
+        return areTexts ? joinTextsInFolding(program, walker.types(), &walker.types(), parts.span()) : PrimitiveKnownToFolding();
+    }
+    case Opcode::TypeOf:
+        return typeNameInFolding(program, heldBy(value.operand(0)));
+    case Opcode::TypeTest: {
+        Reference tested = walker.constant(heldBy(value.operand(0)));
+        TypeID type = tested ? walker.typeOf(tested) : TypeID();
+        if (!type)
+            return { };
+        if (walker.types().isSubset(type, value.testedType()))
+            return PrimitiveKnownToFolding::boolean(true);
+        return walker.types().overlap(type, value.testedType()) ? PrimitiveKnownToFolding() : PrimitiveKnownToFolding::boolean(false);
+    }
+    case Opcode::GetModuleVariable: {
+        VariableID variable = value.as<Opcode::GetModuleVariable>().variable();
+        LinkedCell cell = cellOfVariableInFolding(walker, variable);
+        bool isFilled = program.at(variable).initialization != VariableInitialization::Uninitialized || isStoredBeforeEveryReadInFolding(walker.facts().variable(variable).location);
+        return isFilled && cell.proven && cell.everyWriterIsKnown && !walker.checksProofs() ? onlyValueOfTypeInFolding(walker.types(), cell.proven) : PrimitiveKnownToFolding();
+    }
+    default:
+        break;
+    }
+    if (!operationsOnPrimitivesInFolding.contains(opcode))
+        return primitiveWrittenByInFolding(value);
+    PrimitiveKnownToFolding left = heldBy(value.operand(0));
+    PrimitiveKnownToFolding right = heldBy(value.operand(1));
+    if (!left || (value.operand(1) && !right))
+        return { };
+    return evaluateInFolding(program, walker.types(), &walker.types(), opcode, left, right);
+}
+
+static constexpr uint32_t maxEvaluatedValues = 160;
+static constexpr uint32_t maxEvaluatedOperations = 120;
+
+bool canEvaluateEntryBlock(const Walker& walker, FunctionID callee)
+{
+    static constexpr OpcodeSet evaluated = operationsOnPrimitivesInFolding | castsOfFolding | OpcodeSet { Opcode::CheckInitialized, Opcode::Convert, Opcode::NarrowByTest, Opcode::Strcat, Opcode::TypeOf, Opcode::TypeTest, Opcode::GetModuleVariable, Opcode::LoopHint, Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String };
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || body->numberOfValues() > maxEvaluatedValues)
+        return false;
+    for (BodyValue value : body->block(entryBlock).values()) {
+        if (evaluated.contains(value.opcode()))
+            continue;
+        if (value.opcode() != Opcode::PropGet || value.isFreeName() || value.key() != walker.program().keyOf(BuiltinNames::length))
+            return false;
+    }
+    return true;
+}
+
+static PrimitiveKnownToFolding evaluateCalleeInFolding(Walker& walker, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    const Program& program = walker.program();
+    const Function& function = program.at(callee);
+    const BodyIndex* body = walker.facts().bodies().find(callee);
+    if (!body || body->numberOfValues() > maxEvaluatedValues || function.isCoroutine())
+        return { };
+    Vector<PrimitiveKnownToFolding, maxEvaluatedValues> held(FillWith { }, body->numberOfValues(), PrimitiveKnownToFolding());
+    BodyBlock block = body->block(entryBlock);
+    for (uint32_t parameter = 0; parameter < block.numberOfParameters() && parameter < passedOperands.size(); ++parameter) {
+        if (function.entryParameterKind(parameter) != EntryParameter::Parameter)
+            continue;
+        Reference passed = passedOperands[parameter];
+        TypeID type = passed ? walker.typeOf(passed) : TypeID(TypeTable::undefined);
+        const DeclaredType* declared = function.declaredEntryParameter(parameter);
+        if (!type || (declared && declared->isEstablished() && !walker.types().isSubset(type, program.provenTypeOf(*declared))))
+            return { };
+        TypeID written = declared ? declared->written() : TypeID();
+        if (passed)
+            held[block.parameter(parameter).index()] = primitiveHeldInFolding(walker, passed);
+        else if (parameter - function.firstParameterIndex() < function.numberOfPositionalParameters() && !(written && walker.types().at(written).primitives & Primitive::Absent))
+            held[block.parameter(parameter).index()] = PrimitiveKnownToFolding::undefined();
+    }
+    for (uint32_t numberOfOperations = 0; numberOfOperations < maxEvaluatedOperations; ++numberOfOperations) {
+        for (BodyValue value : block.values()) {
+            if (value.opcode() == Opcode::LoopHint)
+                continue;
+            PrimitiveKnownToFolding result = evaluateOperationOfCallee(walker, value, held.span());
+            if (!result || ++numberOfOperations > maxEvaluatedOperations)
+                return { };
+            held[value.id().index()] = result;
+        }
+        BodyTerminator end = block.terminator();
+        if (end.kind() == TerminatorKind::Return)
+            return end.operand(0) ? held[end.operand(0).index()] : PrimitiveKnownToFolding::undefined();
+        ValueID condition = goesByOneOperand(end.kind()) ? end.operand(0) : ValueID();
+        std::optional<uint32_t> taken = end.kind() == TerminatorKind::Jump ? std::optional<uint32_t>(0) : condition ? onlyTargetWith(walker.types(), end, held[condition.index()]) : std::nullopt;
+        if (!taken)
+            return { };
+        BodyTarget target = end.targets()[*taken];
+        BodyBlock next = body->block(target.block());
+        Vector<PrimitiveKnownToFolding, 8> entering;
+        for (ValueID argument : target.arguments())
+            entering.append(held[argument.index()]);
+        for (uint32_t operandIndex : target.proofs()) {
+            ValueID proven = end.kind() != TerminatorKind::Branch ? condition : !body->isParameter(condition) ? body->value(condition).operand(operandIndex) : ValueID();
+            entering.append(proven ? held[proven.index()] : PrimitiveKnownToFolding());
+        }
+        if (entering.size() != next.numberOfParameters())
+            return { };
+        for (uint32_t parameter = 0; parameter < entering.size(); ++parameter)
+            held[next.parameter(parameter).index()] = entering[parameter];
+        block = next;
+    }
+    return { };
+}
+
+Reference evaluateCallee(Walker& walker, FunctionID callee, std::span<const Reference> passedOperands)
+{
+    return walker.constant(evaluateCalleeInFolding(walker, callee, passedOperands));
+}
+
 static TypingContext typingForFolding(Walker& walker)
 {
     return { walker.program(), walker.types(), PositionTypes::knowingNothing() };
@@ -938,10 +1097,13 @@ static Reference answerOfReadInFolding(Walker& walker, const BodyValue& value)
             if (Reference closure = walker.cellThatRunTimeKeeps(read))
                 return closure;
         }
-        if (Reference held = walker.state().variable(variable))
+        Reference held = walker.state().variable(variable);
+        if (!held)
+            held = valueOfStableBinding(walker, value);
+        if (held) {
+            walker.noteVariableReadByCopy(variable, held);
             return held;
-        if (Reference kept = valueOfStableBinding(walker, value))
-            return kept;
+        }
         bool isFilled = walker.program().at(variable).initialization != VariableInitialization::Uninitialized || isStoredBeforeEveryReadInFolding(walker.facts().variable(variable).location);
         return onlyValueOfCellInFolding(walker, cellOfVariableInFolding(walker, variable), isFilled);
     }

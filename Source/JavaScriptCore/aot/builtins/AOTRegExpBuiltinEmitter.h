@@ -25,6 +25,7 @@ public:
     void generateRegExpSource(const InlineCall&);
     void generateStringReplace(const InlineCall&);
     void generateStringReplaceAll(const InlineCall&);
+    bool storesElementIntoResult(const InlineCall&);
     void generateStringSplit(const InlineCall&);
     void generateRegExpFlag(const InlineCall&);
     void generateRegExpGetLastIndex(const InlineCall&);

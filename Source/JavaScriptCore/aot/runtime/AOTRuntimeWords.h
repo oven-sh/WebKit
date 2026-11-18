@@ -48,6 +48,11 @@ struct BindingWords {
     GlobalBinding* globalBindings;
 };
 
+struct TextInCell {
+    static constexpr unsigned flag = HasStaticPropertyTable;
+    static constexpr unsigned maxLength = sizeof(uint64_t);
+};
+
 struct ConstantCellWords {
     static constexpr unsigned flagOfStringConstant = OverridesGetPrototype;
     static constexpr unsigned flagsOfNamedText = flagOfStringConstant | TypeInfoPerCellBit;

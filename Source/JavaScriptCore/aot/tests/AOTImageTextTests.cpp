@@ -460,12 +460,14 @@ static void testByteBesideStoredStringsThatIsNotZeroIsFound()
 
 static void testStoredStringsOfAnotherFormatAreRefusedByName()
 {
-    Vector<uint8_t> file = fileThatHoldsTextImage(1);
-    uint32_t other = imageFormatVersion + 1;
-    memcpy(file.mutableSpan().data() + sizeOfOtherBytesInFile + offsetof(ImageHeader, formatVersion), &other, sizeof(other));
-    StoredStrings stored = readStoredStrings(file.span());
-    AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::CannotBeRead && stored.strings.isEmpty());
-    AOT_TEST_CHECK(reportOf(stored) == makeString("image 0 | this Bun reads format "_s, imageFormatVersion, "; the image says "_s, other, '\n'));
+    static constexpr uint32_t lastFormatWithCompressedSources = 4;
+    for (uint32_t other : { lastFormatWithCompressedSources, imageFormatVersion + 1 }) {
+        Vector<uint8_t> file = fileThatHoldsTextImage(1);
+        memcpy(file.mutableSpan().data() + sizeOfOtherBytesInFile + offsetof(ImageHeader, formatVersion), &other, sizeof(other));
+        StoredStrings stored = readStoredStrings(file.span());
+        AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::CannotBeRead && stored.strings.isEmpty());
+        AOT_TEST_CHECK(reportOf(stored) == makeString("image 0 | this Bun reads format "_s, imageFormatVersion, "; the image says "_s, other, '\n'));
+    }
 
     StoredStrings ofNoImage = readStoredStrings(otherBytes(4 * sizeOfOtherBytesInFile).span());
     AOT_TEST_CHECK(ofNoImage.verdict == VerdictOnStoredStrings::CannotBeRead && reportOf(ofNoImage) == "the file holds no image\n"_s);
@@ -474,7 +476,7 @@ static void testStoredStringsOfAnotherFormatAreRefusedByName()
 static void testStoredStringsAsJSONLines()
 {
     Vector<uint8_t> file = fileThatHoldsTextImage(1);
-    StoredStrings stored = readStoredStrings(file.span(), nullptr, StoredStringsForm::JSONLines);
+    StoredStrings stored = readStoredStrings(file.span(), StoredStringsForm::JSONLines);
     AOT_TEST_CHECK(stored.verdict == VerdictOnStoredStrings::NothingLiesBesideStrings);
 
     enum class Coverage : uint8_t { None, Strings, UncoveredRun };

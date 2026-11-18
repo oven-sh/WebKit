@@ -769,6 +769,13 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
     TypeID typeOfConstructor = inputs.typeOf(test.constructorOperand());
     if (!typeOfValue || !typeOfConstructor)
         return false;
+    bool testsConstructor = !inputs.areOnlyTypes() && !holdsOnlyPrimitives(typeOfConstructor) && walker.types().at(typeOfConstructor).primitives;
+    if (testsConstructor) {
+        TypeID present = walker.types().withoutNullish(typeOfConstructor);
+        testsConstructor = !walker.types().at(present).primitives && mayBuildArmsForInstanceOf(walker);
+        if (testsConstructor)
+            typeOfConstructor = present;
+    }
     bool valueHasLayoutPrototype = !inputs.areOnlyTypes() && knownCellFacts(walker, walker.referenceOf(test.valueOperand())).contains(CellFact::HasLayoutPrototype);
     valueHasLayoutPrototype |= walker.shouldAssumeLayoutPrototype() && !inputs.areOnlyTypes();
     bool queriesExpectations = !inputs.areOnlyTypes() && maySpendBytesForTimeInInstanceOf(walker);
@@ -788,7 +795,7 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         form->missMeansFalse = false;
         form->areAllInstances = false;
     }
-    bool answersWithoutArms = form->conditions.isEmpty() && (!form->instances || (form->missMeansFalse && !form->testsPrototypeOfInstance));
+    bool answersWithoutArms = !testsConstructor && form->conditions.isEmpty() && (!form->instances || (form->missMeansFalse && !form->testsPrototypeOfInstance));
     if (!answersWithoutArms && !mayBuildArmsForInstanceOf(walker)) {
         if (!form->conditions.isEmpty())
             return false;
@@ -836,6 +843,30 @@ static bool buildInstanceOfClassOfProgram(Walker& walker, const BodyValue& test,
         walker.count(StatisticID::InstanceOfTestsDecidedByHierarchy);
     bool hasArms = false;
     BlockID asWritten;
+    if (testsConstructor) {
+        Draft question(Opcode::TypeTest, origin);
+        question.setValueOperand(constructor);
+        question.setTestedType(typeOfConstructor);
+        Reference isThere = walker.build(WTF::move(question));
+        if (!isThere)
+            return true;
+        if (isThere.isValue()) {
+            BlockID there = walker.addBlock();
+            asWritten = walker.addBlock(BlockFrequency::Rare);
+            walker.branch(isThere, there, asWritten);
+            hasArms = true;
+            walker.continueIn(there);
+            Draft proof(Opcode::Narrowed, origin);
+            proof.setValueOperand(constructor);
+            proof.setTestOperand(isThere);
+            proof.setOperandIndex(OperandIndex::TypeTest::value);
+            proof.setIsOnTakenEdge(true);
+            constructor = walker.isUnreachable() ? Reference() : walker.build(WTF::move(proof));
+            if (!constructor)
+                return true;
+        }
+        walker.count(StatisticID::InstanceOfConstructorsTested);
+    }
     bool everyGuardIsAmongConditions = std::ranges::all_of(form->hierarchyGuards, [&](const MemberConditionRecord& guard) {
         return form->conditions.contains(guard);
     });

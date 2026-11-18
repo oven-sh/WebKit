@@ -74,11 +74,14 @@ function f3 name="work" module=m0 thisType={type=anything} results=[{type=number
   b0():
     v0 = GetModuleVariable variable=g1
     v1 = GetModuleVariable variable=g0
-    v2 = Integer integer=1
-    v3 = Call v1, -, v2 calleeName="give"
-    v4 = GetModuleVariable variable=g0
-    v5 = Integer integer=2
-    v6 = Call v4, -, v5 calleeName="give"
-    v7 = Call v0, -, v3, v6 calleeName="mix"
-    ReturnCall v7 casts=[{declared={type=number}}]
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="seed"
+    v4 = Integer
+    v5 = BitOr v3, v4
+    v6 = Call v1, -, v5 calleeName="give"
+    v7 = GetModuleVariable variable=g0
+    v8 = Integer integer=2
+    v9 = Call v7, -, v8 calleeName="give"
+    v10 = Call v0, -, v6, v9 calleeName="mix"
+    ReturnCall v10 casts=[{declared={type=number}}]
 }

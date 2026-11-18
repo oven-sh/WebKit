@@ -274,7 +274,7 @@ void noteSubclassesOfMixins(Program& program, std::span<const ClassBelowBuiltinC
         while (LayoutID above = program.at(mixin).base)
             mixin = above;
         Layout& topmost = program.layouts[mixin.index()];
-        if (topmost.writtenBuiltinBase || !topmost.has(LayoutFlags::HasHeritage) || layout.mixedBuiltinBase)
+        if (topmost.writtenBuiltinBase || !topmost.has(LayoutFlags::HasHeritage) || isConstructorFunctionBelowValue(topmost) || layout.mixedBuiltinBase)
             continue;
         layout.mixedBuiltinBase = written.builtinClass;
         if (topmost.mixedSubclass)
@@ -288,7 +288,7 @@ void noteSubclassesOfMixins(Program& program, std::span<const ClassBelowBuiltinC
     if (!program.someClassExtendsMixin)
         return;
     auto isTopmostOfMixin = [](const Layout& layout) {
-        return layout.kind == LayoutKind::Instance && layout.has(LayoutFlags::HasHeritage) && !layout.base && !layout.writtenBuiltinBase;
+        return layout.kind == LayoutKind::Instance && layout.has(LayoutFlags::HasHeritage) && !layout.base && !layout.writtenBuiltinBase && !isConstructorFunctionBelowValue(layout);
     };
     Vector<uint32_t, 4> withSubclass;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {

@@ -48,7 +48,7 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocatorOrNull, LBa
     return allocateHeapCell(allocatorOrNull, std::nullopt, slowPath);
 }
 
-CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath)
+CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::optional<size_t> cellSize, LBasicBlock slowPath, bool refillsInline)
 {
     LBasicBlock continuation = newBlock();
     std::array<const Machine::AbstractHeap*, 2> heaps { &m_heaps.collectorState, &m_heaps.entire(AbstractHeap::AllocatorState) };
@@ -63,7 +63,7 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
     allocation->resultConstraints = { Machine::ValueRep::SomeEarlyRegister };
     allocation->clobber(RegisterSet::macroClobberedGPRs());
     m_out.m_block->setSuccessors(normalEdge(continuation), rareEdge(slowPath));
-    allocation->setGenerator([cellSize](CCallHelpers& jit, const Machine::PatchParameters& params) {
+    allocation->setGenerator([cellSize, refillsInline](CCallHelpers& jit, const Machine::PatchParameters& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         CCallHelpers::JumpList slowCases;
         CCallHelpers::FreeListRefill refill = jit.emitAllocateFromFreeList(params[0].gpr(), params[1].gpr(), params.gpScratch(0), slowCases, cellSize ? std::optional<unsigned>(static_cast<unsigned>(*cellSize)) : std::nullopt);
@@ -71,10 +71,13 @@ CellPointer CellAllocationEmitter::allocateHeapCell(Pointer allocator, std::opti
         CCallHelpers::Jump done;
         if (!params.fallsThroughToSuccessor(0))
             done = jit.jump();
-        params.addLatePath([refill, done, hasCell = params.successorLabels()[0], hasNoCell = params.successorLabels()[1]](CCallHelpers& jit) {
+        params.addLatePath([refill, refillsInline, done, hasCell = params.successorLabels()[0], hasNoCell = params.successorLabels()[1]](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             CCallHelpers::JumpList toSlowPath;
-            jit.emitFreeListRefill(refill, toSlowPath);
+            if (refillsInline)
+                jit.emitFreeListRefill(refill, toSlowPath);
+            else if (refill.isExhausted.isSet())
+                toSlowPath.append(refill.isExhausted);
             toSlowPath.linkTo(*hasNoCell, &jit);
             if (done.isSet())
                 done.linkTo(*hasCell, &jit);
@@ -130,19 +133,147 @@ MentionedAllocation CellAllocationEmitter::closureAllocationOf(unsigned numberOf
     return { placed, m_mentions.allocation(placed, { }) };
 }
 
-Pointer CellAllocationEmitter::allocationSiteRecord(const MentionedAllocation& allocation)
+Pointer CellAllocationEmitter::endOfAllocationSiteRecord(const MentionedAllocation& allocation)
 {
     static_assert(std::is_same_v<decltype(ObjectWords::distancesToAllocationSites), int32_t*>);
     Pointer distances = loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.distancesToAllocationSites));
     Pointer placeOfDistance = offsetBy(distances, rowOf(allocation), getLSBSet(sizeof(int32_t)));
     Word32 distance(m_out.load32(m_out.address(m_heaps.entire(AbstractHeap::AllocatorState), placeOfDistance.value())));
-    return offsetBy(Pointer(m_out.add(distances.value(), signExtended(distance).value())), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
+    return Pointer(m_out.add(distances.value(), signExtended(distance).value()));
+}
+
+Pointer CellAllocationEmitter::allocationSiteRecord(const MentionedAllocation& allocation)
+{
+    return offsetBy(endOfAllocationSiteRecord(allocation), -static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)));
+}
+
+static constexpr size_t maxCellSizeAllocatedInline = 128;
+
+bool CellAllocationEmitter::allocatesInline(const OperationContext& context, const MentionedAllocation& allocation) const
+{
+    return allocation.placed.size <= maxCellSizeAllocatedInline && allocatesInline(context);
+}
+
+bool CellAllocationEmitter::allocatesInline(const OperationContext& context) const
+{
+    BlockID block = context.block();
+    if (!block || m_code.at(block).frequency == BlockFrequency::Rare)
+        return false;
+    const auto& linked = m_facts.linked();
+    const size_t function = m_unit.function.index();
+    return linked.functionsReachedByRecursion.get(function) || (linked.functionsFinishedInNestedIterations.get(function) && m_generator.usesLoopForms(block));
+}
+
+static void copyCellChunk(CCallHelpers& jit, CCallHelpers::Address from, CCallHelpers::Address to, const Machine::PatchParameters& params)
+{
+#if CPU(X86_64)
+    FPRReg chunk = params.fpScratch(0);
+    if (jit.supportsAVX()) {
+        jit.m_assembler.vmovups_mr(from.offset, from.base, chunk);
+        jit.m_assembler.vmovups_rm(chunk, to.offset, to.base);
+        return;
+    }
+    jit.m_assembler.movups_mr(from.offset, from.base, chunk);
+    jit.m_assembler.movups_rm(chunk, to.offset, to.base);
+#else
+    jit.loadPair64(from.base, CCallHelpers::TrustedImm32(from.offset), params.gpScratch(0), params.gpScratch(1));
+    jit.store64(params.gpScratch(0), to);
+    jit.store64(params.gpScratch(1), to.withOffset(sizeof(uint64_t)));
+#endif
+}
+
+static void zeroCellChunks(CCallHelpers& jit, GPRReg cell, unsigned end, const Machine::PatchParameters& params)
+{
+#if CPU(X86_64)
+    FPRReg zero = params.fpScratch(0);
+    jit.moveZeroToDouble(zero);
+#else
+    UNUSED_PARAM(params);
+#endif
+    for (unsigned offset = copyChunkBytes; offset < end; offset += copyChunkBytes) {
+#if CPU(X86_64)
+        if (jit.supportsAVX())
+            jit.m_assembler.vmovups_rm(zero, offset, cell);
+        else
+            jit.m_assembler.movups_rm(zero, offset, cell);
+#else
+        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, cell, CCallHelpers::TrustedImm32(offset));
+#endif
+    }
+}
+
+CellPointer CellAllocationEmitter::allocateInline(const MentionedAllocation& allocation, CellInitialization initialization, LValue bodyTemplate, LBasicBlock slowPath)
+{
+    build().statistics().count(StatisticID::CellsAllocatedInline);
+    Pointer endOfRecord = endOfAllocationSiteRecord(allocation);
+    LBasicBlock continuation = newBlock();
+    std::array<const Machine::AbstractHeap*, 2> heaps { &m_heaps.collectorState, &m_heaps.entire(AbstractHeap::AllocatorState) };
+    Machine::PatchOperation* cell = m_out.patchpoint(Machine::pointerType());
+    cell->effects = Machine::Effects::none();
+    cell->effects.terminal = true;
+    m_heaps.decoratePatchpointRead(heaps, cell);
+    m_heaps.decoratePatchpointWrite(heaps, cell);
+    cell->setRunsWithoutFrame(true);
+    cell->appendSomeRegister(endOfRecord.value());
+    if (bodyTemplate)
+        cell->appendSomeRegister(bodyTemplate);
+    std::optional<size_t> cellSize = knownCellSizeFor(allocation.placed.size);
+    cell->numGPScratchRegisters = isX86_64() ? 1 : 2;
+    if (isX86_64())
+        cell->numFPScratchRegisters = 1;
+    cell->resultConstraints = { Machine::ValueRep::SomeEarlyRegister };
+    cell->clobber(RegisterSet::macroClobberedGPRs());
+    m_out.m_block->setSuccessors(normalEdge(continuation), rareEdge(slowPath));
+    cell->setGenerator([size = allocation.placed.size, cellSize, initialization, copiesTemplate = !!bodyTemplate](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        using Address = CCallHelpers::Address;
+        GPRReg cell = params[0].gpr();
+        GPRReg endOfRecord = params[1].gpr();
+        GPRReg allocator = params.gpScratch(0);
+#if CPU(X86_64)
+        GPRReg scratch = CCallHelpers::s_scratchRegister;
+#else
+        GPRReg scratch = params.gpScratch(1);
+#endif
+        auto inRecord = [&](ptrdiff_t offset) { return Address(endOfRecord, static_cast<int32_t>(offset - static_cast<ptrdiff_t>(sizeof(AllocationSiteRecord)))); };
+        jit.loadPtr(inRecord(AllocationSiteRecord::offsetOfAllocator()), allocator);
+        CCallHelpers::JumpList slowCases;
+        CCallHelpers::FreeListRefill refill = jit.emitAllocateFromFreeList(cell, allocator, scratch, slowCases, cellSize ? std::optional<unsigned>(static_cast<unsigned>(*cellSize)) : std::nullopt);
+        RELEASE_ASSERT(slowCases.empty());
+        unsigned end = static_cast<unsigned>(WTF::roundUpToMultipleOf<copyChunkBytes>(size));
+        if (copiesTemplate) {
+            for (unsigned offset = copyChunkBytes; offset < end; offset += copyChunkBytes)
+                copyCellChunk(jit, Address(params[2].gpr(), offset - offsetOfTemplateInCell(initialization)), Address(cell, offset), params);
+        } else if (zeroesBody(initialization))
+            zeroCellChunks(jit, cell, end, params);
+        if (storesWords(initialization))
+            copyCellChunk(jit, inRecord(AllocationSiteRecord::offsetOfHeader()), Address(cell), params);
+        else {
+            jit.load64(inRecord(AllocationSiteRecord::offsetOfHeader()), allocator);
+            jit.store64(allocator, Address(cell));
+            if (copiesTemplate) {
+                jit.load64(Address(params[2].gpr()), allocator);
+                jit.store64(allocator, Address(cell, sizeof(JSCell)));
+            } else if (zeroesBody(initialization))
+                jit.store64(CCallHelpers::TrustedImm32(0), Address(cell, sizeof(JSCell)));
+        }
+        CCallHelpers::Jump done;
+        if (!params.fallsThroughToSuccessor(0))
+            done = jit.jump();
+        params.addLatePath([exhausted = refill.isExhausted, done, hasCell = params.successorLabels()[0], hasNoCell = params.successorLabels()[1]](CCallHelpers& jit) {
+            exhausted.linkTo(*hasNoCell, &jit);
+            if (done.isSet())
+                done.linkTo(*hasCell, &jit);
+        });
+    });
+    m_out.appendToContinuation(continuation);
+    return CellPointer(cell);
 }
 
 ZeroedBy CellAllocationEmitter::whoZeroesBody(const OperationContext& context, const MentionedAllocation& allocation, unsigned storesOfZero, unsigned storesOfOtherPatterns) const
 {
     size_t size = allocation.placed.size;
-    if (!m_generator.usesLoopForms(context.block()) && !m_generator.isInRecursion(context.block())) {
+    if (!m_generator.usesLoopForms(context.block()) && !m_generator.isInRecursion(context.block()) && !allocatesInline(context, allocation)) {
         if (storesOfOtherPatterns && size > copyChunkBytes && size <= maxCellSizeFromTemplate)
             return ZeroedBy::StubFromTemplate;
         return storesOfZero ? ZeroedBy::Stub : ZeroedBy::Nobody;
@@ -200,12 +331,25 @@ void CellAllocationEmitter::zeroBody(CellPointer cell, const MentionedAllocation
     });
 }
 
+CellPointer CellAllocationEmitter::allocateInlineOr(const MentionedAllocation& allocation, CellInitialization initialization, LValue bodyTemplate, NOESCAPE const Invocable<CellPointer()> auto& callStub)
+{
+    LBasicBlock slowPath = newBlock();
+    Join<CellPointer> join(m_out);
+    join.add(allocateInline(allocation, initialization, bodyTemplate, slowPath));
+    m_out.appendTo(slowPath);
+    join.add(callStub());
+    return join.finish();
+}
+
 CellPointer CellAllocationEmitter::allocateFromTemplate(const OperationContext& context, const MentionedAllocation& allocation, std::span<const uint8_t> bodyOfEmptyCell)
 {
     CellInitialization form = isObjectLayout(m_program.at(allocation.placed.layout).kind) ? CellInitialization::HeaderAndWords : CellInitialization::Header;
     RELEASE_ASSERT(bodyOfEmptyCell.size() == sizeOfCellTemplate(form, allocation.placed.size));
     LValue addressOfTemplate = m_out.relocatable(SymbolSpace::Constant, m_out.addConstantData(bodyOfEmptyCell, ConstantKind::CellTemplate));
-    return CellPointer(callStub(context, allocateCellFromTemplate(form, allocation.placed.size), { m_out.wideNumber(allocation.mention), addressOfTemplate }).first);
+    auto callOfStub = [&] {
+        return CellPointer(callStub(context, allocateCellFromTemplate(form, allocation.placed.size), { m_out.wideNumber(allocation.mention), addressOfTemplate }).first);
+    };
+    return allocatesInline(context, allocation) ? allocateInlineOr(allocation, form, addressOfTemplate, callOfStub) : callOfStub();
 }
 
 CellPointer CellAllocationEmitter::allocate(const OperationContext& context, const MentionedAllocation& allocation, ZeroedBy zeroedBy)
@@ -215,7 +359,10 @@ CellPointer CellAllocationEmitter::allocate(const OperationContext& context, con
     CellInitialization form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWords : CellInitialization::Header;
     if (zeroedBy == ZeroedBy::Stub)
         form = hasOrderAndShapeWords ? CellInitialization::HeaderAndWordsAndZeros : CellInitialization::HeaderAndZeros;
-    CellPointer cell(callStub(context, allocateCell(form, knownCellSizeFor(allocation.placed.size)), { m_out.wideNumber(allocation.mention) }).first);
+    auto callOfStub = [&] {
+        return CellPointer(callStub(context, allocateCell(form, knownCellSizeFor(allocation.placed.size)), { m_out.wideNumber(allocation.mention) }).first);
+    };
+    CellPointer cell = allocatesInline(context, allocation) ? allocateInlineOr(allocation, form, nullptr, callOfStub) : callOfStub();
     if (zeroedBy == ZeroedBy::CodeInLine) {
         CodeGenerator::InitializationScope scope(generator());
         zeroBody(cell, allocation);

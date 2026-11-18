@@ -22,12 +22,13 @@ v(FindText8, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Ma
 
 v(ConcatenateKeyOfPair, CalledByCode, (Key, Name), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, ConcatenateKeyOfPair)
 v(IntegerToString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), IntegerToString)
+v(DoubleToString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(RuntimeState), DoubleToString)
 
 v(Concatenate, CalledByCode, (), CountAxis | SlowPathRecurs, 2, 3, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), Concatenate)
 
-v(ConvertAndConcatenate, CalledByCode, (FirstOfTwo, SecondOfTwo, FirstOfThree, SecondOfThree, ThirdOfThree, FirstAndThirdOfThree, NoneOfTwo, NoneOfThree), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), ConvertAndConcatenate)
+v(ConvertAndConcatenate, CalledByCode, (FirstOfTwo, SecondOfTwo, FirstOfThree, SecondOfThree, ThirdOfThree, FirstAndThirdOfThree, NoneOfTwo, NoneOfThree, AddendBehindConstant, AddendInFrontOfConstant, AddendInFrontOfString, AddendBehindString, AddendBetweenConstantAndString, AddendBehindConstantAndString, AddendBehindStringAndConstant, AddendBetweenStringAndConstant, AddendBetweenConstants, AddendBetweenStrings, AddendBehindStrings), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), ConvertAndConcatenate)
 v(ConcatenateWithConstants, CalledByCode, (FirstOfTwo, SecondOfTwo, FirstOfThree, SecondOfThree, ThirdOfThree, FirstAndThirdOfThree), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), ConcatenateWithConstants)
-v(ConcatenateInteger, CalledByCode, (StringThenInteger, IntegerThenString, StringIntegerString, StringsThenInteger, ConstantThenInteger, IntegerThenConstant, ConstantIntegerString, StringIntegerConstant, ConstantIntegerConstant, StringConstantInteger, ConstantStringInteger), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), ConcatenateInteger)
+v(ConcatenateInteger, CalledByCode, (StringThenInteger, IntegerThenString, StringIntegerString, StringsThenInteger, ConstantThenInteger, IntegerThenConstant, ConstantIntegerString, StringIntegerConstant, ConstantIntegerConstant, StringConstantInteger, ConstantStringInteger, IntegersAroundString, IntegersAroundConstant), FormAxis | SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState, RuntimeState) | writes(AllocatorState, RuntimeState), ConcatenateInteger)
 
 v(Substring, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage, AllocatorState) | writes(AllocatorState), Substring)
 
@@ -39,4 +40,6 @@ v(StringEqualsCharacters, CalledByCode, (), CountAxis, 9, 63, AllISAs, NoISA, No
 v(ValueEqualsCharacters, CalledByCode, (), CountAxis, 9, 63, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsCharacters)
 v(StringEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
 v(ValueEqualsLiteralOfLength, CalledByCode, (), CountAxis, 0, 8, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), StringEqualsLiteralOfLength)
+v(StringSwitchCase, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage) | writes(StringStorage), StringSwitchCase)
+v(ValueSwitchCase, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage) | writes(StringStorage), StringSwitchCase)
 v(NarrowCharactersOfString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage) | writes(StringStorage), NarrowCharactersOfString)

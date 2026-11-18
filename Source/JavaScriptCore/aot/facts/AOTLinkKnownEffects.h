@@ -45,7 +45,7 @@ inline constexpr uint64_t objectsOfAnyLayout = UINT64_MAX;
 uint64_t bitOfLayoutInKnownEffects(const Program&, LayoutID);
 Vector<uint64_t> bitsOfLayoutsInKnownEffects(const Program&);
 inline constexpr AbstractHeapSet heapsOfObjectsWithLayouts {
-    AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks
+    AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::ShapeWords, AbstractHeap::OrderWords, AbstractHeap::PrototypeLinks, AbstractHeap::WrittenTypes
 };
 inline constexpr AbstractHeapSet heapsOfPartsOfObjects = perObjectHeaps - unobservableWriteHeaps - AbstractHeapSet { AbstractHeap::EnvironmentFields };
 

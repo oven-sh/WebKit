@@ -43,6 +43,9 @@ public:
         HasKeyOrderOfOneObject = 1 << 0,
         HasKeyOrderWithExtraProperties = 1 << 1,
         ReportsReplacements = 1 << 2,
+        PassesStoresAbove = 1 << 3,
+        MayNotPassStoresAbove = 1 << 4,
+        WasAskedAboutStoresAbove = 1 << 5,
     };
     using KeyOrderEntries = Vector<uint16_t, 16>;
 
@@ -169,6 +172,9 @@ public:
     }
     bool hasKeyOrderOfOneObject() const { return m_furtherFlags.contains(FurtherFlag::HasKeyOrderOfOneObject); }
     bool reportsReplacements() const { return m_furtherFlags.contains(FurtherFlag::ReportsReplacements); }
+    bool has(FurtherFlag flag) const { return m_furtherFlags.contains(flag); }
+    void set(FurtherFlag flag) { m_furtherFlags.add(flag); }
+    void clear(FurtherFlag flag) { m_furtherFlags.remove(flag); }
     std::span<const RefPtr<UniquedStringImpl>> keysNamedByOrder() const
     {
         ASSERT(hasKeyOrderOfOneObject());

@@ -86,11 +86,11 @@ export function groupBy(items, callback)
         for (var item of items) {
             var key = $toPropertyKey(callback.$call($undefined, item, k));
             var group = groups[key];
-            if (!group) {
+            if (!$isJSArray(group)) {
                 group = [];
                 $putByValDirect(groups, key, group);
             }
-            $putByValDirect(group, group.length, item);
+            $appendElement(group, item);
             ++k;
         }
         return groups;
@@ -108,11 +108,11 @@ export function groupBy(items, callback)
             $throwTypeError("The number of iterations exceeds 2**53 - 1");
         key = $toPropertyKey(callback.$call($undefined, item, k));
         group = groups[key];
-        if (!group) {
+        if (!$isJSArray(group)) {
             group = [];
             $putByValDirect(groups, key, group);
         }
-        $putByValDirect(group, group.length, item);
+        $appendElement(group, item);
         ++k;
     }
     return groups;

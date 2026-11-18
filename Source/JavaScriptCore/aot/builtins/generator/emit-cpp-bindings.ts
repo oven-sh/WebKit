@@ -71,7 +71,6 @@ const checkedExpressionHeaders: readonly string[] = [
   "JSIteratorHelper.h",
   "JSMapIterator.h",
   "JSPromise.h",
-  "JSRegExpStringIterator.h",
   "JSSetIterator.h",
   "JSStringIterator.h",
   "JSWrapForValidIterator.h",

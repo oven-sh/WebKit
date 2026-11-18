@@ -95,7 +95,8 @@ Boxed HashTableBuiltinEmitter::normalizedKey(const OperationContext& context, Va
     LBasicBlock needsNormalization = newBlock();
     LBasicBlock isNormalized = newBlock();
     Join<Boxed> join(m_out);
-    m_out.branch(isBoxedDouble.value(), numbersFitInt32 ? unlikelyEdge(needsNormalization) : normalEdge(needsNormalization), normalEdge(isNormalized));
+    bool isOutOfLine = numbersFitInt32 || (context.block() && generator().paysForCodeInLine(context.block()));
+    m_out.branch(isBoxedDouble.value(), isOutOfLine ? unlikelyEdge(needsNormalization) : normalEdge(needsNormalization), normalEdge(isNormalized));
 
     m_out.appendTo(isNormalized);
     join.add(key);
@@ -109,8 +110,7 @@ Word32 HashTableBuiltinEmitter::hashOfBits(Boxed key)
 {
     LValue a = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets)).value());
     LValue b = m_out.bitXor(key.value(), loadImmutable64(AOT_INSTANCE_OFFSET(numbers.hashSecrets) + sizeof(uint64_t)).value());
-    LValue lowerHalf = m_out.mul(a, b);
-    return Word32(m_out.castToInt32(m_out.bitXor(lowerHalf, m_out.uMulHigh(a, b))));
+    return Word32(m_out.foldedProduct(a, b));
 }
 
 Integer HashTableBuiltinEmitter::sizeOf(CellPointer table, HashTableOwner owner)
@@ -153,6 +153,13 @@ Operand HashTableBuiltinEmitter::search(const OperationContext& context, ValueID
         return lookUpByHash();
     using EntryAnswer = CollectionIntrinsicEmitter::EntryAnswer;
     return emitter<CollectionIntrinsicEmitter>().findNumberAtHomeSlot(table, key, answer == LookupAnswer::Value ? EntryAnswer::Value : EntryAnswer::IsPresent, scopedLambda<Operand()>(lookUpByHash));
+}
+
+Operand HashTableBuiltinEmitter::lookUpNormalizedKey(const OperationContext& context, ValueID collection, ValueID key, Boxed normalizedKey, HashTableOwner owner, LookupAnswer answer)
+{
+    KeyComparison comparison = keyComparisonForType(typeOf(key));
+    RELEASE_ASSERT(comparison != KeyComparison::AnyValue);
+    return lookUpByStub(context, cellOperand(collection), normalizedKey, lookupStubFor(owner, answer, comparison), answer);
 }
 
 Integer HashTableBuiltinEmitter::findPlace(const OperationContext& context, ValueID map, ValueID keyOfSearch)
@@ -218,6 +225,18 @@ void HashTableBuiltinEmitter::generateNewMap(const InlineCall& call)
 void HashTableBuiltinEmitter::generateNewSet(const InlineCall& call)
 {
     finish(call, CellPointer(callStub(call.context(), newSet(), { }).first));
+}
+
+void HashTableBuiltinEmitter::generateNewWeakMap(const InlineCall& call)
+{
+    build().statistics().count(StatisticID::WeakTablesAllocatedByStub);
+    finish(call, CellPointer(callStub(call.context(), newWeakMap(), { }).first));
+}
+
+void HashTableBuiltinEmitter::generateNewWeakSet(const InlineCall& call)
+{
+    build().statistics().count(StatisticID::WeakTablesAllocatedByStub);
+    finish(call, CellPointer(callStub(call.context(), newWeakSet(), { }).first));
 }
 
 void HashTableBuiltinEmitter::generateMapGet(const InlineCall& call)

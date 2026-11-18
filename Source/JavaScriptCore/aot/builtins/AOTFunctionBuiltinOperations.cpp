@@ -12,6 +12,7 @@
 #include "AOTOperationScope.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
+#include "ProxyObject.h"
 
 namespace JSC { namespace AOT {
 
@@ -19,6 +20,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareBoundFunctionAllocation, vo
 {
     prepareInlineAllocation<JSBoundFunction>(instance, InlineAllocation::BoundFunction, instance->globalObject->boundFunctionStructure());
     RELEASE_ASSERT(static_cast<LocalAllocator*>(instance->allocation.inlineAllocations[static_cast<unsigned>(InlineAllocation::BoundFunction)].allocator)->cellSize() == sizeof(JSBoundFunction));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPrepareProxyAllocation, void, (Instance* instance))
+{
+    prepareInlineAllocation<ProxyObject>(instance, InlineAllocation::Proxy, instance->globalObject->proxyObjectStructure());
 }
 
 } } // namespace JSC::AOT

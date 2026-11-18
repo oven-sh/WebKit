@@ -103,7 +103,13 @@ void generateArrayPush(StubAssembler& jit)
     slowPath.append(jit.branchIfNotInt32(value));
     isContiguousShape.link(&jit);
     jit.store64(value, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
-    Jump isStored = jit.jump();
+    auto returnNewLength = [&] {
+        jit.add32(TrustedImm32(1), length);
+        jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
+        boxInt32(jit, length, length);
+        jit.returnToCaller();
+    };
+    returnNewLength();
 
     isDoubleShape.link(&jit);
     jit.saveFPR(number, savedNumber);
@@ -116,11 +122,7 @@ void generateArrayPush(StubAssembler& jit)
     isDouble.link(&jit);
     jit.storeDouble(number, BaseIndex(butterfly, length, CCallHelpers::TimesEight));
     jit.restoreFPR(number, savedNumber);
-    isStored.link(&jit);
-    jit.add32(TrustedImm32(1), length);
-    jit.store32(length, Address(butterfly, Butterfly::offsetOfPublicLength()));
-    boxInt32(jit, length, length);
-    jit.returnToCaller();
+    returnNewLength();
 
     notNumber.link(&jit);
     Jump holdsAnyValue = jit.branch32(CCallHelpers::Equal, kind, TrustedImm32(ContiguousShape));
@@ -205,7 +207,6 @@ void generateAppendElements(StubAssembler& jit)
         jit.returnToCaller();
     };
 
-    Label start = jit.label();
     jit.loadPtr(Address(source, JSObject::butterflyOffset()), elements);
     jit.load32(Address(elements, Butterfly::offsetOfPublicLength()), newLength);
     Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, newLength);
@@ -214,6 +215,7 @@ void generateAppendElements(StubAssembler& jit)
     jit.load32(lengthOfTarget, position);
     jit.add32(position, newLength);
     Jump hasNoRoom = jit.branch32(CCallHelpers::Above, newLength, Address(target, Butterfly::offsetOfVectorLength()));
+    Label hasRoom = jit.label();
     jit.lshift64(position, TrustedImm32(3), element);
     jit.subPtr(element, elements);
     jit.load8(Address(array, JSCell::indexingTypeAndMiscOffset()), kind);
@@ -356,7 +358,11 @@ void generateAppendElements(StubAssembler& jit)
 
     hasNoRoom.link(&jit);
     growVectorFor(jit, { array, target, position, elements, kind, element }, newLength, slowPath);
-    jit.jump().linkTo(start, &jit);
+    jit.move(elements, target);
+    if (isARM64())
+        jit.load32(lengthOfTarget, position);
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), elements);
+    jit.jump().linkTo(hasRoom, &jit);
 
     slowPath.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTAppendElements, { .returns = OperationCall::Returns::Void, .saves = OperationCall::Saves::CallerSavedRegisters });
@@ -368,6 +374,23 @@ static void emitBranchUnlessPlainSet(StubAssembler& jit, GPRReg cell, GPRReg rea
     jit.load32(Address(cell, JSCell::structureIDOffset()), scratch);
     isNoSuchSet.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(realm, OBJECT_OFFSETOF(JSGlobalObject, m_setStructure))));
     isNoSuchSet.append(branchIfWatchpointSetIsNotWatched(jit, Address(realm, OBJECT_OFFSETOF(JSGlobalObject, m_setIteratorProtocolWatchpointSet)), scratch));
+}
+
+StubSignature signatureOfListOfIterable(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1) }); }
+
+void generateListOfIterable(StubAssembler& jit)
+{
+    const GPRReg iterable = jit.operand(0);
+    JumpList callsOperation;
+
+    callsOperation.append(jit.branchIfNotCell(iterable));
+    callsOperation.append(jit.branch8(CCallHelpers::NotEqual, Address(iterable, JSCell::typeInfoTypeOffset()), TrustedImm32(ArrayType)));
+    callsOperation.append(branchIfNotPristine(jit, iterable));
+    jit.move(iterable, jit.result());
+    jit.returnToCaller();
+
+    callsOperation.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTListOfIterable, { .saves = OperationCall::Saves::CallerSavedRegisters });
 }
 
 StubSignature signatureOfAppendIterable(StubKey)

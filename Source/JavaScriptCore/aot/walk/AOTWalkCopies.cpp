@@ -36,11 +36,15 @@ bool openGuessOfKeyOrdersOfItsOpcodes(Walker& walker, const BodyValue& value)
     return callAccessorInSlot(walker, value) || accessStaticFieldInVariable(walker, value);
 }
 
-static ALWAYS_INLINE ValueID valueBehindNamesInWalkCopies(const Code& code, ValueID value)
+static ALWAYS_INLINE bool areNamesOfOneValue(const Code& code, ValueID first, ValueID second)
 {
-    while (!code.isConstant(value) && cellPreservingOpcodes.contains(code.at(value).opcode))
-        value = code.at(value).operand(0);
-    return value;
+    while (first != second) {
+        ValueID& later = first < second ? second : first;
+        if (code.isConstant(later) || !cellPreservingOpcodes.contains(code.at(later).opcode))
+            return false;
+        later = code.at(later).operand(0);
+    }
+    return true;
 }
 
 bool foldComparisonOfValueWithItself(Walker& walker, const BodyValue& comparison)
@@ -53,7 +57,7 @@ bool foldComparisonOfValueWithItself(Walker& walker, const BodyValue& comparison
     if (!left || !right || !left.isRecord() || !right.isRecord())
         return false;
     const Code& code = walker.code();
-    if (valueBehindNamesInWalkCopies(code, left.id()) != valueBehindNamesInWalkCopies(code, right.id()))
+    if (!areNamesOfOneValue(code, left.id(), right.id()))
         return false;
     Type typeOfLeft = walker.types().at(walker.typeOf(left));
     Type typeOfRight = walker.types().at(walker.typeOf(right));

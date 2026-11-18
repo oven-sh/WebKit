@@ -70,14 +70,14 @@ struct RopeAllocation {
     void leaveOnlyNextInterval()
     {
         room.bytes.fill(0);
-        room.at<uint64_t>(FreeCell::offsetOfScrambledBits()) = (static_cast<uint64_t>(sizeof(room.bytes)) << 32 | FakeAllocator::noNextInterval) ^ secretOfFreeList;
+        room.at<uint64_t>(FreeCell::offsetOfScrambledBits()) = (static_cast<uint64_t>(room.bytes.size()) << 32 | FakeAllocator::noNextInterval) ^ secretOfFreeList;
         allocator.makeRoomAt(0, 0);
         allocator.nextInterval() = room.address();
     }
 
     bool tookFirstCellOfNextInterval()
     {
-        return allocator.intervalStart() == room.address() + sizeOfRope && allocator.intervalEnd() == room.address() + sizeof(room.bytes) && allocator.nextInterval() == room.address() + FakeAllocator::noNextInterval;
+        return allocator.intervalStart() == room.address() + sizeOfRope && allocator.intervalEnd() == room.address() + room.bytes.size() && allocator.nextInterval() == room.address() + FakeAllocator::noNextInterval;
     }
 
     uint64_t word(unsigned index) { return room.at<uint64_t>(index * sizeof(uint64_t)); }
@@ -104,7 +104,7 @@ static void testRopesFromEveryStateOfTheFreeList()
             && ropes.word(2) == (second.address() << CompactFibers::shiftOfFiber1LowerInLengthWord | 5) && ropes.word(3) == second.address() >> CompactFibers::widthOfFiber1LowerInLengthWord;
     };
 
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(concatenate(2), { first.address(), second.address() });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && isRopeOfBoth());
     AOT_TEST_CHECK(ropes.allocator.intervalStart() == ropes.room.address() + sizeOfRope);
@@ -133,7 +133,7 @@ static void testSubstringsFromEveryStateOfTheFreeList()
             && ropes.word(3) == (string.address() >> CompactFibers::widthOfFiber1LowerInLengthWord | 2ull << CompactFibers::shiftOfFiber2InUpperWord);
     };
 
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(substring(), { string.address(), 2, 5 });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && isSubstring());
 
@@ -156,7 +156,7 @@ static void testJoinedTextCharacter()
     Ref<StringImpl> secondText = StringImpl::create("cde"_span);
     FakeFlatString first(firstText.get());
     FakeFlatString second(secondText.get());
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     uint64_t joined = ropes.runner.run(concatenate(2), { first.address(), second.address() }).result;
     constexpr std::string_view letters = "abcde";
     for (uint64_t position = 0; position < letters.size(); ++position) {
@@ -180,7 +180,7 @@ static void testLongPairKeyJoined()
     FakeFlatString first(longText.get());
     FakeFlatString second(shortText.get());
     StubKey stub = concatenateKeyOfPair(ConcatenatedKeyForm::Name);
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(stub, { first.address(), second.address() });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && ropes.word(1) == (first.address() | JSString::isRopeInPointer | JSRopeString::is8BitInPointer));
     AOT_TEST_CHECK(ropes.runner.run(stub, { second.address(), second.address() }).calledOperation);
@@ -437,6 +437,41 @@ static void testTypesInTablesThatPassTheCheckOfAProof()
     });
 }
 
+static void testLooseEqualityOfPrimitives()
+{
+    StubRunner runner;
+    auto bitsOf = [](JSValue value) {
+        return static_cast<uint64_t>(JSValue::encode(value));
+    };
+    const uint64_t primitives[] = {
+        bitsOf(jsNumber(0)), bitsOf(jsNumber(1)), bitsOf(jsNumber(-1)), bitsOfDouble(0.0), bitsOfDouble(-0.0), bitsOfDouble(1.0), bitsOfDouble(1.5), bitsOfDouble(PNaN), bitsOfDouble(-PNaN),
+        bitsOf(jsUndefined()), bitsOf(jsNull()), bitsOf(jsBoolean(true)), bitsOf(jsBoolean(false)),
+    };
+    auto numberOf = [](JSValue value) {
+        return value.isNumber() ? value.asNumber() : value.isTrue() ? 1 : 0;
+    };
+    for (uint64_t left : primitives) {
+        for (uint64_t right : primitives) {
+            JSValue leftValue = JSValue::decode(static_cast<EncodedJSValue>(left));
+            JSValue rightValue = JSValue::decode(static_cast<EncodedJSValue>(right));
+            const bool areEqual = leftValue.isUndefinedOrNull() || rightValue.isUndefinedOrNull() ? leftValue.isUndefinedOrNull() && rightValue.isUndefinedOrNull() : numberOf(leftValue) == numberOf(rightValue);
+            StubRun run = runner.run(equal(false), { left, right });
+            AOT_TEST_CHECK(!run.calledOperation && run.result == static_cast<uint64_t>(areEqual));
+        }
+    }
+
+    Ref<StringImpl> text = StringImpl::create("ab"_span);
+    FakeFlatString cell(text.get());
+    FakeFlatString object(text.get());
+    object.type = FinalObjectType;
+    for (uint64_t nullish : { bitsOf(jsUndefined()), bitsOf(jsNull()) }) {
+        AOT_TEST_CHECK(!runner.run(equal(false), { cell.address(), nullish }).calledOperation && !runner.run(equal(false), { nullish, cell.address() }).result);
+        AOT_TEST_CHECK(runner.run(equal(false), { object.address(), nullish }).calledOperation && runner.run(equal(false), { nullish, object.address() }).calledOperation);
+    }
+    for (uint64_t number : { bitsOf(jsNumber(1)), bitsOfDouble(1.5), bitsOf(jsBoolean(true)) })
+        AOT_TEST_CHECK(runner.run(equal(false), { cell.address(), number }).calledOperation && runner.run(equal(false), { number, cell.address() }).calledOperation);
+}
+
 static void testStrictEqualityInBothForms()
 {
     StubRunner runner;
@@ -581,6 +616,7 @@ std::span<const NativeTest> stubValueTests()
         { "stubs/check-proof-of-kinds/a-value-passes-where-its-kind-is-among-them-and-nowhere-else"_s, ImageTests::whenExecutable<testKindsThatPassTheCheckOfAProof> },
         { "stubs/check-proof-of-closure/the-closure-asked-for-passes-and-no-other-object"_s, ImageTests::whenExecutable<testClosuresThatPassTheCheckOfAProof> },
         { "stubs/check-proof-of-type/what-the-record-accepts-passes-and-the-rest-is-left-to-the-run-time"_s, ImageTests::whenExecutable<testTypesInTablesThatPassTheCheckOfAProof> },
+        { "stubs/loose-equality-of-primitives"_s, ImageTests::whenExecutable<testLooseEqualityOfPrimitives> },
         { "stubs/equal/strict-in-the-register-and-in-the-flags"_s, ImageTests::whenExecutable<testStrictEqualityInBothForms> },
     };
     return tests;

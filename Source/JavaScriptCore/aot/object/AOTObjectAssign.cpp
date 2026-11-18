@@ -243,7 +243,7 @@ NEVER_INLINE Object* Object::tryCreateCopyOfFieldsAndExtraProperties(VM& vm, con
     CompiledStructure* named = structures.withExtraProperties(vm, copy->compiledStructure(), structureToName(extraProperties));
     copy->setExtraProperties(vm, extraProperties, named);
     if (!structure.extraPropertiesStructureID() && named->extraPropertiesStructureID() == source.extraProperties()->structureID())
-        const_cast<Object&>(source).JSCell::setStructure(vm, named);
+        const_cast<Object&>(source).setVariantOfStructure(vm, named);
     return copy;
 }
 
@@ -574,7 +574,7 @@ static bool storeExtraProperties(VM& vm, Object& target, const AssignmentPlan& p
     if (before != after)
         extra->setStructure(vm, after);
     if (target.structure() != plan.targetAfter)
-        target.JSCell::setStructure(vm, plan.targetAfter);
+        target.setVariantOfStructure(vm, plan.targetAfter);
     return true;
 }
 
@@ -807,6 +807,7 @@ static std::optional<AssignmentSource> assignmentSourceFor(JSObject* source, std
         return AssignmentSource { source, nullptr, source, 0, excludedNames, defines };
     }
     auto* compiledSource = uncheckedDowncast<Object>(source);
+    compiledSource->finishFillingExtraProperties(compiledSource->vm());
     uint32_t orderWord = compiledSource->orderWord();
     if (isOrderStoredOutOfLine(orderWord))
         return std::nullopt;

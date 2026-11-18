@@ -106,6 +106,9 @@ LValue VectorOutput::compute(Arithmetic operation, LValue left, LValue right)
         FPRReg destination = params[0].fpr();
         FPRReg left = params[1].fpr();
         FPRReg right = params[2].fpr();
+        bool isCommutative = operation == Arithmetic::Add || operation == Arithmetic::Mul;
+        if (isCommutative && destination == right)
+            std::swap(left, right);
         switch (operation) {
         case Arithmetic::Add:
             jit.vectorAdd(numberLanes, left, right, destination);

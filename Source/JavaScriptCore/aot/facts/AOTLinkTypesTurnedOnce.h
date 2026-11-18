@@ -13,7 +13,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class TypesOfFlowTurnedOnce {
 public:
-    ALWAYS_INLINE TypeID turn(const LinkFlow& flow, TypeArena& types, const LinkType& type)
+    ALWAYS_INLINE TypeID turnUnlessAnything(const LinkFlow& flow, TypeArena& types, const LinkType& type)
     {
         if (type.holdsPrimitivesAlone())
             return type.isNever() ? TypeID() : type.primitivesWithoutLiteralsAsType();
@@ -55,7 +55,10 @@ private:
         size_t place = hash & mask;
         while (m_slots[place].isFilled)
             place = (place + 1) & mask;
-        m_slots[place] = { type, flow.toTypeID(types, type), true };
+        TypeID turned = flow.toTypeID(types, type);
+        if (turned && !holdsOnlyPrimitives(turned) && types.at(turned).isAnything())
+            turned = { };
+        m_slots[place] = { type, turned, true };
         ++m_numberKept;
         return m_slots[place].turned;
     }

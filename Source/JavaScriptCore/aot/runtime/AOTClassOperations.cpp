@@ -97,7 +97,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRememberStructureOfClass, size_t, 
     offsetOfStructures &= ~StructuresOfHeir::asksElements;
     bool isRemembered = classes.rememberStructureOfInstances(vm, cell, classLayoutAt(classes, classIndex), offsetOfStructures);
     if (asksElements)
-        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(cell, offsetOfStructures);
+        isRemembered = isRemembered && classes.rememberPrototypeWithoutElements(vm, cell, offsetOfStructures);
     countEvent(vm, isRemembered ? RuntimeCounterID::BuiltinSubclassStructuresAccepted : RuntimeCounterID::BuiltinSubclassStructuresRejected);
     return isRemembered;
 }
@@ -938,8 +938,10 @@ static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentB
     return { };
 }
 
+enum class ObjectsWithPrivateFields : bool { LowestAlone, WholeChain };
+
 template<typename Functor>
-static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, const Functor& functor)
+static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, const Functor& functor, ObjectsWithPrivateFields objectsAsked = ObjectsWithPrivateFields::WholeChain)
 {
     VM& vm = globalObject->vm();
     if (!vm.aotState().someClassHasPrivateNames)
@@ -952,8 +954,13 @@ static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject*
         return;
     State& state = *instance->state;
     MarkedArgumentBuffer objects;
-    size_t numberBelowProxies = collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
-    RETURN_IF_EXCEPTION(scope, void());
+    size_t numberBelowProxies = 1;
+    if (objectsAsked == ObjectsWithPrivateFields::LowestAlone)
+        objects.append(lowest);
+    else {
+        numberBelowProxies = collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     MarkedArgumentBuffer tokens;
     collectClassTokens(vm, state, objects, tokens);
     if (objects.hasOverflowed() || tokens.hasOverflowed()) [[unlikely]] {
@@ -980,6 +987,27 @@ unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globa
         return IterationStatus::Continue;
     });
     return count;
+}
+
+bool PropertyWalk::hasOwnPrivateField(JSGlobalObject* globalObject, JSObject* object)
+{
+    bool hasField = false;
+    forEachWrittenPrivateFieldOn(globalObject, object, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
+        hasField = true;
+        return IterationStatus::Done;
+    }, ObjectsWithPrivateFields::LowestAlone);
+    return hasField;
+}
+
+bool PropertyWalk::isRuntimeProperty(VM& vm, UniquedStringImpl* name, JSValue value)
+{
+    if (!PropertyName(name).isPrivateName())
+        return false;
+    for (Instance* instance : vm.aotState().instances) {
+        if (instance->state->objects->classes.namesClassObject(name) || classTokenOrNull(*instance->state, value))
+            return true;
+    }
+    return false;
 }
 
 bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches)

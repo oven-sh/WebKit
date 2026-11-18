@@ -31,7 +31,7 @@ bool lookupPassesHolderLinkedAnew(const Program&, BuiltinID start, PropertyKeyID
 
 BuiltinClassID primitiveClassOf(uint16_t primitives);
 bool isClassOfPrimitives(BuiltinClassID);
-bool isPrototypeOfPrimitives(const BuiltinTable&, BuiltinID);
+bool isPrototypeWithTrackedNames(const BuiltinTable&, BuiltinID);
 TypeID typeOfValuesThatLookUpAsInstancesOf(TypeArena&, BuiltinClassID);
 
 bool isClosedKey(const Program&, BuiltinID holder, PropertyKeyID);

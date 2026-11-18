@@ -1,12 +1,13 @@
 # function count(list, ask) { let found = 0; for (let i = 0; i < list.length; i++) if (ask(list[i])) found++; return found; }
 # function held(list) { let found = 0; for (let i = 0; i < list.length; i++) if (list[i]) found++; return found; }      sink(count, held);
-# In a loop the truth of a value of which nothing is known is asked in line: an object? true? nothing or false? What a call by value has answered is asked for the two booleans first:
-# `false` is answered by one compare where three were asked (the turn of a list method that is entered by value: some, find, filter), `true` by two as before;
+# In a loop the truth of a value of which nothing is known is asked in line: an object? true? nothing or false? What a call by value has answered, and a count adds, is asked for the two booleans first:
+# one compare tells what is no cell and no number (nothing and the two booleans), whose last bit is its truth;
 # an object and nothing pay two compares more. What is read out of a list keeps the old order: the bits of `false` are compared nowhere in held.
 # RUN: emit f1:Body mechanisms=all
 # CHECK-LABEL: unit f1:Body
-# CHECK: = Const64(7)
-# CHECK: = Const64(6)
+# CHECK: = BelowEqual(
+# CHECK: = Trunc(
+# CHECK: = BitAnd(
 # With guesses the turns of held are laid out eight in a row, once a kind of storage: a 6 stands there as the counter's offset of the seventh turn and as the shape of doubles. Without them the loop stands as written, its truth in line.
 # RUN(HELD): emit f2:Body mechanisms=all-Guesses
 # HELD-LABEL: unit f2:Body

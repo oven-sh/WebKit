@@ -134,7 +134,9 @@ StubSignature signatureOfGetterAtSite(StubKey)
 #endif
 }
 
-void generateGetterAtSite(StubAssembler& jit)
+StubSignature signatureOfSetterAtSite(StubKey key) { return signatureOfGetterAtSite(key); }
+
+static void generateAccessorHalfAtSite(StubAssembler& jit, bool isSetter)
 {
     constexpr SiteUse use = SiteUse::Call;
     using Form = SiteAnswers::Form;
@@ -160,7 +162,7 @@ void generateGetterAtSite(StubAssembler& jit)
     JumpList isNoPair;
     auto returnGetterOf = [&](GPRReg getterSetter) {
         branchUnlessAccessorPair(jit, getterSetter, isNoPair);
-        jit.loadPtr(Address(getterSetter, GetterSetter::offsetOfGetter()), result);
+        jit.loadPtr(Address(getterSetter, isSetter ? GetterSetter::offsetOfSetter() : GetterSetter::offsetOfGetter()), result);
         jit.returnToCaller();
     };
     auto branchUnlessForm = [&](Form form) {
@@ -168,6 +170,12 @@ void generateGetterAtSite(StubAssembler& jit)
     };
 
     constexpr int32_t bitsOfCommonForm = static_cast<int32_t>(SiteAnswers::bitsOf(use, Form::OwnGetterInStorage));
+    JumpList storesInOwnWay;
+    if (isSetter) {
+        Jump isCompiledObject = jit.branchIfType(object, CompiledObjectType);
+        storesInOwnWay.append(jit.branchIfNotType(object, FinalObjectType));
+        isCompiledObject.link(&jit);
+    }
     const AnswersOfGetterStub answers(jit, distance, place);
     jit.load32(Address(object, JSCell::structureIDOffset()), key);
     jit.or32(TrustedImm32(bitsOfCommonForm), key);
@@ -219,6 +227,7 @@ void generateGetterAtSite(StubAssembler& jit)
     returnGetterOf(key);
 
     isNoGetter.link(&jit);
+    storesInOwnWay.link(&jit);
     jit.move(TrustedImm64(JSValue::ValueUndefined), result);
     jit.returnToCaller();
 
@@ -235,9 +244,24 @@ void generateGetterAtSite(StubAssembler& jit)
         fillAnswersOfPlaceOfGetter(jit, object, nameBehindMiss, distance);
         jit.jump().linkTo(isCounted, &jit);
     });
+    if (isSetter) {
+        jit.move(TrustedImm64(JSValue::ValueUndefined), result);
+        jit.returnToCaller();
+        return;
+    }
     checkStubOperands(getterByAccessTable(), { object });
     loadNameOfPlaceOfGetter(jit, distance, distance == gprOf(stubImmediateRegister) ? distance : jit.allocateScratch(stubImmediateRegister), scratchBehindMiss);
     jit.jumpToStub(getterByAccessTable());
+}
+
+void generateGetterAtSite(StubAssembler& jit)
+{
+    generateAccessorHalfAtSite(jit, false);
+}
+
+void generateSetterAtSite(StubAssembler& jit)
+{
+    generateAccessorHalfAtSite(jit, true);
 }
 
 } } // namespace JSC::AOT

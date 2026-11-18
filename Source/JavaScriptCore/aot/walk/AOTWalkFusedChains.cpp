@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTArrayCallbacks.h"
 #include "AOTBodyIndex.h"
 #include "AOTBuiltinMembers.h"
 #include "AOTBuiltinTable.h"
@@ -114,12 +115,87 @@ static TypeID elementTypeOfCallback(const Walker& walker, FunctionID function, u
     return place < parameters.size() ? parameters[place].writtenOrSeenToArrive() : TypeID();
 }
 
+static bool copiesFieldsOfElement(const Walker& walker, FunctionID function)
+{
+    const Function& callee = walker.program().at(function);
+    const BodyIndex* index = walker.facts().bodies().find(function);
+    unsigned place = callee.firstParameterIndex();
+    if (!index || !index->opcodes().contains(Opcode::NewObject) || place >= index->block(entryBlock).numberOfParameters())
+        return false;
+    ValueID element = index->block(entryBlock).parameter(place);
+    auto isElement = [&](ValueID value) {
+        value = value ? index->stripCasts(value) : value;
+        while (value && value != element) {
+            ValueID checked = index->isParameter(value) ? index->valueNarrowedInto(value) : index->opcodeOf(value) == Opcode::RequireObjectCoercible ? index->value(value).operand(0) : ValueID();
+            value = checked ? index->stripCasts(checked) : checked;
+        }
+        return value && value == element;
+    };
+    static constexpr OpcodeSet checks { Opcode::RequireObjectCoercible, Opcode::TypeTest };
+    bool readsField = false;
+    for (uint32_t number = 0; number < index->numberOfBlocks(); ++number) {
+        BodyBlock block = index->block(BlockID(number));
+        if (block.terminator().kind() == TerminatorKind::Throw)
+            continue;
+        for (BodyValue value : block.values()) {
+            Opcode opcode = value.opcode();
+            if (opcodesThatStateTypes.contains(opcode) || checks.contains(opcode))
+                continue;
+            bool takesElement = false;
+            bool takesField = false;
+            value.forEachOperand([&](ValueID operand, uint32_t) {
+                takesElement |= isElement(operand);
+                ValueID read = operand ? index->stripCasts(operand) : operand;
+                takesField |= read && !index->isParameter(read) && index->opcodeOf(read) == Opcode::PropGet;
+            });
+            if (takesElement) {
+                if (opcode != Opcode::PropGet || value.isFreeName() || !value.key() || walker.program().at(value.key()).kind != PropertyKeyKind::Text || walker.program().nameClassOf(value.key()) != NameClass::Ordinary)
+                    return false;
+                readsField = true;
+            }
+            if (takesField && opcode != Opcode::NewObject)
+                return false;
+        }
+    }
+    return readsField;
+}
+
+static bool isKnownElementType(const Walker& walker, TypeID arriving)
+{
+    return arriving && !isNeverType(arriving) && !walker.types().isUninformative(arriving);
+}
+
+static bool copiesFieldsOfUnknownElement(const Walker& walker, FunctionID function)
+{
+    const Function& callee = walker.program().at(function);
+    std::span<const LinkedParameter> parameters = walker.facts().linked().parametersOf(function);
+    size_t place = callee.firstParameterIndex();
+    bool isSeen = place < parameters.size() && isKnownElementType(walker, parameters[place].seenToArrive);
+    bool isExpected = isKnownElementType(walker, elementTypeOfCallback(walker, function, 0));
+    return !isSeen && (isExpected || walker.fusesUncopiedMethod()) && walker.runsInIterations() && copiesFieldsOfElement(walker, function);
+}
+
 static bool elementIsSeenToArriveAtFusedCallback(const Walker& walker, FunctionID function, unsigned placeOfElement)
 {
     if (placeOfElement >= walker.program().at(function).numberOfPositionalParameters())
         return true;
-    TypeID arriving = elementTypeOfCallback(walker, function, placeOfElement);
-    return arriving && !isNeverType(arriving) && !walker.types().isUninformative(arriving);
+    return isKnownElementType(walker, elementTypeOfCallback(walker, function, placeOfElement)) || (!placeOfElement && copiesFieldsOfUnknownElement(walker, function));
+}
+
+static bool readsElementOfParameter(const Function& callee, const BodyIndex& index, const BodyValue& read)
+{
+    ValueID object = index.stripCasts(read.objectOperand());
+    return object && index.isParameter(object) && index.blockOf(object) == entryBlock && callee.entryParameterKind(object.index()) == EntryParameter::Parameter;
+}
+
+static bool runsInEveryCall(const BodyIndex& index, BlockID block)
+{
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        BlockID end(number);
+        if (index.isReachable(end) && index.terminator(end).kind() == TerminatorKind::Return && !index.dominates(block, end))
+            return false;
+    }
+    return true;
 }
 
 static bool callbackMayBeFused(const Walker& walker, FunctionID function, unsigned numberOfArguments, bool storageTellsElements)
@@ -139,6 +215,8 @@ static bool callbackMayBeFused(const Walker& walker, FunctionID function, unsign
             return false;
         for (BodyValue value : block.values()) {
             if (!mayStandInFusedCallback(value.opcode()) && !(isPure && value.opcode() == Opcode::Call) && !callsMathFunction(walker, *index, value))
+                return false;
+            if (value.opcode() == Opcode::ElemGet && !readsElementOfParameter(callee, *index, value) && runsInEveryCall(*index, block.id()))
                 return false;
         }
     }
@@ -227,6 +305,9 @@ static bool collectFusedChain(Walker& walker, const BodyValue& firstCall, Builti
         chain.lastCall = callID;
         chain.last = callID;
         if (isReduce) {
+            TypeID arriving = chain.links.isEmpty() && walker.isInLoop() ? elementTypeOfCallback(walker, callback, 1) : TypeID(TypeTable::number);
+            if (!arriving || isNeverType(arriving) || !walker.types().at(arriving).hasOnlyPrimitives(Primitive::Number | Primitive::Undefined))
+                return false;
             chain.start = reducesFromFirst ? ValueID() : arguments[1];
             chain.end = EndOfFusedChain::Reduce;
             return true;
@@ -368,6 +449,26 @@ static bool mayStandInsideFusedChain(const BodyIndex& index, ValueID value)
     return !opcodesThatStateTypes.contains(opcode) && declaredBoundInTable(opcode).isPure() && !operandsMayRunCode(opcode);
 }
 
+static bool stubRunsOnlyMethod(const Walker& walker, const BodyValue& firstCall, BuiltinID firstMethod, const FusedChain& chain)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID closure = isOneMethod(chain) && chain.end != EndOfFusedChain::Length && !chain.callbacks.isEmpty() ? index.stripCasts(chain.callbacks[0]) : ValueID();
+    if (!closure || index.isParameter(closure) || index.opcodeOf(closure) != Opcode::NewClosure)
+        return false;
+    if (!walker.isInLoop() && !walker.facts().linked().functionsCalledInLoopsOfOwnFile.get(walker.unit().function.index()))
+        return false;
+    auto& types = walker.types();
+    Reference receiver = walker.referenceOf(firstCall.thisValueOperand());
+    Type array = types.at(receiver && receiver.isRecord() ? walker.typeOf(receiver) : TypeID(TypeTable::anything));
+    const ClassPart* part = array.isObject() ? singleBuiltinClassOf(types, array) : nullptr;
+    if (!part || part->builtinClass != BuiltinClasses::Array || part->hasWrittenContents())
+        return false;
+    FunctionID callback = index.value(closure).function();
+    std::span<const LinkedParameter> parameters = walker.facts().linked().parametersOf(callback);
+    size_t place = walker.program().at(callback).firstParameterIndex() + (chain.end == EndOfFusedChain::Reduce);
+    return (place >= parameters.size() || !isKnownElementType(walker, parameters[place].seenToArrive)) && stubCanRunCallback(walker.program(), walker.facts(), firstMethod, callback, !!chain.start);
+}
+
 bool fuseChainOfCallbacks(Walker& walker, const BodyValue& firstCall, BuiltinID firstMethod, size_t fewestLinks)
 {
     if (!walker.opensGuesses() || !walker.has(Mechanism::Inlining) || !walker.has(Mechanism::Guesses) || !walker.has(Mechanism::EscapeAnalysis) || walker.program().admitsReplacedBuiltins || walker.standsUnderHandler() || walker.hasStringsInBuilders()
@@ -376,7 +477,7 @@ bool fuseChainOfCallbacks(Walker& walker, const BodyValue& firstCall, BuiltinID 
     if (!firstCall.thisValueOperand())
         return false;
     FusedChain chain;
-    if (!collectFusedChain(walker, firstCall, firstMethod, fewestLinks, chain))
+    if (!collectFusedChain(walker, firstCall, firstMethod, fewestLinks, chain) || stubRunsOnlyMethod(walker, firstCall, firstMethod, chain))
         return false;
     Reference receiver = walker.referenceOf(firstCall.thisValueOperand());
     if (!chain.links.isEmpty() && receiver && receiver.isValue() && !isKnownPristine(walker, receiver) && isArraySubclassInstance(walker, walker.typeOf(receiver)))
@@ -423,6 +524,7 @@ bool fuseChainOfCallbacks(Walker& walker, const BodyValue& firstCall, BuiltinID 
     BlockID asWritten;
     SetForScope exitsAtGenericLoop(walker.exitsChainAtGenericLoops(), !isReduce && (!walker.isInLoop() || holdsNoNumbers(walker, chain)));
     SetForScope storageOfResult(walker.storageOfFusedChain(), storageOfAppendedArray(walker, chain));
+    SetForScope copiesFields(walker.fusedChainCopiesFields(), chain.firstCallback && !isReduce && copiesFieldsOfUnknownElement(walker, chain.firstCallback));
     walker.noteThatCopyMakesNewList(text, operands[0]);
     bool isCopied = !operands.contains(Reference()) && copyFusedChain(walker, index.value(chain.lastCall), text, operands.span(), asWritten);
     walker.noteThatCopyMakesNewList({ }, { });

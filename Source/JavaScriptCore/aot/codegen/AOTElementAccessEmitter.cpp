@@ -83,6 +83,8 @@ Condition ElementAccessEmitter::isPristineArray(CellPointer array, OptionSet<Pri
 {
     if (!aspects.containsAny({ PristineAspects::Names, PristineAspects::Storage }))
         return boolean(true);
+    if (isARM64())
+        return hasBits(loadField<Word32>(array, m_heaps.JSCell_usefulBytes), JSC::IsPristine << 8 * (JSCell::typeInfoFlagsOffset() - JSCell::indexingTypeAndMiscOffset()));
     return hasBits(loadByte(array, m_heaps.JSCell_typeInfoFlags), JSC::IsPristine);
 }
 
@@ -132,6 +134,18 @@ Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage 
     if (IndexingType otherShapes = bitsThatOtherShapesHave(kind))
         return hasNoBits(loadByte(array, m_heaps.JSArray_indexingTypeAndMisc), otherShapes);
     return hasShape(indexingMode(array, arrayStorageTestMask), arrayStorageFormOf(kind));
+}
+
+void ArrayHeaderTest::addStorage(ArrayStorage kind, bool isWritable)
+{
+    uint32_t shapeMask = isWritable ? IndexingShapeAndWritabilityMask : IndexingShapeMask;
+    mask |= shapeMask;
+    header |= static_cast<uint32_t>(arrayStorageFormOf(kind).shape) & shapeMask;
+}
+
+Condition ElementAccessEmitter::passesHeaderTest(CellPointer array, const ArrayHeaderTest& test)
+{
+    return equal(bitAnd(loadField<Word32>(array, m_heaps.JSCell_usefulBytes), word32(test.mask)), word32(test.header));
 }
 
 static constexpr uint32_t doubleBitAmongNumericShapes = DoubleShape & ~Int32Shape;
@@ -661,7 +675,12 @@ Boxed ElementAccessEmitter::boxedPosition(ValueID position)
 
 void ElementAccessEmitter::generateGetArrayLength(const ValueContext& value)
 {
-    define(value, arrayLength(in<CellPointer>(value->arrayOperand())));
+    if (const auto* known = generator().listStorageForLength(value.id())) [[unlikely]] {
+        define(value, Integer(known->length));
+        return;
+    }
+    CellPointer array = in<CellPointer>(value->arrayOperand());
+    define(value, value->storageOperand() ? publicLength(elementsOf(value, array)) : arrayLength(array));
 }
 
 void ElementAccessEmitter::generateGetArrayStorage(const ValueContext& value)
@@ -748,7 +767,7 @@ Integer ElementAccessEmitter::positionOfElementWord(const ValueContext& value, c
     Integer position = indexInsideLength(value->positionOperand());
     if (checksBounds()) {
         CellPointer array = askedAnew(storage.array);
-        stopUnlessInside(value, isWritten == StorageIsWritten::Yes ? hasWritableNumericStorage(array) : hasDoubleOrInt32Storage(array));
+        stopUnlessInside(value, value->isOfAnyStorage() ? takesNumbersByKindOfStorage(array, true) : isWritten == StorageIsWritten::Yes ? hasWritableNumericStorage(array) : hasDoubleOrInt32Storage(array));
         stopUnlessInside(value, below(position, publicLength(storage)));
     }
     return position;
@@ -766,6 +785,8 @@ void ElementAccessEmitter::generateRestoreElementWord(const ValueContext& value)
     CellPointer array = in<CellPointer>(value->arrayOperand());
     ArrayElements storage = elementsOf(value, array);
     m_out.store64(in<Pointer>(value->valueOperand()).value(), elementOfUnknownForm(storage, positionOfElementWord(value, storage, StorageIsWritten::Yes)));
+    if (value->isOfAnyStorage())
+        emitter<BarrierEmitter>().barrier(value, array);
 }
 
 void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
@@ -789,6 +810,7 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
     if (generator().usesLoopForms(value.block())) {
         const ArrayStorageForm& form = arrayStorageFormOf(ArrayStorage::Contiguous);
         LBasicBlock isOther = newBlock();
+        LBasicBlock clearsOne = newBlock();
         LBasicBlock loop = newBlock();
         LBasicBlock isEmptied = newBlock();
         branch(equal(current, length), { normalEdge(done), normalEdge(isOther) });
@@ -797,15 +819,22 @@ void ElementAccessEmitter::generateSetArrayLength(const ValueContext& value)
         branchUnless(below(length, current), otherwise);
         branchUnless(belowOrEqual(vectorLength(elements), integer(Asked::mostElementsOfVector)), otherwise);
         branchUnless(notEqual(kind, word32(ArrayWithDouble)), otherwise);
-        ValueFromBlock start = m_out.anchor(current.value());
-        m_out.jump(loop);
+        ValueFromBlock evenStart = m_out.anchor(current.value());
+        branch(isZero(bitAnd(sub(current, length), integer(1))), { normalEdge(loop), normalEdge(clearsOne) });
+
+        m_out.appendTo(clearsOne);
+        Integer last = sub(current, integer(1));
+        storeRawElement(form, elements, last, rawHole(form));
+        ValueFromBlock oddStart = m_out.anchor(last.value());
+        branch(above(last, length), { normalEdge(loop), normalEdge(isEmptied) });
 
         m_out.appendTo(loop);
-        Integer position(m_out.phi(Machine::Int64, start));
-        Integer index = sub(position, integer(1));
-        storeRawElement(form, elements, index, rawHole(form));
-        m_out.addIncomingToPhi(position.value(), m_out.anchor(index.value()));
-        branch(above(index, length), { normalEdge(loop), normalEdge(isEmptied) });
+        Integer position(m_out.phi(Machine::Int64, evenStart, oddStart));
+        Integer next = sub(position, integer(2));
+        storeRawElement(form, elements, sub(position, integer(1)), rawHole(form));
+        storeRawElement(form, elements, next, rawHole(form));
+        m_out.addIncomingToPhi(position.value(), m_out.anchor(next.value()));
+        branch(above(next, length), { normalEdge(loop), normalEdge(isEmptied) });
 
         m_out.appendTo(isEmptied);
         setPublicLength(elements, length);
@@ -906,6 +935,8 @@ void ElementAccessEmitter::holdPositionInsideList(const ValueContext& access)
 
 ArrayElements ElementAccessEmitter::elementsOf(const ValueContext& access, CellPointer array)
 {
+    if (LValue start = generator().startOfRow(access.id())) [[unlikely]]
+        return { array, Pointer(start) };
     std::optional<Pointer> storage = inOptional<Pointer>(access->storageOperand());
     if (!storage)
         return elementsOf(array);
@@ -916,7 +947,7 @@ ArrayElements ElementAccessEmitter::elementsOf(const ValueContext& access, CellP
     return { array, *storage };
 }
 
-std::optional<ElementAccessEmitter::IndexBesideConstant> ElementAccessEmitter::indexBesideConstant(ValueID position, LValue sum)
+std::optional<ElementAccessEmitter::IndexBesideConstant> ElementAccessEmitter::indexBesideConstant(ValueID position, LValue sum, PositionUses uses)
 {
     static constexpr int32_t greatestConstant = std::numeric_limits<int16_t>::max();
     if (sum->opcode() != Machine::Add || !sum->child(1)->hasInt32())
@@ -925,7 +956,17 @@ std::optional<ElementAccessEmitter::IndexBesideConstant> ElementAccessEmitter::i
     int32_t constant = sum->child(1)->asInt32();
     if (index->hasInt32() || !Machine::clearsUpperHalf(index) || constant < -greatestConstant || constant > greatestConstant)
         return std::nullopt;
-    for (ValueID named = position; index->opcode() != Machine::Phi; named = operationAt(named).valueOperand()) {
+    auto findOperandOfIndex = [&]() -> ValueID {
+        const Operation& definition = operationAt(definitionOf(position));
+        for (uint32_t operandIndex = 0; operandIndex < definition.numberOfOperands(); ++operandIndex) {
+            ValueID operand = definition.operand(operandIndex);
+            if (operand && representationOf(operand) == Representation::Int32 && generator().isGenerated(operand) && get(operand).value == index)
+                return operand;
+        }
+        return { };
+    };
+    bool indexIsHeld = index->opcode() == Machine::Phi || (uses == PositionUses::OneOrSharedIndex && !sum->useCount());
+    for (ValueID named = position; !indexIsHeld; named = operationAt(named).valueOperand()) {
         if (generator().code().useCountOf(named) != 1)
             return std::nullopt;
         if (operationAt(named).opcode != Opcode::Narrowed)
@@ -933,17 +974,34 @@ std::optional<ElementAccessEmitter::IndexBesideConstant> ElementAccessEmitter::i
     }
     if (constant < 0)
         return IndexBesideConstant::IsNotNegative;
-    const Operation& definition = operationAt(definitionOf(position));
-    for (uint32_t operandIndex = 0; operandIndex < definition.numberOfOperands(); ++operandIndex) {
-        ValueID operand = definition.operand(operandIndex);
-        if (operand && representationOf(operand) == Representation::Int32 && generator().isGenerated(operand) && get(operand).value == index)
-            return typeOf(operand).integers.minimum >= 0 ? IndexBesideConstant::IsNotNegative : IndexBesideConstant::IsSigned;
-    }
-    return std::nullopt;
+    ValueID operand = findOperandOfIndex();
+    if (!operand)
+        return std::nullopt;
+    return typeOf(operand).integers.minimum >= 0 ? IndexBesideConstant::IsNotNegative : IndexBesideConstant::IsSigned;
 }
 
-Integer ElementAccessEmitter::indexInsideLength(ValueID position)
+std::optional<Integer> ElementAccessEmitter::indexAboveSharedIndex(ValueID position)
 {
+    const Operation& sum = operationAt(definitionOf(position));
+    bool isLeast = operationAt(position).opcode == Opcode::Narrowed;
+    if (!isLeast && (sum.opcode != Opcode::Add || operationAt(sum.operand(1)).opcode != Opcode::Integer))
+        return std::nullopt;
+    ValueID least = isLeast ? position : sum.operand(0);
+    int64_t distance = isLeast ? 0 : operationAt(sum.operand(1)).integer();
+    if (distance < 0 || distance > std::numeric_limits<int16_t>::max() || !generator().isGenerated(least) || representationOf(least) != Representation::Int32 || typeOf(least).integers.minimum < 0)
+        return std::nullopt;
+    static constexpr unsigned fewestUsesOfSharedIndex = 3;
+    LValue word = get(least).value;
+    if (word->opcode() != Machine::Add || generator().code().useCountOf(least) < fewestUsesOfSharedIndex)
+        return std::nullopt;
+    build().statistics().count(StatisticID::ConstantsFoldedIntoElementAddresses);
+    return Integer(m_out.add(m_out.extendWordThatIsNotNegative(word), m_out.constInt64(distance)));
+}
+
+Integer ElementAccessEmitter::indexInsideLength(ValueID position, PositionUses uses)
+{
+    if (LValue place = generator().placeInRow(position)) [[unlikely]]
+        return Integer(place);
     Operand operand = get(position);
     if (operand.representation != Representation::Int32)
         return indexOrElse(position, true, nullptr);
@@ -957,7 +1015,9 @@ Integer ElementAccessEmitter::indexInsideLength(ValueID position)
                 return Integer(wide);
         }
     }
-    std::optional<IndexBesideConstant> index = indexBesideConstant(position, word);
+    if (std::optional<Integer> index = uses == PositionUses::OneOrSharedIndex ? indexAboveSharedIndex(position) : std::nullopt)
+        return *index;
+    std::optional<IndexBesideConstant> index = indexBesideConstant(position, word, uses);
     if (!index)
         return Integer(m_out.extendWordThatIsNotNegative(word));
     build().statistics().count(StatisticID::ConstantsFoldedIntoElementAddresses);
@@ -2093,6 +2153,10 @@ void ElementAccessEmitter::generateCopyElements(const ValueContext& value)
     Boxed target = in<Boxed>(value->targetOperand());
     Boxed source = in<Boxed>(value->sourceOperand());
     Integer targetIndex = integerOf(value->targetIndexOperand());
+    if (value->elementsAreCounted()) {
+        define(value, low32(callOperation<Integer>(value, RuntimeOperation::CopyCountedElements, { target, source, targetIndex, integerOf(value->countOperand()) })));
+        return;
+    }
     Integer sourceIndex = integerOf(value->sourceIndexOperand());
     define(value, low32(callOperation<Integer>(value, RuntimeOperation::CopyElements, { target, source, targetIndex, sourceIndex, integerOf(value->countOperand()) })));
 }
@@ -2104,6 +2168,13 @@ void ElementAccessEmitter::generateCopyElementsDown(const ValueContext& value)
     Integer targetIndex = integerOf(value->targetIndexOperand());
     Integer sourceIndex = integerOf(value->sourceIndexOperand());
     define(value, low32(callOperation<Integer>(value, RuntimeOperation::CopyElementsDown, { target, source, targetIndex, sourceIndex, integerOf(value->countOperand()) })));
+}
+
+void ElementAccessEmitter::generateCountCopyableElements(const ValueContext& value)
+{
+    Boxed target = in<Boxed>(value->targetOperand());
+    Boxed source = in<Boxed>(value->sourceOperand());
+    define(value, low32(callOperation<Integer>(value, RuntimeOperation::CountCopyableElements, { target, source, integerOf(value->indexOperand()), integerOf(value->countOperand()), integer(value->sourceIsCounted()) })));
 }
 
 void ElementAccessEmitter::generateFillElements(const ValueContext& value)

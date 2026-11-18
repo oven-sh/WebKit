@@ -25,7 +25,7 @@ Reference codeUnitBesideCharCode(Walker& walker, Reference number)
     if (!id)
         return { };
     Type type = walker.types().at(id);
-    if (!type.isNumberWithoutFraction() || type.isInteger())
+    if (!type.isNumber() || type.isInteger())
         return { };
     return codeUnitOfCharCodeInSight(walker, number);
 }

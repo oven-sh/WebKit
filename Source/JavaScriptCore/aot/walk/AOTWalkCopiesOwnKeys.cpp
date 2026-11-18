@@ -198,9 +198,14 @@ std::optional<OwnKeyOrder> ownKeysInSight(Walker& walker, Reference object, Acce
     if (!walker.has(Mechanism::TypedOperations) || !object || !object.isValue())
         return std::nullopt;
     Reference known = nameWhoseOrderWordIsKnownInCopiesOwnKeys(walker, object);
-    LayoutID layout = known ? onlyLayoutProvenInCopiesOwnKeys(walker, walker.typeOf(object)) : LayoutID();
+    std::optional<Vector<FieldIndex, 8>> remaining = known ? std::nullopt : remainingFieldsOfFreshRecord(walker, object);
+    LayoutID layout = known || remaining ? onlyLayoutProvenInCopiesOwnKeys(walker, walker.typeOf(object)) : LayoutID();
     if (!layout || !canPlanOwnKeysOfLayoutInCopiesOwnKeys(walker, layout))
         return std::nullopt;
+    if (remaining) {
+        walker.count(StatisticID::OwnKeysListedAfterDeletions);
+        return ownKeysAmongCreatedFieldsInCopiesOwnKeys(walker, layout, remaining->span(), accessors);
+    }
 
     uint32_t orderWord = *walker.state().orderWordOf(known);
     if (orderWord & ~orderAndCountMask || isOrderStoredOutOfLine(orderWord))

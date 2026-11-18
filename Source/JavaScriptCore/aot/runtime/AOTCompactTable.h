@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCellFormat.h"
 #include "AOTCompactStorage.h"
 #include "AOTSlotRepresentation.h"
 #include "HeapCellInlines.h"
@@ -84,6 +85,10 @@ public:
     static constexpr unsigned sizeStepShiftOfGrowthPlan = 56;
     static constexpr unsigned hashBits = 24;
     static constexpr unsigned hashMask = (1u << hashBits) - 1;
+    static constexpr uint32_t firstSubstringHit = 1u << hashBits;
+    static constexpr uint32_t secondSubstringHit = firstSubstringHit << 1;
+    static constexpr uint32_t substringHits = firstSubstringHit | secondSubstringHit;
+    static_assert(!canPassShapeTest(substringHits) && !mayBeUpperHalfOfSlimClosureWord(substringHits));
     static constexpr uint64_t keyMultiplier = 0x9e3779b97f4a7c15;
     static ALWAYS_INLINE unsigned hashOfKeyBits(uint64_t bits)
     {
@@ -150,13 +155,17 @@ public:
     static Structure* createStructure(VM&);
     static Structure* structureOf(VM&);
     static CompactTable* tryCreate(JSGlobalObject*, Width key, Width value, uint32_t minCapacity);
-    static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, bool hasValues, JSValue key, JSValue value);
+    static CompactTable* tryCreateForFirstEntry(JSGlobalObject*, JSObject* owner, bool hasValues, JSValue key, JSValue value);
     static constexpr uint32_t largestStepInLoop = 8;
     static void reserveForAdditions(JSGlobalObject*, JSObject* owner, uint64_t remaining, uint64_t finished, uint64_t sizeAtEntry);
     static void ensureInitialTableAllocators(VM&);
     JS_EXPORT_PRIVATE static const uint64_t* growthPlans();
+    static const uint64_t* growthPlansOfWideKeys();
+    using GrowthPlans = std::array<uint64_t, 3 * growthPlansPerValueWidth>;
+    static GrowthPlans makeGrowthPlans(Width key);
     static JSSet* tryCreateSetOfStrings(JSGlobalObject*, std::span<const WriteBarrier<Unknown>> values);
     static JSSet* tryCreateSetOfNumbers(JSGlobalObject*, JSArray*);
+    static JSSet* tryCreateSetOfIdentities(JSGlobalObject*, std::span<const WriteBarrier<Unknown>> values);
     static JSMap* tryCreateMapOfStringKeys(JSGlobalObject*, JSArray* pairs);
     static CompactTable* tableOf(JSObject* owner);
     static bool tryClearInPlace(JSObject* owner);
@@ -336,6 +345,7 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    Lookup tryFindNumberOrObject(JSValue key) const;
     QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const;
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const
@@ -475,6 +485,7 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    bool tryRemoveEntry(JSObject* owner, uint32_t entry);
     JS_EXPORT_PRIVATE static uint32_t& deletedPrefixOf(JSObject* owner);
     JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
@@ -566,11 +577,15 @@ public:
     static constexpr ptrdiff_t offsetOfValueWidth() { return OBJECT_OFFSETOF(CompactTable, m_valueWidth); }
     static constexpr ptrdiff_t offsetOfStatus() { return OBJECT_OFFSETOF(CompactTable, m_status); }
     static constexpr ptrdiff_t offsetOfIndex() { return sizeof(CompactTable); }
-    static constexpr size_t initialSize(Width key, Width value) { return sizeof(CompactTable) + maxCapacityWithTags + initialCapacity * (static_cast<size_t>(key) + static_cast<size_t>(value)); }
-    static constexpr uint64_t initialCapacityAndKinds(Width key, Width value) { return initialCapacity | static_cast<uint64_t>(keysShiftWithTags | (key == Width::Wide ? keysAreWide : 0)) << 40 | static_cast<uint64_t>(value) << 48; }
+    static constexpr size_t initialSize(Width key, Width value, uint32_t capacity = initialCapacity) { return sizeof(CompactTable) + maxCapacityWithTags + capacity * (static_cast<size_t>(key) + static_cast<size_t>(value)); }
+    static constexpr uint64_t initialCapacityAndKinds(Width key, Width value, uint32_t capacity) { return capacity | static_cast<uint64_t>(keysShiftWithTags | (key == Width::Wide ? keysAreWide : 0)) << 40 | static_cast<uint64_t>(value) << 48; }
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+
+    bool tryAddQuickly(JSGlobalObject*, JSValue key, JSValue);
+    ALWAYS_INLINE bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
+    bool tryAddCellToWideKeys(VM&, JSValue key, JSValue);
 
 private:
     CompactTable(VM& vm, Structure* structure)
@@ -579,6 +594,7 @@ private:
     }
 
     static uint32_t capacityFor(uint32_t minCapacity, Width key, Width value);
+    static uint32_t findCapacityFor(uint32_t minCapacity, Width key, Width value);
     static uint32_t capacityAfterGrowth(uint32_t alive, uint32_t used);
     static size_t offsetOfKeys(uint32_t capacity);
     static size_t allocationSize(uint32_t capacity, Width key, Width value);
@@ -608,6 +624,7 @@ private:
 
     void setKey(uint32_t entry, JSValue);
     void setValue(uint32_t entry, JSValue);
+    ALWAYS_INLINE void setValueInline(uint32_t entry, JSValue);
     template<typename Matches>
     ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
@@ -624,18 +641,20 @@ private:
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void removeFromIndex(uint32_t entry, unsigned hash);
+    void removeEntry(VM&, uint32_t entry);
     void fillIndex(uint32_t count);
     template<SlotKind kind> void fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
     template<SlotKind> uint32_t fillWithHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithPairsOfHashedStrings(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     template<SlotKind> uint32_t fillWithNumbers(std::span<const EncodedJSValue>);
+    template<SlotKind> uint32_t fillWithIdentities(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
     void resolveSubstringKey(JSRopeString*) const;
-    bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
-    bool tryAddNumberQuickly(VM&, JSValue key, JSValue value);
+    template<SlotKind> ALWAYS_INLINE bool addNumber(VM&, JSValue normalizedNumber, JSValue);
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
+    std::optional<unsigned> hashIfNumberAbsent(JSValue normalizedNumber) const;
     CompactTable* copyWithAbsentKey(VM&, JSValue key, unsigned hash, JSValue) const;
     void becomeObsolete(VM&, Status, JSCell* successor);
     void giveBackPagesBehind(size_t offset);

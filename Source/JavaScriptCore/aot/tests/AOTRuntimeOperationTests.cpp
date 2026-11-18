@@ -31,6 +31,8 @@
 #include "ObjectConstructor.h"
 #include "OperationResult.h"
 #include "Options.h"
+#include "RegExp.h"
+#include "StringReplaceCacheInlines.h"
 #include "TopExceptionScope.h"
 #include "VMEntryScopeInlines.h"
 #include "VMTrapsInlines.h"
@@ -68,6 +70,7 @@ static constexpr ASCIILiteral pollShowsRegistersTest = "runtime-operations/poll-
 static constexpr ASCIILiteral pollInCallStubTest = "runtime-operations/poll-in-call-stub-leaves-pending-out-of-memory-error"_s;
 static constexpr ASCIILiteral callsAreCountedTest = "runtime-operations/calls-are-counted-under-a-counts-path"_s;
 static constexpr ASCIILiteral callsAreNotCountedTest = "runtime-operations/calls-are-not-counted-by-default"_s;
+static constexpr ASCIILiteral staticStringsInReplaceCacheTest = "runtime-operations/replace-cache-holds-static-strings"_s;
 static constexpr ASCIILiteral countsAtExitTest = "runtime-operations/counts-are-written-once-when-the-process-exits"_s;
 static constexpr ASCIILiteral countsPathNamesProcessTest = "runtime-operations/counts-path-names-the-process"_s;
 static constexpr ASCIILiteral vmWithoutImageCountsTest = "runtime-operations/a-vm-without-an-image-counts-what-it-interprets"_s;
@@ -1001,6 +1004,29 @@ static void checkVMWithoutImageCounts(LoadedProgram&)
     })->waitForCompletion();
 }
 
+static void testStaticStringsInReplaceCache()
+{
+    RefPtr<VM> vm = VM::create();
+    JSLockHolder locker(*vm);
+    Vector<Latin1Character> characters(FillWith { }, Options::thresholdForStringReplaceCache(), Latin1Character { 'a' });
+    String held { StringImpl::createStaticStringImpl(std::span<const Latin1Character> { characters.span() }) };
+    String equal { StringImpl::createStaticStringImpl(std::span<const Latin1Character> { characters.span() }) };
+    String counted { std::span<const Latin1Character> { characters.span() } };
+    RegExp* regExp = RegExp::create(*vm, "a"_s, { Yarr::Flags::Global });
+    RegExp* otherRegExp = RegExp::create(*vm, "b"_s, { Yarr::Flags::Global });
+    DeferGC deferGC(*vm);
+    StringReplaceCache cache;
+    cache.set(counted, regExp, nullptr, MatchResult(0, 1), { });
+    AOT_TEST_CHECK(!cache.get(counted, regExp));
+    cache.set(held, regExp, nullptr, MatchResult(1, 2), { });
+    auto* entry = cache.get(held, regExp);
+    AOT_TEST_CHECK(entry && entry->m_subject == held.impl() && entry->m_matchResult.start == 1 && entry->m_matchResult.end == 2);
+    AOT_TEST_CHECK(!cache.get(held, otherRegExp));
+    AOT_TEST_CHECK(!cache.get(equal, regExp));
+    AOT_TEST_CHECK(!cache.get(counted, regExp));
+    vm = nullptr;
+}
+
 static String textOfCounts(const String& path)
 {
     auto bytes = FileSystem::readEntireFile(path);
@@ -1219,6 +1245,7 @@ std::span<const NativeTest> runtimeOperationTests()
 #endif
         { callsAreCountedTest, callsAreCountedUnderCountsPath },
         { callsAreNotCountedTest, callsAreNotCountedByDefault },
+        { staticStringsInReplaceCacheTest, testStaticStringsInReplaceCache },
         { countsAtExitTest, countsAreWrittenOnceWhenProcessExits },
         { countsPathNamesProcessTest, countsPathNamesProcess },
         { vmWithoutImageCountsTest, vmWithoutImageCountsWhatItInterprets },

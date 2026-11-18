@@ -162,7 +162,7 @@ public:
     void close();
 
 private:
-    enum class Stepper : uint8_t { Protocol, ArrayIterator, MapIterator, SetIterator, StringIterator };
+    enum class Stepper : uint8_t { Protocol, ArrayIterator, MapIterator, SetIterator, StringIterator, MatchIterator };
 
     bool isOwnFunctionOfEngine(JSValue, BuiltinID);
     Stepper findStepper();
@@ -227,6 +227,8 @@ IterationInRunTime::Stepper IterationInRunTime::findStepper()
         return isOwnFunctionOfEngine(m_next, Builtins::SetIteratorPrototypeNext) ? Stepper::SetIterator : Stepper::Protocol;
     case JSStringIteratorType:
         return isOwnFunctionOfEngine(m_next, Builtins::StringIteratorPrototypeNext) ? Stepper::StringIterator : Stepper::Protocol;
+    case JSRegExpStringIteratorType:
+        return isOwnFunctionOfEngine(m_next, Builtins::RegExpStringIteratorPrototypeNext) ? Stepper::MatchIterator : Stepper::Protocol;
     case JSArrayIteratorType:
         return isJSArray(uncheckedDowncast<JSArrayIterator>(m_iterator.asCell())->iteratedObject()) && isOwnFunctionOfEngine(m_next, Builtins::ArrayIteratorPrototypeNext) ? Stepper::ArrayIterator : Stepper::Protocol;
     default:
@@ -289,6 +291,14 @@ bool IterationInRunTime::step(JSValue& value)
         RETURN_IF_EXCEPTION(scope, false);
         value = piece;
         return piece;
+    }
+    case Stepper::MatchIterator: {
+        auto* iterator = uncheckedDowncast<JSRegExpStringIterator>(m_iterator.asCell());
+        if (iterator->isDone())
+            return false;
+        value = iterator->nextImpl(m_globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        return !value.isNull();
     }
     case Stepper::Protocol:
         break;
@@ -908,11 +918,28 @@ static bool isSteppedByOwnNext(Instance& instance, JSGlobalObject* globalObject,
         return false;
     JSObject* prototype = iterator->structure()->storedPrototypeObject();
     JSObject* prototypeAbove = prototype->structure()->storedPrototypeObject();
+    if (!prototypeAbove)
+        return false;
+    IterationWords& words = instance.iteration;
+    if (words.structureOfMatchIteratorPrototype == prototype->structure() && words.structureOfPrototypeAbove == prototypeAbove->structure()) [[likely]]
+        return prototype->getDirect(words.placeOfNext) == JSValue(words.nextOfMatchIterator) && prototypeAbove->getDirect(words.placeOfIterator) == JSValue(words.iteratorOfPrototypeAbove);
+
     auto isOwn = [&](JSValue method, BuiltinID builtin) {
         return method && method.isCell() && method.asCell() == instance.state->builtinCells->findObject(builtin);
     };
-    return isOwn(prototype->getDirect(vm, vm.propertyNames->next), Builtins::RegExpStringIteratorPrototypeNext) && !prototype->getDirect(vm, vm.propertyNames->iteratorSymbol)
-        && prototypeAbove && isOwn(prototypeAbove->getDirect(vm, vm.propertyNames->iteratorSymbol), Builtins::IteratorPrototypeSymbolIterator);
+    JSValue next = prototype->getDirect(vm, vm.propertyNames->next);
+    JSValue iteratorMethod = prototypeAbove->getDirect(vm, vm.propertyNames->iteratorSymbol);
+    if (!isOwn(next, Builtins::RegExpStringIteratorPrototypeNext) || prototype->getDirect(vm, vm.propertyNames->iteratorSymbol) || !isOwn(iteratorMethod, Builtins::IteratorPrototypeSymbolIterator))
+        return false;
+    if (prototype->structure()->isDictionary() || prototypeAbove->structure()->isDictionary())
+        return true;
+    words.placeOfNext = prototype->getDirectOffset(vm, vm.propertyNames->next);
+    words.placeOfIterator = prototypeAbove->getDirectOffset(vm, vm.propertyNames->iteratorSymbol);
+    words.nextOfMatchIterator = next.asCell();
+    words.iteratorOfPrototypeAbove = iteratorMethod.asCell();
+    words.structureOfMatchIteratorPrototype = prototype->structure();
+    words.structureOfPrototypeAbove = prototypeAbove->structure();
+    return true;
 }
 
 static void appendMatches(JSGlobalObject* globalObject, JSArray* target, JSRegExpStringIterator* iterator)
@@ -1053,6 +1080,16 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
         target->push(globalObject, values.at(index));
         RETURN_IF_EXCEPTION(scope, void());
     }
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTListOfIterable, JSCell*, (Instance* instance, EncodedJSValue iterable))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTListOfIterable);
+    JSArray* list = constructEmptyArray(globalObject, nullptr);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    appendIterable(*instance, globalObject, list, JSValue::decode(iterable));
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, list);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTAppendIterable, void, (Instance* instance, JSCell* array, EncodedJSValue iterable))

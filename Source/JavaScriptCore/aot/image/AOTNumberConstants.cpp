@@ -249,6 +249,9 @@ static uint64_t sizeInBytesOfRequestKey(const Typed::Program& program, std::span
     case RequestKind::ImportChecks:
         RELEASE_ASSERT(!(words.size() % 2));
         return sizeof(ImportChecksRequest) + sizeof(ImportChecksRequest::Check) * (words.size() / 2);
+    case RequestKind::Prefetch:
+        RELEASE_ASSERT(!(words.size() % 2));
+        return sizeof(PrefetchRequest) + sizeof(PrefetchRequest::Step) * (words.size() / 2);
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -393,6 +396,8 @@ void ImageNumbersBuilder::numberRows()
     const Typed::Program& program = inputs.program;
 
     numbers.m_allocations = uniteNumberedKeys(context.parallelLoops(), mentions.takeKeys(NumberSpace::Allocation), tables.allocations.span());
+    if (std::span<const uint32_t> startRanks = context.startRanks(); !startRanks.empty())
+        placeListedRowsFirst(startRanks);
     if (context.exceeds(LimitID::ClosureAllocationSites, numbers.m_allocations.size()))
         context.reportLimitExceeded(LimitID::ClosureAllocationSites, numbers.m_allocations.size());
 

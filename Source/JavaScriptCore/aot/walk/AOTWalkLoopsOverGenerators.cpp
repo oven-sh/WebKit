@@ -171,22 +171,33 @@ bool engineOpensAsyncGenerators(const Walker& walker)
     return finds(BuiltinNames::next, Builtins::AsyncGeneratorPrototypeNext) && finds(table.nameOf(WellKnownSymbol::AsyncIterator), Builtins::AsyncIteratorPrototypeSymbolAsyncIterator);
 }
 
+static BuiltinID findUnreadGeneratorMember(const Walker& walker, BuiltinName name)
+{
+    std::optional<BuiltinID> location = findMemberAboveForIteration(walker, walker.program().builtins().at(BuiltinClasses::Generator).prototype, name);
+    if (!location || !*location || !firstReadIsSeenForGenerators(walker, *location))
+        return { };
+    return walker.has(Mechanism::Folding) && walker.state().hasReadBuiltin(*location) ? BuiltinID() : *location;
+}
+
+bool mustReadGeneratorNext(const Walker& walker)
+{
+    return !walker.isUnreachable() && findUnreadGeneratorMember(walker, BuiltinNames::next);
+}
+
 static void buildFirstReadForGenerators(Walker& walker, BuiltinName name, Origin origin)
 {
     if (walker.isUnreachable())
         return;
-    std::optional<BuiltinID> location = findMemberAboveForIteration(walker, walker.program().builtins().at(BuiltinClasses::Generator).prototype, name);
-    if (!location || !*location || !firstReadIsSeenForGenerators(walker, *location))
-        return;
-    if (walker.has(Mechanism::Folding) && walker.state().hasReadBuiltin(*location))
+    BuiltinID location = findUnreadGeneratorMember(walker, name);
+    if (!location)
         return;
     origin.isTailCall = false;
-    Draft initialization(opcodeOfFirstReadOffHolder(walker.program().builtins(), *location), origin);
+    Draft initialization(opcodeOfFirstReadOffHolder(walker.program().builtins(), location), origin);
     walker.chooseConservativeFields(initialization);
-    initialization.setBuiltin(*location);
+    initialization.setBuiltin(location);
     walker.build(WTF::move(initialization));
     if (!walker.isUnreachable())
-        walker.state().noteReadOfBuiltin(*location);
+        walker.state().noteReadOfBuiltin(location);
 }
 
 void buildFirstReadsThatOpenOfGeneratorLeavesOut(Walker& walker, Origin origin, bool asksGeneratorForIterator)

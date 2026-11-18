@@ -59,7 +59,7 @@ public:
     }
 
     template<typename T, typename... Arguments>
-    T* create(Arguments&&... arguments)
+    ALWAYS_INLINE T* create(Arguments&&... arguments)
     {
         T* object = new (NotNull, allocate(sizeof(T), alignof(T))) T(std::forward<Arguments>(arguments)...);
         if constexpr (!std::is_trivially_destructible_v<T>)
@@ -68,7 +68,7 @@ public:
     }
 
     template<typename T>
-    T* allocateArray(size_t count)
+    ALWAYS_INLINE T* allocateArray(size_t count)
     {
         static_assert(std::is_trivially_destructible_v<T>);
         return static_cast<T*>(allocate(count * sizeof(T), alignof(T)));

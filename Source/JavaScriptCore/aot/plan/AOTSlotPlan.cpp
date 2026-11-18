@@ -422,7 +422,9 @@ struct PlacesOfFieldsInSlotPlan {
     bool liesOutOfLine(uint32_t row) const { return granulesOfListedFields[row] != inCell; }
     BitVector layoutsWithListedFieldsOutOfLine;
     BitVector layoutsWithHiddenWords;
-    BitVector familiesThatMayAgreeOnSlots;
+    std::span<const LayoutID> membersThatAgreeOnSlots(uint32_t family) const LIFETIME_BOUND { return membersThatAgree.span().subspan(firstMemberThatAgreesOfFamily[family], firstMemberThatAgreesOfFamily[family + 1] - firstMemberThatAgreesOfFamily[family]); }
+    Vector<uint32_t> firstMemberThatAgreesOfFamily;
+    Vector<LayoutID> membersThatAgree;
 };
 
 using StorageOfLayoutInSlotPlan = StorageOfLayout;
@@ -503,7 +505,7 @@ static bool mayLieOutOfLineThoughListedInSlotPlan(const Program& program, const 
     if (writtenBaseOf(program.at(top)) || (layoutsWithLayoutsBelow.quickGet(top.index()) && !onlyTaggedMembersLieBelow(program, top)))
         return false;
     const Field& field = layout.fields[reference.field];
-    constexpr OptionSet<FieldFlags> flagsOfFieldsInCell { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsImmutable, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::IsAlsoInPrototype, FieldFlags::IsBrandOfMethods };
+    constexpr OptionSet<FieldFlags> flagsOfFieldsInCell { FieldFlags::IsMethod, FieldFlags::IsPrivate, FieldFlags::IsImmutable, FieldFlags::IsBrand, FieldFlags::IsHidden, FieldFlags::MayBeDefinedAbove, FieldFlags::IsBrandOfMethods };
     if (!field.key || field.flags.containsAny(flagsOfFieldsInCell) || !field.form.isEmpty() || layout.findField(field.key) != reference.field || declarationOf(program, reference) != reference)
         return false;
     if (top != reference.layout)
@@ -546,7 +548,7 @@ static HiddenWordUse hiddenWordUseInSlotPlan(const Program& program, const LinkT
     return kind == LayoutKind::Instance && !isExtendedAlone && !isConstructedByFewCalls && !program.at(id).isDerived() ? HiddenWordUse::Unseen : HiddenWordUse::Seen;
 }
 
-static BitVector findLayoutsWithHiddenWordsForSlotPlan(const Program& program, const LinkTables* link, const LinkTables& held, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const BitVector& layoutsThatRepeatTheirBases, const Families* families, std::span<const StorageOfLayoutInSlotPlan> storage, const CellSizesForFields& cellSizes)
+static BitVector findLayoutsWithHiddenWordsForSlotPlan(const Program& program, const LinkTables* link, const LinkTables& held, const ParallelLoops& loops, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const BitVector& layoutsThatRepeatTheirBases, const Families* families, std::span<const StorageOfLayoutInSlotPlan> storage, const CellSizesForFields& cellSizes)
 {
     uint32_t numberOfLayouts = static_cast<uint32_t>(program.layouts.size());
     BitVector layoutsWithWords(numberOfLayouts);
@@ -586,11 +588,18 @@ static BitVector findLayoutsWithHiddenWordsForSlotPlan(const Program& program, c
         }
         return numberOfFields && cellSizes.cellSizeFor(offsetOfFirstField + numberOfFields * bytesPerSlotInSlotPlan) < cellSizes.cellSizeFor(offsetOfFirstField + (numberOfFields + 1) * bytesPerSlotInSlotPlan);
     };
+    Vector<HiddenWordUse> uses(FillWith { }, link ? numberOfLayouts : 0, HiddenWordUse::Never);
+    forEachRangeOfIndicesInParallel(loops, uses.size(), [&](size_t first, size_t end) {
+        for (uint32_t index = static_cast<uint32_t>(first); index < end; ++index) {
+            if (isObject(index) && hasCells(index))
+                uses[index] = hiddenWordUseInSlotPlan(program, *link, held, layoutsWithSlotsThatStoresMayEmpty, layoutsThatRepeatTheirBases, LayoutID(index));
+        }
+    });
     BitVector groupsWithWords(numberOfLayouts);
     for (uint32_t index = 0; index < numberOfLayouts; ++index) {
         if (!isObject(index) || (link && !hasCells(index)))
             continue;
-        HiddenWordUse use = link ? hiddenWordUseInSlotPlan(program, *link, held, layoutsWithSlotsThatStoresMayEmpty, layoutsThatRepeatTheirBases, LayoutID(index)) : HiddenWordUse::Seen;
+        HiddenWordUse use = link ? uses[index] : HiddenWordUse::Seen;
         bool canOmitHiddenWord = use == HiddenWordUse::Unseen && !groupsOfSeveral.quickGet(groups.representativeOf(index)) && isSmallerWithoutHiddenWord(index);
         if (use == HiddenWordUse::Seen || (use == HiddenWordUse::Unseen && !canOmitHiddenWord))
             groupsWithWords.quickSet(groups.representativeOf(index));
@@ -629,20 +638,66 @@ static BitVector findFamiliesThatMayAgreeOnSlotsForSlotPlan(const Program& progr
     return result;
 }
 
-static void findMembersThatAgreeOnSlotsForSlotPlan(const Program& program, const Families& families, const BitVector& familiesThatMayAgree, FamilyID family, std::span<const StorageOfLayoutInSlotPlan> storage, Vector<LayoutID, 16>& members)
+static void listMembersThatAgreeOnSlotsForSlotPlan(const Program& program, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, const ParallelLoops& loops, PlacesOfFieldsInSlotPlan& result)
 {
-    members.shrink(0);
-    if (!familiesThatMayAgree.quickGet(family.index()))
-        return;
-    bool everyMemberIsFree = true;
-    program.at(families.layoutsOf(family)).forEach([&](LayoutID member) {
-        if (storage[member.index()].storage != LayoutStorage::CompiledObject || !storage[member.index()].hasCells())
+    const BitVector familiesThatMayAgree = findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, families, storage);
+    uint32_t numberOfFamilies = families.size();
+    result.firstMemberThatAgreesOfFamily.fill(0, numberOfFamilies + 1);
+    result.membersThatAgree = collectInParallel<LayoutID>(loops, numberOfFamilies, [&](unsigned family, Vector<LayoutID>& members) {
+        if (!familiesThatMayAgree.quickGet(family))
             return;
-        members.append(member);
-        everyMemberIsFree &= isFoundByShapeTest(program.at(member)) && !writtenBaseOf(program.at(member));
+        size_t firstMember = members.size();
+        bool everyMemberIsFree = true;
+        program.at(families.layoutsOf(FamilyID(family))).forEach([&](LayoutID member) {
+            if (storage[member.index()].storage != LayoutStorage::CompiledObject || !storage[member.index()].hasCells())
+                return;
+            members.append(member);
+            everyMemberIsFree &= isFoundByShapeTest(program.at(member)) && !writtenBaseOf(program.at(member));
+        });
+        if (members.size() - firstMember < 2 || !everyMemberIsFree)
+            members.shrink(firstMember);
+        result.firstMemberThatAgreesOfFamily[family + 1] = static_cast<uint32_t>(members.size() - firstMember);
     });
-    if (members.size() < 2 || !everyMemberIsFree)
-        members.shrink(0);
+    for (uint32_t family = 0; family < numberOfFamilies; ++family)
+        result.firstMemberThatAgreesOfFamily[family + 1] += result.firstMemberThatAgreesOfFamily[family];
+    RELEASE_ASSERT(result.membersThatAgree.size() == result.firstMemberThatAgreesOfFamily.last());
+}
+
+static BitVector findFamiliesWithDerivedLayouts(const Program& program, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, const BitVector& layoutsWithListedFieldsOutOfLine)
+{
+    auto hasCells = [&](LayoutID member) {
+        return storage[member.index()].storage == LayoutStorage::CompiledObject && storage[member.index()].hasCells();
+    };
+    if (layoutsWithListedFieldsOutOfLine.isEmpty())
+        return { };
+    BitVector result = families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return layoutsWithListedFieldsOutOfLine.quickGet(member.index()) && writtenBaseOf(program.at(member)) && hasCells(member);
+    });
+    result.exclude(families.familiesWithSomeMemberThat([&](LayoutID member) {
+        return hasCells(member) && !isFoundByShapeTest(program.at(member));
+    }));
+    return result;
+}
+
+static void findBaseLayouts(const Program& program, const Families& families, FamilyID family, std::span<const StorageOfLayoutInSlotPlan> storage, Vector<LayoutID, 16>& bases)
+{
+    bases.shrink(0);
+    Vector<LayoutID, 16> members;
+    program.at(families.layoutsOf(family)).forEach([&](LayoutID member) {
+        if (storage[member.index()].storage == LayoutStorage::CompiledObject && storage[member.index()].hasCells())
+            members.append(member);
+    });
+    for (LayoutID member : members) {
+        LayoutID base = writtenBaseOf(program.at(member));
+        if (!base)
+            bases.append(member);
+        else if (!std::ranges::binary_search(members, base.index(), { }, [](LayoutID layout) { return layout.index(); })) {
+            bases.shrink(0);
+            return;
+        }
+    }
+    if (bases.size() < 2)
+        bases.shrink(0);
 }
 
 static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const LinkTables& held, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, PlacesOfFieldsInSlotPlan& result)
@@ -671,12 +726,10 @@ static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const
     if (keysLeftOut.isEmpty())
         return;
 
-    Vector<LayoutID, 16> members;
     Vector<uint32_t, 16> rows;
-    const BitVector& familiesThatMayAgree = result.familiesThatMayAgreeOnSlots;
     for (uint32_t number = families.size(); number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, families, familiesThatMayAgree, FamilyID(number), storage, members);
-        if (members.isEmpty())
+        std::span<const LayoutID> members = result.membersThatAgreeOnSlots(number);
+        if (members.empty())
             continue;
         const Layout& first = program.at(members[0]);
         for (uint32_t field = 0; field < first.fields.size(); ++field) {
@@ -722,40 +775,23 @@ static void chooseListedFieldsOutOfLineForSlotPlan(const Program& program, const
     }
 }
 
-static BitVector findMergingFamilies(const Program& program, const Facts& facts, const Families& families)
+static BitVector findMergingFamilies(const Program& program, const Facts& facts, const Families& families, const ParallelLoops& loops)
 {
     const LinkTables& linked = facts.linked();
     TypeReader reader(program);
     size_t numberOfTypes = program.types.numberOfTypes();
-    BitVector result(families.size());
     BitVector familiesNamedWhole(families.size());
     BitVector typesAsked(numberOfTypes);
     UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> setsAsked;
     Vector<TypeID, 32> typesToAsk;
-    Vector<uint32_t> lookOfFamily(FillWith { }, families.size(), 0);
-    Vector<uint32_t> metFrom(FillWith { }, families.size(), 0);
-    uint32_t look = 0;
+    Vector<LayoutSetID> setsThatMeet;
     auto meet = [&](LayoutSetID layouts) {
         if (!layouts || holdsOneMember(layouts) || !setsAsked.add(layouts.bits()).isNewEntry)
             return;
-        if (FamilyID family = families.familyOf(layouts)) {
+        if (FamilyID family = families.familyOf(layouts))
             familiesNamedWhole.quickSet(family.index());
-            return;
-        }
-        ++look;
-        reader.at(layouts).forEach([&](LayoutID member) {
-            uint32_t inside = families.size() + member.index();
-            for (FamilyID family = families.nearestFamilyOf(member); family; family = families.nearestFamilyAbove(family)) {
-                uint32_t number = family.index();
-                if (std::exchange(lookOfFamily[number], look) == look) {
-                    if (metFrom[number] != inside)
-                        result.quickSet(number);
-                    break;
-                }
-                metFrom[number] = inside;
-                inside = number;
-            }
-        });
+        else
+            setsThatMeet.append(layouts);
     };
     auto ask = [&](TypeID type) {
         if (type && !holdsOnlyPrimitives(type) && liesInProgram(type) && positionOf(type) < numberOfTypes && !typesAsked.quickSet(positionOf(type)))
@@ -772,7 +808,7 @@ static BitVector findMergingFamilies(const Program& program, const Facts& facts,
         }
     };
     auto queryCell = [&](const LinkedCell& cell, const DeclaredType& declared) {
-        ask(cell.proven ? cell.proven : declared.written());
+        ask(cell.proven ? cell.proven : declared.isExpected() ? TypeID() : declared.written());
     };
     for (uint32_t index = 0; index < program.functions.size() && index < linked.functions.size(); ++index) {
         if (!linked.functions[index].isReached)
@@ -799,8 +835,37 @@ static BitVector findMergingFamilies(const Program& program, const Facts& facts,
         if (above && familiesNamedWhole.quickGet(above.index()))
             familiesNamedWhole.quickSet(number);
     }
-    result.merge(familiesNamedWhole);
-    return result;
+    static constexpr size_t mostPieces = 16;
+    static constexpr size_t fewestSetsInPiece = 256;
+    size_t setsInPiece = std::max((setsThatMeet.size() + mostPieces - 1) / mostPieces, fewestSetsInPiece);
+    Vector<BitVector> familiesMetInPieces((setsThatMeet.size() + setsInPiece - 1) / setsInPiece);
+    forEachIndexInParallel(loops, static_cast<unsigned>(familiesMetInPieces.size()), [&](unsigned piece) {
+        BitVector familiesMet(families.size());
+        Vector<uint32_t> lookOfFamily(FillWith { }, families.size(), 0);
+        Vector<uint32_t> metFrom(FillWith { }, families.size(), 0);
+        uint32_t look = 0;
+        size_t first = piece * setsInPiece;
+        for (LayoutSetID layouts : setsThatMeet.span().subspan(first, std::min(setsInPiece, setsThatMeet.size() - first))) {
+            ++look;
+            reader.at(layouts).forEach([&](LayoutID member) {
+                uint32_t inside = families.size() + member.index();
+                for (FamilyID family = families.nearestFamilyOf(member); family; family = families.nearestFamilyAbove(family)) {
+                    uint32_t number = family.index();
+                    if (std::exchange(lookOfFamily[number], look) == look) {
+                        if (metFrom[number] != inside)
+                            familiesMet.quickSet(number);
+                        break;
+                    }
+                    metFrom[number] = inside;
+                    inside = number;
+                }
+            });
+        }
+        familiesMetInPieces[piece] = WTF::move(familiesMet);
+    });
+    for (const BitVector& familiesMet : familiesMetInPieces)
+        familiesNamedWhole.merge(familiesMet);
+    return familiesNamedWhole;
 }
 
 static bool rowFormsDiffer(const PlacesOfFieldsInSlotPlan& places, std::span<const uint32_t> rows)
@@ -814,20 +879,20 @@ static bool rowFormsDiffer(const PlacesOfFieldsInSlotPlan& places, std::span<con
     return hasAnyValueForm && someHoldNumbers;
 }
 
-static void placeFieldsSharedByFamiliesForSlotPlan(const Program& program, const Facts& facts, const Families& families, std::span<const StorageOfLayoutInSlotPlan> storage, PlacesOfFieldsInSlotPlan& result)
+static bool someRowsHaveTypes(const PlacesOfFieldsInSlotPlan& places, std::span<const uint32_t> rows)
 {
-    Vector<LayoutID, 16> members;
+    size_t numberOfRowsWithTypes = std::ranges::count_if(rows, [&](uint32_t row) {
+        return !!places.typesHeld[row];
+    });
+    return numberOfRowsWithTypes && numberOfRowsWithTypes < rows.size();
+}
+
+static void placeFieldsSharedByFamiliesForSlotPlan(const Program& program, const Families& families, const BitVector& mergingFamilies, PlacesOfFieldsInSlotPlan& result)
+{
     Vector<uint32_t, 16> rows;
-    std::optional<BitVector> mergingFamilies;
-    auto meets = [&](uint32_t family) {
-        if (!mergingFamilies)
-            mergingFamilies = findMergingFamilies(program, facts, families);
-        return mergingFamilies->quickGet(family);
-    };
-    const BitVector& familiesThatMayAgree = result.familiesThatMayAgreeOnSlots;
     for (uint32_t number = families.size(); number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, families, familiesThatMayAgree, FamilyID(number), storage, members);
-        if (members.isEmpty())
+        std::span<const LayoutID> members = result.membersThatAgreeOnSlots(number);
+        if (members.empty())
             continue;
         uint64_t end = std::max(result.ends[members[0].index()], result.offsetOfFirstSlotOf(members[0]));
         for (LayoutID member : members)
@@ -844,14 +909,18 @@ static void placeFieldsSharedByFamiliesForSlotPlan(const Program& program, const
                     return;
                 rows.append(result.rowOf({ member, *listed }));
             }
-            bool numbersStandApart = !result.formsProven.isEmpty() && rowFormsDiffer(result, rows.span()) && !meets(number);
+            bool membersMeet = result.formsProven.isEmpty() || mergingFamilies.quickGet(number);
+            bool numbersStandApart = !membersMeet && rowFormsDiffer(result, rows.span());
+            bool typesStandApart = !membersMeet && someRowsHaveTypes(result, rows.span());
             uint32_t place = static_cast<uint32_t>(result.formsOfPlaces.size());
+            const unsigned numberOfForms = 1 + numbersStandApart;
             for (uint32_t row : rows) {
+                bool isNumber = numbersStandApart && result.formsProven[row] != FormOfPlaceInSlotPlan::AnyValue;
+                bool hasType = typesStandApart && result.typesHeld[row];
                 result.offsets[row] = end;
-                result.places[row] = place + (numbersStandApart && result.formsProven[row] != FormOfPlaceInSlotPlan::AnyValue);
+                result.places[row] = place + isNumber + (hasType ? numberOfForms : 0);
             }
-            result.formsOfPlaces.append(FormOfPlaceInSlotPlan::Unclaimed);
-            if (numbersStandApart)
+            for (unsigned number = 0; number < numberOfForms << typesStandApart; ++number)
                 result.formsOfPlaces.append(FormOfPlaceInSlotPlan::Unclaimed);
             end += bytesPerSlotInSlotPlan;
         });
@@ -898,8 +967,9 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
             bool isInBaseCell = placeInBase < keysOfBase.size() && result.granulesOfAppendedFields[base.index()][placeInBase] == PlacesOfFieldsInSlotPlan::inCell;
             bool isRequired = link.isAppendedFieldRequiredByTypeOfThis({ LayoutID(index), numberListed + place });
             bool isOfComputedLiteral = link.computedLiterals.get(index) && numberListed + keys.size() <= maxComputedLiteralNames;
+            bool isOfSingleton = link.singletonRecords.get(index);
             result.cellFieldNumbersFromBase[index] += isInBaseCell && !isRequired;
-            result.granulesOfAppendedFields[index].append(isInBaseCell || isRequired || isOfComputedLiteral ? PlacesOfFieldsInSlotPlan::inCell : noGranule);
+            result.granulesOfAppendedFields[index].append(isInBaseCell || isRequired || isOfComputedLiteral || isOfSingleton ? PlacesOfFieldsInSlotPlan::inCell : noGranule);
         }
     };
     for (uint32_t index = 0; index < numberOfLayouts; ++index)
@@ -910,14 +980,18 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
         return static_cast<uint32_t>(result.formsOfPlaces.size() - 1);
     };
 
-    Vector<LayoutID, 16> members;
+    Vector<LayoutID, 16> bases;
     Vector<uint8_t*, 16> granules;
     Vector<size_t, 16> placesInMembers;
     Vector<uint32_t, 16> rows;
-    const BitVector& familiesThatMayAgree = result.familiesThatMayAgreeOnSlots;
+    const BitVector familiesWithDerivedLayouts = families ? findFamiliesWithDerivedLayouts(program, *families, storage, result.layoutsWithListedFieldsOutOfLine) : BitVector();
+    const bool hasDerivedLayouts = !familiesWithDerivedLayouts.isEmpty();
     for (uint32_t number = families ? families->size() : 0; number--;) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, familiesThatMayAgree, FamilyID(number), storage, members);
-        if (members.isEmpty())
+        bool ofBaseLayouts = hasDerivedLayouts && familiesWithDerivedLayouts.quickGet(number);
+        if (ofBaseLayouts)
+            findBaseLayouts(program, *families, FamilyID(number), storage, bases);
+        std::span<const LayoutID> members = ofBaseLayouts ? bases.span() : result.membersThatAgreeOnSlots(number);
+        if (members.empty())
             continue;
         const Layout& first = program.at(members[0]);
         for (uint32_t field = 0; result.layoutsWithListedFieldsOutOfLine.quickGet(members[0].index()) && field < first.fields.size() && numbersOfGranulesTaken[members[0].index()] < maxExtensionGranules; ++field) {
@@ -941,6 +1015,8 @@ static void placeAppendedFieldsForSlotPlan(const Program& program, const LinkTab
             for (LayoutID member : members)
                 RELEASE_ASSERT(numbersOfGranulesTaken[member.index()]++ == granule);
         }
+        if (ofBaseLayouts)
+            continue;
         Vector<PropertyKeyID, 16> keysOfFirst = link.appendedKeysOfPlan(members[0]);
         for (PropertyKeyID key : keysOfFirst) {
             granules.shrink(0);
@@ -1069,7 +1145,7 @@ static void numberRowsForSlotPlan(const Program& program, PlacesOfFieldsInSlotPl
     result.firstRowOfLayout.append(static_cast<uint32_t>(numberOfRows));
 }
 
-static void placeFieldsForSlotPlan(const Program& program, const Facts& facts, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const Families* families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, std::span<const StorageOfLayoutInSlotPlan> storage, const StorageOfLayouts& storageOfLayouts, bool hasTypedSlots, const CellSizesForFields& cellSizes, PlacesOfFieldsInSlotPlan& result)
+static void placeFieldsForSlotPlan(const Program& program, const Facts& facts, const ParallelLoops& loops, const BitVector& layoutsWithSlotsThatStoresMayEmpty, const Families* families, const LayoutsBelowTheirBases& layoutsBelowTheirBases, std::span<const StorageOfLayoutInSlotPlan> storage, const StorageOfLayouts& storageOfLayouts, bool hasTypedSlots, const CellSizesForFields& cellSizes, PlacesOfFieldsInSlotPlan& result)
 {
     const LinkTables& link = facts.linked();
     const LinkTables& held = facts.held();
@@ -1081,14 +1157,22 @@ static void placeFieldsForSlotPlan(const Program& program, const Facts& facts, c
     result.ends.fill(0, numberOfLayouts);
     result.granulesOfListedFields.fill(PlacesOfFieldsInSlotPlan::inCell, numberOfRows);
     result.layoutsWithListedFieldsOutOfLine.ensureSize(numberOfLayouts);
-    result.layoutsWithHiddenWords = findLayoutsWithHiddenWordsForSlotPlan(program, hasTypedSlots ? &link : nullptr, held, layoutsWithSlotsThatStoresMayEmpty, layoutsThatRepeatTheirBases, families, storage, cellSizes);
-    if (families)
-        result.familiesThatMayAgreeOnSlots = findFamiliesThatMayAgreeOnSlotsForSlotPlan(program, *families, storage);
-    if (families && hasTypedSlots)
-        chooseListedFieldsOutOfLineForSlotPlan(program, held, *families, storage, result);
-    placeAppendedFieldsForSlotPlan(program, link, families, storage, result);
+    BitVector mergingFamilies;
+    runLanes(loops, 2, [&](unsigned lane, const ParallelLoops& loopsOfLane) {
+        if (lane) {
+            if (families && !result.formsProven.isEmpty())
+                mergingFamilies = findMergingFamilies(program, facts, *families, loopsOfLane);
+            return;
+        }
+        result.layoutsWithHiddenWords = findLayoutsWithHiddenWordsForSlotPlan(program, hasTypedSlots ? &link : nullptr, held, loopsOfLane, layoutsWithSlotsThatStoresMayEmpty, layoutsThatRepeatTheirBases, families, storage, cellSizes);
+        if (families)
+            listMembersThatAgreeOnSlotsForSlotPlan(program, *families, storage, loopsOfLane, result);
+        if (families && hasTypedSlots)
+            chooseListedFieldsOutOfLineForSlotPlan(program, held, *families, storage, result);
+        placeAppendedFieldsForSlotPlan(program, link, families, storage, result);
+    });
     if (families) {
-        placeFieldsSharedByFamiliesForSlotPlan(program, facts, *families, storage, result);
+        placeFieldsSharedByFamiliesForSlotPlan(program, *families, mergingFamilies, result);
         auto hasCells = [&](LayoutID id) {
             return storage[id.index()].storage == LayoutStorage::CompiledObject && storage[id.index()].hasCells();
         };
@@ -1359,11 +1443,9 @@ static void chooseFormsOfPlacesForSlotPlan(Program& program, const Facts& facts,
         first = end;
     }
 
-    Vector<LayoutID, 16> members;
-    const BitVector& familiesThatMayAgree = places.familiesThatMayAgreeOnSlots;
     for (uint32_t number = 0; families && number < families->size(); ++number) {
-        findMembersThatAgreeOnSlotsForSlotPlan(program, *families, familiesThatMayAgree, FamilyID(number), storage, members);
-        if (members.isEmpty())
+        std::span<const LayoutID> members = places.membersThatAgreeOnSlots(number);
+        if (members.empty())
             continue;
         for (PropertyKeyID key : link.appendedKeysOfPlan(members[0])) {
             held.shrink(0);
@@ -1497,7 +1579,7 @@ void layAppendedFieldInCellForFields(const Program& program, const Facts& facts,
 
 static constexpr uint64_t maxCellBytesWithLateNames = 128;
 
-static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, uint64_t endOfSlotsInCell, bool areFilledTogether)
+static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const CellSizesForFields& cellSizes, LayoutID id, uint64_t endOfSlotsInCell, bool areFilledTogether, unsigned inlineCapacity)
 {
     constexpr uint64_t mostBytesOfCell = maxCellBytesWithLateNames;
     constexpr uint64_t bytesOfLargeCell = 512;
@@ -1514,7 +1596,13 @@ static bool lateNamesFitInCell(const PlacesOfFieldsInSlotPlan& places, const Cel
     }
     if (endOfSlotsInCell >= bytesOfLargeCell && end <= endOfSlotsInCell + endOfSlotsInCell / 2)
         return true;
+    uint64_t bytesOfExtension = offsetOfFirstExtensionSlot + end - endOfSlotsInCell;
+    if (areFilledTogether && cellSizes.cellSizeFor(end) <= cellSizes.cellSizeFor(cellSizes.cellSizeFor(endOfSlotsInCell) + cellSizes.cellSizeFor(bytesOfExtension)))
+        return true;
     uint64_t sizeWithMore = std::min(cellSizes.cellSizeFor(endOfSlotsInCell + mostBytesAdded), mostBytesOfCell);
+    uint64_t endOfHiddenWords = offsetOfFirstField + (places.layoutsWithHiddenWords.get(id.index()) ? bytesPerSlotInSlotPlan : 0);
+    if (inlineCapacity && end <= endOfHiddenWords + inlineCapacity * bytesPerSlotInSlotPlan)
+        return true;
     return cellSizes.cellSizeFor(end) <= std::max(cellSizes.cellSizeFor(endOfSlotsInCell), sizeWithMore);
 }
 
@@ -1596,7 +1684,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
     for (FieldIndex field = numberOfDeclaredFields; field < numberOfFields; ++field)
         endOfSlotsInCell += places.granulesOfAppendedFields[id.index()][field - numberOfDeclaredFields] == PlacesOfFieldsInSlotPlan::inCell ? bytesPerSlotInSlotPlan : 0;
     const bool canPlaceLateNamesInCell = isCompiledObject && !build.recordedOptions().useWideReferences() && !places.layoutsWithListedFieldsOutOfLine.quickGet(id.index());
-    const bool lateNamesLieInCell = canPlaceLateNamesInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()));
+    const bool lateNamesLieInCell = canPlaceLateNamesInCell && lateNamesFitInCell(places, cellSizes, id, endOfSlotsInCell, facts.linked().layoutsFillingLateFieldsTogether.get(id.index()), facts.linked().inlineCapacityOf(id));
     BitVector lateNamesInCell;
     if (canPlaceLateNamesInCell && !lateNamesLieInCell) {
         lateNamesInCell = lateMethodNamesInCell(facts.linked(), places, cellSizes, id, planned.appendedKeys.span(), endOfSlotsInCell);
@@ -1661,7 +1749,7 @@ static PlannedLayout planLayoutForSlotPlan(const Program& program, const Facts& 
 }
 
 MentionedKeys findMentionedKeys(const Program&, const Facts&, const ParallelLoops&);
-void planNames(const Program&, const LayoutsByNames&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
+void planKeys(const Program&, const MentionedKeys&, BuildContext&, SlotPlanParts&);
 Vector<ClosureForm> chooseClosureForms(const Program&, const LinkTables&);
 BitVector findFunctionsWhoseClosuresGetOnlyListedNames(const Program&, const LinkTables&);
 BitVector findFunctionsWhosePrototypePropertyStaysAsMade(const Program&, const LinkTables&);
@@ -1866,11 +1954,12 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
     parts.layouts.grow(numberOfLayouts);
     GroupsOfLayoutsForFields groupsForFields;
     UnitsOfFields unitsOfFields;
+    Vector<LayoutSetID> fewLayoutsWithoutFamily;
     EnvironmentsHandedBack environmentsHandedBack;
     runLanes(build.parallelLoops(), {
         [&] {
             const CellSizesForFields cellSizes(build);
-            placeFieldsForSlotPlan(program, facts, layoutsWithSlotsThatStoresMayEmpty, families, layoutsBelowTheirBases, storage, storageOfLayouts, hasTypedSlots, cellSizes, places);
+            placeFieldsForSlotPlan(program, facts, build.parallelLoops(), layoutsWithSlotsThatStoresMayEmpty, families, layoutsBelowTheirBases, storage, storageOfLayouts, hasTypedSlots, cellSizes, places);
             if (hasTypedSlots)
                 chooseFormsOfPlacesForSlotPlan(program, facts, facts.linked(), families, storage, storageOfLayouts.layoutsThatRepeatTheirBases, places);
             forEachIndexInParallel(build.parallelLoops(), numberOfLayouts, [&](unsigned index) {
@@ -1880,6 +1969,10 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
         [&] {
             groupsForFields = groupLayoutsForFields(program, facts.families());
             unitsOfFields = collectUnitsOfFields(program, facts.linked(), storageOfLayouts, groupsForFields);
+        },
+        [&] {
+            if (hasTypedSlots)
+                fewLayoutsWithoutFamily = listFewLayoutsWithoutFamily(program, facts.linked(), facts.families());
         },
         [&] { environmentsHandedBack = findEnvironmentsHandedBack(program, facts, build); },
         [&] {
@@ -1904,19 +1997,16 @@ SlotPlanParts computeSlotPlanParts(Program& program, const Facts& facts, BuildCo
                 return promotedEnvironments.isPromoted(id);
             });
             layEnvironmentsHandedBack(build, environmentsHandedBack.all.span(), parts);
-            chooseStorageOfFields(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groupsForFields), WTF::move(unitsOfFields));
+            chooseStorageOfFields(program, facts, build, parts, layoutsBelowTheirBases, WTF::move(groupsForFields), WTF::move(unitsOfFields), fewLayoutsWithoutFamily.span());
             dropTypesOfFractionsLeftBoxedInSlotPlan(program, build, parts);
-            std::optional<LayoutsByNames> writersAlone;
-            if (!facts.mechanisms().contains(Mechanism::Guesses))
-                writersAlone = LayoutsByNames::thatListsWritersAlone(program, facts.summaries());
-            planNames(program, writersAlone ? *writersAlone : facts.layoutsByNames(), mentioned, build, parts);
-            times.didFinish("plan: lane of storage of fields, names"_s);
+            times.didFinish("plan: lane of storage of fields"_s);
         },
         [&] {
             StepTimes times(build, nameOf(Stage::PlanSlots));
             keyOrders = computeKeyOrders(program, facts.linked(), facts.summaries(), facts.bodies(), facts.mechanisms(), parts.layouts.span(), build);
             times.didFinish("plan: lane of key orders"_s);
         },
+        [&] { planKeys(program, mentioned, build, parts); },
     });
     return parts;
 }

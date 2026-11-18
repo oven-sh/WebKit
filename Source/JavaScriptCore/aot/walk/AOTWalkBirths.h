@@ -19,6 +19,7 @@ bool storeLaysWhatSlotOfFreshObjectHolds(Walker&, Reference object, Reference he
 
 bool lookMayFinishBirthOf(Walker&, Reference object);
 void finishBirthAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
+void finishBirthAtReturnOfInitializer(Walker&, Origin);
 void showWhatIsHeldFilledWhereConstructionEnds(Walker&, FunctionID constructor, Reference object, Origin);
 void showWhatIsHeldFilledAtReturnOfClassConstructor(Walker&, Reference returned, Origin);
 Reference allocateFilledObject(Walker&, Reference object, Origin);

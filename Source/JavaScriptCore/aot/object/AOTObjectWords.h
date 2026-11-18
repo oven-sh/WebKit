@@ -10,6 +10,7 @@
 #include "AOTCellFormat.h"
 #include "AOTFunctionData.h"
 #include "LocalAllocator.h"
+#include "MarkedSpace.h"
 #include "Structure.h"
 #include <array>
 #include <span>
@@ -122,7 +123,7 @@ static constexpr uint32_t sizeOfKeyOrderRunTable = numberOfKeyOrderRuns + number
 static constexpr int32_t offsetOfLatestRuns = numberOfKeyOrderRuns << logSizeOfKeyOrderRun;
 static constexpr uint32_t indexOfLatestRun(uint32_t shapeWord, uint32_t slotKey)
 {
-    return numberOfKeyOrderRuns + ((shapeWord ^ slotKey) * multiplierOfKeyOrderRun >> (32 - logNumberOfLatestRuns));
+    return numberOfKeyOrderRuns + ((shapeWord ^ slotKey) * multiplierOfKeyOrderRun >> (32 - logNumberOfLatestRuns) & ~1u);
 }
 
 struct KeyListCacheEntry {
@@ -132,7 +133,8 @@ struct KeyListCacheEntry {
 };
 
 static constexpr uint32_t numberOfKeyLists = 1024;
-static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord) % numberOfKeyLists; }
+static constexpr unsigned shiftOfCountInKeyListIndex = 12;
+static constexpr uint32_t indexOfKeyList(uint32_t shapeWord, uint32_t orderWord) { return (shapeWord + orderWord + (orderWord >> shiftOfCountInKeyListIndex)) % numberOfKeyLists; }
 static constexpr uint32_t keyListWordOfStructure(uint32_t structureID) { return structureID >> 1; }
 static constexpr uint32_t structureEnumerableKeysWord(uint32_t structureID) { return structureID >> 1 | 1; }
 
@@ -182,6 +184,8 @@ static constexpr uint32_t placeOfCopyWithNames(uint32_t structureOfSource, uint3
 static_assert(sizeof(CopyWithNames) == 24 && sizeof(NameInCopy) == 8 && !(offsetOfFirstCopyWithNames % alignof(CopyWithNames)));
 
 struct ObjectWords {
+    static constexpr unsigned numberOfCellAllocators = MarkedSpace::preciseCutoff / MarkedSpace::sizeStep + 1;
+
     int32_t* distancesToAllocationSites;
     KeyOrderTransition* keyOrderTransitions;
     uint32_t keyOrderTransitionMask;
@@ -194,6 +198,7 @@ struct ObjectWords {
     uint32_t unusedBehindCopies;
     EnumeratorCacheEntry* enumerators;
     KeyOrderRun* keyOrderRuns;
+    void* cellAllocators[numberOfCellAllocators];
 
     AllocationSiteRecord* emptyAllocationSite() const { return reinterpret_cast<AllocationSiteRecord*>(distancesToAllocationSites) - 1; }
 

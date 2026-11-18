@@ -211,8 +211,6 @@ struct AnswersAboutModules {
     Vector<uint32_t> compiledRuntimeFunctions;
 };
 
-class PreparedFunctionSources;
-
 struct TableInputs {
     const Typed::Program& program;
     const Typed::Facts& facts;
@@ -221,7 +219,6 @@ struct TableInputs {
     const BodyFactsForTables& bodyFacts;
     const CompileOptions& options;
     const BuildContext* build { nullptr };
-    const PreparedFunctionSources* functionSources { nullptr };
     mutable std::optional<AnswersAboutModules> answersAboutModules { };
 };
 
@@ -259,6 +256,7 @@ struct FieldsOfLayoutRecord {
 struct FirstTableParts {
     static constexpr uint32_t startOfTypes = roundUpToMultipleOf<8>(sizeof(ProgramTables));
     Vector<uint32_t> typeOffsets;
+    static constexpr uint32_t mostShiftOfTypeNumbers = 16;
     uint32_t shiftOfTypeNumbers { ProgramTables::shiftOfNearTypeNumbers };
     Vector<uint32_t> dataNodes;
     Vector<uint32_t> tablesInImage;
@@ -304,6 +302,8 @@ bool showsVariablesOf(const TableInputs&, ModuleID);
 
 void nameWhatTypeTablesName(const TableInputs&, const GatheredMentions&, NamesOfTables&);
 void encodeTypeTables(TableEncoder&, FirstTableParts&);
+std::optional<uint32_t> findShiftOfTypeNumbers(const TablePart&, std::span<const uint32_t> firstWords);
+uint32_t placeTypeRecord(TablePart&, std::span<const uint8_t> record, size_t unit);
 void nameWhatDataTableNames(const TableInputs&, const GatheredMentions&, NamesOfTables&);
 void encodeDataTable(TableEncoder&, FirstTableParts&);
 void nameWhatLayoutTablesName(const TableInputs&, const GatheredMentions&, NamesOfTables&);

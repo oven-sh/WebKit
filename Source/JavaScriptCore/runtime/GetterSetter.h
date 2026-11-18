@@ -125,6 +125,13 @@ public:
         return OBJECT_OFFSETOF(GetterSetter, m_setter);
     }
 
+#if ENABLE(AOT)
+    static constexpr ptrdiff_t offsetOfReturnedCapture()
+    {
+        return OBJECT_OFFSETOF(GetterSetter, m_returnedCapture);
+    }
+#endif
+
     DECLARE_EXPORT_INFO;
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&) { RELEASE_ASSERT_NOT_REACHED(); return false; }
@@ -137,6 +144,11 @@ public:
 private:
     WriteBarrier<JSObject> m_getter;
     WriteBarrier<JSObject> m_setter;  
+#if ENABLE(AOT)
+    // Where the captured variable is that the getter returns and does nothing else: an address in the closure, in an environment that it keeps alive, or in the statics of its program.
+    // 0 until the first read of compiled code, negative where the getter is another function. AOT::ReturnedCaptureData has the forms.
+    int64_t m_returnedCapture { 0 };
+#endif
 };
 
 } // namespace JSC

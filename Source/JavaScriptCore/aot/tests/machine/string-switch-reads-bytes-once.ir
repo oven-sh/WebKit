@@ -23,11 +23,27 @@ function f1 name="weigh" module=m0 flags=[IsChecked, HasExplicitName] thisType={
   b0():
     v0 = GetModuleVariable variable=g0
     v1 = Builtin builtin=GlobalThis
-    v2 = PropGet v1 key="input" [isFreeName]
-    v3 = Convert v2 declared={type=undefined|null|"add"|"mul"|"neg"|"sub" flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
-    v4 = Call v0, -, v3 calleeName="weightOf"
-    v5 = Convert v4 declared={type=number}
-    Return v5
+    v2 = Integer
+    v3 = Convert v2 declared={type=number}
+    Jump -> next b1(v3, v3)
+  b1(v4: number, v5: number):
+    LoopHint
+    v7 = PropGet v1 key="rounds" [isFreeName]
+    v8 = Convert v7 declared={type=number} illTypedCause=Assertion
+    v9 = Less v5, v8
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v10 = PropGet v1 key="input" [isFreeName]
+    v11 = Convert v10 declared={type=undefined|null|"add"|"mul"|"neg"|"sub" flags=[OmitsNull, OmitsUndefined]} illTypedCause=Assertion
+    v12 = Call v0, -, v11 calleeName="weightOf"
+    v13 = Convert v12 declared={type=number}
+    v14 = Add v4, v13
+    v15 = Convert v14 declared={type=number}
+    v16 = Increment v5
+    v17 = Convert v16 declared={type=number}
+    Jump -> next b1(v15, v17)
+  b3():
+    Return v4
 }
 function f2 name="weightOf" module=m0 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|"add"|"mul"|"neg"|"sub" flags=[OmitsNull, OmitsUndefined]}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|"add"|"mul"|"neg"|"sub"):

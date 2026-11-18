@@ -189,7 +189,7 @@ static std::unique_ptr<RegExpCode> generate(const Yarr::YarrPattern& pattern, St
         .sampleString = std::nullopt,
         .codeBlock = &codeBlock,
         .policy = policy,
-        .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
+        .createCodeAddressing = [&](ImageAssembler& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
             return makeUnique<ImageCodeAddressing>(jit, PCRelativeReach::Near, assemblerPolicy, nullptr);
         },
     };
@@ -304,7 +304,8 @@ static void testTwoPrefixesAreSearchedTogether()
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { }, 1) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Sticky }) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh"_s, { Yarr::Flags::Unicode }) == 0);
-    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efgh"_s) == 0);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcde|efgh"_s) == 4);
+    AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcdefghijkl|hgfedcba"_s) == 8);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abc|efgh"_s) == 0);
     AOT_TEST_CHECK(lengthOfPrefixesSearchedFor("abcd|efgh|ijkl"_s) == 0);
 }

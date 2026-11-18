@@ -53,7 +53,7 @@ public:
         if (kind != KeyListKind::Strings)
             shapeWord = add(shapeWord, word32(keyListWordOf(0, kind)));
         Word32 objectOrderWord = shapeTests.orderWordOf(object);
-        Integer index = zeroExtended(bitAnd(add(shapeWord, objectOrderWord), numberOfKeyLists - 1));
+        Integer index = zeroExtended(bitAnd(add(add(shapeWord, objectOrderWord), shiftRightUnsigned(objectOrderWord, shiftOfCountInKeyListIndex)), numberOfKeyLists - 1));
         LValue entry = offsetBy(loadImmutablePointer(AOT_INSTANCE_OFFSET(objects.keyLists)), index, 4).value();
         leaveUnless(equal(Word32(m_out.load32(m_out.address(heap, entry, OBJECT_OFFSETOF(KeyListCacheEntry, shapeWord)))), shapeWord), otherwise);
         leaveUnless(equal(Word32(m_out.load32(m_out.address(heap, entry, OBJECT_OFFSETOF(KeyListCacheEntry, orderWord)))), objectOrderWord), otherwise);
@@ -243,6 +243,14 @@ void OwnPropertyBuiltinEmitter::generateReflectSet(const InlineCall& call)
     ValueID receiver = call.argumentOrNull(3);
     StubCallResult result = callStub(call.context(), reflectSet(), { target.value(), key.value(), value.value(), receiver ? boxedOperand(call.context(), receiver).value() : target.value() }, { .calledBuiltin = functionOf(call.overload()) });
     finish(call, Condition(m_out.notZero64(result.first)));
+}
+
+void OwnPropertyBuiltinEmitter::generateObjectDefineProperty(const InlineCall& call)
+{
+    Boxed target = boxedOperand(call.context(), call.argument(0));
+    Boxed key = boxedOperand(call.context(), call.argument(1));
+    Boxed descriptor = boxedOperand(call.context(), call.argument(2));
+    finish(call, callOperation<Boxed>(call.context(), RuntimeOperation::ObjectDefineProperty, { target, key, descriptor }, { .calledBuiltin = functionOf(call.overload()) }));
 }
 
 void OwnPropertyBuiltinEmitter::generateObjectGetOwnPropertyDescriptor(const InlineCall& call)

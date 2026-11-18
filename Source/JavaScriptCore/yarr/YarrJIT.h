@@ -52,6 +52,10 @@ class ExecutablePool;
 class MacroAssembler;
 class VM;
 
+namespace AOT {
+class ImageAssembler;
+}
+
 namespace Yarr {
 
 class CodeAddressing;
@@ -477,7 +481,7 @@ struct CodeGenerationRequest {
     std::optional<StringView> sampleString;
     YarrCodeBlock* codeBlock;
     const CodeGenerationPolicy& policy;
-    Function<std::unique_ptr<CodeAddressing>(CCallHelpers&)> createCodeAddressing;
+    Function<std::unique_ptr<CodeAddressing>(AOT::ImageAssembler&)> createCodeAddressing;
     // Whether the pattern's flat programs remember failed searches. Requests for one pattern share it.
     std::optional<bool>* remembersFailedSearches { nullptr };
 };

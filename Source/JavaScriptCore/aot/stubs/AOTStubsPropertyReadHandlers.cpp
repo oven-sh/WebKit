@@ -613,24 +613,40 @@ void generateThroughProxy(StubAssembler& jit)
                 jit.loadPtr(kept(OBJECT_OFFSETOF(ProxyAccessWords, proxy)), argumentGPR(operations.numberOfArguments - 1));
         };
         const bool entersClosure = isX86_64() && jit.options().hasOneInstance;
-        Jump isClosure = jit.branch8(CCallHelpers::GreaterThanOrEqual, Address(R0, offsetOfSlimClosureWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(entersClosure ? operations.numberOfArguments : ClosureWord::maxNumberOfParameters)));
-        isNoFunction.append(branchIfNotFunctionType(jit, R0, scratch));
-        Jump hasCalled;
-        if (entersClosure) {
-            loadOperandsOfTrap();
-            jit.callStub(callValueCell(operations.numberOfArguments));
-            hasCalled = jit.jump();
-        }
-        isClosure.link(&jit);
-        loadOperandsOfTrap();
-        if (entersClosure) {
+        auto branchIfClosureTakesArguments = [&](CCallHelpers::RelationalCondition condition, ptrdiff_t offsetOfWord) {
+            return jit.branch8(condition, Address(R0, offsetOfWord + ClosureWord::topByteShift / 8), TrustedImm32(ClosureWord::minTopByteOfCalleeTaking(entersClosure ? operations.numberOfArguments : ClosureWord::maxNumberOfParameters)));
+        };
+        auto enterClosure = [&](ptrdiff_t offsetOfWord) {
             static_assert(!isX86_64() || (ClosureWord::offsetUnit == 1 && ClosureWord::numberOfOffsetBits == 32));
             const GPRReg code = target;
             RELEASE_ASSERT(noOverlap(code, calleeGPR, thisGPR, countGPR, argumentGPR(0), argumentGPR(1), argumentGPR(2), argumentGPR(3)));
             jit.move(TrustedImm32(operations.numberOfArguments), countGPR);
-            jit.load32(Address(calleeGPR, offsetOfSlimClosureWord), code);
+            jit.load32(Address(calleeGPR, offsetOfWord), code);
             jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.code)), code);
             jit.call(code, JSEntryPtrTag);
+        };
+        Jump isClosure = branchIfClosureTakesArguments(CCallHelpers::GreaterThanOrEqual, offsetOfSlimClosureWord);
+        JumpList hasCalled;
+        if (entersClosure) {
+            jit.load32(Address(R0, JSCell::structureIDOffset()), scratch);
+            Jump isOtherCallee = jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(closures.closureHeaders[0])));
+            Jump refusesArguments = branchIfClosureTakesArguments(CCallHelpers::LessThan, offsetOfClosureEntry);
+            loadOperandsOfTrap();
+            enterClosure(offsetOfClosureEntry);
+            hasCalled.append(jit.jump());
+            isOtherCallee.link(&jit);
+            refusesArguments.link(&jit);
+        }
+        isNoFunction.append(branchIfNotFunctionType(jit, R0, scratch));
+        if (entersClosure) {
+            loadOperandsOfTrap();
+            jit.callStub(callValueCell(operations.numberOfArguments));
+            hasCalled.append(jit.jump());
+        }
+        isClosure.link(&jit);
+        loadOperandsOfTrap();
+        if (entersClosure) {
+            enterClosure(offsetOfSlimClosureWord);
             hasCalled.link(&jit);
         } else
             jit.callStub(callValueCell(operations.numberOfArguments));
@@ -647,6 +663,12 @@ void generateThroughProxy(StubAssembler& jit)
         JumpList isNotCompiledObject = branchIfNotCompiledObjectOfThisImage(jit, target);
         runTimeFinishes.append(jit.branchTest8(CCallHelpers::Zero, Address(scratch, CompiledStructure::offsetOfFlags()), TrustedImm32(static_cast<uint8_t>(CompiledStructure::Flag::HasOnlyConfigurableFields))));
         bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(target, offsetOfOrderWord), TrustedImm32(~orderAndCountMask)));
+        runTimeFinishes.append(jit.branchTest32(CCallHelpers::NonZero, Address(target, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordIntegrityBits))));
+        const GPRReg extraProperties = name;
+        loadExtraPropertiesByStructure(jit, target, scratch, handler, extraProperties, runTimeFinishes);
+        runTimeFinishes.append(jit.branchIfNotType(extraProperties, FinalObjectType));
+        loadStructure(jit, extraProperties, scratch);
+        bindsNothing.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasNonConfigurablePropertiesBits)));
         runTimeFinishes.append(jit.jump());
 
         isNotCompiledObject.link(&jit);

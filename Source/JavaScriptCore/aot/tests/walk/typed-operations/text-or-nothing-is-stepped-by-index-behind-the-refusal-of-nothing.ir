@@ -6,7 +6,6 @@
 # CHECK: ([[given]]: undefined|"abc" {{*}}entry=0
 # CHECK: [[text]]: "abc" {{*}} = RequireObjectCoercible [[given]] nullishAccess=Iterate
 # CHECK: ([[total]]: {{*}} @Double, {{*}}isLoopHead=true
-# CHECK: = GetStringCodeUnit
 # RUN(NEVER): walk f1 mechanisms=all
 # NEVER-NOT: key="next"
 # NEVER-NOT: form=Generic

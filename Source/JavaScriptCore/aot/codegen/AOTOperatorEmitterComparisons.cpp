@@ -418,7 +418,8 @@ bool OperatorEmitter::generateMixedDoubleRelation(const ValueContext& value, Rel
     defineTestByBranching(value, [&](BranchTargets targets) {
         LBasicBlock int32Case = newBlock();
         LBasicBlock otherCase = newBlock();
-        m_out.branch(isInt32(other).value(), normalEdge(int32Case), unlikelyEdge(otherCase));
+        bool isComparedWithFraction = typeOf(numberID).primitives & Primitive::FractionalNumber;
+        m_out.branch(isInt32(other).value(), normalEdge(int32Case), isComparedWithFraction ? normalEdge(otherCase) : unlikelyEdge(otherCase));
         m_out.appendTo(int32Case);
         Number otherNumber = toNumber(int32InBox(other));
         branch(numberIsOnRight ? compare(relation, otherNumber, number) : compare(relation, number, otherNumber), targets);

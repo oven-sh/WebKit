@@ -22,6 +22,7 @@
 #include "JSCustomGetterFunction.h"
 #include "JSFunction.h"
 #include "NativeExecutable.h"
+#include "ProxyObject.h"
 #include <variant>
 
 namespace JSC { namespace AOT {
@@ -327,6 +328,56 @@ static CodeSpecializationKind specializationKindOf(InternalFunctionEntry entry)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static void emitConstructOfProxy(StubAssembler& jit, GPRReg scratch)
+{
+    constexpr unsigned kind = static_cast<unsigned>(InlineAllocation::Proxy);
+    constexpr GPRReg target = argumentGPR(0);
+    constexpr GPRReg handler = argumentGPR(1);
+    const GPRReg allocator = jit.allocateScratch(StubRegister::T9);
+    const GPRReg proxy = jit.allocateScratch(StubRegister::T13);
+    RELEASE_ASSERT(noOverlap(scratch, allocator, proxy, calleeGPR, thisGPR, instanceGPR, target, handler));
+    JumpList callsFunction;
+
+    loadStructure(jit, calleeGPR, scratch);
+    jit.loadRuntimePointer(Entry::ProxyConstructorClassInfo, allocator);
+    callsFunction.append(jit.branchPtr(CCallHelpers::NotEqual, Address(scratch, Structure::classInfoOffset()), allocator));
+    jit.loadPtr(Address(calleeGPR, InternalFunction::offsetOfGlobalObject()), scratch);
+    callsFunction.append(jit.branchPtr(CCallHelpers::NotEqual, scratch, Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject))));
+    callsFunction.append(jit.branchIfNotCell(target));
+    callsFunction.append(jit.branchIfNotCell(handler));
+    callsFunction.append(jit.branchIfNotObject(handler));
+    jit.load8(Address(target, JSCell::typeInfoTypeOffset()), scratch);
+    JumpList isNotCallable;
+    isNotCallable.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(CompiledObjectType)));
+    isNotCallable.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(FinalObjectType)));
+    callsFunction.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ArrayType)));
+    isNotCallable.link(&jit);
+
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator)), allocator);
+    Jump isNotPrepared = jit.branchTestPtr(CCallHelpers::Zero, allocator);
+    allocateCell(jit, proxy, allocator, scratch, callsFunction);
+    jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header)), scratch);
+    jit.store64(scratch, Address(proxy));
+    jit.store64(TrustedImm32(0), Address(proxy, JSObject::butterflyOffset()));
+    jit.store64(target, Address(proxy, ProxyObject::offsetOfInternalField(static_cast<unsigned>(ProxyObject::Field::Target))));
+    jit.store64(handler, Address(proxy, ProxyObject::offsetOfInternalField(static_cast<unsigned>(ProxyObject::Field::Handler))));
+    static_assert(ProxyObject::offsetOfHandlerPrototypeStructureID() == ProxyObject::offsetOfHandlerStructureID() + static_cast<ptrdiff_t>(sizeof(StructureID)) && ProxyObject::offsetOfHandlerTrapsOffsetsCache() == ProxyObject::offsetOfHandlerStructureID() + static_cast<ptrdiff_t>(sizeof(uint64_t)));
+    static_assert(static_cast<int64_t>(ProxyObject::emptyHandlerTrapsOffsetsCacheWord()) == -1);
+    jit.store64(TrustedImm32(0), Address(proxy, ProxyObject::offsetOfHandlerStructureID()));
+    for (ptrdiff_t offset = ProxyObject::offsetOfHandlerTrapsOffsetsCache(); offset < static_cast<ptrdiff_t>(sizeof(ProxyObject)); offset += sizeof(uint64_t))
+        jit.store64(TrustedImm32(-1), Address(proxy, offset));
+    fenceAfterAllocation(jit);
+    jit.move(proxy, jit.result());
+    jit.returnToCaller();
+
+    isNotPrepared.link(&jit);
+    jit.preservingCallerSavedRegisters(false, [&](unsigned) {
+        jit.move(instanceGPR, jit.reuseScratch(StubRegister::A0));
+        jit.callOperation(Entry::operationAOTPrepareProxyAllocation, jit.reuseScratch(StubRegister::Operation));
+    });
+    callsFunction.link(&jit);
+}
+
 void generateCallInternalFunction(StubAssembler& jit)
 {
     const CodeSpecializationKind kind = specializationKindOf(static_cast<InternalFunctionEntry>(jit.key().form()));
@@ -335,7 +386,8 @@ void generateCallInternalFunction(StubAssembler& jit)
         emitCallOfBooleanConstructor(jit, scratch);
         emitCallOfNumberOrStringConstructor(jit, scratch);
         emitObjectOrArrayConstructorCall(jit, scratch);
-    }
+    } else if (jit.key().count() == 2)
+        emitConstructOfProxy(jit, scratch);
 
     jit.emitFunctionPrologue();
     emitHostCallFrame(jit, { calleeGPR, thisGPR, jit.key().count(), std::nullopt });

@@ -23,6 +23,7 @@ enum class KnownNote : uint8_t {
     Outcome,
     Relation,
     LengthOfList,
+    StoredLengthOfList,
     PositionFoundInsideList,
     FlatString,
     ValueKeptByPlace,
@@ -41,11 +42,15 @@ enum class KnownNote : uint8_t {
     MirroredVectorOfView,
     MirroredLengthOfBuffer,
     MirroredVectorOfBuffer,
+    CappedLengthOfView,
+    CheckedBelowLength,
     NoExtraPropertyUnderKey,
+    StoresPassAbove,
     IsOfNoneOfLayouts,
     StorageOfListMadeInSight,
     PlaceOfKeyInMap,
     PlaceOfKeyIsNegative,
+    TestOfKeyInMap,
     VariableIsAsInFrontOfLoop,
     LoopBoundElementUnchanged,
     NeverLiesBelow,
@@ -78,6 +83,7 @@ enum class KnownNote : uint8_t {
     HoistedUnknownField,
     CarriedResult,
     CarriedElement,
+    ConstantElementsKept,
     CarriedField,
     WordOfNumber,
     WideSum,
@@ -86,6 +92,8 @@ enum class KnownNote : uint8_t {
     LastIndexOfRegExp,
     NumberOfText,
     ElementOfPresenceTest,
+    ElementOfView,
+    FilledSlot,
 };
 inline constexpr AbstractHeapSet elementGuardHeaps {
     AbstractHeap::ArrayStorage, AbstractHeap::Elements, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks, AbstractHeap::ShapeWords
@@ -93,6 +101,7 @@ inline constexpr AbstractHeapSet elementGuardHeaps {
 void noteKnown(Walker&, KnownNote, Reference subject, Reference other, uint32_t word, const LocationMasks& restsOn, uint64_t noted, bool endsAtSuspension = false);
 std::optional<uint64_t> findKnown(const Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 std::optional<uint64_t> findKnown(const Walker&, const WalkState&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
+Vector<uint64_t, 16> listKnown(const Walker&, KnownNote, Reference subject);
 void endKnown(Walker&, KnownNote, Reference subject, Reference other = { }, uint32_t word = 0);
 constexpr bool isLookupInTable(InlineBuiltin builtin) { return builtin == InlineBuiltin::MapGet || builtin == InlineBuiltin::MapHas || builtin == InlineBuiltin::SetHas; }
 
@@ -169,6 +178,7 @@ WrittenListOfVariable writtenListThatVariableHolds(Walker&, VariableID);
 WrittenListOfVariable writtenListReadBy(Walker&, ValueID input);
 enum class AnswerOfSearch : uint8_t { Membership, Place };
 Reference buildSearchInWrittenList(Walker&, DataID, Reference sought, AnswerOfSearch, Origin);
+Reference buildSearchAmongWords(Walker&, const DataNode::Array&, Reference sought, AnswerOfSearch, Origin);
 WrittenListOfVariable literalArrayInInstance(Walker&, FieldReference);
 bool isReadOutOfVariableOfFileThatStays(Walker&, ValueID input);
 void noteStorageOfWrittenList(Walker&, Reference list, const WrittenListOfVariable&);

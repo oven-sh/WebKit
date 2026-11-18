@@ -216,6 +216,7 @@ struct SummaryCall {
     bool passesLiteral : 1 { false };
     bool continuesConstruction : 1 { false };
     bool describesPrototypeInSight : 1 { false };
+    bool copiesIntoPrototype : 1 { false };
     bool passesWrittenParts : 1 { false };
     uint16_t lengthOfWrittenList : 13 { 0 };
     FunctionID function;
@@ -263,6 +264,7 @@ struct SummaryAccess {
     bool isCopySpelledByLoop : 1 { false };
     bool readsPrototypeOfHeritage : 1 { false };
     bool isByMethodDecorator : 1 { false };
+    bool setsFlagsAlone : 1 { false };
     std::optional<OptionSet<FieldForm>> formCreated;
     uint32_t subject { 0 };
     uint32_t receiver { noSummaryNode };
@@ -307,6 +309,7 @@ struct SummaryOperator {
     bool shiftsRightByConstant { false };
     int8_t step { 0 };
     uint8_t steppedOperand { 0 };
+    bool stepsNonZero { false };
 
     bool isConversionByEquality() const { return opcode == Opcode::Eq; }
 };
@@ -354,6 +357,7 @@ struct SummaryChange {
     enum class Lays : uint8_t { WhatDescriptorSays, Getter, Setter };
     Lays lays { Lays::WhatDescriptorSays };
     uint32_t getter { noSummaryNode };
+    uint32_t setter { noSummaryNode };
     bool liesOnNoWayToReturn { false };
     bool heirIsMadeByCall { false };
     bool definesWhatItCopies { false };
@@ -362,6 +366,7 @@ struct SummaryChange {
     bool isUnderNameThatNobodyElseNames { false };
     bool descriptorIsInSight { false };
     bool descriptorLaysNoAccessor { false };
+    bool descriptorSetsFlagsAlone { false };
     bool isEntryWrittenInMap { false };
     bool laysAccessorAsWritten { false };
     bool laysNewValueOfNativeCode { false };
@@ -412,6 +417,8 @@ struct SummaryConstruction {
 
     Object object { Object::Allocated };
     bool isSeenFromOutside { false };
+    bool isTested { false };
+    uint32_t lastTest { 0 };
     uint32_t firstKey { 0 };
     uint32_t numberOfKeys { 0 };
     uint32_t firstKeyFilledAtEnd { 0 };
@@ -433,6 +440,7 @@ enum class SummaryTrait : uint16_t {
     HoldsInt32Promise = 1 << 9,
     NeverReturns = 1 << 10,
     SuspendsAfterStart = 1 << 11,
+    CallsAccessorDefiner = 1 << 12,
 };
 
 struct OtherNameOfObjectBeingMade {
@@ -455,6 +463,8 @@ struct SummaryMethodOfClass {
 };
 
 struct SummaryStoreOnPrototype {
+    enum class Kind : uint8_t { Store, MethodBeforeInstances, GetterBeforeInstances, SetterBeforeInstances, LiteralBeforeInstances, ParentBeforeInstances, FindsPlainProperty };
+
     ValueID site;
     uint32_t position { 0 };
     VariableID variable;
@@ -462,6 +472,7 @@ struct SummaryStoreOnPrototype {
     FunctionID method;
     PropertyKeyID key;
     bool isOnEveryPath { false };
+    Kind kind { Kind::Store };
 
     friend constexpr auto operator<=>(const SummaryStoreOnPrototype&, const SummaryStoreOnPrototype&) = default;
 };
@@ -472,6 +483,8 @@ struct SummaryUnitInVariable {
 
     friend constexpr auto operator<=>(const SummaryUnitInVariable&, const SummaryUnitInVariable&) = default;
 };
+
+bool isStoredOnPrototypeItself(const Program&, PropertyKeyID);
 
 bool isBodyOfWrappedModule(const Program&, FunctionID);
 bool isModuleOfBundle(const Program&, ModuleID);
@@ -548,15 +561,22 @@ struct SummaryWithoutLists {
     uint16_t entryParametersReadAsNames { 0 };
     uint16_t entryParametersReadAsKeys { 0 };
     uint32_t numberOfArgumentsOfOwnCalls { 0 };
+    uint32_t kindsOfNodes { 0 };
     OptionSet<SummaryTrait> traits;
-    bool operatorsLeftApartMayJoinTexts { false };
-    bool someBlockHasHandler { false };
-    bool someResultIsReadAsKey { false };
-    bool mayReadPathOfAnyModule { true };
-    bool makesObjects { false };
-    bool hasClosures { false };
+    bool operatorsLeftApartMayJoinTexts : 1 { false };
+    bool someBlockHasHandler : 1 { false };
+    bool someResultIsReadAsKey : 1 { false };
+    bool mayReadPathOfAnyModule : 1 { true };
+    bool makesObjects : 1 { false };
+    bool hasClosures : 1 { false };
+    bool hasClosureNodes : 1 { false };
+    bool callsItself : 1 { false };
+    bool definesComputedKeys : 1 { false };
+    bool readsUnknownKeys : 1 { false };
 
     bool has(SummaryTrait trait) const { return traits.contains(trait); }
+    static constexpr uint32_t bitOf(SummaryNode::Kind kind) { return 1u << static_cast<unsigned>(kind); }
+    template<typename... Kinds> bool holdsNodesOf(Kinds... kinds) const { return kindsOfNodes & (bitOf(kinds) | ...); }
 };
 
 struct SummaryStorage {

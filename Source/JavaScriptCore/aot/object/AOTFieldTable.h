@@ -123,13 +123,20 @@ struct FieldTableEntry {
 
 struct FieldRecordIndex {
     static constexpr uint16_t isStoredWithoutTypeTest = 1u << 15;
-    static constexpr uint16_t indexMask = isStoredWithoutTypeTest - 1;
+    static constexpr uint16_t takesEveryInt32 = 1u << 14;
+    static constexpr uint16_t indexMask = takesEveryInt32 - 1;
 
     static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint16_t numberOfAnyType)
     {
         RELEASE_ASSERT(indexInLayoutRecord <= indexMask);
         constexpr uint16_t flagsBarringStore = fieldAttributeFlags;
-        return { static_cast<uint16_t>(indexInLayoutRecord | (typeAcceptsWhatSlotHolds(field, type, numberOfAnyType) && !(field.flags & flagsBarringStore) ? isStoredWithoutTypeTest : 0)) };
+        constexpr uint16_t flagsBarringStoreOfInt32 = flagsBarringStore | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldTypeIsLeftToRunTime;
+        uint16_t bits = indexInLayoutRecord;
+        if (typeAcceptsWhatSlotHolds(field, type, numberOfAnyType) && !(field.flags & flagsBarringStore))
+            bits |= isStoredWithoutTypeTest;
+        if (field.slot.representation() == SlotRepresentation::JSValue && typeAcceptsIntegersFrom(type, INT32_MIN) && !(field.flags & flagsBarringStoreOfInt32))
+            bits |= takesEveryInt32;
+        return { bits };
     }
 
     constexpr uint16_t indexInLayoutRecord() const { return bits & indexMask; }
@@ -139,6 +146,13 @@ struct FieldRecordIndex {
     uint16_t bits;
 
 private:
+    static bool typeAcceptsIntegersFrom(const RuntimeType& type, int32_t least)
+    {
+        if (!type.primitiveSet().contains(PrimitiveSet::Integer))
+            return false;
+        auto range = type.integerRange();
+        return !range || (range->first <= least && range->second >= INT32_MAX);
+    }
     static bool typeAcceptsWhatSlotHolds(const FieldData& field, const RuntimeType& type, uint16_t numberOfAnyType)
     {
         switch (field.slot.representation()) {
@@ -146,11 +160,7 @@ private:
             return field.typeNumber == numberOfAnyType;
         case SlotRepresentation::Int32:
         case SlotRepresentation::OptionalInt32:
-            if (!type.primitiveSet().contains(PrimitiveSet::Integer))
-                return false;
-            if (auto range = type.integerRange())
-                return range->first <= minInlineInt32 && range->second >= INT32_MAX;
-            return true;
+            return typeAcceptsIntegersFrom(type, minInlineInt32);
         case SlotRepresentation::Boolean:
         case SlotRepresentation::OptionalBoolean:
             return type.primitiveSet().containsAll({ PrimitiveSet::False, PrimitiveSet::True });

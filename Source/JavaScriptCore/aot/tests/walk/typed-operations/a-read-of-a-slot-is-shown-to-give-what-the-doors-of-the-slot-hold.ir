@@ -6,7 +6,7 @@
 # A READ OF A SLOT IS SHOWN TO GIVE WHAT THE DOORS OF THE SLOT HOLD, THE PART OF A NUMBER INCLUDED. Every road into a slot asks for the part: a compiled store asks what has a box and what lies raw alike, unless it is shown;
 # the run time compares the kind and the range of an integer; where a stub stores without a test the plan has widened the word of the doors itself. Here the object is shown (a direct call gives it): what its slots
 # `level` and `name` give goes into slots that take the same, and nothing is asked.
-# RUN(RELABELED): walk f2 mechanisms=all-Inlining
+# RUN(RELABELED): walk f2 mechanisms=all-Inlining-EscapeAnalysis
 # RELABELED-LABEL: code f2:Body
 # RELABELED: [[level]]: int[0, 2147483647]|string @JSValue = GetSlot {{*}} key="level" receivers=[L0] level=Proven
 # RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven

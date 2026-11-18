@@ -16,6 +16,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
@@ -25,6 +26,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeCheckFailure.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
@@ -668,19 +670,41 @@ static void didChangePrototypeProperty(Closure* closure)
     }
 }
 
-static bool restatesInitialName(VM& vm, const Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)
+static constexpr unsigned initialAttributesOfName = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+
+static bool tryDefineInitialName(VM& vm, Closure& closure, PropertyName name, const PropertyDescriptor& descriptor)
 {
-    if (name != vm.propertyNames->name || closure.classData() || closure.kind().hasInitialNamePrefix())
+    if (name != vm.propertyNames->name || closure.classData() || descriptor.isAccessorDescriptor() || !descriptor.value() || !descriptor.value().isString())
         return false;
     FunctionRareData* rareData = closure.rareData();
-    if ((rareData && rareData->hasReifiedName()) || closure.getDirect(vm, vm.propertyNames->name))
+    if ((rareData && rareData->hasReifiedName()) || uncheckedDowncast<NativeExecutable>(closure.executable())->isNamedAsBound() || closure.getDirect(vm, vm.propertyNames->name))
         return false;
-    if (descriptor.isAccessorDescriptor() || !descriptor.value() || !descriptor.value().isString())
+    unsigned overriddenAttributes = (descriptor.writablePresent() ? PropertyAttribute::ReadOnly : PropertyAttribute::None) | (descriptor.enumerablePresent() ? PropertyAttribute::DontEnum : PropertyAttribute::None) | (descriptor.configurablePresent() ? PropertyAttribute::DontDelete : PropertyAttribute::None);
+    unsigned attributes = (descriptor.attributes() & overriddenAttributes) | (initialAttributesOfName & ~overriddenAttributes);
+    if (attributes == initialAttributesOfName && !closure.kind().hasInitialNamePrefix()) {
+        auto defined = asString(descriptor.value())->tryGetValue();
+        auto initial = initialNamePropertyString(vm, closure.state(), closure.function())->tryGetValue();
+        if (!defined->isNull() && !initial->isNull() && defined.data == initial.data)
+            return true;
+    }
+    Structure* structure = closure.structure();
+    if (!structure->isStructureExtensible() || structure->mayHaveImmutableProperties())
         return false;
-    if ((descriptor.writablePresent() && descriptor.writable()) || (descriptor.enumerablePresent() && descriptor.enumerable()) || (descriptor.configurablePresent() && !descriptor.configurable()))
+    closure.setNameProperty(vm, asString(descriptor.value()), attributes);
+    countEvent(vm, RuntimeCounterID::InitialNamesReplaced);
+    return true;
+}
+
+static bool reifyWrittenName(VM& vm, Closure& closure)
+{
+    FunctionRareData* rareData = closure.rareData();
+    if ((rareData && rareData->hasReifiedName()) || uncheckedDowncast<NativeExecutable>(closure.executable())->isNamedAsBound())
         return false;
-    auto defined = asString(descriptor.value())->tryGetValue();
-    return !defined->isNull() && defined.data == initialNameProperty(closure.function());
+    JSString* name = initialNamePropertyString(vm, closure.state(), closure.function());
+    closure.ensureRareData(vm)->setHasReifiedName();
+    AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+    closure.putDirect(vm, vm.propertyNames->name, name, initialAttributesOfName);
+    return true;
 }
 
 bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -713,6 +737,8 @@ bool Closure::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
         slot.setValue(closure, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum, value);
         return true;
     }
+    if (isName && !closure->kind().hasInitialNamePrefix() && reifyWrittenName(vm, *closure))
+        return JSObject::getOwnPropertySlot(object, globalObject, propertyName, slot);
     return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
 }
 
@@ -804,7 +830,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name)) [[unlikely]] {
+    if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name) && !closure->structure()->isImmutablePropertyForReader(name.uid())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         slot.disableCaching();
         bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && name != vm.propertyNames->hasInstanceSymbol);
@@ -826,6 +852,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     }
     if (slot.thisValue() == JSValue(closure) && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
+    Structure* structureBefore = closure->structure();
     closure->ensureClassObject(vm);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
@@ -842,6 +869,8 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
             classes.didChangeMember(*classLayout, ClassSide::Static, name.uid());
         }
     }
+    if (slot.type() == PutPropertySlot::ExistingProperty && closure->structure() != structureBefore)
+        slot.disableCaching();
     if (name == vm.propertyNames->prototype) [[unlikely]] {
         slot.disableCaching();
         didChangePrototypeProperty(closure);
@@ -878,15 +907,18 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
-    if (closure->refusesOwnProperty(vm, name)) [[unlikely]]
+    const bool isClosedName = closure->refusesOwnProperty(vm, name);
+    if (isClosedName && !closure->structure()->isImmutablePropertyForReader(name.uid()) && !RuntimeHooks::definesInheritedValue(closure, name, descriptor)) [[unlikely]]
         return typeError(globalObject, scope, shouldThrow, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
-    if (restatesInitialName(vm, *closure, name, descriptor))
+    if (tryDefineInitialName(vm, *closure, name, descriptor))
         return true;
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
-    if (classLayout && tryDefineStaticFieldInVariable(*closure, name, descriptor))
+    if (classLayout && !isClosedName && tryDefineStaticFieldInVariable(*closure, name, descriptor))
         return true;
     closure->ensureClassObject(vm);
+    if (isClosedName) [[unlikely]]
+        RuntimeHooks::closeNamesOfFunction(vm, closure, name);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);

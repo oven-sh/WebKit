@@ -94,6 +94,10 @@ public:
     void generateOpenString(const ValueContext&);
     void generateStringRange(const ValueContext&);
     void generateStringOrder(const ValueContext&);
+    void generateWordOfText(const ValueContext&);
+    void generateReverseWordOfText(const ValueContext&);
+    void generateHasTextInCell(const ValueContext&);
+    void generateLocaleCompareToWord(const ValueContext&);
     void generateStringOrderToCharacter(const ValueContext&);
     void generateStringEqualsLiteral(const ValueContext&);
     void generateValueEqualsLiteral(const ValueContext&);
@@ -118,6 +122,7 @@ public:
     void recordInlined(char16_t codeUnit);
 
     Word32 lengthOf(ValueID string);
+    void addOrderByFirstDifference(ValueID left, ValueID right, LBasicBlock byCall, Join<Word32>& order);
     Word32 lengthOf(CellPointer string);
     CharacterView viewOf(const OperationContext&, ValueID string);
     CharacterView viewOfFlatString(CellPointer flat);
@@ -147,10 +152,11 @@ public:
     CodeUnitRange clampRange(StringRangeMethod, Word32 length, StringPosition first, std::optional<StringPosition> second);
     CodeUnitRange clampRange(StringRangeMethod, Word32 length, Number first, std::optional<Number> second);
     Integer indexInString(Integer position, Word32 length, bool isRelativeToEnd);
-    Integer indexInString(Number position, Word32 length, bool isRelativeToEnd) { return indexInString(truncateToInteger(position), length, isRelativeToEnd); }
+    Integer indexInString(Number position, Word32 length, bool isRelativeToEnd);
 
     enum class StringIdentity : bool { Unknown, Distinct };
     Condition areEqual(const OperationContext&, CellPointer, CellPointer, StringIdentity = StringIdentity::Unknown);
+    void branchOnEqualityOfDistinctStrings(const OperationContext&, CellPointer a, CellPointer b, BranchTargets);
     Word32 order(const OperationContext&, CellPointer, CellPointer);
     Word32 orderToCharacter(const CharacterView&, char16_t codeUnit);
     Condition equalsLiteral(const OperationContext&, ComparedOperand, LValue subject, StringID, std::optional<FlatStringCell> flatSubject = std::nullopt, bool everyCellIsString = false, std::optional<Word32> lengthOfSubject = std::nullopt);
@@ -178,10 +184,11 @@ public:
             : constant(constant)
         {
         }
-        static StringPart toConvert(Boxed value)
+        static StringPart toConvert(Boxed value, ConversionInConcatenation conversion)
         {
             StringPart part { StringID() };
             part.unconverted = value;
+            part.conversion = conversion;
             return part;
         }
         static StringPart ofInteger(Integer value)
@@ -194,6 +201,7 @@ public:
 
         std::optional<CellPointer> cell { };
         std::optional<Boxed> unconverted { };
+        ConversionInConcatenation conversion { ConversionInConcatenation::ToString };
         std::optional<Integer> integer { };
         StringID constant { };
     };
@@ -212,8 +220,14 @@ private:
 
     CellPointer cellOf(const OperationContext&, const StringPart&);
     std::optional<CellPointer> tryConcatenateInteger(const OperationContext&, std::span<const StringPart>);
+    std::optional<CellPointer> tryConcatenateIntegers(const OperationContext&, std::span<const StringPart>);
     CellPointer concatenateTwoOrThree(const OperationContext&, std::span<const StringPart>);
     Word32 flagsInImpl(Pointer impl);
+    struct ShortText {
+        Integer word;
+        Word32 length;
+    };
+    ShortText shortTextOf(CellPointer string, BlockEdge otherwise);
     CharacterSource sourceInImpl(Pointer impl);
     CharacterSource sourceOfRope(const OperationContext&, CellPointer rope);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);

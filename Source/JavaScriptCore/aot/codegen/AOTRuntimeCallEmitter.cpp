@@ -61,6 +61,7 @@ struct CallGenerator {
     Machine::RegisterMask receiversWithVariant;
     std::optional<StubKey> keyThatKeepsFewerRegisters;
     Machine::RegisterMask registersThatItLosesBesides;
+    EmitterOfStubCall emitterOfStubCall;
 };
 
 static_assert(std::is_trivially_destructible_v<CallGenerator>);
@@ -151,6 +152,11 @@ void CallGenerator::emitCallInstruction(CCallHelpers& jit, StubKey called, const
 {
     StubCalls& stubCalls = records->stubCalls;
     RELEASE_ASSERT(!immediate || !numberedImmediate);
+    if (emitterOfStubCall && moves.isEmpty()) {
+        RELEASE_ASSERT(!immediate && !numberedImmediate && !throwSite && !firstRead);
+        emitterOfStubCall(jit, stubCalls, called, site);
+        return;
+    }
     if (!moves.isEmpty()) {
         RELEASE_ASSERT(!throwSite && !firstRead);
         if (numberedImmediate)
@@ -568,7 +574,7 @@ struct PatchEffectsMemo {
     Vector<Machine::HeapIndex*> lists;
 };
 
-static uint64_t hashOfLocationMasks(const LocationMasks& masks, uint64_t hash)
+static ALWAYS_INLINE uint64_t hashOfLocationMasks(const LocationMasks& masks, uint64_t hash)
 {
     hash = (std::rotl(hash, 32) ^ static_cast<uint64_t>(masks.heaps().toRaw())) * 0x9E3779B97F4A7C15ull;
     if (!masks.containsAny(indexedHeaps))
@@ -765,10 +771,10 @@ void RuntimeCallEmitter::fillEntryRequest(CallRequestWithOwnOptions& request, AO
         && numberOfGPRArgumentsOf(signature, first) <= GPRInfo::numberOfArgumentRegisters
         && (first != OperationCall::FirstArgument::None || !checksException);
     if (callerOptions.isOnRarePath && canPreserveRegisters) {
-        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first) };
+        request.preservingCall = OperationCall { .returns = returns, .firstArgument = first, .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = checksException, .pollsBeforeReturning = mayFailToAllocate(entry, first, request.ownEffects) };
         request.key = callOperationPreservingRegisters(*request.preservingCall);
     } else
-        request.key = callOperationFor(entry, returns, first);
+        request.key = callOperationFor(entry, returns, first, request.ownEffects);
 }
 
 void RuntimeCallEmitter::placeArguments(CallRequest& request, std::span<const LValue> arguments, OperationCall::FirstArgument first) const
@@ -1050,7 +1056,7 @@ StubCallResult RuntimeCallEmitter::emitCall(const OperationContext* context, con
 
     const ThrowSite* throwSite = options.throwSite ? m_proc.arena().create<ThrowSite>(*options.throwSite) : nullptr;
     const OperationCall* preservingCall = request.preservingCall ? m_proc.arena().create<OperationCall>(*request.preservingCall) : nullptr;
-    patchpoint->makeGenerator<CallGenerator>(&m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides);
+    patchpoint->makeGenerator<CallGenerator>(&m_records, key, *signature, receiverIsInAnyRegister, resultIsInAnyRegister, branchesOnFlags, neverReturns, options.immediate, options.numberedImmediate, site, firstRead, throwSite, preservingCall, shape->keyWhereNoFPRIsKept, shape->receiversWithVariant, shape->keyThatKeepsFewerRegisters, shape->registersThatItLosesBesides, options.emitterOfStubCall);
     if (mayBeShared)
         m_out.recordPurePatch(patchpoint);
 

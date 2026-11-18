@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTRuntimeTable.h"
 #include "AOTRuntimeWords.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
 #include "AOTStubsGlobalBindings.h"
@@ -607,8 +608,7 @@ void generateCreateConstantAtSite(StubAssembler& jit)
     const GPRReg result = jit.result();
 
     callMakerOfConstantAndReturn(jit, makerOfConstantAtSite(constant), result, [&](GPRReg number) {
-        jit.loadPtr(Address(fp, sizeof(CPURegister)), number);
-        jit.load32(Address(number, offsetOfNumberBehindCall), number);
+        jit.load32(ReturnAddressToLookAt::load(jit, fp, number).at(offsetOfNumberBehindCall), number);
     });
 #if CPU(ARM64)
     jit.add64(TrustedImm32(sizeof(uint32_t)), CCallHelpers::linkRegister);

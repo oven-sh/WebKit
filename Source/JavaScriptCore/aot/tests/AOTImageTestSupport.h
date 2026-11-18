@@ -104,7 +104,7 @@ public:
     CodeUnit genericEntrypointOf(uint32_t function) const;
 
     Vector<uint8_t> encodeTables();
-    TestImage build(Vector<CompiledCode>&&, std::unique_ptr<PreparedFunctionSources> = nullptr);
+    TestImage build(Vector<CompiledCode>&&);
 
     unsigned count(InternalErrorKind);
     unsigned count(UserDiagnosticKind, LimitID = LimitID::None);
@@ -188,7 +188,7 @@ struct Assembly {
 template<typename Emit, typename AfterLink>
 CompiledCode assemble(uint32_t function, const StubCatalog& catalog, const Emit& emit, const AfterLink& afterLink)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder relocations(jit, testAssemblerPolicy());
     StubCalls calls(catalog, relocations);
     MentionList mentions;

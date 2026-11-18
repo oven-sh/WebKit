@@ -86,6 +86,7 @@ static void testStubsFindTheirWordsBeforeFirstUse(LoadedProgram& program)
     }
 
     AOT_TEST_CHECK(words.hashedSlots && words.front[0].plane && words.front[0].rowsForStructureIDZero);
+    AOT_TEST_CHECK(words.namesOfTexts && words.missesOfPairs);
     AOT_TEST_CHECK(words.hasInstanceUID == vm.propertyNames->hasInstanceSymbol.impl() && words.prototypeUID == vm.propertyNames->prototype.impl());
     AOT_TEST_CHECK(words.defaultHasInstanceFunction == program.realm()->functionProtoHasInstanceSymbolFunction() && words.holderOfDefaultHasInstanceFunction == program.realm()->functionPrototype());
 }

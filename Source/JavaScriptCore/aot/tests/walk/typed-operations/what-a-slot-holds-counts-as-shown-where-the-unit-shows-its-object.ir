@@ -6,7 +6,7 @@
 # WHAT A SLOT HOLDS COUNTS AS SHOWN WHERE THE UNIT SHOWS ITS OBJECT: the kind `Field` is on. Every road into a slot of a layout that has doors holds the value to the word that stores are held to, so a read out of such a slot
 # gives a value of that word, IF the object read is really of the layout. Here a direct call gives the object, and what a direct call gives is shown (ResultOfCall is on). So what the two reads give is shown, and nothing is asked
 # in front of the new object of another layout. With the kind off each of the two was asked: CheckProof .. source=Field.
-# RUN(RELABELED): walk f2 mechanisms=all-Inlining
+# RUN(RELABELED): walk f2 mechanisms=all-Inlining-EscapeAnalysis
 # RELABELED-LABEL: code f2:Body
 # RELABELED: [[state]]: L0 @JSValue = CallDirect
 # RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven

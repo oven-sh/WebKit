@@ -629,37 +629,37 @@ TypeID numberResultOf(TypeArena& types, Opcode opcode, OperandTypes operandTypes
 
 ALWAYS_INLINE_INTO_OTHER_FILES TypeID typeAfterStepOfOne(TypeArena& types, Opcode opcode, std::span<const TypeID> operandTypes)
 {
-    auto stepIn = [](TypeID type) -> int64_t {
-        if (!isIntegerType(type))
-            return 0;
-        Range integers = integersInID(type);
-        bool isStep = integers.isSingleValue() && std::abs(integers.minimum) == 1;
-        return isStep ? integers.minimum : 0;
+    constexpr Range none = Range::one(0);
+    auto stepsIn = [&](TypeID type) {
+        Range integers = isIntegerType(type) ? integersInID(type) : none;
+        return integers.isSubsetOf(Range { -1, 1 }) ? integers : none;
     };
     TypeID stepped = operandTypes[0];
-    int64_t step = 0;
+    Range steps = none;
     if (opcode == Opcode::Increment)
-        step = 1;
+        steps = Range::one(1);
     if (opcode == Opcode::Decrement)
-        step = -1;
-    if (opcode == Opcode::Sub)
-        step = -stepIn(operandTypes[1]);
+        steps = Range::one(-1);
+    if (opcode == Opcode::Sub) {
+        Range subtracted = stepsIn(operandTypes[1]);
+        steps = { -subtracted.maximum, -subtracted.minimum };
+    }
     if (opcode == Opcode::Add) {
-        step = stepIn(operandTypes[1]);
-        if (!step) {
-            step = stepIn(operandTypes[0]);
+        steps = stepsIn(operandTypes[1]);
+        if (steps == none) {
+            steps = stepsIn(operandTypes[0]);
             stepped = operandTypes[1];
         }
     }
-    if (!step)
+    if (steps == none)
         return { };
     NaturalOperand counter = naturalOperandOf(types, stepped);
     if (!counter.isInteger() || !counter.integers.isSubsetOf(Range::exact()))
         return { };
-    auto afterStep = [&](int64_t integer) {
+    auto afterStep = [](int64_t integer, int64_t step) {
         return std::clamp(integer + step, -maxExactInteger, maxExactInteger);
     };
-    return naturalTypeOfIntegers(types, { afterStep(counter.integers.minimum), afterStep(counter.integers.maximum) });
+    return naturalTypeOfIntegers(types, { afterStep(counter.integers.minimum, steps.minimum), afterStep(counter.integers.maximum, steps.maximum) });
 }
 
 TypeID naturalTypeOfOperands(const TypingContext& context, Opcode opcode, NaturalTable table, OperandTypes operandTypes)

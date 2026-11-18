@@ -111,7 +111,7 @@ public:
 
 #if ENABLE(AOT)
         if (!m_storage && vm.hasCompiledCode()) [[unlikely]] {
-            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, Traits::hasValueData, key, value);
+            JSCell* storage = AOT::CompactStorage::tryCreateForFirstEntry(globalObject, this, Traits::hasValueData, key, value);
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
         }
@@ -193,6 +193,7 @@ public:
             JSCell* storage = AOT::CompactStorage::tryCreate(globalObject, Traits::hasValueData);
             RETURN_IF_EXCEPTION(scope, void());
             m_storage.set(vm, this, storage);
+            m_deletedPrefix = 0;
             return;
         }
 #endif

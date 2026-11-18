@@ -90,6 +90,7 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
     bool somethingIsLeft = isOnlyExpected;
     bool someAnswerByGetter = false;
     Vector<TypeID, mostArmsInUnionMethodCalls> arms;
+    Vector<FunctionID, mostArmsInUnionMethodCalls> methodsOfArms;
     Vector<TypeID, mostArmsInUnionMethodCalls> armsThatFindNeitherGetterNorField;
     bool hasTwoLayouts = false;
     LayoutID classAboveBoth;
@@ -123,6 +124,19 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             hasTwoLayouts = form == TypedForm::Built && findField(program, member, lookup.key()) && program.at(member).kind == LayoutKind::Instance && above && (!classAboveBoth || above == classAboveBoth);
             classAboveBoth = above;
         }
+        FunctionID method;
+        if (call && !isOnlyExpected && form == TypedForm::BuiltBehindLookAtCell) {
+            TypeID found = typeFoundBehindLooks(walker, read, tested);
+            method = found ? singleFunctionOf(types, types.at(found)) : FunctionID();
+        }
+        if (size_t same = method ? methodsOfArms.find(method) : notFound; same != notFound) {
+            tested = types.unionOf(arms[same], tested);
+            if (typedFormOf(walker, read, TypesOfInputs(typeBehindTest)) == form) {
+                arms[same] = tested;
+                continue;
+            }
+            tested = types.forLayout(member);
+        }
         if (form == TypedForm::None) {
             if (!call)
                 return false;
@@ -131,14 +145,18 @@ static bool walkBehindTestsOfShapeInUnionMethodCalls(Walker& walker, const BodyV
             return false;
         else if (!call && form != TypedForm::BuiltAsCall && !findField(program, member, lookup.key()))
             armsThatFindNeitherGetterNorField.append(tested);
-        else
+        else {
             arms.append(tested);
+            methodsOfArms.append(method);
+        }
     }
     arms.appendVector(armsThatFindNeitherGetterNorField);
     auto callsSmallLeaves = [&](PropertyKeyID key, ValueID called) {
         return index.opcodeOf(called) == Opcode::Call && std::ranges::all_of(arms, [&](TypeID arm) {
-            MemberFound found = walker.facts().linked().findMember(program, singleLayoutOf(types, types.at(arm)), ClassSide::Prototype, key);
-            return found.kind == MemberFound::Kind::Method && found.method && isSmallLeaf(walker, found.method, index.value(called).argumentsOperands().size());
+            return std::ranges::all_of(membersOf(types, types.at(arm)), [&](LayoutID member) {
+                MemberFound found = walker.facts().linked().findMember(program, member, ClassSide::Prototype, key);
+                return found.kind == MemberFound::Kind::Method && found.method && isSmallLeaf(walker, found.method, index.value(called).argumentsOperands().size());
+            });
         });
     };
     if (arms.size() > maxNonLeafArms && !(call && walker.isInLoop() && callsSmallLeaves(lookup.key(), call)))

@@ -317,7 +317,20 @@ void StringBuiltinEmitter::generateStringLocaleCompare(const InlineCall& call)
 {
     CellPointer string = stringOperand(call.receiver());
     CellPointer other = stringOperand(call.argument(0));
-    finish(call, low32(callOperation<Integer>(call.context(), RuntimeOperation::StringLocaleCompare, { string, other })));
+    auto orderByCall = [&] {
+        return low32(callOperation<Integer>(call.context(), RuntimeOperation::StringLocaleCompare, { string, other }));
+    };
+    if (!generator().usesLoopForms(call.context().block())) {
+        finish(call, orderByCall());
+        return;
+    }
+    LBasicBlock byCall = newBlock();
+    Join<Word32> join(m_out);
+    ScopeFork fork = m_out.forkScope();
+    strings().addOrderByFirstDifference(call.receiver(), call.argument(0), byCall, join);
+    m_out.appendTo(byCall);
+    join.add(orderByCall());
+    finish(call, join.finishBehind(fork));
 }
 
 void StringBuiltinEmitter::generateStringConcat(const InlineCall& call)

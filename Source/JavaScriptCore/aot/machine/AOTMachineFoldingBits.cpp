@@ -434,39 +434,64 @@ Operation* foldLowWord(Builder& builder, Operation* root)
     if (!readsLowWords(root))
         return nullptr;
 
-    UncheckedKeyHashMap<Operation*, int> costs;
+    static constexpr unsigned maxOperationsMadeAgain = 8;
+    Builder::LowWords& known = builder.lowWords();
+    auto& costs = known.costs;
     auto costOf = [&](Operation* wide) {
         Opcode opcode = wide->opcode();
         if (opcode == SExt32 || opcode == ZExt32)
             return -2;
         if (wide->hasInt64())
             return 0;
-        return readsLowWords(wide) ? costs.get(wide) : 1;
+        return readsLowWords(wide) ? costs.get(wide).conversions : 1;
     };
-    int costOfRoot = bitFoldAnswerOperandsFirst<int>(root, costs, readsLowWords, [&](Operation* wide) {
-        int cost = 0;
-        for (unsigned index = bitFoldNumberOfLowWordsRead(wide); index--;)
-            cost += costOf(wide->child(index));
-        return std::clamp(cost, bitFoldLeastCostOfLowWord, 1);
-    });
-    if (costOfRoot > 0)
-        return nullptr;
+    if (!costs.contains(root)) {
+        Builder::LowWords::Cost costOfRoot = bitFoldAnswerOperandsFirst<Builder::LowWords::Cost>(root, costs, readsLowWords, [&](Operation* wide) {
+            int conversions = 0;
+            unsigned operations = 1;
+            for (unsigned index = bitFoldNumberOfLowWordsRead(wide); index--;) {
+                Operation* operand = wide->child(index);
+                conversions += costOf(operand);
+                operations += readsLowWords(operand) ? costs.get(operand).operations : 0;
+            }
+            return Builder::LowWords::Cost { std::clamp(conversions, bitFoldLeastCostOfLowWord, 1), std::min(operations, maxOperationsMadeAgain + 1) };
+        });
+        costs.add(root, costOfRoot);
+    }
 
     UncheckedKeyHashMap<Operation*, Operation*> lowWords;
     auto isMadeOfLowWords = [&](Operation* wide) {
-        return readsLowWords(wide) && costs.get(wide) <= 0;
+        if (!readsLowWords(wide) || lowWords.contains(wide))
+            return readsLowWords(wide);
+        Builder::LowWords::Cost cost = costs.get(wide);
+        if (cost.conversions > 0)
+            return false;
+        Operation* made = known.made.get(wide);
+        if (made && builder.isVisibleComputation(made)) {
+            lowWords.add(wide, made);
+            return true;
+        }
+        return !made || cost.operations <= maxOperationsMadeAgain;
     };
+    if (!isMadeOfLowWords(root))
+        return nullptr;
+    if (Operation* made = lowWords.get(root))
+        return made;
     auto lowWordOf = [&](Operation* wide) {
         return isMadeOfLowWords(wide) ? lowWords.get(wide) : builder.unary(Trunc, wide);
     };
     return bitFoldAnswerOperandsFirst<Operation*>(root, lowWords, isMadeOfLowWords, [&](Operation* wide) {
         Opcode opcode = wide->opcode();
         Operation* left = lowWordOf(wide->child(0));
+        Operation* made;
         if (opcode == Neg)
-            return builder.unary(Neg, left);
-        if (opcode == Shl)
-            return builder.binary(Shl, left, wide->child(1));
-        return builder.binary(opcode, left, lowWordOf(wide->child(1)));
+            made = builder.unary(Neg, left);
+        else if (opcode == Shl)
+            made = builder.binary(Shl, left, wide->child(1));
+        else
+            made = builder.binary(opcode, left, lowWordOf(wide->child(1)));
+        known.made.set(wide, made);
+        return made;
     });
 }
 

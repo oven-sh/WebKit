@@ -33,6 +33,12 @@ void emitLateRefill(StubAssembler& jit, const AssemblyHelpers::FreeListRefill& r
     jit.emitFreeListRefill(refill, slowPath);
 }
 
+void storeHeaderAndButterfly(StubAssembler& jit, GPRReg header, GPRReg butterfly, GPRReg array)
+{
+    jit.store64(header, Address(array));
+    jit.store64(butterfly, Address(array, JSObject::butterflyOffset()));
+}
+
 void fenceAfterAllocation(StubAssembler& jit)
 {
 #if CPU(X86_64)

@@ -29,6 +29,14 @@
 #if ENABLE(WEBASSEMBLY) && ENABLE(JIT)
 
 #include "AOTWasmInterface.h"
+#if ENABLE(AOT) && CPU(X86_64)
+#include "AOTCellFormat.h"
+#include "AOTClosureWord.h"
+#include "AOTConvention.h"
+#include "AOTInstance.h"
+#include "AOTStubFrames.h"
+#include "AOTVMState.h"
+#endif
 #include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
 #include "CallLinkInfo.h"
@@ -88,6 +96,113 @@ static void emitCallThroughCallLinkInfo(JIT& jit)
     jit.transferPtr(JIT::Address(callLinkInfoGPR, CallLinkInfo::offsetOfCodeBlock()), JIT::calleeFrameCodeBlockBeforeCall());
     jit.call(callTargetGPR, JSEntryPtrTag);
 }
+
+bool canImportStubCallClosure([[maybe_unused]] const Wasm::ModuleInformation& info, [[maybe_unused]] unsigned importIndex)
+{
+#if ENABLE(AOT) && CPU(X86_64)
+    constexpr unsigned maxArguments = 16;
+    const RTT& signature = info.rtt(info.importFunctionTypeSignatureIndices[importIndex]);
+    if (signature.argumentCount() > maxArguments || signature.argumentsOrResultsIncludeV128() || signature.argumentsOrResultsIncludeExnref())
+        return false;
+    for (unsigned index = 0; index < signature.argumentCount(); ++index) {
+        Type type = signature.argumentType(index);
+        if (!type.isI32() && !isExternref(type))
+            return false;
+    }
+    return true;
+#else
+    return false;
+#endif
+}
+
+#if ENABLE(AOT) && CPU(X86_64)
+// Calls a compiled closure directly: makes a frame without arguments and loads the argument registers. The code after this calls any other function, with the arguments it has already stored.
+static void emitCallCompiledClosure(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsigned importIndex, unsigned bytesBelowFramePointer, JIT::JumpList& wasCalled)
+{
+    const auto& wasmCC = wasmCallingConvention();
+    const RTT& signature = info.rtt(info.importFunctionTypeSignatureIndices[importIndex]);
+    const unsigned argCount = signature.argumentCount();
+    const unsigned numberOfGPRs = wasmCC.gprArgs.size();
+    constexpr GPRReg closureGPR = AOT::thisGPR;
+    constexpr GPRReg scratchGPR = AOT::countGPR;
+    constexpr GPRReg wordGPR = X86Registers::r9;
+    constexpr GPRReg tagGPR = X86Registers::r12;
+    static_assert(noOverlap(closureGPR, scratchGPR, wordGPR, tagGPR, AOT::instanceGPR, AOT::cellCageBaseGPR, GPRInfo::wasmContextInstancePointer, AOT::calleeGPR));
+    for (unsigned index = 0; index < AOT::numberOfArgumentGPRs; ++index)
+        RELEASE_ASSERT(wasmCC.gprArgs[index] == AOT::argumentGPR(index));
+    for (GPRReg reg : wasmCC.gprArgs)
+        RELEASE_ASSERT(noOverlap(reg, closureGPR, scratchGPR, tagGPR));
+
+    JIT::JumpList isOther;
+    materializeImportJSCell(jit, info, importIndex, closureGPR);
+    isOther.append(jit.branchIfNotType(closureGPR, SlimClosureType));
+    if (argCount < AOT::numberOfArgumentGPRs) {
+        jit.load64(JIT::Address(closureGPR, AOT::offsetOfSlimClosureWord), wordGPR);
+        jit.urshift64(JIT::TrustedImm32(AOT::ClosureWord::numberOfParametersShift), wordGPR);
+        jit.and32(JIT::TrustedImm32(AOT::ClosureWord::maxNumberOfParameters), wordGPR);
+        isOther.append(jit.branch32(JIT::Below, wordGPR, JIT::TrustedImm32(AOT::ClosureWord::maxNumberOfParameters - argCount)));
+    }
+    jit.loadPtr(JIT::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfVM()), scratchGPR);
+    jit.loadPtr(JIT::Address(scratchGPR, VM::offsetOfAOTState() + AOT::VMState::offsetOfOnlyInstance()), scratchGPR);
+    isOther.append(jit.branchTestPtr(JIT::Zero, scratchGPR));
+
+    JIT::Address calleeFrame(MacroAssembler::stackPointerRegister, -static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC)));
+    jit.storePtr(JIT::TrustedImmPtr(nullptr), calleeFrame.withOffset(CallFrameSlot::codeBlock * static_cast<int>(sizeof(Register))));
+    jit.storePtr(closureGPR, calleeFrame.withOffset(CallFrameSlot::callee * static_cast<int>(sizeof(Register))));
+    jit.store32(JIT::TrustedImm32(1), calleeFrame.withOffset(CallFrameSlot::argumentCountIncludingThis * static_cast<int>(sizeof(Register)) + LowWordOffset));
+    jit.store64(JIT::TrustedImm64(JSValue::ValueUndefined), calleeFrame.withOffset(CallFrameSlot::thisArgument * static_cast<int>(sizeof(Register))));
+    JIT::Jump callsAdapter = jit.jump();
+
+    const AssemblerLabel adapter = jit.m_assembler.label();
+    jit.emitFunctionPrologue();
+    const unsigned numberOfStackWords = argCount - std::min(argCount, AOT::numberOfArgumentGPRs);
+    const unsigned bytesOfStackWords = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(numberOfStackWords * static_cast<unsigned>(sizeof(Register)));
+    jit.subPtr(JIT::TrustedImm32(AOT::AdapterFrame::saveAreaSize + bytesOfStackWords), MacroAssembler::stackPointerRegister);
+    for (const AOT::AdapterFrame::SavedRegister& saved : AOT::AdapterFrame::savedRegisters)
+        jit.storePtr(saved.reg, JIT::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(saved.offset)));
+    jit.storePtr(scratchGPR, JIT::Address(GPRInfo::callFrameRegister, AOT::AdapterFrame::offsetOfInstance));
+    jit.move(scratchGPR, AOT::instanceGPR);
+    jit.loadPtr(JIT::Address(AOT::instanceGPR, AOT_INSTANCE_OFFSET(cellCageBase)), AOT::cellCageBaseGPR);
+
+    jit.move(JIT::TrustedImm64(JSValue::NumberTag), tagGPR);
+    auto boxArgument = [&](unsigned index, GPRReg reg) {
+        if (!signature.argumentType(index).isI32())
+            return;
+        jit.zeroExtend32ToWord(reg, reg);
+        jit.or64(tagGPR, reg);
+    };
+    for (unsigned index = AOT::numberOfArgumentGPRs; index < argCount; ++index) {
+        GPRReg reg = wordGPR;
+        if (index < numberOfGPRs) {
+            reg = wasmCC.gprArgs[index];
+            boxArgument(index, reg);
+        } else {
+            // The caller stored no more than the lower half of an int32.
+            const ptrdiff_t offset = sizeof(CallerFrameAndPC) + bytesBelowFramePointer + (static_cast<int>(CallFrameSlot::firstArgument) + static_cast<int>(index - numberOfGPRs)) * static_cast<int>(sizeof(Register));
+            const JIT::Address argument(GPRInfo::callFrameRegister, offset);
+            if (signature.argumentType(index).isI32()) {
+                jit.load32(argument, reg);
+                jit.or64(tagGPR, reg);
+            } else
+                jit.load64(argument, reg);
+        }
+        jit.store64(reg, JIT::Address(MacroAssembler::stackPointerRegister, (index - AOT::numberOfArgumentGPRs) * sizeof(Register)));
+    }
+    for (unsigned index = 0; index < std::min(argCount, AOT::numberOfArgumentGPRs); ++index)
+        boxArgument(index, wasmCC.gprArgs[index]);
+    jit.move(closureGPR, AOT::calleeGPR);
+    jit.load64(JIT::Address(AOT::calleeGPR, AOT::offsetOfSlimClosureWord), wordGPR);
+    jit.move(JIT::TrustedImm32(argCount), AOT::countGPR);
+    jit.move(JIT::TrustedImm64(JSValue::ValueUndefined), AOT::thisGPR);
+    jit.farJump(JIT::Address(AOT::instanceGPR, AOT_INSTANCE_OFFSET(stubs.closureEntryWithLoadedArguments)), JSEntryPtrTag);
+
+    // No jump that linking shortens is between the adapter and its call.
+    callsAdapter.link(&jit);
+    jit.m_assembler.linkJump(jit.m_assembler.call(), adapter);
+    wasCalled.append(jit.jump());
+    isOther.link(&jit);
+}
+#endif
 
 void emitWasmToJS(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsigned importIndex, const ImagePointerTable* pointersInImage)
 {
@@ -155,6 +270,12 @@ void emitWasmToJS(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsign
     jit.storePtr(GPRInfo::wasmIPIntPCRegister, CCallHelpers::Address(GPRInfo::callFrameRegister, WasmToJSIPIntReturnPCSlot));
     jit.storePtr(GPRInfo::wasmIPIntMCRegister, CCallHelpers::Address(GPRInfo::callFrameRegister, WasmToJSIPIntMCSlot));
     JIT::Address calleeFrame = CCallHelpers::Address(MacroAssembler::stackPointerRegister, -static_cast<ptrdiff_t>(sizeof(CallerFrameAndPC)));
+
+    JIT::JumpList wasCalled;
+#if ENABLE(AOT) && CPU(X86_64)
+    if (pointersInImage && canImportStubCallClosure(info, importIndex))
+        emitCallCompiledClosure(jit, info, importIndex, stackOffset, wasCalled);
+#endif
 
     // FIXME make these loops which switch on signature if there are many arguments on the stack. It'll otherwise be huge for huge type definitions. https://bugs.webkit.org/show_bug.cgi?id=165547
 
@@ -344,6 +465,7 @@ void emitWasmToJS(CCallHelpers& jit, const Wasm::ModuleInformation& info, unsign
     jit.move(importJSCellGPRReg, BaselineJITRegisters::Call::calleeGPR);
     jit.loadPtr(CCallHelpers::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfCallLinkInfo(info, importIndex)), BaselineJITRegisters::Call::callLinkInfoGPR);
     emitCallThroughCallLinkInfo(jit);
+    wasCalled.link(&jit);
 
     if (signature.returnCount() == 1) {
         const auto& returnType = signature.returnType(0);

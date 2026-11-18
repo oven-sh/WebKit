@@ -289,6 +289,12 @@ struct OperationThatMoves {
     ValueID operation;
 };
 
+struct BlockThatOnlyJumps {
+    BlockID aboveJumps;
+    BlockID leap;
+    uint32_t numberOfJumpsBelow { 0 };
+};
+
 } // anonymous namespace
 
 static bool hasHiddenEntryArray(const Program& program, const Code& code)
@@ -489,24 +495,128 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     m_totals.operationsSwept += numberOfOperationsLookedAt;
     numberOfOperationsLookedAt = 0;
 
-    auto standsOnOneSideOfBranch = [&](BlockID id) {
-        BlockID above;
+    auto onlyTakenEdgeInto = [&](BlockID id) {
+        EdgeID only;
         for (EdgeID edge = code.at(id).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
             if (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
                 continue;
-            if (above)
+            if (only)
+                return EdgeID();
+            only = edge;
+        }
+        return only;
+    };
+    auto onlyJumps = [&](BlockID id) {
+        const Block& block = code.at(id);
+        return block.terminator.numberOfEdges == 1 && !block.isLoopHead && !block.handler && code.valuesOf(id).empty();
+    };
+    static constexpr unsigned numberOfJumpsWalked = 8;
+    Vector<BlockThatOnlyJumps> blocksThatOnlyJump;
+    Vector<BlockID, 8> jumpsOnWay;
+    auto blockAboveEdge = [&](EdgeID edge) {
+        BlockID from = code.at(edge).from;
+        EdgeID above;
+        auto mayClimb = [&] {
+            return onlyJumps(from) && (above = onlyTakenEdgeInto(from));
+        };
+        for (unsigned jump = 0; jump < numberOfJumpsWalked; ++jump) {
+            if (!mayClimb())
+                return from;
+            from = code.at(above).from;
+        }
+        if (!mayClimb())
+            return from;
+        if (blocksThatOnlyJump.isEmpty())
+            blocksThatOnlyJump.fill(BlockThatOnlyJumps { }, numberOfBlocks);
+        jumpsOnWay.shrink(0);
+        do {
+            if (BlockID known = blocksThatOnlyJump[from.index()].aboveJumps) {
+                from = known;
+                break;
+            }
+            jumpsOnWay.append(from);
+            from = code.at(above).from;
+        } while (mayClimb());
+        for (BlockID passed : jumpsOnWay)
+            blocksThatOnlyJump[passed.index()].aboveJumps = from;
+        return from;
+    };
+    auto jumpsBelow = [&](BlockID id) ALWAYS_INLINE_LAMBDA -> BlockThatOnlyJumps& {
+        return blocksThatOnlyJump[id.index()];
+    };
+    auto nextOf = [&](BlockID id) ALWAYS_INLINE_LAMBDA {
+        return code.at(code.at(id).terminator.edge(0)).to;
+    };
+    auto countJumpsBelow = [&](BlockID id) {
+        jumpsOnWay.shrink(0);
+        while (!jumpsBelow(id).leap && onlyJumps(id)) {
+            jumpsOnWay.append(id);
+            id = nextOf(id);
+        }
+        if (!jumpsBelow(id).leap)
+            jumpsBelow(id).leap = id;
+        while (!jumpsOnWay.isEmpty()) {
+            BlockID above = jumpsOnWay.takeLast();
+            const BlockThatOnlyJumps& next = jumpsBelow(id);
+            const BlockThatOnlyJumps& leap = jumpsBelow(next.leap);
+            bool leapsAreOfOneLength = next.numberOfJumpsBelow - leap.numberOfJumpsBelow == leap.numberOfJumpsBelow - jumpsBelow(leap.leap).numberOfJumpsBelow;
+            jumpsBelow(above).numberOfJumpsBelow = next.numberOfJumpsBelow + 1;
+            jumpsBelow(above).leap = leapsAreOfOneLength ? leap.leap : id;
+            id = above;
+        }
+    };
+    auto leadsStraightTo = [&](EdgeID edge, BlockID id) {
+        BlockID to = code.at(edge).to;
+        for (unsigned jump = 0; jump < numberOfJumpsWalked; ++jump) {
+            if (to == id || !onlyJumps(to))
+                return to == id;
+            to = nextOf(to);
+        }
+        if (to == id || !onlyJumps(to))
+            return to == id;
+        if (blocksThatOnlyJump.isEmpty())
+            blocksThatOnlyJump.fill(BlockThatOnlyJumps { }, numberOfBlocks);
+        countJumpsBelow(to);
+        countJumpsBelow(id);
+        uint32_t numberOfJumpsBelow = jumpsBelow(id).numberOfJumpsBelow;
+        while (jumpsBelow(to).numberOfJumpsBelow > numberOfJumpsBelow) {
+            BlockID leap = jumpsBelow(to).leap;
+            to = jumpsBelow(leap).numberOfJumpsBelow >= numberOfJumpsBelow ? leap : nextOf(to);
+        }
+        return to == id;
+    };
+    auto standsOnOneSideOfBranch = [&](BlockID id) {
+        const Block& block = code.at(id);
+        BlockID above;
+        bool hasWayPast = false;
+        for (EdgeID edge = block.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+            if (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
+                continue;
+            BlockID from = blockAboveEdge(edge);
+            if (from == above)
+                continue;
+            if (above && (block.isLoopHead || block.isHandlerBlock()))
                 return false;
-            above = code.at(edge).from;
+            above = from;
+            const Terminator& end = code.at(above).terminator;
+            bool hasOtherTarget = false;
+            for (uint32_t index = 0; index < end.numberOfEdges; ++index) {
+                BlockID other = code.at(end.edge(index)).to;
+                if (code.at(other).frequency > block.frequency || leadsStraightTo(end.edge(index), id))
+                    continue;
+                hasOtherTarget = true;
+                const Terminator& next = code.at(other).terminator;
+                bool returnsToBlock = false;
+                for (uint32_t way = 0; way < next.numberOfEdges && !hasWayPast; ++way)
+                    returnsToBlock |= leadsStraightTo(next.edge(way), id);
+                hasWayPast |= !returnsToBlock;
+                if (hasWayPast)
+                    break;
+            }
+            if (!hasOtherTarget)
+                return false;
         }
-        if (!above)
-            return false;
-        const Terminator& end = code.at(above).terminator;
-        for (uint32_t index = 0; index < end.numberOfEdges; ++index) {
-            BlockID other = code.at(end.edge(index)).to;
-            if (other != id && code.at(other).frequency <= code.at(id).frequency)
-                return true;
-        }
-        return false;
+        return hasWayPast;
     };
 
     auto isRareMerge = [&](BlockID id, BlockID above) {
@@ -703,11 +813,18 @@ bool Sweep::moveBirthsToWhereCellsAreNeeded()
     auto isOnlyLoopExit = [&](BlockID side) {
         if (!standsOnOneSideOfBranch(side))
             return false;
-        EdgeID edge = code.at(side).firstEdgeIn();
-        while (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
-            edge = code.at(edge).nextInto();
-        BlockID loop = findOutermostLoopExcluding(code.at(edge).from, side);
-        return loop && blocksBelow[loop.index()].loopExitCount == 1;
+        BlockID loop;
+        uint32_t numberOfExits = 0;
+        for (EdgeID edge = code.at(side).firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+            if (!isSweptEdgeTaken(code, m_states, edge, code.at(edge)))
+                continue;
+            BlockID left = findOutermostLoopExcluding(blockAboveEdge(edge), side);
+            if (!left || (loop && left != loop))
+                return false;
+            loop = left;
+            ++numberOfExits;
+        }
+        return loop && blocksBelow[loop.index()].loopExitCount == numberOfExits;
     };
 
     Vector<BlockID, 16> blocksOnWay;

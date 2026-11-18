@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTInstance.h"
+#include "AOTNarrowCopy.h"
 #include "AOTRecordTypes.h"
 #include "AOTRuntimeTable.h"
 #include "AOTStubHelpers.h"
@@ -155,7 +156,31 @@ static void loadRegExpAndFlags(StubAssembler& jit, const MatchRegisters& registe
     return jit.branch8(CCallHelpers::NotEqual, Address(regExp, RegExp::offsetOfState()), TrustedImm32(RegExp::stateWithImageCode()));
 }
 
-static void loadMatchingCode(StubAssembler& jit, const MatchRegisters& registers, JumpList& isWideUnderUnicode, JumpList& slowCases)
+static void narrowSubject(StubAssembler& jit, const MatchRegisters& registers, RegisterSet kept, JumpList& misses, JumpList& slowCases)
+{
+    slowCases.append(jit.branch32(CCallHelpers::Above, registers.subjectLength, TrustedImm32(maxLengthCopiedAsLatin1)));
+    RegisterSet lostToLeaf = registersClobberedByPreserveMostLeaves();
+    for (unsigned index = 0; index < 3; ++index)
+        lostToLeaf.add(leafArgumentGPR(index), IgnoreVectors);
+    kept.merge(RegisterSet(registers.regExp, registers.subjectLength));
+    kept.filter(lostToLeaf);
+    Vector<GPRReg, 8> saved;
+    kept.forEach([&](Reg reg) {
+        saved.append(reg.gpr());
+    });
+    RELEASE_ASSERT(noOverlap(registers.subjectLength, leafArgumentGPR(0), leafArgumentGPR(1)) && registers.characters == leafArgumentGPR(0));
+    jit.preserving(saved.span(), [&] {
+        jit.recordClobbers(RegisterSet { leafArgumentGPR(1), leafArgumentGPR(2) });
+        jit.move(registers.characters, leafArgumentGPR(1));
+        jit.move(registers.subjectLength, leafArgumentGPR(2));
+        jit.move(instanceGPR, leafArgumentGPR(0));
+        jit.callLeaf(Entry::operationAOTNarrowSubject, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.move(GPRInfo::returnValueGPR, registers.characters);
+    });
+    misses.append(jit.branchTestPtr(CCallHelpers::Zero, registers.characters));
+}
+
+static void loadMatchingCode(StubAssembler& jit, const MatchRegisters& registers, JumpList& isWideUnderUnicode, JumpList& slowCases, JumpList* misses = nullptr, RegisterSet keptToNarrow = { })
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const GPRReg flags = length;
@@ -163,7 +188,13 @@ static void loadMatchingCode(StubAssembler& jit, const MatchRegisters& registers
     Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     isWideUnderUnicode.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(unicodeFlags)));
     jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf16BitCode()), scratch);
-    Jump is16Bit = jit.jump();
+    Jump is16Bit;
+    if (misses) {
+        is16Bit = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+        narrowSubject(jit, registers, keptToNarrow, *misses, slowCases);
+        jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpJITCode()), scratch);
+    } else
+        is16Bit = jit.jump();
     is8Bit.link(&jit);
     jit.loadPtr(Address(scratch, Yarr::YarrCodeBlock::offsetOf8BitCode()), scratch);
     is16Bit.link(&jit);
@@ -284,6 +315,81 @@ static void matchFromLastIndex(StubAssembler& jit, const MatchRegisters& registe
     jit.jump().linkTo(hasFound, &jit);
 }
 
+static void matchWholeTexts(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg slot, JumpList& isMiss, Label hasFound)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const GPRReg program = scratch;
+    const GPRReg index = length;
+    const GPRReg units = regExp;
+    const GPRReg expectedUnit = scratch;
+    const GPRReg unit = impl;
+    RELEASE_ASSERT(noOverlap(program, slot, index, unit, units, characters, subjectLength, operands.regExpObject, operands.string));
+    static_assert(sizeof(Yarr::FlatProgram::WholeTextSlot) == 16);
+    JumpList isNotAnswered;
+    isNotAnswered.append(jit.branchTestPtr(CCallHelpers::Zero, Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, firstWholeTextSlot))));
+    isNotAnswered.append(jit.branchTest32(CCallHelpers::Zero, subjectLength));
+    isMiss.append(jit.branch32(CCallHelpers::Above, subjectLength, Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, maxWholeTextLength))));
+    Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+    auto search = [&](bool is8Bit) {
+        auto loadUnit = [&](auto address, GPRReg result) {
+            if (is8Bit)
+                jit.load8(address, result);
+            else
+                jit.load16(address, result);
+        };
+        auto scale = is8Bit ? CCallHelpers::TimesOne : CCallHelpers::TimesTwo;
+        loadUnit(Address(characters), slot);
+        jit.mul32(TrustedImm32(31), slot, slot);
+        loadUnit(BaseIndex(characters, subjectLength, scale, is8Bit ? -1 : -2), index);
+        jit.add32(index, slot);
+        jit.mul32(TrustedImm32(31), slot, slot);
+        jit.add32(subjectLength, slot);
+        static_assert(Yarr::FlatProgram::numberOfWholeTextBits == 4 * 64);
+        jit.urshift32(slot, TrustedImm32(6), index);
+        jit.and32(TrustedImm32(3), index);
+        jit.load64(BaseIndex(program, index, CCallHelpers::TimesEight, OBJECT_OFFSETOF(Yarr::FlatProgram, wholeTextBits)), index);
+#if CPU(X86_64)
+        isMiss.append(jit.branchTestBit64(CCallHelpers::Zero, index, slot));
+#else
+        jit.urshift64(slot, index);
+        isMiss.append(jit.branchTest64(CCallHelpers::Zero, index, TrustedImm32(1)));
+#endif
+        jit.and32(Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, wholeTextSlotMask)), slot);
+        jit.lshift32(TrustedImm32(4), slot);
+        jit.loadPtr(Address(program, OBJECT_OFFSETOF(Yarr::FlatProgram, firstWholeTextSlot)), index);
+        jit.addPtr(index, slot);
+
+        Label nextSlot = jit.label();
+        jit.load32(Address(slot, OBJECT_OFFSETOF(Yarr::FlatProgram::WholeTextSlot, length)), index);
+        isMiss.append(jit.branchTest32(CCallHelpers::Zero, index));
+        JumpList isOther;
+        isOther.append(jit.branch32(CCallHelpers::NotEqual, index, subjectLength));
+        jit.loadPtr(Address(slot, OBJECT_OFFSETOF(Yarr::FlatProgram::WholeTextSlot, units)), units);
+        jit.move(TrustedImm32(0), index);
+        Label nextUnit = jit.label();
+        jit.load16(BaseIndex(units, index, CCallHelpers::TimesTwo), expectedUnit);
+        loadUnit(BaseIndex(characters, index, scale), unit);
+        isOther.append(jit.branch32(CCallHelpers::NotEqual, expectedUnit, unit));
+        jit.add32(TrustedImm32(1), index);
+        jit.branch32(CCallHelpers::Below, index, subjectLength).linkTo(nextUnit, &jit);
+
+        const GPRReg output = slot;
+        loadMatchOutput(jit, output);
+        jit.store32(TrustedImm32(0), matchOutputEntry(output, 0));
+        jit.store32(subjectLength, matchOutputEntry(output, 1));
+        jit.move(TrustedImm32(0), scratch);
+        jit.jump().linkTo(hasFound, &jit);
+
+        isOther.link(&jit);
+        jit.addPtr(TrustedImm32(sizeof(Yarr::FlatProgram::WholeTextSlot)), slot);
+        jit.jump().linkTo(nextSlot, &jit);
+    };
+    search(true);
+    is16Bit.link(&jit);
+    search(false);
+    isNotAnswered.link(&jit);
+}
+
 static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, const MatchAnswers& answers, JumpList& slowCases, Label hasFound)
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
@@ -305,6 +411,8 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     jit.loadPtr(Address(regExp, RegExp::offsetOfRegExpBytecode()), bytecode);
     jit.loadPtr(Address(bytecode, Yarr::BytecodePattern::offsetOfFlatProgram()), program);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, program));
+    JumpList isMiss;
+    matchWholeTexts(jit, registers, operands, output, isMiss, hasFound);
 
     pushMatchFrame(jit, operands.all());
     jit.move(subjectLength, lengthArgument);
@@ -321,6 +429,7 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     isSearched.link(&jit);
     popMatchFrame(jit, scratch, operands.all());
     Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
+    isMiss.link(&jit);
     returnResult(jit, TrustedImm64(answers.miss));
 
     didNotMiss.link(&jit);
@@ -591,7 +700,7 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator)), allocator);
     AssemblyHelpers::FreeListRefill arrayRefill = allocateCellWithLateRefill(jit, array, allocator, header, fails);
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].header)), header);
-    jit.storePair64(header, butterfly, array, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, header, butterfly, array);
     fenceAfterAllocation(jit);
     Jump isCreated = jit.jump();
 
@@ -696,7 +805,7 @@ static void generateRecordOfMatch(StubAssembler& jit)
     returnResult(jit, TrustedImm64(JSValue::encode(jsBoolean(true))));
 }
 
-static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg frame, const MatchAnswers& answers, Jump isTooShort, JumpList& slowCases)
+static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, GPRReg frame, const MatchAnswers& answers, JumpList& misses, JumpList& slowCases)
 {
     const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
     const std::array saved { operands.regExpObject, operands.string, frame };
@@ -709,7 +818,7 @@ static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, 
         jit.call(scratch, Yarr8BitPtrTag);
     });
     Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
-    isTooShort.link(&jit);
+    misses.link(&jit);
     returnResult(jit, TrustedImm64(answers.miss));
 
     didNotMiss.link(&jit);
@@ -723,6 +832,28 @@ static void matchIntoFrame(StubAssembler& jit, const MatchRegisters& registers, 
         recordMatch(jit, { .regExp = regExp, .string = operands.string, .offsets = characters, .globalObject = impl, .scratch = scratch });
     }
     returnResult(jit, TrustedImm64(matchIsInFrame));
+}
+
+static void branchIfRopeCannotMatch(StubAssembler& jit, const MatchRegisters& registers, const MatchOperands& operands, JumpList& cannotMatch)
+{
+    const auto [scratch, impl, regExp, characters, subjectLength, length] = registers;
+    const GPRReg flags = length;
+    const GPRReg record = scratch;
+    JumpList mayMatch;
+    mayMatch.append(branchIfSurvivedCollection(jit, operands.string));
+    jit.load64(Address(operands.regExpObject, RegExpObject::offsetOfLastIndex()), scratch);
+    mayMatch.append(jit.branchIfNotNumber(scratch));
+    loadRegExpAndFlags(jit, registers, operands.regExpObject);
+    mayMatch.append(jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag)));
+    jit.load16SignedExtendTo32(Address(regExp, RegExp::offsetOfImageRecordNumber()), record);
+    mayMatch.append(jit.branchSub32(CCallHelpers::Signed, TrustedImm32(1), record));
+    static_assert(sizeof(ImageRegExp) == 32);
+    jit.lshift32(TrustedImm32(5), record);
+    jit.add64(Address(instanceGPR, AOT_INSTANCE_OFFSET(image.regExps)), record);
+    mayMatch.append(branchIfHasNoFirstCharacters(jit, record));
+    loadFirstCharactersOfRope(jit, operands.string, impl, characters, subjectLength, mayMatch);
+    branchUnlessMatchCanBegin(jit, record, subjectLength, characters, impl, cannotMatch);
+    mayMatch.link(&jit);
 }
 
 void generateRegExpMatch(StubAssembler& jit)
@@ -755,19 +886,23 @@ void generateRegExpMatch(StubAssembler& jit)
         slowCases.append(jit.branchIfNotNumber(scratch));
     loadRegExpAndFlags(jit, registers, regExpObject);
     Jump usesLastIndex = jit.branchTest32(CCallHelpers::NonZero, flags, TrustedImm32(globalFlag | stickyFlag));
-    Jump isTooShort = jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize()));
+    JumpList misses;
+    misses.append(jit.branch32(CCallHelpers::Below, subjectLength, Address(regExp, RegExp::offsetOfMinimumSize())));
     Jump hasNoCode = branchIfNotCompiled(jit, regExp);
     JumpList isWideUnderUnicode;
-    loadMatchingCode(jit, registers, isWideUnderUnicode, slowCases);
+    RegisterSet kept(regExpObject, string);
+    if (fillsFrame)
+        kept.add(frame, IgnoreVectors);
+    loadMatchingCode(jit, registers, isWideUnderUnicode, slowCases, &misses, kept);
     Label isSearched;
     if (fillsFrame) {
-        matchIntoFrame(jit, registers, operands, frame, answers, isTooShort, slowCases);
+        matchIntoFrame(jit, registers, operands, frame, answers, misses, slowCases);
         slowCases.append(isWideUnderUnicode);
     } else {
         callMatchingCode(jit, registers, operands.all(), std::nullopt);
         isSearched = jit.label();
         Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
-        isTooShort.link(&jit);
+        misses.link(&jit);
         returnResult(jit, TrustedImm64(answers.miss));
 
         didNotMiss.link(&jit);
@@ -800,10 +935,17 @@ void generateRegExpMatch(StubAssembler& jit)
     }
 
     isNotSubstring.link(&jit);
+    JumpList cannotMatch;
+    if (form != RegExpMatchResult::IndexForStringSearch)
+        branchIfRopeCannotMatch(jit, registers, operands, cannotMatch);
     if (fillsFrame)
         flattenSubject(jit, string, { regExpObject, string, frame }, begin);
     else
         flattenSubject(jit, string, { regExpObject, string }, begin);
+    if (form != RegExpMatchResult::IndexForStringSearch) {
+        cannotMatch.link(&jit);
+        returnResult(jit, TrustedImm64(answers.miss));
+    }
 
     if (form == RegExpMatchResult::IndexForStringSearch)
         slowCases.append(usesLastIndex);

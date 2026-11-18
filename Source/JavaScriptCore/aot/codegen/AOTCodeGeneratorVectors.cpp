@@ -477,10 +477,12 @@ std::optional<CodeGenerator::LanePlan> CodeGenerator::findLanes(const CountedLoo
         return std::nullopt;
     if (callsEndVectors())
         return std::nullopt;
+    if (m_followsMarkers && carriesAnyNaN(m_order[loop.positionOfHead]))
+        return std::nullopt;
     std::optional<LanePlan> plan = LaneFinder(*this, loop).find();
     if (!plan)
         return std::nullopt;
-    if (!m_followsNumbersOutOfBytes && std::ranges::any_of(plan->pairs, [](const LanePair& pair) { return pair.source == LaneSource::Load; }))
+    if ((!m_followsNumbersOutOfBytes || m_followsMarkers) && std::ranges::any_of(plan->pairs, [](const LanePair& pair) { return pair.source == LaneSource::Load; }))
         return std::nullopt;
     return plan;
 }
@@ -623,7 +625,7 @@ bool CodeGenerator::emitLanes(BlockID block, ValueID id)
         return true;
     }
     }
-    if (m_followsNumbersOutOfBytes) {
+    if (m_followsNumbersOutOfBytes && !m_followsMarkers) {
         m_valuesHoldingAnyNaN.quickSet(pair->first.index());
         m_valuesHoldingAnyNaN.quickSet(pair->second.index());
     }
@@ -770,7 +772,7 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
     }
 
     auto purifiedIfNeeded = [&](LValue number) {
-        return m_followsNumbersOutOfBytes ? emitter<ConversionEmitter>().purified(Number(number)).value() : number;
+        return m_followsNumbersOutOfBytes && !m_followsMarkers ? emitter<ConversionEmitter>().purified(Number(number)).value() : number;
     };
     auto takeApart = [&](const LanePair& pair, LValue vector, ValueID parameter) -> LValue {
         LValue number = vectors.lane(vector, pair.first == parameter ? 0 : 1);
@@ -798,7 +800,7 @@ void CodeGenerator::layOutLanes(const CountedLoop& loop, LanePlan& plan)
     m_headOfTurnsLaidOut = head;
     m_turnLaidOut = turn;
     m_valuesLeftOutOfTurnsLaidOut.append(loop.poll);
-    if (m_followsNumbersOutOfBytes) {
+    if (m_followsNumbersOutOfBytes && !m_followsMarkers) {
         m_blocksBegun.quickSet(head.index());
         for (const LanePair& pair : plan.pairs) {
             if (pair.source != LaneSource::Parameter)
@@ -1072,7 +1074,7 @@ bool WideLoopFinder::findParameters()
             continue;
         if (!isInteger(representationOf(parameter))) {
             auto sum = std::ranges::find(m_loop.sumsOfIntegers, index, &CodeGenerator::SumOfIntegers::indexOfParameter);
-            if (sum == m_loop.sumsOfIntegers.end())
+            if (sum == m_loop.sumsOfIntegers.end() || !sum->isVectorizable)
                 return false;
             using Terms = CodeGenerator::WideSum::Terms;
             Terms terms = Terms::BoxedWords;
@@ -1600,7 +1602,8 @@ std::optional<CodeGenerator::WideLoop> CodeGenerator::findWideLoop(const Counted
     }
     if (!wide)
         return std::nullopt;
-    if (wide->lanes == WideLanes::Numbers && !m_followsNumbersOutOfBytes && std::ranges::any_of(wide->accesses, [&](ValueID access) { return opcodeOf(access) == Opcode::GetTypedArrayElement && representationOf(access) == Representation::Double; }))
+    bool mayLoseBitsOfNaN = m_followsMarkers && carriesAnyNaN(m_order[loop.positionOfHead]);
+    if (mayLoseBitsOfNaN || (wide->lanes == WideLanes::Numbers && (!m_followsNumbersOutOfBytes || m_followsMarkers) && std::ranges::any_of(wide->accesses, [&](ValueID access) { return opcodeOf(access) == Opcode::GetTypedArrayElement && representationOf(access) == Representation::Double; })))
         return std::nullopt;
     return wide;
 }
@@ -1703,15 +1706,15 @@ TypedPointer CodeGenerator::elementOfWideLoop(const WideLoop& wide, const ValueC
     return elements.elementOfStorage(wide.storageOfLists, get(access->storageOperand()).value, index);
 }
 
-void CodeGenerator::requireWholeNumber(LValue number, ValueID parameter, LBasicBlock otherwise)
+void CodeGenerator::requireWholeNumber(LValue number, ValueID parameter, LBasicBlock otherwise, double largest)
 {
     LValue size = m_out.doubleAbs(number);
-    LValue limit = m_out.constDouble(0x1p52);
     LBasicBlock isSmall = m_out.newBlock();
-    m_out.branch(m_out.doubleLessThanOrEqual(size, limit), normalEdge(isSmall), unlikelyEdge(otherwise));
+    m_out.branch(m_out.doubleLessThanOrEqual(size, m_out.constDouble(largest)), normalEdge(isSmall), unlikelyEdge(otherwise));
     m_out.appendTo(isSmall);
     if (typeOf(parameter).isNumberWithoutFraction())
         return;
+    LValue limit = m_out.constDouble(0x1p52);
     LBasicBlock isWhole = m_out.newBlock();
     m_out.branch(m_out.doubleEqual(m_out.doubleSub(m_out.doubleAdd(size, limit), limit), size), normalEdge(isWhole), unlikelyEdge(otherwise));
     m_out.appendTo(isWhole);

@@ -143,7 +143,7 @@ void BindingEmitter::generateGetStaticFieldOrAbsent(const ValueContext& value)
         LBasicBlock liesInVariable = newBlock();
         LBasicBlock isProperty = newBlock();
         OperandJoin join(m_out, Representation::JSValue);
-        branch(Condition(m_out.isZero64(held.as<Boxed>().value())), { unlikelyEdge(isProperty), normalEdge(liesInVariable) });
+        branch(Condition(m_out.isZero64(held.as<Boxed>().value())), { rareEdge(isProperty), normalEdge(liesInVariable) });
 
         m_out.appendTo(liesInVariable);
         join.add(held);

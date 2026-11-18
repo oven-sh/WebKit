@@ -39,6 +39,10 @@ void AllocationEmitter::generateAppendHole(const ValueContext& value)
 void GuardEmitter::generateHasArrayStorage(const ValueContext& value)
 {
     ArrayStorage kind = value->arrayStorage();
+    if (generator().isHeaderTested(value.id())) {
+        defineTest(value, boolean(true));
+        return;
+    }
     if (kind == ArrayStorage::Other && value->isWritable()) {
         defineTest(value, emitter<ElementAccessEmitter>().takesNumbersByKindOfStorage(in<CellPointer>(value->arrayOperand()), value->admitsInt32Storage()));
         return;

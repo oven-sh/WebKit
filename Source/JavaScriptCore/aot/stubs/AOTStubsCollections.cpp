@@ -20,6 +20,7 @@
 #include "AOTStubRegisters.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsHashTables.h"
+#include "AOTTrailingZeros.h"
 #include "AOTVector.h"
 #include "CompleteSubspace.h"
 #include "JSArrayIterator.h"
@@ -215,6 +216,47 @@ static void emitReturnValueOfNarrowKey(StubAssembler& jit, const HashTableRegist
     decodeCell32(jit, result, result);
     isNotCell.link(&jit);
     jit.returnToCaller();
+}
+
+static Address wordOfLastMapLookup(ptrdiff_t offset)
+{
+    return Address(instanceGPR, static_cast<int32_t>(AOT_INSTANCE_OFFSET(arrays.lastMapLookup) + offset));
+}
+
+static void emitLoadMovesOfEntries(StubAssembler& jit, GPRReg moves)
+{
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), moves);
+    jit.load64(Address(moves, VM::offsetOfAOTState() + OBJECT_OFFSETOF(VMState, movesOfEntriesInCollections)), moves);
+}
+
+static bool keepsLastLookup(const StubAssembler& jit)
+{
+    return keyComparisonOf(jit) == KeyComparison::AnyValue && !jit.options().useWideReferences;
+}
+
+static void emitKeepLookup(StubAssembler& jit, const HashTableRegisters& registers)
+{
+    Jump isNoMap = jit.branchIfNotType(registers.owner, JSMapType);
+    emitLoadMovesOfEntries(jit, registers.hash);
+    jit.storePtr(registers.owner, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, map)));
+    jit.store64(registers.key, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, key)));
+    jit.store64(registers.hash, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, movesOfEntries)));
+    jit.store64(registers.entry, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, entry)));
+    isNoMap.link(&jit);
+}
+
+static void emitReturnValueOfLastLookup(StubAssembler& jit, const HashTableRegisters& registers, JumpList& valueIsWide)
+{
+    JumpList isOther;
+    isOther.append(jit.branch64(CCallHelpers::NotEqual, registers.key, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, key))));
+    isOther.append(jit.branchPtr(CCallHelpers::NotEqual, registers.owner, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, map))));
+    emitLoadMovesOfEntries(jit, registers.hash);
+    isOther.append(jit.branch64(CCallHelpers::NotEqual, registers.hash, wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, movesOfEntries))));
+    jit.load64(wordOfLastMapLookup(OBJECT_OFFSETOF(MapLookup, entry)), registers.entry);
+    jit.loadPtr(Address(registers.owner, offsetOfHashTableStorage()), registers.table);
+    emitLoadKeysOfCompactTable(jit, registers);
+    emitReturnValueOfNarrowKey(jit, registers, valueIsWide);
+    isOther.link(&jit);
 }
 
 static void emitLoadValueOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers, HashTableExits& exits, JumpList& valueIsWide)
@@ -421,7 +463,10 @@ static void emitInsert(StubAssembler& jit, const HashTableRegisters& registers, 
 static void emitTestForKey(StubAssembler& jit, const HashTableRegisters& registers, bool keepsSlot, Entry operation, const Invocable<void(const HashTableRegisters&, JumpList& leftToOperation)> auto& emitAtEntry)
 {
     HashTableExits exits;
+    const bool keepsLookup = operation == Entry::operationAOTMapHas && keepsLastLookup(jit);
     auto returnTrue = [&] {
+        if (keepsLookup)
+            emitKeepLookup(jit, registers);
         returnConstant(jit, jsBoolean(true));
     };
     auto returnFalse = [&] {
@@ -429,11 +474,14 @@ static void emitTestForKey(StubAssembler& jit, const HashTableRegisters& registe
     };
     const ScopedLambda<void()> emitFound(returnTrue);
     const ScopedLambda<void()> emitAbsent(returnFalse);
-    if (!keepsSlot)
+    if (!keepsSlot && !keepsLookup)
         exits.emitFoundAmongNarrowKeys = &emitFound;
     exits.emitAbsent = &emitAbsent;
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .keepsSlot = keepsSlot, .searchesTablesInImage = !keepsSlot, .asksForPresenceAlone = !keepsSlot, .findsHashedSubstrings = !keepsSlot }, exits);
-    exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
+    if (keepsLookup)
+        emitAtExit(jit, exits.foundAmongNarrowKeys, returnTrue);
+    else
+        exits.foundInCompactTable.append(exits.foundAmongNarrowKeys);
     exits.foundInCompactTable.append(exits.foundAmongWideKeys);
     emitAtExit(jit, exits.foundInCompactTable, [&] {
         emitAtEntry(registers, exits.unknown);
@@ -509,6 +557,8 @@ StubSignature signatureOfSetDelete(StubKey) { return signatureOfLookup(); }
 StubSignature signatureOfMapSet(StubKey) { return StubSignature::withGPRResult({ ownerOfHashTableGPR, argumentGPR(0), argumentGPR(1) }); }
 StubSignature signatureOfNewMap(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewSet(StubKey) { return StubSignature::withGPRResult({ }); }
+StubSignature signatureOfNewWeakMap(StubKey) { return StubSignature::withGPRResult({ }); }
+StubSignature signatureOfNewWeakSet(StubKey) { return StubSignature::withGPRResult({ }); }
 StubSignature signatureOfNewIterator(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::A1), gprOf(StubRegister::A2) }); }
 
 static void emitLoadValueInImage(StubAssembler& jit, const HashTableRegisters& registers, JumpList& isLeftToOperation)
@@ -545,6 +595,8 @@ static void emitGet(StubAssembler& jit, const HashTableRegisters& registers)
     const ScopedLambda<void()> emitAbsent(returnUndefined);
     exits.emitFoundAmongNarrowKeys = &emitFound;
     exits.emitAbsent = &emitAbsent;
+    if (keepsLastLookup(jit))
+        emitReturnValueOfLastLookup(jit, registers, valueIsWide);
     emitFindInHashTable(jit, registers, { .comparison = keyComparisonOf(jit), .searchesTablesInImage = true, .findsHashedSubstrings = true }, exits);
     RELEASE_ASSERT(hasFoundExit(exits) || valueIsWide.empty());
     if (hasFoundExit(exits))
@@ -686,13 +738,13 @@ static void emitStoreFirstEntry(StubAssembler& jit, const HashTableRegisters& re
     jit.store32(registers.candidate, first);
 }
 
-static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTable::Width keyWidth, CompactTable::Width valueWidth, std::optional<GPRReg> value, JumpList& isCreated, JumpList& slowPath)
+static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegisters& registers, uint32_t capacity, CompactTable::Width keyWidth, CompactTable::Width valueWidth, std::optional<GPRReg> value, JumpList& isCreated, JumpList& slowPath)
 {
     constexpr uint64_t oneEntryUsedAndAlive = 1ull << 32 | 1;
     constexpr ptrdiff_t offsetOfKeys = CompactTable::offsetOfIndex() + CompactTable::maxCapacityWithTags;
     static_assert(CompactTable::offsetOfAliveCount() == CompactTable::offsetOfUsed() + 4 && !(CompactTable::offsetOfUsed() % sizeof(uint64_t)) && !(CompactTable::offsetOfCapacity() % sizeof(uint64_t)));
-    const ptrdiff_t offsetOfValues = offsetOfKeys + CompactTable::initialCapacity * static_cast<ptrdiff_t>(keyWidth);
-    const size_t size = CompactTable::initialSize(keyWidth, valueWidth);
+    const ptrdiff_t offsetOfValues = offsetOfKeys + capacity * static_cast<ptrdiff_t>(keyWidth);
+    const size_t size = CompactTable::initialSize(keyWidth, valueWidth, capacity);
     const GPRReg table = registers.table;
     const GPRReg allocator = registers.cursor;
     const GPRReg scratch = registers.keys;
@@ -705,7 +757,7 @@ static void emitCreateTableWithEntry(StubAssembler& jit, const HashTableRegister
     jit.load64(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.compactTableHeader)), scratch);
     jit.store64(scratch, Address(table));
     jit.store64(TrustedImm64(oneEntryUsedAndAlive), Address(table, CompactTable::offsetOfUsed()));
-    jit.store64(TrustedImm64(CompactTable::initialCapacityAndKinds(keyWidth, valueWidth)), Address(table, CompactTable::offsetOfCapacity()));
+    jit.store64(TrustedImm64(CompactTable::initialCapacityAndKinds(keyWidth, valueWidth, capacity)), Address(table, CompactTable::offsetOfCapacity()));
     jit.store64(registers.hash, Address(table, CompactTable::offsetOfIndex()));
     for (size_t offset = offsetOfKeys; offset < size; offset += sizeof(uint64_t))
         jit.store64(TrustedImm32(0), Address(table, static_cast<int32_t>(offset)));
@@ -751,26 +803,39 @@ void generateNewCompactTable(StubAssembler& jit)
         value = jit.operand(3);
     JumpList isCreated;
     JumpList slowPath;
-    JumpList keyIsWide;
-    auto createTableWithKeys = [&](Width keyWidth) {
+    auto createTableWithKeys = [&](uint32_t capacity, Width keyWidth) {
         if (!value) {
-            emitCreateTableWithEntry(jit, registers, keyWidth, Width::None, value, isCreated, slowPath);
+            emitCreateTableWithEntry(jit, registers, capacity, keyWidth, Width::None, value, isCreated, slowPath);
             return;
         }
         JumpList valueIsWide;
         emitBranchUnlessNarrowColumnHolds(jit, *value, valueIsWide);
-        emitCreateTableWithEntry(jit, registers, keyWidth, Width::Narrow, value, isCreated, slowPath);
+        emitCreateTableWithEntry(jit, registers, capacity, keyWidth, Width::Narrow, value, isCreated, slowPath);
         valueIsWide.link(&jit);
-        emitCreateTableWithEntry(jit, registers, keyWidth, Width::Wide, value, isCreated, slowPath);
+        emitCreateTableWithEntry(jit, registers, capacity, keyWidth, Width::Wide, value, isCreated, slowPath);
+    };
+    auto createTable = [&](uint32_t capacity) {
+        JumpList keyIsWide;
+        jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), registers.hash);
+        emitBranchUnlessNarrowColumnHolds(jit, registers.key, keyIsWide);
+        createTableWithKeys(capacity, Width::Narrow);
+        keyIsWide.link(&jit);
+        createTableWithKeys(capacity, Width::Wide);
     };
 
-    jit.urshift32(TrustedImm32(CompactTable::tagShiftOfTags), registers.hash);
-    emitBranchUnlessNarrowColumnHolds(jit, registers.key, keyIsWide);
-    createTableWithKeys(Width::Narrow);
-    keyIsWide.link(&jit);
-    createTableWithKeys(Width::Wide);
+    const Address reservedCapacity(registers.owner, JSMap::offsetOfDeletedPrefix());
+    Jump isReserved = jit.branchTest32(CCallHelpers::NonZero, reservedCapacity);
+    Label hasRoom = jit.label();
+    createTable(CompactTable::initialCapacity);
+
+    isReserved.link(&jit);
+    jit.load32(reservedCapacity, registers.entry);
+    slowPath.append(jit.branch32(CCallHelpers::Above, registers.entry, TrustedImm32(CompactTable::maxCapacityWithTags)));
+    jit.branch32(CCallHelpers::BelowOrEqual, registers.entry, TrustedImm32(CompactTable::initialCapacity)).linkTo(hasRoom, &jit);
+    createTable(CompactTable::maxCapacityWithTags);
 
     isCreated.link(&jit);
+    jit.store32(TrustedImm32(0), reservedCapacity);
     fenceAfterAllocation(jit);
     jit.storePtr(registers.table, Address(registers.owner, offsetOfHashTableStorage()));
     emitBarrierAndReturnOwner(jit, registers, registers.owner);
@@ -1008,7 +1073,7 @@ void generateGrowCompactTable(StubAssembler& jit)
             jit.jump().linkTo(probe, &jit);
 
             hasFreeSlot.link(&jit);
-            jit.countTrailingZeros64(slot, slot);
+            countTrailingZerosOfNonZero(jit, slot, slot);
             jit.urshift32(TrustedImm32(3), slot);
             jit.add32(slot, position);
             jit.jump().linkTo(hasSlot, &jit);
@@ -1350,6 +1415,12 @@ static void emitNewHashTable(StubAssembler& jit, Entry slowPath)
     jit.store64(scratch, Address(result));
     for (unsigned word = 1; word < sizeof(Cell) / sizeof(uint64_t); ++word)
         jit.store64(TrustedImm32(0), Address(result, word * sizeof(uint64_t)));
+    if constexpr (allocation == InlineAllocation::WeakMap || allocation == InlineAllocation::WeakSet) {
+        static_assert(JSWeakMap::offsetOfInlineStorage() == JSWeakSet::offsetOfInlineStorage() && JSWeakMap::offsetOfBuffer() == JSWeakSet::offsetOfBuffer() && JSWeakMap::offsetOfCapacity() == JSWeakSet::offsetOfCapacity());
+        jit.addPtr(TrustedImm32(JSWeakMap::offsetOfInlineStorage()), result, scratch);
+        jit.storePtr(scratch, Address(result, JSWeakMap::offsetOfBuffer()));
+        jit.store32(TrustedImm32(JSWeakMap::initialCapacity), Address(result, JSWeakMap::offsetOfCapacity()));
+    }
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 
@@ -1360,6 +1431,8 @@ static void emitNewHashTable(StubAssembler& jit, Entry slowPath)
 
 void generateNewMap(StubAssembler& jit) { emitNewHashTable<InlineAllocation::Map, JSMap>(jit, Entry::operationAOTNewMap); }
 void generateNewSet(StubAssembler& jit) { emitNewHashTable<InlineAllocation::Set, JSSet>(jit, Entry::operationAOTNewSet); }
+void generateNewWeakMap(StubAssembler& jit) { emitNewHashTable<InlineAllocation::WeakMap, JSWeakMap>(jit, Entry::operationAOTNewWeakMap); }
+void generateNewWeakSet(StubAssembler& jit) { emitNewHashTable<InlineAllocation::WeakSet, JSWeakSet>(jit, Entry::operationAOTNewWeakSet); }
 
 template<InlineAllocation allocation, typename Iterator>
 static void emitNewIterator(StubAssembler& jit, std::optional<ptrdiff_t> offsetOfStorage, Entry slowPath)

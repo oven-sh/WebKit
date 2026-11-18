@@ -27,6 +27,8 @@ StubSignature signatureOfIntegerToString(StubKey)
 #endif
 }
 
+StubSignature signatureOfDoubleToString(StubKey) { return StubSignature::withGPRResult({ FPRInfo::argumentFPR0 }); }
+
 StubSignature signatureOfConcatenateKeyOfPair(StubKey)
 {
     return StubSignature::withGPRResult({ operationArgumentGPR(1), operationArgumentGPR(2) });
@@ -146,6 +148,20 @@ void generateConcatenateKeyOfPair(StubAssembler& jit)
         .saves = OperationCall::Saves::CallerSavedGPRs,
         .spilledArguments = OperationCall::SpilledArguments { 2, static_cast<uint32_t>(use) },
     });
+}
+
+void generateDoubleToString(StubAssembler& jit)
+{
+    const FPRReg number = jit.operandFPR(0);
+    const GPRReg integer = jit.clobberRegister(signatureOf(integerToString()).operands[0].gpr());
+    const FPRReg scratch = jit.allocateScratch(FPRInfo::argumentFPR1);
+    JumpList isNotInt32;
+    branchIfNotExactInt32(jit, number, integer, isNotInt32, scratch);
+    jit.signExtend32ToPtr(integer, integer);
+    jit.jumpToStub(integerToString());
+
+    isNotInt32.link(&jit);
+    jit.callOperationAndReturn(Entry::operationAOTDoubleToString, { .saves = OperationCall::Saves::CallerSavedRegisters, .checksException = false });
 }
 
 void generateIntegerToString(StubAssembler& jit)

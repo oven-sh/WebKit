@@ -1280,11 +1280,30 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
     return materializePropertyTable(vm, setPropertyTable);
 }
 
+#if ENABLE(AOT)
+// For a dictionary or the structure of a possible prototype.
+static NEVER_INLINE bool mayHaveExistingTransition(VM& vm, Structure* structure, IndexingType newIndexingType)
+{
+    if (vm.hasCompiledCode() && structure->mayBePrototype() && hasIndexedProperties(newIndexingType) && !hasIndexedProperties(structure->indexingModeIncludingHistory()))
+        AOT::RuntimeHooks::willAddElementsToPrototype(vm);
+    return !structure->isDictionary();
+}
+#endif
+
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
-    
-    if (!structure->isDictionary()) {
+
+#if ENABLE(AOT)
+    // One test asks for both bits.
+    bool mayBeInTable = true;
+    if (structure->hasAnyOfBitFieldFlags(s_dictionaryKindBits | s_mayBePrototypeBits)) [[unlikely]]
+        mayBeInTable = mayHaveExistingTransition(vm, structure, indexingModeIncludingHistory);
+#else
+    bool mayBeInTable = !structure->isDictionary();
+#endif
+
+    if (mayBeInTable) {
         if (Structure* existingTransition = structure->m_transitionTable.get(nullptr, 0, transitionKind)) {
             ASSERT(existingTransition->transitionKind() == transitionKind);
             ASSERT(existingTransition->indexingModeIncludingHistory() == indexingModeIncludingHistory);

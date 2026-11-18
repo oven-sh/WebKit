@@ -216,9 +216,9 @@ static JSArrayBufferView* plainSubarray(JSGlobalObject* globalObject, View* view
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!isFixed(view) || view->realm() != globalObject) [[unlikely]]
         return nullptr;
-    bool hasOwnSpecies = !speciesWatchpointIsValid(globalObject, view);
+    bool isValid = speciesWatchpointIsValid(globalObject, view);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    if (hasOwnSpecies) [[unlikely]]
+    if (!isValid) [[unlikely]]
         return nullptr;
     int64_t length = view->lengthRaw();
     auto placeOf = [&](JSValue position, int64_t otherwise) {

@@ -468,7 +468,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTObjectToStringOfAnyValue, EncodedJSValue, (
     if (value.isCell() && value.asCell()->type() == ProxyObjectType) [[unlikely]]
         return { encodedJSValue(), nullptr };
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTObjectToStringOfAnyValue);
-    OPERATION_RETURN(scope, JSValue::encode(objectPrototypeToString(globalObject, value)));
+    JSString* text = objectPrototypeToString(globalObject, value);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (text->isRope()) {
+        text->value(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(text));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTObjectValues, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
@@ -616,6 +622,27 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTObjectCreate, JSCell*, (Instance* 
     OPERATION_RETURN(scope, object);
 }
 
+static ALWAYS_INLINE JSObject* tryDescribeField(JSGlobalObject* globalObject, JSObject* object, JSValue key)
+{
+    Object* compiled = compiledObjectOrNull(object);
+    StringImpl* text = compiled && key.isString() ? asString(key)->tryGetValueImpl() : nullptr;
+    if (!text || !text->isAtom())
+        return nullptr;
+    const FieldData* field = compiled->fieldNamed(compiled->state(), PropertyName(static_cast<UniquedStringImpl*>(text)));
+    JSValue value = field && !field->isPrivate() && !field->isAccessor() ? compiled->readInline(*field) : JSValue();
+    if (!value)
+        return nullptr;
+    VM& vm = globalObject->vm();
+    unsigned attributes = compiled->attributesOf(*field);
+    JSObject* result = constructEmptyObject(vm, globalObject->dataPropertyDescriptorObjectStructure());
+    result->putDirectOffset(vm, dataPropertyDescriptorValuePropertyOffset, value);
+    result->putDirectOffset(vm, dataPropertyDescriptorWritablePropertyOffset, jsBoolean(!(attributes & PropertyAttribute::ReadOnly)));
+    result->putDirectOffset(vm, dataPropertyDescriptorEnumerablePropertyOffset, jsBoolean(!(attributes & PropertyAttribute::DontEnum)));
+    result->putDirectOffset(vm, dataPropertyDescriptorConfigurablePropertyOffset, jsBoolean(!(attributes & PropertyAttribute::DontDelete)));
+    countEvent(vm, RuntimeCounterID::FieldsDescribed);
+    return result;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetOwnPropertyDescriptor, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetOwnPropertyDescriptor);
@@ -629,6 +656,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetOwnPropertyDescriptor, EncodedJSValue, (
         object = base.toObject(globalObject);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     }
+    if (JSObject* described = tryDescribeField(globalObject, object, JSValue::decode(encodedKey)))
+        OPERATION_RETURN(scope, JSValue::encode(described));
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, JSValue::encode(objectConstructorGetOwnPropertyDescriptor(globalObject, object, name)));

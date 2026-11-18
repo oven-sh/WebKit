@@ -10694,7 +10694,7 @@ public:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
+    ALWAYS_INLINE static void clearRelocation(RelocationKind kind, std::span<uint8_t> instructions)
     {
         RELEASE_ASSERT(instructions.size() == relocationSize(kind));
         switch (kind) {

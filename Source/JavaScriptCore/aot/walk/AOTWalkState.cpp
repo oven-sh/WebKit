@@ -36,7 +36,7 @@ OptionSet<CellFact> cellFactsInvalidatedBy(const LocationMasks& writes)
     if (writes.contains(AbstractHeap::OrderWords))
         ended.add({ CellFact::OrderWordIsKnown, CellFact::IsLikelyAsAllocated, CellFact::IsLikelyAsConstructed, CellFact::EnumeratorIsCurrent });
     if (writes.contains(AbstractHeap::PrototypeLinks))
-        ended.add(CellFact::HasLayoutPrototype);
+        ended.add({ CellFact::HasLayoutPrototype, CellFact::BearsNoMark });
     return ended;
 }
 
@@ -557,6 +557,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES uint32_t WalkState::Held::findOrAddHolder(Referen
             record.kindsOfPlaces = 0;
             record.maskOfPlaces = 0;
             record.elementsLieOutsideViews = false;
+            record.hasElementsUnderOtherKeys = false;
             ++m_numberOfHolders;
             listAsReachedByEffects(position);
         }
@@ -628,7 +629,42 @@ void WalkState::Held::noteNewestValueSlowCase(uint32_t position, Reference value
     }
 }
 
-void WalkState::Held::notePlace(PlaceKind kind, Reference base, uint32_t first, uint32_t second, Reference value, NOESCAPE const Invocable<uint8_t()> auto& bit)
+bool NumbersOfWalkStates::addElementIndex(Reference index)
+{
+    if (!m_code || !index.isConstant() || m_code->at(index.id()).opcode != Opcode::Integer || m_code->at(index.id()).integer() < 0)
+        return false;
+    Vector<Reference, 2>& indices = m_elementIndices.add(static_cast<uint64_t>(m_code->at(index.id()).integer()), Vector<Reference, 2> { }).iterator->value;
+    if (!indices.contains(index))
+        indices.append(index);
+    return true;
+}
+
+std::span<const Reference> NumbersOfWalkStates::elementIndices(int64_t position) const
+{
+    auto found = position >= 0 ? m_elementIndices.find(static_cast<uint64_t>(position)) : m_elementIndices.end();
+    return found == m_elementIndices.end() ? std::span<const Reference> { } : found->value.span();
+}
+
+void WalkState::Held::endElementsUnderOtherKeys(uint32_t holder)
+{
+    if (!m_holders[holder].hasElementsUnderOtherKeys)
+        return;
+    endPlacesOf(holder, ListOfPlaces::Elements, [](const Place& place) {
+        return !place.isUnderConstant;
+    });
+    m_holders.mutableAt(holder).hasElementsUnderOtherKeys = false;
+}
+
+void WalkState::Held::endElementsOf(const ProgramOfState& program, uint32_t holder)
+{
+    if (program.numbers && program.numbers->arrayKeepingElements && m_holders[holder].object == program.numbers->arrayKeepingElements)
+        return endElementsUnderOtherKeys(holder);
+    endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
+        return true;
+    });
+}
+
+void WalkState::Held::notePlace(PlaceKind kind, Reference base, uint32_t first, uint32_t second, Reference value, NOESCAPE const Invocable<uint8_t()> auto& bit, bool isUnderConstant)
 {
     uint32_t holder = value ? findOrAddHolder(base) : findHolder(base);
     if (holder == none)
@@ -653,12 +689,13 @@ void WalkState::Held::notePlace(PlaceKind kind, Reference base, uint32_t first, 
     if (hasRecord) {
         Place& place = m_places.mutableAt(position);
         place.value = value;
+        place.isUnderConstant |= isUnderConstant;
         if (!std::exchange(place.isListed, true))
             place.next = std::exchange(firstOfList, position);
         mask = place.mask();
     } else {
         position = m_places.size();
-        Place place { kind, bit(), true, holder, first, second, value, firstOfList };
+        Place place { kind, bit(), true, isUnderConstant, holder, first, second, value, firstOfList };
         m_places.append(place);
         firstOfList = position;
         mask = place.mask();
@@ -676,6 +713,8 @@ void WalkState::Held::notePlace(PlaceKind kind, Reference base, uint32_t first, 
         }
     } else {
         ++record.numberOfElements;
+        if (!m_places[position].isUnderConstant)
+            record.hasElementsUnderOtherKeys = true;
         if (!record.isFresh)
             ++m_numberOfElementsReachedByEffects;
     }
@@ -1158,7 +1197,7 @@ void WalkState::Held::noteEnvironmentField(const ProgramOfState& program, Refere
     dropEndedRecordsIfMany();
 }
 
-void WalkState::Held::noteElement(Reference object, Reference index, Reference value)
+void WalkState::Held::noteElement(Reference object, Reference index, Reference value, bool isUnderConstant)
 {
     ASSERT(object && index);
     if (m_numberOfFreshHolders) {
@@ -1171,7 +1210,7 @@ void WalkState::Held::noteElement(Reference object, Reference index, Reference v
     }
     notePlace(PlaceKind::Element, object, index.bits(), 0, value, [] {
         return Place::entireHeap;
-    });
+    }, isUnderConstant);
     dropEndedRecordsIfMany();
 }
 
@@ -1370,9 +1409,7 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
             lostSomething = true;
         }
         if (ends.elements && m_holders[holder].numberOfElements) {
-            endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
-                return true;
-            });
+            endElementsOf(*ends.program, holder);
             lostSomething = true;
         }
         if (lostSomething)
@@ -1494,11 +1531,9 @@ void WalkState::Held::endByLists(const WhatEnds& ends)
                 return false;
             if (!isWritten(holder) || (ends.sparesElementsOutsideViews && record.elementsLieOutsideViews))
                 return true;
-            endPlacesOf(holder, ListOfPlaces::Elements, [](const Place&) {
-                return true;
-            });
+            endElementsOf(*ends.program, holder);
             holdersThatLostSomething.append(holder);
-            return false;
+            return !!m_holders[holder].numberOfElements;
         });
     }
     for (uint32_t holder : holdersThatLostSomething)
@@ -1730,7 +1765,7 @@ void WalkState::Held::endWhatIsWritten(const ProgramOfState& program, const Effe
             changed.maskOfPlaces = remainingMask;
         }
         if (endsElementsOfHolder)
-            endPlacesOf(holder, ListOfPlaces::Elements, endsAlways);
+            endElementsOf(program, holder);
     };
     if (reachesSomething && goesByLists()) [[unlikely]] {
         bool namesOneVariable = writtenAlone && writtenAlone->heap() == AbstractHeap::ModuleVariables && variablesWritten == Typed::maskOf(*program.program, *writtenAlone);

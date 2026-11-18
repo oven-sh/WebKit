@@ -17,6 +17,7 @@
 #include "AOTStubAssembler.h"
 #include "AOTStubHelpers.h"
 #include "AOTStubRegisters.h"
+#include "AOTTrailingZeros.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "JSString.h"
@@ -255,7 +256,8 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
 
     jit.loadPtr(Address(string, JSString::offsetOfValue()), source);
     Jump isRope = jit.branchIfRopeStringImpl(source);
-    slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    JumpList isWide;
+    isWide.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.load32(Address(source, StringImpl::lengthMemoryOffset()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, TrustedImm32(StackStringBuilder::minLengthAppendedByReference)));
     jit.add64(length, cursor, end);
@@ -267,19 +269,33 @@ void generateStackStringBuilderAppendString(StubAssembler& jit)
     isRope.link(&jit);
     jit.load32(Address(string, JSRopeString::offsetOfLength()), length);
     slowPath.append(jit.branch32(CCallHelpers::AboveOrEqual, length, TrustedImm32(StackStringBuilder::minLengthAppendedByReference)));
-    jit.add64(length, cursor, end);
-    slowPath.append(jit.branchPtr(CCallHelpers::Above, end, limit));
     Jump hasPieces = jit.branchTestPtr(CCallHelpers::Zero, source, TrustedImm32(JSRopeString::isSubstringInPointer));
     loadSubstringBaseAndOffset(jit, string, source, offset);
     jit.loadPtr(Address(source, JSString::offsetOfValue()), source);
-    slowPath.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    isWide.append(jit.branchTest32(CCallHelpers::Zero, Address(source, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.add64(length, cursor, end);
+    slowPath.append(jit.branchPtr(CCallHelpers::Above, end, limit));
     jit.loadPtr(Address(source, StringImpl::dataOffset()), source);
     jit.addPtr(offset, source);
     jit.jump().linkTo(copy, &jit);
 
     hasPieces.link(&jit);
+    jit.add64(length, cursor, end);
+    slowPath.append(jit.branchPtr(CCallHelpers::Above, end, limit));
     jit.move(cursor, end);
     CopyIntoStringBuilder { jit, source, end, length, first, second, offset }.copyPiecesOfRope(string, slowPath);
+    jit.returnToCaller();
+
+    isWide.link(&jit);
+    const GPRReg instanceArgument = jit.reuseScratch(StubRegister::A0);
+    RELEASE_ASSERT(instanceArgument == leafArgumentGPR(0) && builder == leafArgumentGPR(1) && cursor == leafArgumentGPR(2) && string == leafArgumentGPR(3));
+    RegisterSet lostAnyway = jit.callerKeepsNoFPRs() ? RegisterSet::allFPRs() : RegisterSet();
+    lostAnyway.add(leafFunctionGPR, IgnoreVectors);
+    jit.preservingRegistersClobberedBy(StubCallee::PreserveMostLeaf, true, lostAnyway, [&](unsigned bytes) {
+        jit.move(instanceGPR, instanceArgument);
+        jit.callLeaf(Entry::operationAOTStackStringBuilderAppendWide, bytes);
+    });
+    slowPath.append(jit.branchTestPtr(CCallHelpers::Zero, end));
     jit.returnToCaller();
 
     slowPath.link(&jit);
@@ -789,14 +805,15 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
             returnResult(jit, TrustedImm32(order));
     };
     JumpList callsOperation;
-    emitLocaleCompareOfASCII(jit, registers, ScopedLambda<void(int32_t)>(returnOrder), callsOperation);
+    emitLocaleCompareOfASCII(jit, registers, CollatorCheck::ByWeights, ScopedLambda<void(int32_t)>(returnOrder), callsOperation);
     callsOperation.link(&jit);
     return PreludeExit::CallsOperation;
 }
 
-void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& registers, const ScopedLambda<void(int32_t)>& returnOrder, JumpList& callsOperation)
+void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& registers, CollatorCheck check, const ScopedLambda<void(int32_t)>& returnOrder, JumpList& callsOperation)
 {
     constexpr int32_t wordSize = sizeof(uint64_t);
+    const ptrdiff_t weightsOffset = check == CollatorCheck::ByWeights ? AOT_INSTANCE_OFFSET(collation.knownLevel1Weights) : AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights);
     auto [left, right, leftCharacters, rightCharacters, remaining, leftUnit, rightUnit, weights] = registers;
     const GPRReg nonASCIIBits = weights;
 
@@ -809,18 +826,17 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     jit.or64(leftCharacters, rightCharacters, leftUnit);
     callsOperation.append(jit.branchTestPtr(CCallHelpers::NonZero, leftUnit, TrustedImm32(JSString::isRopeInPointer)));
     isEqual.append(jit.branchPtr(CCallHelpers::Equal, leftCharacters, rightCharacters));
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), leftUnit);
-    callsOperation.append(jit.branchTest8(CCallHelpers::Zero, Address(leftUnit, JSGlobalObject::offsetOfCanDoASCIIUCADUCETLocaleCompare())));
+    if (check == CollatorCheck::ByRealm) {
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), leftUnit);
+        callsOperation.append(jit.branchTest8(CCallHelpers::Zero, Address(leftUnit, JSGlobalObject::offsetOfCanDoASCIIUCADUCETLocaleCompare())));
+    }
     jit.load32(Address(leftCharacters, StringImpl::flagsOffset()), leftUnit);
-    jit.load32(Address(rightCharacters, StringImpl::flagsOffset()), rightUnit);
-    jit.and32(rightUnit, leftUnit);
+    jit.and32(Address(rightCharacters, StringImpl::flagsOffset()), leftUnit);
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit, TrustedImm32(StringImpl::flagIs8Bit())));
     auto loadCommonPart = [&] {
         jit.load32(Address(leftCharacters, StringImpl::lengthMemoryOffset()), remaining);
         jit.load32(Address(rightCharacters, StringImpl::lengthMemoryOffset()), rightUnit);
-        Jump leftIsNotLonger = jit.branch32(CCallHelpers::BelowOrEqual, remaining, rightUnit);
-        jit.move(rightUnit, remaining);
-        leftIsNotLonger.link(&jit);
+        jit.moveConditionally32(CCallHelpers::Above, remaining, rightUnit, rightUnit, remaining);
         jit.loadPtr(Address(leftCharacters, StringImpl::dataOffset()), leftCharacters);
         jit.loadPtr(Address(rightCharacters, StringImpl::dataOffset()), rightCharacters);
     };
@@ -828,8 +844,8 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
 
     constexpr int32_t halfWordSize = sizeof(uint32_t);
     constexpr int64_t nonASCIIWordBits = 0x8080808080808080ll;
-    JumpList unitsAreLoaded;
-    JumpList weightsDiffer;
+    constexpr int32_t nonASCIIHalfWordBits = static_cast<int32_t>(0x80808080);
+    JumpList unitsDiffer;
     JumpList readsEachByte;
     JumpList readsFromStart;
     Jump isShort = jit.branch32(CCallHelpers::Below, remaining, TrustedImm32(wordSize));
@@ -839,7 +855,7 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     jit.load64(Address(rightCharacters), rightUnit);
     readsEachByte.append(jit.branchTest64(CCallHelpers::NonZero, leftUnit, nonASCIIBits));
     readsEachByte.append(jit.branchTest64(CCallHelpers::NonZero, rightUnit, nonASCIIBits));
-    Jump wordsDiffer = jit.branch64(CCallHelpers::NotEqual, leftUnit, rightUnit);
+    unitsDiffer.append(jit.branch64(CCallHelpers::NotEqual, leftUnit, rightUnit));
     jit.addPtr(TrustedImm32(wordSize), leftCharacters);
     jit.addPtr(TrustedImm32(wordSize), rightCharacters);
     jit.sub32(TrustedImm32(wordSize), remaining);
@@ -847,57 +863,51 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     commonBytesAreEqual.append(jit.branchTest32(CCallHelpers::Zero, remaining));
     jit.load64(BaseIndex(leftCharacters, remaining, CCallHelpers::TimesOne, -wordSize), leftUnit);
     jit.load64(BaseIndex(rightCharacters, remaining, CCallHelpers::TimesOne, -wordSize), rightUnit);
-    unitsAreLoaded.append(jit.jump());
-
-    isShort.link(&jit);
-    commonPartIsEqual.append(jit.branchTest32(CCallHelpers::Zero, remaining));
-    jit.load8(Address(leftCharacters), leftUnit);
-    jit.load8(Address(rightCharacters), rightUnit);
-    Jump firstBytesDiffer = jit.branch32(CCallHelpers::NotEqual, leftUnit, rightUnit);
-    readsEachByte.append(jit.branch32(CCallHelpers::Below, remaining, TrustedImm32(halfWordSize)));
-    auto loadShort = [&](GPRReg characters, GPRReg unit) {
-        jit.load32(BaseIndex(characters, remaining, CCallHelpers::TimesOne, -halfWordSize), weights);
-        jit.load32(Address(characters), unit);
-        jit.lshift64(TrustedImm32(32), weights);
-        jit.or64(weights, unit);
-    };
-    loadShort(leftCharacters, leftUnit);
-    loadShort(rightCharacters, rightUnit);
-    jit.move(TrustedImm64(nonASCIIWordBits), nonASCIIBits);
-
-    unitsAreLoaded.link(&jit);
     readsEachByte.append(jit.branchTest64(CCallHelpers::NonZero, leftUnit, nonASCIIBits));
     readsEachByte.append(jit.branchTest64(CCallHelpers::NonZero, rightUnit, nonASCIIBits));
-    commonBytesAreEqual.append(jit.branch64(CCallHelpers::Equal, leftUnit, rightUnit));
+    unitsDiffer.append(jit.branch64(CCallHelpers::NotEqual, leftUnit, rightUnit));
+    commonBytesAreEqual.append(jit.jump());
 
-    wordsDiffer.link(&jit);
-    jit.byteSwap64(leftUnit);
-    jit.byteSwap64(rightUnit);
-    auto compareWeights = [&](int32_t likelyOrder) {
-        const GPRReg bits = remaining;
-        constexpr int32_t firstBitOfByte = 0x38;
-        jit.xor64(leftUnit, rightUnit, bits);
-        jit.countLeadingZeros64(bits, bits);
-        jit.and32(TrustedImm32(firstBitOfByte), bits);
-        jit.lshift64(bits, leftUnit);
-        jit.lshift64(bits, rightUnit);
-        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
-        jit.urshift64(TrustedImm32(56), leftUnit);
-        jit.urshift64(TrustedImm32(56), rightUnit);
-        jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
-        jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
-        callsOperation.append(jit.branchTest32(CCallHelpers::Zero, likelyOrder < 0 ? leftUnit : rightUnit));
-        Jump ordersDiffer = jit.branch32(likelyOrder < 0 ? CCallHelpers::AboveOrEqual : CCallHelpers::BelowOrEqual, leftUnit, rightUnit);
-        returnOrder(likelyOrder);
-        ordersDiffer.link(&jit);
-        readsFromStart.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
-        callsOperation.append(jit.branchTest32(CCallHelpers::Zero, likelyOrder < 0 ? rightUnit : leftUnit));
-        returnOrder(-likelyOrder);
-    };
-    Jump leftIsBelow = jit.branch64(CCallHelpers::Below, leftUnit, rightUnit);
-    compareWeights(1);
-    leftIsBelow.link(&jit);
-    compareWeights(-1);
+    isShort.link(&jit);
+    Jump isShorterThanHalfWord = jit.branch32(CCallHelpers::Below, remaining, TrustedImm32(halfWordSize));
+    jit.load32(Address(leftCharacters), leftUnit);
+    jit.load32(Address(rightCharacters), rightUnit);
+    Jump halfWordsDiffer = jit.branch32(CCallHelpers::NotEqual, leftUnit, rightUnit);
+    readsEachByte.append(jit.branchTest32(CCallHelpers::NonZero, leftUnit, TrustedImm32(nonASCIIHalfWordBits)));
+    jit.load32(BaseIndex(leftCharacters, remaining, CCallHelpers::TimesOne, -halfWordSize), leftUnit);
+    jit.load32(BaseIndex(rightCharacters, remaining, CCallHelpers::TimesOne, -halfWordSize), rightUnit);
+    Jump lastHalfWordsDiffer = jit.branch32(CCallHelpers::NotEqual, leftUnit, rightUnit);
+    readsEachByte.append(jit.branchTest32(CCallHelpers::NonZero, leftUnit, TrustedImm32(nonASCIIHalfWordBits)));
+    commonBytesAreEqual.append(jit.jump());
+    halfWordsDiffer.link(&jit);
+    lastHalfWordsDiffer.link(&jit);
+    jit.or32(leftUnit, rightUnit, weights);
+    readsEachByte.append(jit.branchTest32(CCallHelpers::NonZero, weights, TrustedImm32(nonASCIIHalfWordBits)));
+
+    unitsDiffer.link(&jit);
+    const GPRReg bits = remaining;
+    constexpr int32_t firstBitOfByte = 0x38;
+    jit.xor64(leftUnit, rightUnit, bits);
+#if CPU(X86_64)
+    jit.m_assembler.tzcntq_rr(bits, bits);
+#else
+    countTrailingZerosOfNonZero(jit, bits, bits);
+#endif
+    jit.and32(TrustedImm32(firstBitOfByte), bits);
+    jit.urshift64(bits, leftUnit);
+    jit.urshift64(bits, rightUnit);
+    jit.loadPtr(Address(instanceGPR, weightsOffset), weights);
+    jit.zeroExtend8To32(leftUnit, leftUnit);
+    jit.zeroExtend8To32(rightUnit, rightUnit);
+    jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
+    jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
+    readsFromStart.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
+    Jump leftHasGreaterWeight = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
+    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
+    returnOrder(-1);
+    leftHasGreaterWeight.link(&jit);
+    callsOperation.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
+    returnOrder(1);
 
     auto loadImpls = [&](GPRReg implOfLeft, GPRReg implOfRight) {
         jit.loadPtr(Address(left, JSString::offsetOfValue()), implOfLeft);
@@ -906,9 +916,12 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     readsFromStart.link(&jit);
     loadImpls(leftCharacters, rightCharacters);
     loadCommonPart();
+    readsEachByte.append(jit.jump());
 
+    isShorterThanHalfWord.link(&jit);
+    commonPartIsEqual.append(jit.branchTest32(CCallHelpers::Zero, remaining));
     readsEachByte.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
+    jit.loadPtr(Address(instanceGPR, weightsOffset), weights);
     Label byteLoop = jit.label();
     jit.load8(Address(leftCharacters), leftUnit);
     jit.load8(Address(rightCharacters), rightUnit);
@@ -921,15 +934,12 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     jit.branchTest32(CCallHelpers::NonZero, remaining).linkTo(byteLoop, &jit);
     commonPartIsEqual.append(jit.jump());
 
-    firstBytesDiffer.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
     bytesDiffer.link(&jit);
     jit.load8(BaseIndex(weights, leftUnit, CCallHelpers::TimesOne), leftUnit);
     jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, leftUnit));
     callsOperation.append(jit.branchTest32(CCallHelpers::Zero, rightUnit));
     jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit).linkTo(advance, &jit);
-    weightsDiffer.link(&jit);
     Jump leftIsGreater = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
     returnOrder(-1);
     leftIsGreater.link(&jit);
@@ -950,7 +960,7 @@ void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& 
     loadLengths();
     callsOperation.append(jit.branch32(CCallHelpers::Equal, leftUnit, rightUnit));
     lengthsAreLoaded.link(&jit);
-    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights)), weights);
+    jit.loadPtr(Address(instanceGPR, weightsOffset), weights);
     Jump leftIsLonger = jit.branch32(CCallHelpers::Above, leftUnit, rightUnit);
     jit.load8(Address(rightCharacters), rightUnit);
     jit.load8(BaseIndex(weights, rightUnit, CCallHelpers::TimesOne), rightUnit);
@@ -1019,11 +1029,30 @@ static PreludeExit emitUnchangedCasePrelude(StubAssembler& jit, CaseConversions:
 
     JumpList mayChange;
     jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
-    mayChange.append(jit.branchIfRopeStringImpl(impl));
+    Jump isRope = jit.branchIfRopeStringImpl(impl);
     mayChange.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), scanned.size);
     jit.loadPtr(Address(impl, StringImpl::dataOffset()), scanned.bytes);
+    Label hasCharacters = jit.label();
+    Jump hasSeveralCharacters = jit.branch32(CCallHelpers::NotEqual, scanned.size, TrustedImm32(1));
+    jit.load8SignedExtendTo32(Address(scanned.bytes), scanned.word);
+    mayChange.append(jit.branchTest32(CCallHelpers::Signed, scanned.word));
+    jit.sub32(TrustedImm32(firstConvertedLetter), scanned.word);
+    mayChange.append(jit.branch32(CCallHelpers::BelowOrEqual, scanned.word, TrustedImm32(lastConvertedLetter - firstConvertedLetter)));
+    returnResult(jit, string);
+
+    hasSeveralCharacters.link(&jit);
     branchUnlessASCIIOutsideRange(jit, scanned, firstConvertedLetter, lastConvertedLetter, mayChange);
+    returnResult(jit, string);
+
+    isRope.link(&jit);
+    const GPRReg implOfBase = scanned.word;
+    jit.move(impl, implOfBase);
+    loadSubstringCharacters(jit, string, implOfBase, scanned.bytes, scanned.size, mayChange);
+    jit.branchTest32(CCallHelpers::NonZero, Address(implOfBase, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())).linkTo(hasCharacters, &jit);
+    mayChange.append(jit.branch32(CCallHelpers::Above, scanned.size, TrustedImm32(CaseConversions::maxLengthOfRememberedString)));
+    jit.lshift32(TrustedImm32(1), scanned.size);
+    branchUnlessASCIIOutsideRange(jit, scanned, firstConvertedLetter, lastConvertedLetter, mayChange, CodeUnitWidth::SixteenBits);
     returnResult(jit, string);
 
     mayChange.link(&jit);

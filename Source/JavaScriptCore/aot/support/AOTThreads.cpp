@@ -23,6 +23,7 @@
 #include <wtf/StackAllocation.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Threading.h>
+#include <wtf/simde/simde.h>
 
 namespace JSC { namespace AOT {
 
@@ -66,10 +67,176 @@ const ParallelLoops& ParallelLoops::ofCurrentThread() const
     return *this;
 }
 
+namespace {
+
+enum class LoopParticipant : bool { Caller, Helper };
+
+} // anonymous namespace
+
+class LoopTeam final : public ThreadSafeRefCounted<LoopTeam> {
+public:
+    using Work = ScopedLambda<void(LoopParticipant)>;
+
+    static Ref<LoopTeam> create() { return adoptRef(*new LoopTeam); }
+
+    static void run(const ParallelLoops& loops, unsigned maxHelpers, NOESCAPE const Work& work, NOESCAPE const ScopedLambda<bool()>& hasWorkToTake)
+    {
+        if (!loops.team().m_isRunningLoop.exchange(true)) {
+            loops.team().runOnCaller(loops, maxHelpers, work, hasWorkToTake);
+            loops.team().m_isRunningLoop.store(false);
+            return;
+        }
+        create()->runOnCaller(loops, maxHelpers, work, hasWorkToTake);
+    }
+
+private:
+    LoopTeam() = default;
+
+    void runOnCaller(const ParallelLoops& loops, unsigned maxHelpers, const Work& work, const ScopedLambda<bool()>& hasWorkToTake)
+    {
+        RELEASE_ASSERT(maxHelpers <= maskOfCount);
+        m_loops = &loops;
+        m_work = &work;
+        m_hasWorkToTake = &hasWorkToTake;
+        m_whatHelpersInherit = t_whatHelpersInherit;
+        m_state.store(static_cast<uint64_t>(maxHelpers) << shiftOfMaxHelpers);
+        requestHelper(maxHelpers);
+        work(LoopParticipant::Caller);
+        close();
+        MonotonicTime deadline;
+        for (uint64_t state = m_state.load(); helpersAtWork(state); state = m_state.load()) {
+            if (!deadline)
+                deadline = MonotonicTime::now() + longestSpin;
+            if (MonotonicTime::now() < deadline) {
+                pauseFor(callerPauses);
+                continue;
+            }
+            ParkingLot::compareAndPark(&m_state, state);
+        }
+    }
+
+    void runOnHelper()
+    {
+        for (;;) {
+            if (tryJoin()) {
+                participate();
+                continue;
+            }
+            if (waitForNextLoop())
+                continue;
+            m_numberOfHelpers.exchangeSub(1);
+            if (!canJoin(m_state.load()))
+                return;
+            m_numberOfHelpers.exchangeAdd(1);
+        }
+    }
+
+    bool tryJoin()
+    {
+        for (uint64_t state = m_state.load(); canJoin(state); state = m_state.load()) {
+            if (m_state.compareExchangeWeak(state, state + oneHelperAtWork + oneHelperJoined))
+                return true;
+        }
+        return false;
+    }
+
+    void participate()
+    {
+        ASSERT(Thread::currentSingleton().stack().size() >= ParallelLoops::workerStackSize / 2);
+        if ((*m_hasWorkToTake)()) {
+            unsigned maxHelpers = countIn(m_state.load(), shiftOfMaxHelpers);
+            requestHelper(maxHelpers);
+            requestHelper(maxHelpers);
+        }
+        {
+            SetForScope whatHelpersInherit(t_whatHelpersInherit, m_whatHelpersInherit);
+            (*m_work)(LoopParticipant::Helper);
+        }
+        close();
+        uint64_t state = m_state.exchangeSub(oneHelperAtWork);
+        if (helpersAtWork(state) == 1)
+            ParkingLot::unparkAll(&m_state);
+    }
+
+    bool waitForNextLoop()
+    {
+        MonotonicTime deadline = MonotonicTime::now() + longestSpin;
+        do {
+            for (unsigned i = 0; i < 4; ++i) {
+                pauseFor(helperPauses);
+                if (canJoin(m_state.load()))
+                    return true;
+            }
+        } while (MonotonicTime::now() < deadline);
+        return false;
+    }
+
+    void close()
+    {
+        if (!(m_state.load() & isClosed))
+            m_state.exchangeOr(isClosed);
+    }
+
+    void requestHelper(unsigned maxHelpers)
+    {
+        if (m_numberOfHelpers.exchangeAdd(1) >= maxHelpers) {
+            m_numberOfHelpers.exchangeSub(1);
+            return;
+        }
+        ref();
+        m_loops->schedule([](void* team) {
+            if (InstructionCounts::hasBegun()) [[unlikely]]
+                InstructionCounts::countOnCurrentThread();
+            adoptRef(*static_cast<LoopTeam*>(team))->runOnHelper();
+        }, this);
+    }
+
+    static void pauseFor(unsigned iterations)
+    {
+        for (unsigned i = 0; i < iterations; ++i) {
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+            simde_mm_pause();
+        }
+    }
+
+    static constexpr Seconds longestSpin = Seconds::fromMicroseconds(50);
+    static constexpr unsigned callerPauses = 1;
+    static constexpr unsigned helperPauses = 2;
+
+    static constexpr unsigned bitsOfCount = 20;
+    static constexpr uint64_t maskOfCount = (1 << bitsOfCount) - 1;
+    static constexpr unsigned shiftOfHelpersAtWork = 1;
+    static constexpr unsigned shiftOfHelpersJoined = shiftOfHelpersAtWork + bitsOfCount;
+    static constexpr unsigned shiftOfMaxHelpers = shiftOfHelpersJoined + bitsOfCount;
+    static constexpr uint64_t isClosed = 1;
+    static constexpr uint64_t oneHelperAtWork = 1ull << shiftOfHelpersAtWork;
+    static constexpr uint64_t oneHelperJoined = 1ull << shiftOfHelpersJoined;
+
+    static unsigned countIn(uint64_t state, unsigned shift) { return static_cast<unsigned>(state >> shift & maskOfCount); }
+    static unsigned helpersAtWork(uint64_t state) { return countIn(state, shiftOfHelpersAtWork); }
+    static bool canJoin(uint64_t state) { return !(state & isClosed) && countIn(state, shiftOfHelpersJoined) < countIn(state, shiftOfMaxHelpers); }
+
+    const ParallelLoops* m_loops { nullptr };
+    const Work* m_work { nullptr };
+    const ScopedLambda<bool()>* m_hasWorkToTake { nullptr };
+    void* m_whatHelpersInherit { nullptr };
+
+    std::atomic<bool> m_isRunningLoop { false };
+    alignas(128) Atomic<uint32_t> m_numberOfHelpers { 0 };
+    alignas(128) Atomic<uint64_t> m_state { isClosed };
+};
+
 ParallelLoops::ParallelLoops(unsigned width, const HostThreadPool* hostPool)
     : m_width(width)
     , m_hostPool(hostPool)
     , m_loopsOfBuild(this)
+    , m_team(LoopTeam::create())
 {
     RELEASE_ASSERT(width);
     if (width == 1 || hostPool)
@@ -82,9 +249,12 @@ ParallelLoops::ParallelLoops(LaneTag, const ParallelLoops& loopsOfStarter)
     , m_hostPool(loopsOfStarter.m_hostPool)
     , m_loopsOfBuild(loopsOfStarter.m_loopsOfBuild)
     , m_ownPool(loopsOfStarter.m_ownPool)
+    , m_team(LoopTeam::create())
 {
     RELEASE_ASSERT(m_hostPool || m_ownPool);
 }
+
+ParallelLoops::~ParallelLoops() = default;
 
 void ParallelLoops::schedule(void (*run)(void* argument), void* argument) const
 {
@@ -96,96 +266,6 @@ void ParallelLoops::schedule(void (*run)(void* argument), void* argument) const
         run(argument);
     });
 }
-
-namespace {
-
-enum class LoopParticipant : bool { Caller, Helper };
-
-class SharedWork final : public ThreadSafeRefCounted<SharedWork> {
-public:
-    using Work = ScopedLambda<void(LoopParticipant)>;
-
-    static void run(const ParallelLoops& loops, unsigned maxHelpers, NOESCAPE const Work& work, NOESCAPE const ScopedLambda<bool()>& hasWorkToTake)
-    {
-        Ref sharedWork = adoptRef(*new SharedWork(loops, maxHelpers, work, hasWorkToTake));
-        sharedWork->runOnCaller();
-    }
-
-private:
-    SharedWork(const ParallelLoops& loops, unsigned maxHelpers, const Work& work, const ScopedLambda<bool()>& hasWorkToTake)
-        : m_loops(loops)
-        , m_maxHelpers(maxHelpers)
-        , m_work(work)
-        , m_hasWorkToTake(hasWorkToTake)
-        , m_whatHelpersInherit(t_whatHelpersInherit)
-    {
-    }
-
-    void runOnCaller()
-    {
-        askForHelper();
-        m_work(LoopParticipant::Caller);
-        close();
-        for (uint32_t state = m_state.load(); state != isClosed; state = m_state.load())
-            ParkingLot::compareAndPark(&m_state, state);
-    }
-
-    void runOnHelper()
-    {
-        for (;;) {
-            uint32_t state = m_state.load();
-            if (state & isClosed)
-                return;
-            if (m_state.compareExchangeWeak(state, state + oneHelperAtWork))
-                break;
-        }
-        ASSERT(Thread::currentSingleton().stack().size() >= ParallelLoops::workerStackSize / 2);
-        if (m_hasWorkToTake()) {
-            askForHelper();
-            askForHelper();
-        }
-        {
-            SetForScope whatHelpersInherit(t_whatHelpersInherit, m_whatHelpersInherit);
-            m_work(LoopParticipant::Helper);
-        }
-        close();
-        if (m_state.exchangeSub(oneHelperAtWork) == (isClosed | oneHelperAtWork))
-            ParkingLot::unparkAll(&m_state);
-    }
-
-    void close()
-    {
-        if (!(m_state.load() & isClosed))
-            m_state.exchangeOr(isClosed);
-    }
-
-    void askForHelper()
-    {
-        if (m_numberOfHelpersAskedFor.fetch_add(1, std::memory_order_relaxed) >= m_maxHelpers) {
-            m_numberOfHelpersAskedFor.fetch_sub(1, std::memory_order_relaxed);
-            return;
-        }
-        ref();
-        m_loops.schedule([](void* sharedWork) {
-            if (InstructionCounts::hasBegun()) [[unlikely]]
-                InstructionCounts::countOnCurrentThread();
-            adoptRef(*static_cast<SharedWork*>(sharedWork))->runOnHelper();
-        }, this);
-    }
-
-    static constexpr uint32_t isClosed = 1;
-    static constexpr uint32_t oneHelperAtWork = 2;
-
-    const ParallelLoops& m_loops;
-    const unsigned m_maxHelpers;
-    const Work& m_work;
-    const ScopedLambda<bool()>& m_hasWorkToTake;
-    void* const m_whatHelpersInherit;
-    std::atomic<unsigned> m_numberOfHelpersAskedFor { 0 };
-    Atomic<uint32_t> m_state { 0 };
-};
-
-} // anonymous namespace
 
 class Lanes final : public ThreadSafeRefCounted<Lanes> {
 public:
@@ -325,7 +405,7 @@ NEVER_INLINE void forEachIndexInParallel(const ParallelLoops& loops, unsigned co
     alignas(128) std::atomic<unsigned> numberOfHelpers { 0 };
     const char* stepOfCaller = currentWorkOfThread().step.load(std::memory_order_relaxed);
     std::optional<uint64_t> instructionsInFrontOfLoop = InstructionCounts::hasBegun() ? InstructionCounts::ofCurrentThread() : std::nullopt;
-    SharedWork::run(loops, maxWorkers - 1, [&](LoopParticipant participant) {
+    LoopTeam::run(loops, maxWorkers - 1, [&](LoopParticipant participant) {
         std::optional<CurrentWorkScope> workOfCaller;
         if (participant == LoopParticipant::Helper && stepOfCaller)
             workOfCaller.emplace(ASCIILiteral::fromLiteralUnsafe(stepOfCaller));

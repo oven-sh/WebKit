@@ -53,6 +53,7 @@ public:
 
     JSONValueParser::LearnedNames& learnedNames();
     JSONValueParser::LearnedStrings& learnedStrings();
+    JSONValueParser::RepeatedValues& repeatedValues();
 
     struct RecordPlan {
         const ObjectBuilderPlan* plan { nullptr };
@@ -125,6 +126,7 @@ private:
     MadeInArena<RecordPlanCache> m_recordPlanCache;
     MadeInArena<JSONValueParser::LearnedNames> m_learnedNames;
     MadeInArena<JSONValueParser::LearnedStrings> m_learnedStrings;
+    MadeInArena<JSONValueParser::RepeatedValues> m_repeatedValues;
     HashMap<uint32_t, Vector<RecordPlanForNames, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_recordPlans;
     uint64_t m_numberOfTimesAskedForRecordPlan { 0 };
     uint64_t m_numberOfTimesAskedWhenPlansWereForgotten { 0 };

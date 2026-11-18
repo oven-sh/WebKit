@@ -175,6 +175,7 @@ enum class RequestKind : uint32_t {
     CollectionData,
     FormatPattern,
     ImportChecks,
+    Prefetch,
 };
 
 struct Mention {
@@ -549,6 +550,8 @@ public:
     const NumberedKeys& arrayProfiles() const { return m_arrayProfiles; }
     const NumberedKeys& readGroupCaches() const { return m_readGroupCaches; }
     const NumberedKeys& siteCaches() const { return m_siteCaches; }
+    std::span<const uint32_t> shapesInStartOrder() const { return m_shapesInStartOrder.span(); }
+    std::span<const uint32_t> classesInStartOrder() const { return m_classesInStartOrder.span(); }
     std::span<const uint32_t> numbersOfSites() const { return m_numbersOfSites.span(); }
     static bool isPlaceWithSiteAnswers(std::span<const uint32_t> keyOfSite) { return keyOfSite.back() >= MentionList::firstUseOfSiteAnswers; }
     static PropertyKeyID nameOfSite(std::span<const uint32_t> keyOfSite) { return PropertyKeyID(keyOfSite[keyOfSite.size() - 2]); }
@@ -621,6 +624,8 @@ private:
     NumberedKeys m_classGuards;
     NumberedKeys m_siteCaches;
     Vector<uint32_t> m_numbersOfSites { 0 };
+    Vector<uint32_t> m_shapesInStartOrder;
+    Vector<uint32_t> m_classesInStartOrder;
     Vector<uint32_t> m_originsOfMethodSelectors;
     Vector<TypeID> m_typesNeededAtRunTime;
     Vector<PlaceOfType> m_placesOfTypes;
@@ -629,7 +634,7 @@ private:
 };
 
 struct FunctionByModule {
-    static FunctionByModule forFunction(const Typed::Program&, FunctionID);
+    static FunctionByModule forFunction(const Typed::Program&, FunctionID, std::span<const uint32_t> startRanks = { });
     friend auto operator<=>(const FunctionByModule&, const FunctionByModule&) = default;
 
     ModuleID module;
@@ -759,6 +764,7 @@ struct ImageNumbersBuilder {
     void numberIdentifiersAndStrings();
     void numberConstants();
     void numberRows();
+    void placeListedRowsFirst(std::span<const uint32_t> startRanks);
     void numberSites();
     void numberTypes();
     void collectRegExpRequests();

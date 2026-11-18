@@ -135,6 +135,16 @@ public:
     JS_EXPORT_PRIVATE Operation* unary(Opcode, Operation*);
     JS_EXPORT_PRIVATE Operation* binary(Opcode, Operation*, Operation*);
     JS_EXPORT_PRIVATE bool findsAgain(Operation* sumOrProduct);
+    bool isVisibleComputation(Operation*);
+    struct LowWords {
+        struct Cost {
+            int conversions { 0 };
+            unsigned operations { 0 };
+        };
+        UncheckedKeyHashMap<Operation*, Cost> costs;
+        UncheckedKeyHashMap<Operation*, Operation*> made;
+    };
+    LowWords& lowWords() LIFETIME_BOUND { return m_lowWords; }
     JS_EXPORT_PRIVATE Operation* lowWord(Operation*);
     JS_EXPORT_PRIVATE Operation* extendWordThatIsNotNegative(Operation*);
     JS_EXPORT_PRIVATE Operation* chill(Opcode, Operation*, Operation*);
@@ -163,6 +173,7 @@ public:
 
     JS_EXPORT_PRIVATE void setDeclaredAccesses(const HeapSet& reads, const HeapSet& writes);
     JS_EXPORT_PRIVATE void clearDeclaredAccesses();
+    bool hasDeclaredAccesses() const { return m_suspensionsOfDeclaredAccesses ? m_hadDeclaredAccessesWhenSuspended : m_hasDeclaredAccesses; }
     void suspendDeclaredAccesses()
     {
         if (!m_suspensionsOfDeclaredAccesses++) {
@@ -179,6 +190,11 @@ public:
 
     Operation* phi(Type type) { return phiIn(m_block, type); }
     JS_EXPORT_PRIVATE Operation* phiIn(Block*, Type);
+    void retypePhi(Operation* phi, Type type)
+    {
+        RELEASE_ASSERT(phi->opcode() == Phi && type.isNumeric());
+        phi->m_type = type;
+    }
     JS_EXPORT_PRIVATE Operation* upsilon(Operation* value, Operation* phi = nullptr);
     JS_EXPORT_PRIVATE void setPhi(Operation* upsilon, Operation* phi);
 
@@ -226,6 +242,8 @@ private:
     Operation* appendLoadLike(const Operation* load, Operation* base);
     Operation* makeSumOfStore(Operation* sum, const Operation* stored);
     Operation* makeOwnShiftOfSum(Operation* shift);
+    void noteComparisonOfSum(Operation* comparison);
+    Operation* compareTermOfSum(Operation* sum);
 #if CPU(ARM64)
     Operation* sharedSumFor(Operation* sum);
 #else
@@ -299,6 +317,7 @@ private:
     Vector<HeapIndex, 2> m_heapsWrittenByOtherThreads;
     UncheckedKeyHashMap<uint64_t, Vector<Operation*, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberedLoadsByPlace;
     Function<void(Operation*)> m_verifierOfReusedLoads;
+    LowWords m_lowWords;
     Origin m_origin;
     PatchOperation* m_pendingPatch { nullptr };
     bool m_hasDeclaredAccesses { false };
@@ -323,6 +342,9 @@ private:
 };
 
 PatchOperation* appendWithFixedRegisters(Builder&, Opcode, Type, Operation*, Operation*);
+#if CPU(X86_64)
+JS_EXPORT_PRIVATE Operation* appendFoldedProduct(Builder&, Operation*, Operation*);
+#endif
 
 } } } // namespace JSC::AOT::Machine
 

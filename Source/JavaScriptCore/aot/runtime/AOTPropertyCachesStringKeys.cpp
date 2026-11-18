@@ -26,6 +26,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(StringKeyCache);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(SharedParts);
 
 StringKeyCache::StringKeyCache(State& state)
     : m_instance(state.instance)
@@ -307,10 +308,61 @@ size_t StringKeyCache::removeDeadIntegerKeys(VM& vm)
     return removedCount;
 }
 
+RefPtr<StringImpl> StringKeyCache::makeCharactersOfShortPart(const JSRopeString& string, std::span<const char16_t> units)
+{
+    auto copyWideCharacters = [&] ALWAYS_INLINE_LAMBDA {
+        std::span<char16_t> characters;
+        RefPtr impl = StringImpl::tryCreateUninitialized(units.size(), characters);
+        if (impl)
+            StringImpl::copyCharacters(characters, units);
+        return impl;
+    };
+    if (!WTF::isLatin1(units[0]))
+        return copyWideCharacters();
+    SharedPart part { units };
+    if (!part.isLatin1())
+        return copyWideCharacters();
+    if (!m_sharedParts) [[unlikely]]
+        m_sharedParts = makeUnique<SharedParts>();
+    unsigned index = part.index();
+    bool wasSeen = std::exchange(m_sharedParts->tags[index], part.tag()) == part.tag();
+    SharedPart& found = m_sharedParts->parts[index];
+    if (wasSeen && found.string && found.hasSameUnits(part)) {
+        StringImpl* impl = const_cast<StringImpl*>(found.string->tryGetValueImpl());
+        ASSERT(impl && impl->length() == units.size());
+        return impl;
+    }
+    std::span<Latin1Character> characters;
+    RefPtr impl = StringImpl::tryCreateUninitialized(units.size(), characters);
+    if (!impl) [[unlikely]]
+        return nullptr;
+    part.copyLatin1Characters(characters);
+    if (!wasSeen || found.string)
+        return impl;
+    if (RefPtr<AtomStringImpl> atom = AtomStringImpl::lookUp(impl.get()))
+        impl = WTF::move(atom);
+    part.string = &string;
+    found = part;
+    return impl;
+}
+
+RefPtr<StringImpl> makeCharactersOfShortPart(Instance& instance, const JSRopeString& string, std::span<const char16_t> units)
+{
+    return instance.state->stringKeys->makeCharactersOfShortPart(string, units);
+}
+
 size_t StringKeyCache::removeDeadEntries(VM& vm, CollectionScope scope)
 {
     forgetPlacesOfPairs();
     size_t removedCount = 0;
+    if (m_sharedParts) {
+        for (SharedPart& part : m_sharedParts->parts) {
+            if (!part.string || vm.heap.isMarked(part.string))
+                continue;
+            part = { };
+            ++removedCount;
+        }
+    }
     m_writtenSinceCollection.forEachRegionToSweep(scope, [&](size_t, size_t) {
         removedCount += removeDeadCachedKeys(vm);
         removedCount += removeDeadIntegerKeys(vm);

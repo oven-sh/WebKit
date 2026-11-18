@@ -19,6 +19,8 @@ public:
     Condition hoistedResult(ValueID question)
     {
         const Operation& relation = generator().code().at(question);
+        if (relation.opcode == Opcode::TypeTest)
+            return isInt32(in<Boxed>(relation.valueOperand()));
         return relation.opcode == Opcode::Less ? isLess(relation.operand(0), relation.operand(1)) : in<Condition>(question);
     }
     void generateJump(const TerminatorContext& terminator) { generator().jumpTo(terminator, 0); }
@@ -38,6 +40,7 @@ public:
     void generateSwitch(const TerminatorContext&);
     void generateSwitchString(const TerminatorContext&);
     bool tryGenerateLiteralChain(const ValueContext& comparison);
+    bool tryGenerateSymbolChain(const ValueContext& comparison);
     void generateReturn(const TerminatorContext&);
     void generateReturnCall(const TerminatorContext&);
     void generateThrow(const TerminatorContext&);

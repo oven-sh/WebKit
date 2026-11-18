@@ -38,7 +38,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC { namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
-static constexpr uint32_t imageFormatVersion = 4;
+static constexpr uint32_t imageFormatVersion = 5;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
 static constexpr size_t imageFunctionAlignment = isX86() ? 2 : sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
@@ -110,6 +110,13 @@ private:
 
     const uint16_t* m_steps;
     const uint32_t* m_groups;
+};
+
+struct ModuleOfRuntimeFunctions {
+    static constexpr uint32_t none = UINT32_MAX;
+
+    uint32_t firstFunction;
+    uint32_t module;
 };
 
 #define FOR_EACH_AOT_IMAGE_SECTION(macro) \
@@ -192,6 +199,7 @@ enum class ImageFlag : uint32_t {
     SetsMainModulePath = 1 << 10,
     HasReloadableModules = 1 << 11,
     RefusesOriginalsBesideMocks = 1 << 12,
+    RecordsOrder = 1 << 13,
 };
 
 struct ImageNumberRanges {
@@ -216,7 +224,7 @@ struct ImageHeader {
     uint64_t address;
     uint64_t executableSize;
     uint32_t formatVersion;
-    uint32_t reserved;
+    uint32_t sizeOfCodeOfStart;
     RecordedOptions options;
     ImageHeapOptions heap;
     ImageSectionRange sections[numberOfImageSections];

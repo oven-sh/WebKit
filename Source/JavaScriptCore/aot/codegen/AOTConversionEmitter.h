@@ -29,6 +29,7 @@ public:
     Boxed box(const OperationContext&, Operand, const Type&);
     Operand inFormOfType(Operand operand, const Type& type) { return operand.is<Boxed>() && type.isInt32() ? Operand(boxInt32(unbox(operand.as<Boxed>(), type, Representation::Int32).as<Word32>())) : operand; }
     Operand unbox(Boxed, const Type&, Representation);
+    Integer lowWordOfBoxedInteger(Boxed);
     Operand toOptional(Operand, const Type&, Representation);
     Operand inRepresentation(const OperationContext&, Operand produced, const Type& producedType, Representation wanted);
 
@@ -49,6 +50,7 @@ public:
     void noteIntegerBehind(Number number, LValue integer) { m_integersNotedBehindNumbers.add(number.value(), integer); }
     void noteIndexOfNumber(Number number, Integer index) { m_indexesOfNumbers.add(number.value(), index.value()); }
     void noteIndexOfKey(Number);
+    void noteRangeOfParameter(Integer, Range);
     void noteInt32OfNumber(Number number, Integer integer) { m_int32sOfNumbers.add(number.value(), integer.value()); }
     void noteTruncationOfNumber(Number number, Word32 word) { m_truncationsOfNumbers.add(number.value(), word.value()); }
     std::optional<Integer> int32Behind(Number number) const
@@ -89,7 +91,8 @@ public:
     enum class BitsOfInt32 : uint8_t { All, Lowest };
     static constexpr unsigned numberOfLowestBits = numberOfLowestBitsOfInt32;
     Word32 toInt32(Number, BitsOfInt32 = BitsOfInt32::All);
-    Word32 truncateNullableNumber(Boxed);
+    Word32 bitsOfPrimitive(Boxed, bool mayBeBoolean);
+    Word32 bitsOfTag(Boxed);
     Word32 toInt32OfBoxedNumber(Boxed);
     Number purified(Number);
     Number withoutPayload(Number);
@@ -97,6 +100,7 @@ public:
     void noteNumberWithoutPayload(Operand optional, Number number) { m_numbersWithoutPayload.add(optional.value, number.value()); }
 
     Operand decode(NarrowReference, const Type&, Representation);
+    Boxed decodeEmptyAsUndefined(NarrowReference loaded);
     NarrowReference compress(Operand, const Type&);
 
     Integer bitsOf(Operand);
@@ -149,6 +153,9 @@ private:
     std::optional<ExactInteger> findExactIntegerBehind(LValue number, ExactIntegerUse);
     ValueID parameterOfLoopHeadFedBy(ValueID);
     bool comesRoundToIntegerBehind(LValue number);
+    bool updatesPlaceItWasReadFrom(ValueID truncation);
+    static constexpr unsigned mostTermsOfSum = 8;
+    std::optional<Range> findRangeOfSum(LValue, unsigned termsLeft) const;
     std::optional<IntegerBehindNumber> describeIntegerBehind(LValue number, bool mayTestWhatWasRead, const IntegersBehindNumbers& operands);
     ExactInteger computeIntegerBehind(LValue number, const IntegerBehindNumber&, bool inWords, const ExactIntegers& operands);
     std::optional<Integer> findTruncation(Number);
@@ -169,6 +176,8 @@ private:
     void stopUnlessToldRangeHolds(Condition);
 
     bool m_boxesNumbersByStub { false };
+    bool m_boxesNumbersInLoop { false };
+    bool m_boxesWholeNumber { false };
     Place m_placeThatBoxesByStub { Place::Anywhere };
     StateOfKnowledge m_stateThatBoxesByStub { StateOfKnowledge::Always };
     UncheckedKeyHashMap<LValue, LValue> m_integersNotedBehindNumbers;
@@ -195,6 +204,7 @@ private:
     UncheckedKeyHashSet<LValue> m_doubleElements;
     UncheckedKeyHashMap<LValue, LValue> m_numbersWithoutPayload;
     std::array<IntegersBehindNumbers, 2> m_integersBehindNumbers;
+    UncheckedKeyHashMap<LValue, Range> m_rangesOfParameters;
     UncheckedKeyHashMap<LValue, bool> m_holdsIntegerThatComesRound;
     LValue m_integerThatComesRound { nullptr };
     Vector<ValueID> m_parametersOfLoopHeadsFed;

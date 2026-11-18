@@ -84,7 +84,7 @@ WTF::Vector<std::unique_ptr<MarkingConstraint>> createMarkingConstraints(VM& vm)
     return constraints;
 }
 
-static void setBarrierThreshold(Instance& instance, unsigned threshold)
+void setBarrierThreshold(Instance& instance, unsigned threshold)
 {
     static_assert(JSCell::cellStateOffset() == sizeof(uint64_t) - 1 && std::endian::native == std::endian::little);
     instance.barrierThreshold = threshold;

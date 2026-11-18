@@ -232,7 +232,7 @@ static Vector<Reference, 8> collectEnteringParts(const Walker& walker, Reference
     return parts;
 }
 
-static bool isJoinFailureMovable(const Walker& walker, ValueID join)
+bool isJoinFailureMovable(const Walker& walker, ValueID join)
 {
     static constexpr unsigned maxBlocks = 4;
     const Code& code = walker.code();

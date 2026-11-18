@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTCallingConventions.h"
 #include "AOTCellFormat.h"
 #include "AOTConvention.h"
@@ -178,6 +179,25 @@ void CallEmitter::generateCallDirect(const ValueContext& value)
     if (value.returnCall() && generator().bodyEnteredAfterNewPromise(m_code.at(value.block())) == value.id()) {
         enterBodyAfterNewPromise(value, callee, locations);
         return;
+    }
+    bool returnsOneValue = locations.results.size() == 1 && locations.results[0].representation == Representation::JSValue;
+    if (returnsOneValue && !value->isConstruction() && calledFunction.role == FunctionRole::Library && (!value.returnCall() || emitter<AccessEmitter>().returnsOneBoxedValue())) {
+        if (std::optional<Boxed> answer = emitter<AccessEmitter>().tryStubOfDirectCall(value, callee.function)) {
+            if (!value.returnCall()) {
+                LBasicBlock isAnswered = newBlock();
+                LBasicBlock isUnanswered = newBlock();
+                OperandJoin results(m_out, Representation::JSValue);
+                branch(isNotEmpty(*answer), { normalEdge(isAnswered), rareEdge(isUnanswered) });
+                m_out.appendTo(isAnswered);
+                results.add(*answer);
+                m_out.appendTo(isUnanswered);
+                PlacedArguments placed = placeArguments(callee, locations, operandsOf(value->argumentsOperands(), locations).span());
+                results.add(resultOfCall(locations.results[0], emitCall(value, CallTarget::unit(callee, primaryEntry), placed, locations.results.span(), { .isOnRarePath = true, .callerSuspendsAtReturn = value.isAwaitedAtOnce() })));
+                define(value, results.finish());
+                return;
+            }
+            emitter<AccessEmitter>().returnUnlessEmpty(*answer);
+        }
     }
     Vector<Operand, 8> arguments = operandsOf(value->argumentsOperands(), locations);
     if (value.returnCall()) {

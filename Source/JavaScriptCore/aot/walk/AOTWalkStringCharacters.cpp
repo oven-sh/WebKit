@@ -16,12 +16,16 @@
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
 #include "AOTTypeTable.h"
+#include "AOTWalkNumberForms.h"
+#include "AOTWalkNumberGuesses.h"
 #include "PureNaN.h"
 #include <algorithm>
 #include <array>
 #include <optional>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+Reference boxNumber(Walker&, Reference, Origin);
 
 
 namespace {
@@ -46,9 +50,11 @@ private:
     using Known = PrimitiveKnownToFolding;
 
     bool answersWithString() const { return m_method == CharacterReadInWalkStrings::CharAt || m_method == CharacterReadInWalkStrings::At || m_method == CharacterReadInWalkStrings::Element; }
+    bool isReadForBits() const { return m_method == CharacterReadInWalkStrings::CharCodeAt && findTruncatedUse(m_walker, m_value.id()) == TruncatedUse::OperandOfBits; }
     bool leavesCodeUnit() const { return answersWithString() || m_method == CharacterReadInWalkStrings::CharCodeAt; }
 
     bool mayRestartIteration() const { return m_walker.canRestartIteration() && m_walker.opensGuesses(); }
+    bool restartsIterationOutside() const { return !m_outside && mayRestartIteration() && m_method != CharacterReadInWalkStrings::CharAt && !m_isOutsideAtFirst; }
     Reference operate(Opcode opcode, Reference left, Reference right = { })
     {
         Walker::SpecializedPreheaderScope preheaderScope(m_walker, m_isReadInFront);
@@ -72,6 +78,10 @@ private:
     {
         switch (m_method) {
         case CharacterReadInWalkStrings::CharCodeAt:
+            if (isReadForBits()) {
+                m_walker.count(StatisticID::CharacterCodesReadForBits);
+                return integer(0);
+            }
             return m_walker.constant(Known::number(PNaN));
         case CharacterReadInWalkStrings::CharAt:
             return m_walker.constant(Known::text(m_walker.program().strings.emptyString()));
@@ -87,7 +97,7 @@ private:
     {
         if (!test || m_walker.isUnreachable())
             return;
-        if (!m_outside && mayRestartIteration() && m_method != CharacterReadInWalkStrings::CharAt && !m_isOutsideAtFirst) {
+        if (restartsIterationOutside()) {
             m_isReadInFront = m_isReadInFront && m_walker.tryBranchInPreheader(test, true);
             if (!m_isReadInFront) {
                 BlockID inside = m_walker.addBlock();
@@ -121,6 +131,17 @@ private:
         Walker::SpecializedPreheaderScope preheaderScope(m_walker, m_isReadInFront);
         Reference flat = m_isInsideByItsCounter && !m_startOfPiece ? flatStringForReaderOfCharacters(m_walker, m_stringRead, m_origin, true) : Reference();
         return buildCodeUnitOfString(m_walker, flat ? flat : m_stringRead, place, m_origin);
+    }
+
+    Reference truncatedQuotient()
+    {
+        if (m_value.opcode() != Opcode::Call || m_walker.isUnreachable())
+            return { };
+        auto arguments = m_value.as<Opcode::Call>().argumentsOperands();
+        if (!arguments.size())
+            return { };
+        std::optional<DivisionAsWritten> division = findQuotientOfIntegers(m_walker, *arguments.begin(), InputsOfTypedOperation(m_walker, nullptr));
+        return division ? buildDivisionOfIntegers(m_walker, m_origin, division->dividend, division->divisor, QuotientRounding::Truncate) : Reference();
     }
 
     Reference textOfCodeUnit(Reference codeUnit)
@@ -275,14 +296,21 @@ void BuilderOfCharacterRead::meetAndBind(const std::array<Reference, 2>& inside)
         return;
     }
 
-    std::array<Reference, 2> outside { valueOutside(), integer(-1) };
+    std::array<Reference, 2> outside { valueOutside(), integer(isReadForBits() ? 0 : -1) };
     if (!lastInside) {
         m_walker.continueIn(m_outside);
         bindOutside();
         return;
     }
 
-    std::array<Walker::JoinArm, 2> arms { { { lastInside, { inside[0], inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
+    Reference given = inside[0];
+    if (m_method == CharacterReadInWalkStrings::CharCodeAt && !m_walker.isInLoop() && m_walker.representationOf(given) == Representation::Int32)
+        given = boxNumber(m_walker, given, m_origin);
+    if (given != inside[0])
+        m_walker.count(StatisticID::CharacterCodesKeptBoxed);
+    if (m_walker.hasFailed() || m_walker.isUnreachable())
+        return;
+    std::array<Walker::JoinArm, 2> arms { { { lastInside, { given, inside[1] } }, { m_outside, { outside[0], outside[1] } } } };
     std::array<Reference, 2> met;
     if (m_walker.joinArms(arms, m_walker.addBlock(), std::span<Reference>(met).first(count)))
         bindAndNote(met[0], met[1]);
@@ -340,9 +368,19 @@ bool BuilderOfCharacterRead::build(Reference position)
         }
         continueIf(isIndex);
         position = truncated;
-    } else if (!types.at(m_walker.typeOf(position)).isInteger()) {
+    } else if (Reference quotient = types.at(m_walker.typeOf(position)).isInteger() ? Reference() : truncatedQuotient(); quotient && types.at(m_walker.typeOf(quotient)).isInteger())
+        position = quotient;
+    else if (!types.at(m_walker.typeOf(position)).isInteger()) {
         Reference root = rootForStrings(m_walker, position);
-        if (!root.isValue() || m_walker.code().at(root.id()).opcode != Opcode::ToIntegerOrInfinity)
+        bool isAskedByTag = position.isValue() && m_walker.representationOf(position) == Representation::JSValue && restartsIterationOutside();
+        if (isAskedByTag) {
+            Reference hasTag = buildTypeTestForStrings(m_walker, position, TypeTable::int32, m_origin);
+            if (!hasTag)
+                return true;
+            Known answer = primitiveKnownForStrings(m_walker, hasTag);
+            isAskedByTag = answer.kind() != Known::Kind::Boolean || answer.asBoolean();
+        }
+        if (!isAskedByTag && (!root.isValue() || m_walker.code().at(root.id()).opcode != Opcode::ToIntegerOrInfinity))
             position = operate(Opcode::ToIntegerOrInfinity, position);
         Reference isInt32 = buildTypeTestForStrings(m_walker, position, TypeTable::int32, m_origin);
         if (!isInt32)
@@ -548,6 +586,8 @@ Reference buildOnlyCharacter(Walker& walker, Reference string, Origin origin)
 }
 
 static constexpr size_t maxStringsMeasuredPerJoin = 2;
+static constexpr size_t mostIntegersMeasuredForOneJoin = 4;
+static constexpr int64_t greatestIntegerMeasuredForJoin = 99999;
 
 Reference buildLengthOfCharacterInSight(Walker& walker, Reference character, Origin origin)
 {
@@ -584,7 +624,8 @@ static Reference integerConvertedToString(Walker& walker, Reference string)
             return !lengthOfTextForStrings(walker, text);
         if (integer)
             return false;
-        integer = part;
+        Reference made = rootForStrings(walker, part);
+        integer = made.isValue() && walker.code().at(made.id()).opcode == Opcode::Box ? referenceToRecordForStrings(walker, walker.code().at(made.id()).valueOperand()) : part;
         return true;
     };
     switch (made.opcode) {
@@ -596,21 +637,54 @@ static Reference integerConvertedToString(Walker& walker, Reference string)
         if (!takePart(made.operand(0)) || !takePart(made.operand(1)))
             return { };
         break;
+    case Opcode::Strcat:
+        if (!std::ranges::all_of(made.partsOperands(), takePart))
+            return { };
+        break;
     default:
         return { };
     }
     return integer;
 }
 
-Reference buildLengthOfIntegerString(Walker& walker, Reference string, Origin origin)
+bool buildMeasuredIntegerString(Walker& walker, const CallByOneRow& call)
 {
-    if (walker.isUnreachable() || !string || !string.isValue() || !isProvenString(walker, walker.typeOf(string)))
-        return { };
-    Reference integer = integerConvertedToString(walker, string);
+    if (walker.isUnreachable() || !walker.isInLoop() || call.isForwarded || call.call.opcode() != Opcode::Call)
+        return false;
+    bool isCallOfConstructor = *call.codeInLine == InlineBuiltin::CallStringConstructor;
+    if (call.arguments.size() != (isCallOfConstructor ? 1 : 0))
+        return false;
+    Reference integer = isCallOfConstructor ? call.arguments[0] : call.receiver;
     Type type = integer ? walker.types().at(walker.typeOf(integer)) : Type();
-    if (!integer || !type.isInt32() || type.integers.isEmpty() || type.integers.minimum < 0)
-        return { };
-    origin.isTailCall = false;
+    if (!integer || !integer.isValue() || !type.isInt32() || type.integers.isEmpty() || type.integers.minimum < 0)
+        return false;
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID string = call.call.id();
+    ValueID reader = index.onlyUsingValue(string);
+    while (reader && opcodesThatStateTypes.contains(index.opcodeOf(reader))) {
+        string = reader;
+        reader = index.onlyUsingValue(reader);
+    }
+    if (!reader || index.opcodeOf(reader) != Opcode::PropGet || index.value(reader).isFreeName() || index.value(reader).key() != walker.program().keyOf(BuiltinNames::length) || index.value(reader).objectOperand() != string)
+        return false;
+    Reference built = buildOperatorForStrings(walker, Opcode::ToString, integer, { }, call.origin);
+    if (!built)
+        return walker.hasFailed() || walker.isUnreachable();
+    bindForStrings(walker, call.call.id(), built, call.origin);
+    return true;
+}
+
+static bool hasCountableDigits(Walker& walker, Reference number)
+{
+    if (!number || !number.isRecord())
+        return false;
+    Type type = walker.types().at(walker.typeOf(number));
+    return type.isInt32() && !type.integers.isEmpty() && type.integers.minimum >= 0;
+}
+
+static Reference buildDigitCount(Walker& walker, Reference integer, Origin origin)
+{
+    Type type = walker.types().at(walker.typeOf(integer));
     int64_t digits = 1;
     Reference length;
     for (int64_t power = 10; power <= type.integers.maximum; power *= 10) {
@@ -630,6 +704,17 @@ Reference buildLengthOfIntegerString(Walker& walker, Reference string, Origin or
     return length ? buildOperatorForStrings(walker, Opcode::Add, length, known, origin) : known;
 }
 
+Reference buildLengthOfIntegerString(Walker& walker, Reference string, Origin origin)
+{
+    if (walker.isUnreachable() || !string || !string.isValue() || !isProvenString(walker, walker.typeOf(string)))
+        return { };
+    Reference integer = integerConvertedToString(walker, string);
+    if (!hasCountableDigits(walker, integer))
+        return { };
+    origin.isTailCall = false;
+    return buildDigitCount(walker, integer, origin);
+}
+
 Reference buildLengthOnlyJoin(Walker& walker, ValueID text, Origin origin, Vector<ValueID, 2>& joinsThatFailWhereReaderFails)
 {
     Vector<Reference, 8> parts;
@@ -638,19 +723,35 @@ Reference buildLengthOnlyJoin(Walker& walker, ValueID text, Origin origin, Vecto
     const int64_t longest = Range::length().maximum;
     int64_t lengthOfWrittenTexts = 0;
     Vector<Reference, 2> texts;
+    Vector<Reference, mostIntegersMeasuredForOneJoin> integers;
     for (Reference part : parts) {
         if (StringID written = textKnownForStrings(walker, part)) {
             lengthOfWrittenTexts += lengthOfTextForStrings(walker, written);
+            continue;
+        }
+        if (hasCountableDigits(walker, part) && walker.types().at(walker.typeOf(part)).integers.maximum <= greatestIntegerMeasuredForJoin && integers.size() < mostIntegersMeasuredForOneJoin) {
+            integers.append(part);
             continue;
         }
         if (texts.size() == maxStringsMeasuredPerJoin || !isProvenString(walker, walker.typeOf(part)))
             return { };
         texts.append(part);
     }
-    if (texts.isEmpty() || lengthOfWrittenTexts > longest)
+    static constexpr int64_t mostDigits = 5;
+    if ((texts.isEmpty() && integers.isEmpty()) || lengthOfWrittenTexts > longest - static_cast<int64_t>(mostIntegersMeasuredForOneJoin) * mostDigits)
         return { };
 
     Reference length;
+    for (Reference part : integers) {
+        Reference digits = buildDigitCount(walker, part, origin);
+        length = length && digits ? buildOperatorForStrings(walker, Opcode::Add, length, digits, origin) : digits;
+        if (!length)
+            return { };
+    }
+    if (texts.isEmpty()) {
+        walker.count(StatisticID::JoinsMeasuredByParts);
+        return lengthOfWrittenTexts ? buildOperatorForStrings(walker, Opcode::Add, length, integerForStrings(walker, lengthOfWrittenTexts), origin) : length;
+    }
     for (Reference part : texts) {
         Reference lengthOfPart = buildLengthOfString(walker, part, origin);
         length = length && lengthOfPart ? buildOperatorForStrings(walker, Opcode::Add, length, lengthOfPart, origin) : lengthOfPart;
@@ -674,6 +775,97 @@ Reference buildLengthOnlyJoin(Walker& walker, ValueID text, Origin origin, Vecto
         return { };
     walker.count(StatisticID::JoinsMeasuredByParts);
     return met;
+}
+
+static bool isCharCodeOfBuiltinCall(const Walker& walker, Reference number)
+{
+    if (!number.isValue())
+        return false;
+    const Operation& call = walker.code().at(rootForStrings(walker, number).id());
+    if (call.opcode != Opcode::CallBuiltin)
+        return false;
+    const BuiltinImplementation& implementation = walker.program().builtins().at(call.overload()).code.implementation;
+    return implementation.inlineBuiltin == InlineBuiltin::StringCharCodeAt;
+}
+
+bool armsBringCharCode(Walker& walker, std::span<const Walker::JoinArm> arms, size_t position)
+{
+    if (!walker.keptByStrings() || notesOfStrings(walker).codeUnitsBesideCharCodes.isEmpty())
+        return false;
+    bool someArmHasCodeUnit = false;
+    for (const Walker::JoinArm& arm : arms) {
+        Reference number = arm.values[position];
+        if (!number || !number.isValue() || walker.code().isConstant(number.id()))
+            return false;
+        bool hasCodeUnit = !!codeUnitOfCharCodeInSight(walker, number);
+        if (!hasCodeUnit && !isCharCodeOfBuiltinCall(walker, number))
+            return false;
+        someArmHasCodeUnit |= hasCodeUnit;
+    }
+    return someArmHasCodeUnit;
+}
+
+void appendCodeUnitOfArm(Walker& walker, Walker::JoinArm& arm, size_t position, Origin origin)
+{
+    Reference number = arm.values[position];
+    Reference codeUnit = codeUnitOfCharCodeInSight(walker, number);
+    if (!codeUnit) {
+        walker.continueIn(arm.last);
+        std::array<Reference, 1> met;
+        Reference isInt32 = buildTypeTestForStrings(walker, number, TypeTable::int32, origin);
+        bool isBuilt = buildArmsForStrings(walker, isInt32, BlockFrequency::Rare, [&](std::span<Reference> results) {
+            Reference integer = buildProofBehindTestForStrings(walker, number, isInt32, OperandIndex::TypeTest::value, origin);
+            results[0] = integer ? buildOperatorForStrings(walker, Opcode::BitAnd, integer, integerForStrings(walker, std::numeric_limits<char16_t>::max()), origin) : Reference();
+        }, [&](std::span<Reference> results) {
+            results[0] = integerForStrings(walker, -1);
+        }, met);
+        codeUnit = isBuilt ? met[0] : Reference();
+        if (!walker.isUnreachable())
+            arm.last = walker.currentBlock();
+    }
+    arm.values.append(codeUnit);
+}
+
+void noteCodeUnitBesideCharCode(Walker& walker, Reference charCode, Reference codeUnit)
+{
+    if (walker.isUnreachable() || !charCode || !charCode.isValue() || !codeUnit || charCode == codeUnit)
+        return;
+    NotesOfStrings& notes = notesOfStrings(walker);
+    uint32_t record = charCode.id().index();
+    if (walker.keepsLogsForUndo())
+        notes.codeUnitsChanged.append({ record, notes.codeUnitsBesideCharCodes.get(record), false });
+    notes.codeUnitsBesideCharCodes.set(record, codeUnit);
+}
+
+bool jumpWithBoxedCharCode(Walker& walker, BlockID target, std::span<Reference> arguments, size_t place)
+{
+    Reference number = arguments[place];
+    if (walker.isUnreachable() || !number.isValue() || walker.representationOf(number) != Representation::Double)
+        return false;
+    Reference codeUnit = codeUnitOfCharCodeInSight(walker, number);
+    if (!codeUnit || walker.code().isConstant(number.id()) || walker.code().at(number.id()).block() == walker.currentBlock())
+        return false;
+    Origin origin = walker.code().at(number.id()).origin();
+    origin.isTailCall = false;
+    Reference isInside = buildOperatorForStrings(walker, Opcode::LessEq, integerForStrings(walker, 0), codeUnit, origin);
+    if (!isInside || walker.isUnreachable())
+        return false;
+    PrimitiveKnownToFolding decided = primitiveKnownForStrings(walker, isInside);
+    if (decided.kind() == PrimitiveKnownToFolding::Kind::Boolean && !decided.asBoolean())
+        return false;
+    if (decided.kind() != PrimitiveKnownToFolding::Kind::Boolean) {
+        BlockID inside = walker.addBlock();
+        BlockID outside = walker.addBlock(BlockFrequency::Unlikely);
+        walker.branch(isInside, inside, outside);
+        walker.continueIn(outside);
+        arguments[place] = walker.constant(PrimitiveKnownToFolding::number(PNaN));
+        walker.jumpTo(target, arguments);
+        walker.continueIn(inside);
+        codeUnit = buildProofBehindTestForStrings(walker, codeUnit, isInside, OperandIndex::LessEq::right, origin);
+    }
+    arguments[place] = codeUnit;
+    walker.jumpTo(target, arguments);
+    return true;
 }
 
 Reference codeUnitOfCharCodeInSight(Walker& walker, Reference number)

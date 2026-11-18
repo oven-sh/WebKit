@@ -153,6 +153,37 @@ private:
     }
 
 public:
+    // The locations of callInformationFor(signature, role).params or .results, one after another, without a CallInformation.
+    class LocationCursor {
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        LocationCursor(const WasmCallingConvention& convention, CallRole role)
+            : m_convention(convention)
+            , m_role(role)
+            , m_stackOffset(headerIncludingThisSizeInBytes(role))
+        { }
+
+        ArgumentLocation next(Type valueType) { return m_convention.marshallLocation(m_role, valueType, m_gpArgumentCount, m_fpArgumentCount, m_stackOffset); }
+
+    private:
+        const WasmCallingConvention& m_convention;
+        const CallRole m_role;
+        size_t m_gpArgumentCount { 0 };
+        size_t m_fpArgumentCount { 0 };
+        size_t m_stackOffset;
+    };
+
+    // Equal to callInformationFor(signature, role).computeResultsOffsetList().sizeOfAreaInBytes().
+    size_t sizeOfResultRegisterAreaInBytes(const RTT& signature, CallRole role) const
+    {
+        // One result lies in one register.
+        if (!signature.returnCount())
+            return 0;
+        if (signature.returnCount() == 1 && signature.returnType(0).kind() != TypeKind::V128)
+            return sizeof(CPURegister);
+        return callInformationFor(signature, role).computeResultsOffsetList().sizeOfAreaInBytes();
+    }
+
     CallInformation callInformationFor(const RTT& signature, CallRole role = CallRole::Caller) const
     {
         size_t gpArgumentCount = 0;
@@ -264,6 +295,26 @@ private:
     }
 
 public:
+    // The locations of callInformationFor(signature, role).params, one after another, without a CallInformation.
+    class LocationCursor {
+        WTF_FORBID_HEAP_ALLOCATION;
+    public:
+        LocationCursor(const JSCallingConvention& convention, CallRole role)
+            : m_convention(convention)
+            , m_role(role)
+            , m_stackOffset(headerSizeInBytes - (role == CallRole::Caller ? sizeof(CallerFrameAndPC) : 0) + sizeof(Register))
+        { }
+
+        ArgumentLocation next(Type valueType) { return m_convention.marshallLocation(m_role, valueType, m_gpArgumentCount, m_fpArgumentCount, m_stackOffset); }
+
+    private:
+        const JSCallingConvention& m_convention;
+        const CallRole m_role;
+        size_t m_gpArgumentCount { 0 };
+        size_t m_fpArgumentCount { 0 };
+        size_t m_stackOffset;
+    };
+
     CallInformation callInformationFor(const RTT& signature, CallRole role = CallRole::Callee) const
     {
         size_t gpArgumentCount = 0;

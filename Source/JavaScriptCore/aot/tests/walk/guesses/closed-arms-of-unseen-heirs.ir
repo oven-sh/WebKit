@@ -1,0 +1,105 @@
+# The objects of Heir, whose parent unseen code passes, have the layout of Cursor and another prototype. The arm of a read keeps no site: a site is bytes, and that arm is rare.
+# function Cursor(text) { this.text = text; this.pos = 0; }
+# Cursor.prototype.step = function () { return this.pos++; };
+# Cursor.prototype.all = function () { "use strict"; while (this.pos < 5) this.step(); };
+# globalThis.pass(Cursor, function (Base) { function Heir() { return Base.apply(this, arguments) || this; } Heir.prototype = Object.create(Base.prototype); Heir.prototype.constructor = Heir; return Heir; });
+# RUN: walk f4 mechanisms=all
+# CHECK-LABEL: code f4:Body
+# CHECK: frequency=Rare isInLoop=true:
+# CHECK-NEXT: = PropGet {{*}}key="pos"
+
+layout L0 kind=Instance name="Cursor" module=m0 position=62 constructor=f1 fields=[{key="text" declared={type=anything} flags=[IsRequired]}, {key="pos" declared={type=anything} flags=[IsRequired]}] flags=[IsConstructorFunction] place=62
+layout L1 kind=Instance name="Heir" module=m0 position=316 constructor=f6 flags=[HasHeritage, IsConstructorFunction] place=316
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+
+function f0 module=m0 flags=[IsSloppy] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = PropGet v1 key="prototype" @120
+    v3 = NewClosure function=f3 @144
+    PropSet v2, v3 key="step" mode=Sloppy @127
+    v5 = PropGet v1 key="prototype" @180
+    v6 = NewClosure function=f4 @203
+    PropSet v5, v6 key="all" mode=Sloppy @187
+    v8 = Builtin builtin=GlobalThis @272
+    v9 = PropGet v8 key="pass" @272
+    v10 = NewClosure function=f5 @296
+    v11 = Call v9, v8, v1, v10 calleeKey="pass" calleeName="globalThis.pass" @283
+    v12 = String string="b" @530
+    v13 = Construct v1, -, v12 calleeName="Cursor" @523 @519
+    v14 = PropGet v13 key="all" @533
+    v15 = Call v14, v13 calleeKey="all" calleeName="all" @535
+    Return v15 @486
+}
+function f1 name="Cursor" module=m0 position=62 sourceRange={start=61 end=118} flags=[IsSloppy, HasThis, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = ToThis v0 @78
+    v3 = Convert v2 declared={type=L0 flags=[IsExpected]} @78
+    PropSet v3, v1 key="text" mode=Sloppy @86
+    v5 = Integer @115
+    PropSet v3, v5 key="pos" mode=Sloppy @104
+    v7 = Undefined @104
+    Return v7 @104
+}
+function f2 module=m0 position=18 results=[{type=anything}] {
+  b0():
+    v0 = Undefined @18
+    Return v0 @18
+}
+function f3 module=m0 position=144 sourceRange={start=143 end=176} flags=[IsSloppy, HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = ToThis v0 @144
+    v2 = Convert v1 declared={type=L0 flags=[IsExpected]} @144
+    v3 = PropGet v2 key="pos" @165
+    v4 = ToNumeric v3 @165
+    v5 = Increment v4 @165
+    PropSet v2, v5 key="pos" mode=Sloppy @165
+    Return v4 @165
+}
+function f4 module=m0 position=203 sourceRange={start=201 end=254} flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Convert v0 declared={type=L0 flags=[IsExpected]} @203
+    Jump -> next b1() @203
+  b1():
+    LoopHint @210
+    v3 = PropGet v1 key="pos" @212
+    v4 = Integer integer=5 @214
+    v5 = Less v3, v4 @216
+    Branch v5 -> taken b2(), notTaken b3() @216
+  b2():
+    v6 = PropGet v1 key="step" @224
+    v7 = Call v6, v1 calleeKey="step" calleeName="this.step" @229
+    Jump -> next b1() @229
+  b3():
+    v8 = Undefined @240
+    Return v8 @240
+}
+function f5 module=m0 position=296 sourceRange={start=293 end=479} flags=[IsSloppy] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Undefined @306
+    v2 = NewClosure v0 function=f6 @382
+    v3 = Builtin builtin=Object @399
+    v4 = Builtin builtin=ObjectCreate @399
+    v5 = PropGet v0 key="prototype" @413
+    v6 = Call v4, v3, v5 calleeName="Object.create" @406
+    PropSet v2, v6 key="prototype" mode=Sloppy @382
+    v8 = PropGet v2 key="prototype" @432
+    PropSet v8, v2 key="constructor" mode=Sloppy @437
+    Return v2 @476
+}
+function f6 name="Heir" module=m0 position=316 sourceRange={start=312 end=375} flags=[IsSloppy, HasThis, TakesCallee, HasArgumentCount, HasHiddenRest, HasExplicitName] captures=[{type=anything variableName="Base"}] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: function, v3: int[0, 4294967295], v4: Array):
+    v5 = CreateMappedArguments v2, v3, v4 @316
+    v6 = ToThis v1 @316
+    v7 = Convert v6 declared={type=L1 flags=[IsExpected]} @316
+    v8 = PropGet v0 key="apply" @341
+    v9 = Call v8, v0, v7, v5 calleeKey="apply" calleeName="Base.apply" @346
+    v10 = ToBoolean v9 @341
+    Branch v10 -> taken b1(), notTaken b2(v7) @341
+  b1():
+    Jump -> next b2(v9) @341
+  b2(v11):
+    Return v11 @372
+}

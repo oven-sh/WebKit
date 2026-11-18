@@ -23,6 +23,7 @@ struct ClosureWord {
     static constexpr unsigned numberOfFunctionBits = 22;
     static constexpr unsigned borrowsArgumentShift = 54;
     static constexpr unsigned numberOfBorrowedArguments = 2;
+    static constexpr unsigned returnsCaptureBit = borrowsArgumentShift + numberOfBorrowedArguments - 1;
     static constexpr unsigned endsItsTailCallsBit = 56;
     static constexpr unsigned takesNewTargetBit = 57;
     static constexpr unsigned numberOfParametersShift = 58;
@@ -49,6 +50,7 @@ struct ClosureWord {
         bool takesNewTarget { false };
         uint8_t borrowedArguments { 0 };
         bool endsItsTailCalls { false };
+        bool returnsCapture { false };
 
         friend constexpr bool operator==(const Flags&, const Flags&) = default;
     };
@@ -62,8 +64,10 @@ struct ClosureWord {
     static constexpr uint32_t encodeUpperHalf(unsigned numberOfParameters, uint32_t function, Flags flags)
     {
         RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(numberOfParameters <= maxNumberOfParameters && function < firstReservedFunction && !(flags.borrowedArguments >> numberOfBorrowedArguments));
+        RELEASE_ASSERT_UNDER_CONSTEXPR_CONTEXT(!flags.returnsCapture || (!numberOfParameters && !flags.borrowedArguments));
         return function
             | static_cast<uint32_t>(flags.borrowedArguments) << (borrowsArgumentShift - numberOfOffsetBits)
+            | static_cast<uint32_t>(flags.returnsCapture) << (returnsCaptureBit - numberOfOffsetBits)
             | static_cast<uint32_t>(flags.endsItsTailCalls) << (endsItsTailCallsBit - numberOfOffsetBits)
             | static_cast<uint32_t>(flags.takesNewTarget) << (takesNewTargetBit - numberOfOffsetBits)
             | static_cast<uint32_t>(maxNumberOfParameters - numberOfParameters) << (numberOfParametersShift - numberOfOffsetBits)
@@ -101,6 +105,7 @@ static_assert(ClosureWord::numberOfParametersOf(ClosureWord::encode({ 16, 3 }, 7
 static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { })) >= ClosureWord::minWordOfCalleeTaking(3) && static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { .takesNewTarget = true })) < ClosureWord::minWordOfCalleeTaking(2));
 static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 0 }, 7, { .isNotCallable = true })) < ClosureWord::minWordOfCalleeTaking(ClosureWord::maxNumberOfParameters));
 static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { .takesNewTarget = true, .borrowedArguments = 3 })) < ClosureWord::minWordOfCalleeTaking(2) && ClosureWord::borrowedArgumentsOf(ClosureWord::encode({ 16, 3 }, 7, { .borrowedArguments = 2 })) == 2);
+static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 0 }, 7, { .returnsCapture = true })) >= ClosureWord::minWordOfCalleeTaking(0) && ClosureWord::encode({ 16, 0 }, 7, { .returnsCapture = true }) >> ClosureWord::returnsCaptureBit & 1);
 static_assert(ClosureWord::endsItsTailCalls(ClosureWord::encode({ 16, 3 }, 7, { .endsItsTailCalls = true })) && !ClosureWord::endsItsTailCalls(ClosureWord::encode({ 16, 3 }, 7, { .takesNewTarget = true, .borrowedArguments = 3 })));
 static_assert(static_cast<int64_t>(ClosureWord::encode({ 16, 3 }, 7, { .takesNewTarget = true, .endsItsTailCalls = true })) < ClosureWord::minWordOfCalleeTaking(2));
 static_assert(offsetOfSlimClosureWord + static_cast<ptrdiff_t>(sizeof(uint32_t)) == offsetOfShapeWord);

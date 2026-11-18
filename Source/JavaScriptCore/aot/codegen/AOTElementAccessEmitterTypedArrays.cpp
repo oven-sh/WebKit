@@ -83,7 +83,7 @@ TypedArrayElements ElementAccessEmitter::typedArrayElementsInsideView(const Valu
 TypedPointer ElementAccessEmitter::elementInsideView(const ValueContext& access)
 {
     RELEASE_ASSERT(access->isInsideView());
-    Integer index = indexInsideLength(access->positionOperand());
+    Integer index = indexInsideLength(access->positionOperand(), PositionUses::OneOrSharedIndex);
     TypedArrayElements elements = typedArrayElementsInsideView(access, in<CellPointer>(access->viewOperand()));
     holdPositionInsideView(access, index, elements);
     return TypedPointer(m_heaps.TypedArrayProperties, offsetBy(elements.vector, index, logElementSize(access->typedArrayType())).value());
@@ -108,6 +108,19 @@ std::optional<TypedArrayElements> ElementAccessEmitter::typedArrayElementsNamedB
         stopUnlessInside(value, belowOrEqual(named.length, TypedArraySupport(generator()).lengthOf(asked)));
     }
     return named;
+}
+
+std::optional<TypedArrayElements> ElementAccessEmitter::findElementsReadBefore(const ValueContext& access, CellPointer view)
+{
+    if (checksBounds() || !generator().accessesViewRepeatedly(access.id()))
+        return std::nullopt;
+    LValue operand = view.value();
+    LValue length = m_out.findPurePatch(functionOfMemory(PureOperation::LengthOfFixedView, 0), machineTypeOf(Integer::representation), singleElementSpan(operand));
+    LValue vector = m_out.findPurePatch(functionOfMemory(PureOperation::VectorOfFixedView, 0), machineTypeOf(Pointer::representation), singleElementSpan(operand));
+    if (!length || !vector)
+        return std::nullopt;
+    build().statistics().count(StatisticID::ViewStorageReused);
+    return TypedArrayElements { view, Integer(length), Pointer(vector) };
 }
 
 void ElementAccessEmitter::askViewWherePositionIsNotBelowNamedLength(LBasicBlock isNotBelow, const ScopeFork& fork, const ValueContext& access, CellPointer view, Integer index, LBasicBlock outside, LBasicBlock otherwise)
@@ -153,6 +166,15 @@ Operand ElementAccessEmitter::loadTypedArrayElement(const TypedArrayElements& el
 Condition ElementAccessEmitter::viewIsOfKind(ValueID view, TypedArrayType kind)
 {
     return equal(loadByte(in<CellPointer>(view), m_heaps.JSCell_typeInfoType), static_cast<int32_t>(typeForTypedArrayType(kind)));
+}
+
+Condition ElementAccessEmitter::isRangeInsideView(const ValueContext& access, Integer least, Integer greatest)
+{
+    CellPointer asked = askedAnew(in<CellPointer>(access->viewOperand()));
+    Integer length = TypedArraySupport(generator()).lengthOf(asked);
+    Condition isVectorOfView = equal(in<Pointer>(access->vectorOperand()), loadField<Pointer>(asked, m_heaps.JSArrayBufferView_vector));
+    Condition isInside = logicalAnd(greaterThanOrEqual(least, integer(0)), lessThan(greatest, length));
+    return logicalAnd(viewIsOfKind(access->viewOperand(), access->typedArrayType()), logicalAnd(isVectorOfView, isInside));
 }
 
 void ElementAccessEmitter::forEachKindOfView(const ValueContext& value, CellPointer view, NOESCAPE const ScopedLambda<void(TypedArrayType)>& inArm)
@@ -274,7 +296,18 @@ Integer ElementAccessEmitter::indexFoundBelowLength(Integer index, TypedArrayTyp
 
 void ElementAccessEmitter::generateGetTypedArrayLength(const ValueContext& value)
 {
-    define(value, TypedArraySupport(generator()).lengthOf(in<CellPointer>(value->viewOperand())));
+    CellPointer view = in<CellPointer>(value->viewOperand());
+    if (!value->isCapped())
+        return define(value, TypedArraySupport(generator()).lengthOf(view));
+    int64_t greatest = (1ll << 31) >> logElementSize(value->typedArrayType());
+    Integer length = loadField<Integer>(view, m_heaps.JSArrayBufferView_length);
+    Condition hasFixedLength = hasNoBits(loadByte(view, m_heaps.JSArrayBufferView_mode), resizabilityAndAutoLengthMask);
+    Integer capped = zeroExtended(low32(select(hasFixedLength, Integer(select(below(length, greatest), length, greatest)), 0)));
+    if (value->offset()) {
+        Integer rest = sub(capped, integer(value->offset()));
+        capped = zeroExtended(low32(select(lessThan(rest, 0), 0, rest)));
+    }
+    define(value, capped);
 }
 
 void ElementAccessEmitter::generateGetTypedArrayVector(const ValueContext& value)
@@ -349,7 +382,7 @@ void ElementAccessEmitter::generatePutDataViewElement(const ValueContext& value)
     if (value->littleEndianOperand())
         order = { std::nullopt, get(value->littleEndianOperand()).as<Condition>() };
     ValueID storedValue = value->valueOperand();
-    Operand stored = takesAnyNaN(value.value(), OperandIndex::PutDataViewElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
+    Operand stored = generator().takesAnyNaNIntoBytes(value.value(), OperandIndex::PutDataViewElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
     if (isFloat(elements))
         stored = stored.is<Number>() ? stored : Operand(TypedArraySupport(generator()).numberOperand(storedValue));
     else if (stored.is<Number>())
@@ -371,6 +404,142 @@ CellPointer ElementAccessEmitter::viewOnSlowPath(const ValueContext& access, Cel
         return view;
     VariableID variable = operationAt(definitionOf(access->vectorOperand())).variable();
     return emitter<StaticsEmitter>().loadMirroredView(variable);
+}
+
+struct PositionOfElement {
+    ValueID base;
+    int64_t offset { 0 };
+};
+
+static PositionOfElement positionOfElement(const Code& code, ValueID position)
+{
+    static constexpr OpcodeSet passingIntegers { Opcode::Narrowed, Opcode::WidenInteger, Opcode::NarrowInteger };
+    PositionOfElement found { position };
+    while (!code.isConstant(found.base)) {
+        const Operation& operation = code.at(found.base);
+        if (passingIntegers.contains(operation.opcode)) {
+            found.base = operation.valueOperand();
+            continue;
+        }
+        bool isSum = operation.opcode == Opcode::Add || operation.opcode == Opcode::Sub;
+        if (!isSum || operation.form() != OperatorForm::Integers || !code.isConstant(operation.rightOperand()) || code.at(operation.rightOperand()).opcode != Opcode::Integer)
+            break;
+        int64_t added = code.at(operation.rightOperand()).integer();
+        found.offset += operation.opcode == Opcode::Add ? added : -added;
+        found.base = operation.leftOperand();
+    }
+    return found;
+}
+
+static bool accessesHalfOfWord(const Operation& access, Opcode opcode)
+{
+    return access.opcode == opcode && access.isInsideView() && access.level() == KnowledgeLevel::Proven && (access.typedArrayType() == TypeInt16 || access.typedArrayType() == TypeUint16);
+}
+
+static bool areNeighboringElements(const Code& code, const Operation& lower, const Operation& upper)
+{
+    PositionOfElement ofLower = positionOfElement(code, lower.positionOperand());
+    PositionOfElement ofUpper = positionOfElement(code, upper.positionOperand());
+    return lower.vectorOperand() && lower.vectorOperand() == upper.vectorOperand() && ofLower.base == ofUpper.base && ofUpper.offset == ofLower.offset + 1;
+}
+
+static std::optional<CodeGenerator::ElementPairCopy> findElementPairCopy(const Code& code, ValueID firstRead)
+{
+    static constexpr size_t mostOperationsBetween = 64;
+    std::span<const ValueID> values = code.valuesOf(code.blockOf(firstRead));
+    const Operation& first = code.at(firstRead);
+    size_t place = std::ranges::find(values, firstRead) - values.begin();
+    size_t end = std::min(values.size(), place + mostOperationsBetween);
+    auto findStores = [&](size_t begin, CodeGenerator::ElementPairCopy copy) -> std::optional<CodeGenerator::ElementPairCopy> {
+        for (size_t later = begin; later < end; ++later) {
+            const Operation& operation = code.at(values[later]);
+            ValueID stored = accessesHalfOfWord(operation, Opcode::PutTypedArrayElement) ? operation.valueOperand() : ValueID();
+            while (stored && !code.isConstant(stored) && code.at(stored).opcode == Opcode::Narrowed)
+                stored = code.at(stored).valueOperand();
+            ValueID* store = stored == copy.lowerRead ? &copy.lowerStore : stored == copy.upperRead ? &copy.upperStore : nullptr;
+            if (!stored || !store) {
+                if (copy.firstStore && !operation.traits().isPure())
+                    return std::nullopt;
+                continue;
+            }
+            if (*store)
+                return std::nullopt;
+            *store = values[later];
+            if (copy.lowerStore && copy.upperStore)
+                return areNeighboringElements(code, code.at(copy.lowerStore), code.at(copy.upperStore)) ? std::optional(copy) : std::nullopt;
+            copy.firstStore = values[later];
+        }
+        return std::nullopt;
+    };
+    for (size_t later = place + 1; later < end; ++later) {
+        const Operation& operation = code.at(values[later]);
+        if (operation.traits().mayWriteObservableState() || operation.traits().mayCallUnknownCode())
+            break;
+        if (!accessesHalfOfWord(operation, Opcode::GetTypedArrayElement) || operation.typedArrayType() != first.typedArrayType())
+            continue;
+        CodeGenerator::ElementPairCopy copy;
+        if (areNeighboringElements(code, first, operation))
+            copy.upperRead = values[later];
+        else if (areNeighboringElements(code, operation, first))
+            copy.lowerRead = values[later];
+        else
+            continue;
+        (copy.upperRead ? copy.lowerRead : copy.upperRead) = firstRead;
+        copy.firstRead = firstRead;
+        if (std::optional<CodeGenerator::ElementPairCopy> found = findStores(later + 1, copy))
+            return found;
+    }
+    return std::nullopt;
+}
+
+TypedPointer ElementAccessEmitter::wordOfElementPair(const ValueContext& access, bool isUpper)
+{
+    build().statistics().count(StatisticID::AccessesInsideViews);
+    Integer index = indexInsideLength(access->positionOperand(), PositionUses::OneOrSharedIndex);
+    TypedArrayElements elements = typedArrayElementsInsideView(access, in<CellPointer>(access->viewOperand()));
+    holdPositionInsideView(access, index, elements);
+    Integer lower = isUpper ? Integer(m_out.add(index.value(), m_out.constInt64(-1))) : index;
+    return TypedPointer(m_heaps.TypedArrayProperties, offsetBy(elements.vector, lower, logElementSize(access->typedArrayType())).value());
+}
+
+std::optional<Operand> ElementAccessEmitter::readElementOfPair(const ValueContext& value)
+{
+    if (checksBounds() || !accessesHalfOfWord(value.value(), Opcode::GetTypedArrayElement) || value.representation() != Representation::Int32)
+        return std::nullopt;
+    auto& copies = generator().elementPairCopies();
+    size_t place = copies.findIf([&](const CodeGenerator::ElementPairCopy& copy) { return copy.lowerRead == value.id() || copy.upperRead == value.id(); });
+    if (place == notFound) {
+        std::optional<CodeGenerator::ElementPairCopy> found = findElementPairCopy(generator().code(), value.id());
+        bool isTaken = found && copies.containsIf([&](const CodeGenerator::ElementPairCopy& copy) {
+            ValueID other = found->lowerRead == value.id() ? found->upperRead : found->lowerRead;
+            return copy.lowerRead == other || copy.upperRead == other;
+        });
+        if (!found || isTaken || representationOf(found->lowerRead) != Representation::Int32 || representationOf(found->upperRead) != Representation::Int32)
+            return std::nullopt;
+        build().statistics().count(StatisticID::ElementPairsCopiedAsWords);
+        copies.append(*found);
+        place = copies.size() - 1;
+    }
+    if (copies[place].firstRead == value.id())
+        copies[place].word = m_out.load32(wordOfElementPair(value, copies[place].upperRead == value.id()));
+    LValue word = copies[place].word;
+    bool isSigned = value->typedArrayType() == TypeInt16;
+    if (copies[place].upperRead == value.id())
+        return Operand(Word32(isSigned ? m_out.aShr(word, 16) : m_out.lShr(word, 16)));
+    return Operand(Word32(isSigned ? m_out.aShr(m_out.shl(word, 16), 16) : m_out.bitAnd(word, m_out.constInt32(UINT16_MAX))));
+}
+
+bool ElementAccessEmitter::storeElementOfPair(const ValueContext& value)
+{
+    for (const CodeGenerator::ElementPairCopy& copy : generator().elementPairCopies()) {
+        if (copy.firstStore == value.id())
+            return true;
+        if (copy.lowerStore != value.id() && copy.upperStore != value.id())
+            continue;
+        m_out.store32(copy.word, wordOfElementPair(value, copy.upperStore == value.id()));
+        return true;
+    }
+    return false;
 }
 
 void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& value)
@@ -420,8 +589,12 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
         return ofAnyKind.finish();
     };
     if (value->isInsideView()) {
+        if (std::optional<Operand> element = readElementOfPair(value)) {
+            define(value, *element);
+            return;
+        }
         build().statistics().count(StatisticID::AccessesInsideViews);
-        Integer index = indexInsideLength(value->positionOperand());
+        Integer index = indexInsideLength(value->positionOperand(), PositionUses::OneOrSharedIndex);
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
         holdPositionInsideView(value, index, elements);
         if (readsNumberOutOfBytes(value.value())) {
@@ -450,24 +623,54 @@ void ElementAccessEmitter::generateGetTypedArrayElement(const ValueContext& valu
 
     Integer index = indexMadeInFront ? *indexMadeInFront : indexOfAccessOrElse(value, outside, NaNIndexMode::ProduceOutOfBoundsIndex);
     std::optional<TypedArrayElements> named = typedArrayElementsNamedBy(value, view);
+    bool keepsElements = false;
+    if (!named && !isOfSeveralKinds && indexMadeInFront) {
+        named = findElementsReadBefore(value, view);
+        keepsElements = !named && !checksBounds() && generator().accessesViewRepeatedly(value.id());
+    }
+    Vector<ValueFromBlock, 4> lengths;
+    Vector<ValueFromBlock, 4> vectors;
+    auto keepElements = [&](Integer length, Pointer vector) {
+        if (!keepsElements)
+            return;
+        lengths.append(m_out.anchor(length.value()));
+        vectors.append(m_out.anchor(vector.value()));
+    };
     LBasicBlock isNotBelowNamedLength = named ? newBlock() : nullptr;
     TypedArrayElements elements = named ? *named : typedArrayElementsOf(value->viewOperand(), otherwise);
     branchUnless(isBelowLengthOfView(index, elements.length, type), named ? isNotBelowNamedLength : outside);
-    if (nothingIsNaN && isFloat(type))
-        join.add(loadBytesOfTypedArrayElement(elements, indexFoundBelowLength(index, type), type));
-    else {
+    if (nothingIsNaN && isFloat(type)) {
+        Operand element = loadBytesOfTypedArrayElement(elements, indexFoundBelowLength(index, type), type);
+        keepElements(elements.length, elements.vector);
+        join.add(element);
+    } else {
         Operand element = loadElement(elements, indexFoundBelowLength(index, type));
-        join.add(TypedArraySupport(generator()).inRepresentation(value, nothingIsNaN ? Representation::Double : representation, element, elementType));
+        Operand represented = TypedArraySupport(generator()).inRepresentation(value, nothingIsNaN ? Representation::Double : representation, element, elementType);
+        keepElements(elements.length, elements.vector);
+        join.add(represented);
     }
 
     if (named)
         askViewWherePositionIsNotBelowNamedLength(isNotBelowNamedLength, fork, value, view, index, outside, otherwise);
     m_out.appendToJoin(outside, fork);
-    join.add(nothingIsNaN ? Operand(number(PNaN)) : absentElement(value, representation));
+    Operand absent = nothingIsNaN ? Operand(number(PNaN)) : absentElement(value, representation);
+    keepElements(elements.length, elements.vector);
+    join.add(absent);
 
     m_out.appendToJoin(otherwise, fork);
-    join.add(nothingIsNaN ? Operand(emitter<ConversionEmitter>().withoutPayload(Number(readByValue().value))) : readByValue());
+    Operand readOfAnyView = nothingIsNaN ? Operand(emitter<ConversionEmitter>().withoutPayload(Number(readByValue().value))) : readByValue();
+    keepElements(Integer(m_out.constInt64(0)), Pointer(m_out.constInt64(0)));
+    join.add(readOfAnyView);
     Operand read = join.finishBehind(fork);
+    if (keepsElements) {
+        LValue operand = view.value();
+        LValue length = m_out.phi(machineTypeOf(Integer::representation), lengths);
+        LValue vector = m_out.phi(machineTypeOf(Pointer::representation), vectors);
+        if (length->opcode() == Machine::Phi && vector->opcode() == Machine::Phi) {
+            m_out.recordInPlaceOfReadOfMemory(functionOfMemory(PureOperation::LengthOfFixedView, 0), length, operand, m_heaps.JSArrayBufferView_length);
+            m_out.recordInPlaceOfReadOfMemory(functionOfMemory(PureOperation::VectorOfFixedView, 0), vector, operand, m_heaps.JSArrayBufferView_vector);
+        }
+    }
     if (isBoxed) {
         build().statistics().count(StatisticID::NumberElementsReadBoxed);
         generator().defineBoxed(value, read.as<Boxed>());
@@ -492,7 +695,7 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
 
     TypedArraySupport support(generator());
     CellPointer view = in<CellPointer>(value->viewOperand());
-    Operand stored = takesAnyNaN(value.value(), OperandIndex::PutTypedArrayElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
+    Operand stored = generator().takesAnyNaNIntoBytes(value.value(), OperandIndex::PutTypedArrayElement::value) ? generator().getWithAnyNaN(storedValue) : get(storedValue);
     bool isOfSeveralKinds = type == NotTypedArray;
     bool storesInline = (isOfSeveralKinds || hasInlineElementAccess(type)) && !stored.is<Boxed>();
     auto elementToStore = [&] {
@@ -517,8 +720,10 @@ void ElementAccessEmitter::generatePutTypedArrayElement(const ValueContext& valu
         m_out.appendTo(isStored);
     };
     if (value->isInsideView() && storesInline) {
+        if (storeElementOfPair(value))
+            return;
         build().statistics().count(StatisticID::AccessesInsideViews);
-        Integer index = indexInsideLength(value->positionOperand());
+        Integer index = indexInsideLength(value->positionOperand(), PositionUses::OneOrSharedIndex);
         TypedArrayElements elements = typedArrayElementsInsideView(value, view);
         holdPositionInsideView(value, index, elements);
         storeElement(elements, index);

@@ -141,6 +141,23 @@ export function from(items /*, mapFn, thisArg */)
             }
         }
 
+        if (nextMethod === $regExpStringIteratorProtoNext && $isRegExpStringIterator(iterator)) {
+            for (;;) {
+                var match = $stepMatchIterator(iterator);
+                if (match === null) {
+                    result.length = k;
+                    return result;
+                }
+                if (k >= $MAX_SAFE_INTEGER)
+                    $ifAbruptCloseIterator(iterator, $throwTypeError("Length exceeded the maximum array length"));
+                if (mapFn !== undefined)
+                    $ifAbruptCloseIterator(iterator, (match = thisArg === undefined ? mapFn(match, k) : mapFn.$call(thisArg, match, k)));
+                if (!$isJSArray(result) || !$tryPutIndex(result, k, match))
+                    $ifAbruptCloseIterator(iterator, $putByValDirect(result, k, match));
+                k += 1;
+            }
+        }
+
         for (;;) {
             var next = $iteratorGenericNext(nextMethod, iterator);
             if (next.done)

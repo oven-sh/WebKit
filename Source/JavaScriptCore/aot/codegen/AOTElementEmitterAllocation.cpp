@@ -153,13 +153,158 @@ std::optional<EmptyArray> ArrayAllocationEmitter::emptyArrayWithPushCapacity(Blo
     return pushed <= 13 ? EmptyArray::ContiguousCapacity13 : EmptyArray::ContiguousCapacity17;
 }
 
+ValueID ArrayAllocationEmitter::restListUsedOnce(ValueID list)
+{
+    static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::Decode };
+    const Function& function = m_program.at(generator().unit().function);
+    if (generator().unit().role != CodeRole::Body || !function.has(FunctionFlags::HasRestParameter) || function.isCoroutine() || function.hasAny({ FunctionFlags::HasArgumentCount, FunctionFlags::HasHiddenRest }))
+        return { };
+    while (!m_code.isConstant(list) && m_code.useCountOf(list) == 1 && names.contains(operationAt(list).opcode))
+        list = operationAt(list).operand(0);
+    if (m_code.isConstant(list) || m_code.useCountOf(list) != 1 || operationAt(list).opcode != Opcode::Parameter)
+        return { };
+    const Block& entry = m_code.at(operationAt(list).block());
+    if (!entry.isEntry || entry.parameters().size() != function.numberOfEntryParameters())
+        return { };
+    size_t place = entry.placeOfParameter(list);
+    bool isRestParameter = place < function.numberOfEntryParameters() && function.entryParameterKind(place) == EntryParameter::Parameter && place - function.firstParameterIndex() >= function.numberOfPositionalParameters();
+    return isRestParameter ? list : ValueID();
+}
+
+ValueID ArrayAllocationEmitter::findAppendOfRestList(const ValueContext& literal)
+{
+    static constexpr OpcodeSet changesOfForm { Opcode::Narrowed, Opcode::Box, Opcode::Unbox, Opcode::Decode };
+    static constexpr OpcodeSet storesOfVariables { Opcode::PutModuleVariable, Opcode::PutEnvironmentField };
+    if (!m_program.at(generator().unit().function).has(FunctionFlags::HasRestParameter) || !m_code.opcodesOfValues().contains(Opcode::AppendElements) || generator().keepsValuesInHeapFrame())
+        return { };
+    if (!literal->elementsOperands().empty() || !literal->holes().empty() || hasArrayStorageForm(literal->arrayStorage()))
+        return { };
+
+    Vector<ValueID, 4> names { literal.id() };
+    ValueID append;
+    BlockID blockOfAppend;
+    auto isName = [&](ValueID value) {
+        return value && names.contains(value);
+    };
+    for (BlockID block : generator().order()) {
+        for (ValueID id : m_code.valuesOf(block)) {
+            const Operation& operation = operationAt(id);
+            if (std::ranges::none_of(operation.operands(), isName))
+                continue;
+            if (changesOfForm.contains(operation.opcode)) {
+                names.append(id);
+                continue;
+            }
+            if (append) {
+                if (!generator().blockDominates(blockOfAppend, block))
+                    return { };
+                continue;
+            }
+            if (operation.opcode != Opcode::AppendElements || !isName(operation.arrayOperand()) || isName(operation.sourceOperand()) || !restListUsedOnce(operation.sourceOperand()))
+                return { };
+            append = id;
+            blockOfAppend = block;
+        }
+    }
+    if (!append)
+        return { };
+    auto holdsName = [&](std::span<const ValueID> arguments) {
+        return std::ranges::any_of(arguments, isName);
+    };
+    for (BlockID id : generator().order()) {
+        if (generator().blockDominates(blockOfAppend, id))
+            continue;
+        const Block& block = m_code.at(id);
+        bool namesLiteral = isName(block.subject);
+        block.terminator.forEachChild([&](ValueID read) {
+            namesLiteral |= isName(read);
+        });
+        m_code.forEachEdgeOf(id, [&](EdgeID, const Edge& edge) {
+            namesLiteral |= holdsName(edge.arguments());
+        });
+        if (namesLiteral)
+            return { };
+    }
+
+    BitVector leadsToAppend(m_code.numberOfBlocks());
+    leadsToAppend.quickSet(blockOfAppend.index());
+    std::span<const BlockID> order = generator().order();
+    for (size_t place = order.size(); place--;) {
+        BlockID block = order[place];
+        if (!generator().blockDominates(literal.block(), block))
+            continue;
+        if (block != blockOfAppend) {
+            m_code.forEachEdgeOf(block, [&](EdgeID, const Edge& edge) {
+                if (leadsToAppend.quickGet(edge.to.index()))
+                    leadsToAppend.quickSet(block.index());
+            });
+        }
+        if (!leadsToAppend.quickGet(block.index()))
+            continue;
+        TerminatorKind end = m_code.at(block).terminator.kind;
+        if (generator().isInLoop(block) || m_code.handlerOf(block) || (block != blockOfAppend && end != TerminatorKind::Jump && end != TerminatorKind::Branch))
+            return { };
+        bool isAheadOfLiteral = block == literal.block();
+        for (ValueID id : m_code.valuesOf(block)) {
+            if (id == append)
+                break;
+            if (isAheadOfLiteral) {
+                isAheadOfLiteral = id != literal.id();
+                continue;
+            }
+            auto traits = operationAt(id).traits();
+            if (traits.mayRunOtherCode() || (traits.mayWriteObservableState() && !storesOfVariables.contains(opcodeOf(id))))
+                return { };
+        }
+    }
+    return append;
+}
+
+CellPointer ArrayAllocationEmitter::useRestListAsLiteral(const ValueContext& literal, ValueID restList)
+{
+    CellPointer rest = representationOf(restList) == Representation::JSValue ? unboxCell(in<Boxed>(restList)) : in<CellPointer>(restList);
+    build().statistics().count(StatisticID::RestListsUsedAsLiterals);
+    static_assert(UndecidedShape < ContiguousShape && Int32Shape < ContiguousShape && DoubleShape < ContiguousShape && ArrayStorageShape > ContiguousShape && SlowPutArrayStorageShape > ContiguousShape && CopyOnWrite > ContiguousShape);
+    LBasicBlock isNoPlainList = newBlock();
+    Join<CellPointer> join(m_out);
+    Word32 shape = bitAnd(loadByte(rest, m_heaps.JSArray_indexingTypeAndMisc), word32(IndexingShapeAndWritabilityMask));
+    branchUnless(belowOrEqual(shape, word32(ContiguousShape)), isNoPlainList);
+    join.add(rest);
+
+    m_out.appendTo(isNoPlainList);
+    join.add(newLiteralAsWritten(literal));
+    return join.finish();
+}
+
+void ArrayAllocationEmitter::appendRestListUnlessUsedAsLiteral(const ValueContext& append)
+{
+    generator().m_appendOfRestList = ValueID();
+    CellPointer array = in<CellPointer>(append->arrayOperand());
+    CellPointer source = in<CellPointer>(append->sourceOperand());
+    LBasicBlock isAnotherList = newBlock();
+    LBasicBlock done = newBlock();
+    m_out.branch(equal(array, source).value(), normalEdge(done), rareEdge(isAnotherList));
+    m_out.appendTo(isAnotherList);
+    callStub(append, appendElements(), { array.value(), source.value() });
+    m_out.jump(done);
+    m_out.appendTo(done);
+}
+
 CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
 {
     if (value->storage() == AllocationStorage::Frame) {
         generator().fail(value, InternalErrorKind::OpcodeWithoutCode, "the frame has no form for an array literal"_s);
         return CellPointer(m_out.int64Zero);
     }
+    if (ValueID append = findAppendOfRestList(value)) {
+        generator().m_appendOfRestList = append;
+        return useRestListAsLiteral(value, restListUsedOnce(operationAt(append).sourceOperand()));
+    }
+    return newLiteralAsWritten(value);
+}
 
+CellPointer ArrayAllocationEmitter::newLiteralAsWritten(const ValueContext& value)
+{
     if (!value->holes().empty())
         return newLiteralWithHoles(value);
     std::span<const ValueID> elements = value->elementsOperands();
@@ -187,7 +332,29 @@ CellPointer ArrayAllocationEmitter::newLiteral(const ValueContext& value)
         if (std::optional<EmptyArray> emptyArray = emptyArrayWithPushCapacity(value.block(), value.id()))
             return callNewEmptyArray(value, *emptyArray);
     }
+    if (length == 1 && form.kind == ArrayStorage::Contiguous && !hasPropertyRoom && isFirstOfGroup(value)) {
+        build().statistics().count(StatisticID::ArrayLiteralsAllocatedWithCapacity);
+        Boxed element = boxElements<Boxed>(generator(), value, elements)[0];
+        return CellPointer(callStub(value, arrayLiteralToGrow(), { element.value() }).first);
+    }
     return newArrayInForm(value, elements, length ? form : formAtSite, hasPropertyRoom);
+}
+
+bool ArrayAllocationEmitter::isFirstOfGroup(const ValueContext& literal)
+{
+    if (!m_generator.runsRepeatedly(literal.block()))
+        return false;
+    ValueID stored = literal.id();
+    ValueID user = m_code.useCountOf(stored) == 1 ? m_code.onlyUserOf(stored) : ValueID();
+    if (user && opcodeOf(user) == Opcode::Box && m_code.useCountOf(user) == 1) {
+        stored = user;
+        user = m_code.onlyUserOf(user);
+    }
+    if (!user)
+        return false;
+    const Operation& operation = m_code.at(user);
+    bool isStored = (operation.opcode == Opcode::ElemSet && operation.valueOperand() == stored) || (operation.opcode == Opcode::CallInline && operation.inlineBuiltin() == InlineBuiltin::MapSet);
+    return isStored && m_generator.pushesElements();
 }
 
 static constexpr OpcodeSet opcodesThatAppendManyToLists { Opcode::AppendElements, Opcode::AppendIterable, Opcode::AppendMembers, Opcode::AppendValuesOfMap };
@@ -208,6 +375,41 @@ bool ArrayAllocationEmitter::isLeftToSpreadRightBehind(BlockID block, ValueID li
         return false;
     std::optional<AppendedBehindSpread> appended = findWhatIsAppendedBehindSpread(block, literal, behind.front());
     return appended && appended->room < maxHoleArrayCapacity;
+}
+
+bool ArrayAllocationEmitter::isCallThatReturns(BlockID id, ValueID call)
+{
+    const Block& block = m_code.at(id);
+    if (block.terminator.kind == TerminatorKind::ReturnCall)
+        return block.terminator.callOperand() == call;
+    return block.terminator.kind == TerminatorKind::Return && (generator().asyncResultReturnedByStub(block) == call || generator().bodyEnteredAfterNewPromise(block) == call);
+}
+
+bool ArrayAllocationEmitter::isLeftToListCall(BlockID block, ValueID literal, const Operation& operation)
+{
+    static constexpr OpcodeSet changesOfForm { Opcode::Box, Opcode::Unbox, Opcode::Narrowed };
+    if (m_code.useCountOf(literal) != 2 || operation.storage() != AllocationStorage::Heap || generator().keepsValuesInHeapFrame())
+        return false;
+    const size_t numberOfWords = operation.elementsOperands().size();
+    if (!numberOfWords || numberOfWords >= numberOfArgumentGPRs || !operation.holes().empty())
+        return false;
+    ValueID append;
+    ValueID call;
+    for (auto [used, user] : generator().usersOfLiteralInBlock(block, literal)) {
+        if (operationAt(user).opcode == Opcode::AppendElements || (operationAt(user).opcode == Opcode::AppendIterable && operationAt(user).readsListsByIndex()))
+            append = user;
+        else if (operationAt(user).opcode == Opcode::CallList)
+            call = user;
+    }
+    if (!append || !call || operationAt(append).arrayOperand() != literal || operationAt(append).operand(1) == literal)
+        return false;
+    const Operation& listCall = operationAt(call);
+    if (listCall.listOperand() != literal || listCall.calleeOperand() == literal || listCall.thisValueOperand() == literal || isCallThatReturns(block, call))
+        return false;
+    ValueID before = listCall.previous;
+    while (before && changesOfForm.contains(operationAt(before).opcode))
+        before = operationAt(before).previous;
+    return before == append && !generator().isLiteralHeldAcrossSuspension(block, literal);
 }
 
 auto ArrayAllocationEmitter::findWhatIsAppendedBehindSpread(BlockID block, ValueID literal, ValueID spread) -> std::optional<AppendedBehindSpread>

@@ -58,7 +58,7 @@ static_assert(std::is_trivially_default_constructible_v<ArrayAllocationProfile>)
 static_assert(BASE_CONTIGUOUS_VECTOR_LEN_MAX <= ArrayAllocationProfile::capacityMask);
 static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
 
-void reviewArrayAllocationProfile(ArrayAllocationProfile&, JSArray* lastArrayOrNull, bool readsContentsAtFirst = false);
+void reviewArrayAllocationProfile(ArrayAllocationProfile&, JSArray* lastArrayOrNull);
 
 inline constexpr unsigned propertyRoomOfArray = 4 * sizeof(uint64_t);
 constexpr size_t sizeOfArrayWithStorage(unsigned capacity, unsigned propertyRoom = 0) { return (3 + capacity) * sizeof(uint64_t) + propertyRoom; }

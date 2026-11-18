@@ -27,6 +27,7 @@ public:
     std::optional<uint32_t> mentionOfUpperHalfThatNames(FunctionID);
 
     bool closureWordNames(FunctionID) const;
+    bool cellTypeTellsFullClosures(FunctionID) const;
     Word32 upperHalfOfWordAtSlimClosureWord(CellPointer);
     Word32 upperHalfOfClosureWordOf(FunctionID);
     struct ClosureCase {

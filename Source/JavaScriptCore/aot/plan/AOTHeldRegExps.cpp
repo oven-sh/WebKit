@@ -52,6 +52,7 @@ HeldRegExps::HeldRegExps(const Program& program, const Facts& facts)
 {
     findPrivateFields(program, facts);
     findVariables(program, facts);
+    findNames(program, facts);
     const ThinSummaries& summaries = facts.summaries();
     Vector<uint32_t> held;
     BitVector functionsAsked(program.functions.size());
@@ -512,6 +513,54 @@ void HeldRegExps::findVariables(const Program& program, const Facts& facts)
                 added.iterator->value = std::nullopt;
         }
     }
+}
+
+void HeldRegExps::findNames(const Program& program, const Facts& facts)
+{
+    static constexpr OpcodeSet stores { Opcode::PropSet, Opcode::PropDefine, Opcode::NewObject };
+    for (uint32_t function = 0; function < program.functions.size(); ++function) {
+        const BodyIndex* index = facts.bodies().find(FunctionID(function));
+        if (!index || !index->opcodes().contains(Opcode::NewRegExp) || !index->holdsAnyOf(stores))
+            continue;
+        auto note = [&](PropertyKeyID key, ValueID value) {
+            const ValueID stored = index->stripCasts(value);
+            if (!key || index->isParameter(stored) || index->opcodeOf(stored) != Opcode::NewRegExp)
+                return;
+            auto made = index->value(stored).as<Opcode::NewRegExp>();
+            const HeldRegExp literal { made.pattern(), made.regExpFlags(), false, true };
+            auto added = m_names.add(key.index(), literal);
+            if (!added.isNewEntry && added.iterator->value != std::optional(literal))
+                added.iterator->value = std::nullopt;
+        };
+        for (uint32_t number = 0; number < index->numberOfValues(); ++number) {
+            const ValueID id(number);
+            if (index->isParameter(id) || !stores.contains(index->opcodeOf(id)))
+                continue;
+            const BodyValue store = index->value(id);
+            switch (store.opcode()) {
+            case Opcode::PropSet:
+                note(store.as<Opcode::PropSet>().key(), store.as<Opcode::PropSet>().valueOperand());
+                break;
+            case Opcode::PropDefine:
+                note(store.as<Opcode::PropDefine>().key(), store.as<Opcode::PropDefine>().valueOperand());
+                break;
+            default: {
+                auto allocation = store.as<Opcode::NewObject>();
+                const Layout& layout = program.at(allocation.layout());
+                std::span<const ValueID> values = allocation.valuesOperands();
+                for (size_t place = 0; !layout.isEnvironment() && place < values.size() && place < allocation.fields().size(); ++place)
+                    note(layout.fields[allocation.fields()[place]].key, values[place]);
+                break;
+            }
+            }
+        }
+    }
+}
+
+const HeldRegExp* HeldRegExps::findExpected(PropertyKeyID key) const
+{
+    auto found = m_names.find(key.index());
+    return found != m_names.end() && found->value ? &*found->value : nullptr;
 }
 
 const HeldRegExp* HeldRegExps::find(VariableID variable) const

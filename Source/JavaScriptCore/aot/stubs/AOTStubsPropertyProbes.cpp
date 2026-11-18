@@ -377,6 +377,11 @@ void readFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg r
             jit.move(probe.receiver, receiverOfStub);
             jit.jumpToStub(stub);
         };
+        if (probe.waysOnwardAreCalls) {
+            slotIsEmpty.link(&jit);
+            otherwise.append(jit.branchTest32(CCallHelpers::NonZero, Address(probe.receiver, offsetOfOrderWord), TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+            slotIsEmpty = { };
+        }
         goOnIn(slotIsEmpty, getByIdOfEmptySlot().withCallerFrame(*probe.answersMissingFields));
         goOnIn(slotIsSilent, getByIdOfSilentSlot().withCallerFrame(*probe.answersMissingFields));
         isNotInCell.link(&jit);
@@ -975,7 +980,21 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
     jit.jumpToStub(refusedValue);
 
     const GPRReg offsetOfRecord = jit.reuseScratch(slotNameRegister);
+    auto loadOrderAfterCreation = [&](int32_t shiftOfOperand, GPRReg words, GPRReg orderAfter, JumpList& isNotRemembered) {
+        jit.lshift32(TrustedImm32(shiftOfOperand), operand);
+        loadOrderAfterRememberedCreation(jit, { .object = probe.receiver, .slotKey = operand, .entry = probe.table, .words = words, .scratch = orderAfter }, isNotRemembered);
+    };
+    const bool mayRepeatCreation = operation != SlotOperation::Define;
     isEmptySlotThatTakesValue.link(&jit);
+    if (mayRepeatCreation) {
+        JumpList isNotRemembered;
+        const GPRReg orderAfter = scratch;
+        loadOrderAfterCreation(CCallHelpers::TimesEight, jit.reuseScratch(StubRegister::T14), orderAfter, isNotRemembered);
+        jit.store64(value, BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne));
+        jit.store32(orderAfter, Address(probe.receiver, offsetOfOrderWord));
+        returnAfterStoring(jit, probe.receiver, value);
+        isNotRemembered.link(&jit);
+    }
     {
         FieldTableProbe again = probe;
         again.nameHasColumn = true;
@@ -988,6 +1007,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         jit.jumpToStub(putKnownFieldThatTakesAnyValue(putModeOf(operation)));
     }
     isEmptySlot.link(&jit);
+    Label findsRecord = jit.label();
     FieldTableProbe again = probe;
     again.nameHasColumn = true;
     again.receiverIsCell = true;
@@ -1008,17 +1028,20 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         static_assert(!traitsOf(SlotRepresentation::Cell32).absentBits && !traitsOf(SlotRepresentation::OptionalCell32).absentBits);
         static_assert(traitsOf(SlotRepresentation::OptionalCell32).undefinedBits == JSValue::ValueUndefined && traitsOf(SlotRepresentation::OptionalCell32).nullBits == JSValue::ValueNull);
         JumpList goesByItsRecord;
+        JumpList mayBeRefused;
         const BaseIndex boxedSlot(probe.receiver, operand, CCallHelpers::TimesEight);
         const BaseIndex narrowSlot(probe.receiver, operand, CCallHelpers::TimesFour);
         static_assert(!static_cast<unsigned>(Form::InlineValue) && static_cast<unsigned>(Form::InlineNarrowCell) == 2);
-        auto leaveUnlessStoreIsKnownToBeTaken = [&] {
+        auto leaveIfFieldIsFixed = [&] {
             goesByItsRecord.append(jit.branchTest32(CCallHelpers::NonZero, Address(probe.receiver, offsetOfOrderWord), TrustedImm32(integrityBitsBlockingStore(operation))));
             if (!jit.options().hasOneInstance) {
                 loadStructure(jit, probe.receiver, kind);
                 goesByItsRecord.append(branchIfNotOfThisRealm(jit, kind));
             }
             jit.or32(TrustedImm32(static_cast<int32_t>(AcceptedKindOfValue::isEntryOfFieldTable)), entryInPlaceOfType);
-            branchUnlessKindOfValueIsAccepted(jit, value, entryInPlaceOfType, kind, probe.table, goesByItsRecord);
+        };
+        auto leaveUnlessKindIsAccepted = [&](JumpList& isNotKnownToBeTaken) {
+            branchUnlessKindOfValueIsAccepted(jit, value, entryInPlaceOfType, kind, probe.table, isNotKnownToBeTaken);
             if (!jit.options().checksProofs)
                 return;
             const GPRReg record = probe.table;
@@ -1027,6 +1050,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
             JumpList differs;
             loadStructure(jit, probe.receiver, record);
             jit.loadPtr(Address(record, CompiledStructure::offsetOfLayout()), record);
+            jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
             addOffsetOfField(jit, record, scratch, record);
             differs.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, sizeof(LayoutData) + OBJECT_OFFSETOF(FieldData, flags)), TrustedImm32(flagsOfFieldsStoredOtherwise | fieldTypeIsLeftToRunTime)));
             loadTypeOfFieldRecord(jit, record, sizeof(LayoutData), type);
@@ -1036,9 +1060,23 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
             jit.breakpoint();
             agrees.link(&jit);
         };
+        auto leaveUnlessStoreIsKnownToBeTaken = [&](JumpList& isNotKnownToBeTaken) {
+            leaveIfFieldIsFixed();
+            leaveUnlessKindIsAccepted(isNotKnownToBeTaken);
+        };
+        JumpList createsBoxedField;
+        JumpList createsNarrowField;
         Jump isNotBoxed = jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
-        goesByItsRecord.append(jit.branchTest64(CCallHelpers::Zero, boxedSlot));
-        leaveUnlessStoreIsKnownToBeTaken();
+        (mayRepeatCreation ? createsBoxedField : goesByItsRecord).append(jit.branchTest64(CCallHelpers::Zero, boxedSlot));
+        leaveIfFieldIsFixed();
+        if (!jit.options().checksProofs) {
+            Jump isNotInt32 = jit.branchIfNotInt32(value);
+            goesByItsRecord.append(jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(FieldRecordIndex::takesEveryInt32)));
+            jit.store64(value, boxedSlot);
+            jit.returnToCaller();
+            isNotInt32.link(&jit);
+        }
+        leaveUnlessKindIsAccepted(goesByItsRecord);
         jit.store64(value, boxedSlot);
         jit.linkToStub(jit.branchIfCell(value), writeBarrier());
         jit.returnToCaller();
@@ -1046,8 +1084,8 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         isNotBoxed.link(&jit);
         jit.sub32(TrustedImm32(static_cast<int32_t>(Form::InlineNarrowCell) << FieldTableEntry::formShift), operand);
         goesByItsRecord.append(jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand)));
-        goesByItsRecord.append(jit.branchTest32(CCallHelpers::Zero, narrowSlot));
-        leaveUnlessStoreIsKnownToBeTaken();
+        (mayRepeatCreation ? createsNarrowField : goesByItsRecord).append(jit.branchTest32(CCallHelpers::Zero, narrowSlot));
+        leaveUnlessStoreIsKnownToBeTaken(goesByItsRecord);
         Jump isMarker = jit.branchIfNotCell(value);
         encodeCellOfProgram(jit, value, kind);
         jit.store32(kind, narrowSlot);
@@ -1056,8 +1094,40 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         isMarker.link(&jit);
         jit.store32(value, narrowSlot);
         jit.returnToCaller();
+
+        if (mayRepeatCreation) {
+            const GPRReg orderAfter = entryInPlaceOfType;
+            const Address orderWord(probe.receiver, offsetOfOrderWord);
+            JumpList isNotRemembered;
+            createsBoxedField.link(&jit);
+            leaveUnlessStoreIsKnownToBeTaken(mayBeRefused);
+            loadOrderAfterCreation(CCallHelpers::TimesEight, kind, orderAfter, isNotRemembered);
+            jit.store64(value, BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne));
+            jit.store32(orderAfter, orderWord);
+            returnAfterStoring(jit, probe.receiver, value);
+
+            createsNarrowField.link(&jit);
+            leaveUnlessStoreIsKnownToBeTaken(mayBeRefused);
+            loadOrderAfterCreation(CCallHelpers::TimesFour, kind, orderAfter, isNotRemembered);
+            jit.store32(orderAfter, orderWord);
+            Jump createsMarker = jit.branchIfNotCell(value);
+            encodeCellOfProgram(jit, value, kind);
+            jit.store32(kind, BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne));
+            jit.jumpToStub(writeBarrier());
+
+            createsMarker.link(&jit);
+            jit.store32(value, BaseIndex(probe.receiver, operand, CCallHelpers::TimesOne));
+            jit.returnToCaller();
+            isNotRemembered.linkTo(findsRecord, &jit);
+
+            mayBeRefused.link(&jit);
+            branchUnlessKindOfValueIsRefused(jit, entryInPlaceOfType, kind, probe.table, goesByItsRecord);
+            goesByItsRecord.append(jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
+            jit.jumpToStub(putByIdBehindFieldTable(putModeOf(operation)));
+        }
         goesByItsRecord.link(&jit);
     }
+    jit.and32(TrustedImm32(FieldRecordIndex::indexMask), scratch);
     hasIndex.link(&jit);
     loadOffsetOfFieldRecord(jit, scratch, offsetOfRecord);
     jit.jumpToStub(putKnownField(putModeOf(operation)));

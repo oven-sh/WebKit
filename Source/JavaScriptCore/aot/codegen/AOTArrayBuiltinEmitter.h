@@ -69,8 +69,8 @@ private:
     TypeID elementTypeOf(const InlineCall&, TypeLevel);
     ArrayStorageFormList candidateFormsOf(const InlineCall&);
     ElementAccessEmitter::FirstForm firstCandidateFormOf(const InlineCall&);
-    void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
-    void forEachReadForm(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&);
+    void forEachFormOrMiss(const InlineCall&, CellPointer array, IndexingType mask, const ScopedLambda<void(const ArrayStorageForm&)>&, std::optional<Word32> knownMode = std::nullopt);
+    void forEachReadForm(const InlineCall&, CellPointer array, IndexingType mask, std::optional<Word32> knownMode, const ScopedLambda<void(const ArrayStorageForm&)>&);
 
     void removeElementAtEnd(const InlineCall&, bool removesFirst);
     Operand removeFirstElement(const InlineCall&, const ArrayStorageForm&, const ArrayElements&, LBasicBlock isAbsent);
@@ -106,10 +106,12 @@ private:
     enum class HoleIs : bool { Nothing, Undefined };
     Integer indexOfValueComparedByIdentity(const InlineCall&, CellPointer array, HoleIs);
     Integer indexOfString(const InlineCall&, CellPointer array, CellPointer searched);
+    Integer indexOfAnyValue(const InlineCall&, CellPointer array, HoleIs);
+    Integer searchValueInLoop(const InlineCall&, CellPointer array, HoleIs);
     bool handlesSearch(const InlineCall&);
     Integer indexOfSearched(const InlineCall&, HoleIs);
     std::optional<Integer> firstIndexOfSearch(const InlineCall&);
-    void scanShortVector(const InlineCall&, const ArrayStorageForm&, CellPointer array, Operand searchedRawElement, std::optional<Integer> first, Join<Integer>& found);
+    void scanShortVector(const InlineCall&, const ArrayStorageForm*, CellPointer array, Operand searchedRawElement, std::optional<Integer> first, Join<Integer>& found);
 };
 
 static_assert(sizeof(ArrayBuiltinEmitter) == sizeof(OperationEmitter));

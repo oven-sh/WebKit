@@ -187,6 +187,21 @@ private:
         found.units.shrinkToFit();
         found.texts.shrinkToFit();
         m_program->wholeTexts = WTF::move(found);
+        auto& slots = m_program->wholeTextSlots;
+        slots.fill({ }, mask + 2 + m_program->wholeTexts->texts.size());
+        for (auto [begin, length] : m_program->wholeTexts->texts) {
+            const char16_t* units = m_program->wholeTexts->units.span().data() + begin;
+            unsigned place = FlatProgram::WholeTexts::placeOf(length, units[0], units[length - 1]);
+            unsigned bit = place % FlatProgram::numberOfWholeTextBits;
+            m_program->wholeTextBits[bit / 64] |= 1ull << (bit % 64);
+            unsigned slot = place & mask;
+            while (slots[slot].length)
+                ++slot;
+            slots[slot] = { length, units };
+        }
+        m_program->firstWholeTextSlot = slots.span().data();
+        m_program->wholeTextSlotMask = mask;
+        m_program->maxWholeTextLength = m_program->wholeTexts->greatestLength;
     }
 
     static bool holdsSingleCodeUnits(const CharacterClass& characterClass)
@@ -2652,7 +2667,7 @@ size_t FlatProgram::estimatedSizeInBytes() const
 {
     return ops.capacity() * sizeof(FlatOp) + characterSets.capacity() * sizeof(CharacterSetBits) + firstSets.capacity() * sizeof(FirstSetBits)
         + dispatchClasses.capacity() * sizeof(uint16_t) + dispatchEntries.capacity() * sizeof(uint32_t)
-        + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t)
+        + wideRanges.capacity() * sizeof(CharacterRange) + text.capacity() + wideText.capacity() * sizeof(char16_t) + wholeTextSlots.capacity() * sizeof(WholeTextSlot)
         + turnsThatMayTakeNothing.capacity() * sizeof(TurnThatMayTakeNothing) + loopsThatCountTurns.capacity() * sizeof(LoopThatCountsTurns) + aroundMemoRow.capacity() * sizeof(AroundMemoRow)
         + referencedGroups.capacity() * sizeof(uint32_t)
         + (programThatFindsEndsOfRuns ? sizeof(FlatProgram) + programThatFindsEndsOfRuns->estimatedSizeInBytes() : 0);

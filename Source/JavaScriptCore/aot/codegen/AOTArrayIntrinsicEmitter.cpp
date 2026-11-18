@@ -154,6 +154,8 @@ void ArrayIntrinsicEmitter::generateGetContiguousIndex(const ValueContext& value
 
 Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext& value, const ArrayElements& storage, const ArrayStorageForm& form, AccessVouchedFor access)
 {
+    if (LValue place = generator().placeInRow(value->positionOperand())) [[unlikely]]
+        return Integer(place);
     Operand position = get(value->positionOperand());
     Integer index = position.representation == Representation::Int32 ? Integer(m_out.extendWordThatIsNotNegative(position.as<Word32>().value())) : integerOperand(value->positionOperand());
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MisplaceUncheckedAccesses) || (access == AccessVouchedFor::Reads && AOT::hasFlag(build().options().testing, Wire::TestingSwitch::MisplaceUncheckedReads))) [[unlikely]] {
@@ -300,6 +302,7 @@ void ArrayIntrinsicEmitter::putNumberInBounds(const ValueContext& value, const A
         fail(value, InternalErrorKind::UnsupportedConversion);
         return;
     }
+    elements().stopWhereHoleWouldBeStored(value, form, *rawElement);
     elements().storeRawElement(form, storage, positionThatLibraryVouchesFor(value, storage, form, AccessVouchedFor::Writes), *rawElement);
     if (!doesNotFit->numberOfIncomingEdges())
         return;
@@ -490,6 +493,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
             ArrayElements found = elements().elementsOf(array);
             branchUnless(below(index, elements().publicLength(found)), otherwise);
             if (std::optional<Operand> element = elements().rawElementToStore(held, stored, otherwise)) {
+                elements().stopWhereHoleWouldBeStored(value, held, *element);
                 elements().storeRawElement(held, found, index, *element);
                 isStored.add(boolean(true));
             } else
@@ -551,6 +555,7 @@ void ArrayIntrinsicEmitter::generateTryPutByValDirect(const ValueContext& value)
     branchUnless(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), form), otherwise);
     ArrayElements storage = elements().elementsOf(array);
     branchUnless(below(index, elements().publicLength(storage)), otherwise);
+    elements().stopWhereHoleWouldBeStored(value, form, *rawElement);
     elements().storeRawElement(form, storage, index, *rawElement);
     if (form.holdsCells)
         barrierAfterStore(value, array, typeOf(stored));

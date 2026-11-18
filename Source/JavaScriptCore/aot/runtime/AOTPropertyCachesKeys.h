@@ -36,6 +36,8 @@ struct KeyName {
 KeyName nameOfKeyWithoutAllocating(JSGlobalObject*, JSCell* key, KeyAtomization);
 std::optional<uint32_t> indexOfKey(JSValue key);
 std::optional<Identifier> nameForKeyedCache(JSGlobalObject*, JSValue key);
+std::optional<Identifier> nameOfShortArray(Instance*, JSValue key);
+Identifier toPropertyKey(Instance*, JSValue key);
 UniquedStringImpl* atomOfKey(JSValue key);
 UniquedStringImpl* uidOfKey(JSCell* key);
 std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValue key, bool checksPrototypes = true);

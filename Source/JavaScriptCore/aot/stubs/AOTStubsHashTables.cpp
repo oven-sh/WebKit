@@ -12,6 +12,7 @@
 #include "AOTInstance.h"
 #include "AOTSlotRepresentation.h"
 #include "AOTStubsCollections.h"
+#include "AOTTrailingZeros.h"
 #include "AOTVector.h"
 #include "JSMap.h"
 #include "JSSet.h"
@@ -209,6 +210,11 @@ static void emitLoadKeys(StubAssembler& jit, const HashTableRegisters& registers
     jit.addPtr(TrustedImm32(CompactTable::offsetOfIndex()), registers.keys);
 }
 
+void emitLoadKeysOfCompactTable(StubAssembler& jit, const HashTableRegisters& registers)
+{
+    emitLoadKeys(jit, registers);
+}
+
 static void emitCompareWithEntry(StubAssembler& jit, const HashTableRegisters& registers, CompactTableSearch& search, JumpList& next, HashTableExits& exits, const ScopedLambda<void()>* emitFound = nullptr)
 {
     const GPRReg key = registers.key;
@@ -346,6 +352,11 @@ static void emitLoadCharactersOfSubstring(StubAssembler& jit, GPRReg substring, 
     jit.add64(scratch, characters);
 }
 
+static void emitRecordSubstringHit(StubAssembler& jit, GPRReg substring)
+{
+    jit.add32(TrustedImm32(static_cast<int32_t>(CompactTable::firstSubstringHit)), Address(substring, JSRopeString::offsetOfFiber0() + static_cast<ptrdiff_t>(sizeof(uint32_t))));
+}
+
 static void emitCompareCharactersOfSubstring(StubAssembler& jit, const HashTableRegisters& registers, JumpList& needsCharacters, JumpList& found, HashTableExits& exits)
 {
     const GPRReg candidate = registers.candidate;
@@ -359,6 +370,7 @@ static void emitCompareCharactersOfSubstring(StubAssembler& jit, const HashTable
     emitLoadCharactersOfSubstring(jit, registers.key, registers.hash, registers.cursor);
     emitCompareLatin1Characters(jit, candidate, registers.hash, length, registers.cursor, registers.keys, areSame, exits.unknown);
     areSame.link(&jit);
+    emitRecordSubstringHit(jit, registers.key);
     jit.loadPtr(Address(registers.owner, offsetOfHashTableStorage()), registers.table);
     emitLoadKeys(jit, registers);
     found.append(jit.jump());
@@ -438,6 +450,8 @@ static void emitCompareCharactersInImage(StubAssembler& jit, const HashTableRegi
         isCompared.link(&jit);
     });
     exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, length));
+    if (keyIsSubstring)
+        emitRecordSubstringHit(jit, registers.key);
     found.append(jit.jump());
     if (keyIsSubstring)
         return;
@@ -478,11 +492,7 @@ static void emitProbeTags(StubAssembler& jit, const HashTableRegisters& register
     }
 
     Label nextMatch = jit.label();
-#if CPU(X86_64)
-    jit.m_assembler.bsfq_rr(matches, entry);
-#else
-    jit.countTrailingZeros64(matches, entry);
-#endif
+    countTrailingZerosOfNonZero(jit, matches, entry);
     jit.urshift32(TrustedImm32(3), entry);
     absent.append(jit.branch32(CCallHelpers::AboveOrEqual, entry, Address(table, CompactTable::offsetOfUsed())));
     JumpList next;
@@ -644,15 +654,6 @@ static void emitLoadEntryNumberAndKeys(StubAssembler& jit, const HashTableRegist
     });
 }
 
-static void emitCountTrailingZerosOfNonZero(StubAssembler& jit, GPRReg source, GPRReg count)
-{
-#if CPU(X86_64)
-    jit.m_assembler.bsfq_rr(source, count);
-#else
-    jit.countTrailingZeros64(source, count);
-#endif
-}
-
 static void emitCompareEightTags(StubAssembler& jit, const HashTableRegisters& registers, GPRReg tags, GPRReg matches, GPRReg taken)
 {
     jit.xor64(registers.hash, tags, taken);
@@ -753,7 +754,7 @@ static void emitSearchGroups(StubAssembler& jit, const HashTableRegisters& regis
 #endif
 
     Label nextMatch = jit.label();
-    emitCountTrailingZerosOfNonZero(jit, candidate, candidate);
+    countTrailingZerosOfNonZero(jit, candidate, candidate);
     jit.urshift32(TrustedImm32(3), candidate);
     jit.add32(candidate, cursor);
     emitLoadEntryNumberAndKeys(jit, registers, true);
@@ -781,7 +782,7 @@ static void emitSearchGroups(StubAssembler& jit, const HashTableRegisters& regis
     if (search.findsInsertionPoint) {
         jit.and64(TrustedImm64(tops), entry);
         Jump isFull = jit.branchTest64(CCallHelpers::Zero, entry);
-        emitCountTrailingZerosOfNonZero(jit, entry, candidate);
+        countTrailingZerosOfNonZero(jit, entry, candidate);
         jit.urshift32(TrustedImm32(3), candidate);
         jit.add32(candidate, cursor);
         emitLoadKeysBehindSlots(jit, registers);
@@ -987,6 +988,8 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
         exits.unknown.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSRopeString::is8BitInPointer)));
         jit.urshift64(impl, TrustedImm32(JSRopeString::substringHashShift), hash);
         exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, hash));
+        exits.unknown.append(jit.branchTest32(CCallHelpers::NonZero, hash, TrustedImm32(static_cast<int32_t>(CompactTable::secondSubstringHit))));
+        jit.and32(TrustedImm32(CompactTable::hashMask), hash);
         if (lookup.comparison == KeyComparison::String) {
             isLeftToFormForAnyValue.append(jit.jump());
             return;

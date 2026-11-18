@@ -17,9 +17,11 @@ bool CalleeSummarizerForLinkEffects::indexesAreAbsentAboveInstancesOf(BuiltinCla
     BuiltinID holder;
     for (BuiltinClassID current = builtinClass; current && !holder; current = m_builtins.at(current).parent)
         holder = m_builtins.at(current).prototype;
-    if (!holder)
-        return false;
-    holder = m_builtins.canonicalID(holder);
+    return holder && indexesAreAbsentAbovePrototype(m_builtins.canonicalID(holder));
+}
+
+bool CalleeSummarizerForLinkEffects::indexesAreAbsentAbovePrototype(BuiltinID holder) const
+{
     while (true) {
         if (!m_builtins.closesIndexKeys(holder) || !m_builtins.hasLockedPrototypeLink(holder))
             return false;

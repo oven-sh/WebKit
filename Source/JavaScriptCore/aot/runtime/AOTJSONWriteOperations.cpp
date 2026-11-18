@@ -39,6 +39,26 @@ static constexpr size_t maxEscapedCharacterLength = 6;
 
 static_assert(maxEscapedJSONStringLength(1) == maxEscapedCharacterLength + numberOfQuotes && maxEscapedJSONStringLength(0) == numberOfQuotes);
 
+Latin1Character* appendLongJSONInteger(Latin1Character* cursor, int64_t integer)
+{
+    if (integer != static_cast<int32_t>(integer)) {
+        char* to = std::bit_cast<char*>(cursor);
+        return std::bit_cast<Latin1Character*>(std::to_chars(to, to + maxJSONIntegerLength, integer).ptr);
+    }
+    uint32_t magnitude = static_cast<uint32_t>(integer);
+    if (integer < 0) {
+        *cursor++ = '-';
+        magnitude = 0 - magnitude;
+    }
+    if (magnitude < 10000)
+        return appendUpToFourJSONDigits(cursor, magnitude);
+    if (magnitude < 100000000)
+        return appendFourJSONDigits(appendUpToFourJSONDigits(cursor, magnitude / 10000), magnitude % 10000);
+    uint32_t low = magnitude % 100000000;
+    cursor = appendUpToFourJSONDigits(cursor, magnitude / 100000000);
+    return appendFourJSONDigits(appendFourJSONDigits(cursor, low / 10000), low % 10000);
+}
+
 NEVER_INLINE Latin1Character* appendQuotedAndEscapedJSONString(Latin1Character* cursor, std::span<const Latin1Character> characters)
 {
     *cursor++ = '"';

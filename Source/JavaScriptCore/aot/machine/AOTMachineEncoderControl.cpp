@@ -199,6 +199,64 @@ static ALWAYS_INLINE void addPendingJumpsOnTest(Encoder& encoder, const Test& te
     encoder.addPendingJumps(encoder.branchOn(test, whenItHolds), target);
 }
 
+NEVER_INLINE bool Encoder::tryEncodeTestOfEnteredLoopSlowCase(const Block* from, const Block* target)
+{
+    Block* header = const_cast<Block*>(blockEnteredThrough(target));
+    if (header != target || !m_blockWrittenNext || header->numSuccessors() != 2 || header->isLandingPad())
+        return false;
+    const BlockPlace& place = placeOf(from);
+    const BlockPlace& placeOfHeader = placeOf(header);
+    if (place.layoutPart != LayoutPart::Likely || placeOfHeader.layoutPart != LayoutPart::Likely)
+        return false;
+    const Loop& loop = m_order.loops()[placeOfHeader.loop];
+    if (loop.hasSideEntrance || (loop.firstBlock <= place.orderIndex && place.orderIndex < loop.endBlock))
+        return false;
+    const FrameAtBlock frame = frameAtBlock(header);
+    if (frame.isSetUpAtHead || frame.isTornDownAtEnd || frame.isEnteredInFrame() != m_blockIsLeftInFrame || frame.isLeftInFrame() != m_blockIsLeftInFrame)
+        return false;
+    if (m_hasFramedPart && m_allocation.isHeadOfFramedPart(header))
+        return false;
+    if (m_hasSpills && (m_blocksThatStoreResultOfPatchAtHead.get(header->index()) || std::ranges::any_of(header->phis(), [&](const Operation* phi) { return m_allocation.isSpilled(phi); })))
+        return false;
+    const BlockSteps& steps = stepsOf(header);
+    if (steps.beginOfEdgeMoves < steps.endOfEdgeMoves || steps.terminator == UINT32_MAX)
+        return false;
+    const Step& terminator = m_allocation.step(steps.terminator);
+    if (terminator.operation->opcode() != Branch || factsOf(terminator.operation).has(ValueFlag::WorksInMemory) || factsOf(terminator.operation).has(ValueFlag::UsesOverflowFlag))
+        return false;
+    for (uint32_t index = steps.begin; index < steps.end; ++index) {
+        const Step& step = m_allocation.step(index);
+        if (step.kind != StepKind::Execute || step.operation->opcode() != Patch || !static_cast<const PatchOperation*>(step.operation)->isLoopPoll())
+            return false;
+    }
+    const Operation* predicate = terminator.operation->child(0);
+    if (m_liveness.isFused(predicate)) {
+        if (predicate->opcode() != BitAnd && !isComparison(predicate->opcode()))
+            return false;
+        auto isFusedWord = [&](const Operation* operand) {
+            return m_liveness.isFused(operand) && operand->opcode() != Trunc;
+        };
+        for (const Operation* operand : predicate->children()) {
+            if (isFusedWord(operand) && (operand->opcode() != BitAnd || predicate->opcode() == BitAnd || std::ranges::any_of(operand->children(), isFusedWord)))
+                return false;
+        }
+    }
+    const Block* body = nullptr;
+    for (const Edge& edge : header->successors()) {
+        if (frameAtBlock(edge.block()).isEnteredInFrame() != m_blockIsLeftInFrame)
+            return false;
+        if (blockEnteredThrough(edge.block()) == m_blockWrittenNext)
+            body = edge.block();
+    }
+    if (!body)
+        return false;
+    Block* former = std::exchange(m_block, header);
+    encodeBranch(header, terminator);
+    m_block = former;
+    ++m_proc.m_numberOfLoopsEnteredByTest;
+    return true;
+}
+
 void Encoder::encodeBranch(Block* block, const Step& step)
 {
     RELEASE_ASSERT(block->numSuccessors() == 2);

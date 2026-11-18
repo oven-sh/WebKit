@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include "VM.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/OrderedHashSet.h>
@@ -93,6 +94,9 @@ public:
     void didLoad();
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
     void didReplaceRecordInRegistry();
+    bool isFileYetToBeEvaluated();
+    void setIsMadeAndNotStored(bool);
+    bool takeIsMadeAndNotStored();
     static std::optional<ModuleID> findEvaluatingCommonJSModule(JSGlobalObject*, const Identifier& key);
     static bool isModuleBeingTransferred(JSGlobalObject*, const Identifier& key);
     static bool tryDeferLinkStep(JSGlobalObject*, const VM::SynchronousModuleTask&);
@@ -125,6 +129,7 @@ public:
     void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
     void bindModuleInstance(VM& vm, JSCell* instance) { m_moduleInstance.set(vm, this, instance); }
     bool belongsToReleasedInstance() const { return !!m_moduleInstance; }
+    bool isOfReleasedFile() const;
     JSCell* moduleInstance() const { return m_moduleInstance.get(); }
     void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
     bool runsWhenLoaded() const { return m_runsWhenLoaded; }
@@ -176,6 +181,9 @@ public:
     bool isReplacedByMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
+    JSValue readExportIfInitialized(const Identifier& exportName, JSValue ifDeferred);
+    JSValue readDeferredExport(const Identifier& exportName);
+    static void readDeferredExportForBinding(JSGlobalObject*, const Resolution&);
     JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase);
     static bool isSameBinding(const Resolution&, const Resolution&);
     static bool throwIfExportWasOmitted(JSGlobalObject*, AbstractModuleRecord* importer, AbstractModuleRecord* exporter, const Identifier& name);
@@ -213,8 +221,15 @@ private:
     bool m_hasUnresolvableRequest { false };
     bool m_keepsToModule { false };
     bool m_wasRequireRefused { false };
+    bool m_isMadeAndNotStored { false };
     WriteBarrier<JSCell> m_moduleInstance;
 };
+
+template<typename T>
+ALWAYS_INLINE ModuleRecord* compiledModule(const VM& vm, T module)
+{
+    return vm.hasCompiledCode() ? dynamicDowncast<ModuleRecord>(module) : nullptr;
+}
 
 void tryBindOriginal(JSGlobalObject*, JSModuleRecord*);
 void noteOriginalsRequestedBySource(JSGlobalObject*, JSModuleRecord* importer);

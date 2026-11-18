@@ -291,6 +291,52 @@ static void applyX86IntegerInstruction(CCallHelpers& jit, X86IntegerInstruction 
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool tryMultiplyX86ByShift(CCallHelpers& jit, Width width, int64_t factor, GPRReg source, GPRReg destination)
+{
+    bool is32 = width == Width32;
+    auto multiplyByLea = [&](MacroAssembler::Scale scale) {
+        MacroAssembler::BaseIndex product(source, source, scale);
+        if (is32)
+            jit.x86Lea32(product, destination);
+        else
+            jit.x86Lea64(product, destination);
+    };
+    switch (factor) {
+    case 3:
+        multiplyByLea(MacroAssembler::TimesTwo);
+        return true;
+    case 5:
+        multiplyByLea(MacroAssembler::TimesFour);
+        return true;
+    case 9:
+        multiplyByLea(MacroAssembler::TimesEight);
+        return true;
+    case 10:
+        multiplyByLea(MacroAssembler::TimesFour);
+        applyX86IntegerInstruction(jit, X86IntegerInstruction::Add, width, destination, destination);
+        return true;
+    case 31:
+    case 33: {
+        GPRReg addend = source;
+        if (source == destination) {
+            if (source == scratchGPR)
+                return false;
+            moveX86IntegerRegister(jit, width, source, scratchGPR);
+            addend = scratchGPR;
+        } else
+            moveX86IntegerRegister(jit, width, source, destination);
+        if (is32)
+            jit.lshift32(MacroAssembler::TrustedImm32(5), destination);
+        else
+            jit.lshift64(MacroAssembler::TrustedImm32(5), destination);
+        applyX86IntegerInstruction(jit, factor == 31 ? X86IntegerInstruction::Subtract : X86IntegerInstruction::Add, width, addend, destination);
+        return true;
+    }
+    default:
+        return false;
+    }
+}
+
 static ALWAYS_INLINE void applyX86IntegerImmediate(CCallHelpers& jit, X86IntegerInstruction instruction, Width width, int64_t constant, GPRReg source, GPRReg destination)
 {
     bool is32 = width == Width32;
@@ -312,6 +358,8 @@ static ALWAYS_INLINE void applyX86IntegerImmediate(CCallHelpers& jit, X86Integer
             jit.sub64(source, immediate, destination);
         return;
     case X86IntegerInstruction::Multiply:
+        if (tryMultiplyX86ByShift(jit, width, is32 ? static_cast<int32_t>(constant) : constant, source, destination))
+            return;
         if (is32)
             jit.mul32(immediate, source, destination);
         else

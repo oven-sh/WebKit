@@ -16,11 +16,13 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTObjectInternal.h"
 #include "AOTObjectModel.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
 #include "AOTPropertyCachesAnswers.h"
 #include "AOTRuntimeHooks.h"
+#include "AOTRuntimeReporter.h"
 #include "AOTState.h"
 #include "ArrayPrototype.h"
 #include "InlineCacheCompiler.h"
@@ -39,6 +41,7 @@ ChainDependents::ChainDependents(State& state)
 {
     ChainDependentOwnerID self = addOwner(*this);
     RELEASE_ASSERT(self == ChainDependentOwnerID { });
+    m_idOfStructuresThatPassStores = addOwner(m_structuresThatPassStores);
     state.caches->add(CacheKind::WeakByKey, "ChainDependents"_s, *this);
 }
 
@@ -59,6 +62,60 @@ void ChainDependents::dropChainDependent(VM&, uint32_t structureIDBits, UniquedS
 bool ChainDependents::hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const
 {
     return m_structuresWithState.contains(std::bit_cast<StructureID>(structureIDBits));
+}
+
+void ChainDependents::StructuresThatPassStores::dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*)
+{
+    StructureID id = std::bit_cast<StructureID>(structureIDBits);
+    if (m_dependents.m_structuresWithState.contains(id))
+        uncheckedDowncast<CompiledStructure>(id.decode())->clear(CompiledStructure::FurtherFlag::PassesStoresAbove);
+}
+
+bool ChainDependents::StructuresThatPassStores::hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const
+{
+    StructureID id = std::bit_cast<StructureID>(structureIDBits);
+    return m_dependents.m_structuresWithState.contains(id) && uncheckedDowncast<CompiledStructure>(id.decode())->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
+}
+
+bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, const CreatedMembers& created)
+{
+    unsigned attributes = 0;
+    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    return !isValidOffset(offset) || !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
+}
+
+bool ChainDependents::areStoresPassedAbove(Object& object)
+{
+    using Flag = CompiledStructure::FurtherFlag;
+    auto& structure = *uncheckedDowncast<CompiledStructure>(object.structure());
+    if (structure.has(Flag::PassesStoresAbove))
+        return true;
+    if (object.isInFrame())
+        return false;
+    if (!structure.has(Flag::WasAskedAboutStoresAbove)) {
+        structure.set(Flag::WasAskedAboutStoresAbove);
+        return false;
+    }
+    if (structure.has(Flag::MayNotPassStoresAbove))
+        return false;
+    VM& vm = *m_state.instance.vm;
+    bool everyStorePasses = structure.realm() == realm() && !structure.mayBePrototype() && !structure.hasExtraProperties();
+    for (const FieldData& field : object.layout().fields()) {
+        if (!everyStorePasses)
+            break;
+        if (field.isPrivate() || field.isBrand())
+            continue;
+        UniquedStringImpl* name = propertyNameOf(vm, object, field);
+        everyStorePasses = name && storeCreatesOwnProperty(realm(), &structure, &object, name, *this, { name, structure.id().bits(), m_idOfStructuresThatPassStores });
+    }
+    if (!everyStorePasses) {
+        structure.set(Flag::MayNotPassStoresAbove);
+        return false;
+    }
+    m_structuresWithState.add(structure.id());
+    structure.set(Flag::PassesStoresAbove);
+    countEvent(vm, RuntimeCounterID::StructuresPassingStores);
+    return true;
 }
 
 JSGlobalObject* ChainDependents::realm() const
@@ -105,7 +162,7 @@ void startReportingReplacements(VM& vm, JSObject* object)
     Object* compiled = compiledObjectOrNull(object);
     if (!compiled || compiled->compiledStructure().reportsReplacements())
         return;
-    compiled->JSCell::setStructure(vm, compiled->state().objects->structures.withReportedReplacements(vm, compiled->compiledStructure()));
+    compiled->setVariantOfStructure(vm, compiled->state().objects->structures.withReportedReplacements(vm, compiled->compiledStructure()));
 }
 
 static bool holdsExtraProperty(VM& vm, JSObject* object, UniquedStringImpl* uidOrNull)
@@ -250,15 +307,19 @@ static const LayoutData* classWhoseHolderChanged(const ClassTable& classes, JSOb
     return layout;
 }
 
-static bool seesAccessesUnderName(VM& vm, JSObject* holder, UniquedStringImpl* uid)
+static bool seesAccessesUnderName(VM& vm, const ClassTable& classes, const LayoutData& layout, ClassSide side, JSObject* holder, UniquedStringImpl* uid)
 {
     unsigned attributes = 0;
     Object* compiled = compiledObjectOrNull(holder);
     JSValue held = compiled ? compiled->getDirectFromNativeCode(vm, uid, &attributes) : holder->getDirect(vm, uid, attributes);
-    return held && ClassTable::seesAccesses(vm, uid, attributes);
+    if (!held || !ClassTable::seesAccesses(vm, uid, attributes))
+        return false;
+    return ClassTable::isAccessorOfProgram(layout, held) || !classes.holdsMemberOfRecordUnder(vm, layout, side, holder, uid);
 }
 
-static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull)
+enum class ChangeOfChainObject : uint8_t { IsOfAnyKind, ReplacesValue, SetsPrototype };
+
+static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, UniquedStringImpl* uidOrNull, ChangeOfChainObject change)
 {
     ClassTable& classes = state.objects->classes;
     ClassSide side;
@@ -268,7 +329,7 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
     classes.reportReplacementsOnHolder(vm, *layout, side, changed, uidOrNull);
     if (uidOrNull) {
         classes.holdMemberToProof(vm, *layout, side, changed, uidOrNull);
-        if (!classes.hasNoGuardLeft(*layout, side) && seesAccessesUnderName(vm, changed, uidOrNull) && !classes.holdsMemberOfRecordUnder(vm, *layout, side, changed, uidOrNull))
+        if (!classes.hasNoGuardLeft(*layout, side) && seesAccessesUnderName(vm, classes, *layout, side, changed, uidOrNull))
             classes.didLayWhatSeesAccesses(vm, *layout, side);
         classes.didChangeMember(*layout, side, uidOrNull);
         classes.noteReplacedMember(vm, *layout, side, changed, uidOrNull);
@@ -280,11 +341,10 @@ static void didChangeClassHolder(VM& vm, State& state, JSObject* changed, Unique
         classes.didFreezeHolder(vm, *layout, side, changed);
         return;
     }
-    classes.didChangeEveryMember(*layout, side);
+    if (change != ChangeOfChainObject::SetsPrototype || isCompiledObject(changed))
+        classes.didChangeEveryMember(*layout, side);
     classes.didChangePrototypeLink(*layout, side);
 }
-
-enum class ChangeOfChainObject : uint8_t { IsOfAnyKind, ReplacesValue };
 
 static void tellOfChangeOfChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNull, ChangeOfChainObject change)
 {
@@ -307,7 +367,7 @@ static void tellOfChangeOfChainObject(VM& vm, JSObject* changed, UniquedStringIm
         if (state->chainDependents)
             state->chainDependents->didChange(changed, uidOrNull);
         if (state->objects)
-            didChangeClassHolder(vm, *state, changed, uidOrNull);
+            didChangeClassHolder(vm, *state, changed, uidOrNull, change);
     }
 }
 
@@ -316,6 +376,13 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
     if (changed && changed == vm.aotState().unobservedClassHolder)
         return;
     tellOfChangeOfChainObject(vm, changed, uidOrNull, ChangeOfChainObject::IsOfAnyKind);
+}
+
+void didSetPrototypeOfChainObject(VM& vm, JSObject* changed)
+{
+    if (changed && changed == vm.aotState().unobservedClassHolder)
+        return;
+    tellOfChangeOfChainObject(vm, changed, nullptr, ChangeOfChainObject::SetsPrototype);
 }
 
 void didReplaceValueOnChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uid)

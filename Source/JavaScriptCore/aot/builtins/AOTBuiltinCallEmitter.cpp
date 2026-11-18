@@ -255,6 +255,10 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::ArrayOfLengthOrElement, { boxedOperand(value, arguments[0]) })));
             return;
         }
+        if (builtin == Builtins::String && overload.mode == BuiltinCallMode::Construct && value->builtinCallForm() == BuiltinCallForm::Whole && arguments.size() == 1 && typeOf(arguments[0]).isAnyString()) {
+            defineResult(boxCell(callOperation<CellPointer>(value, RuntimeOperation::NewStringObject, { boxedOperand(value, arguments[0]) })));
+            return;
+        }
         if (builtin == Builtins::Number && overload.mode == BuiltinCallMode::Call && arguments.size() == 1) {
             defineResult(Boxed(callStub(value, numberOfAnyValue(), { boxedOperand(value, arguments[0]).value() }, { .calledBuiltin = builtin }).first));
             return;
@@ -361,8 +365,18 @@ void BuiltinCallEmitter::generateCallBuiltin(const ValueContext& value)
             return std::ranges::any_of(views, [&](BuiltinClassID builtinClass) { return types().overlap(type, types().builtinClass(builtinClass)); });
         };
         BuiltinClassID constructed = overload.mode == BuiltinCallMode::Construct && arguments.size() == 1 ? m_builtins.at(builtin).instanceClass : BuiltinClassID();
-        if (constructed && m_builtins.typedArrayClassOf(constructed) == constructed && types().overlap(typeIDOf(arguments[0]), types().builtinClass(BuiltinClasses::Array)))
-            return answerOrCallFunction(RuntimeOperation::TypedArrayOfPlainArray, { boxedArguments[0], word32(m_builtins.typedArrayTypeOf(constructed)) });
+        if (constructed && m_builtins.typedArrayClassOf(constructed) == constructed && types().overlap(typeIDOf(arguments[0]), types().builtinClass(BuiltinClasses::Array))) {
+            TypedArrayType type = m_builtins.typedArrayTypeOf(constructed);
+            if (type != TypeInt32 && type != TypeUint32)
+                return answerOrCallFunction(RuntimeOperation::TypedArrayOfPlainArray, { boxedArguments[0], word32(type) });
+            Boxed answer(callStub(value, newTypedArrayOfArray(), { boxedArguments[0].value(), word32(type).value() }, { .calledBuiltin = builtin }).first);
+            defineResult(either<Boxed>(isNotEmpty(answer), [&] {
+                return answer;
+            }, [&] {
+                return callBuiltinFunction(value, id, boxedReceiver, boxedArguments.span(), expected.result == HostResult::String ? &expected : nullptr);
+            }));
+            return;
+        }
         if (builtin == Builtins::TypedArrayPrototypeSet && isCall && receiver && (arguments.size() == 1 || arguments.size() == 2) && types().overlap(typeIDOf(receiver), typeIDOf(arguments[0])))
             return answerOrCallFunction(RuntimeOperation::TypedArraySetOfAnyValue, { *boxedReceiver, boxedArguments[0], argumentOrUndefined(1) });
         if (builtin == Builtins::TypedArrayPrototypeSubarray && isCall && receiver && arguments.size() <= 2 && mayBeView(receiver))
@@ -740,11 +754,17 @@ void BuiltinCallEmitter::generateSharedRegExpLiteral(const ValueContext& value)
 static bool onlyReadsLength(const Program& program, const Code& code, ValueID array)
 {
     static constexpr OpcodeSet names { Opcode::Narrowed, Opcode::Box, Opcode::Unbox };
-    static constexpr OpcodeSet tests { Opcode::ToBoolean, Opcode::TypeTest, Opcode::GetArrayLength };
+    static constexpr OpcodeSet tests { Opcode::ToBoolean, Opcode::TypeTest, Opcode::ShapeTest, Opcode::GetArrayLength };
     Vector<ValueID, 8> holders { array };
     auto add = [&](ValueID holder) {
         if (!holders.contains(holder))
             holders.append(holder);
+    };
+    auto isCompiledInstance = [&](const Operation& operation) {
+        if (operation.opcode != Opcode::Narrowed || !operation.testOperand() || !operation.isOnTakenEdge() || operation.narrowsHolderOfOperand() || operation.narrowsOtherResultOfOperand() || operation.narrowsTermOfOperand())
+            return false;
+        const Operation& test = code.at(operation.testOperand());
+        return test.opcode == Opcode::ShapeTest && holders.contains(test.objectOperand());
     };
     for (size_t seen = 0; seen != holders.size();) {
         seen = holders.size();
@@ -758,9 +778,10 @@ static bool onlyReadsLength(const Program& program, const Code& code, ValueID ar
                 operation.forEachOperand([&](ValueID operand, uint32_t operandIndex) {
                     if (!holders.contains(operand) || tests.contains(operation.opcode))
                         return;
-                    if (names.contains(operation.opcode) && !operandIndex)
-                        add(id);
-                    else
+                    if (names.contains(operation.opcode) && !operandIndex) {
+                        if (!isCompiledInstance(operation))
+                            add(id);
+                    } else
                         isHeld = isHeld && operation.opcode == Opcode::PropGet && !operation.isFreeName() && operation.objectOperand() == operand && program.nameClassOf(operation.key()) == NameClass::Length;
                 });
             }

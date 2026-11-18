@@ -1,0 +1,38 @@
+# function Holder() { this.name = "abc"; this.kept = "abc"; }
+# Holder.prototype.set = function (name) { this.name = name; };
+# globalThis.Holder = Holder;
+# The constructor fills both with strings. Nobody writes or expects the type of the setter's parameter: `name` takes any value, `kept` is held to strings.
+# RUN: plan layouts mechanisms=all
+# CHECK: layout L0 CompiledObject
+# CHECK: slot {{*}}"name" JSValue Inline offset={{*}} record=0 filled-at-birth
+# CHECK: slot {{*}}"kept" {{*}}type=undefined|null|{{*}}
+
+layout L0 kind=Instance name="Holder" module=m0 constructor=f1 fields=[{key="name" declared={type=undefined|null|string flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}, {key="kept" declared={type=undefined|null|string flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}] flags=[IsConstructorFunction] ownFieldCount=2
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f2
+    PropSet v1, v2 key="set"
+    v4 = Builtin builtin=GlobalThis
+    PropSet v4, v0 key="Holder"
+    v6 = Undefined
+    Return v6
+}
+function f1 name="Holder" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = String string="abc"
+    PropSet v0, v1 key="name"
+    v3 = String string="abc"
+    PropSet v0, v3 key="kept"
+    v5 = Undefined
+    Return v5
+}
+function f2 module=m0 flags=[HasThis] length=1 thisType={type=L0 flags=[IsExpected]} parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: L0, v1: anything):
+    PropSet v0, v1 key="name"
+    v3 = Undefined
+    Return v3
+}

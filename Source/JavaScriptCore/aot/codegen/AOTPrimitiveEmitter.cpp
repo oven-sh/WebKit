@@ -11,6 +11,7 @@
 #include "AOTMachineTarget.h"
 #include "AOTPrimitives.h"
 #include "AOTStubRegisters.h"
+#include "AOTTrailingZeros.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -174,9 +175,26 @@ LValue PrimitiveEmitter::countTrailingZerosOfNonZero(LValue bits)
     count->effects = Machine::Effects::none();
     count->setRunsWithoutFrame(true);
     count->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
-        jit.countTrailingZeros64WithoutNullCheck(params[1].gpr(), params[0].gpr());
+#if CPU(X86_64)
+        jit.m_assembler.tzcntq_rr(params[1].gpr(), params[0].gpr());
+#else
+        AOT::countTrailingZerosOfNonZero(jit, params[1].gpr(), params[0].gpr());
+#endif
     });
     return count;
+}
+
+LValue PrimitiveEmitter::reverseBytes(LValue word)
+{
+    Machine::PatchOperation* reversed = m_out.patchpoint(Machine::Int64);
+    reversed->appendSomeRegister(word);
+    reversed->effects = Machine::Effects::none();
+    reversed->setRunsWithoutFrame(true);
+    reversed->setGenerator([](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        jit.move(params[1].gpr(), params[0].gpr());
+        jit.byteSwap64(params[0].gpr());
+    });
+    return reversed;
 }
 
 void PrimitiveEmitter::mutatorFence()

@@ -198,7 +198,7 @@ const replace = (
             this: b.undefined,
             args: [b.string],
             spreadArgs: b.union(capture, nonNegativeInt32, b.object.fresh),
-            result: "Escapes",
+            result: "Converted",
           }),
         ],
       },
@@ -226,7 +226,7 @@ const replace = (
         searchValue: characters,
         replaceValue: [
           b.runs("ToPrimitive"),
-          b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [b.string, nonNegativeInt32, b.string], result: "Escapes" }),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times, this: b.undefined, args: [b.string, nonNegativeInt32, b.string], result: "Converted" }),
         ],
       },
       implementation: b.hostCall,
@@ -243,7 +243,7 @@ const replace = (
         searchValue: isCalledAsPattern(...membersOfSearchValue),
         replaceValue: [
           ...escapesToOperandCode,
-          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Escapes" }),
+          b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Converted" }),
         ],
       },
       reads: [state],
@@ -489,7 +489,7 @@ export default b.declarations(
           ],
           replaceValue: [
             b.runs("ToPrimitive"),
-            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Escapes" }),
+            b.called({ afterwards: "TouchesOnlyWhatRowNames", times: "Repeatedly", this: b.undefined, args: [b.string], spreadArgs: b.any, result: "Converted" }),
           ],
         },
         usesFeature: "RegExp",

@@ -671,6 +671,43 @@ static void testSearchesOfListsInLanguageCallTests()
     LongList allTexts(ContiguousShape, cells.span());
     isAnswered(allTexts, lastInAnotherCell.address(), numberOfTexts - 1);
 
+    AtomString atom { "searched"_s };
+    Ref<StringImpl> sameCharacters = StringImpl::create("searched"_s);
+    TextInLanguageCallTests cellOfAtom;
+    TextInLanguageCallTests cellOfAnotherAtom;
+    TextInLanguageCallTests cellOfSameCharacters;
+    makeFlatInLanguageCallTests(cellOfAtom, *atom.impl());
+    makeFlatInLanguageCallTests(cellOfAnotherAtom, sameCharacters.get());
+    makeFlatInLanguageCallTests(cellOfSameCharacters, sameCharacters.get());
+    cellOfAnotherAtom.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = TypeInfo(StringType, JSString::StructureFlags).inlineTypeFlags() | TypeInfoPerCellBit;
+    const std::array<uint64_t, 4> cellsOfAtoms { int32InLanguageCallTests(1), 0, cellOfAnotherAtom.address(), cellOfAtom.address() };
+    LongList atoms(ContiguousShape, cellsOfAtoms);
+    isAnswered(atoms, cellOfAtom.address(), 3);
+    const std::array<uint64_t, 3> cellsOfCharacters { cellOfAnotherAtom.address(), texts[0].address(), cellOfSameCharacters.address() };
+    LongList charactersOfAtom(ContiguousShape, cellsOfCharacters);
+    isAnswered(charactersOfAtom, cellOfAtom.address(), 2);
+
+    static_assert(NameOfText::widthOfWordFor(8) == sizeof(uint64_t));
+    uint64_t charactersOfName;
+    memcpy(&charactersOfName, atom.impl()->span8().data(), sizeof(charactersOfName));
+    for (bool isNameOfText : { false, true }) {
+        if (isNameOfText)
+            runner.rememberNameOfText({ charactersOfName, charactersOfName, atom.length(), atom.impl() });
+        for (uint32_t count : { 1u, 6u, 7u, 8u, 9u, 63u, numberOfTexts }) {
+            Vector<uint64_t, 20> elements;
+            elements.append(cells.span().first(count - 1));
+            elements.append(0);
+            elements.append(cellOfAtom.address());
+            LongList listOfAtom(ContiguousShape, elements.span());
+            isAnswered(listOfAtom, cellOfSameCharacters.address(), count);
+            isAnswered(listOfAtom, absent.address(), std::nullopt);
+            elements.last() = cellOfSameCharacters.address();
+            LongList listOfCharacters(ContiguousShape, elements.span());
+            isAnswered(listOfCharacters, cellOfSameCharacters.address(), count);
+            isAnswered(listOfCharacters, cellOfAtom.address(), count);
+        }
+    }
+
     LongList mostWords(Int32Shape, integersInLanguageCallTests(64).span());
     LongList tooManyWords(Int32Shape, integersInLanguageCallTests(65).span());
     isAnswered(mostWords, int32InLanguageCallTests(64), 63);
@@ -800,7 +837,6 @@ static void testSpliceOfOneItemInLanguageCallTests()
     uintptr_t& speciesOfLists = realm.at<uintptr_t>(OBJECT_OFFSETOF(JSGlobalObject, m_arraySpeciesWatchpointSet) + InlineWatchpointSet::offsetOfData());
     speciesOfLists = InlineWatchpointSet::encodeState(IsWatched);
     runner.instance().globalObject = std::bit_cast<JSGlobalObject*>(static_cast<uintptr_t>(realm.address()));
-    runner.instance().barrierThreshold = blackThreshold;
     FakeObject<sizeof(JSFunction)> callee;
     callee.at<uint64_t>(JSCallee::offsetOfScopeChain()) = realm.address();
     std::array<FakeObject<sizeof(Structure)>, 2> structures;

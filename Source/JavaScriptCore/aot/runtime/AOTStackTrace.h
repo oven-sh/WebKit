@@ -112,6 +112,7 @@ std::optional<TraceFrame> makeElidedConstructorFrame(const Image&, FunctionID co
 JS_EXPORT_PRIVATE std::optional<SourcePosition> positionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE std::optional<SourcePosition> definitionOf(const TraceFrame&);
 JS_EXPORT_PRIVATE LineColumn obfuscatedPositionOf(const TraceFrame&);
+ModuleID moduleShownByObfuscatedImage(FunctionID);
 JS_EXPORT_PRIVATE String sourceURLOf(ModuleID);
 JS_EXPORT_PRIVATE String displayPathOf(ModuleID);
 JS_EXPORT_PRIVATE String sourceURLOf(const SourcePosition&);

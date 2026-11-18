@@ -93,6 +93,18 @@ struct StoredGlobalValue {
     bool isSameAs(const StoredGlobalValue& other) const { return layout == other.layout && function == other.function && builtinClass == other.builtinClass && type == other.type; }
 };
 
+struct FieldsReadByGetters {
+    struct UnderName {
+        StringID name;
+        uint64_t mask { 0 };
+    };
+
+    uint64_t maskUnder(const Program&, PropertyKeyID) const;
+
+    uint64_t maskUnderAnyName { 0 };
+    Vector<UnderName> underNames;
+};
+
 struct PlanParts {
     DeferredDefinitions deferredDefinitions;
     HeldRegExps heldRegExps;
@@ -117,6 +129,7 @@ struct PlanParts {
     BitVector functionsWhoseCallEntryWalksBody;
     BitVector globalNamesNeverStoredByName;
     BitVector namesOfFieldsWrittenAsOneFunction;
+    FieldsReadByGetters fieldsReadByGetters;
     BitVector globalNamesNeverStoredThroughBinding;
     Vector<StoredGlobalValue> storedGlobalValues;
 
@@ -152,7 +165,10 @@ public:
     const KeyOrders& keyOrders() const { return m_parts.keyOrders; }
     const CallingConventions& conventions() const { return m_parts.conventions; }
     void setMethodTable(MethodTablePlan&& methodTable) { m_parts.conventions.setMethodTable(WTF::move(methodTable)); }
+    void setModulesThatWriteFields(ModulesThatWriteFields&& modules) { m_parts.slots.setModulesThatWriteFields(WTF::move(modules)); }
     void setParameterGuards(std::span<const ParameterGuardPlan> guards) { m_parts.conventions.setParameterGuards(guards); }
+    void setScalarizedParameters(const Program& program, ScalarizedParameters&& parameters) { m_parts.conventions.setScalarizedParameters(program, WTF::move(parameters)); }
+    void setScalarizedResults(ScalarizedResults&& results) { m_parts.conventions.setScalarizedResults(WTF::move(results)); }
     void setFunctionsThatEndTheirTailCalls(FunctionsThatEndTheirTailCalls&& functions) { m_parts.functionsThatEndTheirTailCalls = WTF::move(functions); }
     void setTailCalls(TailCallPlan&& tailCalls) { m_parts.conventions.setTailCalls(WTF::move(tailCalls)); }
     void setStackTests(StackTestPlan&& stackTests) { m_parts.conventions.setStackTests(WTF::move(stackTests)); }
@@ -202,9 +218,11 @@ public:
         return coroutine && coroutine->returned && !isNeverType(coroutine->returned) ? coroutine->returned : TypeID();
     }
     bool runTimeMayFill(VariableID id) const { return m_parts.variablesThatRunTimeMayFill.get(id.index()); }
+    bool isImmutable(const Program&, VariableID) const;
     bool genericCallEntryWalksBody(FunctionID id) const { return m_parts.functionsWhoseCallEntryWalksBody.get(id.index()); }
     void findCallEntriesThatWalkBodies(const Program&, const Facts&);
 
+    const FieldsReadByGetters& fieldsReadByGetters() const { return m_parts.fieldsReadByGetters; }
     bool someFieldUnderNameIsWrittenAsOneFunction(PropertyKeyID key) const { return m_parts.namesOfFieldsWrittenAsOneFunction.get(key.index()); }
     GlobalNameUse globalName(PropertyKeyID key) const { return { !m_parts.globalNamesNeverStoredByName.get(key.index()), !m_parts.globalNamesNeverStoredThroughBinding.get(key.index()) }; }
 

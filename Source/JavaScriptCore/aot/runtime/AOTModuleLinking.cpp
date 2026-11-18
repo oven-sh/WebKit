@@ -525,8 +525,8 @@ static void createHub(const ModuleTable& table, MockedModules& mocks)
     auto reach = [&](ModuleID reached) {
         if (hub.reached.quickSet(reached.index()))
             return;
-        if (uint32_t position = mocks.positionBelow[reached.index()]; position != MockedModules::notBelow)
-            hub.reachedBelow.quickSet(position);
+        if (std::optional<uint32_t> position = mocks.positionBelow(reached))
+            hub.reachedBelow.quickSet(*position);
         if (!mocks.modules.quickGet(reached.index()))
             work.append(reached);
     };
@@ -544,36 +544,48 @@ static void createHub(const ModuleTable& table, MockedModules& mocks)
     }
 }
 
-static Box<MockedModules> createMockedModules(const ModuleTable& table, const ImportersOfModules& importers, BitVector&& modules, const MockedModules* earlier, std::optional<ModuleID> added)
+static Box<MockedModules> createMockedModules(const ModuleTable& table, const ImportersOfModules& importers, BitVector&& modules, const MockedModules* earlier, ModuleID added)
 {
     Box<MockedModules> mocks = Box<MockedModules>::create(importers);
     mocks->modules = WTF::move(modules);
-    Vector<ModuleID, 32> work;
-    if (earlier && added) {
-        mocks->positionBelow = earlier->positionBelow;
+    if (earlier && earlier->positionsBelow) {
+        mocks->positionsBelow = earlier->positionsBelow;
         mocks->numberBelow = earlier->numberBelow;
-        work.append(*added);
-    } else {
-        mocks->positionBelow.fill(MockedModules::notBelow, table.size());
-        for (size_t module : mocks->modules)
-            work.append(ModuleID(module));
+        mocks->addModulesBelow(table, { added });
     }
+    if (earlier && earlier->comeToMock) {
+        mocks->comeToMock = earlier->comeToMock;
+        importers.addModulesAbove({ added }, *mocks->comeToMock);
+    }
+    return mocks;
+}
+
+void MockedModules::ensurePositionsBelow(const ModuleTable& table)
+{
+    if (positionsBelow) [[likely]]
+        return;
+    positionsBelow = Box<Vector<uint32_t>>::create();
+    positionsBelow->fill(notBelow, table.size());
+    Vector<ModuleID, 32> work;
+    for (size_t module : modules)
+        work.append(ModuleID(module));
+    addModulesBelow(table, WTF::move(work));
+}
+
+void MockedModules::addModulesBelow(const ModuleTable& table, Vector<ModuleID, 32>&& work)
+{
+    Vector<uint32_t>& positions = *positionsBelow;
     while (!work.isEmpty()) {
         ModuleID module = work.takeLast();
-        uint32_t& position = mocks->positionBelow[module.index()];
-        if (position != MockedModules::notBelow)
+        uint32_t& position = positions[module.index()];
+        if (position != notBelow)
             continue;
-        position = mocks->numberBelow++;
+        position = numberBelow++;
         forEachModuleRequestedBy(table, module, [&](ModuleID requested) {
-            if (mocks->positionBelow[requested.index()] == MockedModules::notBelow)
+            if (positions[requested.index()] == notBelow)
                 work.append(requested);
         });
     }
-    if (earlier && added && earlier->comeToMock) {
-        mocks->comeToMock = earlier->comeToMock;
-        importers.addModulesAbove({ *added }, *mocks->comeToMock);
-    }
-    return mocks;
 }
 
 const ImportersOfModules& Modules::importersOfModules() const
@@ -582,6 +594,34 @@ const ImportersOfModules& Modules::importersOfModules() const
     if (!importers)
         importers = makeUnique<ImportersOfModules>(m_table);
     return *importers;
+}
+
+const StatementImporters& Modules::statementImporters() const
+{
+    std::unique_ptr<StatementImporters>& importers = m_instance.vm->aotState().statementImporters;
+    if (!importers)
+        importers = makeUnique<StatementImporters>(m_table, StatementImporters::Imports::Statements);
+    return *importers;
+}
+
+const StatementImporters& Modules::importersOfEveryImport() const
+{
+    std::unique_ptr<StatementImporters>& importers = m_instance.vm->aotState().importersOfEveryImport;
+    if (!importers)
+        importers = makeUnique<StatementImporters>(m_table, StatementImporters::Imports::AllRequests);
+    return *importers;
+}
+
+const Vector<ModuleID>& Modules::uncompiledModules() const
+{
+    if (!m_uncompiledModules) {
+        m_uncompiledModules.emplace();
+        for (uint32_t index = 0; index < m_table.size(); ++index) {
+            if (data(ModuleID(index)).isUncompiledCode())
+                m_uncompiledModules->append(ModuleID(index));
+        }
+    }
+    return *m_uncompiledModules;
 }
 
 void Modules::willMock(ModuleID mocked)
@@ -646,9 +686,13 @@ void Modules::didRemoveMock(ModuleID mocked)
         m_mocks = nullptr;
         return;
     }
-    for (size_t module : others)
+    BitVector withoutMoment = others;
+    if (m_testFileOfMomentsOfMocks == m_instance.vm->aotState().momentOfTestFile)
+        withoutMoment.exclude(m_modulesWithMomentOfMock);
+    for (size_t module : withoutMoment)
         momentOfFirstMockInTestFile(ModuleID(module));
-    m_mocks = createMockedModules(m_table, importersOfModules(), WTF::move(others), nullptr, std::nullopt);
+    m_mocks = Box<MockedModules>::create(importersOfModules());
+    m_mocks->modules = WTF::move(others);
 }
 
 bool Modules::MocksInGraph::rootComesToMock() const
@@ -676,8 +720,8 @@ const BitVector& Modules::MocksInGraph::reachedFromRoot() const
         auto reachModule = [&](ModuleID module, bool isMocked) {
             if ((reachesHub && hub->reached.quickGet(module.index())) || reached.quickSet(module.index()))
                 return;
-            if (uint32_t position = m_mocks->positionBelow[module.index()]; position != MockedModules::notBelow)
-                reachedBelow->quickSet(position);
+            if (std::optional<uint32_t> position = m_mocks->positionBelow(module))
+                reachedBelow->quickSet(*position);
             if (!isMocked)
                 work.append(module);
         };
@@ -860,7 +904,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         }
         ASSERT(needsPath);
-        AbstractModuleRecord* record = uncompiledRecord(module);
+        AbstractModuleRecord* record = linkUncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
         checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
@@ -921,7 +965,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
                 captureExports(module);
             return;
         }
-        AbstractModuleRecord* record = uncompiledRecord(module);
+        AbstractModuleRecord* record = linkUncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
         checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1162,6 +1206,8 @@ void Modules::captureExports(ModuleID module)
         RELEASE_ASSERT(exported || deferredExportsSource);
         captured->putDirectMayBeIndex(realm, names[i], exported ? exported : JSValue(captured));
         RETURN_IF_EXCEPTION(scope, void());
+        if (!exported)
+            m_hashesOfDeferredExports |= bitOfHash(names[i]);
     }
     loaded.capturedExports.set(*this, captured);
     loaded.deferredExportsSource.set(*this, deferredExportsSource);
@@ -1258,14 +1304,24 @@ bool Modules::forgetCapturedExports(ModuleID moduleOrFacade)
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);
     loaded.sourceOfCapturedFields.set(*this, nullptr);
-    loaded.bindsEarlierCapture = true;
+    JSObject* earlier = namespaceIfCreated(module, ModulePhase::Evaluation);
+    if (loaded.exportsBeforeMock && !loaded.namespaceOfPatchedCapture)
+        loaded.namespaceOfPatchedCapture.set(*this, earlier);
+    if (!std::exchange(loaded.bindsEarlierCapture, true))
+        loaded.namespaceOfBoundCapture.set(*this, earlier);
     unsettleForLinks(module);
-    if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+    if (earlier) {
         if (data(module).holdsNamespaceInValue())
             m_modulesWithEarlierNamespaceInValue.set(module.index());
         loaded.namespaceObject.set(*this, nullptr);
     }
     return true;
+}
+
+void Modules::forgetEarlierCapture(LoadedModule& loaded)
+{
+    loaded.bindsEarlierCapture = false;
+    loaded.namespaceOfBoundCapture.set(*this, nullptr);
 }
 
 void Modules::endMockOfLibraryModule(ModuleID module)
@@ -1445,6 +1501,8 @@ void Modules::restoreCapturedExports(ModuleID holder)
     if (!before)
         return;
     held->exportsBeforeMock.set(*this, nullptr);
+    auto* patched = dynamicDowncast<ModuleNamespace>(held->namespaceOfPatchedCapture.get());
+    held->namespaceOfPatchedCapture.set(*this, nullptr);
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
@@ -1455,8 +1513,12 @@ void Modules::restoreCapturedExports(ModuleID holder)
             value = source ? source->get(realm, name) : jsUndefined();
             RETURN_IF_EXCEPTION(scope, void());
         }
-        tryReplaceCapturedExport(holder, name.impl(), value);
+        tryReplaceCapturedExport(holder, name.impl(), value, CapturedTable::OfOriginal);
         RETURN_IF_EXCEPTION(scope, void());
+        if (patched && patched->hasExport(name.impl())) [[unlikely]] {
+            patched->replaceCapturedValue(realm, name, value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
 }
 
@@ -1663,7 +1725,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
         RELEASE_AND_RETURN(scope, source ? source->get(realm, name) : jsUndefined());
     };
     BitVector seenBehindStars;
-    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name) -> JSValue {
+    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name, Environment* instance) -> JSValue {
         for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
             std::optional<unsigned> index = m_table.findExport(module, name);
             if (!index) {
@@ -1675,8 +1737,11 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
                     return value;
                 if (name == vm.propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
                     return { };
+                if (!instance)
+                    instance = currentInstance(module);
                 for (ModuleRequestData request : m_table.dynamicStars(module)) {
-                    value = self(self, request.targetModule(), name);
+                    const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, request.targetModule()) : nullptr;
+                    value = self(self, request.targetModule(), name, link && link->hasLink ? readLink(instance, link->link) : nullptr);
                     RETURN_IF_EXCEPTION(scope, { });
                     if (value)
                         return value;
@@ -1690,15 +1755,20 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
                     return keptBy(origin->module, identifier(origin->name));
                 return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
             case ModuleExportKind::Field: {
-                ResolvedField field = variables ? resolveField(module, *index, nullptr) : ResolvedField { };
+                ResolvedField field = variables ? resolveField(module, *index, instance) : ResolvedField { };
                 return field.instance ? loaded->fieldsBeforeMock.get(std::pair { field.instance, field.slot.encoded() }) : JSValue();
             }
-            case ModuleExportKind::Namespace:
-                return { };
+            case ModuleExportKind::Namespace: {
+                if (!isLaidOver || !loaded->namespacesReplacedByMock.contains(moduleExport.targetModule()))
+                    return { };
+                SetForScope readsBeforeItsPatch(m_moduleReadBeforeItsPatch, std::optional(file));
+                RELEASE_AND_RETURN(scope, readExport(module, *index, MockMode::Use, instance));
+            }
             case ModuleExportKind::Indirect: {
                 const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
                 module = moduleLoadedUnder(indirectExport.targetModule());
                 name = identifier(indirectExport.importName).impl();
+                instance = nullptr;
                 break;
             }
             }
@@ -1720,7 +1790,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
         if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
             continue;
         seenBehindStars.clearAll();
-        JSValue value = keptValueOf(keptValueOf, file, name.impl());
+        JSValue value = keptValueOf(keptValueOf, file, name.impl(), nullptr);
         RETURN_IF_EXCEPTION(scope, { });
         if (variables && value == JSValue(variables))
             continue;
@@ -1758,7 +1828,7 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
         if (!m_facadesCapturedForMock.get(module.index()) || loaded.loadWord || loaded.hasLinkedImporter || wasLoadedByImport(file))
             return;
         forgetCapturedExports(module);
-        loaded.bindsEarlierCapture = false;
+        forgetEarlierCapture(loaded);
         m_facadesCapturedForMock.clear(module.index());
         if (status(module) == ModuleStatus::Evaluated) {
             startLoadingModulesIndividually();
@@ -1826,7 +1896,7 @@ void Modules::bindLatestCapture(ModuleID module)
     LoadedModule* loaded = loadedIfExists(module);
     if (!loaded || !loaded->bindsEarlierCapture) [[likely]]
         return;
-    loaded->bindsEarlierCapture = false;
+    forgetEarlierCapture(*loaded);
     if (m_modulesWithEarlierNamespaceInValue.get(module.index())) {
         JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
         RETURN_IF_EXCEPTION(scope, void());

@@ -24,6 +24,9 @@ public:
 
     CellPointer newLiteral(const ValueContext&);
     bool isLeftToSpreadRightBehind(BlockID, ValueID literal, const Operation&, std::span<const ValueID> behind);
+    bool isLeftToListCall(BlockID, ValueID literal, const Operation&);
+    void appendRestListUnlessUsedAsLiteral(const ValueContext& append);
+    bool isCallThatReturns(BlockID, ValueID call);
     void bearLiteralHoldingList(const ValueContext& spread, LValue iterable, StubKey appendsAsWritten);
     CellPointer newArrayOf(const OperationContext&, std::span<const ValueID> elements, const Type& array);
     CellPointer newArrayOfNumbers(const OperationContext&, std::span<const Number>);
@@ -49,6 +52,10 @@ private:
     std::optional<Integer> takeRoomAskedRightBehind(const ValueContext&);
     std::optional<EmptyArray> emptyArrayWithPushCapacity(BlockID, ValueID literal);
     ArrayStorage storageThatLiteralNames(ValueID literal, const Operation&);
+    CellPointer newLiteralAsWritten(const ValueContext&);
+    CellPointer useRestListAsLiteral(const ValueContext&, ValueID restList);
+    ValueID findAppendOfRestList(const ValueContext& literal);
+    ValueID restListUsedOnce(ValueID);
     struct AppendedBehindSpread {
         uint32_t room { 0 };
         bool holdsWhatIsNoNumber { false };
@@ -63,6 +70,7 @@ private:
     std::optional<Pointer> numberLiteralProfile(const OperationContext&);
     CellPointer newProfiledInt32Literal(const OperationContext&, std::span<const ValueID> elements, std::span<const Operand> int32s, Pointer profile);
     CellPointer newArrayInForm(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&, bool hasPropertyRoom = false);
+    bool isFirstOfGroup(const ValueContext& literal);
     CellPointer newArrayOutOfLine(const OperationContext&, std::span<const ValueID> elements, const ArrayStorageForm&);
     const ArrayStorageForm& formOfLiteral(const OperationContext&, std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray = nullptr);
     const ArrayStorageForm* findFormOfLiteral(std::span<const ValueID> elements, const Type& array, ArrayStorage named, const ArrayStorage* declaredByArray);

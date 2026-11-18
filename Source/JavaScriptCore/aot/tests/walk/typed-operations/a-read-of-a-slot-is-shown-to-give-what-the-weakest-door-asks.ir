@@ -7,7 +7,7 @@
 # A READ OF A SLOT IS SHOWN TO GIVE WHAT THE WEAKEST DOOR ASKS. The check in front of a compiled store asks typeThatUnitMayTestFor(testablePartOf(..)): a function that the STORING unit does not lead to is asked as `function`. So a
 # reader may not take the slot's word `f1` for shown: some unit's door may have asked no more than "a function". The reader's condition and the writer's check are the same function, the reader's as of a unit that leads to nothing.
 # Here the object is shown (a direct call gives it). What its slot `name` gives is shown to be a text: nothing is asked. What its slot `run` gives is shown to be a function and no more: it is asked in front of the slot that takes f1.
-# RUN(RELABELED): walk f3 mechanisms=all-Inlining
+# RUN(RELABELED): walk f3 mechanisms=all-Inlining-EscapeAnalysis
 # RELABELED-LABEL: code f3:Body
 # RELABELED: [[run]]: f1 @JSValue = GetSlot {{*}} key="run" receivers=[L0] level=Proven
 # RELABELED: [[name]]: string @JSValue = GetSlot {{*}} key="name" receivers=[L0] level=Proven

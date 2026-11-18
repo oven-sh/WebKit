@@ -267,7 +267,7 @@ void generateArraySlice(StubAssembler& jit)
     jit.addPtr(TrustedImm32(-static_cast<int32_t>(sizeof(JSArray) + propertyRoom)), storage, result);
     jit.load64(BaseIndex(instanceGPR, relativeShape, CCallHelpers::TimesFour, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithInt32Header)), scratch);
     jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
-    jit.storePair64(scratch, storage, result, TrustedImm32(0));
+    storeHeaderAndButterfly(jit, scratch, storage, result);
     fenceAfterAllocation(jit);
     jit.returnToCaller();
 

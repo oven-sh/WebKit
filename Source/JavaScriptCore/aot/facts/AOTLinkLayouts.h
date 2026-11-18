@@ -15,7 +15,11 @@ namespace JSC { namespace AOT { namespace Typed {
 void seedCellsSharedWithUnseenCode(LinkFlow&);
 
 void lookAtSummariesForLayoutsAndCells(const LinkFlow&, LinkTables&);
-void writeLayoutsAndCellsAheadOfTypes(const LinkFlow&, BitVector&& functionsWhoseCallersAreAllKnown);
+enum class LateFills : bool {
+    FoundHere,
+    FoundByOtherReading,
+};
+void writeLayoutsAndCellsAheadOfTypes(const LinkFlow&, BitVector&& functionsWhoseCallersAreAllKnown, LateFills);
 void writeLayoutsAndCells(const LinkFlow&, TypeArena&);
 
 } } } // namespace JSC::AOT::Typed

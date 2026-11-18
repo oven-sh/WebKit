@@ -20,7 +20,7 @@ struct LinkedCall;
 inline constexpr OpcodeSet opcodesOfGeneratorsInLoops { Opcode::Call, Opcode::IteratorOpen, Opcode::IteratorResume, Opcode::IteratorClose, Opcode::AppendSpread, Opcode::InitialYield, Opcode::Yield, Opcode::PropGet, Opcode::InstanceOf };
 
 struct GeneratorTakenByConsumer {
-    Reference functionTested;
+    Reference holderOfReturn;
     ValueID stepInFront;
     uint32_t inlineFrame { 0 };
     ValueID taker;
@@ -69,7 +69,7 @@ struct StepsInRow {
 };
 
 struct GeneratorWalkedInConsumer {
-    Reference functionTested;
+    Reference holderOfReturn;
     bool countsSteps { false };
     bool headPrecedesLoop { false };
     uint32_t frameOfConsumer { 0 };

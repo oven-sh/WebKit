@@ -387,10 +387,37 @@ bool CalleeSummarizerForLinkEffects::readMayMakeClosureOfField(const LinkType& s
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+void CalleeSummarizerForLinkEffects::addEffectsOfStaticFields(const LinkType& subject, PropertyKeyID key, SummaryAccess::Kind kind, Effects& effects) const
+{
+    forEachFunctionOf(subject, [&](FunctionID function) {
+        forEachStaticFieldFound(function, key, [&](VariableID variable) {
+            effects.reads.add(m_program, MemoryLocation::moduleVariable(variable));
+            if (kind == SummaryAccess::Kind::Store || kind == SummaryAccess::Kind::Define)
+                effects.writes.add(m_program, MemoryLocation::moduleVariable(variable));
+        });
+    });
+}
+
 void CalleeSummarizerForLinkEffects::addEffectsOfAccessItself(FunctionID id, const ThinSummary& summary, const SummaryAccess& access, const LinkType& subject, PropertyKeyID key, WayInKnownEffects way, EffectsOfComponentInKnownEffects& effects)
 {
+    IndexedKind indexed = findIndexedAccess(id, summary, access);
+    if (indexed != IndexedKind::Unknown) {
+        Effects ofElement = effectsOfLookupItself(SummaryAccess::Kind::Read, { });
+        if (indexed == IndexedKind::String)
+            ofElement.merge(declaredBoundOf(NamedEffectSet::ResolvesRopes));
+        else
+            ofElement.reads.add(AbstractHeapSet { AbstractHeap::TypedArrayElements, AbstractHeap::TypedArrayStorage });
+        if (access.kind == SummaryAccess::Kind::Store)
+            ofElement.writes.add(AbstractHeap::TypedArrayElements);
+        if (!(m_flow.typeAt(m_flow.nodeOf(id, access.subject)).primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
+            ofElement.mayThrow = ThrowEffect::onlyForLackOfMemory();
+        takeKnownEffects(ofElement, ofElement.writes, 0, way, effects);
+        return;
+    }
     Effects ofLookup = effectsOfLookupItself(access.kind, key);
     uint64_t layouts = 0;
+    if (key && subject.functions != LinkType::Functions::None)
+        addEffectsOfStaticFields(subject, key, access.kind, ofLookup);
     switch (access.kind) {
     case SummaryAccess::Kind::Read:
         if (thenLookupCannotThrow(subject, key))
@@ -628,8 +655,10 @@ auto CalleeSummarizerForLinkEffects::knownEffectsOfBody(uint32_t function) -> Ef
                 effects.layoutsWritten |= bitsOfLayoutsAt(subject);
             continue;
         }
-        if (subject.isNever())
+        if (subject.isNever()) {
+            isKnown = !isUnderComputedKeyForLinkEffects(access);
             continue;
+        }
         const CodeEntered& code = codeOfAccess(id, index);
         PropertyKeyID key = m_flow.keyOf(id, access);
         WayInKnownEffects way = access.liesOnNoWayToReturn ? WayInKnownEffects::ToNoReturn : WayInKnownEffects::ToReturnUnderHandler;

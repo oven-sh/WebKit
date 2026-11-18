@@ -1,0 +1,57 @@
+# f3 constructs the object, the literal `{ __proto__: above, x }`. What a function of the program is constructed to is an object, under no mechanism too: a definition takes no other value.
+# RUN(NONE): walk f1 mechanisms=none
+# NONE: = Construct
+# NONE: PropDefine {{*}} key="x"
+# RUN(ANSWERS): run-in-shell mechanisms=none
+# ANSWERS: 42
+# RUN(ALL): run-in-shell mechanisms=all
+# ALL: 42
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 flags=[IsNeverAllocated] place=0
+layout L1 kind=Instance module=m0 position=14 constructor=f3 fields=[{key="x" declared={type=anything}}] flags=[IsConstructorFunction] place=14 ownFieldCount=1
+variable g0 name="above" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=2
+variable g1 module=m0 declared={type=f3 flags=[IsFromCompiler]} initialization=Function function=f3 flags=[IsImmutable] place=46
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewDictionary @14
+    v3 = NewClosure function=f2 @19
+    PropDefine v2, v3 key="m" @16
+    v5 = GetModuleVariable variable=g1 @14
+    PropSet v5, v2 key="prototype" @14
+    v7 = PropGet v5 key="prototype" @14
+    PutModuleVariable v7 variable=g0 @6
+    v9 = Integer integer=2 @120
+    v10 = Call v1, -, v9 calleeName="make" @115
+    v11 = Builtin builtin=GlobalThis @124
+    v12 = PropGet v11 key="print" [isFreeName] @124
+    v13 = PropGet v10 key="x" @130
+    v14 = PropGet v10 key="m" @139
+    v15 = Call v14, v10 calleeKey="m" calleeName="made.m" @144
+    v16 = Add v13, v15 @130
+    v17 = Call v12, -, v16 calleeName="print" @124
+    v18 = Undefined @124
+    Return v18 @124
+}
+function f1 name="make" module=m0 position=49 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g0 @88
+    v2 = CheckInitialized v1 name="above" @88
+    v3 = GetModuleVariable variable=g1 @75
+    v4 = Construct v3 @75
+    PropDefine v4, v0 key="x" @75
+    Return v4 @75
+}
+function f2 name="m" module=m0 position=19 thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=40 @40
+    Return v0 @40
+}
+function f3 module=m0 position=14 flags=[IsHiddenInStackTraces] syntax=[IsShownAsNativeCode] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0():
+    v0 = Undefined @14
+    Return v0 @14
+}

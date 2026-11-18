@@ -159,6 +159,8 @@ const CachedPropertyList* tryGetOwnPropertyList(VM& vm, JSObject* object, JSObje
     if (extraPropertiesNeedGenericPath(extra) || !extraPropertiesAreWritableAndConfigurable(extra))
         return nullptr;
     ASSERT(vm.heap.isDeferred());
+    if (extra->structure()->isDictionary() && typed->state().objects->caches->propertyLists.isSecondWalk(extra->structureID(), typed->shapeWord(), typed->orderWord() & orderAndCountMask))
+        typed->finishFillingExtraProperties(vm);
     CachedPropertyList* list = cachedPropertyList(vm, *typed);
     if (list && !list->holdsOnlyPlainData) {
         writeJSONKeys(vm, *list);
@@ -1018,7 +1020,10 @@ bool tryReadDescriptorMembers(JSObject* object, DescriptorMembers& members)
         if (const FieldData* field = known.fields[index]) {
             if (field->isAccessor()) [[unlikely]]
                 return false;
-            value = typed.readInline(*field);
+            if (field->slot.representation() == SlotRepresentation::JSValue && !field->isOutOfLine())
+                value = JSValue::decode(typed.at<EncodedJSValue>(field->slot.offset));
+            else
+                value = typed.readInline(*field);
         }
         if (!value && hasExtraProperties) [[unlikely]]
             return false;
@@ -1299,7 +1304,7 @@ void didBecomePrototype(VM& vm, JSObject* object)
     if (typed->structure()->mayBePrototype())
         return;
     validateMutation(vm, *typed, ObjectMutation::BecomePrototype);
-    typed->JSCell::setStructure(vm, typed->state().objects->structures.asPrototype(vm, typed->compiledStructure()));
+    typed->setVariantOfStructure(vm, typed->state().objects->structures.asPrototype(vm, typed->compiledStructure()));
 }
 
 bool hasIndexedProperties(JSObject* object)

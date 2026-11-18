@@ -53,6 +53,7 @@ set(JavaScriptCore_AOT_BUILTIN_TABLE_HANDWRITTEN_FUNCTIONS
     aot/builtins/handwritten/ObjectConstructor.ts
     aot/builtins/handwritten/MapConstructor.ts
     aot/builtins/handwritten/MapIteratorPrototype.ts
+    aot/builtins/handwritten/RegExpStringIteratorPrototype.ts
     aot/builtins/handwritten/SetIteratorPrototype.ts
     aot/builtins/handwritten/SetPrototype.ts
     aot/builtins/handwritten/TypedArrayConstructor.ts

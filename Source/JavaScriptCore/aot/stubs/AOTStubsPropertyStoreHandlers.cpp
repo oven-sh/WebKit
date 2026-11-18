@@ -14,6 +14,7 @@
 #include "AOTInstance.h"
 #include "AOTObjectWords.h"
 #include "AOTRuntimeTable.h"
+#include "AOTSlimClosure.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsField.h"
 #include "AOTStubsKeyed.h"
@@ -76,7 +77,6 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
     case Slot::Kind::ClosureLength:
-    case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
     case Slot::Kind::Removal:
     case Slot::Kind::ExtraPropertyRemoval:
@@ -93,6 +93,7 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
     case Slot::Kind::CustomSetter:
     case Slot::Kind::ExtraSetter:
     case Slot::Kind::ArrayLength:
+    case Slot::closureAddition:
         return !isDefinition;
     case Slot::Kind::FarValue:
     case Slot::Kind::Field:
@@ -104,6 +105,84 @@ static bool hasStoreArm(SlotHandlerTableTraits traits, Slot::Kind kind)
         return !isDefinition && !isPacked;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+struct ClosureAdditionRegisters {
+    GPRReg closure;
+    GPRReg name;
+    GPRReg value;
+    GPRReg addition;
+    GPRReg storage;
+    GPRReg allocator;
+    GPRReg scratch;
+    FPRReg pair;
+};
+
+static void addFirstPropertyOfClosureAndReturn(StubAssembler& jit, const ClosureAdditionRegisters& r, unsigned capacity, JumpList& cannot)
+{
+    constexpr unsigned sizeOfPair = 2 * sizeof(EncodedJSValue);
+    constexpr unsigned numberOfInitialValues = ClosureAddition::numberOfInitialValues;
+    static_assert(!(numberOfInitialValues % 2) && numberOfInitialValues == initialOutOfLineCapacity);
+    const unsigned storageSize = capacity * sizeof(EncodedJSValue);
+    const unsigned offsetOfInitialValues = storageSize - numberOfInitialValues * sizeof(EncodedJSValue);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.auxiliarySpace)), r.allocator);
+    jit.loadPtr(Address(r.allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(storageSize) * sizeof(Allocator)), r.allocator);
+    cannot.append(jit.branchTestPtr(CCallHelpers::Zero, r.allocator));
+    AssemblyHelpers::FreeListRefill refill = allocateCellWithLateRefill(jit, r.storage, r.allocator, r.scratch, cannot, storageSize);
+    for (unsigned offset = 0; offset < numberOfInitialValues * sizeof(EncodedJSValue); offset += sizeOfPair) {
+        jit.loadVector(Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, initialValues) + offset), r.pair);
+        jit.storeVector(r.pair, Address(r.storage, offsetOfInitialValues + offset));
+    }
+    unsigned offsetOfAddedValue = offsetOfInitialValues ? offsetOfInitialValues - sizeof(EncodedJSValue) : 0;
+    jit.store64(r.value, Address(r.storage, offsetOfAddedValue));
+    for (unsigned offset = 0; offset < offsetOfAddedValue; offset += sizeof(EncodedJSValue))
+        jit.store64(TrustedImm32(0), Address(r.storage, offset));
+    jit.addPtr(TrustedImm32(storageSize + sizeof(IndexingHeader)), r.storage);
+
+    static_assert(JSCell::typeInfoFlagsOffset() == JSCell::typeInfoTypeOffset() + 1);
+    jit.load32(Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, structureAfter)), r.scratch);
+    jit.or32(TrustedImm32(StructureID::nukedStructureIDBit), Address(r.closure, JSCell::structureIDOffset()));
+    jit.storeFence();
+    jit.storePtr(r.storage, Address(r.closure, JSObject::butterflyOffset()));
+    jit.storeFence();
+    jit.store32(r.scratch, Address(r.closure, JSCell::structureIDOffset()));
+    jit.load16(Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, typeAndFlagsAfter)), r.scratch);
+    jit.store16(r.scratch, Address(r.closure, JSCell::typeInfoTypeOffset()));
+    jit.jumpToStub(writeBarrier());
+    emitLateRefill(jit, refill, cannot);
+}
+
+static void addFirstPropertyOfClosureAndReturn(StubAssembler& jit, const ClosureAdditionRegisters& r, SlotOrigin origin, JumpList& cannot)
+{
+    static_assert(SlimClosure::offsetOfWord() == JSObject::butterflyOffset() && hasOneBitSet(ClosureAddition::numberOfPlaces));
+    const GPRReg upperHalfOfWord = r.allocator;
+    const GPRReg uid = r.scratch;
+    const bool isUnderKey = origin == SlotOrigin::ByVal;
+    RELEASE_ASSERT(isUnderKey || origin == SlotOrigin::ById);
+    RELEASE_ASSERT(noOverlap(r.closure, r.name, r.value, r.addition, r.storage, r.allocator, r.scratch, instanceGPR));
+    if (isUnderKey) {
+        loadNameOfKey(jit, r.name, uid, r.allocator, cannot);
+        jit.urshift64(uid, TrustedImm32(ClosureAddition::uidShift), r.addition);
+    } else
+        jit.lshift32(r.name, TrustedImm32(ClosureAddition::nameShift), r.addition);
+    jit.load32(Address(r.closure, SlimClosure::offsetOfWord() + sizeof(uint32_t)), upperHalfOfWord);
+    jit.xor32(upperHalfOfWord, r.addition);
+    jit.and32(TrustedImm32(ClosureAddition::numberOfPlaces - 1), r.addition);
+    jit.lshift32(TrustedImm32(ClosureAddition::sizeShift), r.addition);
+    jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.closureAdditions)), r.addition);
+    cannot.append(jit.branch32(CCallHelpers::NotEqual, Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, upperHalfOfWord)), upperHalfOfWord));
+    if (isUnderKey)
+        cannot.append(jit.branchPtr(CCallHelpers::NotEqual, Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, uid)), uid));
+    else
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, name)), r.name));
+    if (!jit.options().hasOneInstance) {
+        jit.load32(Address(r.closure, JSCell::structureIDOffset()), r.scratch);
+        cannot.append(jit.branch32(CCallHelpers::NotEqual, Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, structureBefore)), r.scratch));
+    }
+    Jump hasPrototypeProperty = jit.branchTest64(CCallHelpers::NonZero, Address(r.addition, OBJECT_OFFSETOF(ClosureAddition, initialValues)));
+    addFirstPropertyOfClosureAndReturn(jit, r, initialOutOfLineCapacity, cannot);
+    hasPrototypeProperty.link(&jit);
+    addFirstPropertyOfClosureAndReturn(jit, r, initialOutOfLineCapacity * outOfLineGrowthFactor, cannot);
 }
 
 void generateStoreSlot(StubAssembler& jit)
@@ -215,11 +294,8 @@ void generateStoreSlot(StubAssembler& jit)
         isInline.link(&jit);
         listCreatedFieldAndReturn(jit, keyOrder, value);
     };
-    auto finishExtraPropertyStore = [&](GPRReg owner, bool valueMayNeedBarrier) {
-        if (valueMayNeedBarrier)
-            returnAfterStoring(jit, owner, value);
-        else
-            jit.returnToCaller();
+    auto finishExtraPropertyStore = [&](GPRReg owner) {
+        returnAfterStoring(jit, owner, value);
     };
     auto emitAdditionInStorage = [&] {
         const GPRReg newStructureID = traits.form == SlotForm::Slot ? operands.payload : operands.header;
@@ -416,7 +492,7 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::ExtraPropertyAddition: {
         ExtraPropertyAdditionExits exits;
         JumpList cannotGrow;
-        addExtraProperty(jit, slot, extraPropertyRegisters, value, finishExtraPropertyStore, exits);
+        addExtraProperty(jit, slot, extraPropertyRegisters, value, exits);
         uncached.append(exits.isNotExtensible);
 
         exits.growsStorage.link(&jit);
@@ -428,7 +504,7 @@ void generateStoreSlot(StubAssembler& jit)
             .oldCapacity = allocateSpareRegister(),
             .storage = clobberNameRegister(),
             .scratch = header,
-        }, value, finishExtraPropertyStore, cannotGrow);
+        }, value, cannotGrow);
 
         cannotGrow.link(&jit);
         jit.moveDoubleTo64(savedHeader, header);
@@ -600,6 +676,22 @@ void generateStoreSlot(StubAssembler& jit)
         }
         uncached.append(jit.jump());
         break;
+    case Slot::closureAddition:
+        if (origin == SlotOrigin::ById || origin == SlotOrigin::ByVal) {
+            addFirstPropertyOfClosureAndReturn(jit, {
+                .closure = receiver,
+                .name = name,
+                .value = value,
+                .addition = T10,
+                .storage = allocateSpareRegister(),
+                .allocator = T11,
+                .scratch = T14,
+                .pair = jit.allocateScratch(FPRInfo::fpRegT0),
+            }, origin, uncached);
+            break;
+        }
+        uncached.append(jit.jump());
+        break;
     case Slot::Kind::Empty:
     case Slot::Kind::Absent:
     case Slot::Kind::Getter:
@@ -611,7 +703,6 @@ void generateStoreSlot(StubAssembler& jit)
     case Slot::Kind::TypedArrayLength:
     case Slot::Kind::StringLength:
     case Slot::Kind::ClosureLength:
-    case Slot::Kind::ClosureName:
     case Slot::Kind::Constant:
     case Slot::Kind::Removal:
     case Slot::Kind::ExtraPropertyRemoval:
@@ -682,6 +773,8 @@ static Entry entryFor(const Entry (&byMode)[numberOfModes], PutMode mode)
 
 void storeToReplacedMemberAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg identifierNumber, GPRReg value, GPRReg place, GPRReg word)
 {
+    RELEASE_ASSERT(noOverlap(receiver, identifierNumber, value, place, word));
+    const GPRReg storage = place;
     auto wordOf = [&](ptrdiff_t offset) {
         return Address(place, static_cast<int32_t>(AOT_INSTANCE_OFFSET(propertyCaches.replacedMembers) + offset));
     };
@@ -693,8 +786,12 @@ void storeToReplacedMemberAndReturn(StubAssembler& jit, GPRReg receiver, GPRReg 
     isNoReplacedMember.append(jit.branch32(CCallHelpers::NotEqual, wordOf(OBJECT_OFFSETOF(ReplacedMember, name)), identifierNumber));
     jit.load32(wordOf(OBJECT_OFFSETOF(ReplacedMember, structureID)), word);
     isNoReplacedMember.append(jit.branch32(CCallHelpers::NotEqual, Address(receiver, JSCell::structureIDOffset()), word));
-    jit.loadPtr(wordOf(OBJECT_OFFSETOF(ReplacedMember, word)), word);
-    jit.store64(value, Address(word));
+    jit.loadPtr(wordOf(OBJECT_OFFSETOF(ReplacedMember, offsetOfValue)), word);
+    jit.move(receiver, storage);
+    Jump isInline = jit.branchTest64(CCallHelpers::PositiveOrZero, word);
+    jit.loadPtr(Address(receiver, JSObject::butterflyOffset()), storage);
+    isInline.link(&jit);
+    jit.store64(value, BaseIndex(storage, word, CCallHelpers::TimesOne));
     returnAfterStoring(jit, receiver, value);
     isNoReplacedMember.link(&jit);
 }

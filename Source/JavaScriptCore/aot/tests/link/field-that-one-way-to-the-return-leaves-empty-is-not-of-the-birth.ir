@@ -1,8 +1,8 @@
 # If a field that only some ways to the return of the constructor store counted as of the birth, the objects that took the other way would keep their mark for life, and every typed body that met one would go the closed way
-# function register(n) { }  function Node(kind, pos) { register(this); this.kind = kind; if (pos) this.pos = pos; }  new Node(1, 2);
+# function register(n) { sink(n); }  function Node(kind, pos) { register(this); this.kind = kind; if (pos) this.pos = pos; }  new Node(1, 2);
 # a plain function that `new` enters is through with `this` where it returns
 # RUN: summary f1
-# CHECK: construction This fills [] looks-up ["kind", "pos"] seen-from-outside fills-at-end ["kind"]
+# CHECK: construction This fills ["kind"] looks-up ["kind", "pos"]
 # RUN(LINK): link fields mechanisms=all
 # LINK: field L0.0 "kind" {{*}}of-birth
 # RUN(NEVER): link fields mechanisms=all
@@ -41,6 +41,9 @@ function f1 name="Node" module=m0 flags=[HasThis, HasExplicitName] length=2 this
 }
 function f2 name="register" module=m0 length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] {
   b0(v0: anything):
-    v1 = Undefined
-    Return v1
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="sink" [isFreeName]
+    v3 = Call v2, -, v0 calleeName="sink"
+    v4 = Undefined
+    Return v4
 }

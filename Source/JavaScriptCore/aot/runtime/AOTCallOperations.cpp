@@ -27,6 +27,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTStubsCallAdapters.h"
@@ -284,13 +285,24 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     return true;
 }
 
+static bool isNativeConstructor(JSValue parent)
+{
+    JSObject* object = parent.getObject();
+    if (!object)
+        return false;
+    if (object->type() == InternalFunctionType)
+        return true;
+    return object->type() == JSFunctionType && uncheckedDowncast<JSFunction>(object)->isHostFunction() && !object->inherits<JSBoundFunction>();
+}
+
 class SuperCallScope {
     WTF_MAKE_NONCOPYABLE(SuperCallScope);
 public:
     SuperCallScope(VM& vm, JSValue parent, JSValue newTarget)
         : m_state(vm.aotState())
     {
-        if (!parent.isCell() || !newTarget.isCell())
+        m_state.newTargetOfSuperCall = nullptr;
+        if (!isNativeConstructor(parent) || !newTarget.isCell())
             return;
         m_state.parentOfSuperCall = parent.asCell();
         m_state.newTargetOfSuperCall = newTarget.asCell();
@@ -368,7 +380,7 @@ static JSValue constructValue(JSGlobalObject* globalObject, VM& vm, JSValue call
         throwException(globalObject, scope, isParent ? createParentNotAConstructorError(globalObject, callee) : createNotAConstructorError(globalObject, callee, nameOfCalleeAtCallSite(vm)));
         return { };
     }
-    if (auto* errorConstructor = isParent ? dynamicDowncast<ErrorConstructor>(callee) : nullptr; errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
+    if (auto* errorConstructor = dynamicDowncast<ErrorConstructor>(callee); errorConstructor && errorConstructor->realm() == globalObject && newTarget.isObject() && newTarget != callee) {
         Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, errorStructure, asObject(newTarget), errorConstructor);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, ErrorInstance::create(globalObject, structure, arguments.at(0), arguments.at(1), nullptr, TypeNothing, ErrorType::Error, true, asObject(newTarget)));
@@ -433,6 +445,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadArgumentList, JSCell*, (Instance* insta
     if (!words) [[unlikely]]
         throwOutOfMemoryError(globalObject, scope);
     OPERATION_RETURN(scope, words);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTNewListOfArguments, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* words, JSCell* listCell))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewListOfArguments);
+    JSArray* list = cellArgument<JSArray>(listCell, Entry::operationAOTNewListOfArguments);
+    MarkedArgumentBuffer arguments;
+    for (uint32_t index = 0; index < count; ++index)
+        arguments.append(JSValue::decode(words[index]));
+    JSArray* result = constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), arguments);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    appendElementsOfList(globalObject, result, list);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, result);
 }
 
 static JSArray* tryCopyUnmappedArguments(Instance* instance, JSValue arrayLike)
@@ -648,7 +674,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         return codeAndFrame;
     bool stackIsUnobserved = false;
     if (!exception && !rethrownException) {
-        if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+        if (frameRecord->callerFrame->returnPCForInspection() == instance->state->returnAddressOfThrowAfterCleanup()) {
             if (uint64_t kept = instance->state->keptByCleanup)
                 rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
         }
@@ -669,9 +695,12 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto action = Exception::StackCaptureAction::DoNotCaptureStack;
+        // The stack trace may want the site of an earlier throw there. The unwinder below goes by what the stub saved.
+        void* returnPCOfStub = callFrame->rawReturnPC();
         if (!stackIsUnobserved && !rethrownException)
             action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, found.hasLeftRun ? &found : nullptr);
         Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
+        callFrame->setReturnPC(returnPCOfStub);
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             exceptions.thrownValue = JSValue::encode(thrownException);
@@ -726,6 +755,11 @@ static NEVER_INLINE JSValue enterWithManyArguments(VM& vm, const CallData& callD
     return JSValue::decode(vmEntryToJavaScript(const_cast<void*>(callData.compiled.entrypoint), &vm, &protoCallFrame));
 }
 
+static ALWAYS_INLINE JSValue loadArgument(const ArgList& args, size_t index)
+{
+    return JSValue::decode(WTF::opaque(JSValue::encode(args.at(index))));
+}
+
 static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callData, JSObject* callee, JSValue thisSlot, JSCell* context, const ArgList& args)
 {
     switch (args.size()) {
@@ -734,15 +768,15 @@ static ALWAYS_INLINE JSValue enterWithArgumentList(VM& vm, const CallData& callD
     case 1:
         return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0));
     case 2:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1));
     case 3:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2));
     case 4:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3));
     case 5:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3), loadArgument(args, 4));
     case 6:
-        return enterCompiledCode(vm, callData, callee, thisSlot, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4), args.at(5));
+        return enterCompiledCode(vm, callData, callee, thisSlot, context, loadArgument(args, 0), loadArgument(args, 1), loadArgument(args, 2), loadArgument(args, 3), loadArgument(args, 4), loadArgument(args, 5));
     default:
         return enterWithManyArguments(vm, callData, callee, thisSlot, context, args);
     }

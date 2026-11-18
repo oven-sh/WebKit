@@ -27,6 +27,15 @@ struct TypeTestPlansKeptAcrossUnits {
     KindsInLayoutSets kindsInSets;
 };
 
+struct ArrayHeaderTest {
+    static constexpr unsigned shiftOfType = 8 * (JSCell::typeInfoTypeOffset() - JSCell::indexingTypeAndMiscOffset());
+    static constexpr unsigned shiftOfFlags = 8 * (JSCell::typeInfoFlagsOffset() - JSCell::indexingTypeAndMiscOffset());
+    uint32_t mask { 0xffu << shiftOfType | static_cast<uint32_t>(JSC::IsPristine) << shiftOfFlags };
+    uint32_t header { static_cast<uint32_t>(ArrayType) << shiftOfType | static_cast<uint32_t>(JSC::IsPristine) << shiftOfFlags };
+
+    void addStorage(ArrayStorage, bool isWritable);
+};
+
 class TypeTestEmitter final : public OperationEmitter {
 public:
     explicit TypeTestEmitter(CodeGenerator& generator)
@@ -55,6 +64,7 @@ public:
 private:
     using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
+    Condition isCellAmongOccurring(Boxed, uint16_t primitives);
     void leaveUnless(Condition, BlockEdge failure);
     void leave(BlockEdge failure);
     void jump(BlockEdge);
@@ -90,6 +100,7 @@ private:
     bool asksStubForCallable();
 public:
     bool& testsNumbersFirst() { return m_testsNumbersFirst; }
+    std::optional<ArrayHeaderTest>& arrayHeaderTest() { return m_arrayHeaderTest; }
 
 private:
     std::optional<BuiltinID> onlyBuiltinThatPasses(const TypeTestPlan&) const;
@@ -103,6 +114,7 @@ private:
     bool m_nextCaseIsUnlikely { false };
     bool m_isEmittingPerFunctionBranch { false };
     bool m_testsNumbersFirst { false };
+    std::optional<ArrayHeaderTest> m_arrayHeaderTest;
 };
 
 void TypeTestEmitter::testCases(BlockEdge failure, const auto& forEachCase)

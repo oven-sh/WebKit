@@ -1000,6 +1000,26 @@ static void checkerRefusesFrameAddressReadLateBySuspension()
     expectCheckerRefusal(test, checkReferences, FailureKind::FrameAddressAcrossSuspension, { address });
 }
 
+static void checkerRefusesSelectedInnerPointerAcrossSuspension()
+{
+    ProcedureTraits traits;
+    traits.savesFrameOnSuspend = true;
+    TestProcedure test(traits);
+    Output& out = test.out();
+    AbstractHeap storageOfOwner(test.heaps().argumentBuffer.index(), 0, OptionSet<HeapTrait> { HeapTrait::HoldsInnerPointer });
+    Operation* first = out.opaque(test.argumentGPR(0));
+    Operation* second = out.opaque(test.argumentGPR(1));
+    Operation* selected = out.select(first, out.loadPtr(out.address(storageOfOwner, first)), out.loadPtr(out.address(storageOfOwner, second)));
+    PatchOperation* patch = appendPatchForCheckerTest(out, Void, { });
+    patch->append(first, ValueRep::LateColdAny);
+    patch->append(second, ValueRep::LateColdAny);
+    out.ret(out.load64(out.address(test.heaps().argumentBuffer, selected, 2 * sizeof(uint64_t))));
+    prepareForCheckerTest(test);
+
+    patch->setIsSuspension(true);
+    expectCheckerRefusal(test, checkReferences, FailureKind::InnerPointerWithoutOwner, { selected });
+}
+
 static void checkerRefusesShiftedNarrowReferenceWithoutPointer()
 {
     for (bool isMarkedBeforeAllocation : { true, false }) {
@@ -1160,6 +1180,7 @@ std::span<const NativeTest> machineCheckerTests()
         { "machine-checker/rare-safepoint-outside-the-framed-part-without-the-pointer-kept-ahead-of-it-in-its-block"_s, Machine::checkerRefusesRareSafepointOutsideFramedPartWithoutPointerKeptAheadOfItInItsBlock },
         { "machine-checker/shifted-narrow-reference-without-its-pointer"_s, Machine::checkerRefusesShiftedNarrowReferenceWithoutPointer },
         { "machine-checker/frame-address-read-late-by-a-suspension"_s, Machine::checkerRefusesFrameAddressReadLateBySuspension },
+        { "machine-checker/selected-inner-pointer-across-a-suspension"_s, Machine::checkerRefusesSelectedInnerPointerAcrossSuspension },
         { "machine-checker/operand-that-is-not-taken-back"_s, Machine::checkerRefusesOperandThatIsNotTakenBack },
         { "machine-checker/step-that-may-write-the-flags-ahead-of-a-branch-on-overflow"_s, Machine::checkerRefusesStepThatMayWriteFlagsAheadOfBranchOnOverflow },
         { "machine-checker/low-half-of-a-widened-sum-extended-without-code"_s, Machine::checkerRejectsImplicitlyExtendedLowHalfOfSum },

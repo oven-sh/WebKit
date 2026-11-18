@@ -66,6 +66,9 @@ public:
     AppendResult append(JSGlobalObject*, std::span<const Latin1Character>);
     AppendResult append(JSGlobalObject*, std::span<const char16_t>);
     bool tryAppendShortString(JSString*);
+    bool tryAppendAsLatin1(const JSString*);
+    bool holdsWideText() const { return !m_segments.isEmpty(); }
+    bool tryExtendWideText(std::span<const char16_t> units, uint32_t position);
 
     Latin1Character* reserve(JSGlobalObject*, size_t length);
     Latin1Character* tryReserve(size_t length);
@@ -151,6 +154,9 @@ private:
     AppendResult appendCharactersOf(JSGlobalObject*, JSString*);
     AppendResult addSegment(JSGlobalObject*, JSString*);
     template<typename CopyUnits> AppendResult addUnits(JSGlobalObject*, uint32_t length, const CopyUnits&);
+    void widenShortLatin1Text();
+    bool holdsOnlyUnits() const { return m_segments.size() == 1 && !m_segments[0].string && !m_position && m_units.size() == m_lengthOutsideBuffer; }
+    JSString* createStringFromUnits(JSGlobalObject*);
     bool hasRoomForUnits(uint32_t length) const { return length <= maxCopiedWideLength && m_units.size() + length <= maxUnits; }
     bool collapseSegments(JSGlobalObject*);
     void joinPiecesInto(VM&, JSString* all);
@@ -189,14 +195,23 @@ struct StackStringBuilder {
     static constexpr size_t maxBytesWrittenPastLimit = 16;
     static constexpr uint32_t minLengthAppendedByReference = StringBuilderStorage::minLengthAppendedByReference;
 
+    static constexpr size_t maxFurtherStrings = capacity / sizeof(JSString*);
+    static constexpr size_t maxLengthOfHeldStrings = StringBuilderStorage::minLengthAdoptedByFinish;
+
     bool isOnStack() const { return limit == buffer + capacity; }
-    bool holdsOneString() const { return limit == buffer; }
+    bool holdsStrings() const { return limit == buffer; }
+    size_t lengthOfHeldStrings() const { return std::bit_cast<uintptr_t>(&buffer[0]) - std::bit_cast<uintptr_t>(lengthOrigin); }
+    std::span<JSString*> furtherStrings() LIFETIME_BOUND { return unsafeMakeSpan(reinterpret_cast<JSString**>(buffer + maxBytesWrittenPastLimit), numberOfFurtherStrings); }
     std::span<const Latin1Character> charactersOnStack(const Latin1Character* cursor) const LIFETIME_BOUND { return { buffer, cursor }; }
 
     StringBuilderStorage* moveToStorage(JSGlobalObject*, Instance&, const Latin1Character* cursor);
     Latin1Character* didChangeStorage(JSGlobalObject*, StringBuilderStorage&);
     void abandonChangeOfStorage(Instance&, StringBuilderStorage&);
     Latin1Character* holdOneString(JSString*);
+    Latin1Character* tryHoldFurtherString(JSString*, const Latin1Character* cursor);
+    Latin1Character* tryAppendWide(const JSString&, Latin1Character* cursor);
+    void didChangeLengthOutsideBuffer();
+    JSString* joinHeldStrings(JSGlobalObject*);
     JSString* toString(JSGlobalObject*, Instance&, const Latin1Character* cursor);
     JSString* finish(JSGlobalObject*, Instance&, const Latin1Character* cursor, StringBuilderStorage::StringUse);
 
@@ -207,8 +222,11 @@ struct StackStringBuilder {
         StringBuilderStorage* storage;
         JSString* oneString;
     };
+    size_t numberOfFurtherStrings;
     Latin1Character buffer[capacity + maxBytesWrittenPastLimit];
 };
+
+static_assert(!(OBJECT_OFFSETOF(StackStringBuilder, buffer) % sizeof(JSString*)) && !(StackStringBuilder::maxBytesWrittenPastLimit % sizeof(JSString*)));
 
 static_assert(std::is_trivially_default_constructible_v<StackStringBuilder> && !(sizeof(StackStringBuilder) % sizeof(void*)));
 static_assert(StackStringBuilder::capacity + StackStringBuilder::maxBytesWrittenPastLimit >= StringKeyCache::minReadableBytes);

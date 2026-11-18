@@ -153,7 +153,12 @@ bool Modules::isEvictedWithOriginal(ModuleID module) const
 {
     if (!currentInstance(module) || !isUnderActualKey(module) || status(module) != ModuleStatus::Evaluated || m_loadedInPreload.get(module.index()))
         return false;
-    return m_originalsFetchedByTestFiles.get(module.index()) || (host().wasFetchedByTestFile && host().wasFetchedByTestFile(m_instance.globalObject, makeString(m_table.fullPath(module), "?actual"_s)));
+    return wasActualKeyFetched(module);
+}
+
+bool Modules::wasActualKeyFetched(ModuleID file) const
+{
+    return m_originalsFetchedByTestFiles.get(file.index()) || (host().wasFetchedByTestFile && host().wasFetchedByTestFile(m_instance.globalObject, makeString(m_table.fullPath(file), "?actual"_s)));
 }
 
 bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::optional<ModuleID> patched)
@@ -259,6 +264,8 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
             bool wasLoadedByThisTestFile = data(requirer).kind == ModuleKind::CommonJs ? wasFileLoadedByTest(requirer) : wasLoadedByTestFile(requirer);
             if ((asImported.quickGet(imported) && keepsImportersOfTestFile && wasLoadedByThisTestFile) || seen.quickGet(requirer.index()))
                 return;
+            if (m_stashesRestoredByPass.get(requirer.index()))
+                return;
             if (asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer)))
                 return;
             toRelease.append(requirer);
@@ -309,14 +316,20 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
                 if (required == fileOf(mocked) && released.quickGet(requirer.index()))
                     m_mockedFilesWithReleasedRequirers.set(required, true);
             }
-            else if (!(asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer))))
+            else if (!(asImported.quickGet(imported) && ((keepsPackages && isOfPackage(requirer)) || requiresOriginalUnderMock(fileOf(mocked), requirer)))) {
+                if (which == ReleasedImporters::All)
+                    releasePatchedFileAtMockEnd(requirer);
                 retainedRequirers.add(imported, Vector<ModuleID, 2>()).iterator->value.append(requirer);
+            }
         }
     }
     bool mayHaveImportersWithoutInstances = areReadByImportersWithoutInstances(toRelease.span());
     for (ModuleID importer : toRelease) {
-        if (!tryReleaseModule(importer) && !tryReleasePatchedModule(importer))
+        if (!tryReleaseModule(importer) && !tryReleasePatchedModule(importer)) {
+            if (which == ReleasedImporters::All)
+                releasePatchedFileAtMockEnd(fileOf(importer));
             continue;
+        }
         if (data(fileOf(importer)).isReloadable() && runsTestFilesAgain())
             m_requirersThatRunAgain.set(fileOf(importer).index());
         if (!mayHaveImportersWithoutInstances || !hasEvaluatedImporterWithoutInstances(importer))
@@ -1050,6 +1063,12 @@ bool wasReleasedByLoader(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasReleasedByLoader(module);
+}
+
+void letGoUntilEndOfTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->letGoUntilEndOfTestFile(module);
 }
 
 bool willReloadAfterMockRemoval(JSGlobalObject* realm, ModuleID module)

@@ -337,6 +337,11 @@ public:
         return OBJECT_OFFSETOF(WeakMapImpl<WeakMapBucketType>, m_deleteCount);
     }
 
+    static constexpr ptrdiff_t offsetOfInlineStorage()
+    {
+        return OBJECT_OFFSETOF(WeakMapImpl<WeakMapBucketType>, m_inlineStorage);
+    }
+
     static constexpr bool isWeakMap()
     {
         return std::same_as<WeakMapBucketType, JSC::WeakMapBucket<WeakMapBucketDataKeyValue>>;

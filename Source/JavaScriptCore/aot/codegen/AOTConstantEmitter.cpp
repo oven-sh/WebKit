@@ -390,6 +390,15 @@ CellPointer ConstantEmitter::stringConstant(const OperationContext& context, Str
     });
 }
 
+std::optional<CellPointer> ConstantEmitter::stringConstantIfMade(StringID id)
+{
+    std::span<const uint8_t> text = types().bytesOf(id);
+    if (text.empty() || singleLatin1CharacterOf(text) || m_options.recorded.useWideReferences())
+        return std::nullopt;
+    LValue word = m_out.load32(instanceWord(m_heaps.AOTInstance_stringCells, m_mentions.add(NumberSpace::StringCell, id)));
+    return decode(NarrowReference(word));
+}
+
 CellPointer ConstantEmitter::keyConstant(const OperationContext& context, PropertyKeyID key)
 {
     if (liesInThread(key)) {

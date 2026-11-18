@@ -380,28 +380,26 @@ void Program::indexNames(const ParallelLoops& loops)
         numberOfKeys = std::max(numberOfKeys, holder.key.index() + 1);
     Vector<uint32_t>& first = m_derivedTables.firstLayoutWithName;
     first.fill(0, holders.isEmpty() ? 0 : numberOfKeys + 1);
-    for (const Holder& holder : holders)
+    Vector<LayoutID> lastWithName(FillWith { }, numberOfKeys, LayoutID());
+    for (Holder& holder : holders) {
+        LayoutID& last = lastWithName[holder.key.index()];
+        if (last == holder.layout) {
+            holder.layout = { };
+            continue;
+        }
+        last = holder.layout;
         ++first[holder.key.index() + 1];
+    }
     for (size_t index = 1; index < first.size(); ++index)
         first[index] += first[index - 1];
 
     Vector<LayoutID> layoutsByName;
-    layoutsByName.grow(holders.size());
+    layoutsByName.grow(first.isEmpty() ? 0 : first.last());
     Vector<uint32_t> next(first);
-    for (const Holder& holder : holders)
-        layoutsByName[next[holder.key.index()]++] = holder.layout;
-
-    uint32_t numberKept = 0;
-    for (uint32_t key = 0; key < numberOfKeys; ++key) {
-        uint32_t firstOfKey = std::exchange(first[key], numberKept);
-        for (uint32_t place = firstOfKey; place < first[key + 1]; ++place) {
-            if (place == firstOfKey || layoutsByName[place] != layoutsByName[place - 1])
-                layoutsByName[numberKept++] = layoutsByName[place];
-        }
+    for (const Holder& holder : holders) {
+        if (holder.layout)
+            layoutsByName[next[holder.key.index()]++] = holder.layout;
     }
-    if (numberOfKeys)
-        first[numberOfKeys] = numberKept;
-    layoutsByName.shrink(numberKept);
     m_derivedTables.layoutsWithName = WTF::move(layoutsByName);
 }
 

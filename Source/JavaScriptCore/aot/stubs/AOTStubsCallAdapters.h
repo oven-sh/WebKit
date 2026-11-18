@@ -18,6 +18,7 @@ class StubAssembler;
 constexpr StubKey enterClosure() { return StubKey(StubFamily::EnterClosure); }
 constexpr StubKey enterSlimClosure() { return StubKey(StubFamily::EnterSlimClosure); }
 constexpr StubKey enterModuleBody() { return StubKey(StubFamily::EnterModuleBody); }
+constexpr StubKey enterClosureWithLoadedArguments() { return StubKey(StubFamily::EnterClosureWithLoadedArguments); }
 constexpr StubKey enterClosureForConstruct() { return StubKey(StubFamily::EnterClosureForConstruct); }
 constexpr StubKey startModule() { return StubKey(StubFamily::StartModule); }
 constexpr StubKey startModuleThatRunTimeNames() { return StubKey(StubFamily::StartModuleThatRunTimeNames); }

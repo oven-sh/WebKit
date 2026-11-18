@@ -215,6 +215,8 @@ const FieldData* RuntimeLayoutTable::field(VM& vm, const LayoutData& layout, Uni
     CachedField& cached = placeOfCachedField(layout.shape, name);
     if (cached.shape == layout.shape && cached.name == name) [[likely]]
         return cached.field;
+    if (!name->isSymbol() && !identifiersOf(m_state.instance).numberOf(name))
+        return nullptr;
     const FieldData* found = findField(vm, layout, name);
     ASSERT(!found || !parseIndex(PropertyName(name)));
     name->ref();
@@ -876,7 +878,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES StructureTable::Variant StructureTable::usualVari
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm, const LayoutData& layout, const Variant& variant)
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm, const LayoutData& layout, Variant& variant)
 {
     JSGlobalObject* realm = m_state.instance.globalObject;
     CompiledStructure*& templateStructure = m_templateStructures[variant.hasOtherPrototype];
@@ -891,9 +893,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
     RELEASE_ASSERT(!variant.hasSpareWord || !layout.hasExtraPropertiesSlot);
     RELEASE_ASSERT(!variant.hasExtraProperties || !(layout.hasExtraPropertiesSlot || variant.hasSpareWord) == !!variant.heldExtraProperties);
     RELEASE_ASSERT(!variant.heldExtraProperties || (variant.hasExtraProperties && !variant.extraPropertiesStructure));
-    Variant parameters = variant;
-    parameters.realm = realm;
-    CompiledStructure* structure = CompiledStructure::createForObject(vm, *templateStructure, parameters);
+    variant.realm = realm;
+    CompiledStructure* structure = CompiledStructure::createForObject(vm, *templateStructure, variant);
     bool hasNonConfigurableField = variant.hasExtraProperties && std::ranges::any_of(layout.fields(), [](const FieldData& field) {
         return field.attributes() & PropertyAttribute::DontDelete;
     });
@@ -902,7 +903,7 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::create(VM& vm,
     return structure;
 }
 
-ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout, const Variant& usual)
+ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::createUsual(VM& vm, const LayoutData& layout, Variant& usual)
 {
     CompiledStructure* created = create(vm, layout, usual);
     uint32_t& known = m_structures[layout.shape];
@@ -931,7 +932,8 @@ ALWAYS_INLINE_INTO_OTHER_FILES CompiledStructure* StructureTable::usualStructure
         return known;
     RELEASE_ASSERT(m_tables.hasLayoutForShape(shape));
     const LayoutData& layout = m_tables.layoutForShape(shape);
-    return createUsual(vm, layout, usualVariantOf(vm, layout));
+    Variant usual = usualVariantOf(vm, layout);
+    return createUsual(vm, layout, usual);
 }
 
 void StructureTable::holdUsualStructure(uint32_t shape)
@@ -950,7 +952,8 @@ CompiledStructure* StructureTable::structureForFirstObject(VM& vm, uint32_t shap
     const LayoutData& layout = m_tables.layoutForShape(shape);
     if (!m_weakShapes.quickSet(shape))
         m_listOfWeakShapes.append(shape);
-    return createUsual(vm, layout, usualVariantOf(vm, layout));
+    Variant usual = usualVariantOf(vm, layout);
+    return createUsual(vm, layout, usual);
 }
 
 CompiledStructure* StructureTable::objectStructure(VM& vm, uint32_t shape)
@@ -961,7 +964,8 @@ CompiledStructure* StructureTable::objectStructure(VM& vm, uint32_t shape)
 CompiledStructure* StructureTable::objectStructure(VM& vm, uint32_t shape, JSValue prototype)
 {
     RELEASE_ASSERT(m_tables.hasLayoutForShape(shape));
-    return findOrCreate(vm, Variant { .prototype = prototype, .layout = &m_tables.layoutForShape(shape) });
+    Variant variant { .prototype = prototype, .layout = &m_tables.layoutForShape(shape) };
+    return findOrCreate(vm, variant);
 }
 
 StructureTable::Variant StructureTable::variantOf(const CompiledStructure& structure)
@@ -1006,30 +1010,38 @@ CompiledStructure* StructureTable::find(const Variant& variant) const
     return found;
 }
 
-CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested)
+CompiledStructure* StructureTable::findOrCreate(VM& vm, Variant& variant)
 {
     // outOfLineKeyOrder may point into a Structure that nothing else keeps alive.
     // A collection that is put off runs at the next poll or allocation, not when this returns: this frame and the caller's hold Variants,
     // and an empty std::optional leaves its payload unwritten, so the conservative scan would keep whatever stale pointers lie there alive.
     DeferGCForAWhile deferGC(vm);
-    const LayoutData& layout = *requested.layout;
+    const LayoutData& layout = *variant.layout;
     holdUsualStructure(layout.shape);
     CompiledStructure* usualStructure = usualStructureIfExists(layout.shape);
     RELEASE_ASSERT(m_tables.hasLayoutForShape(layout.shape));
-    Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
-    Variant variant = requested;
+    JSValue usualPrototype;
+    bool usualHasOtherPrototype;
+    if (usualStructure) {
+        usualPrototype = usualStructure->storedPrototype();
+        usualHasOtherPrototype = usualStructure->hasOtherPrototype();
+    } else {
+        Variant usual = usualVariantOf(vm, layout);
+        usualPrototype = usual.prototype;
+        usualHasOtherPrototype = usual.hasOtherPrototype;
+    }
     bool isListedVariant = isListed(variant);
-    bool mayBeFiled = (usual.prototype == variant.prototype || !m_state.objects->classes.takeWordThatNothingHasAskedBelow(variant.prototype)) && isListedVariant;
+    bool mayBeFiled = (usualPrototype == variant.prototype || !m_state.objects->classes.takeWordThatNothingHasAskedBelow(variant.prototype)) && isListedVariant;
     uint32_t hash = isListedVariant ? VariantMaps::hashOf(variant) : 0;
     CompiledStructure* existing = nullptr;
-    if (!variant.hasOtherPrototype && !usual.hasOtherPrototype && usual.prototype != variant.prototype) {
+    if (!variant.hasOtherPrototype && !usualHasOtherPrototype && usualPrototype != variant.prototype) {
         if (mayBeFiled)
             existing = m_variants->findPreferringPristine(variant, hash);
         JSObject* firstAbove = variant.prototype.getObject();
         if (!existing)
             variant.hasOtherPrototype = !firstAbove || !m_state.objects->classes.takesObjectsLaidBelowPrototype(vm, layout, firstAbove);
     } else {
-        variant.hasOtherPrototype |= usual.hasOtherPrototype;
+        variant.hasOtherPrototype |= usualHasOtherPrototype;
         if (mayBeFiled)
             existing = usualStructure && VariantMaps::describes(variant, *usualStructure) ? usualStructure : m_variants->find(variant, hash);
     }
@@ -1038,9 +1050,10 @@ CompiledStructure* StructureTable::findOrCreate(VM& vm, const Variant& requested
             existing->didFindKeyOrderAgain();
         return existing;
     }
-    ASSERT(layout.shape == usual.layout->shape);
-    if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.hasSpareWord && !variant.outOfLineKeyOrder && variant.prototype == usual.prototype && variant.hasOtherPrototype == usual.hasOtherPrototype)
+    if (!variant.mayBePrototype && !variant.hasExtraProperties && !variant.hasSpareWord && !variant.outOfLineKeyOrder && variant.prototype == usualPrototype && variant.hasOtherPrototype == usualHasOtherPrototype) {
+        Variant usual = usualStructure ? variantOf(*usualStructure) : usualVariantOf(vm, layout);
         return createUsual(vm, layout, usual);
+    }
     CompiledStructure* created = create(vm, layout, variant);
     if (isListedVariant) {
         Locker locker { m_state.caches->lock() };
@@ -1067,6 +1080,8 @@ CompiledStructure* StructureTable::withPrototype(VM& vm, const CompiledStructure
     variant.prototype = prototype;
     CompiledStructure* structure = findOrCreate(vm, variant);
     constexpr uint32_t pristineBitInBlob = IsPristine << 16;
+    if (current.layout().marksOtherPrototypes && structure->isPristine())
+        return structure;
     if (structure->isPristine() && structure->typeInfoBlob() == (current.typeInfoBlob() | pristineBitInBlob) && !current.mayBePrototype() && !belongsToOneObject(variant))
         recent = { encodedPrototype, before, structure->id().bits() };
     else if (!structure->isPristine() && structure->typeInfoBlob() == current.typeInfoBlob() && !current.mayBePrototype() && !belongsToOneObject(variant))
@@ -1143,7 +1158,8 @@ CompiledStructure* StructureTable::holdingExtraProperties(VM& vm, const Compiled
 CompiledStructure* StructureTable::withoutHeldStructure(VM& vm, const CompiledStructure& current)
 {
     ASSERT(current.heldStructure());
-    return findOrCreate(vm, variantWithKeyOrderOf(current));
+    Variant variant = variantWithKeyOrderOf(current);
+    return findOrCreate(vm, variant);
 }
 
 static uint32_t sizeWithSpareWord(const LayoutData& layout)
@@ -1282,10 +1298,15 @@ void StructureTable::rememberKeysOfOrderWithoutNumber(StructureID structure, uin
     m_keysOfOrdersWithoutNumber[placeOfKeys(structure, countAndKind)] = { structure, countAndKind, list };
 }
 
-static uint64_t orderAndShapeWordsFor(const AllocationData& allocation)
+static bool marksInstances(const ProgramTables& tables, uint32_t shape, const Structure* structure)
+{
+    return shape < tables.firstEnvironmentShape && structure->isPristine() && tables.layoutForShape(shape).marksOtherPrototypes;
+}
+
+static uint64_t orderAndShapeWordsFor(const AllocationData& allocation, bool bearsMark)
 {
     uint32_t shapeWord = shapeWordOf(allocation.shape);
-    return static_cast<uint64_t>(allocation.isBornUnfinished ? shapeWord & ~shapeWordIsUnmarked : shapeWord) << 32 | allocation.orderWord();
+    return static_cast<uint64_t>(allocation.isBornUnfinished || bearsMark ? shapeWord & ~shapeWordIsUnmarked : shapeWord) << 32 | allocation.orderWord();
 }
 
 static bool fillsSameRecord(const ProgramTables& tables, uint32_t first, uint32_t second)
@@ -1364,9 +1385,11 @@ AllocationSiteRecord& StructureTable::fillAllocationSite(VM& vm, uint32_t number
         m_state.objects->classes.holdMethodsStoredFirst(vm, m_tables.layoutForShape(allocation.shape), structure->storedPrototype());
     CompleteSubspace& space = kind == AllocatedCellKind::Object ? vm.cellSpace() : *vm.heap.aotClosureSpace<SubspaceAccess::OnMainThread>();
     void* allocator = space.allocatorFor(allocation.size(), AllocatorForMode::EnsureAllocator).localAllocator();
+    if (kind == AllocatedCellKind::Object && allocation.size() <= MarkedSpace::preciseCutoff)
+        m_state.instance.objects.cellAllocators[roundUpToMultipleOf<MarkedSpace::sizeStep>(allocation.size()) / MarkedSpace::sizeStep] = allocator;
     record = AllocationSiteRecord {
         .header = kind == AllocatedCellKind::Environment ? Environment::headerFor(structure, allocation.shape) : cellHeaderFor(structure),
-        .orderAndShapeWords = orderAndShapeWordsFor(allocation),
+        .orderAndShapeWords = orderAndShapeWordsFor(allocation, kind == AllocatedCellKind::Object && marksInstances(m_tables, allocation.shape, structure)),
         .allocator = kind == AllocatedCellKind::Object && m_shapesWithGrownCells.quickGet(allocation.shape) ? grownCellAllocator(record) : allocator ? allocator : &m_allocatorWithoutRoom,
         .prototype = kind == AllocatedCellKind::Object && !m_tables.layoutForShape(allocation.shape).impossibleMutations().contains(ObjectMutation::ConstructDirectly) ? static_cast<uint64_t>(JSValue::encode(structure->storedPrototype())) : 0,
     };
@@ -1386,7 +1409,10 @@ void StructureTable::predictStructure(VM&, uint32_t number, CompiledStructure* s
     if (!usual || !record || !usual->hasOtherPrototype() || structureIDOf(number) != usual->id())
         return;
     record->header = cellHeaderFor(structure);
+    record->orderAndShapeWords = orderAndShapeWordsFor(allocation, marksInstances(m_tables, allocation.shape, structure));
     record->prototype = static_cast<uint64_t>(JSValue::encode(structure->storedPrototype()));
+    if (auto grown = m_grownCells.find(record); grown != m_grownCells.end())
+        grown->value->allocatorAndMark = 0;
     m_writtenRecords.record(record);
     if (noteWhetherLivesWhilePrototypeLives(structure->layout()))
         didNameStructureThatLivesWhilePrototypeLives(*record);
@@ -1441,8 +1467,9 @@ ALWAYS_INLINE_INTO_OTHER_FILES AllocationSiteRecord StructureTable::recordForObj
         return fillAllocationSite(vm, number);
     const AllocationData allocation = m_tables.allocations()[number];
     AllocationSiteRecord result = emptyAllocationSiteRecord();
-    result.header = cellHeaderFor(structureForFirstObject(vm, allocation.shape));
-    result.orderAndShapeWords = orderAndShapeWordsFor(allocation);
+    Structure* structure = structureForFirstObject(vm, allocation.shape);
+    result.header = cellHeaderFor(structure);
+    result.orderAndShapeWords = orderAndShapeWordsFor(allocation, allocatedCellKindOf(m_tables, allocation.shape) == AllocatedCellKind::Object && marksInstances(m_tables, allocation.shape, structure));
     return result;
 }
 

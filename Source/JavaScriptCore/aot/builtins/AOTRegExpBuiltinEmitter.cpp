@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTAccessEmitter.h"
 #include "AOTConstantEmitter.h"
 #include "AOTRegExpFlags.h"
 #include "AOTResolvedCallEmitter.h"
@@ -36,6 +37,7 @@ T RegExpBuiltinEmitter::matchInPlace(const InlineCall& call, RegExpMatch match, 
     match.isHeld = true;
     match.calledBuiltin = functionOf(call.overload());
     match.isPrivate = call.parameterWord(1) & privateRegExpParameter;
+    match.isExpected = call.parameterWord(1) & expectedRegExpParameter;
     ResolvedCallEmitter& resolved = emitter<ResolvedCallEmitter>();
     const RegExpMatchPlan* plan = resolved.matchPlanOf(call.context().block(), match);
     return plan ? resolved.matchInPlace<T>(call.context(), *plan, match, answer, miss, matchByCall) : matchByCall();
@@ -160,6 +162,14 @@ void RegExpBuiltinEmitter::generateStringReplaceAll(const InlineCall& call)
     finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::StringReplaceAllString, { string, pattern, cellOperand(replacement) }), stringType);
 }
 
+bool RegExpBuiltinEmitter::storesElementIntoResult(const InlineCall& call)
+{
+    if (!call.value() || !emitter<AccessEmitter>().storesElementInto(call.value()->id()))
+        return false;
+    build().statistics().count(StatisticID::StringsSplitWithOwnStorage);
+    return true;
+}
+
 void RegExpBuiltinEmitter::generateStringSplit(const InlineCall& call)
 {
     CellPointer string = cellOperand(call.receiver());
@@ -171,7 +181,7 @@ void RegExpBuiltinEmitter::generateStringSplit(const InlineCall& call)
         if (typeOf(limitArgument).integers.minimum < 0)
             missUnless(call, greaterThanOrEqual(limit, word32(0)));
     }
-    RuntimeOperation operation = takesRegExp(call) ? RuntimeOperation::StringSplitRegExp : RuntimeOperation::StringSplitString;
+    RuntimeOperation operation = takesRegExp(call) ? RuntimeOperation::StringSplitRegExp : storesElementIntoResult(call) ? RuntimeOperation::StringSplitWithOwnStorage : RuntimeOperation::StringSplitString;
     finish(call, callOperation<CellPointer>(call.context(), operation, { string, separator, limit }, { .calledBuiltin = takesRegExp(call) ? functionOf(call.overload()) : BuiltinID() }), types().at(types().builtinClass(BuiltinClasses::Array)));
 }
 

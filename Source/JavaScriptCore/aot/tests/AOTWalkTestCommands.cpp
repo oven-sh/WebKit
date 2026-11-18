@@ -16,6 +16,7 @@
 #include "AOTTypeText.h"
 #include "AOTWalk.h"
 #include <wtf/StringPrintStream.h>
+#include <wtf/Threading.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -410,6 +411,51 @@ static void runWalkWhereEveryClosureStandsBehindCopiesCommand(TestCommandContext
     }
 }
 
+static void runWalkWhileKeptListsAreDroppedCommand(TestCommandContext& context)
+{
+    static constexpr unsigned enoughListsDropped = 2000;
+    static constexpr unsigned mostWalks = 20000;
+    std::optional<Vector<CodeUnit>> units = unitsInOrderOfWords(*context.program, context.arguments, context.out);
+    if (!units)
+        return;
+    StagedBuild stage = context.stage();
+    const Facts* facts = stage.prepared() ? stage.facts() : nullptr;
+    if (!facts)
+        return;
+    auto textOf = [&](CodeUnit unit) {
+        StringPrintStream text;
+        if (const Code* code = stage.code(unit))
+            printCode(text, CodeTextContext { stage.program(), stage.types() }, *code);
+        return text.toString();
+    };
+    for (CodeUnit unit : *units) {
+        String text = textOf(unit);
+        Vector<std::unique_ptr<const KeptWithBodyIndex>> dropped;
+        std::atomic<unsigned> numberOfListsDropped { 0 };
+        std::atomic<bool> walksAreDone { false };
+        Ref<Thread> dropsLists = Thread::create("AOT walk test"_s, [&] {
+            while (!walksAreDone.load()) {
+                for (uint32_t function = 0; function < stage.program().functions.size(); ++function) {
+                    const BodyIndex* body = facts->bodies().find(FunctionID(function));
+                    std::unique_ptr<const KeptWithBodyIndex> kept = body ? body->takeKeptByWalk() : nullptr;
+                    if (!kept)
+                        continue;
+                    dropped.append(WTF::move(kept));
+                    numberOfListsDropped.store(dropped.size());
+                }
+            }
+        });
+        bool someWalkMadeOtherCode = false;
+        for (unsigned walk = 0; walk < mostWalks && numberOfListsDropped.load() < enoughListsDropped && !someWalkMadeOtherCode; ++walk)
+            someWalkMadeOtherCode = textOf(unit) != text;
+        walksAreDone.store(true);
+        dropsLists->waitForCompletion();
+        context.out.print("code "_s);
+        printCodeUnit(context.out, unit);
+        context.out.println(text.isEmpty() ? ": the walk failed"_s : someWalkMadeOtherCode ? ": a walk made other code"_s : ": every walk made the same code"_s);
+    }
+}
+
 static ASCIILiteral nameOfWalkNoteKind(WalkNoteKind kind)
 {
     switch (kind) {
@@ -480,6 +526,7 @@ std::span<const TestCommand> walkTestCommands()
         { "why-closed"_s, runWhyClosedCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "walk-where-handler-edges-take-stand-ins"_s, runWalkWhereHandlerEdgesTakeStandInsCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "walk-where-every-closure-stands-behind-copies"_s, runWalkWhereEveryClosureStandsBehindCopiesCommand, ProgramOfCommand::AsWritten, "unit.."_s },
+        { "walk-while-kept-lists-are-dropped"_s, runWalkWhileKeptListsAreDroppedCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "notes"_s, runNotesCommand, ProgramOfCommand::AsWritten, "unit.."_s },
         { "code-round-trip"_s, runCodeRoundTripCommand },
         { "verify-code"_s, runVerifyCodeCommand },

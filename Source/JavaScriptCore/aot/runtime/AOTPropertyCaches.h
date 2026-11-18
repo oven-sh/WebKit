@@ -42,7 +42,7 @@ struct State;
 class AddedExtraPropertiesBesideTable {
 public:
     bool isEmpty() const { return !m_numberFilled; }
-    NEVER_INLINE const AddedExtraProperty* find(StructureID structureID, UniquedStringImpl* name)
+    NEVER_INLINE AddedExtraProperty* find(StructureID structureID, UniquedStringImpl* name)
     {
         AddedExtraProperty& place = placeOf(structureID, name);
         return place.name ? &place : nullptr;
@@ -428,14 +428,23 @@ public:
     bool wasChangedOnSomeChain(uint32_t identifierNumber) const { return m_namesChangedOnChains[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     bool storeCreatesOwnField(const Object&, uint32_t identifierNumber) const;
     void didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull);
+    bool mayHaveNameEqualTo(JSGlobalObject*, JSObject*, const JSString& key);
     bool mayObjectPrototypeStopStore(uint32_t identifierNumber) const { return m_objectPrototypeStoreStoppers[identifierNumber / 64] >> identifierNumber % 64 & 1; }
     const AbsenceFilter& absenceFilterFor(StructureID id) const { return m_absenceFilters[AbsenceFilter::indexFor(id.bits())]; }
     void rememberNameOfText(UniquedStringImpl*);
+    void rememberNameOfWideText(UniquedStringImpl*);
     const JSCell*& lastKeyWithoutAtomLike(const JSCell* key) { return m_tables.keysThatCameWithoutAtom[std::bit_cast<uintptr_t>(key) / MarkedBlock::atomSize % std::tuple_size_v<decltype(Tables::keysThatCameWithoutAtom)>]; }
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
     bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
+
+    Structure* structureWithFirstElement(StructureID before, IndexingType shape) const
+    {
+        const FirstElementTransition& entry = m_tables.firstElementTransitions[FirstElementTransition::indexFor(before, shape)];
+        return entry.structureIDBefore == before.bits() && entry.shape == shape ? entry.after : nullptr;
+    }
+    void rememberFirstElement(StructureID before, Structure* after);
 
     size_t removeDeadEntries(VM&, CollectionScope);
 
@@ -444,6 +453,10 @@ private:
 
     void didChangeFilteredObject(JSObject* changed, UniquedStringImpl* uidOrNull);
     void forgetCreations();
+    void rememberNameOfText(const NameOfText&);
+
+    NameShapesOfStructure shapesBeforeListing(JSGlobalObject*, Structure*) const;
+    NameShapes listOwnNames(Structure*) const;
 
     struct Tables {
         std::array<AbsenceFilter, AbsenceFilter::numberOfFilters> absenceFilters;
@@ -452,7 +465,11 @@ private:
         BitPerName objectPrototypeStoreStoppers;
         std::array<uint8_t, MissesOfPairs::numberOfCounters> missesOfPairs;
         std::array<NameOfText, NameOfText::numberOfEntries> namesOfTexts;
+        std::array<uint8_t, NameOfText::numberOfPairs> numbersOfNamesRemembered;
         std::array<const JSCell*, 256> keysThatCameWithoutAtom;
+        std::array<NameShapesOfStructure, NameShapesOfStructure::numberOfEntries> nameShapes;
+        NameShapes nameShapesOfObjectPrototypes;
+        std::array<FirstElementTransition, FirstElementTransition::numberOfEntries> firstElementTransitions;
     };
 
     VM& m_vm;
@@ -482,6 +499,14 @@ struct CachedAccess {
 };
 
 void initializePropertyCacheWords(Instance&);
+
+struct ShortArrayName {
+    static constexpr size_t numberOfPlaces = 64;
+    static constexpr unsigned mostElements = 4;
+
+    uint64_t elements { 0 };
+    RefPtr<AtomStringImpl> name;
+};
 
 class PropertyCaches {
     WTF_MAKE_NONCOPYABLE(PropertyCaches);
@@ -513,12 +538,23 @@ public:
         m_functionAllocationsMayBeFilled = true;
         m_functionAllocationEntries[FunctionAllocationEntry::placeOf(birth.executable)] = birth;
     }
+    void remember(const ClosureAddition& addition)
+    {
+        m_closureAdditionsMayBeFilled = true;
+        m_closureAdditions[addition.place()] = addition;
+    }
     void remember(const StringSwitchTarget& target)
     {
         m_switchTargetsMayBeFilled = true;
         m_switchTargets[StringSwitchTarget::placeOf(target.string, target.instruction)] = target;
     }
+    ShortArrayName& placeOfShortArray(uint64_t elements)
+    {
+        static_assert(ShortArrayName::numberOfPlaces == 1 << 6);
+        return m_shortArrayNames[(elements * 0x9e3779b97f4a7c15) >> 58];
+    }
     void remember(const FieldReturn& back) { placeOfReturn(back.structureBefore, back.name) = back; }
+    ProxyHandlerTraps& proxyHandlerTraps(StructureID handler) { return m_proxyHandlerTraps[(handler.bits() >> StructureRowWords::granuleShift) % ProxyHandlerTraps::numberOfPlaces]; }
     const FieldReturn* findFieldReturn(StructureID structureID, uint32_t name)
     {
         const FieldReturn& back = placeOfReturn(structureID, name);
@@ -544,7 +580,7 @@ public:
         else
             m_addedExtraPropertiesBesideTable.remember(added);
     }
-    const AddedExtraProperty* findAddedExtraProperty(StructureID structureID, UniquedStringImpl* name)
+    AddedExtraProperty* findAddedExtraProperty(StructureID structureID, UniquedStringImpl* name)
     {
         AddedExtraProperty& added = placeOf(structureID, name);
         if (added.name == name && added.structureBefore == structureID) [[likely]]
@@ -556,13 +592,16 @@ public:
     void fillSiteCacheFromTables(SiteCache, JSCell* base, uint32_t identifierNumber, SlotAccess);
     void fillStoreSiteCache(SiteCache, Structure*, UniquedStringImpl*, PropertyOffset);
     bool fillFromHeldValue(uint32_t place, SiteUse, Object&, UniquedStringImpl*, bool stubFollowsFurtherAnswers);
-    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false, bool testsForPresence = false);
+    void fillSiteAnswers(uint32_t place, JSCell* base, uint32_t identifierNumber, SiteUse, bool stubFollowsFurtherAnswers = false, bool stubJumpsToArmOfAnswer = false, bool testsForPresence = false, bool readsForOtherReceiver = false);
     void fileOwnPlainValueUnlessFiled(JSObject*, uint32_t identifierNumber);
     bool mayReadDictionary(Structure*);
-    static ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&, bool usesWideReferences);
-    void claimAndFillReadGroupRow(JSValue, ReadGroupCache&, uint32_t numberOfReads);
-    void fillReadGroupPlace(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index);
+    std::optional<uint16_t> holderOfReadGroup(JSObject&, const ReadGroupCache&, uint32_t numberOfReads);
+    ReadGroupCache::Row* claimReadGroupRow(JSValue, ReadGroupCache&, uint32_t numberOfReads);
+    void claimAndFillReadGroupRow(JSValue, ReadGroupCache&, uint32_t numberOfReads, uint32_t optionalReads);
+    void fillReadGroupPlace(JSCell*, uint32_t identifierNumber, ReadGroupCache::Row&, uint32_t index, bool mayBeAbsent);
+    bool isAbsentFromPlainObject(JSObject*, UniquedStringImpl*);
     bool fillAboveFieldLeftOut(uint32_t place, SiteUse, Object&, const CachedName&);
+    bool structureSaysFieldIsAbsent(Structure&, const CachedName&);
     JSCell* keyForTraps(UniquedStringImpl*);
     void prepareHoldersBeforeLookupsUnder(Symbol*, JSObject* function);
     JSObject* preparationBeforeLookupsUnder(UniquedStringImpl* uid) const { return m_preparationsBeforeLookups.isEmpty() ? nullptr : m_preparationsBeforeLookups.get(uid).function; }
@@ -642,14 +681,18 @@ private:
     EntriesBesideTable<FieldExit, uint64_t> m_fieldExitsBesideTable;
     FieldReturn& placeOfReturn(StructureID structureID, uint32_t name) { return m_fieldReturns[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldReturn::numberOfPlaces]; }
     std::array<FieldReturn, FieldReturn::numberOfPlaces> m_fieldReturns { };
+    std::array<ProxyHandlerTraps, ProxyHandlerTraps::numberOfPlaces> m_proxyHandlerTraps { };
     std::span<PrototypeChainFilter, PrototypeChainFilter::numberOfFilters> m_prototypeChainFilters;
     std::span<StringSwitchTarget, StringSwitchTarget::numberOfTargets> m_switchTargets;
     std::span<FunctionAllocationEntry, FunctionAllocationEntry::numberOfBirths> m_functionAllocationEntries;
+    std::span<ClosureAddition, ClosureAddition::numberOfPlaces> m_closureAdditions;
     uint8_t m_switchTargetsMayBeFilled { false };
     uint8_t m_functionAllocationsMayBeFilled { false };
+    uint8_t m_closureAdditionsMayBeFilled { false };
     AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
     std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
     AddedExtraPropertiesBesideTable m_addedExtraPropertiesBesideTable;
+    std::array<ShortArrayName, ShortArrayName::numberOfPlaces> m_shortArrayNames { };
     std::atomic<bool> m_shouldForgetMisses { false };
 };
 
@@ -662,6 +705,7 @@ public:
     explicit FirstAdditions(State&);
 
     bool shouldMakeStructure(Structure*, UniquedStringImpl*);
+    bool recordAddition(Structure*, UniquedStringImpl*);
     void didMakeStructure(Structure* made) { m_structureMade = made->id(); }
     void didBeginToFill(VM&, JSObject*, Structure* structureBefore);
     void finishFilling(VM&);

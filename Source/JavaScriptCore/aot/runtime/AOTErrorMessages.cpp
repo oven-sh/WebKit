@@ -78,7 +78,7 @@ static String findQuotedSource(ModuleID module, LineColumn place)
         column = row.isOnSameLine ? column + row.columnChange : row.column;
         start += row.startChange;
         if (line == place.line && column == place.column)
-            return quotedSourceBytes(static_cast<uint32_t>(start), row.length).transform([](std::span<const Latin1Character> text) { return String(text); }).value_or(String());
+            return String::fromUTF8ReplacingInvalidSequences(tables.quotedSourceText().subspan(static_cast<size_t>(start), row.length));
     }
     return { };
 }
@@ -617,9 +617,19 @@ String deletionOfFoldedMemberMessage(const String& property, LockedIn lockedIn)
     return deletionFromLockedBuiltinMessage(property);
 }
 
+static String nameOfBuiltinFunction(UniquedStringImpl* uid)
+{
+    return makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s);
+}
+
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
 {
-    return assignmentToLockedBuiltinMessage(makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s));
+    return assignmentToLockedBuiltinMessage(nameOfBuiltinFunction(uid));
+}
+
+String deletionOfInheritedNameMessage(UniquedStringImpl* uid)
+{
+    return deletionFromLockedBuiltinMessage(nameOfBuiltinFunction(uid));
 }
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lockedIn)

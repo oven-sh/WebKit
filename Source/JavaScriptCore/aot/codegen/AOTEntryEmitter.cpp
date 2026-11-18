@@ -223,12 +223,18 @@ static bool rowOfTailCallsThroughEntryEnds(const CodeGenerationInputs& inputs, C
     return unit.role == CodeRole::GenericCallEntry && inputs.plan.endsItsTailCalls(unit.function);
 }
 
+static bool returnsCaptureThrough(const CodeGenerationInputs& inputs, CodeUnit unit)
+{
+    return unit.role == CodeRole::GenericCallEntry && inputs.plan.conventions().of(unit.function).returnsCapture && !numberOfRegisterParameters(inputs, unit);
+}
+
 EntryDescription describeEntry(const CodeGenerationInputs& inputs, CodeUnit unit)
 {
     return {
         .numberOfParameters = numberOfRegisterParameters(inputs, unit),
         .borrowedArguments = argumentsBorrowedThrough(inputs, unit),
         .endsItsTailCalls = rowOfTailCallsThroughEntryEnds(inputs, unit),
+        .returnsCapture = returnsCaptureThrough(inputs, unit),
         .isGenericEntrypoint = isGenericEntry(unit.role),
     };
 }

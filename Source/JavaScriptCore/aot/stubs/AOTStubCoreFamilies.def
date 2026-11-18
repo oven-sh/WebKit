@@ -33,6 +33,7 @@ v(AllocateInstanceOutOfLine, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, No
 v(AllocateExtension, CalledByCode, (), CountAxis, 1, 16, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(ObjectFields, AllocatorState) | writes(ObjectFields, AllocatorState), AllocateExtension)
 v(AllocateExtensionSlow, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, AllocateExtensionSlow)
 v(NewTypedArray, CalledByCode, (OfNumber, OfWholeNumber), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewTypedArray)
+v(NewTypedArrayOfArray, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, NewTypedArrayOfArray)
 v(NewDictionary, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewDictionary)
 
 v(NewClosure, CalledByCode, (), CountAxis | OperandRegisterAxis | SlowPathRecurs, 0, ClosureRequest::maxNumberOfCaptures, AllISAs, NoISA, FewAlternateResults, Never, MayCall, ClobbersOnlyScratch, reads(AllocatorState) | writes(AllocatorState), NewClosure)
@@ -48,6 +49,7 @@ v(StoreStringConstant, CalledByCode, (), CountAxis | OperandRegisterAxis, 0, Stu
 
 v(ToBoolean, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), ToBoolean)
 v(ValueIsTruthy, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
+v(LargeValueIsTruthy, InternalEntry, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), ValueIsTruthy)
 v(IsCallableCell, CalledByCode, (), OperandRegisterAxis, 0, 0, AllISAs, NoISA, AnyAllocatableRegister, Never, MayCall, ClobbersOnlyScratch, NoEffects, IsCallableCell)
 v(TypeOf, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, NoEffects, TypeOf)
 v(ThrowUnlessCallable, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ThrowUnlessCallable)
@@ -72,6 +74,8 @@ AOT_STUB_FRONT_END(ToString, ToStringFrontEnd)
 v(StringOfAnyValueFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringOfAnyValueFrontEnd)
 AOT_STUB_FRONT_END(StringOfAnyValue, StringOfAnyValueFrontEnd)
 
+v(SaveFPRs, InternalEntry, (), NoAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, SaveFPRs)
+v(RestoreFPRs, InternalEntry, (), NoAxis, 0, 0, X86_64Only, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, NoEffects, RestoreFPRs)
 v(MoveFewBytes, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(TypedArrayElements) | writes(TypedArrayElements), MoveFewBytes)
 v(ShiftFewElements, CalledByCode, (Values, Doubles), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, AsOperation, ShiftFewElements)
 v(ShiftArrayStart, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, AsOperation, ShiftArrayStart)
@@ -85,8 +89,8 @@ v(PutByValAtIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoIS
 v(PutByValAtConstantIndex, CalledByCode, (Strict, Sloppy), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByVal)
 v(PutByValAtKnownIndex, CalledByCode, (Strict, Sloppy), FormAxis | CountAxis, 0, StubKey::maxCount, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValAtKnownIndex)
 v(StoreElementOfCompiledObject, InternalEntry, (Strict, Sloppy, Define), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StoreElementOfCompiledObject)
-v(GetByValExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
-v(GetByValAtIndexExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
+v(GetByValExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array, Characters), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
+v(GetByValAtIndexExpecting, CalledByCode, (Int32Array, Uint8Array, Float64Array, Characters), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, GetByValExpecting)
 v(PutByValExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, StrictFloat64Array, SloppyInt32Array, SloppyUint8Array, SloppyFloat64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
 v(PutByValAtIndexExpecting, CalledByCode, (StrictInt32Array, StrictUint8Array, StrictFloat64Array, SloppyInt32Array, SloppyUint8Array, SloppyFloat64Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, PutByValExpecting)
 
@@ -126,6 +130,14 @@ AOT_STUB_FRONT_END(SuperConstruct, SuperConstructFrontEnd)
     DataViewSetUint16, \
     DataViewSetUint32, \
     DataViewSetUint8, \
+    DateGetDate, \
+    DateGetDay, \
+    DateGetFullYear, \
+    DateGetHours, \
+    DateGetMinutes, \
+    DateGetMonth, \
+    DateGetSeconds, \
+    DateGetTime, \
     FunctionBind, \
     IsNaN, \
     JSONStringify, \
@@ -182,6 +194,7 @@ AOT_STUB_FRONT_END(SuperConstruct, SuperConstructFrontEnd)
     WeakMapGet, \
     WeakMapHas, \
     WeakMapSet, \
+    WeakSetAdd, \
     WeakSetHas)
 v(CallBoxedBuiltin, Handler, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallBoxedBuiltin)
 v(CallMethodOfBuiltinClass, CalledByCode, AOT_FORMS_OF_BOXED_CALLS, FormAxis | CountAxis | ImmediateAxis, 0, 4, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfBuiltinClass)
@@ -202,7 +215,18 @@ v(CallMethodOfTable, CalledByCode, (MapDeleteAnyValue, MapDeleteString, MapDelet
 v(CallMethodOfProvenTable, CalledByCode, (MapDeleteAnyValue, MapDeleteString, MapDeleteBits, MapGetAnyValue, MapGetString, MapGetBits, MapHasAnyValue, MapHasString, MapHasBits, MapSetAnyValue, MapSetString, MapSetBits, SetAddAnyValue, SetAddString, SetAddBits, SetDeleteAnyValue, SetDeleteString, SetDeleteBits, SetHasAnyValue, SetHasString, SetHasBits), FormAxis | ImmediateAxis, 0, 0, AllISAs, NoISA, NoChoice, Every, MayCall, ClobbersLikeCall, AsOperation, CallMethodOfTable)
 v(CallCompiledMethodOfArray, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 0, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArray)
 v(CallCompiledMethodOfArrayLending, CalledByCode, (At, Every, Filter, Find, FindIndex, FindLast, FindLastIndex, FlatMap, ForEach, Map, Reduce, ReduceRight, Some), FormAxis | CountAxis, 1, 4, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, CallCompiledMethodOfArrayLending)
+v(SearchArray, CalledByCode, (ElementIsTrue, ElementEquals, ElementIsLess, ElementIsLessOrEqual, ElementStartsWith, ElementHasType, FieldIsTrue, FieldEquals, FieldIsLess, FieldIsLessOrEqual, FieldStartsWith, FieldHasType), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SearchArray)
+v(FilterArray, CalledByCode, (ElementIsTrue, ElementEquals, ElementIsLess, ElementIsLessOrEqual, ElementStartsWith, ElementHasType, FieldIsTrue, FieldEquals, FieldIsLess, FieldIsLessOrEqual, FieldStartsWith, FieldHasType), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FilterArray)
+v(MapArrayToTest, CalledByCode, (ElementIsTrue, ElementEquals, ElementIsLess, ElementIsLessOrEqual, ElementStartsWith, ElementHasType, FieldIsTrue, FieldEquals, FieldIsLess, FieldIsLessOrEqual, FieldStartsWith, FieldHasType), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapArrayToTest)
+v(FoldArray, CalledByCode, (SumOfElements, GreatestElement, LeastElement, SumOfFields, GreatestField, LeastField), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FoldArray)
+v(MapArrayToField, CalledByCode, (Field, LengthOfElement, LengthOfField, FieldOfField), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapArrayToField)
+v(FoldFieldPairs, CalledByCode, (Sum, Difference, Product, FieldOfField), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FoldFieldPairs)
+v(FilterFieldPairs, CalledByCode, (IsLess, IsLessOrEqual, Equals), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, FilterFieldPairs)
+v(SearchFieldPairs, CalledByCode, (IsLess, IsLessOrEqual, Equals), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SearchFieldPairs)
+v(MapFieldPairs, CalledByCode, (Sum, Difference, Product), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapFieldPairs)
+v(MapArrayToNumber, CalledByCode, (SumOfElement, ProductOfElement, QuotientOfElement, SumOfField, ProductOfField, QuotientOfField), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapArrayToNumber)
 v(WeakMapSet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, WeakMapSet)
+v(WeakSetAdd, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, WeakSetAdd)
 v(StringStartsWith, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringStartsWith)
 v(StringIndexOf, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, StringIndexOf)
 
@@ -221,6 +245,8 @@ v(WeakMapHas, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, 
 v(WeakSetHas, InternalEntry, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(CollectionStorage, CollectionEntries), WeakSetHas)
 v(NewMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewMap)
 v(NewSet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewSet)
+v(NewWeakMap, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewWeakMap)
+v(NewWeakSet, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(AllocatorState) | writes(AllocatorState), NewWeakSet)
 v(NewIterator, CalledByCode, (Map, Set, Array), FormAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, reads(CollectionStorage, AllocatorState) | writes(AllocatorState), NewIterator)
 v(MapNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, MapNextFrontEnd)
 v(SetNextFrontEnd, FrontEnd, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersLikeCall, AsOperation, SetNextFrontEnd)
