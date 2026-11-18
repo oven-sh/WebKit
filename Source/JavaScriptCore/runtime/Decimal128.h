@@ -143,6 +143,7 @@ public:
 
     // The count of digits and the power are integers that may be of any magnitude.
     Decimal128 round(double numberOfFractionalDigits, RoundingMode) const;
+    Decimal128 round(int32_t numberOfFractionalDigits, RoundingMode) const;
     Decimal128 scale10(double power) const;
 
     String toString() const;

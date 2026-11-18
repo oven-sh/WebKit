@@ -9,6 +9,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/FastFloat.h>
 #include <wtf/Int128.h>
+#include <wtf/MathExtras.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -1301,7 +1302,7 @@ NEVER_INLINE std::partial_ordering Decimal128::compareSlow(Decimal128 x, Decimal
 }
 
 // The coefficient in units of 10^power. Answers it through the references.
-void Decimal128::roundCoefficient(int64_t power, RoundingMode mode, uint64_t& high, uint64_t& low) const
+ALWAYS_INLINE void Decimal128::roundCoefficient(int64_t power, RoundingMode mode, uint64_t& high, uint64_t& low) const
 {
     ASSERT(power > 0 && isFinite() && !isZero());
     // Of fewer digits than the power, so less than a tenth.
@@ -1318,12 +1319,13 @@ void Decimal128::roundCoefficient(int64_t power, RoundingMode mode, uint64_t& hi
 // https://tc39.es/proposal-decimal/#sec-decimal-method-round
 Decimal128 Decimal128::round(double numberOfFractionalDigits, RoundingMode mode) const
 {
-    if (!isFinite() || isZero())
-        return *this;
-    if (numberOfFractionalDigits >= 0 && m_exponent >= 0)
-        return *this;
-    int64_t unit = saturate(-numberOfFractionalDigits);
-    if (unit <= m_exponent)
+    return round(clampTo<int32_t>(numberOfFractionalDigits), mode);
+}
+
+Decimal128 Decimal128::round(int32_t numberOfFractionalDigits, RoundingMode mode) const
+{
+    int64_t unit = -static_cast<int64_t>(numberOfFractionalDigits);
+    if (unit <= m_exponent || !isFinite() || isZero())
         return *this;
     // The spec rounds to the domain in the same mode, but nothing is left to round: the count is at most 10^34, and the unit is in the domain or overflows.
     uint64_t high;

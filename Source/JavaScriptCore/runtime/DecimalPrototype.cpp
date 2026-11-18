@@ -107,21 +107,22 @@ void DecimalPrototype::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 }
 
-// RequireInternalSlot(value, [[DecimalData]]). Null if it threw.
-static DecimalObject* requireDecimal(JSGlobalObject* globalObject, JSValue value, ASCIILiteral message)
+static NEVER_INLINE EncodedJSValue throwNotDecimal(JSGlobalObject* globalObject, ASCIILiteral message)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = dynamicDowncast<DecimalObject>(value);
-    if (!decimal) [[unlikely]]
-        throwTypeError(globalObject, scope, message);
-    return decimal;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return throwVMTypeError(globalObject, scope, message);
 }
+
+// RequireInternalSlot(value, [[DecimalData]]), which returns from the function if it throws.
+#define REQUIRE_DECIMAL(name, value, message) \
+    auto* name = dynamicDowncast<DecimalObject>(value); \
+    if (!name) [[unlikely]] \
+        return throwNotDecimal(globalObject, message)
 
 static constexpr ASCIILiteral receiverMessage = "Decimal.prototype method called on an object that is not a Decimal"_s;
 static constexpr ASCIILiteral operandMessage = "The operand of a Decimal operation must be a Decimal"_s;
 
-static EncodedJSValue newDecimal(JSGlobalObject* globalObject, const Decimal128& value)
+static EncodedJSValue newDecimal(JSGlobalObject* globalObject, Decimal128 value)
 {
     return JSValue::encode(DecimalObject::create(globalObject->vm(), globalObject->decimalStructure(), value));
 }
@@ -130,21 +131,16 @@ static EncodedJSValue newDecimal(JSGlobalObject* globalObject, const Decimal128&
 template<typename Function>
 static ALWAYS_INLINE EncodedJSValue unary(JSGlobalObject* globalObject, CallFrame* callFrame, const Function& function)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, function(decimal->value()));
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
+    return function(decimal->value());
 }
 
 template<typename Function>
 static ALWAYS_INLINE EncodedJSValue binary(JSGlobalObject* globalObject, CallFrame* callFrame, const Function& function)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto* operand = requireDecimal(globalObject, callFrame->argument(0), operandMessage);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, function(decimal->value(), operand->value()));
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
+    REQUIRE_DECIMAL(operand, callFrame->argument(0), operandMessage);
+    return function(decimal->value(), operand->value());
 }
 
 static ALWAYS_INLINE EncodedJSValue arithmetic(JSGlobalObject* globalObject, CallFrame* callFrame, Decimal128 (*operation)(Decimal128, Decimal128))
@@ -403,12 +399,11 @@ static ALWAYS_INLINE double digitsOfRound(JSGlobalObject* globalObject, JSValue 
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-method-round
-JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, CallFrame* callFrame))
+static NEVER_INLINE EncodedJSValue roundWithAnyArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
     double digits = digitsOfRound(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     auto mode = toRoundingMode(globalObject, callFrame->argument(1));
@@ -416,13 +411,22 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, C
     return newDecimal(globalObject, decimal->value().round(digits, mode));
 }
 
+JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    if (callFrame->argument(0).isInt32() && callFrame->argument(1).isUndefined()) {
+        return unary(globalObject, callFrame, [&](const Decimal128& value) {
+            return newDecimal(globalObject, value.round(callFrame->uncheckedArgument(0).asInt32(), Decimal128::RoundingMode::HalfEven));
+        });
+    }
+    return roundWithAnyArguments(globalObject, callFrame);
+}
+
 // https://tc39.es/proposal-decimal/#sec-decimal-method-scale10
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncScale10, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
     JSValue argument = callFrame->argument(0);
     if (!argument.isNumber()) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "The power must be a number"_s);
@@ -465,10 +469,9 @@ JSString* DecimalStringCache::add(VM& vm, Set& set, const Decimal128& value, uin
 // the steps have the exponent with the wrong sign and scale the mantissa the wrong way (12300e-2 for 123), even out of the domain.
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
     toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(vm.decimalStringCache().toString(vm, decimal->value()));
@@ -480,10 +483,9 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToString, (JSGlobalObject* globalObject
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToLocaleString, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     JSC_REMOVABLE_HOST_FUNCTION_DEFINITION(IntlNumberFormat, decimalProtoFuncToLocaleString);
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
 
     JSValue locales = callFrame->argument(0);
     JSValue options = callFrame->argument(1);
@@ -508,10 +510,9 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToLocaleString, (JSGlobalObject* global
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.toexponential
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToExponential, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
     toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(vm.decimalStringCache().toExponential(vm, decimal->value()));
@@ -524,10 +525,9 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToExponential, (JSGlobalObject* globalO
 // number of digits. It also rounds a negative value in the direction that the rounding modes are defined to have.
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToFixed, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
 
     auto* options = toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
@@ -578,10 +578,9 @@ JSString* tryDecimalToFixed(JSGlobalObject* globalObject, Decimal128 value, JSVa
 // RangeError is what the steps have, although the description of the method says "equivalent to toString". See Decimal128::toPrecision().
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-    RETURN_IF_EXCEPTION(scope, { });
 
     auto* options = toOptions(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
@@ -617,13 +616,12 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToPrecision, (JSGlobalObject* globalObj
 JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncToJSON, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     if (Options::useDecimalToJSON()) {
         // Not in the proposal. A String and not a number, whose digits JSON.parse() and most other parsers would round to those of a double.
-        auto* decimal = requireDecimal(globalObject, callFrame->thisValue(), receiverMessage);
-        RETURN_IF_EXCEPTION(scope, { });
+        REQUIRE_DECIMAL(decimal, callFrame->thisValue(), receiverMessage);
         return JSValue::encode(vm.decimalStringCache().toString(vm, decimal->value()));
     }
+    auto scope = DECLARE_THROW_SCOPE(vm);
     return throwVMTypeError(globalObject, scope, "Decimal cannot be serialized as JSON"_s);
 }
 
@@ -672,10 +670,24 @@ std::optional<DecimalOperation> decimalOperationOf(TaggedNativeFunction function
 
 #endif // ENABLE(DFG_JIT)
 
+Decimal128 DecimalLiteralCache::parse(StringView text)
+{
+    return Decimal128::parse(text).value_or(Decimal128::nan());
+}
+
+NEVER_INLINE Decimal128 DecimalLiteralCache::add(Set& set, uint64_t characters, StringView text)
+{
+    Decimal128 value = parse(text);
+    set[1] = set[0];
+    set[0] = { characters, text.length(), value };
+    return value;
+}
+
 // Not in the proposal. The table of built-ins says that it takes any String and does not throw.
 JSC_DEFINE_HOST_FUNCTION(decimalLiteral, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    return newDecimal(globalObject, Decimal128::parse(asString(callFrame->uncheckedArgument(0))->tryGetValue().data).value_or(Decimal128::nan()));
+    Decimal128 value = globalObject->vm().decimalLiteralCache().get(asString(callFrame->uncheckedArgument(0))->tryGetView());
+    return newDecimal(globalObject, value);
 }
 
 // Not in the proposal, where operators throw. See --useDecimalOperators and BytecodeGenerator::emitDecimalOperator().
@@ -724,5 +736,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalOperator, (JSGlobalObject* globalObject, CallFra
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
+
+#undef REQUIRE_DECIMAL
 
 } // namespace JSC

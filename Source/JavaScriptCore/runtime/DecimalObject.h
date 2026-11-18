@@ -23,7 +23,8 @@ public:
         return vm.decimalObjectSpace<mode>();
     }
 
-    static DecimalObject* create(VM& vm, Structure* structure, const Decimal128& value)
+    // The value is in registers. Of a reference, it is stored in two halves and loaded as one, which waits for the stores.
+    static DecimalObject* create(VM& vm, Structure* structure, Decimal128 value)
     {
         auto* object = new (NotNull, allocateCell<DecimalObject>(vm)) DecimalObject(vm, structure, value);
         object->finishCreation(vm);
@@ -56,7 +57,7 @@ public:
     JS_EXPORT_PRIVATE static DecimalObject* tryCreateFromCloneText(JSGlobalObject*, StringView);
 
 private:
-    DecimalObject(VM& vm, Structure* structure, const Decimal128& value)
+    DecimalObject(VM& vm, Structure* structure, Decimal128 value)
         : Base(vm, structure)
         , m_value(value)
     {

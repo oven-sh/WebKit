@@ -176,3 +176,31 @@ shouldThrow(() => eval("/*\u4e00*/01m"), SyntaxError);
             throw new Error("A long literal has the wrong value");
     }
 }
+
+// The values of short literals are kept by their characters. These share their first and last ones, or a place.
+{
+    const texts = [];
+    for (let length = 1; length <= 10; ++length) {
+        texts.push("1".repeat(length));
+        for (let at = 0; at < length; ++at)
+            texts.push("1".repeat(at) + "2" + "1".repeat(length - at - 1), "1".repeat(at + 1) + "." + "1".repeat(length - at));
+    }
+    for (let i = 0; i < 200; ++i)
+        texts.push(`${i}`, `${i}.5`, `${i}e3`);
+    const functions = texts.map(text => Function(`return [${text}m, -${text}m]`));
+    for (let round = 0; round < 3; ++round) {
+        for (let i = 0; i < texts.length; ++i) {
+            const [positive, negative] = functions[i]();
+            if (positive.toString() !== new Decimal(texts[i]).toString() || negative.toString() !== new Decimal("-" + texts[i]).toString())
+                throw new Error(`${texts[i]}: ${positive} ${negative}`);
+        }
+    }
+
+    // Found again, also behind a collection.
+    const few = () => [10m, 100m, 1000m, 0.5m, -0.5m, 12345678m, 1234.678m, 123456789m].join();
+    noDFG(few);
+    for (let round = 0; round < 3; ++round) {
+        shouldBe(few(), "10,100,1000,0.5,-0.5,12345678,1234.678,123456789");
+        fullGC();
+    }
+}

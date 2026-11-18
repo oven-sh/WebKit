@@ -48,3 +48,23 @@ for (const method of ["round", "scale10"]) {
         }
     }
 }
+
+// An Int32 without a mode has a path of its own.
+for (const receiver of [{ }, 1, "1", null, undefined, Decimal.prototype, new Number(1), Object.create(1m)]) {
+    let error;
+    try {
+        Decimal.prototype.round.call(receiver, 1);
+    } catch (e) {
+        error = e;
+    }
+    if (!(error instanceof TypeError))
+        throw new Error(`round() of ${typeof receiver}`);
+}
+for (const text of ["0", "-0", "NaN", "Infinity", "-Infinity", "1.25", "-1.35", "250", "1e-6176", "9.999999999999999999999999999999999e6144", "5e6144"]) {
+    for (const count of [0, 1, -1, -2, -3, 6175, 6176, -6144, -6145, -6146, 2147483647, -2147483647, -2147483648]) {
+        const expected = Decimal.prototype.round.apply(new Decimal(text), [count, "halfEven"]).toExponential();
+        const actual = Decimal.prototype.round.apply(new Decimal(text), [count]).toExponential();
+        if (actual !== expected)
+            throw new Error(`${text}.round(${count}): ${actual}, expected ${expected}`);
+    }
+}
