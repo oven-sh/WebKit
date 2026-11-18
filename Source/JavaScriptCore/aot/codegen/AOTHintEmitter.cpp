@@ -55,11 +55,16 @@ static void emitFaultingLoad(CCallHelpers& jit, const Machine::PatchParameters& 
     });
 }
 
+CCallHelpers::Jump branchIfStopRequest(CCallHelpers& jit, StopRequest request)
+{
+    return jit.branch64(request == StopRequest::IsPending ? CCallHelpers::LessThan : CCallHelpers::GreaterThanOrEqual, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit), CCallHelpers::TrustedImm32(0));
+}
+
 static void emitCompareAndCall(CCallHelpers& jit, const Machine::PatchParameters& params, CodeRecords* records, uint32_t site, bool leavesOwedError)
 {
     AllowMacroScratchRegisterUsage allowScratch(jit);
     RELEASE_ASSERT(params.frameIsSetUp());
-    CCallHelpers::Jump isInterrupted = jit.branch64(CCallHelpers::LessThan, CCallHelpers::Address(instanceGPR, offsetOfTrapAwareSoftStackLimit), CCallHelpers::TrustedImm32(0));
+    CCallHelpers::Jump isInterrupted = branchIfStopRequest(jit, StopRequest::IsPending);
     CCallHelpers::Label done = jit.label();
     params.addLatePath([=](CCallHelpers& jit) {
         AllowMacroScratchRegisterUsage allowScratch(jit);

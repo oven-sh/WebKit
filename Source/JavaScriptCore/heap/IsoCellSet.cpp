@@ -88,8 +88,10 @@ NEVER_INLINE WTF::BitSet<MarkedBlock::atomsPerBlock>* IsoCellSet::addSlow(unsign
     auto& bitsPtrRef = m_bits[blockIndex];
     auto* bits = bitsPtrRef.get();
     if (!bits) {
-        bitsPtrRef = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
-        bits = bitsPtrRef.get();
+        auto newBits = makeUnique<WTF::BitSet<MarkedBlock::atomsPerBlock>>();
+        bits = newBits.get();
+        WTF::storeStoreFence();
+        bitsPtrRef = WTF::move(newBits);
         WTF::storeStoreFence();
         m_blocksWithBits[blockIndex] = true;
     }
