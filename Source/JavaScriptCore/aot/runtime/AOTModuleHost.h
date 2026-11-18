@@ -128,7 +128,6 @@ struct ModuleHost {
     bool (*wasFetchedByTestFile)(JSGlobalObject*, const String& key);
     bool (*hasSynchronousFactory)(JSGlobalObject*, const String& mocked, bool isOriginalSynchronous);
     bool (*isSpy)(JSGlobalObject*, const String& mocked);
-    bool (*keepsImportersOfPreload)(JSObject* mock);
     bool (*isRequiringMock)(JSGlobalObject*, const String& mocked);
     JSPromise* (*sourceAfterRelease)(JSGlobalObject*, AbstractModuleRecord*, ModuleID);
     bool (*hasPendingPatch)(JSGlobalObject*, ModuleID);
