@@ -10,6 +10,7 @@
 #include "AOTArrayAllocationProfile.h"
 #include "AOTChildProcess.h"
 #include "AOTEffectsDeclared.h"
+#include "AOTFaultHandler.h"
 #include "AOTGrowingText.h"
 #include "AOTHost.h"
 #include "AOTImage.h"
@@ -28,6 +29,7 @@
 #include "Completion.h"
 #include "DeferTermination.h"
 #include "JSCInlines.h"
+#include "MachineContext.h"
 #include "ObjectConstructor.h"
 #include "OperationResult.h"
 #include "Options.h"
@@ -952,6 +954,57 @@ static void pollThatFaultsShowsEveryRegisterToCollector()
 
 #endif
 
+#if CPU(X86_64) && OS(LINUX)
+
+static constexpr ASCIILiteral faultBehindNumberTest = "runtime-operations/fault-behind-a-boxed-number-is-handled-at-its-address"_s;
+
+static constexpr ASCIILiteral programThatChecksByFaulting =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "entry module=m0\n"
+    "variable g0 name=\"list\" module=m0 declared={type=absent|Array} flags=[IsImmutable]\n"
+    "function f0 name=\"main\" kind=Module results=[{type=anything}] {\n"
+    "    v0 = NewClosure function=f1\n"
+    "    v1 = NewArray contents=anything holes=[]\n"
+    "    PutModuleVariable v1 variable=g0\n"
+    "    Return v0\n"
+    "}\n"
+    "function f1 name=\"length\" results=[{type=anything}] {\n"
+    "    v0 = GetModuleVariable variable=g0\n"
+    "    v1 = CheckInitialized v0 name=\"list\"\n"
+    "    v2 = PropGet v1 key=\"length\"\n"
+    "    Return v2\n"
+    "}\n"_s;
+
+static void checkFaultBehindBoxedNumberIsHandled(LoadedProgram& program)
+{
+    const Image* image = Image::current();
+    auto isNullCheck = [&](const uint8_t& byte) {
+        std::optional<FaultSite> site = image->faultSiteAt(&byte);
+        return site && site->kind == FaultSiteKind::NullCheck;
+    };
+    auto check = std::ranges::find_if(image->code(), isNullCheck);
+    AOT_TEST_CHECK(check != image->code().end());
+    if (check == image->code().end())
+        return;
+    auto isHandledBehind = [&](EncodedJSValue value) {
+        PlatformRegisters registers { };
+        registers.machineContext.gregs[REG_R13] = std::bit_cast<greg_t>(&program.instance());
+        MachineContext::setInstructionPointer(registers, const_cast<uint8_t*>(&*check));
+        return handleAccessFault(std::bit_cast<void*>(value + JSCell::typeInfoTypeOffset()), registers);
+    };
+    for (JSValue value : { JSValue(), jsUndefined(), jsBoolean(true), jsNumber(5), jsNumber(-1), jsDoubleNumber(0), jsDoubleNumber(1e-305), jsDoubleNumber(-0.5), jsNaN() })
+        AOT_TEST_CHECK(isHandledBehind(JSValue::encode(value)));
+    AOT_TEST_CHECK(!isHandledBehind(FaultSite::reach));
+    AOT_TEST_CHECK(!isHandledBehind(JSValue::encode(program.realm())));
+}
+
+static void faultBehindBoxedNumberIsHandled()
+{
+    runWithLoadedProgram(faultBehindNumberTest, programThatChecksByFaulting, checkFaultBehindBoxedNumberIsHandled);
+}
+
+#endif
+
 static void checkPollInCallStubLeavesPendingOutOfMemoryError(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -1242,6 +1295,9 @@ std::span<const NativeTest> runtimeOperationTests()
         { pollInCallStubTest, pollInCallStubLeavesPendingOutOfMemoryError },
 #if AOT_LOOP_POLLS_FAULT && OS(LINUX)
         { pollShowsRegistersTest, pollThatFaultsShowsEveryRegisterToCollector },
+#endif
+#if CPU(X86_64) && OS(LINUX)
+        { faultBehindNumberTest, faultBehindBoxedNumberIsHandled },
 #endif
         { callsAreCountedTest, callsAreCountedUnderCountsPath },
         { callsAreNotCountedTest, callsAreNotCountedByDefault },
