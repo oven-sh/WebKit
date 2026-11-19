@@ -12,6 +12,8 @@ namespace JSC {
 
 // decimalLiteral("1.5") is 1.5m.
 JSC_DECLARE_HOST_FUNCTION(decimalLiteral);
+// decimalOperator(DecimalOperator, left, right). undefined if an operand is not a Decimal. Both operands of a unary operator are the same.
+JSC_DECLARE_HOST_FUNCTION(decimalOperator);
 
 // What round() and scale10() answer, or Decimal128::noValue() where they throw.
 Decimal128 roundOrNoValue(Decimal128, JSValue digits, Decimal128::RoundingMode);

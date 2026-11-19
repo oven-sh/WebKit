@@ -9,6 +9,7 @@
 #include "AOTRemovableFeature.h"
 #include "DecimalObject.h"
 #include "DecimalOperation.h"
+#include "DecimalOperator.h"
 #include "DecimalStringCache.h"
 #include "IntlNumberFormatInlines.h"
 #include "JSCInlines.h"
@@ -675,6 +676,53 @@ JSC_DEFINE_HOST_FUNCTION(decimalLiteral, (JSGlobalObject* globalObject, CallFram
 {
     Decimal128 value = globalObject->vm().decimalLiteralCache().get(asString(callFrame->uncheckedArgument(0))->tryGetView());
     return newDecimal(globalObject, value);
+}
+
+// Not in the proposal, where operators throw. See --useDecimalOperators and BytecodeGenerator::emitDecimalOperator().
+JSC_DEFINE_HOST_FUNCTION(decimalOperator, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* left = DecimalObject::tryCast(callFrame->argument(1));
+    auto* right = DecimalObject::tryCast(callFrame->argument(2));
+    if (!left || !right)
+        return JSValue::encode(jsUndefined());
+
+    const Decimal128& x = left->value();
+    const Decimal128& y = right->value();
+    auto boolean = [](bool value) { return JSValue::encode(jsBoolean(value)); };
+    switch (static_cast<DecimalOperator>(callFrame->argument(0).asInt32())) {
+    case DecimalOperator::Add:
+        return newDecimal(globalObject, Decimal128::add(x, y));
+    case DecimalOperator::Subtract:
+        return newDecimal(globalObject, Decimal128::subtract(x, y));
+    case DecimalOperator::Multiply:
+        return newDecimal(globalObject, Decimal128::multiply(x, y));
+    case DecimalOperator::Divide:
+        return newDecimal(globalObject, Decimal128::divide(x, y));
+    case DecimalOperator::Remainder:
+        return newDecimal(globalObject, Decimal128::remainder(x, y));
+    case DecimalOperator::Equal:
+        return boolean(Decimal128::compare(x, y) == 0);
+    case DecimalOperator::NotEqual:
+        // Unlike notEquals() this is the opposite of ==, as for every other type.
+        return boolean(Decimal128::compare(x, y) != 0);
+    case DecimalOperator::Less:
+        return boolean(Decimal128::compare(x, y) < 0);
+    case DecimalOperator::LessOrEqual:
+        return boolean(Decimal128::compare(x, y) <= 0);
+    case DecimalOperator::Greater:
+        return boolean(Decimal128::compare(x, y) > 0);
+    case DecimalOperator::GreaterOrEqual:
+        return boolean(Decimal128::compare(x, y) >= 0);
+    case DecimalOperator::Negate:
+        return newDecimal(globalObject, x.negate());
+    case DecimalOperator::Increment:
+        return newDecimal(globalObject, Decimal128::add(x, Decimal128::one()));
+    case DecimalOperator::Decrement:
+        return newDecimal(globalObject, Decimal128::subtract(x, Decimal128::one()));
+    case DecimalOperator::ToNumeric:
+        return JSValue::encode(left);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 #undef REQUIRE_DECIMAL

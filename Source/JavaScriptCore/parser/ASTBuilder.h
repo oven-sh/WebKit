@@ -1276,6 +1276,7 @@ ExpressionNode* ASTBuilder::makeNegateNode(const JSTokenLocation& location, Expr
         return createBigIntFromUnaryOperation(location, !bigIntNode.sign(), bigIntNode);
     }
 
+    // With or without useDecimalOperators.
     if (n->isDecimal()) [[unlikely]] {
         auto& literal = static_cast<DecimalNode&>(*n);
         auto* node = new (m_parserArena) DecimalNode(location, literal.value(), !literal.isNegative());

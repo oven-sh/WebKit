@@ -33,6 +33,7 @@
 #include "AOTRemovableFeature.h"
 #include "BytecodeStructs.h"
 #include "CodeBlock.h"
+#include "DecimalOperator.h"
 #include "Instruction.h"
 #include "Interpreter.h"
 #include "JSAsyncFunctionGenerator.h"
@@ -802,6 +803,7 @@ namespace JSC {
         }
 
         RegisterID* emitBinaryOp(OpcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes);
+        RegisterID* emitOrdinaryBinaryOp(OpcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes);
 
         template<typename EqOp>
         RegisterID* emitEqualityOp(RegisterID* dst, RegisterID* src1, RegisterID* src2)
@@ -813,6 +815,15 @@ namespace JSC {
         }
 
         bool emitEqualityOpImpl(RegisterID* dst, RegisterID* src1, RegisterID* src2);
+
+        // --useDecimalOperators, and the code is not that of a builtin. The emitters below are for this only, and are not inlined to keep
+        // the frames of emitBytecode() small.
+        bool usesDecimalOperators() const { return m_usesDecimalOperators && !m_isBuiltinFunction; }
+        NEVER_INLINE RegisterID* emitNegateOrDecimal(RegisterID* dst, RegisterID* src, ResultType);
+        NEVER_INLINE RegisterID* emitBinaryOpOrDecimal(OpcodeID, RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes);
+        NEVER_INLINE RegisterID* emitEqualOrDecimal(RegisterID* dst, RegisterID* src1, RegisterID* src2, OperandTypes);
+        NEVER_INLINE RegisterID* emitIncOrDecOrDecimal(RegisterID* srcDst, bool isIncrement);
+        NEVER_INLINE RegisterID* emitToNumericOrDecimal(RegisterID* dst, RegisterID* src);
 
         RegisterID* emitCreateThis(RegisterID* dst);
         RegisterID* emitCreatePromise(RegisterID* dst, RegisterID* newTarget);
@@ -1565,6 +1576,12 @@ namespace JSC {
 #endif
         bool m_isBuiltinDefaultClassConstructor { false };
         bool m_usesSloppyEval { false };
+        // Runs emitOrdinary, which has to write dst, unless the operands are Decimals. A unary operator passes its operand twice.
+        template<typename Functor>
+        RegisterID* emitWithDecimalOperator(DecimalOperator, RegisterID* dst, RegisterID* left, RegisterID* right, OperandTypes, const Functor& emitOrdinary);
+        void emitDecimalOperator(DecimalOperator, RegisterID* dst, RegisterID* left, RegisterID* right, Label& ordinary);
+        bool m_usesDecimalOperators { Options::useDecimal() && Options::useDecimalOperators() };
+
         bool m_allowTailCallOptimization { false };
         bool m_allowCallIgnoreResultOptimization { false };
         bool m_needsToUpdateArrowFunctionContext : 1;
