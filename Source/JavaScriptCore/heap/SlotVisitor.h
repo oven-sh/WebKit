@@ -197,6 +197,9 @@ public:
     void visitAsConstraint(const JSCell*) final;
     
     bool didReachTermination();
+    // For a mutator that conducts and polls in the concurrent phase. If marking has not reached termination, the
+    // conductor counts as away until Collector::setConductorIsAway(false).
+    bool didReachTerminationOrConductorIsAway();
     
     void donateAll();
 

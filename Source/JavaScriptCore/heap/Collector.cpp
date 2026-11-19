@@ -597,7 +597,8 @@ void Collector::startHelpers()
         return;
     RELEASE_ASSERT(!m_parallelMarkersShouldExit);
 
-    m_helperClient.setFunction(
+    // On request: a helper that leaves the collection can be asked for again. Every thread of the pool is asked for now.
+    m_helperClient.setFunctionOnRequest(
         [this] () {
             SlotVisitor* visitor;
             {
@@ -621,6 +622,18 @@ void Collector::startHelpers()
                 m_availableParallelSlotVisitors.append(visitor);
             }
         });
+}
+
+void Collector::recallHelpersSlow()
+{
+    // The lock order is m_markingMutex, then the pool's lock, as in startHelpers() under SlotVisitor::donateAll().
+    m_helperClient.requestThreads(std::exchange(m_numberOfHelpersThatLeft, 0));
+}
+
+void Collector::setConductorIsAway(bool isAway)
+{
+    Locker locker { m_markingMutex };
+    m_conductorIsAway = isAway;
 }
 
 NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
@@ -662,6 +675,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
             Locker locker { m_markingMutex };
             if (!m_deferredRootRegions.isEmpty()) {
                 startHelpers();
+                recallHelpers(locker);
                 m_markingConditionVariable.notifyOne();
             }
         }
@@ -714,6 +728,7 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
     switch (conn) {
     case GCConductor::Mutator: {
         if (m_conductorMarksInConcurrentPhase) [[unlikely]] {
+            setConductorIsAway(false);
             {
                 ParallelModeEnabler enabler(visitor);
                 visitor.drainInParallel(m_scheduler->timeToStop());
@@ -724,9 +739,13 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
-        if (visitor.didReachTermination()
-            || m_scheduler->shouldStop())
+        // Between two of these polls the conductor is away, and a helper that runs out of work leaves the collection.
+        if (visitor.didReachTerminationOrConductorIsAway())
             return changePhase(conn, CollectorPhase::Reloop);
+        if (m_scheduler->shouldStop()) {
+            setConductorIsAway(false);
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
 
         // We could be coming from a collector phase that stuffed our SlotVisitor, so make sure we donate
         // everything. This is super cheap if the SlotVisitor is already empty.
@@ -734,6 +753,8 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         return false;
     }
     case GCConductor::Collector: {
+        // This thread waits for the marking in this phase. A mutator that had the conn before can have left the flag set.
+        setConductorIsAway(false);
         unsigned worldState = heap().m_worldState.load();
         // FIXME: Heap access is only a proxy for whether the mutator's thread wants a core: a JSC API client drops
         // access with the JSLock and may then run native code. And the choice below holds until this drain returns,
@@ -775,6 +796,8 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     {
         Locker locker { m_markingMutex };
         m_parallelMarkersShouldExit = true;
+        m_conductorIsAway = false;
+        m_numberOfHelpersThatLeft = 0;
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
@@ -1200,6 +1223,7 @@ void Collector::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
     {
         Locker locker { m_markingMutex };
         m_bonusVisitorTask = task;
+        recallHelpers(locker);
         m_markingConditionVariable.notifyAll();
     }
 

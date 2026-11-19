@@ -86,6 +86,7 @@ private:
     friend class Thread;
 
     void didMakeWorkAvailable(const AbstractLocker&) WTF_REQUIRES_LOCK(m_lock);
+    void didMakeWorkAvailableForThreads(const AbstractLocker&, unsigned count) WTF_REQUIRES_LOCK(m_lock);
 
     NODELETE bool hasClientWithTask() WTF_REQUIRES_LOCK(m_lock);
     NODELETE ParallelHelperClient* getClientWithTask() WTF_REQUIRES_LOCK(m_lock);
@@ -181,6 +182,22 @@ public:
         setTask(createSharedTask<void ()>(functor));
     }
 
+    // Sets a task that stays set until finish(), also after a thread has returned from it. Every thread of the pool
+    // runs it once. After that, a thread runs it once for each request that requestThreads() makes. So a thread that
+    // has no work in the task can return from it and serve another client, and the algorithm asks for it again when
+    // it has work.
+    WTF_EXPORT_PRIVATE void setTaskOnRequest(RefPtr<SharedTask<void ()>>&&);
+
+    template<typename Functor>
+    void setFunctionOnRequest(const Functor& functor)
+    {
+        setTaskOnRequest(createSharedTask<void ()>(functor));
+    }
+
+    // Asks for this many more runs of the task that setTaskOnRequest() set. Unlike the rest of this class, any
+    // thread may call it, also one that runs the task. Does nothing once finish() has cleared the task.
+    WTF_EXPORT_PRIVATE void requestThreads(unsigned count);
+
     WTF_EXPORT_PRIVATE void finish();
 
     WTF_EXPORT_PRIVATE void doSomeHelping();
@@ -208,12 +225,16 @@ private:
     friend class ParallelHelperPool;
 
     void finishWithLock() WTF_REQUIRES_LOCK(*m_pool->m_lock);
+    // Whether a thread of the pool that is free should run the task now.
+    bool hasTaskForThread() const { return m_task && (!m_taskIsOnRequest || m_numRequested); }
     NODELETE RefPtr<SharedTask<void()>> claimTask() WTF_REQUIRES_LOCK(*m_pool->m_lock);
     void runTask(const RefPtr<SharedTask<void ()>>&);
 
     const RefPtr<ParallelHelperPool> m_pool;
     RefPtr<SharedTask<void ()>> m_task;
     unsigned m_numActive { 0 };
+    unsigned m_numRequested { 0 };
+    bool m_taskIsOnRequest { false };
 };
 
 } // namespace WTF

@@ -236,6 +236,15 @@ private:
     void setUpVisitors(CollectionScope) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     static bool startsHelpersLazily() { return Options::runsCompiledImage(); }
     void startHelpers();
+    // Asks for the helpers that left this collection (SlotVisitor::drainFromShared). Every site that gives the helpers
+    // something to do calls it: shared cells, a deferred root region, a bonus task.
+    void recallHelpers(const AbstractLocker&)
+    {
+        if (m_numberOfHelpersThatLeft) [[unlikely]]
+            recallHelpersSlow();
+    }
+    void recallHelpersSlow();
+    void setConductorIsAway(bool);
     void endCollectionInEachHeap(GCConductor) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
     void stopThePeriphery(GCConductor) WTF_REQUIRES_CAPABILITY(conductorRole);
@@ -271,6 +280,11 @@ private:
     Condition m_markingConditionVariable;
     Condition m_bonusVisitorTaskConditionVariable;
     bool m_parallelMarkersShouldExit { false };
+    // The conductor is a mutator that runs its program in the concurrent phase. It comes back when it allocates or
+    // when its run loop asks, and nothing bounds that: it can sleep in its event loop, in Atomics.wait or in a system
+    // call. A helper with nothing to do does not wait for such a conductor.
+    bool m_conductorIsAway { false };
+    unsigned m_numberOfHelpersThatLeft { 0 };
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;
     std::atomic<bool> m_hasStartedHelpers { false };

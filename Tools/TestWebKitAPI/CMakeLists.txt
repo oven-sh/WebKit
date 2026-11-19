@@ -130,6 +130,7 @@ set(TestWTF_SOURCES
     Tests/WTF/Packed.cpp
     Tests/WTF/PackedRef.cpp
     Tests/WTF/PackedRefPtr.cpp
+    Tests/WTF/ParallelHelperPool.cpp
     Tests/WTF/ParkingLot.cpp
     Tests/WTF/PlainGregorianDateTime.cpp
     Tests/WTF/PreciseSum.cpp
