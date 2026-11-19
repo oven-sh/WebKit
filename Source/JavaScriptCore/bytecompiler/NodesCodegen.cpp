@@ -208,7 +208,7 @@ RegisterID* DecimalNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     RefPtr<RegisterID> function = generator.moveLinkTimeConstant(generator.newTemporary(), LinkTimeConstant::decimalLiteral);
     CallArguments arguments(generator, nullptr, 1);
     generator.emitLoad(arguments.thisRegister(), jsUndefined());
-    generator.emitLoad(arguments.argumentRegister(0), m_isNegative ? generator.parserArena().identifierArena().makeIdentifier(generator.vm(), makeString('-', m_value.string()).span8()) : m_value);
+    generator.emitLoad(arguments.argumentRegister(0), m_isNegative ? Identifier::fromString(generator.vm(), makeString('-', m_value.string())) : m_value);
     return generator.emitCall(result.get(), function.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
 }
 

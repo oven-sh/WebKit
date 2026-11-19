@@ -204,3 +204,15 @@ shouldThrow(() => eval("/*\u4e00*/01m"), SyntaxError);
         fullGC();
     }
 }
+
+// The atom of the digits may have 16 bits a character. The texts are put together, or this file would make atoms of them first.
+{
+    const digits = ["86", "42"].join("."), keys = { };
+    keys[$vm.make16BitStringIfPossible(digits)] = keys[$vm.make16BitStringIfPossible("-" + digits + "1")] = true;
+    for (const text of [digits, "-" + digits, digits + "1", "-" + digits + "1"]) {
+        const f = Function(`return ${text}m;`);
+        noInline(f);
+        for (let i = 0; i < testLoopCount; ++i)
+            shouldBe(f().toString(), text);
+    }
+}
