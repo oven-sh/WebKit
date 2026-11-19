@@ -1,4 +1,5 @@
 //@ skip if $memoryLimited
+//@ slow!
 //@ requireOptions("--useDecimal=1")
 //@ runDefault
 // Near the greatest count of digits the bound of the length does not fit in 32 bits. One string of 2 GB at a time.

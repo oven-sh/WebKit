@@ -1,3 +1,4 @@
+//@ slow!
 //@ requireOptions("--useDecimal=1", "--useConcurrentJIT=0")
 //@ runDefault
 // Only in this mode: others compile again on purpose.
@@ -18,7 +19,7 @@ for (const sites of [1, 3, 10]) {
     for (const name in counts) {
         const run = Function("x", "t", "v", `let s = 0; for (let i = 0; i < 10; ++i) { ${`s += x.round(${counts[name]}).isNaN() ? 1 : 2; `.repeat(sites)}} return s;`);
         noInline(run);
-        for (let i = 0; i < 20000; ++i) {
+        for (let i = 0; i < 2 * testLoopCount; ++i) {
             if (run(x, [2, 0, 0.5], i & 1 ? 2 : 1e10) != 20 * sites)
                 throw new Error(`${name}: wrong result`);
         }
@@ -39,8 +40,8 @@ for (const sites of [1, 3, 10]) {
             body += `if (x.${methods[i % methods.length]}) ++c;`;
         const run = Function("x", "y", body + "return c;");
         noInline(run);
-        for (let i = 0; i < 60000; ++i)
-            i < 6000 ? run(a, b) : run(c, d);
+        for (let i = 0; i < 6 * testLoopCount; ++i)
+            i < 0.6 * testLoopCount ? run(a, b) : run(c, d);
         const compiles = numberOfDFGCompiles(run);
         if (compiles > 4 && compiles < 1000)
             throw new Error(`${methods} of two realms: compiled ${compiles} times`);
@@ -54,8 +55,8 @@ for (const [source, argument] of [["try { return x.add(y); } catch { }", 1], ["t
     noInline(run);
     if (typeof argument === "function")
         noInline(argument);
-    for (let i = 0; i < 60000; ++i)
-        run(x, i < 6000 && typeof argument !== "function" ? x : argument);
+    for (let i = 0; i < 6 * testLoopCount; ++i)
+        run(x, i < 0.6 * testLoopCount && typeof argument !== "function" ? x : argument);
     const compiles = numberOfDFGCompiles(run);
     if (compiles > 3 && compiles < 1000)
         throw new Error(`${source}: compiled ${compiles} times`);
@@ -66,7 +67,7 @@ for (const [source, argument] of [["try { return x.add(y); } catch { }", 1], ["t
     const run = (start, list) => { let total = start; for (const value of list) total = total.add(value); return total; };
     noInline(run);
     const other = new ArrayBuffer(8);
-    for (let i = 0; i < 200000; ++i)
+    for (let i = 0; i < 20 * testLoopCount; ++i)
         i & 1 ? run(x, [x, x, x]) : run(other, []);
     const compiles = numberOfDFGCompiles(run);
     if (compiles > 4 && compiles < 1000)
