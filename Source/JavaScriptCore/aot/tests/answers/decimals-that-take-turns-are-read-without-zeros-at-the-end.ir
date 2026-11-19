@@ -1,12 +1,13 @@
 # An operation that needs the one way to write the value strips the words it has read.
-# sink((list, at) => { let text = "", total = 0m; for (let i = 0; i < list.length; i++) { total = total.add(list[i]); if (i === at) text += total.toString() + total.toExponential() + total.equals(1m) + total.notEquals(1m) + total.mantissa().toString() + total.scale10(1).toString() + total.abs().toString() + total.negate().toString() + total.round(1, "ceil").toString() + (total.compare(1m) === 0) + 1m.equals(total); } return text; }, list => { let total = 3m; for (const x of list) total = total.subtract(x); return total; }, list => { let total = 3m; for (const x of list) total = x.subtract(total); return total; }, list => { let total = 0m; for (const x of list) total = x.add(total); return total; });
+# sink((list, at) => { let text = "", total = 0m; for (let i = 0; i < list.length; i++) { total = total.add(list[i]); if (i === at) text += total.toString() + total.toExponential() + total.equals(1m) + total.notEquals(1m) + total.mantissa().toString() + total.scale10(1).toString() + total.abs().toString() + total.negate().toString() + total.round(1, "ceil").toString() + (total.compare(1m) === 0) + 1m.equals(total); } return text; }, list => { let total = 3m; for (const x of list) total = total.subtract(x); return total; }, list => { let total = 3m; for (const x of list) total = x.subtract(total); return total; }, list => { let total = 0m; for (const x of list) total = x.add(total); return total; }, list => { let total = 0m; for (const x of list) total = total.add(x); return total.toExponential(); });
 # JSC-OPTIONS: --useDecimal=1
-# STATISTIC: DecimalsReused >= 4
-# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => f(amounts, 1)); show(() => g(amounts)); show(() => h(amounts)); show(() => k(amounts)); };
+# STATISTIC: DecimalsReused >= 5
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k, l) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => f(amounts, 1)); show(() => g(amounts)); show(() => h(amounts)); show(() => k(amounts)); show(() => l(amounts)); };
 # CHECK: 11e0truefalse1101-11truetrue;
 # CHECK-NEXT: -3;
 # CHECK-NEXT: 5.4;
 # CHECK-NEXT: 6;
+# CHECK-NEXT: 6e0;
 # CHECK-NEXT: exited with 0
 
 module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
@@ -19,9 +20,10 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
     v3 = NewClosure function=f2
     v4 = NewClosure function=f3
     v5 = NewClosure function=f4
-    v6 = Call v1, -, v2, v3, v4, v5 calleeName="sink"
-    v7 = Undefined
-    Return v7
+    v6 = NewClosure function=f5
+    v7 = Call v1, -, v2, v3, v4, v5, v6 calleeName="sink"
+    v8 = Undefined
+    Return v8
 }
 function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string|Array, v1: anything):
@@ -197,4 +199,34 @@ function f4 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v13 = CatchException
     IteratorClose v4 completion=Throw
     Rethrow v13
+}
+function f5 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = String string="0"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = IteratorOpen v0
+    Jump -> next b1(v4)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v5
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    v11 = PropGet v6 key="toExponential"
+    v12 = Call v11, v6 calleeKey="toExponential" calleeName="total.toExponential"
+    ReturnCall v12
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v13 = PropGet v6 key="add"
+    v14 = Call v13, v6, v10 calleeKey="add" calleeName="total.add"
+    v15 = Convert v14 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v15)
+  b5() role=IterationCleanup subject=v5:
+    v16 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v16
 }

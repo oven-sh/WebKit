@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1")
+//@ requireOptions("--useDecimal=1", "--useDollarVM=1")
 
 // A value that goes around a loop is kept in registers, and is still one object wherever that can be seen.
 
@@ -286,6 +286,32 @@ test((list, skip) => {
     }
 }, f => shouldBe(f(amounts, 0), "6"), f => shouldBe(f(amounts, 1), "ReferenceError"), f => shouldBe(f([], 1), "ReferenceError"));
 
+// A check that was made for something else stays.
+{
+    class Sub extends Decimal { isFinite() { return "sub"; } }
+    let f = (start, list, asks) => { let total = start, answer; for (let x of list) { if (asks) answer = total.isFinite(); total = total.add(x); } return asks ? answer : total.toString(); };
+    noInline(f);
+    for (let i = 0; i < 200; i++)
+        shouldBe(f(new Sub(1), [amounts[0]], true), "sub");
+    test(f, f => shouldBe(f(amounts[0], amounts, false), "6.25"));
+    shouldBe(f(amounts[0], amounts, true), true);
+}
+{
+    let node = $vm.createDOMJITCheckJSCastObject(), func = node.func;
+    let f = (start, list, asks) => { let total = start, answer; for (let x of list) { if (asks) answer = func.call(total); total = x.add(asks === 1 ? x : total); } return asks ? answer : total.toString(); };
+    noInline(f);
+    for (let i = 0; i < 200; i++)
+        shouldBe(f(node, [amounts[0]], 1), 42);
+    test(f, f => shouldBe(f(amounts[0], amounts, 0), "6.25"));
+    let name;
+    try {
+        f(amounts[0], amounts, 2);
+    } catch (error) {
+        name = error.name;
+    }
+    shouldBe(name, "TypeError");
+}
+
 // What else has the object changes it. This is last: from here on a Decimal may have properties.
 {
     function change(value, i, at) { if (i === at) value.add = () => 42m; }
@@ -299,6 +325,9 @@ test((list, skip) => {
         f => shouldBe(f(amounts, 9).toString(), "6"),
         f => shouldBe(f(amounts, -1).toString(), "6"));
     shouldBe(f(amounts, 4).toString(), "42.95");
+    f = test((list, at) => { let total = 0m; for (let i = 0; i < list.length; i++) { if (i === 4) change(total, i, at); else total = total.add(list[i]); } return total.toString(); },
+        f => shouldBe(f(amounts, -1), "5.95"));
+    shouldBe(f(amounts, 4), "42");
 }
 
 test(list => { let total = 0m; for (let x of list) total = total.add(x); return total; },
