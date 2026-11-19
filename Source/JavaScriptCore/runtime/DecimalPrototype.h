@@ -10,6 +10,9 @@
 
 namespace JSC {
 
+// decimalLiteral("1.5") is 1.5m.
+JSC_DECLARE_HOST_FUNCTION(decimalLiteral);
+
 // What round() and scale10() answer, or Decimal128::noValue() where they throw.
 Decimal128 roundOrNoValue(Decimal128, JSValue digits, Decimal128::RoundingMode);
 Decimal128 scale10OrNoValue(Decimal128, JSValue power);

@@ -657,6 +657,26 @@ std::optional<DecimalOperation> decimalOperationOf(TaggedNativeFunction function
     return std::nullopt;
 }
 
+Decimal128 DecimalLiteralCache::parse(StringView text)
+{
+    return Decimal128::parse(text).value_or(Decimal128::nan());
+}
+
+NEVER_INLINE Decimal128 DecimalLiteralCache::add(Set& set, uint64_t characters, StringView text)
+{
+    Decimal128 value = parse(text);
+    set[1] = set[0];
+    set[0] = { characters, text.length(), value };
+    return value;
+}
+
+// Not in the proposal. The table of built-ins says that it takes any String and does not throw.
+JSC_DEFINE_HOST_FUNCTION(decimalLiteral, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    Decimal128 value = globalObject->vm().decimalLiteralCache().get(asString(callFrame->uncheckedArgument(0))->tryGetView());
+    return newDecimal(globalObject, value);
+}
+
 #undef REQUIRE_DECIMAL
 
 } // namespace JSC

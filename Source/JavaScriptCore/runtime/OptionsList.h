@@ -774,7 +774,7 @@ bool hasCapacityToUseLargeGigacage();
     FOR_EACH_JSC_WEB_PREFERENCE_OPTION(v) \
     /* Restricted so some app doesn't set this environment variable and start using it. */ \
     v(Bool, disallowMixedWasmExceptions, true, Restricted, "Disallow using both legacy and modern (try_table) wasm exception specs in the same module."_s) \
-    v(Bool, useDecimal, false, Normal, "Expose the Decimal constructor of the TC39 Decimal proposal."_s) \
+    v(Bool, useDecimal, false, Normal, "Expose the Decimal constructor of the TC39 Decimal proposal, and parse Decimal literals (1.5m)."_s) \
     v(Bool, useDecimalToJSON, false, Normal, "With useDecimal: Decimal.prototype.toJSON() answers the exact value as a String. In the proposal it throws."_s) \
     /* Not sourced from UnifiedWebPreferences.yaml: unconditionally expose SharedArrayBuffer to every global object. */ \
     v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \

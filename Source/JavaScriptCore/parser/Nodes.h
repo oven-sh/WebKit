@@ -181,6 +181,7 @@ namespace JSC {
         virtual bool isNumber() const { return false; }
         virtual bool isString() const { return false; }
         virtual bool isBigInt() const { return false; }
+        virtual bool isDecimal() const { return false; }
         virtual bool isObjectLiteral() const { return false; }
         virtual bool isArrayLiteral() const { return false; }
         virtual bool isNull() const { return false; }
@@ -576,6 +577,22 @@ namespace JSC {
 
         const Identifier& m_pattern;
         const Identifier& m_flags;
+    };
+
+    // 1.5m or -1.5m. Every evaluation makes a new Decimal object.
+    class DecimalNode final : public ExpressionNode, public ThrowableExpressionData {
+    public:
+        DecimalNode(const JSTokenLocation&, const Identifier& value, bool isNegative);
+
+        const Identifier& value() const { return m_value; }
+        bool isNegative() const { return m_isNegative; }
+
+    private:
+        bool isDecimal() const final { return true; }
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+
+        const Identifier& m_value;
+        bool m_isNegative;
     };
 
     class ThisNode final : public ExpressionNode {

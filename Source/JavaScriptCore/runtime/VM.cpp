@@ -895,6 +895,13 @@ void VM::initializeDecimalStringCache()
     m_decimalStringCache = makeUnique<DecimalStringCache>();
 }
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(DecimalLiteralCache);
+
+void VM::initializeDecimalLiteralCache()
+{
+    m_decimalLiteralCache = makeUnique<DecimalLiteralCache>();
+}
+
 Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop)
 {
     return adoptRef(*new VM(VMType::Default, heapType, runLoop));

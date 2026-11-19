@@ -58,6 +58,7 @@
 #include "DecimalConstructor.h"
 #include "DecimalObject.h"
 #include "DecimalOperations.h"
+#include "DecimalPrototype.h"
 #include "DeleteByStatus.h"
 #include "FunctionCodeBlock.h"
 #include "GetByStatus.h"
@@ -535,12 +536,14 @@ private:
     DecimalWords decimalWordsOfTuple(Node*);
     DecimalWords checkDecimal(Node*);
     Node* addDecimalNode(NodeType, OpInfo, OpInfo, std::initializer_list<DecimalWords>);
-    // Of the realm of the code, which is that of the callee.
+    // Of the realm of the code, which is that of the callee. Without useDecimal, where cached bytecode can have literals, null until one ran.
     Structure* decimalStructure() { return m_inlineStackTop->m_codeBlock->globalObject()->decimalStructureConcurrently(); }
     Node* newDecimal(DecimalWords);
     Node* emitDecimalOperation(DecimalOperation, DecimalWords, std::optional<DecimalWords>, SpeculatedType prediction);
     template<typename ChecksFunctor>
     Node* handleDecimalMethod(DecimalOperation, int registerOffset, int argumentCountIncludingThis, SpeculatedType, NOESCAPE const ChecksFunctor& insertChecks);
+    template<typename ChecksFunctor>
+    Node* handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
     bool handleConstantFunction(Node* callTargetNode, Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, CodeSpecializationKind, SpeculatedType, Node* newTarget, NOESCAPE const ChecksFunctor& insertChecks);
     Node* handlePutByOffset(Node* base, unsigned identifier, PropertyOffset, Node* value);
@@ -4123,7 +4126,9 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             auto function = variant.nativeExecutable()->function();
             Node* result = nullptr;
-            if (auto operation = decimalOperationOf(function))
+            if (function == toTagged(decimalLiteral))
+                result = handleDecimalLiteral(registerOffset, insertChecks);
+            else if (auto operation = decimalOperationOf(function))
                 result = handleDecimalMethod(*operation, registerOffset, argumentCountIncludingThis, prediction, insertChecks);
             if (!result)
                 return CallOptimizationResult::DidNothing;
@@ -7032,6 +7037,18 @@ Node* ByteCodeParser::handleDecimalMethod(DecimalOperation operation, int regist
         return emitDecimalOperation(operation, x, checkDecimal(argument(1)), prediction);
     }
     }
+}
+
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    // Null if it is very long.
+    String text = get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->tryGetString(m_graph);
+    if (text.isNull() || !decimalStructure())
+        return nullptr;
+
+    insertChecks();
+    return newDecimal(decimalConstant(Decimal128::parse(text).value_or(Decimal128::nan())));
 }
 
 template<typename ChecksFunctor>

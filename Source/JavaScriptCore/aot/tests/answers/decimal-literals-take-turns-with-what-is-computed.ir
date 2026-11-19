@@ -1,0 +1,171 @@
+# A total that begins with a literal, or again, needs one object for all turns of its loop.
+# sink(list => { let total = -0m; for (const x of list) total = total.add(x); return total; }, (list, again) => { let total = 1m; for (const x of list) { if (x === again) total = 2m; else total = total.add(0.5m); } return total; }, (list, mask) => { const first = 1m; let total = first; for (let i = 0; i < list.length; i++) { if (i & mask) total = total.add(list[i]); } return [first, total]; }, (list, mask) => { let count = 0; for (let i = 0; i < list.length; i++) { const limit = i & mask ? 1m : 2m; if (limit.greaterThan(list[i])) count++; } return count; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalsReused = 4
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => k(amounts, 2)); show(() => names([f(amounts), f(amounts), f([])])); show(() => names([g(amounts, amounts[3]), g(amounts, amounts[5]), g(amounts, amounts[5])])); show(() => names(h(amounts, 1))); show(() => names(h(amounts, 0))); };
+# CHECK: 4;
+# CHECK-NEXT: 0:6 1:6 2:-0;
+# CHECK-NEXT: 0:3 1:2 2:2;
+# CHECK-NEXT: 0:1 1:5.2;
+# CHECK-NEXT: 0:1 0:1;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5 calleeName="sink"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = String string="-0"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = IteratorOpen v0
+    Jump -> next b1(v4)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v5
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Return v6
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v11 = PropGet v6 key="add"
+    v12 = Call v11, v6, v10 calleeKey="add" calleeName="total.add"
+    v13 = Convert v12 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v13)
+  b5() role=IterationCleanup subject=v5:
+    v14 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v14
+}
+function f2 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = String string="1"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = IteratorOpen v0
+    Jump -> next b1(v5)
+  b1(v7):
+    LoopHint
+    v9 = IteratorResume v6
+    v10 = ResultAt v9
+    v11 = ResultAt v9 index=1
+    Branch v10 -> taken b2(), notTaken b3()
+  b2():
+    Return v7
+  b3():
+    Jump -> next b4()
+  b4() handler=b8():
+    v12 = StrictEq v11, v1
+    Branch v12 -> taken b5(), notTaken b6()
+  b5() handler=b8():
+    v13 = String string="2"
+    v14 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v15 = Call v14, -, v13
+    v16 = Convert v15 declared={type=anything flags=[IsExpected]}
+    Jump -> next b7(v16)
+  b6() handler=b8():
+    v17 = PropGet v7 key="add"
+    v18 = String string="0.5"
+    v19 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v20 = Call v19, -, v18
+    v21 = Call v17, v7, v20 calleeKey="add" calleeName="total.add"
+    v22 = Convert v21 declared={type=anything flags=[IsExpected]}
+    Jump -> next b7(v22)
+  b7(v23) handler=b8():
+    Jump -> next b1(v23)
+  b8() role=IterationCleanup subject=v6:
+    v24 = CatchException
+    IteratorClose v6 completion=Throw
+    Rethrow v24
+}
+function f3 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = String string="1"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v7)
+  b1(v8, v9):
+    LoopHint
+    v11 = PropGet v0 key="length"
+    v12 = Less v9, v11
+    Branch v12 -> taken b2(), notTaken b5()
+  b2():
+    v13 = BitAnd v9, v1
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(| 0), notTaken b4(v8)
+  b3(v15):
+    v16 = PropGet v8 key="add"
+    v17 = ElemGet v0, v9
+    v18 = Call v16, v8, v17 calleeKey="add" calleeName="total.add"
+    v19 = Convert v18 declared={type=anything flags=[IsExpected]}
+    Jump -> next b4(v19)
+  b4(v20):
+    v21 = Increment v9
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v20, v22)
+  b5():
+    v23 = NewArray v4, v8 contents=anything
+    Return v23
+}
+function f4 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = Integer
+    v3 = Convert v2 declared={type=number flags=[IsExpected]}
+    v4 = Integer
+    v5 = Convert v4 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v5)
+  b1(v6, v7):
+    LoopHint
+    v9 = PropGet v0 key="length"
+    v10 = Less v7, v9
+    Branch v10 -> taken b2(), notTaken b8()
+  b2():
+    v11 = BitAnd v7, v1
+    v12 = ToBoolean v11
+    Branch v12 -> taken b3(| 0), notTaken b4(| 0)
+  b3(v13):
+    v14 = String string="1"
+    v15 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v16 = Call v15, -, v14
+    Jump -> next b5(v16)
+  b4(v17):
+    v18 = String string="2"
+    v19 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v20 = Call v19, -, v18
+    Jump -> next b5(v20)
+  b5(v21):
+    v22 = PropGet v21 key="greaterThan"
+    v23 = ElemGet v0, v7
+    v24 = Call v22, v21, v23 calleeKey="greaterThan" calleeName="limit.greaterThan"
+    v25 = ToBoolean v24
+    Branch v25 -> taken b6(| 0), notTaken b7(v6)
+  b6(v26):
+    v27 = Increment v6
+    v28 = Convert v27 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v28)
+  b7(v29):
+    v30 = Increment v7
+    v31 = Convert v30 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v29, v31)
+  b8():
+    Return v6
+}
