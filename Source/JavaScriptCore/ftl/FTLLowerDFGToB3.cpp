@@ -54,6 +54,7 @@
 #include "DFGMayExit.h"
 #include "DFGOSRAvailabilityAnalysisPhase.h"
 #include "DFGOSRExitFuzz.h"
+#include "DecimalFastPaths.h"
 #include "DecimalObject.h"
 #include "DecimalOperations.h"
 #include "DirectArguments.h"
@@ -10094,17 +10095,79 @@ IGNORE_CLANG_WARNINGS_END
         }
     }
 
-    LValue lowDecimalWord(unsigned index) { return lowStorage(m_graph.child(m_node, index)); }
+    struct DecimalGenerator {
+        using Value = LValue;
+        using Block = LBasicBlock;
 
-    void setDecimal(LValue words)
+        Output& out() { return lowering.m_out; }
+        LType int64Type() { return Int64; }
+        Block newBlock() { return out().newBlock(); }
+        void appendTo(Block block) { out().appendTo(block); }
+        void continueIf(Value condition, Block otherwise)
+        {
+            Block next = newBlock();
+            out().branch(condition, usually(next), rarely(otherwise));
+            appendTo(next);
+        }
+        void branch(Value condition, Block taken, Block notTaken) { out().branch(condition, unsure(taken), unsure(notTaken)); }
+        // Opaque, or each field gets a constant of its own.
+        Value addressInTables(ptrdiff_t offset, Value index) { return out().opaque(out().add(out().constIntPtr(std::bit_cast<intptr_t>(&Decimal128::tables()) + offset), index)); }
+        Value loadFromTables(Value address, ptrdiff_t offset) { return out().load64(out().address(lowering.m_heaps.root, address, offset)); }
+        Value countLeadingZeros64(Value value) { return out().ctlz64(value); }
+
+        LowerDFGToB3& lowering;
+    };
+    using DecimalWords = DecimalFastPaths<DecimalGenerator>::Words;
+    using TrailingZeros = DecimalFastPaths<DecimalGenerator>::TrailingZeros;
+
+    DecimalWords lowDecimal(Node* node, unsigned index) { return { lowStorage(m_graph.child(node, 2 * index)), lowStorage(m_graph.child(node, 2 * index + 1)) }; }
+    DecimalWords lowDecimal(unsigned index) { return lowDecimal(m_node, index); }
+
+    struct ReadsOfTuple {
+        unsigned wordsRead { 0 };
+        TrailingZeros trailingZeros { TrailingZeros::Some };
+    };
+    ReadsOfTuple readsOfTuple(Node* tuple)
     {
-        setTuple(0, m_out.extract(words, 0));
-        setTuple(1, m_out.extract(words, 1));
+        if (!m_readsOfTuples) {
+            auto& tuples = m_readsOfTuples.emplace();
+            for (DFG::BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+                for (Node* node : *block) {
+                    // For what an exit reads see operationMaterializeObjectInOSR.
+                    if (node->op() == PutHint || node->op() == DFG::Check || node->op() == CheckVarargs || node->op() == Phantom)
+                        continue;
+                    m_graph.doToChildren(node, [&](Edge edge) {
+                        if (edge->op() != ExtractFromTuple)
+                            return;
+                        auto& reads = tuples.add(edge->child1().node(), ReadsOfTuple { }).iterator->value;
+                        ++reads.wordsRead;
+                        if (!node->hasDecimalOperation() || !takesTrailingZeros(node->decimalOperation()))
+                            reads.trailingZeros = TrailingZeros::None;
+                    });
+                }
+            }
+        }
+        return m_readsOfTuples->get(tuple);
     }
+    TrailingZeros trailingZerosOfTuple(Node* tuple) { return readsOfTuple(tuple).trailingZeros; }
+
+    TrailingZeros trailingZerosOfDecimal(unsigned index)
+    {
+        Node* low = m_graph.child(m_node, 2 * index).node();
+        return low->op() == ExtractFromTuple ? trailingZerosOfTuple(low->child1().node()) : TrailingZeros::None;
+    }
+
+    void setDecimal(DecimalWords words)
+    {
+        setTuple(0, words.low);
+        setTuple(1, words.upper);
+    }
+
+    void setDecimal(LValue words) { setDecimal({ m_out.extract(words, 0), m_out.extract(words, 1) }); }
 
     void setDecimalOrExit(LValue words)
     {
-        speculate(BadDecimalArgument, noValue(), nullptr, m_out.equal(m_out.extract(words, 1), m_out.constInt64(upperOfNoDecimal)));
+        speculate(BadDecimalArgument, noValue(), nullptr, m_out.equal(m_out.extract(words, 1), m_out.constInt64(Decimal128::upperOfNoValue)));
         setDecimal(words);
     }
 
@@ -10127,121 +10190,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        setTuple(0, m_out.phi(Int64, fastLow, slowLow));
-        setTuple(1, m_out.phi(Int64, fastUpper, slowUpper));
-    }
-
-    void continueIf(LValue condition, LBasicBlock slowCase)
-    {
-        LBasicBlock next = m_out.newBlock();
-        m_out.branch(condition, usually(next), rarely(slowCase));
-        m_out.appendTo(next);
-    }
-
-    // What the coefficient has above 64 bits, at the top of the word.
-    LValue highOfDecimal(LValue upper) { return m_out.shl(upper, m_out.constInt32(64 - Decimal128::shiftOfExponent)); }
-    LValue exponentOfDecimal(LValue upper) { return m_out.aShr(m_out.shl(upper, m_out.int32One), m_out.constInt32(64 - Decimal128::bitsOfExponent)); }
-
-    LValue fieldOfExponent(LValue exponent) { return m_out.lShr(m_out.shl(exponent, m_out.constInt32(64 - Decimal128::bitsOfExponent)), m_out.int32One); }
-    // Whether any coefficient can have it.
-    LValue isQuantumExponent(LValue exponent) { return m_out.belowOrEqual(m_out.sub(exponent, m_out.constInt64(Decimal128::minimumQuantumExponent)), m_out.constInt64(Decimal128::maximumQuantumExponent - Decimal128::minimumQuantumExponent)); }
-
-    LValue withSignOfDecimal(LValue magnitude, LValue upper)
-    {
-        LValue sign = m_out.aShr(upper, m_out.constInt32(63));
-        return m_out.sub(m_out.bitXor(magnitude, sign), sign);
-    }
-
-    // False for 0. See Granlund and Montgomery, Division by Invariant Integers using Multiplication, section 9.
-    LValue hasNoTrailingZero(LValue value)
-    {
-        constexpr uint64_t inverseOf5 = 0xcccccccccccccccdull;
-        static_assert(inverseOf5 * 5 == 1);
-        LValue fifth = m_out.mul(value, m_out.constInt64(inverseOf5));
-        LValue rotated = m_out.bitOr(m_out.lShr(fifth, m_out.int32One), m_out.shl(fifth, m_out.constInt32(63)));
-        return m_out.above(rotated, m_out.constInt64(std::numeric_limits<uint64_t>::max() / 10));
-    }
-
-    // The finite operands as signed counts of one unit, of a magnitude below 2^62, and the upper word of the operand that has that unit.
-    std::array<LValue, 3> alignShortDecimals(LBasicBlock slowCase)
-    {
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
-        LValue otherLow = lowDecimalWord(2);
-        LValue otherUpper = lowDecimalWord(3);
-        continueIf(m_out.isZero64(highOfDecimal(m_out.bitOr(upper, otherUpper))), slowCase);
-
-        // NaN and infinity are far from any finite value, and their exponents are above the greatest with which no sum is infinite.
-        constexpr int reach = Decimal128::reachOfAlignments;
-        LValue exponent = exponentOfDecimal(upper);
-        LValue distance = m_out.sub(exponent, exponentOfDecimal(otherUpper));
-        continueIf(m_out.belowOrEqual(m_out.add(distance, m_out.constInt64(reach)), m_out.constInt64(2 * reach)), slowCase);
-        continueIf(m_out.lessThanOrEqual(exponent, m_out.constInt64(Decimal128::maximumQuantumExponent)), slowCase);
-
-        using Alignment = Decimal128::Alignment;
-        static_assert(sizeof(Alignment) == 1 << 5);
-        LValue alignment = m_out.add(m_out.constIntPtr(Decimal128::alignmentsByDistance()), m_out.shl(distance, m_out.constInt32(5)));
-        auto load = [&](ptrdiff_t offset) { return m_out.load64(m_out.address(m_heaps.root, alignment, offset)); };
-        continueIf(m_out.belowOrEqual(low, load(OBJECT_OFFSETOF(Alignment, limit))), slowCase);
-        continueIf(m_out.belowOrEqual(otherLow, load(OBJECT_OFFSETOF(Alignment, otherLimit))), slowCase);
-        LValue count = m_out.mul(low, load(OBJECT_OFFSETOF(Alignment, factor)));
-        LValue otherCount = m_out.mul(otherLow, load(OBJECT_OFFSETOF(Alignment, otherFactor)));
-        return { withSignOfDecimal(count, upper), withSignOfDecimal(otherCount, otherUpper), m_out.select(m_out.lessThan(distance, m_out.int64Zero), upper, otherUpper) };
-    }
-
-    std::array<LValue, 2> roundShortDecimal(LValue low, LValue upper, LValue digits, LBasicBlock slowCase)
-    {
-        LBasicBlock hasMoreDigits = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-
-        // NaN and infinity have none. 0 seems to have some if the count is negative.
-        LValue unit = m_out.neg(m_out.signExt32To64(digits));
-        LValue power = m_out.sub(unit, exponentOfDecimal(upper));
-        ValueFromBlock sameLow = m_out.anchor(low);
-        ValueFromBlock sameUpper = m_out.anchor(upper);
-        m_out.branch(m_out.greaterThan(power, m_out.int64Zero), unsure(hasMoreDigits), unsure(continuation));
-
-        m_out.appendTo(hasMoreDigits);
-        continueIf(m_out.lessThanOrEqual(unit, m_out.constInt64(Decimal128::maximumQuantumExponent)), slowCase);
-        if (!digits->hasInt32() || digits->asInt32() < 0)
-            continueIf(m_out.notZero64(low), slowCase);
-        continueIf(m_out.isZero64(highOfDecimal(upper)), slowCase);
-        continueIf(m_out.lessThanOrEqual(power, m_out.constInt64(Decimal128::greatestPowerOfDivisors)), slowCase);
-        using Divisor = Decimal128::Divisor;
-        static_assert(sizeof(Divisor) == 1 << 5);
-        LValue divisor = m_out.add(m_out.constIntPtr(Decimal128::divisorsByPower()), m_out.shl(power, m_out.constInt32(5)));
-        auto load = [&](ptrdiff_t offset) { return m_out.load64(m_out.address(m_heaps.root, divisor, offset)); };
-        LValue quotient = m_out.lShr(m_out.uMulHigh(m_out.lShr(low, m_out.castToInt32(power)), load(OBJECT_OFFSETOF(Divisor, reciprocal))), m_out.castToInt32(load(OBJECT_OFFSETOF(Divisor, shift))));
-        auto remainder = [&] { return m_out.sub(low, m_out.mul(quotient, load(OBJECT_OFFSETOF(Divisor, value)))); };
-
-        // The last digit is not 0, so the remainder is not.
-        LValue isNegative = m_out.lShr(upper, m_out.constInt32(63));
-        LValue increment = nullptr;
-        switch (static_cast<Decimal128::RoundingMode>(m_node->decimalRoundingMode())) {
-        case Decimal128::RoundingMode::Ceil:
-            increment = m_out.bitXor(isNegative, m_out.constInt64(1));
-            break;
-        case Decimal128::RoundingMode::Floor:
-            increment = isNegative;
-            break;
-        case Decimal128::RoundingMode::Trunc:
-            increment = m_out.int64Zero;
-            break;
-        case Decimal128::RoundingMode::HalfExpand:
-            increment = m_out.zeroExt(m_out.aboveOrEqual(remainder(), load(OBJECT_OFFSETOF(Divisor, half))), Int64);
-            break;
-        case Decimal128::RoundingMode::HalfEven:
-            increment = m_out.zeroExt(m_out.above(m_out.add(remainder(), m_out.bitAnd(quotient, m_out.constInt64(1))), load(OBJECT_OFFSETOF(Divisor, half))), Int64);
-            break;
-        }
-        LValue count = m_out.add(quotient, increment);
-        continueIf(hasNoTrailingZero(count), slowCase);
-        ValueFromBlock roundedLow = m_out.anchor(count);
-        ValueFromBlock roundedUpper = m_out.anchor(m_out.bitOr(m_out.bitAnd(upper, m_out.constInt64(Decimal128::signBit)), fieldOfExponent(unit)));
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation);
-        return { m_out.phi(Int64, sameLow, roundedLow), m_out.phi(Int64, sameUpper, roundedUpper) };
+        setDecimal({ m_out.phi(Int64, fastLow, slowLow), m_out.phi(Int64, fastUpper, slowUpper) });
     }
 
     void compileDecimalWordConstant()
@@ -10251,6 +10200,10 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileGetDecimalWord()
     {
+        if (auto* object = m_node->child1()->dynamicCastConstant<DecimalObject*>()) {
+            setStorage(m_out.constInt64(object->value().words()[m_node->decimalWordIndex()]));
+            return;
+        }
         setStorage(m_out.load64(lowCell(m_node->child1()), m_node->decimalWordIndex() ? m_heaps.DecimalObject_upper : m_heaps.DecimalObject_low));
     }
 
@@ -10261,11 +10214,7 @@ IGNORE_CLANG_WARNINGS_END
         case Int32Use: {
             LValue value = lowInt32(m_node->child1());
             setDecimal([&](LBasicBlock slowCase) {
-                LValue wide = m_out.signExt32To64(value);
-                LValue sign = m_out.aShr(wide, m_out.constInt32(63));
-                LValue magnitude = m_out.sub(m_out.bitXor(wide, sign), sign);
-                continueIf(hasNoTrailingZero(magnitude), slowCase);
-                return std::array { magnitude, m_out.shl(sign, m_out.constInt32(63)) };
+                return m_decimals.fromInteger(m_out.signExt32To64(value), true, trailingZerosOfTuple(m_node), slowCase);
             }, [&] {
                 return m_out.callWithoutSideEffects(words, operationInt32ToDecimal, value);
             });
@@ -10274,9 +10223,21 @@ IGNORE_CLANG_WARNINGS_END
         case DoubleRepUse:
             setDecimal(m_out.callWithoutSideEffects(words, operationDoubleToDecimal, lowDouble(m_node->child1())));
             return;
-        case UntypedUse:
-            setDecimalOrExit(vmCall(words, operationToDecimal, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), lowJSValue(m_node->child1())));
+        case UntypedUse: {
+            LValue value = lowJSValue(m_node->child1());
+            setDecimal([&](LBasicBlock slowCase) {
+                LValue result = m_out.callWithoutSideEffects(words, operationPrimitiveToDecimal, value);
+                // In front of a check the value can be empty.
+                result->as<CCallValue>()->effects.controlDependent = true;
+                m_decimalGenerator.continueIf(m_out.notEqual(m_out.extract(result, 1), m_out.constInt64(Decimal128::upperOfNoValue)), slowCase);
+                return DecimalWords { m_out.extract(result, 0), m_out.extract(result, 1) };
+            }, [&] {
+                LValue result = vmCall(words, operationToDecimal, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), value);
+                speculate(BadDecimalArgument, noValue(), nullptr, m_out.equal(m_out.extract(result, 1), m_out.constInt64(Decimal128::upperOfNoValue)));
+                return result;
+            });
             return;
+        }
         default:
             DFG_CRASH(m_graph, m_node, "Bad use kind"_s);
         }
@@ -10285,127 +10246,105 @@ IGNORE_CLANG_WARNINGS_END
     void compileDecimalArith()
     {
         LType words = toOperationType(Int64);
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
-        switch (m_node->decimalOperation()) {
+        auto operation = m_node->decimalOperation();
+        DecimalWords x = lowDecimal(0);
+        switch (operation) {
         case DecimalOperation::Abs:
-            setTuple(0, low);
-            setTuple(1, m_out.bitAnd(upper, m_out.constInt64(~Decimal128::signBit)));
+            setDecimal(m_decimals.abs(x));
             return;
         case DecimalOperation::Negate:
-            setTuple(0, low);
-            setTuple(1, m_out.select(isDecimalNaN(upper), upper, m_out.bitXor(upper, m_out.constInt64(Decimal128::signBit))));
+            setDecimal(m_decimals.negate(x));
             return;
         case DecimalOperation::Mantissa:
-            setDecimal(m_out.callWithoutSideEffects(words, operationDecimalMantissa, low, upper));
-            return;
-        case DecimalOperation::Add:
-        case DecimalOperation::Subtract:
-            setDecimal([&](LBasicBlock slowCase) {
-                auto [x, y, upperOfUnit] = alignShortDecimals(slowCase);
-                LValue sum = m_node->decimalOperation() == DecimalOperation::Add ? m_out.add(x, y) : m_out.sub(x, y);
-                LValue sign = m_out.aShr(sum, m_out.constInt32(63));
-                LValue magnitude = m_out.sub(m_out.bitXor(sum, sign), sign);
-                continueIf(hasNoTrailingZero(magnitude), slowCase);
-                return std::array { magnitude, m_out.bitOr(m_out.bitAnd(upperOfUnit, m_out.constInt64(~Decimal128::signBit)), m_out.shl(sign, m_out.constInt32(63))) };
-            }, [&] {
-                return m_out.callWithoutSideEffects(words, binaryDecimalOperation(m_node->decimalOperation()), low, upper, lowDecimalWord(2), lowDecimalWord(3));
-            });
-            return;
-        case DecimalOperation::Multiply:
-            setDecimal([&](LBasicBlock slowCase) {
-                LValue otherLow = lowDecimalWord(2);
-                LValue otherUpper = lowDecimalWord(3);
-                continueIf(m_out.isZero64(m_out.bitOr(highOfDecimal(m_out.bitOr(upper, otherUpper)), m_out.uMulHigh(low, otherLow))), slowCase);
-                LValue exponent = m_out.add(exponentOfDecimal(upper), exponentOfDecimal(otherUpper));
-                continueIf(isQuantumExponent(exponent), slowCase);
-                // The coefficient of NaN and infinity is 0.
-                LValue product = m_out.mul(low, otherLow);
-                continueIf(hasNoTrailingZero(product), slowCase);
-                return std::array { product, m_out.bitOr(fieldOfExponent(exponent), m_out.bitAnd(m_out.bitXor(upper, otherUpper), m_out.constInt64(Decimal128::signBit))) };
-            }, [&] {
-                return m_out.callWithoutSideEffects(words, binaryDecimalOperation(DecimalOperation::Multiply), low, upper, lowDecimalWord(2), lowDecimalWord(3));
-            });
+            setDecimal(m_out.callWithoutSideEffects(words, operationDecimalMantissa, x.low, x.upper));
             return;
         default:
-            setDecimal(m_out.callWithoutSideEffects(words, binaryDecimalOperation(m_node->decimalOperation()), low, upper, lowDecimalWord(2), lowDecimalWord(3)));
+            break;
+        }
+
+        DecimalWords y = lowDecimal(1);
+        if (auto reciprocal = operation == DecimalOperation::Divide ? m_decimals.reciprocalOf(y) : std::nullopt) {
+            operation = DecimalOperation::Multiply;
+            y = *reciprocal;
+        }
+        auto call = [&] {
+            return m_out.callWithoutSideEffects(words, binaryDecimalOperation(operation), x.low, x.upper, y.low, y.upper);
+        };
+        if (operation > DecimalOperation::Multiply) {
+            setDecimal(call());
             return;
         }
+        setDecimal([&](LBasicBlock slowCase) {
+            TrailingZeros result = trailingZerosOfTuple(m_node);
+            if (operation == DecimalOperation::Add)
+                return m_decimals.add(x, y, result, slowCase);
+            if (operation == DecimalOperation::Subtract)
+                return m_decimals.subtract(x, y, result, slowCase);
+            return m_decimals.multiply(x, y, result, slowCase);
+        }, call);
+    }
+
+    // If this node alone reads the quotient.
+    Node* divisionThatGives(Node* word)
+    {
+        if (word->op() != ExtractFromTuple)
+            return nullptr;
+        Node* tuple = word->child1().node();
+        if (tuple->op() != DecimalArith || tuple->decimalOperation() != DecimalOperation::Divide || readsOfTuple(tuple).wordsRead != 2)
+            return nullptr;
+        return m_decimals.reciprocalOf(lowDecimal(tuple, 1)) ? nullptr : tuple;
     }
 
     void compileDecimalScale()
     {
         LType words = toOperationType(Int64);
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
+        DecimalWords x = lowDecimal(0);
         LValue mode = m_out.constInt32(m_node->decimalRoundingMode());
         bool isRound = m_node->decimalOperation() == DecimalOperation::Round;
         if (m_node->child3().useKind() == UntypedUse) {
-            setDecimalOrExit(m_out.callWithoutSideEffects(words, isRound ? operationDecimalRoundByValue : operationDecimalScale10ByValue, low, upper, lowJSValue(m_node->child3()), mode));
+            setDecimalOrExit(m_out.callWithoutSideEffects(words, isRound ? operationDecimalRoundByValue : operationDecimalScale10ByValue, x.low, x.upper, lowJSValue(m_node->child3()), mode));
             return;
         }
 
         LValue count = lowInt32(m_node->child3());
+        if (Node* division = isRound ? divisionThatGives(m_node->child1().node()) : nullptr) {
+            // B3 removes the other call unless an exit reads the quotient.
+            DecimalWords dividend = lowDecimal(division, 0);
+            DecimalWords divisor = lowDecimal(division, 1);
+            setDecimal(m_out.callWithoutSideEffects(words, operationDecimalDivideAndRound, dividend.low, dividend.upper, divisor.low, divisor.upper, count, mode));
+            return;
+        }
         setDecimal([&](LBasicBlock slowCase) {
             if (isRound)
-                return roundShortDecimal(low, upper, count, slowCase);
-            // The coefficient of NaN and infinity is 0.
-            continueIf(m_out.notZero64(m_out.bitOr(low, highOfDecimal(upper))), slowCase);
-            LValue exponent = m_out.add(exponentOfDecimal(upper), m_out.signExt32To64(count));
-            continueIf(isQuantumExponent(exponent), slowCase);
-            constexpr uint64_t field = ((1ull << Decimal128::bitsOfExponent) - 1) << Decimal128::shiftOfExponent;
-            return std::array { low, m_out.bitOr(m_out.bitAnd(upper, m_out.constInt64(~field)), fieldOfExponent(exponent)) };
+                return m_decimals.round(x, trailingZerosOfDecimal(0), count, static_cast<Decimal128::RoundingMode>(m_node->decimalRoundingMode()), trailingZerosOfTuple(m_node), slowCase);
+            return m_decimals.scale10(x, count, slowCase);
         }, [&] {
-            return m_out.callWithoutSideEffects(words, isRound ? operationDecimalRound : operationDecimalScale10, low, upper, count, mode);
+            return m_out.callWithoutSideEffects(words, isRound ? operationDecimalRound : operationDecimalScale10, x.low, x.upper, count, mode);
         });
     }
-
-    LValue isDecimalNaN(LValue upper) { return m_out.equal(upper, m_out.constInt64(Decimal128::upperOfNaN)); }
 
     // One functor takes two integers that are in the order of the operands, the other what operationDecimalCompare answers.
     template<typename FastFunctor, typename SlowFunctor>
     LValue compareDecimals(LType type, NOESCAPE const FastFunctor& ofIntegers, NOESCAPE const SlowFunctor& ofOrder)
     {
-        LBasicBlock notShortCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
-        LBasicBlock lastNext = m_out.insertNewBlocksBefore(notShortCase);
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
 
-        auto [x, y, upperOfUnit] = alignShortDecimals(notShortCase);
-        ValueFromBlock fastResult = m_out.anchor(ofIntegers(x, y));
-        m_out.jump(continuation);
-
-        // Of one sign and one exponent: the upper word of the difference, with a bit behind it for the lower word.
-        m_out.appendTo(notShortCase, slowCase);
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
-        LValue otherLow = lowDecimalWord(2);
-        LValue otherUpper = lowDecimalWord(3);
-        continueIf(m_out.isZero64(m_out.lShr(m_out.bitXor(upper, otherUpper), m_out.constInt32(Decimal128::shiftOfExponent))), slowCase);
-        continueIf(m_out.logicalNot(isDecimalNaN(upper)), slowCase);
-        LValue high = m_out.sub(m_out.sub(upper, otherUpper), m_out.zeroExt(m_out.below(low, otherLow), Int64));
-        LValue difference = m_out.bitOr(m_out.shl(high, m_out.int32One), m_out.zeroExt(m_out.notEqual(low, otherLow), Int64));
-        ValueFromBlock longResult = m_out.anchor(ofIntegers(withSignOfDecimal(difference, upper), m_out.int64Zero));
-        m_out.jump(continuation);
+        DecimalWords x = lowDecimal(0);
+        DecimalWords y = lowDecimal(1);
+        Vector<ValueFromBlock, 3> results;
+        m_decimals.compare(x, y, slowCase, [&](LValue left, LValue right) {
+            results.append(m_out.anchor(ofIntegers(left, right)));
+            m_out.jump(continuation);
+        });
 
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(ofOrder(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationDecimalCompare, lowDecimalWord(0), lowDecimalWord(1), lowDecimalWord(2), lowDecimalWord(3)))));
+        results.append(m_out.anchor(ofOrder(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationDecimalCompare, x.low, x.upper, y.low, y.upper)))));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
-        return m_out.phi(type, fastResult, longResult, slowResult);
-    }
-
-    // The representation of a value is unique, but for the sign of 0.
-    LValue areDecimalsEqualOrBothNaN()
-    {
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
-        LValue otherLow = lowDecimalWord(2);
-        LValue otherUpper = lowDecimalWord(3);
-        LValue areSame = m_out.isZero64(m_out.bitOr(m_out.bitXor(low, otherLow), m_out.bitXor(upper, otherUpper)));
-        LValue areZero = m_out.isZero64(m_out.bitOr(m_out.bitOr(low, otherLow), m_out.shl(m_out.bitOr(upper, otherUpper), m_out.int32One)));
-        return m_out.bitOr(areSame, areZero);
+        return m_out.phi(type, results);
     }
 
     void compileDecimalTest()
@@ -10413,20 +10352,16 @@ IGNORE_CLANG_WARNINGS_END
         static_assert(unorderedDecimals == 2);
         switch (m_node->decimalOperation()) {
         case DecimalOperation::IsNaN:
-            setBoolean(isDecimalNaN(lowDecimalWord(1)));
+            setBoolean(m_decimals.isNaN(lowDecimal(0)));
             return;
-        case DecimalOperation::IsFinite: {
-            // The exponents of NaN and infinity differ in the last bit only.
-            static_assert((Decimal128::exponentOfNaN ^ Decimal128::exponentOfInfinity) == 1);
-            LValue bits = m_out.lShr(m_out.shl(lowDecimalWord(1), m_out.int32One), m_out.constInt32(Decimal128::shiftOfExponent + 2));
-            setBoolean(m_out.notEqual(bits, m_out.constInt64(Decimal128::exponentOfNaN >> 1)));
+        case DecimalOperation::IsFinite:
+            setBoolean(m_decimals.isFinite(lowDecimal(0)));
             return;
-        }
         case DecimalOperation::Equals:
-            setBoolean(m_out.bitAnd(areDecimalsEqualOrBothNaN(), m_out.logicalNot(isDecimalNaN(lowDecimalWord(1)))));
+            setBoolean(m_decimals.equals(lowDecimal(0), lowDecimal(1)));
             return;
         case DecimalOperation::NotEquals:
-            setBoolean(m_out.logicalNot(m_out.bitOr(areDecimalsEqualOrBothNaN(), m_out.bitOr(isDecimalNaN(lowDecimalWord(1)), isDecimalNaN(lowDecimalWord(3))))));
+            setBoolean(m_decimals.notEquals(lowDecimal(0), lowDecimal(1)));
             return;
         case DecimalOperation::LessThan:
             setBoolean(compareDecimals(Int32, [&](LValue x, LValue y) { return m_out.lessThan(x, y); }, [&](LValue order) { return m_out.lessThan(order, m_out.int32Zero); }));
@@ -10457,26 +10392,16 @@ IGNORE_CLANG_WARNINGS_END
         }
 
         ASSERT(m_node->decimalOperation() == DecimalOperation::Exponent);
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
-        LBasicBlock fastCase = m_out.newBlock();
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
 
-        // A coefficient of 64 bits that is not 0.
-        m_out.branch(m_out.bitAnd(m_out.isZero64(highOfDecimal(upper)), m_out.notZero64(low)), usually(fastCase), rarely(slowCase));
-
-        // As numberOfDigits().
-        LBasicBlock lastNext = m_out.appendTo(fastCase, slowCase);
-        LValue bits = m_out.sub(m_out.constInt64(64), m_out.ctlz64(low));
-        LValue guess = m_out.lShr(m_out.mul(bits, m_out.constInt64(1233)), m_out.constInt32(12));
-        LValue power = m_out.load64(TypedPointer(m_heaps.root, m_out.add(m_out.constIntPtr(Decimal128::powersOf10()), m_out.shl(guess, m_out.constInt32(3)))));
-        LValue digitsBehindFirst = m_out.sub(m_out.castToInt32(guess), m_out.below(low, power));
-        ValueFromBlock fastResult = m_out.anchor(boxInt32(m_out.add(m_out.castToInt32(exponentOfDecimal(upper)), digitsBehindFirst)));
+        DecimalWords x = lowDecimal(0);
+        ValueFromBlock fastResult = m_out.anchor(boxInt32(m_decimals.exponent(x, slowCase)));
         m_out.jump(continuation);
 
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(m_out.callWithoutSideEffects(Int64, operationDecimalExponent, low, upper));
+        ValueFromBlock slowResult = m_out.anchor(m_out.callWithoutSideEffects(Int64, operationDecimalExponent, x.low, x.upper));
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
@@ -10485,20 +10410,19 @@ IGNORE_CLANG_WARNINGS_END
 
     void compileDecimalToString()
     {
-        setJSValue(vmCall(pointerType(), m_node->decimalOperation() == DecimalOperation::ToString ? operationDecimalToString : operationDecimalToExponential, m_vmValue, lowDecimalWord(0), lowDecimalWord(1)));
+        setJSValue(vmCall(pointerType(), m_node->decimalOperation() == DecimalOperation::ToString ? operationDecimalToString : operationDecimalToExponential, m_vmValue, lowDecimal(0).low, lowDecimal(0).upper));
     }
 
     void compileDecimalToFixed()
     {
-        LValue result = vmCall(pointerType(), operationDecimalToFixed, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), lowDecimalWord(0), lowDecimalWord(1), lowJSValue(m_graph.child(m_node, 2)), lowJSValue(m_graph.child(m_node, 3)));
+        LValue result = vmCall(pointerType(), operationDecimalToFixed, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), lowDecimal(0).low, lowDecimal(0).upper, lowJSValue(m_graph.child(m_node, 2)), lowJSValue(m_graph.child(m_node, 3)));
         speculate(BadDecimalArgument, noValue(), nullptr, m_out.isNull(result));
         setJSValue(result);
     }
 
     void compileNewDecimal()
     {
-        LValue low = lowDecimalWord(0);
-        LValue upper = lowDecimalWord(1);
+        auto [low, upper] = lowDecimal(0);
         LBasicBlock slowCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
@@ -29821,6 +29745,9 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue m_callFrame;
     LValue m_vmValue;
+    DecimalGenerator m_decimalGenerator { *this };
+    DecimalFastPaths<DecimalGenerator> m_decimals { m_decimalGenerator };
+    std::optional<UncheckedKeyHashMap<Node*, ReadsOfTuple>> m_readsOfTuples;
     LValue m_captured;
     LValue m_numberTag;
     LValue m_notCellMask;

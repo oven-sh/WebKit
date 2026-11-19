@@ -25,8 +25,6 @@ static ALWAYS_INLINE UGPRPair inRegisters(Decimal128 value)
     return makeUGPRPair(low, upper);
 }
 
-static constexpr UGPRPair noDecimal = makeUGPRPair(0, static_cast<int64_t>(upperOfNoDecimal));
-
 #define FOR_EACH_BINARY_DECIMAL_OPERATION(macro) \
     macro(Add, add) \
     macro(Subtract, subtract) \
@@ -82,7 +80,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalMantissa, UGPRPair, (uint64_t 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalRound, UGPRPair, (uint64_t low, uint64_t upper, int32_t digits, uint32_t mode))
 {
-    return inRegisters(Decimal128::fromWords(low, upper).round(digits, static_cast<Decimal128::RoundingMode>(mode)));
+    return inRegisters(Decimal128::round(Decimal128::fromWords(low, upper), digits, static_cast<Decimal128::RoundingMode>(mode)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalDivideAndRound, UGPRPair, (uint64_t xLow, uint64_t xUpper, uint64_t yLow, uint64_t yUpper, int32_t digits, uint32_t mode))
+{
+    return inRegisters(Decimal128::divideAndRound(Decimal128::fromWords(xLow, xUpper), Decimal128::fromWords(yLow, yUpper), digits, static_cast<Decimal128::RoundingMode>(mode)));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalScale10, UGPRPair, (uint64_t low, uint64_t upper, int32_t power, uint32_t))
@@ -92,8 +95,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalScale10, UGPRPair, (uint64_t l
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalCompare, UCPUStrictInt32, (uint64_t xLow, uint64_t xUpper, uint64_t yLow, uint64_t yUpper))
 {
-    auto order = Decimal128::compare(Decimal128::fromWords(xLow, xUpper), Decimal128::fromWords(yLow, yUpper));
-    return toUCPUStrictInt32(order == std::partial_ordering::unordered ? unorderedDecimals : (order > 0) - (order < 0));
+    return toUCPUStrictInt32(orderOfDecimals(Decimal128::compare(Decimal128::fromWords(xLow, xUpper), Decimal128::fromWords(yLow, yUpper))));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalExponent, EncodedJSValue, (uint64_t low, uint64_t upper))
@@ -118,24 +120,22 @@ JSC_DEFINE_JIT_OPERATION(operationToDecimal, UGPRPair, (JSGlobalObject* globalOb
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto result = tryToDecimal128(globalObject, JSValue::decode(value));
-    OPERATION_RETURN(scope, result ? inRegisters(*result) : noDecimal);
+    OPERATION_RETURN(scope, inRegisters(tryToDecimal128(globalObject, JSValue::decode(value)).value_or(Decimal128::noValue())));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalRoundByValue, UGPRPair, (uint64_t low, uint64_t upper, EncodedJSValue encodedDigits, uint32_t mode))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPrimitiveToDecimal, UGPRPair, (EncodedJSValue value))
 {
-    JSValue digits = JSValue::decode(encodedDigits);
-    if (!digits.isNumber() || !isInteger(digits.asNumber())) [[unlikely]]
-        return noDecimal;
-    return inRegisters(Decimal128::fromWords(low, upper).round(digits.asNumber(), static_cast<Decimal128::RoundingMode>(mode)));
+    return inRegisters(toDecimal128OrNoValue(JSValue::decode(value)));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalScale10ByValue, UGPRPair, (uint64_t low, uint64_t upper, EncodedJSValue encodedPower, uint32_t))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalRoundByValue, UGPRPair, (uint64_t low, uint64_t upper, EncodedJSValue digits, uint32_t mode))
 {
-    JSValue power = JSValue::decode(encodedPower);
-    if (!power.isNumber() || (std::isfinite(power.asNumber()) && !isInteger(power.asNumber()))) [[unlikely]]
-        return noDecimal;
-    return inRegisters(Decimal128::fromWords(low, upper).scale10(power.asNumber()));
+    return inRegisters(roundOrNoValue(Decimal128::fromWords(low, upper), JSValue::decode(digits), static_cast<Decimal128::RoundingMode>(mode)));
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalScale10ByValue, UGPRPair, (uint64_t low, uint64_t upper, EncodedJSValue power, uint32_t))
+{
+    return inRegisters(scale10OrNoValue(Decimal128::fromWords(low, upper), JSValue::decode(power)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationNewDecimal, JSCell*, (VM* vmPointer, Structure* structure, uint64_t low, uint64_t upper))

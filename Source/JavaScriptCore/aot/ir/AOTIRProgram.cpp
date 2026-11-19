@@ -555,6 +555,14 @@ void Program::internBuiltinNameKeys()
             keys.append(arena.textKey(strings.stringOf(name)));
     }
     m_derivedTables.keyOfWordOnWhatSeesAccesses = arena.textKey(strings.intern(StringView("what sees a read or a store above"_s)));
+
+    // An option defines the class, so the table of built-ins does not list it.
+    auto find = [&](ASCIILiteral name) {
+        return strings.find(byteCast<uint8_t>(name.span8()));
+    };
+    NamesOfDecimals& names = m_derivedTables.namesOfDecimals;
+    names = { find("Decimal"_s), find("digits"_s), find("roundingMode"_s), { } };
+    std::ranges::transform(namesOfDecimalOperations, names.methods.begin(), find);
 }
 
 using ModuleOfNamespaceObject = std::pair<BuiltinID, ModuleID>;

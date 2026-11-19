@@ -29,6 +29,7 @@
 #include "AOTControlEmitter.h"
 #include "AOTConversionEmitter.h"
 #include "AOTDateBuiltinEmitter.h"
+#include "AOTDecimalEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTEngineIntrinsicEmitter.h"
 #include "AOTEntryEmitter.h"

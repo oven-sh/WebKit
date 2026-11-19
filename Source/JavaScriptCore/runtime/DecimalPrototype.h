@@ -15,6 +15,10 @@ JSC_DECLARE_HOST_FUNCTION(decimalLiteral);
 // decimalOperator(DecimalOperator, left, right). undefined if an operand is not a Decimal. Both operands of a unary operator are the same.
 JSC_DECLARE_HOST_FUNCTION(decimalOperator);
 
+// What round() and scale10() answer, or Decimal128::noValue() where they throw.
+Decimal128 roundOrNoValue(Decimal128, JSValue digits, Decimal128::RoundingMode);
+Decimal128 scale10OrNoValue(Decimal128, JSValue power);
+
 // What toFixed() answers for the options that it has read, or null where it throws. This throws only for want of memory.
 JSString* tryDecimalToFixed(JSGlobalObject*, Decimal128, JSValue digits, JSValue roundingMode);
 

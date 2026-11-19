@@ -18,6 +18,7 @@ aot/builtins/AOTBuiltinTableRealm.cpp
 aot/builtins/AOTBuiltinTypeFit.cpp
 aot/builtins/AOTBuiltinTypes.cpp
 aot/builtins/AOTDateBuiltinOperations.cpp
+aot/builtins/AOTDecimalOperations.cpp
 aot/builtins/AOTEngineIntrinsicOperations.cpp
 aot/builtins/AOTErrorBuiltinOperations.cpp
 aot/builtins/AOTFunctionBuiltinOperations.cpp
@@ -51,6 +52,7 @@ aot/codegen/AOTClosureTestEmitter.cpp
 aot/codegen/AOTClosuresLent.cpp
 aot/codegen/AOTCodeDescription.cpp
 aot/codegen/AOTCodeGenerator.cpp
+aot/codegen/AOTCodeGeneratorDecimalRuns.cpp
 aot/codegen/AOTCodeGeneratorDispatch.cpp
 aot/codegen/AOTCodeGeneratorEmitters.cpp
 aot/codegen/AOTCodeGeneratorMoveLoops.cpp
@@ -61,6 +63,8 @@ aot/codegen/AOTConstantEmitter.cpp
 aot/codegen/AOTConstantEmitterClosures.cpp
 aot/codegen/AOTControlEmitter.cpp
 aot/codegen/AOTConversionEmitter.cpp
+aot/codegen/AOTDecimalEmitter.cpp
+aot/codegen/AOTDecimalRuns.cpp
 aot/codegen/AOTElementAccessEmitter.cpp
 aot/codegen/AOTElementAccessEmitterStores.cpp
 aot/codegen/AOTElementEmitterAllocation.cpp

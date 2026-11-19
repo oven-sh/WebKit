@@ -6905,6 +6905,8 @@ auto ByteCodeParser::checkDecimal(Node* value) -> DecimalWords
 {
     if (value->op() == NewDecimal)
         return { value->child1().node(), value->child2().node() };
+    if (auto* object = value->dynamicCastConstant<DecimalObject*>())
+        return decimalConstant(object->value());
     addToGraph(CheckJSCast, OpInfo(DecimalObject::info()), value);
     return { addToGraph(GetDecimalWord, OpInfo(0), value), addToGraph(GetDecimalWord, OpInfo(1), value) };
 }

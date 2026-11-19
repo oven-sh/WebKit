@@ -4061,10 +4061,14 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     const OpcodeSet& opcodesOfCode = code().opcodesOfValues();
     const bool looksForElementMoves = opcodesOfCode.intersects(storesOfElements) && opcodesOfCode.intersects(readsOfElements) && mayMoveElements(id);
     std::optional<ElementMoves> moves;
+    const bool looksForDecimalRuns = build().options().expectsDecimals && mayComputeWithDecimals(id);
+    std::optional<EndOfDecimalRun> decimalRun;
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
         if (moves && index == moves->end) [[unlikely]]
             endElementMoves(moves);
+        if (decimalRun && index == decimalRun->end) [[unlikely]]
+            endDecimalRun(decimalRun);
         if (value == m_readLeftToBranch)
             continue;
         const Operation& operation = code().at(value);
@@ -4093,6 +4097,14 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
             m_out.unreachable();
             return;
         }
+        if (looksForDecimalRuns && !moves) [[unlikely]] {
+            if (!decimalRun && (decimalRun = beginDecimalRun(id, values, index)) && std::ranges::contains(values.subspan(index, decimalRun->end - index), test))
+                test = { };
+            if (m_hasFailed)
+                return;
+            if (decimalRun && decimalRun->madeAhead.contains(value))
+                continue;
+        }
         generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
             return;
@@ -4111,6 +4123,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     }
     if (moves) [[unlikely]]
         endElementMoves(moves);
+    if (decimalRun) [[unlikely]]
+        endDecimalRun(decimalRun);
     if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
         beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);

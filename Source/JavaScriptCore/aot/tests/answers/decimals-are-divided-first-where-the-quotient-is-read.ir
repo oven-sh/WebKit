@@ -1,0 +1,42 @@
+# A quotient that something else reads is computed.
+# sink((x, y) => { const quotient = x.divide(y); return quotient.round(1).add(quotient); }, (x, y) => x.divide(y).add(x));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 1
+# RUN(CODE): emit f1
+# CODE-COUNT-3: Tuple(Int64, Int64) {{*}} = Patch(
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g) => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("8"))); show(() => g(D("1"), D("8"))); };
+# CHECK: 0.225
+# CHECK-NEXT: 1.125
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="divide"
+    v3 = Call v2, v0, v1 calleeKey="divide" calleeName="x.divide"
+    v4 = PropGet v3 key="round"
+    v5 = Integer integer=1
+    v6 = Call v4, v3, v5 calleeKey="round" calleeName="quotient.round"
+    v7 = PropGet v6 key="add"
+    v8 = Call v7, v6, v3 calleeKey="add" calleeName="add"
+    ReturnCall v8
+}
+function f2 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="divide"
+    v3 = Call v2, v0, v1 calleeKey="divide" calleeName="x.divide"
+    v4 = PropGet v3 key="add"
+    v5 = Call v4, v3, v0 calleeKey="add" calleeName="add"
+    ReturnCall v5
+}

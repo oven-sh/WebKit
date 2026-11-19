@@ -1,0 +1,72 @@
+# What goes into a sum only may keep zeros at its end. What is compared by its words, written or handed on may not.
+# sink((x, y, z) => { const sum = x.add(y), product = x.multiply(y); return [x.add(y).equals(z), x.add(y).toString(), x.add(y).add(z), x.add(y).round(1, "ceil"), x.add(y).abs(), x.add(y).scale10(1), x.add(y).exponent(), x.add(y).remainder(z), sum, sum.add(product), x.add(y).compare(z) === 0]; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = f => { for (const [x, y, z] of [["0.75", "0.25", "1"], ["999.5", "0.5", "1e30"]]) { const all = f(new Decimal(x), new Decimal(y), new Decimal(z)); let line = ""; for (let i = 0; i < all.length; i++) line += " " + (all[i] instanceof Decimal ? all[i].toExponential() : all[i]); print("of" + line); } };
+# CHECK: of true 1 2e0 1e0 1e0 1e1 0 0e+0 1e0 1.1875e0 true
+# CHECK-NEXT: of false 1000 1.000000000000000000000000001e30 1e3 1e3 1e4 3 1e3 1e3 1.49975e3 false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=3 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="add"
+    v4 = Call v3, v0, v1 calleeKey="add" calleeName="x.add"
+    v5 = PropGet v0 key="multiply"
+    v6 = Call v5, v0, v1 calleeKey="multiply" calleeName="x.multiply"
+    v7 = PropGet v0 key="add"
+    v8 = Call v7, v0, v1 calleeKey="add" calleeName="x.add"
+    v9 = PropGet v8 key="equals"
+    v10 = Call v9, v8, v2 calleeKey="equals" calleeName="equals"
+    v11 = PropGet v0 key="add"
+    v12 = Call v11, v0, v1 calleeKey="add" calleeName="x.add"
+    v13 = PropGet v12 key="toString"
+    v14 = Call v13, v12 calleeKey="toString" calleeName="toString"
+    v15 = PropGet v0 key="add"
+    v16 = Call v15, v0, v1 calleeKey="add" calleeName="x.add"
+    v17 = PropGet v16 key="add"
+    v18 = Call v17, v16, v2 calleeKey="add" calleeName="add"
+    v19 = PropGet v0 key="add"
+    v20 = Call v19, v0, v1 calleeKey="add" calleeName="x.add"
+    v21 = PropGet v20 key="round"
+    v22 = Integer integer=1
+    v23 = String string="ceil"
+    v24 = Call v21, v20, v22, v23 calleeKey="round" calleeName="round"
+    v25 = PropGet v0 key="add"
+    v26 = Call v25, v0, v1 calleeKey="add" calleeName="x.add"
+    v27 = PropGet v26 key="abs"
+    v28 = Call v27, v26 calleeKey="abs" calleeName="abs"
+    v29 = PropGet v0 key="add"
+    v30 = Call v29, v0, v1 calleeKey="add" calleeName="x.add"
+    v31 = PropGet v30 key="scale10"
+    v32 = Integer integer=1
+    v33 = Call v31, v30, v32 calleeKey="scale10" calleeName="scale10"
+    v34 = PropGet v0 key="add"
+    v35 = Call v34, v0, v1 calleeKey="add" calleeName="x.add"
+    v36 = PropGet v35 key="exponent"
+    v37 = Call v36, v35 calleeKey="exponent" calleeName="exponent"
+    v38 = PropGet v0 key="add"
+    v39 = Call v38, v0, v1 calleeKey="add" calleeName="x.add"
+    v40 = PropGet v39 key="remainder"
+    v41 = Call v40, v39, v2 calleeKey="remainder" calleeName="remainder"
+    v42 = PropGet v4 key="add"
+    v43 = Call v42, v4, v6 calleeKey="add" calleeName="sum.add"
+    v44 = PropGet v0 key="add"
+    v45 = Call v44, v0, v1 calleeKey="add" calleeName="x.add"
+    v46 = PropGet v45 key="compare"
+    v47 = Call v46, v45, v2 calleeKey="compare" calleeName="compare"
+    v48 = Integer
+    v49 = StrictEq v47, v48
+    v50 = NewArray v10, v14, v18, v24, v28, v33, v37, v41, v4, v43, v49 contents=anything
+    Return v50
+}

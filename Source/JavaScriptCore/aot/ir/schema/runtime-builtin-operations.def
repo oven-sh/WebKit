@@ -66,6 +66,18 @@ runtime LinkTimeConstant : JSCell* (uint32_t constant) ; RuntimeCreatesConstant
 runtime NewBigInt64 : JSCell* (uint64_t bits, uint32_t isSigned) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime DateNow : double () ; reads(all) writes(ExternalState)
 runtime DateToISOString : JSCell* (double timeValue) ; RuntimeAllocates
+runtime DecimalAdd, DecimalSubtract, DecimalMultiply, DecimalDivide, DecimalRemainder : UGPRPair (uint64_t low, uint64_t upper, uint64_t otherLow, uint64_t otherUpper) ; none ; leaf
+runtime DecimalMantissa : UGPRPair (uint64_t low, uint64_t upper) ; none ; leaf
+runtime DecimalRound : UGPRPair (uint64_t low, uint64_t upper, EncodedJSValue digits, uint32_t mode) ; none ; leaf
+runtime DecimalDivideAndRound : UGPRPair (uint64_t low, uint64_t upper, uint64_t otherLow, uint64_t otherUpper, EncodedJSValue digits, uint32_t mode) ; none ; leaf
+runtime DecimalScale10 : UGPRPair (uint64_t low, uint64_t upper, EncodedJSValue power) ; none ; leaf
+runtime DecimalCompare : int64_t (uint64_t low, uint64_t upper, uint64_t otherLow, uint64_t otherUpper) ; none ; leaf
+runtime DecimalExponent : EncodedJSValue (uint64_t low, uint64_t upper) ; none ; leaf
+runtime DecimalOfInteger : UGPRPair (int64_t integer) ; none ; leaf
+runtime DecimalOfPrimitive : UGPRPair (EncodedJSValue value) ; reads(StringStorage) ; leaf
+runtime DecimalOfRopeOrBigInt : UGPRPair (EncodedJSValue value) ; RuntimeCreatesString
+runtime NewDecimal, DecimalToString, DecimalToExponential : JSCell* (uint64_t low, uint64_t upper) ; RuntimeAllocates
+runtime DecimalToFixed : JSCell* (uint64_t low, uint64_t upper, EncodedJSValue digits, EncodedJSValue roundingMode) ; RuntimeCreatesString
 runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates
 runtime PrepareProxyAllocation : void () ; RuntimeAllocates
 runtime NewError : JSCell* (uint32_t errorKind, EncodedJSValue message, EncodedJSValue options) ; unknownCode

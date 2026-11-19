@@ -8,8 +8,7 @@
 
 #include <wtf/ASCIICType.h>
 #include <wtf/FastFloat.h>
-#include <wtf/Int128.h>
-#include <wtf/MathExtras.h>
+#include <wtf/UnalignedAccess.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -162,10 +161,89 @@ static constexpr auto powersOf10In128Bits = [] {
     return result;
 }();
 
-// floor(bits * log10(2)) is the number of digits or one less. Exact up to 256 bits.
-static ALWAYS_INLINE int leastNumberOfDigits(unsigned bits)
+// For divisions by two words: Moller and Granlund, Improved Division by Invariant Integers (2011), algorithms 5 and 6.
+struct LongDivisor {
+    UInt128 value; // shifted so that its upper bit is set
+    uint64_t reciprocal; // (2^192 - 1) / value - 2^64
+    unsigned shift;
+};
+
+static ALWAYS_INLINE LongDivisor makeLongDivisor(UInt128 divisor)
 {
-    return static_cast<int>(bits * 1233 >> 12);
+    ASSERT(highOf(divisor));
+    unsigned shift = std::countl_zero(highOf(divisor));
+    uint64_t high = highOf(divisor) << shift | lowOf(divisor) >> 1 >> (63 - shift);
+    uint64_t low = lowOf(divisor) << shift;
+
+    uint64_t reciprocal = divide128By64(~high, ~0ull, high).quotient;
+    uint64_t rest = high * reciprocal + low;
+    uint64_t carries = -static_cast<uint64_t>(rest < low);
+    uint64_t carriesTwice = carries & -static_cast<uint64_t>(rest >= high);
+    reciprocal += carries + carriesTwice;
+    rest -= (carries & high) + (carriesTwice & high);
+
+    UInt128 product = multiply64(reciprocal, low);
+    rest += highOf(product);
+    carries = -static_cast<uint64_t>(rest < highOf(product));
+    carriesTwice = carries & -static_cast<uint64_t>(makeUInt128(rest, lowOf(product)) >= makeUInt128(high, low));
+    return { makeUInt128(high, low), reciprocal + carries + carriesTwice, shift };
+}
+
+static constexpr int leastLongPower = 20;
+
+static constexpr auto longPowersOf10 = [] {
+    std::array<LongDivisor, powersOf10In128Bits.size() - leastLongPower> result { };
+    for (unsigned i = 0; i < result.size(); ++i) {
+        unsigned shift = std::countl_zero(highOf(powersOf10In128Bits[leastLongPower + i]));
+        UInt128 divisor = powersOf10In128Bits[leastLongPower + i] << shift;
+        // By bits.
+        UInt128 remainder = makeUInt128(~highOf(divisor), ~lowOf(divisor));
+        uint64_t quotient = 0;
+        for (int bit = 0; bit < 64; ++bit) {
+            bool carry = highOf(remainder) >> 63;
+            remainder = remainder << 1 | 1;
+            quotient <<= 1;
+            if (carry || remainder >= divisor) {
+                remainder = remainder - divisor;
+                quotient |= 1;
+            }
+        }
+        result[i] = { divisor, quotient, shift };
+    }
+    return result;
+}();
+
+struct DecimalDivision192 {
+    uint64_t quotient;
+    UInt128 remainder;
+};
+
+// (upper * 2^64 + low) / divisor, where upper is less than the divisor. All are shifted.
+static ALWAYS_INLINE DecimalDivision192 divide192By128(UInt128 upper, uint64_t low, const LongDivisor& divisor)
+{
+    ASSERT(upper < divisor.value);
+    UInt128 estimate = multiply64(divisor.reciprocal, highOf(upper)) + upper;
+    uint64_t quotient = highOf(estimate);
+    UInt128 remainder = makeUInt128(lowOf(upper) - quotient * highOf(divisor.value), low) - multiply64(lowOf(divisor.value), quotient) - divisor.value;
+    uint64_t isTooLarge = -static_cast<uint64_t>(highOf(remainder) >= lowOf(estimate));
+    quotient += 1 + isTooLarge;
+    remainder = remainder + makeUInt128(highOf(divisor.value) & isTooLarge, lowOf(divisor.value) & isTooLarge);
+    if (remainder >= divisor.value) [[unlikely]] {
+        ++quotient;
+        remainder = remainder - divisor.value;
+    }
+    return { quotient, remainder };
+}
+
+// floor(bits * log10(2)) is the number of digits or one less. Exact from -256 to 256 bits.
+static ALWAYS_INLINE int leastNumberOfDigits(int bits)
+{
+    return bits * 1233 >> 12;
+}
+
+static ALWAYS_INLINE int numberOfBits(UInt128 value)
+{
+    return highOf(value) ? 128 - std::countl_zero(highOf(value)) : 64 - std::countl_zero(lowOf(value));
 }
 
 static ALWAYS_INLINE int numberOfDigits(UInt128 value)
@@ -185,10 +263,19 @@ struct DecimalDivision128 {
     uint64_t remainder;
 };
 
-// 10^i is 2^i * 5^i. The reciprocal of 5^i is too large by less than 2^-(64 + shift), which a dividend below 2^63 makes less than 5^-i.
-alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = [] {
-    std::array<Decimal128::Divisor, Decimal128::greatestPowerOfDivisors + 1> result { };
-    for (unsigned i = 1; i < result.size(); ++i) {
+alignas(64) static constexpr auto decimalTables = [] {
+    Decimal128::Tables result { };
+
+    constexpr uint64_t greatest = (1ull << 62) - 1;
+    for (int i = -Decimal128::reachOfAlignments; i <= Decimal128::reachOfAlignments; ++i) {
+        uint64_t factor = powersOf10In64Bits[std::max(i, 0)];
+        uint64_t otherFactor = powersOf10In64Bits[std::max(-i, 0)];
+        constexpr uint64_t greatestUnit = static_cast<uint64_t>(Decimal128::maximumQuantumExponent) << Decimal128::shiftOfUnit;
+        result.alignments[i + Decimal128::reachOfAlignments] = { factor, otherFactor, greatest / factor, greatest / otherFactor, greatestUnit, Decimal128::inverseOf5, Decimal128::greatestTenth, 0 };
+    }
+
+    // 10^i is 2^i * 5^i. The reciprocal of 5^i is too large by less than 2^-(64 + shift), which a dividend below 2^63 makes less than 5^-i.
+    for (unsigned i = 1; i < result.divisors.size(); ++i) {
         uint64_t powerOf5 = powersOf10In64Bits[i] >> i;
         unsigned shift = 63 - std::countl_zero(powerOf5);
         // 2^(64 + shift) / 5^i. The division of UInt128 is not constexpr everywhere.
@@ -199,7 +286,24 @@ alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = []
             quotient = quotient * 2 + (remainder >= powerOf5);
             remainder %= powerOf5;
         }
-        result[i] = { powersOf10In64Bits[i], powersOf10In64Bits[i] / 2, quotient + 1, shift };
+        result.divisors[i] = { powersOf10In64Bits[i], powersOf10In64Bits[i] / 2, quotient + 1, shift };
+    }
+
+    // From the next power of 10 on the sum carries into the count.
+    for (unsigned i = 0; i < result.digitSteps.size(); ++i) {
+        uint64_t least = 1ull << (Decimal128::shiftOfDigitSteps - 1 - i);
+        uint64_t digits = 1;
+        while (powersOf10In64Bits[digits] <= least)
+            ++digits;
+        result.digitSteps[i] = (digits << Decimal128::shiftOfDigitSteps) - std::min<uint64_t>(powersOf10In64Bits[digits], 1ull << Decimal128::shiftOfDigitSteps);
+    }
+    for (unsigned i = 0; i < result.digitStepsOfLongValues.size(); ++i) {
+        UInt128 least = static_cast<UInt128>(1) << (64 + Decimal128::shiftOfExponent - 1 - i);
+        uint64_t digits = 1;
+        while (powersOf10In128Bits[digits] <= least)
+            ++digits;
+        UInt128 step = makeUInt128(digits << Decimal128::shiftOfExponent, 0) - powersOf10In128Bits[digits];
+        result.digitStepsOfLongValues[i] = { lowOf(step), highOf(step) };
     }
     return result;
 }();
@@ -207,7 +311,7 @@ alignas(sizeof(Decimal128::Divisor)) static constexpr auto divisorsOf64Bits = []
 static ALWAYS_INLINE DecimalDivision64 divide64ByPowerOf10(uint64_t value, unsigned power)
 {
     ASSERT(power);
-    auto& divisor = divisorsOf64Bits[power];
+    auto& divisor = decimalTables.divisors[power];
     uint64_t quotient = highOf(multiply64(value >> power, divisor.reciprocal)) >> divisor.shift;
     return { quotient, value - quotient * divisor.value };
 }
@@ -223,10 +327,11 @@ static ALWAYS_INLINE DecimalDivision128 divideByShortPowerOf10(UInt128 value, un
     return { makeUInt128(upper.quotient, lower.quotient), lower.remainder };
 }
 
+// The rest is what the remainder lacks of the divisor.
 struct DecimalQuotient {
     UInt128 quotient;
-    std::strong_ordering fractionToHalf;
-    bool hasFraction;
+    UInt128 remainder;
+    UInt128 rest;
 };
 
 static constexpr int maximumShortPower = 38;
@@ -234,73 +339,87 @@ static constexpr int maximumShortPower = 38;
 static ALWAYS_INLINE DecimalQuotient divideByPowerOf10(UInt128 value, int power)
 {
     ASSERT(power > 0 && power <= maximumShortPower);
-    constexpr int step = 19;
-    if (power <= step) {
-        uint64_t divisor = powersOf10In64Bits[power];
+    if (power < leastLongPower) {
         auto division = divideByShortPowerOf10(value, power);
-        return { division.quotient, division.remainder <=> divisor / 2, !!division.remainder };
+        return { division.quotient, division.remainder, powersOf10In64Bits[power] - division.remainder };
     }
-    auto lower = divideByShortPowerOf10(value, step);
-    auto upper = divideByShortPowerOf10(lower.quotient, power - step);
-    UInt128 remainder = multiply64(upper.remainder, powersOf10In64Bits[step]) + lower.remainder;
-    UInt128 half = powersOf10In128Bits[power] >> 1;
-    auto fractionToHalf = remainder < half ? std::strong_ordering::less : remainder == half ? std::strong_ordering::equal : std::strong_ordering::greater;
-    return { upper.quotient, fractionToHalf, !!remainder };
+    auto& divisor = longPowersOf10[power - leastLongPower];
+    uint64_t top = highOf(value) >> 1 >> (63 - divisor.shift);
+    uint64_t middle = highOf(value) << divisor.shift | lowOf(value) >> 1 >> (63 - divisor.shift);
+    auto division = divide192By128(makeUInt128(top, middle), lowOf(value) << divisor.shift, divisor);
+    return { division.quotient, division.remainder, divisor.value - division.remainder };
 }
 
-// The mode is one for a magnitude.
-static ALWAYS_INLINE bool roundsUp(Decimal128::RoundingMode mode, bool hasFraction, std::strong_ordering fractionToHalf, bool isOdd)
+// Both without a branch on the digits or on the sign, which no processor can guess.
+template<typename Integer>
+static ALWAYS_INLINE bool isNearerToNext(Integer remainder, Integer rest, bool tieGoesToNext)
 {
-    if (!hasFraction)
-        return false;
-    switch (mode) {
-    case Decimal128::RoundingMode::Floor:
-    case Decimal128::RoundingMode::Trunc:
-        return false;
-    case Decimal128::RoundingMode::Ceil:
-        return true;
-    case Decimal128::RoundingMode::HalfExpand:
-        return fractionToHalf != std::strong_ordering::less;
-    case Decimal128::RoundingMode::HalfEven:
-        return fractionToHalf == std::strong_ordering::greater || (fractionToHalf == std::strong_ordering::equal && isOdd);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
+    return remainder > rest - tieGoesToNext;
 }
 
-// Both remove the zeros at the end of a value that is not 0, and answer how many. A multiple of 10^n is one of 2^n, which costs less to find out.
+template<typename Integer>
+static ALWAYS_INLINE bool magnitudeRoundsUp(Decimal128::RoundingMode mode, bool isNegative, Integer remainder, Integer rest, bool isOdd)
+{
+    using enum Decimal128::RoundingMode;
+    if (mode == HalfEven || mode == HalfExpand)
+        return isNearerToNext(remainder, rest, isOdd | (mode == HalfExpand));
+    return (mode == (isNegative ? Floor : Ceil)) & !!remainder;
+}
+
+// Answers the value if it is no multiple. See Decimal128::inverseOf5.
+template<int power>
+static ALWAYS_INLINE uint64_t divideIfMultipleOfPowerOf10(uint64_t value)
+{
+    constexpr uint64_t inverse = [] {
+        uint64_t result = 1;
+        for (int i = 0; i < power; ++i)
+            result *= Decimal128::inverseOf5;
+        return result;
+    }();
+    uint64_t quotient = std::rotr(value * inverse, power);
+    return quotient <= std::numeric_limits<uint64_t>::max() / powersOf10In64Bits[power] ? quotient : value;
+}
+
+struct StrippedCoefficient {
+    uint64_t value;
+    int numberOfZeros;
+};
+
+static NEVER_INLINE StrippedCoefficient withoutManyTrailingZeros(uint64_t value)
+{
+    uint64_t result = divideIfMultipleOfPowerOf10<16>(value);
+    result = divideIfMultipleOfPowerOf10<8>(result);
+    result = divideIfMultipleOfPowerOf10<4>(result);
+    result = divideIfMultipleOfPowerOf10<2>(result);
+    result = divideIfMultipleOfPowerOf10<1>(result);
+    return { result, std::countr_zero(value) - std::countr_zero(result) };
+}
+
+// These remove the zeros at the end of a value that is not 0, and answer how many.
 static ALWAYS_INLINE int stripTrailingZeros(uint64_t& value)
 {
-    if (value & 1)
+    uint64_t tenth = std::rotr(value * Decimal128::inverseOf5, 1);
+    if (tenth > Decimal128::greatestTenth) [[likely]]
         return 0;
-    int count = 0;
-    auto strip = [&](uint64_t divisor, int power) ALWAYS_INLINE_LAMBDA {
-        if (value & ((1ull << power) - 1))
-            return;
-        uint64_t quotient = value / divisor;
-        if (quotient * divisor != value)
-            return;
-        value = quotient;
-        count += power;
-    };
-    strip(10'000'000'000'000'000, 16);
-    strip(100'000'000, 8);
-    strip(10'000, 4);
-    strip(100, 2);
-    strip(10, 1);
-    return count;
+    if (std::rotr(tenth * Decimal128::inverseOf5, 1) > Decimal128::greatestTenth) [[likely]] {
+        value = tenth;
+        return 1;
+    }
+    auto stripped = withoutManyTrailingZeros(value);
+    value = stripped.value;
+    return stripped.numberOfZeros;
 }
 
-// 2^64 is 1 more than a multiple of 5.
-static ALWAYS_INLINE unsigned remainderBy5(UInt128 value)
+// What leaves the same remainder by 5: 2^64 is 1 more than a multiple of it.
+static ALWAYS_INLINE uint64_t sumOfWords(UInt128 value)
 {
     uint64_t sum = highOf(value) + lowOf(value);
-    sum += sum < lowOf(value);
-    return sum % 5;
+    return sum + (sum < lowOf(value));
 }
 
 static ALWAYS_INLINE bool isMultipleOf10(UInt128 value)
 {
-    return !((lowOf(value) & 1) | remainderBy5(value));
+    return (sumOfWords(value) * Decimal128::inverseOf5 | lowOf(value) << 63) <= std::numeric_limits<uint64_t>::max() / 5;
 }
 
 // With the inverse of 5 modulo 2^128.
@@ -314,7 +433,7 @@ static ALWAYS_INLINE UInt128 divideMultipleOf10By10(UInt128 value)
 }
 
 // Of a multiple of 10.
-static NEVER_INLINE int stripTrailingZerosOfLong(UInt128& value)
+static ALWAYS_INLINE int stripTrailingZerosOfLong(UInt128& value)
 {
     value = divideMultipleOf10By10(value);
     int count = 1;
@@ -389,16 +508,35 @@ public:
         ASSERT_UNDER_CONSTEXPR_CONTEXT(!carry);
     }
 
-    // Answers the remainder.
-    ALWAYS_INLINE uint64_t divideByPowerOf10(unsigned power)
+    static ALWAYS_INLINE Wide product(UInt128 a, UInt128 b)
     {
-        uint64_t remainder = 0;
-        for (unsigned i = usedLimbs(); i--;) {
-            auto division = divide128ByPowerOf10(remainder, m_limbs[i], power);
-            m_limbs[i] = division.quotient;
-            remainder = division.remainder;
-        }
-        return remainder;
+        UInt128 lowest = multiply64(lowOf(a), lowOf(b));
+        UInt128 middle = multiply64(lowOf(a), highOf(b)) + highOf(lowest);
+        UInt128 otherMiddle = multiply64(highOf(a), lowOf(b)) + lowOf(middle);
+        UInt128 highest = multiply64(highOf(a), highOf(b)) + highOf(middle) + highOf(otherMiddle);
+        Wide result;
+        result.m_limbs = { lowOf(lowest), lowOf(otherMiddle), lowOf(highest), highOf(highest) };
+        return result;
+    }
+
+    // Both for a quotient below 2^127. The functor divides two words by the divisor.
+    ALWAYS_INLINE DecimalQuotient dividedBy(uint64_t divisor, NOESCAPE const Invocable<DecimalDivision64(uint64_t, uint64_t)> auto& divide) const
+    {
+        ASSERT(!m_limbs[3]);
+        auto upper = divide(m_limbs[2], m_limbs[1]);
+        auto lower = divide(upper.remainder, m_limbs[0]);
+        return { makeUInt128(upper.quotient, lower.quotient), lower.remainder, divisor - lower.remainder };
+    }
+
+    ALWAYS_INLINE DecimalQuotient dividedBy(const LongDivisor& divisor) const
+    {
+        auto shifted = [&](unsigned i) {
+            return m_limbs[i] << divisor.shift | m_limbs[i - 1] >> 1 >> (63 - divisor.shift);
+        };
+        ASSERT(!(m_limbs[3] >> 1 >> (63 - divisor.shift)));
+        auto upper = divide192By128(makeUInt128(shifted(3), shifted(2)), shifted(1), divisor);
+        auto lower = divide192By128(upper.remainder, m_limbs[0] << divisor.shift, divisor);
+        return { makeUInt128(upper.quotient, lower.quotient), lower.remainder, divisor.value - lower.remainder };
     }
 
     Wide half() const
@@ -463,13 +601,15 @@ public:
     struct Division;
     static Division divide(const Wide& dividend, const Wide& divisor);
 
-    int numberOfDigits() const
+    // Of more than 128 bits.
+    ALWAYS_INLINE int numberOfDigits() const
     {
-        unsigned limbs = usedLimbs();
-        if (!limbs)
-            return 0;
-        int estimate = leastNumberOfDigits(limbs * 64 - std::countl_zero(m_limbs[limbs - 1]));
-        return estimate > maximumPowerOf10 || *this < powerOf10(estimate) ? estimate : estimate + 1;
+        ASSERT(!fitsIn128Bits());
+        UInt128 upper = makeUInt128(m_limbs[3], m_limbs[2]);
+        int estimate = leastNumberOfDigits(128 + numberOfBits(upper));
+        const Wide& power = powerOf10(estimate);
+        bool borrow = makeUInt128(m_limbs[1], m_limbs[0]) < makeUInt128(power.m_limbs[1], power.m_limbs[0]);
+        return estimate + (upper >= makeUInt128(power.m_limbs[3], power.m_limbs[2]) + borrow);
     }
 
 private:
@@ -597,22 +737,28 @@ auto Decimal128::Wide::divide(const Wide& dividend, const Wide& divisor) -> Divi
 ALWAYS_INLINE Decimal128 Decimal128::fromExact(bool isNegative, uint64_t high, uint64_t low, int64_t exponent)
 {
     ASSERT(high | low);
-    Decimal128 result;
-    result.m_isNegative = isNegative;
-    if (!high) {
+    ASSERT(makeUInt128(high, low) < powersOf10In128Bits[precision]);
+    if (!high)
         exponent += stripTrailingZeros(low);
-        result.m_low = low;
-    } else {
-        UInt128 value = makeUInt128(high, low);
-        ASSERT(value < powersOf10In128Bits[precision]);
-        if (isMultipleOf10(value)) [[unlikely]]
-            exponent += stripTrailingZerosOfLong(value);
-        result.m_low = lowOf(value);
-        result.m_high = highOf(value);
-    }
-    result.m_exponent = exponent;
+    else if (isMultipleOf10(makeUInt128(high, low))) [[unlikely]]
+        return fromLongMultipleOf10(isNegative, high, low, exponent);
+    return fromFields(isNegative, high, low, exponent);
+}
+
+ALWAYS_INLINE Decimal128 Decimal128::fromFields(bool isNegative, uint64_t high, uint64_t low, int64_t exponent)
+{
+    Decimal128 result { static_cast<int>(exponent), isNegative };
+    result.m_low = low;
+    result.m_high = high;
     ASSERT(result.m_exponent == exponent && result.isFinite());
     return result;
+}
+
+NEVER_INLINE Decimal128 Decimal128::fromLongMultipleOf10(bool isNegative, uint64_t high, uint64_t low, int64_t exponent)
+{
+    UInt128 value = makeUInt128(high, low);
+    exponent += stripTrailingZerosOfLong(value);
+    return fromFields(isNegative, highOf(value), lowOf(value), exponent);
 }
 
 auto Decimal128::coefficient() const -> Wide
@@ -676,37 +822,19 @@ Decimal128 Decimal128::significand() const
     return result;
 }
 
-auto Decimal128::modeForMagnitude(bool isNegative, RoundingMode mode) -> RoundingMode
-{
-    if (isNegative && mode == RoundingMode::Floor)
-        return RoundingMode::Ceil;
-    if (isNegative && mode == RoundingMode::Ceil)
-        return RoundingMode::Floor;
-    return mode;
-}
-
 // https://tc39.es/proposal-decimal/#sec-decimal-applyroundingmodetopositive
 // Half even.
-auto Decimal128::roundedQuotientByPowerOf10(const Wide& value, int64_t power, bool isInexact) -> Wide
+NEVER_INLINE auto Decimal128::roundedQuotientByPowerOf10(const Wide& value, int64_t power) -> Wide
 {
     ASSERT(power > 0);
-    Wide quotient;
-    auto fractionToHalf = std::strong_ordering::less;
-    bool hasFraction = isInexact || !value.isZero();
     // A value of fewer digits than the power is less than a tenth.
-    if (power <= value.numberOfDigits()) {
-        const Wide& divisor = Wide::powerOf10(static_cast<int>(power));
-        auto division = Wide::divide(value, divisor);
-        quotient = division.quotient;
-        hasFraction = isInexact || !division.remainder.isZero();
-        // The divisor is even, so half of it is a whole number.
-        fractionToHalf = division.remainder <=> divisor.half();
-        if (isInexact && fractionToHalf == std::strong_ordering::equal)
-            fractionToHalf = std::strong_ordering::greater;
-    }
-    if (roundsUp(RoundingMode::HalfEven, hasFraction, fractionToHalf, quotient.isOdd()))
-        quotient = quotient + Wide { 1 };
-    return quotient;
+    if (power > value.numberOfDigits())
+        return { };
+    const Wide& divisor = Wide::powerOf10(static_cast<int>(power));
+    auto division = Wide::divide(value, divisor);
+    // The divisor is even, so half of it is a whole number.
+    auto order = division.remainder <=> divisor.half();
+    return order > 0 || (order == 0 && division.quotient.isOdd()) ? division.quotient + Wide { 1 } : division.quotient;
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-roundtodecimaldomain
@@ -731,28 +859,21 @@ Decimal128 Decimal128::roundToDomainSlow(bool isNegative, uint64_t high, uint64_
 
     // One digit too many, as many a sum has, and no more once it is rounded.
     if (value >= powersOf10In128Bits[precision] && value < powersOf10In128Bits[precision + 1] - 5 && exponent >= minimumQuantumExponent && exponent < maximumQuantumExponent) {
-        unsigned digit = remainderBy5(value);
+        unsigned digit = sumOfWords(value) % 5;
         digit += (digit ^ low) & 1 ? 5 : 0;
         value = divideMultipleOf10By10(value - digit);
-        if (digit > 5 || (digit == 5 && (isInexact || lowOf(value) & 1)))
-            value = value + 1;
+        value = value + isNearerToNext(digit, 10 - digit, isInexact | (lowOf(value) & 1));
         return fromExact(isNegative, highOf(value), lowOf(value), exponent + 1);
     }
 
-    int digits = JSC::numberOfDigits(value);
-    ASSERT(!isInexact || digits > precision);
-    int64_t quantum = std::max<int64_t>(exponent + digits - precision, minimumQuantumExponent);
+    int64_t quantum = std::max<int64_t>(exponent + JSC::numberOfDigits(value) - precision, minimumQuantumExponent);
+    ASSERT(!isInexact || quantum > exponent || quantum > maximumQuantumExponent);
     if (quantum > exponent) {
         // 2^128 is less than half of 10^39.
         if (quantum - exponent > maximumShortPower)
             return zero(isNegative);
         auto division = divideByPowerOf10(value, static_cast<int>(quantum - exponent));
-        auto fractionToHalf = division.fractionToHalf;
-        if (isInexact && fractionToHalf == std::strong_ordering::equal)
-            fractionToHalf = std::strong_ordering::greater;
-        value = division.quotient;
-        if (roundsUp(RoundingMode::HalfEven, division.hasFraction || isInexact, fractionToHalf, lowOf(value) & 1))
-            value = value + 1;
+        value = division.quotient + isNearerToNext(division.remainder, division.rest, isInexact | (lowOf(division.quotient) & 1));
         exponent = quantum;
         if (value == powersOf10In128Bits[precision]) {
             value = powersOf10In128Bits[precision - 1];
@@ -768,28 +889,20 @@ Decimal128 Decimal128::roundToDomainSlow(bool isNegative, uint64_t high, uint64_
     return fromExact(isNegative, highOf(value), lowOf(value), exponent);
 }
 
-Decimal128 Decimal128::roundToDomain(bool isNegative, const Wide& value, int64_t exponent, bool isInexact)
+ALWAYS_INLINE Decimal128 Decimal128::roundToDomain(bool isNegative, const Wide& value, int64_t exponent)
 {
     if (value.fitsIn128Bits())
-        return roundToDomain(isNegative, highOf(value.low128()), lowOf(value.low128()), exponent, isInexact);
+        return roundToDomain(isNegative, highOf(value.low128()), lowOf(value.low128()), exponent, false);
 
     int64_t quantum = std::max<int64_t>(exponent + value.numberOfDigits() - precision, minimumQuantumExponent);
     UInt128 quotient;
-    if (int64_t power = quantum - exponent; power <= maximumShortPower) {
-        // Short divisions by at most 10^19 each.
-        Wide rest = value;
-        unsigned first = std::min<int64_t>(power, 19);
-        unsigned second = static_cast<unsigned>(power) - first;
-        uint64_t lowerRemainder = rest.divideByPowerOf10(first);
-        uint64_t upperRemainder = second ? rest.divideByPowerOf10(second) : 0;
-        UInt128 remainder = multiply64(upperRemainder, powersOf10In64Bits[first]) + lowerRemainder;
-        UInt128 half = powersOf10In128Bits[power] >> 1;
-        quotient = rest.low128();
-        bool isUp = remainder > half || (remainder == half && (isInexact || (lowOf(quotient) & 1)));
-        if (isUp)
-            quotient = quotient + 1;
+    if (int64_t power = quantum - exponent; power <= maximumShortPower) [[likely]] {
+        auto division = power >= leastLongPower ? value.dividedBy(longPowersOf10[power - leastLongPower]) : value.dividedBy(powersOf10In64Bits[power], [&](uint64_t high, uint64_t low) {
+            return divide128ByPowerOf10(high, low, power);
+        });
+        quotient = division.quotient + isNearerToNext(division.remainder, division.rest, lowOf(division.quotient) & 1);
     } else
-        quotient = roundedQuotientByPowerOf10(value, power, isInexact).low128();
+        quotient = roundedQuotientByPowerOf10(value, power).low128();
     if (quotient == powersOf10In128Bits[precision]) {
         quotient = powersOf10In128Bits[precision - 1];
         ++quantum;
@@ -801,8 +914,38 @@ Decimal128 Decimal128::roundToDomain(bool isNegative, const Wide& value, int64_t
     return fromExact(isNegative, highOf(quotient), lowOf(quotient), quantum);
 }
 
+// Of eight bytes from 0 to 9, the first of which is the lowest.
+static ALWAYS_INLINE uint64_t valueOfEightDigits(uint64_t digits)
+{
+    digits = digits * 2561 >> 8;
+    digits = (digits & 0x00ff00ff00ff00ff) * 6553601 >> 16;
+    return (digits & 0x0000ffff0000ffff) * 42949672960001 >> 32;
+}
+
+// What is behind the digits, from the position on. Null if it is not an exponent or nothing.
 template<typename CharacterType>
-ALWAYS_INLINE std::optional<Decimal128> Decimal128::parse(std::span<const CharacterType> text)
+static ALWAYS_INLINE std::optional<int64_t> parseExponent(std::span<const CharacterType> text, size_t position)
+{
+    size_t end = text.size();
+    if (position == end)
+        return 0;
+    if (!isASCIIAlphaCaselessEqual(text[position++], 'e'))
+        return std::nullopt;
+    bool isNegative = false;
+    if (position != end && (text[position] == '-' || text[position] == '+'))
+        isNegative = text[position++] == '-';
+    if (position == end)
+        return std::nullopt;
+    int64_t written = 0;
+    for (; position != end && isASCIIDigit(text[position]); ++position)
+        written = std::min<int64_t>(written * 10 + (text[position] - '0'), saturatedExponent);
+    if (position != end)
+        return std::nullopt;
+    return isNegative ? -written : written;
+}
+
+template<typename CharacterType>
+std::optional<Decimal128> Decimal128::parseByDigits(std::span<const CharacterType> text)
 {
     size_t position = 0;
     size_t end = text.size();
@@ -823,28 +966,6 @@ ALWAYS_INLINE std::optional<Decimal128> Decimal128::parse(std::span<const Charac
     bool hasDigits = false;
     auto parseDigits = [&](bool isFraction) ALWAYS_INLINE_LAMBDA {
         size_t start = position;
-        if constexpr (sizeof(CharacterType) == 1 && std::endian::native == std::endian::little) {
-            // Eight digits at a time, where they are all of one part.
-            while (end - position >= 8) {
-                int inPart = numberOfKept < partDigits ? numberOfKept : numberOfKept - partDigits;
-                if (!numberOfKept ? text[position] == '0' : (numberOfKept == partDigits || numberOfKept == keptDigits))
-                    break;
-                if (inPart + 8 > partDigits)
-                    break;
-                uint64_t chunk;
-                memcpySpan(asMutableByteSpan(chunk), asBytes(text.subspan(position, 8)));
-                if (((chunk & 0xf0f0f0f0f0f0f0f0) | (((chunk + 0x0606060606060606) & 0xf0f0f0f0f0f0f0f0) >> 4)) != 0x3333333333333333)
-                    break;
-                chunk = (chunk & 0x0f0f0f0f0f0f0f0f) * 2561 >> 8;
-                chunk = (chunk & 0x00ff00ff00ff00ff) * 6553601 >> 16;
-                chunk = (chunk & 0x0000ffff0000ffff) * 42949672960001 >> 32;
-                lower = lower * 100'000'000 + chunk;
-                numberOfKept += 8;
-                position += 8;
-                if (isFraction)
-                    exponent -= 8;
-            }
-        }
         for (; position != end && isASCIIDigit(text[position]); ++position) {
             uint32_t digit = text[position] - '0';
             if (numberOfKept == keptDigits) {
@@ -875,20 +996,10 @@ ALWAYS_INLINE std::optional<Decimal128> Decimal128::parse(std::span<const Charac
     if (!hasDigits)
         return std::nullopt;
 
-    if (position != end && (text[position] == 'e' || text[position] == 'E')) {
-        ++position;
-        bool isNegativeExponent = false;
-        if (position != end && (text[position] == '-' || text[position] == '+'))
-            isNegativeExponent = text[position++] == '-';
-        if (position == end)
-            return std::nullopt;
-        int64_t written = 0;
-        for (; position != end && isASCIIDigit(text[position]); ++position)
-            written = std::min<int64_t>(written * 10 + (text[position] - '0'), saturatedExponent);
-        exponent += isNegativeExponent ? -written : written;
-    }
-    if (position != end)
+    auto written = parseExponent(text, position);
+    if (!written)
         return std::nullopt;
+    exponent += *written;
 
     if (!numberOfKept)
         return zero(isNegative);
@@ -898,44 +1009,134 @@ ALWAYS_INLINE std::optional<Decimal128> Decimal128::parse(std::span<const Charac
     return roundToDomain(isNegative, highOf(value), lowOf(value), exponent, isInexact);
 }
 
-std::optional<Decimal128> Decimal128::parse(StringView text)
-{
-    auto result = text.is8Bit() ? parse(text.span8()) : parse(text.span16());
-    if (result) [[likely]]
-        return result;
+static constexpr uint64_t eachByte = 0x0101010101010101;
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+template<typename Word>
+static ALWAYS_INLINE uint64_t loadCharacters(std::span<const Latin1Character> text, size_t offset)
+{
+    ASSERT(offset + sizeof(Word) <= text.size());
+    return WTF::unalignedLoad<Word>(text.data() + offset);
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
+// One to eight, with zeros above them.
+static ALWAYS_INLINE uint64_t loadFewCharacters(std::span<const Latin1Character> text)
+{
+    size_t size = text.size();
+    if (size >= 4)
+        return loadCharacters<uint32_t>(text, 0) | loadCharacters<uint32_t>(text, size - 4) << (size - 4) * 8;
+    return loadCharacters<uint8_t>(text, 0) | loadCharacters<uint8_t>(text, size / 2) << size / 2 * 8 | loadCharacters<uint8_t>(text, size - 1) << (size - 1) * 8;
+}
+
+// The lowest bit that is set is the upper one of the first byte above 9.
+static ALWAYS_INLINE uint64_t bytesAbove9(uint64_t bytes)
+{
+    return ((bytes + eachByte * 0x76) | bytes) & eachByte * 0x80;
+}
+
+Decimal128 Decimal128::parseOrNoValue(StringView view)
+{
+    // Up to eight digits and a point, with no branch on where the point is or on how many zeros are at the end.
+    if (!view.is8Bit() || view.isEmpty() || std::endian::native != std::endian::little) [[unlikely]]
+        return parseSlow(view);
+    bool isNegative = view.span8()[0] == '-';
+    auto text = view.span8().subspan(isNegative);
+    if (text.size() - 1 >= 8)
+        return parseByWords(view);
+
+    // The first byte that is no digit goes. If it is neither the point nor behind the text, a digit is missing at the end.
+    uint64_t bytes = loadFewCharacters(text) ^ eachByte * '0';
+    uint64_t others = bytesAbove9(bytes);
+    if (!others) [[unlikely]]
+        return parseByWords(view);
+    unsigned shiftOfOther = std::countr_zero(others) & ~7;
+    uint64_t beforeOther = (others ^ (others - 1)) >> 8;
+    unsigned numberOfDigits = text.size() - (static_cast<uint8_t>(bytes >> shiftOfOther) == ('.' ^ '0'));
+    uint64_t digits = ((bytes & beforeOther) | ~(~bytes >> 8 | beforeOther)) << (-numberOfDigits * 8 & 63);
+    if (bytesAbove9(digits) || !digits) [[unlikely]]
+        return parseByWords(view);
+
+    unsigned shiftOfZeros = std::countl_zero(digits) & ~7;
+    Decimal128 result { static_cast<int>((shiftOfZeros + shiftOfOther) / 8 - numberOfDigits), isNegative };
+    result.m_low = valueOfEightDigits(digits << shiftOfZeros);
+    return result;
+}
+
+// Eight characters at a time, if the digits fit in 128 bits.
+NEVER_INLINE Decimal128 Decimal128::parseByWords(StringView view)
+{
+    auto text = view.span8();
+    size_t end = text.size();
+    // More than the digits, a sign, a point and an exponent of the domain take.
+    if (end > maximumShortPower + 8) [[unlikely]]
+        return parseSlow(view);
+    bool isNegative = text[0] == '-';
+    size_t position = isNegative || text[0] == '+';
+    bool isShort = end < 8;
+    uint64_t lastWord = isShort ? loadFewCharacters(text) << (8 - end) * 8 : loadCharacters<uint64_t>(text, end - 8);
+
+    uint64_t high = 0;
+    uint64_t low = 0;
+    auto append = [&](uint64_t digits, unsigned count) ALWAYS_INLINE_LAMBDA {
+        UInt128 lower = multiply64(low, powersOf10In64Bits[count]) + valueOfEightDigits(digits);
+        high = high * powersOf10In64Bits[count] + highOf(lower);
+        low = lowOf(lower);
+        position += count;
+    };
+    auto parseDigits = [&] ALWAYS_INLINE_LAMBDA {
+        size_t start = position;
+        uint64_t bytes;
+        uint64_t others;
+        while (true) {
+            size_t left = end - position;
+            bytes = (left >= 8 ? loadCharacters<uint64_t>(text, position) : lastWord >> 1 >> (63 - left * 8)) ^ eachByte * '0';
+            others = bytesAbove9(bytes);
+            if (others)
+                break;
+            append(bytes, 8);
+        }
+        unsigned count = std::countr_zero(others) / 8;
+        append(bytes << 1 << (63 - count * 8), count);
+        return position - start;
+    };
+    size_t wholeDigits = parseDigits();
+    size_t fractionalDigits = 0;
+    if (position != end && text[position] == '.') {
+        ++position;
+        fractionalDigits = parseDigits();
+    }
+    auto exponent = parseExponent(text, position);
+    if (wholeDigits + fractionalDigits - 1 >= maximumShortPower || !exponent) [[unlikely]]
+        return parseSlow(view);
+    if (!(high | low))
+        return zero(isNegative);
+    return roundToDomain(isNegative, high, low, *exponent - static_cast<int64_t>(fractionalDigits), false);
+}
+
+NEVER_INLINE Decimal128 Decimal128::parseSlow(StringView text)
+{
+    if (auto result = text.is8Bit() ? parseByDigits(text.span8()) : parseByDigits(text.span16()))
+        return *result;
     if (text == "NaN"_s)
         return nan();
     if (text == "Infinity"_s || text == "+Infinity"_s)
         return infinity(false);
     if (text == "-Infinity"_s)
         return infinity(true);
-    return std::nullopt;
+    return noValue();
 }
 
-auto Decimal128::alignmentsByDistance() -> const Alignment*
+auto Decimal128::tables() -> const Tables&
 {
-    alignas(sizeof(Alignment)) static constexpr auto alignments = [] {
-        constexpr uint64_t greatest = (1ull << 62) - 1;
-        std::array<Alignment, 2 * reachOfAlignments + 1> result { };
-        for (int i = -reachOfAlignments; i <= reachOfAlignments; ++i) {
-            uint64_t factor = powersOf10In64Bits[std::max(i, 0)];
-            uint64_t otherFactor = powersOf10In64Bits[std::max(-i, 0)];
-            result[i + reachOfAlignments] = { factor, otherFactor, greatest / factor, greatest / otherFactor };
-        }
-        return result;
-    }();
-    return &alignments[reachOfAlignments];
+    return decimalTables;
 }
 
-auto Decimal128::divisorsByPower() -> const Divisor*
+Decimal128 Decimal128::withoutTrailingZerosSlow(Decimal128 value)
 {
-    return divisorsOf64Bits.data();
-}
-
-const uint64_t* Decimal128::powersOf10()
-{
-    return powersOf10In64Bits.data();
+    return fromExact(value.m_isNegative, 0, value.m_low, value.m_exponent);
 }
 
 Decimal128 Decimal128::fromInteger(int64_t value)
@@ -1033,101 +1234,86 @@ Decimal128 Decimal128::negate() const
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.add
 Decimal128 Decimal128::add(Decimal128 x, Decimal128 y)
 {
-    // Both in 64 bits and not 0, and the sum too. NaN and infinity have a coefficient of 0.
-    if (!(x.m_high | y.m_high) && x.m_low && y.m_low) [[likely]] {
-        int difference = static_cast<int>(x.m_exponent) - static_cast<int>(y.m_exponent);
-        uint64_t a = x.m_low;
-        uint64_t b = y.m_low;
-        int exponent = std::min<int>(x.m_exponent, y.m_exponent);
-        // Above this exponent a sum can be infinite.
-        bool overflows = exponent > maximumQuantumExponent;
-        if (difference) {
-            if (static_cast<unsigned>(difference + 19) > 38)
-                overflows = true;
-            else {
-                overflows |= __builtin_mul_overflow(a, powersOf10In64Bits[std::max(difference, 0)], &a);
-                overflows |= __builtin_mul_overflow(b, powersOf10In64Bits[std::max(-difference, 0)], &b);
-            }
-        }
-        bool isNegative = x.m_isNegative;
-        uint64_t sum;
-        if (x.m_isNegative == y.m_isNegative)
-            overflows |= __builtin_add_overflow(a, b, &sum);
-        else {
-            bool isLess = a < b;
-            sum = isLess ? b - a : a - b;
-            isNegative ^= isLess;
-        }
-        if (!overflows) [[likely]] {
-            if (!sum) [[unlikely]]
-                return zero(false);
-            return fromExact(isNegative, 0, sum, exponent);
+    if (x.m_high | y.m_high)
+        return addSlow(x, y);
+    // As DecimalFastPaths does it. NaN and infinity are far from any finite value.
+    if (unsigned index = x.m_exponent - y.m_exponent + reachOfAlignments; index <= 2 * reachOfAlignments && x.m_exponent <= maximumQuantumExponent) [[likely]] {
+        auto& alignment = decimalTables.alignments[index];
+        if (x.m_low <= alignment.limit && y.m_low <= alignment.otherLimit) [[likely]] {
+            uint64_t signsDiffer = -static_cast<uint64_t>(x.m_isNegative ^ y.m_isNegative);
+            uint64_t sum = x.m_low * alignment.factor + ((y.m_low * alignment.otherFactor ^ signsDiffer) - signsDiffer);
+            uint64_t isReversed = static_cast<int64_t>(sum) >> 63;
+            if (sum) [[likely]]
+                return fromExact(x.m_isNegative ^ (isReversed & 1), 0, (sum ^ isReversed) - isReversed, std::min(x.m_exponent, y.m_exponent));
         }
     }
     return addSlow(x, y);
 }
 
-NEVER_INLINE Decimal128 Decimal128::addSlow(Decimal128 x, Decimal128 y)
+static NEVER_INLINE Decimal128 addWithoutCoefficient(Decimal128 x, Decimal128 y)
 {
-    if (!x.isFinite() || !y.isFinite()) [[unlikely]] {
-        if (x.isNaN() || y.isNaN())
-            return nan();
-        if (x.isInfinity())
-            return y.isInfinity() && x.m_isNegative != y.m_isNegative ? nan() : x;
+    if (x.isNaN() || y.isNaN())
+        return Decimal128::nan();
+    if (x.isInfinity())
+        return y.isInfinity() && x.isNegative() != y.isNegative() ? Decimal128::nan() : x;
+    if (y.isInfinity())
         return y;
-    }
     if (x.isZero())
-        return y.isZero() ? zero(x.m_isNegative && y.m_isNegative) : y;
-    if (y.isZero())
-        return x;
+        return y.isZero() ? Decimal128::zero(x.isNegative() && y.isNegative()) : y.withoutTrailingZeros();
+    return x.withoutTrailingZeros();
+}
 
-    const Decimal128& upper = x.m_exponent >= y.m_exponent ? x : y;
-    const Decimal128& lower = x.m_exponent >= y.m_exponent ? y : x;
+NEVER_INLINE Decimal128 Decimal128::addSlow(Decimal128 upper, Decimal128 lower)
+{
+    if (!(upper.m_low | upper.m_high) || !(lower.m_low | lower.m_high)) [[unlikely]]
+        return addWithoutCoefficient(upper, lower);
 
-    // In 128 bits. With 37 digits in units of the lower value the upper one is less than 10^37, and the sum than 2^128.
-    constexpr int maximumShortDigits = 37;
+    UInt128 upperValue = makeUInt128(upper.m_high, upper.m_low);
+    if (int difference = upper.m_exponent - lower.m_exponent) {
+        auto x = upper.words();
+        auto y = lower.words();
+        bool isReversed = difference < 0;
+        upper = fromWords(isReversed ? y[0] : x[0], isReversed ? y[1] : x[1]);
+        lower = fromWords(isReversed ? x[0] : y[0], isReversed ? x[1] : y[1]);
+        upperValue = makeUInt128(upper.m_high, upper.m_low);
+        difference = std::abs(difference);
+        // With 37 digits in units of the lower value the upper one is less than 10^37, and the sum than 2^128.
+        if (JSC::numberOfDigits(upperValue) + difference > 37)
+            return addFarApart(upper, lower);
+        upperValue = upperValue * powersOf10In128Bits[difference];
+    }
+    UInt128 lowerValue = makeUInt128(lower.m_high, lower.m_low);
+    if (upper.m_isNegative == lower.m_isNegative) {
+        UInt128 sum = upperValue + lowerValue;
+        return roundToDomain(upper.m_isNegative, highOf(sum), lowOf(sum), lower.m_exponent, false);
+    }
+    uint64_t isLess = -static_cast<uint64_t>(upperValue < lowerValue);
+    UInt128 rest = ((upperValue - lowerValue) ^ makeUInt128(isLess, isLess)) + (isLess & 1);
+    return roundToDomain(upper.m_isNegative ^ (isLess & 1), highOf(rest), lowOf(rest), lower.m_exponent, false);
+}
+
+// In units of the lower value the upper one has more digits than the precision.
+NEVER_INLINE Decimal128 Decimal128::addFarApart(Decimal128 upper, Decimal128 lower)
+{
+    UInt128 upperValue = makeUInt128(upper.m_high, upper.m_low);
     int difference = upper.m_exponent - lower.m_exponent;
-    if (!difference || JSC::numberOfDigits(makeUInt128(upper.m_high, upper.m_low)) + difference <= maximumShortDigits) {
-        UInt128 upperValue = makeUInt128(upper.m_high, upper.m_low);
-        UInt128 lowerValue = makeUInt128(lower.m_high, lower.m_low);
-        if (difference)
-            upperValue = upper.m_high ? upperValue * powersOf10In128Bits[difference] : difference < static_cast<int>(powersOf10In64Bits.size()) ? multiply64(upper.m_low, powersOf10In64Bits[difference]) : upperValue * powersOf10In128Bits[difference];
-        bool isNegative = upper.m_isNegative;
-        UInt128 sum;
-        if (upper.m_isNegative == lower.m_isNegative)
-            sum = upperValue + lowerValue;
-        else if (upperValue >= lowerValue)
-            sum = upperValue - lowerValue;
-        else {
-            sum = lowerValue - upperValue;
-            isNegative = lower.m_isNegative;
-        }
-        return roundToDomain(isNegative, highOf(sum), lowOf(sum), lower.m_exponent, false);
+    // 10^76 + 10^34 is less than 2^256. With more digits the lower value is less than 10^-42 of the upper one, which is the nearest then.
+    if (JSC::numberOfDigits(upperValue) + difference >= Wide::maximumPowerOf10)
+        return upper.withoutTrailingZeros();
+    if (difference > maximumShortPower) {
+        upperValue = upperValue * powersOf10In128Bits[difference - maximumShortPower];
+        difference = maximumShortPower;
     }
-
-    Wide upperValue = upper.coefficient();
-    Wide lowerValue = lower.coefficient();
-
-    // 10^76 + 10^34 is less than 2^256, so the sum is exact when the upper value has at most this many digits in units of the lower.
-    constexpr int maximumDigits = Wide::maximumPowerOf10 - 1;
-    int spare = maximumDigits - upperValue.numberOfDigits();
-    if (difference <= spare) {
-        upperValue = upperValue * Wide::powerOf10(difference);
-        if (upper.m_isNegative == lower.m_isNegative)
-            return roundToDomain(upper.m_isNegative, upperValue + lowerValue, lower.m_exponent, false);
-        if (upperValue >= lowerValue)
-            return roundToDomain(upper.m_isNegative, upperValue - lowerValue, lower.m_exponent, false);
-        return roundToDomain(lower.m_isNegative, lowerValue - upperValue, lower.m_exponent, false);
-    }
-
-    // The lower value is less than 10^-42 of the upper one, so the upper one is the nearest value.
-    return upper;
+    Wide scaled = Wide::product(upperValue, powersOf10In128Bits[difference]);
+    return roundToDomain(upper.m_isNegative, upper.m_isNegative == lower.m_isNegative ? scaled + lower.coefficient() : scaled - lower.coefficient(), lower.m_exponent);
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.subtract
 Decimal128 Decimal128::subtract(Decimal128 x, Decimal128 y)
 {
-    return add(x, y.negate());
+    // The sum does not look at the sign of NaN.
+    y.m_isNegative ^= 1;
+    return add(x, y);
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.multiply
@@ -1155,60 +1341,154 @@ NEVER_INLINE Decimal128 Decimal128::multiplySlow(Decimal128 x, Decimal128 y)
         UInt128 product = multiply64(x.m_low, y.m_low);
         return roundToDomain(isNegative, highOf(product), lowOf(product), x.m_exponent + y.m_exponent, false);
     }
-    return roundToDomain(isNegative, x.coefficient() * y.coefficient(), x.m_exponent + y.m_exponent, false);
+    return roundToDomain(isNegative, Wide::product(makeUInt128(x.m_high, x.m_low), makeUInt128(y.m_high, y.m_low)), x.m_exponent + y.m_exponent);
+}
+
+// The quotient has as many digits as the precision.
+ALWAYS_INLINE Decimal128 Decimal128::roundQuotient(bool isNegative, const DecimalQuotient& division, int64_t exponent)
+{
+    UInt128 value = division.quotient;
+    ASSERT(JSC::numberOfDigits(value) == precision);
+    if (exponent >= minimumQuantumExponent && exponent <= maximumQuantumExponent) [[likely]] {
+        // No quotient is nearer to the next power of 10 than one unit.
+        value = value + isNearerToNext(division.remainder, division.rest, lowOf(value) & 1);
+        return fromExact(isNegative, highOf(value), lowOf(value), exponent);
+    }
+    return roundToDomainSlow(isNegative, highOf(value), lowOf(value), exponent, !!division.remainder);
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.divide
 Decimal128 Decimal128::divide(Decimal128 x, Decimal128 y)
 {
-    if (x.isNaN() || y.isNaN())
-        return nan();
-    bool isNegative = x.m_isNegative != y.m_isNegative;
-    if (x.isInfinity())
-        return y.isInfinity() ? nan() : infinity(isNegative);
-    if (y.isInfinity())
-        return zero(isNegative);
-    if (y.isZero())
-        return x.isZero() ? nan() : infinity(isNegative);
-    if (x.isZero())
-        return zero(isNegative);
+    // Both in 64 bits and not 0. NaN and infinity have a coefficient of 0.
+    if ((x.m_high | y.m_high) || !x.m_low || !y.m_low) [[unlikely]]
+        return divideSlow(x, y);
 
-    // A long division, up to 19 digits at a time.
-    if (!(x.m_high | y.m_high)) {
-        uint64_t divisor = y.m_low;
-        UInt128 first = multiply64(x.m_low, powersOf10In64Bits[19]);
-        auto division = divide128By64(highOf(first) % divisor, lowOf(first), divisor);
-        UInt128 quotient = makeUInt128(highOf(first) / divisor, division.quotient);
-        uint64_t remainder = division.remainder;
-        int64_t exponent = static_cast<int64_t>(x.m_exponent) - y.m_exponent - 19;
-        while (remainder) {
-            int digits = !quotient ? 0 : JSC::numberOfDigits(quotient);
-            if (digits > precision)
-                break;
-            int power = std::min(19, precision + 1 - digits);
-            UInt128 dividend = multiply64(remainder, powersOf10In64Bits[power]);
-            auto next = divide128By64(highOf(dividend), lowOf(dividend), divisor);
-            quotient = quotient * powersOf10In64Bits[power] + next.quotient;
-            remainder = next.remainder;
-            exponent -= power;
-        }
-        return roundToDomain(isNegative, highOf(quotient), lowOf(quotient), exponent, !!remainder);
+    bool isNegative = x.m_isNegative != y.m_isNegative;
+    int64_t exponent = static_cast<int64_t>(x.m_exponent) - y.m_exponent;
+    uint64_t divisor = y.m_low;
+    if (divisor == 1)
+        return roundToDomain(isNegative, 0, x.m_low, exponent, false);
+
+    // A long division. The first step gives 18 or 19 digits, and the second one the rest.
+    constexpr int step = 19;
+    int power = step - 1 - leastNumberOfDigits(std::countl_zero(divisor) - std::countl_zero(x.m_low) + 1);
+    UInt128 factor = powersOf10In128Bits[power];
+    UInt128 dividend = multiply64(x.m_low, lowOf(factor));
+    auto upper = divide128By64(highOf(dividend) + x.m_low * highOf(factor), lowOf(dividend), divisor);
+    exponent -= power;
+    if (!upper.remainder)
+        return roundToDomain(isNegative, 0, upper.quotient, exponent, false);
+
+    power = precision - step + (upper.quotient < powersOf10In64Bits[step - 1]);
+    dividend = multiply64(upper.remainder, powersOf10In64Bits[power]);
+    auto lower = divide128By64(highOf(dividend), lowOf(dividend), divisor);
+    UInt128 quotient = multiply64(upper.quotient, powersOf10In64Bits[power]) + lower.quotient;
+    return roundQuotient(isNegative, { quotient, lower.remainder, divisor - lower.remainder }, exponent - power);
+}
+
+NEVER_INLINE Decimal128 Decimal128::divideSlow(Decimal128 x, Decimal128 y)
+{
+    bool isNegative = x.m_isNegative != y.m_isNegative;
+    if (!(x.m_low | x.m_high) || !(y.m_low | y.m_high)) [[unlikely]] {
+        if (x.isNaN() || y.isNaN())
+            return nan();
+        if (x.isInfinity())
+            return y.isInfinity() ? nan() : infinity(isNegative);
+        if (y.isInfinity())
+            return zero(isNegative);
+        if (y.isZero())
+            return x.isZero() ? nan() : infinity(isNegative);
+        return zero(isNegative);
     }
 
-    // The quotient has 35 or 36 digits, which is enough for a correct rounding. The dividend has at most 69.
+    UInt128 value = makeUInt128(x.m_high, x.m_low);
     UInt128 divisor = makeUInt128(y.m_high, y.m_low);
-    int padding = precision + 1 + JSC::numberOfDigits(divisor) - JSC::numberOfDigits(makeUInt128(x.m_high, x.m_low));
-    auto division = Wide::divide(x.coefficient() * Wide::powerOf10(padding), Wide::from(divisor));
-    return roundToDomain(isNegative, division.quotient, x.m_exponent - padding - y.m_exponent, !division.remainder.isZero());
+    // The exponent of the quotient of the coefficients in scientific notation is this or one less.
+    int magnitude = leastNumberOfDigits(numberOfBits(value) - numberOfBits(divisor) + 1);
+    magnitude -= magnitude >= 0 ? value < divisor * powersOf10In128Bits[magnitude] : value * powersOf10In128Bits[-magnitude] < divisor;
+    int power = precision - 1 - magnitude;
+    int64_t exponent = static_cast<int64_t>(x.m_exponent) - y.m_exponent - power;
+    // The dividend has at most 68 digits.
+    if (power > maximumShortPower) {
+        value = value * powersOf10In128Bits[power - maximumShortPower];
+        power = maximumShortPower;
+    }
+    Wide dividend = Wide::product(value, powersOf10In128Bits[power]);
+    if (y.m_high)
+        return roundQuotient(isNegative, dividend.dividedBy(makeLongDivisor(divisor)), exponent);
+    return roundQuotient(isNegative, dividend.dividedBy(y.m_low, [&](uint64_t high, uint64_t low) { return divide128By64(high, low, y.m_low); }), exponent);
+}
+
+Decimal128 Decimal128::divideAndRound(Decimal128 x, Decimal128 y, int32_t numberOfFractionalDigits, RoundingMode mode)
+{
+    // What is left of a quotient by less than 2^64 is 0, or a half, or not within 10^-20 of these and of 1. To round it to 20 digits or more
+    // first changes nothing.
+    constexpr uint64_t limit = powersOf10In64Bits[precision - 20];
+    int64_t unit = -static_cast<int64_t>(numberOfFractionalDigits);
+    int64_t power = static_cast<int64_t>(x.m_exponent) - y.m_exponent - unit;
+    constexpr int reach = 19;
+    if (!(x.m_high | y.m_high) && x.m_low && y.m_low && static_cast<uint64_t>(power + reach) <= 2 * reach && unit >= minimumQuantumExponent + 20 && unit <= maximumQuantumExponent) [[likely]] {
+        UInt128 dividend = multiply64(x.m_low, powersOf10In64Bits[std::max<int64_t>(power, 0)]);
+        UInt128 divisor = multiply64(y.m_low, powersOf10In64Bits[std::max<int64_t>(-power, 0)]);
+        if (!highOf(divisor) && highOf(dividend) < lowOf(divisor)) [[likely]] {
+            auto [count, remainder] = divide128By64(highOf(dividend), lowOf(dividend), lowOf(divisor));
+            if (count < limit) [[likely]] {
+                bool isNegative = x.m_isNegative != y.m_isNegative;
+                count += magnitudeRoundsUp(mode, isNegative, remainder, lowOf(divisor) - remainder, count & 1);
+                return roundToDomain(isNegative, 0, count, unit, false);
+            }
+        }
+    }
+    return round(divide(x, y), numberOfFractionalDigits, mode);
+}
+
+std::optional<Decimal128> Decimal128::exactReciprocal() const
+{
+    if (m_high || !m_low)
+        return std::nullopt;
+    Decimal128 result = divide(one(), *this);
+    int power = -(m_exponent + result.m_exponent);
+    if (result.m_high || power < 0 || power > maximumShortPower || multiply64(m_low, result.m_low) != powersOf10In128Bits[power])
+        return std::nullopt;
+    return result;
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.remainder
 Decimal128 Decimal128::remainder(Decimal128 x, Decimal128 y)
 {
+    // Both in 64 bits and not 0, and so in one unit. NaN and infinity have a coefficient of 0.
+    if (unsigned index = x.m_exponent - y.m_exponent + reachOfAlignments; !(x.m_high | y.m_high) && x.m_low && y.m_low && index <= 2 * reachOfAlignments) [[likely]] {
+        auto& alignment = decimalTables.alignments[index];
+        if (x.m_low <= alignment.limit && y.m_low <= alignment.otherLimit) [[likely]] {
+            uint64_t rest = x.m_low * alignment.factor % (y.m_low * alignment.otherFactor);
+            return rest ? fromExact(x.m_isNegative, 0, rest, std::min(x.m_exponent, y.m_exponent)) : zero(x.m_isNegative);
+        }
+    }
+    return remainderSlow(x, y);
+}
+
+// Warren, Hacker's Delight, 9-5: the estimate less one is the quotient or one less.
+static ALWAYS_INLINE UInt128 remainderOf(UInt128 dividend, UInt128 divisor)
+{
+    if (!highOf(divisor))
+        return divide128By64(highOf(dividend) % lowOf(divisor), lowOf(dividend), lowOf(divisor)).remainder;
+    unsigned shift = std::countl_zero(highOf(divisor));
+    uint64_t top = highOf(divisor) << shift | lowOf(divisor) >> 1 >> (63 - shift);
+    uint64_t quotient = divide128By64(highOf(dividend) >> 1, lowOf(dividend >> 1), top).quotient >> (63 - shift);
+    quotient -= !!quotient;
+    UInt128 product = multiply64(quotient, lowOf(divisor));
+    UInt128 rest = dividend - makeUInt128(highOf(product) + quotient * highOf(divisor), lowOf(product));
+    uint64_t isTooLarge = -static_cast<uint64_t>(rest >= divisor);
+    return rest - makeUInt128(highOf(divisor) & isTooLarge, lowOf(divisor) & isTooLarge);
+}
+
+NEVER_INLINE Decimal128 Decimal128::remainderSlow(Decimal128 x, Decimal128 y)
+{
     if (x.isNaN() || y.isNaN() || x.isInfinity() || y.isZero())
         return nan();
     if (y.isInfinity() || x.isZero())
-        return x;
+        return x.withoutTrailingZeros();
 
     // The result is a multiple of the smaller quantum and less than both operands, so it needs no rounding.
     int distance = x.m_exponent - y.m_exponent;
@@ -1222,13 +1502,9 @@ Decimal128 Decimal128::remainder(Decimal128 x, Decimal128 y)
     if (distance <= 0) {
         // Both are less than 10^34 where the multiplied modulus is not greater than the value.
         if (distance && JSC::numberOfDigits(yCoefficient) - distance > JSC::numberOfDigits(xCoefficient))
-            return x;
+            return x.withoutTrailingZeros();
         UInt128 modulus = distance ? yCoefficient * powersOf10In128Bits[-distance] : yCoefficient;
-        if (xCoefficient < modulus)
-            return x;
-        if (!highOf(xCoefficient))
-            return finish(lowOf(xCoefficient) % lowOf(modulus));
-        return finish(xCoefficient % modulus);
+        return xCoefficient < modulus ? x.withoutTrailingZeros() : finish(remainderOf(xCoefficient, modulus));
     }
     if (!(x.m_high | y.m_high) && distance <= 19) {
         UInt128 dividend = multiply64(x.m_low, powersOf10In64Bits[distance]);
@@ -1289,14 +1565,11 @@ NEVER_INLINE std::partial_ordering Decimal128::compareSlow(Decimal128 x, Decimal
             return x.isInfinity() <=> y.isInfinity();
         if (auto order = x.scientificExponent() <=> y.scientificExponent(); order != 0)
             return order;
-        // The same scientific exponent: the quanta are at most 33 apart.
-        Wide xValue = x.coefficient();
-        Wide yValue = y.coefficient();
-        if (x.m_exponent > y.m_exponent)
-            xValue = xValue * Wide::powerOf10(x.m_exponent - y.m_exponent);
-        else
-            yValue = yValue * Wide::powerOf10(y.m_exponent - x.m_exponent);
-        return xValue <=> yValue;
+        // The same scientific exponent: in the lower unit both have as many digits.
+        int distance = x.m_exponent - y.m_exponent;
+        UInt128 xValue = makeUInt128(x.m_high, x.m_low) * powersOf10In128Bits[std::max(distance, 0)];
+        UInt128 yValue = makeUInt128(y.m_high, y.m_low) * powersOf10In128Bits[std::max(-distance, 0)];
+        return (xValue > yValue) - (xValue < yValue) <=> 0;
     };
     return sign > 0 ? compareMagnitudes(x, y) : compareMagnitudes(y, x);
 }
@@ -1306,32 +1579,26 @@ ALWAYS_INLINE void Decimal128::roundCoefficient(int64_t power, RoundingMode mode
 {
     ASSERT(power > 0 && isFinite() && !isZero());
     // Of fewer digits than the power, so less than a tenth.
-    DecimalQuotient division { 0, std::strong_ordering::less, true };
-    if (power <= maximumShortPower)
+    DecimalQuotient division { 0, 1, 9 };
+    if (power <= maximumShortPower) [[likely]]
         division = divideByPowerOf10(makeUInt128(m_high, m_low), static_cast<int>(power));
-    UInt128 count = division.quotient;
-    if (roundsUp(modeForMagnitude(m_isNegative, mode), division.hasFraction, division.fractionToHalf, lowOf(count) & 1))
-        count = count + 1;
+    UInt128 count = division.quotient + magnitudeRoundsUp(mode, m_isNegative, division.remainder, division.rest, lowOf(division.quotient) & 1);
     high = highOf(count);
     low = lowOf(count);
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-method-round
-Decimal128 Decimal128::round(double numberOfFractionalDigits, RoundingMode mode) const
-{
-    return round(clampTo<int32_t>(numberOfFractionalDigits), mode);
-}
-
-Decimal128 Decimal128::round(int32_t numberOfFractionalDigits, RoundingMode mode) const
+Decimal128 Decimal128::round(Decimal128 x, int32_t numberOfFractionalDigits, RoundingMode mode)
 {
     int64_t unit = -static_cast<int64_t>(numberOfFractionalDigits);
-    if (unit <= m_exponent || !isFinite() || isZero())
-        return *this;
+    // NaN and infinity have a coefficient of 0.
+    if (unit <= x.m_exponent || !(x.m_low | x.m_high))
+        return x.withoutTrailingZeros();
     // The spec rounds to the domain in the same mode, but nothing is left to round: the count is at most 10^34, and the unit is in the domain or overflows.
     uint64_t high;
     uint64_t low;
-    roundCoefficient(unit - m_exponent, mode, high, low);
-    return roundToDomain(m_isNegative, high, low, unit, false);
+    x.roundCoefficient(unit - x.m_exponent, mode, high, low);
+    return roundToDomain(x.m_isNegative, high, low, unit, false);
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal-method-scale10

@@ -8,7 +8,7 @@
 
 #include "AOTRemovableFeature.h"
 #include "DecimalObject.h"
-#include "DecimalOperations.h"
+#include "DecimalOperation.h"
 #include "DecimalOperator.h"
 #include "DecimalStringCache.h"
 #include "IntlNumberFormatInlines.h"
@@ -239,7 +239,7 @@ static JSValue numberOfOrder(std::partial_ordering order)
 {
     if (order == std::partial_ordering::unordered)
         return jsNaN();
-    return jsNumber(order < 0 ? -1 : order > 0 ? 1 : 0);
+    return jsNumber((order > 0) - (order < 0));
 }
 
 // https://tc39.es/proposal-decimal/#sec-decimal.prototype.compare
@@ -415,7 +415,7 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncRound, (JSGlobalObject* globalObject, C
 {
     if (callFrame->argument(0).isInt32() && callFrame->argument(1).isUndefined()) {
         return unary(globalObject, callFrame, [&](const Decimal128& value) {
-            return newDecimal(globalObject, value.round(callFrame->uncheckedArgument(0).asInt32(), Decimal128::RoundingMode::HalfEven));
+            return newDecimal(globalObject, Decimal128::round(value, callFrame->uncheckedArgument(0).asInt32(), Decimal128::RoundingMode::HalfEven));
         });
     }
     return roundWithAnyArguments(globalObject, callFrame);
@@ -434,6 +434,20 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncScale10, (JSGlobalObject* globalObject,
     if (std::isfinite(power) && !isInteger(power)) [[unlikely]]
         return throwVMRangeError(globalObject, scope, "The power must be an integer"_s);
     return newDecimal(globalObject, decimal->value().scale10(power));
+}
+
+Decimal128 roundOrNoValue(Decimal128 value, JSValue digits, Decimal128::RoundingMode mode)
+{
+    if (digits.isInt32()) [[likely]]
+        return Decimal128::round(value, digits.asInt32(), mode);
+    return digits.isNumber() && isInteger(digits.asNumber()) ? value.round(digits.asNumber(), mode) : Decimal128::noValue();
+}
+
+Decimal128 scale10OrNoValue(Decimal128 value, JSValue power)
+{
+    if (!power.isNumber() || (std::isfinite(power.asNumber()) && !isInteger(power.asNumber()))) [[unlikely]]
+        return Decimal128::noValue();
+    return value.scale10(power.asNumber());
 }
 
 JSString* DecimalStringCache::add(VM& vm, Set& set, const Decimal128& value, uint32_t format)
@@ -633,42 +647,16 @@ JSC_DEFINE_HOST_FUNCTION(decimalProtoFuncValueOf, (JSGlobalObject* globalObject,
     return throwVMTypeError(globalObject, scope, "Decimal.prototype.valueOf must not be called. To compare Decimals, use compare(), equals() or lessThan()"_s);
 }
 
-#if ENABLE(DFG_JIT)
-
 // One intrinsic is enough: the function says which method it is.
 std::optional<DecimalOperation> decimalOperationOf(TaggedNativeFunction function)
 {
-#define ANSWER(name) \
+#define ANSWER(name, method) \
     if (function == TaggedNativeFunction { decimalProtoFunc##name }) \
         return DecimalOperation::name;
-    ANSWER(Add)
-    ANSWER(Subtract)
-    ANSWER(Multiply)
-    ANSWER(Divide)
-    ANSWER(Remainder)
-    ANSWER(Abs)
-    ANSWER(Negate)
-    ANSWER(Mantissa)
-    ANSWER(Round)
-    ANSWER(Scale10)
-    ANSWER(Equals)
-    ANSWER(NotEquals)
-    ANSWER(LessThan)
-    ANSWER(LessThanOrEqual)
-    ANSWER(GreaterThan)
-    ANSWER(GreaterThanOrEqual)
-    ANSWER(IsNaN)
-    ANSWER(IsFinite)
-    ANSWER(Compare)
-    ANSWER(Exponent)
-    ANSWER(ToString)
-    ANSWER(ToExponential)
-    ANSWER(ToFixed)
+    FOR_EACH_DECIMAL_OPERATION(ANSWER)
 #undef ANSWER
     return std::nullopt;
 }
-
-#endif // ENABLE(DFG_JIT)
 
 Decimal128 DecimalLiteralCache::parse(StringView text)
 {

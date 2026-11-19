@@ -572,7 +572,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeObjectInOSR, HeapCell*, (J
                 structure = uncheckedDowncast<Structure>(JSValue::decode(values[i]));
         }
         RELEASE_ASSERT(structure);
-        return DecimalObject::create(vm, structure, Decimal128::fromWords(words[0], words[1]));
+        return DecimalObject::create(vm, structure, Decimal128::fromWords(words[0], words[1]).withoutTrailingZeros());
     }
 
     case PhantomNewPromise: {

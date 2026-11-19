@@ -1,0 +1,47 @@
+# What a handler reads is there when a later call throws.
+# sink((x, y) => { let last = x; try { last = x.add(x); last = last.add(y); } catch { return "caught " + last.toString(); } return last; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); show(() => f(D("1"), 2)); show(() => f(1, 2)); };
+# CHECK: 4
+# CHECK-NEXT: caught 2
+# CHECK-NEXT: caught 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1()
+  b1() handler=b5(v2):
+    v3 = PropGet v0 key="add"
+    v4 = Call v3, v0, v0 calleeKey="add" calleeName="x.add"
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    Jump -> next b2()
+  b2() handler=b5(v5):
+    v6 = PropGet v5 key="add"
+    v7 = Call v6, v5, v1 calleeKey="add" calleeName="last.add"
+    v8 = Convert v7 declared={type=anything flags=[IsExpected]}
+    Jump -> next b3()
+  b3() handler=b5(v8):
+    Jump -> next b4()
+  b4():
+    Return v8
+  b5(v9) role=CatchHandler:
+    v10 = CatchValue
+    v11 = String string="caught "
+    v12 = PropGet v9 key="toString"
+    v13 = Call v12, v9 calleeKey="toString" calleeName="last.toString"
+    v14 = Add v11, v13
+    Return v14
+}

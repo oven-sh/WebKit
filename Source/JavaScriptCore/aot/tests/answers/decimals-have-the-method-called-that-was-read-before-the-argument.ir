@@ -1,0 +1,38 @@
+# A call between the read of a method and its call may replace it. What was read is called.
+# sink((x, argument) => x.add(argument()).negate());
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 2
+# RUN(STAYS): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), () => D("2"))); };
+# STAYS: -3
+# STAYS-NEXT: exited with 0
+# RUN(GOES): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), () => { Decimal.prototype.add = () => D("9"); return D("2"); })); show(() => f(D("1"), () => D("2"))); };
+# GOES: -3
+# GOES-NEXT: -9
+# GOES-NEXT: exited with 0
+# RUN(RETURNS): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const add = Decimal.prototype.add; Decimal.prototype.add = () => D("9"); show(() => f(D("1"), () => { Decimal.prototype.add = add; return D("2"); })); };
+# RETURNS: -9
+# RETURNS-NEXT: exited with 0
+# RUN(OWN): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const x = D("1"); x.add = () => D("9"); Object.freeze(D("1")); show(() => f(x, () => { delete x.add; return D("2"); })); };
+# OWN: -9
+# OWN-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = PropGet v0 key="add"
+    v3 = Call v1 calleeName="argument"
+    v4 = Call v2, v0, v3 calleeKey="add" calleeName="x.add"
+    v5 = PropGet v4 key="negate"
+    v6 = Call v5, v4 calleeKey="negate" calleeName="negate"
+    ReturnCall v6
+}

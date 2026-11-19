@@ -1,0 +1,55 @@
+# The body of a module runs once, so each operation is a call of the run time.
+# report(1.5m.add(value).multiply(value).round(1).lessThan(value), new Decimal(20).subtract(value).exponent(), value.compare(1m));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 1
+# RUN(CODE): emit f0
+# CODE-NOT: = Mul(
+# RUN: run-in-shell --useDecimal=1 globalThis.value = new Decimal("2.5"); globalThis.report = print;
+# CHECK: false 1 1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="1.5"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = PropGet v4 key="add"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="value" [isFreeName]
+    v8 = Call v5, v4, v7 calleeKey="add" calleeName="add"
+    v9 = PropGet v8 key="multiply"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="value" [isFreeName]
+    v12 = Call v9, v8, v11 calleeKey="multiply" calleeName="multiply"
+    v13 = PropGet v12 key="round"
+    v14 = Integer integer=1
+    v15 = Call v13, v12, v14 calleeKey="round" calleeName="round"
+    v16 = PropGet v15 key="lessThan"
+    v17 = Builtin builtin=GlobalThis
+    v18 = PropGet v17 key="value" [isFreeName]
+    v19 = Call v16, v15, v18 calleeKey="lessThan" calleeName="lessThan"
+    v20 = Builtin builtin=GlobalThis
+    v21 = PropGet v20 key="Decimal" [isFreeName]
+    v22 = Integer integer=20
+    v23 = Construct v21, -, v22 calleeName="Decimal"
+    v24 = PropGet v23 key="subtract"
+    v25 = Builtin builtin=GlobalThis
+    v26 = PropGet v25 key="value" [isFreeName]
+    v27 = Call v24, v23, v26 calleeKey="subtract" calleeName="subtract"
+    v28 = PropGet v27 key="exponent"
+    v29 = Call v28, v27 calleeKey="exponent" calleeName="exponent"
+    v30 = Builtin builtin=GlobalThis
+    v31 = PropGet v30 key="value" [isFreeName]
+    v32 = PropGet v31 key="compare"
+    v33 = String string="1"
+    v34 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v35 = Call v34, -, v33
+    v36 = Call v32, v31, v35 calleeKey="compare" calleeName="value.compare"
+    v37 = Call v1, -, v19, v29, v36 calleeName="report"
+    v38 = Undefined
+    Return v38
+}

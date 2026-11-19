@@ -1,0 +1,47 @@
+# A division by a constant whose reciprocal ends is a multiplication. By another one it is a call.
+# sink(x => x.divide(8m), x => x.divide(3m));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 2
+# RUN(ENDS): emit f1
+# ENDS: = Mul(
+# RUN(NEVER): emit f2
+# NEVER-NOT: = Mul(
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g) => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; for (const x of ["1", "-16", "-0", "NaN", "9999999999999999999999999999999999", "1e-6176"]) show(() => f(D(x)).toExponential() + " " + g(D(x)).toExponential()); };
+# CHECK: 1.25e-1 3.333333333333333333333333333333333e-1
+# CHECK-NEXT: -2e0 -5.333333333333333333333333333333333e0
+# CHECK-NEXT: -0e+0 -0e+0
+# CHECK-NEXT: NaN NaN
+# CHECK-NEXT: 1.25e33 3.333333333333333333333333333333333e33
+# CHECK-NEXT: 0e+0 0e+0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="divide"
+    v2 = String string="8"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v1, v0, v4 calleeKey="divide" calleeName="x.divide"
+    ReturnCall v5
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="divide"
+    v2 = String string="3"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v1, v0, v4 calleeKey="divide" calleeName="x.divide"
+    ReturnCall v5
+}

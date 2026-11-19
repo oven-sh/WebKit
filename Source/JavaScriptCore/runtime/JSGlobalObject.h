@@ -1132,6 +1132,7 @@ public:
     JSObject* numberFormatPrototype() LIFETIME_BOUND;
 
     Structure* decimalStructure() { return m_decimalStructure.get(this); }
+    JSObject* decimalConstructor() LIFETIME_BOUND { return m_decimalStructure.constructor(this); }
     Structure* decimalStructureConcurrently() const { return m_decimalStructure.getConcurrently(); }
 
     Structure* durationStructure() { return m_durationStructure.get(this); }

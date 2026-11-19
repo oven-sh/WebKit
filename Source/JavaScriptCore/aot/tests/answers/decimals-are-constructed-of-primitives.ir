@@ -1,0 +1,65 @@
+# `new Decimal` and a literal give values that need no object.
+# sink(value => new Decimal(value).add(1.5m));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 1
+# RUN(VALUES): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const rope = (a, b) => a + b; for (const value of [100, -7, 0, -0, 0.25, 2 ** 53, 1e21, NaN, "2.50", "1e3", rope("1".repeat(20), ".5"), "\u1234".slice(1) + "3", 12n]) show(() => f(value)); };
+# VALUES: 101.5
+# VALUES-NEXT: -5.5
+# VALUES-NEXT: 1.5
+# VALUES-NEXT: 1.5
+# VALUES-NEXT: 1.75
+# VALUES-NEXT: 9007199254740993.5
+# VALUES-NEXT: 1000000000000000000001.5
+# VALUES-NEXT: NaN
+# VALUES-NEXT: 4
+# VALUES-NEXT: 1001.5
+# VALUES-NEXT: 11111111111111111113
+# VALUES-NEXT: 4.5
+# VALUES-NEXT: 13.5
+# VALUES-NEXT: exited with 0
+# RUN(ERRORS): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; for (const value of ["", "x", " 1", null, undefined, true, Symbol(), {}, D("1")]) show(() => f(value)); };
+# ERRORS: SyntaxError
+# ERRORS-NEXT: SyntaxError
+# ERRORS-NEXT: SyntaxError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: TypeError
+# ERRORS-NEXT: exited with 0
+# RUN(REPLACED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(1)); globalThis.Decimal = function (value) { return { add: literal => "own " + value + " " + literal.toString() }; }; show(() => f(1)); };
+# REPLACED: 2.5
+# REPLACED-NEXT: own 1 1.5
+# REPLACED-NEXT: exited with 0
+# RUN(DELETED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(1)); delete globalThis.Decimal; show(() => f(1)); };
+# DELETED: 2.5
+# DELETED-NEXT: ReferenceError
+# DELETED-NEXT: exited with 0
+# RUN(SUBCLASS): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; globalThis.Decimal = class extends Decimal { add() { return "derived"; } }; show(() => f(1)); };
+# SUBCLASS: derived
+# SUBCLASS-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Decimal" [isFreeName]
+    v3 = Construct v2, -, v0 calleeName="Decimal"
+    v4 = PropGet v3 key="add"
+    v5 = String string="1.5"
+    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v7 = Call v6, -, v5
+    v8 = Call v4, v3, v7 calleeKey="add" calleeName="add"
+    ReturnCall v8
+}

@@ -41,7 +41,7 @@ void SpeculativeJIT::callDecimalOperation(Node* node, OperationType operation, A
     if (node->op() != DecimalArith && node->argumentOfDecimalNode().useKind() == UntypedUse) {
         if (node->op() == ToDecimal)
             exceptionCheck();
-        speculationCheck(BadDecimalArgument, JSValueSource(), nullptr, branch64(Equal, upper.gpr(), TrustedImm32(upperOfNoDecimal)));
+        speculationCheck(BadDecimalArgument, JSValueSource(), nullptr, branch64(Equal, upper.gpr(), TrustedImm64(Decimal128::upperOfNoValue)));
     }
     decimalResult(low.gpr(), upper.gpr(), node);
 }
@@ -220,22 +220,18 @@ void SpeculativeJIT::compileDecimalToNumber(Node* node)
         GPRReg resultGPR = result.gpr();
         GPRReg scratchGPR = scratch.gpr();
 
-        // A coefficient of more than 64 bits, and the values that have none.
+        // As DecimalFastPaths::exponent().
+        constexpr int shift = Decimal128::shiftOfDigitSteps;
         JumpList slowCases;
         lshift64(upperGPR, TrustedImm32(64 - Decimal128::shiftOfExponent), scratchGPR);
         slowCases.append(branchTest64(NonZero, scratchGPR));
-        slowCases.append(branchTest64(Zero, lowGPR));
-
-        // As numberOfDigits().
         countLeadingZeros64(lowGPR, scratchGPR);
-        move(TrustedImm32(64), resultGPR);
-        sub32(scratchGPR, resultGPR);
-        mul32(TrustedImm32(1233), resultGPR, resultGPR);
-        urshift32(TrustedImm32(12), resultGPR);
-        move(TrustedImmPtr(Decimal128::powersOf10()), scratchGPR);
-        load64(BaseIndex(scratchGPR, resultGPR, TimesEight), scratchGPR);
-        compare64(Below, lowGPR, scratchGPR, scratchGPR);
-        sub32(scratchGPR, resultGPR);
+        sub32(TrustedImm32(64 - shift), scratchGPR);
+        slowCases.append(branch32(AboveOrEqual, scratchGPR, TrustedImm32(shift)));
+        move(TrustedImmPtr(Decimal128::tables().digitSteps.data()), resultGPR);
+        load64(BaseIndex(resultGPR, scratchGPR, TimesEight), resultGPR);
+        add64(lowGPR, resultGPR);
+        urshift64(TrustedImm32(shift), resultGPR);
 
         lshift64(upperGPR, TrustedImm32(1), scratchGPR);
         rshift64(TrustedImm32(64 - Decimal128::bitsOfExponent), scratchGPR);

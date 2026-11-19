@@ -14,6 +14,8 @@ class DecimalPrototype;
 
 // The value of new Decimal(value), or null where that throws. This throws only for want of memory.
 std::optional<Decimal128> tryToDecimal128(JSGlobalObject*, JSValue);
+// The same without effects, so not of a rope or a BigInt.
+Decimal128 toDecimal128OrNoValue(JSValue);
 
 class DecimalConstructor final : public InternalFunction {
 public:

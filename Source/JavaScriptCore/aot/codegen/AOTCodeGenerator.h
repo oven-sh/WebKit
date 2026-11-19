@@ -1157,6 +1157,16 @@ private:
     friend class MoveLoopFinder;
     friend class MoveLoopEmitter;
     void tryEmitMoveLoop(BlockID head);
+    struct EndOfDecimalRun {
+        size_t end { 0 };
+        LBasicBlock continuation { nullptr };
+        Vector<ValueID, 2> madeAhead { };
+        Vector<std::pair<ValueID, ValueFromBlock>, 4> results { };
+    };
+    bool mayComputeWithDecimals(BlockID) const;
+    std::optional<EndOfDecimalRun> beginDecimalRun(BlockID, std::span<const ValueID> values, size_t first);
+    void endDecimalRun(std::optional<EndOfDecimalRun>&);
+
     struct ElementMoves {
         struct Read {
             ValueID value;

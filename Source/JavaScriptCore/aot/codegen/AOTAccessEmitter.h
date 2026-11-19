@@ -144,6 +144,7 @@ public:
     void storeStructureAfterPrototypeTransition(CellPointer object, Word32 structureID);
     std::optional<CellPointer> tryAllocateCopyOfFields(const ValueContext& allocation, const MentionedAllocation&, ValueID copy, const ScopedLambda<CellPointer()>& allocateEmpty);
     bool tryCallMethodByName(const ValueContext& call);
+    Boxed constantOfGlobalBindingOrEmpty(const ValueContext& read);
     bool readsTruthAtSite(BlockID, ValueID read) const;
     std::optional<unsigned> integerThatLengthIsAskedFor(BlockID, ValueID read, ValueID test);
     bool isPatternLeftToCall(ValueID pattern) const { return m_readLeftToCall && m_readLeftToCall->pattern == pattern; }

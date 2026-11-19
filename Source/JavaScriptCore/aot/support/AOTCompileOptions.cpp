@@ -112,6 +112,7 @@ public:
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresRetainedByName = m_wire.target.featuresRetainedByName;
         options.logging = readLoggingOptions();
+        options.expectsDecimals = Options::useDecimal();
         return options;
     }
 

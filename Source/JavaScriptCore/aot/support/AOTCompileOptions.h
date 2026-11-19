@@ -106,6 +106,7 @@ struct CompileOptions {
     double sizeClassProgression { 0 };
     unsigned threadCount { 1 };
     CompileAction action { CompileAction::Compile };
+    bool expectsDecimals { false };
     bool verifiesCode { false };
     bool verifiesMachineCode { false };
     bool checksFlowFixpoint { false };

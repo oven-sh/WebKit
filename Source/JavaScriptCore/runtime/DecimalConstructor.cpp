@@ -78,6 +78,17 @@ std::optional<Decimal128> tryToDecimal128(JSGlobalObject* globalObject, JSValue 
     return tryToDecimal128Inline(globalObject, value);
 }
 
+Decimal128 toDecimal128OrNoValue(JSValue value)
+{
+    if (value.isString()) {
+        auto* impl = asString(value)->tryGetValueImpl();
+        return impl ? Decimal128::parseOrNoValue(StringView(*impl)) : Decimal128::noValue();
+    }
+    if (value.isInt32())
+        return Decimal128::fromInteger(value.asInt32());
+    return value.isNumber() ? Decimal128::fromDouble(value.asNumber()) : Decimal128::noValue();
+}
+
 // https://tc39.es/proposal-decimal/#sec-the-decimal-constructor-value
 JSC_DEFINE_HOST_FUNCTION(constructDecimal, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

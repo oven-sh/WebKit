@@ -393,11 +393,29 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(StringComparisonOperations, StringsAreEqual) \
     v(ArithmeticOperations, AddNumberAndValueAsNumber) \
     v(ArithmeticOperations, BigIntConstant) \
+    v(ArithmeticOperations, DecimalAdd) \
+    v(ArithmeticOperations, DecimalCompare) \
+    v(ArithmeticOperations, DecimalDivide) \
+    v(ArithmeticOperations, DecimalDivideAndRound) \
+    v(ArithmeticOperations, DecimalExponent) \
+    v(ArithmeticOperations, DecimalMantissa) \
+    v(ArithmeticOperations, DecimalMultiply) \
+    v(ArithmeticOperations, DecimalOfInteger) \
+    v(ArithmeticOperations, DecimalOfPrimitive) \
+    v(ArithmeticOperations, DecimalOfRopeOrBigInt) \
+    v(ArithmeticOperations, DecimalRemainder) \
+    v(ArithmeticOperations, DecimalRound) \
+    v(ArithmeticOperations, DecimalScale10) \
+    v(ArithmeticOperations, DecimalSubtract) \
+    v(ArithmeticOperations, DecimalToExponential) \
+    v(ArithmeticOperations, DecimalToFixed) \
+    v(ArithmeticOperations, DecimalToString) \
     v(ArithmeticOperations, Decrement) \
     v(ArithmeticOperations, DivNumberAndValueAsNumber) \
     v(ArithmeticOperations, Increment) \
     v(ArithmeticOperations, MulNumberAndValueAsNumber) \
     v(ArithmeticOperations, NewBigInt64) \
+    v(ArithmeticOperations, NewDecimal) \
     v(ArithmeticOperations, NumberOfAnyValue) \
     v(ArithmeticOperations, SubNumberAndValueAsNumber) \
     v(ArithmeticOperations, ToNumber) \

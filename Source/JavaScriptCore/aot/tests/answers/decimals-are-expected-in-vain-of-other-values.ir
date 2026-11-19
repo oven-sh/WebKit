@@ -1,0 +1,52 @@
+# What is no Decimal as the class makes it has its methods called, each one once.
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 1
+# PROGRAM-OF: decimals-are-computed-without-calls-of-their-methods.ir
+# RUN(OBJECT): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const own = { multiply() { print("multiply"); return this; }, round() { print("round"); return this; }, add() { return "add"; } }; show(() => f(own, D("1"))); };
+# OBJECT: multiply
+# OBJECT-NEXT: round
+# OBJECT-NEXT: add
+# OBJECT-NEXT: exited with 0
+# RUN(SUBCLASS): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; class Sub extends Decimal { multiply() { return D("7"); } } show(() => f(new Sub("1"), D("2"))); show(() => f(D("2"), new Sub("3"))); };
+# SUBCLASS: 8
+# SUBCLASS-NEXT: 8
+# SUBCLASS-NEXT: exited with 0
+# RUN(OWN): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const x = D("1"); show(() => f(x, D("2"))); x.multiply = () => D("5"); show(() => f(x, D("2"))); show(() => f(Object.freeze(D("1")), D("2"))); };
+# OWN: 3
+# OWN-NEXT: 6
+# OWN-NEXT: 3
+# OWN-NEXT: exited with 0
+# RUN(PROTOTYPE): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(Object.setPrototypeOf(D("1"), null), D("2"))); show(() => f(D("2"), Object.setPrototypeOf(D("3"), null))); show(() => f(Object.create(Decimal.prototype), D("1"))); };
+# PROTOTYPE: TypeError
+# PROTOTYPE-NEXT: 8
+# PROTOTYPE-NEXT: TypeError
+# PROTOTYPE-NEXT: exited with 0
+# RUN(PRIMITIVE): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; for (const value of [1, 1.5, "1", 1n, null, undefined, true, Symbol()]) { show(() => f(value, D("1"))); show(() => f(D("1"), value)); } };
+# PRIMITIVE: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: TypeError
+# PRIMITIVE-NEXT: exited with 0
+# RUN(PROXY): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(new Proxy(D("1"), {}), D("2"))); show(() => f(D("1"), new Proxy(D("2"), {}))); };
+# PROXY: TypeError
+# PROXY-NEXT: TypeError
+# PROXY-NEXT: exited with 0
+# RUN(REALM): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const other = createGlobalObject().Decimal; show(() => f(new other("2"), D("3")) instanceof other); show(() => f(D("2"), new other("3")) instanceof Decimal); };
+# REALM: true
+# REALM-NEXT: true
+# REALM-NEXT: exited with 0
+# RUN(UNDEFINED): run-in-shell globalThis.sink = f => { const own = { multiply() { return this; }, round() { return this; }, add() { return typeof Decimal; } }; print(f(own, own)); };
+# UNDEFINED: undefined
+# UNDEFINED-NEXT: exited with 0

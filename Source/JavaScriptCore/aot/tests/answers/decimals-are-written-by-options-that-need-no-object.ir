@@ -1,0 +1,44 @@
+# A literal of options for toFixed() is not made.
+# sink((x, digits, roundingMode) => x.toFixed({ digits }) + " " + x.toFixed({ digits, roundingMode }));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 2
+# RUN(VALUES): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1.25"), 1, "ceil")); show(() => f(D("1.25"), 1)); show(() => f(D("1.25"), 3.0, "floor")); show(() => f(D("1.25"), -1)); show(() => f(D("1.25"), 1, "up")); show(() => f(D("1.25"), "1")); };
+# VALUES: 1.2 1.3
+# VALUES-NEXT: 1.2 1.2
+# VALUES-NEXT: 1.250 1.250
+# VALUES-NEXT: RangeError
+# VALUES-NEXT: RangeError
+# VALUES-NEXT: TypeError
+# VALUES-NEXT: exited with 0
+# RUN(OTHER): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f({ toFixed: options => JSON.stringify(options) }, 1, "ceil")); };
+# OTHER: {"digits":1} {"digits":1,"roundingMode":"ceil"}
+# OTHER-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="digits" declared={type=anything} flags=[IsRequired]}, {key="roundingMode" declared={type=anything} flags=[IsRequired]}] place=74 ownFieldCount=2
+layout L1 module=m0 fields=[{key="digits" declared={type=anything} flags=[IsRequired]}] place=44 ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=3 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = PropGet v0 key="toFixed"
+    v4 = NewObject -, v1 layout=L1 fields=[0]
+    v5 = FinishObject v4
+    v6 = Call v3, v0, v5 calleeKey="toFixed" calleeName="x.toFixed"
+    v7 = String string=" "
+    v8 = Add v6, v7
+    v9 = PropGet v0 key="toFixed"
+    v10 = NewObject -, v1, v2 layout=L0 fields=[0, 1]
+    v11 = FinishObject v10
+    v12 = Call v9, v0, v11 calleeKey="toFixed" calleeName="x.toFixed"
+    v13 = Add v8, v12
+    Return v13
+}

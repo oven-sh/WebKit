@@ -8,14 +8,18 @@
 #include <array>
 #include <bit>
 #include <compare>
+#include <limits>
 #include <optional>
 #include <span>
 #include <wtf/HashFunctions.h>
 #include <wtf/Int128.h>
+#include <wtf/MathExtras.h>
 #include <wtf/text/StringView.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
+
+struct DecimalQuotient;
 
 // A Decimal value of https://tc39.es/proposal-decimal/: an IEEE 754-2019 Decimal128 value without cohorts, and with one NaN.
 //
@@ -42,7 +46,11 @@ public:
     }
 
     // StrDecimalLiteral or "NaN". No white space, no numeric separators. nullopt is a syntax error.
-    static std::optional<Decimal128> parse(StringView);
+    static std::optional<Decimal128> parse(StringView text)
+    {
+        Decimal128 result = parseOrNoValue(text);
+        return result.isSameValueAs(noValue()) ? std::nullopt : std::optional { result };
+    }
 
     bool isNaN() const { return m_exponent == exponentOfNaN; }
     bool isInfinity() const { return m_exponent == exponentOfInfinity; }
@@ -68,6 +76,10 @@ public:
     static Decimal128 multiply(Decimal128, Decimal128);
     static Decimal128 divide(Decimal128, Decimal128);
     static Decimal128 remainder(Decimal128, Decimal128);
+    // As divide() and then round().
+    static Decimal128 divideAndRound(Decimal128, Decimal128, int32_t numberOfFractionalDigits, RoundingMode);
+    // What to multiply by in place of a division, if that has a coefficient of 64 bits.
+    std::optional<Decimal128> exactReciprocal() const;
 
     // As Object.is() of Numbers: NaN is itself, and -0 and +0 differ. The representation of a value is unique.
     bool isSameValueAs(const Decimal128& other) const
@@ -90,24 +102,34 @@ public:
     static constexpr int exponentOfNaN = 8191;
     static constexpr uint64_t signBit = 1ull << 63;
     static constexpr uint64_t upperOfNaN = static_cast<uint64_t>(exponentOfNaN) << shiftOfExponent;
+    // In place of nullopt, which does not fit in registers: NaN with a sign, so it does no harm where a compiler computes with it ahead of the test.
+    static constexpr uint64_t upperOfNoValue = upperOfNaN | signBit;
+    static constexpr Decimal128 noValue() { return { exponentOfNaN, true }; }
+    static Decimal128 parseOrNoValue(StringView);
     // Whether the compiler has laid out the fields so. A constant expression cannot tell.
     static bool hasLayoutOfGeneratedCode()
     {
         using Words = std::array<uint64_t, 2>;
         return nan().words() == Words { 0, upperOfNaN } && one().words() == Words { 1, 0 } && zero(true).words() == Words { 0, signBit };
     }
-    // 10^i for i < 20.
-    static const uint64_t* powersOf10();
-    // What brings two coefficients to one unit, and the greatest coefficients that are less than 2^62 then. The index is the first exponent
-    // less the other, of either sign.
+    // Of a coefficient of 64 bits the upper word has the sign and the exponent only. Shifted by one it is the exponent at the top of a word.
+    static constexpr int shiftOfUnit = shiftOfExponent + 1;
+    // x is a multiple of 10 if x * inverseOf5, rotated right by one, is no greater than this, and that is x / 10 then. See Granlund and
+    // Montgomery, Division by Invariant Integers using Multiplication, section 9.
+    static constexpr uint64_t inverseOf5 = 0xcccccccccccccccdull;
+    static constexpr uint64_t greatestTenth = std::numeric_limits<uint64_t>::max() / 10;
+    // What brings two coefficients to one unit, and the greatest coefficients that are less than 2^62 then. The constants are at hand in each.
     struct Alignment {
         uint64_t factor;
         uint64_t otherFactor;
         uint64_t limit;
         uint64_t otherLimit;
+        uint64_t greatestUnit;
+        uint64_t inverseOf5;
+        uint64_t greatestTenth;
+        uint64_t unused;
     };
     static constexpr int reachOfAlignments = 18;
-    static const Alignment* alignmentsByDistance();
     // x / 10^i is (x >> i) * reciprocal >> (64 + shift) for x < 2^64 and i > 0.
     struct Divisor {
         uint64_t value;
@@ -116,7 +138,20 @@ public:
         uint64_t shift;
     };
     static constexpr int greatestPowerOfDivisors = 19;
-    static const Divisor* divisorsByPower();
+    // x has (x + step >> shiftOfDigitSteps) + 1 digits for 0 < x < 2^shiftOfDigitSteps.
+    static constexpr int shiftOfDigitSteps = 59;
+    struct Tables {
+        // By the first exponent less the other, plus the reach.
+        std::array<Alignment, 2 * reachOfAlignments + 1> alignments;
+        std::array<Divisor, greatestPowerOfDivisors + 1> divisors;
+        // By the leading zeros of x, less the fewest it can have.
+        std::array<uint64_t, shiftOfDigitSteps> digitSteps;
+        // By the leading zeros of what a coefficient has above 64 bits. Added to the words, it makes the exponent that of scientific notation.
+        std::array<std::array<uint64_t, 2>, shiftOfExponent> digitStepsOfLongValues;
+    };
+    static const Tables& tables();
+    // Generated code may leave zeros at the end of a coefficient of 64 bits where it only computes with it. This is the value it stands for.
+    Decimal128 withoutTrailingZeros() const { return m_high || !m_low || m_low % 10 ? *this : withoutTrailingZerosSlow(*this); }
 
     // For caches: each of the factors holds one of the words, so in the rare case that one of them is 0 the other word does not matter.
     unsigned hash(uint64_t seed) const
@@ -142,8 +177,8 @@ public:
     static std::partial_ordering compare(Decimal128, Decimal128);
 
     // The count of digits and the power are integers that may be of any magnitude.
-    Decimal128 round(double numberOfFractionalDigits, RoundingMode) const;
-    Decimal128 round(int32_t numberOfFractionalDigits, RoundingMode) const;
+    Decimal128 round(double numberOfFractionalDigits, RoundingMode mode) const { return round(*this, clampTo<int32_t>(numberOfFractionalDigits), mode); }
+    static Decimal128 round(Decimal128, int32_t numberOfFractionalDigits, RoundingMode);
     Decimal128 scale10(double power) const;
 
     String toString() const;
@@ -174,21 +209,29 @@ private:
     };
     Digits coefficientDigits() const;
 
-    template<typename CharacterType> static std::optional<Decimal128> parse(std::span<const CharacterType>);
+    template<typename CharacterType> static std::optional<Decimal128> parseByDigits(std::span<const CharacterType>);
     // Apart, so that the common cases need no frame.
+    static Decimal128 parseByWords(StringView);
+    static Decimal128 parseSlow(StringView);
+    static Decimal128 withoutTrailingZerosSlow(Decimal128);
     static Decimal128 addSlow(Decimal128, Decimal128);
+    static Decimal128 addFarApart(Decimal128 upper, Decimal128 lower);
     static Decimal128 multiplySlow(Decimal128, Decimal128);
+    static Decimal128 divideSlow(Decimal128, Decimal128);
+    static Decimal128 remainderSlow(Decimal128, Decimal128);
     static std::partial_ordering compareSlow(Decimal128, Decimal128);
     static Decimal128 fromExact(bool isNegative, uint64_t high, uint64_t low, int64_t exponent);
+    static Decimal128 fromLongMultipleOf10(bool isNegative, uint64_t high, uint64_t low, int64_t exponent);
+    static Decimal128 fromFields(bool isNegative, uint64_t high, uint64_t low, int64_t exponent);
 
     // The value nearest to coefficient * 10^exponent, plus something greater than 0 and less than one unit of the coefficient if isInexact.
-    // An inexact coefficient has to have more digits than the precision.
+    // An inexact coefficient has to have a digit that does not fit.
     static Decimal128 roundToDomain(bool isNegative, uint64_t high, uint64_t low, int64_t exponent, bool isInexact);
     static Decimal128 roundToDomainSlow(bool isNegative, uint64_t high, uint64_t low, int64_t exponent, bool isInexact);
-    static Decimal128 roundToDomain(bool isNegative, const Wide&, int64_t exponent, bool isInexact);
-    static Wide roundedQuotientByPowerOf10(const Wide&, int64_t power, bool isInexact);
+    static Decimal128 roundToDomain(bool isNegative, const Wide&, int64_t exponent);
+    static Decimal128 roundQuotient(bool isNegative, const DecimalQuotient&, int64_t exponent);
+    static Wide roundedQuotientByPowerOf10(const Wide&, int64_t power);
     void roundCoefficient(int64_t power, RoundingMode, uint64_t& high, uint64_t& low) const;
-    static RoundingMode modeForMagnitude(bool isNegative, RoundingMode);
 
     uint64_t m_low { 0 };
     // 10^34 is less than 2^113, and an exponent needs 14 bits.

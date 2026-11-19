@@ -77,7 +77,8 @@
     v(BarrierEmitter) \
     v(CellAllocationEmitter) \
     v(FrameMapEmitter) \
-    v(GuessedAccessEmitter)
+    v(GuessedAccessEmitter) \
+    v(DecimalEmitter)
 
 #define FOR_EACH_AOT_EMITTER(v) \
     FOR_EACH_AOT_OPERATION_EMITTER(v) \
