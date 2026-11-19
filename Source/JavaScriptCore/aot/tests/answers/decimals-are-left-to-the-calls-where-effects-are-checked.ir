@@ -1,0 +1,13 @@
+# Where the effects of each operation are checked at run time the calls are compiled as they are written only.
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 0
+# PROGRAM-OF: decimals-are-computed-without-calls-of-their-methods.ir
+# RUN: run-in-shell testing=CheckEffectsAtRunTime --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("19.99"), D("0.0825"))); show(() => f(D("12.5"), D("8"))); show(() => f(D("-0.5"), D("1"))); show(() => f(D("NaN"), D("1"))); show(() => f(D("1e6144"), D("10"))); show(() => f(D("1.234567890123456789012345678901234"), D("3"))); show(() => f(D("1"), D("1")) === f(D("1"), D("1"))); };
+# CHECK: 21.64
+# CHECK-NEXT: 112.5
+# CHECK-NEXT: -1
+# CHECK-NEXT: NaN
+# CHECK-NEXT: Infinity
+# CHECK-NEXT: 4.934567890123456789012345678901234
+# CHECK-NEXT: false
+# CHECK-NEXT: exited with 0

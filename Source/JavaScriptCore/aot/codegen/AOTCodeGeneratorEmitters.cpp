@@ -92,6 +92,7 @@ CodeGenerator::CodeGenerator(const FunctionInputs& inputs, Machine::Procedure& p
     , m_out(proc)
     , m_checksAllocation(proc.traits().checksAllocation)
     , m_checksEffects(AOT::hasFlag(inputs.build.options().testing, Wire::TestingSwitch::CheckEffectsAtRunTime))
+    , m_expectsDecimals(inputs.build.options().expectsDecimals)
     , m_understatedEffects(inputs.build.options().understatedEffects)
 {
     if (FunctionID id = code().function())
