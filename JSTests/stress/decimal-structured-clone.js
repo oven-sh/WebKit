@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1")
+//@ requireOptions("--useDecimal=1", "--useDecimalStructuredClone=1")
 // An extension: the draft has no structured clone, and neither has HTML for a Decimal.
 
 function shouldBe(actual, expected, what = "") {

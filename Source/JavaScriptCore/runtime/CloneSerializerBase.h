@@ -504,7 +504,7 @@ protected:
             dumpBigIntData(bigIntValue);
             return true;
         }
-        if (auto* decimal = dynamicDowncast<DecimalObject>(obj)) {
+        if (auto* decimal = dynamicDowncast<DecimalObject>(obj); decimal && DecimalObject::canBeCloned()) {
             if (!addToObjectPoolIfNotDupe<DecimalTag>(decimal))
                 return true;
             write(DecimalTag);

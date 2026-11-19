@@ -44,8 +44,8 @@ String DecimalObject::textForClone() const
 
 DecimalObject* DecimalObject::tryCreateFromCloneText(JSGlobalObject* globalObject, StringView text)
 {
-    // Not where the program has no Decimal: bytes can come from a process that has.
-    if (!Options::useDecimal())
+    // Bytes can come from a process with other options.
+    if (!canBeCloned())
         return nullptr;
     auto value = Decimal128::parse(text);
     if (!value)
