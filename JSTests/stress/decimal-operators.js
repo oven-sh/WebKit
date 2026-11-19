@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1", "--useDecimalOperators=1")
+//@ requireOptions("--useDecimal=1", "--useDecimalLiterals=1", "--useDecimalOperators=1")
 // Operators are not in https://tc39.es/proposal-decimal/, where they throw, but for == and !=, which compare identity.
 // decimal-operators-off.js has those tests.
 

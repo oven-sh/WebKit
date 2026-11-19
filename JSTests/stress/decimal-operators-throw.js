@@ -46,3 +46,7 @@ check("a == a", true, nan);
 Decimal.prototype.valueOf = function () { return Number(this); };
 for (const source in withNumbers)
     check(source, withNumbers[source]);
+
+// Nor is there a literal.
+for (const source of ["1m", "1.5m", ".5m", "1e3m", "-1m"])
+    shouldBe(errorOf(() => Function(source)), "SyntaxError", source);

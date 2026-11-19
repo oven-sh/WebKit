@@ -1889,7 +1889,7 @@ ALWAYS_INLINE bool Lexer<T>::parseDecimalSuffix(JSTokenData* tokenData)
         return false;
     // 010m and 08.5m begin like the literals of sloppy mode that have no suffix.
     bool isLegacyLiteral = m_buffer8.size() > 1 && m_buffer8[0] == '0' && isASCIIDigit(m_buffer8[1]);
-    if (!Options::useDecimal() || isLegacyLiteral)
+    if (!Options::useDecimal() || !Options::useDecimalLiterals() || isLegacyLiteral)
         return false;
     tokenData->ident = makeIdentifier(m_buffer8.span());
     shift();

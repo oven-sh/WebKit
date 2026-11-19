@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1")
+//@ requireOptions("--useDecimal=1", "--useDecimalLiterals=1")
 import { shouldBe } from "./resources/assert.js";
 import * as self from "./decimal-literals.js";
 

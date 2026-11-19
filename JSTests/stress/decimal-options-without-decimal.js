@@ -1,5 +1,5 @@
-//@ runDefault("--useDecimalOperators=1")
-// The option does nothing without useDecimal.
+//@ runDefault("--useDecimalLiterals=1", "--useDecimalOperators=1")
+// The options do nothing without useDecimal.
 
 function shouldBe(actual, expected, what = "") {
     if (!Object.is(actual, expected))

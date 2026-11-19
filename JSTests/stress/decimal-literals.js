@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1")
+//@ requireOptions("--useDecimal=1", "--useDecimalLiterals=1")
 // 1.5m. An extension: the proposal has no literals.
 
 function shouldBe(actual, expected, what = "") {

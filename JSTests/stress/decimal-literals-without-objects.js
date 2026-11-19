@@ -1,4 +1,4 @@
-//@ requireOptions("--useDecimal=1")
+//@ requireOptions("--useDecimal=1", "--useDecimalLiterals=1")
 // To optimized code a literal is a constant, and has an object where one can be seen.
 
 function shouldBe(actual, expected) {
