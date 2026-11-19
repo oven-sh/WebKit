@@ -1856,7 +1856,7 @@ ALWAYS_INLINE auto Lexer<T>::parseDecimal() -> std::optional<NumberParseResult>
             --digit;
         } while (isASCIIDigitOrSeparator(m_current) && digit >= 0);
 
-        if (digit >= 0 && m_current != '.' && !isASCIIAlphaCaselessEqual(m_current, 'e') && m_current != 'n' && m_current != 'm')
+        if (digit >= 0 && m_current != '.' && !isASCIIAlphaCaselessEqual(m_current, 'e') && m_current != 'n')
             return NumberParseResult { static_cast<double>(decimalValue) };
 
         for (int i = maximumDigits - 1; i > digit; --i)
@@ -1879,21 +1879,6 @@ ALWAYS_INLINE auto Lexer<T>::parseDecimal() -> std::optional<NumberParseResult>
         return NumberParseResult { makeIdentifier(m_buffer8.span()) };
 
     return std::nullopt;
-}
-
-// 1.5m: the characters of a DecimalLiteral are in m_buffer8, without separators.
-template <typename T>
-ALWAYS_INLINE bool Lexer<T>::parseDecimalSuffix(JSTokenData* tokenData)
-{
-    if (m_current != 'm') [[likely]]
-        return false;
-    // 010m and 08.5m begin like the literals of sloppy mode that have no suffix.
-    bool isLegacyLiteral = m_buffer8.size() > 1 && m_buffer8[0] == '0' && isASCIIDigit(m_buffer8[1]);
-    if (!Options::useDecimal() || isLegacyLiteral)
-        return false;
-    tokenData->ident = makeIdentifier(m_buffer8.span());
-    shift();
-    return true;
 }
 
 template <typename T>
@@ -2508,12 +2493,8 @@ start:
             token = atEnd() ? UNTERMINATED_NUMERIC_LITERAL_ERRORTOK : INVALID_NUMERIC_LITERAL_ERRORTOK;
             goto returnError;
         }
-        if (parseDecimalSuffix(tokenData)) [[unlikely]]
-            token = DECIMALLITERAL;
-        else {
-            size_t parsedLength;
-            tokenData->doubleValue = parseDouble(m_buffer8, parsedLength);
-        }
+        size_t parsedLength;
+        tokenData->doubleValue = parseDouble(m_buffer8, parsedLength);
 
         if (cannotBeIdentStart(m_current)) [[likely]] {
             m_buffer8.shrink(0);
@@ -2735,14 +2716,10 @@ start:
                     token = atEnd() ? UNTERMINATED_NUMERIC_LITERAL_ERRORTOK : INVALID_NUMERIC_LITERAL_ERRORTOK;
                     goto returnError;
                 }
-                if (parseDecimalSuffix(tokenData)) [[unlikely]]
-                    token = DECIMALLITERAL;
-                else {
-                    size_t parsedLength;
-                    tokenData->doubleValue = parseDouble(m_buffer8, parsedLength);
-                    if (token == INTEGER)
-                        token = tokenTypeForIntegerLikeToken(tokenData->doubleValue);
-                }
+                size_t parsedLength;
+                tokenData->doubleValue = parseDouble(m_buffer8, parsedLength);
+                if (token == INTEGER)
+                    token = tokenTypeForIntegerLikeToken(tokenData->doubleValue);
             }
         }
 

@@ -1,5 +1,5 @@
 # A sum goes from one turn to the next, also where something else comes in on the way.
-# sink(list => { let sum = 0m; for (let i = 0; i < list.length; i++) sum = sum.add(list[i]); return sum; });
+# sink(list => { let sum = new Decimal(0); for (let i = 0; i < list.length; i++) sum = sum.add(list[i]); return sum; });
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalRuns >= 1
 # RUN: run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f([])); show(() => f([D("0.5"), D("0.5"), D("1e-40"), D("2")])); show(() => f([D("1"), 2])); show(() => f([D("1"), new (class extends Decimal { })("2")])); const many = []; for (let i = 0; i < 100000; i++) many[i] = D("0.01"); show(() => f(many)); show(() => f([]) === f([])); };
@@ -24,26 +24,27 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 }
 function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|string|Array):
-    v1 = String string="0"
-    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v3 = Call v2, -, v1
-    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
-    v5 = Integer
-    v6 = Convert v5 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b1(v4, v6)
-  b1(v7, v8):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Decimal" [isFreeName]
+    v3 = Integer
+    v4 = Construct v2, -, v3 calleeName="Decimal"
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v7)
+  b1(v8, v9):
     LoopHint
-    v10 = PropGet v0 key="length"
-    v11 = Less v8, v10
-    Branch v11 -> taken b2(), notTaken b3()
+    v11 = PropGet v0 key="length"
+    v12 = Less v9, v11
+    Branch v12 -> taken b2(), notTaken b3()
   b2():
-    v12 = PropGet v7 key="add"
-    v13 = ElemGet v0, v8
-    v14 = Call v12, v7, v13 calleeKey="add" calleeName="sum.add"
-    v15 = Convert v14 declared={type=anything flags=[IsExpected]}
-    v16 = Increment v8
-    v17 = Convert v16 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b1(v15, v17)
+    v13 = PropGet v8 key="add"
+    v14 = ElemGet v0, v9
+    v15 = Call v13, v8, v14 calleeKey="add" calleeName="sum.add"
+    v16 = Convert v15 declared={type=anything flags=[IsExpected]}
+    v17 = Increment v9
+    v18 = Convert v17 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v16, v18)
   b3():
-    Return v7
+    Return v8
 }

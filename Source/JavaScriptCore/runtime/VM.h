@@ -152,7 +152,6 @@ enum class InternalMicrotask : uint8_t;
 namespace FFI { class CallbackEntryScope; }
 #endif
 class Debugger;
-class DecimalLiteralCache;
 class DecimalStringCache;
 class DeferredWorkTimer;
 class PinballCompletion;
@@ -705,14 +704,6 @@ public:
         return *m_decimalStringCache;
     }
     void initializeDecimalStringCache();
-    std::unique_ptr<DecimalLiteralCache> m_decimalLiteralCache;
-    DecimalLiteralCache& decimalLiteralCache() LIFETIME_BOUND
-    {
-        if (!m_decimalLiteralCache) [[unlikely]]
-            initializeDecimalLiteralCache();
-        return *m_decimalLiteralCache;
-    }
-    void initializeDecimalLiteralCache();
     std::unique_ptr<SimpleStats> machineCodeBytesPerBytecodeWordForBaselineJIT;
     WriteBarrier<JSString> lastCachedString;
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };

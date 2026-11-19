@@ -1,5 +1,5 @@
-# `new Decimal` and a literal give values that need no object.
-# sink(value => new Decimal(value).add(1.5m));
+# `new Decimal` gives a value that needs no object.
+# sink(value => new Decimal(value).add(new Decimal("1.5")));
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalRuns = 1
 # RUN(VALUES): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; const rope = (a, b) => a + b; for (const value of [100, -7, 0, -0, 0.25, 2 ** 53, 1e21, NaN, "2.50", "1e3", rope("1".repeat(20), ".5"), "\u1234".slice(1) + "3", 12n]) show(() => f(value)); };
@@ -28,7 +28,7 @@
 # ERRORS-NEXT: TypeError
 # ERRORS-NEXT: TypeError
 # ERRORS-NEXT: exited with 0
-# RUN(REPLACED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(1)); globalThis.Decimal = function (value) { return { add: literal => "own " + value + " " + literal.toString() }; }; show(() => f(1)); };
+# RUN(REPLACED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(1)); globalThis.Decimal = function (value) { return { value, add: other => "own " + value + " " + other.value }; }; show(() => f(1)); };
 # REPLACED: 2.5
 # REPLACED-NEXT: own 1 1.5
 # REPLACED-NEXT: exited with 0
@@ -57,9 +57,10 @@ function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v2 = PropGet v1 key="Decimal" [isFreeName]
     v3 = Construct v2, -, v0 calleeName="Decimal"
     v4 = PropGet v3 key="add"
-    v5 = String string="1.5"
-    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v7 = Call v6, -, v5
-    v8 = Call v4, v3, v7 calleeKey="add" calleeName="add"
-    ReturnCall v8
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Decimal" [isFreeName]
+    v7 = String string="1.5"
+    v8 = Construct v6, -, v7 calleeName="Decimal"
+    v9 = Call v4, v3, v8 calleeKey="add" calleeName="add"
+    ReturnCall v9
 }

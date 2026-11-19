@@ -29,7 +29,6 @@ struct DecimalRun {
         CallsMethod,
         ReadsConstructor,
         Constructs,
-        IsLiteral,
         AsksTruth,
         AsksOrder,
         IsReadThrough,
@@ -101,7 +100,6 @@ private:
     bool findOptionsOfToFixed(ValueID argument, DecimalCall&) const;
     ValueID callOfMethodReadAt(ValueID) const;
     bool readsConstructor(ValueID) const;
-    bool isLiteral(ValueID) const;
     bool mayConstructDecimal(ValueID) const;
     Evidence evidenceOf(ValueID call, const DecimalCall&) const;
     bool mayBeMadeTwice(const Operation&) const;

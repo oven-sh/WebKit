@@ -1,5 +1,5 @@
 # The edge that gives the value before away is taken after the next value is made.
-# sink(lists => { let a = 1m, b = 2m, total = 0m; for (const list of lists) { for (const x of list) total = total.add(x); a = total; b = total; total = total.add(1m); } return [a, b, total]; }, (lists, seen) => { let a = 1m, b = 2m, total = 0m, i = 0; do { seen.push(a, b); for (const x of lists[i]) total = total.add(x); a = total; b = total; total = total.add(1m); } while (++i < lists.length); });
+# sink(lists => { let a = new Decimal(1), b = new Decimal(2), total = new Decimal(0); for (const list of lists) { for (const x of list) total = total.add(x); a = total; b = total; total = total.add(new Decimal(1)); } return [a, b, total]; }, (lists, seen) => { let a = new Decimal(1), b = new Decimal(2), total = new Decimal(0), i = 0; do { seen.push(a, b); for (const x of lists[i]) total = total.add(x); a = total; b = total; total = total.add(new Decimal(1)); } while (++i < lists.length); });
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalsReused = 0
 # RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => names(f([amounts, amounts]))); const seen = []; g([amounts, amounts], seen); show(() => names(seen)); };
@@ -21,115 +21,123 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 }
 function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string|Array> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string|Array>):
-    v1 = String string="1"
-    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v3 = Call v2, -, v1
-    v4 = String string="2"
-    v5 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v6 = Call v5, -, v4
-    v7 = String string="0"
-    v8 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v9 = Call v8, -, v7
-    v10 = Convert v9 declared={type=anything flags=[IsExpected]}
-    v11 = IteratorOpen v0
-    Jump -> next b1(v3, v6, v10)
-  b1(v12, v13, v14):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Decimal" [isFreeName]
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3 calleeName="Decimal"
+    v5 = Builtin builtin=GlobalThis
+    v6 = PropGet v5 key="Decimal" [isFreeName]
+    v7 = Integer integer=2
+    v8 = Construct v6, -, v7 calleeName="Decimal"
+    v9 = Builtin builtin=GlobalThis
+    v10 = PropGet v9 key="Decimal" [isFreeName]
+    v11 = Integer
+    v12 = Construct v10, -, v11 calleeName="Decimal"
+    v13 = Convert v12 declared={type=anything flags=[IsExpected]}
+    v14 = IteratorOpen v0
+    Jump -> next b1(v4, v8, v13)
+  b1(v15, v16, v17):
     LoopHint
-    v16 = IteratorResume v11
-    v17 = ResultAt v16
-    v18 = ResultAt v16 index=1
-    Branch v17 -> taken b2(), notTaken b3()
+    v19 = IteratorResume v14
+    v20 = ResultAt v19
+    v21 = ResultAt v19 index=1
+    Branch v20 -> taken b2(), notTaken b3()
   b2():
-    v19 = NewArray v12, v13, v14 contents=anything
-    Return v19
+    v22 = NewArray v15, v16, v17 contents=anything
+    Return v22
   b3():
     Jump -> next b4()
   b4() handler=b10():
-    v20 = Convert v18 declared={type=undefined|null|string|Array flags=[IsExpected]}
-    v21 = IteratorOpen v20
-    Jump -> next b5(v14)
-  b5(v22) handler=b10():
+    v23 = Convert v21 declared={type=undefined|null|string|Array flags=[IsExpected]}
+    v24 = IteratorOpen v23
+    Jump -> next b5(v17)
+  b5(v25) handler=b10():
     LoopHint
-    v24 = IteratorResume v21
-    v25 = ResultAt v24
-    v26 = ResultAt v24 index=1
-    Branch v25 -> taken b6(), notTaken b7()
+    v27 = IteratorResume v24
+    v28 = ResultAt v27
+    v29 = ResultAt v27 index=1
+    Branch v28 -> taken b6(), notTaken b7()
   b6() handler=b10():
-    v27 = PropGet v22 key="add"
-    v28 = String string="1"
-    v29 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v30 = Call v29, -, v28
-    v31 = Call v27, v22, v30 calleeKey="add" calleeName="total.add"
-    v32 = Convert v31 declared={type=anything flags=[IsExpected]}
-    Jump -> next b1(v22, v22, v32)
+    v30 = PropGet v25 key="add"
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="Decimal" [isFreeName]
+    v33 = Integer integer=1
+    v34 = Construct v32, -, v33 calleeName="Decimal"
+    v35 = Call v30, v25, v34 calleeKey="add" calleeName="total.add"
+    v36 = Convert v35 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v25, v25, v36)
   b7() handler=b10():
     Jump -> next b8()
   b8() handler=b9():
-    v33 = PropGet v22 key="add"
-    v34 = Call v33, v22, v26 calleeKey="add" calleeName="total.add"
-    v35 = Convert v34 declared={type=anything flags=[IsExpected]}
-    Jump -> next b5(v35)
-  b9() role=IterationCleanup subject=v21 handler=b10():
-    v36 = CatchException
-    IteratorClose v21 completion=Throw
-    Rethrow v36
-  b10() role=IterationCleanup subject=v11:
-    v38 = CatchException
-    IteratorClose v11 completion=Throw
-    Rethrow v38
+    v37 = PropGet v25 key="add"
+    v38 = Call v37, v25, v29 calleeKey="add" calleeName="total.add"
+    v39 = Convert v38 declared={type=anything flags=[IsExpected]}
+    Jump -> next b5(v39)
+  b9() role=IterationCleanup subject=v24 handler=b10():
+    v40 = CatchException
+    IteratorClose v24 completion=Throw
+    Rethrow v40
+  b10() role=IterationCleanup subject=v14:
+    v42 = CatchException
+    IteratorClose v14 completion=Throw
+    Rethrow v42
 }
 function f2 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string|Array> flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|string|Array>, v1: anything):
-    v2 = String string="1"
-    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v4 = Call v3, -, v2
-    v5 = String string="2"
-    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v7 = Call v6, -, v5
-    v8 = String string="0"
-    v9 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v10 = Call v9, -, v8
-    v11 = Convert v10 declared={type=anything flags=[IsExpected]}
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Decimal" [isFreeName]
+    v4 = Integer integer=1
+    v5 = Construct v3, -, v4 calleeName="Decimal"
+    v6 = Builtin builtin=GlobalThis
+    v7 = PropGet v6 key="Decimal" [isFreeName]
+    v8 = Integer integer=2
+    v9 = Construct v7, -, v8 calleeName="Decimal"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="Decimal" [isFreeName]
     v12 = Integer
-    v13 = Convert v12 declared={type=i32 flags=[IsExpected]}
-    Jump -> next b1(v4, v7, v11, v13)
-  b1(v14, v15, v16, v17):
+    v13 = Construct v11, -, v12 calleeName="Decimal"
+    v14 = Convert v13 declared={type=anything flags=[IsExpected]}
+    v15 = Integer
+    v16 = Convert v15 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v9, v14, v16)
+  b1(v17, v18, v19, v20):
     LoopHint
-    v19 = PropGet v1 key="push"
-    v20 = Call v19, v1, v14, v15 calleeKey="push" calleeName="seen.push"
-    v21 = ElemGet v0, v17
-    v22 = IteratorOpen v21
-    Jump -> next b2(v16)
-  b2(v23):
+    v22 = PropGet v1 key="push"
+    v23 = Call v22, v1, v17, v18 calleeKey="push" calleeName="seen.push"
+    v24 = ElemGet v0, v20
+    v25 = IteratorOpen v24
+    Jump -> next b2(v19)
+  b2(v26):
     LoopHint
-    v25 = IteratorResume v22
-    v26 = ResultAt v25
-    v27 = ResultAt v25 index=1
-    Branch v26 -> taken b3(), notTaken b5()
+    v28 = IteratorResume v25
+    v29 = ResultAt v28
+    v30 = ResultAt v28 index=1
+    Branch v29 -> taken b3(), notTaken b5()
   b3():
-    v28 = PropGet v23 key="add"
-    v29 = String string="1"
-    v30 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v31 = Call v30, -, v29
-    v32 = Call v28, v23, v31 calleeKey="add" calleeName="total.add"
-    v33 = Convert v32 declared={type=anything flags=[IsExpected]}
-    v34 = Increment v17
-    v35 = Convert v34 declared={type=i32 flags=[IsExpected]}
-    v36 = PropGet v0 key="length"
-    v37 = Less v35, v36
-    Branch v37 -> taken b1(v23, v23, v33, v35), notTaken b4()
+    v31 = PropGet v26 key="add"
+    v32 = Builtin builtin=GlobalThis
+    v33 = PropGet v32 key="Decimal" [isFreeName]
+    v34 = Integer integer=1
+    v35 = Construct v33, -, v34 calleeName="Decimal"
+    v36 = Call v31, v26, v35 calleeKey="add" calleeName="total.add"
+    v37 = Convert v36 declared={type=anything flags=[IsExpected]}
+    v38 = Increment v20
+    v39 = Convert v38 declared={type=i32 flags=[IsExpected]}
+    v40 = PropGet v0 key="length"
+    v41 = Less v39, v40
+    Branch v41 -> taken b1(v26, v26, v37, v39), notTaken b4()
   b4():
-    v38 = Undefined
-    Return v38
+    v42 = Undefined
+    Return v42
   b5():
     Jump -> next b6()
   b6() handler=b7():
-    v39 = PropGet v23 key="add"
-    v40 = Call v39, v23, v27 calleeKey="add" calleeName="total.add"
-    v41 = Convert v40 declared={type=anything flags=[IsExpected]}
-    Jump -> next b2(v41)
-  b7() role=IterationCleanup subject=v22:
-    v42 = CatchException
-    IteratorClose v22 completion=Throw
-    Rethrow v42
+    v43 = PropGet v26 key="add"
+    v44 = Call v43, v26, v30 calleeKey="add" calleeName="total.add"
+    v45 = Convert v44 declared={type=anything flags=[IsExpected]}
+    Jump -> next b2(v45)
+  b7() role=IterationCleanup subject=v25:
+    v46 = CatchException
+    IteratorClose v25 completion=Throw
+    Rethrow v46
 }

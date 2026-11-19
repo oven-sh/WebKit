@@ -1861,7 +1861,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
     putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    // Without the option too: cached bytecode may hold a Decimal literal.
+    // Without the option too: a program that was compiled with it asks for the structure.
     m_decimalStructure.initLater(
         [] (LazyClassStructure::Initializer& init) {
             auto* prototype = DecimalPrototype::create(init.vm, DecimalPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));
@@ -2165,12 +2165,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::SuppressedError)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;
         init.set(globalObject->m_suppressedErrorStructure.constructor(globalObject));
-    });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalLiteral)].initLater([] (const Initializer<JSCell>& init) {
-        init.set(JSFunction::create(init.vm, init.owner, 1, "decimalLiteral"_s, decimalLiteral, ImplementationVisibility::Private, DecimalIntrinsic));
-    });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalOperator)].initLater([] (const Initializer<JSCell>& init) {
-        init.set(JSFunction::create(init.vm, init.owner, 3, "decimalOperator"_s, decimalOperator, ImplementationVisibility::Private, DecimalIntrinsic));
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::DisposableStack)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;

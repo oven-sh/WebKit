@@ -1,5 +1,5 @@
 # The body of a module runs once, so each operation is a call of the run time.
-# report(1.5m.add(value).multiply(value).round(1).lessThan(value), new Decimal(20).subtract(value).exponent(), value.compare(1m));
+# report(new Decimal("1.5").add(value).multiply(value).round(1).lessThan(value), new Decimal(20).subtract(value).exponent(), value.compare(new Decimal(1)));
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalRuns >= 1
 # RUN(CODE): emit f0
@@ -14,42 +14,44 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
   b0():
     v0 = Builtin builtin=GlobalThis
     v1 = PropGet v0 key="report" [isFreeName]
-    v2 = String string="1.5"
-    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v4 = Call v3, -, v2
-    v5 = PropGet v4 key="add"
-    v6 = Builtin builtin=GlobalThis
-    v7 = PropGet v6 key="value" [isFreeName]
-    v8 = Call v5, v4, v7 calleeKey="add" calleeName="add"
-    v9 = PropGet v8 key="multiply"
-    v10 = Builtin builtin=GlobalThis
-    v11 = PropGet v10 key="value" [isFreeName]
-    v12 = Call v9, v8, v11 calleeKey="multiply" calleeName="multiply"
-    v13 = PropGet v12 key="round"
-    v14 = Integer integer=1
-    v15 = Call v13, v12, v14 calleeKey="round" calleeName="round"
-    v16 = PropGet v15 key="lessThan"
-    v17 = Builtin builtin=GlobalThis
-    v18 = PropGet v17 key="value" [isFreeName]
-    v19 = Call v16, v15, v18 calleeKey="lessThan" calleeName="lessThan"
-    v20 = Builtin builtin=GlobalThis
-    v21 = PropGet v20 key="Decimal" [isFreeName]
-    v22 = Integer integer=20
-    v23 = Construct v21, -, v22 calleeName="Decimal"
-    v24 = PropGet v23 key="subtract"
-    v25 = Builtin builtin=GlobalThis
-    v26 = PropGet v25 key="value" [isFreeName]
-    v27 = Call v24, v23, v26 calleeKey="subtract" calleeName="subtract"
-    v28 = PropGet v27 key="exponent"
-    v29 = Call v28, v27 calleeKey="exponent" calleeName="exponent"
-    v30 = Builtin builtin=GlobalThis
-    v31 = PropGet v30 key="value" [isFreeName]
-    v32 = PropGet v31 key="compare"
-    v33 = String string="1"
-    v34 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v35 = Call v34, -, v33
-    v36 = Call v32, v31, v35 calleeKey="compare" calleeName="value.compare"
-    v37 = Call v1, -, v19, v29, v36 calleeName="report"
-    v38 = Undefined
-    Return v38
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Decimal" [isFreeName]
+    v4 = String string="1.5"
+    v5 = Construct v3, -, v4 calleeName="Decimal"
+    v6 = PropGet v5 key="add"
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="value" [isFreeName]
+    v9 = Call v6, v5, v8 calleeKey="add" calleeName="add"
+    v10 = PropGet v9 key="multiply"
+    v11 = Builtin builtin=GlobalThis
+    v12 = PropGet v11 key="value" [isFreeName]
+    v13 = Call v10, v9, v12 calleeKey="multiply" calleeName="multiply"
+    v14 = PropGet v13 key="round"
+    v15 = Integer integer=1
+    v16 = Call v14, v13, v15 calleeKey="round" calleeName="round"
+    v17 = PropGet v16 key="lessThan"
+    v18 = Builtin builtin=GlobalThis
+    v19 = PropGet v18 key="value" [isFreeName]
+    v20 = Call v17, v16, v19 calleeKey="lessThan" calleeName="lessThan"
+    v21 = Builtin builtin=GlobalThis
+    v22 = PropGet v21 key="Decimal" [isFreeName]
+    v23 = Integer integer=20
+    v24 = Construct v22, -, v23 calleeName="Decimal"
+    v25 = PropGet v24 key="subtract"
+    v26 = Builtin builtin=GlobalThis
+    v27 = PropGet v26 key="value" [isFreeName]
+    v28 = Call v25, v24, v27 calleeKey="subtract" calleeName="subtract"
+    v29 = PropGet v28 key="exponent"
+    v30 = Call v29, v28 calleeKey="exponent" calleeName="exponent"
+    v31 = Builtin builtin=GlobalThis
+    v32 = PropGet v31 key="value" [isFreeName]
+    v33 = PropGet v32 key="compare"
+    v34 = Builtin builtin=GlobalThis
+    v35 = PropGet v34 key="Decimal" [isFreeName]
+    v36 = Integer integer=1
+    v37 = Construct v35, -, v36 calleeName="Decimal"
+    v38 = Call v33, v32, v37 calleeKey="compare" calleeName="value.compare"
+    v39 = Call v1, -, v20, v30, v38 calleeName="report"
+    v40 = Undefined
+    Return v40
 }

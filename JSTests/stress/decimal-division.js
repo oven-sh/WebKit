@@ -83,14 +83,14 @@ for (const mode of ["ceil", "floor", "trunc", "halfExpand", "halfEven"]) {
     noInline(between);
     noInline(byCount);
     for (let i = 0; i < testLoopCount; ++i) {
-        shouldBe(between(1m, 3m, 1), 0.3m, "between");
-        shouldBe(byCount(2m, 3m, 1), 0.7m, "by count");
+        shouldBe(between(new Decimal(1), new Decimal(3), 1), new Decimal("0.3"), "between");
+        shouldBe(byCount(new Decimal(2), new Decimal(3), 1), new Decimal("0.7"), "by count");
     }
-    shouldBe(between(1m, 3m, 2147483647), 0.3333333333333333333333333333333333m, "between");
-    shouldBe(byCount(2m, 3m, 2 ** 40), 0.6666666666666666666666666666666667m, "by count");
+    shouldBe(between(new Decimal(1), new Decimal(3), 2147483647), new Decimal("0.3333333333333333333333333333333333"), "between");
+    shouldBe(byCount(new Decimal(2), new Decimal(3), 2 ** 40), new Decimal("0.6666666666666666666666666666666667"), "by count");
     let error;
     try {
-        byCount(2m, 3m, 0.5);
+        byCount(new Decimal(2), new Decimal(3), 0.5);
     } catch (thrown) {
         error = thrown;
     }
@@ -101,25 +101,25 @@ for (const mode of ["ceil", "floor", "trunc", "halfExpand", "halfEven"]) {
 // A constant object is an operand whatever its class or its properties are, and a receiver by what it has under the name.
 {
     class Derived extends Decimal {
-        divide() { return 42m; }
+        divide() { return new Decimal(42); }
     }
     const derived = new Derived("4"), frozen = Object.freeze(new Decimal("8")), changed = new Decimal("16"), other = {};
     const f = x => [x.divide(derived), derived.divide(x), x.divide(frozen), frozen.divide(x), x.divide(changed), changed.divide(x)];
     const g = (x, fails) => fails ? x.divide(other) : x;
     noInline(f);
     noInline(g);
-    const check = expected => f(2m).forEach((result, i) => shouldBe(result, expected[i], `constant ${i}`));
+    const check = expected => f(new Decimal(2)).forEach((result, i) => shouldBe(result, expected[i], `constant ${i}`));
     for (let i = 0; i < testLoopCount; ++i) {
-        check([0.5m, 42m, 0.25m, 4m, 0.125m, 8m]);
+        check([new Decimal("0.5"), new Decimal(42), new Decimal("0.25"), new Decimal(4), new Decimal("0.125"), new Decimal(8)]);
         let error;
         try {
-            g(2m, !(i % 50));
+            g(new Decimal(2), !(i % 50));
         } catch (thrown) {
             error = thrown;
         }
         if (error instanceof TypeError !== !(i % 50))
             throw new Error(`no Decimal: ${error}`);
     }
-    changed.divide = () => 43m;
-    check([0.5m, 42m, 0.25m, 4m, 0.125m, 43m]);
+    changed.divide = () => new Decimal(43);
+    check([new Decimal("0.5"), new Decimal(42), new Decimal("0.25"), new Decimal(4), new Decimal("0.125"), new Decimal(43)]);
 }

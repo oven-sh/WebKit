@@ -235,8 +235,6 @@ namespace JSC {
     macro(includes) \
     macro(ReferenceError) \
     macro(SuppressedError) \
-    macro(decimalLiteral) \
-    macro(decimalOperator) \
     macro(DisposableStack) \
     macro(AsyncDisposableStack) \
     macro(enqueueJob) \

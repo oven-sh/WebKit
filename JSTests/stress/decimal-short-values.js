@@ -138,7 +138,7 @@ for (const mode of ["ceil", "floor", "trunc", "halfExpand", "halfEven"]) {
 // The zeros at the end of a long result are removed, also where the sum of its words overflows.
 for (const c of [2n ** 64n * 5n, 2n ** 64n * 10n - 10n, 2n ** 64n * 25n + 2n ** 64n - 6n, 2n ** 64n * 3n + 2n, 2n ** 64n * 4n + 2n ** 64n - 4n, 10n ** 33n + 10n, 10n ** 33n + 5n, 10n ** 33n + 2n, 10n ** 33n + 10n ** 20n]) {
     for (let delta = -12n; delta <= 12n; ++delta) {
-        const sum = new Decimal(c + delta - 7n).add(7m);
+        const sum = new Decimal(c + delta - 7n).add(new Decimal(7));
         if (!sum.equals(new Decimal(c + delta)) || sum.toExponential() !== new Decimal(String(c + delta)).toExponential() || /0e/.test(sum.toExponential()))
             throw new Error(`${c + delta} is ${sum.toExponential()}`);
     }

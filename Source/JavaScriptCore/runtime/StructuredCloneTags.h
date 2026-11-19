@@ -81,7 +81,6 @@ namespace Wasm { class Module; }
  *    | EmptyStringTag
  *    | EmptyStringObjectTag
  *    | BigInt
- *    | Decimal
  *    | File
  *    | FileList
  *    | ImageData
@@ -138,9 +137,6 @@ namespace Wasm { class Module; }
  * BigInt :-
  *      BigIntTag BigIntData
  *      BigIntObjectTag BigIntData
- *
- * Decimal :-
- *      DecimalTag <value:StringData>
  *
  * BigIntData :-
  *      <sign:uint8_t> <numberOfUint64Elements:uint32_t> <contents:uint64_t{numberOfUint64Elements}>
@@ -337,7 +333,6 @@ enum SerializationTag {
     TransformStreamTag = 67,
     FileSystemHandleTag = 68,
     QuotaExceededErrorTag = 69,
-    DecimalTag = 192, // Away from the tags upstream adds.
     ErrorTag = 255
 };
 
@@ -536,7 +531,6 @@ NODELETE inline constexpr bool canBeAddedToObjectPool(SerializationTag tag)
     case ArrayBufferTag:
     case ArrayBufferViewTag:
     case BigIntObjectTag:
-    case DecimalTag:
     case EmptyStringObjectTag:
     case FalseObjectTag:
     case MapObjectTag:
@@ -611,7 +605,6 @@ inline ASCIILiteral name(SerializationTag tag)
 #endif
     case BigIntTag: return "BigIntTag"_s;
     case BigIntObjectTag: return "BigIntObjectTag"_s;
-    case DecimalTag: return "DecimalTag"_s;
 #if ENABLE(WEBASSEMBLY)
     case WasmMemoryTag: return "WasmMemoryTag"_s;
 #endif

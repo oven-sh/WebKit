@@ -1,5 +1,5 @@
 # A value that is made in each turn and read by the operations of other blocks needs one object too.
-# sink(list => { let count = 0; for (const x of list) { const twice = x.add(x); if (twice.lessThan(2m)) count += twice.exponent(); else count += twice.toString().length; } return count; });
+# sink(list => { let count = 0; for (const x of list) { const twice = x.add(x); if (twice.lessThan(new Decimal(2))) count += twice.exponent(); else count += twice.toString().length; } return count; });
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalsReused >= 1
 # RUN: run-in-shell --useDecimal=1 globalThis.sink = (f) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => f(amounts)); };
@@ -38,29 +38,30 @@ function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{
     v10 = PropGet v9 key="add"
     v11 = Call v10, v9, v9 calleeKey="add" calleeName="x.add"
     v12 = PropGet v11 key="lessThan"
-    v13 = String string="2"
-    v14 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v15 = Call v14, -, v13
-    v16 = Call v12, v11, v15 calleeKey="lessThan" calleeName="twice.lessThan"
-    v17 = ToBoolean v16
-    Branch v17 -> taken b5(| 0), notTaken b6(| 0)
-  b5(v18) handler=b8():
-    v19 = PropGet v11 key="exponent"
-    v20 = Call v19, v11 calleeKey="exponent" calleeName="twice.exponent"
-    v21 = Add v4, v20
-    v22 = Convert v21 declared={type=number flags=[IsExpected]}
-    Jump -> next b7(v22)
-  b6(v23) handler=b8():
-    v24 = PropGet v11 key="toString"
-    v25 = Call v24, v11 calleeKey="toString" calleeName="twice.toString"
-    v26 = PropGet v25 key="length"
-    v27 = Add v4, v26
-    v28 = Convert v27 declared={type=number flags=[IsExpected]}
-    Jump -> next b7(v28)
-  b7(v29) handler=b8():
-    Jump -> next b1(v29)
+    v13 = Builtin builtin=GlobalThis
+    v14 = PropGet v13 key="Decimal" [isFreeName]
+    v15 = Integer integer=2
+    v16 = Construct v14, -, v15 calleeName="Decimal"
+    v17 = Call v12, v11, v16 calleeKey="lessThan" calleeName="twice.lessThan"
+    v18 = ToBoolean v17
+    Branch v18 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v19) handler=b8():
+    v20 = PropGet v11 key="exponent"
+    v21 = Call v20, v11 calleeKey="exponent" calleeName="twice.exponent"
+    v22 = Add v4, v21
+    v23 = Convert v22 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v23)
+  b6(v24) handler=b8():
+    v25 = PropGet v11 key="toString"
+    v26 = Call v25, v11 calleeKey="toString" calleeName="twice.toString"
+    v27 = PropGet v26 key="length"
+    v28 = Add v4, v27
+    v29 = Convert v28 declared={type=number flags=[IsExpected]}
+    Jump -> next b7(v29)
+  b7(v30) handler=b8():
+    Jump -> next b1(v30)
   b8() role=IterationCleanup subject=v3:
-    v30 = CatchException
+    v31 = CatchException
     IteratorClose v3 completion=Throw
-    Rethrow v30
+    Rethrow v31
 }

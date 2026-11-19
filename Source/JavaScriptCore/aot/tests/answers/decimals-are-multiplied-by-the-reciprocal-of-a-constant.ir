@@ -1,5 +1,5 @@
 # A division by a constant whose reciprocal ends is a multiplication. By another one it is a call.
-# sink(x => x.divide(8m), x => x.divide(3m));
+# sink(x => x.divide(new Decimal(8)), x => x.divide(new Decimal(3)));
 # JSC-OPTIONS: --useDecimal=1
 # STATISTIC: DecimalRuns >= 2
 # RUN(ENDS): emit f1
@@ -30,18 +30,20 @@ function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anythi
 function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = PropGet v0 key="divide"
-    v2 = String string="8"
-    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v4 = Call v3, -, v2
-    v5 = Call v1, v0, v4 calleeKey="divide" calleeName="x.divide"
-    ReturnCall v5
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Decimal" [isFreeName]
+    v4 = Integer integer=8
+    v5 = Construct v3, -, v4 calleeName="Decimal"
+    v6 = Call v1, v0, v5 calleeKey="divide" calleeName="x.divide"
+    ReturnCall v6
 }
 function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: anything):
     v1 = PropGet v0 key="divide"
-    v2 = String string="3"
-    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
-    v4 = Call v3, -, v2
-    v5 = Call v1, v0, v4 calleeKey="divide" calleeName="x.divide"
-    ReturnCall v5
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Decimal" [isFreeName]
+    v4 = Integer integer=3
+    v5 = Construct v3, -, v4 calleeName="Decimal"
+    v6 = Call v1, v0, v5 calleeKey="divide" calleeName="x.divide"
+    ReturnCall v6
 }

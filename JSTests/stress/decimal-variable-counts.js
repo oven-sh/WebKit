@@ -4,7 +4,7 @@
 function outcome(f, ...args) {
     try {
         const value = f(...args);
-        return value.toExponential() + (value.equals(0m) ? 1m.divide(value).toString() : "");
+        return value.toExponential() + (value.equals(new Decimal(0)) ? new Decimal(1).divide(value).toString() : "");
     } catch (error) {
         return `${error.name}: ${error.message}`;
     }
@@ -50,7 +50,7 @@ for (const method of ["round", "scale10"]) {
 }
 
 // An Int32 without a mode has a path of its own.
-for (const receiver of [{ }, 1, "1", null, undefined, Decimal.prototype, new Number(1), Object.create(1m)]) {
+for (const receiver of [{ }, 1, "1", null, undefined, Decimal.prototype, new Number(1), Object.create(new Decimal(1))]) {
     let error;
     try {
         Decimal.prototype.round.call(receiver, 1);

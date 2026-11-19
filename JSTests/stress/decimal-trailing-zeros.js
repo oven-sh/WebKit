@@ -27,7 +27,7 @@ const producers = {
     "a.add(b)": (a, b) => viaCall("add", a, b),
     "a.subtract(b)": (a, b) => viaCall("subtract", a, b),
     "a.multiply(b)": (a, b) => viaCall("multiply", a, b),
-    "a.divide(0.5m)": a => viaCall("divide", a, make("0.5")),
+    "a.divide(new Decimal('0.5'))": a => viaCall("divide", a, make("0.5")),
     "a.round(0)": a => viaCall("round", a, 0),
     "a.round(-1, 'ceil')": a => viaCall("round", a, -1, "ceil"),
     "new Decimal(n)": (a, b, n) => make(n),
@@ -49,8 +49,8 @@ consumers["x.round(digits + 0.5 - 0.5)"] = x => viaCall("round", x, 1);
 consumers["x.scale10(1)"] = x => viaCall("scale10", x, 1);
 for (const constant of ["-2", "-0.5", "123456789012345678901234567891"]) {
     for (const method of ["add", "subtract", "multiply", "remainder", "compare"]) {
-        consumers[`x.${method}(${constant}m)`] = x => viaCall(method, x, make(constant));
-        consumers[`(${constant}m).${method}(x)`] = x => viaCall(method, make(constant), x);
+        consumers[`x.${method}(new Decimal("${constant}"))`] = x => viaCall(method, x, make(constant));
+        consumers[`new Decimal("${constant}").${method}(x)`] = x => viaCall(method, make(constant), x);
     }
 }
 consumers["x.divide(c).scale10(1)"] = (x, c) => viaCall("scale10", viaCall("divide", x, c), 1);
@@ -90,7 +90,7 @@ for (const [producer, produce] of Object.entries(producers)) {
 
 // From one turn of a loop to the next, and where two ways join.
 function sum(list) {
-    let total = 0m;
+    let total = new Decimal(0);
     for (let i = 0; i < list.length; ++i)
         total = total.add(list[i].multiply(list[0]));
     return total;
@@ -98,7 +98,7 @@ function sum(list) {
 noInline(sum);
 function either(a, b, which) {
     const x = which ? a.add(b) : a.multiply(b);
-    return x.equals(2m);
+    return x.equals(new Decimal(2));
 }
 noInline(either);
 for (let i = 0; i < testLoopCount; ++i) {

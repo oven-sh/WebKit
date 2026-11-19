@@ -100,7 +100,6 @@ void DecimalEmitter::beginRun(const DecimalRun& run, BlockID block, LBasicBlock 
     m_run = &run;
     m_asWritten = asWritten;
     m_computesInLine = generator().runsRepeatedly(block) || !function().isModuleBody();
-    m_classIsKnownToBeAsMade = false;
     m_decimals.shrink(0);
     m_truths.shrink(0);
 }
@@ -112,16 +111,9 @@ void DecimalEmitter::leaveUnless(Condition condition)
     m_out.appendToContinuation(holds);
 }
 
-void DecimalEmitter::requireClassAsMade()
-{
-    if (!std::exchange(m_classIsKnownToBeAsMade, true))
-        leaveUnless(isNotZero(loadMutable32(AOT_INSTANCE_OFFSET(decimals.structureID))));
-}
-
 void DecimalEmitter::requireWordOfClass(Boxed value, ptrdiff_t offsetInInstance)
 {
     leaveUnless(Condition(m_out.equal(value.value(), m_out.load64(mutableInstanceField(offsetInInstance)))));
-    m_classIsKnownToBeAsMade = true;
 }
 
 auto DecimalEmitter::decimalIn(ValueID value) -> KnownDecimal
@@ -138,7 +130,6 @@ auto DecimalEmitter::decimalIn(ValueID value) -> KnownDecimal
         leaveUnless(isCellAmong(word, primitives));
     CellPointer cell = unboxCell(word);
     leaveUnless(equal(loadStructureID(cell), loadMutable32(AOT_INSTANCE_OFFSET(decimals.structureID))));
-    m_classIsKnownToBeAsMade = true;
     if (isReused)
         m_decimals.append({ origin, { m_out.load64(wordOfReusedObject(cell, DecimalObject::offsetOfLow())), m_out.load64(wordOfReusedObject(cell, DecimalObject::offsetOfUpper())) }, TrailingZeros::Some });
     else
@@ -483,14 +474,9 @@ void DecimalEmitter::call(const ValueContext& context, const DecimalRun::Part& p
 void DecimalEmitter::generate(const ValueContext& context, const DecimalRun::Part& part)
 {
     using Step = DecimalRun::Step;
-    auto noteConstant = [&](Decimal128 constant) {
-        auto [low, upper] = constant.words();
-        m_decimals.append({ context.id(), { m_out.constInt64(low), m_out.constInt64(upper) }, TrailingZeros::None });
-    };
     switch (part.step) {
     case Step::ReadsMethod:
         decimalIn(context->objectOperand());
-        requireClassAsMade();
         if (part.isReadBehindRun)
             define(context, Boxed(m_out.load64(mutableInstanceField(offsetOfDecimalMethod(m_runs.callAt(m_code.onlyUserOf(context.id()))->operation)))));
         return;
@@ -507,16 +493,14 @@ void DecimalEmitter::generate(const ValueContext& context, const DecimalRun::Par
         if (!m_run->has(context->calleeOperand(), Step::ReadsConstructor))
             requireWordOfClass(boxed(context->calleeOperand()), AOT_INSTANCE_OFFSET(decimals.constructor));
         if (std::optional<Decimal128> constant = m_runs.constantAt(context.id())) {
-            noteConstant(*constant);
+            auto [low, upper] = constant->words();
+            m_decimals.append({ context.id(), { m_out.constInt64(low), m_out.constInt64(upper) }, TrailingZeros::None });
             return;
         }
         TrailingZeros result = part.mustLackTrailingZeros ? TrailingZeros::None : TrailingZeros::Some;
         m_decimals.append({ context.id(), construct(context, result), result });
         return;
     }
-    case Step::IsLiteral:
-        noteConstant(*m_runs.constantAt(context.id()));
-        return;
     case Step::AsksTruth:
         define(context, std::ranges::find(m_truths, context->valueOperand(), &std::pair<ValueID, Condition>::first)->second);
         return;
