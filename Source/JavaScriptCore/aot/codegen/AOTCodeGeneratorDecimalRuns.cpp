@@ -33,6 +33,12 @@ void CodeGenerator::findReusedDecimals()
     m_reusedDecimals = &reused;
 }
 
+Boxed CodeGenerator::getReusedDecimal(ValueID value)
+{
+    SetForScope withoutLettingGo(m_watchesReads, false);
+    return get(value).as<Boxed>();
+}
+
 bool CodeGenerator::isReusedDecimal(ValueID value) const
 {
     return m_reusedDecimals->contains(value);
@@ -53,6 +59,8 @@ void CodeGenerator::letGoOfDecimal(ValueID value)
 auto CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> values, size_t first) -> std::optional<EndOfDecimalRun>
 {
     using Step = DecimalRun::Step;
+    if (!mayComputeWithDecimals(block))
+        return std::nullopt;
     DecimalEmitter& decimals = emitter<DecimalEmitter>();
     std::optional<DecimalRun> run = decimals.findRun(block, values.subspan(first));
     if (!run)
@@ -131,7 +139,6 @@ void CodeGenerator::endDecimalRun(std::optional<EndOfDecimalRun>& run)
             word = Operand(representationOf(value), m_out.phi(word->type(), forDecimals, asWritten[index])).value;
         }
     }
-    m_decimalsLetGo.shrink(0);
     run = std::nullopt;
 }
 
