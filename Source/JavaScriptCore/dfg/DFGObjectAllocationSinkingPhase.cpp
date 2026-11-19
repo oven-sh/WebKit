@@ -1214,6 +1214,8 @@ private:
             writes.add(StructurePLoc, LazyNode(m_graph.freeze(node->structure().get())));
             writes.add(PromotedLocationDescriptor(DecimalWordPLoc, 0), LazyNode(node->child1().node()));
             writes.add(PromotedLocationDescriptor(DecimalWordPLoc, 1), LazyNode(node->child2().node()));
+            if (node->child3())
+                writes.add(DecimalObjectPLoc, LazyNode(node->child3().node()));
             break;
         }
 
@@ -2819,12 +2821,16 @@ escapeChildren:
         }
 
         case NewDecimal: {
-            ASSERT(m_locationsForAllocation.get(escapee).size() == 3);
             auto word = [&](unsigned index) {
                 return Edge(resolve(block, PromotedHeapLocation(allocation.identifier(), PromotedLocationDescriptor(DecimalWordPLoc, index))), KnownStorageUse);
             };
             node->child1() = word(0);
             node->child2() = word(1);
+            PromotedHeapLocation object(DecimalObjectPLoc, allocation.identifier());
+            bool mayHaveObject = m_locationsForAllocation.get(escapee).contains(object);
+            ASSERT(m_locationsForAllocation.get(escapee).size() == 3u + mayHaveObject);
+            if (mayHaveObject)
+                node->child3() = Edge(resolve(block, object));
             break;
         }
 

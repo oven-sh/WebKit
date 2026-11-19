@@ -929,6 +929,15 @@ public:
         m_opInfo2 = OpInfoWrapper();
     }
 
+    void convertPhiToNewDecimal(RegisteredStructure structure, Node* low, Node* upper, Node* object)
+    {
+        ASSERT(m_op == Phi);
+        setOpAndDefaultFlags(NewDecimal);
+        m_opInfo = structure;
+        m_opInfo2 = OpInfoWrapper();
+        children = AdjacencyList(AdjacencyList::Fixed, Edge(low, KnownStorageUse), Edge(upper, KnownStorageUse), Edge(object));
+    }
+
     void convertToPhantomNewDecimal()
     {
         ASSERT(m_op == NewDecimal);

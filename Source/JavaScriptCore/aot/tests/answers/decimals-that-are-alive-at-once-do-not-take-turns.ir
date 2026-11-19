@@ -1,0 +1,243 @@
+# The value before is still needed when the next one is made.
+# sink((list, mask) => { let total = 1m, before = 2m; for (let i = 0; i < list.length; i++) { before = total; if (i & mask) total = total.add(list[i]); } return [before, total]; }, count => { let a = 0.5m, b = 0.5m; for (let i = 0; i < count; i++) { const sum = a.add(b); a = b; b = sum; } return [a, b]; }, (list, mask) => { let a = 1m, b = a; for (let i = 0; i < list.length; i++) { if (i & mask) { a = a.add(list[i]); b = b.subtract(list[i]); } } return [a, b]; }, (list, mask) => { const first = 1m; let total = first; for (let i = 0; i < list.length; i++) { if (i & mask) total = total.add(list[i]); } return [first, total]; }, (list, call) => { let total = 0m, text = ""; for (const x of list) { const next = total.add(x); call(); text += total.toString() + " "; total = next; } return text; }, (list, call) => { let total = 0m, other = 0m; for (const x of list) { const next = total.add(x); if (call()) other = other.add(total); total = next; } return other; });
+# JSC-OPTIONS: --useDecimal=1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k, l, m) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => names(f(amounts, 1))); show(() => names(f(amounts, 2))); show(() => names(g(5))); show(() => names(g(0))); show(() => names(h(amounts, 1))); show(() => names(h(amounts, 0))); show(() => names(k(amounts, 1))); show(() => names(k(amounts, 0))); show(() => l(amounts, () => { }).trim()); show(() => m(amounts, () => true)); };
+# CHECK: 0:4.25 1:5.2;
+# CHECK-NEXT: 0:5 0:5;
+# CHECK-NEXT: 0:4 1:6.5;
+# CHECK-NEXT: 0:0.5 1:0.5;
+# CHECK-NEXT: 0:5.2 1:-3.2;
+# CHECK-NEXT: 0:1 0:1;
+# CHECK-NEXT: 0:1 1:5.2;
+# CHECK-NEXT: 0:1 0:1;
+# CHECK-NEXT: 0 0.25 1 2.5 5 5.05;
+# CHECK-NEXT: 13.8;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = NewClosure function=f5
+    v7 = NewClosure function=f6
+    v8 = Call v1, -, v2, v3, v4, v5, v6, v7 calleeName="sink"
+    v9 = Undefined
+    Return v9
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = String string="1"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = String string="2"
+    v7 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v8 = Call v7, -, v6
+    v9 = Integer
+    v10 = Convert v9 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v8, v10)
+  b1(v11, v12, v13):
+    LoopHint
+    v15 = PropGet v0 key="length"
+    v16 = Less v13, v15
+    Branch v16 -> taken b2(), notTaken b5()
+  b2():
+    v17 = BitAnd v13, v1
+    v18 = ToBoolean v17
+    Branch v18 -> taken b3(| 0), notTaken b4(v11)
+  b3(v19):
+    v20 = PropGet v11 key="add"
+    v21 = ElemGet v0, v13
+    v22 = Call v20, v11, v21 calleeKey="add" calleeName="total.add"
+    v23 = Convert v22 declared={type=anything flags=[IsExpected]}
+    Jump -> next b4(v23)
+  b4(v24):
+    v25 = Increment v13
+    v26 = Convert v25 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v24, v11, v26)
+  b5():
+    v27 = NewArray v12, v11 contents=anything
+    Return v27
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = String string="0.5"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = String string="0.5"
+    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v7 = Call v6, -, v5
+    v8 = Integer
+    v9 = Convert v8 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v4, v7, v9)
+  b1(v10, v11, v12):
+    LoopHint
+    v14 = Less v12, v0
+    Branch v14 -> taken b2(), notTaken b3()
+  b2():
+    v15 = PropGet v10 key="add"
+    v16 = Call v15, v10, v11 calleeKey="add" calleeName="a.add"
+    v17 = Convert v11 declared={type=anything flags=[IsExpected]}
+    v18 = Increment v12
+    v19 = Convert v18 declared={type=number flags=[IsExpected]}
+    Jump -> next b1(v17, v16, v19)
+  b3():
+    v20 = NewArray v10, v11 contents=anything
+    Return v20
+}
+function f3 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = String string="1"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = Convert v5 declared={type=anything flags=[IsExpected]}
+    v7 = Integer
+    v8 = Convert v7 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v6, v8)
+  b1(v9, v10, v11):
+    LoopHint
+    v13 = PropGet v0 key="length"
+    v14 = Less v11, v13
+    Branch v14 -> taken b2(), notTaken b5()
+  b2():
+    v15 = BitAnd v11, v1
+    v16 = ToBoolean v15
+    Branch v16 -> taken b3(| 0), notTaken b4(v9, v10)
+  b3(v17):
+    v18 = PropGet v9 key="add"
+    v19 = ElemGet v0, v11
+    v20 = Call v18, v9, v19 calleeKey="add" calleeName="a.add"
+    v21 = Convert v20 declared={type=anything flags=[IsExpected]}
+    v22 = PropGet v10 key="subtract"
+    v23 = ElemGet v0, v11
+    v24 = Call v22, v10, v23 calleeKey="subtract" calleeName="b.subtract"
+    v25 = Convert v24 declared={type=anything flags=[IsExpected]}
+    Jump -> next b4(v21, v25)
+  b4(v26, v27):
+    v28 = Increment v11
+    v29 = Convert v28 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v26, v27, v29)
+  b5():
+    v30 = NewArray v9, v10 contents=anything
+    Return v30
+}
+function f4 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=i32 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: i32):
+    v2 = String string="1"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = Integer
+    v7 = Convert v6 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v5, v7)
+  b1(v8, v9):
+    LoopHint
+    v11 = PropGet v0 key="length"
+    v12 = Less v9, v11
+    Branch v12 -> taken b2(), notTaken b5()
+  b2():
+    v13 = BitAnd v9, v1
+    v14 = ToBoolean v13
+    Branch v14 -> taken b3(| 0), notTaken b4(v8)
+  b3(v15):
+    v16 = PropGet v8 key="add"
+    v17 = ElemGet v0, v9
+    v18 = Call v16, v8, v17 calleeKey="add" calleeName="total.add"
+    v19 = Convert v18 declared={type=anything flags=[IsExpected]}
+    Jump -> next b4(v19)
+  b4(v20):
+    v21 = Increment v9
+    v22 = Convert v21 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v20, v22)
+  b5():
+    v23 = NewArray v4, v8 contents=anything
+    Return v23
+}
+function f5 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: undefined|null|function):
+    v2 = String string="0"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = String string=""
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]}
+    v8 = IteratorOpen v0
+    Jump -> next b1(v5, v7)
+  b1(v9, v10):
+    LoopHint
+    v12 = IteratorResume v8
+    v13 = ResultAt v12
+    v14 = ResultAt v12 index=1
+    Branch v13 -> taken b2(), notTaken b3()
+  b2():
+    Return v10
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v15 = PropGet v9 key="add"
+    v16 = Call v15, v9, v14 calleeKey="add" calleeName="total.add"
+    v17 = Call v1 calleeName="call"
+    v18 = PropGet v9 key="toString"
+    v19 = Call v18, v9 calleeKey="toString" calleeName="total.toString"
+    v20 = String string=" "
+    v21 = Add v19, v20
+    v22 = Add v10, v21
+    v23 = Convert v22 declared={type=undefined|null|string flags=[IsExpected]}
+    v24 = Convert v16 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v24, v23)
+  b5() role=IterationCleanup subject=v8:
+    v25 = CatchException
+    IteratorClose v8 completion=Throw
+    Rethrow v25
+}
+function f6 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: undefined|null|function):
+    v2 = String string="0"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Convert v4 declared={type=anything flags=[IsExpected]}
+    v6 = String string="0"
+    v7 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v8 = Call v7, -, v6
+    v9 = Convert v8 declared={type=anything flags=[IsExpected]}
+    v10 = IteratorOpen v0
+    Jump -> next b1(v5, v9)
+  b1(v11, v12):
+    LoopHint
+    v14 = IteratorResume v10
+    v15 = ResultAt v14
+    v16 = ResultAt v14 index=1
+    Branch v15 -> taken b2(), notTaken b3()
+  b2():
+    Return v12
+  b3():
+    Jump -> next b4()
+  b4() handler=b8():
+    v17 = PropGet v11 key="add"
+    v18 = Call v17, v11, v16 calleeKey="add" calleeName="total.add"
+    v19 = Call v1 calleeName="call"
+    v20 = ToBoolean v19
+    Branch v20 -> taken b5(| 0), notTaken b6(| 0)
+  b5(v21) handler=b8():
+    v22 = PropGet v12 key="add"
+    v23 = Call v22, v12, v11 calleeKey="add" calleeName="other.add"
+    v24 = Convert v23 declared={type=anything flags=[IsExpected]}
+    Jump -> next b7(v24)
+  b6(v25) handler=b8():
+    Jump -> next b7(v12)
+  b7(v26) handler=b8():
+    v27 = Convert v18 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v27, v26)
+  b8() role=IterationCleanup subject=v10:
+    v28 = CatchException
+    IteratorClose v10 completion=Throw
+    Rethrow v28
+}

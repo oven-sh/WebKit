@@ -59,7 +59,38 @@ std::optional<DecimalRun> DecimalEmitter::findRun(BlockID block, std::span<const
 {
     const Terminator& terminator = m_code.at(block).terminator;
     bool mayReturn = terminator.kind == TerminatorKind::ReturnCall && emitter<AccessEmitter>().returnsOneBoxedValue();
-    return m_runs.find(block, values, mayReturn ? terminator.callOperand() : ValueID());
+    return m_runs.find(block, values, mayReturn ? terminator.callOperand() : ValueID(), m_reused);
+}
+
+const ReusedDecimals& DecimalEmitter::findReusedDecimals(std::span<const BlockID> order, const ScopedLambda<bool(BlockID, BlockID)>& dominates)
+{
+    m_reused = ReusedDecimals(m_code, m_runs, order, dominates);
+    if (m_reused.numberOfObjects())
+        m_reusedObjects = m_proc.addStackSlot(m_reused.numberOfObjects() * sizeof(EncodedJSValue));
+    return m_reused;
+}
+
+TypedPointer DecimalEmitter::wordThatNamesObjectOf(unsigned object)
+{
+    return m_out.address(m_heaps.reusedDecimals, m_out.slotBase(m_reusedObjects), object * sizeof(EncodedJSValue));
+}
+
+TypedPointer DecimalEmitter::wordOfReusedObject(CellPointer cell, ptrdiff_t offset)
+{
+    return m_out.address(m_heaps.reusedDecimals, cell.value(), offset);
+}
+
+void DecimalEmitter::beginWithoutReusedObjects()
+{
+    for (unsigned object = 0; object < m_reused.numberOfObjects(); ++object)
+        m_out.store64(m_out.int64Zero, wordThatNamesObjectOf(object));
+}
+
+void DecimalEmitter::letGo(ValueID value)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    std::array<Operand, 2> arguments { Pointer(m_out.valueOf(wordThatNamesObjectOf(m_reused.objectOf(value)))), generator().getReusedDecimal(value) };
+    callLeaf(RuntimeOperation::LetGoOfReusedDecimal, arguments, Representation::Void);
 }
 
 void DecimalEmitter::beginRun(const DecimalRun& run, BlockID block, LBasicBlock asWritten)
@@ -99,14 +130,27 @@ auto DecimalEmitter::decimalIn(ValueID value) -> KnownDecimal
     if (auto known = std::ranges::find(m_decimals, origin, &KnownDecimal::origin); known != m_decimals.end())
         return *known;
 
-    Boxed word = boxed(value);
+    bool isReused = m_reused.contains(origin);
+    if (isReused)
+        value = origin;
+    Boxed word = isReused ? generator().getReusedDecimal(value) : boxed(value);
     if (uint16_t primitives = typeOf(value).primitives)
         leaveUnless(isCellAmong(word, primitives));
     CellPointer cell = unboxCell(word);
     leaveUnless(equal(loadStructureID(cell), loadMutable32(AOT_INSTANCE_OFFSET(decimals.structureID))));
     m_classIsKnownToBeAsMade = true;
-    m_decimals.append({ origin, { m_out.load64(cell.value(), m_heaps.DecimalObject_low), m_out.load64(cell.value(), m_heaps.DecimalObject_upper) }, TrailingZeros::None });
+    if (isReused)
+        m_decimals.append({ origin, { m_out.load64(wordOfReusedObject(cell, DecimalObject::offsetOfLow())), m_out.load64(wordOfReusedObject(cell, DecimalObject::offsetOfUpper())) }, TrailingZeros::Some });
+    else
+        m_decimals.append({ origin, { m_out.load64(cell.value(), m_heaps.DecimalObject_low), m_out.load64(cell.value(), m_heaps.DecimalObject_upper) }, TrailingZeros::None });
     return m_decimals.last();
+}
+
+void DecimalEmitter::stripTrailingZerosOf(ValueID value)
+{
+    KnownDecimal& known = *std::ranges::find(m_decimals, m_runs.originOf(value), &KnownDecimal::origin);
+    if (std::exchange(known.trailingZeros, TrailingZeros::None) == TrailingZeros::Some)
+        known.words = m_fastPaths.withoutTrailingZeros(known.words);
 }
 
 Operand DecimalEmitter::argument(ValueID value)
@@ -253,11 +297,20 @@ auto DecimalEmitter::compute(const ValueContext& context, const DecimalCall& cal
             return callForWords(context, operation, { Integer(x.low), Integer(x.upper), Integer(y.low), Integer(y.upper) });
         };
     };
+    auto isTotal = [&](ValueID operand) {
+        return result == TrailingZeros::Some && m_reused.shareObject(operand, context.id());
+    };
     switch (call.operation) {
     case DecimalOperation::Add:
-        return wordsInLineOr([&](LBasicBlock slowCase) { return m_fastPaths.add(x, y, result, slowCase); }, byCallOf(RuntimeOperation::DecimalAdd));
+        return wordsInLineOr([&](LBasicBlock slowCase) {
+            if (isTotal(call.receiver))
+                return m_fastPaths.addToTotal(x, y, false, slowCase);
+            return isTotal(call.otherDecimal) ? m_fastPaths.addToTotal(y, x, false, slowCase) : m_fastPaths.add(x, y, result, slowCase);
+        }, byCallOf(RuntimeOperation::DecimalAdd));
     case DecimalOperation::Subtract:
-        return wordsInLineOr([&](LBasicBlock slowCase) { return m_fastPaths.subtract(x, y, result, slowCase); }, byCallOf(RuntimeOperation::DecimalSubtract));
+        return wordsInLineOr([&](LBasicBlock slowCase) {
+            return isTotal(call.receiver) ? m_fastPaths.addToTotal(x, y, true, slowCase) : m_fastPaths.subtract(x, y, result, slowCase);
+        }, byCallOf(RuntimeOperation::DecimalSubtract));
     case DecimalOperation::Divide: {
         std::optional<Words> reciprocal = m_fastPaths.reciprocalOf(y);
         if (!reciprocal)
@@ -402,6 +455,11 @@ void DecimalEmitter::call(const ValueContext& context, const DecimalRun::Part& p
     decimalIn(call.receiver);
     if (call.otherDecimal)
         decimalIn(call.otherDecimal);
+    if (!takesTrailingZeros(m_runs.operationAsComputed(*m_run, context.id()))) {
+        stripTrailingZerosOf(call.receiver);
+        if (call.otherDecimal)
+            stripTrailingZerosOf(call.otherDecimal);
+    }
 
     if (call.operation == DecimalOperation::Divide && part.isOnlyRounded && !m_fastPaths.reciprocalOf(decimalIn(call.otherDecimal).words)) {
         m_decimals.append({ context.id(), decimalIn(call.receiver).words, TrailingZeros::Some, decimalIn(call.otherDecimal).words });
@@ -474,16 +532,10 @@ void DecimalEmitter::generate(const ValueContext& context, const DecimalRun::Par
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-void DecimalEmitter::makeObject(const ValueContext& context)
+CellPointer DecimalEmitter::allocate(const ValueContext& context, Words words)
 {
-    auto known = std::ranges::find(m_decimals, context.id(), &KnownDecimal::origin);
-    if (known == m_decimals.end() || generator().wordOf(context.id()))
-        return;
-    Words words = known->words;
-    if (!m_computesInLine) {
-        define(context, boxCell(callOperation<CellPointer>(context, RuntimeOperation::NewDecimal, { Integer(words.low), Integer(words.upper) })));
-        return;
-    }
+    if (!m_computesInLine)
+        return callOperation<CellPointer>(context, RuntimeOperation::NewDecimal, { Integer(words.low), Integer(words.upper) });
 
     LBasicBlock slowCase = m_fastPathGenerator.newBlock();
     ScopeFork scope = m_out.forkScope();
@@ -500,7 +552,35 @@ void DecimalEmitter::makeObject(const ValueContext& context)
 
     m_fastPathGenerator.appendTo(slowCase);
     join.add(callOperation<CellPointer>(context, RuntimeOperation::NewDecimal, { Integer(words.low), Integer(words.upper) }, { .isOnRarePath = true }));
-    define(context, boxCell(join.finishBehind(scope)));
+    return join.finishBehind(scope);
+}
+
+void DecimalEmitter::makeObject(const ValueContext& context)
+{
+    auto known = std::ranges::find(m_decimals, context.id(), &KnownDecimal::origin);
+    if (known == m_decimals.end() || generator().wordOf(context.id()))
+        return;
+    Words words = known->words;
+    if (!m_reused.contains(context.id())) {
+        define(context, boxCell(allocate(context, words)));
+        return;
+    }
+
+    LBasicBlock hasNone = m_fastPathGenerator.newBlock();
+    ScopeFork scope = m_out.forkScope();
+    Join<Boxed> join(m_out);
+    unsigned object = m_reused.objectOf(context.id());
+    Boxed reused(m_out.load64(wordThatNamesObjectOf(object)));
+    branchUnless(isNotEmpty(reused), hasNone);
+    m_out.store64(words.low, wordOfReusedObject(unboxCell(reused), DecimalObject::offsetOfLow()));
+    m_out.store64(words.upper, wordOfReusedObject(unboxCell(reused), DecimalObject::offsetOfUpper()));
+    join.add(reused);
+
+    m_fastPathGenerator.appendTo(hasNone);
+    Boxed made = boxCell(allocate(context, words));
+    m_out.store64(made.value(), wordThatNamesObjectOf(object));
+    join.add(made);
+    define(context, join.finishBehind(scope));
 }
 
 } } } // namespace JSC::AOT::Typed

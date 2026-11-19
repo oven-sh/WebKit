@@ -18,6 +18,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTControlEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTDecimalEmitter.h"
 #include "AOTEffectsNet.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTElementAccessEmitter.h"
@@ -140,6 +141,8 @@ GenerationResult CodeGenerator::run()
     findCarriedListStorages();
     findCarriedSubstrings();
     findKeysCheckedTwice();
+    if (build().options().expectsDecimals) [[unlikely]]
+        findReusedDecimals();
     if (!m_parametersThatMaySum.isEmpty()) [[unlikely]]
         carrySums();
     m_notesHeadsOfBlocks = m_hasKeysAskedTwice || m_rows || m_kindsTried;
@@ -4019,6 +4022,11 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         widenCarriedIntegers(block);
     if (m_carriesSums) [[unlikely]]
         takeIntegersOfCarriedSums(block);
+    if (m_reusedDecimals && block.isEntry) [[unlikely]]
+        emitter<DecimalEmitter>().beginWithoutReusedObjects();
+    auto forgetDecimalsLetGo = makeScopeExit([&] {
+        m_decimalsLetGo.shrink(0);
+    });
     const bool remakesValues = m_remakesValuesInRareBlocks && block.frequency == BlockFrequency::Rare;
     const size_t numberOfBigIntsInFrame = remakesValues ? remakeValuesInRareBlock(id) : 0;
     auto forgetValues = makeScopeExit([&] {
@@ -4065,8 +4073,10 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     std::optional<EndOfDecimalRun> decimalRun;
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
-        if (moves && index == moves->end) [[unlikely]]
+        if (moves && index == moves->end) [[unlikely]] {
             endElementMoves(moves);
+            m_decimalsLetGo.shrink(0);
+        }
         if (decimalRun && index == decimalRun->end) [[unlikely]]
             endDecimalRun(decimalRun);
         if (value == m_readLeftToBranch)
@@ -4105,6 +4115,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
             if (decimalRun && decimalRun->madeAhead.contains(value))
                 continue;
         }
+        if (m_reusedDecimals) [[unlikely]]
+            letGoOfDecimalsReadBy(operation);
         generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
             return;
@@ -4121,10 +4133,17 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         emitter<ThrowEmitter>().crashOnFalseProof(context, std::nullopt, ProofSource::OtherOperation);
         return;
     }
-    if (moves) [[unlikely]]
+    if (moves) [[unlikely]] {
         endElementMoves(moves);
+        m_decimalsLetGo.shrink(0);
+    }
     if (decimalRun) [[unlikely]]
         endDecimalRun(decimalRun);
+    if (m_reusedDecimals) [[unlikely]] {
+        for (ValueID value : code().valuesOf(block).last(owned ? numberOwned : 0))
+            letGoOfDecimalsReadBy(code().at(value));
+        letGoOfDecimalsReadBy(block.terminator);
+    }
     if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
         beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);
@@ -7664,6 +7683,8 @@ void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> par
             passed.append(emitter<ConversionEmitter>().unbox(getIn(arguments[index], Representation::JSValue).as<Boxed>(), typeOf(arguments[index]), carriedRepresentationOf(parameter)));
         else if (index < arguments.size() && holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
             passed.append(getWithAnyNaN(arguments[index]));
+        else if (m_reusedDecimals && index < arguments.size() && handsOnReusedDecimal(arguments[index], parameter)) [[unlikely]]
+            passed.append(getReusedDecimal(arguments[index]));
         else if (index < arguments.size())
             passed.append(getIn(arguments[index], carriedRepresentationOf(parameter)));
         else

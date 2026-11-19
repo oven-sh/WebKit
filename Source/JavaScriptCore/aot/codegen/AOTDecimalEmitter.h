@@ -9,6 +9,7 @@
 
 #include "AOTDecimalRuns.h"
 #include "AOTOperationEmitter.h"
+#include "AOTReusedDecimals.h"
 #include "DecimalFastPaths.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -22,6 +23,11 @@ public:
     void beginRun(const DecimalRun&, BlockID, LBasicBlock asWritten);
     void generate(const ValueContext&, const DecimalRun::Part&);
     void makeObject(const ValueContext&);
+
+    const ReusedDecimals& findReusedDecimals(std::span<const BlockID> order, const ScopedLambda<bool(BlockID home, BlockID user)>& dominates) LIFETIME_BOUND;
+    void beginWithoutReusedObjects();
+    // Without a branch, so that it can stand wherever a value is read.
+    void letGo(ValueID);
 
 private:
     struct FastPathGenerator {
@@ -57,6 +63,10 @@ private:
     void requireClassAsMade();
     void requireWordOfClass(Boxed, ptrdiff_t offsetInInstance);
     KnownDecimal decimalIn(ValueID);
+    void stripTrailingZerosOf(ValueID);
+    TypedPointer wordThatNamesObjectOf(unsigned object);
+    TypedPointer wordOfReusedObject(CellPointer, ptrdiff_t offset);
+    CellPointer allocate(const ValueContext&, Words);
     Operand argument(ValueID);
     Boxed boxedArgument(const ValueContext&, ValueID);
 
@@ -78,6 +88,8 @@ private:
     void call(const ValueContext&, const DecimalRun::Part&);
 
     DecimalRuns m_runs;
+    ReusedDecimals m_reused;
+    Machine::StackSlot* m_reusedObjects { nullptr };
     FastPathGenerator m_fastPathGenerator { *this };
     FastPaths m_fastPaths { m_fastPathGenerator };
 

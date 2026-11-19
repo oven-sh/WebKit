@@ -91,6 +91,7 @@ aot/codegen/AOTPrimitiveEmitter.cpp
 aot/codegen/AOTPrivateAccessEmitter.cpp
 aot/codegen/AOTRegExpMatchLiteral.cpp
 aot/codegen/AOTRepresentationEmitter.cpp
+aot/codegen/AOTReusedDecimals.cpp
 aot/codegen/AOTRuntimeCallEmitter.cpp
 aot/codegen/AOTSavedFrameEmitter.cpp
 aot/codegen/AOTShapeTestEmitter.cpp

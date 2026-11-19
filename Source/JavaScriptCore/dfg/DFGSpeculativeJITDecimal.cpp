@@ -302,7 +302,7 @@ void SpeculativeJIT::compileNewDecimal(Node* node)
     store64(upperGPR, Address(resultGPR, DecimalObject::offsetOfUpper()));
     mutatorFence(vm());
 
-    addSlowPathGenerator(slowPathCall(slowCases, this, operationNewDecimal, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), lowGPR, upperGPR));
+    addSlowPathGenerator(slowPathCall(slowCases, this, operationNewDecimal, NeedToSpill, ExceptionCheckRequirement::CheckNotNeeded, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure), lowGPR, upperGPR));
     cellResult(resultGPR, node);
 }
 

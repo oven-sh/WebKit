@@ -46,6 +46,8 @@ public:
     static DecimalObject* tryCast(JSValue value) { return value.isObject() ? dynamicDowncast<DecimalObject>(asObject(value)) : nullptr; }
 
     const Decimal128& value() const { return m_value; }
+    // For compiled code, which writes into an object that only it has.
+    void stripTrailingZeros() { m_value = m_value.withoutTrailingZeros(); }
 
     // What Number(decimal) is.
     double toNumberValue() const;

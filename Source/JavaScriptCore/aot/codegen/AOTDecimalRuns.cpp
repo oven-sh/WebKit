@@ -12,6 +12,7 @@
 #include "AOTFacts.h"
 #include "AOTLinkTables.h"
 #include "AOTPlan.h"
+#include "AOTReusedDecimals.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -302,6 +303,27 @@ auto DecimalRuns::evidenceOf(ValueID value, const DecimalCall& call) const -> Ev
     return otherClassesAnswer ? Evidence::Weak : Evidence::Strong;
 }
 
+bool DecimalRuns::isLikelyDecimal(ValueID value) const
+{
+    return !m_evidence.isEmpty() && m_code.at(value).representation == Representation::JSValue && mayBeDecimal(value) && evidenceFor(value) == Evidence::Strong;
+}
+
+bool DecimalRuns::makesDecimal(ValueID value) const
+{
+    if (!isLikelyDecimal(value))
+        return false;
+    std::optional<DecimalCall> call = callAt(value);
+    return call ? call->givesDecimal() : isLiteral(value) || mayConstructDecimal(value);
+}
+
+bool DecimalRuns::onlyReadsWordsOf(ValueID reader, ValueID decimal) const
+{
+    if (callOfMethodReadAt(reader))
+        return true;
+    std::optional<DecimalCall> call = callAt(reader);
+    return call && call->count != decimal && m_code.at(reader).calleeOperand() != decimal;
+}
+
 bool DecimalRuns::mayBeMadeTwice(const Operation& operation) const
 {
     static constexpr OpcodeSet reads { Opcode::GetModuleVariable, Opcode::GetEnvironmentField, Opcode::GetCapture, Opcode::WidenInteger, Opcode::LogicalNot };
@@ -325,7 +347,7 @@ bool DecimalRuns::mayBeMadeAhead(const Operation& operation) const
     return arithmetic.contains(operation.opcode) && operation.traits().isPure() && m_types.at(operation.type).isNumber();
 }
 
-std::optional<DecimalRun> DecimalRuns::find(BlockID block, std::span<const ValueID> values, ValueID returnedCall) const
+std::optional<DecimalRun> DecimalRuns::find(BlockID block, std::span<const ValueID> values, ValueID returnedCall, const ReusedDecimals& reused) const
 {
     using Step = DecimalRun::Step;
     if (m_evidence.isEmpty())
@@ -434,11 +456,17 @@ std::optional<DecimalRun> DecimalRuns::find(BlockID block, std::span<const Value
     if (EdgeID handler = m_code.handlerOf(block); handler && std::ranges::any_of(m_code.at(handler).arguments(), [&](ValueID argument) { return argument && run.find(argument); }))
         return std::nullopt;
     run.isLikely = m_evidence[*classOfRun] == Evidence::Strong;
-    noteReads(run);
+    noteReads(run, reused);
     return run;
 }
 
-void DecimalRuns::noteReads(DecimalRun& run) const
+DecimalOperation DecimalRuns::operationAsComputed(const DecimalRun& run, ValueID call) const
+{
+    ValueID user = m_code.onlyUserOf(call);
+    return user && run.has(user, DecimalRun::Step::AsksOrder) ? *testOfOrderAt(user) : callAt(call)->operation;
+}
+
+void DecimalRuns::noteReads(DecimalRun& run, const ReusedDecimals& reused) const
 {
     using Step = DecimalRun::Step;
     Vector<uint32_t, 16> readsInRun;
@@ -460,8 +488,7 @@ void DecimalRuns::noteReads(DecimalRun& run) const
         if (reader.step != Step::CallsMethod)
             continue;
         DecimalCall call = *callAt(reader.value);
-        ValueID user = m_code.onlyUserOf(reader.value);
-        DecimalOperation asComputed = user && run.has(user, Step::AsksOrder) ? *testOfOrderAt(user) : call.operation;
+        DecimalOperation asComputed = operationAsComputed(run, reader.value);
         for (ValueID operand : { call.receiver, call.otherDecimal }) {
             if (size_t place = operand ? placeOf(operand) : run.parts.size(); place < run.parts.size()) {
                 run.parts[place].mustLackTrailingZeros |= !takesTrailingZeros(asComputed);
@@ -474,7 +501,7 @@ void DecimalRuns::noteReads(DecimalRun& run) const
         DecimalRun::Part& part = run.parts[place];
         uint8_t uses = m_code.useCountOf(part.value);
         part.isReadBehindRun = run.endsInReturnedCall ? place + 1 == run.parts.size() : readsInRun[place] < uses || uses == std::numeric_limits<uint8_t>::max();
-        part.mustLackTrailingZeros |= part.isReadBehindRun;
+        part.mustLackTrailingZeros |= part.isReadBehindRun && !reused.contains(part.value);
     }
     // A conversion may be left to what reads it.
     for (size_t place = run.parts.size(); place--;) {

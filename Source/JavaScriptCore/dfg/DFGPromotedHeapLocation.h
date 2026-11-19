@@ -74,6 +74,7 @@ enum PromotedLocationKind {
     RegExpObjectRegExpPLoc,
     RegExpObjectLastIndexPLoc,
     DecimalWordPLoc,
+    DecimalObjectPLoc,
 };
 
 class PromotedLocationDescriptor {

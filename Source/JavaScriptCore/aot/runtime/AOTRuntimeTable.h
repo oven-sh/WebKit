@@ -413,6 +413,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ArithmeticOperations, Decrement) \
     v(ArithmeticOperations, DivNumberAndValueAsNumber) \
     v(ArithmeticOperations, Increment) \
+    v(ArithmeticOperations, LetGoOfReusedDecimal) \
     v(ArithmeticOperations, MulNumberAndValueAsNumber) \
     v(ArithmeticOperations, NewBigInt64) \
     v(ArithmeticOperations, NewDecimal) \

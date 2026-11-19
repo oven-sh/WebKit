@@ -3905,6 +3905,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case NewDecimal:
         setForNode(node, node->structure());
+        if (node->child3() && m_state.structureClobberState() == StructuresAreClobbered)
+            forNode(node).clobberStructures(m_graph);
         break;
 
     case DecimalWordConstant:

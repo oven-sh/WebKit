@@ -133,6 +133,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDecimalOfRopeOrBigInt, UGPRPair, (Instance*
     OPERATION_RETURN(scope, pairOfDecimal(tryToDecimal128(globalObject, JSValue::decode(value)).value_or(Decimal128::noValue())));
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLetGoOfReusedDecimal, void, (void* reused, EncodedJSValue value))
+{
+    auto& named = *static_cast<EncodedJSValue*>(reused);
+    if (!value || value != named)
+        return;
+    uncheckedDowncast<DecimalObject>(JSValue::decode(value).asCell())->stripTrailingZeros();
+    named = { };
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewDecimal, JSCell*, (Instance* instance, uint64_t low, uint64_t upper))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTNewDecimal);

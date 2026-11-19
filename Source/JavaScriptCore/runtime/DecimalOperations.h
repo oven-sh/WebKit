@@ -33,7 +33,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDecimalExponent, EncodedJSValue, (ui
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationInt32ToDecimal, UGPRPair, (int32_t));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationDoubleToDecimal, UGPRPair, (double));
 
-JSC_DECLARE_JIT_OPERATION(operationNewDecimal, JSCell*, (VM*, Structure*, uint64_t, uint64_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationNewDecimal, JSCell*, (VM*, Structure*, uint64_t, uint64_t));
 JSC_DECLARE_JIT_OPERATION(operationDecimalToString, JSString*, (VM*, uint64_t, uint64_t));
 JSC_DECLARE_JIT_OPERATION(operationDecimalToExponential, JSString*, (VM*, uint64_t, uint64_t));
 

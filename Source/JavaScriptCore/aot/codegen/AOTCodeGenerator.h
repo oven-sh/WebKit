@@ -35,6 +35,7 @@ class StubCatalog;
 
 namespace Typed {
 
+class ReusedDecimals;
 struct CodeRecords;
 struct FormAtPlace;
 
@@ -309,6 +310,7 @@ public:
     }
 
     Operand get(ValueID id) { return get(id, code().at(id)); }
+    Boxed getReusedDecimal(ValueID id) { return getAsItIs(id, code().at(id)).as<Boxed>(); }
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
     void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
     bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
@@ -838,6 +840,12 @@ private:
     }
     ALWAYS_INLINE Operand get(ValueID id, const Operation& operation)
     {
+        if (m_reusedDecimals && isReusedDecimal(id)) [[unlikely]]
+            letGoOfDecimal(id);
+        return getAsItIs(id, operation);
+    }
+    ALWAYS_INLINE Operand getAsItIs(ValueID id, const Operation& operation)
+    {
         Representation representation = operation.representation;
         BlockID home = operation.block();
         BlockID user = blockBeingGenerated();
@@ -1166,6 +1174,23 @@ private:
     bool mayComputeWithDecimals(BlockID) const;
     std::optional<EndOfDecimalRun> beginDecimalRun(BlockID, std::span<const ValueID> values, size_t first);
     void endDecimalRun(std::optional<EndOfDecimalRun>&);
+    void findReusedDecimals();
+    bool isReusedDecimal(ValueID) const;
+    bool handsOnReusedDecimal(ValueID argument, ValueID parameter) const;
+    void letGoOfDecimal(ValueID);
+    // The reader may be made later than it stands, when the object has the next value.
+    void letGoOfDecimalsReadBy(const auto& reader)
+    {
+        reader.forEachChild([&](ValueID operand) {
+            if (!isReusedDecimal(operand))
+                return;
+            letGoOfDecimal(operand);
+            m_decimalsLetGo.appendIfNotContains(operand);
+        });
+    }
+    const ReusedDecimals* m_reusedDecimals { nullptr };
+    // In front of an operation of the block, so for the rest of it.
+    Vector<ValueID, 2> m_decimalsLetGo;
 
     struct ElementMoves {
         struct Read {

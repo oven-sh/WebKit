@@ -76,6 +76,7 @@ runtime DecimalExponent : EncodedJSValue (uint64_t low, uint64_t upper) ; none ;
 runtime DecimalOfInteger : UGPRPair (int64_t integer) ; none ; leaf
 runtime DecimalOfPrimitive : UGPRPair (EncodedJSValue value) ; reads(StringStorage) ; leaf
 runtime DecimalOfRopeOrBigInt : UGPRPair (EncodedJSValue value) ; RuntimeCreatesString
+runtime LetGoOfReusedDecimal : void (void* reused, EncodedJSValue value) ; reads(RuntimeState) writes(RuntimeState) ; leaf
 runtime NewDecimal, DecimalToString, DecimalToExponential : JSCell* (uint64_t low, uint64_t upper) ; RuntimeAllocates
 runtime DecimalToFixed : JSCell* (uint64_t low, uint64_t upper, EncodedJSValue digits, EncodedJSValue roundingMode) ; RuntimeCreatesString
 runtime PrepareBoundFunctionAllocation : void () ; RuntimeAllocates

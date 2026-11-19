@@ -59,6 +59,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(reusedDecimals, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_keyOrderRuns, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTCompiledStructure_numberOfExtraKeys, CompiledStructure::offsetOfNumberOfExtraKeys(), OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \

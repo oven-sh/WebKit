@@ -138,13 +138,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationDecimalScale10ByValue, UGPRPair, (uin
     return inRegisters(scale10OrNoValue(Decimal128::fromWords(low, upper), JSValue::decode(power)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationNewDecimal, JSCell*, (VM* vmPointer, Structure* structure, uint64_t low, uint64_t upper))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationNewDecimal, JSCell*, (VM* vmPointer, Structure* structure, uint64_t low, uint64_t upper))
 {
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    OPERATION_RETURN(scope, DecimalObject::create(vm, structure, Decimal128::fromWords(low, upper)));
+    return DecimalObject::create(vm, structure, Decimal128::fromWords(low, upper));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationDecimalToString, JSString*, (VM* vmPointer, uint64_t low, uint64_t upper))

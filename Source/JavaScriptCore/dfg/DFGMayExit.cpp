@@ -78,6 +78,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case PhantomNewObject:
     case PhantomNewArrayWithButterfly:
     case PhantomNewInternalFieldObject:
+    case NewDecimal:
     case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomNewButterflyWithSize:
@@ -212,7 +213,6 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case NewStringObject:
     case NewInternalFieldObject:
     case DecimalToString:
-    case NewDecimal:
     case NewPromise:
     case NewRegExp:
     case NewMap:

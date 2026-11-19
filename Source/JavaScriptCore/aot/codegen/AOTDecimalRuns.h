@@ -19,6 +19,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 class Facts;
 class Plan;
+class ReusedDecimals;
 
 // Operations that follow one another in a block and that nothing sees if their operands are Decimals. They are generated twice: first for
 // Decimals, which gives up wherever it finds something else, and then as they are written, from the first one on.
@@ -78,10 +79,15 @@ public:
     DecimalRuns(const Program&, const Plan&, const Facts&, const Code&, const TypeArena&);
 
     // The values are those of the block from where the run begins.
-    std::optional<DecimalRun> find(BlockID, std::span<const ValueID>, ValueID returnedCall) const;
+    std::optional<DecimalRun> find(BlockID, std::span<const ValueID>, ValueID returnedCall, const ReusedDecimals&) const;
+
+    bool isLikelyDecimal(ValueID) const;
+    bool makesDecimal(ValueID) const;
+    bool onlyReadsWordsOf(ValueID reader, ValueID decimal) const;
 
     std::optional<DecimalCall> callAt(ValueID) const;
     std::optional<DecimalOperation> testOfOrderAt(ValueID) const;
+    DecimalOperation operationAsComputed(const DecimalRun&, ValueID call) const;
     std::optional<Decimal128> constantAt(ValueID) const;
     ValueID originOf(ValueID) const;
 
@@ -100,7 +106,7 @@ private:
     Evidence evidenceOf(ValueID call, const DecimalCall&) const;
     bool mayBeMadeTwice(const Operation&) const;
     bool mayBeMadeAhead(const Operation&) const;
-    void noteReads(DecimalRun&) const;
+    void noteReads(DecimalRun&, const ReusedDecimals&) const;
 
     uint32_t classOf(ValueID) const;
     void unite(ValueID, ValueID);

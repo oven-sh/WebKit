@@ -40,6 +40,7 @@
 #include "DFGConstantHoistingPhase.h"
 #include "DFGCriticalEdgeBreakingPhase.h"
 #include "DFGDCEPhase.h"
+#include "DFGDecimalPhiUnboxingPhase.h"
 #include "DFGFailedFinalizer.h"
 #include "DFGFixupPhase.h"
 #include "DFGGraphSafepoint.h"
@@ -398,6 +399,8 @@ Plan::CompilationPath Plan::compileInThreadImpl()
         RUN_PHASE(performStrengthReduction);
         if (Options::useObjectAllocationSinking()) {
             RUN_PHASE(performCriticalEdgeBreaking);
+            if (Options::useDecimal())
+                RUN_PHASE(performDecimalPhiUnboxing);
             RUN_PHASE(performObjectAllocationSinking);
         }
         if (Options::useValueRepElimination()) {

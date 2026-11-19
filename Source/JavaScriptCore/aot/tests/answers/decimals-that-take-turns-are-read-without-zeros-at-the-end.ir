@@ -1,0 +1,200 @@
+# An operation that needs the one way to write the value strips the words it has read.
+# sink((list, at) => { let text = "", total = 0m; for (let i = 0; i < list.length; i++) { total = total.add(list[i]); if (i === at) text += total.toString() + total.toExponential() + total.equals(1m) + total.notEquals(1m) + total.mantissa().toString() + total.scale10(1).toString() + total.abs().toString() + total.negate().toString() + total.round(1, "ceil").toString() + (total.compare(1m) === 0) + 1m.equals(total); } return text; }, list => { let total = 3m; for (const x of list) total = total.subtract(x); return total; }, list => { let total = 3m; for (const x of list) total = x.subtract(total); return total; }, list => { let total = 0m; for (const x of list) total = x.add(total); return total; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalsReused >= 4
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => f(amounts, 1)); show(() => g(amounts)); show(() => h(amounts)); show(() => k(amounts)); };
+# CHECK: 11e0truefalse1101-11truetrue;
+# CHECK-NEXT: -3;
+# CHECK-NEXT: 5.4;
+# CHECK-NEXT: 6;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5 calleeName="sink"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = String string=""
+    v3 = Convert v2 declared={type=undefined|null|string flags=[IsExpected]}
+    v4 = String string="0"
+    v5 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v6 = Call v5, -, v4
+    v7 = Convert v6 declared={type=anything flags=[IsExpected]}
+    v8 = Integer
+    v9 = Convert v8 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v3, v7, v9)
+  b1(v10, v11, v12):
+    LoopHint
+    v14 = PropGet v0 key="length"
+    v15 = Less v12, v14
+    Branch v15 -> taken b2(), notTaken b5()
+  b2():
+    v16 = PropGet v11 key="add"
+    v17 = ElemGet v0, v12
+    v18 = Call v16, v11, v17 calleeKey="add" calleeName="total.add"
+    v19 = Convert v18 declared={type=anything flags=[IsExpected]}
+    v20 = StrictEq v12, v1
+    Branch v20 -> taken b3(), notTaken b4(v10)
+  b3():
+    v21 = PropGet v19 key="toString"
+    v22 = Call v21, v19 calleeKey="toString" calleeName="total.toString"
+    v23 = PropGet v19 key="toExponential"
+    v24 = Call v23, v19 calleeKey="toExponential" calleeName="total.toExponential"
+    v25 = Add v22, v24
+    v26 = PropGet v19 key="equals"
+    v27 = String string="1"
+    v28 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v29 = Call v28, -, v27
+    v30 = Call v26, v19, v29 calleeKey="equals" calleeName="total.equals"
+    v31 = Add v25, v30
+    v32 = PropGet v19 key="notEquals"
+    v33 = String string="1"
+    v34 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v35 = Call v34, -, v33
+    v36 = Call v32, v19, v35 calleeKey="notEquals" calleeName="total.notEquals"
+    v37 = Add v31, v36
+    v38 = PropGet v19 key="mantissa"
+    v39 = Call v38, v19 calleeKey="mantissa" calleeName="total.mantissa"
+    v40 = PropGet v39 key="toString"
+    v41 = Call v40, v39 calleeKey="toString" calleeName="toString"
+    v42 = Add v37, v41
+    v43 = PropGet v19 key="scale10"
+    v44 = Integer integer=1
+    v45 = Call v43, v19, v44 calleeKey="scale10" calleeName="total.scale10"
+    v46 = PropGet v45 key="toString"
+    v47 = Call v46, v45 calleeKey="toString" calleeName="toString"
+    v48 = Add v42, v47
+    v49 = PropGet v19 key="abs"
+    v50 = Call v49, v19 calleeKey="abs" calleeName="total.abs"
+    v51 = PropGet v50 key="toString"
+    v52 = Call v51, v50 calleeKey="toString" calleeName="toString"
+    v53 = Add v48, v52
+    v54 = PropGet v19 key="negate"
+    v55 = Call v54, v19 calleeKey="negate" calleeName="total.negate"
+    v56 = PropGet v55 key="toString"
+    v57 = Call v56, v55 calleeKey="toString" calleeName="toString"
+    v58 = Add v53, v57
+    v59 = PropGet v19 key="round"
+    v60 = Integer integer=1
+    v61 = String string="ceil"
+    v62 = Call v59, v19, v60, v61 calleeKey="round" calleeName="total.round"
+    v63 = PropGet v62 key="toString"
+    v64 = Call v63, v62 calleeKey="toString" calleeName="toString"
+    v65 = Add v58, v64
+    v66 = PropGet v19 key="compare"
+    v67 = String string="1"
+    v68 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v69 = Call v68, -, v67
+    v70 = Call v66, v19, v69 calleeKey="compare" calleeName="total.compare"
+    v71 = Integer
+    v72 = StrictEq v70, v71
+    v73 = Add v65, v72
+    v74 = String string="1"
+    v75 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v76 = Call v75, -, v74
+    v77 = PropGet v76 key="equals"
+    v78 = Call v77, v76, v19 calleeKey="equals" calleeName="equals"
+    v79 = Add v73, v78
+    v80 = Add v10, v79
+    v81 = Convert v80 declared={type=undefined|null|string flags=[IsExpected]}
+    Jump -> next b4(v81)
+  b4(v82):
+    v83 = Increment v12
+    v84 = Convert v83 declared={type=i32 flags=[IsExpected]}
+    Jump -> next b1(v82, v19, v84)
+  b5():
+    Return v10
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array):
+    v1 = String string="3"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = Convert v3 declared={type=anything flags=[IsExpected]}
+    v5 = IteratorOpen v0
+    Jump -> next b1(v4)
+  b1(v6):
+    LoopHint
+    v8 = IteratorResume v5
+    v9 = ResultAt v8
+    v10 = ResultAt v8 index=1
+    Branch v9 -> taken b2(), notTaken b3()
+  b2():
+    Return v6
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v11 = PropGet v6 key="subtract"
+    v12 = Call v11, v6, v10 calleeKey="subtract" calleeName="total.subtract"
+    v13 = Convert v12 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v13)
+  b5() role=IterationCleanup subject=v5:
+    v14 = CatchException
+    IteratorClose v5 completion=Throw
+    Rethrow v14
+}
+function f3 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = String string="3"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = IteratorOpen v0
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v10 = Convert v9 declared={type=anything flags=[IsExpected]}
+    v11 = PropGet v10 key="subtract"
+    v12 = Call v11, v10, v5 calleeKey="subtract" calleeName="x.subtract"
+    Jump -> next b1(v12)
+  b5() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}
+function f4 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = String string="0"
+    v2 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v3 = Call v2, -, v1
+    v4 = IteratorOpen v0
+    Jump -> next b1(v3)
+  b1(v5):
+    LoopHint
+    v7 = IteratorResume v4
+    v8 = ResultAt v7
+    v9 = ResultAt v7 index=1
+    Branch v8 -> taken b2(), notTaken b3()
+  b2():
+    Return v5
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v10 = Convert v9 declared={type=anything flags=[IsExpected]}
+    v11 = PropGet v10 key="add"
+    v12 = Call v11, v10, v5 calleeKey="add" calleeName="x.add"
+    Jump -> next b1(v12)
+  b5() role=IterationCleanup subject=v4:
+    v13 = CatchException
+    IteratorClose v4 completion=Throw
+    Rethrow v13
+}

@@ -568,6 +568,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeObjectInOSR, HeapCell*, (J
             auto location = materialization->properties()[i].location();
             if (location.kind() == DecimalWordPLoc)
                 words[location.info()] = values[i];
+            else if (JSValue object = location.kind() == DecimalObjectPLoc ? JSValue::decode(values[i]) : JSValue())
+                return object.asCell();
             else if (location == PromotedLocationDescriptor(StructurePLoc))
                 structure = uncheckedDowncast<Structure>(JSValue::decode(values[i]));
         }

@@ -460,6 +460,7 @@ namespace JSC { namespace DFG {
     macro(DecimalToNumber, NodeResultJS | NodeHasVarArgs) \
     macro(DecimalToString, NodeResultJS) \
     macro(DecimalToFixed, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* The third child, if any, is the object if it has been made, or else empty. */\
     macro(NewDecimal, NodeResultJS) \
     macro(NewRegExpUntyped, NodeResultJS | NodeMustGenerate) \
     macro(NewSymbol, NodeResultJS | NodeMustGenerate) \

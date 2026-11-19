@@ -60,3 +60,15 @@ for (const [source, argument] of [["try { return x.add(y); } catch { }", 1], ["t
     if (compiles > 3 && compiles < 1000)
         throw new Error(`${source}: compiled ${compiles} times`);
 }
+
+// The check of what a total begins with is given up where it fails.
+{
+    const run = (start, list) => { let total = start; for (const value of list) total = total.add(value); return total; };
+    noInline(run);
+    const other = new ArrayBuffer(8);
+    for (let i = 0; i < 200000; ++i)
+        i & 1 ? run(x, [x, x, x]) : run(other, []);
+    const compiles = numberOfDFGCompiles(run);
+    if (compiles > 4 && compiles < 1000)
+        throw new Error(`a total: compiled ${compiles} times`);
+}

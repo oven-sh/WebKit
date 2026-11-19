@@ -46,6 +46,32 @@ public:
     Words add(Words x, Words y, TrailingZeros result, Block slowCase) { return addOrSubtract(x, y, false, result, slowCase); }
     Words subtract(Words x, Words y, TrailingZeros result, Block slowCase) { return addOrSubtract(x, y, true, result, slowCase); }
 
+    // A total that keeps its trailing zeros soon has the least exponent, and it seldom changes its sign. What comes next then waits for
+    // one addition only.
+    Words addToTotal(Words total, Words x, bool subtracts, Block slowCase)
+    {
+        Block otherCase = m_generator.newBlock();
+        Block continuation = m_generator.newBlock();
+
+        Aligned aligned = align(total, x, slowCase);
+        Value count = countOfOther(total, x, aligned);
+        continueIf(out().lessThanOrEqual(unitOf(total.upper), unitOf(x.upper)), otherCase);
+        Value sum = subtracts ? out().sub(total.low, count) : out().add(total.low, count);
+        continueIf(out().greaterThan(sum, constant(0)), otherCase);
+        auto usualLow = out().anchor(sum);
+        auto usualUpper = out().anchor(total.upper);
+        out().jump(continuation);
+
+        m_generator.appendTo(otherCase);
+        Words other = addOrSubtract(total, x, aligned, count, subtracts, TrailingZeros::Some, slowCase);
+        auto otherLow = out().anchor(other.low);
+        auto otherUpper = out().anchor(other.upper);
+        out().jump(continuation);
+
+        m_generator.appendTo(continuation);
+        return { phi(usualLow, otherLow), phi(usualUpper, otherUpper) };
+    }
+
     Words multiply(Words x, Words y, TrailingZeros result, Block slowCase)
     {
         if (x.low->hasInt64())
@@ -160,6 +186,26 @@ public:
         if (result == TrailingZeros::Some)
             return { magnitude, shl(lShr(sign, 63), 63) };
         return finish(magnitude, constant(0), sign, result, slowCase);
+    }
+
+    Words withoutTrailingZeros(Words x)
+    {
+        Block isSame = m_generator.newBlock();
+        Block continuation = m_generator.newBlock();
+
+        continueIf(out().isZero64(highOf(x.upper)), isSame);
+        Words stripped = finish(x.low, unitOf(x.upper), x.upper, TrailingZeros::None, isSame);
+        auto strippedLow = out().anchor(stripped.low);
+        auto strippedUpper = out().anchor(stripped.upper);
+        out().jump(continuation);
+
+        m_generator.appendTo(isSame);
+        auto sameLow = out().anchor(x.low);
+        auto sameUpper = out().anchor(x.upper);
+        out().jump(continuation);
+
+        m_generator.appendTo(continuation);
+        return { phi(strippedLow, sameLow), phi(strippedUpper, sameUpper) };
     }
 
     Words abs(Words x) { return { x.low, out().bitAnd(x.upper, constant(~Decimal128::signBit)) }; }
@@ -293,14 +339,19 @@ private:
         return { load(OBJECT_OFFSETOF(Alignment, factor)), load(OBJECT_OFFSETOF(Alignment, otherFactor)), alignment };
     }
 
+    // As if the first operand were positive.
+    Value countOfOther(Words x, Words y, const Aligned& aligned) { return withSignOf(out().mul(aligned.otherFactor, y.low), signOfProduct(x, y)); }
+
     Words addOrSubtract(Words x, Words y, bool subtracts, TrailingZeros result, Block slowCase)
     {
         Aligned aligned = align(x, y, slowCase);
+        return addOrSubtract(x, y, aligned, countOfOther(x, y, aligned), subtracts, result, slowCase);
+    }
+
+    Words addOrSubtract(Words x, Words y, const Aligned& aligned, Value otherCount, bool subtracts, TrailingZeros result, Block slowCase)
+    {
         Value count = out().mul(aligned.factor, x.low);
-        Value otherMagnitude = out().mul(aligned.otherFactor, y.low);
         Value unit = out().select(out().lessThan(unitOf(x.upper), unitOf(y.upper)), unitOf(x.upper), unitOf(y.upper));
-        // As if the first operand were positive.
-        Value otherCount = withSignOf(otherMagnitude, signOfProduct(x, y));
         Value sum = subtracts ? out().sub(count, otherCount) : out().add(count, otherCount);
         return finish(magnitudeOf(sum), unit, out().bitXor(sum, x.upper), result, slowCase, aligned.alignment);
     }

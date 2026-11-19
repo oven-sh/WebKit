@@ -428,6 +428,7 @@ dfg/DFGConstantFoldingPhase.cpp
 dfg/DFGConstantHoistingPhase.cpp
 dfg/DFGCriticalEdgeBreakingPhase.cpp
 dfg/DFGDCEPhase.cpp
+dfg/DFGDecimalPhiUnboxingPhase.cpp @no-unify
 dfg/DFGDesiredGlobalProperties.cpp
 dfg/DFGDesiredIdentifiers.cpp
 dfg/DFGDesiredTransitions.cpp
