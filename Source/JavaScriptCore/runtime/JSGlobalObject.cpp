@@ -1861,7 +1861,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     IntlObject* intl = IntlObject::create(vm, this, IntlObject::createStructure(vm, this, m_objectPrototype.get()));
     putDirectWithoutTransition(vm, vm.propertyNames->Intl, intl, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
-    // Without the option too: cached bytecode may hold a Decimal literal.
+    // Without the option too: a program that was compiled with it asks for the structure.
     m_decimalStructure.initLater(
         [] (LazyClassStructure::Initializer& init) {
             auto* prototype = DecimalPrototype::create(init.vm, DecimalPrototype::createStructure(init.vm, init.global, init.global->objectPrototype()));

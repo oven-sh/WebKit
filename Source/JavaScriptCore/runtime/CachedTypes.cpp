@@ -5335,7 +5335,9 @@ protected:
     {
         // With these options operators are compiled into other code, which does something else.
         uint32_t decimalOperators = Options::useDecimal() && Options::useDecimalOperators() ? 0x85EBCA6Bu : 0;
-        return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u) ^ decimalOperators;
+        // What the cache lacks is parsed later, like the code of a function for new.
+        uint32_t decimalLiterals = Options::useDecimal() && Options::useDecimalLiterals() ? 0xC2B2AE35u : 0;
+        return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u) ^ decimalOperators ^ decimalLiterals;
     }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
