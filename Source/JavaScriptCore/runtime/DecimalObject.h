@@ -54,6 +54,10 @@ public:
     // What BigInt(decimal) is. Throws a RangeError if the value is not an integer.
     JSValue toBigIntValue(JSGlobalObject*) const;
 
+    // For structured clone. The text is exact. The latter answers null if the text is not that of a Decimal, or useDecimal is off.
+    JS_EXPORT_PRIVATE String textForClone() const;
+    JS_EXPORT_PRIVATE static DecimalObject* tryCreateFromCloneText(JSGlobalObject*, StringView);
+
 private:
     DecimalObject(VM& vm, Structure* structure, Decimal128 value)
         : Base(vm, structure)

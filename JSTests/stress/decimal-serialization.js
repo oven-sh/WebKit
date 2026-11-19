@@ -20,17 +20,6 @@ for (const value of values) {
         shouldBe(exact(new Decimal(value.toFixed({ digits: 6176 }))), exact(value));
 }
 
-// HTML has no steps for its internal slot, so structuredClone() throws, and does not make an empty object instead.
-for (const value of [values[5], [values[5]], { a: values[5] }, new (class extends Decimal { })(1)]) {
-    let error;
-    try {
-        structuredClone(value);
-    } catch (thrown) {
-        error = thrown;
-    }
-    shouldBe(error instanceof TypeError, true);
-}
-
 // JSON.stringify() throws wherever the Decimal is, as for a BigInt, and does not write an empty object instead.
 {
     const original = Decimal.prototype.toJSON;

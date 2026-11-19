@@ -33,6 +33,7 @@
 #include <JavaScriptCore/BooleanObject.h>
 #include <JavaScriptCore/CloneBase.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DecimalObject.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
@@ -501,6 +502,13 @@ protected:
             JSValue bigIntValue = bigIntObject->internalValue();
             ASSERT(bigIntValue.isBigInt());
             dumpBigIntData(bigIntValue);
+            return true;
+        }
+        if (auto* decimal = dynamicDowncast<DecimalObject>(obj)) {
+            if (!addToObjectPoolIfNotDupe<DecimalTag>(decimal))
+                return true;
+            write(DecimalTag);
+            write(decimal->textForClone());
             return true;
         }
         if (RefPtr arrayBuffer = toPossiblySharedArrayBuffer(m_lexicalGlobalObject->vm(), obj)) {
