@@ -213,6 +213,7 @@ bool Planner::addGroup(const Yarr::PatternTerm& term, Sequence& sequence)
         group.firstInnerGroup = term.parentheses.subpatternId;
         group.lastInnerGroup = term.parentheses.lastSubpatternId;
     }
+    const unsigned numberOfNodesInFront = m_numberOfNodes - 1;
     if (!addAlternatives(*term.parentheses.disjunction, group.alternatives))
         return false;
 
@@ -224,6 +225,9 @@ bool Planner::addGroup(const Yarr::PatternTerm& term, Sequence& sequence)
         return true;
     }
     if (minimum != group.maximum || minimum > maxCopiesOfGroup)
+        return false;
+    m_numberOfNodes = numberOfNodesInFront + (m_numberOfNodes - numberOfNodesInFront) * minimum;
+    if (m_numberOfNodes > m_maxNodes)
         return false;
     group.maximum = 1;
     for (unsigned copy = 0; copy < minimum; ++copy)
