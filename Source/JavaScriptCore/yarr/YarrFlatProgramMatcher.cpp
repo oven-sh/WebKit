@@ -2649,7 +2649,7 @@ static JSRegExpResult matchIfSubjectHoldsText(const FlatProgram& program, std::s
 template<typename CharType, bool isFull>
 static NEVER_INLINE JSRegExpResult matchBehindLimit(const FlatProgram& program, const CharType* input, const Enclosure<CharType>& enclosure, unsigned* output)
 {
-    if (enclosure.steps == FlatProgram::stepsBeforeLookingForText)
+    if (program.textOfEveryMatch && enclosure.steps == FlatProgram::stepsBeforeLookingForText(enclosure.length, enclosure.startOffset()))
         return matchIfSubjectHoldsText(program, std::span { input, enclosure.length }, enclosure.startOffset(), output);
     if (enclosure.steps == matchLimit || program.jitCountsTurns)
         return JSRegExpResult::ErrorHitLimit;
@@ -2744,11 +2744,8 @@ static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, st
     }
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
-    if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly) {
-        if (input.size() >= start + FlatProgram::leastLengthLookedThroughFirst)
-            return matchIfSubjectHoldsText(program, input, start, output);
-        return matchForgetting(program, input.data(), input.size(), start, output, FlatProgram::stepsBeforeLookingForText);
-    }
+    if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly)
+        return matchForgetting(program, input.data(), input.size(), start, output, FlatProgram::stepsBeforeLookingForText(input.size(), start));
     return matchByPolicy<CharType, false>(program, input, start, output, policy);
 }
 
