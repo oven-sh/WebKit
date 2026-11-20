@@ -3478,6 +3478,12 @@ class YarrGenerator final : public YarrJITInfo {
                 m_pendingReturns.clear();
                 m_pendingFallthrough = true;
             }
+            constexpr size_t maxJumpsHandedOn = 64;
+            if (m_laterFailures.jumps().size() > maxJumpsHandedOn) {
+                m_laterFailures.link(assembler);
+                m_laterFailures.clear();
+                m_pendingFallthrough = true;
+            }
             if (m_pendingFallthrough)
                 jumpList.append(assembler->jump());
             jumpList.append(m_laterFailures);
