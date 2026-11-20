@@ -1730,6 +1730,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToLowerCase, (JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, { });
 
     String lowercasedString = s->convertToLowercaseWithoutLocale();
+    if (lowercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (lowercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1766,6 +1768,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToUpperCase, (JSGlobalObject* globalObje
     RETURN_IF_EXCEPTION(scope, { });
 
     String uppercasedString = s->convertToUppercaseWithoutLocale();
+    if (uppercasedString.isNull()) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (uppercasedString.impl() == s->impl())
         return JSValue::encode(sVal);
 
@@ -1885,6 +1889,8 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
     if (locale.isNull()) {
         // Case mapping is locale-independent here, so skip ICU and use the root conversion.
         String converted = mode == CaseConversionMode::Lower ? s->convertToLowercaseWithoutLocale() : s->convertToUppercaseWithoutLocale();
+        if (converted.isNull()) [[unlikely]]
+            return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
         if (converted.impl() == s->impl())
             return JSValue::encode(sVal);
         RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(converted))));
