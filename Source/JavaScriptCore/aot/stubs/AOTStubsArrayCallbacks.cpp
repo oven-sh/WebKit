@@ -186,6 +186,14 @@ static Jump branchAtEnd(StubAssembler& jit, const CallbackRegisters& registers)
     return jit.branchPtr(CCallHelpers::AboveOrEqual, registers.cursor, registers.end);
 }
 
+// A sum of int32 numbers is kept in 64 bits. It equals the sum that is rounded at each step while no step can leave 2 ** 53.
+static void bailOutIfSumCouldRound(StubAssembler& jit, const CallbackRegisters& registers, JumpList& bailouts)
+{
+    constexpr int32_t mostSummands = (1 << 22) - 1;
+    jit.load32(Address(registers.cursor, Butterfly::offsetOfPublicLength()), registers.value);
+    bailouts.append(jit.branch32(CCallHelpers::Above, registers.value, TrustedImm32(mostSummands)));
+}
+
 #if CPU(X86_64)
 static constexpr GPRReg scratchOfLoad = CCallHelpers::s_scratchRegister;
 #else
@@ -1512,6 +1520,8 @@ void generateFoldArray(StubAssembler& jit)
     saveOperand();
     saveCallback(jit, registers);
     loadCursorAndEnd(jit, registers);
+    if (fold == NumberFold::Sum)
+        bailOutIfSumCouldRound(jit, registers, exits.bailouts);
     Jump hasShape;
     if (!isElement)
         hasShape = loadPlaceOfField(jit, registers, exits.bailouts);
@@ -2275,6 +2285,7 @@ void generateFoldFieldPairs(StubAssembler& jit)
     const ArrayCheck check = checkArray(jit, registers, exits);
     save();
     loadCursorAndEnd(jit, registers);
+    bailOutIfSumCouldRound(jit, registers, exits.bailouts);
     exits.bailouts.append(branchAtEnd(jit, registers));
 
     const bool isNested = operation == FieldPairOperation::FieldOfField;
