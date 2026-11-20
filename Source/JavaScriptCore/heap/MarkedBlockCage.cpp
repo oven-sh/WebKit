@@ -596,6 +596,11 @@ bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
     if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
     m_exhaustedHeaps = { };
+    // Where allocations may not collect, each collection at a poll can fill the reserve again and free little else. One poll is spared the error that barren collections owe, not the next.
+    if (m_numberOfBarrenCollections > barrenCollectionsUntilError) {
+        addExhaustedHeap(ExhaustedHeap::Cells);
+        return false;
+    }
     return true;
 }
 
