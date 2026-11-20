@@ -8,6 +8,7 @@ JSString_value | codegen/AOTPrimitiveEmitter.h | 1 | isRopeString(): it is the t
 JSString_value | codegen/AOTStringBuiltinEmitter.cpp | 1 | is8Bit() tests the rope bit next to the load: the flat side alone reads through the word, the other side reads the width off the word itself
 JSString_value | codegen/AOTStringEmitter.cpp | 12 | implOfFlatString() takes a FlatStringCell; viewOfFlatString() is listed below; seven test the rope bit next to the load; two read what FlattenString has just made; one reads the base of a substring, which is flat
 JSString_value | codegen/AOTStringEmitterComparisons.cpp | 5 | each tests the rope bit next to the load; two test the bits of both strings at once; shortTextOf() tests its own
+JSString_value | codegen/AOTStringEmitterRanges.cpp | 1 | isLongRope(): tests the rope bit and the substring bit, and nothing is read through the word
 JSString_value | codegen/AOTStringSwitch.cpp | 1 | tests the rope bit next to the load
 viewOfFlatString | codegen/AOTStringBuiltinEmitter.cpp | 2 | each behind isRopeString() of the same cell
 viewOfFlatString | codegen/AOTStringEmitter.cpp | 1 | the definition

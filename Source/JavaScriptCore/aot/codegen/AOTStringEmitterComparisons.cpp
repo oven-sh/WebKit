@@ -705,6 +705,15 @@ Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& so
     return found;
 }
 
+void StringEmitter::branchOnTextAtEnd(const OperationContext& context, ValueID string, LiteralEnd end, StringID literal, BranchTargets targets)
+{
+    Word32 lengthOfString = lengthOf(string);
+    Word32 length = word32(textOf(literal).length());
+    continueIf(aboveOrEqual(lengthOfString, length), targets.notTaken);
+    CodeUnitRange range = end == LiteralEnd::Start ? CodeUnitRange { word32(0), length } : CodeUnitRange { sub(lengthOfString, length), lengthOfString };
+    branchOnTextAt(viewOfRange(context, string, range), word32(0), literal, targets);
+}
+
 void StringEmitter::generateEndsLiteral(const ValueContext& value, LiteralEnd end)
 {
     StringID literal = value->literal();
@@ -714,11 +723,8 @@ void StringEmitter::generateEndsLiteral(const ValueContext& value, LiteralEnd en
         return;
     }
 
-    CharacterView view = viewOf(value, value->stringOperand());
-    Word32 length = word32(textOf(literal).length());
     defineTestByBranching(value, [&](BranchTargets targets) {
-        continueIf(aboveOrEqual(view.length, length), targets.notTaken);
-        branchOnTextAt(view, end == LiteralEnd::Start ? word32(0) : sub(view.length, length), literal, targets);
+        branchOnTextAtEnd(value, value->stringOperand(), end, literal, targets);
     });
 }
 
@@ -756,10 +762,13 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         return readsRange ? viewOfRange(value) : viewOf(value, string);
     };
     if (!isForward && position.value()->isInt32(0) && canCompareInline(literal)) {
-        CharacterView view = viewOfSubject();
-        Word32 length = word32(text.length());
         Condition isAtStart = asBoolean([&](BranchTargets targets) {
-            continueIf(aboveOrEqual(view.length, length), targets.notTaken);
+            if (!readsRange) {
+                branchOnTextAtEnd(value, string, LiteralEnd::Start, literal, targets);
+                return;
+            }
+            CharacterView view = viewOfRange(value);
+            continueIf(aboveOrEqual(view.length, word32(text.length())), targets.notTaken);
             branchOnTextAt(view, word32(0), literal, targets);
         });
         define(value, select<Word32>(isAtStart, 0, -1));
@@ -777,14 +786,16 @@ void StringEmitter::generateFindLiteral(const ValueContext& value, SearchDirecti
         return;
     }
 
-    CharacterView view = viewOfSubject();
     if (!isForward && text.length() == 1) {
         Word32 codeUnit = word32(text[0]);
         recordInlined(literal);
-        define(value, findCodeUnit(view, codeUnit, select(lessThan(position, 0), 0, position), direction));
+        define(value, selectByBranch<Word32>(readsRange ? boolean(false) : isLongRope(string), findInCell, [&] {
+            return findCodeUnit(viewOfSubject(), codeUnit, select(lessThan(position, 0), 0, position), direction);
+        }, Machine::EdgeClass::Unlikely));
         return;
     }
 
+    CharacterView view = viewOfSubject();
     Word32 found = selectByWidth<Word32>(view.is8Bit, [&](bool is8Bit) {
         if (!is8Bit && !readsRange)
             return findInCell();

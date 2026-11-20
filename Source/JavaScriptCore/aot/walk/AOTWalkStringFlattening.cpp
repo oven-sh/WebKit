@@ -188,7 +188,7 @@ static Reference openBeforeLoopForReads(Walker& walker, Reference string, Origin
     return opened;
 }
 
-Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Origin origin, bool readsCodeUnitsAlone)
+Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Origin origin, bool readsCodeUnitsAlone, bool leavesRopeAlone)
 {
     if (walker.isUnreachable() || !string.isValue())
         return { };
@@ -204,7 +204,7 @@ Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Orig
         if (Reference opened = openBeforeLoopForReads(walker, string, origin); opened || walker.hasFailed())
             return opened;
     }
-    if (!flat && readerHasBeenHereForFlattening(walker, string))
+    if (!flat && readerHasBeenHereForFlattening(walker, string) && !leavesRopeAlone)
         flat = walker.build(draftOfFlatStringForFlattening(string, origin));
     if (flat)
         noteFlatStringForFlattening(walker, string, flat);

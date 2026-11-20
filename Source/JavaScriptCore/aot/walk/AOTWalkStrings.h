@@ -170,7 +170,7 @@ bool readsCharacterUnderLoweredCounter(Walker&, const BodyValue& read);
 bool readsCharacterAtOuterCounter(Walker&, const BodyValue& read);
 
 
-Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin, bool readsCodeUnitsAlone = false);
+Reference flatStringForReaderOfCharacters(Walker&, Reference string, Origin, bool readsCodeUnitsAlone = false, bool leavesRopeAlone = false);
 void flattenStringsReadByLoop(Walker&, BlockID inputHead, std::span<const Reference> entering, Origin);
 Reference flatStringInSight(Walker&, Reference string);
 bool isOrCanBeFlattenedBeforeLoop(Walker&, Reference string);
