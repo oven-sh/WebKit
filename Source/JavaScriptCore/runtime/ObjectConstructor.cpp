@@ -299,7 +299,7 @@ static void objectAssignGeneric(JSGlobalObject* globalObject, VM& vm, JSObject* 
 #if ENABLE(AOT)
     if (target->structure()->isCompiledStructure() && !goesOnKeyByKey) {
         // Same as for an ordinary target that accepts direct property puts.
-        if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::testIntegrity(target, AOT::PropertyWalk::Integrity::NonExtensible) == AOT::PropertyWalk::Presence::Absent) {
+        if (source->hasNonReifiedStaticProperties() && AOT::PropertyWalk::wouldPerformFastPut(vm, target)) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
         }

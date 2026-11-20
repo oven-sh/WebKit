@@ -1470,7 +1470,7 @@ bool ClassTable::tryLeaveHoldersOut(VM& vm, const LayoutData& layout, Closure* c
         return false;
     if (!m_classObjectOfHolderLeftOut)
         m_classObjectOfHolderLeftOut = PrivateSymbolImpl::create(*StringImpl::create("class"_span8).ptr());
-    prototype->putDirect(vm, PropertyName(m_classObjectOfHolderLeftOut.get()), classObject, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    prototype->putDirect(vm, PropertyName(m_classObjectOfHolderLeftOut.get()), classObject, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     prototype->didBecomePrototype(vm);
     m_hasHoldersLeftOut = true;
     return true;

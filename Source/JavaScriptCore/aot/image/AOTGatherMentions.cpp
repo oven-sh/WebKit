@@ -152,6 +152,7 @@ private:
         switch (space) {
         case NumberSpace::CardOfVariable:
         case NumberSpace::CardOfWord:
+        case NumberSpace::DataElements:
         case NumberSpace::Request:
         case NumberSpace::ClassGuard:
         case NumberSpace::SiteCache:
@@ -201,6 +202,12 @@ private:
         case NumberSpace::Request:
             addMentionsImpliedByRequest(key);
             return;
+        case NumberSpace::DataElements: {
+            // A test may name elements that no literal is made of, so the mention alone places them.
+            uint32_t request[] { static_cast<uint32_t>(RequestKind::Data), key[0], static_cast<uint32_t>(Typed::DataEncoding::CopyOnWriteArray) };
+            add(NumberSpace::Request, request);
+            return;
+        }
         case NumberSpace::ClassGuard:
             if (isRowOfClassGuardCountsKey(key)) {
                 bool everySlotListsGuards = true;
@@ -258,7 +265,6 @@ private:
         case NumberSpace::ModuleNamespace:
         case NumberSpace::ModuleBuiltinCell:
         case NumberSpace::DataStorage:
-        case NumberSpace::DataElements:
         case NumberSpace::RegExpLiteralCell:
         case NumberSpace::TemplateObjectCell:
         case NumberSpace::ArrayProfile:

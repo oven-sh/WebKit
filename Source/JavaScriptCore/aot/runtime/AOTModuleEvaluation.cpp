@@ -573,7 +573,8 @@ JSValue Modules::callBody(ModuleID module)
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (!m_formsAnsweredFirst.isEmpty()) [[unlikely]] {
-        if (moduleData.kind == ModuleKind::Data) {
+        // An import, deferred or not, shares the entry of the import before it, and a require() under a type loads its own.
+        if (moduleData.kind == ModuleKind::Data && m_innermostRequireRoot != std::optional(module)) {
             bool hasTaken = takeWhatFormAnsweredFirstHolds(module);
             RETURN_IF_EXCEPTION(scope, { });
             if (hasTaken)
@@ -4599,6 +4600,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     int64_t firstOrder = m_instance.vm->incrementModuleAsyncEvaluationCount();
     SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
     SetForScope innermostSyncLoadRoot(m_innermostSyncLoadRoot, std::optional(module));
+    SetForScope innermostRequireRoot(m_innermostRequireRoot, reason == SynchronousEvaluationReason::Require ? std::optional(module) : std::nullopt);
     SetForScope outermostSynchronousLoad(m_outermostSynchronousLoad, m_outermostSynchronousLoad ? m_outermostSynchronousLoad : m_activeSynchronousLoad);
     auto leaveLoad = [&] {
         if (!queue)
@@ -4907,13 +4909,21 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
     std::optional<ModuleID> file = findByName(key);
     if (file && isEvicted(*file))
         file = std::nullopt;
-    if (file && wasRequired(*file))
+    if (file && wasRequired(*file)) {
+        // A require() without a type took the string out of the file, and one with the type gets the module of the text.
+        if (data(*file).loaderReturnsNamespace() && m_table.fullPath(target).endsWith("?text"_s)) {
+            answersNamespace = true;
+            return target;
+        }
         return *file;
+    }
     for (ModuleID form : forms) {
         if (wasRequired(form))
             return form;
     }
-    if (file && !hasNotBegun(*file) && !wasEvictedByRemovedMock(*file))
+    // A statement has put code in the loader before it runs, and require() with type text loads that.
+    bool isCodeInLoader = file && data(*file).kind == ModuleKind::SourceText && m_table.fullPath(target).endsWith("?text"_s) && wasImportedByStatement(*file);
+    if (file && (isCodeInLoader || !hasNotBegun(*file)) && !wasEvictedByRemovedMock(*file))
         return *file;
     auto wasImported = [&](ModuleID form) {
         return (status(form) == ModuleStatus::Evaluated || hasBeenImported(form)) && !wasEvictedByRemovedMock(form);
@@ -5542,6 +5552,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
             loaded.exportsWhileRequired.set(*this, constructEmptyObject(m_instance.globalObject));
         return loaded.exportsWhileRequired.get();
     }
+    if (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue) [[unlikely]]
+        loaded.wasImportedWhenRequired = hasBeenImported(target);
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.loaderReturnsNamespace();
     bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target)) && !m_table.fullPath(target).endsWith("?text"_s)));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
@@ -5624,7 +5636,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
     if (!isAnsweredAsByLoader)
         loaded.requiredValue.set(*this, result);
-    loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program;
+    // In an ES module each require() is the loader's, so a later import() makes another object of data.
+    loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program || (referrer && data(referrer).kind == ModuleKind::SourceText);
     if (isFetchedSynchronously(target)) {
         reevaluateDataFile(target, ImportResolver::Build);
         RETURN_IF_EXCEPTION(scope, { });

@@ -1762,6 +1762,8 @@ bool LinkFlow::storesCopiedNamesOnPrototype(const FlowObserver& observer, const 
     if (!namesAreListed)
         return false;
     for (const OwnValue& value : stored) {
+        // Copying reads every source value, so getters run even for properties the prototype refuses.
+        observe(value.node, FlowObserver { FlowObserver::Kind::FieldIsOnlyAsked, observer.function, observer.record });
         if (copies.namesStoredOnPrototypes.add(std::pair { static_cast<uint64_t>(value.node.index()) << 32 | target.layout.index(), static_cast<uint64_t>(value.key.bits()) << 32 | observer.record }).isNewEntry)
             storeOnClassHolder(observer.function, target.layout, ClassSide::Prototype, value.key, value.node);
     }
