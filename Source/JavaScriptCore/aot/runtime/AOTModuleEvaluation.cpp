@@ -5632,7 +5632,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
     }
     if (!isAnsweredAsByLoader)
         loaded.requiredValue.set(*this, result);
-    loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program;
+    // In an ES module each require() is the loader's, so a later import() makes another object of data.
+    loaded.wasRequiredByHost |= requiredBy == RequiredBy::Program || (referrer && data(referrer).kind == ModuleKind::SourceText);
     if (isFetchedSynchronously(target)) {
         reevaluateDataFile(target, ImportResolver::Build);
         RETURN_IF_EXCEPTION(scope, { });
