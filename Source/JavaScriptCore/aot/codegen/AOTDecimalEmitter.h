@@ -23,6 +23,7 @@ public:
     void beginRun(const DecimalRun&, BlockID, LBasicBlock asWritten);
     void generate(const ValueContext&, const DecimalRun::Part&);
     void makeObject(const ValueContext&);
+    void endRun() { m_run = nullptr; }
 
     const ReusedDecimals& findReusedDecimals(std::span<const BlockID> order, const ScopedLambda<bool(BlockID home, BlockID user)>& dominates) LIFETIME_BOUND;
     void beginWithoutReusedObjects();

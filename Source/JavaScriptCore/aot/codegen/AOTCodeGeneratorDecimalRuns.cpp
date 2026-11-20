@@ -10,6 +10,7 @@
 
 #include "AOTCallEmitter.h"
 #include "AOTDecimalEmitter.h"
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -88,6 +89,7 @@ auto CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> valu
     ScopeFork scope = m_out.forkScope();
     size_t numberLetGo = m_decimalsLetGo.size();
     decimals.beginRun(*run, block, asWritten);
+    auto endRun = makeScopeExit([&] { decimals.endRun(); });
     for (const DecimalRun::Part& part : run->parts) {
         if (m_hasFailed)
             return std::nullopt;
