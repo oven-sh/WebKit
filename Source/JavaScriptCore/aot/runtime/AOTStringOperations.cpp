@@ -1819,9 +1819,11 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
                     return result;
                 }
                 std::span<Latin1Character> buffer;
-                Ref impl = StringImpl::createUninitialized(length, buffer);
+                RefPtr impl = StringImpl::tryCreateUninitialized(length, buffer);
+                if (!impl) [[unlikely]]
+                    return nullptr;
                 writeTo(byteCast<uint8_t>(buffer.data()));
-                return jsString(vm, String { WTF::move(impl) });
+                return jsString(vm, String { impl.releaseNonNull() });
             };
             if (length < stride) {
                 EndsOfShortText ends = EndsOfShortText::load(characters, length);
@@ -1889,6 +1891,10 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
     auto characters = string->value(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);
     String converted = letterCase == LetterCase::Lower ? characters->convertToLowercaseWithoutLocale() : characters->convertToUppercaseWithoutLocale();
+    if (converted.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
     JSString* result = converted.impl() == characters->impl() ? string : jsString(vm, WTF::move(converted));
     if (characters->length() > CaseConversions::maxLengthOfRememberedString)
         CaseConversions::ensure(state).remember(string, rememberedCase, result);
