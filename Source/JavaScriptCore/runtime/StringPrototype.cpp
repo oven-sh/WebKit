@@ -1901,6 +1901,8 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
         return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     auto convertCase = mode == CaseConversionMode::Lower ? u_strToLower : u_strToUpper;
     auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), locale.utf8().legacyCStringPointer());
+    if (isICUMemoryAllocationError(status)) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (U_FAILURE(status))
         return throwVMTypeError(globalObject, scope, String::fromLatin1(u_errorName(status)));
 
