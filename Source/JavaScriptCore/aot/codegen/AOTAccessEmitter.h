@@ -206,7 +206,10 @@ private:
     void putFreeName(const ValueContext&);
     CellPointer globalObject();
     Pointer globalBindingAddress(PropertyKeyID, OptionSet<GlobalBindingFlags>);
+    Integer placeOfPropertyOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
+    Pointer addressOfPlace(Integer place, Integer storage);
     Pointer propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
+    Pointer addressOfGlobalProperty(Integer place);
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     bool lookVouchesForPropertyOfHeir(const ValueContext&) const;
     TypedPointer locationOfPropertyOfHeir(const ValueContext&, CellPointer object);
