@@ -31,6 +31,7 @@
 #include <JavaScriptCore/CloneBase.h>
 #include <JavaScriptCore/DataView.h>
 #include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DecimalObject.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/JSArrayBufferView.h>
@@ -635,6 +636,19 @@ protected:
             BigIntObject* obj = BigIntObject::create(m_lexicalGlobalObject->vm(), m_globalObject, bigInt);
             addToObjectPool<BigIntObjectTag>(obj);
             return obj;
+        }
+        case DecimalTag: {
+            CachedStringRef text;
+            if (!readStringData(text))
+                return JSValue();
+            auto* decimal = DecimalObject::tryCreateFromCloneText(m_globalObject, text->string());
+            if (!decimal) [[unlikely]] {
+                SERIALIZE_TRACE("FAIL deserialize");
+                fail();
+                return JSValue();
+            }
+            addToObjectPool<DecimalTag>(decimal);
+            return decimal;
         }
         case ErrorInstanceTag: {
             SerializableErrorType serializedErrorType;

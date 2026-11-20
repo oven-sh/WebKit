@@ -1,0 +1,81 @@
+# A literal is a constant, whatever the global Decimal is, and an object of its own where one is seen.
+# sink(x => x.divide(8m), x => x.equals(1.5m), () => [1m, 1m, (-0m).add(-0m)], value => new Decimal(value).add(1.5m));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 6
+# RUN(CODE): emit f1
+# CODE: = Mul(
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g, h, k) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); const one = D("1"), x = D("1.50"); show(() => f(one)); show(() => g(x)); show(() => g({ equals: literal => literal })); show(() => names(h())); show(() => k(1)); globalThis.Decimal = function (value) { return { add: literal => "own " + value + " " + literal.toString() }; }; show(() => k(1)); delete globalThis.Decimal; show(() => f(one)); show(() => names(h())); show(() => k(1)); };
+# CHECK: 0.125;
+# CHECK-NEXT: true;
+# CHECK-NEXT: 1.5;
+# CHECK-NEXT: 0:1 1:1 2:-0;
+# CHECK-NEXT: 2.5;
+# CHECK-NEXT: own 1 1.5;
+# CHECK-NEXT: 0.125;
+# CHECK-NEXT: 0:1 1:1 2:-0;
+# CHECK-NEXT: ReferenceError;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5 calleeName="sink"
+    v7 = Undefined
+    Return v7
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="divide"
+    v2 = String string="8"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v1, v0, v4 calleeKey="divide" calleeName="x.divide"
+    ReturnCall v5
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="equals"
+    v2 = String string="1.5"
+    v3 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v4 = Call v3, -, v2
+    v5 = Call v1, v0, v4 calleeKey="equals" calleeName="x.equals"
+    ReturnCall v5
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="1"
+    v1 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = String string="1"
+    v4 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v5 = Call v4, -, v3
+    v6 = String string="-0"
+    v7 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v8 = Call v7, -, v6
+    v9 = PropGet v8 key="add"
+    v10 = String string="-0"
+    v11 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v12 = Call v11, -, v10
+    v13 = Call v9, v8, v12 calleeKey="add" calleeName="add"
+    v14 = NewArray v2, v5, v13 contents=anything
+    Return v14
+}
+function f4 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Decimal" [isFreeName]
+    v3 = Construct v2, -, v0 calleeName="Decimal"
+    v4 = PropGet v3 key="add"
+    v5 = String string="1.5"
+    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v7 = Call v6, -, v5
+    v8 = Call v4, v3, v7 calleeKey="add" calleeName="add"
+    ReturnCall v8
+}

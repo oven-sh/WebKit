@@ -7,6 +7,7 @@
 
 #include <JavaScriptCore/Decimal128.h>
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/Options.h>
 
 namespace JSC {
 
@@ -53,6 +54,11 @@ public:
     double toNumberValue() const;
     // What BigInt(decimal) is. Throws a RangeError if the value is not an integer.
     JSValue toBigIntValue(JSGlobalObject*) const;
+
+    // For structured clone. The text is exact. The last answers null if the text is not that of a Decimal, or none can be cloned.
+    static bool canBeCloned() { return Options::useDecimal() && Options::useDecimalStructuredClone(); }
+    JS_EXPORT_PRIVATE String textForClone() const;
+    JS_EXPORT_PRIVATE static DecimalObject* tryCreateFromCloneText(JSGlobalObject*, StringView);
 
 private:
     DecimalObject(VM& vm, Structure* structure, Decimal128 value)

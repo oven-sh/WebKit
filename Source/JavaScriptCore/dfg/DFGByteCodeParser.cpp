@@ -58,6 +58,8 @@
 #include "DecimalConstructor.h"
 #include "DecimalObject.h"
 #include "DecimalOperations.h"
+#include "DecimalOperator.h"
+#include "DecimalPrototype.h"
 #include "DeleteByStatus.h"
 #include "FunctionCodeBlock.h"
 #include "GetByStatus.h"
@@ -535,12 +537,16 @@ private:
     DecimalWords decimalWordsOfTuple(Node*);
     DecimalWords checkDecimal(Node*);
     Node* addDecimalNode(NodeType, OpInfo, OpInfo, std::initializer_list<DecimalWords>);
-    // Of the realm of the code, which is that of the callee.
+    // Of the realm of the code, which is that of the callee. Without useDecimal, where cached bytecode can have literals, null until one ran.
     Structure* decimalStructure() { return m_inlineStackTop->m_codeBlock->globalObject()->decimalStructureConcurrently(); }
     Node* newDecimal(DecimalWords);
     Node* emitDecimalOperation(DecimalOperation, DecimalWords, std::optional<DecimalWords>, SpeculatedType prediction);
     template<typename ChecksFunctor>
     Node* handleDecimalMethod(DecimalOperation, int registerOffset, int argumentCountIncludingThis, SpeculatedType, NOESCAPE const ChecksFunctor& insertChecks);
+    template<typename ChecksFunctor>
+    Node* handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks);
+    template<typename ChecksFunctor>
+    Node* handleDecimalOperator(int registerOffset, SpeculatedType, NOESCAPE const ChecksFunctor& insertChecks);
     template<typename ChecksFunctor>
     bool handleConstantFunction(Node* callTargetNode, Operand result, JSObject*, int registerOffset, int argumentCountIncludingThis, CodeSpecializationKind, SpeculatedType, Node* newTarget, NOESCAPE const ChecksFunctor& insertChecks);
     Node* handlePutByOffset(Node* base, unsigned identifier, PropertyOffset, Node* value);
@@ -4123,7 +4129,11 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
                 return CallOptimizationResult::DidNothing;
             auto function = variant.nativeExecutable()->function();
             Node* result = nullptr;
-            if (auto operation = decimalOperationOf(function))
+            if (function == toTagged(decimalLiteral))
+                result = handleDecimalLiteral(registerOffset, insertChecks);
+            else if (function == toTagged(decimalOperator))
+                result = handleDecimalOperator(registerOffset, prediction, insertChecks);
+            else if (auto operation = decimalOperationOf(function))
                 result = handleDecimalMethod(*operation, registerOffset, argumentCountIncludingThis, prediction, insertChecks);
             if (!result)
                 return CallOptimizationResult::DidNothing;
@@ -7032,6 +7042,72 @@ Node* ByteCodeParser::handleDecimalMethod(DecimalOperation operation, int regist
         return emitDecimalOperation(operation, x, checkDecimal(argument(1)), prediction);
     }
     }
+}
+
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalLiteral(int registerOffset, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    // Null if it is very long.
+    String text = get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->tryGetString(m_graph);
+    if (text.isNull() || !decimalStructure())
+        return nullptr;
+
+    insertChecks();
+    return newDecimal(decimalConstant(Decimal128::parse(text).value_or(Decimal128::nan())));
+}
+
+template<typename ChecksFunctor>
+Node* ByteCodeParser::handleDecimalOperator(int registerOffset, SpeculatedType prediction, NOESCAPE const ChecksFunctor& insertChecks)
+{
+    // The result is undefined where the operands are not Decimals.
+    if ((prediction & SpecOther) && (prediction & ~SpecOther))
+        return nullptr;
+
+    insertChecks();
+    Node* left = get(virtualRegisterForArgumentIncludingThis(2, registerOffset));
+    Node* right = get(virtualRegisterForArgumentIncludingThis(3, registerOffset));
+    if (prediction & SpecOther) {
+        addToGraph(CheckNotJSCast, OpInfo(DecimalObject::info()), left);
+        return jsConstant(jsUndefined());
+    }
+
+    auto x = checkDecimal(left);
+    auto binary = [&](DecimalOperation operation) {
+        return emitDecimalOperation(operation, x, checkDecimal(right), prediction);
+    };
+    switch (static_cast<DecimalOperator>(get(virtualRegisterForArgumentIncludingThis(1, registerOffset))->asInt32())) {
+    case DecimalOperator::Add:
+        return binary(DecimalOperation::Add);
+    case DecimalOperator::Subtract:
+        return binary(DecimalOperation::Subtract);
+    case DecimalOperator::Multiply:
+        return binary(DecimalOperation::Multiply);
+    case DecimalOperator::Divide:
+        return binary(DecimalOperation::Divide);
+    case DecimalOperator::Remainder:
+        return binary(DecimalOperation::Remainder);
+    case DecimalOperator::Equal:
+        return binary(DecimalOperation::Equals);
+    case DecimalOperator::NotEqual:
+        return addToGraph(LogicalNot, binary(DecimalOperation::Equals));
+    case DecimalOperator::Less:
+        return binary(DecimalOperation::LessThan);
+    case DecimalOperator::LessOrEqual:
+        return binary(DecimalOperation::LessThanOrEqual);
+    case DecimalOperator::Greater:
+        return binary(DecimalOperation::GreaterThan);
+    case DecimalOperator::GreaterOrEqual:
+        return binary(DecimalOperation::GreaterThanOrEqual);
+    case DecimalOperator::Negate:
+        return emitDecimalOperation(DecimalOperation::Negate, x, std::nullopt, prediction);
+    case DecimalOperator::Increment:
+        return emitDecimalOperation(DecimalOperation::Add, x, decimalConstant(Decimal128::one()), prediction);
+    case DecimalOperator::Decrement:
+        return emitDecimalOperation(DecimalOperation::Subtract, x, decimalConstant(Decimal128::one()), prediction);
+    case DecimalOperator::ToNumeric:
+        return left;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 template<typename ChecksFunctor>

@@ -8,6 +8,7 @@
 #include <JavaScriptCore/Decimal128.h>
 #include <JavaScriptCore/JSString.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UnalignedAccess.h>
 
 namespace JSC {
 
@@ -69,6 +70,51 @@ private:
     static JSString* add(VM&, Set&, const Decimal128&, uint32_t format);
 
     std::array<Set, 512> m_sets { };
+};
+
+// The values of short literals, for code that evaluates one each time. By the characters, so the collector has no part in it.
+class DecimalLiteralCache {
+    WTF_MAKE_TZONE_ALLOCATED(DecimalLiteralCache);
+public:
+    ALWAYS_INLINE Decimal128 get(StringView text)
+    {
+        if (!text.is8Bit() || text.isEmpty() || text.length() > sizeof(uint64_t)) [[unlikely]]
+            return parse(text);
+        uint64_t characters = pack(text.span8());
+        auto& set = m_sets[(characters * 0x9e3779b97f4a7c15ull) >> (64 - log2OfNumberOfSets)];
+        if (set[0].is(characters, text.length())) [[likely]]
+            return set[0].value;
+        if (set[1].is(characters, text.length()))
+            return set[1].value;
+        return add(set, characters, text);
+    }
+
+private:
+    struct Entry {
+        uint64_t characters { 0 };
+        unsigned length { 0 };
+        Decimal128 value;
+
+        bool is(uint64_t otherCharacters, unsigned otherLength) const { return characters == otherCharacters && length == otherLength; }
+    };
+    // The one added last is the first.
+    using Set = std::array<Entry, 2>;
+
+    // Each at its place. The loads overlap where there are fewer than they cover.
+    static ALWAYS_INLINE uint64_t pack(std::span<const Latin1Character> text)
+    {
+        size_t size = text.size();
+        if (size >= 4)
+            return WTF::unalignedLoad<uint32_t>(text.data()) | static_cast<uint64_t>(WTF::unalignedLoad<uint32_t>(text.last(4).data())) << 8 * (size - 4);
+        return text.front() | text[size / 2] << 8 * (size / 2) | text.back() << 8 * (size - 1);
+    }
+
+    // NaN if it is no number.
+    static Decimal128 parse(StringView);
+    static Decimal128 add(Set&, uint64_t characters, StringView);
+
+    static constexpr unsigned log2OfNumberOfSets = 5;
+    std::array<Set, 1 << log2OfNumberOfSets> m_sets { };
 };
 
 } // namespace JSC
