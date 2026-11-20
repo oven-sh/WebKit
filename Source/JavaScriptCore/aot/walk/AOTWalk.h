@@ -1498,6 +1498,10 @@ public:
 
     void walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end);
     bool hasWalkedBeyond(const BodyValue& operation) const;
+    uint32_t limitOfStretchInFrontOfSteps(const BodyBlock& block, uint32_t limit) const { return m_hasTakenGeneratorsSteppedByHand ? placeOfNextStepOfGenerator(block, limit) : limit; }
+    uint32_t placeOfNextStepOfGenerator(const BodyBlock&, uint32_t limit) const;
+    Reference generatorSteppedBy(const BodyValue& operation) const { return m_hasTakenGeneratorsSteppedByHand ? findGeneratorSteppedBy(operation) : Reference(); }
+    Reference findGeneratorSteppedBy(const BodyValue& operation) const;
     struct StaticFieldSeenInVariable {
         VariableID variable;
         Reference held;
@@ -4730,8 +4734,15 @@ private:
         BlockID block;
         Reference sent;
         WalkState state;
+        struct OtherWay {
+            BlockID block;
+            Reference sent;
+            WalkState state;
+        };
+        Vector<OtherWay> otherWays;
     };
     EndOfManualIteration walkManualIterationToStep(const GeneratorWalkedInConsumer&);
+    void joinWaysToStep(EndOfManualIteration&);
     bool answerStepOfGeneratorTaken(const BodyValue&);
     bool holdsLoopsThatStepByHand(FunctionID);
     bool loopStepsGeneratorTaken(BlockID inputHead) const;

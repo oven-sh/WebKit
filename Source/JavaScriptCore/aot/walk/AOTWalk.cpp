@@ -6014,8 +6014,11 @@ Walker::StretchInArms Walker::stretchInArms(BlockID inputBlock, uint32_t begin, 
     }
     for (uint32_t place = 0; place < size; ++place) {
         uint32_t uses = index.useCount(ValueID(first + place));
-        if (uses == BodyIndex::maxCountedUses || uses > mentions[place])
-            stretch.mentionedBehind.append(ValueID(first + place));
+        if (uses != BodyIndex::maxCountedUses && uses <= mentions[place])
+            continue;
+        if (index.opcodeOf(ValueID(first + place)) == Opcode::PropGet && generatorSteppedBy(index.value(ValueID(first + place))))
+            continue;
+        stretch.mentionedBehind.append(ValueID(first + place));
     }
     BodyTerminator terminator = index.terminator(inputBlock);
     stretch.isReturnedAtOnce = terminator.kind() == TerminatorKind::ReturnCall && terminator.operand(0) == ValueID(first + size - 1);
