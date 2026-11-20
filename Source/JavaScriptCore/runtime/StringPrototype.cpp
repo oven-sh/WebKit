@@ -1027,9 +1027,9 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSlice, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(stringSlice<double>(globalObject, vm, string, length, start, end)));
 }
 
-// Return true in case of early return (resultLength got to limitLength).
+// Return true in case of early return (resultLength got to limitLength, or there is no more room).
 template<typename CharacterType, typename Indice>
-static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringImpl* string, char16_t separatorCharacter, unsigned limitLength)
+static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringImpl* string, char16_t separatorCharacter, unsigned limitLength, bool& hasOverflowed)
 {
     // 12. Let q = p.
     size_t matchPosition;
@@ -1043,7 +1043,10 @@ static ALWAYS_INLINE bool splitStringByOneCharacterImpl(Indice& result, StringIm
         //    through q (exclusive).
         // 2. Call the [[DefineOwnProperty]] internal method of A with arguments ToString(lengthA),
         //    Property Descriptor {[[Value]]: T, [[Writable]]: true, [[Enumerable]]: true, [[Configurable]]: true}, and false.
-        result.append(matchPosition);
+        if (!result.tryAppend(matchPosition)) [[unlikely]] {
+            hasOverflowed = true;
+            return true;
+        }
         // 3. Increment lengthA by 1.
         // 4. If lengthA == lim, return A.
         if (result.size() == limitLength)
@@ -1086,7 +1089,13 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     constexpr unsigned atomStringsArrayLimit = 100;
     const bool subjectCanBeKey = input->impl()->isAtomOrInImage();
 
+    bool hasOverflowed = false;
     auto cacheAndCreateArray = [&]() -> JSArray* {
+        if (hasOverflowed) [[unlikely]] {
+            result.clear();
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
         if (result.isEmpty())
             return constructEmptyArray(globalObject, nullptr);
 
@@ -1217,10 +1226,10 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     if (separatorLength == 1) {
         char16_t separatorCharacter = separatorImpl->at(0);
         if (stringImpl->is8Bit()) {
-            if (splitStringByOneCharacterImpl<Latin1Character>(result, stringImpl, separatorCharacter, limit))
+            if (splitStringByOneCharacterImpl<Latin1Character>(result, stringImpl, separatorCharacter, limit, hasOverflowed))
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
         } else {
-            if (splitStringByOneCharacterImpl<char16_t>(result, stringImpl, separatorCharacter, limit))
+            if (splitStringByOneCharacterImpl<char16_t>(result, stringImpl, separatorCharacter, limit, hasOverflowed))
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
         }
     } else {
@@ -1235,10 +1244,10 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
             // 1. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
             //    through q (exclusive).
             // 2. Call CreateDataProperty(A, ToString(lengthA), T).
-            result.append(matchPosition);
+            hasOverflowed = !result.tryAppend(matchPosition);
             // 3. Increment lengthA by 1.
             // 4. If lengthA == lim, return A.
-            if (result.size() == limit)
+            if (hasOverflowed || result.size() == limit)
                 RELEASE_AND_RETURN(scope, cacheAndCreateArray());
 
             // 5. Let p = e.
@@ -1250,7 +1259,7 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
     // 15. Let T be a String value equal to the substring of S consisting of the characters at positions p (inclusive)
     //     through s (exclusive).
     // 16. Call CreateDataProperty(A, ToString(lengthA), T).
-    result.append(input->length());
+    hasOverflowed = !result.tryAppend(input->length());
     RELEASE_AND_RETURN(scope, cacheAndCreateArray());
 }
 
