@@ -2184,7 +2184,7 @@ struct Machine {
     ALWAYS_INLINE Step runLoopBackUnlessEmpty()
     {
         if (registers()[op->registerIndex] == position)
-            return Step::Failed;
+            return nextIf(op->argument);
         return runLoopBack();
     }
 
