@@ -16,6 +16,7 @@
 #include "LocalAllocatorInlines.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <wtf/StdLibExtras.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/StringImpl.h>
@@ -236,7 +237,11 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
     auto areAdditionsLong = [&] {
         return length - bottom->length() + lengthOfPieces > lengthInAdvance + numberOfAdditions * maxLengthPerAddition;
     };
+    // A walk that ends at a long addition leaves the rope as deep as it was. A length passes a multiple of n once in n characters, which pay for n steps.
+    uint64_t maxAdditionsWalked = std::max<uint64_t>(4 * minAdditionsToGrowingText, std::bit_floor(length ^ (length + lengthOfPieces)));
     for (; bottom->isNonSubstringRope(); bottom = firstPartOf(bottom)) {
+        if (numberOfAdditions == maxAdditionsWalked)
+            return nullptr;
         if (numberOfAdditions == minAdditionsToGrowingText / 2)
             recent = bottom;
         if (!(++numberOfAdditions % additionsPerQuestion) && areAdditionsLong())
