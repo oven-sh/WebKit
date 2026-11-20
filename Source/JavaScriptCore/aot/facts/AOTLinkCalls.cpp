@@ -1216,7 +1216,8 @@ private:
     void makeSiteOfClassOfReceiver(const BuiltinTypePart&, const LinkType& receiver);
     bool onlyWaitRightBehindSeesResult() const;
     SlotOfContents slotOfField(const BuiltinTypePart&, uint16_t fieldIndex);
-    Values stepValuesOf(IterationKind, const Values& iterated);
+    enum class StepsThrough : bool { WhatClassHolds, Indexes };
+    Values stepValuesOf(IterationKind, const Values& iterated, StepsThrough = StepsThrough::WhatClassHolds);
     enum class NamesRead : uint8_t { All, ThoseThatMayBeIndexes };
     void addContentsOf(const LinkType& holder, const Source*, Values&, NamesRead = NamesRead::All);
     void addContentsOfSlot(RowCall&, const Values& holders, BuiltinSlotID, Values&);
@@ -6428,8 +6429,10 @@ ALWAYS_INLINE void CallInLinkCalls::addResult(RowCall& call)
     }
 
     if (result.iteratedOperand) {
-        Values stepValues = stepValuesOf(result.iterationKind, valuesAt(call, *result.iteratedOperand));
-        if (const BuiltinParameter* iterated = m_builtins.parameterFor(row, *result.iteratedOperand); iterated && iterated->conversion == BuiltinConversion::ToString)
+        const BuiltinParameter* iterated = m_builtins.parameterFor(row, *result.iteratedOperand);
+        bool takesArrayLike = iterated && iterated->conversion == BuiltinConversion::ToObject;
+        Values stepValues = stepValuesOf(result.iterationKind, valuesAt(call, *result.iteratedOperand), takesArrayLike ? StepsThrough::Indexes : StepsThrough::WhatClassHolds);
+        if (iterated && iterated->conversion == BuiltinConversion::ToString)
             add(stepValues, primitivesForLinkCalls(Primitive::String));
         bool everyIteratorIsFollowed = forEachSiteOfResult(call, [&](SiteID made, const BuiltinTypePart&) {
             bool hasSlot = false;
@@ -6973,7 +6976,7 @@ void CallInLinkCalls::addContentsOfSlot(RowCall& call, const Values& holders, Bu
     });
 }
 
-ValuesInLinkCalls CallInLinkCalls::stepValuesOf(IterationKind kind, const Values& iterated)
+ValuesInLinkCalls CallInLinkCalls::stepValuesOf(IterationKind kind, const Values& iterated, StepsThrough stepsThrough)
 {
     Values keys;
     Values held;
@@ -6989,6 +6992,10 @@ ValuesInLinkCalls CallInLinkCalls::stepValuesOf(IterationKind kind, const Values
             add(keys, primitivesForLinkCalls(Primitive::Integer));
             add(held, primitivesForLinkCalls(Primitive::String));
         }
+        if (stepsThrough == StepsThrough::Indexes && holder.primitives & ~(Primitive::AnyString | Primitive::UndefinedOrNull)) {
+            add(keys, primitivesForLinkCalls(Primitive::Integer));
+            add(held, primitivesForLinkCalls(Primitive::Undefined));
+        }
         if (holder.classes == LinkType::Classes::Site) {
             auto findSlot = [&](ContentsSlot wanted) {
                 BuiltinSlotID found;
@@ -7003,7 +7010,11 @@ ValuesInLinkCalls CallInLinkCalls::stepValuesOf(IterationKind kind, const Values
             auto stepValues = std::ranges::find_if(m_builtins.at(holder.builtinClass).slots, [&](BuiltinSlotID slot) {
                 return m_builtins.at(slot).holdsStepValues;
             });
-            if (findSlot(ContentsSlot::Key) && findSlot(ContentsSlot::Value)) {
+            if (stepsThrough == StepsThrough::Indexes && !isTypedArray && (!element || m_builtins.at(element).heap != AbstractHeap::Elements)) {
+                escape(holder, source);
+                add(keys, primitivesForLinkCalls(Primitive::Integer));
+                add(held, LinkType::anything());
+            } else if (findSlot(ContentsSlot::Key) && findSlot(ContentsSlot::Value)) {
                 add(keys, m_flow.contentsOf(holder, ContentsSlot::Key), beyond(source));
                 add(held, m_flow.contentsOf(holder, ContentsSlot::Value), beyond(source));
             } else if (isTypedArray) {
