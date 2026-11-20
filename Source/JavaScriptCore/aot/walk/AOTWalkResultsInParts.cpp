@@ -1474,7 +1474,8 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     NotesOfResultInParts notes;
     appendPiecesReadInResultsInParts(walker, notes, results, call.receiver, mentions->placesRead, 1, origin);
     if (mentions->readsLength) {
-        if (Reference length = buildResultOfRangeForStrings(walker, results, firstBoundOfParts + 2 * numberOfParts, origin))
+        Reference placeOfLast = buildResultOfRangeForStrings(walker, results, firstBoundOfParts + 2 * numberOfParts, origin);
+        if (Reference length = placeOfLast ? buildOperatorForStrings(walker, Opcode::Add, placeOfLast, integerForStrings(walker, 1), origin) : Reference())
             notes.append({ keyOfNameInResultsInParts(walker, BuiltinNames::length), length });
     }
     if (!array || !array.isValue() || walker.isUnreachable())
