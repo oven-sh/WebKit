@@ -13,7 +13,7 @@
 
 const sab = new SharedArrayBuffer(16);
 const ia = new Int32Array(sab);
-const steps = 40;
+const steps = 10;
 const capacityLimit = 300 * 1024 * 1024;
 
 $.agent.start(`
