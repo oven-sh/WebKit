@@ -114,8 +114,12 @@ uint8_t WideProductReader::numberOfFactor(Reference value, unsigned shift, Range
     const Code& code = m_walker.code();
     uint32_t key = value.isValue() ? code.valueBehindNames<valuePreservingOpcodes>(value.id()).index() << 1 : value.bits() << 1 | 1;
     for (size_t place = 0; place < m_factors.size(); ++place) {
-        if (m_factors[place].key == key && m_factors[place].shift == shift)
-            return place + 1;
+        FactorInWideProduct& factor = m_factors[place];
+        if (factor.key != key || factor.shift != shift)
+            continue;
+        // Each reading is bounded by what it asks for: (over | 0) + over * large.
+        factor.needed = factor.needed.intersectWith(needed);
+        return place + 1;
     }
     if (m_factors.size() == mostFactorsInWideProduct)
         return 0;
