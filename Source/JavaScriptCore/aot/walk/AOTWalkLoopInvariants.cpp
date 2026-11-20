@@ -719,6 +719,8 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         if (operand && !isInvariantInLoop(numberOfLoops - 1, operand))
             return std::nullopt;
     }
+    if (draft.opcode == Opcode::GetStringCodeUnit && !nameProvesPositionBelowLengthForStrings(*this, draft.positionOperand(), draft.stringOperand()))
+        return std::nullopt;
     if (drawChoice(DrawnFor::PlaceInFrontOfLoop, currentFunction().index(), draft.position, false) == ChoiceOfCost::No)
         return std::nullopt;
     if ((draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField) && draft.isKnownInitialized())
