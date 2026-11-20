@@ -1339,6 +1339,17 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSplit, (JSGlobalObject* globalObject, Ca
     RELEASE_AND_RETURN(scope, JSValue::encode(stringSplitFast(globalObject, thisString, separatorString, limit)));
 }
 
+static void throwNotAFunctionError(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
+{
+    auto message = constructErrorMessage(globalObject, value, "is not a function"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!message) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return;
+    }
+    throwTypeError(globalObject, scope, message);
+}
+
 JSValue stringMatchSlow(JSGlobalObject* globalObject, JSString* thisString, JSValue regexpValue)
 {
     VM& vm = globalObject->vm();
@@ -1354,9 +1365,7 @@ JSValue stringMatchSlow(JSGlobalObject* globalObject, JSString* thisString, JSVa
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(matcher);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, matcher);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, matcher);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1397,9 +1406,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatch, (JSGlobalObject* globalObject, Ca
         if (!matcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(matcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, matcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, matcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
@@ -1429,9 +1437,7 @@ JSValue stringSearchSlow(JSGlobalObject* globalObject, JSString* thisString, JSV
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(searcher);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, searcher);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, searcher);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1479,9 +1485,7 @@ JSValue stringMatchAllSlow(JSGlobalObject* globalObject, JSString* thisString, J
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(matchAllMethod);
     if (callData.type == CallData::Type::None) [[unlikely]] {
-        auto description = errorDescriptionForValue(globalObject, matchAllMethod);
-        RETURN_IF_EXCEPTION(scope, { });
-        throwTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+        throwNotAFunctionError(globalObject, scope, matchAllMethod);
         return { };
     }
     auto args = WTF::toArray<EncodedJSValue>({
@@ -1519,9 +1523,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncSearch, (JSGlobalObject* globalObject, C
         if (!searcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(searcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, searcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, searcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
@@ -1600,9 +1603,8 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncMatchAll, (JSGlobalObject* globalObject,
         if (!matcher.isUndefinedOrNull()) {
             auto callData = JSC::getCallData(matcher);
             if (callData.type == CallData::Type::None) [[unlikely]] {
-                auto description = errorDescriptionForValue(globalObject, matcher);
-                RETURN_IF_EXCEPTION(scope, { });
-                return throwVMTypeError(globalObject, scope, makeString(description, " is not a function"_s));
+                throwNotAFunctionError(globalObject, scope, matcher);
+                return { };
             }
             auto args = WTF::toArray<EncodedJSValue>({
                 JSValue::encode(thisValue),
