@@ -30,6 +30,7 @@ using TrustedImm64 = MacroAssembler::TrustedImm64;
 static constexpr unsigned maxStates = 63;
 static constexpr unsigned maxAlternatives = 31;
 static constexpr unsigned maxCodePoints = 256;
+static constexpr unsigned maxGroupsInFrontOfGroup = 64;
 static constexpr unsigned unbounded = std::numeric_limits<unsigned>::max();
 static constexpr unsigned unitsOfCodePoint = 2;
 
@@ -84,6 +85,8 @@ static bool addTerm(const Yarr::PatternTerm& term, Vector<AlternativeOfCodePoint
             return false;
         for (AlternativeOfCodePoints& sequence : sequences) {
             if (isFixed) {
+                if (sequence.sets.size() + term.quantityMinCount.value() > maxStates)
+                    return false;
                 for (unsigned count = 0; count < term.quantityMinCount; ++count)
                     sequence.sets.append(*set);
                 continue;
@@ -99,6 +102,8 @@ static bool addTerm(const Yarr::PatternTerm& term, Vector<AlternativeOfCodePoint
             return false;
         Vector<AlternativeOfCodePoints> results;
         for (const AlternativeOfCodePoints& sequence : sequences) {
+            if (sequence.groups.size() > maxGroupsInFrontOfGroup)
+                return false;
             for (auto& alternative : term.parentheses.disjunction->m_alternatives) {
                 Vector<AlternativeOfCodePoints> inner { sequence };
                 for (const Yarr::PatternTerm& innerTerm : alternative->m_terms) {
