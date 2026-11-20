@@ -640,6 +640,9 @@ void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext
         vm().verifyCanGC();
 
     m_hasAllocatedSinceLastCollection = true;
+#if USE(BUN_JSC_ADDITIONS)
+    didGrow();
+#endif
     m_extraMemoryBytesSinceLastCollectionCheck += size;
     bool shouldCheckForCollection = m_extraMemoryBytesSinceLastCollectionCheck >= MarkedBlock::blockSize;
     if (shouldCheckForCollection) {
@@ -2841,6 +2844,74 @@ bool Heap::shouldSweepSynchronously()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Heap::collectAsyncIfAllocated(size_t minimumBytes)
+{
+    if (!Options::useGC()) [[unlikely]]
+        return false;
+
+    if constexpr (validateDFGDoesGC)
+        vm().verifyCanGC();
+
+    if (!m_isSafeToCollect)
+        return false;
+
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    assertIsAccessHolder();
+
+    // The steps of collect(Async), in its order. A queued request that covers this one answers it, with no safepoint.
+    GCRequest request;
+    if (m_collector->isSubsumedByQueuedRequest(request))
+        return true;
+
+    RELEASE_ASSERT(vm().atomStringTable() == Thread::currentSingleton().atomStringTable());
+
+    stopIfNecessary();
+
+    // A request stays queued until its collection ends, and until then the bytes counted below are that collection's.
+    if (m_collector->hasPendingGCRequest())
+        return true;
+
+    // updateAllocationLimits() asks for a Full collection after an Eden one that left little room, and nothing but the
+    // next collection runs it. The same holds where every collection without a scope is a Full one and the last was not.
+    bool lastWasFull = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full;
+    bool isOwedFullCollection = !lastWasFull && (Collector::collectsOnlyFull() || wantsFullCollection());
+    if (totalBytesAllocatedThisCycle() < minimumBytes && !isOwedFullCollection)
+        return false;
+
+    m_collector->requestCollection(*this, request);
+    return true;
+}
+
+size_t Heap::sizeForGrowthNotice()
+{
+#if ENABLE(RESOURCE_USAGE)
+    size_t blockBytes = m_blockBytesAllocated;
+#else
+    size_t blockBytes = m_objectSpace.capacity();
+#endif
+    return blockBytes + extraMemorySize();
+}
+
+void Heap::notifyObserversAfterGrowth(size_t bytes)
+{
+    if (!bytes) {
+        m_sizeAtGrowthNotice = 0;
+        return;
+    }
+    size_t size = sizeForGrowthNotice();
+    m_sizeAtGrowthNotice = bytes > std::numeric_limits<size_t>::max() - size ? std::numeric_limits<size_t>::max() : size + bytes;
+}
+
+NEVER_INLINE void Heap::didGrowWithNoticeArmed()
+{
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    if (sizeForGrowthNotice() < m_sizeAtGrowthNotice)
+        return;
+    m_sizeAtGrowthNotice = 0;
+    for (auto* observer : m_observers)
+        observer->didGrow();
+}
+
 bool Heap::isIdleCollection() const
 {
     return m_collector->m_currentRequest.isIdle;
@@ -3211,6 +3282,9 @@ void Heap::didAllocateBlock(size_t capacity)
     m_blockBytesAllocated += capacity;
 #else
     UNUSED_PARAM(capacity);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    didGrow();
 #endif
 }
 

@@ -40,6 +40,9 @@ public:
     virtual void visitRoots(AbstractSlotVisitor&) { }
     // On the mutator's thread, after each collection.
     virtual void clearCachesInEpilogue() { }
+    // On the mutator's thread, once, inside the allocation that took the heap past what Heap::notifyObserversAfterGrowth()
+    // named. Must not allocate in the heap.
+    virtual void didGrow() { }
 };
 
 } // namespace JSC
