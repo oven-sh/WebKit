@@ -113,7 +113,11 @@ private:
 
     const PatternTerm* findRepeatedLookahead(PatternPosition position, unsigned subpatternId, unsigned groupsLeft)
     {
-        for (;;) {
+        for (unsigned termsLeft = maxTermsPassedToRepeatedLookahead;; --termsLeft) {
+            if (!termsLeft) {
+                sets().countLimitHit();
+                return nullptr;
+            }
             if (!position.precedingTermCount) {
                 if (!position.groupPosition)
                     return nullptr;

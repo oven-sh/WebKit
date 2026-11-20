@@ -2906,6 +2906,16 @@ public:
     };
     using TermsInOrder = Vector<const PatternTerm*, 16>;
     static constexpr unsigned maxTermsBehindLazyRun = 64;
+    // For all the lazy runs together: many of them can stand in front of the same terms.
+    unsigned m_termsLeftToVisitBehindLazyRuns { 1 << 20 };
+
+    bool chargeVisitBehindLazyRun()
+    {
+        if (!m_termsLeftToVisitBehindLazyRuns)
+            return false;
+        --m_termsLeftToVisitBehindLazyRuns;
+        return true;
+    }
 
     static bool isTakenOnce(const PatternTerm& group)
     {
@@ -2930,6 +2940,8 @@ public:
         for (;;) {
             for (; index < alternative->m_terms.size(); ++index) {
                 const PatternTerm& term = alternative->m_terms[index];
+                if (!chargeVisitBehindLazyRun())
+                    return false;
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern && isTakenOnce(term) && term.matchDirection() == Forward && term.parentheses.disjunction->m_alternatives.size() == 1) {
                     TermsBehindGroup behind { alternative, index + 1, outer };
                     return collectTermsBehind(term.parentheses.disjunction->m_alternatives[0].get(), 0, &behind, terms);
@@ -2940,6 +2952,8 @@ public:
             }
             if (!outer)
                 return true;
+            if (!chargeVisitBehindLazyRun())
+                return false;
             alternative = outer->alternative;
             index = outer->index;
             outer = outer->outer;
@@ -2947,8 +2961,10 @@ public:
     }
 
     // Whether the search from the term on depends on the position alone, and the JIT counts no turns in it: it gives a match up by their number.
-    static bool dependsOnPositionAlone(const PatternTerm& term)
+    bool dependsOnPositionAlone(const PatternTerm& term)
     {
+        if (!chargeVisitBehindLazyRun() || !isSafeToRecurse())
+            return false;
         switch (term.type) {
         case PatternTerm::Type::NumberedBackReference:
         case PatternTerm::Type::NamedBackReference:
@@ -2959,8 +2975,10 @@ public:
                 return false;
             [[fallthrough]];
         case PatternTerm::Type::ParentheticalAssertion:
-            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) {
-                return std::ranges::all_of(alternative->m_terms, dependsOnPositionAlone);
+            return std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [&](auto& alternative) {
+                return chargeVisitBehindLazyRun() && std::ranges::all_of(alternative->m_terms, [&](const PatternTerm& nested) {
+                    return dependsOnPositionAlone(nested);
+                });
             });
         default:
             return true;
@@ -3027,7 +3045,7 @@ public:
             if (step > 1 && !isSubset(sets.set(behind[step - 1]->m_matchedSet), sets.set(behind[step]->m_matchedSet)))
                 return false;
         }
-        return std::ranges::all_of(behind.span().subspan(next + 1), [](const PatternTerm* term) {
+        return std::ranges::all_of(behind.span().subspan(next + 1), [&](const PatternTerm* term) {
             return dependsOnPositionAlone(*term);
         });
     }

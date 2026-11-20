@@ -178,11 +178,15 @@ private:
         }
         found.places.fill(0, std::bit_ceil(found.texts.size() * 4));
         unsigned mask = found.places.size() - 1;
+        size_t takenPlacesLeftToPass = maxTakenPlacesPassedPerWholeText * found.texts.size();
         for (unsigned index = 0; index < found.texts.size(); ++index) {
             auto [begin, length] = found.texts[index];
             unsigned place = FlatProgram::WholeTexts::placeOf(length, found.units[begin], found.units[begin + length - 1]) & mask;
-            while (found.places[place])
+            while (found.places[place]) {
+                if (!takenPlacesLeftToPass--)
+                    return;
                 place = (place + 1) & mask;
+            }
             found.places[place] = index + 1;
         }
         found.units.shrinkToFit();
@@ -268,6 +272,8 @@ private:
     static constexpr unsigned maxNestingDepth = 64;
     static constexpr unsigned maxTermsVisitedForEmptiness = 64;
     static constexpr unsigned maxSharedPrefixDepth = 32;
+    static constexpr unsigned maxGroupsPassedByBranch = 256;
+    static constexpr unsigned maxTakenPlacesPassedPerWholeText = 32;
     static constexpr size_t maxIndexCount = std::numeric_limits<uint16_t>::max();
 
     // What the search goes on with behind a group that is taken exactly once.
@@ -1634,7 +1640,7 @@ private:
                     home = &group;
                     break;
                 }
-                if (!mayPassOthers || !group.first || intersects(*group.first, *first))
+                if (!mayPassOthers || !group.first || intersects(*group.first, *first) || groups.size() - i > maxGroupsPassedByBranch)
                     break;
             }
             if (!home) {
@@ -2330,9 +2336,9 @@ private:
     }
 
     // As findSinglePathOps(): nothing in front of the run makes a choice.
-    bool hasEmittedOnlyFixedSteps() const
+    bool hasEmittedOnlyFixedSteps()
     {
-        return std::ranges::all_of(m_program->ops, [](const FlatOp& op) {
+        m_mayHaveEmittedOnlyFixedSteps = m_mayHaveEmittedOnlyFixedSteps && std::ranges::all_of(m_program->ops, [](const FlatOp& op) {
             switch (op.kind) {
             case Kind::Character:
             case Kind::Text:
@@ -2355,6 +2361,7 @@ private:
                 return false;
             }
         });
+        return m_mayHaveEmittedOnlyFixedSteps;
     }
 
     // In ([\"']).*?\1 and \[(.+?)\]\(\1 nearly every end of the run fails at the back reference, after a frame, a capture and the steps between. Enclosure::endOfRunBeforeReference() goes
@@ -2669,6 +2676,7 @@ private:
     static constexpr unsigned maxTrackedReferencedGroups = 32;
     bool m_decodesSurrogatePairs { false };
     bool m_readsBackward { false };
+    bool m_mayHaveEmittedOnlyFixedSteps { true };
     unsigned m_nextRegister { 0 };
     const PatternAlternative* m_firstRepeatedAlternative { nullptr };
     KnownBacktrackableContent m_knownBacktrackableContent;
