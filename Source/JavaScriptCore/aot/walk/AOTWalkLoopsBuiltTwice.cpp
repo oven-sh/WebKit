@@ -7580,6 +7580,15 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             count(StatisticID::VersionedLoopsFillingLocalArrays);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_hoistedElementCheckCount != elementsAskedInFront && (m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements) & cellHoldingElementsMask))
             m_typedBuildEndedListsTestedInFront = true;
+        // loom.rows[0][i] = loom.next; sum += loom.rows[1][i]: a getter, a setter, a step or a trap that the turn takes may lay another list under the name.
+        auto turnsMayReplaceHolder = [&](const HoistedRow& row) {
+            static constexpr AbstractHeapSet heapsUnderNamesOfHolders { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
+            return !row.isRejected && std::ranges::any_of(row.fieldReads, [&](ValueID read) {
+                return m_effectsOfLoopKeptLast.writes.overlaps(readsOfNamedLookup(*this, index.value(read).key()).restrictedTo(heapsUnderNamesOfHolders));
+            });
+        };
+        if (!m_hasFailed && m_walkOfLoopWasKept && std::ranges::any_of(hoistedRowsOf(inputHead), turnsMayReplaceHolder))
+            m_typedBuildEndedListsTestedInFront = true;
         bool turnsStoreElements = m_effectsOfLoopKeptLast.mayRunOtherCode() || m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_hoistedNumberReadCount != numbersReadInFront && turnsStoreElements)
             m_typedBuildEndedListsTestedInFront = true;
