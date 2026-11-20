@@ -1001,6 +1001,9 @@ static uint64_t addressOfReplaceableValue(JSObject* holder, UniquedStringImpl* n
     Structure* structure = holder->structure();
     if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || structure->isWatchingReplacement())
         return 0;
+    // An operation that only reads, such as Object.keys(), may flatten it, which renumbers its offsets.
+    if (structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore())
+        return 0;
     unsigned attributes = 0;
     auto offset = structure->getWithoutMaterializing(name, attributes);
     if (!offset || !isValidOffset(*offset) || attributes & isNotReplaceable)
