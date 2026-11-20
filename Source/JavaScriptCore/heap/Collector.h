@@ -198,6 +198,8 @@ private:
     bool canSkipMarking();
 
     bool shouldCollectInCollectorThread() WTF_REQUIRES_LOCK(*m_threadLock) WTF_REQUIRES_CAPABILITY(m_collectorThreadRole);
+    // Whether every collection is a Full one, whatever its request says.
+    static bool collectsOnlyFull();
     CollectionScope decideCollectionScope() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void collectInCollectorThread() WTF_REQUIRES_CAPABILITY(m_collectorThreadRole);
     void collectInMutatorThread(Heap& conductor);

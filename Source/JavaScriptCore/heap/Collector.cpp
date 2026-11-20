@@ -292,9 +292,14 @@ bool Collector::shouldCollectInCollectorThread()
     return hasWorkWithLock() && !anyMutatorHasConnWithLock();
 }
 
+bool Collector::collectsOnlyFull()
+{
+    return !Options::useGenerationalGC() || VM::isInMiniMode();
+}
+
 CollectionScope Collector::decideCollectionScope()
 {
-    if (!Options::useGenerationalGC() || VM::isInMiniMode())
+    if (collectsOnlyFull())
         return CollectionScope::Full;
     if (m_currentRequest.scope)
         return *m_currentRequest.scope;
@@ -302,7 +307,7 @@ CollectionScope Collector::decideCollectionScope()
     // should be process-wide, not per heap, but Heap::collectNow depends on the Heap cache given a consistent result.
     bool anyHeapNeedsFullCollection = false;
     forEachHeap([&](Heap& heap) {
-        if (heap.m_shouldDoFullCollection || heap.overCriticalMemoryThreshold())
+        if (heap.wantsFullCollection())
             anyHeapNeedsFullCollection = true;
     });
     return anyHeapNeedsFullCollection ? CollectionScope::Full : CollectionScope::Eden;

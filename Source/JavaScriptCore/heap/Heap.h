@@ -507,6 +507,22 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command: the heap queues the
+    // collection only if there is something for it to do. That is when the mutator has allocated `minimumBytes` since the
+    // last collection ended, or when the collection would be the Full one that the Eden collections before it left owing
+    // (it frees what they could not, however little was allocated since). Returns whether a collection is queued or
+    // under way on return, this one or an earlier one. Mutator thread only.
+    JS_EXPORT_PRIVATE bool collectAsyncIfAllocated(size_t minimumBytes);
+
+    // A one-shot for an embedder that stops looking at a heap that has gone quiet: HeapObserver::didReachAllocationNotice()
+    // runs once, when the mutator has allocated `bytes` more than it has now. Allocation is what totalBytesAllocated()
+    // counts: cells of every kind, and the memory outside the heap that they report. It is what the heap paces its own
+    // collections with, so a collection in between takes nothing off. A second call replaces the first and 0 cancels.
+    // Mutator thread only.
+    JS_EXPORT_PRIVATE void setAllocationNotice(size_t bytes);
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
@@ -800,6 +816,16 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // Whether this heap makes a collection that was requested without a scope a Full one (Collector::decideCollectionScope()).
+    bool wantsFullCollection() { return m_shouldDoFullCollection || overCriticalMemoryThreshold(); }
+#if USE(BUN_JSC_ADDITIONS)
+    ALWAYS_INLINE void checkAllocationNotice()
+    {
+        if (m_allocationNoticeAt) [[unlikely]]
+            checkAllocationNoticeSlow();
+    }
+    void checkAllocationNoticeSlow();
+#endif
     bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
     bool canSkipMarking() const;
 
@@ -955,6 +981,7 @@ private:
     ApproximateTime m_currentGCStartApproximateTime;
     size_t m_bytesAllocatedSinceLastActiveCollection { 0 };
     uint64_t m_bytesAllocatedInPastCycles { 0 };
+    uint64_t m_allocationNoticeAt { 0 }; // setAllocationNotice(): the totalBytesAllocated() at which it is due. 0: none.
     bool m_isCollectionPrevented { false }; // Between preventCollection() and allowCollection(), which do not nest.
     bool m_auxiliaryEvacuationIsDue { false };
     HeapVersion m_lastAuxiliaryEvacuationVersion { 0 }; // The marking version (one per full collection) when cells were last moved.
