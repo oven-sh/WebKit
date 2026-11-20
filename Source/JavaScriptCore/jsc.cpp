@@ -503,6 +503,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionCollectAsyncIfAllocated);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
@@ -872,6 +873,7 @@ private:
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+        addFunction(vm, "collectAsyncIfAllocated"_s, functionCollectAsyncIfAllocated, 2);
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
@@ -2477,6 +2479,20 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, Call
     request.isIdle = true;
     vm.heap.collectSync(request);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+
+// The collection an embedder's idle timer hints at (Heap::collectAsyncIfAllocated): whether one is queued or under way.
+// With a second argument that is true, an Eden collection is requested first: a request that does not cover the hint.
+JSC_DEFINE_HOST_FUNCTION(functionCollectAsyncIfAllocated, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double minimumBytes = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (callFrame->argument(1).toBoolean(globalObject))
+        vm.heap.collectAsync(CollectionScope::Eden);
+    return JSValue::encode(jsBoolean(vm.heap.collectAsyncIfAllocated(static_cast<size_t>(std::max(minimumBytes, 0.0)))));
 }
 #endif
 

@@ -103,6 +103,17 @@ void LocalAllocator::stopAllocating(MarkedBlock::Handle::StopAllocatingMode mode
         return;
     }
 
+    // A cell that the mutator takes from a free list passes no slow path. resumeAllocating() makes the list anew from
+    // what is free in the block, so what is missing from it here was taken since the world last resumed.
+    JSC::Heap& heap = m_directory->markedSpace().heap();
+    if (!heap.m_hasAllocatedSinceLastCollectionBegan) {
+        size_t freeBytes = 0;
+        m_freeList.forEachInterval([&](char* intervalStart, char* intervalEnd) {
+            freeBytes += intervalEnd - intervalStart;
+        });
+        heap.m_hasAllocatedSinceLastCollectionBegan = freeBytes != m_freeList.originalSize();
+    }
+
     m_currentBlock->stopAllocating(m_freeList, mode);
     m_lastActiveBlock = m_currentBlock;
     m_currentBlock = nullptr;

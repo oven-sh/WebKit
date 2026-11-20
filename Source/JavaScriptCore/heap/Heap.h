@@ -507,6 +507,16 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command: the heap queues the
+    // collection only if there is something for it to do. That is when the mutator has allocated `minimumBytes` since the
+    // last collection ended (for 0: has allocated at all since the last collection began), or when the collection would
+    // be the Full one that the Eden collections before it left owing (it frees what they could not, however little was
+    // allocated since). Returns whether a collection is queued or under way on return, this one or an earlier one.
+    // Mutator thread only.
+    JS_EXPORT_PRIVATE bool collectAsyncIfAllocated(size_t minimumBytes);
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
@@ -771,6 +781,7 @@ private:
     friend class DeferGC;
     friend class DeferGCForAWhile;
     friend class HeapUtil;
+    friend class LocalAllocator;
     friend class MarkStackMergingConstraint;
     friend class MarkedSpace;
     friend class RunningScope;
@@ -800,6 +811,10 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // Whether this heap makes a collection that was requested without a scope a Full one (Collector::decideCollectionScope()).
+    bool wantsFullCollection() { return m_shouldDoFullCollection || overCriticalMemoryThreshold(); }
+    // collect(), and collectAsyncIfAllocated() with `minimumBytes`. Returns whether a collection is queued or under way.
+    bool collect(Synchronousness, GCRequest, std::optional<size_t> minimumBytes);
     bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
     bool canSkipMarking() const;
 
@@ -942,6 +957,10 @@ private:
     bool m_hasAllocatedSinceLastCollection { true };
     bool m_didSkipMarkingInLastCollection { false };
     bool m_validatesCellVisits { false };
+    // Whether the mutator has allocated a cell since the last collection began. Every allocation slow path sets it, and
+    // after a collection the first cell of each size takes that path. While a collection runs the mutator can also take
+    // cells from a free list, with no slow path: LocalAllocator::stopAllocating() sets it for those.
+    bool m_hasAllocatedSinceLastCollectionBegan { true };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
 
