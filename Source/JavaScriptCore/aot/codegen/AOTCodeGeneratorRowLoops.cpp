@@ -97,6 +97,8 @@ struct RowLoop {
     std::unique_ptr<RowLoop> nested;
     Vector<Step, 8> stepsAtEnd;
     Vector<Step, 24> stepsOfNest;
+    // Whether the gather and the sums are known to end at one bound. Otherwise that is asked in front.
+    bool hasOneBound { false };
     bool isTiled { false };
     Vector<Step, 24> stepsOfStoredRow;
 };
@@ -1126,7 +1128,8 @@ bool RowLoopFinder::findTiledOrder()
     ValueID boundOfSums = passed(nested.innerBound);
     auto isOfNest = [&](ValueID bound) { return isConstant(bound) || isInLoop(bound) || at(bound).traits().isPure(); };
     bool isOneBound = representative(boundOfGather) == representative(boundOfSums) || (isOfNest(boundOfGather) && isOfNest(boundOfSums) && isCongruent(boundOfGather, boundOfSums));
-    if (!isOneBound || !isOfAllColumns(isOfAllColumns, nested.nextSum))
+    m_found.hasOneBound = isOneBound;
+    if (!isOfAllColumns(isOfAllColumns, nested.nextSum))
         return false;
     for (ValueID part : { nested.sum, sums.reads[0].access, sums.reads[1].access }) {
         if (!includes(includes, nested.nextSum, part))
@@ -3113,14 +3116,18 @@ void RowLoopEmitter::emitNest()
     });
     if (m_loop.isTiled) {
         bool readsColumns = nested.form == RowLoop::Form::ColumnSum;
-        LBasicBlock others = readsColumns ? m_out.newBlock() : nullptr;
-        if (readsColumns) {
+        LBasicBlock others = readsColumns || !m_loop.hasOneBound ? m_out.newBlock() : nullptr;
+        auto requireForTiles = [&](LValue condition) {
             LBasicBlock tiles = m_out.newBlock();
-            m_out.branch(m_out.greaterThanOrEqual(m_out.sub(m_limit, m_first), sums.m_limit), normalEdge(tiles), normalEdge(others));
+            m_out.branch(condition, normalEdge(tiles), normalEdge(others));
             m_out.appendTo(tiles);
-        }
+        };
+        if (!m_loop.hasOneBound)
+            requireForTiles(m_out.equal(m_lengthAsWord, sums.m_lengthAsWord));
+        if (readsColumns)
+            requireForTiles(m_out.greaterThanOrEqual(m_out.sub(m_limit, m_first), sums.m_limit));
         emitTiles(sums, storedRows);
-        if (m_generator.m_hasFailed || !readsColumns)
+        if (m_generator.m_hasFailed || !others)
             return;
         m_out.appendTo(others);
         m_out.setOrigin(Machine::Origin());
