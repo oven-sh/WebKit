@@ -2356,7 +2356,7 @@ static JSArray* trySplitAtPlainText(JSGlobalObject* globalObject, VM& vm, JSStri
         };
         while ((found = findSeparator()) != notFound) {
             ends.append(static_cast<unsigned>(found));
-            if (ends.size() == limit)
+            if (ends.size() == limit || ends.size() >= MIN_SPARSE_ARRAY_INDEX)
                 break;
             position = static_cast<unsigned>(found) + separatorLength;
         }
