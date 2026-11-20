@@ -4919,7 +4919,9 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
         if (wasRequired(form))
             return form;
     }
-    if (file && !hasNotBegun(*file) && !wasEvictedByRemovedMock(*file))
+    // A statement has put code in the loader before it runs, and require() with type text loads that.
+    bool isCodeInLoader = file && data(*file).kind == ModuleKind::SourceText && m_table.fullPath(target).endsWith("?text"_s) && wasImportedByStatement(*file);
+    if (file && (isCodeInLoader || !hasNotBegun(*file)) && !wasEvictedByRemovedMock(*file))
         return *file;
     auto wasImported = [&](ModuleID form) {
         return (status(form) == ModuleStatus::Evaluated || hasBeenImported(form)) && !wasEvictedByRemovedMock(form);
