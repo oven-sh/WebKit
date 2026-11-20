@@ -503,6 +503,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionCollectAsyncIfAllocated);
+static JSC_DECLARE_HOST_FUNCTION(functionNotifyAfterHeapGrowth);
+static JSC_DECLARE_HOST_FUNCTION(functionHeapGrowthNotices);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
@@ -872,6 +875,9 @@ private:
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+        addFunction(vm, "collectAsyncIfAllocated"_s, functionCollectAsyncIfAllocated, 1);
+        addFunction(vm, "notifyAfterHeapGrowth"_s, functionNotifyAfterHeapGrowth, 1);
+        addFunction(vm, "heapGrowthNotices"_s, functionHeapGrowthNotices, 0);
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
@@ -2477,6 +2483,58 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, Call
     request.isIdle = true;
     vm.heap.collectSync(request);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+
+// The collection an embedder's idle timer hints at (Heap::collectAsyncIfAllocated): whether one is queued or under way.
+JSC_DEFINE_HOST_FUNCTION(functionCollectAsyncIfAllocated, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double minimumBytes = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsBoolean(vm.heap.collectAsyncIfAllocated(static_cast<size_t>(std::max(minimumBytes, 0.0)))));
+}
+
+// Counts the growth notices of the heap of the thread's VM (Heap::notifyObserversAfterGrowth). Never removed: the
+// shell's VMs live as long as their threads.
+class HeapGrowthNoticeCounter final : public HeapObserver {
+public:
+    static HeapGrowthNoticeCounter& forHeap(Heap& heap)
+    {
+        static thread_local HeapGrowthNoticeCounter* counter;
+        if (!counter) {
+            counter = new HeapGrowthNoticeCounter;
+            heap.addObserver(counter);
+        }
+        return *counter;
+    }
+
+    unsigned count { 0 };
+
+private:
+    void willGarbageCollect() final { }
+    void didGarbageCollect(CollectionScope) final { }
+    void didGrow() final { ++count; }
+};
+
+JSC_DEFINE_HOST_FUNCTION(functionNotifyAfterHeapGrowth, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    double bytes = callFrame->argument(0).toNumber(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    HeapGrowthNoticeCounter::forHeap(vm.heap);
+    vm.heap.notifyObserversAfterGrowth(static_cast<size_t>(std::max(bytes, 0.0)));
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHeapGrowthNotices, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    return JSValue::encode(jsNumber(HeapGrowthNoticeCounter::forHeap(vm.heap).count));
 }
 #endif
 
