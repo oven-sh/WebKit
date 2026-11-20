@@ -992,6 +992,11 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
+    // A program that lets go of what it holds at each error recovers. Its live heap shrinks from error to error, and that can't go on forever.
+    if (size_t liveSize = vm.heap.sizeAfterLastFullCollection(); liveSize < m_smallestLiveSizeAtError) {
+        m_smallestLiveSizeAtError = liveSize;
+        m_numberOfBarrenCollectionsSinceRoom = 0;
+    }
     // A range that grows takes its room from where storage takes it.
     if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
@@ -1010,6 +1015,7 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
     if (bytesAllocatedSinceLastFull >= vm.heap.objectSpace().capacity() / barrenCollectionDivisor) {
         m_numberOfBarrenCollections = 0;
         m_numberOfBarrenCollectionsSinceRoom = 0;
+        m_smallestLiveSizeAtError = std::numeric_limits<size_t>::max();
         m_hasCollectedAtPoll = false;
         return;
     }
@@ -1022,9 +1028,11 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
             vm.traps().setNeedsOutOfMemoryError(true);
         }
     }
-    if (m_numberOfBarrenCollectionsSinceRoom == barrenCollectionsUntilThreadEnds)
+    // Under a limit on address space malloc runs out too, and a program that catches those errors one after another goes on to let go of what it holds. There each error begins the count again.
+    unsigned numberOfBarrenCollections = s_isGrowable ? m_numberOfBarrenCollections : m_numberOfBarrenCollectionsSinceRoom;
+    if (numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)
         willUseLastReserve(vm);
-    if (m_numberOfBarrenCollectionsSinceRoom < barrenCollectionsUntilProcessEnds)
+    if (numberOfBarrenCollections < barrenCollectionsUntilProcessEnds)
         return;
     logExhaustion(exhaustedHeap);
     RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
