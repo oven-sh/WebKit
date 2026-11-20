@@ -7142,10 +7142,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
-        String path = modules.table().fullPath(ModuleID(module));
-        if (std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?'))); file && modules.data(*file).kind == ModuleKind::Data && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
-            modules.moduleNamespace(*file, Modules::ModulePhase::Evaluation);
-            OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+        if (std::optional<ModuleID> file = fileOfForm(modules, ModuleID(module))) {
+            // Until the text has evaluated, a require() loads code under the entry without a type.
+            if (modules.data(*file).kind != ModuleKind::Data)
+                OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+            if (modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
+                modules.moduleNamespace(*file, Modules::ModulePhase::Evaluation);
+                OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+            }
         }
     }
     OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
