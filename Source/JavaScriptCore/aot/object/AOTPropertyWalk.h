@@ -66,7 +66,7 @@ struct GetterWalkHooks {
     const ScopedLambda<bool(UniquedStringImpl*)>* isLeftOut { nullptr };
     bool refusesProtoName { false };
 };
-bool hasGetterToCall(JSObject* compiledObject);
+JS_EXPORT_PRIVATE bool hasGetterToCall(JSObject* compiledObject);
 enum class NewObjectTakes : bool { Definitions, Stores };
 bool tryListCallingGetters(JSGlobalObject*, JSObject* compiledObject, MarkedArgumentBuffer* keys, MarkedArgumentBuffer& values);
 JSObject* tryCopyWithGetters(JSGlobalObject*, JSObject* compiledObject, uint32_t excludedRunNumberPlusOne = 0, std::span<UniquedStringImpl* const> excludedNames = { });
