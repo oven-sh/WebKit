@@ -3376,16 +3376,20 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
                 slotsFilledOnce.append(slot);
         }
         BlockID firstIteration;
+        WalkState stateBeforeTests;
         if (!slotsFilledOnce.isEmpty()) {
             firstIteration = addBlock(BlockFrequency::Unlikely);
-            WalkState stateBeforeTests = m_state;
+            stateBeforeTests = m_state;
             for (const SlotOfLoop& slot : slotsFilledOnce)
                 guardSlotBeforeLoop(slot, index.block(inputHead).firstParameter().index(), firstIteration);
             if (m_hasFailed || isUnreachable())
                 return false;
-            m_state = WTF::move(stateBeforeTests);
+            m_state = stateBeforeTests;
         }
         enterWithFieldsOfScopes(reentry, enteringKept.span());
+        // What the arguments are made into on the way past the tests is made on that way alone: the first iteration, which a test leads to, comes back to the reentry.
+        if (firstIteration && pendingBlock(firstIteration).numberOfArrivals)
+            m_state = WTF::move(stateBeforeTests);
         m_state.invalidate(m_loopSummaries[place].effects);
         m_state.clearRestartMark();
         if (m_state.holdsFreshObjects())
