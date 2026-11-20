@@ -7342,6 +7342,9 @@ bool BuilderOfProgramFacts::mayReadRecordOfLastMatch() const
     if (!constructor || m_program.unseenCodeCanRun)
         return true;
     BuiltinID canonical = m_builtins.canonicalID(constructor);
+    // Whoever climbs from a class that extends it holds it as an unknown value, and native code reads under any name.
+    if (m_isLookedThrough.quickGet(canonical.index()) && programMayReachPrototypes())
+        return true;
     bool unknownValuesMayBeIt = m_hasDeferredMembers || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isLookedThrough.quickGet(canonical.index());
     return std::ranges::any_of(m_builtins.membersOf(canonical), [&](BuiltinID member) {
         const Builtin& entry = m_builtins.at(member);
