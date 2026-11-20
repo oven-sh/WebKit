@@ -82,7 +82,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* ins
         int64_t length = view->lengthRaw();
         int64_t first = start.isUndefined() ? 0 : start.asInt32();
         int64_t last = end.isUndefined() ? length : end.asInt32();
-        if (!isResizableOrGrowableShared(view->mode()) && !view->isDetached() && 0 <= first && first <= last && last <= length) [[likely]] {
+        if (!isResizableOrGrowableShared(view->mode()) && !view->isDetached() && !view->isShared() && 0 <= first && first <= last && last <= length) [[likely]] {
             std::span<const Latin1Character> bytes = byteCast<Latin1Character>(std::span<const uint8_t> { view->typedVector() + first, static_cast<size_t>(last - first) });
             if (bytes.empty())
                 OPERATION_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
