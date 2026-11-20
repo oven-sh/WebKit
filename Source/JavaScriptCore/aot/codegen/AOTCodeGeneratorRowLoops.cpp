@@ -3492,7 +3492,7 @@ void ArrayAllocationLoopEmitter::emit(LValue first, LBasicBlock written, LValue 
     ArrayElements elements = m_elements.elementsOf(CellPointer(m_array));
     LValue bound = valueOf(m_loop.bound);
     LValue length = m_elements.publicLengthAsWord(elements).value();
-    LValue limit = m_out.select(m_out.below(length, bound), length, bound);
+    LValue limit = m_out.select(m_out.lessThan(length, bound), length, bound);
     leaveUnless(m_out.lessThan(first, limit));
 
     LValue word = m_out.load32(wordOfProfile());
