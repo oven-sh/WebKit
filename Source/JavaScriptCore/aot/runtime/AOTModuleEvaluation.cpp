@@ -4907,8 +4907,14 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
     std::optional<ModuleID> file = findByName(key);
     if (file && isEvicted(*file))
         file = std::nullopt;
-    if (file && wasRequired(*file))
+    if (file && wasRequired(*file)) {
+        // A require() without a type took the string out of the file, and one with the type gets the module of the text.
+        if (data(*file).loaderReturnsNamespace() && m_table.fullPath(target).endsWith("?text"_s)) {
+            answersNamespace = true;
+            return target;
+        }
         return *file;
+    }
     for (ModuleID form : forms) {
         if (wasRequired(form))
             return form;
