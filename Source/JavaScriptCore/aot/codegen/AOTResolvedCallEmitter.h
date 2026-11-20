@@ -87,7 +87,7 @@ private:
     void storeBounds(RegExpMatchEmitter&, const RegExpMatchEmitter::Bounds&, LValue output, ptrdiff_t offset = 0);
     Boxed createMatchArray(const OperationContext&, const RegExpMatch&);
     Condition isMadeByLiteral(const RegExpMatch&);
-    void clearAbsentGroupBounds(const RegExpMatch&, unsigned count);
+    void clearAbsentGroupBounds(const RegExpMatch&);
     template<typename T> T matchByFirstCharacter(const ValueContext&, const RegExpMatch&, T miss, NOESCAPE const Invocable<T()> auto& call);
 
     Vector<ValueID, 2> m_stringsAskedFirstCharacter;
