@@ -55,6 +55,22 @@ Reference Walker::allocateScalarizedResult(ValueID call)
 
 Reference Walker::buildObjectOfScalars(LayoutID layout, Vector<uint32_t, 8>&& fields, Vector<Reference, 8>&& values, Origin origin)
 {
+    size_t endOfWhatIsListed = 0;
+    for (size_t place = 0; place < values.size() && plan().layout(layout).hasSlots(); ++place) {
+        if (plan().slot(layout, fields[place]).hasStorage() && onlyAllocationFills(*this, { layout, fields[place] }))
+            endOfWhatIsListed = place + 1;
+    }
+    for (size_t place = 0; place < endOfWhatIsListed; ++place) {
+        FieldReference field { layout, fields[place] };
+        if (!plan().slot(layout, fields[place]).hasStorage() || valueFitsSlot(*this, field, values[place]))
+            continue;
+        TypeID held = typeShownOfFieldHandedBack(*this, field);
+        if (!held || isNeverType(held) || m_types.isSubset(typeOf(values[place]), held) || !m_types.overlap(typeOf(values[place]), held))
+            continue;
+        values[place] = proveOrTrap(values[place], held, ProofSource::ResultOfCall, origin);
+        if (!values[place] || isUnreachable() || m_hasFailed)
+            return { };
+    }
     Draft allocation(Opcode::NewObject, origin);
     allocation.standsForNoValueOfInput = true;
     allocation.setLayout(layout);

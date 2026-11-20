@@ -175,6 +175,26 @@ static PropertyKeyID keyDefinedBehindAllocationInChoices(const Walker& walker, F
     return declaration.flags.containsAny(filledByAllocationAlone) ? PropertyKeyID() : declaration.key;
 }
 
+bool onlyAllocationFills(const Walker& walker, FieldReference field)
+{
+    return !keyDefinedBehindAllocationInChoices(walker, field);
+}
+
+TypeID typeShownOfFieldHandedBack(Walker& walker, FieldReference field)
+{
+    TypeArena& types = walker.types();
+    const PlacedSlot& slot = walker.plan().slot(field.layout, field.field);
+    TypeID held = slot.provenType ? slot.provenType : slot.type;
+    if (!held)
+        return { };
+    uint16_t neverStored = Primitive::Absent;
+    FieldFacts facts = walker.facts().field(field);
+    TypeID stored = walker.facts().linked().provenOfField(field);
+    if (facts.slotType && !facts.facts.contains(FieldFact::SlotHoldsUndefinedAndNull) && stored)
+        neverStored |= Primitive::UndefinedOrNull & ~types.at(stored).primitives;
+    return types.withoutPrimitives(held, neverStored);
+}
+
 bool valueFitsSlot(Walker& walker, FieldReference field, Reference value)
 {
     TypeArena& types = walker.types();
