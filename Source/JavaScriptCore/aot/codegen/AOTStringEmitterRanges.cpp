@@ -53,6 +53,9 @@ void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
 
     defineTestByBranching(value, [&](BranchTargets targets) {
         continueIf(equal(sub(end, start), word32(length)), targets.notTaken);
+        // A group that took no part in a match has no start. The bytecode interpreter leaves its end as it was.
+        if (typeOf(value->startOperand()).integers.minimum < 0)
+            continueIf(greaterThanOrEqual(start, word32(0)), targets.notTaken);
         holdRangeInside(value, start, end);
         branchOnTextAt(viewOf(value, value->stringOperand()), start, literal, targets);
     });
