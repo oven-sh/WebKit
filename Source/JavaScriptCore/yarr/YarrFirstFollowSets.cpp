@@ -29,6 +29,7 @@
 #include "YarrCanonicalize.h"
 #include "YarrPattern.h"
 #include <algorithm>
+#include <ranges>
 #include <wtf/ASCIICType.h>
 #include <wtf/Hasher.h>
 
@@ -338,11 +339,22 @@ Outcome CharacterSetWalker::collectBackReference(const PatternTerm& reference, c
         return Outcome::GaveUp;
     const PatternTerm* group = nullptr;
     const PatternAlternative* alternative = &alternativeOfReference;
+    constexpr unsigned termsPassedPerVisit = 8;
+    unsigned termsPassed = 0;
+    auto chargeTermPassed = [&] {
+        return ++termsPassed % termsPassedPerVisit ? Outcome::Done : chargeVisit(walk);
+    };
     while (alternative && !group) {
-        for (const PatternTerm& term : alternative->m_terms.span().first(termIndex)) {
+        if (chargeTermPassed() == Outcome::GaveUp)
+            return Outcome::GaveUp;
+        for (const PatternTerm& term : alternative->m_terms.span().first(termIndex) | std::views::reverse) {
+            if (chargeTermPassed() == Outcome::GaveUp)
+                return Outcome::GaveUp;
             bool isTakenOnce = term.quantityType == QuantifierType::FixedCount && term.quantityMaxCount == 1;
-            if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.capture() && term.parentheses.subpatternId == reference.backReferenceSubpatternId && isTakenOnce && term.matchDirection() == Forward)
+            if (term.type == PatternTerm::Type::ParenthesesSubpattern && term.capture() && term.parentheses.subpatternId == reference.backReferenceSubpatternId && isTakenOnce && term.matchDirection() == Forward) {
                 group = &term;
+                break;
+            }
         }
         if (!continuation)
             break;
