@@ -1256,8 +1256,25 @@ BlockID Walker::closeFrontOfQuietTurns(const OpenLoop& loop)
         count(StatisticID::LoopReloadBlocksEmitted);
         count(StatisticID::ReloadingBackEdgesEmitted, loop.edgesHeldBack.size());
     }
-    for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack)
-        m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
+    for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack) {
+        if (!loop.holdsReadsInFront || loop.carriedSlotsThatHangOnFront.isEmpty()) {
+            m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
+            continue;
+        }
+        ArgumentsOfEdge arguments = held.arguments;
+        for (uint32_t slot : loop.carriedSlotsThatHangOnFront) {
+            size_t place = arguments.m_records.size() - loop.carriedResultCount + slot;
+            Representation form = m_code.at(m_code.at(loop.head).parameters()[place]).representation;
+            Reference absent = convertWithoutCode(absentResult(form), form);
+            if (!absent) {
+                if (!m_hasFailed)
+                    fail("an answer that is not there has no form in which the front takes it"_s);
+                break;
+            }
+            arguments.m_records[place] = absent.id();
+        }
+        m_code.closeEdge(held.edge, loop.firstReloadBlock, arguments);
+    }
     for (const OpenLoop::EdgeHeldBack& held : loop.edgesThatRunIterationAgain)
         m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
     BlockID last = loop.reloadBlocks.last();

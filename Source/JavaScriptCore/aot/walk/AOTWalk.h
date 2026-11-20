@@ -2243,7 +2243,7 @@ public:
     bool executesInEverySpecializedIteration() const;
     bool tryPreparePreheaderForCall();
     Reference buildOnFirstArrival(ValueID site, const Draft& call, const Effects&);
-    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult);
+    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult, std::span<const Reference> operands = { });
     static constexpr uint32_t noCounter = std::numeric_limits<uint32_t>::max();
     struct RecurringAccess {
         uint32_t loop;
@@ -4227,6 +4227,8 @@ private:
         uint32_t carriedResultCount { 0 };
         uint32_t carriedResultsSummary { 0 };
         Vector<uint32_t, 2> carriedSlotsBuilt { };
+        // What hangs on what the front of the quiet turns reads.
+        Vector<uint32_t, 1> carriedSlotsThatHangOnFront { };
         Vector<uint32_t, 2> untouchedArrays { };
         struct CarriedElement {
             uint32_t slot;
