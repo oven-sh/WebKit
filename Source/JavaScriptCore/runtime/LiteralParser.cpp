@@ -2387,8 +2387,9 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 if (object->structure() != originalStructure && std::holds_alternative<ExistingProperty>(property)) [[unlikely]]
                     property = Identifier::fromUid(vm, std::get<ExistingProperty>(property).structure->transitionPropertyName());
             } else {
-                // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure.
-                ASSERT(object->structure() == originalStructure);
+                // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure,
+                // but for a dictionary that was being filled and has been given its shared Structure meanwhile.
+                ASSERT(object->structure() == originalStructure || (originalStructure->isDictionary() && std::holds_alternative<Identifier>(property)));
             }
 
             if (std::holds_alternative<ExistingProperty>(property)) {
