@@ -46,6 +46,7 @@
 #include "ClonedArguments.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
+#include "JSGlobalProxy.h"
 #include "PropertyName.h"
 #include "RegExpObject.h"
 #include <limits>
@@ -855,6 +856,25 @@ std::array<const Machine::AbstractHeap*, 2> AccessEmitter::heapsOfKeyedProperty(
     return { &m_heaps.entire(AbstractHeap::ObjectFields), &m_heaps.entire(AbstractHeap::NamedProperties) };
 }
 
+// A negative value is a place in the storage of the global object behind `object`, as that storage is at this use.
+Pointer AccessEmitter::addressOfKeyedProperty(CellPointer object, Pointer addressOrPlace)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    Integer place(addressOrPlace.value());
+    LBasicBlock isAddress = newBlock();
+    LBasicBlock isPlace = newBlock();
+    Join<Pointer> join(m_out);
+    branch(lessThan(place, Integer(m_out.constInt64(0))), { unlikelyEdge(isPlace), normalEdge(isAddress) });
+
+    m_out.appendTo(isAddress);
+    join.add(addressOrPlace);
+
+    m_out.appendTo(isPlace);
+    LValue global = m_out.loadPtr(m_out.address(m_heaps.root, m_out.opaque(object.value()), JSGlobalProxy::targetOffset()));
+    join.add(Pointer(add(place, Integer(m_out.loadPtr(global, m_heaps.JSObject_butterfly))).value()));
+    return join.finish();
+}
+
 void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
 {
     CellPointer object(in<Boxed>(value->objectOperand()).value());
@@ -863,6 +883,7 @@ void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
     if (operationAt(value->addressOperand()).findsOnlyFields())
         property = m_out.load64(TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        address = addressOfKeyedProperty(object, address);
         Machine::PatchOperation* load = m_out.patchpoint(Machine::Int64);
         load->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointRead(heapsOfKeyedProperty(), load);
@@ -887,6 +908,7 @@ void AccessEmitter::generatePutKeyedProperty(const ValueContext& value)
     if (isField)
         m_out.store64(stored.value(), TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        address = addressOfKeyedProperty(cell, address);
         Machine::PatchOperation* store = m_out.patchpoint(Machine::Void);
         store->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointWrite(heapsOfKeyedProperty(), store);
