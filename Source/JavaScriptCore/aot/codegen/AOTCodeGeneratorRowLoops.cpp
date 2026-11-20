@@ -203,6 +203,7 @@ private:
     bool dependsOnCounter(ValueID, unsigned depth = 0) const;
     bool dependsOnSum(ValueID, unsigned depth = 0) const;
     bool findOrderOfSteps();
+    bool isUntouchedByStores(const Step&) const;
     bool finish(const Edge& back);
     bool readsStoredColumn();
     void dropImpliedTests();
@@ -305,8 +306,12 @@ void RowLoopFinder::restorePlace(const Place& place, bool hadInnerLoop)
     m_nestedBlocks.shrink(0);
 }
 
+static bool onlyReads(const Operation&);
+
 bool RowLoopFinder::addTest(BlockID block, ValueID test, bool isOwnTest, bool expected)
 {
+    if (isOwnTest && !onlyReads(at(test)))
+        return false;
     if (!isOwnTest && !isInLoop(test) && !isAvailableBefore(test))
         return false;
     const Operation& operation = at(test);
@@ -318,7 +323,7 @@ bool RowLoopFinder::addTest(BlockID block, ValueID test, bool isOwnTest, bool ex
         if (step.kind != Step::Kind::OwnTest && step.kind != Step::Kind::Test)
             continue;
         const Operation& earlier = at(step.value);
-        if (isCongruent(test, step.value))
+        if (isCongruent(test, step.value) && (test == step.value || operation.traits().isPure() || (isInLoop(test) && isInLoop(step.value))))
             return step.expected == expected;
         bool bothHold = expected && step.expected;
         if (bothHold && testsOfClass.contains(operation.opcode) && testsOfClass.contains(earlier.opcode) && representative(operation.operand(0)) == representative(earlier.operand(0)))
@@ -528,7 +533,7 @@ bool RowLoopFinder::addInnerOperation(Body& body, BlockID block, ValueID value)
 bool RowLoopFinder::isColumnIndex(ValueID position) const
 {
     Representation representation = at(position).representation;
-    return (isAvailableBefore(position) || (m_isNest && passed(position) == m_found.counter)) && (representation == Representation::Int32 || representation == Representation::Int64) && m_generator.typeOf(position).integers.minimum >= 0;
+    return (m_isNest ? passed(position) == m_found.counter : isAvailableBefore(position)) && (representation == Representation::Int32 || representation == Representation::Int64) && m_generator.typeOf(position).integers.minimum >= 0;
 }
 
 bool RowLoopFinder::isInvariant(ValueID value, unsigned depth) const
@@ -920,7 +925,23 @@ bool RowLoopFinder::readsStoredColumn()
     }
     if (!isAvailableBefore(position) || (representation != Representation::Int32 && representation != Representation::Int64))
         return true;
-    return std::ranges::any_of(m_found.bodies[0].reads, [&](const ElementRead& read) { return !read.isColumn && !m_generator.isArrayWithoutRows(read.list); });
+    ValueID stored = m_generator.withoutNames(store.arrayOperand());
+    return std::ranges::any_of(m_found.bodies[0].reads, [&](const ElementRead& read) { return !read.isColumn && (!m_generator.isArrayWithoutRows(read.list) || m_generator.withoutNames(read.list) == stored); });
+}
+
+// The iterations store numbers into arrays of doubles, and nothing else. What reads no element of such an array is the same in front of all iterations, and where an iteration is run again.
+bool RowLoopFinder::isUntouchedByStores(const Step& step) const
+{
+    static constexpr OpcodeSet readsNoElement {
+        Opcode::HasStructureOfClass, Opcode::ShapeTest, Opcode::HasLayoutPrototype, Opcode::AreMembersUnchanged, Opcode::IsSlotFilled, Opcode::IsPristine, Opcode::HasArrayStorage, Opcode::TypeTest,
+        Opcode::GetSlot, Opcode::GetPropertyOfHeir, Opcode::GetCapture, Opcode::GetArrayStorage, Opcode::GetArrayLength, Opcode::RequireObjectCoercible, Opcode::Narrowed, Opcode::Unbox, Opcode::Box,
+    };
+    if (step.kind == Step::Kind::Row || step.kind == Step::Kind::Name || isConstant(step.value) || !isInLoop(step.value))
+        return true;
+    const Operation& operation = at(step.value);
+    if (operation.opcode == Opcode::GetArrayElement || operation.opcode == Opcode::IsElementPresent)
+        return operation.arrayStorage() == ArrayStorage::Contiguous;
+    return operation.traits().isPure() || readsNoElement.contains(operation.opcode);
 }
 
 bool RowLoopFinder::findOrderOfSteps()
@@ -945,7 +966,7 @@ bool RowLoopFinder::findOrderOfSteps()
         bool readsElement = step.kind != Step::Kind::Row && step.kind != Step::Kind::Name && !isConstant(step.value) && isInLoop(step.value) && elementReads.contains(opcodeOf(step.value));
         hasRow |= step.kind == Step::Kind::Row || (readsElement && opcodeOf(step.value) == Opcode::IsElementPresent && step.expected && passed(at(step.value).positionOperand()) == m_found.counter);
         bool mayChange = readsElement && !(at(step.value).arrayStorage() == ArrayStorage::Contiguous);
-        if (mayChange)
+        if (mayChange || (!isDependent && !isUntouchedByStores(step)))
             return false;
         (isDependent ? dependent : independent).append(step);
     }
@@ -990,7 +1011,7 @@ bool RowLoopFinder::findOrderOfSteps()
     }
     if (m_found.form == RowLoop::Form::Map) {
         for (const Step& step : m_found.stepsAfter) {
-            if (dependsOnCounter(step.kind == Step::Kind::Name ? step.source : step.value))
+            if (!isUntouchedByStores(step) || dependsOnCounter(step.kind == Step::Kind::Name ? step.source : step.value))
                 return false;
         }
     }
@@ -1017,7 +1038,8 @@ bool RowLoopFinder::findOrderOfNest()
     m_found.stepsBefore.appendRange(gather.decisions.begin(), gather.decisions.end());
     gather.decisions.shrink(0);
     for (const ElementRead& read : gather.reads) {
-        if (!read.isColumn && isKnown(read.list) && !m_generator.isArrayWithoutRows(read.list))
+        bool isStored = m_generator.withoutNames(read.list) == m_generator.withoutNames(gather.stores[0].list);
+        if (!read.isColumn && isKnown(read.list) && (isStored || !m_generator.isArrayWithoutRows(read.list)))
             return false;
     }
     if (m_found.innerGuard && !isKnown(m_generator.m_rows->guards[*m_found.innerGuard].array))
@@ -1043,6 +1065,12 @@ bool RowLoopFinder::findOrderOfNest()
             return false;
     }
     m_found.stepsAtEnd.removeAllMatching([&](const Step& step) { return !isKnown(step.value); });
+
+    auto isUntouched = [&](const Step& step) { return step.value == nested.store || isUntouchedByStores(step); };
+    for (std::span<const Step> steps : { m_found.stepsBefore.span(), m_found.stepsAfter.span(), m_found.stepsAtEnd.span(), nested.stepsBefore.span(), nested.stepsWithSum.span(), nested.stepsAfter.span() }) {
+        if (!std::ranges::all_of(steps, isUntouched))
+            return false;
+    }
 
     auto split = [&](Vector<Step, 24>& steps, Vector<Step, 24>& known) {
         Vector<Step, 24> dependent;
@@ -1084,6 +1112,22 @@ bool RowLoopFinder::findTiledOrder()
             return self(self, at(term).valueOperand(), part);
         return self(self, at(term).leftOperand(), part) || self(self, at(term).rightOperand(), part);
     };
+    auto isOfAllColumns = [&](auto& self, ValueID term) -> bool {
+        term = sums.numberOf(m_code, term);
+        if (isConstant(term) || term == nested.sum || term == sums.reads[0].access || term == sums.reads[1].access)
+            return true;
+        if (!sums.blocks.contains(m_code.blockOf(term)))
+            return !dependsOnCounter(term);
+        if (opcodeOf(term) == Opcode::Parameter || opcodeOf(term) == Opcode::GetArrayElement)
+            return false;
+        return self(self, at(term).leftOperand()) && self(self, at(term).rightOperand());
+    };
+    ValueID boundOfGather = passed(m_found.innerBound);
+    ValueID boundOfSums = passed(nested.innerBound);
+    auto isOfNest = [&](ValueID bound) { return isConstant(bound) || isInLoop(bound) || at(bound).traits().isPure(); };
+    bool isOneBound = representative(boundOfGather) == representative(boundOfSums) || (isOfNest(boundOfGather) && isOfNest(boundOfSums) && isCongruent(boundOfGather, boundOfSums));
+    if (!isOneBound || !isOfAllColumns(isOfAllColumns, nested.nextSum))
+        return false;
     for (ValueID part : { nested.sum, sums.reads[0].access, sums.reads[1].access }) {
         if (!includes(includes, nested.nextSum, part))
             return false;
