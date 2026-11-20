@@ -55,7 +55,6 @@ enum class SlotForm : uint8_t { Slot, PackedSlot };
 enum class SlotOrigin : uint8_t { ById, ByIdInStubFrame, ByVal };
 enum class SlotOperation : uint8_t { Read, StoreStrict, StoreSloppy, Define };
 enum class AddressLookup : uint32_t { StoresAnyValue, FitsFieldTypes, FindsAgain };
-constexpr JSTypeRange typesWithMovingStorage { ArrayType, DataViewType };
 
 constexpr SlotAccess accessOf(SlotOperation operation) { return operation == SlotOperation::Read ? SlotAccess::Read : operation == SlotOperation::Define ? SlotAccess::Define : SlotAccess::Store; }
 constexpr SlotOperation operationFor(PutMode mode) { return mode == PutMode::Strict ? SlotOperation::StoreStrict : mode == PutMode::Sloppy ? SlotOperation::StoreSloppy : SlotOperation::Define; }
