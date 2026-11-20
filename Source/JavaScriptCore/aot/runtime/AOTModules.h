@@ -2041,6 +2041,7 @@ private:
         StructureID idOfStructureOfModuleObjectLastLookedAt;
         bool isKeptByRequire { false };
         bool wasRequiredByHost { false };
+        bool wasImportedWhenRequired { false };
         bool isPatchedByMock { false };
         bool isReleasedPatch { false };
         bool wasEvaluatedWhenPatched { false };

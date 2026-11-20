@@ -4793,7 +4793,8 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
     for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
         std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
-        if (sharesEntry && wasRequired(*form))
+        // A form that was imported first stays under its type, and an import without one runs the code.
+        if (sharesEntry && wasRequired(*form) && !loadedIfExists(*form)->wasImportedWhenRequired)
             return looksInRequireCache || mark == "?text"_s ? *form : module;
     }
     return module;
