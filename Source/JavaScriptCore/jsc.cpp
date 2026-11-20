@@ -503,6 +503,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGCAndSweep);
 static JSC_DECLARE_HOST_FUNCTION(functionFullGC);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
+static JSC_DECLARE_HOST_FUNCTION(functionCollectAsyncIfNecessary);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
@@ -872,6 +873,7 @@ private:
         addFunction(vm, "fullGC"_s, functionFullGC, 0);
 #if USE(BUN_JSC_ADDITIONS)
         addFunction(vm, "idleFullGC"_s, functionIdleFullGC, 0);
+        addFunction(vm, "collectAsyncIfNecessary"_s, functionCollectAsyncIfNecessary, 0);
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
@@ -2477,6 +2479,14 @@ JSC_DEFINE_HOST_FUNCTION(functionIdleFullGC, (JSGlobalObject* globalObject, Call
     request.isIdle = true;
     vm.heap.collectSync(request);
     return JSValue::encode(jsNumber(vm.heap.sizeAfterLastFullCollection()));
+}
+
+// The collection an embedder's idle timer hints at (Heap::collectAsyncIfNecessary): false if the heap turned it down.
+JSC_DEFINE_HOST_FUNCTION(functionCollectAsyncIfNecessary, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    return JSValue::encode(jsBoolean(vm.heap.collectAsyncIfNecessary()));
 }
 #endif
 

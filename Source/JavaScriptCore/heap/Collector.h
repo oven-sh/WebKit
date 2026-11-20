@@ -156,6 +156,8 @@ private:
 
     GCRequest::Ticket requestCollection(Heap& requester, GCRequest);
     bool isSubsumedByQueuedRequest(const GCRequest&);
+    // Whether every collection is a Full one, whatever scope its request has.
+    static bool collectsOnlyFull();
 
     // Call after a mutator gives up the conn, so that any work waiting for the conn can proceed.
     void didRelinquishConn();

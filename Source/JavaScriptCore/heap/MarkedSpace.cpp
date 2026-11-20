@@ -329,6 +329,22 @@ void MarkedSpace::prepareForAllocation()
     m_preciseAllocationsNurseryOffset = m_preciseAllocations.size();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool MarkedSpace::isEdenEmpty()
+{
+    if (m_preciseAllocationsNurseryOffset != m_preciseAllocations.size())
+        return false;
+    bool isEmpty = true;
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            directory.assertMayAccessBitsUnlocked();
+            isEmpty = directory.edenBitsView().isEmpty();
+            return isEmpty ? IterationStatus::Continue : IterationStatus::Done;
+        });
+    return isEmpty;
+}
+#endif
+
 void MarkedSpace::enablePreciseAllocationTracking()
 {
     m_preciseAllocationSet = UncheckedKeyHashSet<HeapCell*> { };
