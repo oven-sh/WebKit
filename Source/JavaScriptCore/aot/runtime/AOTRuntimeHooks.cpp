@@ -14,6 +14,7 @@
 #include "AOTClosure.h"
 #include "AOTErrorMessages.h"
 #include "AOTGenerator.h"
+#include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTProgramStatics.h"
 #include "AOTRuntimeCheckFailure.h"
@@ -275,6 +276,13 @@ void didCreateRealm(JSGlobalObject* realm)
 
 void willRecompileRegExp(VM& vm)
 {
+    if (const Image* image = vm.aotState().image; image && (image->programTables().flags & ProgramTables::neverRecompilesRegExps)) [[unlikely]] {
+        RuntimeCheckFailure failure("reachability check failed"_s);
+        failure.atTopCall(vm);
+        failure.detail("RegExp.prototype.compile was called, but this executable was compiled as if nothing could call it");
+        failure.report();
+        CRASH();
+    }
     for (Instance* instance : vm.aotState().instances)
         instance->regExpsAreRecompiled = true;
 }

@@ -230,7 +230,7 @@ static Vector<StringID> findStringsByNumberInTables(const TableEncoder& encoder)
 static bool checkHeaderOfProgramTables(const JoinedTables& check)
 {
     using WordsOfInstanceSizes = std::array<uint32_t, sizeof(InstanceSizes) / sizeof(uint32_t)>;
-    constexpr uint32_t everyFlag = ProgramTables::mayRunInMultipleInstances | ProgramTables::neverReadsLegacyRegExpStatics;
+    constexpr uint32_t everyFlag = ProgramTables::mayRunInMultipleInstances | ProgramTables::neverReadsLegacyRegExpStatics | ProgramTables::neverRecompilesRegExps;
     const ProgramTables& tables = check.tables;
     const Typed::ShapeTable& shapes = check.plan.shapes();
     const FunctionNumbers& functions = check.numbers.functions();
