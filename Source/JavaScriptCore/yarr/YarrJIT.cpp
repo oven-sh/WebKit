@@ -11007,7 +11007,8 @@ class YarrGenerator final : public YarrJITInfo {
         dataLogLnIf(Options::verboseRegExpCompilation() && search.exactUnits, "Searches by exact units");
         if (search.exactUnits) {
             uint64_t repeats = m_charSize == CharSize::Char8 ? 0x01010101 : 0x00010001;
-            if (vectorIsLeft == VectorIsLeft::Unknown) {
+            constexpr unsigned maxUnitsInDisplacement = 0x3fffffff;
+            if (vectorIsLeft == VectorIsLeft::Unknown || claimed > maxUnitsInDisplacement) {
                 m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
                 moveConstant((*search.exactUnits)[0] * repeats | (*search.exactUnits)[1] * repeats << 32, m_regs.regT1);
                 callRoutine(SharedRoutine::FindFirstOfTwoUnits { m_charSize });
