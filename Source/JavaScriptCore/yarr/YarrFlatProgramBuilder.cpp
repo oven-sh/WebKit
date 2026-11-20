@@ -1858,6 +1858,8 @@ private:
         std::optional<CaptureRange> captures;
         bool countsTurns { false };
         bool makesNoChoice { false };
+        // Nothing behind a turn that has matched can fail: see YarrPatternConstructor::markTailLoops().
+        bool dropsFramesOfTurns { false };
     };
 
     static bool leavesFrameToResumeAt(const FlatOp& op)
@@ -1881,7 +1883,7 @@ private:
     template<typename Body>
     bool emitLoop(const Loop& loop, const Body& emitBody)
     {
-        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns, makesNoChoice] = loop;
+        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns, makesNoChoice, dropsFramesOfTurns] = loop;
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
@@ -1896,6 +1898,10 @@ private:
             for (unsigned group = captures->first; group <= captures->last; ++group)
                 emit(Kind::LoggedCaptureEmpty, group << 1);
         }
+        unsigned positionRegister = dropsFramesOfTurns ? m_nextRegister++ : 0;
+        unsigned frameDepthRegister = dropsFramesOfTurns ? m_nextRegister++ : 0;
+        if (dropsFramesOfTurns)
+            emitWithRegister(Kind::LookaheadBegin, positionRegister, frameDepthRegister);
         unsigned loopBegin = here();
         if (needsCounter)
             emitWithRegister(Kind::LoggedSetRegister, counter, 0);
@@ -1963,6 +1969,10 @@ private:
             emit(Kind::LoggedClearCaptures, captures->first, captures->last);
         if (!emitBody())
             return false;
+        if (dropsFramesOfTurns) {
+            emitWithRegister(Kind::SavePosition, positionRegister);
+            emitWithRegister(Kind::LookaheadEnd, positionRegister, frameDepthRegister);
+        }
         // A failure in a loop that leaves no frame to resume at goes back to before the loop. Its registers are set again on the way in, and what its captures held is logged in front of it,
         // so that no turn keeps a frame. Its turns are not steps of a search either: each takes input.
         bool keepsNoFrames = min == max && (makesNoChoice || !captures) && std::ranges::none_of(m_program->ops.span().subspan(loopBegin), leavesFrameToResumeAt);
@@ -2062,7 +2072,8 @@ private:
         // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
         if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice };
+        bool dropsFramesOfTurns = !m_countsTurns && (term.parentheses.isTerminal || term.parentheses.isTailLoop) && disjunction.m_minimumSize;
+        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice, dropsFramesOfTurns };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
         });
