@@ -240,7 +240,7 @@ bool isJoinFailureMovable(const Walker& walker, ValueID join)
     for (unsigned blocks = 0; blocks < maxBlocks; ++blocks) {
         for (ValueID id = code.lastOperationOf(block); id; id = code.at(id).previous) {
             if (id == join)
-                return true;
+                return block == walker.currentBlock() || (!code.at(block).handler && !walker.standsUnderHandler());
             if (!code.at(id).traits().isRemovableWhenUnused())
                 return false;
         }
