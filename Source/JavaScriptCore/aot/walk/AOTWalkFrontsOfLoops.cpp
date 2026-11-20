@@ -10,6 +10,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkStrings.h"
 
@@ -888,14 +889,18 @@ Reference Walker::buildUnswitchRead(uint32_t openLoop, ValueID record, unsigned 
         reads.add(program(), MemoryLocation::objectField(made.key()));
     if (made.opcode != Opcode::GetSlot || made.level() != KnowledgeLevel::Proven || reads.overlaps(m_openLoops[openLoop].effects.writes))
         return { };
-    Draft read(Opcode::GetSlot, m_origin);
-    chooseConservativeFields(read);
-    read.setKey(made.key());
-    read.setReceivers(made.receivers());
-    read.setLevel(KnowledgeLevel::Proven);
+    const PropertyKeyID key = made.key();
+    const LayoutSetID receivers = made.receivers();
+    const TypeID typeOfHolder = m_code.at(made.objectOperand()).type;
     Reference object = buildUnswitchRead(openLoop, made.objectOperand(), depth - 1);
-    if (!object || m_hasFailed || !m_types.isSubset(typeOf(object), m_code.at(made.objectOperand()).type))
+    if (!object || m_hasFailed || !m_types.isSubset(typeOf(object), typeOfHolder))
         return { };
+    const bool isFilled = areReceiversFilledAtAllReads(*this, typeOfHolder, key) || (m_openLoops[openLoop].stateAtHeader && findKnown(*this, *m_openLoops[openLoop].stateAtHeader, KnownNote::FilledSlot, object, { }, key.bits()));
+    Draft read(isFilled ? Opcode::GetSlot : Opcode::GetSlotOrUndefined, m_origin);
+    chooseConservativeFields(read);
+    read.setKey(key);
+    read.setReceivers(receivers);
+    read.setLevel(KnowledgeLevel::Proven);
     read.setObjectOperand(object);
     return build(WTF::move(read));
 }
