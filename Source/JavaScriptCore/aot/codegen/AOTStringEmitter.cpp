@@ -747,7 +747,8 @@ void StringEmitter::generateBoundsOfStringSplit(const ValueContext& value)
     Vector<Operand, 9> results;
     for (uint32_t bound = 0; bound < 2 * count; ++bound)
         results.append(Word32(m_out.load32(m_out.address(m_heaps.argumentBuffer, bounds.value(), bound * sizeof(uint32_t)))));
-    results.append(numberOfPieces);
+    // The longest text has 2^31 pieces, which is no int32: the place of the last piece is.
+    results.append(add(numberOfPieces, -1));
     defineResults(value, results.span());
 }
 
