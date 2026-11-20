@@ -547,6 +547,8 @@ private:
             m_state = ClassSetConstructionState::AfterSetOperand;
         }
 
+        bool isAfterCharacterClass() const { return m_state == ClassSetConstructionState::AfterCharacterClass; }
+
         bool canTakeSetOperand()
         {
             bool unionOpActive = m_setOp == CharacterClassSetOp::Default || m_setOp == CharacterClassSetOp::Union;
@@ -815,12 +817,12 @@ private:
         void atomPatternCharacter(char32_t ch, bool)
         {
             m_stringInProgress.append(ch);
-            if (m_stringInProgress.size() > 1)
-                m_mayContainStrings = true;
         }
 
         void newAlternative()
         {
+            if (m_stringInProgress.size() != 1)
+                m_mayContainStrings = true;
             m_strings.append(m_stringInProgress);
             m_stringInProgress.clear();
         }
@@ -1384,6 +1386,7 @@ private:
                 return;
 
             classSetConstructor.atomPatternCharacter(static_cast<char32_t>(ch), /* hyphenIsRange */ true);
+            classSetConstructor.computeMayContainStrings(false);
         };
 
         while (!atEndOfPattern()) {
@@ -1409,10 +1412,12 @@ private:
 
                 TokenType tokenType = parseClassSetEscape(classSetConstructor);
 
-                classSetConstructor.computeMayContainStrings(tokenType == TokenType::SetDisjunctionMayContainStrings);
-
                 if (tokenType == TokenType::SetDisjunction || tokenType == TokenType::SetDisjunctionMayContainStrings)
                     classSetConstructor.afterSetOperand();
+
+                // A built-in class has already accounted for its strings.
+                if (!classSetConstructor.isAfterCharacterClass())
+                    classSetConstructor.computeMayContainStrings(tokenType == TokenType::SetDisjunctionMayContainStrings);
 
                 break;
             }
