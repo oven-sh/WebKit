@@ -128,6 +128,45 @@ CellPointer GuardEmitter::cellOrElse(const OperationContext& context, ValueID id
     return untestedCell(context, id);
 }
 
+static std::span<const uint8_t> topDirectoryOfProgramFile(const Program& program, ModuleID id)
+{
+    if (!id || program.at(id).kind == ModuleKind::RuntimeSource || program.at(id).flags.contains(ModuleFlags::IsLibrary) || !program.at(id).displayPath)
+        return { };
+    std::span<const uint8_t> path = program.string(program.at(id).displayPath);
+    auto slash = std::ranges::find(path, '/');
+    return slash == path.end() || path[0] == '.' ? std::span<const uint8_t> { } : path.first(slash - path.begin());
+}
+
+bool GuardEmitter::mayMeetObjectOfOtherInstance(LayoutSetID tested)
+{
+    if (!build().options().assumesSeparateRealms())
+        return true;
+    if (!m_topDirectoryOfUnit) {
+        std::span<const uint8_t> directory = isLibraryCode(m_program, function()) ? std::span<const uint8_t> { } : topDirectoryOfProgramFile(m_program, function().module);
+        std::span<const InlineFrame> frames = m_code.inlineFrames();
+        bool holdsCodeFromElsewhere = std::ranges::any_of(frames, [&](const InlineFrame& frame) {
+            if (!frame.callee)
+                return true;
+            const Function& callee = m_program.at(frame.callee);
+            if (!isLibraryCode(m_program, callee))
+                return !equalSpans(topDirectoryOfProgramFile(m_program, callee.module), directory);
+            const InlineFrame* outer = &frame;
+            while (!outer->calledBuiltin && outer != frames.data())
+                outer = &frames[outer->parent];
+            return !outer->calledBuiltin || m_program.builtins().at(outer->calledBuiltin).origin != BuiltinOrigin::Engine;
+        });
+        m_topDirectoryOfUnit = holdsCodeFromElsewhere ? std::span<const uint8_t> { } : directory;
+    }
+    return m_topDirectoryOfUnit->empty() || types().layoutSets().at(tested).anyOf([&](LayoutID id) {
+        return !equalSpans(topDirectoryOfProgramFile(m_program, m_program.at(id).module), *m_topDirectoryOfUnit);
+    });
+}
+
+bool GuardEmitter::asksForInstance(const Type& known, LayoutSetID tested)
+{
+    return !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known) && mayMeetObjectOfOtherInstance(tested);
+}
+
 void GuardEmitter::generateShapeTest(const ValueContext& value)
 {
     if (AOT::hasFlag(build().options().testing, Wire::TestingSwitch::SkipUnrolledShapeChecks) && generator().isLayingOutTurns()) {
@@ -137,7 +176,7 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
     ValueID object = value->objectOperand();
     std::optional<TruthinessEmitter::DeferredTruthTest> deferred = emitter<TruthinessEmitter>().takeTruthTestOf(value.id());
     const Type& known = value->asksInFull() ? types().at(TypeTable::anythingOrAbsent) : typeOf(deferred ? deferred->source : object);
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, known);
+    bool asksForInstance = this->asksForInstance(known, value->layouts());
     MarkedObjects marked = value->rejectsMarkedObjects() ? MarkedObjects::AreRefused : MarkedObjects::Pass;
     defineTestByBranching(value, [&](BranchTargets targets) {
         BranchTargets targetsOfShape = targets;
@@ -797,7 +836,7 @@ void GuardEmitter::defineWhetherDeclaredMemberIsFound(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
     LayoutSetID receivers = value->receivers();
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    bool asksForInstance = this->asksForInstance(typeOf(object), value->receivers());
     defineTestByBranching(value, [&](BranchTargets targets) {
         CellPointer cell = cellOrElse(value, object, targets.notTaken);
         auto continueIf = [&](Condition holds) {
@@ -882,7 +921,7 @@ std::optional<GuardEmitter::RowOfCountsOfDoor> GuardEmitter::rowOfCountsOfDoor(c
 void GuardEmitter::defineWhetherObjectIsPlainInstance(const ValueContext& value)
 {
     ValueID object = value->objectOperand();
-    bool asksForInstance = !hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(object));
+    bool asksForInstance = this->asksForInstance(typeOf(object), value->receivers());
     std::optional<RowOfCountsOfDoor> row = rowOfCountsOfDoor(value);
     defineTestByBranching(value, [&](BranchTargets targets) {
         CellPointer cell = cellOrElse(value, object, targets.notTaken);
@@ -948,7 +987,7 @@ void GuardEmitter::defineWhetherNoMemberIsFound(const ValueContext& value)
             LBasicBlock hasShape = newBlock();
             emitter<ShapeTestEmitter>().branchOnShapeIn(cell, value->receivers(), typeOf(value->objectOperand()), { normalEdge(hasShape), targets.notTaken });
             m_out.appendTo(hasShape);
-            if (!hasOneInstance() && !holdsOnlyCompiledObjects(types(), m_plan, typeOf(value->objectOperand())))
+            if (asksForInstance(typeOf(value->objectOperand()), value->receivers()))
                 continueIf(belongsToInstance(cell));
         }
         uint32_t bits = (value->asksForNoExtraPropertyUnderKey() ? orderWordHasExtraProperties : 0) | (value->asksForNoFieldOutsideSlot() ? orderWordHasFieldOutsideSlot : 0);

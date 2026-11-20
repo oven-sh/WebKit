@@ -55,6 +55,8 @@ public:
 
     Condition holds(LayoutID classLayout, ClassSide, PropertyKeyID name);
     Condition guardsWereBegun(LayoutID constructorFunction);
+    bool mayMeetObjectOfOtherInstance(LayoutSetID tested);
+    bool asksForInstance(const Type& known, LayoutSetID tested);
     Condition belongsToInstance(CellPointer cell) { return hasInstanceRealm(loadStructure(cell)); }
     bool testsMayAddNamesToObjectPrototype() const;
     Condition noNameWasAddedToObjectPrototype();
@@ -95,6 +97,8 @@ private:
     Condition hasInstanceRealm(Pointer structure);
     void branchOnIsNotThenable(Boxed, const Type&, BranchTargets);
     void branchOnIsWatched(TypedPointer inlineWatchpointSet, BranchTargets);
+
+    std::optional<std::span<const uint8_t>> m_topDirectoryOfUnit;
 };
 
 } } } // namespace JSC::AOT::Typed

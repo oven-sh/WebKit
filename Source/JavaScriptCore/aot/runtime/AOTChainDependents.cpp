@@ -14,6 +14,7 @@
 #include "AOTGenerator.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
+#include "AOTHost.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
 #include "AOTObjectInternal.h"
@@ -378,6 +379,31 @@ void didChangeChainObject(VM& vm, JSObject* changed, UniquedStringImpl* uidOrNul
     tellOfChangeOfChainObject(vm, changed, uidOrNull, ChangeOfChainObject::IsOfAnyKind);
 }
 
+static bool announcesNames(Structure* structure)
+{
+    return structure->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence() && structure->typeInfo().newImpurePropertyFiresWatchpoints();
+}
+
+static size_t bitOfUnannouncedName(VM& vm, UniquedStringImpl* uid)
+{
+    return uid->existingSymbolAwareHash() % vm.aotState().hashesOfNamesTakenAsUnannounced.size();
+}
+
+void didAnnounceNameAboveGlobalObject(VM& vm, UniquedStringImpl* uidOrNull)
+{
+    auto& hashes = vm.aotState().hashesOfNamesTakenAsUnannounced;
+    if (uidOrNull ? !hashes.get(bitOfUnannouncedName(vm, uidOrNull)) : hashes.isEmpty()) [[likely]]
+        return;
+    for (Instance* instance : vm.aotState().instances) {
+        for (JSObject* object = instance->globalObject->getPrototypeDirect().getObject(); object; object = object->getPrototypeDirect().getObject()) {
+            if (announcesNames(object->structure()))
+                didChangeChainObject(vm, object, uidOrNull);
+        }
+    }
+    if (!uidOrNull)
+        hashes.clearAll();
+}
+
 void didSetPrototypeOfChainObject(VM& vm, JSObject* changed)
 {
     if (changed && changed == vm.aotState().unobservedClassHolder)
@@ -619,6 +645,11 @@ static bool isCompleteClassObject(VM& vm, JSObject* object, Structure* structure
     return prototype && isValidOffset(*prototype) && !closure->hasStaticFieldsLeft();
 }
 
+static bool isArrayPrototypeOfAnyRealm(Structure* structure)
+{
+    return structure->classInfoForCells() == ArrayPrototype::info();
+}
+
 static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* object, Structure* structure, UniquedStringImpl* uid)
 {
     VM& vm = start.globalObject->vm();
@@ -634,7 +665,7 @@ static bool hasOrdinaryLookupForName(const ChainWalkStart& start, JSObject* obje
         return true;
 
     JSType type = typeInfo.type();
-    bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || object == start.globalObject->arrayPrototype();
+    bool answersOnlyForLength = type == ArrayType || type == DerivedStringObjectType || isArrayPrototypeOfAnyRealm(structure);
     if (uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto) {
         return answersOnlyForLength && (uid == vm.propertyNames->name || uid == vm.propertyNames->prototype);
     }
@@ -736,11 +767,14 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         return stopAt(object, walk);
     if (structure->isCompiledStructure())
         return isCompiledObject(object) ? lookUpInCompiledObject(start, uid, *uncheckedDowncast<Object>(object), walk) : stopAt(object, walk);
-    if (start.use == ChainWalkUse::KeptForStores && uid == vm.propertyNames->length && isArrayPrototypeWithWritableLength(start.globalObject, object)) {
+    if (start.use == ChainWalkUse::KeptForStores && uid == vm.propertyNames->length && isArrayPrototypeOfAnyRealm(structure) && isArrayPrototypeWithWritableLength(structure->realm(), object)) {
         walk.changeableObjects.append(object);
         return stopAtProperty(walk, object, object, invalidOffset, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
     }
-    if (!hasOrdinaryLookupForName(start, object, structure, uid))
+    const bool mayAnnounceName = start.isNameThatNoObjectHasAnnounced && announcesNames(structure);
+    if (mayAnnounceName)
+        vm.aotState().hashesOfNamesTakenAsUnannounced.set(bitOfUnannouncedName(vm, uid));
+    else if (!hasOrdinaryLookupForName(start, object, structure, uid))
         return stopAt(object, walk);
 
     unsigned attributes = 0;
@@ -766,7 +800,7 @@ static StepResult lookUpInObject(const ChainWalkStart& start, UniquedStringImpl*
         }
     }
     bool canGainProperty = structure->isStructureExtensible() && !structure->isImmutablePropertyForReader(uid);
-    if (canGainProperty || !structure->hasImmutablePrototype())
+    if (canGainProperty || mayAnnounceName || !structure->hasImmutablePrototype())
         walk.changeableObjects.append(object);
     return StepResult::Continue;
 }

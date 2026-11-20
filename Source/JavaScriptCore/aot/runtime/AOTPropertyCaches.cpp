@@ -918,11 +918,20 @@ size_t HashedSlotTable::removeChainDependentEntries(StructureID structureID, Uni
 
 void HashedSlotTable::clear()
 {
+    clearDuringCollection();
     releaseNamesErasedDuringCollection();
+}
+
+void HashedSlotTable::clearDuringCollection()
+{
     m_writtenRegions.forEachRegionToClear([&](size_t beginOffset, size_t endOffset) {
         RememberedSlotSet::forEachEntryInRegion(allEntries(), beginOffset, endOffset, [&](Entry& entry) {
-            if (!entry.get().isEmpty())
-                erase(entry);
+            if (entry.get().isEmpty())
+                return;
+            forgetPlacesCopiedFrom(entry.get());
+            m_namesErasedDuringCollection.append(entry.get().uid());
+            entry.clear();
+            --m_numberOfFilledEntries;
         });
     });
     ASSERT(!m_numberOfFilledEntries);
@@ -1115,6 +1124,12 @@ void VMPropertyCaches::didCreateInstance(Instance& instance)
         didChangeObjectPrototype(instance.globalObject->objectPrototype(), nullptr);
     }
     publishWords(instance);
+}
+
+void VMPropertyCaches::clearTablesDuringCollection()
+{
+    m_front.clear();
+    m_hashedTable.clearDuringCollection();
 }
 
 void VMPropertyCaches::didChangeObjectPrototype(JSObject* prototype, UniquedStringImpl* uidOrNull)
@@ -1589,6 +1604,9 @@ bool VMPropertyCaches::keepChainDependent(VM& vm, uint32_t structureIDBits, Uniq
 {
     ASSERT(uid);
     ASSERT(vm.heap.isDeferred());
+    // Only the entry keeps the name alive.
+    if (!hasChainDependent(vm, structureIDBits, uid))
+        return false;
     unsigned attributes = 0;
     PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
     if (!isValidOffset(offset))
@@ -1801,7 +1819,8 @@ bool PropertyCaches::canCache(Structure* structure, const PropertyAnswer& answer
     bool isVariable = answer.kind == PropertyAnswerKind::Variable;
     if (answer.dependsOnChain() || isVariable) {
         JSGlobalObject* realm = structure->realm();
-        if (realm && Instance::of(realm) != &m_state.instance)
+        // The tables are cleared when a realm outlives the instance that drops its answers.
+        if (realm && (isVariable ? Instance::of(realm) : realm->aotTableInstance()) != &m_state.instance)
             return false;
     }
     return !m_tables.isSharedByInstances() || (!isVariable && structure->typeInfo().isObject());
@@ -2970,6 +2989,15 @@ static std::optional<AnswersAtSites::AnswerByStructure> getterFieldAnswer(SiteUs
     return answer ? std::optional(AnswersAtSites::AnswerByStructure { *answer, 0 }) : std::nullopt;
 }
 
+static std::optional<AnswersAtSites::AnswerByStructure> cachedValueAnswer(SiteUse use, const Slot& slot, const CustomAccessorTable& accessors)
+{
+    if (slot.kind != Slot::Kind::CustomGetter || !isRead(use))
+        return std::nullopt;
+    uint32_t offset = accessors.at(slot.customAccessor.index).offsetOfCachedValue;
+    std::optional<SiteAnswers::Answer> answer = offset ? SiteAnswers::tryByStructure(use, slot.structureID, SiteAnswers::Form::OwnFieldInCell, offset) : std::nullopt;
+    return answer ? std::optional(AnswersAtSites::AnswerByStructure { *answer, 0 }) : std::nullopt;
+}
+
 static std::optional<AnswersAtSites::AnswerByStructure> answerOfSlot(SiteUse use, const Slot& slot, uintptr_t cageBase, bool usesWideReferences, JSObject* objectThatHoldsUndefined)
 {
     using Form = SiteAnswers::Form;
@@ -3556,6 +3584,8 @@ void PropertyCaches::fillSiteAnswers(uint32_t place, JSCell* base, uint32_t iden
         slot = std::nullopt;
     bool placeMayNotCallGetter = slot && slot->kind == Slot::Kind::Getter && slot->has(Slot::isOwn) && compiledObjectStructureOrNull(structure);
     std::optional<AnswersAtSites::AnswerByStructure> answer = slot && !testsForPresence && !readsForOtherReceiver ? getterFieldAnswer(use, *slot) : std::nullopt;
+    if (!answer && slot && !testsForPresence && !readsForOtherReceiver && !compiledObjectStructureOrNull(structure))
+        answer = cachedValueAnswer(use, *slot, m_tables.customAccessors());
     if (!answer && slot && slot->kind == Slot::fieldOfGetter) {
         ChainWalk above = walkChain({ m_state.instance.globalObject, structure, asObject(base), ChainWalkMode::AllocatesNothing, ChainWalkUse::KeptForReadsThatAskObjects }, name.uid);
         if (above.result == ChainWalkResult::Found && above.holder && isValidOffset(above.offset) && (above.attributes & PropertyAttribute::Accessor))

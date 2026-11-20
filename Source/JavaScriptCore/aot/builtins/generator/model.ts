@@ -400,6 +400,10 @@ export interface ModelDispatch {
   root: ModelDispatchTarget;
 }
 
+/** `BuiltinTable::dispatchOf()` finds the only overload of a mode without a record. */
+export const dispatchesWithChoice = (dispatches: readonly ModelDispatch[]): ModelDispatch[] =>
+  dispatches.filter(({ root }) => "node" in root);
+
 export interface ModelCondition {
   operand: ModelOperand | null;
   isOneOf: readonly ModelName[];

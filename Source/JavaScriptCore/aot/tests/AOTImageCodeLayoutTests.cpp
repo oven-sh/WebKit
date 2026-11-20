@@ -12,6 +12,7 @@
 #include "AOTImageTestBodies.h"
 #include "AOTImageTestSupport.h"
 #include "AOTRegExpCompiler.h"
+#include "AOTStartOrder.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsExceptions.h"
 #include "AOTStubsPropertyKeys.h"
@@ -300,6 +301,17 @@ static void checkSelectedMoveLists(unsigned numberOfLists)
     Steps steps(bodiesWithMoves(100, lists.span()));
     steps.select();
     checkMoveLists(steps, lists.span());
+}
+
+static void testMoveListsInStartOrder()
+{
+    Vector<ArgumentMoves> lists = moveLists(4);
+    Steps steps(bodiesWithMoves(4, lists.span()));
+    constexpr uint32_t lateRank = 100000;
+    steps.build.context().setStartRanks({ noStartRank, noStartRank, lateRank, 0, noStartRank });
+    steps.select();
+    const ArgumentMoves expected[] = { lists[3], lists[2], lists[0], lists[1] };
+    checkMoveLists(steps, expected);
 }
 
 static void testUncalledKey()
@@ -674,6 +686,7 @@ std::span<const NativeTest> codeLayoutTests()
         { "image/stub-selection/called-keys"_s, testCalledKeys },
         { "image/stub-selection/equal-move-lists"_s, [] { checkSelectedMoveLists(1); } },
         { "image/stub-selection/different-move-lists"_s, [] { checkSelectedMoveLists(3); } },
+        { "image/stub-selection/move-lists-in-start-order"_s, testMoveListsInStartOrder },
         { "image/stub-selection/uncalled-key"_s, testUncalledKey },
         { "image/stub-selection/missing-stub"_s, [] { checkMissingStub(stubCaller(1, writeBarrier().withCount(1))); } },
         { "image/stub-selection/missing-stub-of-thunk"_s, [] { checkMissingStub(thunkCaller(1, stubArgumentMoves(writeBarrier().withCount(1), 1))); } },

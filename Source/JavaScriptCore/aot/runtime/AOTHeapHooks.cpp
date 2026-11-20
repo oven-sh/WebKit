@@ -15,6 +15,7 @@
 #include "AOTImage.h"
 #include "AOTInstance.h"
 #include "AOTObject.h"
+#include "AOTPropertyCaches.h"
 #include "AOTState.h"
 #include "AOTUnwinding.h"
 #include "AOTVMState.h"
@@ -121,11 +122,13 @@ void finalize(VM& vm, CollectionScope scope)
     state.realmsWithBorrowedTables.removeAllMatching([&](JSGlobalObject* realm) {
         return !vm.heap.isMarked(realm);
     });
-    state.lendTablesOfLivingInstances();
+    bool didLoseLender = state.lendTablesOfLivingInstances();
     if (state.realmWhoseDatesAreWrittenInPlace && !vm.heap.isMarked(state.realmWhoseDatesAreWrittenInPlace))
         state.realmWhoseDatesAreWrittenInPlace = nullptr;
 
     state.caches->finalize(vm, scope);
+    if (didLoseLender)
+        state.propertyCaches->clearTablesDuringCollection();
     for (Instance* instance : state.instances)
         instance->state->caches->finalize(vm, scope);
     if (!std::exchange(state.didFinishCollection, true))
@@ -252,16 +255,20 @@ static void forEachPiece(std::span<uint8_t> bytes, NOESCAPE const Invocable<void
     }
 }
 
-static void zeroNonzeroPiecesAndGiveBackWholePages(std::span<uint8_t> bytes)
+// Reading a page to see whether it was written to costs a fault, and on Darwin the page.
+static void zeroAndGiveBackWholePages(std::span<uint8_t> bytes)
 {
-    PagesToGiveBack pages;
-    forEachPiece(bytes, [&](size_t, std::span<uint8_t> piece, bool isWholePage) {
-        if (holdsOnlyZeros(piece))
-            return;
-        zeroSpan(piece);
-        if (isWholePage)
-            pages.add(piece);
-    });
+#if OS(LINUX) || OS(DARWIN)
+    uintptr_t begin = reinterpret_cast<uintptr_t>(bytes.data());
+    size_t beforePages = roundUpToMultipleOf(pageSize(), begin) - begin;
+    if (bytes.size() >= beforePages + pageSize()) {
+        size_t sizeOfPages = (bytes.size() - beforePages) & ~(pageSize() - 1);
+        zeroNonzeroPieces(bytes.first(beforePages));
+        OSAllocator::zeroFill(bytes.subspan(beforePages).data(), sizeOfPages);
+        bytes = bytes.subspan(beforePages + sizeOfPages);
+    }
+#endif
+    zeroNonzeroPieces(bytes);
 }
 
 static void zeroDirtyPiecesAndReleaseIdlePages(std::span<uint8_t> bytes, BitVector& writtenPages)
@@ -337,11 +344,7 @@ void CacheRegistry::addClearedAndGivenBackEachCollection(ASCIILiteral name, std:
         .size = zeroedByClear.size(),
     };
     entry.clear = [](Entry& entry) {
-        auto bytes = unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size);
-        if (pageGivenBackStaysAwayWhenRead)
-            zeroNonzeroPiecesAndGiveBackWholePages(bytes);
-        else
-            zeroNonzeroPieces(bytes);
+        zeroAndGiveBackWholePages(unsafeMakeSpan(static_cast<uint8_t*>(entry.owner), entry.size));
     };
     append(WTF::move(entry));
 }

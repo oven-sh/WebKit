@@ -57,6 +57,7 @@ public:
 
 private:
     bool appendWithoutSideEffects(JSGlobalObject*, JSValue);
+    bool appendIfRepeated(JSString*);
     void append(JSString*, StringViewWithUnderlyingString&&);
     void append8Bit(const String&);
     unsigned joinedLength(JSGlobalObject*) const;
@@ -98,17 +99,22 @@ inline JSString* JSStringJoiner::join(JSGlobalObject* globalObject)
     return joinImpl(globalObject);
 }
 
+ALWAYS_INLINE bool JSStringJoiner::appendIfRepeated(JSString* jsString)
+{
+    if (m_lastString != jsString)
+        return false;
+    auto& entry = m_strings.last();
+    if (entry.m_additional == UINT16_MAX) [[unlikely]]
+        return false;
+    ++m_stringsCount;
+    ++entry.m_additional;
+    m_accumulatedStringsLength += entry.m_view.view.length();
+    return true;
+}
+
 ALWAYS_INLINE void JSStringJoiner::append(JSString* jsString, StringViewWithUnderlyingString&& string)
 {
     ++m_stringsCount;
-    if (m_lastString == jsString) {
-        auto& entry = m_strings.last();
-        if (entry.m_additional < UINT16_MAX) [[likely]] {
-            ++entry.m_additional;
-            m_accumulatedStringsLength += entry.m_view.view.length();
-            return;
-        }
-    }
     m_accumulatedStringsLength += string.view.length();
     m_isAll8Bit = m_isAll8Bit && string.view.is8Bit();
     m_hasOverflowed |= !m_strings.tryAppend({ WTF::move(string), 0 });
@@ -148,6 +154,8 @@ ALWAYS_INLINE bool JSStringJoiner::appendWithoutSideEffects(JSGlobalObject* glob
         // FIXME: Support JSBigInt in side-effect-free append.
         // https://bugs.webkit.org/show_bug.cgi?id=211173
         if (JSString* jsString = dynamicDowncast<JSString>(value)) {
+            if (appendIfRepeated(jsString))
+                return true;
             auto view = jsString->view(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
             // Since getting the view didn't OOM, we know that the underlying String exists and isn't
@@ -193,6 +201,8 @@ ALWAYS_INLINE bool JSStringJoiner::append(JSGlobalObject* globalObject, JSValue 
         ASSERT(!value.isString());
         JSString* jsString = value.asCell()->toStringInline(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
+        if (appendIfRepeated(jsString))
+            return false;
         auto view = jsString->view(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         scope.release();

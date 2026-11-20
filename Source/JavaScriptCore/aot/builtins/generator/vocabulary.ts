@@ -562,6 +562,7 @@ export const builtinMarks = [
   "MayLayListenerForUncaughtExceptions",
   "IsReportedAsReadOnly",
   "AppliesMethodDecorators",
+  "IsOptional",
 ] as const;
 export type BuiltinMark = (typeof builtinMarks)[number];
 

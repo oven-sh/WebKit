@@ -48,6 +48,7 @@ struct ChainWalkStart {
     JSObject* receiverOrNull { nullptr };
     ChainWalkMode mode { ChainWalkMode::MayAllocate };
     ChainWalkUse use { ChainWalkUse::KeptForReads };
+    bool isNameThatNoObjectHasAnnounced { false };
 };
 
 struct ChainWalk {

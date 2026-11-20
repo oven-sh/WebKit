@@ -149,9 +149,45 @@ function checkNameNumbers(namesInArrayOrder: readonly ModelName[]): void {
   });
 }
 
+function isOptional(builtin: ModelBuiltin | null): boolean {
+  for (let current = builtin; current !== null; current = current.holder)
+    if (current.marks.includes("IsOptional")) return true;
+  return false;
+}
+
+function reachedFrom(roots: readonly unknown[], isBarrier: (value: object) => boolean): Set<object> {
+  const reached = new Set<object>();
+  const waiting = [...roots];
+  while (waiting.length > 0) {
+    const value = waiting.pop();
+    if (typeof value !== "object" || value === null || reached.has(value) || isBarrier(value)) continue;
+    reached.add(value);
+    for (const inner of value instanceof Set || value instanceof Map ? value : Object.values(value)) waiting.push(inner);
+  }
+  return reached;
+}
+
+/** The names that nothing in the table speaks of but optional entries. */
+function collectNamesOfOptionalEntries(model: TableModel): ModelName[] {
+  const optional = new Set<object>([
+    ...model.builtins.filter(isOptional),
+    ...model.classes.filter(({ prototype }) => isOptional(prototype)),
+    ...model.modules.filter(({ namespace }) => isOptional(namespace)),
+    ...model.closedKeys.filter(({ holder }) => isOptional(holder)),
+  ]);
+  if (optional.size === 0) return [];
+  const { names, overloads, dispatches, dispatchNodes, ...rest } = model;
+  const rowsOfOthers = [...overloads, ...dispatches].filter(({ builtin }) => !isOptional(builtin));
+  const ofOthers = reachedFrom([rest, rowsOfOthers], value => optional.has(value));
+  const ofOptional = reachedFrom([...optional], value => ofOthers.has(value));
+  return names.filter(name => name.kind === "Text" && ofOptional.has(name));
+}
+
 function collectMemberClasses(classes: readonly ModelClass[]): MemberNameClasses[] {
   const classesByName = new Map<number, MemberNameClasses>();
-  for (const builtinClass of classes) {
+  // BuiltinTable::classesWithInstanceMember() cuts the optional ones off the end.
+  const isLast = ({ prototype }: ModelClass) => isOptional(prototype);
+  for (const builtinClass of [...classes.filter(other => !isLast(other)), ...classes.filter(isLast)]) {
     for (const { name } of builtinClass.prototype?.members ?? []) {
       const found = classesByName.get(name.number);
       if (found === undefined) classesByName.set(name.number, { name, classes: [builtinClass] });
@@ -225,6 +261,11 @@ export function nameArraysOf(model: TableModel): NameArrays {
         cppType: "BuiltinProtocolKeys",
         name: "builtinTableProtocolKeys",
         elements: model.protocolKeys.map(entry => formatProtocolKeys(entry, protocolKeyNames)),
+      },
+      {
+        cppType: "BuiltinName",
+        name: "builtinTableNamesOfOptionalEntries",
+        elements: collectNamesOfOptionalEntries(model).map(name => formatName(name)),
       },
       {
         cppType: "BuiltinID",

@@ -11,6 +11,7 @@
 #include "AOTBuildContext.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStartOrder.h"
 #include "AOTStubCatalog.h"
 #include "AOTStubDescriptor.h"
 #include <algorithm>
@@ -35,6 +36,14 @@ struct HashedArgumentMoves {
 static_assert(!VectorTraits<HashedArgumentMoves>::needsInitialization && !VectorTraits<KeptArgumentMoves>::needsInitialization, "the loops that fill a list of them are the first to touch its memory");
 
 } // anonymous namespace
+
+static constexpr uint8_t tierOfWhatNoListedFunctionCalls = std::numeric_limits<uint8_t>::max();
+
+static uint8_t tierOfStartRank(uint32_t rank)
+{
+    constexpr unsigned shiftOfRanksInFirstTier = 9;
+    return rank == noStartRank ? tierOfWhatNoListedFunctionCalls : std::bit_width(rank >> shiftOfRanksInFirstTier);
+}
 
 static bool comesFirstAmongArgumentMoves(KeptArgumentMoves a, KeptArgumentMoves b)
 {
@@ -96,13 +105,13 @@ namespace {
 struct ArgumentMovesWithFirstWords {
     std::array<uint64_t, 4> firstWords;
     uint32_t list;
-    uint32_t unused;
+    uint32_t tier;
 };
 static_assert(!VectorTraits<ArgumentMovesWithFirstWords>::needsInitialization, "the loops that fill a list of them are the first to touch its memory");
 
 } // anonymous namespace
 
-static Vector<KeptArgumentMoves> sortArgumentMovesByWords(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, const Vector<uint32_t>& kept, Vector<uint32_t>& placeOfKept, Vector<StubKey>& stubKeys)
+static Vector<KeptArgumentMoves> sortArgumentMovesByWords(const ParallelLoops& loops, const Vector<HashedArgumentMoves>& lists, const Vector<uint32_t>& kept, std::span<const uint8_t> tiers, Vector<uint32_t>& placeOfKept, Vector<StubKey>& stubKeys)
 {
     Vector<ArgumentMovesWithFirstWords> withFirstWords;
     withFirstWords.grow(kept.size());
@@ -111,12 +120,14 @@ static Vector<KeptArgumentMoves> sortArgumentMovesByWords(const ParallelLoops& l
             std::span<const uint64_t> words = lists[kept[index]].moves.span();
             ArgumentMovesWithFirstWords& entry = withFirstWords[index];
             entry.list = kept[index];
-            entry.unused = 0;
+            entry.tier = tiers.empty() ? 0 : tiers[entry.list];
             for (size_t word = 0; word < entry.firstWords.size(); ++word)
                 entry.firstWords[word] = word < words.size() ? words[word] : 0;
         }
     });
     parallelSort(loops, withFirstWords.mutableSpan(), [&](const ArgumentMovesWithFirstWords& a, const ArgumentMovesWithFirstWords& b) {
+        if (a.tier != b.tier)
+            return a.tier < b.tier;
         for (size_t word = 0; word < a.firstWords.size(); ++word) {
             if (a.firstWords[word] != b.firstWords[word])
                 return a.firstWords[word] < b.firstWords[word];
@@ -317,9 +328,24 @@ std::optional<CalledSharedCode> collectCalledSharedCode(const LinkedFunctions& f
     Vector<uint32_t> kept = removeDuplicateArgumentMoves(loops, hashedMoves, listKeptFor);
     times.didFinish("remove duplicate argument moves"_s);
 
+    Vector<uint8_t> tiers;
+    if (std::span<const uint32_t> startRanks = context.startRanks(); !startRanks.empty()) {
+        tiers.fill(tierOfWhatNoListedFunctionCalls, hashedMoves.size());
+        for (size_t position = 0; position < functions.size(); ++position) {
+            uint8_t tier = tierOfStartRank(startRanks[functions[position].unit.function.index()]);
+            if (tier == tierOfWhatNoListedFunctionCalls)
+                continue;
+            uint32_t firstListKept = firstListKeptByChunk[position / indicesInRangeOfLoop];
+            for (uint32_t thunk : thunksOfLists.subspan(firstListOfBody[position], firstListOfBody[position + 1] - firstListOfBody[position])) {
+                uint8_t& tierOfList = tiers[listKeptFor[firstListKept + thunk]];
+                tierOfList = std::min(tierOfList, tier);
+            }
+        }
+    }
+
     called.stubKeys = joinChunks<StubKey>(loops, WTF::move(stubKeysOfChunks));
     Vector<uint32_t> placeOfKept;
-    called.argumentMoves = sortArgumentMovesByWords(loops, hashedMoves, kept, placeOfKept, called.stubKeysOfArgumentMoves);
+    called.argumentMoves = sortArgumentMovesByWords(loops, hashedMoves, kept, tiers.span(), placeOfKept, called.stubKeysOfArgumentMoves);
     forEachRangeOfIndicesInParallel(loops, functions.size(), [&](size_t first, size_t end) {
         uint32_t firstListKept = firstListKeptByChunk[first / indicesInRangeOfLoop];
         for (uint32_t& thunk : thunksOfLists.subspan(firstListOfBody[first], firstListOfBody[end] - firstListOfBody[first]))
@@ -368,9 +394,9 @@ static void checkStubSummariesMatchCompile(const StubCatalog& catalogOfImage, st
 
 uint32_t SharedCode::thunkOffset(std::span<const uint64_t> moves) const
 {
-    auto found = std::ranges::lower_bound(argumentMoves, KeptArgumentMoves(moves), comesFirstAmongArgumentMoves);
-    RELEASE_ASSERT(found != argumentMoves.end() && areSameArgumentMoves(*found, moves));
-    return argumentThunks.offsets[found - argumentMoves.begin()];
+    return argumentThunks.offsets[argumentMoves.findIf([&](KeptArgumentMoves each) {
+        return areSameArgumentMoves(each, moves);
+    })];
 }
 
 SharedCode generateSharedCode(CalledSharedCode&& called, const StubCatalog& catalog, const WTF::BitSet<numberOfEntries>& entriesUsedByFunctions, BuildContext& context)

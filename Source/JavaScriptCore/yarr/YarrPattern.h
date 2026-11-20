@@ -652,7 +652,10 @@ struct TermChain {
 struct CharacterSetWithRanges;
 
 struct YarrPattern {
-    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, PatternAnalysis = PatternAnalysis::Skipped);
+    // expansionLimit: how long the text may be, and how many terms and members of classes may be made or copied besides those that it spells out. More is ErrorCode::PatternTooLarge.
+    static constexpr size_t noExpansionLimit = std::numeric_limits<size_t>::max();
+
+    JS_EXPORT_PRIVATE YarrPattern(StringView pattern, OptionSet<Flags>, ErrorCode&, ExecutionMode = ExecutionMode::IncludeSubpatterns, PatternAnalysis = PatternAnalysis::Skipped, size_t expansionLimit = noExpansionLimit);
     JS_EXPORT_PRIVATE ~YarrPattern();
 
     void resetForReparsing()
@@ -781,7 +784,7 @@ struct YarrPattern {
     String m_atom;
 
 private:
-    ErrorCode compile(StringView patternString);
+    ErrorCode compile(StringView patternString, size_t expansionLimit);
 };
 
     void indentForNestingLevel(PrintStream&, unsigned);

@@ -312,7 +312,7 @@ static Vector<StringID> sortTextsForCoding(const Typed::StringTable& strings, co
 void ImageNumbersBuilder::collectNamesAndStringsWithText()
 {
     const Typed::Program& program = inputs.program;
-    const Typed::BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
+    const Typed::BitVector& keysWithColumn = numbers.m_keysWithColumn = chooseKeysWithColumn();
 
     if (size_t numberOfPromises = keysWithColumn.bitCount(); numberOfPromises > RowDisplacementTable::maxColumn) {
         context.diagnostics().add(InternalError {

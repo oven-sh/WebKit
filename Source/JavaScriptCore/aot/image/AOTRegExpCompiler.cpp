@@ -380,6 +380,8 @@ NEVER_INLINE CompiledRegExp compileRegExp(const RegExpCompilerInputs& inputs)
         return { .form = RegExpRecordForm::Atom };
     if (inputs.pattern.length() > maxRegExpPatternLengthWithCode)
         return { .form = RegExpRecordForm::NoCode, .reason = RegExpDeclineReason::PatternTooLong };
+    if (inputs.isLeftToInterpreter)
+        return { .form = RegExpRecordForm::NoCode };
 
     RELEASE_ASSERT(StackCheck(Thread::currentSingleton().stack(), regExpCompilerStackSize).isSafeToRecurse());
     Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
@@ -469,8 +471,10 @@ static void countRegExpResult(Statistics& statistics, const CompiledRegExp& resu
 
 CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpRequests& requests, BuildContext& context)
 {
+    static constexpr size_t mostBytesOfUnlistedRegExp = 2 * KB;
     std::span<const RegExpRequest> allRequests = requests.all();
     RegExpSummaries& summaries = context.regExpSummaries();
+    const bool orderTellsWhichRun = context.options().assumesCompleteOrder() && std::ranges::any_of(requests.literals(), &RegExpRequest::isListedInOrderFile);
 
     CompiledRegExps compiled;
     compiled.results.grow(allRequests.size());
@@ -480,7 +484,11 @@ CompiledRegExps compileRegExps(const Typed::Program& program, const RegExpReques
         StringView pattern = program.strings.viewOf(request.pattern, patternBuffer);
         auto compile = [&] {
             const RegExpSummary& summary = summaries.summaryOf(request.pattern, request.flags, pattern);
-            compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject });
+            compiled.results[index] = compileRegExp({ pattern, request.flags, summary, context.assemblerPolicy(), &context, RegExpCodeFor16BitSubjects::WhereWideCharactersCanBeInMatchedSubject, context.options().recordsOrder() });
+            compiled.results[index].isListedInOrderFile = request.isListedInOrderFile;
+            bool isTooLarge = orderTellsWhichRun && !request.isListedInOrderFile && compiled.results[index].codeSize() > mostBytesOfUnlistedRegExp;
+            if (isTooLarge)
+                compiled.results[index] = { .form = RegExpRecordForm::NoCode };
             if (!request.needsMatcher)
                 return;
             if (const RegExpCode* matcher = summaries.matcherOf(request.pattern, request.flags, pattern, context))

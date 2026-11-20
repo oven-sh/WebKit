@@ -85,8 +85,7 @@ public:
         return m_matches8.size() + m_ranges8.size() + m_matches32.size() + m_ranges32.size();
     }
 
-    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size(). A set operation
-    // goes through every code point of both sets: a million steps for [\S].
+    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size().
     void appendDifference(const CharacterClass& characterClass, const CharacterClassConstructor& excluded)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default);
@@ -145,6 +144,11 @@ public:
         appendDifferenceOfTables(characterClass.m_matches8, characterClass.m_ranges8, excluded.m_matches8, excluded.m_ranges8, m_matches8, m_ranges8);
         appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
     }
+
+    size_t sizeWithStrings() const { return size() + m_strings.size(); }
+
+    // A union moves the members behind the new one. The other operations make the class anew.
+    size_t costOfInsertion() { return isUnionSetOp() ? size() / 256 : sizeWithStrings(); }
 
     NODELETE void combiningSetOp(CharacterClassSetOp setOp)
     {
@@ -958,166 +962,76 @@ private:
         m_ranges8.swap(resultRanges);
     }
 
+    static Vector<CharacterRange> disjointRanges(const Vector<char32_t>& sortedMatches, const Vector<CharacterRange>& sortedRanges)
+    {
+        Vector<CharacterRange> result;
+        result.reserveInitialCapacity(sortedMatches.size() + sortedRanges.size());
+        size_t matchIndex = 0;
+        size_t rangeIndex = 0;
+        while (matchIndex < sortedMatches.size() || rangeIndex < sortedRanges.size()) {
+            bool takesMatch = rangeIndex == sortedRanges.size() || (matchIndex < sortedMatches.size() && sortedMatches[matchIndex] < sortedRanges[rangeIndex].begin);
+            CharacterRange next = takesMatch ? CharacterRange(sortedMatches[matchIndex], sortedMatches[matchIndex]) : sortedRanges[rangeIndex];
+            ++(takesMatch ? matchIndex : rangeIndex);
+            if (!result.isEmpty() && next.begin <= result.last().end + 1)
+                result.last().end = std::max(result.last().end, next.end);
+            else
+                result.append(next);
+        }
+        return result;
+    }
+
     void nonLatin1OpSorted(const Vector<char32_t>& rhsMatches32, const Vector<CharacterRange>& rhsRanges32)
     {
+        Vector<CharacterRange> lhs = disjointRanges(m_matches32, m_ranges32);
+        Vector<CharacterRange> rhs = disjointRanges(rhsMatches32, rhsRanges32);
         Vector<char32_t> resultMatches;
         Vector<CharacterRange> resultRanges;
-
-        constexpr size_t chunkSize = 2048;
-        WTF::BitSet<chunkSize> lhsChunkBitSet;
-        WTF::BitSet<chunkSize> rhsChunkBitSet;
-
-        char32_t chunkLo = INT_MAX, chunkHi;
-
-        size_t lhsMatchIndex = 0;
-        size_t lhsRangeIndex = 0;
-        size_t rhsMatchIndex = 0;
-        size_t rhsRangeIndex = 0;
-
-        auto lhsHasMore = [&] {
-            return lhsMatchIndex < m_matches32.size() || lhsRangeIndex < m_ranges32.size();
-        };
-        auto rhsHasMore = [&] {
-            return rhsMatchIndex < rhsMatches32.size() || rhsRangeIndex < rhsRanges32.size();
-        };
-        auto canProduceMore = [&] {
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                return lhsHasMore() || rhsHasMore();
-            case CharacterClassSetOp::Intersection:
-                return lhsHasMore() && rhsHasMore();
-            case CharacterClassSetOp::Subtraction:
-                return lhsHasMore();
-            }
-            RELEASE_ASSERT_NOT_REACHED();
-            return false;
+        auto append = [&](char32_t begin, char32_t end) {
+            if (begin == end)
+                resultMatches.append(begin);
+            else
+                resultRanges.append(CharacterRange(begin, end));
         };
 
-        if (!m_matches32.isEmpty())
-            chunkLo = std::min(chunkLo, m_matches32[0]);
+        switch (m_setOp) {
+        case CharacterClassSetOp::Default:
+        case CharacterClassSetOp::Union: {
+            Vector<CharacterRange> both;
+            both.fill(CharacterRange(0, 0), lhs.size() + rhs.size());
+            std::ranges::merge(lhs, rhs, both.begin(), { }, &CharacterRange::begin, &CharacterRange::begin);
+            for (CharacterRange range : disjointRanges({ }, both))
+                append(range.begin, range.end);
+            break;
+        }
 
-        if (!m_ranges32.isEmpty())
-            chunkLo = std::min(chunkLo, m_ranges32[0].begin);
-
-        if (!rhsMatches32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsMatches32[0]);
-
-        if (!rhsRanges32.isEmpty())
-            chunkLo = std::min(chunkLo, rhsRanges32[0].begin);
-
-        while (canProduceMore()) {
-            chunkHi = chunkLo + chunkSize - 1;
-
-            for (; lhsMatchIndex < m_matches32.size(); ++lhsMatchIndex) {
-                char32_t ch = m_matches32[lhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                lhsChunkBitSet.set(ch - chunkLo);
+        case CharacterClassSetOp::Intersection:
+            for (size_t left = 0, right = 0; left < lhs.size() && right < rhs.size();) {
+                char32_t begin = std::max(lhs[left].begin, rhs[right].begin);
+                char32_t end = std::min(lhs[left].end, rhs[right].end);
+                if (begin <= end)
+                    append(begin, end);
+                ++(lhs[left].end < rhs[right].end ? left : right);
             }
+            break;
 
-            for (; lhsRangeIndex < m_ranges32.size(); ++lhsRangeIndex) {
-                auto range = m_ranges32[lhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    lhsChunkBitSet.set(ch - chunkLo);
+        case CharacterClassSetOp::Subtraction: {
+            size_t right = 0;
+            for (CharacterRange range : lhs) {
+                char32_t begin = range.begin;
+                while (right < rhs.size() && rhs[right].end < begin)
+                    ++right;
+                for (; right < rhs.size() && rhs[right].begin <= range.end; ++right) {
+                    if (rhs[right].begin > begin)
+                        append(begin, rhs[right].begin - 1);
+                    begin = rhs[right].end + 1;
+                    if (begin > range.end)
+                        break;
                 }
-
-                if (range.end > chunkHi)
-                    break;
+                if (begin <= range.end)
+                    append(begin, range.end);
             }
-
-            for (; rhsMatchIndex < rhsMatches32.size(); ++rhsMatchIndex) {
-                char32_t ch = rhsMatches32[rhsMatchIndex];
-                if (ch > chunkHi)
-                    break;
-
-                ASSERT(ch >= chunkLo);
-                rhsChunkBitSet.set(ch - chunkLo);
-            }
-
-            for (; rhsRangeIndex < rhsRanges32.size(); ++rhsRangeIndex) {
-                auto range = rhsRanges32[rhsRangeIndex];
-                if (range.begin > chunkHi)
-                    break;
-
-                auto begin = std::max(chunkLo, range.begin);
-                auto end = std::min(range.end, chunkHi);
-
-                for (char32_t ch = begin; ch <= end; ch++) {
-                    ASSERT(ch >= chunkLo);
-                    rhsChunkBitSet.set(ch - chunkLo);
-                }
-
-                if (range.end > chunkHi)
-                    break;
-            }
-
-            switch (m_setOp) {
-            case CharacterClassSetOp::Default:
-            case CharacterClassSetOp::Union:
-                lhsChunkBitSet.merge(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Intersection:
-                lhsChunkBitSet.filter(rhsChunkBitSet);
-                break;
-
-            case CharacterClassSetOp::Subtraction:
-                lhsChunkBitSet.exclude(rhsChunkBitSet);
-                break;
-            }
-
-            bool firstCharUnset = true;
-            char32_t lo = 0;
-            char32_t hi = 0;
-
-            auto addCharToResults = [&]() {
-                if (lo == hi)
-                    resultMatches.append(lo);
-                else {
-                    // Coalesce the prior range with the new (lo, hi) range if they are adjacent.
-                    if (resultRanges.size() > 0) {
-                        auto lastIndex = resultRanges.size() - 1;
-                        if (resultRanges[lastIndex].end + 1 == lo) {
-                            resultRanges[lastIndex].end = hi;
-                            return;
-                        }
-                    }
-
-                    resultRanges.append(CharacterRange(lo, hi));
-                }
-            };
-
-            for (auto setVal : lhsChunkBitSet) {
-                char32_t ch = static_cast<char32_t>(setVal) + chunkLo;
-                if (firstCharUnset) {
-                    lo = hi = ch;
-                    firstCharUnset = false;
-                } else {
-                    if (ch == hi + 1)
-                        hi = ch;
-                    else {
-                        addCharToResults();
-                        lo = hi = ch;
-                    }
-                }
-            }
-
-            if (!firstCharUnset)
-                addCharToResults();
-
-            chunkLo = chunkHi + 1;
-            lhsChunkBitSet.clearAll();
-            rhsChunkBitSet.clearAll();
+            break;
+        }
         }
 
         m_matches32.swap(resultMatches);
@@ -1326,9 +1240,10 @@ class YarrPatternConstructor {
     };
 
 public:
-    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags)
+    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags, size_t expansionLimit)
         : m_pattern(pattern)
         , m_baseCharacterClassConstructor(pattern.ignoreCase(), pattern.compileMode())
+        , m_remainingExpansion(expansionLimit)
         , m_initialFlags(flags)
     {
         m_currentCharacterClassConstructor = &m_baseCharacterClassConstructor;
@@ -1691,17 +1606,24 @@ public:
 
     void atomCharacterClassAtom(char32_t ch)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
         m_currentCharacterClassConstructor->putChar(ch);
     }
 
     void atomCharacterClassRange(char32_t begin, char32_t end)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
         m_currentCharacterClassConstructor->putRange(begin, end);
     }
 
     void atomCharacterClassBuiltIn(BuiltInCharacterClassID classID, bool invert)
     {
         ASSERT(classID != BuiltInCharacterClassID::DotClassID);
+
+        if (!mayExpandBy(m_currentCharacterClassConstructor->costOfInsertion()))
+            return;
 
         switch (classID) {
         case BuiltInCharacterClassID::DigitClassID:
@@ -1728,6 +1650,8 @@ public:
                 } else if (CharacterClass* core = ignoreCaseInvertedUnicodePropertyCore(classID))
                     characterClass = core; // and still inverted below: [^K] == closure(complement(X))
             }
+            if (!mayExpandBy(characterClass->m_strings.size() + characterClass->m_matches8.size() + characterClass->m_ranges8.size() + characterClass->m_matches32.size() + characterClass->m_ranges32.size()))
+                return;
             if (!invert)
                 m_currentCharacterClassConstructor->append(characterClass);
             else
@@ -1738,6 +1662,8 @@ public:
 
     void atomClassStringDisjunction(Vector<Vector<char32_t>>& utf32Strings)
     {
+        if (!mayExpandBy(m_currentCharacterClassConstructor->sizeWithStrings()))
+            return;
         m_currentCharacterClassConstructor->atomClassStringDisjunction(utf32Strings);
     }
 
@@ -1762,7 +1688,8 @@ public:
             m_currentCharacterClassConstructor->invertMatches();
 
         CharacterClassConstructor* priorCharacterClassConstructor = m_characterClassStack.size() == 1 ? &m_baseCharacterClassConstructor : &m_characterClassStack[m_characterClassStack.size() - 2];
-        priorCharacterClassConstructor->performSetOpWith(m_currentCharacterClassConstructor);
+        if (mayExpandBy(priorCharacterClassConstructor->sizeWithStrings() + m_currentCharacterClassConstructor->sizeWithStrings()))
+            priorCharacterClassConstructor->performSetOpWith(m_currentCharacterClassConstructor);
         m_characterClassStack.removeLast();
         m_currentCharacterClassConstructor = priorCharacterClassConstructor;
         m_invertCharacterClass = invert;
@@ -1853,6 +1780,8 @@ public:
             ++stringCount;
             totalStringLength += string.size();
         }
+        if (!mayExpandBy(stringCount + totalStringLength))
+            return;
         bool dispatchGroup = parenthesisMatchDirection() == Forward && !ignoreCase() && !hasEmptyMember
             && stringCount >= alternationDispatchMinAlternatives && totalStringLength >= alternationDispatchMinTotalSize;
         if (dispatchGroup)
@@ -2137,6 +2066,8 @@ public:
     // std::nullopt when one of those has to be matched, i.e. this alternative cannot match at all.
     std::optional<PatternTermList> copyTerms(PatternAlternative* alternative, bool filterStartsWithBOL, Vector<unsigned>& sourceTermIndices)
     {
+        if (!mayExpandBy(1 + alternative->m_terms.size()))
+            return std::nullopt;
         PatternTermList copiedTerms(ReserveCapacityTag { }, alternative->m_terms.size());
         for (unsigned termIndex = 0; termIndex < alternative->m_terms.size(); ++termIndex) {
             auto& term = alternative->m_terms[termIndex];
@@ -4519,6 +4450,17 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    bool mayExpandBy(size_t amount)
+    {
+        if (amount >= m_remainingExpansion) [[unlikely]] {
+            m_remainingExpansion = 0;
+            m_error = ErrorCode::PatternTooLarge;
+            return false;
+        }
+        m_remainingExpansion -= amount;
+        return true;
+    }
+
     CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
     {
         ASSERT(!characterClass->hasStrings());
@@ -4551,6 +4493,7 @@ private:
     std::optional<PatternTerm> m_shortCharacterClassTerm;
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
+    size_t m_remainingExpansion;
     ErrorCode m_error { ErrorCode::NoError };
     bool m_invertCharacterClass;
     ParenthesisContext m_parenthesisContext;
@@ -4560,9 +4503,12 @@ private:
 };
 static_assert(YarrSyntaxCheckable<YarrPatternConstructor>);
 
-ErrorCode YarrPattern::compile(StringView patternString)
+ErrorCode YarrPattern::compile(StringView patternString, size_t expansionLimit)
 {
-    YarrPatternConstructor constructor(*this, m_flags);
+    YarrPatternConstructor constructor(*this, m_flags, expansionLimit);
+
+    if (patternString.length() > expansionLimit)
+        return ErrorCode::PatternTooLarge;
 
     {
         ErrorCode error = parse(constructor, patternString, compileMode());
@@ -4610,7 +4556,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     return ErrorCode::NoError;
 }
 
-YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, PatternAnalysis analysis)
+YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, PatternAnalysis analysis, size_t expansionLimit)
     : m_containsBackreferences(false)
     , m_containsBOL(false)
     , m_containsLookbehinds(false)
@@ -4624,7 +4570,7 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
     , m_flags(flags)
 {
     ASSERT(m_flags != Flags::DeletedValue);
-    error = compile(pattern);
+    error = compile(pattern, expansionLimit);
 }
 
 YarrPattern::~YarrPattern() = default;

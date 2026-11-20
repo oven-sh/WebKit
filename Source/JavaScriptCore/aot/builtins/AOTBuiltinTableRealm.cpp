@@ -260,9 +260,22 @@ void forEachHiddenPrototype(JSGlobalObject* realm, const ScopedLambda<void(Built
         function(prototype.builtinClass, prototype.object);
 }
 
+bool keepsGlobalsAside(JSGlobalObject* realm)
+{
+    const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost;
+    return host && host->holderOfGlobal;
+}
+
+JSObject* holderOfGlobal(JSGlobalObject* realm, UniquedStringImpl* name)
+{
+    return keepsGlobalsAside(realm) ? realm->globalObjectMethodTable()->moduleHost->holderOfGlobal(realm, name) : realm;
+}
+
 template<typename Function>
 static void forEachStaticTableOf(JSGlobalObject* realm, const Function& function)
 {
+    if (keepsGlobalsAside(realm)) [[unlikely]]
+        function(*realm->globalObjectMethodTable()->moduleHost->tableOfGlobals);
     for (const ClassInfo* info = realm->classInfo(); info; info = info->parentClass) {
         if (const HashTable* hashTable = info->staticPropHashTable)
             function(*hashTable);
@@ -345,18 +358,14 @@ BuiltinID findGlobalCreatedWith(JSGlobalObject* realm, const LazyClassStructure&
         }
         return { };
     }
-    for (const ClassInfo* info = realm->classInfo(); info; info = info->parentClass) {
-        const HashTable* hashTable = info->staticPropHashTable;
-        if (!hashTable)
-            continue;
-        for (auto& entry : *hashTable) {
-            if (!(entry.attributes() & PropertyAttribute::ClassStructure))
-                continue;
-            if (BuiltinID found = globalOf(entry))
-                return found;
+    BuiltinID found;
+    forEachStaticTableOf(realm, [&](const HashTable& hashTable) {
+        for (auto& entry : hashTable) {
+            if (!found && entry.attributes() & PropertyAttribute::ClassStructure)
+                found = globalOf(entry);
         }
-    }
-    return { };
+    });
+    return found;
 }
 
 void forEachCreatedClassOfGlobal(JSGlobalObject* realm, const ScopedLambda<void(BuiltinID, JSObject* constructor)>& function)
@@ -567,6 +576,10 @@ static Lookup findDeclaredProperty(JSGlobalObject* realm, BuiltinID id, Property
     if (builtin.holder == Builtins::GlobalThis && kind == PropertyKind::Data) {
         if (JSObject* constructor = findConstructorOfLazyClass(realm, table.identifierOf(realm->vm(), builtin.name)))
             return JSValue(constructor);
+    }
+    if (builtin.holder == Builtins::GlobalThis) {
+        Identifier name = table.identifierOf(realm->vm(), builtin.name);
+        return findOwnProperty(realm, holderOfGlobal(realm, name.impl()), name, kind);
     }
     auto holder = findHolderObject(realm, builtin.holder);
     if (!holder)
@@ -817,9 +830,11 @@ JSValue getByPath(JSGlobalObject* realm, BuiltinID id)
         auto root = findHiddenRoot(realm, id);
         return root ? JSValue(*root) : throwNoPath();
     }
-    JSValue base = getByPath(realm, builtin.holder);
+    Identifier name = table.identifierOf(vm, builtin.name);
+    JSObject* aside = builtin.holder == Builtins::GlobalThis ? holderOfGlobal(realm, name.impl()) : realm;
+    JSValue base = aside != realm ? JSValue(aside) : getByPath(realm, builtin.holder);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue value = base.get(realm, table.identifierOf(vm, builtin.name));
+    JSValue value = base.get(realm, name);
     RETURN_IF_EXCEPTION(scope, { });
     return value;
 }
@@ -848,8 +863,9 @@ JSObject* findExistingBuiltin(JSGlobalObject* realm, BuiltinID id)
     if (builtin.holder) {
         if (table.isSymbolName(builtin.name) && !table.wellKnownSymbolOf(builtin.name))
             return nullptr;
-        JSObject* holder = findExistingBuiltin(realm, builtin.holder);
-        return holder ? findExistingObject(holder, table.identifierOf(vm, builtin.name).impl()) : nullptr;
+        Identifier name = table.identifierOf(vm, builtin.name);
+        JSObject* holder = builtin.holder == Builtins::GlobalThis ? holderOfGlobal(realm, name.impl()) : findExistingBuiltin(realm, builtin.holder);
+        return holder ? findExistingObject(holder, name.impl()) : nullptr;
     }
     if (BuiltinID subclassConstructor = findSubclassConstructor(table, id)) {
         JSObject* constructor = findExistingBuiltin(realm, subclassConstructor);

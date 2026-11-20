@@ -37,6 +37,7 @@
 #include "AOTStubsValues.h"
 #include "AOTVector.h"
 #include "Butterfly.h"
+#include "EmbedderListItems.h"
 #include "IndexingType.h"
 #include "JSCJSValueInlines.h"
 #include "JSObject.h"
@@ -863,6 +864,35 @@ static void testInstructionsAtConstantIndex()
 #endif
 }
 
+static void testReadsOfEmbedderList()
+{
+    StubRunner runner;
+    uint64_t clock = 5;
+    FakeObject<JSCellButterfly::offsetOfData() + 4 * sizeof(EncodedJSValue)> items;
+    items.at<uint32_t>(JSCellButterfly::offsetOfPublicLength()) = 3;
+    for (unsigned index : { 0, 2, 3 })
+        items.at<uint64_t>(JSCellButterfly::offsetOfData() + index * sizeof(EncodedJSValue)) = boxed(jsNumber(index + 10));
+    FakeObject<EmbedderListItems::offsetInCell + sizeof(EmbedderListItems)> list;
+    list.setHeader(0, EmbedderListType);
+    list.at<uint64_t*>(EmbedderListItems::offsetOfClock()) = &clock;
+    list.at<uint64_t>(EmbedderListItems::offsetOfTime()) = clock;
+
+    auto check = [&](int32_t index, std::optional<int32_t> expected) {
+        for (auto [stub, key] : { std::pair(getByVal(false), boxed(jsNumber(index))), std::pair(getByVal(true), static_cast<uint64_t>(static_cast<int64_t>(index))) }) {
+            StubRun run = runner.run(stub, { list.address(), key });
+            AOT_TEST_CHECK(expected ? !run.calledOperation && run.result == boxed(jsNumber(*expected)) : run.calledOperation);
+        }
+    };
+    check(0, std::nullopt);
+    list.at<uint64_t>(EmbedderListItems::offsetOfItems()) = items.address();
+    check(0, 10);
+    check(2, 12);
+    for (int32_t index : { 1, 3, -1, std::numeric_limits<int32_t>::max() })
+        check(index, std::nullopt);
+    ++clock;
+    check(0, std::nullopt);
+}
+
 enum class PushedOnto : uint8_t { Doubles, Integers, Values };
 
 template<PushedOnto onto, bool kindIsKnown, uint32_t budget>
@@ -888,6 +918,7 @@ std::span<const NativeTest> stubBlobTests()
 {
     static constexpr NativeTest tests[] = {
         { "stub-blob/entry-placements"_s, testEntryPlacements },
+        { "stub-blob/reads-of-an-embedder-list"_s, ImageTests::whenExecutable<testReadsOfEmbedderList> },
         { "stub-blob/instructions-at-constant-indices/doubles"_s, ImageTests::whenExecutable<testInstructionsAtConstantIndex<DoubleShape, 20, 25>> },
         { "stub-blob/instructions-at-constant-indices/int32s"_s, ImageTests::whenExecutable<testInstructionsAtConstantIndex<Int32Shape, 17, 18>> },
         { "stub-blob/instructions-of-pushes/a-double-onto-doubles"_s, ImageTests::whenExecutable<testInstructionsOfPush<PushedOnto::Doubles, false, 26>> },

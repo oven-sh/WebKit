@@ -34,6 +34,7 @@ class JSString;
 class ScriptFetchParameters;
 class SourceOrigin;
 class VM;
+struct HashTable;
 
 namespace AOT {
 
@@ -134,6 +135,9 @@ struct ModuleHost {
     bool (*evictOriginal)(JSGlobalObject*, const String& mocked);
     bool (*requiresPatch)(JSGlobalObject*, const ScopedLambda<String()>& path, JSObject*& exports);
     bool (*isESModuleInNode)(JSGlobalObject*, const String& path);
+    // For a global object that does not have the host's names: the object that holds what the table of built-ins lists under a name, and the host's static table.
+    JSObject* (*holderOfGlobal)(JSGlobalObject*, UniquedStringImpl* name);
+    const HashTable* tableOfGlobals;
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

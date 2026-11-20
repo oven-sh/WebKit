@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTChainDependents.h"
+#include "AOTHost.h"
 #include "AOTLoadedProgramTestSupport.h"
 #include "AOTObject.h"
 #include "AOTOperationCallScope.h"
@@ -20,11 +21,13 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTRuntimeTable.h"
 #include "AOTVector.h"
+#include "CustomGetterSetter.h"
 #include "DeferGCInlines.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "ObjectConstructor.h"
+#include "ObjectPropertyConditionSet.h"
 #include "ObjectPrototype.h"
 #include "PrivateName.h"
 #include "PropertyDescriptor.h"
@@ -95,6 +98,23 @@ static constexpr ASCIILiteral programReadingCountText =
     "    v8 = PropGet v4 key=\"count\"\n"
     "    v9 = NewArray v7, v8 contents=anything holes=[]\n"
     "    Return v9\n"
+    "}\n"
+    "entry module=m0\n"_s;
+
+static constexpr ASCIILiteral programReadingAtPlaceText =
+    "module m0 path=\"/main.js\" displayPath=\"main.js\" body=f0\n"
+    "function f0 name=\"main\" module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {\n"
+    "  b0():\n"
+    "    v0 = Builtin builtin=GlobalThis\n"
+    "    v1 = PropGet v0 key=\"publish\" [isFreeName]\n"
+    "    v2 = NewClosure function=f1\n"
+    "    v3 = Call v1, -, v2\n"
+    "    Return\n"
+    "}\n"
+    "function f1 name=\"read\" module=m0 parameters=[{type=anything}] results=[{type=anything}] {\n"
+    "  b0(v0: anything):\n"
+    "    v1 = PropGet v0 key=\"count\" @10\n"
+    "    Return v1\n"
     "}\n"
     "entry module=m0\n"_s;
 
@@ -531,6 +551,208 @@ struct ObjectBelowPrototype {
 
 } // namespace
 
+namespace {
+
+class ObjectWithNames final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence;
+    static inline UniquedStringImpl* nameThatItHas { nullptr };
+    static inline bool keepsPromise { true };
+
+    template<typename CellType, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(ObjectWithNames, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static ObjectWithNames* create(JSGlobalObject* realm, JSObject* prototype, JSType type, unsigned moreFlags = 0)
+    {
+        VM& vm = realm->vm();
+        prototype->didBecomePrototype(vm);
+        Structure* structure = Structure::create(vm, realm, prototype, TypeInfo(type, StructureFlags | moreFlags), info());
+        auto* object = new (NotNull, allocateCell<ObjectWithNames>(vm)) ObjectWithNames(vm, structure);
+        object->finishCreation(vm);
+        return object;
+    }
+
+    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* realm, PropertyName name, PropertySlot& slot)
+    {
+        if (asObject(object->getPrototypeDirect())->hasProperty(realm, name))
+            return false;
+        if (!keepsPromise)
+            slot.setIsTaintedByOpaqueObject();
+        if (name.uid() != nameThatItHas)
+            return false;
+        slot.setValue(object, 0, jsNumber(-1));
+        return true;
+    }
+
+    DECLARE_INFO;
+
+private:
+    ObjectWithNames(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
+const ClassInfo ObjectWithNames::s_info = { "ObjectWithNames"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ObjectWithNames) };
+
+} // namespace
+
+static JSC_DECLARE_CUSTOM_GETTER(getReceiver);
+JSC_DEFINE_CUSTOM_GETTER(getReceiver, (JSGlobalObject*, EncodedJSValue receiver, PropertyName))
+{
+    return receiver;
+}
+
+static void putGetterOfReceiver(VM& vm, JSObject* holder, const Identifier& name)
+{
+    holder->putDirectCustomAccessor(vm, name, CustomGetterSetter::create(vm, getReceiver, nullptr), PropertyAttribute::CustomAccessor | PropertyAttribute::ReadOnly);
+}
+
+static std::optional<Slot::Kind> kindThatIsFiled(LoadedProgram& program, JSObject* object, const Identifier& name)
+{
+    PropertyCaches& caches = *program.state().propertyCaches;
+    std::optional<Slot> slot = caches.tables().find(object->structure()->id(), caches.nameOf(name.impl()), SlotAccess::Read);
+    return slot ? std::optional { slot->kind } : std::nullopt;
+}
+
+static std::optional<Slot::Kind> readAndFile(LoadedProgram& program, JSObject* object, const Identifier& name)
+{
+    PropertyCaches& caches = *program.state().propertyCaches;
+    readAndClassify(program, object, name);
+    caches.cache({ object->structure(), caches.nameOf(name.impl()), SlotAccess::Read }, readAndClassify(program, object, name));
+    return kindThatIsFiled(program, object, name);
+}
+
+static void testMembersOfPlatformObjectWithNames(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    Identifier count = Identifier::fromString(vm, "count"_s);
+    JSObject* prototype = constructEmptyObject(realm);
+    prototype->putDirect(vm, label, jsNumber(7));
+    putGetterOfReceiver(vm, prototype, count);
+    JSObject* platformObject = ObjectWithNames::create(realm, prototype, static_cast<JSType>(LastJSCObjectType + 1));
+
+    AOT_TEST_CHECK(isInheritedFrom(program, readAndClassify(program, platformObject, label), PropertyAnswerKind::Value, prototype, label));
+    AOT_TEST_CHECK(readAndClassify(program, platformObject, count).kind == PropertyAnswerKind::CustomAccessor);
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, platformObject, Identifier::fromString(vm, "other"_s))));
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, ObjectWithNames::create(realm, prototype, ObjectType), label)));
+
+    AOT_TEST_CHECK(readAndFile(program, platformObject, label) == Slot::Kind::Value);
+    ObjectWithNames::nameThatItHas = label.impl();
+    AOT_TEST_CHECK(prototype->deleteProperty(realm, label));
+    AOT_TEST_CHECK(!kindThatIsFiled(program, platformObject, label));
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, platformObject, label)));
+}
+
+static void testPlaceReadsCachedValueOfCustomGetter(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    PropertyCaches& caches = *program.state().propertyCaches;
+    Identifier count = Identifier::fromString(vm, "count"_s);
+    CachedName name = caches.nameOf(count.impl());
+    JSObject* prototype = constructEmptyObject(realm);
+    putGetterOfReceiver(vm, prototype, count);
+    JSObject* object = constructEmptyObject(realm, prototype);
+
+    readAndClassify(program, object, count);
+    PropertyAnswer answer = readAndClassify(program, object, count);
+    AOT_TEST_CHECK(answer.kind == PropertyAnswerKind::CustomAccessor && name.identifierNumber);
+    CustomAccessorRecord record = caches.tables().customAccessors().at(answer.customAccessor);
+    record.offsetOfCachedValue = JSObject::offsetOfInlineStorage();
+    answer.customAccessor = *caches.tables().customAccessors().add(record);
+    caches.cache({ object->structure(), name, SlotAccess::Read }, answer);
+
+    constexpr uint32_t place = 0;
+    AOT_TEST_CHECK(place < program.state().instance.indicesOfSiteAnswers().size());
+    const SiteAnswers::Answer expected = *SiteAnswers::tryByStructure(SiteUse::Read, object->structureID(), SiteAnswers::Form::OwnFieldInCell, record.offsetOfCachedValue);
+    auto readsCachedValue = [&] {
+        const SiteAnswers* answers = caches.answersAtSites().answersOf(place);
+        return answers && (answers->first == expected || answers->second == expected);
+    };
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, false, true, false);
+    AOT_TEST_CHECK(!readsCachedValue());
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, false, false, true);
+    AOT_TEST_CHECK(!readsCachedValue());
+    caches.fillSiteAnswers(place, object, *name.identifierNumber, SiteUse::Read, true, true);
+    AOT_TEST_CHECK(readsCachedValue());
+    AOT_TEST_CHECK(prototype->deleteProperty(realm, count));
+    AOT_TEST_CHECK(!readsCachedValue());
+}
+
+static void testCustomAccessorOfGlobalObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    JSObject* proxy = realm->globalThis();
+    AOT_TEST_CHECK(proxy->type() == GlobalProxyType);
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    putGetterOfReceiver(vm, realm, label);
+
+    AOT_TEST_CHECK(readAndFile(program, proxy, label) == Slot::Kind::CustomGetter);
+    AOT_TEST_CHECK(realm->methodTable()->defineOwnProperty(realm, realm, label, PropertyDescriptor(jsNumber(7), 0), false));
+    AOT_TEST_CHECK(!kindThatIsFiled(program, proxy, label));
+    AOT_TEST_CHECK(readAndFile(program, proxy, label) == Slot::Kind::Value);
+
+    Identifier count = Identifier::fromString(vm, "count"_s);
+    putGetterOfReceiver(vm, realm, count);
+    AOT_TEST_CHECK(readAndFile(program, proxy, count) == Slot::Kind::CustomGetter);
+    AOT_TEST_CHECK(JSCell::deleteProperty(realm, realm, count));
+    AOT_TEST_CHECK(!kindThatIsFiled(program, proxy, count));
+}
+
+static void testNamesAnnouncedAboveGlobalObject(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realm();
+    JSObject* proxy = realm->globalThis();
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    Identifier count = Identifier::fromString(vm, "count"_s);
+    Identifier inherited = Identifier::fromString(vm, "inherited"_s);
+    JSObject* top = constructEmptyObject(realm);
+    top->putDirect(vm, inherited, jsNumber(7));
+
+    realm->setPrototypeDirect(vm, ObjectWithNames::create(realm, top, ObjectType));
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, proxy, label)));
+
+    JSObject* names = ObjectWithNames::create(realm, top, ObjectType, NewImpurePropertyFiresWatchpoints);
+    realm->setPrototypeDirect(vm, names);
+    AOT_TEST_CHECK(readAndFile(program, proxy, inherited) == Slot::Kind::Value);
+    AOT_TEST_CHECK(readAndFile(program, proxy, label) == Slot::Kind::Absent && readAndFile(program, proxy, count) == Slot::Kind::Absent);
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, constructEmptyObject(realm, names), label)));
+
+    didAnnounceNameAboveGlobalObject(vm, label.impl());
+    ObjectWithNames::nameThatItHas = label.impl();
+    AOT_TEST_CHECK(!kindThatIsFiled(program, proxy, label) && kindThatIsFiled(program, proxy, count) == Slot::Kind::Absent);
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, proxy, label)));
+
+    didAnnounceNameAboveGlobalObject(vm, nullptr);
+    ObjectWithNames::keepsPromise = false;
+    AOT_TEST_CHECK(!kindThatIsFiled(program, proxy, count));
+    AOT_TEST_CHECK(isLastingRefusal(readAndClassify(program, proxy, count)));
+}
+
+static void testNoConditionsForMissBelowObjectWithNames(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = program.realms().plain();
+    Identifier label = Identifier::fromString(vm, "label"_s);
+    JSObject* top = constructEmptyObject(vm, realm->nullPrototypeObjectStructure());
+    auto hasConditionsBelow = [&](JSObject* prototype) {
+        JSObject* object = constructEmptyObject(realm, prototype);
+        return generateConditionsForPropertyMiss(vm, object, realm, object->structure(), label.impl()).isValid();
+    };
+    AOT_TEST_CHECK(hasConditionsBelow(constructEmptyObject(realm, top)));
+    AOT_TEST_CHECK(!hasConditionsBelow(ObjectWithNames::create(realm, top, ObjectType)));
+}
+
 static void testEvictedDependentsAreDroppedWhenTheTableHasDoubled(LoadedProgram& program)
 {
     VM& vm = program.vm();
@@ -893,6 +1115,9 @@ template<LoadedProgramTest body>
 static constexpr void (*withProgramReadingCount)() = runNativeTestWithLoadedProgram<propertyLookupTests, programReadingCountText, changeObjectsUnseen<body>>;
 
 template<LoadedProgramTest body>
+static constexpr void (*withProgramReadingAtPlace)() = runNativeTestWithLoadedProgram<propertyLookupTests, programReadingAtPlaceText, body>;
+
+template<LoadedProgramTest body>
 static constexpr void (*withProgramCreatingSymbol)() = runNativeTestWithLoadedProgram<propertyLookupTests, programCreatingSymbolText, body>;
 
 static void runSymbolOfEachRealmIsNeverFiledInFront()
@@ -909,6 +1134,11 @@ std::span<const NativeTest> propertyLookupTests()
         { "property-lookup/other-prototype"_s, withProgram<testOtherPrototype> },
         { "property-lookup/dictionary-on-chain"_s, withProgram<testDictionaryOnChain> },
         { "property-lookup/other-base"_s, withProgram<testOtherBase> },
+        { "property-lookup/members-of-platform-object-with-names"_s, withProgram<testMembersOfPlatformObjectWithNames> },
+        { "property-lookup/place-reads-cached-value-of-custom-getter"_s, withProgramReadingAtPlace<testPlaceReadsCachedValueOfCustomGetter> },
+        { "property-lookup/custom-accessor-of-global-object"_s, withProgram<testCustomAccessorOfGlobalObject> },
+        { "property-lookup/names-announced-above-global-object"_s, withProgram<testNamesAnnouncedAboveGlobalObject> },
+        { "property-lookup/no-conditions-for-miss-below-object-with-names"_s, withProgram<testNoConditionsForMissBelowObjectWithNames> },
         { "property-lookup/length-of-typed-arrays"_s, withProgram<testLengthOfTypedArrays> },
         { "property-lookup/last-index-of-regexps"_s, withProgram<testLastIndexOfRegExps> },
         { "property-lookup/each-place-of-answers-waits-by-a-state-of-its-own"_s, testEachPlaceOfAnswersWaitsByStateOfItsOwn },

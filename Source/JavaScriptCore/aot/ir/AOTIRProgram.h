@@ -56,6 +56,7 @@ public:
 
     bool mayBeTrimmed(BuiltinID builtin) const { return builtin && m_builtinsThatMayBeTrimmed.get(builtin.index()); }
     const BuiltinTable& builtins() const { return m_builtins; }
+    void leaveOutOptionalBuiltins() { m_tableOfBuild.leaveOutOptionalEntries(); }
     void unlockReplaceableBuiltins();
     std::span<const BuiltinID> unlockedBuiltins() const LIFETIME_BOUND { return m_tableOfBuild.unlockedMembers(); }
     bool isUnlocked(BuiltinID member) const { return m_tableOfBuild.isUnlocked(member); }

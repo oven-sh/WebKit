@@ -130,6 +130,53 @@ Vector<uint32_t> listSitesInStartOrder(const NumberingInputs& inputs, std::span<
     return listedNumbersFirst(listed.span(), sites.size());
 }
 
+Typed::BitVector ImageNumbersBuilder::chooseKeysWithColumn() const
+{
+    const Typed::BitVector& promised = inputs.plan.slots().keysWithColumn();
+    std::span<const uint32_t> startRanks = context.startRanks();
+    size_t columnsLeft = promised.bitCount();
+    if (startRanks.empty() || columnsLeft < context.limit(LimitID::LookupTableNames))
+        return promised;
+    const Typed::Program& program = inputs.program;
+    const uint32_t numberOfKeys = program.types.numberOfPropertyKeys();
+    Typed::BitVector chosen(numberOfKeys);
+    auto choose = [&](PropertyKeyID key) {
+        if (columnsLeft && key && program.types.hasStableNumber(key) && !chosen.quickSet(key.index()))
+            --columnsLeft;
+    };
+
+    Vector<uint32_t> ranks(numberOfKeys, [&](size_t key) {
+        FunctionID first = mentions.firstFunctionMentioning(NumberSpace::Name, static_cast<uint32_t>(key)).function;
+        return first ? startRanks[first.index()] : noStartRank;
+    });
+    for (uint32_t key : indicesByRank(ranks.span())) {
+        if (ranks[key] == noStartRank)
+            break;
+        choose(PropertyKeyID(key));
+    }
+
+    auto chooseFieldsOf = [&](LayoutID layout) {
+        constexpr size_t mostFieldsOfWhatIsNoTable = 128;
+        if (const auto& fields = program.at(layout).fields; fields.size() <= mostFieldsOfWhatIsNoTable) {
+            for (const Typed::Field& field : fields)
+                choose(field.key);
+        }
+    };
+    BitVector isVisited(program.data.size());
+    forEachMentionOfListedUnits(inputs, startRanks, scopedLambda<void(FunctionID, const Mention&, std::span<const uint32_t>)>([&](FunctionID, const Mention& mention, std::span<const uint32_t> key) {
+        if (mention.space == NumberSpace::Allocation)
+            return chooseFieldsOf(decodeAllocationKey(key).allocation.layout);
+        forEachNodeOfListedData(inputs, mention, key, isVisited, scopedLambda<void(const Typed::DataNode&)>([&](const Typed::DataNode& node) {
+            if (node.kind() == Typed::DataNode::Kind::Object)
+                chooseFieldsOf(node.as<Typed::DataNode::Object>().layout);
+        }));
+    }));
+
+    for (size_t key : promised)
+        choose(PropertyKeyID(key));
+    return chosen;
+}
+
 Vector<LayoutRecordToPlace> sortLayoutRecords(Vector<LayoutRecordToPlace>&& records, const ImageNumbers& numbers, size_t numberOfShapes, size_t numberOfLayouts)
 {
     Vector<uint32_t> ranksOfShapes(FillWith { }, numberOfShapes + 1, noStartRank);

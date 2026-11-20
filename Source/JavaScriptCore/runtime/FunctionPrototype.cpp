@@ -26,7 +26,7 @@
 #include "ExecutableBaseInlines.h"
 #include "FunctionExecutable.h"
 #include "IntegrityInlines.h"
-#include "JSBoundFunction.h"
+#include "JSBoundFunctionInlines.h"
 #include "JSCInlines.h"
 
 #include "AOTCompiledCallee.h"
@@ -168,14 +168,14 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    bool canAssumeNameAndLengthAreOriginal = function && function->canAssumeNameAndLengthAreOriginal(vm);
+    bool canAssumeNameAndLengthAreOriginal = function && canBindWithoutReadingNameAndLength(vm, function);
 #if ENABLE(AOT)
     if (isSlimClosureType(target->type()))
         canAssumeNameAndLengthAreOriginal = AOT::CompiledCallee::canAssumeNameAndLengthAreOriginal(vm, target);
 #endif
     if (canAssumeNameAndLengthAreOriginal) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
-        // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
+        // And this is totally OK since we know that nothing has changed them in the wrapped functions
         // at the time of creation of JSBoundFunction.
         length = PNaN; // Defer computation.
     } else {
@@ -363,6 +363,10 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
 
     // 12. If caller.[[Strict]] is true, return null.
     if (function->jsExecutable()->isInStrictContext())
+        return JSValue::encode(jsNull());
+
+    // 13. If caller.[[Realm]] is not currentRealm, return null.
+    if (function->realm() != globalObject && globalObject->runtimeFlags().isCallerOfOtherRealmHidden())
         return JSValue::encode(jsNull());
 
     // Prevent bodies (private implementations) of generator / async functions from being exposed.

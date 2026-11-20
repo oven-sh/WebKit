@@ -550,6 +550,7 @@ public:
     const NumberedKeys& arrayProfiles() const { return m_arrayProfiles; }
     const NumberedKeys& readGroupCaches() const { return m_readGroupCaches; }
     const NumberedKeys& siteCaches() const { return m_siteCaches; }
+    const Typed::BitVector& keysWithColumn() const { return m_keysWithColumn; }
     std::span<const uint32_t> shapesInStartOrder() const { return m_shapesInStartOrder.span(); }
     std::span<const uint32_t> classesInStartOrder() const { return m_classesInStartOrder.span(); }
     std::span<const uint32_t> numbersOfSites() const { return m_numbersOfSites.span(); }
@@ -624,6 +625,7 @@ private:
     NumberedKeys m_classGuards;
     NumberedKeys m_siteCaches;
     Vector<uint32_t> m_numbersOfSites { 0 };
+    Typed::BitVector m_keysWithColumn;
     Vector<uint32_t> m_shapesInStartOrder;
     Vector<uint32_t> m_classesInStartOrder;
     Vector<uint32_t> m_originsOfMethodSelectors;
@@ -760,6 +762,7 @@ struct ImageNumbersBuilder {
     static void numberFunctions(const NumberingInputs&, ImageNumbers&, BuildContext&);
     void checkEntriesOfMentionedClosures();
     void numberClosureCellsAndClassRanks();
+    Typed::BitVector chooseKeysWithColumn() const;
     void collectNamesAndStringsWithText();
     void numberIdentifiersAndStrings();
     void numberConstants();

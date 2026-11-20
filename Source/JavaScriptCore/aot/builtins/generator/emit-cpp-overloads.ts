@@ -19,6 +19,7 @@ import {
   type AggregateMember,
 } from "./emit-cpp-support.ts";
 import {
+  dispatchesWithChoice,
   overloadFlags,
   type ModelCallback,
   type ModelCode,
@@ -462,7 +463,7 @@ export function emitCppOverloads(model: TableModel): string {
   checkModel(model);
   const pools = createPools();
   const overloads = model.overloads.map(overload => formatOverload(overload, pools));
-  const dispatches = model.dispatches.map(formatDispatch);
+  const dispatches = dispatchesWithChoice(model.dispatches).map(formatDispatch);
   const dispatchNodes = model.dispatchNodes.map(node => formatDispatchNode(node, pools));
   const body = joinBlocks([
     pools.names.emit(),

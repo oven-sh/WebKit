@@ -172,6 +172,81 @@ static void testReadsFollowOtherReceivers()
     checkServicesInShell(__FILE__, __LINE__, programText, outputOfOtherReceivers, statementsWithOtherReceivers, wordsOfCaches, "nnnnnnn"_s);
 }
 
+static constexpr ASCIILiteral statementsWithStrings = COUNTED_CALLS(R"("GetByIdAndCache", "GetById", "GetGeneric")") R"JS(
+const repeat = (what, access) => {
+    const before = countedCalls();
+    let result;
+    for (let i = 0; i < 100; i++) result = access();
+    print(what + ": " + result + servedBy(before, 100, 7));
+};
+globalThis.publish = (read) => {
+    const other = createGlobalObject();
+    for (let i = 0; i < 16; i++) read("text");
+    repeat("absent", () => read("text"));
+    String.prototype.shared = 1;
+    repeat("on the prototype", () => read("text"));
+    other.String.prototype.shared = 2;
+    repeat("on the prototype of another realm", () => read("text"));
+    String.prototype.shared = 3;
+    repeat("replaced", () => read("te" + ["xt"].join("")));
+    Object.defineProperty(String.prototype, "shared", { get() { "use strict"; return typeof this; }, configurable: true });
+    repeat("getter", () => read("text"));
+    delete String.prototype.shared;
+    repeat("deleted", () => read("text"));
+    Symbol.prototype.shared = 4;
+    repeat("of a symbol", () => read(Symbol.iterator));
+};
+)JS"_s;
+
+static constexpr ASCIILiteral outputOfStrings =
+    "absent: undefined\n"
+    "on the prototype: 1\n"
+    "on the prototype of another realm: 1\n"
+    "replaced: 3\n"
+    "getter: string\n"
+    "deleted: undefined\n"
+    "of a symbol: 4\n"_s;
+
+static void testReadsOfStringsWithSeveralRealms()
+{
+    checkOutputOfProgramInShell(programText, outputOfStrings, { "several-realms"_s }, statementsWithStrings);
+    checkServicesInShell(__FILE__, __LINE__, programText, outputOfStrings, statementsWithStrings, wordsOfCaches, "ccccccn"_s, { "several-realms"_s });
+}
+
+static constexpr ASCIILiteral statementsWithObjectsOfBorrower = STATEMENTS_DEFINING_REPEAT R"JS(
+globalThis.publish = (read, has, hasOwn, readByKey) => {
+    const other = $vm.createGlobalObject();
+    const list = new other.Array, object = new other.Object;
+    for (let i = 0; i < 16; i++) read(list), read(object), readByKey(list, "map");
+    repeat("absent from an array", () => read(list));
+    repeat("absent from an object", () => read(object));
+    repeat("method of an array", () => readByKey(list, "map") === other.Array.prototype.map);
+    other.Object.prototype.shared = 1;
+    repeat("above an array", () => read(list));
+    repeat("above an object", () => read(object));
+    other.Array.prototype.shared = 2;
+    repeat("on the prototype of arrays", () => read(list));
+    delete other.Array.prototype.shared;
+    delete other.Object.prototype.shared;
+    print("deleted: " + read(list) + " " + read(object));
+};
+)JS"_s;
+
+static constexpr ASCIILiteral outputOfObjectsOfBorrower =
+    "absent from an array: undefined\n"
+    "absent from an object: undefined\n"
+    "method of an array: true\n"
+    "above an array: 1\n"
+    "above an object: 1\n"
+    "on the prototype of arrays: 2\n"
+    "deleted: undefined undefined\n"_s;
+
+static void testReadsOfObjectsOfRealmThatBorrowsTables()
+{
+    checkOutputOfProgramInShell(programText, outputOfObjectsOfBorrower, { }, statementsWithObjectsOfBorrower, { "--useDollarVM=1"_s });
+    checkServicesInShell(__FILE__, __LINE__, programText, outputOfObjectsOfBorrower, statementsWithObjectsOfBorrower, wordsOfCaches, "cccccc."_s, { }, { "--useDollarVM=1"_s, "--aotCountsPath=/dev/null"_s });
+}
+
 static constexpr ASCIILiteral programWithStoresByKey = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
 entry module=m0
 function f0 name="main" kind=Module results=[{type=anything}] {
@@ -369,6 +444,8 @@ std::span<const NativeTest> globalProxyReadProgramTests()
     static constexpr NativeTest tests[] = {
         { "global-proxy-reads/programs/reads-follow-the-global-object"_s, testReadsFollowTheGlobalObject },
         { "global-proxy-reads/programs/reads-follow-other-receivers"_s, testReadsFollowOtherReceivers },
+        { "global-proxy-reads/programs/reads-of-strings-with-several-realms"_s, testReadsOfStringsWithSeveralRealms },
+        { "global-proxy-reads/programs/objects-of-a-realm-that-borrows-tables"_s, testReadsOfObjectsOfRealmThatBorrowsTables },
         { "global-proxy-reads/programs/stores-by-key-follow-the-global-object"_s, testStoresByKeyFollowTheGlobalObject },
         { "global-proxy-reads/programs/stores-by-name-follow-the-global-object"_s, testStoresByNameFollowTheGlobalObject },
     };

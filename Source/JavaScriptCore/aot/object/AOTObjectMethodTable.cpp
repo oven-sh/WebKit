@@ -187,6 +187,7 @@ bool Object::tryMoveFieldBackToSlot(VM& vm, const FieldData& field)
     if (!isUndone) {
         VM::DeletePropertyModeScope ignoreConfigurable(vm, VM::DeletePropertyMode::IgnoreConfigurable);
         DeletePropertySlot slot;
+        state().objects->keyOrders.lastExtraKeyFound() = { };
         JSObject::deleteProperty(extra, structure()->realm(), name, slot);
     }
     didChangeExtraProperties(vm);
@@ -1417,6 +1418,7 @@ bool Object::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Property
             object->didRemoveExtraKey(vm, state, place);
         didChangeOwnProperties(vm, *object, VM::StructureChainIntegrityEvent::Remove, name.uid());
     });
+    state.objects->keyOrders.lastExtraKeyFound() = { };
     isDeleted = extra->methodTable()->deleteProperty(extra, globalObject, name, slot);
     scope.release();
     return isDeleted;

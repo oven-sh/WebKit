@@ -439,8 +439,8 @@ bool JSBoundFunction::canSkipNameAndLengthMaterialization(JSGlobalObject* global
     if (structure->realm() != globalObject)
         return false;
 
-    // Bound functions cannot assume their .length/.name are unchanged, and so cannot skip
-    // materializing them.
+    // Bound functions do not record that their .length/.name have changed. They are left to
+    // the slow path, see canBindWithoutReadingNameAndLength().
     //
     // This must be synced with JSFunction::canAssumeNameAndLengthAreOriginal().
     if (structure->classInfoForCells()->isSubClassOf(JSBoundFunction::info()))

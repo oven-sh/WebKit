@@ -38,6 +38,7 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "DirectArguments.h"
+#include "EmbedderListItems.h"
 #include "FullCodeOrigin.h"
 #include "GetterSetter.h"
 #include "GetterSetterAccessCase.h"
@@ -280,6 +281,7 @@ NODELETE static bool needsScratchFPR(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -411,6 +413,7 @@ NODELETE static bool forInBy(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -596,6 +599,7 @@ NODELETE static bool isStateless(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -748,6 +752,7 @@ NODELETE bool doesJSCalls(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -901,6 +906,7 @@ NODELETE static bool isMegamorphic(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -1048,6 +1054,7 @@ bool canBeViaGlobalProxy(AccessCase::AccessType type)
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -1837,6 +1844,11 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
     return { };
 }
 
+static bool hasDOMJITCode(const DOMAttributeAnnotation& attribute)
+{
+    return Options::useDOMJIT() && attribute.domJIT && attribute.domJIT->compiler()()->generator();
+}
+
 void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCase, CCallHelpers::JumpList& fallThrough)
 {
     SuperSamplerScope superSamplerScope(false);
@@ -2076,6 +2088,34 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
     case AccessCase::IndexedProxyObjectStore: {
         ASSERT(!accessCase.viaGlobalProxy());
         emitProxyObjectAccess(index, accessCase, fallThrough);
+        return;
+    }
+
+    case AccessCase::IndexedEmbedderListLoad: {
+        ASSERT(!accessCase.viaGlobalProxy());
+        // This code is written such that the result could alias with the base or the property.
+        GPRReg propertyGPR = m_propertyCache.propertyGPR();
+
+        jit.load8(CCallHelpers::Address(baseGPR, JSCell::typeInfoTypeOffset()), scratchGPR);
+        fallThrough.append(jit.branch32(CCallHelpers::NotEqual, scratchGPR, CCallHelpers::TrustedImm32(EmbedderListType)));
+
+        jit.loadPtr(CCallHelpers::Address(baseGPR, EmbedderListItems::offsetOfClock()), scratchGPR);
+        jit.load64(CCallHelpers::Address(scratchGPR), scratchGPR);
+        m_failAndIgnore.append(jit.branch64(CCallHelpers::NotEqual, CCallHelpers::Address(baseGPR, EmbedderListItems::offsetOfTime()), scratchGPR));
+        jit.loadPtr(CCallHelpers::Address(baseGPR, EmbedderListItems::offsetOfItems()), scratchGPR);
+        m_failAndIgnore.append(jit.branchTestPtr(CCallHelpers::Zero, scratchGPR));
+        m_failAndIgnore.append(jit.branch32(CCallHelpers::AboveOrEqual, propertyGPR, CCallHelpers::Address(scratchGPR, JSCellButterfly::offsetOfPublicLength())));
+
+        auto allocator = makeDefaultScratchAllocator(scratchGPR);
+        GPRReg scratch2GPR = allocator.allocateScratchGPR();
+        ScratchRegisterAllocator::PreservedState preservedState = allocator.preserveReusedRegistersByPushing(jit, ScratchRegisterAllocator::ExtraStackSpace::NoExtraSpace);
+        jit.zeroExtend32ToWord(propertyGPR, scratch2GPR);
+        jit.loadValue(CCallHelpers::BaseIndex(scratchGPR, scratch2GPR, CCallHelpers::TimesEight, JSCellButterfly::offsetOfData()), scratchGPR);
+        allocator.restoreReusedRegistersByPopping(jit, preservedState);
+
+        m_failAndIgnore.append(jit.branchIfEmpty(scratchGPR));
+        jit.move(scratchGPR, valueGPR);
+        succeed();
         return;
     }
 
@@ -3295,7 +3335,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
                 return;
             }
 
-            if (Options::useDOMJIT() && access.domAttribute()->domJIT) {
+            if (hasDOMJITCode(*access.domAttribute())) {
                 if (auto* globalObject = accessCase.structure()->realm()) {
                     emitDOMJITGetter(globalObject, access.domAttribute()->domJIT, baseGPR);
                     return;
@@ -3915,6 +3955,7 @@ void InlineCacheCompiler::generateAccessCase(unsigned index, AccessCase& accessC
     case AccessCase::IndexedContiguousLoad:
     case AccessCase::IndexedArrayStorageLoad:
     case AccessCase::IndexedScopedArgumentsLoad:
+    case AccessCase::IndexedEmbedderListLoad:
     case AccessCase::IndexedDirectArgumentsLoad:
     case AccessCase::IndexedTypedArrayInt8Load:
     case AccessCase::IndexedTypedArrayUint8Load:
@@ -7312,7 +7353,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
 
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             if (accessCase.m_type == AccessCase::CustomAccessorGetter) {
-                                if (Options::useDOMJIT() && access.domAttribute() && access.domAttribute()->domJIT) {
+                                if (access.domAttribute() && hasDOMJITCode(*access.domAttribute())) {
                                     code = compileGetByDOMJITHandler(codeBlock, access.domAttribute()->domJIT, std::nullopt);
                                     if (!code)
                                         return AccessGenerationResult::GaveUp;
@@ -7674,7 +7715,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
 
                             MacroAssemblerCodeRef<JITStubRoutinePtrTag> code;
                             if (accessCase.m_type == AccessCase::CustomAccessorGetter) {
-                                if (Options::useDOMJIT() && access.domAttribute() && access.domAttribute()->domJIT) {
+                                if (access.domAttribute() && hasDOMJITCode(*access.domAttribute())) {
                                     code = compileGetByDOMJITHandler(codeBlock, access.domAttribute()->domJIT, accessCase.uid()->isSymbol());
                                     if (!code)
                                         return AccessGenerationResult::GaveUp;

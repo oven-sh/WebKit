@@ -226,6 +226,8 @@ void StringTable::initialize(const BuiltinTable& builtins, const ParallelLoops& 
     m_textOfTrue = intern(StringView("true"_s));
     m_textOfFalse = intern(StringView("false"_s));
     appendBuiltinNames();
+    for (BuiltinName name : builtins.namesLeftOut())
+        m_builtinNames[stringOf(name).index()] = { };
     ASCIIUnits asciiUnits { };
     for (size_t i = numberOfStrings; i < m_strings.size(); ++i)
         addCodeUnitsOf(m_strings[i], asciiUnits, codeUnits);

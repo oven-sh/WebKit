@@ -17,6 +17,7 @@
 #include "AOTNumbering.h"
 #include "AOTPlan.h"
 #include "AOTPropertyCachesFront.h"
+#include "AOTStartOrder.h"
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include <algorithm>
@@ -178,6 +179,24 @@ static void testMorePromisesThanColumns()
     AOT_TEST_CHECK(named.context.diagnostics().hasErrors());
 }
 
+static void testNamesOfListedFunctionsHaveColumns()
+{
+    constexpr uint32_t listedFunction = 5;
+    NamedProgram named;
+    Vector<PropertyKeyID> promised = named.addKeysWithColumn(RowDisplacementTable::maxColumn);
+    PropertyKeyID ofListedFunction = named.key("read at start"_s);
+    named.mentionsOfFunctions[listedFunction].append(NamedProgram::MentionedID { NumberSpace::Name, ofListedFunction.index(), 0 });
+    Vector<uint32_t> startRanks(FillWith { }, named.program->functions.size(), noStartRank);
+    startRanks[listedFunction] = 0;
+    named.context.setStartRanks(WTF::move(startRanks));
+
+    IdentifierNumbering identifiers = named.number();
+    AOT_TEST_CHECK(!named.context.diagnostics().hasErrors());
+    AOT_TEST_CHECK(RowDisplacementTable::hasColumn(*identifiers.numberOf(ofListedFunction)));
+    AOT_TEST_CHECK(RowDisplacementTable::hasColumn(*identifiers.numberOf(promised.first())));
+    AOT_TEST_CHECK(!RowDisplacementTable::hasColumn(*identifiers.numberOf(promised.last())));
+}
+
 static void testFirstFunctionIsFirstInSource()
 {
     constexpr uint32_t functionWrittenFirst = 7;
@@ -201,6 +220,7 @@ std::span<const NativeTest> identifierNumberingTests()
 {
     static constexpr NativeTest tests[] = {
         { "image/identifier-numbering/more-promises-than-columns"_s, testMorePromisesThanColumns },
+        { "image/identifier-numbering/names-of-listed-functions-have-columns"_s, testNamesOfListedFunctionsHaveColumns },
         { "image/identifier-numbering/first-function-is-first-in-source"_s, testFirstFunctionIsFirstInSource },
     };
     return tests;

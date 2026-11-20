@@ -1985,7 +1985,7 @@ void VM::drainMicrotasks()
             didExhaustMicrotaskQueue();
             if (hasPendingTerminationException()) [[unlikely]]
                 return;
-            if (m_defaultMicrotaskQueue->isEmpty())
+            if (!m_defaultMicrotaskQueue->hasMicrotasksForFullyActiveDocument())
                 break;
             if (!entryScope)
                 entryScope.emplace(*this, nullptr);

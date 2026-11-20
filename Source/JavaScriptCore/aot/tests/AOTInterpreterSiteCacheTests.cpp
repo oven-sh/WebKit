@@ -20,9 +20,13 @@
 #include "FunctionExecutable.h"
 #include "JSCInlines.h"
 #include "JSFunction.h"
+#include "ObjectConstructor.h"
 #include "PutPropertySlot.h"
+#include "StrongInlines.h"
+#include <algorithm>
 #include <limits>
 #include <tuple>
+#include <wtf/SetForScope.h>
 
 namespace JSC::AOT {
 
@@ -431,6 +435,251 @@ static void testTextStoresIntoUnboxedSlots(LoadedProgram& program)
     }
 }
 
+static JSGlobalObject* createRealmThatBorrowsTables(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
+    AOT_TEST_CHECK(!Instance::of(realm) && realm->aotTableInstance() == &program.instance());
+    return realm;
+}
+
+// The cache of the site goes to `other`, so the table has to answer for `object`.
+static constexpr ASCIILiteral readerOfTwoStructures = R"JS(
+var above = { name: 1 }, object = Object.create(above), other = { name: 0 };
+function read(o) { return o.name; }
+function readOften() { for (let i = 0; i < 12; i++) read(other), read(object); }
+)JS"_s;
+
+static const Slot* slotFiledInBorrower(LoadedProgram& program, JSGlobalObject* realm, ASCIILiteral text, SlotAccess access)
+{
+    Identifier name = Identifier::fromString(program.vm(), text);
+    Structure* structure = program.realms().object(realm, "object"_s)->structure();
+    return realm->aotTableInstance()->state->propertyCaches->findByKey(structure, name.impl(), access);
+}
+
+static Slot::Kind kindFiledInBorrower(LoadedProgram& program, JSGlobalObject* realm, ASCIILiteral text, SlotAccess access = SlotAccess::Read)
+{
+    const Slot* slot = slotFiledInBorrower(program, realm, text, access);
+    return slot ? slot->kind : Slot::Kind::Empty;
+}
+
+struct ChangeAboveObject {
+    ASCIILiteral changesAndReads;
+    JSValue value;
+    Slot::Kind kindOnceFiled;
+};
+
+static void checkChangesAboveObject(LoadedProgram& program, JSGlobalObject* realm, std::initializer_list<ChangeAboveObject> changes)
+{
+    for (const ChangeAboveObject& change : changes) {
+        AOT_TEST_CHECK_FOR_SOURCE(program.realms().evaluate(realm, change.changesAndReads) == change.value, change.changesAndReads);
+        for (unsigned turn = 0; turn < readsUntilNameIsFiled; ++turn)
+            program.realms().evaluate(realm, "read = o => o.name, readOften()"_s);
+        AOT_TEST_CHECK_FOR_SOURCE(kindFiledInBorrower(program, realm, "name"_s) == change.kindOnceFiled, change.changesAndReads);
+        AOT_TEST_CHECK_FOR_SOURCE(program.realms().evaluate(realm, "read(object)"_s) == change.value, change.changesAndReads);
+    }
+}
+
+static void testBorrowerFilesWhatLiesAbove(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, readerOfTwoStructures);
+    checkChangesAboveObject(program, realm, {
+        { "read(object)"_s, jsNumber(1), Slot::Kind::Value },
+        { "above.name = 2, read(object)"_s, jsNumber(2), Slot::Kind::Value },
+        { "delete above.name, read(object)"_s, jsUndefined(), Slot::Kind::Absent },
+        { "Object.prototype.name = 3, read(object)"_s, jsNumber(3), Slot::Kind::Value },
+        { "Object.defineProperty(above, 'name', { get: () => 4, configurable: true }), read(object)"_s, jsNumber(4), Slot::Kind::Getter },
+        { "delete above.name, read(object)"_s, jsNumber(3), Slot::Kind::Value },
+        { "Object.setPrototypeOf(above, { name: 5 }), read(object)"_s, jsNumber(5), Slot::Kind::Value },
+        { "Object.setPrototypeOf(above, null), read(object)"_s, jsUndefined(), Slot::Kind::Absent },
+    });
+}
+
+static void testBorrowerFilesWhatArraysInherit(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, readerOfTwoStructures);
+    checkChangesAboveObject(program, realm, {
+        { "object = [], read(object)"_s, jsUndefined(), Slot::Kind::Absent },
+        { "Object.prototype.name = 1, read(object)"_s, jsNumber(1), Slot::Kind::Value },
+        { "Array.prototype.name = 2, read(object)"_s, jsNumber(2), Slot::Kind::Value },
+    });
+}
+
+static void testOtherRealmsFileWhatBorrowerWouldFile(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    static constexpr ASCIILiteral belowArrayPrototype = "Reflect.ownKeys(Array.prototype).map(key => Array.prototype[key]); var object = Object.create(Array.prototype); () => Object.create(Array.prototype)"_s;
+    static constexpr ASCIILiteral belowObjectPrototype = "var above = { }, object = Object.create(above); () => Object.create(above)"_s;
+    struct Access {
+        ASCIILiteral makerOfObjects;
+        ASCIILiteral name;
+        SlotAccess access;
+        Slot::Kind kindOnceFiled;
+        ASCIILiteral text;
+    };
+    static constexpr Access accesses[] = {
+        { belowArrayPrototype, "map"_s, SlotAccess::Read, Slot::Kind::Value, "(make => { const read = o => o.map; for (let i = 0; i < 64; i++) read({ map: 0 }), read(make()); })"_s },
+        { belowArrayPrototype, "absent"_s, SlotAccess::Read, Slot::Kind::Absent, "(make => { const read = o => o.absent; for (let i = 0; i < 64; i++) read({ absent: 0 }), read(make()); })"_s },
+        { belowArrayPrototype, "length"_s, SlotAccess::Store, Slot::Kind::Transition, "(make => { const add = o => { o.length = 1; }; for (let i = 0; i < 64; i++) add({ }), add(make()); })"_s },
+        { belowObjectPrototype, "__proto__"_s, SlotAccess::Read, Slot::Kind::Getter, "(make => { const read = o => o.__proto__; for (let i = 0; i < 64; i++) read({ }), read(make()); })"_s },
+    };
+    for (JSGlobalObject* asker : { program.realm(), createRealmThatBorrowsTables(program) }) {
+        for (const Access& access : accesses) {
+            JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+            callWith(program, uncheckedDowncast<JSFunction>(program.realms().evaluate(asker, access.text)), program.realms().evaluate(realm, access.makerOfObjects));
+            AOT_TEST_CHECK_FOR_SOURCE(kindFiledInBorrower(program, realm, access.name, access.access) == access.kindOnceFiled, access.text);
+        }
+    }
+}
+
+static void testBorrowerLeavesGlobalProxyAlone(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, readerOfTwoStructures);
+    checkChangesAboveObject(program, realm, {
+        { "object = globalThis, read(object)"_s, jsUndefined(), Slot::Kind::Uncacheable },
+        { "globalThis.name = 1, read(object)"_s, jsNumber(1), Slot::Kind::Uncacheable },
+    });
+    AOT_TEST_CHECK(!realm->mayBePrototype());
+}
+
+static void testHeirOfGlobalObjectSeesReplacedValue(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, readerOfTwoStructures);
+    Identifier name = Identifier::fromString(vm, "name"_s);
+    for (JSGlobalObject* above : { program.realm(), realm }) {
+        above->putDirect(vm, name, jsNumber(0));
+        above->didBecomePrototype(vm);
+        JSObject* heir = constructEmptyObject(realm, above);
+        PutPropertySlot slot(realm);
+        JSGlobalObject::put(realm, realm, Identifier::fromString(vm, "object"_s), heir, slot);
+        for (int value = 1; value <= 3; ++value) {
+            for (unsigned turn = 0; turn < readsUntilNameIsFiled; ++turn)
+                program.realms().evaluate(realm, "readOften()"_s);
+            above->putDirect(vm, name, jsNumber(value));
+            AOT_TEST_CHECK(program.realms().evaluate(realm, "read(object)"_s) == jsNumber(value));
+            vm.heap.collectSync(CollectionScope::Full);
+            AOT_TEST_CHECK(program.realms().evaluate(realm, "read(object)"_s) == jsNumber(value));
+        }
+    }
+}
+
+static JSC_DECLARE_CUSTOM_GETTER(getRealmOfRecord);
+JSC_DEFINE_CUSTOM_GETTER(getRealmOfRecord, (JSGlobalObject* globalObject, EncodedJSValue, PropertyName))
+{
+    return JSValue::encode(globalObject);
+}
+
+static void testBorrowerCallsCustomGetterOfTable(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    static constexpr std::pair<ASCIILiteral, ASCIILiteral> ownAndInherited[] = {
+        { "multiline"_s, "var object = RegExp, other = { }, read = o => o.multiline; RegExp.multiline = true"_s },
+        { "numeric"_s, "var object = new Intl.Locale('de-u-kn'), other = { }, read = o => o.numeric"_s },
+    };
+    for (auto [name, receiver] : ownAndInherited) {
+        JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+        program.realms().evaluate(realm, receiver);
+        for (unsigned turn = 0; turn < 4 * readsUntilNameIsFiled; ++turn)
+            AOT_TEST_CHECK_FOR_SOURCE(program.realms().evaluate(realm, "read(other), read(object)"_s) == jsBoolean(true), receiver);
+        const Slot* slot = slotFiledInBorrower(program, realm, name, SlotAccess::Read);
+        AOT_TEST_CHECK_FOR_SOURCE(slot && slot->kind == Slot::Kind::CustomGetter, receiver);
+        if (!slot || slot->kind != Slot::Kind::CustomGetter)
+            continue;
+        auto& record = const_cast<CustomAccessorRecord&>(program.vm().aotState().propertyCaches->customAccessors().at(slot->customAccessor.index));
+        SetForScope function(record.function, std::bit_cast<void*>(GetValueFunc(getRealmOfRecord).taggedPtr()));
+        AOT_TEST_CHECK_FOR_SOURCE(program.realms().evaluate(realm, "read(object)"_s) == realm, receiver);
+    }
+}
+
+static void testBorrowerFilesStores(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, R"JS(
+var above = { }, object = Object.create(above), seen;
+function add(o) { o.name = 1; return Object.hasOwn(o, "name"); }
+function addOften() { for (let i = 0; i < 64; i++) add({ other: 0 }), add(Object.create(above)); }
+addOften();
+)JS"_s);
+    AOT_TEST_CHECK(kindFiledInBorrower(program, realm, "name"_s, SlotAccess::Store) == Slot::Kind::Transition);
+    AOT_TEST_CHECK(program.realms().evaluate(realm, "Object.defineProperty(above, 'name', { set(value) { seen = value; }, configurable: true }), add(Object.create(above))"_s) == jsBoolean(false));
+    AOT_TEST_CHECK(program.realms().evaluate(realm, "add = o => (o.name = 1, Object.hasOwn(o, 'name')), addOften(), seen"_s) == jsNumber(1));
+    AOT_TEST_CHECK(kindFiledInBorrower(program, realm, "name"_s, SlotAccess::Store) == Slot::Kind::Setter);
+    AOT_TEST_CHECK(program.realms().evaluate(realm, "delete above.name, add(Object.create(above))"_s) == jsBoolean(true));
+    AOT_TEST_CHECK(program.realms().evaluate(realm, "addOften(), Object.defineProperty(Object.prototype, 'name', { value: 0 }), add(Object.create(above))"_s) == jsBoolean(false));
+}
+
+static void testBorrowerFilesStoresBelowArrayPrototype(LoadedProgram& program)
+{
+    DeferGC deferGC(program.vm());
+    JSGlobalObject* realm = createRealmThatBorrowsTables(program);
+    program.realms().evaluate(realm, R"JS(
+Reflect.ownKeys(Array.prototype).map(key => Array.prototype[key]);
+var object = Object.create(Array.prototype);
+function add(o) { o.length = 1; return Object.hasOwn(o, "length"); }
+for (let i = 0; i < 64; i++) add({ other: 0 }), add(Object.create(Array.prototype));
+)JS"_s);
+    AOT_TEST_CHECK(kindFiledInBorrower(program, realm, "length"_s, SlotAccess::Store) == Slot::Kind::Transition);
+    AOT_TEST_CHECK(program.realms().evaluate(realm, "Object.defineProperty(Array.prototype, 'length', { writable: false }), add(Object.create(Array.prototype))"_s) == jsBoolean(false));
+}
+
+static NEVER_INLINE Strong<JSGlobalObject> borrowFromRealmThatNothingHolds(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    JSGlobalObject* lender = JSGlobalObject::createWithCustomMethodTable(vm, JSGlobalObject::createStructure(vm, jsNull()), program.realm()->globalObjectMethodTable());
+    JSGlobalObject* borrower = createRealmThatBorrowsTables(program);
+    borrower->setAOTTableInstance(Instance::of(lender));
+    program.realms().evaluate(borrower, readerOfTwoStructures);
+    checkChangesAboveObject(program, borrower, { { "delete above.name, read(object)"_s, jsUndefined(), Slot::Kind::Absent } });
+    return Strong<JSGlobalObject>(vm, borrower);
+}
+
+static void testBorrowerOutlivesLender(LoadedProgram& program)
+{
+    constexpr size_t numberOfBorrowers = 8;
+    for (CollectionScope scope : { CollectionScope::Eden, CollectionScope::Full }) {
+        Vector<Strong<JSGlobalObject>> borrowers;
+        for (size_t number = 0; number < numberOfBorrowers; ++number)
+            borrowers.append(borrowFromRealmThatNothingHolds(program));
+        program.vm().heap.collectSync(scope);
+        auto hasOtherLender = [&](const Strong<JSGlobalObject>& borrower) {
+            return borrower->aotTableInstance() == &program.instance();
+        };
+        AOT_TEST_CHECK(static_cast<size_t>(std::ranges::count_if(borrowers, hasOtherLender)) > numberOfBorrowers / 2);
+        for (const Strong<JSGlobalObject>& borrower : borrowers) {
+            checkChangesAboveObject(program, borrower.get(), {
+                { "above.name = 2, read(object)"_s, jsNumber(2), Slot::Kind::Value },
+                { "delete above.name, read(object)"_s, jsUndefined(), Slot::Kind::Absent },
+            });
+        }
+    }
+}
+
+static constexpr ASCIILiteral nameOfTestOfLenders = "borrowed-tables/borrower-outlives-lender"_s;
+
+static void runTestOfLenders()
+{
+    runWithLoadedProgram(nameOfTestOfLenders, programText, testBorrowerOutlivesLender, { "several-realms"_s });
+}
+
+static void testRecordWithoutEntryIsNotKept(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    DeferGC deferGC(vm);
+    JSObject* prototype = constructEmptyObject(program.realm());
+    Identifier name = Identifier::fromString(vm, "a name that is not filed"_s);
+    AOT_TEST_CHECK(!vm.aotState().propertyCaches->keepChainDependent(vm, prototype->structureID().bits(), name.impl(), { prototype, nullptr }));
+}
+
 template<LoadedProgramTest body>
 static constexpr void (*withProgram)() = runNativeTestWithLoadedProgram<interpreterSiteCacheTests, programText, body>;
 
@@ -450,6 +699,16 @@ std::span<const NativeTest> interpreterSiteCacheTests()
         { "interpreter-site-cache/place-of-extra-property"_s, withProgram<testPlaceOfExtraProperty> },
         { "interpreter-site-cache/read-of-text-fills-its-site"_s, withProgram<testReadOfTextFillsItsSite> },
         { "interpreter-site-cache/site-goes-over-to-what-keeps-coming-by"_s, withProgram<testSiteGoesOverToWhatKeepsComingBy> },
+        { "borrowed-tables/what-lies-above-is-filed"_s, withProgram<testBorrowerFilesWhatLiesAbove> },
+        { "borrowed-tables/what-arrays-inherit-is-filed"_s, withProgram<testBorrowerFilesWhatArraysInherit> },
+        { "borrowed-tables/other-realms-file-the-same"_s, withProgram<testOtherRealmsFileWhatBorrowerWouldFile> },
+        { "borrowed-tables/global-proxy-is-left-alone"_s, withProgram<testBorrowerLeavesGlobalProxyAlone> },
+        { "borrowed-tables/heir-of-a-global-object-sees-a-replaced-value"_s, withProgram<testHeirOfGlobalObjectSeesReplacedValue> },
+        { "borrowed-tables/custom-getter-is-called-from-table"_s, withProgram<testBorrowerCallsCustomGetterOfTable> },
+        { "borrowed-tables/stores-are-filed"_s, withProgram<testBorrowerFilesStores> },
+        { "borrowed-tables/stores-below-array-prototype-are-filed"_s, withProgram<testBorrowerFilesStoresBelowArrayPrototype> },
+        { "borrowed-tables/record-without-entry-is-not-kept"_s, withProgram<testRecordWithoutEntryIsNotKept> },
+        { nameOfTestOfLenders, runTestOfLenders },
         { "interpreter-stores/text-stores-into-unboxed-slots"_s, withUnboxedNumbers<testTextStoresIntoUnboxedSlots> },
         { "interpreter-stores/marker-in-a-raw-field-marks-the-cell"_s, withTypedSlots<testMarkerStoredByTextMarksCell>, noTypedSlots },
         { "interpreter-stores/marker-that-a-field-never-takes-leaves-the-slot"_s, withTypedSlots<testMarkerThatFieldNeverTakesLeavesSlot>, noTypedSlots },

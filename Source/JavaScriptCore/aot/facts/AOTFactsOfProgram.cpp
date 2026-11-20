@@ -4049,7 +4049,7 @@ Vector<FeatureUseRecord> FeaturesOfProgramFacts::run(std::span<const BuiltinUseR
 class WritesOnBuiltinsInProgramFacts {
     WTF_MAKE_NONCOPYABLE(WritesOnBuiltinsInProgramFacts);
 public:
-    WritesOnBuiltinsInProgramFacts(const Program&, RefusedCode, const LookupsPastProgramObjects&);
+    WritesOnBuiltinsInProgramFacts(const Program&, RefusedCode, const LookupsPastProgramObjects&, bool assumesLocks);
 
     void take(const FindingOfProgramFacts&);
     void settle();
@@ -4072,7 +4072,8 @@ public:
 private:
     ReasonBuiltinStaysOpen reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const;
     ReasonBuiltinStaysOpen reasonNoLockHolds() const;
-    ReasonBuiltinStaysOpen reasonToLeaveOpenUnder(BuiltinID canonicalHolder, PropertyKeyID, bool isLockedForProduct, const BitVector& lost) const;
+    enum class WritesUnderAnyName : bool { MayHit, Miss };
+    ReasonBuiltinStaysOpen reasonToLeaveOpenUnder(BuiltinID canonicalHolder, PropertyKeyID, bool isLockedForProduct, const BitVector& lost, WritesUnderAnyName = WritesUnderAnyName::MayHit) const;
     void closeOverNamesReadThroughLostBuiltins(BitVector&) const;
     void carryOut(BuiltinID canonical, bool onlyWhatLiesOnIt, bool isByFileOfProduct);
     bool runsCodeThatNoLockIsLaidBeside(BuiltinID canonical, bool mayPassOptionThatRunsCode) const;
@@ -4084,6 +4085,7 @@ private:
     const BuiltinTable& m_builtins;
     const RefusedCode m_refused;
     const LookupsPastProgramObjects& m_lookups;
+    const bool m_assumesLocks;
 
     BitVector m_isWritten;
     BitVector m_isCarriedOutByProgram;
@@ -4097,11 +4099,12 @@ private:
     bool m_locksAreLaid { true };
 };
 
-WritesOnBuiltinsInProgramFacts::WritesOnBuiltinsInProgramFacts(const Program& program, RefusedCode refused, const LookupsPastProgramObjects& lookups)
+WritesOnBuiltinsInProgramFacts::WritesOnBuiltinsInProgramFacts(const Program& program, RefusedCode refused, const LookupsPastProgramObjects& lookups, bool assumesLocks)
     : m_source(program)
     , m_builtins(program.builtins())
     , m_refused(refused)
     , m_lookups(lookups)
+    , m_assumesLocks(assumesLocks)
     , m_isWritten(m_builtins.builtinCount())
     , m_isCarriedOutByProgram(m_builtins.builtinCount())
     , m_isCarriedOutBesideProduct(m_builtins.builtinCount())
@@ -4377,6 +4380,10 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonNoLockHolds() const
 
 ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(BuiltinID member, const BitVector& lost) const
 {
+    const Builtin& value = m_builtins.at(m_builtins.canonicalID(member));
+    bool isAssumedLocked = m_assumesLocks && m_builtins.at(member).origin == BuiltinOrigin::Engine && value.origin == BuiltinOrigin::Engine
+        && !m_builtins.isUnder(member, Builtins::Console) && m_builtins.canonicalID(member) != m_builtins.canonicalID(Builtins::Console)
+        && (value.kind == BuiltinKind::Function || value.kind == BuiltinKind::Method || value.kind == BuiltinKind::Constructor || value.kind == BuiltinKind::Namespace);
     if (ReasonBuiltinStaysOpen reason = reasonNoLockHolds(); reason != ReasonBuiltinStaysOpen::None)
         return reason;
     BuiltinID canonical = m_builtins.canonicalID(member);
@@ -4386,7 +4393,7 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpen(Builtin
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
     if (m_isWritten.quickGet(member.index()) || m_isWritten.quickGet(canonical.index()) || m_lookups.membersWritten.get(member.index()))
         return ReasonBuiltinStaysOpen::IsWrittenUnderItsName;
-    return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost);
+    return reasonToLeaveOpenUnder(m_builtins.canonicalID(m_builtins.at(member).holder), m_source.keyOf(m_builtins.at(member).name), m_source.isLockLeftToProgram(member), lost, isAssumedLocked ? WritesUnderAnyName::Miss : WritesUnderAnyName::MayHit);
 }
 
 bool WritesOnBuiltinsInProgramFacts::canLockAbsentName(BuiltinID canonicalHolder, PropertyKeyID key) const
@@ -4397,15 +4404,16 @@ bool WritesOnBuiltinsInProgramFacts::canLockAbsentName(BuiltinID canonicalHolder
     return isLockedAtStartUp && isPrototypeWithTrackedNames(m_builtins, canonicalHolder) && isTextThatIsNoIndex && !m_source.admitsReplacedBuiltins && m_locksAreLaid && m_refused.codeOutsideImage;
 }
 
-ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(BuiltinID holder, PropertyKeyID key, bool isLockedForProduct, const BitVector& lost) const
+ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(BuiltinID holder, PropertyKeyID key, bool isLockedForProduct, const BitVector& lost, WritesUnderAnyName writesUnderAnyName) const
 {
-    if (m_isWrittenUnderAnyName.quickGet(holder.index()) || m_lookups.holdersWrittenUnderAnyName.get(holder.index()))
+    const bool anyNameMayHit = writesUnderAnyName == WritesUnderAnyName::MayHit;
+    if (anyNameMayHit && (m_isWrittenUnderAnyName.quickGet(holder.index()) || m_lookups.holdersWrittenUnderAnyName.get(holder.index())))
         return ReasonBuiltinStaysOpen::HolderIsWrittenUnderAnyName;
     bool isWrittenThroughLostBuiltins = isLockedForProduct
-        ? m_lookups.writesUnderAnyNameThroughLostBuiltinsBesideProduct || (key && m_lookups.namesWrittenThroughLostBuiltinsBesideProduct.get(key.index()))
-        : m_lookups.writesUnderAnyNameThroughLostBuiltins || (key && m_lookups.namesWrittenThroughLostBuiltins.get(key.index()));
+        ? (anyNameMayHit && m_lookups.writesUnderAnyNameThroughLostBuiltinsBesideProduct) || (key && m_lookups.namesWrittenThroughLostBuiltinsBesideProduct.get(key.index()))
+        : (anyNameMayHit && m_lookups.writesUnderAnyNameThroughLostBuiltins) || (key && m_lookups.namesWrittenThroughLostBuiltins.get(key.index()));
     bool isNamedThroughUnseen = key && (isLockedForProduct ? m_lookups.namesWrittenThroughUnseenBesideProduct : m_lookups.namesWrittenThroughUnseenByProgram).get(key.index());
-    bool isWrittenThroughUnseen = isNamedThroughUnseen || (isLockedForProduct ? m_lookups.writesUnderAnyNameThroughUnseenBesideProduct : m_lookups.writesUnderAnyNameThroughUnseenByProgram);
+    bool isWrittenThroughUnseen = isNamedThroughUnseen || (anyNameMayHit && (isLockedForProduct ? m_lookups.writesUnderAnyNameThroughUnseenBesideProduct : m_lookups.writesUnderAnyNameThroughUnseenByProgram));
     if (lost.quickGet(holder.index())) {
         if (isWrittenThroughLostBuiltins)
             return ReasonBuiltinStaysOpen::IsWrittenThroughLostBuiltins;
@@ -4416,7 +4424,7 @@ ReasonBuiltinStaysOpen WritesOnBuiltinsInProgramFacts::reasonToLeaveOpenUnder(Bu
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
     if (!isLockedForProduct && key && m_lookups.namesWrittenThroughUnseenByLibrary.get(key.index()) && m_builtins.at(holder).origin == BuiltinOrigin::Host && m_builtins.at(holder).kind == BuiltinKind::Prototype)
         return ReasonBuiltinStaysOpen::IsSpelledThroughUnseen;
-    if ((isLockedForProduct ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
+    if (anyNameMayHit && (isLockedForProduct ? m_isCarriedOutBesideProduct : m_isCarriedOutByProgram).quickGet(holder.index()))
         return ReasonBuiltinStaysOpen::HolderIsLetGoByProgram;
     return ReasonBuiltinStaysOpen::None;
 }
@@ -4859,7 +4867,7 @@ BuilderOfProgramFacts::BuilderOfProgramFacts(const InputsOfProgramFacts& inputs,
     , m_isCalledByCodeInSight(m_builtins.builtinCount())
     , m_isSpelledInTexts(m_builtins.builtinCount())
     , m_modulesImportedByProgram(m_builtins.builtinCount())
-    , m_writes(inputs.program, m_refused, inputs.linked.lookups)
+    , m_writes(inputs.program, m_refused, inputs.linked.lookups, inputs.build.options().assumesLockedBuiltins())
     , m_namesOfProtocols(m_builtins.nameCount())
     , m_keysReadOnlyByRowsThatNameThem(m_builtins.nameCount())
     , m_keysNamedByRowsThatMayRun(m_builtins.nameCount())
@@ -6120,7 +6128,7 @@ void BuilderOfProgramFacts::listBuiltinUses()
         OptionSet<BuiltinUse> uses = m_uses[index];
         if (someAreNamedAtRunTime && !usedByCodeInSight.quickGet(index) && !usedByCodeInSight.quickGet(m_builtins.canonicalID(BuiltinID(index)).index()))
             uses.add(BuiltinUse::NamedAtRunTime);
-        if (!m_uses[index].isEmpty())
+        if (!m_uses[index].isEmpty() && !m_builtins.isLeftOut(BuiltinID(index)))
             m_tables.builtinUses.append(BuiltinUseRecord { index, static_cast<BuiltinUse>(uses.toRaw()), m_witnesses[index] });
     }
 }

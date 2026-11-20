@@ -66,6 +66,12 @@ bool BuiltinTable::canBeReplacedInTestRuns(BuiltinID id) const
     return !isReadWithoutLookup(*this, member.name, NameIs::OfMember);
 }
 
+static bool isGlobalNameOfHostObject(const BuiltinTable& table, BuiltinID id)
+{
+    const Builtin& member = table.at(id);
+    return member.origin == BuiltinOrigin::Host && member.kind == BuiltinKind::Namespace && member.holder == Builtins::GlobalThis && !member.sameObjectAs;
+}
+
 bool BuiltinTable::canTakeNameInTestRuns(BuiltinID holder, BuiltinName name) const
 {
     const Builtin& object = at(holder);
@@ -94,6 +100,44 @@ BuiltinTableOfBuild::BuiltinTableOfBuild(const BuiltinTable& table)
     : m_data(table.m_data)
     , m_table(m_data)
 {
+}
+
+void BuiltinTableOfBuild::leaveOutOptionalEntries()
+{
+    RELEASE_ASSERT(m_builtins.isEmpty() && !m_data.leavesOutOptionalEntries);
+    if (m_table.marked(BuiltinMark::IsOptional).empty())
+        return;
+    auto isOptional = [&](BuiltinID builtin) {
+        return builtin && m_table.has(BuiltinMark::IsOptional, m_table.rootOf(builtin));
+    };
+    m_builtinsWithoutOptionalEntries = Vector<Builtin>(m_data.builtins);
+    for (uint32_t index = 0; index < m_data.builtins.size(); ++index) {
+        if (!isOptional(BuiltinID(index)))
+            continue;
+        m_builtinsWithoutOptionalEntries[index] = Builtin {
+            .origin = BuiltinOrigin::Host,
+            .prototypeLink = BuiltinPrototypeLink::Null,
+            .flags = { BuiltinFlag::ListsAllMembers },
+            .name = m_table.at(m_table.rootOf(BuiltinID(index))).name,
+        };
+    }
+    m_classesWithoutOptionalEntries = Vector<BuiltinClass>(m_data.classes);
+    for (BuiltinClass& builtinClass : m_classesWithoutOptionalEntries) {
+        if (!isOptional(builtinClass.prototype))
+            continue;
+        builtinClass.parent = { };
+        builtinClass.constructor = { };
+        builtinClass.prototype = { };
+    }
+    for (const BuiltinMarkedEntry& marked : m_data.runtime.marks) {
+        if (!isOptional(marked.builtin))
+            m_marksWithoutOptionalEntries.append(marked);
+    }
+    RELEASE_ASSERT(std::ranges::none_of(m_data.runtime.lockedObjects, isOptional) && std::ranges::none_of(m_data.runtime.lockedMembers, isOptional));
+    m_data.builtins = m_builtinsWithoutOptionalEntries.span();
+    m_data.classes = m_classesWithoutOptionalEntries.span();
+    m_data.runtime.marks = m_marksWithoutOptionalEntries.span();
+    m_data.leavesOutOptionalEntries = true;
 }
 
 void BuiltinTableOfBuild::answerQuestionsAboutClasses()
@@ -143,7 +187,7 @@ void BuiltinTableOfBuild::unlock(std::span<const BuiltinID> members, std::span<c
 {
     RELEASE_ASSERT(m_builtins.isEmpty());
     for (BuiltinID member : members) {
-        if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
+        if (m_table.contains(member) && (m_table.canBeReplacedInTestRuns(member) || isGlobalNameOfHostObject(m_table, member) || m_table.at(member).mutability == BuiltinMutability::ConstantUnlessWritten))
             m_unlockedMembers.append(member);
     }
     if (m_unlockedMembers.isEmpty() && holdersOfNewNames.empty()) {
@@ -211,7 +255,7 @@ void Program::unlockReplaceableBuiltins()
             continue;
         }
         members.append(entry.member);
-        if (m_builtins.contains(entry.member) && m_builtins.canBeReplacedInTestRuns(entry.member))
+        if (m_builtins.contains(entry.member) && m_builtins.canBeReplacedInTestRuns(entry.member) && !isGlobalNameOfHostObject(m_builtins, entry.member))
             losesLockOfTable.quickSet(entry.member.index());
     }
     openedNames.removeAllMatching([&](OpenedName& opened) {

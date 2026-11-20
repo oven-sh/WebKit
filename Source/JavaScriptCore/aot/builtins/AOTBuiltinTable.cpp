@@ -273,9 +273,13 @@ std::optional<BuiltinDispatchTarget> BuiltinTable::dispatchOf(BuiltinID id, Buil
     static constinit RecordsByBuiltin<BuiltinDispatch> dispatchesByBuiltin;
     std::span<const BuiltinDispatch> dispatches = dispatchesByBuiltin.find(keptByThisReader(m_data.dispatches, builtinTableDispatches), m_data.builtins.size(), id);
     auto found = std::ranges::find(dispatches, mode, &BuiltinDispatch::mode);
-    if (found == dispatches.end())
-        return std::nullopt;
-    return found->root;
+    if (found != dispatches.end())
+        return found->root;
+    for (BuiltinOverloadID overload : overloadIDsOf(id)) {
+        if (summaryOf(overload).mode == mode)
+            return BuiltinDispatchTarget { .overload = overload };
+    }
+    return std::nullopt;
 }
 
 const BuiltinParameter* BuiltinTable::parameterFor(const BuiltinOverload& overload, BuiltinOperand position) const
@@ -474,7 +478,13 @@ std::span<const BuiltinClassID> BuiltinTable::classesWithInstanceMember(BuiltinN
     const BuiltinNameClasses* found = findRecord(keptByThisReader(m_data.names.classesByMemberName, builtinTableClassesByMemberName), &BuiltinNameClasses::name, name);
     if (!found)
         return { };
-    return found->classes;
+    std::span<const BuiltinClassID> classes = found->classes;
+    if (!m_data.leavesOutOptionalEntries)
+        return classes;
+    auto firstLeftOut = std::ranges::partition_point(classes, [&](BuiltinClassID builtinClass) {
+        return !!at(builtinClass).prototype;
+    });
+    return classes.first(firstLeftOut - classes.begin());
 }
 
 BuiltinClassID BuiltinTable::receiverClassOf(BuiltinID id) const
@@ -652,18 +662,24 @@ bool BuiltinTable::isClosedKey(BuiltinID holder, BuiltinName name) const
 
 std::span<const BuiltinFeatureUse> BuiltinTable::featureUsesOf(BuiltinID id) const
 {
+    if (isLeftOut(id))
+        return { };
     static constinit RecordsByBuiltin<BuiltinFeatureUse> featureUsesByBuiltin;
     return featureUsesByBuiltin.find(keptByThisReader(m_data.attachments.featureUses, builtinTableFeatureUses), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinModuleLoad> BuiltinTable::moduleLoadsOf(BuiltinID id) const
 {
+    if (isLeftOut(id))
+        return { };
     static constinit RecordsByBuiltin<BuiltinModuleLoad> moduleLoadsByBuiltin;
     return moduleLoadsByBuiltin.find(keptByThisReader(m_data.attachments.moduleLoads, builtinTableModuleLoads), m_data.builtins.size(), id);
 }
 
 std::span<const BuiltinCalledFunction> BuiltinTable::calledFunctionsOf(BuiltinID id) const
 {
+    if (isLeftOut(id))
+        return { };
     static constinit RecordsByBuiltin<BuiltinCalledFunction> calledFunctionsByBuiltin;
     return calledFunctionsByBuiltin.find(keptByThisReader(m_data.attachments.calledFunctions, builtinTableCalledFunctions), m_data.builtins.size(), id);
 }
@@ -700,12 +716,12 @@ std::span<const BuiltinName> BuiltinTable::nativeCellsFilledByCalledFunctions() 
 
 const BuiltinUnseenCode* BuiltinTable::unseenCodeOf(BuiltinID id) const
 {
-    return findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
+    return isLeftOut(id) ? nullptr : findRecord(m_data.attachments.unseenCode, &BuiltinUnseenCode::builtin, id);
 }
 
 const BuiltinCondition* BuiltinTable::conditionOnInstancesThatAnswerEveryName(BuiltinID constructor) const
 {
-    const BuiltinUnseenCode* row = constructor ? findRecord(m_data.attachments.instancesThatAnswerEveryName, &BuiltinUnseenCode::builtin, constructor) : nullptr;
+    const BuiltinUnseenCode* row = constructor && !isLeftOut(constructor) ? findRecord(m_data.attachments.instancesThatAnswerEveryName, &BuiltinUnseenCode::builtin, constructor) : nullptr;
     return row ? row->condition : nullptr;
 }
 

@@ -241,11 +241,10 @@ bool JSGenericTypedArrayView<Adaptor>::setWithSpecificType(
         || existingBuffer() != other->existingBuffer()
         || (elementSize == otherElementSize && (static_cast<void*>(typedVector() + offset) <= static_cast<void*>(other->typedVector() + otherOffset)))
         || type == CopyType::LeftToRight) {
-        for (size_t i = 0; i < length; ++i) {
-            setIndexQuicklyToNativeValue(
-                offset + i, OtherAdaptor::template convertTo<Adaptor>(
-                    other->getIndexQuicklyAsNativeValue(i + otherOffset)));
-        }
+        auto* target = typedVector() + offset;
+        const auto* source = other->typedVector() + otherOffset;
+        for (size_t i = 0; i < length; ++i)
+            target[i] = OtherAdaptor::template convertTo<Adaptor>(source[i]);
         return true;
     }
 

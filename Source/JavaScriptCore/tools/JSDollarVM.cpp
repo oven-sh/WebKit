@@ -43,6 +43,7 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
 #include "Debugger.h"
+#include "EmbedderListItems.h"
 #include "ExecutableBaseInlines.h"
 #include "FastMallocAlignedMemoryAllocator.h"
 #include "FrameTracers.h"
@@ -668,6 +669,111 @@ JSC_DEFINE_CUSTOM_GETTER(customGetterAcessorGetter, (JSGlobalObject* globalObjec
 }
 
 static JSC_DECLARE_CUSTOM_GETTER(runtimeArrayLengthGetter);
+
+class TestEmbedderList final : public JSDestructibleObject {
+public:
+    using Base = JSDestructibleObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero;
+
+    template<typename CellType, SubspaceAccess>
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    static TestEmbedderList* create(JSGlobalObject* globalObject, JSArray* source)
+    {
+        DollarVMAssertScope assertScope;
+        static_assert(OBJECT_OFFSETOF(TestEmbedderList, m_items) == EmbedderListItems::offsetInCell);
+        VM& vm = globalObject->vm();
+        Structure* structure = Structure::create(vm, globalObject, globalObject->objectPrototype(), TypeInfo(EmbedderListType, StructureFlags), info());
+        auto* list = new (NotNull, allocateCell<TestEmbedderList>(vm)) TestEmbedderList(vm, structure, source);
+        list->finishCreation(vm);
+        return list;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        DollarVMAssertScope assertScope;
+        static_cast<TestEmbedderList*>(cell)->TestEmbedderList::~TestEmbedderList();
+    }
+
+    static bool getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+    {
+        DollarVMAssertScope assertScope;
+        if (std::optional<uint32_t> index = parseIndex(propertyName))
+            return getOwnPropertySlotByIndex(object, globalObject, *index, slot);
+        return Base::getOwnPropertySlot(object, globalObject, propertyName, slot);
+    }
+
+    static bool getOwnPropertySlotByIndex(JSObject* object, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+    {
+        DollarVMAssertScope assertScope;
+        auto* thisObject = uncheckedDowncast<TestEmbedderList>(object);
+        ++thisObject->m_timesAsked;
+        thisObject->publish(globalObject->vm());
+        JSValue item = thisObject->m_source->tryGetIndexQuickly(index);
+        if (!item)
+            return false;
+        slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::ReadOnly), item);
+        return true;
+    }
+
+    void change(VM& vm, JSArray* source)
+    {
+        DollarVMAssertScope assertScope;
+        ++s_clock;
+        m_source.set(vm, this, source);
+        m_hasChanged = true;
+    }
+
+    NODELETE unsigned timesAsked() const { return m_timesAsked; }
+    bool holdsItems() const { return m_items.itemsOfAnyTime(); }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+private:
+    TestEmbedderList(VM& vm, Structure* structure, JSArray* source)
+        : Base(vm, structure)
+        , m_source(source, WriteBarrierEarlyInit)
+    {
+    }
+
+    void publish(VM& vm)
+    {
+        if (!std::exchange(m_hasChanged, false) && m_items.itemsOfAnyTime()) {
+            m_items.renew();
+            return;
+        }
+        auto* items = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, m_source->length());
+        for (unsigned index = 0; index < items->length(); ++index)
+            items->setIndex(vm, index, m_source->tryGetIndexQuickly(index));
+        m_items.publish(vm, this, items, &s_clock);
+    }
+
+    static thread_local uint64_t s_clock;
+
+    EmbedderListItems m_items;
+    WriteBarrier<JSArray> m_source;
+    unsigned m_timesAsked { 0 };
+    bool m_hasChanged { true };
+};
+
+thread_local uint64_t TestEmbedderList::s_clock { 0 };
+
+template<typename Visitor>
+void TestEmbedderList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    DollarVMAssertScope assertScope;
+    auto* thisObject = uncheckedDowncast<TestEmbedderList>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    thisObject->m_items.visit(visitor);
+    visitor.append(thisObject->m_source);
+}
+
+DEFINE_VISIT_CHILDREN(TestEmbedderList);
 
 class RuntimeArray : public JSArray {
 public:
@@ -1310,10 +1416,43 @@ private:
 
 static const DOMJITGetterNoEffects::DOMJITAttribute DOMJITGetterNoEffectsDOMJIT;
 
+static thread_local unsigned timesGetterWithoutCodeWasCalled;
+
+static JSC_DECLARE_CUSTOM_GETTER(domJITGetterWithoutCode);
+JSC_DEFINE_CUSTOM_GETTER(domJITGetterWithoutCode, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName name))
+{
+    DollarVMAssertScope assertScope;
+    ++timesGetterWithoutCodeWasCalled;
+    return domJITGetterNoEffectCustomGetter(globalObject, thisValue, name);
+}
+
+static JSC_DECLARE_CUSTOM_GETTER(domJITTimesGetterWithoutCodeWasCalled);
+JSC_DEFINE_CUSTOM_GETTER(domJITTimesGetterWithoutCodeWasCalled, (JSGlobalObject*, EncodedJSValue, PropertyName))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(timesGetterWithoutCodeWasCalled));
+}
+
+#if ENABLE(JIT)
+static Ref<DOMJIT::CallDOMGetterSnippet> snippetWithoutCode()
+{
+    DollarVMAssertScope assertScope;
+    Ref<DOMJIT::CallDOMGetterSnippet> snippet = DOMJIT::CallDOMGetterSnippet::create();
+    snippet->effect = DOMJIT::Effect::forDef(DOMJIT::HeapRange::fromConstant<11, 12>());
+    snippet->requireGlobalObject = false;
+    return snippet;
+}
+static const DOMJIT::GetterSetter DOMJITGetterWithoutCodeDOMJIT { domJITGetterWithoutCode, snippetWithoutCode, SpecInt32Only };
+#else
+static const DOMJIT::GetterSetter DOMJITGetterWithoutCodeDOMJIT { domJITGetterWithoutCode, nullptr, SpecInt32Only };
+#endif
+
 void DOMJITGetterNoEffects::finishCreation(VM& vm)
 {
     DollarVMAssertScope assertScope;
     Base::finishCreation(vm);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "getterWithoutCode"_s), DOMAttributeGetterSetter::create(vm, domJITGetterWithoutCode, nullptr, DOMAttributeAnnotation { DOMJITNode::info(), &DOMJITGetterWithoutCodeDOMJIT }), PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor);
+    putDirectCustomAccessor(vm, Identifier::fromString(vm, "timesCalled"_s), CustomGetterSetter::create(vm, domJITTimesGetterWithoutCodeWasCalled, nullptr), PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor);
     const DOMJIT::GetterSetter* domJIT = &DOMJITGetterNoEffectsDOMJIT;
     auto* customGetterSetter = DOMAttributeGetterSetter::create(vm, domJIT->getter(), nullptr, DOMAttributeAnnotation { DOMJITNode::info(), domJIT });
     putDirectCustomAccessor(vm, Identifier::fromString(vm, "customGetter"_s), customGetterSetter, PropertyAttribute::ReadOnly | PropertyAttribute::CustomAccessor);
@@ -1540,10 +1679,43 @@ JSC_DEFINE_JIT_OPERATION(functionDOMJITFunctionObjectWithoutTypeCheck, EncodedJS
 
 static const DOMJIT::Signature DOMJITFunctionObjectSignature(functionDOMJITFunctionObjectWithoutTypeCheck, DOMJITFunctionObject::info(), DOMJIT::Effect::forRead(DOMJIT::HeapRange(DOMJIT::HeapRange::ConstExpr, 0, 1)), SpecInt32Only);
 
+static EncodedJSValue describeArguments(JSGlobalObject* globalObject, JSValue first, JSValue second)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSString* string = first.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue values[] = { string, second };
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values, std::size(values))));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionDOMJITTakesAnythingWithTypeCheck);
+JSC_DEFINE_HOST_FUNCTION(functionDOMJITTakesAnythingWithTypeCheck, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!dynamicDowncast<DOMJITNode>(callFrame->thisValue()))
+        return throwVMTypeError(globalObject, scope);
+    RELEASE_AND_RETURN(scope, describeArguments(globalObject, callFrame->argument(0), callFrame->argument(1)));
+}
+
+JSC_DECLARE_JIT_OPERATION(functionDOMJITTakesAnythingWithoutTypeCheck, EncodedJSValue, (JSGlobalObject*, DOMJITNode*, EncodedJSValue, EncodedJSValue));
+JSC_DEFINE_JIT_OPERATION(functionDOMJITTakesAnythingWithoutTypeCheck, EncodedJSValue, (JSGlobalObject* globalObject, DOMJITNode*, EncodedJSValue first, EncodedJSValue second))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    OPERATION_RETURN(scope, describeArguments(globalObject, JSValue::decode(first), JSValue::decode(second)));
+}
+
+static const DOMJIT::Signature DOMJITTakesAnythingSignature(functionDOMJITTakesAnythingWithoutTypeCheck, DOMJITNode::info(), DOMJIT::Effect(), SpecArray, SpecBytecodeTop, SpecBytecodeTop);
+
 void DOMJITFunctionObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
 {
     DollarVMAssertScope assertScope;
     Base::finishCreation(vm);
+    putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "takesAnything"_s), 2, functionDOMJITTakesAnythingWithTypeCheck, ImplementationVisibility::Public, NoIntrinsic, &DOMJITTakesAnythingSignature, static_cast<unsigned>(PropertyAttribute::ReadOnly));
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "func"_s), 0, functionDOMJITFunctionObjectWithTypeCheck, ImplementationVisibility::Public, NoIntrinsic, &DOMJITFunctionObjectSignature, static_cast<unsigned>(PropertyAttribute::ReadOnly));
 }
 
@@ -1936,6 +2108,7 @@ const ClassInfo Root::s_info = { "Root"_s, &Base::s_info, nullptr, nullptr, CREA
 const ClassInfo SimpleObject::s_info = { "SimpleObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(SimpleObject) };
 const ClassInfo ImpureGetter::s_info = { "ImpureGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(ImpureGetter) };
 const ClassInfo CustomGetter::s_info = { "CustomGetter"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CustomGetter) };
+const ClassInfo TestEmbedderList::s_info = { "TestEmbedderList"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TestEmbedderList) };
 const ClassInfo RuntimeArray::s_info = { "RuntimeArray"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(RuntimeArray) };
 #if ENABLE(JIT)
 const ClassInfo DOMJITNode::s_info = { "DOMJITNode"_s, &Base::s_info, nullptr, &DOMJITNode::checkSubClassSnippet, CREATE_METHOD_TABLE(DOMJITNode) };
@@ -2241,6 +2414,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateRuntimeArray);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateEmbedderList);
+static JSC_DECLARE_HOST_FUNCTION(functionChangeEmbedderList);
+static JSC_DECLARE_HOST_FUNCTION(functionTimesEmbedderListWasAsked);
+static JSC_DECLARE_HOST_FUNCTION(functionEmbedderListHoldsItems);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateImpureGetter);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateCustomGetterObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateDOMJITNodeObject);
@@ -3675,6 +3852,39 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateRuntimeArray, (JSGlobalObject* globalObje
     JSLockHolder lock(globalObject);
     RuntimeArray* array = RuntimeArray::create(globalObject, callFrame);
     return JSValue::encode(array);
+}
+
+// Usage: $vm.createEmbedderList(array)
+JSC_DEFINE_HOST_FUNCTION(functionCreateEmbedderList, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* source = dynamicDowncast<JSArray>(callFrame->argument(0));
+    return JSValue::encode(source ? TestEmbedderList::create(globalObject, source) : jsUndefined());
+}
+
+// Usage: $vm.changeEmbedderList(list, array)
+JSC_DEFINE_HOST_FUNCTION(functionChangeEmbedderList, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* list = dynamicDowncast<TestEmbedderList>(callFrame->argument(0));
+    auto* source = dynamicDowncast<JSArray>(callFrame->argument(1));
+    if (list && source)
+        list->change(globalObject->vm(), source);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionTimesEmbedderListWasAsked, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* list = dynamicDowncast<TestEmbedderList>(callFrame->argument(0));
+    return JSValue::encode(list ? jsNumber(list->timesAsked()) : jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionEmbedderListHoldsItems, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* list = dynamicDowncast<TestEmbedderList>(callFrame->argument(0));
+    return JSValue::encode(jsBoolean(list && list->holdsItems()));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCreateImpureGetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6287,6 +6497,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "createGlobalObject"_s, functionCreateGlobalObject, 0);
     addFunction(vm, allowIfNotFuzz, "createGlobalProxy"_s, functionCreateProxy, 1);
     addFunction(vm, allowIfNotFuzz, "createRuntimeArray"_s, functionCreateRuntimeArray, 0);
+    addFunction(vm, allowIfNotFuzz, "createEmbedderList"_s, functionCreateEmbedderList, 1);
+    addFunction(vm, allowIfNotFuzz, "changeEmbedderList"_s, functionChangeEmbedderList, 2);
+    addFunction(vm, allowIfNotFuzz, "timesEmbedderListWasAsked"_s, functionTimesEmbedderListWasAsked, 1);
+    addFunction(vm, allowIfNotFuzz, "embedderListHoldsItems"_s, functionEmbedderListHoldsItems, 1);
 
     addFunction(vm, allowIfNotFuzz, "createImpureGetter"_s, functionCreateImpureGetter, 1);
     addFunction(vm, allowIfNotFuzz, "createCustomGetterObject"_s, functionCreateCustomGetterObject, 0);

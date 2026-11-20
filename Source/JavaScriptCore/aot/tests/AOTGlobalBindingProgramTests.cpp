@@ -311,7 +311,141 @@ globalThis.publish = (read, store, storeSloppy, readOfGlobalObject, storeToGloba
 
 static void testScriptLetShadowsBoundGlobal()
 {
-    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_LET_OF_A_SCRIPT, OUTPUT_WITH_A_LET_OF_A_SCRIPT, "ccccn.cc"_s);
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, STATEMENTS_WITH_A_LET_OF_A_SCRIPT, OUTPUT_WITH_A_LET_OF_A_SCRIPT, "ccccc.cc"_s);
+}
+
+#define STATEMENTS_WITH_VARIABLES_OF_SCRIPTS R"JS(
+globalThis.publish = (read, store, storeSloppy) => {
+    const keeps = (what, readByOtherCode) => {
+        store({ kept: 0 });
+        fullGC();
+        store({ kept: 7 });
+        edenGC();
+        for (let i = 0; i < 10000; i++) ({ kept: i });
+        print(what + ": " + readByOtherCode().kept);
+    };
+    if (declaration === "let") {
+        loadString("let shared = 1; globalThis.readShared = () => shared;");
+        measure("stores", () => { store(2); return readShared(); });
+        measure("sloppy stores", () => { storeSloppy(3); return readShared(); });
+        keeps("kept across a collection", readShared);
+        return;
+    }
+    loadString("var shared = 1;");
+    measure("stores", () => { store(2); return globalThis.shared; });
+    measure("sloppy stores", () => { storeSloppy(3); return globalThis.shared; });
+    keeps("kept across a collection", () => globalThis.shared);
+    Object.defineProperty(globalThis, "shared", { value: 4, writable: false });
+    describeError("strict store once it is read-only", () => store(5));
+    repeat("sloppy stores once it is read-only", () => { storeSloppy(6); return read(); });
+};
+)JS"
+
+#define OUTPUT_OF_STORES_TO_VARIABLES \
+    "stores: 2\n" \
+    "sloppy stores: 3\n" \
+    "kept across a collection: 7\n"
+
+#define OUTPUT_OF_STORES_TO_A_READ_ONLY_VAR \
+    "strict store once it is read-only: TypeError\n" \
+    "sloppy stores once it is read-only: 4\n"
+
+static void testStoresToLetOfScript()
+{
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, "const declaration = 'let';" STATEMENTS_WITH_VARIABLES_OF_SCRIPTS, OUTPUT_OF_STORES_TO_VARIABLES, "cc."_s);
+}
+
+static void testStoresToVarOfScript()
+{
+    CHECK_IN_EVERY_BUILD(accessesOfOneName, "const declaration = 'var';" STATEMENTS_WITH_VARIABLES_OF_SCRIPTS, OUTPUT_OF_STORES_TO_VARIABLES OUTPUT_OF_STORES_TO_A_READ_ONLY_VAR, "cc..."_s);
+}
+
+// An engine built with assertions checks its exception scopes under this option. Any other takes it and checks nothing.
+static void testStoresToVariablesUnderExceptionScopeVerification()
+{
+    for (ASCIILiteral statements : { "loadString('let shared = 1;'); globalThis.publish = (read, store) => { store(2); print(read()); };"_s, "loadString('var shared = 1;'); globalThis.publish = (read, store) => { store(2); print(read()); };"_s })
+        checkOutputOfProgramInShell(accessesOfOneName, "2\n"_s, { }, statements, { "--validateExceptionChecks=1"_s });
+}
+
+#define STATEMENTS_THAT_MAKE_A_VAR_IMMUTABLE HELPERS R"JS(
+globalThis.publish = (read, store, storeSloppy) => {
+    loadString("var shared = 1;");
+    repeat("stores", () => { store(2); storeSloppy(3); return read(); });
+    makeImmutable();
+    describeError("strict store once it is immutable", () => store(4));
+    repeat("sloppy stores once it is immutable", () => { storeSloppy(5); return read(); });
+};
+)JS"
+
+static void testStoresToVarThatIsMadeImmutable()
+{
+    constexpr ASCIILiteral output = "stores: 3\nstrict store once it is immutable: TypeError\nsloppy stores once it is immutable: 3\n"_s;
+    checkOutputOfProgramInShell(accessesOfOneName, output, { }, "const makeImmutable = () => $vm.makePropertiesImmutable(globalThis);" STATEMENTS_THAT_MAKE_A_VAR_IMMUTABLE ""_s, { "--useDollarVM=1"_s });
+    checkOutputOfProgramInShell(accessesOfOneName, output, { }, "const makeImmutable = () => $vm.makePropertiesImmutable(globalThis, ['shared']);" STATEMENTS_THAT_MAKE_A_VAR_IMMUTABLE ""_s, { "--useDollarVM=1"_s });
+}
+
+static constexpr ASCIILiteral accessesThroughHeirs = R"IR(module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="publish" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewClosure function=f4
+    v6 = Call v1, -, v2, v3, v4, v5
+    Return
+}
+function f1 name="store" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = Builtin builtin=GlobalThis
+    PropSet v1, v0 key="shared" mode=Strict [isFreeName]
+    Return
+}
+function f2 name="call" results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="shared" [isFreeName]
+    v2 = Call v1, - calleeName="shared"
+    Return v2
+}
+function f3 name="readOf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="shared"
+    Return v1
+}
+function f4 name="callOf" parameters=[{type=anything}] results=[{type=anything}] {
+    v1 = PropGet v0 key="shared"
+    v2 = Call v1, v0 calleeKey="shared"
+    Return v2
+}
+)IR"_s;
+
+static constexpr ASCIILiteral statementsWithHeirsOfGlobalObjects = HELPERS R"JS(
+globalThis.publish = (store, call, readOf, callOf) => {
+    const other = $vm.createGlobalObject();
+    const heirs = [Object.create(globalThis), other.Object.create(globalThis)];
+    const heirsOfOther = [Object.create(other), other.Object.create(other)];
+    const seen = list => {
+        let text = "";
+        for (let i = 0; i < list.length; i++) text += " " + readOf(list[i])() + callOf(list[i]) + list[i].shared();
+        return text;
+    };
+    globalThis.shared = other.shared = () => 0;
+    measure("stores", () => { store(() => 0); return call(); });
+    for (let value = 1; value <= 3; value++) {
+        for (let i = 0; i < 32; i++) seen(heirs), seen(heirsOfOther), call();
+        store(() => value);
+        other.shared = () => value + 4;
+        print(call() + seen(heirs) + seen(heirsOfOther));
+        (value & 1 ? fullGC : edenGC)();
+        print(call() + seen(heirs) + seen(heirsOfOther));
+    }
+};
+)JS"_s;
+
+static void testHeirsOfGlobalObjectsSeeStores()
+{
+    constexpr ASCIILiteral output = "stores: 0\n1 111 111 555 555\n1 111 111 555 555\n2 222 222 666 666\n2 222 222 666 666\n3 333 333 777 777\n3 333 333 777 777\n"_s;
+    checkOutputOfProgramInShell(accessesThroughHeirs, output, { }, statementsWithHeirsOfGlobalObjects, { "--useDollarVM=1"_s });
+    checkServicesInShell(__FILE__, __LINE__, accessesThroughHeirs, output, statementsWithHeirsOfGlobalObjects, wordsOfCaches, "c......"_s, { }, { "--useDollarVM=1"_s, "--aotCountsPath=/dev/null"_s });
 }
 
 #define STATEMENTS_IN_THE_DEAD_ZONE R"JS(
@@ -627,6 +761,11 @@ std::span<const NativeTest> globalBindingProgramTests()
         { "global-bindings/programs/delete-then-read-throws"_s, testDeleteThenReadThrows },
         { "global-bindings/programs/redefined-as-getter-runs"_s, testRedefinedAsGetterRuns },
         { "global-bindings/programs/script-let-shadows-bound-global"_s, testScriptLetShadowsBoundGlobal },
+        { "global-bindings/programs/stores-to-let-of-script"_s, testStoresToLetOfScript },
+        { "global-bindings/programs/stores-to-var-of-script"_s, testStoresToVarOfScript },
+        { "global-bindings/programs/stores-to-variables-under-exception-scope-verification"_s, testStoresToVariablesUnderExceptionScopeVerification },
+        { "global-bindings/programs/stores-to-var-that-is-made-immutable"_s, testStoresToVarThatIsMadeImmutable },
+        { "global-bindings/programs/heirs-of-global-objects-see-stores"_s, testHeirsOfGlobalObjectsSeeStores },
         { "global-bindings/programs/dead-zone-of-script-let-throws"_s, testDeadZoneOfScriptLetThrows },
         { "global-bindings/programs/const-of-script-is-constant"_s, testConstOfScriptIsConstant },
         { "global-bindings/programs/typeof-absent-name-follows-the-global-object"_s, testTypeOfAbsentNameFollowsTheGlobalObject },

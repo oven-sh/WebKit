@@ -23,6 +23,12 @@ class Program;
 
 Vector<FinalJump> orderCodeByFiles(const Typed::Program&, const Typed::Plan&, const FunctionNumbers&, LinkedFunctions&, ResolvedCallees&, BuildContext&);
 
+struct RegExpOfOrderFile {
+    Vector<char16_t> pattern;
+    uint16_t flags;
+};
+Vector<RegExpOfOrderFile> regExpsOfOrderFiles(std::span<const uint8_t>);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

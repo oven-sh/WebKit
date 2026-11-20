@@ -28,6 +28,10 @@ namespace AOT {
 
 JS_EXPORT_PRIVATE JSObject* withAllPropertiesInline(JSGlobalObject*, JSObject*);
 
+// For an object above a global object with GetOwnPropertySlotIsImpureForPropertyAbsence and NewImpurePropertyFiresWatchpoints: it may have the name
+// (null: any name) from now on. Where it cannot promise to say so, it taints the slot of the lookup.
+JS_EXPORT_PRIVATE void didAnnounceNameAboveGlobalObject(VM&, UniquedStringImpl* nameOrNull);
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(AOT)

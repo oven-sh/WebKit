@@ -177,6 +177,14 @@ static bool isImmutableLocation(const BuiltinTable& table, const ProgramTables& 
     });
 }
 
+static bool isKeptAside(JSGlobalObject* realm, BuiltinID member)
+{
+    const BuiltinTable& table = BuiltinTable::singleton();
+    if (!keepsGlobalsAside(realm) || table.at(member).holder != Builtins::GlobalThis) [[likely]]
+        return false;
+    return holderOfGlobal(realm, table.identifierOf(realm->vm(), table.at(member).name).impl()) != realm;
+}
+
 static BuiltinID rootOf(const BuiltinTable& table, BuiltinID id)
 {
     while (BuiltinID holder = table.at(id).holder)
@@ -308,7 +316,7 @@ std::expected<JSCell*, BuiltinLookupFailure> BuiltinCells::find(BuiltinCellKey k
             return makeUnexpected(read.error());
         return read->isCell() ? read->asCell() : holderCell;
     }
-    if (m_writtenMembers.quickGet(id.index())) {
+    if (m_writtenMembers.quickGet(id.index()) && !isKeptAside(realm, id)) {
         JSObject* object = holder == Builtins::GlobalThis ? realm : findKnownObject(holder);
         if (!object)
             return makeUnexpected(BuiltinLookupFailure::HolderIsMissing);
@@ -639,7 +647,7 @@ bool BuiltinCells::awaitCreation(uint32_t number)
     std::optional<BuiltinCellKey> key = BuiltinCellKey::decode(m_tables.builtinCells()[number], table);
     RELEASE_ASSERT(key);
     const Builtin& member = table.at(key->builtin());
-    if (key->kind() != BuiltinCellKey::Kind::Object || member.origin != BuiltinOrigin::Host || !member.holder || !member.name)
+    if (key->kind() != BuiltinCellKey::Kind::Object || member.origin != BuiltinOrigin::Host || !member.holder || !member.name || isKeptAside(m_instance.globalObject, key->builtin()))
         return false;
     JSCell* holderCell = findObject(member.holder);
     JSObject* holder = holderCell ? holderCell->getObject() : nullptr;
@@ -720,6 +728,8 @@ void BuiltinCells::willAddNameTo(BuiltinID holder)
 
 void BuiltinCells::willWrite(BuiltinID member, UniquedStringImpl* key)
 {
+    if (isKeptAside(m_instance.globalObject, member))
+        return;
     const BuiltinTable& table = BuiltinTable::singleton();
     takeFunctionAsWritten(member);
     if (!m_membersWritten.empty() && !std::exchange(m_membersWritten[member.index()], 1))
@@ -820,11 +830,12 @@ void BuiltinCells::hearsOfWritesTo(BuiltinID holder)
     } else {
         NamesOnHolder& names = m_namesOnHolders[canonicalIndex];
         isHeardOfAgain = names != NamesOnHolder::AreNotHeardOf;
+        bool hasOtherNames = holder == Builtins::GlobalThis && keepsGlobalsAside(m_instance.globalObject);
         if (!isHeardOfAgain)
-            names = vmState.builtinHoldersWithNamesAddedInSomeRealm.get(canonicalIndex) ? NamesOnHolder::WereAdded : NamesOnHolder::AreAsBuilt;
+            names = hasOtherNames || vmState.builtinHoldersWithNamesAddedInSomeRealm.get(canonicalIndex) ? NamesOnHolder::WereAdded : NamesOnHolder::AreAsBuilt;
     }
     for (BuiltinID member : BuiltinTable::singleton().membersOf(holder)) {
-        if (m_writtenMembers.quickGet(member.index()) || vmState.builtinMembersWrittenInSomeRealm.get(member.index()))
+        if (m_writtenMembers.quickGet(member.index()) || vmState.builtinMembersWrittenInSomeRealm.get(member.index()) || isKeptAside(m_instance.globalObject, member))
             continue;
         RELEASE_ASSERT(!isHeardOfAgain || !m_membersWritten[member.index()]);
         m_membersWritten[member.index()] = 0;
@@ -1421,9 +1432,10 @@ private:
             return nullptr;
         }
         Identifier key = table.identifierOf(m_vm, name);
-        if (JSObject* existing = findExistingObject(holder, key.impl()))
+        JSObject* aside = holder == m_realm ? holderOfGlobal(m_realm, key.impl()) : holder;
+        if (JSObject* existing = findExistingObject(aside, key.impl()))
             return existing;
-        if (isLockedByTable(table, member) || reportsCreationOfMember(holder, key.impl())) {
+        if (aside != holder || isLockedByTable(table, member) || reportsCreationOfMember(holder, key.impl())) {
             isLockedWhereItIsMade = true;
             return nullptr;
         }
@@ -1665,6 +1677,8 @@ void didCreateStaticProperty(JSObject* holder, UniquedStringImpl* key, JSValue v
     if (!value || !value.isObject())
         return;
     JSGlobalObject* realm = holder->realm();
+    if (holder == realm && holderOfGlobal(realm, key) != realm)
+        return;
     if (BuiltinCells* cells = builtinCellsOfRealm(realm))
         cells->didCreateMember(holder, key, asObject(value));
     lockMemberOfLockedHolder(realm, holder, key, asObject(value));

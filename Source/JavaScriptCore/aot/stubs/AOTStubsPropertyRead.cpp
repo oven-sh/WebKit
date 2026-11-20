@@ -456,8 +456,8 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     };
 
     isUnknown.append(jit.branchIfNotCell(r.receiver));
-    isUnknown.append(jit.branchIfNotObject(r.receiver));
     isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.uid, StringImpl::lengthMemoryOffset())));
+    Jump isNoObject = jit.branchIfNotObject(r.receiver);
     jit.move(r.receiver, r.object);
 
     Label askObject = jit.label();
@@ -471,7 +471,7 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     isAbsentHere.link(&jit);
     Jump hasNoStaticTable = jit.branchTest8(CCallHelpers::Zero, Address(r.object, JSCell::typeInfoFlagsOffset()), TrustedImm32(HasStaticPropertyTable));
     loadStructure(jit, r.object, r.structure);
-    isUnknown.append(jit.branchTest32(CCallHelpers::Zero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_staticPropertiesReifiedBits)));
+    Jump mayBeInStaticTable = jit.branchTest32(CCallHelpers::Zero, Address(r.structure, Structure::bitFieldOffset()), TrustedImm32(Structure::s_staticPropertiesReifiedBits));
     hasNoStaticTable.link(&jit);
     Label askObjectAbove = jit.label();
     if (question == ObjectLookupQuestion::HasOwn)
@@ -511,6 +511,26 @@ void answerFromObjectsAndReturn(StubAssembler& jit, ObjectLookupQuestion questio
     hasElements.link(&jit);
     isUnknown.append(branchIfNameBeginsWithDigit());
     jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+
+    if (question == ObjectLookupQuestion::Read && name == ObjectLookupName::IsGivenByNumber && !jit.options().hasOneInstance) {
+        isNoObject.link(&jit);
+        isUnknown.append(jit.branchIfNotString(r.receiver));
+        isUnknown.append(jit.branchPtr(CCallHelpers::Equal, Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.lengthUID)), r.uid));
+        isUnknown.append(jit.branchTest32(CCallHelpers::NonZero, Address(r.uid, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsSymbol())));
+        isUnknown.append(branchIfNameBeginsWithDigit());
+        jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(globalObject)), r.object);
+        jit.loadPtr(Address(r.object, JSGlobalObject::offsetOfStringPrototype()), r.object);
+        jit.jump().linkTo(askPropertyTableForNameThatSpellsNoIndex, &jit);
+
+        mayBeInStaticTable.link(&jit);
+        jit.load32(Address(r.object, JSCell::structureIDOffset()), r.structure);
+        findHashedSlot(jit, SlotAccess::Read, { r.structure, r.uid, r.vector, r.index, r.size, r.size }, isUnknown);
+        isUnknown.append(branchIfSlotKindDiffers(jit, { SlotForm::Slot, r.index }, Slot::Kind::Absent, r.size));
+        returnAnswerOfObjects(jit, question, false);
+    } else {
+        isUnknown.append(isNoObject);
+        isUnknown.append(mayBeInStaticTable);
+    }
 
     isNotCompiledObject.link(&jit);
     if (jit.options().useWideReferences) {

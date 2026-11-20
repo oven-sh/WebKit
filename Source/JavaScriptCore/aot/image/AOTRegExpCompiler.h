@@ -124,6 +124,7 @@ struct CompiledRegExp {
     std::optional<RegExpDeclineReason> reason { };
     std::array<std::unique_ptr<RegExpCode>, 2> code { };
     std::unique_ptr<RegExpCode> matcher { };
+    bool isListedInOrderFile { false };
 };
 
 enum class RegExpCodeFor16BitSubjects : uint8_t {
@@ -138,6 +139,7 @@ struct RegExpCompilerInputs {
     const AssemblerPolicy& assemblerPolicy;
     BuildContext* context;
     RegExpCodeFor16BitSubjects codeFor16BitSubjects { RegExpCodeFor16BitSubjects::Always };
+    bool isLeftToInterpreter { false }; // Which is where the recorder of an order file sees it.
 };
 
 JS_EXPORT_PRIVATE CompiledRegExp compileRegExp(const RegExpCompilerInputs&);

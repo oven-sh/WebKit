@@ -89,6 +89,8 @@ JS_EXPORT_PRIVATE std::expected<JSValue, BuiltinLookupFailure> findValueInHolder
 JS_EXPORT_PRIVATE JSValue getByPath(JSGlobalObject*, BuiltinID);
 JS_EXPORT_PRIVATE JSObject* findExistingObject(JSObject* holder, UniquedStringImpl* key);
 JS_EXPORT_PRIVATE JSObject* findExistingBuiltin(JSGlobalObject*, BuiltinID);
+bool keepsGlobalsAside(JSGlobalObject*);
+JSObject* holderOfGlobal(JSGlobalObject*, UniquedStringImpl* name);
 BuiltinID findGlobalCreatedWith(JSGlobalObject*, const LazyClassStructure&);
 BuiltinID findMemberOfNamespaceCreatedWith(JSGlobalObject*, const LazyClassStructure&);
 void forEachCreatedClassOfGlobal(JSGlobalObject*, const ScopedLambda<void(BuiltinID, JSObject* constructor)>&);

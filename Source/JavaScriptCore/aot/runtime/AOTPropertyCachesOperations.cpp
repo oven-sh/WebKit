@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "NumericStrings.h"
 #include "ProxyObject.h"
+#include "StringPrototype.h"
 
 namespace JSC { namespace AOT {
 
@@ -157,7 +158,11 @@ JSValue getAndCache(const NamedAccess& access, JSValue base, JSValue receiver, S
     PropertySlot slot(receiver, PropertySlot::InternalMethodType::Get);
     JSValue result = (lazy.firstObjectAbove ? JSValue(lazy.firstObjectAbove) : base).get(globalObject, ident, slot);
     RETURN_IF_EXCEPTION(scope, { });
-    fileRead(access.instance, base, structureBefore, access.name(), slot);
+    if (base.isString() && slot.isUnset() && access.caches().tables().isSharedByInstances()) {
+        JSObject* prototype = globalObject->stringPrototype();
+        fileRead(access.instance, prototype, WTF::opaque(prototype->structure()), { uid, std::nullopt }, slot);
+    } else
+        fileRead(access.instance, base, structureBefore, access.name(), slot);
     return result;
 }
 
@@ -200,12 +205,25 @@ JSValue getUnderKeyForReceiver(Instance* instance, JSObject* base, const Identif
     return JSValue(base).get(instance->globalObject, name, slot);
 }
 
+// Strings of all realms have one structure, so tables that realms share cannot answer for them.
+static JSValue tryGetValueOfStringPrototype(VM& vm, JSGlobalObject* globalObject, JSValue base, UniquedStringImpl* uid)
+{
+    if (!base.isString() || uid->isSymbol() || !vm.aotState().propertyCaches->isSharedByInstances())
+        return { };
+    StringPrototype* prototype = globalObject->stringPrototype();
+    unsigned attributes = 0;
+    PropertyOffset offset = prototype->structure()->get(vm, uid, attributes);
+    return isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? prototype->getDirect(offset) : JSValue();
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t key, uint32_t isInStubFrame))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTGetByIdAndCache);
     ++instance->propertyCaches.slowPathReadCount;
     NamedAccess access { instance, identifierAt(instance, key), key };
     JSValue base = JSValue::decode(encodedBase);
+    if (JSValue value = tryGetValueOfStringPrototype(vm, globalObject, base, access.ident.impl()))
+        OPERATION_RETURN(scope, JSValue::encode(value));
     if (JSValue value = tryGetFromPermanentDictionary(instance, base, access.ident.impl()))
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (base.isUndefinedOrNull()) [[unlikely]] {

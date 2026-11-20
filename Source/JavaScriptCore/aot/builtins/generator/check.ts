@@ -1354,6 +1354,13 @@ function checkMarksOfReach(model: Pick<TableModel, "builtins">, problems: Proble
   }
 }
 
+function checkOptionalEntries(model: Pick<TableModel, "builtins">, problems: Problems): void {
+  for (const builtin of model.builtins) {
+    if (builtin.marks.includes("IsOptional") && builtin.holder !== null)
+      problems.add(null, `${builtin.text} has the mark IsOptional, which takes an entry out with all that it holds: nothing may hold it`);
+  }
+}
+
 function checkRowsThatLayOperandAbovePrototype(model: Pick<TableModel, "builtins">, problems: Problems): void {
   const mark: BuiltinMark = "LaysOperandAbovePrototype";
   for (const builtin of model.builtins) {
@@ -1531,6 +1538,7 @@ export function checkModel(model: TableModel, schema: Schema, problems: Problems
   checkMarksOfTestRunner(model, problems);
   checkMarksOfReach(model, problems);
   checkRowsThatLayOperandAbovePrototype(model, problems);
+  checkOptionalEntries(model, problems);
   checkSyntax(model, problems);
   checkEngineFiles(model, problems);
   checkGuards(model, problems);

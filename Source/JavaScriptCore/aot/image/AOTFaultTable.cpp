@@ -596,9 +596,15 @@ static void* findStub(const Image& image, StubKey key)
     return const_cast<void*>(image.stubAddress(key));
 }
 
+// With four levels of page tables such an address is not canonical, and the fault comes with 0, on Windows with all ones.
+static bool isBehindBoxedNumber(uintptr_t address)
+{
+    return isX86_64() && address >= static_cast<uintptr_t>(JSValue::DoubleEncodeOffset);
+}
+
 static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
 {
-    if (fault.address >= FaultSite::reach && fault.address - registerOf(registers, cellCageBaseGPR) >= FaultSite::reach)
+    if (fault.address >= FaultSite::reach && fault.address - registerOf(registers, cellCageBaseGPR) >= FaultSite::reach && !isBehindBoxedNumber(fault.address))
         return false;
     void* target = findStub(fault.image, throwAtSite(ThrowSiteSource::FaultSite, fault.callerFrame));
     if (!target)

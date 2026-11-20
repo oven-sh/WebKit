@@ -39,6 +39,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "DFGOSREntry.h"
 #include "DFGThunks.h"
 #include "Debugger.h"
+#include "EmbedderListItems.h"
 #include "EnsureStillAliveHere.h"
 #include "ExceptionFuzz.h"
 #include "FrameTracers.h"
@@ -3513,6 +3514,8 @@ ALWAYS_INLINE static JSValue getByVal(JSGlobalObject* globalObject, CallFrame* c
                 arrayProfile->setOutOfBounds();
         } else if (baseValue.isObject()) {
             JSObject* object = asObject(baseValue);
+            if (JSValue result = EmbedderListItems::tryGet(object, i))
+                return result;
             if (JSValue result = object->tryGetIndexQuickly(i, arrayProfile))
                 return result;
 

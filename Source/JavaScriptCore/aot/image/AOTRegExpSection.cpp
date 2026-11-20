@@ -118,10 +118,12 @@ public:
 
     std::optional<RegExpSection> build()
     {
-        for (uint8_t charSizeIndex = 0; charSizeIndex < numberOfRegExpCharSizes; ++charSizeIndex) {
-            for (uint32_t regExp = 0; regExp < m_regExps.size(); ++regExp) {
-                if (m_regExps[regExp].form == RegExpRecordForm::Code && m_regExps[regExp].code[charSizeIndex])
-                    m_bodies.append({ numberUnit(*m_regExps[regExp].code[charSizeIndex], regExp), regExp, charSizeIndex });
+        for (bool isListed : { true, false }) {
+            for (uint8_t charSizeIndex = 0; charSizeIndex < numberOfRegExpCharSizes; ++charSizeIndex) {
+                for (uint32_t regExp = 0; regExp < m_regExps.size(); ++regExp) {
+                    if (m_regExps[regExp].isListedInOrderFile == isListed && m_regExps[regExp].form == RegExpRecordForm::Code && m_regExps[regExp].code[charSizeIndex])
+                        m_bodies.append({ numberUnit(*m_regExps[regExp].code[charSizeIndex], regExp), regExp, charSizeIndex });
+                }
             }
         }
         for (uint32_t regExp = 0; regExp < m_regExps.size(); ++regExp) {

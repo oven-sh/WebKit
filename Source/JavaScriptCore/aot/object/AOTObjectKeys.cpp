@@ -165,6 +165,27 @@ static UniquedStringImpl* lastExtraKeyUpTo(State& state, const Object& object, c
     return nullptr;
 }
 
+static UniquedStringImpl* lastExtraKey(State& state, const Object& object, JSObject& extra)
+{
+    const PropertyTable& table = *extra.structure()->propertyTableInOrderOfAddition(object.vm());
+    unsigned end = table.numberOfEntriesWithRemovedOnes();
+    if (!extra.structure()->isDictionary() || table.numberOfRemovedEntries() || !(object.orderWord() & orderWordHasFieldOutsideSlot))
+        return lastExtraKeyUpTo(state, object, table, end);
+    LastExtraKeyFound& found = object.state().objects->keyOrders.lastExtraKeyFound();
+    if (found.object != &object || found.table != &table || found.numberOfEntriesSearched > end)
+        found = { &object, &table, 0, 0 };
+    for (unsigned entry = end; entry > found.numberOfEntriesSearched; --entry) {
+        if (isExtraKey(state, object, table.keyOfEntry(entry))) {
+            found.entry = entry;
+            break;
+        }
+    }
+    found.numberOfEntriesSearched = end;
+    UniquedStringImpl* key = found.entry ? table.keyOfEntry(found.entry) : nullptr;
+    ASSERT(key == lastExtraKeyUpTo(state, object, table, end));
+    return key;
+}
+
 namespace {
 
 class KeyOrderOfOneObject {
@@ -293,11 +314,7 @@ bool Object::tryListFieldBehindNamedKey(State& state, const FieldData& field)
     if (field.flags & fieldMayExistWithoutStorage && isInKeyOrder(state, field))
         return true;
     VM& vm = this->vm();
-    RefPtr<UniquedStringImpl> lastKey;
-    if (extra) {
-        const PropertyTable& table = *extra->structure()->propertyTableInOrderOfAddition(vm);
-        lastKey = lastExtraKeyUpTo(state, *this, table, table.numberOfEntriesWithRemovedOnes());
-    }
+    RefPtr<UniquedStringImpl> lastKey = extra ? lastExtraKey(state, *this, *extra) : nullptr;
     if (!namesKeys) {
         if (!lastKey)
             return false;
@@ -522,7 +539,9 @@ static uint32_t countExtraKeys(State& state, const Object& object, JSObject* ext
     if (Structure* extraStructure = extra->structure(); !mayHoldFields && extraStructure->isQuickPropertyAccessAllowedForEnumeration()) {
         numberOfExtraKeys = static_cast<uint32_t>(numberOfSlotsForMaxOffset(extraStructure->maxOffset(), extraStructure->inlineCapacity()));
         ASSERT(numberOfExtraKeys == countByWalk(false));
-    } else
+    } else if (extraStructure->isDictionary() && !lastExtraKey(state, object, *extra))
+        numberOfExtraKeys = 0;
+    else
         numberOfExtraKeys = countByWalk(mayHoldFields);
     if (isFixedByStructure)
         structure.setNumberOfExtraKeys(numberOfExtraKeys);

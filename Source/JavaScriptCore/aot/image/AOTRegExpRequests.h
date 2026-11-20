@@ -44,6 +44,7 @@ struct RegExpRequest {
     OptionSet<Yarr::Flags> flags;
     RegExpRequestOrigin origin { RegExpRequestOrigin::Literal };
     bool needsMatcher { false };
+    bool isListedInOrderFile { false };
     StringID atom { };
     Vector<StringID> captureGroupNames { };
     Vector<RegExpNamedGroupStrings> namedGroups { };

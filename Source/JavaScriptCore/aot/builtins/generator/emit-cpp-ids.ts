@@ -12,6 +12,7 @@ import {
 } from "./emit-cpp-names.ts";
 import { emitMacroList, formatDouble, formatInt64, joinBlocks } from "./emit-cpp-support.ts";
 import { fileHeader } from "./emit-rust-ids.ts";
+import { dispatchesWithChoice } from "./model.ts";
 import type {
   ModelAttachments,
   ModelBound,
@@ -185,7 +186,7 @@ export function collectArrayDeclarations(model: TableModel): ArrayDeclaration[] 
   return [
     ["Builtin", "builtinTableBuiltins", builtins.length],
     ["BuiltinPackedOverload", "builtinTableOverloads", model.overloads.length],
-    ["BuiltinDispatch", "builtinTableDispatches", model.dispatches.length],
+    ["BuiltinDispatch", "builtinTableDispatches", dispatchesWithChoice(model.dispatches).length],
     ["BuiltinDispatchNode", "builtinTableDispatchNodes", model.dispatchNodes.length],
     ["BuiltinType", "builtinTableTypes", model.types.length],
     ["BuiltinClass", "builtinTableClasses", model.classes.length],

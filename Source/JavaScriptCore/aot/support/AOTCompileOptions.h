@@ -129,6 +129,7 @@ struct CompileOptions {
 
     bool admitsUnseenCode() const { return hasFlag(recorded.admitted(), AdmittedCode::Inspector); }
     bool admitsReplacedBuiltins() const { return hasFlag(recorded.admitted(), AdmittedCode::ReplacedBuiltins); }
+    bool admitsOptionalBuiltins() const { return hasFlag(recorded.admitted(), AdmittedCode::OptionalBuiltins); }
     bool excludesEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::EvaluatedText); }
     bool excludesHostEvaluatedText() const { return hasFlag(excludedCode, ExcludedCode::HostEvaluatedText); }
     bool excludesForeignCalls() const { return hasFlag(excludedCode, ExcludedCode::ForeignCalls); }
@@ -140,6 +141,9 @@ struct CompileOptions {
     bool hidesFunctionNames() const { return obfuscates() && !hasFlag(output, OutputOptions::KeepsFunctionNames); }
     bool runsInSeveralRealms() const { return hasFlag(output, OutputOptions::RunsInSeveralRealms); }
     bool recordsOrder() const { return hasFlag(output, OutputOptions::RecordsOrder); }
+    bool assumesSeparateRealms() const { return hasFlag(output, OutputOptions::AssumesSeparateRealms); }
+    bool assumesCompleteOrder() const { return hasFlag(output, OutputOptions::AssumesCompleteOrder); }
+    bool assumesLockedBuiltins() const { return hasFlag(output, OutputOptions::AssumesLockedBuiltins); }
 
     JS_EXPORT_PRIVATE static CompileOptions fromWire(const Wire::CompileOptions&, Diagnostics&);
 };

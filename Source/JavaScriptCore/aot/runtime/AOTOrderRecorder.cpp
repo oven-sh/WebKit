@@ -18,6 +18,7 @@
 #include <atomic>
 #include <optional>
 #include <span>
+#include <wtf/ASCIICType.h>
 #include <wtf/HashMap.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -87,6 +88,8 @@ public:
     bool didTrapAt(uintptr_t pc);
     void write();
     void runWriter();
+    void appendLineForRegExp(StringView pattern, uint16_t significantFlags);
+    void appendLineForModule(ModuleID);
 
     static OrderRecorder* s_current;
     static struct sigaction s_previousAction;
@@ -465,6 +468,30 @@ void OrderRecorder::appendLineForUnit(Vector<uint8_t>& out, const ModuleTable& m
     out.append('\n');
 }
 
+void OrderRecorder::appendLineForRegExp(StringView pattern, uint16_t significantFlags)
+{
+    Locker locker { m_lock };
+    appendTextToOrder(m_bytesToWrite, toString("R ", significantFlags, " "));
+    for (char16_t unit : pattern.codeUnits()) {
+        if (unit >= ' ' && unit <= '~' && unit != '%') {
+            m_bytesToWrite.append(static_cast<uint8_t>(unit));
+            continue;
+        }
+        m_bytesToWrite.append('%');
+        for (unsigned shift : { 12, 8, 4, 0 })
+            m_bytesToWrite.append(lowerNibbleToASCIIHexDigit(static_cast<uint8_t>(unit >> shift)));
+    }
+    m_bytesToWrite.append('\n');
+}
+
+void OrderRecorder::appendLineForModule(ModuleID module)
+{
+    if (m_image.isObfuscated())
+        return;
+    Locker locker { m_lock };
+    numberOfFile(m_bytesToWrite, ModuleTable(m_image.programTables()), module);
+}
+
 void OrderRecorder::write()
 {
     Locker locker { m_lock };
@@ -535,6 +562,20 @@ bool isRecordingOrder()
     return OrderRecorder::s_current;
 }
 
+void recordUseOfRegExp(StringView pattern, uint16_t significantFlags, bool isInImage)
+{
+    // A pattern that is made at run time may hold what a person typed.
+    static const bool recordsEveryPattern = !!getenv("BUN_AOT_ORDER_DYNAMIC_REGEXPS");
+    if (!isInImage && !recordsEveryPattern)
+        return;
+    OrderRecorder::s_current->appendLineForRegExp(pattern, significantFlags);
+}
+
+void recordRequestOfModule(uint32_t module)
+{
+    OrderRecorder::s_current->appendLineForModule(ModuleID(module));
+}
+
 #else // AOT_CAN_RECORD_ORDER
 
 ASCIILiteral startOrderRecording(const char*)
@@ -549,6 +590,14 @@ void finishOrderRecording()
 bool isRecordingOrder()
 {
     return false;
+}
+
+void recordUseOfRegExp(StringView, uint16_t, bool)
+{
+}
+
+void recordRequestOfModule(uint32_t)
+{
 }
 
 #endif

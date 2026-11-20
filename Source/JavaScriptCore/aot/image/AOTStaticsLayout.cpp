@@ -662,7 +662,7 @@ void ImageNumbersBuilder::numberSites()
     numbers.m_siteCaches = mentions.takeKeys(NumberSpace::SiteCache);
     const NumberedKeys& sites = numbers.m_siteCaches;
     numbers.m_numbersOfSites.resize(sites.size() + 1);
-    const Typed::BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
+    const Typed::BitVector keysWithColumn = chooseKeysWithColumn();
     uint64_t numberOfNumbersOfSites = 0;
     Vector<uint32_t> placesInStartOrder = listSitesInStartOrder(inputs, context.startRanks(), sites);
     for (uint32_t index = 0; index < sites.size(); ++index) {

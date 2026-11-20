@@ -491,6 +491,7 @@ KeyOrderTable::KeyOrderTable(State& state)
     state.caches->add(CacheKind::ClearedEachCollection, "key lists by structure"_s, m_keyListsByStructure);
     state.caches->addClearedEachCollection("published enumerators"_s, asWritableBytes(std::span { instance.objects.enumerators, numberOfCachedEnumerators }));
     state.caches->addClearedEachCollection("places of positioned keys"_s, asWritableBytes(std::span { m_placesOfPositionedKeys }));
+    state.caches->addClearedEachCollection("last extra key found"_s, asWritableBytes(singleElementSpan(m_lastExtraKeyFound)));
     state.caches->addClearedEachCollection("enumerators below compiled objects"_s, asWritableBytes(std::span { m_enumeratorsBelowCompiledObjects }));
 }
 

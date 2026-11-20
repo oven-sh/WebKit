@@ -10850,7 +10850,7 @@ void SpeculativeJIT::compileCallDOM(Node* node)
 
     // FIXME: We should have a way to call functions with the vector of registers.
     // https://bugs.webkit.org/show_bug.cgi?id=163099
-    using OperandVariant = Variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand>;
+    using OperandVariant = Variant<SpeculateCellOperand, SpeculateInt32Operand, SpeculateBooleanOperand, JSValueOperand>;
     Vector<OperandVariant, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> operands;
     Vector<GPRReg, JSC_DOMJIT_SIGNATURE_MAX_ARGUMENTS_INCLUDING_THIS> regs;
 
@@ -10880,6 +10880,12 @@ void SpeculativeJIT::compileCallDOM(Node* node)
         operands.append(OperandVariant(WTF::InPlaceType<SpeculateBooleanOperand>, WTF::move(operand)));
     };
 
+    auto appendJSValue = [&](Edge& edge) {
+        JSValueOperand operand(this, edge);
+        regs.append(operand.gpr());
+        operands.append(OperandVariant(WTF::InPlaceType<JSValueOperand>, WTF::move(operand)));
+    };
+
     unsigned index = 0;
     m_graph.doToChildren(node, [&](Edge edge) {
         if (!index)
@@ -10894,6 +10900,9 @@ void SpeculativeJIT::compileCallDOM(Node* node)
                 break;
             case SpecBoolean:
                 appendBoolean(edge);
+                break;
+            case SpecBytecodeTop:
+                appendJSValue(edge);
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -10933,7 +10942,7 @@ void SpeculativeJIT::compileCallDOM(Node* node)
 void SpeculativeJIT::compileCallDOMGetter(Node* node)
 {
     DOMJIT::CallDOMGetterSnippet* snippet = node->callDOMGetterData()->snippet;
-    if (!snippet) {
+    if (!snippet || !snippet->generator()) {
         CodePtr<CustomAccessorPtrTag> getter = node->callDOMGetterData()->customAccessorGetter;
         SpeculateCellOperand base(this, node->child1());
         GPRTemporary result(this);

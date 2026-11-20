@@ -183,7 +183,7 @@ Condition TypeTestEmitter::passesCellTest(CellPointer cell, const CellTest& test
         return hasCellTypeIn(cell, test.cellTypes);
     case CellTestKind::ShapeIn: {
         Condition hasShape = emitter<ShapeTestEmitter>().hasShapeIn(cell, test.layouts, from, marked);
-        if (!test.asksForInstance)
+        if (!test.asksForInstance || !emitter<GuardEmitter>().mayMeetObjectOfOtherInstance(test.layouts))
             return hasShape;
         return logicalAnd(hasShape, emitter<GuardEmitter>().belongsToInstance(cell));
     }

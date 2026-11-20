@@ -43,6 +43,7 @@
 #include "JSSourceCode.h"
 #include "JSWebAssembly.h"
 #include "Microtask.h"
+#include "MicrotaskQueueInlines.h"
 #include "ModuleAnalyzer.h"
 #include "ModuleLoadingContext.h"
 #include "ModuleRegistryEntry.h"

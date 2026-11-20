@@ -8,12 +8,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTableRealm.h"
 #include "AOTGlobalBindings.h"
 #include "AOTHeapCacheRegistry.h"
 #include "AOTInstance.h"
 #include "AOTOperationScope.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTPropertyCaches.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTState.h"
 #include "ExceptionHelpers.h"
 #include "JSCInlines.h"
@@ -42,9 +44,10 @@ static bool isConstantVariable(const SymbolTableEntry::Fast& entry, const Identi
     return !entry.isNull() && (entry.isReadOnly() || identifier.isPrivateName());
 }
 
+// For a name that was looked up, and that is absent or held by an object which lists it.
 static ChainWalk walkAboveGlobalObject(JSGlobalObject* globalObject, UniquedStringImpl* uid, ChainWalkMode mode = ChainWalkMode::MayAllocate)
 {
-    return walkChain({ globalObject, globalObject->structure(), globalObject, mode }, uid);
+    return walkChain({ globalObject, globalObject->structure(), globalObject, mode, ChainWalkUse::KeptForReads, true }, uid);
 }
 
 static ALWAYS_INLINE void putGlobalName(JSGlobalObject* globalObject, const Identifier& identifier, JSValue value, PutPropertySlot& slot)
@@ -100,6 +103,14 @@ static PropertyAnswer classifyInheritedRead(JSGlobalObject* globalObject, Unique
     return PropertyAnswer::above(isValue ? PropertyAnswerKind::Value : PropertyAnswerKind::Accessor, SlotAccess::Read, WTF::move(walk));
 }
 
+static PropertyAnswer classifyCustomAccessorOfGlobalObject(const ReadQuery& query)
+{
+    if (!(query.slot.attributes() & PropertyAttribute::CustomAccessor) || query.slot.domAttribute())
+        return PropertyAnswer::uncacheable(SlotAccess::Read);
+    CustomAccessorRecord record { std::bit_cast<void*>(query.slot.customGetter().taggedPtr()), nullptr, query.globalObject, 0, 0 };
+    return answerForCustomAccessor(query.globalObject->vm(), SlotAccess::Read, query.mode, record, false, { });
+}
+
 PropertyAnswer classifyGlobalProxyRead(const ReadQuery& query)
 {
     JSGlobalObject* globalObject = query.globalObject;
@@ -108,8 +119,13 @@ PropertyAnswer classifyGlobalProxyRead(const ReadQuery& query)
             return PropertyAnswer::uncacheable(SlotAccess::Read);
         unsigned attributes = 0;
         PropertyOffset offset = globalObject->structure()->get(globalObject->vm(), query.uid, attributes);
+        if (isValidOffset(offset) && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            return answerInStorage(PropertyAnswerKind::Value, SlotAccess::Read, globalObject, offset);
+        bool isStillCustom = isValidOffset(offset) ? attributes & PropertyAttribute::CustomAccessor : globalObject->structure()->hasNonReifiedStaticProperties();
+        if (isStillCustom && query.slot.isCacheableCustom() && query.slot.slotBase() == globalObject)
+            return classifyCustomAccessorOfGlobalObject(query);
         if (isValidOffset(offset))
-            return attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue ? PropertyAnswer::uncacheable(SlotAccess::Read) : answerInStorage(PropertyAnswerKind::Value, SlotAccess::Read, globalObject, offset);
+            return PropertyAnswer::uncacheable(SlotAccess::Read);
         if (query.slot.isUnset())
             return classifyAbsentRead(globalObject, query.uid);
         if (query.slot.slotBase() == globalObject || query.slot.isAccessor())
@@ -126,7 +142,7 @@ ChainWalk walkChainThroughGlobalProxy(JSGlobalObject* globalObject, const Slot& 
     ChainWalk walk;
     if (slot.structureID.decode()->realm() != globalObject)
         return walk;
-    if (slot.kind == Slot::Kind::Value && slot.holder == globalObject)
+    if (slot.kind == Slot::Kind::CustomGetter || (slot.kind == Slot::Kind::Value && slot.holder == globalObject))
         walk.result = ChainWalkResult::Found;
     else
         walk = walkAboveGlobalObject(globalObject, uid, ChainWalkMode::AllocatesNothing);
@@ -314,7 +330,7 @@ static bool tryFileRead(const BindingAccess& access, const PropertySlot& slot, J
     int64_t location;
     const bool filesConstants = !access.bindings.filesLocationAlone(access.number);
     if (slot.isCacheableValue()) {
-        if (filesConstants && (isFixed(slot, access.name) || globalObject->structure()->isImmutablePropertyForReader(access.uid())))
+        if (filesConstants && ((isFixed(slot, access.name) && !keepsGlobalsAside(globalObject)) || globalObject->structure()->isImmutablePropertyForReader(access.uid())))
             return access.bindings.fileConstant(access.vm, access.number, nullptr, value);
         if (filesConstants && access.bindings.fileConstant(access.vm, access.number, globalObject, value))
             return true;
@@ -387,7 +403,8 @@ static ALWAYS_INLINE JSValue getGlobalBinding(Instance* instance, uint32_t numbe
     RETURN_IF_EXCEPTION(scope, { });
     if (!found) {
         if (access.bindings.answersUndefinedWhereAbsent(number)) {
-            tryFileAbsence(access);
+            if (!slot.isTaintedByOpaqueObject())
+                tryFileAbsence(access);
             return jsUndefined();
         }
         throwException(globalObject, scope, createUndefinedVariableError(globalObject, identifier));
@@ -414,24 +431,37 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetGlobalObjectBinding, EncodedJSValue, (In
     OPERATION_RETURN(scope, JSValue::encode(getGlobalBinding(instance, binding, false)));
 }
 
-static bool tryReplaceAndFileLocation(const BindingAccess& access, JSValue value)
+// A host whose put() has to see each store calls disableCaching() on the slot.
+static void fileLocationOfReplacedProperty(const BindingAccess& access, const PutPropertySlot& slot)
 {
-    VM& vm = access.vm;
     JSGlobalObject* globalObject = access.globalObject;
-    if (globalObject->methodTable()->put != JSGlobalObject::info()->methodTable.put || !canCachePropertiesOf(globalObject))
-        return false;
-    unsigned attributes = 0;
-    if (!isValidOffset(globalObject->structure()->get(vm, access.uid(), attributes)) || attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)
-        return false;
+    if (!slot.isCacheablePut() || slot.type() != PutPropertySlot::ExistingProperty || slot.base() != globalObject || !canCachePropertiesOf(globalObject))
+        return;
     if (globalObject->structure()->isImmutableProperty(access.uid()) || isWriteJudgedByWriter(globalObject->structure(), access.uid()) || !structureSaysWherePropertiesAre(access))
-        return false;
+        return;
     Structure* structure = globalObject->structure();
-    PropertyOffset offset = structure->get(vm, access.uid());
-    structure->didCachePropertyReplacement(vm, offset);
+    structure->didCachePropertyReplacement(access.vm, slot.cachedOffset());
     access.bindings.didFileStore(access.number);
-    access.bindings.fileLocation(access.number, structure, locationOfProperty(globalObject, offset));
-    globalObject->putDirectOffset(vm, offset, value);
-    return true;
+    access.bindings.fileLocation(access.number, structure, locationOfProperty(globalObject, slot.cachedOffset()));
+}
+
+static void fileLocationOfStoredVariable(const BindingAccess& access)
+{
+    JSGlobalObject* globalObject = access.globalObject;
+    JSSegmentedVariableObject* scope = globalObject->globalLexicalEnvironment();
+    SymbolTableEntry::Fast entry = scope->symbolTable()->get(access.uid());
+    if (entry.isNull() && canCachePropertiesOf(globalObject)) {
+        scope = globalObject;
+        entry = scope->symbolTable()->get(access.uid());
+    }
+    if (entry.isNull() || isConstantVariable(entry, access.name) || access.vm.allowRedeclaringSymbols())
+        return;
+    JSValue value = scope->variableAt(entry.scopeOffset()).get();
+    bool didPut = false;
+    if (!value || !symbolTablePutInvalidateWatchpointSet(scope, globalObject, access.name, value, false, false, didPut))
+        return;
+    access.bindings.didFileStore(access.number);
+    access.bindings.fileLocation(access.number, globalObject->structure(), locationOfVariable(scope, entry));
 }
 
 static ALWAYS_INLINE void setGlobalBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
@@ -440,10 +470,15 @@ static ALWAYS_INLINE void setGlobalBinding(Instance* instance, uint32_t number, 
         return;
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(access.bindings.seesScriptBindings(number));
-    if (!access.globalObject->globalLexicalEnvironment()->symbolTable()->contains(access.uid()) && tryReplaceAndFileLocation(access, value))
-        return;
+    auto scope = DECLARE_THROW_SCOPE(access.vm);
     PutPropertySlot slot(access.globalObject, isStrict);
     putGlobalName(access.globalObject, access.name, value, slot);
+    RETURN_IF_EXCEPTION(scope, void());
+    scope.release();
+    if (slot.isCacheablePut())
+        fileLocationOfReplacedProperty(access, slot);
+    else
+        fileLocationOfStoredVariable(access);
 }
 
 static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t number, JSValue value, bool isStrict)
@@ -452,12 +487,14 @@ static ALWAYS_INLINE void setGlobalObjectBinding(Instance* instance, uint32_t nu
         return;
     BindingAccess access = bindingAccess(instance, number);
     ASSERT(!access.bindings.seesScriptBindings(number));
+    auto scope = DECLARE_THROW_SCOPE(access.vm);
     JSGlobalObject* globalObject = access.globalObject;
-    if (forwardsToGlobalObject(globalObject) && tryReplaceAndFileLocation(access, value))
-        return;
     JSObject* receiver = globalObject->globalThis();
     PutPropertySlot slot(receiver, isStrict);
     receiver->methodTable()->put(receiver, globalObject, access.name, value, slot);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (forwardsToGlobalObject(globalObject))
+        fileLocationOfReplacedProperty(access, slot);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetGlobalBinding, void, (Instance* instance, uint32_t binding, EncodedJSValue value))
@@ -486,6 +523,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetGlobalObjectBindingSloppy, void, (Instan
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSetGlobalObjectBindingSloppy);
     setGlobalObjectBinding(instance, binding, JSValue::decode(value), false);
     OPERATION_RETURN(scope);
+}
+
+void RuntimeHooks::didMakeGlobalVariableReadOnly(JSGlobalObject* realm)
+{
+    Instance* instance = Instance::of(realm);
+    if (instance && instance->state && instance->state->globalBindings)
+        instance->state->globalBindings->dropLocations();
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalBindings);

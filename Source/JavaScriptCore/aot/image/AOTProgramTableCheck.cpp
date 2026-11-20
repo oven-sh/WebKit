@@ -1197,7 +1197,7 @@ static void checkObfuscationOfProgramTables(const JoinedTables& check)
 static void checkPromisedColumns(const JoinedTables& check)
 {
     const IdentifierNumbering& identifiers = check.numbers.identifiers();
-    for (size_t index : check.plan.slots().keysWithColumn()) {
+    for (size_t index : check.numbers.keysWithColumn()) {
         std::optional<uint32_t> number = identifiers.numberOf(PropertyKeyID(index));
         if (!check.expect(!number || RowDisplacementTable::hasColumn(*number), "KeyWithoutPromisedColumn"_s))
             return;

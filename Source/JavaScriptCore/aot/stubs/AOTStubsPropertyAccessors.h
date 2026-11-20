@@ -15,7 +15,7 @@ void callGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg getterSetter, J
 void countSlowPathRead(StubAssembler&);
 void callGetterFunctionAndReturn(StubAssembler&, GPRReg receiver, GPRReg getter, JumpList& cannot);
 void callSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg getterSetter, JumpList& cannot);
-void callCustomGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell);
+void callCustomGetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell, const ScopedLambda<void()>& loadName);
 void callCustomSetterAndReturn(StubAssembler&, GPRReg receiver, GPRReg value, GPRReg accessorIndex, GPRReg uid, std::optional<GPRReg> keyCell);
 
 } } // namespace JSC::AOT

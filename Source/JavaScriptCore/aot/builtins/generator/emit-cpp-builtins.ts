@@ -65,6 +65,7 @@ const nameSpans: readonly SpanMember[] = [
   ["symbolConstants", "builtinTableSymbolConstants"],
   ["classesByMemberName", "builtinTableClassesByMemberName"],
   ["protocolKeys", "builtinTableProtocolKeys"],
+  ["namesOfOptionalEntries", "builtinTableNamesOfOptionalEntries"],
 ];
 
 const tokenSpans: readonly SpanMember[] = [

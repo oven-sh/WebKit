@@ -12,6 +12,7 @@
 #include "AOTFacts.h"
 #include "AOTIRProgram.h"
 #include "AOTNumbering.h"
+#include "AOTOrderFile.h"
 #include "AOTRegExpRecord.h"
 #include "AOTRegExpSummary.h"
 #include "AOTStringTable.h"
@@ -92,7 +93,7 @@ static Vector<RegExpRequest> requestsForMentionedRegExps(const NumberedKeys& men
     });
 }
 
-static Vector<RegExpRequest> requestsForPredictedRegExpTexts(const Typed::Facts& facts, Typed::StringTable& strings, std::span<const RegExpRequest> sortedLiterals, const ParallelLoops& loops)
+static Vector<RegExpRequest> requestsForPredictedRegExpTexts(const Typed::Facts& facts, Typed::StringTable& strings, std::span<const RegExpRequest> sortedLiterals, std::span<const RegExpRequestKey> listed, const ParallelLoops& loops)
 {
     using PredictedKey = std::tuple<uint32_t, uint16_t, RegExpRequestOrigin>;
     static_assert(RegExpRequestOrigin::Evaluated < RegExpRequestOrigin::Candidate);
@@ -106,6 +107,8 @@ static Vector<RegExpRequest> requestsForPredictedRegExpTexts(const Typed::Facts&
         keys.append(PredictedKey { text.pattern.index(), text.flags, originOf(text.isOneOfAllAtSomeCall) });
     for (const Typed::RegExpTextWorkedOut& text : facts.regExpTextsWorkedOut())
         keys.append(PredictedKey { strings.intern(StringView(text.pattern)).index(), text.flags, originOf(text.isOneOfAllAtSomeCall) });
+    for (auto [pattern, flags] : listed)
+        keys.append(PredictedKey { pattern, flags, RegExpRequestOrigin::Evaluated });
     sortAndRemoveDuplicates(loops, keys);
 
     Vector<RegExpRequest> requests;
@@ -164,7 +167,15 @@ void ImageNumbersBuilder::collectRegExpRequests()
 
     Typed::StringTable& strings = inputs.program.strings;
     Vector<RegExpRequest> literals = requestsForMentionedRegExps(mentions.keys(NumberSpace::RegExp), context.parallelLoops());
-    Vector<RegExpRequest> predictedTexts = requestsForPredictedRegExpTexts(inputs.facts, strings, literals.span(), context.parallelLoops());
+    Vector<RegExpRequestKey> listed = regExpsOfOrderFiles(context.orderFile()).map([&](const RegExpOfOrderFile& regExp) {
+        return RegExpRequestKey { strings.intern(StringView(regExp.pattern.span())).index(), ImageRegExp::significantFlags(OptionSet<Yarr::Flags>::fromRaw(regExp.flags)).toRaw() };
+    });
+    sortAndRemoveDuplicates(context.parallelLoops(), listed);
+    Vector<RegExpRequest> predictedTexts = requestsForPredictedRegExpTexts(inputs.facts, strings, literals.span(), listed.span(), context.parallelLoops());
+    for (Vector<RegExpRequest>* requests : { &literals, &predictedTexts }) {
+        for (RegExpRequest& request : *requests)
+            request.isListedInOrderFile = std::ranges::binary_search(listed, keyOfRegExpRequest(request));
+    }
     Vector<const RegExpSummary*> summariesOfLiterals = summarizeRequestedRegExps(literals.span(), strings, context);
     Vector<const RegExpSummary*> summariesOfPredictedTexts = summarizeRequestedRegExps(predictedTexts.span(), strings, context);
 
