@@ -1757,6 +1757,8 @@ public:
         uint32_t node { 0 };
         bool givesPairs { false };
         bool isLoop { false };
+        // `Object.keys(v)[0]`: where the list is shorter, the key is `undefined`.
+        bool mayLieBehindList { false };
     };
     std::optional<ListedObject> findListedObject(FunctionID, const BodyIndex&, ValueID key) const;
     bool onlyReadsKeys(FunctionID, const BodyIndex&, ValueID list) const;

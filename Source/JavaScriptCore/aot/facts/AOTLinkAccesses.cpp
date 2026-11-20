@@ -1469,6 +1469,7 @@ std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, 
     const BodyIndex* made = &index;
     ValueID list = whatStepGoesThroughForLinkAccesses(index, pair ? pair : key, false);
     ValueID element = pair ? ValueID() : name;
+    bool mayLieBehindList = false;
     if (list) {
         while (!index.isParameter(list) && index.hasOneUse(list) && opcodesThatStateTypes.contains(index.opcodeOf(list)))
             list = index.value(list).operand(0);
@@ -1477,9 +1478,11 @@ std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, 
         else if (index.isParameter(list) || !index.hasOneUse(list))
             return std::nullopt;
     } else if (element && !index.isParameter(element) && index.opcodeOf(element) == Opcode::ElemGet) {
-        list = index.stripCasts(index.value(element).as<Opcode::ElemGet>().objectOperand());
+        ValueID read = index.value(element).as<Opcode::ElemGet>().objectOperand();
+        list = index.stripCasts(read);
         if (!onlyReadsKeys(id, index, list))
             return std::nullopt;
+        mayLieBehindList = !readsElementInBoundsForLinkAccesses(program, index, index.value(element), read);
     } else {
         ValueID element = index.stripCasts(pair ? pair : key);
         bool isElement = index.isParameter(element) && index.blockOf(element) == entryBlock && isPlainCallback(id, index) && element == index.block(entryBlock).parameter(program.at(id).firstParameterIndex());
@@ -1505,7 +1508,7 @@ std::optional<LinkFlow::ListedObject> LinkFlow::findListedObject(FunctionID id, 
     uint32_t node = listed == summary.calls.end() ? noSummaryNode : summary.arguments[listed->firstArgument];
     if (node == noSummaryNode || call.argumentsOperands().empty() || !call.argumentsOperands()[0])
         return std::nullopt;
-    return ListedObject { maker, made->stripCasts(call.argumentsOperands()[0]), node, !!pair };
+    return ListedObject { maker, made->stripCasts(call.argumentsOperands()[0]), node, !!pair, false, mayLieBehindList };
 }
 
 bool LinkFlow::storesUnderListedNames(FunctionID id, ValueID site) const
@@ -2520,6 +2523,8 @@ Vector<PropertyKeyID, 16> LinkFlow::findListedNamesOfStore(FunctionID id, const 
     bool listsOwnNames = !listed->isLoop || isBehindOwnNameTest(id, *index, access.site, listed->object, index->stripCasts(key), objects, watched);
     if (objects.isNever() || !appendListedNames(objects, listsOwnNames ? PrototypeNames::Excluded : PrototypeNames::Included, names))
         names.shrink(0);
+    else if (listed->mayLieBehindList)
+        names.append(program.keyOf(BuiltinNames::undefined));
     std::ranges::sort(names, { }, &PropertyKeyID::bits);
     names.shrink(std::ranges::unique(names).begin() - names.begin());
     return names;
@@ -2549,6 +2554,9 @@ bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
         Vector<PropertyKeyID, 16> names;
         if (!appendNamesOfRecords(node, numberOfNames, prototypeNames, names))
             return false;
+        PropertyKeyID nameBehindList = listed->mayLieBehindList ? m_program.keyOf(BuiltinNames::undefined) : PropertyKeyID();
+        if (nameBehindList && !names.contains(nameBehindList))
+            names.append(nameBehindList);
         resolveUnderNames(names.span());
         return true;
     }
@@ -2566,8 +2574,13 @@ bool AccessInLinkAccesses::accessesListedNames(const LinkType& subject)
     Vector<PropertyKeyID, 16> names;
     if (!appendNamesOfRecords(node, numberOfNames, prototypeNames, names))
         return false;
+    PropertyKeyID nameBehindList = listed->mayLieBehindList ? m_program.keyOf(BuiltinNames::undefined) : PropertyKeyID();
+    if (nameBehindList && !names.contains(nameBehindList))
+        names.append(nameBehindList);
     if (!holdsValueUnderKey(*index, store, *listed) || !storeEachListedValue(records, prototypeNames, listed->givesPairs ? ListedNames::AreThere : ListedNames::MayBeGone))
         resolveUnderNames(names.span());
+    else if (nameBehindList)
+        resolveUnderNames(std::span<const PropertyKeyID>(&nameBehindList, 1));
     return true;
 }
 
