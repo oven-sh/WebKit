@@ -17,7 +17,6 @@
 #include "AOTOpcode.h"
 #include "AOTSort.h"
 #include "AOTThreads.h"
-#include "Options.h"
 #include <algorithm>
 #include <limits>
 #include <span>
@@ -143,7 +142,7 @@ static void printCodeReportNameOfForm(PrintStream& out, const CodeReportForm& ro
 
 static bool codeReportStopsAtFormsThatAreNotNamed()
 {
-    return ASSERT_ENABLED || ASAN_ENABLED || Options::verifyAOTMachineCode();
+    return ASSERT_ENABLED || ASAN_ENABLED;
 }
 
 static void writeCodeReportBytesByForm(const LinkedFunctions& units, BuildContext& context, CompileOutput& output)

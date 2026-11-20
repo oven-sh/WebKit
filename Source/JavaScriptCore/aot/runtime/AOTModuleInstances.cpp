@@ -3376,8 +3376,11 @@ bool Modules::tryEvictRequirerOfOriginal(ModuleID module)
     ModuleID file = fileOf(module);
     if (!activeMock(file) || (!hasInstances(file) && !data(file).isESModuleOfProgram()) || !m_requirersOfOwnOriginals.clear(file.index()))
         return false;
+    if (!isOfPackage(file))
+        m_evictedActiveMocks.set(file.index());
     releaseImportersOf(file, ReleasedImporters::All);
     forgetUnmockedOriginal(file);
+    m_originalsRunForStatements.clear(file.index());
     didRemoveActiveMockEntry(file);
     return true;
 }

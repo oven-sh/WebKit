@@ -927,6 +927,7 @@ bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID imp
 
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool keepsEarlierMockForImporters)
 {
+    m_evictedActiveMocks.clear(fileOrModule.index());
     std::optional<MomentMockWasLaid> waiting = m_pendingMockCalls.takeOptional(fileOrModule);
     if (JSObject* earlier = keepsEarlierMockForImporters ? activeMock(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).preloadMock.get()) {
         ModuleID module = moduleWithExportsOf(fileOrModule);

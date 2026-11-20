@@ -117,7 +117,7 @@ public:
     static void leaveTestToNext(Block* first, unsigned leavingSuccessor);
     static void readWordWhereRequested(Block* asked, Operation* word);
     static void compareEarlierReadWord(Operation* comparison, Operation* word);
-    static void mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value);
+    static void mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Opcode opcodeOfRead, Operation* base, int64_t offsetOfRead, uint32_t mask, uint32_t value);
     static void askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, Block* second, unsigned leavingSuccessorOfSecond, Operation* subject, int32_t low, int32_t high);
     struct CaseOfEquality {
         int64_t value;

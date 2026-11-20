@@ -719,6 +719,8 @@ std::optional<uint32_t> Walker::findLoopToBuildInFrontOf(const Draft& draft, con
         if (operand && !isInvariantInLoop(numberOfLoops - 1, operand))
             return std::nullopt;
     }
+    if (draft.opcode == Opcode::GetStringCodeUnit && !nameProvesPositionBelowLengthForStrings(*this, draft.positionOperand(), draft.stringOperand()))
+        return std::nullopt;
     if (drawChoice(DrawnFor::PlaceInFrontOfLoop, currentFunction().index(), draft.position, false) == ChoiceOfCost::No)
         return std::nullopt;
     if ((draft.opcode == Opcode::GetModuleVariable || draft.opcode == Opcode::GetEnvironmentField) && draft.isKnownInitialized())
@@ -2450,10 +2452,10 @@ Reference Walker::buildOnFirstArrival(ValueID site, const Draft& call, const Eff
 {
     return buildOnFirstArrival(site, resultTypeOf(call), call.origin(), scopedLambda<Reference()>([&] {
         return build(Draft(call), &effects);
-    }));
+    }), call.operands());
 }
 
-Reference Walker::buildOnFirstArrival(ValueID site, TypeID resultType, Origin origin, NOESCAPE const ScopedLambda<Reference()>& buildResult)
+Reference Walker::buildOnFirstArrival(ValueID site, TypeID resultType, Origin origin, NOESCAPE const ScopedLambda<Reference()>& buildResult, std::span<const Reference> operands)
 {
     std::optional<uint32_t> place = innermostOpenLoop();
     if (!place || m_isBuildingInPlace || !has(Mechanism::LoopInvariants) || isUnreachable() || isUnderHandler() || hasStringsInBuilders())
@@ -2483,6 +2485,14 @@ Reference Walker::buildOnFirstArrival(ValueID site, TypeID resultType, Origin or
     if (loop.carriedSlotsBuilt.contains(static_cast<uint32_t>(slot)))
         return { };
     m_openLoops.changeable(*place).carriedSlotsBuilt.append(static_cast<uint32_t>(slot));
+    bool hangsOnFront = std::ranges::any_of(operands, [&](Reference operand) {
+        if (!operand || !operand.isValue() || m_code.isConstant(operand.id()))
+            return false;
+        const auto& front = m_openLoops[*place].reloadBlocks;
+        return front.contains(m_code.blockOf(operand.id())) || front.contains(m_code.blockOf(underlyingCellOf(m_code, operand.id())));
+    });
+    if (hangsOnFront)
+        m_openLoops.changeable(*place).carriedSlotsThatHangOnFront.append(static_cast<uint32_t>(slot));
     Reference headerParameter = Reference::value(parameters[parameters.size() - m_openLoops[*place].carriedResultCount + slot]);
     Reference carried = carriedResultOf(m_state, headerParameter);
     if (!(m_types.at(ownTypeOf(carried)).primitives & Primitive::Absent))

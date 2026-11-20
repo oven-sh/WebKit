@@ -872,11 +872,53 @@ bool Walker::holdsLoopsThatStepByHand(FunctionID id)
     return holdsSome;
 }
 
+Reference Walker::findGeneratorSteppedBy(const BodyValue& operation) const
+{
+    ValueID named;
+    if (operation.opcode() == Opcode::Call)
+        named = operation.as<Opcode::Call>().thisValueOperand();
+    else if (operation.opcode() == Opcode::PropGet && !operation.isFreeName())
+        named = operation.objectOperand();
+    Reference state = named ? referenceBoundTo(named) : Reference();
+    return state && state.isVirtual() && standsForFrameOfGenerator(state) ? state : Reference();
+}
+
+uint32_t Walker::placeOfNextStepOfGenerator(const BodyBlock& block, uint32_t limit) const
+{
+    const Frame& frame = m_frames.last();
+    const uint32_t first = block.firstValue().index();
+    const uint32_t walkedUpTo = frame.block == block.id() ? frame.walkedUpTo : 0;
+    auto endInFrontOf = [&](ValueID step) {
+        if (step && block.holds(step) && step.index() >= first && step.index() - first >= walkedUpTo)
+            limit = std::min(limit, step.index() - first);
+    };
+    auto endInFrontOfStepsOf = [&](const auto& generator) {
+        if (!generator.stepsInRow.isEmpty())
+            endInFrontOf(generator.stepsInRow[0]);
+        if (!generator.isSteppedByHand)
+            return;
+        if (!generator.placeOfResult) {
+            endInFrontOf(generator.step);
+            return;
+        }
+        for (BodyTarget target : block.terminator().targets()) {
+            if (target.block() == generator.inputHead && *generator.placeOfResult < target.arguments().size())
+                endInFrontOf(frame.index->stripCasts(target.arguments()[*generator.placeOfResult]));
+        }
+    };
+    for (const GeneratorTakenByConsumer& taken : m_generatorsTakenByConsumers) {
+        if (taken.inlineFrame == frame.inlineFrame)
+            endInFrontOfStepsOf(taken);
+    }
+    for (const GeneratorWalkedInConsumer& walked : m_generatorsWalkedInConsumers) {
+        if ((walked.frameOfTurn == UINT32_MAX ? walked.frameOfConsumer : walked.frameOfTurn) + 1 == m_frames.size())
+            endInFrontOfStepsOf(walked);
+    }
+    return limit;
+}
+
 bool Walker::answerStepOfGeneratorTaken(const BodyValue& operation)
 {
-    bool isRead = operation.opcode() == Opcode::PropGet;
-    if (isRead && operation.isFreeName())
-        return false;
     if (operation.opcode() == Opcode::IsPristineArray) {
         Reference tested = operation.operand(0) ? referenceBoundTo(operation.operand(0)) : Reference();
         if (!tested || !tested.isVirtual() || !standsForFrameOfGenerator(tested))
@@ -884,11 +926,10 @@ bool Walker::answerStepOfGeneratorTaken(const BodyValue& operation)
         bind(operation.id(), BuilderForGenerators(*this, originOf(operation)).boolean(true));
         return true;
     }
-    ValueID named = isRead ? operation.objectOperand() : operation.as<Opcode::Call>().thisValueOperand();
-    Reference state = named ? referenceBoundTo(named) : Reference();
-    if (!state || !state.isVirtual() || !standsForFrameOfGenerator(state))
+    Reference state = findGeneratorSteppedBy(operation);
+    if (!state)
         return false;
-    if (isRead) {
+    if (operation.opcode() == Opcode::PropGet) {
         buildFirstReadsThatOpenOfGeneratorLeavesOut(*this, originOf(operation), false);
         if (!isUnreachable())
             bind(operation.id(), Reference());
@@ -902,10 +943,15 @@ bool Walker::answerStepOfGeneratorTaken(const BodyValue& operation)
         sent = constant(WTF::move(nothing));
     }
     if (m_endOfManualIteration && m_endOfManualIteration->generator == state) {
-        m_endOfManualIteration->isReached = true;
-        m_endOfManualIteration->block = m_block;
-        m_endOfManualIteration->sent = sent;
-        m_endOfManualIteration->state = WTF::move(m_state);
+        EndOfManualIteration& end = *m_endOfManualIteration;
+        if (end.isReached)
+            end.otherWays.append(EndOfManualIteration::OtherWay { m_block, sent, WTF::move(m_state) });
+        else {
+            end.isReached = true;
+            end.block = m_block;
+            end.sent = sent;
+            end.state = WTF::move(m_state);
+        }
         m_block = { };
         m_state.clear();
         return true;
@@ -2943,7 +2989,33 @@ Walker::EndOfManualIteration Walker::walkManualIterationToStep(const GeneratorWa
         m_state = WTF::move(end.state);
     else
         m_state.clear();
+    if (!end.otherWays.isEmpty() && !m_hasFailed)
+        joinWaysToStep(end);
     return end;
+}
+
+void Walker::joinWaysToStep(EndOfManualIteration& end)
+{
+    ArmsThatMeet ways;
+    auto listWay = [&](BlockID last, Reference sent) {
+        JoinArm way { last, { } };
+        way.values.append(sent);
+        ways.append(WTF::move(way));
+    };
+    listWay(m_block, end.sent);
+    for (EndOfManualIteration::OtherWay& other : end.otherWays) {
+        PendingBlock& left = pendingBlock(other.block);
+        left.state = WTF::move(other.state);
+        left.hasState = true;
+        listWay(other.block, other.sent);
+    }
+    for (const JoinArm& way : ways) {
+        if (!way.values[0] || !way.values[0].isRecord())
+            return fail("a way to the step of a generator brings a value without a record"_s);
+    }
+    Vector<Reference, 8> met(1);
+    if (joinArms(ways.span(), addBlock(), met.mutableSpan()))
+        end.sent = met[0];
 }
 
 Reference Walker::resumptionOfGenerator(Reference sent, ResumeMode mode, Origin origin)

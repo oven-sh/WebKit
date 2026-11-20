@@ -7591,7 +7591,7 @@ static uint32_t limitOfStretchOfGuess(Walker& walker, const BodyBlock& block)
     ValueID condition = end.isConditionalBranch() ? end.operand(0) : ValueID();
     if (condition && condition >= block.firstValue() && block.holds(condition) && condition.index() - block.firstValue().index() < limit && relationThatNarrowsBehind(walker, end))
         limit = condition.index() - block.firstValue().index();
-    return limit;
+    return walker.limitOfStretchInFrontOfSteps(block, limit);
 }
 
 uint32_t limitOfStretchOfArms(Walker& walker, const BodyBlock& block)

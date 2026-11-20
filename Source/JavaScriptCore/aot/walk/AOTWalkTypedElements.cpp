@@ -1533,7 +1533,7 @@ static Reference buildTestedRead(const AccessOfTypedElements& access, Draft&& re
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::EffectFree;
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
-    bool isInvariant = walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
+    bool isInvariant = !read.testsPassed && walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
     Reference element;
     Reference isNumber;
     {
@@ -3118,6 +3118,61 @@ static bool buildLengthExtension(const AccessOfTypedElements& access, const Hois
     return !walker.isUnreachable() && !walker.hasFailed();
 }
 
+// A loop counts on the length of a list that its own store or push alone changes. What appends under another name is told apart from that list. False: the walk cannot go on here.
+static bool tellAppendApartFromListsCountedOn(const AccessOfTypedElements& access, Origin origin)
+{
+    Walker& walker = access.walker;
+    Vector<Reference, 2> lists;
+    auto gather = [&](BlockID head, bool isOfCurrentFunction = false) {
+        Reference last;
+        while (std::optional<uint64_t> next = findKnown(walker, KnownNote::LengthEqualsInitialCounter, { }, last, head.index())) {
+            last = Reference::fromBits(static_cast<uint32_t>(*next));
+            // Where a turn writes what the note rests on, no turn counts on it. A head is numbered within its function.
+            std::optional<uint64_t> noted = findKnown(walker, KnownNote::LengthEqualsInitialCounter, last, { }, head.index());
+            if (noted && (!isOfCurrentFunction || *noted >> 32 == walker.currentFunction().index()) && !lists.contains(last))
+                lists.append(last);
+        }
+        return false;
+    };
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (LoopID loop = isReadOfBody(access) ? index.loopOf(index.blockOf(access.value.id())) : LoopID(); loop; loop = index.loop(loop).parent)
+        gather(index.loop(loop).head, true);
+    walker.someCallerLoop([&](BlockID head) { return gather(head); });
+    for (Reference list : lists) {
+        if (underlyingCellOf(walker.code(), access.base.id()) == list.id()) {
+            // buildPushAtLength() has asked for the push.
+            AccessOfTypedElements asWritten = access;
+            asWritten.isPushAtLength = false;
+            if (access.value.opcode() == Opcode::Call || notedCounterPosition(asWritten, KnownNote::LengthEqualsInitialCounter, list))
+                continue;
+            jumpToGuardFallback(walker);
+            return false;
+        }
+        Walker::AllocationsUsedInLoop alone { list.id().index() };
+        if (!mayBeSameObject(walker, list, access.base) || walker.classifyAgainstAllocations(alone, access.base) == Walker::IsListedAllocation::No)
+            continue;
+        Draft isSame(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(isSame);
+        isSame.setLeftOperand(access.base);
+        isSame.setRightOperand(list);
+        isSame.setForm(operatorFormFor(walker, isSame));
+        Reference test = walker.build(WTF::move(isSame));
+        if (!test)
+            return false;
+        BlockID same = walker.addBlock(BlockFrequency::Rare);
+        BlockID differs = walker.addBlock();
+        walker.branch(test, same, differs);
+        walker.continueIn(same);
+        if (!walker.isUnreachable())
+            jumpToGuardFallback(walker);
+        walker.continueIn(differs);
+        walker.recordSpeculation();
+        if (walker.isUnreachable() || walker.hasFailed())
+            return false;
+    }
+    return true;
+}
+
 static bool isLiteralFilledByEarlierLoop(Walker& walker, const BodyIndex& index, ValueID array, LoopID loop)
 {
     static constexpr OpcodeSet literals { Opcode::NewArray, Opcode::Data };
@@ -3676,6 +3731,8 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
         if (access.isPushAtLength && (!mayAppend || access.key != currentLength))
             return false;
         if (mayAppend) {
+            if (!tellAppendApartFromListsCountedOn(access, origin))
+                return true;
             lengthOfArray = currentLength;
             fromZeroUpOfAppend = fromZeroUp;
         } else {

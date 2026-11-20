@@ -1003,6 +1003,19 @@ public:
     FlowNodeID joinedExtraProperties(LayoutID);
     void noteCopyOfAppendedFields(FunctionID, uint32_t record);
     void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
+    void noteNamesOfRecordsRead(const FlowObserver& access, FlowNodeID records) { noteNamesOfRecordsRead(access, records, countNamesOfRecords(records)); }
+    size_t countNamesOfRecords(FlowNodeID) const;
+    void noteNameMadeEnumerable(LayoutID holder, PropertyKeyID);
+    template<typename Functor> void forEachNameMadeEnumerable(LayoutID layout, const Functor& functor) const
+    {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        size_t stepsLeft = m_namesMadeEnumerable.isEmpty() ? 0 : program.layouts.size();
+        for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
+            if (auto names = m_namesMadeEnumerable.find(current.index()); names != m_namesMadeEnumerable.end())
+                std::ranges::for_each(names->value, functor);
+        }
+    }
+    bool hasNameMadeEnumerable(const LinkType& objects) const;
     template<typename Functor> void forEachAppendedField(LayoutID layout, const Functor& functor) const
     {
         LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -1744,13 +1757,15 @@ public:
         uint32_t node { 0 };
         bool givesPairs { false };
         bool isLoop { false };
+        // `Object.keys(v)[0]`: where the list is shorter, the key is `undefined`.
+        bool mayLieBehindList { false };
     };
     std::optional<ListedObject> findListedObject(FunctionID, const BodyIndex&, ValueID key) const;
     bool onlyReadsKeys(FunctionID, const BodyIndex&, ValueID list) const;
     bool storesUnderListedNames(FunctionID, ValueID site) const;
     enum class PrototypeNames : bool { Excluded, Included };
     bool appendPrototypeNames(LayoutID, Vector<PropertyKeyID, 16>&) const;
-    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&, size_t* numberOfNames = nullptr) const;
+    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&) const;
     bool isBehindOwnNameTest(FunctionID, const BodyIndex&, ValueID site, ValueID object, ValueID name, const LinkType& objects, Vector<FlowNodeID, 4>& watched) const;
     Vector<PropertyKeyID, 16> findListedNamesOfStore(FunctionID, const SummaryAccess&) const;
     bool iteratesListsAsBuilt() const;
@@ -2460,7 +2475,6 @@ private:
     class CopiesOfMembers;
     bool layMembersThatCopiesBring();
     bool copyAppendedFields();
-    size_t countNamesOfRecords(FlowNodeID) const;
     size_t countPrototypeNames(LayoutID) const;
     FlowNodeID findExtraPropertyStoreNode(LayoutID) const;
     bool tellAccessesUnderNewNames();
@@ -2502,6 +2516,7 @@ private:
     Vector<LayoutID> m_nearestConstructorFunctionsFrom;
     BitVector m_prototypesPassedByLookups;
     BitVector m_prototypesWithDefinitions;
+    HashMap<uint32_t, Vector<PropertyKeyID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesMadeEnumerable;
     BitVector m_keysDefinedByDescriptors;
     bool m_someAccessorIsWrittenUnderComputedKey { false };
     bool mayBeDefinedUnderUnknownKeyOnPrototypeOf(LayoutID, PropertyKeyID) const;

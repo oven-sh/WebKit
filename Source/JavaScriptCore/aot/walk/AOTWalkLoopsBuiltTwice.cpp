@@ -641,6 +641,21 @@ Reference Walker::boundElementReadBy(const BodyValue& read, Reference view)
     return element;
 }
 
+// for (let i = 0; i < raft.size; i++) { sum += planks[i]; sum += drop(raft); }: no text of the loop stores the field, but a callee that the turns copy may. The bound is the front's where the head reads the same out of the field.
+static bool headReadsBoundOfFront(Walker& walker, const BodyValue& relation, BlockID inputHead, Reference boundOfFront)
+{
+    static constexpr OpcodeSet readsOfFields { Opcode::PropGet, Opcode::PrivateGet };
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = index.stripCasts(relation.operand(1));
+    if (!read || read.index() < index.block(inputHead).firstParameter().index() || index.isParameter(read) || !readsOfFields.contains(index.opcodeOf(read)))
+        return true;
+    Reference atHead = walker.referenceOf(relation.operand(1));
+    if (!atHead || !atHead.isRecord() || !boundOfFront || !boundOfFront.isRecord())
+        return false;
+    const Code& code = walker.code();
+    return code.valueBehindNames<valuePreservingOpcodes>(atHead.id()) == code.valueBehindNames<valuePreservingOpcodes>(boundOfFront.id());
+}
+
 bool Walker::askLesserBoundAt(const BodyValue& relation)
 {
     VersionedLoop& versionedLoop = m_versionedLoops.last();
@@ -657,6 +672,9 @@ bool Walker::askLesserBoundAt(const BodyValue& relation)
     if (versionedLoop.variableThatIsBound && !shouldAssumeInvariantLoopBounds() && !findKnown(*this, KnownNote::VariableIsAsInFrontOfLoop, versionedLoop.readOfVariableThatIsBound, { }, versionedLoop.variableThatIsBound.index()))
         return false;
     if (versionedLoop.boundElement && referenceOf(relation.operand(1)) != versionedLoop.boundElement)
+        return false;
+    bool boundMayBeField = !versionedLoop.viewWhoseLengthIsBound && !versionedLoop.variableThatIsBound && !versionedLoop.boundElement;
+    if (boundMayBeField && !shouldAssumeInvariantLoopBounds() && !headReadsBoundOfFront(*this, relation, versionedLoop.inputHead, versionedLoop.boundBesideLesserBound))
         return false;
     Reference counter = referenceOf(relation.operand(0));
     if (!counter || !counter.isRecord() || !m_types.at(typeOf(counter)).isInteger())
@@ -938,6 +956,26 @@ std::optional<Range> Walker::expectedStepsOfSum(BlockID inputHead, uint32_t posi
     return addends->known.isSubsetOf(Range { -most, most }) && (addends->known.minimum || addends->known.maximum) ? std::optional { addends->known } : std::nullopt;
 }
 
+static bool isEmptiedByOperatorsOfOneKind(Walker& walker, BlockID inputHead, size_t position)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    std::optional<Opcode> emptiedBy;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID brought = position < arguments.size() && arguments[position] ? index.stripCasts(arguments[position]) : ValueID();
+        if (!brought || index.isParameter(brought))
+            return false;
+        Opcode step = index.opcodeOf(brought);
+        if (emptiedBy.value_or(step) != step)
+            return false;
+        emptiedBy = step;
+    }
+    return true;
+}
+
 bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32_t targetIndex, Vector<Reference, 8>& arguments)
 {
     if (m_refusesSecondCounters)
@@ -984,6 +1022,9 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
         }
         if (!counted || (counted->minimum <= 0 && counted->maximum >= 0))
             continue;
+        bool counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+        if (counterEmpties && !isEmptiedByOperatorsOfOneKind(*this, inputHead, placeOfCounter))
+            continue;
         for (uint32_t position = 0; position < head.numberOfParameters(); ++position) {
             ValueID stepped = m_code.at(loop.head).parameters()[position];
             Type type = m_types.at(m_code.at(stepped).type);
@@ -995,7 +1036,7 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
                     steps = invariant->steps;
             }
             SecondCounter second { counter, stepped, Range::one(0), counted->minimum > 0 };
-            second.counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+            second.counterEmpties = counterEmpties;
             if (!steps) {
                 steps = expectedStepsOfSum(inputHead, position, m_code.at(testID), operandIndex, second);
                 second.isSpeculated = steps.has_value();
@@ -1024,7 +1065,7 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
             if (field.slotSteps.isEmpty() || (!field.slotSteps.minimum && !field.slotSteps.maximum) || !parameter || !parameter.isValue() || valueKnownOf(field) != parameter || !m_types.at(m_code.at(parameter.id()).type).isInteger())
                 continue;
             SecondCounter second { counter, parameter.id(), Range { std::min<int64_t>(field.slotSteps.minimum, 0), std::max<int64_t>(field.slotSteps.maximum, 0) }, counted->minimum > 0 };
-            second.counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+            second.counterEmpties = counterEmpties;
             Reference built = buildSecondCounter(second, parameter, testID, operandIndex, isOnTakenEdge, edge, to);
             if (isUnreachable() && built)
                 return false;
@@ -7556,6 +7597,15 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
         else if (listsRead.areTested && !m_hasFailed && m_walkOfLoopWasKept && !preservesHoistedArrayGuards(*this, m_effectsOfLoopKeptLast))
             count(StatisticID::VersionedLoopsFillingLocalArrays);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_hoistedElementCheckCount != elementsAskedInFront && (m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements) & cellHoldingElementsMask))
+            m_typedBuildEndedListsTestedInFront = true;
+        // loom.rows[0][i] = loom.next; sum += loom.rows[1][i]: a getter, a setter, a step or a trap that the turn takes may lay another list under the name.
+        auto turnsMayReplaceHolder = [&](const HoistedRow& row) {
+            static constexpr AbstractHeapSet heapsUnderNamesOfHolders { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
+            return !row.isRejected && std::ranges::any_of(row.fieldReads, [&](ValueID read) {
+                return m_effectsOfLoopKeptLast.writes.overlaps(readsOfNamedLookup(*this, index.value(read).key()).restrictedTo(heapsUnderNamesOfHolders));
+            });
+        };
+        if (!m_hasFailed && m_walkOfLoopWasKept && std::ranges::any_of(hoistedRowsOf(inputHead), turnsMayReplaceHolder))
             m_typedBuildEndedListsTestedInFront = true;
         bool turnsStoreElements = m_effectsOfLoopKeptLast.mayRunOtherCode() || m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_hoistedNumberReadCount != numbersReadInFront && turnsStoreElements)

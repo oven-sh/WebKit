@@ -688,7 +688,7 @@ Operand OperatorEmitter::unaryOnLikelyBigInt(const ValueContext& value, UnaryOpe
         RELEASE_ASSERT_NOT_REACHED();
     };
     bool isBigInt = value->form() == OperatorForm::BigInts;
-    m_out.noteForm(Form::Closed, isBigInt ? StateOfKnowledge::BigInts : StateOfKnowledge::Generic);
+    m_out.noteForm(Form::Closed, StateOfKnowledge::Generic);
     Boxed operand = boxedOperand(value->valueOperand());
     auto make = [&] {
         return isBigInt ? callOperation<Boxed>(value, traitsOfUnaryOperator(op).onBigInt, { operand }) : Boxed(callStub(value, unaryOperation(traitsOfUnaryOperator(op).stub), { operand.value() }).first);
