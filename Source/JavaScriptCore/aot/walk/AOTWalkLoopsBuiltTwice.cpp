@@ -641,6 +641,21 @@ Reference Walker::boundElementReadBy(const BodyValue& read, Reference view)
     return element;
 }
 
+// for (let i = 0; i < raft.size; i++) { sum += planks[i]; sum += drop(raft); }: no text of the loop stores the field, but a callee that the turns copy may. The bound is the front's where the head reads the same out of the field.
+static bool headReadsBoundOfFront(Walker& walker, const BodyValue& relation, BlockID inputHead, Reference boundOfFront)
+{
+    static constexpr OpcodeSet readsOfFields { Opcode::PropGet, Opcode::PrivateGet };
+    const BodyIndex& index = walker.currentBodyIndex();
+    ValueID read = index.stripCasts(relation.operand(1));
+    if (!read || read.index() < index.block(inputHead).firstParameter().index() || index.isParameter(read) || !readsOfFields.contains(index.opcodeOf(read)))
+        return true;
+    Reference atHead = walker.referenceOf(relation.operand(1));
+    if (!atHead || !atHead.isRecord() || !boundOfFront || !boundOfFront.isRecord())
+        return false;
+    const Code& code = walker.code();
+    return code.valueBehindNames<valuePreservingOpcodes>(atHead.id()) == code.valueBehindNames<valuePreservingOpcodes>(boundOfFront.id());
+}
+
 bool Walker::askLesserBoundAt(const BodyValue& relation)
 {
     VersionedLoop& versionedLoop = m_versionedLoops.last();
@@ -657,6 +672,9 @@ bool Walker::askLesserBoundAt(const BodyValue& relation)
     if (versionedLoop.variableThatIsBound && !shouldAssumeInvariantLoopBounds() && !findKnown(*this, KnownNote::VariableIsAsInFrontOfLoop, versionedLoop.readOfVariableThatIsBound, { }, versionedLoop.variableThatIsBound.index()))
         return false;
     if (versionedLoop.boundElement && referenceOf(relation.operand(1)) != versionedLoop.boundElement)
+        return false;
+    bool boundMayBeField = !versionedLoop.viewWhoseLengthIsBound && !versionedLoop.variableThatIsBound && !versionedLoop.boundElement;
+    if (boundMayBeField && !shouldAssumeInvariantLoopBounds() && !headReadsBoundOfFront(*this, relation, versionedLoop.inputHead, versionedLoop.boundBesideLesserBound))
         return false;
     Reference counter = referenceOf(relation.operand(0));
     if (!counter || !counter.isRecord() || !m_types.at(typeOf(counter)).isInteger())
