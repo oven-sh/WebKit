@@ -573,8 +573,8 @@ JSValue Modules::callBody(ModuleID module)
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (!m_formsAnsweredFirst.isEmpty()) [[unlikely]] {
-        // An import shares the entry of the import before it, and a require() under a type loads its own.
-        if (moduleData.kind == ModuleKind::Data && m_innermostSyncLoadRoot != std::optional(module)) {
+        // An import, deferred or not, shares the entry of the import before it, and a require() under a type loads its own.
+        if (moduleData.kind == ModuleKind::Data && m_innermostRequireRoot != std::optional(module)) {
             bool hasTaken = takeWhatFormAnsweredFirstHolds(module);
             RETURN_IF_EXCEPTION(scope, { });
             if (hasTaken)
@@ -4600,6 +4600,7 @@ void Modules::evaluateSynchronously(ModuleID module, SynchronousEvaluationReason
     int64_t firstOrder = m_instance.vm->incrementModuleAsyncEvaluationCount();
     SetForScope activeSynchronousLoad(m_activeSynchronousLoad, ++m_synchronousLoadCount);
     SetForScope innermostSyncLoadRoot(m_innermostSyncLoadRoot, std::optional(module));
+    SetForScope innermostRequireRoot(m_innermostRequireRoot, reason == SynchronousEvaluationReason::Require ? std::optional(module) : std::nullopt);
     SetForScope outermostSynchronousLoad(m_outermostSynchronousLoad, m_outermostSynchronousLoad ? m_outermostSynchronousLoad : m_activeSynchronousLoad);
     auto leaveLoad = [&] {
         if (!queue)

@@ -2496,6 +2496,7 @@ private:
     uint32_t m_synchronousLoadCount { 0 };
     uint32_t m_activeSynchronousLoad { 0 };
     std::optional<ModuleID> m_innermostSyncLoadRoot;
+    std::optional<ModuleID> m_innermostRequireRoot;
     uint32_t m_outermostSynchronousLoad { 0 };
     Structure* m_namespaceStructure { nullptr };
     JSObject* m_prototypeOfModuleObjects { nullptr };
