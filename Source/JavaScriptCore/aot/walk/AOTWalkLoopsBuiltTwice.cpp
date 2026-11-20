@@ -938,6 +938,26 @@ std::optional<Range> Walker::expectedStepsOfSum(BlockID inputHead, uint32_t posi
     return addends->known.isSubsetOf(Range { -most, most }) && (addends->known.minimum || addends->known.maximum) ? std::optional { addends->known } : std::nullopt;
 }
 
+static bool isEmptiedByOperatorsOfOneKind(Walker& walker, BlockID inputHead, size_t position)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    LoopID loop = index.loopOf(inputHead);
+    std::optional<Opcode> emptiedBy;
+    for (const BodyIncomingEdge& edge : walker.incomingEdgesOf(index, inputHead)) {
+        if (!index.isInLoop(edge.from, loop))
+            continue;
+        std::span<const ValueID> arguments = edge.target.arguments();
+        ValueID brought = position < arguments.size() && arguments[position] ? index.stripCasts(arguments[position]) : ValueID();
+        if (!brought || index.isParameter(brought))
+            return false;
+        Opcode step = index.opcodeOf(brought);
+        if (emptiedBy.value_or(step) != step)
+            return false;
+        emptiedBy = step;
+    }
+    return true;
+}
+
 bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32_t targetIndex, Vector<Reference, 8>& arguments)
 {
     if (m_refusesSecondCounters)
@@ -984,6 +1004,9 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
         }
         if (!counted || (counted->minimum <= 0 && counted->maximum >= 0))
             continue;
+        bool counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+        if (counterEmpties && !isEmptiedByOperatorsOfOneKind(*this, inputHead, placeOfCounter))
+            continue;
         for (uint32_t position = 0; position < head.numberOfParameters(); ++position) {
             ValueID stepped = m_code.at(loop.head).parameters()[position];
             Type type = m_types.at(m_code.at(stepped).type);
@@ -995,7 +1018,7 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
                     steps = invariant->steps;
             }
             SecondCounter second { counter, stepped, Range::one(0), counted->minimum > 0 };
-            second.counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+            second.counterEmpties = counterEmpties;
             if (!steps) {
                 steps = expectedStepsOfSum(inputHead, position, m_code.at(testID), operandIndex, second);
                 second.isSpeculated = steps.has_value();
@@ -1024,7 +1047,7 @@ bool Walker::narrowSecondCounters(EdgeID& edge, BlockID from, BlockID to, uint32
             if (field.slotSteps.isEmpty() || (!field.slotSteps.minimum && !field.slotSteps.maximum) || !parameter || !parameter.isValue() || valueKnownOf(field) != parameter || !m_types.at(m_code.at(parameter.id()).type).isInteger())
                 continue;
             SecondCounter second { counter, parameter.id(), Range { std::min<int64_t>(field.slotSteps.minimum, 0), std::max<int64_t>(field.slotSteps.maximum, 0) }, counted->minimum > 0 };
-            second.counterEmpties = asksTruth && m_types.at(m_code.at(counter).type).isInteger() && m_types.at(m_code.at(counter).type).integers.minimum < 0;
+            second.counterEmpties = counterEmpties;
             Reference built = buildSecondCounter(second, parameter, testID, operandIndex, isOnTakenEdge, edge, to);
             if (isUnreachable() && built)
                 return false;
