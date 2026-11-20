@@ -32,10 +32,28 @@ static ALWAYS_INLINE uint32_t lengthOfBufferHeader(bool is8Bit)
     return is8Bit ? sizeof(EndOfText) / sizeof(Latin1Character) : sizeof(EndOfText) / sizeof(char16_t);
 }
 
-static ALWAYS_INLINE EndOfText& endOfTextIn(StringImpl& characters)
+// A text that does not fit its buffer is copied out of it once, and again when it has grown by a part of its length. The stubs find no text that ends a buffer with this mark.
+static constexpr EndOfText wasCopiedOut = 1u << 31;
+static_assert(JSString::MaxLength < wasCopiedOut);
+
+static ALWAYS_INLINE EndOfText& headerOfTextBuffer(StringImpl& characters)
 {
     const void* first = characters.is8Bit() ? static_cast<const void*>(characters.span8().data()) : characters.span16().data();
     return *static_cast<EndOfText*>(const_cast<void*>(first));
+}
+
+static ALWAYS_INLINE EndOfText endOfTextIn(StringImpl& characters)
+{
+    return headerOfTextBuffer(characters) & ~wasCopiedOut;
+}
+
+static ALWAYS_INLINE void setEndOfTextIn(StringImpl& characters, EndOfText end)
+{
+    constexpr int bitsThatCountAsGrowth = 4;
+    const int shift = std::max<int>(std::bit_width(end) - bitsThatCountAsGrowth, 0);
+    const bool hasGrown = endOfTextIn(characters) >> shift != end >> shift;
+    EndOfText& header = headerOfTextBuffer(characters);
+    header = hasGrown ? end : end | (header & wasCopiedOut);
 }
 
 using CompactFibers = JSRopeString::CompactFibers;
@@ -157,6 +175,7 @@ static JSString* tryCreateTextBuffer(VM& vm, bool is8Bit, uint32_t length)
     }
     if (!characters)
         return nullptr;
+    headerOfTextBuffer(*characters) = lengthOfBufferHeader(is8Bit);
     JSString* buffer = jsNontrivialString(vm, String(characters.releaseNonNull()));
     buffer->setStructure(vm, vm.aotState().runtimeTable->textBufferStructure());
     return buffer;
@@ -180,7 +199,7 @@ static ALWAYS_INLINE void writePieces(StringImpl& buffer, uint32_t position, std
         writeString(charactersOf<CharacterType>(buffer) + position, piece);
         position += piece->length();
     }
-    endOfTextIn(buffer) = position;
+    setEndOfTextIn(buffer, position);
 }
 
 static ALWAYS_INLINE void resolveLastingPieces(std::span<JSString* const> pieces)
@@ -213,17 +232,21 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
         return nullptr;
     uint32_t numberOfAdditions = 0;
     JSString* bottom = text;
+    JSString* recent = nullptr;
     auto areAdditionsLong = [&] {
         return length - bottom->length() + lengthOfPieces > lengthInAdvance + numberOfAdditions * maxLengthPerAddition;
     };
     for (; bottom->isNonSubstringRope(); bottom = firstPartOf(bottom)) {
+        if (numberOfAdditions == minAdditionsToGrowingText / 2)
+            recent = bottom;
         if (!(++numberOfAdditions % additionsPerQuestion) && areAdditionsLong())
             return nullptr;
     }
     if (numberOfAdditions && areAdditionsLong())
         return nullptr;
 
-    if (JSString* buffer = bottom->isRope() ? bufferThatEndsWith(instance, bottom) : nullptr) {
+    JSString* outgrown = bottom->isRope() ? bufferThatEndsWith(instance, bottom) : nullptr;
+    if (JSString* buffer = outgrown) {
         StringImpl& characters = *buffer->tryGetValueImpl();
         uint32_t end = endOfTextIn(characters);
         uint32_t lengthAddedAsRopes = length - bottom->length();
@@ -237,7 +260,9 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
             }
             return createSubstringOfBuffer(instance, vm, buffer, end - bottom->length(), length + static_cast<uint32_t>(lengthOfPieces), characters.is8Bit());
         }
-    } else if (numberOfAdditions < minAdditionsToGrowingText || lengthOfPieces > length)
+    }
+    bool isFirstCopyOutOfBuffer = outgrown && !(headerOfTextBuffer(*outgrown->tryGetValueImpl()) & wasCopiedOut);
+    if (!isFirstCopyOutOfBuffer && (numberOfAdditions < minAdditionsToGrowingText || lengthOfPieces > length))
         return nullptr;
 
     uint32_t start = lengthOfBufferHeader(is8Bit);
@@ -257,6 +282,16 @@ JSString* tryAppendToGrowingText(Instance& instance, JSString* text, std::span<J
         writeText(charactersOf<Latin1Character>(characters));
     else
         writeText(charactersOf<char16_t>(characters));
+    if (outgrown)
+        headerOfTextBuffer(*outgrown->tryGetValueImpl()) |= wasCopiedOut;
+    if (recent) {
+        // Whatever else is joined to this text, or to one of its last states, has to count its additions anew.
+        auto* rope = uncheckedDowncast<JSRopeString>(recent);
+        if (rope->is8Bit() == is8Bit)
+            rope->resolveBySharing(StringImpl::createSubstringSharingImpl(characters, start, rope->length()).get());
+        else
+            rope->resolveRope(nullptr);
+    }
     return createSubstringOfBuffer(instance, vm, buffer, start, static_cast<uint32_t>(lengthOfAll), is8Bit);
 }
 
@@ -347,7 +382,7 @@ bool tryResolveInOwnBuffer(Instance& instance, JSRopeString* rope)
         writeWhatWasAddedTo(bottom, rope, charactersOf<Latin1Character>(characters) + end + lengthAdded);
     else
         writeWhatWasAddedTo(bottom, rope, charactersOf<char16_t>(characters) + end + lengthAdded);
-    endOfTextIn(characters) = end + lengthAdded;
+    setEndOfTextIn(characters, end + lengthAdded);
     instance.state->growingFlatText.buffer = buffer;
     rope->resolveBySharing(StringImpl::createSubstringSharingImpl(characters, offset, rope->length()).get());
     return true;
