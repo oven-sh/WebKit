@@ -2744,11 +2744,8 @@ static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, st
     }
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
-    if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly) {
-        if (input.size() >= start + FlatProgram::leastLengthLookedThroughFirst)
-            return matchIfSubjectHoldsText(program, input, start, output);
+    if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly)
         return matchForgetting(program, input.data(), input.size(), start, output, FlatProgram::stepsBeforeLookingForText);
-    }
     return matchByPolicy<CharType, false>(program, input, start, output, policy);
 }
 

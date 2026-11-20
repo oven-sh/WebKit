@@ -282,9 +282,9 @@ public:
     bool asksRequiredTextsLate { false };
     static constexpr unsigned unitsWalkedBeforeTextsAreAsked = 128;
     // Of a program that makes one attempt, with a run in front of the text: `^(?:.*\/)?[^\/]*\.pem$` walks a path once for each of its folders.
-    // A long subject is looked through for the text first: the run alone costs more. A shorter one when the attempt has gone back this often, and then the attempt begins anew: a short attempt pays nothing.
+    // The subject is looked through for the text when the attempt has gone back this often, and then the attempt begins anew: a short attempt pays nothing, however long the subject is.
     std::optional<RequiredText> textOfEveryMatch;
-    static constexpr unsigned leastLengthLookedThroughFirst = 256;
+    // A step may walk a run again, so the number does not grow with the subject.
     static constexpr unsigned stepsBeforeLookingForText = 9;
     uint8_t stepsPerCharacterBehindLookForText { 0 };
 
