@@ -912,7 +912,8 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 if (collector().m_parallelMarkersShouldExit)
                     return SharedDrainResult::Done;
 
-                if (!hasWork(locker) && !collector().m_bonusVisitorTask && canLeave()) {
+                // The wait ended for canLeave(). Do not ask again: a conductor can come at any time, with no lock held.
+                if (!hasWork(locker) && !collector().m_bonusVisitorTask) {
                     collector().m_numberOfHelpersThatLeft++;
                     return SharedDrainResult::Done;
                 }
