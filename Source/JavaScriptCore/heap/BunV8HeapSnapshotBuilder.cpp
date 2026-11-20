@@ -400,6 +400,11 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
 
     switch (cell->type()) {
     case JSType::StringType: {
+#if ENABLE(AOT)
+        // Its characters are a header, the text so far and room that nobody has written.
+        if (AOT::HeapHooks::isBufferOfGrowingText(cell))
+            return "system / GrowingText"_s;
+#endif
         auto* string = uncheckedDowncast<JSString>(cell);
         static constexpr unsigned heapSnapshotStringLimit = 1024;
         // V8 never resolves cons strings for the node name. We do, because
