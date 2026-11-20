@@ -8658,10 +8658,10 @@ class YarrGenerator final : public YarrJITInfo {
                 alternativeEndOpCode = YarrOpCode::NestedAlternativeEnd;
             }
 #if !defined(YARR_FOR_IMAGE)
-        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it doesn't use tail loops.
+        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it only uses tail loops that have none.
         } else if (term->parentheses.isTerminal || term->parentheses.isTailLoop) {
 #else
-        } else if (term->parentheses.isTerminal || (term->possessive() && term->parentheses.disjunction->m_minimumSize)) {
+        } else if (term->parentheses.isTerminal || ((term->possessive() || term->parentheses.isTailLoop) && term->parentheses.disjunction->m_minimumSize)) {
 #endif
             // Select the 'Terminal' nodes.
             parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternTerminalBegin;
