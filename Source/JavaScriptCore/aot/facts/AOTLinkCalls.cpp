@@ -1193,6 +1193,7 @@ private:
     bool onlyWritesOnObject(RowCall&, const BuiltinPropertyAction&);
     void escapeAllButBuiltins(const Values&, bool assigns, bool knowsThatLinkIsLeftAlone = false);
     std::optional<PropertyKeyID> keyWrittenAs(const RowCall&, BuiltinOperand) const;
+    PropertyKeyID keyOfAccessorThatIsLookedUp();
     void tellWhatIsFoundUnder(PropertyKeyID, const Values& objects, bool readsThroughPrototypes);
     void tellWhatReadFinds(const RowCall&, const BuiltinPropertyAction&);
     void tellWhatIterationCallsAbove(BuiltinClassID, bool followsWhatIsMade);
@@ -1918,8 +1919,14 @@ void CallInLinkCalls::callUnseenSlowCase(UnknownIs unknownIs, ReceiverOfUnseenCo
     addObjectsOfOwnClasses();
     if (m_flow.testRuns().isTestRun() && m_call.numberOfArguments && m_summary.arguments[m_call.firstArgument] != noSummaryNode)
         m_flow.testRuns().noteCallOutOfSight(m_caller, m_call.site, nodeAt(m_summary.arguments[m_call.firstArgument]));
-    if (m_call.callee == SummaryCall::Callee::Name && m_call.key && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_caller, m_call.key)))
-        m_flow.note(LinkFlow::Note::NameCalled, m_call.key.bits(), (m_flow.isInLibraryCode() ? 0 : LinkFlow::spelledByProgram) | (m_shared || m_call.numberOfArguments || m_call.passesList ? 0 : LinkFlow::passesNoOperand));
+    if (m_call.callee == SummaryCall::Callee::Name && m_call.key && (m_shared || !m_flow.rowsSpeakOfKeyFor(m_caller, m_call.key))) {
+        bool passesOperand = m_shared || m_call.numberOfArguments || m_call.passesList;
+        if (PropertyKeyID key = keyOfAccessorThatIsLookedUp()) {
+            m_flow.note(LinkFlow::Note::NameRead, key.bits(), !m_flow.isInLibraryCode());
+            passesOperand = false;
+        }
+        m_flow.note(LinkFlow::Note::NameCalled, m_call.key.bits(), (m_flow.isInLibraryCode() ? 0 : LinkFlow::spelledByProgram) | (passesOperand ? 0 : LinkFlow::passesNoOperand));
+    }
     if (m_call.callee == SummaryCall::Callee::Value && m_call.builtin)
         m_flow.note(LinkFlow::Note::BuiltinCalledOutOfSight, m_builtins.canonicalID(m_call.builtin).index(), LinkFlow::withoutRow);
     if (BuiltinID bound = m_call.builtin ? m_call.builtin : m_call.expectsCalleeItself ? m_call.expectedBuiltin : BuiltinID(); bound && m_state.builtinsWithCodeWaitingForOperand.quickGet(m_builtins.canonicalID(bound).index()) && m_builtins.canonicalID(bound) != m_memberWhoseOperandsAreRead)
@@ -6256,6 +6263,14 @@ std::optional<PropertyKeyID> CallInLinkCalls::keyWrittenAs(const RowCall& call, 
     if (nameClass == NameClass::Proto || mayBeElementKey(nameClass))
         return std::nullopt;
     return m_program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = *text }).value_or(PropertyKeyID());
+}
+
+PropertyKeyID CallInLinkCalls::keyOfAccessorThatIsLookedUp()
+{
+    bool looksUpAccessor = m_call.key == m_program.keyOf(BuiltinNames::__lookupGetter__) || m_call.key == m_program.keyOf(BuiltinNames::__lookupSetter__);
+    if (!looksUpAccessor || m_call.numberOfArguments != 1)
+        return { };
+    return keyWrittenAs(RowCall { .passed = passedByCall() }, BuiltinOperand::argument(0)).value_or(PropertyKeyID());
 }
 
 void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& objects, bool readsThroughPrototypes)
