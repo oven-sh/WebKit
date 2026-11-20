@@ -2071,7 +2071,7 @@ void AccessEmitter::checkStoreSiteInline(Boxed receiver, Pointer site, const Sha
     askReceiver();
     if (shapes.hasMovingStorage) {
         LBasicBlock keepsStorage = newBlock();
-        m_out.branch(hasCellTypeIn(object, typesWithMovingStorage).value(), unlikelyEdge(shapes.hasMovingStorage), normalEdge(keepsStorage));
+        m_out.branch(hasMutableCellType(object, FinalObjectType).value(), normalEdge(keepsStorage), unlikelyEdge(shapes.hasMovingStorage));
         m_out.appendToContinuation(keepsStorage);
     }
     usePlace(object, offsetBy(loadField<Pointer>(object, m_heaps.JSObject_butterfly), signExtended(Word32(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())))), 3));

@@ -635,9 +635,9 @@ void generateFindReplaceableValue(StubAssembler& jit)
     extractBits(jit, cell, 8 * PackedSlot::offsetOfBiasedKindAndFlags(), 8, registers.scratch);
     static_assert(((static_cast<uint8_t>(Slot::Kind::Value) | PackedSlot::isOwn | PackedSlot::isOutOfLine) ^ PackedSlot::ownInlineValueBits) == PackedSlot::isOutOfLine);
     isInNoCell.append(jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(PackedSlot::isOutOfLine)));
+    // The storage of any other object can move without a store by the program: elements grow, lazy properties are made.
     jit.load8(Address(registers.receiver, JSCell::typeInfoTypeOffset()), registers.scratch);
-    jit.sub32(TrustedImm32(typesWithMovingStorage.first), registers.scratch);
-    isInNoCell.append(jit.branch32(CCallHelpers::BelowOrEqual, registers.scratch, TrustedImm32(typesWithMovingStorage.last - typesWithMovingStorage.first)));
+    isInNoCell.append(jit.branch32(CCallHelpers::NotEqual, registers.scratch, TrustedImm32(FinalObjectType)));
     jit.signExtend32ToPtr(cell, cell);
     jit.loadPtr(Address(registers.receiver, JSObject::butterflyOffset()), registers.scratch);
     jit.getEffectiveAddress(BaseIndex(registers.scratch, cell, CCallHelpers::TimesEight), result);
