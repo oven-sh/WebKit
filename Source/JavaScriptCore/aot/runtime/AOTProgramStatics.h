@@ -45,7 +45,8 @@ public:
         EncodedJSValue variable;
         void* vector;
         uint64_t length;
-        uint64_t lengthOfBuffer;
+        uint32_t lengthOfBuffer;
+        uint32_t plannedLogElementSize;
     };
     std::span<VariableWithViewMirror> viewMirrorVariables(const StaticsRange&);
     void refreshViewMirrors();

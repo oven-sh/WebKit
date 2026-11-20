@@ -2973,7 +2973,10 @@ bool LinkFlow::isWorthFollowingToWrites(BuiltinID canonical) const
 
 bool LinkFlow::staysAbsentUnseen(BuiltinID canonicalHolder, PropertyKeyID key) const
 {
-    return isPrototypeWithTrackedNames(program.builtins(), canonicalHolder) && !m_stateOfLinkReach->builtinsInReach().mayHaveNameLaid({ canonicalHolder, key });
+    if (!isPrototypeWithTrackedNames(program.builtins(), canonicalHolder))
+        return false;
+    LockerOfWhatIsShared locker(*this);
+    return !m_stateOfLinkReach->builtinsInReach().mayHaveNameLaid({ canonicalHolder, key });
 }
 
 bool LinkFlow::isOutOfSight(BuiltinID canonical) const

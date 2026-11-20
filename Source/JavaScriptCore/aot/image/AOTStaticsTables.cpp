@@ -24,6 +24,10 @@
 
 namespace JSC { namespace AOT {
 
+namespace Typed {
+std::optional<TypedArrayType> findViewTypeOfVariable(const Program&, const Facts&, VariableID);
+}
+
 static constexpr uint32_t sizeOfStaticsWord = sizeof(uint64_t);
 static constexpr unsigned bitsInByteOfStatics = 8;
 
@@ -193,6 +197,17 @@ private:
         }
         if (isFunctionVariableInStatics(placed.plan))
             recordFunctionVariable(id, placed);
+        if (placed.plan.firstViewOfBuffer)
+            recordElementSizeOfView(id, placed);
+    }
+
+    void recordElementSizeOfView(VariableID id, const PlacedVariable& placed)
+    {
+        std::optional<TypedArrayType> type = Typed::findViewTypeOfVariable(m_encoder.program, m_encoder.facts, id);
+        RELEASE_ASSERT(type);
+        static constexpr uint32_t offsetInWord = sizeof(uint32_t);
+        uint32_t word = (placed.offset + Typed::bufferLengthOffsetInViewMirror) / sizeOfStaticsWord;
+        m_initialWords[word] |= static_cast<uint64_t>(logElementSize(*type)) << bitsInByteOfStatics * offsetInWord;
     }
 
     void recordFunctionVariable(VariableID id, const PlacedVariable& placed)

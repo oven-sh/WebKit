@@ -5367,7 +5367,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         bool isPending = m_modulesWithPendingMock.get(target.index());
         if ((isOverActiveMock || (isPending && wasOriginalEvaluated(target))) && host().shouldBypassMock && host().shouldBypassMock(m_instance.globalObject, m_table.fullPath(target), String(), false)) {
             auto waiting = m_pendingMockCalls.find(target);
-            if (!isOverActiveMock || !isPending || waiting == m_pendingMockCalls.end() || !waiting->value.keepsActiveMock)
+            if (!isOverActiveMock || !isPending || waiting == m_pendingMockCalls.end() || !waiting->value.keepsActiveMock || m_evictedActiveMocks.get(target.index()))
                 RELEASE_AND_RETURN(scope, requireOriginalUnderMock(target));
             if (isMockedByFactoryThatTakesOriginal(target))
                 m_filesWithRejectedRequire.set(fileOf(target).index());

@@ -20,6 +20,8 @@
 
 namespace JSC { namespace AOT { namespace Typed {
 
+static constexpr OpcodeSet readsOfPrototypes { Opcode::GetClassPrototype, Opcode::GetConstructPrototype };
+
 void ClassEmitter::generateResolveHeritage(const ValueContext& value)
 {
     define(value, callOperation<Boxed>(value, RuntimeOperation::ResolveHeritage, { in<Boxed>(value->heritageOperand()) }));
@@ -61,7 +63,7 @@ void ClassEmitter::generateGetClassPrototype(const ValueContext& value)
         define(value, readByOperation(false));
         return;
     }
-    m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
+    m_out.noteFormOf(readsOfPrototypes, Form::Open, StateOfKnowledge::PrototypeInTable);
 
     static_assert(sizeof(JSCell*) == 1u << logScale(ScalePtr));
     Pointer prototypes = loadImmutablePointer(AOT_INSTANCE_OFFSET(classes.classPrototypes));
@@ -138,7 +140,7 @@ void ClassEmitter::generateGetConstructPrototype(const ValueContext& value)
     AccessContext context { m_program, WalkFacts(m_facts), m_plan, types(), { } };
     bool guardAnswers = constructor &&m_program.at(constructor).constructedClass == classLayout && isConstructorPrototypeGuarded(context, classLayout);
     if (std::optional<Word32> rank = guardAnswers ? rankOfClassWithOnePrototypeObject(value) : std::nullopt) {
-        m_out.noteForm(Form::Open, StateOfKnowledge::PrototypeInTable);
+        m_out.noteFormOf(readsOfPrototypes, Form::Open, StateOfKnowledge::PrototypeInTable);
         LBasicBlock guardHolds = newBlock();
         LBasicBlock wordIsFilled = newBlock();
         LBasicBlock readsProperty = newBlock();

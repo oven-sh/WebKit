@@ -520,10 +520,17 @@ std::optional<EnteringCounters> findEnteringCounters(const Code& code, const Typ
     };
     followEdgesInto(header, second.stepped, second.counter, EnteringCounters { Range::full(), Range::full() });
     EnteringCounters entering;
+    std::optional<Opcode> emptiedBy;
     for (size_t next = 0; next < arrivals.size() && isBounded; ++next) {
         auto [stepped, counter, bounds] = arrivals[next];
-        if (stepsSecondCounter(code, types, second, stepped, counter))
+        if (stepsSecondCounter(code, types, second, stepped, counter)) {
+            if (second.counterEmpties) {
+                Opcode step = code.at(rootInSumOverRecords(code, counter)).opcode;
+                isBounded &= emptiedBy.value_or(step) == step;
+                emptiedBy = step;
+            }
             continue;
+        }
         if (isIntegerInSumOverRecords(code, types, stepped))
             bounds.stepped = bounds.stepped.intersectWith(types.at(code.at(stepped).type).integers);
         if (isIntegerInSumOverRecords(code, types, counter))

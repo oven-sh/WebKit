@@ -554,7 +554,9 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.setIsRemovableWhenUnused(callOnlyMakesGenerator(walker, callee));
     direct.setVariadicOperands(entryArguments);
     Effects effects = effectsOfDirectCall(walker, callee, entryArguments);
-    if (entersAsCallWould || entersBody)
+    const bool entersSlowBodyThatGoesByArrivals = !entersAsCallWould && !entersBody && slowBodyGoesByWhatCallersLeave(walker.program(), walker.facts(), walker.plan(), callee);
+    walker.count(StatisticID::SlowBodiesToldWhatCopiesHandThem, entersSlowBodyThatGoesByArrivals);
+    if (entersAsCallWould || entersBody || entersSlowBodyThatGoesByArrivals)
         walker.leaveArrivals(callee, entryArguments);
     return walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
 }

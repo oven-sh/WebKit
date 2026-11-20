@@ -3838,8 +3838,9 @@ static Reference bearLiteralAgainBehindItsRoom(Walker& walker, const BodyIndex& 
     Reference again = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(written);
     if (!again || !again.isValue() || again == list || walker.code().at(again.id()).opcode != Opcode::NewArray)
         return { };
+    walker.bindForWay(written, again);
     for (ValueID cast : casts)
-        walker.bind(cast, again);
+        walker.bindForWay(cast, again);
     walker.count(StatisticID::ArrayLiteralAllocationsSunk);
     return again;
 }
@@ -8130,6 +8131,14 @@ void buildTestsOfListsReadInLoop(Walker& walker, BlockID inputHead, std::span<co
         if (!length || !continueIfGuardPasses(walker, buildIntegerOperator(walker, Opcode::StrictEq, length, entering[static_cast<uint32_t>(*noted) - 1], origin), genericStart))
             return;
         noteKnown(walker, KnownNote::LengthEqualsInitialCounter, list.name, { }, inputHead.index(), slotsUnderInBoundsIndices, *noted);
+        // What appends under another name asks for each list of the header: they stand one behind another.
+        ValueID cell = underlyingCellOf(walker.code(), list.name.id());
+        Reference counted = walker.code().isConstant(cell) ? Reference::constant(cell) : Reference::value(cell);
+        Reference last;
+        while (std::optional<uint64_t> next = last == counted ? std::nullopt : findKnown(walker, KnownNote::LengthEqualsInitialCounter, { }, last, inputHead.index()))
+            last = Reference::fromBits(static_cast<uint32_t>(*next));
+        if (last != counted)
+            noteKnown(walker, KnownNote::LengthEqualsInitialCounter, { }, last, inputHead.index(), LocationMasks(), counted.bits());
         std::optional<uint64_t> filledTo = findKnown(walker, KnownNote::FinalLiteralLength, list.name, { }, inputHead.index());
         if (!filledTo)
             continue;

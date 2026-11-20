@@ -1617,12 +1617,12 @@ void ProgramStatics::VariableWithViewMirror::refreshViewsOfOneBuffer(std::span<V
     bool haveOneVector = true;
     for (VariableWithViewMirror& mirrored : views) {
         mirrored.refresh();
-        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector;
+        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector && logElementSizeOf(mirrored) == mirrored.plannedLogElementSize;
         if (haveOneVector)
-            size = std::min(size, mirrored.length << logElementSizeOf(mirrored));
+            size = std::min(size, mirrored.length << mirrored.plannedLogElementSize);
     }
     for (VariableWithViewMirror& mirrored : views)
-        mirrored.lengthOfBuffer = haveOneVector ? size >> logElementSizeOf(mirrored) : 0;
+        mirrored.lengthOfBuffer = haveOneVector ? static_cast<uint32_t>(size >> mirrored.plannedLogElementSize) : 0;
 }
 
 void ProgramStatics::didWriteVariable(uint32_t offset)

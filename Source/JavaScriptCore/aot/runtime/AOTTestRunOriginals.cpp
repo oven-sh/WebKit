@@ -1843,6 +1843,7 @@ JSValue Modules::evaluateOriginal(JSModuleRecord* record)
     uint8_t storedStatus = std::exchange(m_storedStatuses[module.index()], static_cast<uint8_t>(StoredModuleStatus::Linked));
     auto restoresStatus = makeScopeExit([&] {
         m_storedStatuses[module.index()] = storedStatus;
+        unsettleForLinks(module);
         didChangeStatusInRecord(module);
     });
     EvaluationMarkScope markScope(*this);
