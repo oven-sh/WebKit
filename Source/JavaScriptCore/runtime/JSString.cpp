@@ -273,7 +273,8 @@ static NEVER_INLINE RefPtr<StringImpl> tryMakeCharactersOfWideSubstring(AOT::Ins
 static NEVER_INLINE Ref<StringImpl> makeCharactersOfSubstring(const JSRopeString& string, StringImpl& base, unsigned offset, unsigned length)
 {
 #if ENABLE(AOT)
-    if (!base.is8Bit()) {
+    // The end of a collection names stack frames by strings that are dead, and has already swept the cache of short parts.
+    if (!base.is8Bit() && !string.vm().heap.worldIsStopped()) {
         if (AOT::Instance* instance = string.vm().aotState().onlyInstance) [[unlikely]] {
             if (RefPtr impl = tryMakeCharactersOfWideSubstring(*instance, string, base.span16().subspan(offset, length)))
                 return impl.releaseNonNull();

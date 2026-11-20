@@ -1,0 +1,241 @@
+# The stack of an error is formatted at the end of a collection, out of names that are dead.
+# -- source: main.js
+# const collect = globalThis.fullGC;
+# let text = "あ";
+# for (let i = 0; i < 600; i++) text += "n" + (100000 + i * 7) + "_";
+# const wide = JSON.parse(JSON.stringify(text));
+# function part(i) { return wide.substring(1 + i * 8, 9 + i * 8); }
+# function makeError(i) {
+#   const f = new Function("return new Error('x')");
+#   Object.defineProperty(f, "name", { value: part(i) });
+#   Object.defineProperty(f, "displayName", { value: part(i) });
+#   return f();
+# }
+# const errors = [];
+# for (let i = 0; i < 600; i++) { errors.push(makeError(i)); errors.push(makeError(i)); }
+# collect();
+# const keep = [];
+# const other = JSON.parse('"' + "Z".repeat(75) + '"');
+# for (let i = 0; i < 200000; i++) { const rope = other + i; Symbol(rope); keep.push(rope); }
+# let bad = 0;
+# for (let i = 0; i < 600; i++) {
+#   const s = part(i);
+#   Symbol(s);
+#   if (JSON.stringify(s) !== '"n' + (100000 + i * 7) + '_"' || s.length !== 8) bad++;
+# }
+# print(bad ? "substrings took the characters of other strings" : "ok");
+# -- end of source
+# RUN: run-in-shell
+# CHECK: ok
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 fields=[{key="configurable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="enumerable" declared={type=undefined|boolean flags=[IsExpected]}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean flags=[IsExpected]}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+data d0 root=Array{contents=anything} module=m0
+data d1 root=Array{contents=anything} module=m0
+variable g0 name="part" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=1
+variable g1 name="wide" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=5
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=GlobalThis @39
+    v3 = PropGet v2 key="globalThis" [isFreeName] @39
+    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]} @39
+    v5 = PropGet v4 key="fullGC" @39
+    v6 = String string="\u{3042}" @69
+    v7 = Convert v6 declared={type=undefined|null|string flags=[IsExpected]} @69
+    v8 = Integer @89
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @89
+    Jump -> next b1(v7, v9) @85
+  b1(v10, v11):
+    LoopHint @85
+    v13 = Integer integer=600 @96
+    v14 = Less v11, v13 @92
+    Branch v14 -> taken b2(), notTaken b3() @92
+  b2():
+    v15 = String string="n" @114
+    v16 = Integer integer=100000 @121
+    v17 = Integer integer=7 @134
+    v18 = Mul v11, v17 @130
+    v19 = Add v16, v18 @121
+    v20 = Add v15, v19 @114
+    v21 = String string="_" @139
+    v22 = Add v20, v21 @114
+    v23 = Add v10, v22 @114
+    v24 = Convert v23 declared={type=undefined|null|string flags=[IsExpected]} @106
+    v25 = Increment v11 @101
+    v26 = Convert v25 declared={type=number flags=[IsExpected]} @101
+    Jump -> next b1(v24, v26) @101
+  b3():
+    v27 = Builtin builtin=JSON @157
+    v28 = PropGet v27 key="parse" @157
+    v29 = Convert v28 declared={type=builtin(JSONParse) flags=[IsExpected]} @157
+    v30 = Builtin builtin=JSON @168
+    v31 = PropGet v30 key="stringify" @168
+    v32 = Convert v31 declared={type=builtin(JSONStringify) flags=[IsExpected]} @168
+    v33 = Call v32, v30, v10 calleeKey="stringify" calleeName="JSON.stringify" @173
+    v34 = Call v29, v27, v33 calleeKey="parse" calleeName="JSON.parse" @162
+    PutModuleVariable v34 variable=g1 @150
+    v36 = Data data=d0 @482
+    v37 = Integer @499
+    v38 = Convert v37 declared={type=number flags=[IsExpected]} @499
+    Jump -> next b4(v38) @495
+  b4(v39):
+    LoopHint @495
+    v41 = Integer integer=600 @506
+    v42 = Less v39, v41 @502
+    Branch v42 -> taken b5(), notTaken b6() @502
+  b5():
+    v43 = PropGet v36 key="push" @518
+    v44 = Call v1, -, v39 calleeName="makeError" @530
+    v45 = Call v43, v36, v44 calleeKey="push" calleeName="errors.push" @525
+    v46 = PropGet v36 key="push" @545
+    v47 = Call v1, -, v39 calleeName="makeError" @557
+    v48 = Call v46, v36, v47 calleeKey="push" calleeName="errors.push" @552
+    v49 = Increment v39 @511
+    v50 = Convert v49 declared={type=number flags=[IsExpected]} @511
+    Jump -> next b4(v50) @511
+  b6():
+    v51 = Call v5 calleeName="collect" @574
+    v52 = Data data=d1 @598
+    v53 = Builtin builtin=JSON @616
+    v54 = PropGet v53 key="parse" @616
+    v55 = Convert v54 declared={type=builtin(JSONParse) flags=[IsExpected]} @616
+    v56 = String string="\"" @627
+    v57 = String string="Z" @633
+    v58 = PropGet v57 key="repeat" @633
+    v59 = Integer integer=75 @644
+    v60 = Call v58, v57, v59 calleeKey="repeat" calleeName="repeat" @637
+    v61 = Add v56, v60 @627
+    v62 = String string="\"" @650
+    v63 = Add v61, v62 @627
+    v64 = Call v55, v53, v63 calleeKey="parse" calleeName="JSON.parse" @621
+    v65 = Integer @669
+    v66 = Convert v65 declared={type=number flags=[IsExpected]} @669
+    Jump -> next b7(v66) @665
+  b7(v67):
+    LoopHint @665
+    v69 = Integer integer=200000 @676
+    v70 = Less v67, v69 @672
+    Branch v70 -> taken b8(), notTaken b9() @672
+  b8():
+    v71 = Add v64, v67 @704
+    v72 = Builtin builtin=Symbol @715
+    v73 = Call v72, -, v71 calleeName="Symbol" callNumber=16 @715
+    v74 = PropGet v52 key="push" @729
+    v75 = Call v74, v52, v71 calleeKey="push" calleeName="keep.push" @734
+    v76 = Increment v67 @684
+    v77 = Convert v76 declared={type=number flags=[IsExpected]} @684
+    Jump -> next b7(v77) @684
+  b9():
+    v78 = Integer @758
+    v79 = Convert v78 declared={type=number flags=[IsExpected]} @758
+    v80 = Integer @774
+    v81 = Convert v80 declared={type=number flags=[IsExpected]} @774
+    Jump -> next b10(v79, v81) @770
+  b10(v82, v83):
+    LoopHint @770
+    v85 = Integer integer=600 @781
+    v86 = Less v83, v85 @777
+    Branch v86 -> taken b11(), notTaken b17() @777
+  b11():
+    v87 = GetModuleVariable variable=g0 @805
+    v88 = Call v87, -, v83 calleeName="part" @805
+    v89 = Builtin builtin=Symbol @816
+    v90 = Call v89, -, v88 calleeName="Symbol" callNumber=19 @816
+    v91 = Builtin builtin=JSON @833
+    v92 = PropGet v91 key="stringify" @833
+    v93 = Convert v92 declared={type=builtin(JSONStringify) flags=[IsExpected]} @833
+    v94 = Call v93, v91, v88 calleeKey="stringify" calleeName="JSON.stringify" @838
+    v95 = String string="\"n" @855
+    v96 = Integer integer=100000 @863
+    v97 = Integer integer=7 @876
+    v98 = Mul v83, v97 @872
+    v99 = Add v96, v98 @863
+    v100 = Add v95, v99 @855
+    v101 = String string="_\"" @881
+    v102 = Add v100, v101 @855
+    v103 = StrictEq v94, v102 @833
+    Branch v103 -> taken b12(), notTaken b15() @833
+  b12():
+    v104 = PropGet v88 key="length" @889
+    v105 = Integer integer=8 @902
+    v106 = StrictEq v104, v105 @889
+    Branch v106 -> taken b13(| 0), notTaken b14(| 0) @889
+  b13(v107):
+    v108 = NarrowByField v88, v107 key="length" @889
+    Jump -> next b16(v82) @889
+  b14(v109):
+    v110 = NarrowByField v88, v109 key="length" @889
+    Jump -> next b15() @889
+  b15():
+    v111 = Increment v82 @905
+    v112 = Convert v111 declared={type=number flags=[IsExpected]} @905
+    Jump -> next b16(v112) @905
+  b16(v113):
+    v114 = Increment v83 @786
+    v115 = Convert v114 declared={type=number flags=[IsExpected]} @786
+    Jump -> next b10(v113, v115) @786
+  b17():
+    v116 = Builtin builtin=GlobalThis @914
+    v117 = PropGet v116 key="print" [isFreeName] @914
+    v118 = ToBoolean v82 @920
+    Branch v118 -> taken b18(| 0), notTaken b19(| 0) @920
+  b18(v119):
+    v120 = String string="substrings took the characters of other strings" @926
+    Jump -> next b20(v120) @926
+  b19(v121):
+    v122 = String string="ok" @978
+    Jump -> next b20(v122) @978
+  b20(v123):
+    v124 = Call v117, -, v123 calleeName="print" @914
+    v125 = Undefined @914
+    Return v125 @914
+}
+function f1 name="part" module=m0 position=191 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = GetModuleVariable variable=g1 @217
+    v2 = CheckInitialized v1 name="wide" @217
+    v3 = PropGet v2 key="substring" @217
+    v4 = Integer integer=1 @232
+    v5 = Integer integer=8 @240
+    v6 = Mul v0, v5 @236
+    v7 = Add v4, v6 @232
+    v8 = Integer integer=9 @243
+    v9 = Integer integer=8 @251
+    v10 = Mul v0, v9 @247
+    v11 = Add v8, v10 @243
+    v12 = Call v3, v2, v7, v11 calleeKey="substring" calleeName="wide.substring" @222
+    ReturnCall v12 @222
+}
+function f2 name="makeError" module=m0 position=257 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis @297
+    v2 = PropGet v1 key="Function" [isFreeName] @297
+    v3 = Convert v2 declared={type=builtin(Function) flags=[IsExpected]} @297
+    v4 = String string="return new Error('x')" @306
+    v5 = Construct v3, -, v4 calleeName="Function" @297
+    v6 = Builtin builtin=Object @334
+    v7 = Builtin builtin=ObjectDefineProperty @334
+    v8 = String string="name" @359
+    v9 = GetModuleVariable variable=g0 @376
+    v10 = Call v9, -, v0 calleeName="part" @376
+    v11 = NewObject -, v10 layout=L0 fields=[4] @367
+    v12 = FinishObject v11 @367
+    v13 = Call v7, v6, v5, v8, v12 calleeName="Object.defineProperty" @341
+    v14 = Builtin builtin=Object @390
+    v15 = Builtin builtin=ObjectDefineProperty @390
+    v16 = String string="displayName" @415
+    v17 = GetModuleVariable variable=g0 @439
+    v18 = Call v17, -, v0 calleeName="part" @439
+    v19 = NewObject -, v18 layout=L0 fields=[4] @430
+    v20 = FinishObject v19 @430
+    v21 = Call v15, v14, v5, v16, v20 calleeName="Object.defineProperty" @397
+    v22 = Call v5 calleeName="f" @460
+    ReturnCall v22 @460
+}
+function f3 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f4 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
