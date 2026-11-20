@@ -6272,8 +6272,10 @@ void CallInLinkCalls::tellWhatIsFoundUnder(PropertyKeyID key, const Values& obje
             others.dropInstances();
             MemberOfTable found = findOnInstancesOf(type.builtinClass, key, MembersUnderKey(m_program, key));
             m_flow.noteLossOf(found.member ? m_builtins.canonicalID(found.member) : BuiltinID());
-            if (found.outcome == Lookup::Unknown)
+            if (found.outcome == Lookup::Unknown || !m_builtins.mayHavePristineInstances(type.builtinClass))
                 others.hasUnknownObjects = true;
+            else if (!m_flow.isInLibraryCode())
+                m_flow.note(LinkFlow::Note::NameReadOffInstance, key.bits(), type.builtinClass.index());
         }
         if (!others.isNever())
             m_flow.note(LinkFlow::Note::NameRead, key.bits(), !m_flow.isInLibraryCode());
