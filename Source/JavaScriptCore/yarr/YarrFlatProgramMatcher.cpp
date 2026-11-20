@@ -1296,6 +1296,9 @@ struct Machine {
         if constexpr (sizeof(CharType) > 1) {
             if (character > 0xff) [[unlikely]] {
                 enclosure.hasMetSurrogate |= U16_IS_SURROGATE(character);
+                // The match is given up, so a run has no reason to go on.
+                if (!isFull && U16_IS_SURROGATE(character) && program.decodesSurrogatePairs) [[unlikely]]
+                    return false;
                 return enclosure.neighbors.contains(wideRanges, set, character);
             }
         }
@@ -2522,6 +2525,10 @@ struct Machine {
     ALWAYS_INLINE Step backtrack()
     {
         for (;;) {
+            if constexpr (!isFull && sizeof(CharType) > 1) {
+                if (enclosure.hasMetSurrogate && program.decodesSurrogatePairs) [[unlikely]]
+                    return Step::NoMatch;
+            }
             if (top == bottom) {
                 if (program.triesOnlyOnce || matchStart >= length)
                     return Step::NoMatch;
