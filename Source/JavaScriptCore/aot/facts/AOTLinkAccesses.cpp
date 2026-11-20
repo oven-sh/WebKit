@@ -4988,6 +4988,10 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
         m_flow.handToAccessorsLaidAbove(m_receiver);
     if (m_access.kind != Kind::Define && testsMayHaveLaidNameFrom(builtin))
         m_flow.addEdge(m_receiver, m_flow.unseen());
+    // An accessor on Function.prototype is handed the constructor, and may read the record of the last match off it.
+    if (isNamed() && (isRead() || m_access.kind == Kind::Store) && m_table.canonicalID(builtin) == m_table.canonicalID(Builtins::RegExp) && isKeyAbsentFromChain(builtin)
+        && !isNameUndefinedFrom(m_table.at(m_table.canonicalID(builtin)).inheritsFrom))
+        m_flow.addEdge(m_receiver, m_flow.unseen());
     bool isStoredGlobalName = isNamed() && m_nameClass != NameClass::Proto && m_parts.state.globalNamesStored.get(m_access.key.index()) && m_table.canonicalID(builtin) == m_table.canonicalID(Builtins::GlobalThis) && isKeyAbsentFromChain(builtin);
     if (isRead() && isNamed()) {
         if (m_nameClass == NameClass::Proto && !m_table.isObjectOfClass(builtin) && m_table.at(builtin).prototypeLink == BuiltinPrototypeLink::Builtin && !m_flow.isInLibraryCode())
