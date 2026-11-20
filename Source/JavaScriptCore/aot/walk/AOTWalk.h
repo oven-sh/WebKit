@@ -5774,6 +5774,8 @@ std::span<const uint32_t> additionsToTables(Walker&);
 TypeID findPrimitivesExpectedBesideObjects(Walker&, ValueID input);
 LayoutID layoutThatNamesFamily(Walker&, TypeID);
 bool valueFitsSlot(Walker&, FieldReference, Reference value);
+bool onlyAllocationFills(const Walker&, FieldReference);
+TypeID typeShownOfFieldHandedBack(Walker&, FieldReference);
 ExpectationOfValue expectationOfAnswerOfCallBeingCopied(Walker&, const BodyValue& call);
 bool isEntryParameterUninformative(Walker&, FunctionID callee, uint32_t entryParameter);
 uint64_t entryParametersOnlyReadByTwoNamesOrMore(const BodyIndex&);

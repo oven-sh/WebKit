@@ -4782,11 +4782,19 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
     ModuleID file = fileOf(module);
     if (data(file).kind == ModuleKind::Data || !hasNotBegun(file))
         return module;
+    String path = m_table.fullPath(file);
+    if (size_t mark = path.reverseFind('?'); mark != notFound && data(file).kind == ModuleKind::SourceText) {
+        std::optional<ModuleID> required = m_table.findByPath(StringView(path).left(mark));
+        if (required && moduleFormOf(*required) == file)
+            path = m_table.fullPath(*required);
+    }
+    // It leaves a path in the require cache, where only the import of a CommonJS module looks.
+    bool looksInRequireCache = data(file).kind == ModuleKind::CommonJs && !data(file).isImportedAsESModule();
     for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
-        std::optional<ModuleID> form = m_table.findByPath(makeString(m_table.fullPath(file), mark));
+        std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
         if (sharesEntry && wasRequired(*form))
-            return *form;
+            return looksInRequireCache || mark == "?text"_s ? *form : module;
     }
     return module;
 }
@@ -7116,6 +7124,12 @@ static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
     return file && modules.data(*file).kind != ModuleKind::Data && modules.wasRequired(form);
 }
 
+// The path stays in the require cache where an import runs the file as an ES module.
+static bool wasPathRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
+{
+    return wasRequiredInPlaceOfCode(modules, form) && modules.table().fullPath(form).endsWith("?file"_s);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfImported);
@@ -7125,7 +7139,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
-    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || isLoadedWithoutType(modules, ModuleID(module)))
+    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
         String path = modules.table().fullPath(ModuleID(module));

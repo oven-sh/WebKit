@@ -1424,6 +1424,11 @@ std::optional<PassedTest> Walker::provePositionAfterCounterStart(Reference list,
     if (!grounds.start)
         return std::nullopt;
     grounds.counter = counter;
+    for (const VersionedLoop& versionedLoop : m_versionedLoops) {
+        const VersionedLoop::CounterBelowRoomOfViews& held = versionedLoop.counterBelowRoom;
+        if (held.counter == counter)
+            grounds.stepNonNegativeCheck = held.stepNonNegativeCheck;
+    }
     return showPositionInside(grounds);
 }
 
@@ -7598,12 +7603,38 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             count(StatisticID::VersionedLoopsFillingLocalArrays);
         if (!m_hasFailed && m_walkOfLoopWasKept && m_hoistedElementCheckCount != elementsAskedInFront && (m_effectsOfLoopKeptLast.writes.maskOf(AbstractHeap::Elements) & cellHoldingElementsMask))
             m_typedBuildEndedListsTestedInFront = true;
-        // loom.rows[0][i] = loom.next; sum += loom.rows[1][i]: a getter, a setter, a step or a trap that the turn takes may lay another list under the name.
+        // loom.rows[0][i] = loom.next; shelf.bins[0][i], this.box.bins[0][i]: a getter, a setter, a step or a trap that the turn takes may replace each place that the turn would ask again on its way to the row.
         auto turnsMayReplaceHolder = [&](const HoistedRow& row) {
             static constexpr AbstractHeapSet heapsUnderNamesOfHolders { AbstractHeap::ObjectFields, AbstractHeap::NamedProperties, AbstractHeap::PrototypeLinks };
-            return !row.isRejected && std::ranges::any_of(row.fieldReads, [&](ValueID read) {
-                return m_effectsOfLoopKeptLast.writes.overlaps(readsOfNamedLookup(*this, index.value(read).key()).restrictedTo(heapsUnderNamesOfHolders));
-            });
+            if (row.isRejected || row.fieldReads.isEmpty())
+                return false;
+            const uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
+            LocationMasks asked;
+            for (ValueID value = row.read; value && value.index() >= firstValueOfLoop && !index.isParameter(value);) {
+                BodyValue read = index.value(value);
+                switch (read.opcode()) {
+                case Opcode::GetModuleVariable:
+                    asked.add(program(), MemoryLocation::moduleVariable(read.variable()));
+                    value = { };
+                    break;
+                case Opcode::GetEnvironmentField:
+                    asked.add(program(), MemoryLocation::environmentField(read.layout(), read.field()));
+                    value = read.environmentOperand();
+                    break;
+                case Opcode::PropGet:
+                case Opcode::PrivateGet:
+                    asked.merge(readsOfNamedLookup(*this, keyOfAccessToSlot(program(), read)).restrictedTo(heapsUnderNamesOfHolders));
+                    value = read.objectOperand();
+                    break;
+                case Opcode::ElemGet:
+                    value = read.objectOperand();
+                    break;
+                default:
+                    value = opcodesThatStateTypes.contains(read.opcode()) || read.opcode() == Opcode::CheckInitialized ? read.operand(0) : ValueID();
+                    break;
+                }
+            }
+            return m_effectsOfLoopKeptLast.writes.overlaps(asked);
         };
         if (!m_hasFailed && m_walkOfLoopWasKept && std::ranges::any_of(hoistedRowsOf(inputHead), turnsMayReplaceHolder))
             m_typedBuildEndedListsTestedInFront = true;
