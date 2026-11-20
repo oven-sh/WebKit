@@ -507,6 +507,16 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command. The heap turns the hint
+    // down, and returns false, only if its collection would be an Eden one with nothing to sweep: no cell was allocated
+    // and no memory was counted since its last collection ended, and a request without a scope would not run as a Full
+    // collection. It then leaves its Eden timer as that collection would, and clears what the sweeper and
+    // clearCachesAfterEmptyEdenCollection() clear. It returns true if a collection is queued or under way, whoever
+    // asked for it. Mutator thread only, where the sweeper's timer could run (clearConcurrentRetainedDataIfPossible()).
+    JS_EXPORT_PRIVATE bool collectAsyncIfNecessary();
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
@@ -891,6 +901,7 @@ private:
     void removeDeadHeapSnapshotNodes(HeapProfiler&) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void runCollectionEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     void sweepAndClearCachesInEpilogue();
+    void clearCachesAfterEmptyEdenCollection();
     void sweepEagerlyInEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
     void addDetachedWeakBlock(WeakBlock*);
@@ -919,6 +930,8 @@ private:
     };
 
     bool overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCallType = MemoryThresholdCallType::Cached);
+    // Whether this heap makes a collection whose request names no scope a Full one (Collector::decideCollectionScope()).
+    bool wantsFullCollection(MemoryThresholdCallType callType = MemoryThresholdCallType::Cached) { return m_shouldDoFullCollection || overCriticalMemoryThreshold(callType); }
 
     // The eden this cycle is being paced against: m_maxEdenSize, capped to m_maxEdenSizeWhenCritical while we are
     // over the critical memory threshold, the same way collectIfNecessaryOrDefer() caps the bytes it allows per cycle.
