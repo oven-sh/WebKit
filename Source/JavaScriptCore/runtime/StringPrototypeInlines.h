@@ -468,7 +468,10 @@ ALWAYS_INLINE JSString* stringReplaceAllStringString(JSGlobalObject* globalObjec
         if (matchStart == notFound)
             break;
 
-        matchStarts.append(matchStart);
+        if (!matchStarts.tryAppend(matchStart)) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         matchStart += searchLength;
         if (search.isEmpty())
             ++matchStart;
@@ -576,7 +579,10 @@ inline JSString* replaceUsingStringSearch(VM& vm, JSGlobalObject* globalObject, 
         }
 
         size_t matchEnd = matchStart + searchStringLength;
-        replacements.append(WTF::move(replaceString));
+        if (!replacements.tryAppend(WTF::move(replaceString))) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
 
         endOfLastMatch = matchEnd;
         if constexpr (mode == StringReplaceMode::Single)

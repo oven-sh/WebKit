@@ -2162,7 +2162,10 @@ static JSString* tryReplaceAllWithPlainText(JSGlobalObject* globalObject, VM& vm
         return string;
     Vector<unsigned, 16> matchStarts;
     do {
-        matchStarts.append(static_cast<unsigned>(found));
+        if (!matchStarts.tryAppend(static_cast<unsigned>(found))) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
         found = findFrom(static_cast<unsigned>(found) + matchLength);
     } while (found != notFound);
 
