@@ -40,7 +40,7 @@ static StringID textOfConstantField(const Walker& walker, const BodyValue& read)
     if (!held || holdsOnlyPrimitives(held))
         return { };
     TypeArena& types = walker.types();
-    LayoutID layout = singleLayoutOf(types, types.at(types.withOnlyObjects(held)));
+    LayoutID layout = singleLayoutOf(types, types.at(types.withoutPrimitives(held, Primitive::Absent)));
     std::optional<FieldReference> field = layout ? findField(walker.program(), layout, read.key()) : std::nullopt;
     const LinkedCell* cell = field ? &walker.facts().linked().field(*field) : nullptr;
     if (!cell || !cell->isFilledAtEveryRead || cell->isWrittenAfterConstruction || !cell->proven)
