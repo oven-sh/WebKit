@@ -71,7 +71,15 @@ private:
         Reference flat = flatStringInSight(m_walker, m_stringRead);
         if (flat && m_walker.isInvariantInSpecializedVersion(flat))
             return true;
-        return m_walker.tryHoistEntryTest() || !flat;
+        if (!m_walker.tryHoistEntryTest())
+            return !flat;
+        if (!flat || m_walker.code().at(flat.id()).opcode != Opcode::FlattenString)
+            return true;
+        // A rope is left alone, and the empty string stands for it, unless all of these hold.
+        Vector<ValueID, 2> conditions(m_walker.code().at(flat.id()).isReadOperands());
+        return std::ranges::all_of(conditions, [&](ValueID condition) {
+            return m_walker.tryBranchInPreheader(Reference::value(condition), true);
+        });
     }
 
     Reference valueOutside()
