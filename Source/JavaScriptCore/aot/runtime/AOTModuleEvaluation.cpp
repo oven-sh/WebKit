@@ -573,7 +573,8 @@ JSValue Modules::callBody(ModuleID module)
         RETURN_IF_EXCEPTION(scope, { });
     }
     if (!m_formsAnsweredFirst.isEmpty()) [[unlikely]] {
-        if (moduleData.kind == ModuleKind::Data) {
+        // An import shares the entry of the import before it, and a require() under a type loads its own.
+        if (moduleData.kind == ModuleKind::Data && m_innermostSyncLoadRoot != std::optional(module)) {
             bool hasTaken = takeWhatFormAnsweredFirstHolds(module);
             RETURN_IF_EXCEPTION(scope, { });
             if (hasTaken)
