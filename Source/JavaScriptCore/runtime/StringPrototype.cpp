@@ -2337,10 +2337,13 @@ JSC_DEFINE_HOST_FUNCTION(stringProtoFuncToWellFormed, (JSGlobalObject* globalObj
     if (WTF::isWellFormedUTF16(characters))
         return JSValue::encode(stringValue);
 
-    Vector<char16_t, 16> buffer(characters.size());
-    WTF::toWellFormedUTF16(characters, buffer.mutableSpan());
+    std::span<char16_t> buffer;
+    auto result = StringImpl::tryCreateUninitialized(characters.size(), buffer);
+    if (!result) [[unlikely]]
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+    WTF::toWellFormedUTF16(characters, buffer);
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, String::adopt(WTF::move(buffer)))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsString(vm, result.releaseNonNull())));
 }
 
 JSC_DEFINE_HOST_FUNCTION(stringProtoFuncAt, (JSGlobalObject* globalObject, CallFrame* callFrame))
