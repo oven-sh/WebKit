@@ -1097,8 +1097,9 @@ static size_t countOccurrences(std::span<const Latin1Character> source, std::spa
 
 static size_t lengthOfEveryOccurrence(VM& vm, StringView source, StringView text, size_t start, size_t& startOfLast)
 {
+    constexpr unsigned maxLengthComparedAtEveryPlace = 32;
     startOfLast = start;
-    if (source.is8Bit() && text.is8Bit() && cannotOverlapItself(text.span8())) {
+    if (source.is8Bit() && text.is8Bit() && text.length() <= maxLengthComparedAtEveryPlace && cannotOverlapItself(text.span8())) {
         startOfLast = source.reverseFind(text);
         return countOccurrences(source.span8().subspan(start), text.span8()) * text.length();
     }
