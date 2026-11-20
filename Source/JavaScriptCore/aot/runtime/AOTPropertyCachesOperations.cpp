@@ -1027,6 +1027,14 @@ static uint64_t addressInCompiledObject(Object& object, UniquedStringImpl* name,
     return extra ? addressOfReplaceableValue(extra, name) : 0;
 }
 
+// The first use of a built-in adds a property to the global object, so its storage moves: a place there is negative, as in a GlobalBinding.
+static uint64_t placeInGlobalObject(JSGlobalObject* target, PropertyOffset offset)
+{
+    if (isInlineOffset(offset))
+        return std::bit_cast<uint64_t>(target->locationForOffset(offset));
+    return static_cast<uint64_t>(offsetInButterfly(offset) * static_cast<int64_t>(sizeof(EncodedJSValue)));
+}
+
 static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
 {
     if (proxy->classInfo() != JSGlobalProxy::info())
@@ -1036,7 +1044,7 @@ static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
     Instance* instance = Instance::of(target);
     if (const Slot* filed = instance ? instance->state->propertyCaches->findByKey(structure, name, SlotAccess::Store) : nullptr) {
         bool isOwnValue = filed->has(Slot::isOwn) && (filed->kind == Slot::Kind::Value || filed->kind == Slot::Kind::FarValue);
-        return isOwnValue ? std::bit_cast<uint64_t>(target->locationForOffset(filed->offsetInStorage())) : 0;
+        return isOwnValue ? placeInGlobalObject(target, filed->offsetInStorage()) : 0;
     }
     unsigned attributes = 0;
     auto offset = structure->getWithoutMaterializing(name, attributes);
@@ -1047,7 +1055,7 @@ static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
     WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(*offset);
     if (!replacements || !replacements->hasBeenInvalidated())
         return 0;
-    return std::bit_cast<uint64_t>(target->locationForOffset(*offset));
+    return placeInGlobalObject(target, *offset);
 }
 
 static uint64_t addressInFunction(Closure& function, UniquedStringImpl* name)
