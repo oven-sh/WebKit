@@ -9,6 +9,7 @@
 #include "YarrPattern.h"
 #include <algorithm>
 #include <bit>
+#include <limits>
 #include <optional>
 #include <unicode/utf16.h>
 #include <wtf/ASCIICType.h>
@@ -557,6 +558,9 @@ ALWAYS_INLINE size_t findText(const RequiredText& required, std::span<const Char
     }
 }
 
+// In place of a place: the first attempt has been made, and the walk back from the end has not.
+constexpr unsigned walkFromEndIsDue = std::numeric_limits<unsigned>::max();
+
 template<typename CharType>
 ALWAYS_INLINE unsigned nextStartOfRepeatedAlternatives(const RequiredTexts& texts, std::span<const CharType> subject, unsigned start, RequiredTextPlaces& places)
 {
@@ -564,7 +568,7 @@ ALWAYS_INLINE unsigned nextStartOfRepeatedAlternatives(const RequiredTexts& text
     for (unsigned i = 0; i < texts.size(); ++i) {
         const RequiredText& required = texts[i];
         if (required.isAllThatMatchesAtEndHold) {
-            if (!places[i]) {
+            if (!places[i] || places[i] == walkFromEndIsDue) {
                 size_t first = length;
                 while (first > start && required.isMember(subject[first - 1]))
                     --first;
@@ -607,10 +611,7 @@ ALWAYS_INLINE unsigned nextStart(const RequiredTexts& texts, std::span<const Cha
     if (!isFirstAttempt || !texts[0].isFirstAttemptAlwaysMade)
         return nextStartOfRepeatedAlternatives(texts, subject, start, places);
     // The search waits until that attempt has failed: every later one begins behind place 0, and so looks for the text.
-    if (texts[0].isAllThatMatchesAtEndHold)
-        nextStartOfRepeatedAlternatives(texts, subject, start, places);
-    else
-        places[0] = 1;
+    places[0] = texts[0].isAllThatMatchesAtEndHold ? walkFromEndIsDue : 1;
     return start;
 }
 
