@@ -81,7 +81,7 @@ static constexpr size_t sharedReserveSize = smallestReserveSize / lastReserveDiv
 static constexpr size_t barrenCollectionDivisor = 64;
 // After this many barren collections in a row, with no out-of-memory error in between, the error is owed.
 static constexpr unsigned barrenCollectionsUntilError = 4;
-// While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
+// Whether the error found no place to be thrown or the program caught it: after this many in a row a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
 
@@ -596,6 +596,11 @@ bool MarkedBlockCage::tryRestoreReleasedReserves(VM& vm)
     if (m_hasReleasedReserve && !tryRestoreOwnReserve())
         return false;
     m_exhaustedHeaps = { };
+    // Where allocations may not collect, each collection at a poll can fill the reserve again and free little else. One poll is spared the error that barren collections owe, not the next.
+    if (m_numberOfBarrenCollections > barrenCollectionsUntilError) {
+        addExhaustedHeap(ExhaustedHeap::Cells);
+        return false;
+    }
     return true;
 }
 
@@ -992,6 +997,11 @@ void MarkedBlockCage::didCreateOutOfMemoryError()
 void MarkedBlockCage::didCreateOutOfMemoryError(VM& vm)
 {
     didCreateOutOfMemoryError();
+    // A program that lets go of what it holds at each error recovers. Its live heap shrinks from error to error, and that can't go on forever.
+    if (size_t liveSize = vm.heap.sizeAfterLastFullCollection(); liveSize < m_smallestLiveSizeAtError) {
+        m_smallestLiveSizeAtError = liveSize;
+        m_numberOfBarrenCollectionsSinceRoom = 0;
+    }
     // A range that grows takes its room from where storage takes it.
     if (!m_exhaustedHeaps.containsAny({ ExhaustedHeap::Tables, ExhaustedHeap::ListOfArrayBuffers, ExhaustedHeap::WeakBlocks }) && !(s_isGrowable && m_exhaustedHeaps.contains(ExhaustedHeap::Cells)))
         return;
@@ -1009,20 +1019,25 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
         return;
     if (bytesAllocatedSinceLastFull >= vm.heap.objectSpace().capacity() / barrenCollectionDivisor) {
         m_numberOfBarrenCollections = 0;
+        m_numberOfBarrenCollectionsSinceRoom = 0;
+        m_smallestLiveSizeAtError = std::numeric_limits<size_t>::max();
         m_hasCollectedAtPoll = false;
         return;
     }
-    if (++m_numberOfBarrenCollections < barrenCollectionsUntilError)
-        return;
-    m_errorWaitsForPoll = false;
-    if (!vm.traps().needsOutOfMemoryError()) {
-        addExhaustedHeap(exhaustedHeap);
-        m_errorWaitsForPoll = !m_hasCollectedAtPoll;
-        vm.traps().setNeedsOutOfMemoryError(true);
+    ++m_numberOfBarrenCollectionsSinceRoom;
+    if (++m_numberOfBarrenCollections >= barrenCollectionsUntilError) {
+        m_errorWaitsForPoll = false;
+        if (!vm.traps().needsOutOfMemoryError()) {
+            addExhaustedHeap(exhaustedHeap);
+            m_errorWaitsForPoll = !m_hasCollectedAtPoll;
+            vm.traps().setNeedsOutOfMemoryError(true);
+        }
     }
-    if (m_numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)
+    // Under a limit on address space malloc runs out too, and a program that catches those errors one after another goes on to let go of what it holds. There each error begins the count again.
+    unsigned numberOfBarrenCollections = s_isGrowable ? m_numberOfBarrenCollections : m_numberOfBarrenCollectionsSinceRoom;
+    if (numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)
         willUseLastReserve(vm);
-    if (m_numberOfBarrenCollections < barrenCollectionsUntilProcessEnds)
+    if (numberOfBarrenCollections < barrenCollectionsUntilProcessEnds)
         return;
     logExhaustion(exhaustedHeap);
     RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");

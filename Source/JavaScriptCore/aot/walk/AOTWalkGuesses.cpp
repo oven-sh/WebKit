@@ -20602,8 +20602,12 @@ static std::optional<ElementCopyLoop> findElementCopyLoop(Walker& walker, BlockI
             ValueID addend = valueBehindCastsOfLoopForGuesses(index, sum.operand(1 - side), firstValueOfLoop);
             bool isSubtracted = sum.opcode() == Opcode::Sub;
             notePart(key);
-            if (!index.isParameter(addend) && index.opcodeOf(addend) == Opcode::Integer)
-                return CopiedElementKey { *parameter, { }, false, isSubtracted ? -index.value(addend).integer() : index.value(addend).integer() };
+            if (!index.isParameter(addend) && index.opcodeOf(addend) == Opcode::Integer) {
+                int64_t constant = isSubtracted ? -index.value(addend).integer() : index.value(addend).integer();
+                if (constant != static_cast<int32_t>(constant))
+                    return std::nullopt;
+                return CopiedElementKey { *parameter, { }, false, constant };
+            }
             return isBeforeLoop(addend) ? std::optional<CopiedElementKey>(CopiedElementKey { *parameter, addend, isSubtracted, 0 }) : std::nullopt;
         }
         return std::nullopt;
