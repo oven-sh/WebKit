@@ -1,0 +1,121 @@
+# The base of a substring has adopted a 16-bit atom since the substring was made.
+# -- source: main.js
+# function flat(s) { return JSON.parse(JSON.stringify(s)); }
+# function has(set, key) { return set.has(key); }
+# function get(map, key) { return map.get(key); }
+# const text = flat(["xxxx", "rzyq", "k000", "0396", "padding-padding-padding"]).join("");
+# const holder = {};
+# const wide = flat("あ" + text).slice(1);
+# Symbol(wide);
+# holder[wide] = 1;      // a 16-bit atom with the text
+# const base = flat(text);
+# const key = base.substring(8, 16);
+# const stored = flat(["r", "z", "y", "q", ""].join("\0"));
+# const set = new Set(); set.add(stored); set.add(flat("other" + 1));
+# const map = new Map(); map.set(stored, "secret"); map.set(flat("other" + 1), 1);
+# print(has(set, key), get(map, key));
+# print(holder[base]);
+# print(has(set, key), get(map, key), key);
+# -- end of source
+# RUN: run-in-shell
+# CHECK: false undefined
+# CHECK-NEXT: 1
+# CHECK-NEXT: false undefined k0000396
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=282 place=282
+data d0 root=Array{contents=anything elements=[String{value="xxxx"}, String{value="rzyq"}, String{value="k000"}, String{value="0396"}, String{value="padding-padding-padding"}]} module=m0
+data d1 root=Object{layout=L0} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Data data=d0 @196
+    v7 = Call v1, -, v6 calleeName="flat" @191
+    v8 = PropGet v7 key="join" @255
+    v9 = String string="" @262
+    v10 = Call v8, v7, v9 calleeKey="join" calleeName="join" @257
+    v11 = Data data=d1 @282
+    v12 = String string="\u{3042}" @304
+    v13 = Add v12, v10 @304
+    v14 = Call v1, -, v13 calleeName="flat" @299
+    v15 = PropGet v14 key="slice" @316
+    v16 = Integer integer=1 @324
+    v17 = Call v15, v14, v16 calleeKey="slice" calleeName="slice" @318
+    v18 = Builtin builtin=Symbol @328
+    v19 = Call v18, -, v17 calleeName="Symbol" callNumber=8 @328
+    v20 = Integer integer=1 @357
+    ElemSet v11, v17, v20 @342
+    v22 = Call v1, -, v10 calleeName="flat" @409
+    v23 = PropGet v22 key="substring" @433
+    v24 = Integer integer=8 @448
+    v25 = Integer integer=16 @451
+    v26 = Call v23, v22, v24, v25 calleeKey="substring" calleeName="base.substring" @438
+    v27 = String string="r\u{0}z\u{0}y\u{0}q\u{0}" @476
+    v28 = Call v1, -, v27 calleeName="flat" @471
+    v29 = Builtin builtin=Set @530
+    v30 = Construct v29 calleeName="Set" @526
+    v31 = PropGet v30 key="add" @537
+    v32 = Call v31, v30, v28 calleeKey="add" calleeName="set.add" @541
+    v33 = PropGet v30 key="add" @554
+    v34 = String string="other1" @567
+    v35 = Call v1, -, v34 calleeName="flat" @562
+    v36 = Call v33, v30, v35 calleeKey="add" calleeName="set.add" @558
+    v37 = Builtin builtin=Map @598
+    v38 = Construct v37 calleeName="Map" @594
+    v39 = PropGet v38 key="set" @605
+    v40 = String string="secret" @621
+    v41 = Call v39, v38, v28, v40 calleeKey="set" calleeName="map.set" @609
+    v42 = PropGet v38 key="set" @632
+    v43 = String string="other1" @645
+    v44 = Call v1, -, v43 calleeName="flat" @640
+    v45 = Integer integer=1 @659
+    v46 = Call v42, v38, v44, v45 calleeKey="set" calleeName="map.set" @636
+    v47 = Builtin builtin=GlobalThis @663
+    v48 = PropGet v47 key="print" [isFreeName] @663
+    v49 = Call v3, -, v30, v26 calleeName="has" @669
+    v50 = Call v5, -, v38, v26 calleeName="get" @684
+    v51 = Call v48, -, v49, v50 calleeName="print" @663
+    v52 = Builtin builtin=GlobalThis @700
+    v53 = PropGet v52 key="print" [isFreeName] @700
+    v54 = ElemGet v11, v22 @706
+    v55 = Call v53, -, v54 calleeName="print" @700
+    v56 = Builtin builtin=GlobalThis @721
+    v57 = PropGet v56 key="print" [isFreeName] @721
+    v58 = Call v3, -, v30, v26 calleeName="has" @727
+    v59 = Call v5, -, v38, v26 calleeName="get" @742
+    v60 = Call v57, -, v58, v59, v26 calleeName="print" @721
+    v61 = Undefined @721
+    Return v61 @721
+}
+function f1 name="flat" module=m0 position=23 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=JSON @49
+    v2 = PropGet v1 key="parse" @49
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]} @49
+    v4 = Builtin builtin=JSON @60
+    v5 = PropGet v4 key="stringify" @60
+    v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]} @60
+    v7 = Call v6, v4, v0 calleeKey="stringify" calleeName="JSON.stringify" @65
+    v8 = Call v3, v1, v7 calleeKey="parse" calleeName="JSON.parse" @54
+    ReturnCall v8 @54
+}
+function f2 name="has" module=m0 position=82 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Set flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Set, v1: anything):
+    v2 = PropGet v0 key="has" @114
+    v3 = Call v2, v0, v1 calleeKey="has" calleeName="set.has" @118
+    ReturnCall v3 @118
+}
+function f3 name="get" module=m0 position=130 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Map flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Map, v1: anything):
+    v2 = PropGet v0 key="get" @162
+    v3 = Call v2, v0, v1 calleeKey="get" calleeName="map.get" @166
+    ReturnCall v3 @166
+}
