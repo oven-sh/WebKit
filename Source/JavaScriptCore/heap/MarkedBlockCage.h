@@ -189,6 +189,8 @@ private:
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
     OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
+    // Creating an error does not reset it. Only room does, so a program that catches every error cannot run barren collections forever.
+    unsigned m_numberOfBarrenCollectionsSinceRoom { 0 };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
     Vector<void*, numberOfSpareWeakBlocks> m_spareWeakBlocks;

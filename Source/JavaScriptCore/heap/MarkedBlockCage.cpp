@@ -81,7 +81,7 @@ static constexpr size_t sharedReserveSize = smallestReserveSize / lastReserveDiv
 static constexpr size_t barrenCollectionDivisor = 64;
 // After this many barren collections in a row, with no out-of-memory error in between, the error is owed.
 static constexpr unsigned barrenCollectionsUntilError = 4;
-// While the error finds no place to be thrown: after this many a thread that can end alone is asked to, and after this many the process ends.
+// Whether the error found no place to be thrown or the program caught it: after this many in a row a thread that can end alone is asked to, and after this many the process ends.
 static constexpr unsigned barrenCollectionsUntilThreadEnds = 8;
 static constexpr unsigned barrenCollectionsUntilProcessEnds = 16;
 
@@ -1009,20 +1009,22 @@ void MarkedBlockCage::didFindNoRoom(VM& vm, ExhaustedHeap exhaustedHeap)
         return;
     if (bytesAllocatedSinceLastFull >= vm.heap.objectSpace().capacity() / barrenCollectionDivisor) {
         m_numberOfBarrenCollections = 0;
+        m_numberOfBarrenCollectionsSinceRoom = 0;
         m_hasCollectedAtPoll = false;
         return;
     }
-    if (++m_numberOfBarrenCollections < barrenCollectionsUntilError)
-        return;
-    m_errorWaitsForPoll = false;
-    if (!vm.traps().needsOutOfMemoryError()) {
-        addExhaustedHeap(exhaustedHeap);
-        m_errorWaitsForPoll = !m_hasCollectedAtPoll;
-        vm.traps().setNeedsOutOfMemoryError(true);
+    ++m_numberOfBarrenCollectionsSinceRoom;
+    if (++m_numberOfBarrenCollections >= barrenCollectionsUntilError) {
+        m_errorWaitsForPoll = false;
+        if (!vm.traps().needsOutOfMemoryError()) {
+            addExhaustedHeap(exhaustedHeap);
+            m_errorWaitsForPoll = !m_hasCollectedAtPoll;
+            vm.traps().setNeedsOutOfMemoryError(true);
+        }
     }
-    if (m_numberOfBarrenCollections == barrenCollectionsUntilThreadEnds)
+    if (m_numberOfBarrenCollectionsSinceRoom == barrenCollectionsUntilThreadEnds)
         willUseLastReserve(vm);
-    if (m_numberOfBarrenCollections < barrenCollectionsUntilProcessEnds)
+    if (m_numberOfBarrenCollectionsSinceRoom < barrenCollectionsUntilProcessEnds)
         return;
     logExhaustion(exhaustedHeap);
     RELEASE_ASSERT_RESOURCE_AVAILABLE(false, MemoryExhaustion, "Crash intentionally because memory is exhausted.");
