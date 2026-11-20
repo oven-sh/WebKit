@@ -1041,13 +1041,14 @@ JSObject* JSONValueParser::createOrdinaryObject(Members& members, unsigned count
 
 ALWAYS_INLINE JSObject* JSONValueParser::createRecord(Members& members, unsigned count, uint8_t kindsOfAll, LearnedName& name)
 {
+    Structure* ordinaryStructure = name.structure;
     if (JSObject* object = ObjectBuilder::tryBuild(m_vm, *name.plan, name.recordStructure, members.values, members.kinds, kindsOfAll)) [[likely]] {
         ++m_numberOfRecordsMade;
         if (kindsOfAll & ObjectBuilderPlan::AcceptsObject)
             m_repeatedValues.addFieldsWithObjects(name.recordStructure->id(), *name.plan, members.objects);
         return object;
     }
-    return createOrdinaryObject(members, count, name.structure);
+    return createOrdinaryObject(members, count, ordinaryStructure);
 }
 
 ALWAYS_INLINE JSObject* JSONValueParser::createObject(Members& members, unsigned count, uint8_t kindsOfAll, Structure* structure, LearnedName& name)
