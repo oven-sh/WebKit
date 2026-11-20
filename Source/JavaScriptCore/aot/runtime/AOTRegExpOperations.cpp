@@ -654,7 +654,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSCell*, (Instance* instance, JS
         if (RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, *found.record, OptionSet<Yarr::Flags>::fromRaw(flags)); regExp->isValid()) [[likely]]
             OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), regExp));
     }
-    if (found.created)
+    if (found.created && found.created->isValid())
         OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), found.created));
     auto pattern = text->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
