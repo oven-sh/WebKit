@@ -11,6 +11,7 @@
 #include "YarrPattern.h"
 #include <algorithm>
 #include <wtf/ASCIICType.h>
+#include <wtf/text/StringImpl.h>
 
 namespace JSC { namespace AOT {
 
@@ -195,6 +196,8 @@ bool Planner::addCharacters(const Yarr::PatternTerm& term, const Latin1Set& char
         return false;
     if (minimum != maximum && minimum)
         return false;
+    if (maximum >= StringImpl::MaxLength)
+        maximum = Node::unbounded;
     sequence.append(Node { .kind = Node::Kind::Characters, .isGreedy = term.quantityType != Yarr::QuantifierType::NonGreedy, .minimum = minimum, .maximum = maximum, .characters = characters });
     return true;
 }
