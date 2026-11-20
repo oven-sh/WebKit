@@ -507,6 +507,16 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command. The heap turns the hint
+    // down, and returns false, only if its collection would be an Eden one with nothing to sweep: no cell was allocated
+    // and no memory was counted since its last collection ended, and a request without a scope would not run as a Full
+    // collection. It then leaves its Eden timer as that collection would, and drops the string buffers that the sweeper
+    // drops between collections. It returns true if a collection is queued or under way, whoever asked for it. Mutator
+    // thread only.
+    JS_EXPORT_PRIVATE bool collectAsyncIfNecessary();
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 

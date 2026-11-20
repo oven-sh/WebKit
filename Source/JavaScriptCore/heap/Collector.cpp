@@ -292,9 +292,14 @@ bool Collector::shouldCollectInCollectorThread()
     return hasWorkWithLock() && !anyMutatorHasConnWithLock();
 }
 
+bool Collector::collectsOnlyFull()
+{
+    return !Options::useGenerationalGC() || VM::isInMiniMode();
+}
+
 CollectionScope Collector::decideCollectionScope()
 {
-    if (!Options::useGenerationalGC() || VM::isInMiniMode())
+    if (collectsOnlyFull())
         return CollectionScope::Full;
     if (m_currentRequest.scope)
         return *m_currentRequest.scope;
