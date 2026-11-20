@@ -35,6 +35,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/Hasher.h>
 #include <wtf/SetForScope.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StdUnorderedMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -1682,6 +1683,8 @@ private:
     {
         if (hasExceededIndexLimit())
             return decline(FlatProgramDecline::TooManySetsOrRegisters);
+        if (!m_stackCheck.isSafeToRecurse()) [[unlikely]]
+            return decline(FlatProgramDecline::NestedTooDeep);
         auto groups = groupBranches(branches, branches.size() > 2 && context.sharedPrefixDepth < maxSharedPrefixDepth);
         unsigned count = groups.size();
         if (count == 1)
@@ -1754,7 +1757,7 @@ private:
 
     bool emitAlternatives(Alternatives alternatives, EmitContext context)
     {
-        if (context.nestingDepth >= maxNestingDepth)
+        if (context.nestingDepth >= maxNestingDepth || !m_stackCheck.isSafeToRecurse())
             return decline(FlatProgramDecline::NestedTooDeep);
         ++context.nestingDepth;
         if (m_countsTurns || m_readsBackward)
@@ -2659,6 +2662,7 @@ private:
     unsigned m_nextRegister { 0 };
     const PatternAlternative* m_firstRepeatedAlternative { nullptr };
     KnownBacktrackableContent m_knownBacktrackableContent;
+    StackCheck m_stackCheck;
     const bool m_countsTurns;
     const bool m_findsEndsOfRuns;
 };
@@ -2674,10 +2678,12 @@ size_t FlatProgram::estimatedSizeInBytes() const
 }
 
 // As YarrGenerator::disjunctionContainsBacktrackableContent().
-static bool containsBacktrackableContent(const PatternDisjunction& disjunction, KnownBacktrackableContent& known)
+static bool containsBacktrackableContent(const PatternDisjunction& disjunction, KnownBacktrackableContent& known, StackCheck& stackCheck)
 {
     if (auto found = known.find(&disjunction); found != known.end())
         return found->value;
+    if (!stackCheck.isSafeToRecurse()) [[unlikely]]
+        return true;
     bool result = [&] {
         if (disjunction.m_alternatives.size() > 1)
             return true;
@@ -2687,7 +2693,7 @@ static bool containsBacktrackableContent(const PatternDisjunction& disjunction, 
                     return true;
                 if (term.type == PatternTerm::Type::NumberedBackReference || term.type == PatternTerm::Type::NamedBackReference)
                     return true;
-                if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction, known))
+                if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction, known, stackCheck))
                     return true;
             }
         }
@@ -2704,7 +2710,8 @@ bool jitCountsTurnsOf(const PatternTerm& term, KnownBacktrackableContent& known)
         return false;
     if (term.quantityType != QuantifierType::FixedCount)
         return true;
-    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction, known));
+    StackCheck stackCheck;
+    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction, known, stackCheck));
 }
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern, FlatProgramForm form)

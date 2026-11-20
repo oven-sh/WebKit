@@ -14,6 +14,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/SIMDHelpers.h>
 #include <wtf/SetForScope.h>
+#include <wtf/StackCheck.h>
 #include <wtf/text/StringCommon.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -208,7 +209,7 @@ public:
             if (depth || m_covers == Covers::EveryAlternative || !isTriedAtFirstPlaceAlone(*alternative))
                 alternatives.append(alternative.get());
         }
-        if (depth > maxNestingDepth || alternatives.isEmpty())
+        if (depth > maxNestingDepth || alternatives.isEmpty() || !m_stackCheck.isSafeToRecurse())
             return { 0, unbounded };
         if (alternatives.size() == 1) {
             SetForScope inFront(m_inFront, depth ? std::nullopt : std::optional<Place> { Place { } });
@@ -426,6 +427,7 @@ private:
 
     const YarrPattern& m_pattern;
     const Covers m_covers;
+    StackCheck m_stackCheck;
     // What the match can hold between its start and the term that is walked. Without a value: anything.
     std::optional<Place> m_inFront;
     bool m_hasFailed { false };
