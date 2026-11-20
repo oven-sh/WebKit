@@ -2163,7 +2163,14 @@ public:
         if ((term.type != PatternTerm::Type::ParenthesesSubpattern) && (term.type != PatternTerm::Type::ParentheticalAssertion))
             return PatternTerm(term);
         
-        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL && !term.invert() && term.matchDirection() == Forward)) {
+        filterStartsWithBOL = filterStartsWithBOL && !term.invert() && term.matchDirection() == Forward;
+        if (filterStartsWithBOL && term.type == PatternTerm::Type::ParentheticalAssertion) {
+            if (std::ranges::all_of(term.parentheses.disjunction->m_alternatives, [](auto& alternative) { return alternative->m_startsWithBOL; }))
+                return std::nullopt;
+            filterStartsWithBOL = false;
+        }
+
+        if (auto* newDisjunction = copyDisjunction(term.parentheses.disjunction, filterStartsWithBOL)) {
             PatternTerm termCopy = term;
             termCopy.parentheses.disjunction = newDisjunction;
             m_pattern.m_hasCopiedParenSubexpressions = true;
