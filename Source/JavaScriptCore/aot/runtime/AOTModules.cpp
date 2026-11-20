@@ -4220,13 +4220,19 @@ bool Modules::standsForFileOutsideImage(ModuleID module) const
     return data(module).isHostValue() && isAbsoluteFileSystemPath(m_table.fullPath(module));
 }
 
+static String withoutQuery(const ModuleTable&, ModuleID, const String& path);
+
 JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isURL = form == ResolvedSpecifierForm::URL;
-    if (m_table.hasFilePath(module) && isURL)
-        return jsString(vm, URL::fileURLWithFileSystemPath(m_table.fullPath(module)).string());
+    if (m_table.hasFilePath(module) && isURL) {
+        String path = m_table.fullPath(module);
+        String file = withoutQuery(m_table, module, path);
+        // The kept path has the query, which is not to be escaped as a part of the file's name.
+        return jsString(vm, makeString(URL::fileURLWithFileSystemPath(file).string(), StringView(path).substring(file.length())));
+    }
     JSString* specifier = pathString(module);
     if (data(module).kind != ModuleKind::External)
         return specifier;
