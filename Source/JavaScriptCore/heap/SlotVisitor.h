@@ -197,6 +197,9 @@ public:
     void visitAsConstraint(const JSCell*) final;
     
     bool didReachTermination();
+    // The poll of a mutator that conducts, in the concurrent phase. If marking has not reached termination, this
+    // sets Collector::conductorIsAwayBit: the caller leaves the collector, or clears the bit.
+    bool didReachTerminationOrConductorIsAway();
     
     void donateAll();
 

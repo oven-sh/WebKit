@@ -308,9 +308,46 @@ CollectionScope Collector::decideCollectionScope()
     return anyHeapNeedsFullCollection ? CollectionScope::Full : CollectionScope::Eden;
 }
 
+class Collector::ConductorPresenceScope {
+    WTF_MAKE_NONCOPYABLE(ConductorPresenceScope);
+public:
+    explicit ConductorPresenceScope(Collector& collector)
+        : m_collector(collector)
+    {
+        unsigned previous = collector.m_conductorPresence.load(std::memory_order_relaxed);
+        do {
+            // Clears the bit and counts this conductor.
+            m_presence = (previous | conductorIsAwayBit) + 1;
+        } while (!collector.m_conductorPresence.compare_exchange_weak(previous, m_presence, std::memory_order_relaxed));
+    }
+
+    ~ConductorPresenceScope()
+    {
+        m_collector.conductorDidLeave(m_presence);
+    }
+
+private:
+    Collector& m_collector;
+    unsigned m_presence;
+};
+
+void Collector::conductorDidLeave(unsigned presence)
+{
+    // Nothing to do if the poll of the concurrent phase has set the bit, or if another conductor has come.
+    if (m_conductorPresence.load(std::memory_order_relaxed) != presence)
+        return;
+    Locker locker { m_markingMutex };
+    if (!m_conductorPresence.compare_exchange_strong(presence, presence | conductorIsAwayBit, std::memory_order_relaxed))
+        return;
+    // A helper that ran out of work while a conductor was here waits for that conductor.
+    if (m_numberOfWaitingParallelMarkers)
+        m_markingConditionVariable.notifyAll();
+}
+
 void Collector::collectInCollectorThread()
 {
     checkIsConductor(GCConductor::Collector);
+    ConductorPresenceScope presenceScope(*this);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Collector, nullptr);
         switch (result) {
@@ -344,6 +381,7 @@ void Collector::collectInMutatorThread(Heap& conductor)
     ASSERT(!m_conductingHeap);
     SetForScope setConductingHeap { m_conductingHeap, &conductor };
     checkIsConductor(GCConductor::Mutator);
+    ConductorPresenceScope presenceScope(*this);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Mutator, nullptr);
         switch (result) {
@@ -597,7 +635,8 @@ void Collector::startHelpers()
         return;
     RELEASE_ASSERT(!m_parallelMarkersShouldExit);
 
-    m_helperClient.setFunction(
+    // On request: a helper that leaves the collection can be asked for again. Every thread of the pool is asked for now.
+    m_helperClient.setFunctionOnRequest(
         [this] () {
             SlotVisitor* visitor;
             {
@@ -621,6 +660,12 @@ void Collector::startHelpers()
                 m_availableParallelSlotVisitors.append(visitor);
             }
         });
+}
+
+void Collector::recallHelpersSlow()
+{
+    // The lock order is m_markingMutex, then the pool's lock, as in startHelpers() under SlotVisitor::donateAll().
+    m_helperClient.requestThreads(std::exchange(m_numberOfHelpersThatLeft, 0));
 }
 
 NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
@@ -662,6 +707,7 @@ NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
             Locker locker { m_markingMutex };
             if (!m_deferredRootRegions.isEmpty()) {
                 startHelpers();
+                recallHelpers(locker);
                 m_markingConditionVariable.notifyOne();
             }
         }
@@ -724,9 +770,14 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
-        if (visitor.didReachTermination()
-            || m_scheduler->shouldStop())
+        // Between two of these polls no conductor is here, and a helper that runs out of work leaves the collection.
+        // The poll says so with the lock that it takes for the termination check: conductorDidLeave then takes none.
+        if (visitor.didReachTerminationOrConductorIsAway())
             return changePhase(conn, CollectorPhase::Reloop);
+        if (m_scheduler->shouldStop()) {
+            m_conductorPresence.fetch_and(~conductorIsAwayBit, std::memory_order_relaxed);
+            return changePhase(conn, CollectorPhase::Reloop);
+        }
 
         // We could be coming from a collector phase that stuffed our SlotVisitor, so make sure we donate
         // everything. This is super cheap if the SlotVisitor is already empty.
@@ -775,6 +826,7 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     {
         Locker locker { m_markingMutex };
         m_parallelMarkersShouldExit = true;
+        m_numberOfHelpersThatLeft = 0;
         m_markingConditionVariable.notifyAll();
     }
     m_helperClient.finish();
@@ -1200,6 +1252,7 @@ void Collector::runTaskInParallel(RefPtr<SharedTask<void(SlotVisitor&)>> task)
     {
         Locker locker { m_markingMutex };
         m_bonusVisitorTask = task;
+        recallHelpers(locker);
         m_markingConditionVariable.notifyAll();
     }
 
