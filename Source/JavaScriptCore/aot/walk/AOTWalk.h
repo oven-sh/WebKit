@@ -140,6 +140,7 @@ bool inlineCallee(Walker&, const BodyValue&);
 bool callDirectly(Walker&, const BodyValue&);
 bool buildTypedOperation(Walker&, const BodyValue&);
 bool someLoopGivesSlowVersionSomethingToReckon(const BodyIndex&);
+bool slowBodyGoesByWhatCallersLeave(const Program&, const Facts&, const Plan&, FunctionID);
 enum class GuessOpened : uint8_t {
     None,
     AsOneOperation,
@@ -1225,6 +1226,12 @@ public:
             frame.duplicatedValues->noteBoundOnWay(input, reference);
         bound = reference;
     }
+    void bindForWay(ValueID input, Reference reference)
+    {
+        bind(input, reference);
+        if (Frame& frame = m_frames.last(); frame.isDuplicated(input)) [[unlikely]]
+            frame.duplicatedValues->nameOtherwiseOn(frame.duplicatedValues->namesOfWay, input, reference);
+    }
     class StandIn {
         WTF_MAKE_NONCOPYABLE(StandIn);
     public:
@@ -1491,6 +1498,10 @@ public:
 
     void walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end);
     bool hasWalkedBeyond(const BodyValue& operation) const;
+    uint32_t limitOfStretchInFrontOfSteps(const BodyBlock& block, uint32_t limit) const { return m_hasTakenGeneratorsSteppedByHand ? placeOfNextStepOfGenerator(block, limit) : limit; }
+    uint32_t placeOfNextStepOfGenerator(const BodyBlock&, uint32_t limit) const;
+    Reference generatorSteppedBy(const BodyValue& operation) const { return m_hasTakenGeneratorsSteppedByHand ? findGeneratorSteppedBy(operation) : Reference(); }
+    Reference findGeneratorSteppedBy(const BodyValue& operation) const;
     struct StaticFieldSeenInVariable {
         VariableID variable;
         Reference held;
@@ -2232,7 +2243,7 @@ public:
     bool executesInEverySpecializedIteration() const;
     bool tryPreparePreheaderForCall();
     Reference buildOnFirstArrival(ValueID site, const Draft& call, const Effects&);
-    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult);
+    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult, std::span<const Reference> operands = { });
     static constexpr uint32_t noCounter = std::numeric_limits<uint32_t>::max();
     struct RecurringAccess {
         uint32_t loop;
@@ -4216,6 +4227,8 @@ private:
         uint32_t carriedResultCount { 0 };
         uint32_t carriedResultsSummary { 0 };
         Vector<uint32_t, 2> carriedSlotsBuilt { };
+        // What hangs on what the front of the quiet turns reads.
+        Vector<uint32_t, 1> carriedSlotsThatHangOnFront { };
         Vector<uint32_t, 2> untouchedArrays { };
         struct CarriedElement {
             uint32_t slot;
@@ -4723,8 +4736,15 @@ private:
         BlockID block;
         Reference sent;
         WalkState state;
+        struct OtherWay {
+            BlockID block;
+            Reference sent;
+            WalkState state;
+        };
+        Vector<OtherWay> otherWays;
     };
     EndOfManualIteration walkManualIterationToStep(const GeneratorWalkedInConsumer&);
+    void joinWaysToStep(EndOfManualIteration&);
     bool answerStepOfGeneratorTaken(const BodyValue&);
     bool holdsLoopsThatStepByHand(FunctionID);
     bool loopStepsGeneratorTaken(BlockID inputHead) const;

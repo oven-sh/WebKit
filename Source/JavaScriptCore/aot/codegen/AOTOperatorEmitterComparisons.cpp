@@ -434,7 +434,7 @@ bool OperatorEmitter::generateRelationWithLikelyZero(const ValueContext& value, 
     ValueID leftID = value->leftOperand();
     if (!isBigInt(value->rightOperand()) || isBigInt(leftID) || !expectsBigInts(value.block(), leftID))
         return false;
-    m_out.noteForm(Form::Open, StateOfKnowledge::BigInts);
+    m_out.noteForm(Form::Open, StateOfKnowledge::BigIntAndValue);
     Boxed left = in<Boxed>(leftID);
     Boxed right = boxedOperand(value->rightOperand());
     defineTestByBranching(value, [&](BranchTargets targets) {

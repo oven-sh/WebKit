@@ -386,7 +386,7 @@ static auto findInClassOfVariable(const Program& program, const Facts& facts, Va
     return id.index() < facts.linked().variables.size() ? findIn(facts.linked().variable(id).proven) : decltype(functor(std::declval<const ClassPart&>())) { };
 }
 
-static std::optional<TypedArrayType> findViewTypeOfVariable(const Program& program, const Facts& facts, VariableID id)
+std::optional<TypedArrayType> findViewTypeOfVariable(const Program& program, const Facts& facts, VariableID id)
 {
     return findInClassOfVariable(program, facts, id, [&](const ClassPart& held) -> std::optional<TypedArrayType> {
         TypedArrayType kind = program.builtins().typedArrayTypeOf(held.builtinClass);

@@ -91,7 +91,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTextOfBytes, EncodedJSValue, (Instance* ins
                     OPERATION_RETURN(scope, JSValue::encode(jsSingleCharacterString(vm, bytes[0])));
                 if (bytes.size() <= String::MaxLength) [[likely]]
                     OPERATION_RETURN(scope, JSValue::encode(jsNontrivialString(vm, String(bytes))));
-            } else if (*way == BytesAreRead::AsUTF8 && bytes.size() <= String::MaxLength) {
+            } else if (*way == BytesAreRead::AsUTF8 && WTF::isValidCapacityForVector<char16_t>(bytes.size())) {
                 if (String text = String::fromUTF8(byteCast<char8_t>(bytes)); !text.isNull())
                     OPERATION_RETURN(scope, JSValue::encode(jsString(vm, WTF::move(text))));
             }

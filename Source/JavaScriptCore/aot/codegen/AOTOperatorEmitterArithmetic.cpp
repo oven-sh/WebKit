@@ -1382,7 +1382,7 @@ void OperatorEmitter::generateMod(const ValueContext& value)
             return Word32(m_out.castToInt32(callStub(value, remainderTruth(), { left.value(), right.value() }).first));
         };
         if (generator().usesLoopForms(value.block())) {
-            m_out.noteForm(Form::Open, StateOfKnowledge::Generic);
+            m_out.noteForm(Form::Open, StateOfKnowledge::Integers);
             build().statistics().count(StatisticID::RemainderTruthsInLine);
             LBasicBlock callsStub = newBlock();
             Join<Word32> join(m_out);

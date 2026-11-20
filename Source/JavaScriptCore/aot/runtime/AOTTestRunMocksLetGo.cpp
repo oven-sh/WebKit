@@ -245,7 +245,7 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
             if (seen.quickSet(index))
                 continue;
             bool isLoaded = isLinked || status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
-            if (!isLoaded || m_loadedInPreload.get(index) || importer == patched || activeMock(importer) || hasIntactOriginal(importer) || (m_originalsRestoredAfterPass && m_originalsRestoredAfterPass->get(index)))
+            if (!isLoaded || m_loadedInPreload.get(index) || importer == patched || activeMock(importer) || hasIntactOriginal(importer) || (m_originalsRestoredAfterPass && m_originalsRestoredAfterPass->get(index)) || m_stashesRestoredByPass.get(index))
                 continue;
             if (mayReleaseModule(importer) || mayReleasePatchedModule(importer)) {
                 toRelease.append(importer);

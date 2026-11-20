@@ -851,6 +851,10 @@ ALWAYS_INLINE JSCellButterfly* addToRegExpSearchCache(VM& vm, JSGlobalObject* gl
         }
 
         results.append(jsNumber(result.start));
+        if (results.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return nullptr;
+        }
 
         lastIndex = result.end;
         startPosition = lastIndex;

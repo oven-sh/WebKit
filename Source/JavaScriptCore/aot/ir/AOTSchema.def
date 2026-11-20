@@ -29,7 +29,7 @@ enum StateOfKnowledge {
     Generic Integers CheckedIntegers Numbers NumberAndValue Bits Booleans BigInts Strings StringAndValue Int32AndValue
     StringAndPrimitive NullableStrings NullableStringAndPrimitive String Number NumberByOperation NullableString NullableNumber MayBeString
     MayBeStringOrNumber
-    NumberAndOtherValue NumbersAndDivisorOne NumbersAndWholeDivisor NumbersAndDivisorWithFraction NumbersAndOtherDivisor
+    BigIntAndValue NumberAndOtherValue NumbersAndDivisorOne NumbersAndWholeDivisor NumbersAndDivisorWithFraction NumbersAndOtherDivisor
     NumbersAndConstantExponent NumbersAndConstantBase NumbersAndWholeExponent NumberWithFraction
     PassesTest FailsTest NeedsTest BranchOnTestedKinds BranchOnOtherKinds FreeName
     ReadOnlyTree CopyOnWriteArray SlimOnHeap SlimInFrame FullOnHeap FullInFrame FullWithOwnStructure Singleton

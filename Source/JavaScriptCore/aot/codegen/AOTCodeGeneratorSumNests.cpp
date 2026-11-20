@@ -2228,6 +2228,11 @@ void SumNestEmitter::emitStores()
         else if (m_generator.opcodeOf(step.value) == Opcode::GetArrayElement)
             emitColumnRead(step.value);
         else {
+            // The second store of a pair of elements stores both. If a later store replaces it, the first one stores its element alone.
+            m_generator.elementPairCopies().removeAllMatching([&](const CodeGenerator::ElementPairCopy& copy) {
+                ValueID second = copy.firstStore == copy.lowerStore ? copy.upperStore : copy.lowerStore;
+                return copy.firstStore == step.value && std::ranges::any_of(m_nest.steps, [&](const Step& other) { return other.value == second && !other.isNeeded; });
+            });
             name(step.value, nullptr);
             m_generator.generateValue(step.block, step.value, m_code.at(step.value), false, { });
         }

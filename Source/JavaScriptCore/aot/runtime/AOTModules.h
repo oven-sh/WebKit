@@ -904,7 +904,7 @@ public:
     void restoreLibraryOriginal(ModuleID, LibraryMock);
     bool doesMockReplaceLibraryModule(ModuleID module) const { return m_libraryModulesThatMockReplaces.get(module.index()); }
     bool isLibraryOriginalDisplaced(ModuleID module) const { return m_displacedLibraryModules.get(module.index()); }
-    enum class LoadRootKind : bool { StartsLoad, ImportStatement };
+    enum class LoadRootKind : uint8_t { StartsLoad, ImportStatement, StatementOfCompiledFile };
     bool runMocksInGraph(ModuleID root, LoadRootKind = LoadRootKind::StartsLoad);
     bool runMocksInGraphSlow(ModuleID root, LoadRootKind);
     bool wasLoadedWhenMockWasMade(ModuleID);
@@ -987,6 +987,12 @@ public:
     JSValue mockLoadError(ModuleID module) const { return m_modulesWithMockLoadError.get(module.index()) ? loadedIfExists(module)->cachedLoadError.get() : JSValue(); }
     bool didMockFailForImportStatement(ModuleID);
     void willFetchAfterTick(ModuleID);
+    void noteImporterOfFetch(ModuleID, ModuleID importer);
+    bool importsAbsentNameThroughLoader(ModuleID importer);
+    bool evaluateStatementsInFrontOf(ModuleID importer, ModuleID);
+    void evaluateStatementsBehind(ModuleID importer, ModuleID);
+    std::optional<ModuleID> fileOfStatement(const ModuleRequestData&);
+    bool mayEvaluateInFrontOfMocks(ModuleID);
     std::optional<ModuleID> loadOfFetch(ModuleID fetched);
     JSPromise* pendingFactoryForFetch(ModuleID fetched, JSValue& state);
     std::optional<ModuleID> currentLoadTarget() const { return m_currentImportTarget ? std::optional(fileOf(m_currentImportTarget)) : m_moduleBeingFetched; }
@@ -1053,6 +1059,7 @@ public:
             m_requirersOfOwnOriginals.set(module.index());
     }
     bool tryEvictRequirerOfOriginal(ModuleID);
+    bool wasOriginalRunForStatement(ModuleID file) const { return m_originalsRunForStatements.get(file.index()); }
     bool takeRequirerOfOwnOriginal(ModuleID module) { return m_requirersOfOwnOriginals.clear(module.index()); }
     bool takeEvictedOriginal(ModuleID module) { return m_evictedOriginals.clear(fileOf(module).index()); }
     void forgetMockRegisteredAfter(ModuleID, uint32_t moment);
@@ -2676,6 +2683,12 @@ private:
     void didCallFactoryOfLoad(ModuleID file);
     bool shouldRunMocksAtFetch(ModuleID);
     BitVector m_statementFetchesDelayedByTick;
+    struct FetchForStatement {
+        ModuleID importer;
+        bool walksInFrontOfMocks { false };
+    };
+    UncheckedKeyHashMap<ModuleID, FetchForStatement> m_fetchesForStatements;
+    std::optional<ModuleID> m_importerOfWalkedStatement;
     struct FactoryCaller {
         ModuleID root;
         ModuleID mocked;
@@ -3323,6 +3336,7 @@ private:
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;
     BitVector m_unseenMocks;
     BitVector m_evictedOriginals;
+    BitVector m_originalsRunForStatements;
     BitVector m_originalsFetchedByTestFiles;
     void didEvaluateOriginalUnderMock(ModuleID module)
     {
@@ -3333,6 +3347,7 @@ private:
     std::optional<BitVector> m_originalsRestoredAfterPass;
     BitVector m_stashesRestoredByPass;
     BitVector m_requirersOfOwnOriginals;
+    BitVector m_evictedActiveMocks;
     BitVector m_originalsRequiredByFactories;
     UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;
     UncheckedKeyHashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;

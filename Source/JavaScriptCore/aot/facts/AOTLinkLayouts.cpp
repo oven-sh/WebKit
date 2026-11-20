@@ -5976,7 +5976,7 @@ NEVER_INLINE bool WriterOfLinkLayouts::appendStoresUnderNames(FunctionID id, con
         if (!holdsPrototypes && !m_flow.holdsOnlyPlainRecords(holders) && !holdsInstancesOfOneClass(m_flow, holders) && !holdsFollowedInstances(m_flow, holders))
             return false;
     } else {
-        if (!holdsFollowedInstances(m_flow, holders) || (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(holders, typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site)))))
+        if (!holdsFollowedInstances(m_flow, holders) || (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(holders, typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))) && !m_flow.hasNameMadeEnumerable(typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site)))))
             return false;
         names = m_flow.findListedNamesOfStore(id, access);
         if (names.isEmpty())
@@ -6075,7 +6075,7 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const Thin
         case SummaryAccess::Kind::Has:
             continue;
         case SummaryAccess::Kind::Store:
-            if (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(typeAt(id, access.subject), typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))))
+            if (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(typeAt(id, access.subject), typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))) && !m_flow.hasNameMadeEnumerable(typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))))
                 continue;
             traits.add(Trait::MayRunSetter);
             break;

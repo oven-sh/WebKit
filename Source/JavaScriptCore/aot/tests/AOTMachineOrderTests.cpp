@@ -1737,12 +1737,12 @@ static void testThreadingMergesWordByteTests()
     LBasicBlock slow = out.newBlock();
     LBasicBlock other = out.newBlock();
     auto byteAt = [&](ptrdiff_t offset) {
-        return out.load8ZeroExt32(out.address(test.testProcedure.heaps().argumentBuffer, test.first, offset));
+        return out.load8ZeroExt32(out.address(test.testProcedure.heaps().JSCell_usefulBytes, test.first, offset));
     };
     out.branch(out.equal(byteAt(5), out.constInt32(0x30)), normalEdge(next), rareEdge(slow));
     out.appendTo(next);
     if (variant == StoredBetween)
-        out.store32(out.constInt32(0x40300c), out.address(test.testProcedure.heaps().argumentBuffer, test.first, 4));
+        out.store32(out.constInt32(0x40300c), out.address(test.testProcedure.heaps().JSCell_usefulBytes, test.first, 4));
     if (variant == AllOfByteInMiddle)
         out.branch(out.equal(byteAt(6), out.constInt32(0x40)), normalEdge(last), rareEdge(slow));
     else
