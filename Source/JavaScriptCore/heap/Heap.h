@@ -507,6 +507,15 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command: the heap asks for the
+    // collection only if there is something for it to do. That is when a cell was allocated since the last collection
+    // ended (MarkedSpace::isEdenEmpty()), or when the collection would be a Full one that the collections before it
+    // left owing. Any other collection would be an Eden one with nothing to sweep. Returns whether it asked. Mutator
+    // thread only.
+    JS_EXPORT_PRIVATE bool collectAsyncIfAllocated();
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
@@ -800,6 +809,8 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // Whether this heap makes a collection that was requested without a scope a Full one (Collector::decideCollectionScope()).
+    bool wantsFullCollection() { return m_shouldDoFullCollection || overCriticalMemoryThreshold(); }
     bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
     bool canSkipMarking() const;
 

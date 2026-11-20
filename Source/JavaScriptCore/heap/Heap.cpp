@@ -2841,6 +2841,18 @@ bool Heap::shouldSweepSynchronously()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Heap::collectAsyncIfAllocated()
+{
+    // A Full collection is owed after an Eden one that left little room (updateAllocationLimits()), and after any
+    // collection but a Full one while memory use is over the critical threshold. Only the next request runs it.
+    bool lastWasFull = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full;
+    bool isOwedFullCollection = !lastWasFull && wantsFullCollection();
+    if (!isOwedFullCollection && m_objectSpace.isEdenEmpty())
+        return false;
+    collectAsync();
+    return true;
+}
+
 bool Heap::isIdleCollection() const
 {
     return m_collector->m_currentRequest.isIdle;
