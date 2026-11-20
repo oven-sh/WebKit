@@ -473,7 +473,8 @@ public:
             const Operation& call = m_code.at(ValueID(index));
             if (call.opcode != Opcode::CallDirect || !call.block() || call.numberOfBoundArguments())
                 continue;
-            bool entersUnitThatBelievesCallers = call.role() == CodeRole::Body || call.role() == CodeRole::ParameterGuard || call.role() == CodeRole::CoroutineBody;
+            bool entersUnitThatBelievesCallers = call.role() == CodeRole::Body || call.role() == CodeRole::ParameterGuard || call.role() == CodeRole::CoroutineBody
+                || (call.role() == CodeRole::SlowBody && slowBodyGoesByWhatCallersLeave(m_inputs.program, m_inputs.facts, m_inputs.plan, call.function()));
             if (!entersUnitThatBelievesCallers || !m_inputs.arrivals.takesWhatWasLeft(call.function()))
                 continue;
             if (String refusal = judge(ValueID(index), call); !refusal.isNull())

@@ -110,7 +110,7 @@ enum StatisticID (stage: StatisticStage) {
     Float64ArrayGenericAccessesHinted
     UntypedKeyGenericAccessesHinted
     ArgumentsLengthsReadInline
-    RestArrayAllocationsSunk RestArraysForwarded
+    RestArrayAllocationsSunk RestArraysForwarded SlowBodiesToldWhatCopiesHandThem
     MoveTargetsCheckedInPreheaders StoredNumbersCheckedInPreheaders OrdinaryObjectLoopsVersioned OrdinaryObjectLoopVersionsDiscarded OrdinaryObjectElementsReadDirectly LoopsVersionedForPlainObjects OrdinaryObjectStorageReadsHoisted ViewMemoryTestsHoisted FieldSumsTakenForNumbers KeyedReadsKeepingRegisters ElementsOverwrittenInLoops DictionariesExpectedInLoops
     UnrolledLoopRawTruthinessTests UnrolledLoopsForInt32Truthiness UnrolledLoopsWithSlotStores
     LocalArrayMethodEffectsNarrowed FreshArrayWritesNarrowed ReceiversSpeculatedForNamedCallbacks

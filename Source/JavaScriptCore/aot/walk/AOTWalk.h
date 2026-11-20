@@ -140,6 +140,7 @@ bool inlineCallee(Walker&, const BodyValue&);
 bool callDirectly(Walker&, const BodyValue&);
 bool buildTypedOperation(Walker&, const BodyValue&);
 bool someLoopGivesSlowVersionSomethingToReckon(const BodyIndex&);
+bool slowBodyGoesByWhatCallersLeave(const Program&, const Facts&, const Plan&, FunctionID);
 enum class GuessOpened : uint8_t {
     None,
     AsOneOperation,

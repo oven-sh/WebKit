@@ -945,16 +945,25 @@ bool someLoopGivesSlowVersionSomethingToReckon(const BodyIndex& index)
     return false;
 }
 
+static bool constructsNamesDefinedAbove(const Program& program, const Function& constructor)
+{
+    return constructor.constructedClass && std::ranges::any_of(program.at(constructor.constructedClass).fields, [](const Field& field) {
+        return field.flags.contains(FieldFlags::MayBeDefinedAbove);
+    });
+}
+
+// It is walked as any other body.
+bool slowBodyGoesByWhatCallersLeave(const Program& program, const Facts& facts, const Plan& plan, FunctionID function)
+{
+    bool hasVersionBeforeEvaluation = facts.beforeEvaluation().holdsIn(function) && plan.conventions().hasParameterGuard(function);
+    return hasVersionBeforeEvaluation || constructsNamesDefinedAbove(program, program.at(function));
+}
+
 void Walker::beginUnit(CodeUnit unit)
 {
     RELEASE_ASSERT(!std::exchange(m_hasBegunUnit, true) && m_newestWalkerOfWorker == this);
     const Function& function = program().at(unit.function);
 
-    auto constructsNamesDefinedAbove = [](const Program& program, const Function& constructor) {
-        return constructor.constructedClass && std::ranges::any_of(program.at(constructor.constructedClass).fields, [](const Field& field) {
-            return field.flags.contains(FieldFlags::MayBeDefinedAbove);
-        });
-    };
     bool hasVersionBeforeEvaluation = facts().beforeEvaluation().holdsIn(unit.function) && plan().conventions().hasParameterGuard(unit.function);
     m_noTextWasEvaluated = hasVersionBeforeEvaluation && unit.role == CodeRole::Body;
     m_comparesElementsOfViews = false;
