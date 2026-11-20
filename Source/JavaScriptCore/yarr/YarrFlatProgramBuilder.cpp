@@ -224,9 +224,10 @@ private:
     // The parser has made classes of the letters that have other cases. RegExp::matchInline keeps a match from beginning inside a surrogate pair.
     static Steps whatStepsConsume(const PatternDisjunction& disjunction, unsigned depth = 0)
     {
-        Steps steps = Steps::SingleCodeUnits;
+        // Not looked at, and atomicRunAt() takes a run from this deep.
         if (depth > maxNestingDepth)
-            return steps;
+            return Steps::Surrogates;
+        Steps steps = Steps::SingleCodeUnits;
         for (auto& alternative : disjunction.m_alternatives) {
             for (const PatternTerm& term : alternative->m_terms) {
                 switch (term.type) {
