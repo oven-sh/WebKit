@@ -206,6 +206,9 @@ private:
     void initializeSubspace(Subspace&);
 
     template<typename Functor> inline void forEachDirectory(NOESCAPE const Functor&);
+
+    // Whether the mutator has taken a cell from a free list since the world last resumed.
+    bool hasAllocatedFromFreeLists();
     
     NODELETE void addActiveWeakSet(WeakSet*);
 

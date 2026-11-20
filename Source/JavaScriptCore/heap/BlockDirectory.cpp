@@ -267,6 +267,17 @@ void BlockDirectory::stopAllocating()
 #endif
 }
 
+bool BlockDirectory::hasAllocatedFromFreeLists()
+{
+    bool result = false;
+    m_localAllocators.forEach(
+        [&] (LocalAllocator* allocator) {
+            if (allocator->hasAllocatedFromFreeList())
+                result = true;
+        });
+    return result;
+}
+
 void BlockDirectory::prepareForAllocation()
 {
     m_localAllocators.forEach(

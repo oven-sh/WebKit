@@ -507,6 +507,16 @@ public:
     JS_EXPORT_PRIVATE void collectNow(Synchronousness, GCRequest = GCRequest());
     
     JS_EXPORT_PRIVATE void collectNowFullIfNotDoneRecently(Synchronousness);
+
+#if USE(BUN_JSC_ADDITIONS)
+    // collectAsync() for an embedder's hint ("now would be a good time") as opposed to a command: the heap asks for the
+    // collection only if there is something for it to do. That is when the mutator has allocated a cell since the last
+    // collection began, or when the collection would be the Full one that the Eden collections before it left owing (it
+    // frees what they could not, with nothing allocated since). Any other collection would be an Eden one, and an Eden
+    // collection frees only cells that were allocated after the collection before it began. Returns whether it asked.
+    // Mutator thread only.
+    JS_EXPORT_PRIVATE bool collectAsyncIfAllocated();
+#endif
     
     void collectIfNecessaryOrDefer(GCDeferralContext* = nullptr);
 
@@ -800,6 +810,8 @@ private:
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
+    // Whether this heap makes a collection that was requested without a scope a Full one (Collector::decideCollectionScope()).
+    bool wantsFullCollection() { return m_shouldDoFullCollection || overCriticalMemoryThreshold(); }
     bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
     bool canSkipMarking() const;
 
@@ -942,6 +954,10 @@ private:
     bool m_hasAllocatedSinceLastCollection { true };
     bool m_didSkipMarkingInLastCollection { false };
     bool m_validatesCellVisits { false };
+    // Whether the mutator has allocated a cell since the last collection began. Every allocation slow path sets it, and
+    // after a collection the first cell of each size takes that path. While a collection runs the mutator can also take
+    // cells from a free list, with no slow path: MarkedSpace::stopAllocating() looks at the free lists for those.
+    bool m_hasAllocatedSinceLastCollectionBegan { true };
     const size_t m_ramSize;
     const size_t m_minBytesPerCycle;
 

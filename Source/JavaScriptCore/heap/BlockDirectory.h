@@ -77,6 +77,7 @@ public:
     void lastChanceToFinalize();
     void prepareForAllocation();
     void stopAllocating();
+    bool hasAllocatedFromFreeLists();
     void stopAllocatingForGood();
     void resumeAllocating();
     NODELETE void beginMarkingForFullCollection();

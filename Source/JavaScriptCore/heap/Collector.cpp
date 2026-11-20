@@ -302,7 +302,7 @@ CollectionScope Collector::decideCollectionScope()
     // should be process-wide, not per heap, but Heap::collectNow depends on the Heap cache given a consistent result.
     bool anyHeapNeedsFullCollection = false;
     forEachHeap([&](Heap& heap) {
-        if (heap.m_shouldDoFullCollection || heap.overCriticalMemoryThreshold())
+        if (heap.wantsFullCollection())
             anyHeapNeedsFullCollection = true;
     });
     return anyHeapNeedsFullCollection ? CollectionScope::Full : CollectionScope::Eden;

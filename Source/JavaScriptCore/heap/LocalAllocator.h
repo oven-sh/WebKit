@@ -60,6 +60,10 @@ public:
     // Intended for diagnostics only (rdar://157153895)
     bool isFreeListedCell(const void*) const;
 
+    // resumeAllocating() makes the free list anew from what is free in the block, so what is missing from the list was
+    // taken since the world last resumed.
+    bool hasAllocatedFromFreeList() const;
+
 private:
     friend class BlockDirectory;
     

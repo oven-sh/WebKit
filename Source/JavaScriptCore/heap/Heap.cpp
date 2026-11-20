@@ -2503,6 +2503,8 @@ void Heap::willStartCollection(CollectionScope scope)
 
     dataLogIf(Options::logGC(), "=> ");
     
+    // The world is stopped: what the mutator has allocated so far is this collection's.
+    m_hasAllocatedSinceLastCollectionBegan = false;
     m_collectionScope = scope;
     if (scope == CollectionScope::Full) {
         m_shouldDoFullCollection = false;
@@ -2761,6 +2763,7 @@ constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
     m_hasAllocatedSinceLastCollection = true;
+    m_hasAllocatedSinceLastCollectionBegan = true;
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversizedAllocationThisCycle = bytes;
@@ -2841,6 +2844,18 @@ bool Heap::shouldSweepSynchronously()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Heap::collectAsyncIfAllocated()
+{
+    // updateAllocationLimits() asks for a Full collection after an Eden one that left little room, and nothing but the
+    // next collection runs it.
+    bool lastWasFull = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full;
+    bool isOwedFullCollection = !lastWasFull && wantsFullCollection();
+    if (!m_hasAllocatedSinceLastCollectionBegan && !isOwedFullCollection)
+        return false;
+    collectAsync();
+    return true;
+}
+
 bool Heap::isIdleCollection() const
 {
     return m_collector->m_currentRequest.isIdle;

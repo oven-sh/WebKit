@@ -72,6 +72,17 @@ bool LocalAllocator::isFreeListedCell(const void* target) const
     return found;
 }
 
+bool LocalAllocator::hasAllocatedFromFreeList() const
+{
+    if (!m_currentBlock)
+        return false;
+    size_t freeBytes = 0;
+    m_freeList.forEachInterval([&](char* intervalStart, char* intervalEnd) {
+        freeBytes += intervalEnd - intervalStart;
+    });
+    return freeBytes != m_freeList.originalSize();
+}
+
 LocalAllocator::~LocalAllocator()
 {
     if (isOnList()) {

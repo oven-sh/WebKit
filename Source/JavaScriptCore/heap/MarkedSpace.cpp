@@ -353,11 +353,26 @@ void MarkedSpace::stopAllocating()
     ASSERT(!isIterating());
     if (!heap().m_hasAllocatedSinceLastCollection)
         return;
+    // A cell that the mutator takes from a free list passes no slow path. With the flag clear there are free lists only
+    // while a collection runs: it clears the flag as it begins, after its first stop.
+    if (!heap().m_hasAllocatedSinceLastCollectionBegan)
+        heap().m_hasAllocatedSinceLastCollectionBegan = hasAllocatedFromFreeLists();
     forEachDirectory(
         [&] (BlockDirectory& directory) -> IterationStatus {
             directory.stopAllocating();
             return IterationStatus::Continue;
         });
+}
+
+bool MarkedSpace::hasAllocatedFromFreeLists()
+{
+    bool result = false;
+    forEachDirectory(
+        [&] (BlockDirectory& directory) -> IterationStatus {
+            result = directory.hasAllocatedFromFreeLists();
+            return result ? IterationStatus::Done : IterationStatus::Continue;
+        });
+    return result;
 }
 
 void MarkedSpace::prepareForConservativeScan()
