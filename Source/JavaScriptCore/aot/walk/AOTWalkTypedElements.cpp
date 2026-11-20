@@ -1533,7 +1533,7 @@ static Reference buildTestedRead(const AccessOfTypedElements& access, Draft&& re
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::EffectFree;
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
-    bool isInvariant = walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
+    bool isInvariant = !read.testsPassed && walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
     Reference element;
     Reference isNumber;
     {
