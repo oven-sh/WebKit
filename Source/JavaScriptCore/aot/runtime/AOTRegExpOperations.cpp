@@ -959,7 +959,8 @@ static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM&
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     StringReplaceTemplateParts parts;
-    parseReplacementTemplate(parts, replacementText, regExp, dollar);
+    if (!tryParseReplacementTemplate(parts, replacementText, regExp, dollar)) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
 
     MatchResult first = match;
     StringBuilder firstReplacement(OverflowPolicy::RecordOverflow);
