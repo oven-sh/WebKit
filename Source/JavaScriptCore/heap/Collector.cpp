@@ -308,9 +308,46 @@ CollectionScope Collector::decideCollectionScope()
     return anyHeapNeedsFullCollection ? CollectionScope::Full : CollectionScope::Eden;
 }
 
+class Collector::ConductorPresenceScope {
+    WTF_MAKE_NONCOPYABLE(ConductorPresenceScope);
+public:
+    explicit ConductorPresenceScope(Collector& collector)
+        : m_collector(collector)
+    {
+        unsigned previous = collector.m_conductorPresence.load(std::memory_order_relaxed);
+        do {
+            // Clears the bit and counts this conductor.
+            m_presence = (previous | conductorIsAwayBit) + 1;
+        } while (!collector.m_conductorPresence.compare_exchange_weak(previous, m_presence, std::memory_order_relaxed));
+    }
+
+    ~ConductorPresenceScope()
+    {
+        m_collector.conductorDidLeave(m_presence);
+    }
+
+private:
+    Collector& m_collector;
+    unsigned m_presence;
+};
+
+void Collector::conductorDidLeave(unsigned presence)
+{
+    // Nothing to do if the poll of the concurrent phase has set the bit, or if another conductor has come.
+    if (m_conductorPresence.load(std::memory_order_relaxed) != presence)
+        return;
+    Locker locker { m_markingMutex };
+    if (!m_conductorPresence.compare_exchange_strong(presence, presence | conductorIsAwayBit, std::memory_order_relaxed))
+        return;
+    // A helper that ran out of work while a conductor was here waits for that conductor.
+    if (m_numberOfWaitingParallelMarkers)
+        m_markingConditionVariable.notifyAll();
+}
+
 void Collector::collectInCollectorThread()
 {
     checkIsConductor(GCConductor::Collector);
+    ConductorPresenceScope presenceScope(*this);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Collector, nullptr);
         switch (result) {
@@ -344,6 +381,7 @@ void Collector::collectInMutatorThread(Heap& conductor)
     ASSERT(!m_conductingHeap);
     SetForScope setConductingHeap { m_conductingHeap, &conductor };
     checkIsConductor(GCConductor::Mutator);
+    ConductorPresenceScope presenceScope(*this);
     for (;;) {
         RunCurrentPhaseResult result = runCurrentPhase(GCConductor::Mutator, nullptr);
         switch (result) {
@@ -630,12 +668,6 @@ void Collector::recallHelpersSlow()
     m_helperClient.requestThreads(std::exchange(m_numberOfHelpersThatLeft, 0));
 }
 
-void Collector::setConductorIsAway(bool isAway)
-{
-    Locker locker { m_markingMutex };
-    m_conductorIsAway = isAway;
-}
-
 NEVER_INLINE bool Collector::runFixpointPhase(GCConductor conn)
 {
     assertIsConductorWithWorldStopped(conn);
@@ -728,7 +760,6 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
     switch (conn) {
     case GCConductor::Mutator: {
         if (m_conductorMarksInConcurrentPhase) [[unlikely]] {
-            setConductorIsAway(false);
             {
                 ParallelModeEnabler enabler(visitor);
                 visitor.drainInParallel(m_scheduler->timeToStop());
@@ -739,11 +770,12 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         // When the mutator has the conn, we poll runConcurrentPhase() on every time someone says
         // stopIfNecessary(), so on every allocation slow path. When that happens we poll if it's time
         // to stop and do some work.
-        // Between two of these polls the conductor is away, and a helper that runs out of work leaves the collection.
+        // Between two of these polls no conductor is here, and a helper that runs out of work leaves the collection.
+        // The poll says so with the lock that it takes for the termination check: conductorDidLeave then takes none.
         if (visitor.didReachTerminationOrConductorIsAway())
             return changePhase(conn, CollectorPhase::Reloop);
         if (m_scheduler->shouldStop()) {
-            setConductorIsAway(false);
+            m_conductorPresence.fetch_and(~conductorIsAwayBit, std::memory_order_relaxed);
             return changePhase(conn, CollectorPhase::Reloop);
         }
 
@@ -753,8 +785,6 @@ NEVER_INLINE bool Collector::runConcurrentPhase(GCConductor conn)
         return false;
     }
     case GCConductor::Collector: {
-        // This thread waits for the marking in this phase. A mutator that had the conn before can have left the flag set.
-        setConductorIsAway(false);
         unsigned worldState = heap().m_worldState.load();
         // FIXME: Heap access is only a proxy for whether the mutator's thread wants a core: a JSC API client drops
         // access with the JSLock and may then run native code. And the choice below holds until this drain returns,
@@ -796,7 +826,6 @@ NEVER_INLINE bool Collector::runEndPhase(GCConductor conn)
     {
         Locker locker { m_markingMutex };
         m_parallelMarkersShouldExit = true;
-        m_conductorIsAway = false;
         m_numberOfHelpersThatLeft = 0;
         m_markingConditionVariable.notifyAll();
     }

@@ -244,7 +244,15 @@ private:
             recallHelpersSlow();
     }
     void recallHelpersSlow();
-    void setConductorIsAway(bool);
+
+    // Whether a thread conducts the collection now, for the helpers. A conductor is here while it is in
+    // collectInCollectorThread or collectInMutatorThread. A mutator that conducts is not here between its polls of the
+    // concurrent phase, and nothing says when it polls again: it can sleep in its event loop, in Atomics.wait or in a
+    // system call. When the collector thread gives the conn to a mutator, no conductor is here until that mutator polls.
+    class ConductorPresenceScope;
+    static constexpr unsigned conductorIsAwayBit = 1;
+    bool conductorIsAway(const AbstractLocker&) const { return m_conductorPresence.load(std::memory_order_relaxed) & conductorIsAwayBit; }
+    void conductorDidLeave(unsigned presence);
     void endCollectionInEachHeap(GCConductor) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
     void stopThePeriphery(GCConductor) WTF_REQUIRES_CAPABILITY(conductorRole);
@@ -280,10 +288,12 @@ private:
     Condition m_markingConditionVariable;
     Condition m_bonusVisitorTaskConditionVariable;
     bool m_parallelMarkersShouldExit { false };
-    // The conductor is a mutator that runs its program in the concurrent phase. It comes back when it allocates or
-    // when its run loop asks, and nothing bounds that: it can sleep in its event loop, in Atomics.wait or in a system
-    // call. A helper with nothing to do does not wait for such a conductor.
-    bool m_conductorIsAway { false };
+    // Bit 0 (conductorIsAwayBit) is set while no thread conducts. It is set with m_markingMutex held, so that a helper
+    // that reads it with the lock held does not miss it. The other bits count the conductors that came, so that a
+    // conductor that leaves cannot set the bit for the one that took over from it.
+    std::atomic<unsigned> m_conductorPresence { 0 };
+    // Helpers that left the collection and that nothing has asked for again. A helper thread that comes and finds no
+    // work counts once each time, so this can count one thread more than once. Guarded by m_markingMutex.
     unsigned m_numberOfHelpersThatLeft { 0 };
     Lock m_parallelSlotVisitorLock;
     Lock m_raceMarkStackLock;

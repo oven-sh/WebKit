@@ -491,6 +491,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, minimumNumberOfScansBetweenRebalance, 100, Normal, nullptr) \
     v(Unsigned, numberOfGCMarkers, computeNumberOfGCMarkers(8), Normal, nullptr) \
+    v(Bool, gcHelpersLeaveWhenConductorIsAway, true, Normal, "A marking helper thread that has nothing to do returns to the pool of helper threads, which all heaps of the process share, while no thread conducts its collection: the conductor is a mutator that runs or sleeps. false = the helper waits in the collection until it has work or the collection ends."_s) \
     v(Bool, useParallelMarkingConstraintSolver, true, Normal, nullptr) \
     v(Unsigned, opaqueRootMergeThreshold, 1000, Normal, nullptr) \
     v(Unsigned, maxHeapSizeAsRAMSizeMultiple, 0, Normal, nullptr) \

@@ -182,10 +182,11 @@ public:
         setTask(createSharedTask<void ()>(functor));
     }
 
-    // Sets a task that stays set until finish(), also after a thread has returned from it. Every thread of the pool
-    // runs it once. After that, a thread runs it once for each request that requestThreads() makes. So a thread that
-    // has no work in the task can return from it and serve another client, and the algorithm asks for it again when
-    // it has work.
+    // Sets a task that stays set until finish(), also after a thread has returned from it. The task starts with one
+    // request for each thread of the pool, and requestThreads() adds requests. A thread of the pool that is free
+    // takes one request and runs the task once, so one thread can run the task more than once. A thread that has no
+    // work in the task can thus return from it and serve another client, and the algorithm asks for a thread again
+    // when it has work.
     WTF_EXPORT_PRIVATE void setTaskOnRequest(RefPtr<SharedTask<void ()>>&&);
 
     template<typename Functor>
@@ -194,8 +195,9 @@ public:
         setTaskOnRequest(createSharedTask<void ()>(functor));
     }
 
-    // Asks for this many more runs of the task that setTaskOnRequest() set. Unlike the rest of this class, any
-    // thread may call it, also one that runs the task. Does nothing once finish() has cleared the task.
+    // Adds this many requests for the task that setTaskOnRequest() set. The requests that no thread has taken yet
+    // are never more than the threads of the pool. Unlike the rest of this class, any thread may call this, also one
+    // that runs the task. Does nothing once finish() has cleared the task.
     WTF_EXPORT_PRIVATE void requestThreads(unsigned count);
 
     WTF_EXPORT_PRIVATE void finish();

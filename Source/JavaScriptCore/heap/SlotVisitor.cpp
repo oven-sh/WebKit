@@ -790,12 +790,19 @@ bool SlotVisitor::didReachTerminationOrConductorIsAway()
 {
     Locker locker { collector().m_markingMutex };
     bool result = didReachTermination(locker);
-    collector().m_conductorIsAway = !result;
+    if (!result)
+        collector().m_conductorPresence.fetch_or(Collector::conductorIsAwayBit, std::memory_order_relaxed);
     return result;
 }
 
 bool SlotVisitor::didReachTermination(const AbstractLocker& locker)
 {
+#if ASSERT_ENABLED
+    // Every site that shares cells or sets a bonus task asks for the helpers that left (Collector::recallHelpers).
+    assertIsHeld(collector().m_markingMutex);
+    ASSERT(!collector().m_numberOfHelpersThatLeft
+        || (collector().m_sharedCollectorMarkStack->isEmpty() && collector().m_sharedMutatorMarkStack->isEmpty() && !collector().m_bonusVisitorTask));
+#endif
     return !collector().m_numberOfActiveParallelMarkers
         && !hasWork(locker);
 }
@@ -882,12 +889,14 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                 }
 
                 // A helper with nothing to do waits for the conductor, which gives it work or ends the collection. It does
-                // not wait for a conductor that is away. It returns to the pool, which all heaps of the process share, and
-                // Collector::recallHelpers asks for it when there is work again. A helper that waited here had no other
-                // heap to mark for until the conductor came back, and an idle thread does not come back.
+                // not wait when no conductor is here (Collector::m_conductorPresence): a mutator that conducts can sleep
+                // for any time. The helper returns to the pool, which all heaps of the process share, and
+                // Collector::recallHelpers asks for it when there is work again.
                 auto canLeave = [&] () -> bool {
                     locker.assertIsHolding(collector().m_markingMutex);
-                    return collector().m_conductorIsAway && !collector().m_numberOfActiveParallelMarkers;
+                    return Options::gcHelpersLeaveWhenConductorIsAway()
+                        && collector().conductorIsAway(locker)
+                        && !collector().m_numberOfActiveParallelMarkers;
                 };
 
                 auto isReady = [&] () -> bool {
