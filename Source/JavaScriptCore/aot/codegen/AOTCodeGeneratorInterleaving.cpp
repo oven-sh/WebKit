@@ -1213,6 +1213,8 @@ void CodeGenerator::layOutSteppedStore(const SteppedStore& loop)
             require(m_out.lessThanOrEqual(firstBehind, elements.publicLength(*elementsOfList).value()));
             box = elements.rawElementToStore(form, store.valueOperand(), nullptr);
             RELEASE_ASSERT(box);
+            if (m_rows)
+                zeroRowCounts();
         }
         LValue behindStretch = m_out.add(wide(counter), m_out.mul(step, m_out.constInt64(mostIterationsWithoutPoll)));
         end = m_out.select(m_out.lessThan(behindStretch, lastStart), behindStretch, lastStart);
