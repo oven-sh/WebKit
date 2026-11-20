@@ -1548,6 +1548,13 @@ slowPathBegin:
         return TokError;
     }
 
+    if (m_builder.hasOverflowed()) [[unlikely]] {
+        m_failedToAllocate = true;
+        m_lexErrorMessage = "Out of memory"_s;
+        token.type = TokError;
+        return TokError;
+    }
+
     if (m_builder.isEmpty()) {
         setParserTokenString<CharType>(token, runStart);
         token.stringOrIdentifierLength = m_ptr - runStart;
@@ -1792,6 +1799,17 @@ NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumberErr
     ASSERT_NOT_REACHED();
     m_lexErrorMessage = "Invalid number"_s;
     return TokError;
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+JSValue LiteralParser<CharType, reviverMode>::didFailToParse()
+{
+    if (m_lexer.failedToAllocate()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        if (!scope.exception())
+            throwOutOfMemoryError(m_globalObject, scope);
+    }
+    return { };
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
