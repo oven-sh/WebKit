@@ -319,6 +319,9 @@ private:
             return;
         }
         case Opcode::NewClosure:
+            // Only literals are followed into captures, not what is read out of a field.
+            if (m_literalsOfFields)
+                user.forEachOperand([&](ValueID operand, uint32_t) { escape(operand); });
             return;
         case Opcode::PrivateDefine:
         case Opcode::PrivateSet: {
@@ -336,7 +339,8 @@ private:
         case Opcode::CallDirect: {
             auto call = user.as<Opcode::CallDirect>();
             std::span<const ValueID> operands = call.argumentsOperands();
-            escapeAll(operands.subspan(std::min<size_t>(operands.size(), m_program.at(call.function()).captures.size())));
+            const size_t numberFollowed = m_literalsOfFields ? 0 : std::min<size_t>(operands.size(), m_program.at(call.function()).captures.size());
+            escapeAll(operands.subspan(numberFollowed));
             return;
         }
         default:
