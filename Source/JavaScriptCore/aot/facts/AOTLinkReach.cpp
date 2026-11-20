@@ -1685,7 +1685,7 @@ void StateOfLinkReach::findModulesWhoseValueStaysInSight()
     for (const Module& module : m_program.modules) {
         for (const ModuleRequest& request : module.requests) {
             bool bindsFacadeVariables = request.phase == ImportPhase::Evaluation && commonJsModuleCapturedBy(m_program, m_program.at(request.target));
-            bool bindsVariablesOfLibraryFile = request.phase == ImportPhase::Evaluation && !request.isDynamicStarExport && loaderFillsVariablesOffValueOf(m_program.at(request.target)) && !importStatementListsInRequireCache(m_program, request.target);
+            bool bindsVariablesOfLibraryFile = (request.phase == ImportPhase::Evaluation || asksToLoadAtFirstUse(m_program, request)) && !request.isDynamicStarExport && loaderFillsVariablesOffValueOf(m_program.at(request.target)) && !importStatementListsInRequireCache(m_program, request.target);
             if (request.kind != ModuleRequestKind::Require && !bindsFacadeVariables && !bindsVariablesOfLibraryFile)
                 m_modulesWhoseValueStaysInSight.quickClear(request.target.index());
         }

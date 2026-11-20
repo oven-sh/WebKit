@@ -55,6 +55,7 @@ struct ModuleData {
         CachesEvaluationError = 1 << 7,
         BodyMayRunAgain = 1 << 7,
         IsDataFoundByName = 1 << 7,
+        LoadsAtFirstUse = 1 << 7,
         HasDeferredRequest = 1 << 8,
         IsImportedAsESModule = 1 << 8,
         HasValue = 1 << 9,
@@ -114,6 +115,7 @@ struct ModuleData {
     bool cachesEvaluationError() const { return kind != ModuleKind::CommonJs || has(Flag::CachesEvaluationError); }
     bool bodyOfESModuleMayRunAgain() const { return kind == ModuleKind::SourceText && has(Flag::BodyMayRunAgain); }
     bool isDataFoundByName() const { return kind == ModuleKind::Data && has(Flag::IsDataFoundByName); }
+    bool loadsAtFirstUse() const { return kind == ModuleKind::RuntimeSource && has(Flag::LoadsAtFirstUse); }
     bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
     bool isImportedAsESModule() const { return kind == ModuleKind::CommonJs && has(Flag::IsImportedAsESModule); }
     bool hasValue() const { return has(Flag::HasValue); }

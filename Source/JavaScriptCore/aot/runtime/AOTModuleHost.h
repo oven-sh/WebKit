@@ -134,6 +134,9 @@ struct ModuleHost {
     bool (*evictOriginal)(JSGlobalObject*, const String& mocked);
     bool (*requiresPatch)(JSGlobalObject*, const ScopedLambda<String()>& path, JSObject*& exports);
     bool (*isESModuleInNode)(JSGlobalObject*, const String& path);
+    // Asked once where the loader is about to leave a built-in module to its first use: whether its load shows in no way when it runs, and
+    // reads nothing that the program can write before then. Null, or no: the module runs at link.
+    bool (*willLeaveBuiltinModuleToFirstUse)(JSGlobalObject*, uint32_t registryID);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);

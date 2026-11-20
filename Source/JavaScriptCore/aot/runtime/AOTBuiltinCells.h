@@ -29,6 +29,7 @@ namespace JSC {
 class JSCell;
 class JSGlobalObject;
 class JSObject;
+class VM;
 
 namespace AOT {
 
@@ -39,6 +40,19 @@ struct ProgramTables;
 struct State;
 
 inline constexpr uint32_t limitOfNumbersOfBuiltinCells = 1 << 15;
+
+// While one lives, what loads a built-in module may use the stack that is kept from the program (BuiltinCells::stackKeptFromProgram).
+class UseOfStackKeptFromProgram {
+    WTF_MAKE_NONCOPYABLE(UseOfStackKeptFromProgram);
+public:
+    explicit UseOfStackKeptFromProgram(VM&);
+    ~UseOfStackKeptFromProgram();
+
+private:
+    VM& m_vm;
+    size_t m_softReservedZoneSize;
+    bool m_isNearEndOfStack;
+};
 
 class BuiltinCells final : public WritesToBuiltinMembers {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(BuiltinCells);

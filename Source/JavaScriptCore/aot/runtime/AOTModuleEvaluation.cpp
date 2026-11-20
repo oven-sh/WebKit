@@ -4787,6 +4787,10 @@ JSValue Modules::execute(ModuleID module, ReadsExports readsExports)
         throwStackOverflowError(realm, scope);
         return { };
     case ModuleStatus::Evaluated:
+        if (moduleData.loadsAtFirstUse()) [[unlikely]] {
+            takeOwedCapture(module);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         return value(module);
     case ModuleStatus::Failed:
         scope.release();
@@ -4798,6 +4802,12 @@ JSValue Modules::execute(ModuleID module, ReadsExports readsExports)
     }
 
     JSValue value;
+    // The load that link left to the first use, and the capture behind it, find the stack that a load at link has.
+    LoadedModule* loaded = moduleData.loadsAtFirstUse() ? loadedIfExists(module) : nullptr;
+    bool owesCapture = loaded && loaded->owesCapture;
+    std::optional<UseOfStackKeptFromProgram> stackKeptFromProgram;
+    if (owesCapture) [[unlikely]]
+        stackKeptFromProgram.emplace(vm);
     if (moduleData.kind == ModuleKind::RuntimeSource) {
         size_t availableStack = std::bit_cast<uintptr_t>(currentStackPointer()) - std::bit_cast<uintptr_t>(vm.softStackLimit());
         if (!m_isStartingRuntimeModule && (availableStack < stackNeededToStartRuntimeModule || !vm.isSafeToRecurseSoft())) [[unlikely]] {
@@ -4842,6 +4852,11 @@ JSValue Modules::execute(ModuleID module, ReadsExports readsExports)
     setStatus(module, ModuleStatus::Evaluated);
     if (std::optional<uint32_t> number = moduleData.registryID(); number && moduleData.kind == ModuleKind::RuntimeSource && value.isObject())
         m_state.builtinCells->didLoadModule(RuntimeModuleID(*number), asObject(value));
+    // A link that came while the body ran has left its capture to this place too.
+    if (moduleData.loadsAtFirstUse()) [[unlikely]] {
+        takeOwedCapture(module);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return value;
 }
 

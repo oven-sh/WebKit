@@ -773,9 +773,15 @@ bool Modules::loadRuntimeModules(const ModuleLinkWalk& walk, NativeModuleLoading
         }
         if (exportsWhatMockNamesAlone(module))
             return;
+        bool isFirstToLeaveCapture = false;
+        if (module != walk.root() && leavesCaptureToFirstUse(module, &isFirstToLeaveCapture)) {
+            didRunModule |= isFirstToLeaveCapture;
+            return;
+        }
         LoadedModule* loaded = loadedIfExists(module);
         if (status(module) != ModuleStatus::Evaluated || (loaded && loaded->cachedLoadError)) {
-            didRunModule = true;
+            // A module that owes its capture was to run where an importer linked before: to whoever counts the modules that this walk ran, it had run.
+            didRunModule |= !loaded || !loaded->owesCapture;
             executeForLoader(module);
         }
     }, [](ModuleID, bool) { });
@@ -896,7 +902,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             }
             if (data(module).capturesExportsBehindEvaluation() && (!resolvesNames || module == walk.root()))
                 captureExportsBehindEvaluation(module);
-            else {
+            else if (module == walk.root() || !leavesCaptureToFirstUse(module)) {
                 captureExports(module);
                 if (LoadedModule* loaded = loadedIfExists(module))
                     loaded->isBeingLoadedByLoader = false;
@@ -961,7 +967,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
                 return;
             runFileThatWaitsForItsTurn(module);
             RETURN_IF_EXCEPTION(scope, void());
-            if (!data(module).capturesExportsBehindEvaluation())
+            if (!data(module).capturesExportsBehindEvaluation() && (module == walk.root() || !leavesCaptureToFirstUse(module)))
                 captureExports(module);
             return;
         }
@@ -1054,6 +1060,67 @@ bool Modules::didCaptureExports(ModuleID module) const
     return loaded && (loaded->capturedExports || loaded->capturedFields);
 }
 
+// A built-in module that its imports let load at its first use has run no body when the first of them links. Its exports are taken
+// behind its body, whoever runs it first: the snapshot is the one that a load at link takes of a module that nobody has seen yet.
+// The module that a walk starts at is asked for itself, by import() or by the loader of the host: that is a use, and no caller asks of it.
+bool Modules::leavesCaptureToFirstUse(ModuleID module, bool* isFirstToLeaveIt)
+{
+    if (!data(module).loadsAtFirstUse())
+        return false;
+    ModuleStatus current = status(module);
+    if (current == ModuleStatus::Evaluated || current == ModuleStatus::Failed)
+        return false;
+    LoadedModule& loaded = ensureLoaded(module);
+    if (loaded.owesCapture)
+        return true;
+    if (loaded.capturedExports || loaded.capturedFields || loaded.cachedLoadError)
+        return false;
+    if (current != ModuleStatus::Evaluating) {
+        auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+        auto* willLeave = host().willLeaveBuiltinModuleToFirstUse;
+        bool leaves = willLeave && willLeave(m_instance.globalObject, *data(module).registryID());
+        // The caller captures nothing behind what the host threw.
+        RETURN_IF_EXCEPTION(scope, true);
+        // What the host did may have run the module.
+        if (!leaves || status(module) == ModuleStatus::Evaluated)
+            return false;
+    }
+    loaded.owesCapture = true;
+    m_modulesThatOweCapture.append(module);
+    if (isFirstToLeaveIt)
+        *isFirstToLeaveIt = true;
+    return true;
+}
+
+void Modules::takeOwedCapture(ModuleID module)
+{
+    LoadedModule* loaded = loadedIfExists(module);
+    if (!loaded || !loaded->owesCapture)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    loaded->owesCapture = false;
+    captureExports(module);
+    if (scope.exception()) [[unlikely]] {
+        loaded->owesCapture = true;
+        return;
+    }
+    m_modulesThatOweCapture.removeFirst(module);
+}
+
+bool Modules::loadModuleThatOwesVariable(SlotData variable)
+{
+    for (ModuleID module : m_modulesThatOweCapture) {
+        bool fillsVariable = std::ranges::any_of(m_table.syntheticExports(module), [&](const SyntheticExportData& entry) {
+            return entry.hasVariable && entry.variable == variable;
+        });
+        if (fillsVariable) {
+            require(module);
+            return true;
+        }
+    }
+    return false;
+}
+
 void Modules::captureExportsBehindEvaluation(ModuleID module)
 {
     if (didCaptureExports(module))
@@ -1083,6 +1150,8 @@ void Modules::captureExportsOfLibraryModules(ModuleID root)
         return status(module) == ModuleStatus::Unlinked;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
         if (leaf != ModuleLinkWalk::Leaf::CapturesExports || data(module).exportRule != SyntheticExportRule::RuntimeModule || isNativeModule(module))
+            return;
+        if (module != root && leavesCaptureToFirstUse(module))
             return;
         if (!didCaptureExports(module))
             ensureLoaded(module).isBeingLoadedByLoader = true;

@@ -1447,6 +1447,7 @@ public:
     void didMakeTemplateObject(ModuleID, uint32_t offsetOfCell);
     void forgetRunOfLibraryModule(ModuleID);
     JSValue executeForLoader(ModuleID);
+    bool loadModuleThatOwesVariable(SlotData);
     bool wouldBeEvicted(ModuleID);
     bool isLoadInFlight(ModuleID module) const { return status(fileOf(module)) == ModuleStatus::EvaluatingAsync; }
     bool wasLoadedByImport(ModuleID);
@@ -2089,6 +2090,7 @@ private:
         bool wasReachedBySecondLoad { false };
         bool isAwaitedByCallThatComesInLaterJob { false };
         bool isBeingLoadedByLoader { false };
+        bool owesCapture { false };
         bool isLinkedWithoutNotice { false };
         BitVector ambiguousExports;
         std::unique_ptr<SourceOrigin> sourceOrigin;
@@ -2176,6 +2178,8 @@ private:
     void bindLatestCapture(ModuleID);
     void forgetEarlierCapture(LoadedModule&);
     void captureExportsBehindEvaluation(ModuleID);
+    bool leavesCaptureToFirstUse(ModuleID, bool* isFirstToLeaveIt = nullptr);
+    void takeOwedCapture(ModuleID);
     void captureExportsOfLibraryModules(ModuleID root);
     void captureExportsOfFilesBeingEvaluated(ModuleID root);
     void noteThatGraphBegins(ModuleID root);
@@ -3812,6 +3816,7 @@ private:
     RefPtr<MicrotaskQueue> m_deferredJobs;
     VM::SynchronousModuleQueue* m_deferredLoaderSteps { nullptr };
     bool m_isStartingRuntimeModule { false };
+    Vector<ModuleID, 4> m_modulesThatOweCapture;
     bool m_entryPointIsLinked { false };
 };
 

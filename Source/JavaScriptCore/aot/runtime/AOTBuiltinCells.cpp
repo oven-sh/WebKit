@@ -75,29 +75,20 @@ static bool isNearEndOfStack(VM& vm)
     return std::bit_cast<uintptr_t>(currentStackPointer()) < std::bit_cast<uintptr_t>(vm.softStackLimit()) + BuiltinCells::stackKeptFromProgram;
 }
 
-class UseOfStackKeptFromProgram {
-    WTF_MAKE_NONCOPYABLE(UseOfStackKeptFromProgram);
-public:
-    explicit UseOfStackKeptFromProgram(VM& vm)
-        : m_vm(vm)
-        , m_softReservedZoneSize(vm.softReservedZoneSize())
-        , m_isNearEndOfStack(isNearEndOfStack(vm))
-    {
-        if (m_isNearEndOfStack && m_softReservedZoneSize > Options::softReservedZoneSize()) [[unlikely]]
-            m_vm.updateSoftReservedZoneSize(Options::softReservedZoneSize());
-    }
+UseOfStackKeptFromProgram::UseOfStackKeptFromProgram(VM& vm)
+    : m_vm(vm)
+    , m_softReservedZoneSize(vm.softReservedZoneSize())
+    , m_isNearEndOfStack(isNearEndOfStack(vm))
+{
+    if (m_isNearEndOfStack && m_softReservedZoneSize > Options::softReservedZoneSize()) [[unlikely]]
+        m_vm.updateSoftReservedZoneSize(Options::softReservedZoneSize());
+}
 
-    ~UseOfStackKeptFromProgram()
-    {
-        if (m_isNearEndOfStack) [[unlikely]]
-            m_vm.updateSoftReservedZoneSize(m_softReservedZoneSize);
-    }
-
-private:
-    VM& m_vm;
-    size_t m_softReservedZoneSize;
-    bool m_isNearEndOfStack;
-};
+UseOfStackKeptFromProgram::~UseOfStackKeptFromProgram()
+{
+    if (m_isNearEndOfStack) [[unlikely]]
+        m_vm.updateSoftReservedZoneSize(m_softReservedZoneSize);
+}
 
 static_assert(BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Object && BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Getter && BuiltinCellKey::Kind::Value > BuiltinCellKey::Kind::Setter);
 

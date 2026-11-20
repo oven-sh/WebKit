@@ -96,8 +96,13 @@ static DirectArguments* mappedArgumentsOf(JSCellButterfly* operands, const EvalB
 static JSValue readBinding(Instance* instance, JSCellButterfly* operands, const EvalBindingData& binding)
 {
     switch (formOf(binding)) {
-    case EvalBindingForm::ModuleVariable:
-        return ProgramStatics::readVariable(*instance, binding.slot);
+    case EvalBindingForm::ModuleVariable: {
+        JSValue value = ProgramStatics::readVariable(*instance, binding.slot);
+        // The variable of an import whose built-in module has yet to run.
+        if (!value && instance->state->modules->loadModuleThatOwesVariable(binding.slot)) [[unlikely]]
+            return ProgramStatics::readVariable(*instance, binding.slot);
+        return value;
+    }
     case EvalBindingForm::EnvironmentSlot:
         return readSlot(binding.slot.representation(), &cellOperandOf<Environment>(operands, binding)->at<uint8_t>(binding.slot.offset), *instance);
     case EvalBindingForm::MappedArgument:

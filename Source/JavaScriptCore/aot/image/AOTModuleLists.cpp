@@ -634,6 +634,7 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::CachesEvaluationError), Flag::CachesEvaluationError },
         { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::BodyMayRunAgain },
         { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
+        { module.kind == ModuleKind::RuntimeSource && inputs.plan.loadsModuleAtFirstUse(id), Flag::LoadsAtFirstUse },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
         { isBundlerHelper, Flag::IsLibraryCodeWithFilePath },
@@ -772,7 +773,7 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
         bool isRequire = request.kind == Typed::ModuleRequestKind::Require;
         if (isRequire && &request != facadeRequest && !isAnsweredByCode(inputs, numbers, id, request))
             continue;
-        lists.requests.append(ModuleRequestData::create(request.target.index(), request.phase == ImportPhase::Defer, request.isDynamicStarExport, isRequire, request.isHoisted));
+        lists.requests.append(ModuleRequestData::create(request.target.index(), Typed::defersEvaluationOfTarget(program, request), request.isDynamicStarExport, isRequire, request.isHoisted));
     }
     appendExportsToModuleLists(inputs, answers, id, numbers, lists);
     for (const Typed::SyntheticExport& syntheticExport : module.syntheticExports) {

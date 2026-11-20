@@ -1286,6 +1286,16 @@ bool loaderFillsVariablesOffValueOf(const Module& module)
     return module.kind == ModuleKind::RuntimeSource && module.body && module.exportRule == SyntheticExportRule::RuntimeModule && module.requireResult == RequireResult::DefaultExport;
 }
 
+bool asksToLoadAtFirstUse(const Program& program, const ModuleRequest& request)
+{
+    return request.kind == ModuleRequestKind::Import && request.phase == ImportPhase::Defer && !request.completes && program.at(request.target).kind == ModuleKind::RuntimeSource;
+}
+
+bool defersEvaluationOfTarget(const Program& program, const ModuleRequest& request)
+{
+    return request.phase == ImportPhase::Defer && !asksToLoadAtFirstUse(program, request);
+}
+
 BuiltinID hostRequireFunctionFor(const Module& module)
 {
     switch (module.kind) {

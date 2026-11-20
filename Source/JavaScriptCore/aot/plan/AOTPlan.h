@@ -120,6 +120,7 @@ struct PlanParts {
     BitVector modulesWithNamespaceWord;
     BitVector modulesWhoseImportsAreNeverMocked;
     BitVector modulesWhoseBodyIsPassedOver;
+    BitVector modulesLoadedAtFirstUse;
 
     LayoutID closureLayout;
     BitVector layoutsWithClassRecord;
@@ -187,6 +188,7 @@ public:
     bool hasModuleNamespaceWord(ModuleID id) const { return m_parts.modulesWithNamespaceWord.get(id.index()); }
     bool importsWhatMayBeMocked(ModuleID id) const { return !m_parts.modulesWhoseImportsAreNeverMocked.get(id.index()); }
     bool moduleBodyIsEntered(ModuleID id) const { return !m_parts.modulesWhoseBodyIsPassedOver.get(id.index()); }
+    bool loadsModuleAtFirstUse(ModuleID id) const { return m_parts.modulesLoadedAtFirstUse.get(id.index()); }
 
     bool hasClassRecord(LayoutID id) const { return m_parts.layoutsWithClassRecord.get(id.index()); }
     const BitVector& layoutsWithClassRecord() const { return m_parts.layoutsWithClassRecord; }

@@ -1329,8 +1329,13 @@ JSValue Modules::readExport(ModuleID module, unsigned index, MockMode mockOfModu
         if (moduleExport.kind() == ModuleExportKind::Field) {
             ResolvedField resolved = resolveField(module, index, instance);
             value = readField(resolved.instance, resolved.slot);
-        } else
+        } else {
             value = ProgramStatics::readVariable(m_instance, moduleExport.variable);
+            if (!value && loadModuleThatOwesVariable(moduleExport.variable)) [[unlikely]] {
+                RETURN_IF_EXCEPTION(scope, { });
+                value = ProgramStatics::readVariable(m_instance, moduleExport.variable);
+            }
+        }
         if (!value) [[unlikely]] {
             DeferGCForAWhile deferGC(vm);
             throwException(realm, scope, createTDZError(realm, StringView(identifier(moduleExport.name).string())));
@@ -5516,6 +5521,11 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     auto promiseForCaller = [&] {
         return promiseOfCaller ? promiseOfCaller : JSPromise::create(*m_instance.vm, realm->promiseStructure());
     };
+    // A built-in module that owes its capture was to run where an importer linked. To an import() of it, it has run.
+    if (LoadedModule* owing = loadedIfExists(module); owing && owing->owesCapture) [[unlikely]] {
+        require(module);
+        RETURN_IF_EXCEPTION(scope, rejectedPromiseWithPendingException(realm, scope));
+    }
     bool hadWaited = !!importWaitState;
     if (hadWaited && status(module) >= ModuleStatus::EvaluatingAsync && m_originalsEvaluatedUnderMock.get(module.index()) && !isMocked(module) && host().didRunOriginal) [[unlikely]]
         host().didRunOriginal(realm, m_table.fullPath(module), OriginalRun::RunsAmongLoads);

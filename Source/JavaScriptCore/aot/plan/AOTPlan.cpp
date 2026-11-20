@@ -596,6 +596,8 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
     parts.modulesWithRequireCacheValue.ensureSize(numberOfModules);
     parts.modulesWithNamespaceWord.ensureSize(numberOfModules);
     parts.modulesWhoseBodyIsPassedOver.ensureSize(numberOfModules);
+    parts.modulesLoadedAtFirstUse.ensureSize(numberOfModules);
+    BitVector modulesImportedAtLink(numberOfModules);
     for (uint32_t index = 0; index < numberOfModules; ++index) {
         const Module& module = program.modules[index];
         if (module.kind != ModuleKind::CommonJs)
@@ -606,6 +608,8 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
         if (!module.body || !program.at(module.body).hasBody() || bodyOfModuleOnlyReturns(program.at(module.body).body))
             parts.modulesWhoseBodyIsPassedOver.quickSet(index);
         for (const ModuleRequest& request : module.requests) {
+            if (request.kind == ModuleRequestKind::Import && request.target)
+                (asksToLoadAtFirstUse(program, request) ? parts.modulesLoadedAtFirstUse : modulesImportedAtLink).quickSet(request.target.index());
             if (request.kind != ModuleRequestKind::Require || !request.target)
                 continue;
             if (requireReadsModuleValue(program, program.at(request.target)) && requireAddsToRequireCache(program, ModuleID(index), request.target))
@@ -617,6 +621,7 @@ static void chooseModuleWordsOfPlan(const Program& program, PlanParts& parts)
             parts.modulesWithNamespaceWord.quickClear(module.requests[0].target.index());
     }
     parts.modulesWithRequireCacheValue.filter(parts.modulesWithValue);
+    parts.modulesLoadedAtFirstUse.exclude(modulesImportedAtLink);
     parts.modulesWhoseImportsAreNeverMocked = modulesWhoseImportsAreNeverMockedInPlan(program);
 }
 

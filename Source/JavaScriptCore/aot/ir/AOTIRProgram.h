@@ -399,6 +399,10 @@ bool requireReadsModuleValue(const Program&, const Module&);
 bool requireAddsToRequireCache(const Program&, ModuleID referrer, ModuleID target);
 bool importStatementListsInRequireCache(const Program&, ModuleID target);
 bool loaderFillsVariablesOffValueOf(const Module&);
+// An import with phase Defer that does not complete its target, of a module of the host with source, defers nothing for the importer:
+// the loader runs no body of the module for it, and takes the exports when the module first runs. No statement of a program is written so.
+bool asksToLoadAtFirstUse(const Program&, const ModuleRequest&);
+bool defersEvaluationOfTarget(const Program&, const ModuleRequest&);
 
 } } } // namespace JSC::AOT::Typed
 

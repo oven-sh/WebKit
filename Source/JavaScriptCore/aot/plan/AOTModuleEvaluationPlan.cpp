@@ -428,7 +428,7 @@ bool ModuleEvaluationPlanner::needsLoaderItself(uint32_t index) const
     }
     if (module.flags.containsAny({ ModuleFlags::HasTopLevelAwait, ModuleFlags::IsLoadedByLoader, ModuleFlags::MayBeMocked }))
         return true;
-    if (std::ranges::any_of(module.requests, [](const ModuleRequest& request) { return request.phase == ImportPhase::Defer; }))
+    if (std::ranges::any_of(module.requests, [&](const ModuleRequest& request) { return defersEvaluationOfTarget(program, request); }))
         return true;
     return has(index, HasCode) && !has(index, BodyCanBeCalledByCode);
 }
