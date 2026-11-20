@@ -111,6 +111,8 @@ public:
     void generateStringRangeParseInt(const ValueContext&);
     void generateFindStringRangeInMap(const ValueContext&);
     CharacterView viewOfRange(const ValueContext&);
+    CharacterView viewOfRange(const OperationContext&, ValueID string, CodeUnitRange);
+    Condition isLongRope(ValueID string);
     void holdRangeInside(const ValueContext&, Word32 start, Word32 end);
 
     void continueIf(Condition, BlockEdge otherwise);
@@ -169,6 +171,7 @@ public:
     void makeCellsHoldAtomOf(StringID);
     void makeCellsHoldAtomOf(StringID, const String& text);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
+    void branchOnTextAtEnd(const OperationContext&, ValueID string, LiteralEnd, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
     static bool canCompareInline(const String& text) { return text.length() <= maxLengthComparedInPlace; }
 

@@ -904,11 +904,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTConcatThree, JSCell*, (Instance* instance, 
     OPERATION_RETURN(scope, jsString(globalObject, firstString, secondString, thirdString));
 }
 
+static bool tryResolveRope(Instance&, JSString*);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTSubstring, JSCell*, (Instance* instance, JSCell* string, int32_t from, int32_t to))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTSubstring);
     leaveCellsForRopes(instance);
     JSString* base = cellArgument<JSString>(string, Entry::operationAOTSubstring);
+    if (JSString* piece = tryJSSubstringImpl(vm, base, from, to - from))
+        OPERATION_RETURN(scope, piece);
+    tryResolveRope(*instance, base);
     OPERATION_RETURN(scope, jsSubstring(globalObject, base, from, to - from));
 }
 
@@ -985,24 +990,28 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTStringCodeUnitAt, size_t, (Instanc
     return part->tryGetValueImpl()->at(index);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryResolveRope, size_t, (Instance* instance, JSCell* cell))
+static bool tryResolveRope(Instance& instance, JSString* string)
 {
-    JSString* string = cellArgument<JSString>(cell, Entry::operationAOTTryResolveRope);
     if (!string->isRope())
         return true;
     VM& vm = string->vm();
     DeferGCForAWhile deferGC(vm);
     auto* rope = uncheckedDowncast<JSRopeString>(string);
     bool mayGrow = rope->length() >= minLengthOfGrowingText;
-    if (mayGrow && (tryResolveLongText(*instance, rope) || tryResolveInGrowingBuffer(*instance, rope)))
+    if (mayGrow && (tryResolveLongText(instance, rope) || tryResolveInGrowingBuffer(instance, rope)))
         return true;
     if (!tryResolveShortRope(vm, rope) && !rope->tryResolveFlatLatin1Parts(vm))
         rope->resolveRope(nullptr);
     if (string->isRope())
         return false;
     if (mayGrow)
-        noteResolvedText(*instance, string);
+        noteResolvedText(instance, string);
     return true;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTryResolveRope, size_t, (Instance* instance, JSCell* cell))
+{
+    return tryResolveRope(*instance, cellArgument<JSString>(cell, Entry::operationAOTTryResolveRope));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTFlatten, void*, (Instance* instance, JSCell* string))
@@ -1076,6 +1085,12 @@ static void resolveComparedRope(JSString* string)
 static bool standsAt(JSGlobalObject* globalObject, JSString* base, JSString* argument, unsigned position)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (argument->length() == 1 && base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        auto sought = argument->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (auto character = base->tryGetCharAt(globalObject, position))
+            return *character == sought[0];
+    }
     auto characters = base->view(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
     if (isAskedAboutForTheFirstTime(argument)) {
@@ -1226,10 +1241,15 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
         OPERATION_RETURN(scope, JSValue::encode(jsBoolean(false)));
     auto otherCharacters = argument->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    unsigned position = 0;
+    if (argument->length() == 1 && base->isRope() && base->length() >= JSString::minLengthForRopeWalk) {
+        if (auto found = base->tryFindOneChar(globalObject, otherCharacters[0], position))
+            OPERATION_RETURN(scope, JSValue::encode(jsBoolean(*found != notFound)));
+    }
     resolveRopeForReading(vm, base);
     auto characters = base->view(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(findText(vm, characters, otherCharacters, 0) != notFound)));
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(findText(vm, characters, otherCharacters, position) != notFound)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTStringIncludes, EncodedJSValue, (Instance* instance, JSCell* string, JSCell* other))
