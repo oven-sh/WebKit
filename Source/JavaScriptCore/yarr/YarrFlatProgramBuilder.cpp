@@ -411,8 +411,9 @@ private:
                 return { 0, 0, true, true };
             case Kind::Jump:
             case Kind::LoopBack:
-            case Kind::LoopBackUnlessEmpty:
                 return { 0, 0, false, true };
+            case Kind::LoopBackUnlessEmpty:
+                return { 0, 0, !!op.argument, true };
             case Kind::Match:
             case Kind::RecordFailure:
             case Kind::NegativeLookaheadEnd:
@@ -505,7 +506,11 @@ private:
             break;
         case Kind::Jump:
         case Kind::LoopBack:
+            functor(op.target);
+            break;
         case Kind::LoopBackUnlessEmpty:
+            if (op.argument)
+                functor(i + 1);
             functor(op.target);
             break;
         default:
@@ -1874,6 +1879,8 @@ private:
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
+        // As Interpreter::matchTurnsWithoutChoices(): the turn behind one that takes no input ends as that ended, and so does every turn that is left.
+        bool endsAtEmptyTurn = canBeEmpty && makesNoChoice && needsCounter;
 
         std::optional<unsigned> jumpToBody;
         std::optional<unsigned> jumpToMandatory;
@@ -1932,7 +1939,9 @@ private:
                 setTarget(*jumpToMandatory);
                 if (countsTurns)
                     emit(Kind::CountTurn);
-                if (canBeEmpty)
+                if (endsAtEmptyTurn)
+                    emitWithRegister(Kind::LoggedSavePosition, start);
+                else if (canBeEmpty)
                     emitWithRegister(Kind::LoggedSetRegister, start, offsetNoMatch);
                 if (skip)
                     setTarget(*skip);
@@ -1954,7 +1963,7 @@ private:
         if (keepsNoFrames)
             removeLogging(m_program->ops.mutableSpan().subspan(loopBegin));
         if (canBeEmpty)
-            emitWithRegister(Kind::LoopBackUnlessEmpty, start, 0, head);
+            emitWithRegister(Kind::LoopBackUnlessEmpty, start, endsAtEmptyTurn, head);
         else
             emit(keepsNoFrames ? Kind::Jump : Kind::LoopBack, 0, head);
         if (canBeEmpty)
@@ -2499,7 +2508,7 @@ private:
         bool isFixed = term.quantityType == QuantifierType::FixedCount;
         if (isFixed && max == 1)
             return emitReference();
-        return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt }, emitReference);
+        return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt, false, isFixed }, emitReference);
     }
 
     bool emitAtomReadBackward(const PatternTerm& term)
