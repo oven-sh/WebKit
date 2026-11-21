@@ -6893,7 +6893,7 @@ public:
 
     static void replaceWithHlt(void* instructionStart)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t op = OP_HLT;
         performJITMemcpy<jitMemcpyRepatch>(instructionStart, &op, 1);
 #else
@@ -6906,7 +6906,7 @@ public:
         uint8_t* ptr = std::bit_cast<uint8_t*>(instructionStart);
         uint8_t* dstPtr = std::bit_cast<uint8_t*>(to);
         intptr_t distance = (intptr_t)(dstPtr - (ptr + 5));
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[5];
         buffer[0] = static_cast<uint8_t>(OP_JMP_rel32);
         WTF::unalignedStore<int32_t>(buffer + 1, static_cast<int32_t>(distance));
@@ -6944,7 +6944,7 @@ public:
             uint8_t asBytes[8];
         } u;
         u.asWord = imm;
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[instructionSize];
         buffer[0] = PRE_REX | (1 << 3) | (dst >> 3);
         buffer[1] = OP_MOV_EAXIv | (dst & 7);
@@ -6974,7 +6974,7 @@ public:
             uint8_t asBytes[4];
         } u;
         u.asWord = imm;
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[instructionSize];
         buffer[0] = PRE_REX | (1 << 3) | (dst >> 3);
         buffer[1] = OP_MOV_EAXIv | (dst & 7);
@@ -6999,7 +6999,7 @@ public:
             uint8_t asBytes[4];
         } u;
         u.asWord = imm;
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[maxJumpReplacementSize()];
         buffer[0] = OP_GROUP1_EvIz;
         buffer[1] = (X86InstructionFormatter::ModRmRegister << 6) | (GROUP1_OP_CMP << 3) | dst;
@@ -7025,7 +7025,7 @@ public:
             uint8_t asBytes[4];
         } u;
         u.asWord = imm;
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[maxJumpReplacementSize()];
         buffer[0] = OP_GROUP1_EvIz;
         buffer[1] = (X86InstructionFormatter::ModRmMemoryNoDisp << 6) | (GROUP1_OP_CMP << 3) | dst;
@@ -7102,7 +7102,7 @@ public:
                 *bufferWriter++ = nops[nopRest-1][i];
 
             ASSERT(nopSize == bufferWriter - buffer);
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
             machineCodeCopy<jitMemcpyRepatch>(where, buffer, nopSize);
 #else
             machineCodeCopy<memcpyRepatch>(where, buffer, nopSize);
@@ -7129,7 +7129,7 @@ private:
 
     static void setPointer(void* where, void* value)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         performJITMemcpy<jitMemcpyRepatch>(std::bit_cast<void**>(where) - 1, &value, sizeof(void*));
 #else
         WTF::unalignedStore<void*>(std::bit_cast<void**>(where) - 1, value);
@@ -7138,7 +7138,7 @@ private:
 
     static void setInt32(void* where, int32_t value)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         performJITMemcpy<jitMemcpyRepatch>(std::bit_cast<int32_t*>(where) - 1, &value, sizeof(int32_t));
 #else
         WTF::unalignedStore<int32_t>(std::bit_cast<int32_t*>(where) - 1, value);
@@ -7147,7 +7147,7 @@ private:
     
     static void setInt8(void* where, int8_t value)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         performJITMemcpy<jitMemcpyRepatch>(std::bit_cast<int8_t*>(where) - 1, &value, sizeof(int8_t));
 #else
         WTF::unalignedStore<int8_t>(std::bit_cast<int8_t*>(where) - 1, value);

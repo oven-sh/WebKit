@@ -22,6 +22,7 @@
 #include "config.h"
 #include "JSLock.h"
 
+#include "FastJITPermissions.h"
 #include "HeapInlines.h"
 #include "JSGlobalObject.h"
 #include "MachineStackMarker.h"
@@ -127,6 +128,13 @@ void JSLock::didAcquireLock()
     ASSERT(m_entryAtomStringTable);
 
     m_vm->setLastStackTop(thread);
+
+#if ENABLE(JIT_PROTECTION_KEY)
+    // A thread inherits its rights from the one that created it, so one older than the key, or begun by such a one, cannot
+    // even read the JIT region. Before acquireAccess(), which may finish a collection on this thread.
+    if (g_jscConfig.useFastJITPermissions)
+        threadSelfRestrict<MemoryRestriction::kRwxToRx>();
+#endif
 
     if (m_vm->heap.hasAccess())
         m_shouldReleaseHeapAccess = false;
