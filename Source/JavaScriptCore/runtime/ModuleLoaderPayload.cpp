@@ -33,16 +33,23 @@ namespace JSC {
 
 const ClassInfo ModuleLoaderPayload::s_info = { "ModuleLoaderPayload"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleLoaderPayload) };
 
-ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
+#if USE(BUN_JSC_ADDITIONS)
+// m_asyncContext is in what was padding of the cell: a payload takes the memory that it took without it.
+static_assert(sizeof(ModuleLoaderPayload) <= 48);
+#endif
+
+ModuleLoaderPayload::ModuleLoaderPayload(VM& vm, Structure* structure, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder, JSValue asyncContext)
     : Base(vm, structure)
     , m_promise(promise, WriteBarrierEarlyInit)
 #if USE(BUN_JSC_ADDITIONS)
+    , m_asyncContext(asyncContext, WriteBarrierEarlyInit)
     , m_referrerAsyncOrder(referrerAsyncOrder)
 #endif
     , m_deferred(deferred)
 {
 #if !USE(BUN_JSC_ADDITIONS)
     UNUSED_PARAM(referrerAsyncOrder);
+    UNUSED_PARAM(asyncContext);
 #endif
 }
 
@@ -60,13 +67,16 @@ void ModuleLoaderPayload::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_promise);
     visitor.append(thisObject->m_fulfillment);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoaderPayload);
 
-ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder)
+ModuleLoaderPayload* ModuleLoaderPayload::create(VM& vm, JSPromise* promise, bool deferred, int64_t referrerAsyncOrder, JSValue asyncContext)
 {
-    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred, referrerAsyncOrder);
+    ModuleLoaderPayload* instance = new (NotNull, allocateCell<ModuleLoaderPayload>(vm)) ModuleLoaderPayload(vm, vm.moduleLoaderPayloadStructure.get(), promise, deferred, referrerAsyncOrder, asyncContext);
     instance->finishCreation(vm);
     return instance;
 }

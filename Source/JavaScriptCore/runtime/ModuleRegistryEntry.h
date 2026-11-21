@@ -74,7 +74,29 @@ public:
     ScriptFetchParameters::Type moduleType() const;
     AbstractModuleRecord* record() const;
     JSPromise* ensureFetchPromise(JSGlobalObject*);
-    JSPromise* ensureModulePromise(JSGlobalObject*);
+    // asyncContext: of the load that asks. The first load that asks while the entry is neither fetched nor failed says
+    // under which async context the record is made. ModuleRegistryFetchSettled makes the record, which runs the body of a
+    // CommonJS module, under that context where it is a store (ModuleLoaderAsyncContextScope: not in the drain of a
+    // synchronous load). Undefined is an answer: none. Empty is no answer. That is a caller that is no load and only
+    // wants the promise, and a synchronous load: it makes the record inside its drain, and where it fails, the load that
+    // still waits says it. One load answers, and no later one: where another load of the key fails first and marks the
+    // entry, the record of the load that still fetches is made under none.
+    // An entry of a loader that has an async context of its own (JSModuleLoader::asyncContext()) keeps none: the host
+    // runs the body of its modules in the loader's.
+    JSPromise* ensureModulePromise(JSGlobalObject*, JSValue asyncContext = { });
+#if USE(BUN_JSC_ADDITIONS)
+    // For the job that makes the record. The entry does not keep the context behind its record: setStatus() drops it
+    // where the entry is settled, by that job or without it (the AOT run time makes the record of a file that it ran
+    // itself).
+    JSValue takeAsyncContext()
+    {
+        JSValue asyncContext = m_asyncContext.get();
+        m_asyncContext.clear();
+        return asyncContext;
+    }
+    // For that job where it runs again before the record is made.
+    void giveBackAsyncContext(VM&, JSValue asyncContext);
+#endif
     JSPromise* loadPromise() const;
     JSValue error(JSGlobalObject*) const;
     JSValue fetchError() const;
@@ -88,7 +110,7 @@ public:
     void setStatus(Status);
 
     void provideFetch(JSGlobalObject*, SourceCode&&);
-    void provideFetch(JSGlobalObject*, JSValue);
+    void provideFetch(JSGlobalObject*, JSValue, JSValue asyncContext = { });
     void fetchComplete(JSGlobalObject*, AbstractModuleRecord*);
 #if USE(BUN_JSC_ADDITIONS)
     // For an embedder that already built the module record: leaves the entry Fetched without allocating the
@@ -123,6 +145,9 @@ private:
     // The fetch / instantiation / evaluation errors are mutually exclusive: m_status
     // disambiguates which kind m_error holds (FetchFailed / InstantiationFailed / EvaluationFailed).
     WriteBarrier<Unknown> m_error;
+#if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
+#endif
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isLoaded { false };
