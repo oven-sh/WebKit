@@ -73,7 +73,9 @@ ModuleLoadingContext::ModuleLoadingContext(VM& vm, Structure* structure, JSModul
 #endif
     , m_flags(flags)
 {
-#if !USE(BUN_JSC_ADDITIONS)
+#if USE(BUN_JSC_ADDITIONS)
+    static_assert(OBJECT_OFFSETOF(ModuleLoadingContext, m_moduleRequest) == sizeof(JSCell) + sizeof(void*), "m_registryEpoch fits in the padding after m_step");
+#else
     UNUSED_PARAM(referrerAsyncOrder);
 #endif
 }
