@@ -4,6 +4,7 @@ const ownProperties = ["ObjectFields", "NamedProperties", "Elements", "ArrayStor
 const inheritedProperties = [...ownProperties, "PrototypeLinks"];
 const prototypeLink = ["ShapeWords", "NamedProperties", "PrototypeLinks"];
 const memberGuards = ["MemberGuards"];
+const closuresMadeAtFirstRead = ["ObjectFields"];
 const prototypeChange = [...prototypeLink, ...memberGuards, "ArrayStorage"];
 
 const operandCodeEffects = { capability: "js", runsOnlyOperandCode: true } as const;
@@ -116,6 +117,7 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
+        writes: closuresMadeAtFirstRead,
         implementation: b.inline("ObjectGetOwnPropertyDescriptor", { otherwise: b.hostCall }),
       },
       getPrototypeOf: {
@@ -132,6 +134,7 @@ export default b.declarations(
         returns: b.bool,
         uses: { target: [b.testedByKey(b.keyFrom("propertyKey")), ...b.ownPropertyTraps, b.runs("PrototypeChain")] },
         reads: inheritedProperties,
+        writes: closuresMadeAtFirstRead,
         implementation: b.compiled("ReflectObject", "has"),
       },
       isExtensible: {
