@@ -126,6 +126,10 @@ using LocaleSet = IntlAvailableLocales;
 // found no set in their IntlAvailableLocales.
 unsigned intlLocaleIDsPutIntoSetsForTesting();
 unsigned intlLookupsThatFoundNoSetForTesting();
+// For tests. How many locale IDs of its lists ICU has converted for a set, and the IDs of ICU's lists whose language
+// tag is made without ICU and is not the tag that ICU makes.
+unsigned intlLocaleIDsOfListsConvertedByICUForTesting();
+Vector<String> intlAvailableLocaleIDsWithAnotherTagForTesting();
 #else
 using LocaleSet = LocaleTagSet;
 #endif

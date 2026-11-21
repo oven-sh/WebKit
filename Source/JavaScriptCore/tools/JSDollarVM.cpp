@@ -2329,6 +2329,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionIntlLocaleIDsPutIntoSets);
 static JSC_DECLARE_HOST_FUNCTION(functionIntlLookupsThatFoundNoSet);
+static JSC_DECLARE_HOST_FUNCTION(functionIntlLocaleIDsOfListsConvertedByICU);
+static JSC_DECLARE_HOST_FUNCTION(functionIntlAvailableLocaleIDsWithAnotherTag);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
@@ -4962,6 +4964,31 @@ JSC_DEFINE_HOST_FUNCTION(functionIntlLookupsThatFoundNoSet, (JSGlobalObject*, Ca
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(intlLookupsThatFoundNoSetForTesting()));
 }
+
+// Usage: $vm.intlLocaleIDsOfListsConvertedByICU()
+// How many locale IDs of its lists ICU has converted to a language tag for a set of available locales.
+JSC_DEFINE_HOST_FUNCTION(functionIntlLocaleIDsOfListsConvertedByICU, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(intlLocaleIDsOfListsConvertedByICUForTesting()));
+}
+
+// Usage: $vm.intlAvailableLocaleIDsWithAnotherTag()
+// The locale IDs of ICU's lists of available locales whose language tag JavaScriptCore makes without ICU, and for
+// which uloc_toLanguageTag() gives another tag. There must be none.
+JSC_DEFINE_HOST_FUNCTION(functionIntlAvailableLocaleIDsWithAnotherTag, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* array = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& localeID : intlAvailableLocaleIDsWithAnotherTagForTesting()) {
+        array->push(globalObject, jsString(vm, localeID));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(array);
+}
 #endif
 
 // Usage: $vm.setHostTimeZone("Asia/Tokyo")
@@ -6418,6 +6445,8 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "intlLocaleIDsPutIntoSets"_s, functionIntlLocaleIDsPutIntoSets, 0);
     addFunction(vm, alwaysAllow, "intlLookupsThatFoundNoSet"_s, functionIntlLookupsThatFoundNoSet, 0);
+    addFunction(vm, alwaysAllow, "intlLocaleIDsOfListsConvertedByICU"_s, functionIntlLocaleIDsOfListsConvertedByICU, 0);
+    addFunction(vm, alwaysAllow, "intlAvailableLocaleIDsWithAnotherTag"_s, functionIntlAvailableLocaleIDsWithAnotherTag, 0);
 #endif
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
     addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);

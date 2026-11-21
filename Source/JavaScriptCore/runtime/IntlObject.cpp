@@ -430,6 +430,73 @@ String languageTagForLocaleID(const char* localeID, bool isImmortal)
     return createResult(canonicalizeUnicodeExtensionsAfterICULocaleCanonicalization(WTF::move(buffer)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// For tests. It is written only while a set is made.
+static std::atomic<unsigned> localeIDsOfListsConvertedByICU;
+
+unsigned intlLocaleIDsOfListsConvertedByICUForTesting()
+{
+    return localeIDsOfListsConvertedByICU.load(std::memory_order_relaxed);
+}
+
+// The language tag of a locale ID that is a language, a script and a region and no more ("en", "es_419",
+// "zh_Hant_TW"): the ID with "-" for "_". A null string for any other ID ("en_US_POSIX").
+static String languageTagOfLanguageScriptRegion(const char* localeID)
+{
+    const char* end = localeID;
+    while (isASCIILower(*end))
+        ++end;
+    if (end - localeID < 2 || end - localeID > 3)
+        return { };
+    if (end[0] == '_' && isASCIIUpper(end[1]) && isASCIILower(end[2]) && isASCIILower(end[3]) && isASCIILower(end[4]) && (!end[5] || end[5] == '_'))
+        end += 5;
+    if (end[0] == '_' && isASCIIUpper(end[1]) && isASCIIUpper(end[2]) && !end[3])
+        end += 3;
+    else if (end[0] == '_' && isASCIIDigit(end[1]) && isASCIIDigit(end[2]) && isASCIIDigit(end[3]) && !end[4])
+        end += 4;
+    if (*end)
+        return { };
+    Vector<Latin1Character, 16> languageTag(byteCast<Latin1Character>(unsafeMakeSpan(localeID, end - localeID)));
+    std::ranges::replace(languageTag, static_cast<Latin1Character>('_'), static_cast<Latin1Character>('-'));
+    return String { languageTag.span() };
+}
+#endif
+
+// The language tag of a locale ID of one of ICU's lists of available locales.
+static String languageTagForAvailableLocale(const char* localeID)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    // ICU converts a language, a script and a region to the same subtags with "-" between them, unless one of them is
+    // deprecated, and its lists have no ID with a deprecated subtag: such an ID is an alias of another locale.
+    // stress/bun-intl-available-locale-ids-are-spelled-as-their-tags.js holds ICU to that.
+    if (String languageTag = languageTagOfLanguageScriptRegion(localeID); !languageTag.isNull()) {
+        ASSERT(languageTag == languageTagForLocaleID(localeID));
+        return languageTag;
+    }
+    localeIDsOfListsConvertedByICU.fetch_add(1, std::memory_order_relaxed);
+#endif
+    return languageTagForLocaleID(localeID);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+Vector<String> intlAvailableLocaleIDsWithAnotherTagForTesting()
+{
+    Vector<String> localeIDs;
+    auto check = [&](int32_t count, const char* (*localeIDAt)(int32_t)) {
+        for (int32_t i = 0; i < count; ++i) {
+            const char* localeID = localeIDAt(i);
+            String languageTag = languageTagOfLanguageScriptRegion(localeID);
+            if (!languageTag.isNull() && languageTag != languageTagForLocaleID(localeID))
+                localeIDs.append(String::fromLatin1(localeID));
+        }
+    };
+    check(uloc_countAvailable(), uloc_getAvailable);
+    check(ucol_countAvailable(), ucol_getAvailable);
+    check(ubrk_countAvailable(), ubrk_getAvailable);
+    return localeIDs;
+}
+#endif
+
 // Ensure we have xx-ZZ whenever we have xx-Yyyy-ZZ.
 static void addScriptlessLocaleIfNeeded(LocaleTagSet& availableLocales, StringView locale)
 {
@@ -484,10 +551,9 @@ const LocaleSet& intlAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = uloc_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(uloc_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(uloc_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             // addScriptlessLocaleIfNeeded() may have added it already. A static StringImpl is never freed, so do not create one that the set would not keep.
@@ -636,10 +702,9 @@ const LocaleSet& intlCollatorAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = ucol_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(ucol_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(ucol_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             if (!availableLocales->contains(locale))
@@ -670,10 +735,9 @@ const LocaleSet& intlSegmenterAvailableLocales()
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
-        constexpr bool isImmortal = false;
         int32_t count = ubrk_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForLocaleID(ubrk_getAvailable(i), isImmortal);
+            String locale = languageTagForAvailableLocale(ubrk_getAvailable(i));
             if (locale.isEmpty())
                 continue;
             if (!availableLocales->contains(locale))
