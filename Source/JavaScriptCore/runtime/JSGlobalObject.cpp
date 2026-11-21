@@ -4239,8 +4239,15 @@ std::optional<unsigned> JSGlobalObject::stackTraceLimit() const
         return std::nullopt;
 
     double limit = value.asNumber();
+#if USE(BUN_JSC_ADDITIONS)
+    // V8: a limit that is a number but NaN is a limit of 0 (Isolate::GetStackTraceLimit), so the error still
+    // gets a `stack` of its header. Only a limit that is not a number leaves `stack` unset.
+    if (std::isnan(limit))
+        return 0;
+#else
     if (std::isnan(limit))
         return std::nullopt;
+#endif
     return clampToUnsigned(limit);
 }
 
