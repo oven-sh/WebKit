@@ -51,6 +51,13 @@ private:
 
     bool answersWithString() const { return m_method == CharacterReadInWalkStrings::CharAt || m_method == CharacterReadInWalkStrings::At || m_method == CharacterReadInWalkStrings::Element; }
     bool isReadForBits() const { return m_method == CharacterReadInWalkStrings::CharCodeAt && findTruncatedUse(m_walker, m_value.id()) == TruncatedUse::OperandOfBits; }
+    bool readsTextAsWritten() const
+    {
+        if (m_value.opcode() != Opcode::Call)
+            return true;
+        Reference written = m_value.thisValueOperand() ? m_walker.referenceOf(m_value.thisValueOperand()) : Reference();
+        return written && rootForStrings(m_walker, written) == rootForStrings(m_walker, m_string);
+    }
     bool leavesCodeUnit() const { return answersWithString() || m_method == CharacterReadInWalkStrings::CharCodeAt; }
 
     bool mayRestartIteration() const { return m_walker.canRestartIteration() && m_walker.opensGuesses(); }
@@ -71,7 +78,15 @@ private:
         Reference flat = flatStringInSight(m_walker, m_stringRead);
         if (flat && m_walker.isInvariantInSpecializedVersion(flat))
             return true;
-        return m_walker.tryHoistEntryTest() || !flat;
+        if (!m_walker.tryHoistEntryTest())
+            return !flat;
+        if (!flat || m_walker.code().at(flat.id()).opcode != Opcode::FlattenString)
+            return true;
+        // A rope is left alone, and the empty string stands for it, unless all of these hold.
+        Vector<ValueID, 2> conditions(m_walker.code().at(flat.id()).isReadOperands());
+        return std::ranges::all_of(conditions, [&](ValueID condition) {
+            return m_walker.tryBranchInPreheader(Reference::value(condition), true);
+        });
     }
 
     Reference valueOutside()
@@ -420,8 +435,9 @@ bool BuilderOfCharacterRead::build(Reference position)
     }
 
     bool isInside = type.integers.minimum >= 0 && (isBelowLength || nameProvesPositionBelowLengthForStrings(m_walker, position, m_string));
-    isInside = isInside || (m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
-    m_isInsideByItsCounter = !isInside && m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0
+    bool mayAskBody = !isInside && m_method != CharacterReadInWalkStrings::At && type.integers.minimum >= 0 && readsTextAsWritten();
+    isInside = isInside || (mayAskBody && testOfBodyHoldsPositionOfCharacterReadBelowLength(m_walker, m_value));
+    m_isInsideByItsCounter = !isInside && mayAskBody
         && (readsCharacterUnderLoweredCounter(m_walker, m_value) || (m_walker.isInLoop() && readsCharacterBeforeTestedNumber(m_walker, m_value)));
     isInside = isInside || m_isInsideByItsCounter;
     if (isInside && !m_walker.checksBounds())

@@ -42,6 +42,8 @@ static constexpr unsigned maxSpansSweptForDeterminism = 8192;
 static constexpr unsigned maxFixedPrefixCompared = 32;
 // Bounds the recursion from a backreference back to its lookahead. Deeper nesting: the backreference compares.
 static constexpr unsigned maxGroupsCrossedToRepeatedLookahead = 8;
+// Bounds the assertions passed in one group on that way. More: the backreference compares.
+static constexpr unsigned maxTermsPassedToRepeatedLookahead = 64;
 
 enum class AlternativeDeterminism : uint8_t {
     // After a failed continuation a later alternative may have to be tried.

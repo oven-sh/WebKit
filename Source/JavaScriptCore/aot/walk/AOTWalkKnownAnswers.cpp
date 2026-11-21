@@ -913,7 +913,7 @@ static bool collectKeyOfOperationInKnownAnswers(const Code& code, const Draft& d
         words.append(draft.key().bits());
         break;
     case Opcode::GetKeyedPropertyAddress:
-        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes() + 4 * draft.takesFunctions());
+        words.append(draft.findsOnlyFields() + 2 * draft.fitsFieldTypes() + 4 * draft.takesFunctions() + 8 * draft.findsPlaceInGlobalObject());
         break;
     case Opcode::CallInline:
         words.append(static_cast<uint32_t>(draft.inlineBuiltin()));

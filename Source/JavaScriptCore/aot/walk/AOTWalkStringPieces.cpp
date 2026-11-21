@@ -747,7 +747,7 @@ bool buildLookupOfPieceInMap(Walker& walker, const CallByOneRow& call)
 
     Draft find(Opcode::FindStringRangeInMap, call.origin);
     find.setMapOperand(call.receiver);
-    Reference flat = flatStringForReaderOfCharacters(walker, piece->string, call.origin);
+    Reference flat = flatStringForReaderOfCharacters(walker, piece->string, call.origin, false, true);
     find.setStringOperand(flat ? flat : piece->string);
     find.setStartOperand(piece->start);
     find.setEndOperand(piece->end);

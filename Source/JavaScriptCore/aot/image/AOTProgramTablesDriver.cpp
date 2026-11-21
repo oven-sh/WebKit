@@ -106,6 +106,8 @@ static ProgramTables makeHeaderOfProgramTables(const TableInputs& inputs, const 
         header.flags |= ProgramTables::mayRunInMultipleInstances;
     if (!inputs.facts.mayReadLegacyRegExpStatics())
         header.flags |= ProgramTables::neverReadsLegacyRegExpStatics;
+    if (!inputs.facts.mayRecompileRegExps())
+        header.flags |= ProgramTables::neverRecompilesRegExps;
     header.instanceSizes = numbers.instanceSizes();
     header.numberOfShapes = shapes.numberOfShapes();
     header.firstEnvironmentShape = shapes.firstEnvironmentShape();

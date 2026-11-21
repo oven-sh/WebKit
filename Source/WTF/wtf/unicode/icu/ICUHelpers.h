@@ -107,7 +107,10 @@ template<typename FunctionType, typename ...ArgumentTypes> UErrorCode callBuffer
         buffer.shrink(resultLength);
     else if (needsToGrowToProduceBuffer(status)) {
         status = U_ZERO_ERROR;
-        buffer.grow(resultLength);
+        if (!buffer.tryGrow(resultLength)) [[unlikely]] {
+            buffer.shrink(0);
+            return U_MEMORY_ALLOCATION_ERROR;
+        }
         std::apply(function, CallBufferProducingFunction::argumentTuple(std::forward<ArgumentTypes>(arguments)..., &status));
         ASSERT(U_SUCCESS(status));
     }

@@ -676,7 +676,7 @@ auto MatcherCompiler::compile() -> Outcome
             misses.jumps.append(m_jit.branch64(MacroAssembler::Equal, begin, endGPR));
         else if (minimumLength)
             misses.jumps.append(branchOnAddress(MacroAssembler::Above, state, minimumLength, endGPR));
-        if (m_plan.maximumLengthToEnd) {
+        if (m_plan.maximumLengthToEnd && *m_plan.maximumLengthToEnd < maxLengthSearchedByMatcher) {
             m_jit.add64(TrustedImm32(-static_cast<int32_t>(*m_plan.maximumLengthToEnd)), endGPR, characterGPR);
             m_jit.moveConditionally64(MacroAssembler::Above, characterGPR, begin, characterGPR, begin);
         }

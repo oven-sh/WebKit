@@ -1195,7 +1195,7 @@ static bool appendRowStringsForLinkAccesses(const Program& program, const BodyIn
     if (made.opcode() != Opcode::NewArray || !made.as<Opcode::NewArray>().holes().empty())
         return false;
     for (ValueID row : made.variadicOperands()) {
-        if (!row || index.isParameter(row) || !index.hasOneUse(row))
+        if (!row || index.isParameter(row) || !index.hasOneUse(row) || index.loopOf(index.blockOf(row)) != index.loopOf(index.blockOf(list)))
             return false;
         BodyValue rowMade = index.value(row);
         if (rowMade.opcode() == Opcode::Data) {
@@ -1310,7 +1310,15 @@ bool LinkFlow::appendCallbackKeys(FunctionID callback, const BodyIndex& index, V
         return !position && made->blockOf(list) == entryBlock && appendArrayParameterStrings(maker, *made, list, keys);
     if (!position && (made->useCount(list) > 2 || variableReadAtForLinkAccesses(*made, list)))
         return appendReadListTexts(maker, *made, list, keys);
-    return position ? appendRowStringsForLinkAccesses(program, *made, list, *position, length, keys) : appendTextsOfWrittenListForLinkAccesses(program, *made, list, keys);
+    if (!position)
+        return appendTextsOfWrittenListForLinkAccesses(program, *made, list, keys);
+    // A call of a method of the list hands each row over once. A function that is passed the list, or a loop that the list is made outside of, may come back to a row that the callback has changed.
+    ValueID closure;
+    ValueID site = findCallWithCallback(callback, maker, *made, closure);
+    ValueID receiver = made->value(site).as<Opcode::Call>().thisValueOperand();
+    if (!receiver || made->stripCasts(receiver) != made->stripCasts(list) || made->hasIrreducibleFlow() || made->loopOf(made->blockOf(site)) != made->loopOf(made->blockOf(list)))
+        return false;
+    return appendRowStringsForLinkAccesses(program, *made, list, *position, length, keys);
 }
 
 static FunctionID findCalledFunctionForLinkAccesses(const Program& program, const BodyIndex& index, ValueID callee)
@@ -1370,30 +1378,36 @@ ValueID LinkFlow::findCallbackList(FunctionID callback, FunctionID& maker) const
     return list;
 }
 
+ValueID LinkFlow::findCallWithCallback(FunctionID callback, FunctionID maker, const BodyIndex& made, ValueID& closure) const
+{
+    for (auto& [function, value] : std::ranges::equal_range(closuresInBody(maker), callback, { }, &std::pair<FunctionID, ValueID>::first)) {
+        if (made.opcodeOf(value) != Opcode::NewClosure)
+            continue;
+        if (closure)
+            return { };
+        closure = value;
+    }
+    std::optional<BodyUser> user = closure ? made.onlyUser(closure) : std::nullopt;
+    while (user && user->kind == BodyUseKind::Operand && opcodesThatStateTypes.contains(made.opcodeOf(user->value))) {
+        closure = user->value;
+        user = made.onlyUser(closure);
+    }
+    return user && user->kind == BodyUseKind::Operand && made.opcodeOf(user->value) == Opcode::Call ? user->value : ValueID();
+}
+
 ValueID LinkFlow::findCallbackListSlow(FunctionID callback, FunctionID& maker) const
 {
     maker = findOnlyReferrer(callback);
     const BodyIndex* made = maker && maker != callback ? bodiesLookedAt(looks).find(maker) : nullptr;
     if (!made)
         return { };
-    ValueID closure;
-    for (auto& [function, value] : std::ranges::equal_range(closuresInBody(maker), callback, { }, &std::pair<FunctionID, ValueID>::first)) {
-        if (made->opcodeOf(value) != Opcode::NewClosure)
-            continue;
-        if (closure)
-            return { };
-        closure = value;
-    }
     if (std::ranges::any_of(summaries.at(maker).calls, [&](const SummaryCall& call) { return call.callee == SummaryCall::Callee::Binding && call.function == callback; }))
         return { };
-    std::optional<BodyUser> user = closure ? made->onlyUser(closure) : std::nullopt;
-    while (user && user->kind == BodyUseKind::Operand && opcodesThatStateTypes.contains(made->opcodeOf(user->value))) {
-        closure = user->value;
-        user = made->onlyUser(closure);
-    }
-    if (!user || user->kind != BodyUseKind::Operand || made->opcodeOf(user->value) != Opcode::Call)
+    ValueID closure;
+    ValueID site = findCallWithCallback(callback, maker, *made, closure);
+    if (!site)
         return { };
-    auto call = made->value(user->value).as<Opcode::Call>();
+    auto call = made->value(site).as<Opcode::Call>();
     ValueID callee = call.calleeOperand() ? made->stripCasts(call.calleeOperand()) : ValueID();
     std::span<const ValueID> arguments = call.argumentsOperands();
     ValueID list;
@@ -1403,7 +1417,7 @@ ValueID LinkFlow::findCallbackListSlow(FunctionID callback, FunctionID& maker) c
         if (!list || !made->hasOneUse(list))
             return { };
     } else {
-        if (ValueID readList = findCallbackReadList(maker, *made, user->value, closure))
+        if (ValueID readList = findCallbackReadList(maker, *made, site, closure))
             return readList;
         if (arguments.empty() || arguments[0] != closure || !callee || made->isParameter(callee) || made->opcodeOf(callee) != Opcode::PropGet)
             return { };
@@ -4973,6 +4987,10 @@ void AccessInLinkAccesses::resolveOnBuiltin(BuiltinID builtin)
     if (m_access.kind != Kind::Define && lookupPassesHolderLinkedAnew(m_program, builtin, m_access.key))
         m_flow.handToAccessorsLaidAbove(m_receiver);
     if (m_access.kind != Kind::Define && testsMayHaveLaidNameFrom(builtin))
+        m_flow.addEdge(m_receiver, m_flow.unseen());
+    // An accessor on Function.prototype is handed the constructor, and may read the record of the last match off it.
+    if (isNamed() && (isRead() || m_access.kind == Kind::Store) && m_table.canonicalID(builtin) == m_table.canonicalID(Builtins::RegExp) && isKeyAbsentFromChain(builtin)
+        && !isNameUndefinedFrom(m_table.at(m_table.canonicalID(builtin)).inheritsFrom))
         m_flow.addEdge(m_receiver, m_flow.unseen());
     bool isStoredGlobalName = isNamed() && m_nameClass != NameClass::Proto && m_parts.state.globalNamesStored.get(m_access.key.index()) && m_table.canonicalID(builtin) == m_table.canonicalID(Builtins::GlobalThis) && isKeyAbsentFromChain(builtin);
     if (isRead() && isNamed()) {

@@ -1,0 +1,283 @@
+# Object.keys() renumbers the offsets of an uncacheable dictionary in a loop that stores under a key.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# const N = JSON.parse("2") + 40;
+# const key: string = JSON.parse('"p300"');
+# const first: string = JSON.parse('"first"');
+# function lostWrite() {
+#   const rec: any = { [first]: 1 };
+#   for (let i = 0; i < 500; i++) rec["p" + i] = i;
+#   for (let i = 0; i < 497; i++) if (i !== 300) delete rec["p" + i];
+#   let n = 0;
+#   for (let i = 0; i < N; i++) { const v = rec[key]; n += Object.keys(rec).length; rec[key] = v + 1; }
+#   print(+rec[key], n, rec.unset);
+# }
+# lostWrite();
+# function define(o: any) { Object.defineProperty(o, "p440", { get() { return "getter"; }, enumerable: true, configurable: true }); }
+# function overwritesAccessor() {
+#   const rec: any = { [first]: 1 };
+#   for (let i = 0; i < 500; i++) rec["p" + i] = i;
+#   define(rec);
+#   for (let i = 0; i < 140; i++) delete rec["p" + i];
+#   let n = 0;
+#   for (let i = 0; i < N; i++) { const v = rec[key]; n += Object.keys(rec).length; rec[key] = v + 0x41414141; }
+#   print(+rec[key], n, rec.unset);
+#   print(rec["p" + 440]);
+# }
+# overwritesAccessor();
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 342 210 undefined
+# CHECK-NEXT: 45981414870 15162 undefined
+# CHECK-NEXT: getter
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+expectedresult x0 type=string flags=[IsMadeByParser]
+expectedresult x1 type=string flags=[IsMadeByParser]
+layout L0 module=m0 position=236 place=236
+layout L1 module=m0 position=717 place=717
+layout L2 fields=[{key="configurable" declared={type=undefined|boolean}}, {key="enumerable" declared={type=undefined|boolean}}, {key="get" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="set" declared={type=undefined|null|function flags=[IsExpected]} flags=[IsMethod]}, {key="value" declared={type=anything}}, {key="writable" declared={type=undefined|boolean}}] declaredOrder=[0, 1, 4, 5, 2, 3] ownFieldCount=6
+variable g0 name="define" module=m0 declared={type=f1 flags=[IsFromCompiler]} initialization=Function function=f1 flags=[IsImmutable] place=5
+variable g1 name="N" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=9
+variable g2 name="key" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=10
+variable g3 name="first" module=m0 declared={type=undefined|null|string|absent flags=[OmitsNull, OmitsUndefined]} flags=[IsImmutable] place=11
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f2 @0
+    v1 = Convert v0 declared={type=f2 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f3 @0
+    v3 = Convert v2 declared={type=f3 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=JSON @85
+    v5 = PropGet v4 key="parse" @85
+    v6 = Convert v5 declared={type=builtin(JSONParse) flags=[IsExpected]} @85
+    v7 = String string="2" @96
+    v8 = Call v6, v4, v7 calleeKey="parse" calleeName="JSON.parse" @90
+    v9 = Integer integer=40 @103
+    v10 = Add v8, v9 @85
+    PutModuleVariable v10 variable=g1 @81
+    v12 = Builtin builtin=JSON @127
+    v13 = PropGet v12 key="parse" @127
+    v14 = Convert v13 declared={type=builtin(JSONParse) flags=[IsExpected]} @127
+    v15 = String string="\"p300\"" @138
+    v16 = Call v14, v12, v15 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @132
+    v17 = Convert v16 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @127
+    PutModuleVariable v17 variable=g2 @113
+    v19 = Builtin builtin=JSON @171
+    v20 = PropGet v19 key="parse" @171
+    v21 = Convert v20 declared={type=builtin(JSONParse) flags=[IsExpected]} @171
+    v22 = String string="\"first\"" @182
+    v23 = Call v21, v19, v22 calleeKey="parse" calleeName="JSON.parse" expectedResult=x1 @176
+    v24 = Convert v23 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @171
+    PutModuleVariable v24 variable=g3 @155
+    v26 = Call v1 calleeName="lostWrite" @521
+    v27 = Call v3 calleeName="overwritesAccessor" @1036
+    v28 = Undefined @1036
+    Return v28 @1036
+}
+function f1 name="define" module=m0 position=534 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=Object @560
+    v2 = Builtin builtin=ObjectDefineProperty @560
+    v3 = String string="p440" @585
+    v4 = NewClosure function=f4 @595
+    v5 = Convert v4 declared={type=undefined|null|function flags=[IsExpected]} @598
+    v6 = Boolean boolean=true @635
+    v7 = Convert v6 declared={type=undefined|boolean} @635
+    v8 = Boolean boolean=true @655
+    v9 = Convert v8 declared={type=undefined|boolean} @655
+    v10 = NewObject layout=L2 @593
+    PropDefine v10, v5 key="get" @595
+    PropDefine v10, v7 key="enumerable" @623
+    PropDefine v10, v9 key="configurable" @641
+    v14 = FinishObject v10 @593
+    v15 = Call v2, v1, v0, v3, v14 calleeName="Object.defineProperty" @567
+    v16 = Undefined @560
+    Return v16 @560
+}
+function f2 name="lostWrite" module=m0 position=194 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g3 @239
+    v1 = CheckInitialized v0 name="first" @239
+    v2 = ToPropertyKey v1 @239
+    v3 = Integer integer=1 @247
+    v4 = NewObject layout=L0 @238
+    ElemDefine v4, v2, v3 @238
+    v6 = FinishObject v4 @236
+    v7 = Integer @267
+    v8 = Convert v7 declared={type=number} @267
+    Jump -> next b1(v8) @263
+  b1(v9: number):
+    LoopHint @263
+    v11 = Integer integer=500 @274
+    v12 = Less v9, v11 @270
+    Branch v12 -> taken b2(), notTaken b3() @270
+  b2():
+    v13 = String string="p" @288
+    v14 = Add v13, v9 @288
+    ElemSet v6, v14, v9 @284
+    v16 = Increment v9 @279
+    v17 = Convert v16 declared={type=number} @279
+    Jump -> next b1(v17) @279
+  b3():
+    v18 = Integer @317
+    v19 = Convert v18 declared={type=number} @317
+    Jump -> next b4(v19) @313
+  b4(v20: number):
+    LoopHint @313
+    v22 = Integer integer=497 @324
+    v23 = Less v20, v22 @320
+    Branch v23 -> taken b5(), notTaken b8() @320
+  b5():
+    v24 = Integer integer=300 @344
+    v25 = StrictEq v20, v24 @338
+    Branch v25 -> taken b7(), notTaken b6() @338
+  b6():
+    v26 = String string="p" @360
+    v27 = Add v26, v20 @360
+    v28 = ElemDelete v6, v27 @366
+    Jump -> next b7() @366
+  b7():
+    v29 = Increment v20 @329
+    v30 = Convert v29 declared={type=number} @329
+    Jump -> next b4(v30) @329
+  b8():
+    v31 = Integer @380
+    v32 = Convert v31 declared={type=number} @380
+    v33 = Integer @398
+    v34 = Convert v33 declared={type=number} @398
+    Jump -> next b9(v32, v34) @394
+  b9(v35: number, v36: number):
+    LoopHint @394
+    v38 = GetModuleVariable variable=g1 @405
+    v39 = CheckInitialized v38 name="N" @405
+    v40 = Less v36, v39 @401
+    Branch v40 -> taken b10(), notTaken b11() @401
+  b10():
+    v41 = GetModuleVariable variable=g2 @429
+    v42 = CheckInitialized v41 name="key" @429
+    v43 = ElemGet v6, v42 @425
+    v44 = Builtin builtin=Object @440
+    v45 = Builtin builtin=ObjectKeys @440
+    v46 = Call v45, v44, v6 calleeName="Object.keys" @447
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @440
+    v48 = PropGet v47 key="length" @455
+    v49 = Add v35, v48 @440
+    v50 = Convert v49 declared={type=number} @435
+    v51 = GetModuleVariable variable=g2 @469
+    v52 = CheckInitialized v51 name="key" @469
+    v53 = Integer integer=1 @480
+    v54 = Add v43, v53 @476
+    ElemSet v6, v52, v54 @465
+    v56 = Increment v36 @408
+    v57 = Convert v56 declared={type=number} @408
+    Jump -> next b9(v50, v57) @408
+  b11():
+    v58 = Builtin builtin=GlobalThis @487
+    v59 = PropGet v58 key="print" [isFreeName] @487
+    v60 = GetModuleVariable variable=g2 @498
+    v61 = CheckInitialized v60 name="key" @498
+    v62 = ElemGet v6, v61 @494
+    v63 = ToNumber v62 @493
+    v64 = PropGet v6 key="unset" @507
+    v65 = Call v59, -, v63, v35, v64 calleeName="print" @487
+    v66 = Undefined @487
+    Return v66 @487
+}
+function f3 name="overwritesAccessor" module=m0 position=666 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = GetModuleVariable variable=g3 @720
+    v1 = CheckInitialized v0 name="first" @720
+    v2 = ToPropertyKey v1 @720
+    v3 = Integer integer=1 @728
+    v4 = NewObject layout=L1 @719
+    ElemDefine v4, v2, v3 @719
+    v6 = FinishObject v4 @717
+    v7 = Integer @748
+    v8 = Convert v7 declared={type=number} @748
+    Jump -> next b1(v8) @744
+  b1(v9: number):
+    LoopHint @744
+    v11 = Integer integer=500 @755
+    v12 = Less v9, v11 @751
+    Branch v12 -> taken b2(), notTaken b3() @751
+  b2():
+    v13 = String string="p" @769
+    v14 = Add v13, v9 @769
+    ElemSet v6, v14, v9 @765
+    v16 = Increment v9 @760
+    v17 = Convert v16 declared={type=number} @760
+    Jump -> next b1(v17) @760
+  b3():
+    v18 = GetModuleVariable variable=g0 @785
+    v19 = Call v18, -, v6 calleeName="define" @785
+    v20 = Integer @813
+    v21 = Convert v20 declared={type=number} @813
+    Jump -> next b4(v21) @809
+  b4(v22: number):
+    LoopHint @809
+    v24 = Integer integer=140 @820
+    v25 = Less v22, v24 @816
+    Branch v25 -> taken b5(), notTaken b6() @816
+  b5():
+    v26 = String string="p" @841
+    v27 = Add v26, v22 @841
+    v28 = ElemDelete v6, v27 @847
+    v29 = Increment v22 @825
+    v30 = Convert v29 declared={type=number} @825
+    Jump -> next b4(v30) @825
+  b6():
+    v31 = Integer @861
+    v32 = Convert v31 declared={type=number} @861
+    v33 = Integer @879
+    v34 = Convert v33 declared={type=number} @879
+    Jump -> next b7(v32, v34) @875
+  b7(v35: number, v36: number):
+    LoopHint @875
+    v38 = GetModuleVariable variable=g1 @886
+    v39 = CheckInitialized v38 name="N" @886
+    v40 = Less v36, v39 @882
+    Branch v40 -> taken b8(), notTaken b9() @882
+  b8():
+    v41 = GetModuleVariable variable=g2 @910
+    v42 = CheckInitialized v41 name="key" @910
+    v43 = ElemGet v6, v42 @906
+    v44 = Builtin builtin=Object @921
+    v45 = Builtin builtin=ObjectKeys @921
+    v46 = Call v45, v44, v6 calleeName="Object.keys" @928
+    v47 = Convert v46 declared={type=undefined|null|Array<undefined|null|string> flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody @921
+    v48 = PropGet v47 key="length" @936
+    v49 = Add v35, v48 @921
+    v50 = Convert v49 declared={type=number} @916
+    v51 = GetModuleVariable variable=g2 @950
+    v52 = CheckInitialized v51 name="key" @950
+    v53 = Integer integer=1094795585 @961
+    v54 = Add v43, v53 @957
+    ElemSet v6, v52, v54 @946
+    v56 = Increment v36 @889
+    v57 = Convert v56 declared={type=number} @889
+    Jump -> next b7(v50, v57) @889
+  b9():
+    v58 = Builtin builtin=GlobalThis @977
+    v59 = PropGet v58 key="print" [isFreeName] @977
+    v60 = GetModuleVariable variable=g2 @988
+    v61 = CheckInitialized v60 name="key" @988
+    v62 = ElemGet v6, v61 @984
+    v63 = ToNumber v62 @983
+    v64 = PropGet v6 key="unset" @997
+    v65 = Call v59, -, v63, v35, v64 calleeName="print" @977
+    v66 = Builtin builtin=GlobalThis @1011
+    v67 = PropGet v66 key="print" [isFreeName] @1011
+    v68 = PropGet v6 key="p440" @1017
+    v69 = Call v67, -, v68 calleeName="print" @1011
+    v70 = Undefined @1011
+    Return v70 @1011
+}
+function f4 name="get" module=m0 position=595 kind=Method flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="getter" @610
+    Return v0 @610
+}
+function f5 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]
+function f6 module=m0 role=Signature thisType={type=anything} results=[{type=anything}]

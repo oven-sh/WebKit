@@ -11,6 +11,7 @@
 #include "AOTConversionEmitter.h"
 #include "AOTElementAccessEmitter.h"
 #include "AOTStubsCollections.h"
+#include "JSString.h"
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -24,12 +25,42 @@ void StringEmitter::holdRangeInside(const ValueContext& value, Word32 start, Wor
     elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(value->stringOperand())));
 }
 
+bool StringEmitter::isNoRopeByItsForm(ValueID string)
+{
+    return m_code.isConstant(string) || typeOf(string).isOpaque(OpaqueKind::FlatString) || generator().findCarriedSubstring(string);
+}
+
+Condition StringEmitter::isLongRope(ValueID string)
+{
+    if (isNoRopeByItsForm(string))
+        return boolean(false);
+    CellPointer cell = in<CellPointer>(string);
+    Pointer fiber = loadField<Pointer>(cell, m_heaps.JSString_value);
+    return selectByBranch<Condition>(Condition(m_out.testNonZeroPtr(fiber.value(), JSString::isRopeInPointer)), [&] {
+        Word32 length = loadField<Word32>(cell, m_heaps.JSRopeString_length);
+        return logicalAnd(hasNoBits(fiber, JSRopeString::isSubstringInPointer), aboveOrEqual(length, word32(JSString::minLengthForRopeWalk)));
+    }, [&] {
+        return boolean(false);
+    }, Machine::EdgeClass::Unlikely);
+}
+
+// Has the length and the places of the whole string, but only the range may be read, and only if it lies inside the string: see RopeCharactersAroundRange.
+CharacterView StringEmitter::viewForReadOfRange(const OperationContext& context, ValueID string, const RangeInString& range)
+{
+    return isNoRopeByItsForm(string) ? viewOf(context, string) : viewOfString(context, in<CellPointer>(string), &range);
+}
+
+CharacterView StringEmitter::viewForReadOfRange(const ValueContext& value, CodeUnitRange range)
+{
+    holdRangeInside(value, range.start, range.end);
+    return viewForReadOfRange(value, value->stringOperand(), scopedLambda<CodeUnitRange(Word32)>([&](Word32) { return range; }));
+}
+
 CharacterView StringEmitter::viewOfRange(const ValueContext& value)
 {
-    CharacterView view = viewOf(value, value->stringOperand());
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
-    holdRangeInside(value, start, end);
+    CharacterView view = viewForReadOfRange(value, { start, end });
     Integer units = zeroExtended(start);
     Pointer characters = select(view.is8Bit, offsetBy(view.characters, units, 0), offsetBy(view.characters, units, 1));
     return { characters, sub(end, start), view.is8Bit, view.owner };
@@ -53,8 +84,10 @@ void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
 
     defineTestByBranching(value, [&](BranchTargets targets) {
         continueIf(equal(sub(end, start), word32(length)), targets.notTaken);
-        holdRangeInside(value, start, end);
-        branchOnTextAt(viewOf(value, value->stringOperand()), start, literal, targets);
+        // A group that took no part in a match has no start. The bytecode interpreter leaves its end as it was.
+        if (typeOf(value->startOperand()).integers.minimum < 0)
+            continueIf(greaterThanOrEqual(start, word32(0)), targets.notTaken);
+        branchOnTextAt(viewForReadOfRange(value, { start, end }), start, literal, targets);
     });
 }
 
@@ -83,16 +116,11 @@ void StringEmitter::generateStringRangeParseInt(const ValueContext& value)
 void StringEmitter::generateFindStringRangeInMap(const ValueContext& value)
 {
     CellPointer map = in<CellPointer>(value->mapOperand());
-    CharacterView view = viewOf(value, value->stringOperand());
-    Word32 start = word32Of(value->startOperand());
-    Word32 end = word32Of(value->endOperand());
-    holdRangeInside(value, start, end);
-    Word32 length = sub(end, start);
+    CharacterView view = viewOfRange(value);
     Integer place = selectByWidth<Integer>(view.is8Bit, [&](bool is8Bit) {
-        Pointer characters = offsetBy(view.characters, zeroExtended(start), is8Bit ? 0 : 1);
         if (is8Bit)
-            return Integer(callStub(value, findCharactersInMap(), { map.value(), characters.value(), length.value() }).first);
-        return callLeaf<Integer>(RuntimeOperation::FindCharacters16InMap, { map, characters, length });
+            return Integer(callStub(value, findCharactersInMap(), { map.value(), view.characters.value(), view.length.value() }).first);
+        return callLeaf<Integer>(RuntimeOperation::FindCharacters16InMap, { map, view.characters, view.length });
     });
     ensureStillAliveHere(view.owner);
     define(value, place);
