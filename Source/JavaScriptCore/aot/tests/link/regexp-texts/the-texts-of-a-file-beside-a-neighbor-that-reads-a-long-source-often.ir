@@ -1,4 +1,4 @@
-# The list follows from the program alone, and the texts of a file do not hang on its neighbors. The source of a RegExp is made anew at every read: that is counted, and paid for by the file that reads.
+# The list follows from the program alone, and the texts of a file do not hang on its neighbors. A text that a native accessor gives is counted at every read, whether or not the engine kept it: so is the source of a RegExp, and the file that reads pays for it.
 # neighbor.js: const long = new RegExp(doubled("a", 20)); const kept = []; for (let turn = 0; turn < 300; turn++) kept.push(long.source);   (doubled(text, k): text = text + text, k times)
 # routes.js: export function route(path) { return new RegExp("^" + path); } . main.js: route("shops");
 # RUN: regexp-texts mechanisms=all

@@ -33,6 +33,7 @@
 #include "JSRegExpStringIterator.h"
 #include "JSStringInlines.h"
 #include "ObjectConstructor.h"
+#include "RegExpCache.h"
 #include "RegExpConstructor.h"
 #include "StringPrototypeInlines.h"
 #include "VMEntryScopeInlines.h"
@@ -597,11 +598,11 @@ JSC_DEFINE_HOST_FUNCTION(regExpProtoGetterSource, (JSGlobalObject* globalObject,
     auto* regexp = dynamicDowncast<RegExpObject>(thisValue);
     if (!regexp) [[unlikely]] {
         if (thisValue == globalObject->regExpPrototype())
-            return JSValue::encode(jsNontrivialString(vm, "(?:)"_s));
+            return JSValue::encode(vm.regExpCache()->ensureEmptyRegExp(vm)->sourceString(vm));
         return throwVMTypeError(globalObject, scope, "The RegExp.prototype.source getter can only be called on a RegExp object"_s);
     }
 
-    return JSValue::encode(jsString(vm, regexp->regExp()->escapedPattern()));
+    return JSValue::encode(regexp->regExp()->sourceString(vm));
 }
 
 JSValue regExpSearchFast(JSGlobalObject* globalObject, RegExpObject* regExpObject, JSString* string)

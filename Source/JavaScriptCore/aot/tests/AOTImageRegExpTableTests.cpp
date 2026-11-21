@@ -521,6 +521,16 @@ static void testSourceIsPattern()
     AOT_TEST_CHECK(checkFoundLiteral(regExps, "a\\/b+"_s).sourceIsPattern);
     AOT_TEST_CHECK(!checkFoundLiteral(regExps, "a/b+"_s).sourceIsPattern);
     AOT_TEST_CHECK(!checkFoundLiteral(regExps, emptyString()).sourceIsPattern);
+
+    // The source of a RegExp of the image, whichever way its record says to find it, and the one JSString that keeps it.
+    VM& vm = regExps.vm();
+    for (auto [text, source] : { std::pair { "a\\/b+"_s, "a\\/b+"_s }, std::pair { "a/b+"_s, "a\\/b+"_s }, std::pair { ""_s, "(?:)"_s } }) {
+        RegExp* regExp = RegExp::createFromImage(vm, text, { }, checkFoundLiteral(regExps, text));
+        AOT_TEST_CHECK(regExp->escapedPattern() == source);
+        JSString* string = regExp->sourceString(vm);
+        AOT_TEST_CHECK(string->tryGetValue().data == source);
+        AOT_TEST_CHECK(regExp->sourceString(vm) == string);
+    }
 }
 
 static void checkNamedGroupsRoundTrip(const String& text)
