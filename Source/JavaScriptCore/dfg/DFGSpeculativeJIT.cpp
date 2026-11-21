@@ -8937,8 +8937,8 @@ void SpeculativeJIT::compileCreateRest(Node* node)
         transfer64(BaseIndex(argumentsStartGPR, arrayLengthGPR, TimesEight), BaseIndex(butterflyGPR, arrayLengthGPR, TimesEight));
         branch32(NotEqual, arrayLengthGPR, TrustedImm32(0)).linkTo(loop, this);
 
-        // We don't need a mutator fence here since the array cannot have been exposed to the GC yet, hence cannot be old gen. If this array were stored in an old gen object
-        // any of the values above would fenced by the writeBarrier of that store.
+        // compileAllocateNewArrayWithSize() fenced the array of holes. This one is for the elements stored since.
+        mutatorFence(vm());
 
         skipLoop.link(this);
         cellResult(arrayResultGPR, node);
@@ -9441,6 +9441,9 @@ void SpeculativeJIT::compileNewArrayWithSpread(Node* node)
             }
         }
 
+        // compileAllocateNewArrayWithSize() fenced the array of holes. This one is for the elements stored since.
+        mutatorFence(vm());
+
         cellResult(resultGPR, node);
         return;
     }
@@ -9641,7 +9644,6 @@ void SpeculativeJIT::compileArraySlice(Node* node)
         emitAllocateButterfly(storageResultGPR, scratchGPR, sizeGPR, scratch2GPR, resultGPR, slowCases);
         emitInitializeButterfly(storageResultGPR, scratchGPR, emptyValueGPR, scratchGPR);
         emitAllocateJSObject<JSArray>(resultGPR, tempValue, storageResultGPR, scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
-        mutatorFence(vm());
 
         addSlowPathGenerator(makeUniqueWithoutFastMallocCheck<CallArrayAllocatorWithVariableStructureVariableSizeSlowPathGenerator>(
             slowCases, this, operationNewArrayWithSize, resultGPR, LinkableConstant::globalObject(*this, node), tempValue, sizeGPR, storageResultGPR));
@@ -9684,6 +9686,7 @@ void SpeculativeJIT::compileArraySlice(Node* node)
     branchPtr(Below, loadIndex, tempGPR).linkTo(loop, this);
 
     done.link(this);
+    mutatorFence(vm());
     cellResult(resultGPR, node);
 }
 
