@@ -107,6 +107,9 @@ void SlotVisitor::didStartMarking(CollectionScope scope, HeapVersion markingVers
     ASSERT(!m_flushedBytesMarked);
     ASSERT(!m_extraMemoryHeap);
     ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+#if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!m_oversizeTypedArrayVectorBytesInHeap.hasOverflowed() && !m_oversizeTypedArrayVectorBytesInHeap);
+#endif
     ASSERT(!m_currentCell);
     ASSERT(!m_validatesCellVisits);
     Base::didStartMarking(scope, isAnalyzingHeap);
@@ -120,6 +123,9 @@ void SlotVisitor::reset()
     // These counts should have been flushed to each heap by now.
     RELEASE_ASSERT(!m_bytesMarkedInHeap);
     RELEASE_ASSERT(!m_extraMemoryInHeap.hasOverflowed() && !m_extraMemoryInHeap);
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!m_oversizeTypedArrayVectorBytesInHeap.hasOverflowed() && !m_oversizeTypedArrayVectorBytesInHeap);
+#endif
     m_bytesMarkedHeap = nullptr;
     m_flushedBytesMarked = 0;
     m_extraMemoryHeap = nullptr;
@@ -515,6 +521,13 @@ void SlotVisitor::flushExtraMemoryVisited()
     else if (m_extraMemoryInHeap)
         m_extraMemoryHeap->reportExtraMemoryVisited(m_extraMemoryInHeap);
     m_extraMemoryInHeap = 0;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_oversizeTypedArrayVectorBytesInHeap.hasOverflowed())
+        m_extraMemoryHeap->reportOversizeTypedArrayVectorVisited(std::numeric_limits<size_t>::max());
+    else if (m_oversizeTypedArrayVectorBytesInHeap)
+        m_extraMemoryHeap->reportOversizeTypedArrayVectorVisited(m_oversizeTypedArrayVectorBytesInHeap);
+    m_oversizeTypedArrayVectorBytesInHeap = 0;
+#endif
 }
 
 void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)

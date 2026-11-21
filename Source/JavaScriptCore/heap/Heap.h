@@ -539,6 +539,23 @@ public:
     size_t externalMemorySize() { return m_externalMemorySize; }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The vector of an OversizeTypedArray is malloc'd memory that only the view owns, with no ArrayBuffer to register
+    // with addReference(). These keep an exact count of those bytes from the moment the vector is allocated: the view
+    // reports it on creation, and reports it gone when the view's finalizer frees it or when slowDownAndWasteMemory()
+    // hands it to an ArrayBuffer (from then on m_arrayBuffers counts it). The marking report keeps its own counter, so
+    // extraMemorySize() and the collector's pacing see the same sum as before, and the exact count is read only by
+    // the reporting accessors below.
+    void reportOversizeTypedArrayVectorAllocated(size_t bytes) { m_oversizeTypedArrayVectorBytes.exchangeAdd<MemoryOrder::Relaxed>(bytes); }
+    void reportOversizeTypedArrayVectorFreed(size_t bytes) { m_oversizeTypedArrayVectorBytes.exchangeSub<MemoryOrder::Relaxed>(bytes); }
+    JS_EXPORT_PRIVATE void reportOversizeTypedArrayVectorVisited(size_t);
+
+    // Bytes of ArrayBuffer storage and of typed array vectors that have no ArrayBuffer yet, as of now.
+    JS_EXPORT_PRIVATE size_t typedArrayBackingStoreSize();
+    // extraMemorySize() with the OversizeTypedArray vectors counted as of now rather than as of the last marking.
+    JS_EXPORT_PRIVATE size_t extraMemorySizeForReporting();
+#endif
+
     // Use this API to report non-GC memory if you can't use the better API above.
     void deprecatedReportExtraMemory(size_t size)
     {
@@ -798,6 +815,9 @@ private:
     void reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(const JSCell*, size_t);
     JS_EXPORT_PRIVATE void reportExtraMemoryAllocatedSlowCase(GCDeferralContext*, const JSCell*, size_t);
     JS_EXPORT_PRIVATE void deprecatedReportExtraMemorySlowCase(size_t);
+#if USE(BUN_JSC_ADDITIONS)
+    size_t extraMemorySizeWithOversizeTypedArrayVectors(size_t oversizeTypedArrayVectorBytes);
+#endif
     
     size_t totalBytesAllocatedThisCycle() { return m_nonOversizedBytesAllocatedThisCycle + m_oversizedBytesAllocatedThisCycle; }
     bool isEdenCollectionWithEmptyEden() const { return !m_hasAllocatedSinceLastCollection && m_collectionScope && m_collectionScope.value() == CollectionScope::Eden; }
@@ -998,6 +1018,12 @@ private:
     size_t m_extraMemorySize { 0 };
     size_t m_deprecatedExtraMemorySize { 0 };
     size_t m_extraMemoryBytesSinceLastCollectionCheck { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    // Exact: bytes of OversizeTypedArray vectors alive now.
+    Atomic<size_t> m_oversizeTypedArrayVectorBytes { 0 };
+    // Visited: the bytes the last marking saw, the share of extraMemorySize() that m_extraMemorySize held before.
+    size_t m_oversizeTypedArrayVectorBytesVisited { 0 };
+#endif
 
     ProtectCountSet m_protectedValues;
     UncheckedKeyHashSet<MarkedVectorBase*> m_markListSet;

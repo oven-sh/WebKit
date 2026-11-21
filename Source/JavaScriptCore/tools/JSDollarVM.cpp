@@ -5251,6 +5251,20 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapTotalBytesAllocated, (JSGlobalObject* globa
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsNumber(globalObject->vm().heap.totalBytesAllocated()));
 }
+
+// Heap::extraMemorySize() with the vectors of oversize typed arrays counted as of now, not as of the last marking.
+JSC_DEFINE_HOST_FUNCTION(functionHeapExtraMemorySizeForReporting, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.extraMemorySizeForReporting()));
+}
+
+// Bytes of ArrayBuffer storage plus the vectors of oversize typed arrays that have no ArrayBuffer yet, as of now.
+JSC_DEFINE_HOST_FUNCTION(functionHeapTypedArrayBackingStoreSize, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(globalObject->vm().heap.typedArrayBackingStoreSize()));
+}
 #endif
 
 #if ENABLE(JIT)
@@ -6429,6 +6443,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "heapExtraMemorySize"_s, functionHeapExtraMemorySize, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "heapTotalBytesAllocated"_s, functionHeapTotalBytesAllocated, 0);
+    addFunction(vm, alwaysAllow, "heapExtraMemorySizeForReporting"_s, functionHeapExtraMemorySizeForReporting, 0);
+    addFunction(vm, alwaysAllow, "heapTypedArrayBackingStoreSize"_s, functionHeapTypedArrayBackingStoreSize, 0);
 #endif
     addFunction(vm, alwaysAllow, "codeBlockCensus"_s, functionCodeBlockCensus, 0);
 
