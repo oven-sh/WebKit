@@ -357,6 +357,16 @@ public:
 
     bool isIteratorProtocolFastAndNonObservable();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // See ArrayBuffer::beginBorrow(). An OversizeTypedArray stays one. A FastTypedArray gets its ArrayBuffer, which
+    // moves the bytes, so read vector() afterwards. False if there is no memory for that.
+    [[nodiscard]] inline bool beginBorrow();
+    // The view has to be alive until this returns. A cell that does it in its destructor needs a root for the view: with
+    // a WriteBarrier they die in the same collection. The borrows of a dead view are gone with it.
+    inline void endBorrow();
+    inline bool isBorrowed();
+#endif
+
 private:
     enum Requester { Mutator, ConcurrentThread };
     template<Requester> ArrayBuffer* possiblySharedBufferImpl();
@@ -377,6 +387,10 @@ protected:
     size_t m_length;
     size_t m_byteOffset { 0 };
     TypedArrayMode m_mode;
+#if USE(BUN_JSC_ADDITIONS)
+    // Only for an OversizeTypedArray. Compiled code does not initialize it in the FastTypedArrays that it allocates.
+    Checked<unsigned> m_borrowCount { 0 };
+#endif
 };
 
 inline JSArrayBufferView* validateTypedArray(JSGlobalObject*, JSValue);

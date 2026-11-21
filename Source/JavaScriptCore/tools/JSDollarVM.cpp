@@ -61,6 +61,7 @@
 #include "JSGlobalProxyInlines.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSModuleRecord.h"
+#include "JSNativeStdFunction.h"
 #include "JSONObject.h"
 #include "JSModuleLoader.h"
 #include "JSLexicalEnvironmentInlines.h"
@@ -180,6 +181,10 @@ public:
     void updateVMStackLimits() { return m_vm.updateStackLimits(); };
 
     static void setOwnerIsDead(GCAwareJITStubRoutine& stub) { stub.m_ownerIsDead = true; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    static BufferMemoryHandle* memoryHandle(ArrayBuffer& buffer) { return buffer.m_contents.m_memoryHandle.get(); }
+#endif
 
     VM& m_vm;
 };
@@ -6183,6 +6188,125 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateBufferAccessors, (JSGlobalObject* globalO
     }
     return JSValue::encode(result);
 }
+
+// Holds a pointer to the bytes of an ArrayBuffer or a view, as an embedder's pending I/O does.
+// Usage: var borrow = $vm.borrowBytes(bufferOrView); borrow("fill", byte); var howMany = borrow("count", byte); borrow("end")
+static JSC_DECLARE_HOST_FUNCTION(functionBorrowBytes);
+JSC_DEFINE_HOST_FUNCTION(functionBorrowBytes, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    std::span<uint8_t> bytes;
+    if (view) {
+        if (!view->beginBorrow())
+            return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+        bytes = { static_cast<uint8_t*>(view->vector()), view->byteLength() };
+    } else if (buffer) {
+        buffer->impl()->beginBorrow();
+        bytes = buffer->impl()->mutableSpan();
+    } else
+        return throwVMTypeError(globalObject, scope, "Expected an ArrayBuffer or a view"_s);
+
+    return JSValue::encode(JSNativeStdFunction::create(vm, globalObject, 2, "borrow"_s, [view, buffer, bytes, hasEnded = false](JSGlobalObject* globalObject, CallFrame* callFrame) mutable -> EncodedJSValue {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        String operation = callFrame->argument(0).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        uint8_t byte = callFrame->argument(1).toUInt32(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (hasEnded)
+            return throwVMTypeError(globalObject, scope, "The borrow has ended"_s);
+
+        if (operation == "count"_s)
+            return JSValue::encode(jsNumber(std::ranges::count(bytes, byte)));
+        if (operation == "fill"_s) {
+            std::ranges::fill(bytes, byte);
+            return encodedJSUndefined();
+        }
+        if (operation != "end"_s)
+            return throwVMTypeError(globalObject, scope, "Expected count, fill or end"_s);
+        hasEnded = true;
+        if (view)
+            view->endBorrow();
+        else
+            buffer->impl()->endBorrow();
+        return encodedJSUndefined();
+    }, callFrame->argument(0)));
+}
+
+static JSC_DECLARE_HOST_FUNCTION(functionIsBorrowed);
+JSC_DEFINE_HOST_FUNCTION(functionIsBorrowed, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0)))
+        return JSValue::encode(jsBoolean(view->isBorrowed()));
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    return JSValue::encode(jsBoolean(buffer && buffer->impl()->isBorrowed()));
+}
+
+static std::atomic<unsigned> freedExternalArrayBuffers;
+static std::atomic<size_t> stackUsedToFreeExternalArrayBuffer;
+
+// An ArrayBuffer with a destructor function of the embedder's. See $vm.externalArrayBufferStatistics().
+// Usage: var buffer = $vm.createExternalArrayBuffer(byteLength)
+static JSC_DECLARE_HOST_FUNCTION(functionCreateExternalArrayBuffer);
+JSC_DEFINE_HOST_FUNCTION(functionCreateExternalArrayBuffer, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    uint32_t byteLength = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    void* data = Gigacage::tryZeroedMalloc(Gigacage::Primitive, std::max(byteLength, 1u));
+    if (!data)
+        return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
+
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(data), byteLength }, createSharedTask<void(void*)>([data](void* freed) {
+        RELEASE_ASSERT(freed == data);
+        ++freedExternalArrayBuffers;
+        stackUsedToFreeExternalArrayBuffer = static_cast<char*>(Thread::currentSingleton().stack().origin()) - static_cast<char*>(currentStackPointer());
+        Gigacage::free(Gigacage::Primitive, freed);
+    }));
+    return JSValue::encode(JSArrayBuffer::create(vm, globalObject->arrayBufferStructure(ArrayBufferSharingMode::Default), WTF::move(buffer)));
+}
+
+// How often that function has run, and how many bytes of stack were in use the last time.
+// Usage: var { freed, stackUsed } = $vm.externalArrayBufferStatistics()
+static JSC_DECLARE_HOST_FUNCTION(functionExternalArrayBufferStatistics);
+JSC_DEFINE_HOST_FUNCTION(functionExternalArrayBufferStatistics, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    JSValue freed = jsNumber(freedExternalArrayBuffers.load());
+    JSValue stackUsed = jsNumber(stackUsedToFreeExternalArrayBuffer.load());
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "freed"_s), freed);
+    result->putDirect(vm, Identifier::fromString(vm, "stackUsed"_s), stackUsed);
+    return JSValue::encode(result);
+}
+
+// Unlike reading view.buffer, this does not make one.
+static JSC_DECLARE_HOST_FUNCTION(functionHasArrayBuffer);
+JSC_DEFINE_HOST_FUNCTION(functionHasArrayBuffer, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0));
+    return JSValue::encode(jsBoolean(view && view->hasArrayBuffer()));
+}
+
+// How much of a resizable ArrayBuffer's address range can be read and written.
+static JSC_DECLARE_HOST_FUNCTION(functionMappedByteLength);
+JSC_DEFINE_HOST_FUNCTION(functionMappedByteLength, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* buffer = dynamicDowncast<JSArrayBuffer>(callFrame->argument(0));
+    auto* handle = buffer ? JSDollarVMHelper::memoryHandle(*buffer->impl()) : nullptr;
+    return JSValue::encode(handle ? jsNumber(handle->size()) : jsUndefined());
+}
 #endif // USE(BUN_JSC_ADDITIONS)
 
 constexpr unsigned jsDollarVMPropertyAttributes = PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
@@ -6455,6 +6579,12 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "weakBlockCount"_s, functionWeakBlockCount, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "createBufferAccessors"_s, functionCreateBufferAccessors, 0);
+    addFunction(vm, allowIfNotFuzz, "borrowBytes"_s, functionBorrowBytes, 1);
+    addFunction(vm, alwaysAllow, "isBorrowed"_s, functionIsBorrowed, 1);
+    addFunction(vm, alwaysAllow, "createExternalArrayBuffer"_s, functionCreateExternalArrayBuffer, 1);
+    addFunction(vm, allowIfNotFuzz, "externalArrayBufferStatistics"_s, functionExternalArrayBufferStatistics, 0);
+    addFunction(vm, alwaysAllow, "hasArrayBuffer"_s, functionHasArrayBuffer, 1);
+    addFunction(vm, alwaysAllow, "mappedByteLength"_s, functionMappedByteLength, 1);
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)

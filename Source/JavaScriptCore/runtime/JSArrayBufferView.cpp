@@ -319,6 +319,12 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
         // allocated when it allocated it, so only the ArrayBuffer itself is new.
         buffer = ArrayBuffer::createAdopted(span());
         bytesAlreadyReported = buffer->byteLength();
+#if USE(BUN_JSC_ADDITIONS)
+#if CPU(ADDRESS64)
+        static_assert(OBJECT_OFFSETOF(JSArrayBufferView, m_borrowCount) - offsetOfMode() < static_cast<ptrdiff_t>(sizeof(void*)), "It takes no room of its own");
+#endif
+        buffer->beginBorrow(m_borrowCount);
+#endif
         break;
     }
 
