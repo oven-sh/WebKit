@@ -4806,8 +4806,17 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
         std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
         // A form that was imported first stays under its type, and an import without one runs the code.
-        if (sharesEntry && wasRequired(*form) && !loadedIfExists(*form)->wasImportedWhenRequired)
-            return looksInRequireCache || mark == "?text"_s ? *form : module;
+        if (sharesEntry && wasRequired(*form) && !loadedIfExists(*form)->wasImportedWhenRequired) {
+            JSValue required = loadedIfExists(*form)->requiredValue.get();
+            if (mark == "?text"_s || (looksInRequireCache && !required))
+                return *form;
+            if (looksInRequireCache) {
+                // The file now exports that path, so its namespace has a default and no __esModule.
+                setCommonJSExports(file, required);
+                markEvaluated(file);
+            }
+            return module;
+        }
     }
     return module;
 }
