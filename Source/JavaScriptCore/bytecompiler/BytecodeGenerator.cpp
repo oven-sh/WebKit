@@ -3833,7 +3833,7 @@ RegisterID* BytecodeGenerator::emitNewDefaultConstructor(RegisterID* dst, Constr
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&& classElementDefinitions, bool isDerived)
+RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* dst, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>&& classElementDefinitions, bool isDerived, ClassFieldInitializerKind kind)
 {
     DerivedContextType newDerivedContextType;
     SuperBinding superBinding;
@@ -3850,8 +3850,31 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     SourceParseMode parseMode = SourceParseMode::ClassFieldInitializerMode;
     ConstructAbility constructAbility = ConstructAbility::CannotConstruct;
 
-    FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, ImplementationVisibility::Private, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
+    ImplementationVisibility implementationVisibility = ImplementationVisibility::Private;
+    Identifier ecmaName;
+#if USE(BUN_JSC_ADDITIONS)
+    // The function that runs the field initializers of a class stays in stack traces, under the name V8 gives it, so
+    // that an error made while a field is initialized is reported at the field and not at the constructor that ran it.
+    // With static blocks only, the function has nothing of its own to report: the frame of a block is the block's function.
+    switch (kind) {
+    case ClassFieldInitializerKind::Instance:
+        implementationVisibility = ImplementationVisibility::Public;
+        ecmaName = propertyNames().instanceMembersInitializerFrameName;
+        break;
+    case ClassFieldInitializerKind::Static:
+        implementationVisibility = ImplementationVisibility::Public;
+        ecmaName = propertyNames().staticInitializerFrameName;
+        break;
+    case ClassFieldInitializerKind::StaticBlocks:
+        break;
+    }
+#else
+    UNUSED_PARAM(kind);
+#endif
+
+    FunctionMetadataNode metadata(parserArena(), JSTokenLocation(), JSTokenLocation(), 0, 0, 0, implementationVisibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, superBinding, 0, parseMode, false);
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
+    metadata.setEcmaName(ecmaName);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
 

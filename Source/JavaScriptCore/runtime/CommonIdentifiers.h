@@ -448,6 +448,11 @@ namespace JSC {
         const Identifier useStrictIdentifier;
         const Identifier negativeOneIdentifier;
         const Identifier usingIdentifier;
+#if USE(BUN_JSC_ADDITIONS)
+        // The names V8 gives, in a stack trace, to the code that initializes the fields of a class.
+        const Identifier instanceMembersInitializerFrameName;
+        const Identifier staticInitializerFrameName;
+#endif
     private:
         std::unique_ptr<BuiltinNames> m_builtinNames;
 
