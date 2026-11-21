@@ -27,6 +27,8 @@
 
 #include "VM.h"
 #include "VMEntryScope.h"
+#include <memory>
+#include <new>
 
 namespace JSC {
 
@@ -44,6 +46,37 @@ ALWAYS_INLINE VMEntryScope::~VMEntryScope()
     if (m_vm.entryScope != this)
         return;
     tearDownSlow();
+}
+
+ALWAYS_INLINE VMEntryScope* OptionalVMEntryScope::scope()
+{
+    return std::launder(reinterpret_cast<VMEntryScope*>(m_storage));
+}
+
+ALWAYS_INLINE VMEntryScope* OptionalVMEntryScope::operator->()
+{
+    ASSERT(m_isEntered);
+    return scope();
+}
+
+ALWAYS_INLINE void OptionalVMEntryScope::emplace(VM& vm, JSGlobalObject* globalObject)
+{
+    ASSERT(!m_isEntered);
+    new (NotNull, m_storage) VMEntryScope(vm, globalObject);
+    m_isEntered = 1;
+}
+
+ALWAYS_INLINE void OptionalVMEntryScope::reset()
+{
+    if (!m_isEntered)
+        return;
+    std::destroy_at(scope());
+    m_isEntered = 0;
+}
+
+ALWAYS_INLINE OptionalVMEntryScope::~OptionalVMEntryScope()
+{
+    reset();
 }
 
 } // namespace JSC
