@@ -605,9 +605,10 @@ void releaseFastMallocFreeMemoryForThisThread()
     bmalloc::api::scavengeThisThread();
 }
 
-void releaseFastMallocFreeMemoryForIdleThread()
+void IdleFreeMemoryRelease::release()
 {
-    bmalloc::api::scavengeThisThreadOnIdle();
+    ASSERT(isDue());
+    m_releasesLeft = bmalloc::api::scavengeThisThreadOnIdle() ? m_releasesLeft - 1 : 0;
 }
 
 void releaseFastMallocFreeMemory()
