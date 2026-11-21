@@ -29,5 +29,5 @@ try {
     exception = e;
 }
 
-if (exception != "TypeError: Cannot convert a symbol to a string")
+if (exception != "TypeError: Cannot convert a Symbol value to a string")
     throw "FAILED";
