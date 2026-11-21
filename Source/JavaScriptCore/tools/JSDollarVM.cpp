@@ -53,6 +53,7 @@
 #include "ImmutablePropertyNames.h"
 #include "InitializeThreading.h"
 #include "InterpreterInlines.h"
+#include "IntlObjectInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
 #include "JSAsyncGenerator.h"
@@ -2326,6 +2327,14 @@ static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionHasListedICUTimeZoneNames);
+static JSC_DECLARE_HOST_FUNCTION(functionHasListedPrimaryTimeZones);
+static JSC_DECLARE_HOST_FUNCTION(functionQuestionsAboutICUTimeZones);
+static JSC_DECLARE_HOST_FUNCTION(functionTimeZoneTable);
+static JSC_DECLARE_HOST_FUNCTION(functionTimeZoneInTable);
+static JSC_DECLARE_HOST_FUNCTION(functionTimeZoneByName);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
@@ -4956,6 +4965,77 @@ JSC_DEFINE_HOST_FUNCTION(functionSetHostTimeZone, (JSGlobalObject* globalObject,
     return JSValue::encode(jsBoolean(WTF::setHostTimeZoneForTesting(tz)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Usage: $vm.hasListedICUTimeZoneNames()
+// Whether this process has listed the names of ICU's time zones, which a name that is not a primary identifier needs.
+JSC_DEFINE_HOST_FUNCTION(functionHasListedICUTimeZoneNames, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(intlHasListedICUTimeZoneNamesForTesting()));
+}
+
+// Usage: $vm.hasListedPrimaryTimeZones()
+// Whether this process has asked ICU about every one of those names, as Intl.supportedValuesOf("timeZone") does.
+JSC_DEFINE_HOST_FUNCTION(functionHasListedPrimaryTimeZones, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsBoolean(intlHasListedPrimaryTimeZoneIdentifiersForTesting()));
+}
+
+// Usage: $vm.questionsAboutICUTimeZones()
+// How many times this process has asked ICU about the name of a time zone. A name that the process has named before,
+// and a name that it knows to be no zone, are answered without a question.
+JSC_DEFINE_HOST_FUNCTION(functionQuestionsAboutICUTimeZones, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(intlQuestionsAboutICUTimeZonesForTesting()));
+}
+
+// Usage: $vm.timeZoneTable()
+// Every identifier of upstream's table of time zones, primaries first and then aliases. Bun does not build that table:
+// this does, for a test to hold against what Bun finds by name.
+JSC_DEFINE_HOST_FUNCTION(functionTimeZoneTable, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(createArrayFromStringVector(globalObject, intlTimeZoneTableForTesting()));
+}
+
+static EncodedJSValue timeZoneIdentifiersForTesting(JSGlobalObject* globalObject, const std::optional<TimeZoneIdentifiers>& identifiers)
+{
+    if (!identifiers)
+        return JSValue::encode(jsNull());
+    return JSValue::encode(createArrayFromStringVector(globalObject, Vector<String> { identifiers->identifier, identifiers->primary }));
+}
+
+// Usage: $vm.timeZoneInTable("asia/calcutta")
+// What that table has for a name: [identifier, identifier of its primary], or null.
+JSC_DEFINE_HOST_FUNCTION(functionTimeZoneInTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String name { callFrame->argument(0).toWTFString(globalObject) };
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, timeZoneIdentifiersForTesting(globalObject, intlTimeZoneInTableForTesting(name)));
+}
+
+// Usage: $vm.timeZoneByName("asia/calcutta")
+// The same answer as $vm.timeZoneInTable(), found the way Bun finds it: from ICU, for this name.
+JSC_DEFINE_HOST_FUNCTION(functionTimeZoneByName, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String name { callFrame->argument(0).toWTFString(globalObject) };
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, timeZoneIdentifiersForTesting(globalObject, intlTimeZoneByNameForTesting(name)));
+}
+#endif
+
 // Usage: $vm.overrideDateNow(819331200000)
 // Pins the current time this global object reports (Date.now(), new Date(), Date(), Intl,
 // Temporal.Now) to the given epoch milliseconds, the way an embedder's setSystemTime() does
@@ -6393,6 +6473,14 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "hasListedICUTimeZoneNames"_s, functionHasListedICUTimeZoneNames, 0);
+    addFunction(vm, alwaysAllow, "hasListedPrimaryTimeZones"_s, functionHasListedPrimaryTimeZones, 0);
+    addFunction(vm, alwaysAllow, "questionsAboutICUTimeZones"_s, functionQuestionsAboutICUTimeZones, 0);
+    addFunction(vm, alwaysAllow, "timeZoneTable"_s, functionTimeZoneTable, 0);
+    addFunction(vm, alwaysAllow, "timeZoneInTable"_s, functionTimeZoneInTable, 1);
+    addFunction(vm, alwaysAllow, "timeZoneByName"_s, functionTimeZoneByName, 1);
+#endif
     addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);
 
     addFunction(vm, alwaysAllow, "assertEnabled"_s, functionAssertEnabled, 0);

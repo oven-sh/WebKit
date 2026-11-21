@@ -29,9 +29,9 @@
 #include "CalendarArithmetic.h"
 #include "CalendarICUBridge.h"
 #include "DateConstructor.h"
+#include "ICUTimeZone.h"
 #include "IntlObject.h"
 #include "JSCTimeZone.h"
-#include <unicode/ucal.h>
 #include <wtf/DateMath.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
@@ -47,7 +47,7 @@ class TimeZoneCacheEntry final : public ThreadSafeRefCounted<TimeZoneCacheEntry>
     WTF_MAKE_TZONE_ALLOCATED(TimeZoneCacheEntry);
 public:
     Lock useLock;
-    std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> cal;
+    std::unique_ptr<ICUTimeZone> zone;
 };
 WTF_MAKE_TZONE_ALLOCATED_IMPL(TimeZoneCacheEntry);
 
@@ -71,38 +71,25 @@ static RefPtr<TimeZoneCacheEntry> timeZoneCacheEntry(const TimeZone& timeZone)
 }
 
 template<typename F>
-static auto withTimeZone(const TimeZone& timeZone, NOESCAPE const F& fn) -> decltype(fn(static_cast<UCalendar*>(nullptr)))
+static auto withTimeZone(const TimeZone& timeZone, NOESCAPE const F& fn) -> decltype(fn(static_cast<ICUTimeZone*>(nullptr)))
 {
     ASSERT(timeZone.isID());
     auto entry = timeZoneCacheEntry(timeZone);
     ASSERT(entry);
+    // Threads share the entry, and a query of an ICUTimeZone is not always free of writes.
     Locker locker { entry->useLock };
-    if (!entry->cal) {
-        String tzStr = timeZone.toICUString();
-        StringView view(tzStr);
-        auto upconverted = view.upconvertedCharacters();
-        UErrorCode status = U_ZERO_ERROR;
-        entry->cal = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(upconverted, view.length(), "", UCAL_DEFAULT, &status));
-    }
-    if (entry->cal)
-        ucal_clear(entry->cal.get());
-    return fn(entry->cal.get());
+    if (!entry->zone)
+        entry->zone = ICUTimeZone::create(timeZone.toICUString());
+    return fn(entry->zone.get());
 }
 
 // getOffsetMsAtEpoch — internal: queries ICU for UTC+DST offset in ms at a given epoch
-static std::optional<int32_t> getOffsetMsAtEpoch(UCalendar* cal, double epochMs)
+static std::optional<int32_t> getOffsetMsAtEpoch(ICUTimeZone& zone, double epochMs)
 {
-    UErrorCode status = U_ZERO_ERROR;
-    ucal_setMillis(cal, epochMs, &status);
-    if (U_FAILURE(status)) [[unlikely]]
+    auto offsets = zone.offsetAt(epochMs);
+    if (!offsets) [[unlikely]]
         return std::nullopt;
-    int32_t rawOffset = ucal_get(cal, UCAL_ZONE_OFFSET, &status);
-    if (U_FAILURE(status)) [[unlikely]]
-        return std::nullopt;
-    int32_t dstOffset = ucal_get(cal, UCAL_DST_OFFSET, &status);
-    if (U_FAILURE(status)) [[unlikely]]
-        return std::nullopt;
-    return rawOffset + dstOffset;
+    return offsets->raw + offsets->dst;
 }
 
 // isoDateTimeToLocalMs — internal: converts ISO date+time to epoch ms treating local time as UTC (no offset applied)
@@ -193,12 +180,12 @@ TemporalResult<int64_t> getOffsetNanosecondsFor(const TimeZone& timeZone, ISO860
         return timeZone.utcOffsetNanoseconds();
 
     // 3. Return GetNamedTimeZoneOffsetNanoseconds(parseResult.[[Name]], epochNs).
-    // NOTE: Implemented via ICU4C: UCAL_ZONE_OFFSET + UCAL_DST_OFFSET.
-    return withTimeZone(timeZone, [&](UCalendar* cal) -> TemporalResult<int64_t> {
-        if (!cal) [[unlikely]]
+    // NOTE: Implemented via ICU4C: the zone's raw offset + its DST offset.
+    return withTimeZone(timeZone, [&](ICUTimeZone* zone) -> TemporalResult<int64_t> {
+        if (!zone) [[unlikely]]
             return makeUnexpected(rangeError(icuOpenTimeZoneFailed));
         double epochMs = static_cast<double>(exactTime.floorEpochMilliseconds());
-        auto offsetMs = getOffsetMsAtEpoch(cal, epochMs);
+        auto offsetMs = getOffsetMsAtEpoch(*zone, epochMs);
         if (!offsetMs)
             return makeUnexpected(rangeError(icuTimeZoneOffsetFailed));
         constexpr int64_t nsPerMs = 1'000'000;
@@ -219,9 +206,9 @@ TemporalResult<ISO8601::PlainDateTime> getISODateTimeFor(const TimeZone& timeZon
 
 // getNamedTimeZoneEpochNanoseconds — ICU4C implementation of the implementation-defined AO
 // https://tc39.es/proposal-temporal/#sec-getnamedtimezoneepochnanoseconds
-// NOTE: Uses ucal_getTimeZoneOffsetFromLocal (ICU 69+), which resolves a local wall-clock time
-// to its UTC offset(s) directly, with explicit control over the gap (nonExistingTimeOpt) and
-// fold (duplicatedTimeOpt) cases. Querying the FORMER (pre-transition) and LATTER (post-transition)
+// NOTE: Uses ICUTimeZone::offsetFromLocal (ICU's getOffsetFromLocal, ICU 69+), which resolves a local
+// wall-clock time to its UTC offset(s) directly, with explicit control over the gap (nonExistingTimeOpt)
+// and fold (duplicatedTimeOpt) cases. Querying the FORMER (pre-transition) and LATTER (post-transition)
 // interpretations yields the two bracket offsets, from which normal/gap/fold follow arithmetically.
 // This replaces the previous ucal_setDateTime + transition-probing + pre-LMT-fallback approach.
 static TemporalResult<PossibleEpochNanoseconds> getNamedTimeZoneEpochNanoseconds(const TimeZone& timeZone, const ISO8601::PlainDate& date, const ISO8601::PlainTime& time)
@@ -232,8 +219,8 @@ static TemporalResult<PossibleEpochNanoseconds> getNamedTimeZoneEpochNanoseconds
     // Compute the "naive" local epoch — the local datetime treated as UTC, used for gap/fold detection.
     double localMs = isoDateTimeToLocalMs(date, time);
 
-    return withTimeZone(timeZone, [&](UCalendar* cal) -> TemporalResult<PossibleEpochNanoseconds> {
-        if (!cal) [[unlikely]]
+    return withTimeZone(timeZone, [&](ICUTimeZone* zone) -> TemporalResult<PossibleEpochNanoseconds> {
+        if (!zone) [[unlikely]]
             return makeUnexpected(rangeError(icuOpenTimeZoneFailed));
 
         auto makeExactTime = [&](double epochMs) -> ISO8601::ExactTime {
@@ -241,29 +228,22 @@ static TemporalResult<PossibleEpochNanoseconds> getNamedTimeZoneEpochNanoseconds
             return ISO8601::ExactTime(base.epochNanoseconds() + subMs);
         };
 
-        // Store the naive local epoch as the calendar's time value. ucal_getTimeZoneOffsetFromLocal
-        // reinterprets that stored value as wall-clock (local) time. IMPORTANT: do NOT use
-        // ucal_setDateTime here — it would apply ICU's own disambiguation and store a resolved UTC
-        // instant, which is not what getTimeZoneOffsetFromLocal expects to read.
-        UErrorCode status = U_ZERO_ERROR;
-        ucal_setMillis(cal, localMs, &status);
-        if (U_FAILURE(status)) [[unlikely]]
+        // The naive local epoch is the wall-clock (local) time that offsetFromLocal takes. ICU refuses
+        // only a time that is NaN.
+        if (std::isnan(localMs)) [[unlikely]]
             return makeUnexpected(rangeError(icuSetCalendarFailed));
 
         // Query both interpretations of the local time. Away from any transition they are equal.
-        //   FORMER = offset in effect before a nearby transition, LATTER = offset after it.
-        auto offsetMsFor = [&](UTimeZoneLocalOption opt) -> std::optional<int64_t> {
-            UErrorCode s = U_ZERO_ERROR;
-            int32_t rawOffset = 0;
-            int32_t dstOffset = 0;
-            ucal_getTimeZoneOffsetFromLocal(cal, opt, opt, &rawOffset, &dstOffset, &s);
-            if (U_FAILURE(s)) [[unlikely]]
+        //   Former = offset in effect before a nearby transition, Latter = offset after it.
+        auto offsetMsFor = [&](ICUTimeZone::LocalTime localTime) -> std::optional<int64_t> {
+            auto offsets = zone->offsetFromLocal(localMs, localTime);
+            if (!offsets) [[unlikely]]
                 return std::nullopt;
-            return static_cast<int64_t>(rawOffset) + static_cast<int64_t>(dstOffset);
+            return static_cast<int64_t>(offsets->raw) + static_cast<int64_t>(offsets->dst);
         };
 
-        auto before = offsetMsFor(UCAL_TZ_LOCAL_FORMER);
-        auto after = offsetMsFor(UCAL_TZ_LOCAL_LATTER);
+        auto before = offsetMsFor(ICUTimeZone::LocalTime::Former);
+        auto after = offsetMsFor(ICUTimeZone::LocalTime::Latter);
         if (!before || !after) [[unlikely]]
             return makeUnexpected(rangeError(icuTimeZoneOffsetFailed));
 
@@ -344,46 +324,42 @@ TemporalResult<std::optional<ISO8601::ExactTime>> getTimeZoneTransition(const Ti
     } else
         epochMs = static_cast<double>(exactTime.floorEpochMilliseconds());
 
-    return withTimeZone(timeZone, [&](UCalendar* cal) -> TemporalResult<std::optional<ISO8601::ExactTime>> {
-        if (!cal) [[unlikely]]
+    return withTimeZone(timeZone, [&](ICUTimeZone* zone) -> TemporalResult<std::optional<ISO8601::ExactTime>> {
+        if (!zone) [[unlikely]]
             return makeUnexpected(rangeError(icuOpenTimeZoneFailed));
 
-        UErrorCode status = U_ZERO_ERROR;
-        ucal_setMillis(cal, epochMs, &status);
-        if (U_FAILURE(status)) [[unlikely]]
+        if (std::isnan(epochMs)) [[unlikely]]
             return makeUnexpected(rangeError(icuSetCalendarFailed));
 
-        UTimeZoneTransitionType transType = (direction == TransitionDirection::Next) ? UCAL_TZ_TRANSITION_NEXT : UCAL_TZ_TRANSITION_PREVIOUS;
+        auto which = (direction == TransitionDirection::Next) ? ICUTimeZone::Transition::Next : ICUTimeZone::Transition::Previous;
 
         // 3. Repeat (up to 20 times to skip rule-only changes).
+        double searchFromMs = epochMs;
         for (int safetyLimit = 0; safetyLimit < 20; ++safetyLimit) {
-            UDate transitionMs = 0;
-            bool hasTransition = ucal_getTimeZoneTransitionDate(cal, transType, &transitionMs, &status);
-            if (U_FAILURE(status)) [[unlikely]]
+            auto found = zone->transition(searchFromMs, which);
+            if (!found) [[unlikely]]
                 return makeUnexpected(rangeError(icuTransitionFailed));
 
-            if (!hasTransition)
+            if (!*found)
                 return std::optional<ISO8601::ExactTime> { std::nullopt };
 
+            double transitionMs = **found;
             auto transition = ISO8601::ExactTime::fromEpochMilliseconds(static_cast<int64_t>(transitionMs));
             if (!transition.isValid())
                 return std::optional<ISO8601::ExactTime> { std::nullopt };
 
-            // Check if offset actually changed at this transition by querying before/after on cal directly.
+            // Check if offset actually changed at this transition by querying before/after on the zone directly.
             double beforeMs = transitionMs - 1.0;
-            auto offsetBefore = getOffsetMsAtEpoch(cal, beforeMs);
+            auto offsetBefore = getOffsetMsAtEpoch(*zone, beforeMs);
             if (!offsetBefore) [[unlikely]]
                 return makeUnexpected(rangeError(icuTransitionFailed));
-            auto offsetAfter = getOffsetMsAtEpoch(cal, transitionMs);
+            auto offsetAfter = getOffsetMsAtEpoch(*zone, transitionMs);
             if (!offsetAfter) [[unlikely]]
                 return makeUnexpected(rangeError(icuTransitionFailed));
             if (*offsetBefore != *offsetAfter)
                 return std::optional<ISO8601::ExactTime> { transition };
 
-            status = U_ZERO_ERROR;
-            ucal_setMillis(cal, direction == TransitionDirection::Previous ? beforeMs : transitionMs + 1.0, &status);
-            if (U_FAILURE(status)) [[unlikely]]
-                return makeUnexpected(rangeError(icuTransitionFailed));
+            searchFromMs = direction == TransitionDirection::Previous ? beforeMs : transitionMs + 1.0;
         }
         return std::optional<ISO8601::ExactTime> { std::nullopt };
     }); // withTimeZone

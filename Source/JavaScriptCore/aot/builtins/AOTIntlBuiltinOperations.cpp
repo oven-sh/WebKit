@@ -15,6 +15,7 @@
 #include "AOTVMState.h"
 #include "DateInstance.h"
 #include "DeferTermination.h"
+#include "ICUTimeZone.h"
 #include "IntlDateTimeFormat.h"
 #include "IntlNumberFormat.h"
 #include "IntlNumberFormatInlines.h"
@@ -245,25 +246,18 @@ static NEVER_INLINE bool findUTCOffset(UTCOffsetOfStretch& stretch, const Format
 {
     if (!(std::abs(timeValue) <= maxTimeValue))
         return false;
-    UErrorCode status = U_ZERO_ERROR;
-    String timeZone = timeZoneNamedBy(header);
-    auto characters = StringView(timeZone).upconvertedCharacters();
-    auto calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(characters.get(), timeZone.length(), "", UCAL_GREGORIAN, &status));
-    if (U_FAILURE(status))
+    auto zone = ICUTimeZone::create(timeZoneNamedBy(header));
+    if (!zone)
         return false;
-    ucal_setMillis(calendar.get(), timeValue, &status);
-    double offset = ucal_get(calendar.get(), UCAL_ZONE_OFFSET, &status);
-    offset += ucal_get(calendar.get(), UCAL_DST_OFFSET, &status);
-    UDate previous = 0;
-    UDate next = 0;
-    bool hasPrevious = ucal_getTimeZoneTransitionDate(calendar.get(), UCAL_TZ_TRANSITION_PREVIOUS_INCLUSIVE, &previous, &status);
-    bool hasNext = ucal_getTimeZoneTransitionDate(calendar.get(), UCAL_TZ_TRANSITION_NEXT, &next, &status);
-    if (U_FAILURE(status))
+    auto offsets = zone->offsetAt(timeValue);
+    auto previous = zone->transition(timeValue, ICUTimeZone::Transition::PreviousInclusive);
+    auto next = zone->transition(timeValue, ICUTimeZone::Transition::Next);
+    if (!offsets || !previous || !next)
         return false;
     constexpr double infinity = std::numeric_limits<double>::infinity();
-    stretch.start = hasPrevious ? previous : -infinity;
-    stretch.end = hasNext ? next : infinity;
-    stretch.offset = offset;
+    stretch.start = previous->value_or(-infinity);
+    stretch.end = next->value_or(infinity);
+    stretch.offset = static_cast<double>(offsets->raw) + offsets->dst;
     return true;
 }
 
