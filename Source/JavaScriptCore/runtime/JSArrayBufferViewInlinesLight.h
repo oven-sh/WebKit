@@ -51,6 +51,27 @@ inline bool JSArrayBufferView::isShared()
     }
 }
 
+inline bool JSArrayBufferView::canBeWrittenConcurrently()
+{
+    switch (m_mode) {
+    case WastefulTypedArray:
+    case ResizableNonSharedWastefulTypedArray:
+    case ResizableNonSharedAutoLengthWastefulTypedArray:
+    case GrowableSharedWastefulTypedArray:
+    case GrowableSharedAutoLengthWastefulTypedArray:
+        return existingBufferInButterfly()->canBeWrittenConcurrently();
+    case DataViewMode:
+    case ResizableNonSharedDataViewMode:
+    case ResizableNonSharedAutoLengthDataViewMode:
+    case GrowableSharedDataViewMode:
+    case GrowableSharedAutoLengthDataViewMode:
+        return uncheckedDowncast<JSDataView>(this)->possiblySharedBuffer()->canBeWrittenConcurrently();
+    default:
+        // Only an ArrayBuffer says who else writes its bytes, and this view has none yet.
+        return false;
+    }
+}
+
 template<JSArrayBufferView::Requester requester>
 inline ArrayBuffer* JSArrayBufferView::possiblySharedBufferImpl()
 {
