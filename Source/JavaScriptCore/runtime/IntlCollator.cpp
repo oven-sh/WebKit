@@ -261,7 +261,8 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
     // Keep in sync with canDoASCIIUCADUCETComparisonSlow about used attributes.
     ucol_setAttribute(m_collator.get(), UCOL_STRENGTH, strength, &status);
     ucol_setAttribute(m_collator.get(), UCOL_CASE_LEVEL, caseLevel, &status);
-    ucol_setAttribute(m_collator.get(), UCOL_CASE_FIRST, caseFirst, &status);
+    if (!caseFirstString.isNull())
+        ucol_setAttribute(m_collator.get(), UCOL_CASE_FIRST, caseFirst, &status);
     ucol_setAttribute(m_collator.get(), UCOL_NUMERIC_COLLATION, m_numeric ? UCOL_ON : UCOL_OFF, &status);
 
     // FIXME: Setting UCOL_ALTERNATE_HANDLING to UCOL_SHIFTED causes punctuation and whitespace to be
@@ -278,6 +279,20 @@ void IntlCollator::initializeCollator(JSGlobalObject* globalObject, JSValue loca
         auto result = ucol_getAttribute(m_collator.get(), UCOL_ALTERNATE_HANDLING, &status);
         ASSERT(U_SUCCESS(status));
         m_ignorePunctuation = (result == UCOL_SHIFTED);
+    }
+
+    if (caseFirstString.isNull()) {
+        // Neither a caseFirst option nor a -u-kf- extension was supplied. Some locales
+        // (da, mt) tailor [caseFirst upper] in CLDR; read the collator's actual value
+        // back so resolvedOptions() reports it and the ASCII fast path is gated correctly.
+        auto result = ucol_getAttribute(m_collator.get(), UCOL_CASE_FIRST, &status);
+        ASSERT(U_SUCCESS(status));
+        if (result == UCOL_UPPER_FIRST)
+            m_caseFirst = CaseFirst::Upper;
+        else if (result == UCOL_LOWER_FIRST)
+            m_caseFirst = CaseFirst::Lower;
+        else
+            m_caseFirst = CaseFirst::False;
     }
 }
 
