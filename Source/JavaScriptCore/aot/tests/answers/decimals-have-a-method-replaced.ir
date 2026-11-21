@@ -1,0 +1,29 @@
+# A method of Decimal.prototype that is replaced is called, whenever that happens and however.
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 1
+# PROGRAM-OF: decimals-are-computed-without-calls-of-their-methods.ir
+# RUN(LATER): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); Decimal.prototype.round = () => D("40"); show(() => f(D("1"), D("2"))); };
+# LATER: 3
+# LATER-NEXT: 41
+# LATER-NEXT: exited with 0
+# RUN(BEFORE): run-in-shell --useDecimal=1 Decimal.prototype.round = () => new Decimal("40"); globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); };
+# BEFORE: 41
+# BEFORE-NEXT: exited with 0
+# RUN(SWAPPED): run-in-shell --useDecimal=1 [Decimal.prototype.add, Decimal.prototype.subtract] = [Decimal.prototype.subtract, Decimal.prototype.add]; globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("5"))); };
+# SWAPPED: 4
+# SWAPPED-NEXT: exited with 0
+# RUN(DELETED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); delete Decimal.prototype.add; show(() => f(D("1"), D("2"))); };
+# DELETED: 3
+# DELETED-NEXT: TypeError
+# DELETED-NEXT: exited with 0
+# RUN(GETTER): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); Object.defineProperty(Decimal.prototype, "add", { get() { return () => "got"; } }); show(() => f(D("1"), D("2"))); };
+# GETTER: 3
+# GETTER-NEXT: got
+# GETTER-NEXT: exited with 0
+# RUN(REALM): run-in-shell --useDecimal=1 Decimal.prototype.add = createGlobalObject().Decimal.prototype.add; globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2")) instanceof Decimal); };
+# REALM: false
+# REALM-NEXT: exited with 0
+# RUN(ADDED): run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; Decimal.prototype.more = 1; show(() => f(D("1"), D("2"))); Object.freeze(Decimal.prototype); show(() => f(D("1"), D("2"))); };
+# ADDED: 3
+# ADDED-NEXT: 3
+# ADDED-NEXT: exited with 0

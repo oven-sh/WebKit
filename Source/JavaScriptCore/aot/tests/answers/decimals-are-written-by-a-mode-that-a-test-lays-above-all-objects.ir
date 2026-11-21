@@ -1,0 +1,49 @@
+# Where a test writes to Object.prototype, that is asked anew for what the options lack.
+# sink(x => x.toFixed({ digits: 1 }), () => { Object.prototype.roundingMode = "ceil"; }, () => { delete Object.prototype.roundingMode; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 1
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (write, lay, take) => { const x = new Decimal("1.25"); print(write(x)); lay(); print(write(x)); take(); print(write(x)); };
+# CHECK: 1.2
+# CHECK-NEXT: 1.3
+# CHECK-NEXT: 1.2
+# CHECK-NEXT: exited with 0
+
+module m0 path="/a.test.js" displayPath="a.test.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="digits" declared={type=anything} flags=[IsRequired]}] place=20 ownFieldCount=1
+data d0 root=Object{layout=L0 members=[{key="digits" value=Number{value=1}}]} module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = Call v1, -, v2, v3, v4 calleeName="sink"
+    v6 = Undefined
+    Return v6
+}
+function f1 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="toFixed"
+    v2 = Data data=d0
+    v3 = Call v1, v0, v2 calleeKey="toFixed" calleeName="x.toFixed"
+    ReturnCall v3
+}
+function f2 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = String string="ceil"
+    PropSet v0, v1 key="roundingMode"
+    v3 = Undefined
+    Return v3
+}
+function f3 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=ObjectPrototype
+    v1 = PropDelete v0 key="roundingMode"
+    v2 = Undefined
+    Return v2
+}
+openedname holder=ObjectPrototype name="roundingMode"

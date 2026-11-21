@@ -21,6 +21,7 @@
 #include "AOTStringBuilderWords.h"
 #include "AOTStubWords.h"
 #include "AOTStubsArrayWords.h"
+#include "DecimalOperation.h"
 #include "IndexingType.h"
 #include "JSCJSValue.h"
 #include "JSGlobalObject.h"
@@ -178,9 +179,9 @@ struct LazyStringWords {
     uint64_t capacity;
 };
 
-enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject, MapIterator, SetIterator, ArrayIterator, Proxy, WeakMap, WeakSet };
-static constexpr unsigned numberOfInlineAllocations = 19;
-static_assert(static_cast<unsigned>(InlineAllocation::WeakSet) + 1 == numberOfInlineAllocations);
+enum class InlineAllocation : unsigned { Promise, Map, BoundFunction, BigInt, RegExpObject, NullPrototypeObject, RegExpMatchesArray, Set, GetterSetter, Arguments, MappedArguments, DefaultFinalObject, SmallNullPrototypeObject, MapIterator, SetIterator, ArrayIterator, Proxy, WeakMap, WeakSet, Decimal };
+static constexpr unsigned numberOfInlineAllocations = 20;
+static_assert(static_cast<unsigned>(InlineAllocation::Decimal) + 1 == numberOfInlineAllocations);
 static constexpr unsigned smallObjectInlineCapacity = 2;
 
 struct InlineAllocationData {
@@ -292,6 +293,21 @@ struct DefaultCollatorWords {
     const uint8_t* knownLevel1Weights;
 };
 
+// Words that no cell and no value has, once a method of Decimal.prototype is not the one it was made with.
+struct DecimalWords {
+    static constexpr EncodedJSValue noValue = JSValue::ValueDeleted;
+
+    uint32_t structureID;
+    uint32_t structureIDOfObjectPrototypeWithoutRoundingMode;
+    EncodedJSValue constructor;
+    EncodedJSValue methods[numberOfDecimalOperations];
+};
+void prepareDecimalWords(Instance&);
+
+struct DecimalTableWords {
+    const void* tables;
+};
+
 struct NumberWords {
     const double* powersOfTen;
     uint64_t hashSecrets[2];
@@ -327,6 +343,8 @@ struct NumberWords {
     writtenOnce(emptyTable, EmptyTableWords) \
     writtenOnce(collation, CollationWords) \
     v(defaultCollator, DefaultCollatorWords) \
+    v(decimals, DecimalWords) \
+    writtenOnce(decimalTables, DecimalTableWords) \
     v(effectsNet, EffectsNetWords)
 #define FOR_EACH_AOT_INSTANCE_PART(v) FOR_EACH_AOT_INSTANCE_PART_BY_KIND(v, v)
 

@@ -19,10 +19,13 @@ aot/builtins/AOTRuntimeIntrinsicEmitter.cpp
 aot/codegen/AOTArrayBuiltinEmitter.cpp
 aot/codegen/AOTArrayBuiltinEmitterCopies.cpp
 aot/codegen/AOTArrayIntrinsicEmitter.cpp
+aot/codegen/AOTCodeGeneratorDecimalRuns.cpp
 aot/codegen/AOTCodeGeneratorInterleaving.cpp
 aot/codegen/AOTCodeGeneratorRotatingLoops.cpp
 aot/codegen/AOTCodeGeneratorRowLoops.cpp
 aot/codegen/AOTCodeGeneratorVectors.cpp
+aot/codegen/AOTDecimalEmitter.cpp
+aot/codegen/AOTDecimalRuns.cpp
 aot/codegen/AOTElementAccessEmitterTypedArrays.cpp
 aot/codegen/AOTElementEmitterLiterals.cpp
 aot/codegen/AOTEvalEmitter.cpp
@@ -35,6 +38,7 @@ aot/codegen/AOTPromiseBuiltinEmitter.cpp
 aot/codegen/AOTPromiseIntrinsicEmitter.cpp
 aot/codegen/AOTRegExpMatchEmitter.cpp
 aot/codegen/AOTResolvedCallEmitter.cpp
+aot/codegen/AOTReusedDecimals.cpp
 aot/codegen/AOTStraightAllocations.cpp
 aot/codegen/AOTStraightArrayIntrinsics.cpp
 aot/codegen/AOTStraightArrays.cpp

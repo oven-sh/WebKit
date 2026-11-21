@@ -700,6 +700,7 @@ private:
                 case PhantomNewAsyncGeneratorFunction:
                 case PhantomCreateActivation:
                 case PhantomNewRegExp:
+                case PhantomNewDecimal:
                 case PhantomNewPromise:
                 case GetMyArgumentByVal:
                 case GetMyArgumentByValOutOfBounds:
@@ -925,6 +926,7 @@ private:
                 case PhantomCreateRest:
                 case PhantomClonedArguments:
                 case PhantomNewRegExp:
+                case PhantomNewDecimal:
                 case PhantomNewPromise:
                 case MovHint:
                 case Upsilon:

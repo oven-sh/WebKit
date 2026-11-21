@@ -1,0 +1,54 @@
+# A total needs one object for all turns of its loop. What gets the object finds no zeros at the end of it, and keeps it.
+# sink((start, list) => { let total = start; for (const x of list) total = total.add(x); return total; });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalsReused >= 1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(() => f(D("0"), amounts)); show(() => f(amounts[0], []) === amounts[0]); show(() => names([f(amounts[0], amounts), amounts[0]])); const first = f(D("0"), amounts); show(() => names([f(first, amounts), first, f(first, amounts)])); for (const list of [["-0"], ["1.5", "-1.5"], ["1.5", "-4", "0.5", "7"], ["1", "NaN", "1"], ["1e-20", "1", "-1e-20", "1"], ["0.001", "4611686018427387", "4611686018427387", "4611686018427387", "4611686018427387", "0.999"], ["9e6144", "9e6144"]]) show(() => f(D("-0"), all(list))); };
+# CHECK: 6;
+# CHECK-NEXT: true;
+# CHECK-NEXT: 0:6.25 1:0.25;
+# CHECK-NEXT: 0:12 1:6 2:12;
+# CHECK-NEXT: -0;
+# CHECK-NEXT: 0;
+# CHECK-NEXT: 5;
+# CHECK-NEXT: NaN;
+# CHECK-NEXT: 2;
+# CHECK-NEXT: 18446744073709549;
+# CHECK-NEXT: Infinity;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything}, {type=undefined|null|string|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string|Array):
+    v2 = Convert v0 declared={type=anything flags=[IsExpected]}
+    v3 = IteratorOpen v1
+    Jump -> next b1(v2)
+  b1(v4):
+    LoopHint
+    v6 = IteratorResume v3
+    v7 = ResultAt v6
+    v8 = ResultAt v6 index=1
+    Branch v7 -> taken b2(), notTaken b3()
+  b2():
+    Return v4
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v9 = PropGet v4 key="add"
+    v10 = Call v9, v4, v8 calleeKey="add" calleeName="total.add"
+    v11 = Convert v10 declared={type=anything flags=[IsExpected]}
+    Jump -> next b1(v11)
+  b5() role=IterationCleanup subject=v3:
+    v12 = CatchException
+    IteratorClose v3 completion=Throw
+    Rethrow v12
+}

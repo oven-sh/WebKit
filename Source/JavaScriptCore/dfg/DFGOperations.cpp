@@ -44,6 +44,7 @@
 #include "DFGToFTLDeferredCompilationCallback.h"
 #include "DFGToFTLForOSREntryDeferredCompilationCallback.h"
 #include "DateInstance.h"
+#include "DecimalObject.h"
 #include "DefinePropertyAttributes.h"
 #include "DirectArguments.h"
 #include "FTLForOSREntryJITCode.h"
@@ -2563,6 +2564,8 @@ JSC_DEFINE_JIT_OPERATION(operationCallNumberConstructor, EncodedJSValue, (JSGlob
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = JSValue::decode(encodedValue);
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(decimal->toNumberValue())));
     JSValue numeric = value.toNumeric(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (numeric.isNumber())

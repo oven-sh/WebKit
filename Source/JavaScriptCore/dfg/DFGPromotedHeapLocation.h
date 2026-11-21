@@ -73,6 +73,8 @@ enum PromotedLocationKind {
     NewArrayBufferPLoc,
     RegExpObjectRegExpPLoc,
     RegExpObjectLastIndexPLoc,
+    DecimalWordPLoc,
+    DecimalObjectPLoc,
 };
 
 class PromotedLocationDescriptor {

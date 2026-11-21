@@ -18,6 +18,7 @@ aot/builtins/AOTBuiltinTableRealm.cpp
 aot/builtins/AOTBuiltinTypeFit.cpp
 aot/builtins/AOTBuiltinTypes.cpp
 aot/builtins/AOTDateBuiltinOperations.cpp
+aot/builtins/AOTDecimalOperations.cpp
 aot/builtins/AOTEngineIntrinsicOperations.cpp
 aot/builtins/AOTErrorBuiltinOperations.cpp
 aot/builtins/AOTFunctionBuiltinOperations.cpp

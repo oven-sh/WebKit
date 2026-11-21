@@ -44,6 +44,7 @@
 #include "DFGMayExit.h"
 #include "DFGNaturalLoops.h"
 #include "DFGVariableAccessDataDump.h"
+#include "DecimalOperations.h"
 #include "FullBytecodeLiveness.h"
 #include "FunctionExecutableDump.h"
 #include "GetterSetter.h"
@@ -393,6 +394,8 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
         out.print(", offset = "_s, data->offset, ", mandatoryMinimum = "_s, data->mandatoryMinimum);
         out.print(", limit = "_s, data->limit);
     }
+    if (node->hasDecimalOperation())
+        out.print(comma, node->decimalOperation());
     if (node->hasInternalFieldIndex())
         out.print(comma, "internalFieldIndex = "_s, node->internalFieldIndex());
     if (node->hasCallDOMGetterData()) {

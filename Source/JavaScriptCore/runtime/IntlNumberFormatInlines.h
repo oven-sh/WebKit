@@ -26,6 +26,7 @@
 #pragma once
 
 #include "BuiltinNames.h"
+#include "DecimalObject.h"
 #include "IntlNumberFormat.h"
 #include "IntlObjectInlines.h"
 #include "IntlPluralRules.h"
@@ -364,6 +365,19 @@ inline IntlMathematicalValue toIntlMathematicalValue(JSGlobalObject* globalObjec
 
     if (auto number = JSBigInt::tryExtractDouble(value))
         return IntlMathematicalValue { number.value() };
+
+    // https://tc39.es/proposal-decimal/#sec-tointlmathematicalvalue
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]] {
+        const Decimal128& decimalValue = decimal->value();
+        if (decimalValue.isNaN())
+            return IntlMathematicalValue { PNaN };
+        if (decimalValue.isInfinity())
+            return IntlMathematicalValue { decimalValue.isNegative() ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity() };
+        // The steps answer the Decimal value itself, which is not an Intl mathematical value.
+        if (decimalValue.isZero())
+            return IntlMathematicalValue { decimalValue.isNegative() ? -0.0 : 0.0 };
+        return IntlMathematicalValue { IntlMathematicalValue::NumberType::Integer, decimalValue.isNegative(), decimalValue.toExponentialString().ascii() };
+    }
 
     JSValue primitive = value.toPrimitive(globalObject, PreferredPrimitiveType::PreferNumber);
     RETURN_IF_EXCEPTION(scope, { });

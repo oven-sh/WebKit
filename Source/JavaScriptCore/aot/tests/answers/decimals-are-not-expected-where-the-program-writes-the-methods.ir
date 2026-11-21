@@ -1,0 +1,42 @@
+# A name under which the program has written a method tells nothing.
+# sink((x, y) => x.multiply(y).add(x), { multiply() { return this; }, add() { return "money"; } });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 0
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, money) => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(money, money)); show(() => f(D("2"), D("3"))); };
+# CHECK: money
+# CHECK-NEXT: 8
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="add" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="multiply" declared={type=anything} flags=[IsRequired, IsMethod]}] declaredOrder=[1, 0] place=37 ownFieldCount=2
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = NewClosure function=f3
+    v5 = NewObject -, v3, v4 layout=L0 fields=[1, 0]
+    v6 = FinishObject v5
+    v7 = Call v1, -, v2, v6 calleeName="sink"
+    v8 = Undefined
+    Return v8
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="multiply"
+    v3 = Call v2, v0, v1 calleeKey="multiply" calleeName="x.multiply"
+    v4 = PropGet v3 key="add"
+    v5 = Call v4, v3, v0 calleeKey="add" calleeName="add"
+    ReturnCall v5
+}
+function f2 name="multiply" module=m0 kind=Method flags=[HasThis, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    Return v0
+}
+function f3 name="add" module=m0 kind=Method flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="money"
+    Return v0
+}

@@ -175,6 +175,8 @@ namespace JSC::B3 {
     macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
     macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
     macro(RegExpObject_regExpAndFlags, RegExpObject::offsetOfRegExpAndFlags(), Mutability::Mutable) \
+    macro(DecimalObject_low, DecimalObject::offsetOfLow(), Mutability::Mutable) \
+    macro(DecimalObject_upper, DecimalObject::offsetOfUpper(), Mutability::Mutable) \
     macro(RegExpObject_lastIndex, RegExpObject::offsetOfLastIndex(), Mutability::Mutable) \
     macro(ShadowChicken_Packet_callee, OBJECT_OFFSETOF(ShadowChicken::Packet, callee), Mutability::Mutable) \
     macro(ShadowChicken_Packet_frame, OBJECT_OFFSETOF(ShadowChicken::Packet, frame), Mutability::Mutable) \

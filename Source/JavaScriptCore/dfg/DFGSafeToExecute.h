@@ -28,6 +28,7 @@
 #if ENABLE(DFG_JIT)
 
 #include "DFGGraph.h"
+#include "DecimalObject.h"
 
 namespace JSC { namespace DFG {
 
@@ -338,6 +339,13 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case MapIteratorNext:
     case MapIteratorKey:
     case MapIteratorValue:
+    case DecimalWordConstant:
+    case ToDecimal:
+    case DecimalArith:
+    case DecimalScale:
+    case DecimalTest:
+    case DecimalToNumber:
+    case DecimalToString:
     case StringIteratorNext:
     case StringIteratorNextWithUndefined:
     case ExtractValueFromWeakMapGet:
@@ -595,8 +603,14 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
         return isSafe;
     }
 
-    case EnumeratorNextUpdateIndexAndMode:
+    case GetDecimalWord:
+        return state.forNode(node->child1()).m_structure.isSubClassOf(DecimalObject::info());
+
     case ExtractFromTuple:
+        return node->hasStorageResult(); // A word of a Decimal128.
+
+    case DecimalToFixed: // The result can be of any length.
+    case EnumeratorNextUpdateIndexAndMode:
     case EnumeratorNextUpdatePropertyName:
     case ToThis:
     case CreateThis:
@@ -710,6 +724,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case NewArrayBuffer:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
+    case NewDecimal:
     case NewPromise:
     case Spread:
     case NewRegExp:
@@ -799,6 +814,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewAsyncFunction:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomCreateActivation:
     case PhantomNewRegExp:

@@ -1,0 +1,42 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#include <JavaScriptCore/Decimal128.h>
+#include <JavaScriptCore/JSObject.h>
+
+namespace JSC {
+
+// What round() and scale10() answer, or Decimal128::noValue() where they throw.
+Decimal128 roundOrNoValue(Decimal128, JSValue digits, Decimal128::RoundingMode);
+Decimal128 scale10OrNoValue(Decimal128, JSValue power);
+
+// What toFixed() answers for the options that it has read, or null where it throws. This throws only for want of memory.
+JSString* tryDecimalToFixed(JSGlobalObject*, Decimal128, JSValue digits, JSValue roundingMode);
+
+class DecimalPrototype final : public JSNonFinalObject {
+public:
+    using Base = JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    template<typename CellType, SubspaceAccess>
+    static GCClient::IsoSubspace* subspaceFor(VM& vm)
+    {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DecimalPrototype, Base);
+        return &vm.plainObjectSpace();
+    }
+
+    static DecimalPrototype* create(VM&, Structure*);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+
+    DECLARE_INFO;
+
+private:
+    DecimalPrototype(VM&, Structure*);
+    void finishCreation(VM&);
+};
+
+} // namespace JSC

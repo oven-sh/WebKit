@@ -94,7 +94,7 @@ public:
                 }
 
                 if (node->isTuple()) {
-                    ASSERT(node->refCount() <= node->tupleSize());
+                    ASSERT(node->adjustedRefCount() <= node->tupleSize());
                     for (unsigned i = 0; i < node->tupleSize(); ++i) {
                         auto& tupleData = m_graph.m_tupleData.at(node->tupleOffset() + i);
                         if (tupleData.refCount)

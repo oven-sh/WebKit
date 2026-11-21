@@ -37,6 +37,7 @@
 #include "CollectorInlines.h"
 #include "ConservativeRoots.h"
 #include "DeferGCInlines.h"
+#include "DecimalStringCache.h"
 #include "EdenGCActivityCallback.h"
 #include "EvalExecutable.h"
 #include "Exception.h"
@@ -2414,6 +2415,8 @@ void Heap::sweepAndClearCachesInEpilogue()
         // Compiled code reads these tables itself. They have a fixed size, so what they keep is bounded.
         if (!Options::runsCompiledImage())
             vm().numericStrings.clearOnGarbageCollection();
+        if (auto& cache = vm().m_decimalStringCache)
+            cache->clearOnGarbageCollection();
         vm().stringReplaceCache.clear();
     }
     vm().keyAtomStringCache.clear();

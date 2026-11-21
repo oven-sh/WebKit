@@ -2798,6 +2798,7 @@ private:
         case PhantomNewAsyncGeneratorFunction:
         case PhantomNewAsyncFunction:
         case PhantomNewInternalFieldObject:
+        case PhantomNewDecimal:
         case PhantomNewPromise:
         case PhantomCreateActivation:
         case PhantomDirectArguments:
@@ -2938,6 +2939,29 @@ private:
             fixEdge<Int32Use>(node->child2());
             m_graph.m_tupleData.at(node->tupleOffset()).resultFlags = NodeResultJS;
             m_graph.m_tupleData.at(node->tupleOffset() + 1).resultFlags = NodeResultInt32;
+            break;
+        }
+
+        case GetDecimalWord: {
+            fixEdge<KnownCellUse>(node->child1());
+            break;
+        }
+
+        case ToDecimal:
+        case DecimalScale: {
+            Edge& argument = node->argumentOfDecimalNode();
+            if (argument->shouldSpeculateInt32()) {
+                fixEdge<Int32Use>(argument);
+                node->clearFlags(NodeMustGenerate);
+            } else if (node->op() == ToDecimal && argument->shouldSpeculateNumber()) {
+                fixEdge<DoubleRepUse>(argument);
+                node->clearFlags(NodeMustGenerate);
+            }
+            [[fallthrough]];
+        }
+        case DecimalArith: {
+            m_graph.m_tupleData.at(node->tupleOffset()).resultFlags = NodeResultStorage;
+            m_graph.m_tupleData.at(node->tupleOffset() + 1).resultFlags = NodeResultStorage;
             break;
         }
 
@@ -3791,6 +3815,12 @@ private:
         case ProfileControlFlow:
         case NewObject:
         case NewInternalFieldObject:
+        case DecimalWordConstant:
+        case DecimalTest:
+        case DecimalToNumber:
+        case DecimalToString:
+        case DecimalToFixed:
+        case NewDecimal:
         case NewPromise:
         case NewRegExp:
         case NewMap:

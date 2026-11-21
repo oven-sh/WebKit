@@ -12,6 +12,7 @@
 #include "AOTCompiledStructure.h"
 #include "CompleteSubspace.h"
 #include "DateInstance.h"
+#include "DecimalObject.h"
 #include "DirectArguments.h"
 #include "GetterSetter.h"
 #include "JSArrayBufferView.h"

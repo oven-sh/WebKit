@@ -81,6 +81,16 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case NewArray:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
+    case DecimalWordConstant:
+    case GetDecimalWord:
+    case ToDecimal:
+    case DecimalArith:
+    case DecimalScale:
+    case DecimalTest:
+    case DecimalToNumber:
+    case DecimalToString:
+    case DecimalToFixed:
+    case NewDecimal:
     case NewPromise:
     case Spread:
     case NewArrayBuffer:
@@ -371,6 +381,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewAsyncFunction:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomCreateActivation:
     case PhantomNewRegExp:

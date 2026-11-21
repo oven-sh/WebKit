@@ -1,0 +1,36 @@
+# A row of calls by the names of the methods of Decimal is compiled twice: for Decimals, and as it is written.
+# sink((price, rate) => price.multiply(rate).round(2).add(price));
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = f => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("19.99"), D("0.0825"))); show(() => f(D("12.5"), D("8"))); show(() => f(D("-0.5"), D("1"))); show(() => f(D("NaN"), D("1"))); show(() => f(D("1e6144"), D("10"))); show(() => f(D("1.234567890123456789012345678901234"), D("3"))); show(() => f(D("1"), D("1")) === f(D("1"), D("1"))); };
+# CHECK: 21.64
+# CHECK-NEXT: 112.5
+# CHECK-NEXT: -1
+# CHECK-NEXT: NaN
+# CHECK-NEXT: Infinity
+# CHECK-NEXT: 4.934567890123456789012345678901234
+# CHECK-NEXT: false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="multiply"
+    v3 = Call v2, v0, v1 calleeKey="multiply" calleeName="price.multiply"
+    v4 = PropGet v3 key="round"
+    v5 = Integer integer=2
+    v6 = Call v4, v3, v5 calleeKey="round" calleeName="round"
+    v7 = PropGet v6 key="add"
+    v8 = Call v7, v6, v0 calleeKey="add" calleeName="add"
+    ReturnCall v8
+}
