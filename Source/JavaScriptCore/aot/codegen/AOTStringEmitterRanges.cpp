@@ -25,9 +25,14 @@ void StringEmitter::holdRangeInside(const ValueContext& value, Word32 start, Wor
     elements.stopUnlessInside(value, belowOrEqual(end, lengthOf(value->stringOperand())));
 }
 
+bool StringEmitter::isNoRopeByItsForm(ValueID string)
+{
+    return m_code.isConstant(string) || typeOf(string).isOpaque(OpaqueKind::FlatString) || generator().findCarriedSubstring(string);
+}
+
 Condition StringEmitter::isLongRope(ValueID string)
 {
-    if (m_code.isConstant(string) || typeOf(string).isOpaque(OpaqueKind::FlatString) || generator().findCarriedSubstring(string))
+    if (isNoRopeByItsForm(string))
         return boolean(false);
     CellPointer cell = in<CellPointer>(string);
     Pointer fiber = loadField<Pointer>(cell, m_heaps.JSString_value);
@@ -39,32 +44,26 @@ Condition StringEmitter::isLongRope(ValueID string)
     }, Machine::EdgeClass::Unlikely);
 }
 
-// The range is cut out of a long rope, as slice() would have, which resolves the rope only where the range lies in several of its parts.
-CharacterView StringEmitter::viewOfRange(const OperationContext& context, ValueID string, CodeUnitRange range)
+// Has the length and the places of the whole string, but only the range may be read, and only if it lies inside the string: see RopeCharactersAroundRange.
+CharacterView StringEmitter::viewForReadOfRange(const OperationContext& context, ValueID string, const RangeInString& range)
 {
-    auto rangeIn = [&](const CharacterView& view, Word32 start) -> CharacterView {
-        Integer units = zeroExtended(start);
-        Pointer characters = select(view.is8Bit, offsetBy(view.characters, units, 0), offsetBy(view.characters, units, 1));
-        return { characters, sub(range.end, range.start), view.is8Bit, view.owner };
-    };
-    Condition isCut = isLongRope(string);
-    if (isCut.value()->isInt(0))
-        return rangeIn(viewOf(context, string), range.start);
-    CellPointer whole = in<CellPointer>(string);
-    CellPointer holder = selectByBranch<CellPointer>(isCut, [&] {
-        return substring(context, whole, range);
-    }, [&] {
-        return whole;
-    }, Machine::EdgeClass::Unlikely);
-    return rangeIn(viewOfString(context, holder), select(isCut, word32(0), range.start));
+    return isNoRopeByItsForm(string) ? viewOf(context, string) : viewOfString(context, in<CellPointer>(string), &range);
+}
+
+CharacterView StringEmitter::viewForReadOfRange(const ValueContext& value, CodeUnitRange range)
+{
+    holdRangeInside(value, range.start, range.end);
+    return viewForReadOfRange(value, value->stringOperand(), scopedLambda<CodeUnitRange(Word32)>([&](Word32) { return range; }));
 }
 
 CharacterView StringEmitter::viewOfRange(const ValueContext& value)
 {
     Word32 start = word32Of(value->startOperand());
     Word32 end = word32Of(value->endOperand());
-    holdRangeInside(value, start, end);
-    return viewOfRange(value, value->stringOperand(), { start, end });
+    CharacterView view = viewForReadOfRange(value, { start, end });
+    Integer units = zeroExtended(start);
+    Pointer characters = select(view.is8Bit, offsetBy(view.characters, units, 0), offsetBy(view.characters, units, 1));
+    return { characters, sub(end, start), view.is8Bit, view.owner };
 }
 
 void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
@@ -88,8 +87,7 @@ void StringEmitter::generateStringRangeEqualsLiteral(const ValueContext& value)
         // A group that took no part in a match has no start. The bytecode interpreter leaves its end as it was.
         if (typeOf(value->startOperand()).integers.minimum < 0)
             continueIf(greaterThanOrEqual(start, word32(0)), targets.notTaken);
-        holdRangeInside(value, start, end);
-        branchOnTextAt(viewOfRange(value, value->stringOperand(), { start, end }), word32(0), literal, targets);
+        branchOnTextAt(viewForReadOfRange(value, { start, end }), start, literal, targets);
     });
 }
 

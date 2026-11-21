@@ -707,11 +707,13 @@ Word32 StringEmitter::find(const CharacterView& subject, const CharacterView& so
 
 void StringEmitter::branchOnTextAtEnd(const OperationContext& context, ValueID string, LiteralEnd end, StringID literal, BranchTargets targets)
 {
-    Word32 lengthOfString = lengthOf(string);
     Word32 length = word32(textOf(literal).length());
-    continueIf(aboveOrEqual(lengthOfString, length), targets.notTaken);
-    CodeUnitRange range = end == LiteralEnd::Start ? CodeUnitRange { word32(0), length } : CodeUnitRange { sub(lengthOfString, length), lengthOfString };
-    branchOnTextAt(viewOfRange(context, string, range), word32(0), literal, targets);
+    auto rangeIn = [&](Word32 lengthOfString) {
+        return end == LiteralEnd::Start ? CodeUnitRange { word32(0), length } : CodeUnitRange { sub(lengthOfString, length), lengthOfString };
+    };
+    CharacterView view = viewForReadOfRange(context, string, scopedLambda<CodeUnitRange(Word32)>(rangeIn));
+    continueIf(aboveOrEqual(view.length, length), targets.notTaken);
+    branchOnTextAt(view, rangeIn(view.length).start, literal, targets);
 }
 
 void StringEmitter::generateEndsLiteral(const ValueContext& value, LiteralEnd end)
