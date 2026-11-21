@@ -263,19 +263,27 @@ std::expected<typename Parser<LexerType>::ParseInnerResult, String> Parser<Lexer
     if (m_lexer->isReparsingFunction())
         m_statementDepth--;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The body function of a generator or async function takes the name of the function, for the frames that run its
+    // code: the declared name, or the one that was inferred (`const f = async () => { }`), which is not a callee name.
+    const Identifier& bodyName = calleeName.isNull() && m_inferredFunctionName ? *m_inferredFunctionName : calleeName;
+#else
+    const Identifier& bodyName = calleeName;
+#endif
+
     SourceElements* sourceElements = nullptr;
     // The only way we can error this early is if we reparse a function and we run out of stack space.
     if (!hasError()) {
         if (isAsyncFunctionWrapperParseMode(parseMode))
-            sourceElements = parseAsyncFunctionSourceElements(context, calleeName, isArrowFunctionBodyExpression, CheckForStrictMode);
+            sourceElements = parseAsyncFunctionSourceElements(context, bodyName, isArrowFunctionBodyExpression, CheckForStrictMode);
         else if (isArrowFunctionBodyExpression)
             sourceElements = parseArrowFunctionSingleExpressionBodySourceElements(context);
         else if (isModuleParseMode(parseMode))
             sourceElements = parseModuleSourceElements(context);
         else if (isGeneratorWrapperParseMode(parseMode))
-            sourceElements = parseGeneratorFunctionSourceElements(context, calleeName, CheckForStrictMode);
+            sourceElements = parseGeneratorFunctionSourceElements(context, bodyName, CheckForStrictMode);
         else if (isAsyncGeneratorWrapperParseMode(parseMode))
-            sourceElements = parseAsyncGeneratorFunctionSourceElements(context, calleeName, isArrowFunctionBodyExpression, CheckForStrictMode);
+            sourceElements = parseAsyncGeneratorFunctionSourceElements(context, bodyName, isArrowFunctionBodyExpression, CheckForStrictMode);
         else if (parsingContext == ParsingContext::FunctionConstructor)
             sourceElements = parseSingleFunction(context, functionConstructorParametersEndPosition);
         else if (parseMode == SourceParseMode::ClassFieldInitializerMode) {
