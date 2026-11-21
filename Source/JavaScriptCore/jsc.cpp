@@ -220,6 +220,7 @@ struct MemoryFootprint {
 // their ICU header and pass through after one compare; a decompressed item is kept for the life of the process.
 #define ZSTD_STATIC_LINKING_ONLY
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
@@ -228,12 +229,25 @@ struct MemoryFootprint {
 extern "C" const unsigned char bun_icu_zstd_dict[];
 extern "C" const unsigned bun_icu_zstd_dict_size;
 
+// The items that ICU has loaded. icuDataItemCount() is their number, for a test to say that an operation loaded no
+// data, or that it loaded some (JSTests/stress/bun-time-zone-holder-loads-no-locale-data.js).
+static Lock loadedICUDataItemsLock;
+static HashSet<const void*>& loadedICUDataItems() WTF_REQUIRES_LOCK(loadedICUDataItemsLock)
+{
+    static NeverDestroyed<HashSet<const void*>> items;
+    return items;
+}
+
 extern "C" const void* bun_icu_maybe_decompress(const void* item, int32_t* length)
 {
     // A raw item has 0xda 0x27 at bytes 2 and 3 (ucmndata.h), so its first word is never zstd's magic number.
     uint32_t magic;
     if (!item)
         return item;
+    {
+        Locker locker { loadedICUDataItemsLock };
+        loadedICUDataItems().add(item);
+    }
     memcpy(&magic, item, sizeof(magic));
     if (magic != ZSTD_MAGICNUMBER) [[likely]]
         return item;
@@ -506,6 +520,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionIdleFullGC);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
+#if defined(BUN_ICU_ZSTD)
+static JSC_DECLARE_HOST_FUNCTION(functionICUDataItemCount);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
 static JSC_DECLARE_HOST_FUNCTION(functionResetMemoryPeak);
@@ -875,6 +892,9 @@ private:
 #endif
         addFunction(vm, "edenGC"_s, functionEdenGC, 0);
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
+#if defined(BUN_ICU_ZSTD)
+        addFunction(vm, "icuDataItemCount"_s, functionICUDataItemCount, 0);
+#endif
         addFunction(vm, "memoryUsageStatistics"_s, functionMemoryUsageStatistics, 0);
         addFunction(vm, "MemoryFootprint"_s, functionCreateMemoryFootprint, 0);
         addFunction(vm, "resetMemoryPeak"_s, functionResetMemoryPeak, 0);
@@ -2494,6 +2514,14 @@ JSC_DEFINE_HOST_FUNCTION(functionHeapSize, (JSGlobalObject* globalObject, CallFr
     JSLockHolder lock(vm);
     return JSValue::encode(jsNumber(vm.heap.size()));
 }
+
+#if defined(BUN_ICU_ZSTD)
+JSC_DEFINE_HOST_FUNCTION(functionICUDataItemCount, (JSGlobalObject*, CallFrame*))
+{
+    Locker locker { loadedICUDataItemsLock };
+    return JSValue::encode(jsNumber(loadedICUDataItems().size()));
+}
+#endif
 
 class JSCMemoryFootprint : public JSDestructibleObject {
     using Base = JSDestructibleObject;

@@ -1403,6 +1403,7 @@ yarr/YarrTZoneImpls.cpp
 // Derived Sources
 yarr/YarrCanonicalizeUnicode.cpp
 
+runtime/ICUTimeZone.cpp @no-unify // Confine U_SHOW_CPLUSPLUS_API's effect to this file.
 runtime/InternalFieldTuple.cpp
 
 heap/BunV8HeapSnapshotBuilder.cpp
