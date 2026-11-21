@@ -260,6 +260,9 @@ bool SparseArrayEntry::put(JSGlobalObject* globalObject, JSValue thisValue, Spar
         return true;
     }
 
+    // JSObject::putByIndexBeyondVectorLengthWithArrayStorage() ends its deferral of termination before it comes here,
+    // which throws a TerminationException that was pending when the store began. The setter must not run then.
+    RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, false);
     RELEASE_AND_RETURN(scope, uncheckedDowncast<GetterSetter>(m_value.get())->callSetter(globalObject, thisValue, value, shouldThrow));
 }
 
