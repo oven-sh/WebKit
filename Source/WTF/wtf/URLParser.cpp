@@ -2330,9 +2330,15 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 break;
             default:
                 syntaxViolation(c);
-                if (base.isValid() && base.protocolIsFile() && shouldCopyFileURL(c))
+                if (base.isValid() && base.protocolIsFile() && shouldCopyFileURL(c)) {
                     copyURLPartsUntil(base, URLPart::PathAfterLastSlash, c, nonUTF8QueryEncoding);
-                else {
+                    // Shortening a path that consists of a drive letter alone is a no-op
+                    // (https://url.spec.whatwg.org/#shorten-a-urls-path), so "x" against "file:///C:" is "file:///C:/x".
+                    if (m_url.m_pathAfterLastSlash == m_url.m_hostEnd + m_url.m_portLength + 1 && copyBaseWindowsDriveLetter(base)) {
+                        appendToASCIIBuffer('/');
+                        m_url.m_pathAfterLastSlash = currentPosition(c);
+                    }
+                } else {
                     bool copiedHost = false;
                     if (base.isValid() && base.protocolIsFile()) {
                         if (base.host().isEmpty()) {
@@ -2437,12 +2443,18 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     bool windowsQuirk = takesTwoAdvancesUntilEnd(CodePointIterator<CharacterType>(authorityOrHostBegin, c))
                         && isWindowsDriveLetter(authorityOrHostBegin);
                     if (windowsQuirk) {
+                        // https://url.spec.whatwg.org/#file-host-state step 1.1: the buffer is the first path segment of a
+                        // host-less URL, and c (a slash, '?' or '#') is reprocessed in the path state. No segment is added
+                        // for '?' or '#': "file://C|?q" is "file:///C:?q".
                         syntaxViolation(authorityOrHostBegin);
                         appendToASCIIBuffer('/');
                         appendWindowsDriveLetter(authorityOrHostBegin);
+                        m_url.m_pathAfterLastSlash = m_url.m_hostEnd + m_url.m_portLength + 1;
+                        state = State::Path;
+                        break;
                     }
-                    if (windowsQuirk || authorityOrHostBegin == c) {
-                        ASSERT(windowsQuirk || parsedDataView(currentPosition(c) - 1) == '/');
+                    if (authorityOrHostBegin == c) {
+                        ASSERT(parsedDataView(currentPosition(c) - 1) == '/');
                         if (*c == '?') [[unlikely]] {
                             syntaxViolation(c);
                             appendToASCIIBuffer("/?"_span8);
@@ -2466,7 +2478,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                             state = State::Fragment;
                             break;
                         }
-                        state = authorityOrHostBegin == c ? State::FilePathStart : State::Path;
+                        state = State::FilePathStart;
                         break;
                     }
                     if (parseHostAndPort(CodePointIterator<CharacterType>(authorityOrHostBegin, c)) == HostParsingResult::InvalidHost) {
@@ -2479,8 +2491,11 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                         m_url.m_hostEnd = currentPosition(c);
                         m_url.m_portLength = 0;
                     }
-                    
-                    state = State::PathStart;
+
+                    // The drive letter quirk of the path state (https://url.spec.whatwg.org/#path-state, "url's path is
+                    // empty") does not depend on the host: "file://host/C|/x" is "file://host/C:/x", and
+                    // "file://localhost/C|/x" has to serialize as "file:///C:/x" like parsing "file:///C|/x" does.
+                    state = (*c == '/' || *c == '\\') ? State::FilePathStart : State::PathStart;
                     break;
                 }
                 if (isPercentOrNonASCII(*c))
@@ -2496,8 +2511,8 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 appendToASCIIBuffer('/');
                 advance(c);
                 m_url.m_pathAfterLastSlash = currentPosition(c);
-                if (isWindowsDriveLetter(c)
-                    && currentPosition(c) == m_url.m_hostEnd + 1)
+                ASSERT(m_url.m_pathAfterLastSlash == m_url.m_hostEnd + m_url.m_portLength + 1);
+                if (isWindowsDriveLetter(c))
                     appendWindowsDriveLetter(c);
             }
             state = State::Path;
@@ -2530,6 +2545,12 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                             consumeSingleDotPathSegment(c);
                         ASSERT(m_didSeeSyntaxViolation);
                         afterSlash = !m_asciiBuffer.isEmpty() && m_asciiBuffer.last() == '/';
+                        if (m_urlIsFile && m_asciiBuffer.size() == m_url.m_hostEnd + m_url.m_portLength + 1 && isWindowsDriveLetter(c)) {
+                            // The dot segments left the path empty, so the segment that follows them is still subject to
+                            // the drive letter quirk: "file:///./C|" is "file:///C:".
+                            appendWindowsDriveLetter(c);
+                            afterSlash = false;
+                        }
                         p = positionOf(c);
                         if (p == inputEnd)
                             break;
@@ -2829,9 +2850,9 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
             syntaxViolation(authorityOrHostBegin);
             appendToASCIIBuffer('/');
             appendWindowsDriveLetter(authorityOrHostBegin);
-            m_url.m_pathAfterLastSlash = currentPosition(c);
-            m_url.m_pathEnd = m_url.m_pathAfterLastSlash;
-            m_url.m_queryEnd = m_url.m_pathAfterLastSlash;
+            m_url.m_pathAfterLastSlash = m_url.m_hostEnd + m_url.m_portLength + 1;
+            m_url.m_pathEnd = currentPosition(c);
+            m_url.m_queryEnd = m_url.m_pathEnd;
             break;
         }
         
