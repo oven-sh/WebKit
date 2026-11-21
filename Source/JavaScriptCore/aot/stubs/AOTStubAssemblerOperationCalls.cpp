@@ -222,7 +222,7 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
     const OperationToCall function = setUpOperationCall(operation, operationCall);
     if (callerIsStub) {
 #if CPU(ARM64)
-        pushToSave(linkRegister);
+        emitPushLinkRegister(*this);
 #else
         subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
@@ -234,7 +234,7 @@ void StubAssembler::emitOperationCallSavingNothing(const CalledOperation& operat
         bindReturnLabel(StubFrameKind::ReturnsAfterOperation);
     if (callerIsStub) {
 #if CPU(ARM64)
-        popToRestore(linkRegister);
+        emitPopLinkRegister(*this);
 #else
         addPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
 #endif
@@ -442,13 +442,11 @@ void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& oper
     pollBeforeReturningFromOperation(afterPoll);
 }
 #else
-void StubAssembler::emitFramelessCallerEpilogueAndReturn(GPRReg scratch)
+void StubAssembler::emitFramelessCallerEpilogueAndReturn()
 {
     RELEASE_ASSERT(key().callerFrame() == CallerFrame::Frameless && m_savedRegisterStack.isEmpty());
     checkHasNoBorrowedFPRs();
-    move(linkRegister, scratch);
-    popPair(GPRInfo::callFrameRegister, linkRegister);
-    m_assembler.ret(scratch);
+    emitPopFrameRecordAndReturnToOldLinkRegister(*this);
 }
 
 void StubAssembler::emitOperationCallSavingRegisters(const CalledOperation& operation, const OperationCall& operationCall, const ScopedLambda<void()>& beforeReturn)

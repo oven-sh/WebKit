@@ -631,7 +631,7 @@ void ControlData::fillLabels(CCallHelpers::Label label)
 }
 
 BBQJIT::BBQJIT(CompilationContext& compilationContext, const RTT& signature, Module& module, CalleeGroup& calleeGroup, IPIntCallee& profiledCallee, BBQCallee& callee, const FunctionData& function, FunctionCodeIndex functionIndex, const ModuleInformation& info, Vector<UnlinkedWasmToWasmCall>& unlinkedWasmToWasmCalls, MemoryMode mode, InternalFunction* compilation)
-    : m_jit(*compilationContext.wasmEntrypointJIT)
+    : m_jit(compilationContext.entrypointJIT())
     , m_codeForImage(compilationContext.codeForImage)
     , m_module(module)
     , m_calleeGroup(calleeGroup)

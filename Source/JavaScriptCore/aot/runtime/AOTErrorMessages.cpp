@@ -45,6 +45,12 @@ JSObject* createUpdateOfNullishError(JSGlobalObject* globalObject)
     return createTypeError(globalObject, "Cannot access property of undefined or null"_s);
 }
 
+static StringView clampedForErrorMessage(StringView text LIFETIME_BOUND)
+{
+    constexpr unsigned maxLength = 2 * KB;
+    return text.left(maxLength);
+}
+
 static String describeForErrorMessage(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -320,6 +326,7 @@ static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String&
 
 JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
 {
+    name = clampedForErrorMessage(name);
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
     const Image* image = Image::current();
     if (!isModuleOfBun && image && hasFlag(image->header().options.admitted(), AdmittedCode::ReplacedBuiltins))
@@ -342,6 +349,7 @@ JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, 
 
 JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
 {
+    name = clampedForErrorMessage(name);
     return withCode(globalObject, createReferenceError(globalObject, withAOTErrorNote(makeString("Cannot read '"_s, name, "' from the namespace object of '"_s, path, "': the build kept only the exports that it saw your code read. Import '"_s, name, "' by name."_s))), "ERR_MODULE_NOT_FOUND"_s);
 }
 
@@ -352,6 +360,7 @@ JSObject* createModuleInOtherRealmError(JSGlobalObject* globalObject, StringView
 
 JSObject* createLoaderChangeError(JSGlobalObject* globalObject, LoaderChange change, StringView changed)
 {
+    changed = clampedForErrorMessage(changed);
     if (change == LoaderChange::TakeOutOfRequireCache)
         return createError(globalObject, makeString("Cannot delete '"_s, changed, "' from require.cache: the build saw no code that deletes it, so the module was compiled to load once. Write the path out where you delete it, in a file that the tests import: delete require.cache[require.resolve(\"./module\")]"_s));
     if (change == LoaderChange::StoreUnderNameOfModuleInRequireCache)
@@ -458,13 +467,14 @@ static bool mayBeKeyOfElement(const UniquedStringImpl& key)
 String memberOfLockedBuiltin(BuiltinID holder, UniquedStringImpl* key)
 {
     String text = BuiltinTable::singleton().textOf(holder);
+    StringView shown = clampedForErrorMessage(StringView(key));
     if (key->isSymbol())
-        return makeString(text, "[Symbol("_s, StringView(key), ")]"_s);
+        return makeString(text, "[Symbol("_s, shown, ")]"_s);
     if (parseIndex(*key))
-        return makeString(text, '[', StringView(key), ']');
-    if (!isWrittenBehindDot(StringView(key)))
-        return spelledInBrackets(text, StringView(key));
-    return holder == Builtins::GlobalThis ? String(key) : makeString(text, '.', StringView(key));
+        return makeString(text, '[', shown, ']');
+    if (!isWrittenBehindDot(shown))
+        return spelledInBrackets(text, shown);
+    return holder == Builtins::GlobalThis ? shown.toString() : makeString(text, '.', shown);
 }
 
 String deletionFromLockedBuiltinMessage(const String& property)
@@ -539,9 +549,10 @@ static String refusalInTestRun(VM& vm, ASCIILiteral change, BuiltinID holder, Un
     if (!canBeOpened)
         return refusalThatNoTestRunLifts(change, member, does);
     String object = table.textOf(holder);
-    String spelled = !isText ? makeString(object, '[', StringView(key), ']') : isWrittenBehindDot(StringView(key)) ? makeString(object, '.', StringView(key)) : spelledInBrackets(object, StringView(key));
+    StringView shown = clampedForErrorMessage(StringView(key));
+    String spelled = !isText ? makeString(object, '[', shown, ']') : isWrittenBehindDot(shown) ? makeString(object, '.', shown) : spelledInBrackets(object, shown);
     String example = found
-        ? makeString(spelled, " = f or spyOn("_s, object, ", "_s, isText ? "\""_s : ""_s, StringView(key), isText ? "\""_s : ""_s, ')')
+        ? makeString(spelled, " = f or spyOn("_s, object, ", "_s, isText ? "\""_s : ""_s, shown, isText ? "\""_s : ""_s, ')')
         : makeString(spelled, " = value"_s);
     return makeString(change, member, " because built-in objects are read-only in compiled code, and the build didn't see a test "_s, does, " this one. Spell out the object and the name where the test does it, as in "_s, example, pageOnCompiledTests);
 }
@@ -617,9 +628,19 @@ String deletionOfFoldedMemberMessage(const String& property, LockedIn lockedIn)
     return deletionFromLockedBuiltinMessage(property);
 }
 
+static String nameOfBuiltinFunction(UniquedStringImpl* uid)
+{
+    return makeString(uid->isSymbol() ? '[' : '\'', clampedForErrorMessage(StringView(uid)), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s);
+}
+
 String assignmentToNameThatBuiltinFunctionInheritsMessage(UniquedStringImpl* uid)
 {
-    return assignmentToLockedBuiltinMessage(makeString(uid->isSymbol() ? '[' : '\'', StringView(uid), uid->isSymbol() ? ']' : '\'', " of a built-in function"_s));
+    return assignmentToLockedBuiltinMessage(nameOfBuiltinFunction(uid));
+}
+
+String deletionOfInheritedNameMessage(UniquedStringImpl* uid)
+{
+    return deletionFromLockedBuiltinMessage(nameOfBuiltinFunction(uid));
 }
 
 String prototypeChangeOfLockedBuiltinMessage(const String& holder, LockedIn lockedIn)

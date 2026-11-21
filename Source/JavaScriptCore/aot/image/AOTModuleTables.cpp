@@ -538,6 +538,9 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
             case Kind::AbandonOnThrow:
                 result.steps.append(ModuleStartStepData::create(Operation::AbandonOnThrow, operation.module.index()));
                 break;
+            case Kind::ResumeLoadOnThrow:
+                result.steps.append(ModuleStartStepData::create(Operation::ResumeLoadOnThrow, operation.module.index()));
+                break;
             case Kind::NeverComesBack:
                 returns = false;
                 break;

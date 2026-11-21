@@ -82,6 +82,20 @@ bool Modules::isFetchedBesideFactory(ModuleID module)
     return false;
 }
 
+bool Modules::isImportedByLoad(ModuleID root, ModuleID file) const
+{
+    for (size_t index : modulesInLoadGraph(root)) {
+        ModuleID importer(index);
+        if (isCommonJSModuleOrFacade(importer) || status(importer) >= ModuleStatus::Evaluating)
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            if (fileOf(moduleLoadedBy(request)) == file)
+                return true;
+        }
+    }
+    return false;
+}
+
 bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 {
     ModuleID file = fileOf(module);
@@ -381,6 +395,7 @@ void Modules::makeCallAgain(BatchedFetch& text)
         return;
     }
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
+    didRefetchFile(text.file);
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, ImportSourceState::Arrived, promise);
     bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
@@ -855,6 +870,12 @@ bool tryEvictRequirerOfOriginal(JSGlobalObject* realm, ModuleID module)
     return modules && modules->tryEvictRequirerOfOriginal(module);
 }
 
+bool wasOriginalRunForStatement(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasOriginalRunForStatement(file);
+}
+
 bool takeRequirerOfOwnOriginal(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -920,6 +941,12 @@ bool wasOriginalRequiredFirst(JSGlobalObject* realm, ModuleID file)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->wasOriginalRequiredFirst(file);
+}
+
+bool isImportedByLoad(JSGlobalObject* realm, ModuleID root, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isImportedByLoad(root, file);
 }
 
 bool isMockUnseen(JSGlobalObject* realm, ModuleID mocked)

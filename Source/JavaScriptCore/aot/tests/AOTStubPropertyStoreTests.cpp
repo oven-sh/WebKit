@@ -93,7 +93,7 @@ template<unsigned capacity, unsigned vectorLength>
 struct FakeStorageWithElements : FakeObject<((capacity + vectorLength + 2) & ~1u) * sizeof(uint64_t)> {
     FakeStorageWithElements()
     {
-        for (size_t offset = 0; offset < sizeof(this->bytes); offset += sizeof(uint64_t))
+        for (size_t offset = 0; offset < this->bytes.size(); offset += sizeof(uint64_t))
             this->template at<uint64_t>(offset) = untouched;
     }
 
@@ -150,7 +150,7 @@ public:
         instance.image.programSymbols = &m_symbols;
         instance.image.fieldTableEntries = m_emptyFieldTable.data() + highestShapeWithoutFields;
         instance.image.fieldRecordIndices = m_emptyFieldRecordIndices.data();
-        instance.cellCageBase = MarkedBlockCage::baseOf(this);
+        instance.cellCageBase = memoryOfFakeObjects().cageBase();
         instance.objects.keyOrderRuns = m_keyOrderRuns.get();
 
         m_auxiliarySpace.at<void*>(CompleteSubspace::offsetOfAllocatorForSizeStep() + initialOutOfLineCapacity * sizeof(uint32_t)) = &allocatorOfFirstStorage;
@@ -329,7 +329,7 @@ static void testAdditionsWithFirstStorage()
         stores.file(storeCase, slot);
         FakeStorage<initialOutOfLineCapacity> storage;
         FakePlainObject object(PropertyStores::structureID);
-        stores.allocatorOfFirstStorage.makeRoomAt(storage.address(), sizeof(storage.bytes));
+        stores.allocatorOfFirstStorage.makeRoomAt(storage.address(), storage.bytes.size());
         StubRun run = stores.store(storeCase, object.address(), value);
         AOT_TEST_CHECK(!run.calledOperation && !stores.allocatorOfFirstStorage.hasRoom());
         AOT_TEST_CHECK(object.structureID() == PropertyStores::structureIDAfterAddition && object.butterfly() == storage.butterfly());
@@ -342,7 +342,7 @@ static void testAdditionsWithFirstStorage()
         checkLeftToAdditionBySlot(stores, storeCase, slot, objectWithoutRoom, value);
 
         FakePlainObject objectThatHasStorage(PropertyStores::structureID, storage.butterfly());
-        stores.allocatorOfFirstStorage.makeRoomAt(storage.address(), sizeof(storage.bytes));
+        stores.allocatorOfFirstStorage.makeRoomAt(storage.address(), storage.bytes.size());
         checkLeftToAdditionBySlot(stores, storeCase, slot, objectThatHasStorage, value);
         stores.allocatorOfFirstStorage.makeRoomAt(0, 0);
     });
@@ -361,7 +361,7 @@ static void checkAdditionsWithDoubledStorage(PropertyStores& stores, FakeAllocat
             fullStorage.property(index) = bitsOf(jsNumber(static_cast<int32_t>(100 + index)));
         FakeStorage<doubledCapacity> storage;
         FakePlainObject object(PropertyStores::structureID, fullStorage.butterfly());
-        allocator.makeRoomAt(storage.address(), sizeof(storage.bytes));
+        allocator.makeRoomAt(storage.address(), storage.bytes.size());
         StubRun run = stores.store(storeCase, object.address(), value);
         AOT_TEST_CHECK(!run.calledOperation && !allocator.hasRoom());
         AOT_TEST_CHECK(object.structureID() == PropertyStores::structureIDAfterAddition && object.butterfly() == storage.butterfly());
@@ -376,7 +376,7 @@ static void checkAdditionsWithDoubledStorage(PropertyStores& stores, FakeAllocat
         checkLeftToAdditionBySlot(stores, storeCase, slot, objectWithoutRoom, value);
 
         FakePlainObject objectWithoutStorage(PropertyStores::structureID);
-        allocator.makeRoomAt(storage.address(), sizeof(storage.bytes));
+        allocator.makeRoomAt(storage.address(), storage.bytes.size());
         checkLeftToAdditionBySlot(stores, storeCase, slot, objectWithoutStorage, value);
         allocator.makeRoomAt(0, 0);
     });
@@ -410,7 +410,7 @@ static void testAdditionsBesideIndexingHeader()
         stores.allocatorOfFirstStorage.makeRoomAt(0, 0);
 
         stores.file(storeCase, doubled);
-        stores.allocatorOfDoubledStorage.makeRoomAt(room.address(), sizeof(room.bytes));
+        stores.allocatorOfDoubledStorage.makeRoomAt(room.address(), room.bytes.size());
         checkLeftToAdditionBySlot(stores, storeCase, doubled, object, value);
         AOT_TEST_CHECK(stores.allocatorOfDoubledStorage.hasRoom());
         stores.allocatorOfDoubledStorage.makeRoomAt(0, 0);
@@ -437,7 +437,7 @@ static void checkAdditionCopiesElements(PropertyStores& stores, FakeAllocator& a
         FakePlainObject object(PropertyStores::structureID, before.butterfly());
         uint8_t& flagsOfCell = object.at<uint8_t>(JSCell::typeInfoFlagsOffset());
         flagsOfCell = UINT8_MAX;
-        allocator.makeRoomAt(after.address(), sizeof(after.bytes));
+        allocator.makeRoomAt(after.address(), after.bytes.size());
         StubRun run = stores.store(storeCase, object.address(), value);
         AOT_TEST_CHECK(!run.calledOperation && !allocator.hasRoom());
         AOT_TEST_CHECK(object.structureID() == PropertyStores::structureIDAfterAddition && object.butterfly() == after.butterfly());
@@ -483,7 +483,7 @@ static void testAdditionsClearPristineFlag()
         FakePlainObject objectWithoutStorage(PropertyStores::structureID);
         objectWithoutStorage.at<uint8_t>(JSCell::typeInfoFlagsOffset()) = UINT8_MAX;
         stores.file(storeCase, createAddition(firstOutOfLineOffset, initialOutOfLineCapacity, Slot::clearsPristineFlag));
-        stores.allocatorOfFirstStorage.makeRoomAt(firstStorage.address(), sizeof(firstStorage.bytes));
+        stores.allocatorOfFirstStorage.makeRoomAt(firstStorage.address(), firstStorage.bytes.size());
         run = stores.store(storeCase, objectWithoutStorage.address(), value);
         AOT_TEST_CHECK(!run.calledOperation && objectWithoutStorage.butterfly() == firstStorage.butterfly() && firstStorage.property(0) == value);
         AOT_TEST_CHECK(objectWithoutStorage.at<uint8_t>(JSCell::typeInfoFlagsOffset()) == static_cast<uint8_t>(~IsPristine));
@@ -972,7 +972,7 @@ static void testAdditionsToExtraPropertiesInNewStorage()
         FakePlainObject extraPropertiesWithoutStorage(structureIDOfExtraProperties);
         FakeTypedObject objectWithoutStorage(hiddenWordFor(extraPropertiesWithoutStorage), orderWordHasExtraProperties);
         stores.file(storeCase, first);
-        stores.allocatorOfFirstStorage.makeRoomAt(firstStorage.address(), sizeof(firstStorage.bytes));
+        stores.allocatorOfFirstStorage.makeRoomAt(firstStorage.address(), firstStorage.bytes.size());
         AOT_TEST_CHECK(!stores.store(storeCase, objectWithoutStorage.address(), value).calledOperation && !stores.allocatorOfFirstStorage.hasRoom());
         AOT_TEST_CHECK(objectWithoutStorage.at<uint32_t>(JSCell::structureIDOffset()) == PropertyStores::structureIDAfterAddition);
         AOT_TEST_CHECK(extraPropertiesWithoutStorage.structureID() == structureIDOfExtraPropertiesAfterAddition && extraPropertiesWithoutStorage.butterfly() == firstStorage.butterfly());
@@ -984,7 +984,7 @@ static void testAdditionsToExtraPropertiesInNewStorage()
             fullStorage.property(index) = valueAt(index);
         FakeStorage<doubledCapacity> doubledStorage;
         FakePlainObject extraProperties(structureIDOfExtraProperties, fullStorage.butterfly());
-        stores.allocatorOfDoubledStorage.makeRoomAt(doubledStorage.address(), sizeof(doubledStorage.bytes));
+        stores.allocatorOfDoubledStorage.makeRoomAt(doubledStorage.address(), doubledStorage.bytes.size());
         for (const Slot& slot : { besideIndexingHeader, pastLimit }) {
             FakeTypedObject object(hiddenWordFor(extraProperties), orderWordHasExtraProperties);
             stores.file(storeCase, slot);

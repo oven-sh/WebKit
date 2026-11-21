@@ -137,6 +137,7 @@ set(JavaScriptCore_AOT_EXPORTED_HEADERS
     aot/runtime/AOTModules.h
     aot/runtime/AOTNarrowCopy.h
     aot/runtime/AOTOperationData.h
+    aot/runtime/AOTOrderRecorder.h
     aot/runtime/AOTPropertyCachesStringKeys.h
     aot/runtime/AOTPropertyCachesWords.h
     aot/runtime/AOTRealmStartup.h
@@ -360,6 +361,7 @@ set(JavaScriptCore_AOT_TEST_SOURCES
     aot/tests/AOTSavedFrameTests.cpp
     aot/tests/AOTSharedArrayTests.cpp
     aot/tests/AOTSharingModeAndNamespaceTests.cpp
+    aot/tests/AOTSignedReturnAddressTests.cpp
     aot/tests/AOTSiteAnswersOfGettersTests.cpp
     aot/tests/AOTSlimClosureTests.cpp
     aot/tests/AOTSlotAccessTests.cpp

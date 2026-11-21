@@ -26,6 +26,7 @@
 #include "AOTStaticFields.h"
 #include "DeferTermination.h"
 #include "ExceptionHelpers.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumericStrings.h"
 #include "ProxyObject.h"
@@ -1000,6 +1001,9 @@ static uint64_t addressOfReplaceableValue(JSObject* holder, UniquedStringImpl* n
     Structure* structure = holder->structure();
     if (structure->mayBePrototype() || structure->mayHaveImmutableProperties() || structure->isWatchingReplacement())
         return 0;
+    // An operation that only reads, such as Object.keys(), may flatten it, which renumbers its offsets.
+    if (structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore())
+        return 0;
     unsigned attributes = 0;
     auto offset = structure->getWithoutMaterializing(name, attributes);
     if (!offset || !isValidOffset(*offset) || attributes & isNotReplaceable)
@@ -1023,16 +1027,22 @@ static uint64_t addressInCompiledObject(Object& object, UniquedStringImpl* name,
     return extra ? addressOfReplaceableValue(extra, name) : 0;
 }
 
-static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
+static uint64_t placeInStorage(PropertyOffset offset)
 {
-    if (proxy->classInfo() != JSGlobalProxy::info())
+    return isInlineOffset(offset) ? 0 : static_cast<uint64_t>(offsetInButterfly(offset) * static_cast<int64_t>(sizeof(EncodedJSValue)));
+}
+
+// The first use of a built-in adds a property to the global object, so its storage moves: this is the distance from wherever that storage is.
+static uint64_t placeInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
+{
+    if (proxy->type() != GlobalProxyType || proxy->classInfo() != JSGlobalProxy::info())
         return 0;
     JSGlobalObject* target = uncheckedDowncast<JSGlobalProxy>(proxy)->target();
     Structure* structure = target->structure();
     Instance* instance = Instance::of(target);
     if (const Slot* filed = instance ? instance->state->propertyCaches->findByKey(structure, name, SlotAccess::Store) : nullptr) {
         bool isOwnValue = filed->has(Slot::isOwn) && (filed->kind == Slot::Kind::Value || filed->kind == Slot::Kind::FarValue);
-        return isOwnValue ? std::bit_cast<uint64_t>(target->locationForOffset(filed->offsetInStorage())) : 0;
+        return isOwnValue ? placeInStorage(filed->offsetInStorage()) : 0;
     }
     unsigned attributes = 0;
     auto offset = structure->getWithoutMaterializing(name, attributes);
@@ -1043,7 +1053,7 @@ static uint64_t addressInGlobalObject(JSObject* proxy, UniquedStringImpl* name)
     WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(*offset);
     if (!replacements || !replacements->hasBeenInvalidated())
         return 0;
-    return std::bit_cast<uint64_t>(target->locationForOffset(*offset));
+    return placeInStorage(*offset);
 }
 
 static uint64_t addressInFunction(Closure& function, UniquedStringImpl* name)
@@ -1055,7 +1065,7 @@ static uint64_t addressInFunction(Closure& function, UniquedStringImpl* name)
     return addressOfReplaceableValue(&function, name);
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t takesFunctions))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t holders))
 {
     JSValue base = JSValue::decode(encodedBase);
     if (!base.isObject())
@@ -1063,14 +1073,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTOwnPropertyAddress, uint64_t, (Enc
     RefPtr<UniquedStringImpl> name = nameOfExistingKey(JSValue::decode(encodedProperty));
     if (!name || name == base.asCell()->vm().propertyNames->underscoreProto.impl())
         return 0;
+    if (static_cast<AddressHolders>(holders) == AddressHolders::GlobalObject)
+        return placeInGlobalObject(asObject(base), name.get());
     if (Object* object = compiledObjectOrNull(base))
         return addressInCompiledObject(*object, name.get(), findsOnlyFields, fitsFieldTypes);
     if (findsOnlyFields)
         return 0;
     JSObject* object = asObject(base);
-    if (object->type() == GlobalProxyType)
-        return addressInGlobalObject(object, name.get());
-    if (takesFunctions && isCompiledClosure(object))
+    if (static_cast<AddressHolders>(holders) == AddressHolders::ObjectsAndFunctions && isCompiledClosure(object))
         return addressInFunction(*uncheckedDowncast<Closure>(object), name.get());
     if (object->type() != FinalObjectType || object->structure()->isCompiledStructure() || object->structure()->typeInfo().overridesGetOwnPropertySlot() || !object->canPerformFastPutInlineExcludingProto())
         return 0;
@@ -1094,8 +1104,6 @@ static NEVER_INLINE uint64_t searchOwnNamedPropertyAddress(PropertyCaches& cache
     if (Object* object = compiledObjectOrNull(base))
         return addressInCompiledObject(*object, name, false, fitsFieldTypes);
     JSObject* object = asObject(base);
-    if (object->type() == GlobalProxyType)
-        return addressInGlobalObject(object, name);
     Structure* structure = object->structure();
     if (object->type() != FinalObjectType || structure->isCompiledStructure() || structure->typeInfo().overridesGetOwnPropertySlot() || !object->canPerformFastPutInlineExcludingProto())
         return 0;

@@ -36,7 +36,6 @@ aot/codegen/AOTAccessEmitterDefinitions.cpp
 aot/codegen/AOTAllocationEmitter.cpp
 aot/codegen/AOTAllocationEmitterObjects.cpp
 aot/codegen/AOTArgumentsEmitter.cpp
-aot/codegen/AOTArrayBuiltinEmitter.cpp
 aot/codegen/AOTArrayStorageBuiltinEmitter.cpp
 aot/codegen/AOTBarrierEmitter.cpp
 aot/codegen/AOTBigIntValues.cpp
@@ -55,7 +54,6 @@ aot/codegen/AOTCodeGenerator.cpp
 aot/codegen/AOTCodeGeneratorDispatch.cpp
 aot/codegen/AOTCodeGeneratorEmitters.cpp
 aot/codegen/AOTCodeGeneratorMoveLoops.cpp
-aot/codegen/AOTCodeGeneratorRotatingLoops.cpp
 aot/codegen/AOTCodeGeneratorSearchLoops.cpp
 aot/codegen/AOTCodeGeneratorSumNests.cpp
 aot/codegen/AOTCollectionIntrinsicEmitter.cpp
@@ -65,9 +63,7 @@ aot/codegen/AOTControlEmitter.cpp
 aot/codegen/AOTConversionEmitter.cpp
 aot/codegen/AOTElementAccessEmitter.cpp
 aot/codegen/AOTElementAccessEmitterStores.cpp
-aot/codegen/AOTElementAccessEmitterTypedArrays.cpp
 aot/codegen/AOTElementEmitterAllocation.cpp
-aot/codegen/AOTElementEmitterLiterals.cpp
 aot/codegen/AOTEntryEmitter.cpp
 aot/codegen/AOTEnvironmentEmitter.cpp
 aot/codegen/AOTExceptionEmitter.cpp
@@ -189,6 +185,7 @@ aot/image/AOTRuntimeDescription.cpp
 aot/image/AOTSectionLinker.cpp
 aot/image/AOTSharedCode.cpp
 aot/image/AOTSideTables.cpp
+aot/image/AOTStartOrder.cpp
 aot/image/AOTStaticsLayout.cpp
 aot/image/AOTStaticsTables.cpp
 aot/image/AOTStoredStrings.cpp
@@ -247,7 +244,6 @@ aot/ir/AOTWireFamilies.cpp
 aot/ir/AOTWireFunctionFamilies.cpp
 aot/ir/AOTWireTypes.cpp
 aot/machine/AOTMachine.cpp
-aot/machine/AOTMachineAllocationChecker.cpp
 aot/machine/AOTMachineAllocator.cpp
 aot/machine/AOTMachineAllocatorCalleeSaves.cpp
 aot/machine/AOTMachineAllocatorJoins.cpp
@@ -493,7 +489,6 @@ aot/walk/AOTWalkListedOwnKeys.cpp
 aot/walk/AOTWalkLoopInvariants.cpp
 aot/walk/AOTWalkLoops.cpp
 aot/walk/AOTWalkLoopsBuiltTwice.cpp
-aot/walk/AOTWalkLoopsOverGenerators.cpp
 aot/walk/AOTWalkNarrowingOfBranches.cpp
 aot/walk/AOTWalkNarrowingOfGuesses.cpp
 aot/walk/AOTWalkNumberArms.cpp

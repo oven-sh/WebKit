@@ -38,11 +38,23 @@ PoisonedCellSites::PoisonedCellSites(CacheRegistry& caches)
 
 size_t PoisonedCellSites::removeDeadEntries(VM& vm, CollectionScope)
 {
-    size_t sizeBefore = m_sites.size();
-    m_sites.removeIf([&](const auto& entry) {
-        return !vm.heap.isMarked(entry.key);
-    });
-    return sizeBefore - m_sites.size();
+    Sites sitesThatStay;
+    for (const Site& site : m_sites) {
+        if (vm.heap.isMarked(site.cell.get()))
+            sitesThatStay.append(site);
+    }
+    size_t numberRemoved = m_sites.size() - sitesThatStay.size();
+    m_sites = WTF::move(sitesThatStay);
+    return numberRemoved;
+}
+
+std::optional<uint32_t> PoisonedCellSites::findFunction(const JSCell* cell) const
+{
+    for (size_t place = m_sites.size(); place--;) {
+        if (m_sites[place].cell.get() == cell)
+            return m_sites[place].function.get();
+    }
+    return std::nullopt;
 }
 
 namespace {
@@ -50,7 +62,7 @@ namespace {
 struct CellLent {
     JSCell* cell;
     const void* frame;
-    PoisonedCellSites::Site site;
+    uint32_t function;
 };
 
 } // anonymous namespace
@@ -67,9 +79,9 @@ static Vector<CellLent>& cellsLentOnThisThread()
     return *cells;
 }
 
-void PoisonedCell::noteThatCellIsLent(JSCell* cell, const void* frame, uint32_t function, uint32_t position)
+void PoisonedCell::noteThatCellIsLent(JSCell* cell, const void* frame, uint32_t function)
 {
-    cellsLentOnThisThread().append({ cell, frame, { function, position } });
+    cellsLentOnThisThread().append({ cell, frame, function });
     ++s_numberOfCellsLent;
 }
 
@@ -79,7 +91,7 @@ uint32_t PoisonedCell::poisonCellsLentBelow(VM& vm, const void* frame, bool andB
     Vector<CellLent>& lent = cellsLentOnThisThread();
     while (!lent.isEmpty() && (lent.last().frame < frame || (andByThatFrame && lent.last().frame == frame))) {
         CellLent last = lent.last();
-        numberPoisoned += tryPoison(vm, last.cell, last.site.function, last.site.position);
+        numberPoisoned += tryPoison(vm, last.cell, last.function);
     }
     return numberPoisoned;
 }
@@ -102,7 +114,7 @@ size_t PoisonedCell::estimatedSize(JSCell* cell, VM&)
     return cell->cellSize();
 }
 
-bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t position)
+bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function)
 {
     if (s_numberOfCellsLent) {
         s_numberOfCellsLent -= cellsLentOnThisThread().removeLastMatching([&](const CellLent& lent) {
@@ -131,7 +143,7 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
 
     if (!state.poisonedCellSites)
         state.poisonedCellSites = makeUnique<PoisonedCellSites>(*state.caches);
-    state.poisonedCellSites->set(cell, { function, position });
+    state.poisonedCellSites->append(cell, function);
 
     *reinterpret_cast<uint64_t*>(bytes + JSObject::butterflyOffset()) = 0;
     constexpr uint64_t cellStateMask = 0xffull << 8 * JSCell::cellStateOffset();
@@ -146,8 +158,11 @@ bool PoisonedCell::tryPoison(VM& vm, JSCell* cell, uint32_t function, uint32_t p
 void PoisonedCell::stop(const JSCell* cell)
 {
     RuntimeCheckFailure failure("lifetime check failed"_s);
-    failure.inFunction(FunctionID(cell->vm().aotState().poisonedCellSites->get(cell).function));
-    failure.detail("an object that this function allocated was used after the compiler ended its lifetime");
+    if (std::optional<uint32_t> function = cell->vm().aotState().poisonedCellSites->findFunction(cell)) {
+        failure.inFunction(FunctionID(*function));
+        failure.detail("an object that this function allocated was used after the compiler ended its lifetime");
+    } else
+        failure.detail("an object was used after the compiler ended its lifetime and a collection found it dead");
     failure.report();
     CRASH();
 }

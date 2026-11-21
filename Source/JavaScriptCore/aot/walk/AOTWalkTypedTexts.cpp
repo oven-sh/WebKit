@@ -206,7 +206,7 @@ static bool takePartsInWalkTexts(Walker& walker, const BodyValue& join, ValueID 
             return;
         }
         Type type = part ? walker.types().at(walker.typeOf(part)) : Type();
-        if (part && type.hasObjects() && takePartsOfConvertedList(walker, part, parts)) {
+        if (part && type.hasObjects() && takePartsOfConvertedList(walker, part, walker.originOf(join), parts)) {
             joinsTexts = true;
             return;
         }

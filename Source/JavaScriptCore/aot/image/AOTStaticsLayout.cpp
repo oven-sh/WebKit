@@ -18,6 +18,7 @@
 #include "AOTPropertyCachesWords.h"
 #include "AOTSort.h"
 #include "AOTStringUses.h"
+#include "AOTStartOrder.h"
 #include "AOTThreads.h"
 #include <algorithm>
 #include <functional>
@@ -663,7 +664,9 @@ void ImageNumbersBuilder::numberSites()
     numbers.m_numbersOfSites.resize(sites.size() + 1);
     const Typed::BitVector& keysWithColumn = inputs.plan.slots().keysWithColumn();
     uint64_t numberOfNumbersOfSites = 0;
-    for (uint32_t place = 0; place < sites.size(); ++place) {
+    Vector<uint32_t> placesInStartOrder = listSitesInStartOrder(inputs, context.startRanks(), sites);
+    for (uint32_t index = 0; index < sites.size(); ++index) {
+        uint32_t place = placesInStartOrder.isEmpty() ? index : placesInStartOrder[index];
         std::span<const uint32_t> key = sites.keyAt(place);
         numbers.m_numbersOfSites[place] = static_cast<uint32_t>(numberOfNumbersOfSites);
         numberOfNumbersOfSites += ImageNumbers::isPlaceWithSiteAnswers(key) && !keysWithColumn.get(ImageNumbers::nameOfSite(key).index()) ? InstanceLayout::numbersOfSiteWhoseNameStandsBehind : 1;

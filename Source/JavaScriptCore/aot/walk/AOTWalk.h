@@ -140,6 +140,7 @@ bool inlineCallee(Walker&, const BodyValue&);
 bool callDirectly(Walker&, const BodyValue&);
 bool buildTypedOperation(Walker&, const BodyValue&);
 bool someLoopGivesSlowVersionSomethingToReckon(const BodyIndex&);
+bool slowBodyGoesByWhatCallersLeave(const Program&, const Facts&, const Plan&, FunctionID);
 enum class GuessOpened : uint8_t {
     None,
     AsOneOperation,
@@ -1225,6 +1226,12 @@ public:
             frame.duplicatedValues->noteBoundOnWay(input, reference);
         bound = reference;
     }
+    void bindForWay(ValueID input, Reference reference)
+    {
+        bind(input, reference);
+        if (Frame& frame = m_frames.last(); frame.isDuplicated(input)) [[unlikely]]
+            frame.duplicatedValues->nameOtherwiseOn(frame.duplicatedValues->namesOfWay, input, reference);
+    }
     class StandIn {
         WTF_MAKE_NONCOPYABLE(StandIn);
     public:
@@ -1420,6 +1427,7 @@ public:
     void branchOnTest(Reference test, BlockID taken, BlockID notTaken) { branch(test, taken, notTaken, true); }
     std::optional<PassedTest> continueIfCheckPasses(Reference test, BlockID whereItFails, bool passesWithYes = true);
     std::optional<PassedTest> findPassedTest(Reference test, bool passesWithYes = true);
+    std::optional<PassedTest> findTestPassedOnPath(Reference test, bool passesWithYes = true);
     bool stillHolds(const PassedTest&);
     std::optional<PassedTest> findUpperBoundProof(Reference value, Reference bound);
     std::optional<PassedTest> findNonNegativeProof(Reference value);
@@ -1490,6 +1498,10 @@ public:
 
     void walkStretch(BlockID inputBlock, uint32_t begin, uint32_t end);
     bool hasWalkedBeyond(const BodyValue& operation) const;
+    uint32_t limitOfStretchInFrontOfSteps(const BodyBlock& block, uint32_t limit) const { return m_hasTakenGeneratorsSteppedByHand ? placeOfNextStepOfGenerator(block, limit) : limit; }
+    uint32_t placeOfNextStepOfGenerator(const BodyBlock&, uint32_t limit) const;
+    Reference generatorSteppedBy(const BodyValue& operation) const { return m_hasTakenGeneratorsSteppedByHand ? findGeneratorSteppedBy(operation) : Reference(); }
+    Reference findGeneratorSteppedBy(const BodyValue& operation) const;
     struct StaticFieldSeenInVariable {
         VariableID variable;
         Reference held;
@@ -1704,6 +1716,7 @@ public:
     Reference buildWithInlineLookup(Draft&&);
     bool canThreadBranchAfter(const BodyValue& operation);
     bool canFollowNotTakenEdge(const BodyTerminator&);
+    bool letArmsLeadEdgesOf(BlockID inputBlock);
     void followNotTakenEdge(const BodyTerminator&);
     bool canThreadBranchAfterMatch(const BodyValue& operation);
     bool blockEndKeepsStringBuilders(uint32_t begin);
@@ -2230,7 +2243,7 @@ public:
     bool executesInEverySpecializedIteration() const;
     bool tryPreparePreheaderForCall();
     Reference buildOnFirstArrival(ValueID site, const Draft& call, const Effects&);
-    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult);
+    Reference buildOnFirstArrival(ValueID site, TypeID resultType, Origin, NOESCAPE const ScopedLambda<Reference()>& buildResult, std::span<const Reference> operands = { });
     static constexpr uint32_t noCounter = std::numeric_limits<uint32_t>::max();
     struct RecurringAccess {
         uint32_t loop;
@@ -2349,6 +2362,7 @@ public:
     bool hasStringsInBuilders() const { return !m_stringsInBuilders.isEmpty(); }
     bool exitsLoopBeingVersioned(BlockID to) const { return exitsLoopBeingVersioned(m_frames.size() - 1, to); }
     bool canRestartIteration() const;
+    bool restartsAtUnknownCode() const { return canRestartIteration() && isUncaughtIterationEffectFree() && !looksAtLoopsAroundHaveSeen(Effects::unknownCode()); }
     bool isInCopyOfAccessor() const;
     bool isIterationQuiet() const;
     bool buildGrowthOfList(Draft&& growth);
@@ -2676,6 +2690,7 @@ private:
     void findSlotsOfObjectsThatComeRound(BlockID inputHead, const LoopPreview&, std::span<const Reference> entering, Vector<FieldOfScope, 4>&);
     Reference valueCarriedByLoop(const FieldOfScope&, std::span<const Reference> arguments);
     bool mayBeInDeadZone(const FieldOfScope&) const;
+    bool isBeforeFirstStore(const FieldOfScope&) const;
     TypeID backEdgeTypeOfVariable(BlockID inputHead, const FieldOfScope&) const;
     bool namesFreshCell(const WalkState&, Reference) const;
     bool isEnvironmentAllocation(Reference) const;
@@ -4212,6 +4227,8 @@ private:
         uint32_t carriedResultCount { 0 };
         uint32_t carriedResultsSummary { 0 };
         Vector<uint32_t, 2> carriedSlotsBuilt { };
+        // What hangs on what the front of the quiet turns reads.
+        Vector<uint32_t, 1> carriedSlotsThatHangOnFront { };
         Vector<uint32_t, 2> untouchedArrays { };
         struct CarriedElement {
             uint32_t slot;
@@ -4683,9 +4700,13 @@ private:
     bool isOnlyTestedSinceCall(Reference generator) const;
     bool checkPassedGenerator(Reference generator, Origin, Reference* holderOfReturn = nullptr);
     Reference buildGeneratorPrototype(Reference function, Origin);
-    void closeByChangedReturn(Reference holder, IteratorCompletion, bool leavesAtOnce, BlockID inPlace, BlockID after, Origin);
+    bool isResumableGenerator(FunctionID generatorFunction);
+    Reference buildSuspendedGeneratorFrame(size_t place, Origin);
+    Reference buildSuspendedIteration(const Frame& suspended, ValueID open, Reference state, Origin);
+    void closeByChangedReturn(size_t place, IteratorCompletion, BlockID inPlace, BlockID after, Origin);
     bool runsNothingSinceCall(Reference generator) const;
     bool isOnlyPassedToCopy(Reference generator);
+    bool callMakesGenerator(const Frame& caller, const BodyValue& call, Reference generator) const;
     Reference functionOfGenerator(Reference generator) const;
     Reference makeGeneratorAgain(Reference generator);
     Frame& frameLeftForCall();
@@ -4715,8 +4736,15 @@ private:
         BlockID block;
         Reference sent;
         WalkState state;
+        struct OtherWay {
+            BlockID block;
+            Reference sent;
+            WalkState state;
+        };
+        Vector<OtherWay> otherWays;
     };
     EndOfManualIteration walkManualIterationToStep(const GeneratorWalkedInConsumer&);
+    void joinWaysToStep(EndOfManualIteration&);
     bool answerStepOfGeneratorTaken(const BodyValue&);
     bool holdsLoopsThatStepByHand(FunctionID);
     bool loopStepsGeneratorTaken(BlockID inputHead) const;
@@ -5555,7 +5583,7 @@ bool buildOwnPropertyTest(Walker&, const BodyValue& question, Reference object, 
 bool dispatchOwnPropertyTest(Walker&, const BodyValue& question, Reference object, Reference key);
 BuiltinID findMemberAboveHeirsOfBuiltinClass(const Walker&, BuiltinClassID, PropertyKeyID);
 TypedForm buildReadOfMemberAboveHeirOfBuiltinClass(Walker&, const BodyValue& read, TypeID typeOfObject, Reference object, BuiltinID location);
-bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access);
+bool readsOffEntryParameterThatStaysAsMade(Walker&, const BodyValue& access, TypeID named);
 bool someThreadMayGrowSharedMemory(const Walker&);
 bool isViewOverUnsharedMemory(const Walker&, Reference view);
 bool viewMayFollowSharedMemoryThatGrows(const Walker&, Reference view);
@@ -5746,6 +5774,8 @@ std::span<const uint32_t> additionsToTables(Walker&);
 TypeID findPrimitivesExpectedBesideObjects(Walker&, ValueID input);
 LayoutID layoutThatNamesFamily(Walker&, TypeID);
 bool valueFitsSlot(Walker&, FieldReference, Reference value);
+bool onlyAllocationFills(const Walker&, FieldReference);
+TypeID typeShownOfFieldHandedBack(Walker&, FieldReference);
 ExpectationOfValue expectationOfAnswerOfCallBeingCopied(Walker&, const BodyValue& call);
 bool isEntryParameterUninformative(Walker&, FunctionID callee, uint32_t entryParameter);
 uint64_t entryParametersOnlyReadByTwoNamesOrMore(const BodyIndex&);
@@ -5821,6 +5851,8 @@ void storePendingElements(Walker&);
 bool isArithmeticReadInReadArm(Walker&, const BodyValue& read);
 inline constexpr OpcodeSet opcodesThatTryReadAtSiteTakes { Opcode::PropGet, Opcode::ElemGet, Opcode::PropHas };
 AOT_LINK_OF_WALK(tryReadAtSite, opcodesThatTryReadAtSiteTakes)
+inline constexpr OpcodeSet opcodesThatLookUpVaryingKeyTakes { Opcode::ElemGet };
+AOT_LINK_OF_WALK(lookUpVaryingKey, opcodesThatLookUpVaryingKeyTakes)
 bool shouldOpenGuess(const Walker&, Reference value, TypeID expected, bool isDeclaredInSource, uint32_t numberOfTypedOperations);
 void openGuess(Walker&, Reference value, TypeID expected, BlockID inputBlock, uint32_t begin, uint32_t end, TypeID expectedNext = { });
 uint32_t limitOfStretchOfArms(Walker&, const BodyBlock&);

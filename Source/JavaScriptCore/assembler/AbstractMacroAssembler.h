@@ -920,6 +920,13 @@ public:
         return label();
     }
 #endif
+
+    Label labelAt(AssemblerBuffer::PlaceToDescribe place)
+    {
+        Label result;
+        result.m_label = m_assembler.buffer().labelAt(place);
+        return result;
+    }
     
     Label label()
     {

@@ -468,6 +468,48 @@ void BodyLiveness::compute(const BodyIndex& index)
         delete made;
 }
 
+GeneratorFrameLayout::GeneratorFrameLayout(const BodyIndex& index)
+{
+    BodyLiveness liveness;
+    liveness.compute(index);
+    BitVector isListed(index.numberOfValues());
+    for (uint32_t number = 0; number < index.numberOfBlocks(); ++number) {
+        BodyBlock block = index.block(BlockID(number));
+        if (!index.isReachable(block.id()))
+            continue;
+        for (BodyValue operation : block.values()) {
+            if (operation.opcode() != Opcode::Yield)
+                continue;
+            Suspension suspension { operation.id(), block.id(), { } };
+            BitVector isReadInBlock(index.numberOfValues());
+            auto noteRead = [&](ValueID value, auto...) {
+                if (value)
+                    isReadInBlock.set(value.index());
+            };
+            for (BodyValue later : block.values()) {
+                if (later.id().index() > operation.id().index())
+                    later.forEachOperand(noteRead);
+            }
+            block.terminator().forEachOperand(noteRead);
+            auto isReadBehind = [&](ValueID value) {
+                return isReadInBlock.get(value.index()) || (block.hasHandler() && (liveness.isLiveAtHead(value, block.handler().block()) || std::ranges::find(block.handler().arguments(), value) != block.handler().arguments().end()))
+                    || std::ranges::any_of(block.terminator().targets(), [&](BodyTarget target) {
+                        return liveness.isLiveAtHead(value, target.block()) || std::ranges::find(target.arguments(), value) != target.arguments().end();
+                    });
+            };
+            liveness.forEachLiveAcross(operation.id(), block.id(), [&](ValueID value) {
+                if ((!index.isParameter(value) && isRematerialized(index.opcodeOf(value))) || !isReadBehind(value))
+                    return;
+                suspension.values.append(value);
+                isListed.quickSet(value.index());
+            });
+            suspensions.append(WTF::move(suspension));
+        }
+    }
+    for (size_t value : isListed)
+        values.append(ValueID(static_cast<uint32_t>(value)));
+}
+
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

@@ -73,6 +73,8 @@ static bool isFunctionOwnName(VM& vm, UniquedStringImpl* uid)
 
 bool isNeverCachedName(VM& vm, UniquedStringImpl* uid)
 {
+    if (uid->length() == 10 && equal(uid, "4294967295"_s)) [[unlikely]]
+        return true;
     return parseIndex(PropertyName(uid)) || uid == vm.propertyNames->underscoreProto.impl() || (PropertyName(uid).isPrivateName() && !PropertyName(uid).passesThroughProxies());
 }
 
@@ -1100,6 +1102,8 @@ PropertyAnswer classifyCompiledObjectStore(const StoreQuery& query, Object& obje
 static PropertyAnswer classifyFieldDeletion(const DeletionQuery& query, const Object& object, const CompiledStructure& before, const FieldData& field)
 {
     constexpr SlotAccess access = SlotAccess::Delete;
+    if (field.attributes() & PropertyAttribute::DontDelete)
+        return PropertyAnswer::uncacheable(access);
     if (before.mayBePrototype() || before.hasOutOfLineKeyOrder() || field.isOutOfLine() || field.isPrivate() || !absentPatternOf(field.slot.representation()) || field.slot.offset > UINT16_MAX)
         return PropertyAnswer::uncacheable(access);
     if (object.structure() != &before || query.orderWordBefore & orderWordIntegrityBits)

@@ -91,6 +91,7 @@ ClassTable::ClassTable(State& state)
     state.caches->addClearedEachCollection("places of prototype properties"_s, asWritableBytes(std::span { m_placesOfPrototypeProperties }));
     state.caches->addClearedEachCollection("prototypes of class objects"_s, asWritableBytes(std::span { m_prototypesOfClassObjects }));
     state.caches->addClearedEachCollection("this beside callees"_s, asWritableBytes(std::span { m_thisBesideCallees }));
+    state.caches->addClearedEachCollection("callees constructed once"_s, asWritableBytes(std::span { m_calleesConstructedOnce }));
     state.caches->addClearedEachCollection("instances below Object"_s, asWritableBytes(std::span { m_instancesBelowObject }));
     state.caches->addClearedEachCollection("the last evaluation of a class"_s, asWritableBytes(singleElementSpan(m_lastEvaluation)));
     state.caches->addClearedEachCollection("structures with brands of heirs"_s, asWritableBytes(std::span { m_structuresWithBrandsOfHeirs }));

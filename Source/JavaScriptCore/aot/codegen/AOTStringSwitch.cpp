@@ -679,8 +679,17 @@ std::optional<CodeGenerator::SymbolChain> CodeGenerator::findSymbolChain(BlockID
         }
         return std::nullopt;
     };
+    // The place of a cell among the cells doesn't tell two names of one symbol apart.
+    Vector<KeySetID, 16> symbols;
+    auto isFurtherSymbol = [&](ValueID read) {
+        KeySetID symbol = inputs().types.at(code().at(read).type).symbolLiterals;
+        if (!holdsOneMember(symbol) || symbols.contains(symbol))
+            return false;
+        symbols.append(symbol);
+        return true;
+    };
     std::optional<ComparisonWithSymbol> comparison = comparisonAt(id);
-    if (!comparison)
+    if (!comparison || !isFurtherSymbol(comparison->read))
         return std::nullopt;
     SymbolChain chain { comparison->subject, code().at(comparison->read).variable(), { id } };
     const uint64_t initialWord = plan().variable(chain.first).initialWord;
@@ -696,7 +705,7 @@ std::optional<CodeGenerator::SymbolChain> CodeGenerator::findSymbolChain(BlockID
         if (!next || next->subject != chain.subject)
             break;
         VariableID variable = code().at(next->read).variable();
-        if (variable.index() != chain.first.index() + chain.blocks.size() || plan().variable(variable).initialWord != initialWord)
+        if (variable.index() != chain.first.index() + chain.blocks.size() || plan().variable(variable).initialWord != initialWord || !isFurtherSymbol(next->read))
             break;
         chain.blocks.append(edge.to);
     }

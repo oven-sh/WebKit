@@ -1083,8 +1083,8 @@ static void appendStringRangeToBuilder(JSGlobalObject* globalObject, StringBuild
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!length)
         return;
-    bool mayHaveNarrowParts = !base->is8Bit() && base->isRope() && !base->isSubstring();
-    if (length < StringBuilderStorage::minLengthAppendedByReference && !mayHaveNarrowParts) {
+    bool isCutOutOfParts = base->isNonSubstringRope() && (!base->is8Bit() || base->length() >= JSString::minLengthForRopeWalk);
+    if (length < StringBuilderStorage::minLengthAppendedByReference && !isCutOutOfParts) {
         auto view = base->view(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (view->is8Bit()) {

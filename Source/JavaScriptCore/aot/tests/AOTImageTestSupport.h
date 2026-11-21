@@ -188,7 +188,7 @@ struct Assembly {
 template<typename Emit, typename AfterLink>
 CompiledCode assemble(uint32_t function, const StubCatalog& catalog, const Emit& emit, const AfterLink& afterLink)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder relocations(jit, testAssemblerPolicy());
     StubCalls calls(catalog, relocations);
     MentionList mentions;

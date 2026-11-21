@@ -157,11 +157,11 @@ const symbolMethod = (nativeSymbol: string, columns: SymbolMethodColumns) =>
     ...columns,
   }) satisfies b.FunctionField;
 
-const invokeSymbolMethod = (...membersOfRegExp: readonly b.ProtocolSpec[]) =>
+const invokeSymbolMethod = (returns: b.TableType, ...membersOfRegExp: readonly b.ProtocolSpec[]) =>
   ({
     this: b.any.refusing(b.null),
     args: { regexp: b.any.optional },
-    returns: b.any,
+    returns,
     capability: "js",
     throws: true,
     runsOnlyOperandCode: true,
@@ -539,7 +539,7 @@ export default b.declarations(
       nativeSymbols: ["stringProtoFuncMatch"],
       implementation: b.inline("StringMatch", { otherwise: b.hostCall }),
     },
-    invokeSymbolMethod(b.calls("@@match")),
+    invokeSymbolMethod(b.anyMadeOf("Array"), b.calls("@@match")),
   ]),
   b.method("String.prototype.matchAll", [
     {
@@ -554,7 +554,7 @@ export default b.declarations(
       overloadUsesFeature: "RegExp",
       implementation: b.hostCall,
     },
-    invokeSymbolMethod(b.named("@@match", "flags"), b.calls("@@matchAll")),
+    invokeSymbolMethod(b.anyMadeOf("RegExpStringIterator"), b.named("@@match", "flags"), b.calls("@@matchAll")),
   ]),
   b.method(
     "String.prototype.replace",
@@ -590,7 +590,7 @@ export default b.declarations(
       overloadUsesFeature: "RegExp",
       implementation: b.inline("StringSearch", { otherwise: b.hostCall }),
     },
-    invokeSymbolMethod(b.calls("@@search")),
+    invokeSymbolMethod(b.any, b.calls("@@search")),
   ]),
   b.method("String.prototype.split", [
     {

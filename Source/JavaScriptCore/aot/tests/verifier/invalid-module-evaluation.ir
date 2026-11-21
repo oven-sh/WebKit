@@ -69,7 +69,7 @@ function f8 name="badTargetIsOnlyImported" module=m0 results=[{type=anything}] {
     Return
 }
 function f9 name="badRecordWithoutRequest" module=m0 results=[{type=anything}] {
-    RecordRequire module=m7 referrer=m0
+    RecordRequire module=m7 referrer=m1
     Return
 }
 function f10 name="badBareSiteOutsideBody" module=m0 results=[{type=anything}] {

@@ -636,6 +636,32 @@ private:
     BodyLivenessScratch m_scratch;
 };
 
+struct GeneratorFrameLayout {
+    static constexpr uint32_t yieldWord = 0;
+    static constexpr uint32_t generatorWord = 1;
+    static constexpr uint32_t firstValueWord = 2;
+
+    struct Suspension {
+        ValueID yield;
+        BlockID block;
+        Vector<ValueID> values;
+    };
+
+    JS_EXPORT_PRIVATE explicit GeneratorFrameLayout(const BodyIndex&);
+
+    uint32_t numberOfWords() const { return firstValueWord + static_cast<uint32_t>(values.size()); }
+    uint32_t wordOf(ValueID value) const { return firstValueWord + static_cast<uint32_t>(std::ranges::lower_bound(values, value.index(), { }, [](ValueID each) { return each.index(); }) - values.begin()); }
+    const Suspension* find(ValueID yield) const LIFETIME_BOUND
+    {
+        auto found = std::ranges::lower_bound(suspensions, yield.index(), { }, [](const Suspension& each) { return each.yield.index(); });
+        return found != suspensions.end() && found->yield == yield ? &*found : nullptr;
+    }
+    static bool isRematerialized(Opcode opcode) { return opcode == Opcode::Undefined || opcode == Opcode::Null || opcode == Opcode::Boolean || opcode == Opcode::Integer || opcode == Opcode::Double; }
+
+    Vector<Suspension> suspensions;
+    Vector<ValueID> values;
+};
+
 } } } // namespace JSC::AOT::Typed
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

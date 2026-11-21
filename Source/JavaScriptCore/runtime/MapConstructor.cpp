@@ -33,6 +33,9 @@
 #include "JSMapInlines.h"
 #include "MapPrototype.h"
 #include "VMInlines.h"
+#if ENABLE(AOT)
+#include "AOTRuntimeHooks.h"
+#endif
 
 namespace JSC {
 
@@ -53,9 +56,16 @@ void MapConstructor::finishCreation(VM& vm, MapPrototype* mapPrototype)
 
 static JSC_DECLARE_HOST_FUNCTION(callMap);
 static JSC_DECLARE_HOST_FUNCTION(constructMap);
+#if ENABLE(AOT)
+static JSC_DECLARE_HOST_FUNCTION(constructMapWithCompiledCode);
+#endif
 
 MapConstructor::MapConstructor(VM& vm, Structure* structure)
+#if ENABLE(AOT)
+    : Base(vm, structure, callMap, Options::runsCompiledImage() ? constructMapWithCompiledCode : constructMap)
+#else
     : Base(vm, structure, callMap, constructMap)
+#endif
 {
 }
 
@@ -66,7 +76,8 @@ JSC_DEFINE_HOST_FUNCTION(callMap, (JSGlobalObject* globalObject, CallFrame*))
     return JSValue::encode(throwConstructorCannotBeCalledAsFunctionTypeError(globalObject, scope, "Map"_s));
 }
 
-JSC_DEFINE_HOST_FUNCTION(constructMap, (JSGlobalObject* globalObject, CallFrame* callFrame))
+template<bool runsCompiledImage>
+static ALWAYS_INLINE EncodedJSValue constructMapImpl(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -84,6 +95,15 @@ JSC_DEFINE_HOST_FUNCTION(constructMap, (JSGlobalObject* globalObject, CallFrame*
         if (canPerformFastSet && iterableMap->isIteratorProtocolFastAndNonObservable())
             RELEASE_AND_RETURN(scope, JSValue::encode(iterableMap->clone(globalObject, vm, mapStructure)));
     }
+
+#if ENABLE(AOT)
+    if (runsCompiledImage && canPerformFastSet && vm.hasCompiledCode()) {
+        JSObject* made = AOT::RuntimeHooks::tryMakeMapOfIterable(globalObject, callFrame, mapStructure, iterable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (made)
+            return JSValue::encode(made);
+    }
+#endif
 
     JSMap* map = JSMap::create(vm, mapStructure);
 
@@ -129,6 +149,18 @@ JSC_DEFINE_HOST_FUNCTION(constructMap, (JSGlobalObject* globalObject, CallFrame*
 
     return JSValue::encode(map);
 }
+
+JSC_DEFINE_HOST_FUNCTION(constructMap, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return constructMapImpl<false>(globalObject, callFrame);
+}
+
+#if ENABLE(AOT)
+JSC_DEFINE_HOST_FUNCTION(constructMapWithCompiledCode, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return constructMapImpl<true>(globalObject, callFrame);
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(mapPrivateFuncMapIterationNext, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {

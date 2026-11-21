@@ -107,6 +107,16 @@ const LayoutData* ClassTable::constructorFunctionWithMostFields(VM& vm, const La
     return found;
 }
 
+bool ClassTable::mayGainLayoutAbove(VM& vm, JSObject* prototype) const
+{
+    const JSObject* objectPrototype = m_state.instance.globalObject->objectPrototype();
+    for (JSObject* object = prototype->getPrototypeDirect().getObject(); object && object != objectPrototype && object->type() != ProxyObjectType; object = object->getPrototypeDirect().getObject()) {
+        if (object->type() == FinalObjectType && !constructorFunctionWithPrototype(vm, object))
+            return true;
+    }
+    return false;
+}
+
 static unsigned inlineCapacityFor(unsigned numberOfProperties)
 {
     numberOfProperties = std::min<unsigned>(numberOfProperties, JSFinalObject::maxInlineCapacity);
@@ -232,6 +242,10 @@ JSObject* ClassTable::createThis(JSGlobalObject* globalObject, JSObject* constru
     JSObject* object = layout && layout->shape
         ? static_cast<JSObject*>(createClassInstance(vm, *layout, prototype))
         : createOrdinaryInstance(globalObject, layout ? layout->numberOfFields : 0, prototype);
+    if (JSCell*& constructedOnce = m_calleesConstructedOnce[indexOfCalleeWithThisBeside(newTarget)]; !constructedOnce && !layout && function && constructor == newTarget && mayGainLayoutAbove(vm, prototype)) {
+        constructedOnce = newTarget;
+        return object;
+    }
     if (canRemember) {
         Structure* structure = object->structure();
         uint32_t number = m_tables.closureNumberOf(function->index());

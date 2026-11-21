@@ -19,6 +19,7 @@
 #include <array>
 #include <optional>
 #include <span>
+#include <wtf/BitVector.h>
 #include <wtf/EnumSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/OptionSet.h>
@@ -1129,8 +1130,10 @@ public:
     const BuiltinTable& table() const LIFETIME_BOUND { return m_table; }
     void unlock(std::span<const BuiltinID> members, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> unlockedMembers() const LIFETIME_BOUND { return m_unlockedMembers.span(); }
+    bool isUnlocked(BuiltinID member) const { return m_isUnlocked.get(member.index()); }
     void unlockForTestRun(std::span<const BuiltinID> members, std::span<const BuiltinID> membersThatStayLocked, std::span<const BuiltinID> holdersOfNewNames);
     std::span<const BuiltinID> membersWhoseLockIsLeftToProgram() const LIFETIME_BOUND { return m_membersWhoseLockIsLeftToProgram.span(); }
+    bool isLockLeftToProgram(BuiltinID member) const { return m_isLockLeftToProgram.get(member.index()); }
 
 private:
     void lockByNames(BuiltinID wholeObject);
@@ -1145,6 +1148,8 @@ private:
     Vector<Vector<BuiltinName>> m_closedSymbols;
     Vector<BuiltinID> m_unlockedMembers;
     Vector<BuiltinID> m_membersWhoseLockIsLeftToProgram;
+    BitVector m_isUnlocked;
+    BitVector m_isLockLeftToProgram;
     Vector<OptionSet<AnswerAboutBuiltinClass>> m_answersAboutClasses;
     BuiltinTable m_table;
 };

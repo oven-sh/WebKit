@@ -1324,6 +1324,7 @@ private:
 
     void fill(Instruction&, const DraftWords&);
     void appendEdgeInto(BlockID from, BlockID to, std::span<const ValueID> arguments);
+    void retargetSweptEdge(EdgeID, BlockID to, std::span<const ValueID> arguments);
     void layClosureInFrame(ValueID, LoanOfClosure);
     void layObjectInFrame(ValueID);
     BlockFrequency frequencyTakenFor(uint32_t block, BlockFrequency given);

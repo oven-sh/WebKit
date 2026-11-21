@@ -904,7 +904,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             return;
         }
         ASSERT(needsPath);
-        AbstractModuleRecord* record = uncompiledRecord(module);
+        AbstractModuleRecord* record = linkUncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
         checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
@@ -965,7 +965,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
                 captureExports(module);
             return;
         }
-        AbstractModuleRecord* record = uncompiledRecord(module);
+        AbstractModuleRecord* record = linkUncompiledRecord(module);
         RETURN_IF_EXCEPTION(scope, void());
         checkSafeToRecurseWhileLinking(realm, scope);
         RETURN_IF_EXCEPTION(scope, void());
@@ -1206,6 +1206,8 @@ void Modules::captureExports(ModuleID module)
         RELEASE_ASSERT(exported || deferredExportsSource);
         captured->putDirectMayBeIndex(realm, names[i], exported ? exported : JSValue(captured));
         RETURN_IF_EXCEPTION(scope, void());
+        if (!exported)
+            m_hashesOfDeferredExports |= bitOfHash(names[i]);
     }
     loaded.capturedExports.set(*this, captured);
     loaded.deferredExportsSource.set(*this, deferredExportsSource);
@@ -1302,14 +1304,24 @@ bool Modules::forgetCapturedExports(ModuleID moduleOrFacade)
     loaded.deferredExportsSource.set(*this, nullptr);
     loaded.capturedFields.set(*this, nullptr);
     loaded.sourceOfCapturedFields.set(*this, nullptr);
-    loaded.bindsEarlierCapture = true;
+    JSObject* earlier = namespaceIfCreated(module, ModulePhase::Evaluation);
+    if (loaded.exportsBeforeMock && !loaded.namespaceOfPatchedCapture)
+        loaded.namespaceOfPatchedCapture.set(*this, earlier);
+    if (!std::exchange(loaded.bindsEarlierCapture, true))
+        loaded.namespaceOfBoundCapture.set(*this, earlier);
     unsettleForLinks(module);
-    if (namespaceIfCreated(module, ModulePhase::Evaluation)) {
+    if (earlier) {
         if (data(module).holdsNamespaceInValue())
             m_modulesWithEarlierNamespaceInValue.set(module.index());
         loaded.namespaceObject.set(*this, nullptr);
     }
     return true;
+}
+
+void Modules::forgetEarlierCapture(LoadedModule& loaded)
+{
+    loaded.bindsEarlierCapture = false;
+    loaded.namespaceOfBoundCapture.set(*this, nullptr);
 }
 
 void Modules::endMockOfLibraryModule(ModuleID module)
@@ -1489,6 +1501,8 @@ void Modules::restoreCapturedExports(ModuleID holder)
     if (!before)
         return;
     held->exportsBeforeMock.set(*this, nullptr);
+    auto* patched = dynamicDowncast<ModuleNamespace>(held->namespaceOfPatchedCapture.get());
+    held->namespaceOfPatchedCapture.set(*this, nullptr);
     PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     JSObject::getOwnPropertyNames(before, realm, names, DontEnumPropertiesMode::Include);
     RETURN_IF_EXCEPTION(scope, void());
@@ -1499,8 +1513,12 @@ void Modules::restoreCapturedExports(ModuleID holder)
             value = source ? source->get(realm, name) : jsUndefined();
             RETURN_IF_EXCEPTION(scope, void());
         }
-        tryReplaceCapturedExport(holder, name.impl(), value);
+        tryReplaceCapturedExport(holder, name.impl(), value, CapturedTable::OfOriginal);
         RETURN_IF_EXCEPTION(scope, void());
+        if (patched && patched->hasExport(name.impl())) [[unlikely]] {
+            patched->replaceCapturedValue(realm, name, value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
     }
 }
 
@@ -1707,7 +1725,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
         RELEASE_AND_RETURN(scope, source ? source->get(realm, name) : jsUndefined());
     };
     BitVector seenBehindStars;
-    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name) -> JSValue {
+    auto keptValueOf = [&](auto& self, ModuleID module, UniquedStringImpl* name, Environment* instance) -> JSValue {
         for (unsigned steps = 0; steps <= m_table.size(); ++steps) {
             std::optional<unsigned> index = m_table.findExport(module, name);
             if (!index) {
@@ -1719,8 +1737,11 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
                     return value;
                 if (name == vm.propertyNames->defaultKeyword.impl() || seenBehindStars.set(module.index()))
                     return { };
+                if (!instance)
+                    instance = currentInstance(module);
                 for (ModuleRequestData request : m_table.dynamicStars(module)) {
-                    value = self(self, request.targetModule(), name);
+                    const ModuleLinkData* link = isLinkedInstance(module, instance) ? findModuleLink(module, request.targetModule()) : nullptr;
+                    value = self(self, request.targetModule(), name, link && link->hasLink ? readLink(instance, link->link) : nullptr);
                     RETURN_IF_EXCEPTION(scope, { });
                     if (value)
                         return value;
@@ -1734,15 +1755,20 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
                     return keptBy(origin->module, identifier(origin->name));
                 return variables ? storedValue(realm, variables, Identifier::from(vm, moduleExport.variable.encoded())) : JSValue();
             case ModuleExportKind::Field: {
-                ResolvedField field = variables ? resolveField(module, *index, nullptr) : ResolvedField { };
+                ResolvedField field = variables ? resolveField(module, *index, instance) : ResolvedField { };
                 return field.instance ? loaded->fieldsBeforeMock.get(std::pair { field.instance, field.slot.encoded() }) : JSValue();
             }
-            case ModuleExportKind::Namespace:
-                return { };
+            case ModuleExportKind::Namespace: {
+                if (!isLaidOver || !loaded->namespacesReplacedByMock.contains(moduleExport.targetModule()))
+                    return { };
+                SetForScope readsBeforeItsPatch(m_moduleReadBeforeItsPatch, std::optional(file));
+                RELEASE_AND_RETURN(scope, readExport(module, *index, MockMode::Use, instance));
+            }
             case ModuleExportKind::Indirect: {
                 const IndirectExportData& indirectExport = m_table.indirectExport(moduleExport);
                 module = moduleLoadedUnder(indirectExport.targetModule());
                 name = identifier(indirectExport.importName).impl();
+                instance = nullptr;
                 break;
             }
             }
@@ -1764,7 +1790,7 @@ JSValue Modules::exportsBeforeMock(ModuleID file, bool evenIfEvaluationFailed, O
         if (!m_table.findExport(file, name.impl()) && (!data(file).hasDynamicStarExport() || isAddedByMock(file, name)))
             continue;
         seenBehindStars.clearAll();
-        JSValue value = keptValueOf(keptValueOf, file, name.impl());
+        JSValue value = keptValueOf(keptValueOf, file, name.impl(), nullptr);
         RETURN_IF_EXCEPTION(scope, { });
         if (variables && value == JSValue(variables))
             continue;
@@ -1802,7 +1828,7 @@ void Modules::exportWhatMockNamesAlone(ModuleID file, bool hasRun)
         if (!m_facadesCapturedForMock.get(module.index()) || loaded.loadWord || loaded.hasLinkedImporter || wasLoadedByImport(file))
             return;
         forgetCapturedExports(module);
-        loaded.bindsEarlierCapture = false;
+        forgetEarlierCapture(loaded);
         m_facadesCapturedForMock.clear(module.index());
         if (status(module) == ModuleStatus::Evaluated) {
             startLoadingModulesIndividually();
@@ -1870,7 +1896,7 @@ void Modules::bindLatestCapture(ModuleID module)
     LoadedModule* loaded = loadedIfExists(module);
     if (!loaded || !loaded->bindsEarlierCapture) [[likely]]
         return;
-    loaded->bindsEarlierCapture = false;
+    forgetEarlierCapture(*loaded);
     if (m_modulesWithEarlierNamespaceInValue.get(module.index())) {
         JSObject* namespaceObject = moduleNamespace(module, ModulePhase::Evaluation);
         RETURN_IF_EXCEPTION(scope, void());

@@ -327,6 +327,8 @@ private:
     struct TestOfBytes {
         Operation* base { nullptr };
         int64_t offsetOfWord { 0 };
+        int64_t offsetOfRead { 0 };
+        int64_t endOfRead { 0 };
         uint32_t mask { 0 };
         uint32_t value { 0 };
         unsigned wayOn { 0 };
@@ -336,6 +338,7 @@ private:
         const Operation* test { nullptr };
     };
     static std::optional<TestOfBytes> describeTestOfBytes(const Block*);
+    static bool isInHeaderOfCell(const Procedure&, const Operation* read);
     static bool holdsOnlyByteTest(const Block*, const TestOfBytes&);
     static NEVER_INLINE bool mergeNextByteTest(Block* first);
     static ALWAYS_INLINE bool endsInMaskedByteTest(const Block*);
@@ -1007,7 +1010,7 @@ ALWAYS_INLINE void JumpThreader::listTestOfBranch(uint32_t indexOfBlock, const O
         if (isLoad(first->opcode()) && test->useCount() == 1) {
             static_assert(Load - Load8Z < 7);
             constexpr int32_t endOfOffsets = 1 << 12;
-            bool mayBeWritten = !first->has(OperationFlag::ReadsImmutableHeap);
+            bool mayBeWritten = !first->has(OperationFlag::ReadsImmutableHeap) || m_proc.traits().checksProofs;
             const Block* block = branch->owner();
             if (!first->traps() && !first->child(0)->has(OperationFlag::IsInnerPointer) && first->offset() >= 0 && first->offset() < endOfOffsets && (!mayBeWritten || (first->owner() == block && !block->writesMemory()))) {
                 wordRead = static_cast<uint16_t>(first->offset() << 4 | (first->opcode() - Load8Z + 1) << 1 | static_cast<int32_t>(mayBeWritten));
@@ -1150,6 +1153,8 @@ bool JumpThreader::storesMayWriteWordReadBy(const Block* asked, uint32_t depth) 
     constexpr unsigned mostStoresLookedAt = 32;
     if (m_storesOnWay.isEmpty() || m_storesOnWay.last().depth < depth)
         return false;
+    if (m_proc.traits().checksProofs)
+        return true;
     const Operation* word = simplifyPredicateOfBranch(asked->last()->child(0)).predicate->child(0);
     RELEASE_ASSERT(isLoad(word->opcode()));
     const HeapTree& heapTree = m_proc.heapTree();
@@ -1607,16 +1612,22 @@ std::optional<JumpThreader::TestOfBytes> JumpThreader::describeTestOfBytes(const
     } else
         return std::nullopt;
 
-    bool readsWord = read->opcode() == Load && read->type() == Int32 && found.masked;
-    if ((read->opcode() != Load8Z && !readsWord) || read->useCount() != 1 || read->owner() != block || read->traps() || read->offset() < 0 || (readsWord && read->offset() % bytesOfWord))
+    bool readsSeveralBytes = (read->opcode() == Load && read->type() == Int32) || read->opcode() == Load16Z;
+    if ((read->opcode() != Load8Z && (!readsSeveralBytes || !found.masked)) || read->useCount() != 1 || read->owner() != block || read->traps() || read->offset() < 0)
         return std::nullopt;
-    unsigned shift = readsWord ? 0 : static_cast<unsigned>(read->offset() % bytesOfWord) * 8;
-    if (!readsWord && ((mask | value) >> 8))
+    const int64_t bytesRead = bytesForWidth(read->accessWidth());
+    const int64_t placeInWord = read->offset() % bytesOfWord;
+    if (placeInWord + bytesRead > bytesOfWord)
+        return std::nullopt;
+    const unsigned shift = static_cast<unsigned>(placeInWord) * 8;
+    if (bytesRead < bytesOfWord && (mask | value) >> (bytesRead * 8))
         return std::nullopt;
     if (!mask || (value & ~mask))
         return std::nullopt;
     found.base = read->child(0);
-    found.offsetOfWord = read->offset() - read->offset() % bytesOfWord;
+    found.offsetOfWord = read->offset() - placeInWord;
+    found.offsetOfRead = read->offset();
+    found.endOfRead = read->offset() + bytesRead;
     found.mask = mask << shift;
     found.value = value << shift;
     found.read = read;
@@ -1635,6 +1646,17 @@ bool JumpThreader::holdsOnlyByteTest(const Block* block, const TestOfBytes& foun
     return true;
 }
 
+// Every cell is longer than its header, so the word around a byte of the header is the cell's.
+bool JumpThreader::isInHeaderOfCell(const Procedure& procedure, const Operation* read)
+{
+    const HeapTree& heapTree = procedure.heapTree();
+    for (HeapIndex heap = read->heap(); heap != rootHeapIndex; heap = heapTree.parentOf(heap)) {
+        if (heapTree.nameOf(heap) == "JSCell_header"_s)
+            return true;
+    }
+    return false;
+}
+
 bool JumpThreader::mergeNextByteTest(Block* first)
 {
     static constexpr unsigned instructionsOfBoth = 4;
@@ -1649,6 +1671,14 @@ bool JumpThreader::mergeNextByteTest(Block* first)
         return false;
     if ((ofFirst->value ^ ofSecond->value) & ofFirst->mask & ofSecond->mask)
         return false;
+    int64_t offsetOfRead = std::min(ofFirst->offsetOfRead, ofSecond->offsetOfRead);
+    int64_t bytesRead = std::max(ofFirst->endOfRead, ofSecond->endOfRead) - offsetOfRead;
+    if (!std::has_single_bit(static_cast<uint64_t>(bytesRead))) {
+        if (!isInHeaderOfCell(first->procedure(), ofFirst->read) && !isInHeaderOfCell(first->procedure(), ofSecond->read))
+            return false;
+        offsetOfRead = ofFirst->offsetOfWord;
+        bytesRead = 4;
+    }
     if (!holdsOnlyByteTest(second, *ofSecond))
         return false;
     for (unsigned index = ofFirst->read->indexInBlock() + 1, size = first->size(); index < size; ++index) {
@@ -1663,7 +1693,9 @@ bool JumpThreader::mergeNextByteTest(Block* first)
         return false;
     if (leavingFirst.block() == second || leavingFirst.block() == first || wayOn == second || wayOn == first || !canGainPredecessor(wayOn))
         return false;
-    Order::mergeTwoByteTests(first, ofFirst->wayOn, second, ofSecond->wayOn, ofFirst->base, ofFirst->offsetOfWord, ofFirst->mask | ofSecond->mask, ofFirst->value | ofSecond->value);
+    const unsigned shift = static_cast<unsigned>(offsetOfRead - ofFirst->offsetOfWord) * 8;
+    const Opcode opcodeOfRead = bytesRead == 4 ? Load : bytesRead == 2 ? Load16Z : Load8Z;
+    Order::mergeTwoByteTests(first, ofFirst->wayOn, second, ofSecond->wayOn, opcodeOfRead, ofFirst->base, offsetOfRead, (ofFirst->mask | ofSecond->mask) >> shift, (ofFirst->value | ofSecond->value) >> shift);
     return true;
 }
 

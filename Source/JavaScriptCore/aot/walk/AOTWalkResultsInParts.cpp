@@ -872,9 +872,14 @@ bool buildHeldRegExpMatchInParts(Walker& walker, const BodyValue& call, BuiltinO
     return buildMatchOnTwoWaysInResultsInParts(walker, call, WTF::move(match), WTF::move(whole), { string, *mentions, WTF::move(*groups), keepsItsPattern ? summary.groupsPresentInEveryMatch : 0, summary.numSubpatterns + 1, storesLastIndex && keepsItsPattern ? regExpObject : Reference() });
 }
 
+static uint64_t keyOfOpen(FunctionID function, ValueID open)
+{
+    return static_cast<uint64_t>(function.index()) << 32 | open.index();
+}
+
 static uint64_t keyOfOpen(const Walker& walker, ValueID open)
 {
-    return static_cast<uint64_t>(walker.currentFunction().index()) << 32 | open.index();
+    return keyOfOpen(walker.currentFunction(), open);
 }
 
 static bool isConstantMemberOf(Walker& walker, BuiltinID holder, BuiltinName name)
@@ -935,11 +940,29 @@ static std::optional<LoopOverResult> findLoopOverResult(Walker& walker, const Bo
     return LoopOverResult { openID, step };
 }
 
+void walkTypesStatedOfOtherValues(Walker& walker, ValueID behind, ValueID call, ValueID taker)
+{
+    const BodyIndex& index = walker.currentBodyIndex();
+    BodyBlock block = index.block(walker.inputBlockOf(call));
+    for (uint32_t number = behind.index() + 1; number < taker.index() && !walker.isUnreachable() && !walker.hasFailed(); ++number) {
+        ValueID between(number);
+        if (!opcodesThatStateTypes.contains(index.opcodeOf(between)) || index.stripCasts(between) == call)
+            continue;
+        uint32_t place = number - block.firstValue().index();
+        walker.walkStretch(block.id(), place, place + 1);
+    }
+}
+
 static void openLoopOverResult(Walker& walker, const BodyValue& call, const LoopOverResult& loop, Reference state)
 {
-    for (uint32_t value = call.id().index(); value <= loop.open.index(); ++value)
-        walker.bind(ValueID(value), state);
-    BodyBlock block = walker.currentBodyIndex().block(walker.inputBlockOf(call.id()));
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (uint32_t number = call.id().index(); number <= loop.open.index(); ++number) {
+        ValueID value(number);
+        if (value == loop.open || index.stripCasts(value) == call.id())
+            walker.bind(value, state);
+    }
+    walkTypesStatedOfOtherValues(walker, call.id(), call.id(), loop.open);
+    BodyBlock block = index.block(walker.inputBlockOf(call.id()));
     const uint32_t place = loop.open.index() - block.firstValue().index() + 1;
     walker.walkStretch(block.id(), place, place);
 }
@@ -1307,6 +1330,21 @@ static bool stepMatchIteration(Walker& walker, const BodyValue& step, const Matc
     return true;
 }
 
+Reference stringOfMatchIteration(Walker& walker, FunctionID function, ValueID open, Reference regExpObject)
+{
+    std::unique_ptr<Walker::KeptForBuild>& keptByStrings = walker.keptByStrings();
+    if (!keptByStrings)
+        return { };
+    std::unique_ptr<Walker::KeptForBuild>& kept = static_cast<NotesOfStrings&>(*keptByStrings).looksAtResultsInParts;
+    if (!kept)
+        return { };
+    for (const MatchIteration& iteration : static_cast<LooksAtResultsInParts&>(*kept).matchIterations.get(keyOfOpen(function, open))) {
+        if (iteration.regExpObject == regExpObject)
+            return iteration.string;
+    }
+    return { };
+}
+
 bool walkMatchIteration(Walker& walker, const BodyValue& operation)
 {
     if (walkIterationOverString(walker, operation))
@@ -1436,7 +1474,8 @@ bool buildSplitInParts(Walker& walker, const CallByOneRow& call)
     NotesOfResultInParts notes;
     appendPiecesReadInResultsInParts(walker, notes, results, call.receiver, mentions->placesRead, 1, origin);
     if (mentions->readsLength) {
-        if (Reference length = buildResultOfRangeForStrings(walker, results, firstBoundOfParts + 2 * numberOfParts, origin))
+        Reference placeOfLast = buildResultOfRangeForStrings(walker, results, firstBoundOfParts + 2 * numberOfParts, origin);
+        if (Reference length = placeOfLast ? buildOperatorForStrings(walker, Opcode::Add, placeOfLast, integerForStrings(walker, 1), origin) : Reference())
             notes.append({ keyOfNameInResultsInParts(walker, BuiltinNames::length), length });
     }
     if (!array || !array.isValue() || walker.isUnreachable())

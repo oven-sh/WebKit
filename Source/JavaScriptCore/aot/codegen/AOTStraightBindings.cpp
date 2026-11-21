@@ -97,13 +97,13 @@ static void generatePutEnvironmentField(StraightEmitter& emitter, const BodyValu
 {
     const GPRReg stored = StraightEmitter::temporary(1);
     const PlacedSlot& slot = emitter.plan().slot(value.layout(), value.field());
-    if (slot.representation == SlotRepresentation::OptionalInt64 || slot.representation == SlotRepresentation::OptionalDouble) {
+    if (!emitter.resumesGenerator() && (slot.representation == SlotRepresentation::OptionalInt64 || slot.representation == SlotRepresentation::OptionalDouble)) {
         emitter.fail(value);
         return;
     }
     const GPRReg environment = emitter.loadIntoResultRegister(value.environmentOperand());
     emitter.load(value.valueOperand(), stored);
-    if (!emitter.isConstant(value.valueOperand())) {
+    if (!emitter.isConstant(value.valueOperand()) || emitter.resumesGenerator()) {
         emitter.storeSlot(environment, slot, stored);
         return;
     }

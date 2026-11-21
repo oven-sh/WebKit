@@ -28,6 +28,7 @@ struct Instance;
 
 bool runsCompiledProgram(JSGlobalObject*);
 bool locksBuiltins(JSGlobalObject*);
+bool areBuiltinsLockedWithoutImage();
 JS_EXPORT_PRIVATE void lockBuiltinsWithoutImage();
 JS_EXPORT_PRIVATE void unlockNameWithoutImage(uint32_t holder, std::span<const uint8_t> name);
 JS_EXPORT_PRIVATE void lockTableBuiltins(JSGlobalObject*);

@@ -17,6 +17,7 @@
 #include "AOTLinkedFunctions.h"
 #include "AOTPhaseTimes.h"
 #include "AOTPlan.h"
+#include "AOTStartOrder.h"
 #include "AOTSort.h"
 #include "AOTTableParts.h"
 #include "AOTThreads.h"
@@ -42,9 +43,14 @@ static_assert(FunctionByModule { .module = ModuleID(0u), .position = 0, .functio
 
 static constexpr uint32_t largestGatheredID = Typed::StringID::largestIndex;
 
-FunctionByModule FunctionByModule::forFunction(const Typed::Program& program, FunctionID id)
+FunctionByModule FunctionByModule::forFunction(const Typed::Program& program, FunctionID id, std::span<const uint32_t> startRanks)
 {
     const Typed::Function& function = program.at(id);
+    if (!startRanks.empty()) {
+        if (uint32_t rank = startRanks[id.index()]; rank != noStartRank)
+            return { ModuleID(0u), rank, id };
+        return { function.module ? ModuleID(function.module.index() + 1) : ModuleID(), function.position, id };
+    }
     return { function.module, function.position, id };
 }
 
@@ -130,7 +136,7 @@ public:
             size_t end = m_chunk.wordsOf(space).size();
             if (end == (idsOfUnits.isEmpty() ? 0 : idsOfUnits.last().end))
                 continue;
-            idsOfUnits.append(GatheredIDsOfUnit { .function = FunctionByModule::forFunction(m_program, code.unit.function), .end = end, .codeRunsAtMostOnce = runsAtMostOnce(code) });
+            idsOfUnits.append(GatheredIDsOfUnit { .function = FunctionByModule::forFunction(m_program, code.unit.function, m_context.startRanks()), .end = end, .codeRunsAtMostOnce = runsAtMostOnce(code) });
         }
     }
 

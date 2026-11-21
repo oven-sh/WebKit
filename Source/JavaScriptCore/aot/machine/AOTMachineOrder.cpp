@@ -578,7 +578,7 @@ void Order::askBothBoundsAtOnce(Block* first, unsigned leavingSuccessorOfFirst, 
         letGoOfBlockThatNothingLeadsTo(leavingSecond.block());
 }
 
-void Order::mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Operation* base, int64_t offsetOfWord, uint32_t mask, uint32_t value)
+void Order::mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second, unsigned wayOnOfSecond, Opcode opcodeOfRead, Operation* base, int64_t offsetOfRead, uint32_t mask, uint32_t value)
 {
     Procedure& procedure = first->procedure();
     Arena& arena = procedure.arena();
@@ -610,11 +610,11 @@ void Order::mergeTwoByteTests(Block* first, unsigned wayOnOfFirst, Block* second
         first->m_operations.append(arena, made);
         return made;
     };
-    Operation* word = append(Load, base, nullptr);
+    Operation* bytes = append(opcodeOfRead, base, nullptr);
     base->gainUse();
-    word->m_payload.memory.offset = offsetOfWord;
-    word->m_payload.memory.heap = rootHeapIndex;
-    Operation* test = append(Equal, append(BitAnd, word, constant(mask)), constant(value));
+    bytes->m_payload.memory.offset = offsetOfRead;
+    bytes->m_payload.memory.heap = rootHeapIndex;
+    Operation* test = append(Equal, append(BitAnd, bytes, constant(mask)), constant(value));
     branch->m_children[0]->loseUse();
     branch->m_children[0] = test;
     test->gainUse();

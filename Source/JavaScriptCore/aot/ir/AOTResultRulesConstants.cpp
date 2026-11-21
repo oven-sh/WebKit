@@ -98,7 +98,7 @@ static bool hasDescribedResult(const BuiltinTable& builtins, BuiltinID function)
         if (overload.mode != BuiltinCallMode::Call || !overload.result.type)
             return false;
         const BuiltinType& answer = builtins.at(overload.result.type);
-        return !answer.isAnything() && (!(answer.primitives - BuiltinPrimitive::Undefined).isEmpty() || !answer.stringLiterals.empty() || !answer.parts.empty());
+        return !answer.isAnything() && (!answer.primitives.isEmpty() || !answer.stringLiterals.empty() || !answer.parts.empty());
     });
 }
 

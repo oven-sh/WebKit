@@ -345,7 +345,7 @@ static PreludeExit emitThrowPrelude(StubAssembler& jit, bool endsCleanup)
         const GPRReg state = jit.allocateScratch(StubRegister::T10);
         jit.loadCallerReturnAddress(0, returnAddress);
         jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(state)), state);
-        jit.storePtr(returnAddress, Address(state, OBJECT_OFFSETOF(State, returnAddressOfThrowAfterCleanup)));
+        jit.storePtr(returnAddress, Address(state, OBJECT_OFFSETOF(State, rawReturnAddressOfThrowAfterCleanup)));
         jit.store64(operationArgumentGPR(2), Address(state, OBJECT_OFFSETOF(State, keptByCleanup)));
     }
     jit.jumpToExceptionHandler();

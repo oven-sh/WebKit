@@ -166,6 +166,7 @@ public:
     JSCell* parentOfSuperCall { nullptr };
     JSCell* newTargetOfSuperCall { nullptr };
     bool hasCompiledCode { false };
+    bool mayLockBuiltins { false };
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
     bool hasObjectsBeingFilled { false };

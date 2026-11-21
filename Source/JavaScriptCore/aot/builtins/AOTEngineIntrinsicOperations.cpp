@@ -103,8 +103,9 @@ static JSValue resumeBytecodeGenerator(JSGlobalObject* globalObject, VM& vm, JSG
     arguments.append(field(JSGenerator::Field::Frame).get());
     ASSERT(!arguments.hasOverflowed());
     JSValue result = call(globalObject, body, JSC::getCallData(body), field(JSGenerator::Field::This).get(), arguments);
-    if (scope.exception()) [[unlikely]] {
-        setState(JSGenerator::State::Completed);
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        if (!vm.isTerminationException(exception))
+            setState(JSGenerator::State::Completed);
         return { };
     }
     bool isDone = field(JSGenerator::Field::State).get().asInt32() == static_cast<int32_t>(JSGenerator::State::Executing);

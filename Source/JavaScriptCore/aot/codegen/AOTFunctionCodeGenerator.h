@@ -27,6 +27,7 @@ public:
 
     CompiledCode run();
     std::optional<CompiledCode> runStraight(const BodyIndex&);
+    bool canEmitStraight(const BodyIndex&);
     CompiledCode runEntryWrittenByHand(std::span<const QuestionOfEntry>, bool nobodyEnters);
 
 private:
@@ -40,7 +41,7 @@ private:
     const CodeGenerationInputs& m_inputs;
     const Code& m_code;
     const Statistics::CountersOfThread m_statistics;
-    CCallHelpers m_jit;
+    ImageAssembler m_jit;
     RelocationRecorder m_relocations;
     CodeRecords m_records;
     StackCheckState m_stackChecks;

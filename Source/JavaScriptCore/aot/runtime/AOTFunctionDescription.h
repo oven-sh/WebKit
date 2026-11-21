@@ -54,6 +54,7 @@ public:
     JS_EXPORT_PRIVATE bool isAsync() const;
     JS_EXPORT_PRIVATE bool isNamedByOwner() const;
     JS_EXPORT_PRIVATE bool isInRuntimeModule() const;
+    JS_EXPORT_PRIVATE bool isOfProgram() const;
     JS_EXPORT_PRIVATE TraceVisibility visibility() const;
     JS_EXPORT_PRIVATE FunctionID sourceFunction() const;
     JS_EXPORT_PRIVATE bool rejectsOnThrow() const;
@@ -64,6 +65,7 @@ public:
 
 private:
     bool isOfCalledBuiltin() const;
+    bool hasHiddenName() const;
 
     FunctionID m_function;
     const FunctionTraceData* m_record;

@@ -31,6 +31,7 @@ JS_EXPORT_PRIVATE unsigned closureCaptureSlotOf(const Program&, const CallingCon
 JS_EXPORT_PRIVATE Representation closureCaptureRepresentationOf(const Program&, const CallingConventions&, FunctionID, unsigned capture);
 
 bool isAsyncFunctionWithoutAwait(const Program&, const Function& source);
+bool functionObjectsLieInRuntimeModule(const Program&, const Function&);
 bool rejectsOnThrow(const Program&, const CallingConventions&, CodeUnit);
 
 JS_EXPORT_PRIVATE FunctionKindData functionKindOf(const Program&, const SlotPlan&, const CallingConventions&, CodeUnit closureEntry);

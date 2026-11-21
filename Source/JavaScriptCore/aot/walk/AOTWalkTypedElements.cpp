@@ -988,6 +988,10 @@ static ValueID findRelationFalseForHole(Walker& walker, const BodyValue& read, R
             isStep &= isInteger(operation.operand(operand));
         if (!index.hasOneUse(ValueID(between)) || (operation.opcode() != Opcode::Integer && !isStep && !readsSameList(operation)))
             return { };
+        BodyUser userBehind = *index.onlyUser(ValueID(between));
+        bool isUsedBehindBlock = userBehind.kind == BodyUseKind::Operand ? !block.holds(userBehind.value) : userBehind.block != block.id();
+        if (isUsedBehindBlock && walker.isLiveAtHeadOf(ValueID(between), end.targets()[1].block()))
+            return { };
     }
     BodyValue relation = index.value(user);
     ValueID other = relation.operand(0) == read.id() ? relation.operand(1) : relation.operand(0);
@@ -1529,7 +1533,7 @@ static Reference buildTestedRead(const AccessOfTypedElements& access, Draft&& re
     constexpr Walker::IterationPurity purity = Walker::IterationPurity::EffectFree;
     Origin origin = walker.originOf(access.value);
     origin.isTailCall = false;
-    bool isInvariant = walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
+    bool isInvariant = !read.testsPassed && walker.isInvariantInSpecializedVersion(access.base, purity) && walker.isInvariantInSpecializedVersion(access.key, purity) && walker.iterationsPreserveArrayGuards(access.base, purity) && walker.hasNoElementStores() && !walker.readStandsUnderHandler();
     Reference element;
     Reference isNumber;
     {
@@ -3114,6 +3118,61 @@ static bool buildLengthExtension(const AccessOfTypedElements& access, const Hois
     return !walker.isUnreachable() && !walker.hasFailed();
 }
 
+// A loop counts on the length of a list that its own store or push alone changes. What appends under another name is told apart from that list. False: the walk cannot go on here.
+static bool tellAppendApartFromListsCountedOn(const AccessOfTypedElements& access, Origin origin)
+{
+    Walker& walker = access.walker;
+    Vector<Reference, 2> lists;
+    auto gather = [&](BlockID head, bool isOfCurrentFunction = false) {
+        Reference last;
+        while (std::optional<uint64_t> next = findKnown(walker, KnownNote::LengthEqualsInitialCounter, { }, last, head.index())) {
+            last = Reference::fromBits(static_cast<uint32_t>(*next));
+            // Where a turn writes what the note rests on, no turn counts on it. A head is numbered within its function.
+            std::optional<uint64_t> noted = findKnown(walker, KnownNote::LengthEqualsInitialCounter, last, { }, head.index());
+            if (noted && (!isOfCurrentFunction || *noted >> 32 == walker.currentFunction().index()) && !lists.contains(last))
+                lists.append(last);
+        }
+        return false;
+    };
+    const BodyIndex& index = walker.currentBodyIndex();
+    for (LoopID loop = isReadOfBody(access) ? index.loopOf(index.blockOf(access.value.id())) : LoopID(); loop; loop = index.loop(loop).parent)
+        gather(index.loop(loop).head, true);
+    walker.someCallerLoop([&](BlockID head) { return gather(head); });
+    for (Reference list : lists) {
+        if (underlyingCellOf(walker.code(), access.base.id()) == list.id()) {
+            // buildPushAtLength() has asked for the push.
+            AccessOfTypedElements asWritten = access;
+            asWritten.isPushAtLength = false;
+            if (access.value.opcode() == Opcode::Call || notedCounterPosition(asWritten, KnownNote::LengthEqualsInitialCounter, list))
+                continue;
+            jumpToGuardFallback(walker);
+            return false;
+        }
+        Walker::AllocationsUsedInLoop alone { list.id().index() };
+        if (!mayBeSameObject(walker, list, access.base) || walker.classifyAgainstAllocations(alone, access.base) == Walker::IsListedAllocation::No)
+            continue;
+        Draft isSame(Opcode::StrictEq, origin);
+        walker.chooseConservativeFields(isSame);
+        isSame.setLeftOperand(access.base);
+        isSame.setRightOperand(list);
+        isSame.setForm(operatorFormFor(walker, isSame));
+        Reference test = walker.build(WTF::move(isSame));
+        if (!test)
+            return false;
+        BlockID same = walker.addBlock(BlockFrequency::Rare);
+        BlockID differs = walker.addBlock();
+        walker.branch(test, same, differs);
+        walker.continueIn(same);
+        if (!walker.isUnreachable())
+            jumpToGuardFallback(walker);
+        walker.continueIn(differs);
+        walker.recordSpeculation();
+        if (walker.isUnreachable() || walker.hasFailed())
+            return false;
+    }
+    return true;
+}
+
 static bool isLiteralFilledByEarlierLoop(Walker& walker, const BodyIndex& index, ValueID array, LoopID loop)
 {
     static constexpr OpcodeSet literals { Opcode::NewArray, Opcode::Data };
@@ -3350,7 +3409,7 @@ static bool buildRoomAtEnd(const AccessOfTypedElements& access, const HoistedArr
         if (!isWithin || !continueOrRestartIteration(walker, isWithin, true))
             return false;
     }
-    if (std::optional<PassedTest> below = walker.findPassedTest(isWithin))
+    if (std::optional<PassedTest> below = walker.findTestPassedOnPath(isWithin))
         room = walker.boundsProofFromChecks(access.base, access.key, capacity, fromZeroUp, *below);
     walker.count(StatisticID::StoresGrowingArrays);
     return !walker.isUnreachable() && !walker.hasFailed();
@@ -3368,7 +3427,7 @@ static bool buildAppendingArm(const AccessOfTypedElements& access, const Hoisted
         return walker.build(WTF::move(capacity));
     };
     auto positionBelow = [&](Reference bound, Reference isBelow) -> std::optional<PassedTest> {
-        std::optional<PassedTest> below = isBelow ? walker.findPassedTest(isBelow) : std::nullopt;
+        std::optional<PassedTest> below = isBelow ? walker.findTestPassedOnPath(isBelow) : std::nullopt;
         return below ? walker.boundsProofFromChecks(access.base, access.key, bound, fromZeroUp, *below) : std::nullopt;
     };
     auto append = [&](Reference capacity, Reference isWithinCapacity, Reference pointer) {
@@ -3666,19 +3725,21 @@ static bool buildStoreBehindRowOfTypedElements(const AccessOfTypedElements& acce
             return true;
         lengthComparison.setForm(operatorFormFor(walker, lengthComparison));
         Reference currentLength = lengthComparison.rightOperand();
-        std::optional<PassedTest> fromZeroUp = isKeyNonNegative ? walker.findPassedTest(isKeyNonNegative) : walker.findNonNegativeProof(access.key);
+        std::optional<PassedTest> fromZeroUp = isKeyNonNegative ? walker.findTestPassedOnPath(isKeyNonNegative) : walker.findNonNegativeProof(access.key);
         mayAppend &= !asksForKind || access.key == currentLength;
         mayAppend &= fromZeroUp && access.key.isValue() && currentLength.isValue() && !(walker.code().isConstant(access.key.id()) && walker.code().isConstant(currentLength.id()));
         if (access.isPushAtLength && (!mayAppend || access.key != currentLength))
             return false;
         if (mayAppend) {
+            if (!tellAppendApartFromListsCountedOn(access, origin))
+                return true;
             lengthOfArray = currentLength;
             fromZeroUpOfAppend = fromZeroUp;
         } else {
             Reference isKeyWithinLength = walker.build(WTF::move(lengthComparison));
             if (!continueOrRestartIteration(walker, isKeyWithinLength, true))
                 return true;
-            std::optional<PassedTest> below = walker.findPassedTest(isKeyWithinLength);
+            std::optional<PassedTest> below = walker.findTestPassedOnPath(isKeyWithinLength);
             if (below && fromZeroUp) {
                 inside = walker.boundsProofFromChecks(access.base, access.key, currentLength, *fromZeroUp, *below);
                 noteLengthAbovePosition(walker, currentLength, isKeyWithinLength, origin);
@@ -6547,6 +6608,8 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         std::optional<uint32_t> known = lengthOfFreshList(walker, base);
         if (!known)
             known = lengthOfListMadeInSight(walker, base);
+        if (known && walker.checksProofs() && walker.isInLoop() && walker.has(Mechanism::Folding))
+            checkLengthOfListMadeInSight(walker, base, *known, walker.originOf(value));
         if (!known && walker.has(Mechanism::Folding) && walker.facts().linked().nobodyChangesReceiverAt(walker.currentFunction(), value.id())) {
             if (WrittenListOfVariable written = writtenListReadBy(walker, value.objectOperand())) {
                 known = written.length;
@@ -6606,7 +6669,7 @@ static bool buildLengthOfTypedElements(Walker& walker, const BodyValue& value, c
         bool onlyClass = singleBuiltinClassOf(types, types.at(typeOfBase)) || classified.typedArrayType == NotTypedArray || classOfViewBesideInstancesBelowIt(walker, typeOfBase);
         bool isFoundAboveByNote = onlyClass && !isOnlyAskedAbout && base && base.isValue() && walker.program().nameClassOf(value.key()) == NameClass::Length && findKnown(walker, KnownNote::LengthOfViewIsFoundAbove, base);
         bool isSeenToFindGetter = onlyClass && !isOnlyAskedAbout && (findConstantMemberReadOff(walker, base, value.key()) || isFoundAboveByNote);
-        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value);
+        bool isSaidByLinkToFindGetter = onlyClass && !isSeenToFindGetter && (isOnlyAskedAbout || linksWordCanBeHeldAgainst(walker, base)) && readsOffEntryParameterThatStaysAsMade(walker, value, typeOfBase);
         if (!isSeenToFindGetter && !isSaidByLinkToFindGetter)
             return false;
         if (isOnlyAskedAbout)

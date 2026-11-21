@@ -343,7 +343,7 @@ void AllocationEmitter::generateTryFinishBirth(const ValueContext& value)
             }
             MemoryLocation location = locationOfField(m_program, m_plan.slots(), layout, checked.field);
             if (isListedOnlyByKeyOrder(slot.representation))
-                continueIf(slots.isFilled(cell, slot, location));
+                continueIf(slots.isFilled(cell, cell, slot, location));
             else
                 continueIf(checked.holdsRawValue ? slots.holdsDeclaredType(cell, slot, location) : slots.holdsValue(cell, slot, location));
         }

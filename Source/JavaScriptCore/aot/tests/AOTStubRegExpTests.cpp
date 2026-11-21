@@ -307,10 +307,10 @@ struct MatchArrayMemory {
         : storageAllocator(static_cast<uint32_t>(WTF::roundUpToMultipleOf<2>(wordsInFrontOfElements + numberOfGroups + 1) * sizeof(uint64_t)))
     {
         storage.bytes.fill(0xab);
-        storageAllocator.makeRoomAt(storage.address(), sizeof(storage.bytes));
+        storageAllocator.makeRoomAt(storage.address(), storage.bytes.size());
         matches.setStorageAllocator(numberOfGroups, &storageAllocator);
-        matches.ropeAllocator.makeRoomAt(ropes.address(), sizeof(ropes.bytes));
-        matches.arrayAllocator.makeRoomAt(array.address(), sizeof(array.bytes));
+        matches.ropeAllocator.makeRoomAt(ropes.address(), ropes.bytes.size());
+        matches.arrayAllocator.makeRoomAt(array.address(), array.bytes.size());
     }
 
     uint64_t butterfly() const { return storage.address() + wordsInFrontOfElements * sizeof(uint64_t); }

@@ -27,6 +27,7 @@
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
 #include "AOTRuntimeFunctions.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeTable.h"
 #include "AOTState.h"
 #include "AOTStubsCallAdapters.h"
@@ -284,13 +285,24 @@ static bool appendArrayLike(JSGlobalObject* globalObject, VM& vm, MarkedArgument
     return true;
 }
 
+static bool isNativeConstructor(JSValue parent)
+{
+    JSObject* object = parent.getObject();
+    if (!object)
+        return false;
+    if (object->type() == InternalFunctionType)
+        return true;
+    return object->type() == JSFunctionType && uncheckedDowncast<JSFunction>(object)->isHostFunction() && !object->inherits<JSBoundFunction>();
+}
+
 class SuperCallScope {
     WTF_MAKE_NONCOPYABLE(SuperCallScope);
 public:
     SuperCallScope(VM& vm, JSValue parent, JSValue newTarget)
         : m_state(vm.aotState())
     {
-        if (!parent.isCell() || !newTarget.isCell())
+        m_state.newTargetOfSuperCall = nullptr;
+        if (!isNativeConstructor(parent) || !newTarget.isCell())
             return;
         m_state.parentOfSuperCall = parent.asCell();
         m_state.newTargetOfSuperCall = newTarget.asCell();
@@ -662,7 +674,7 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         return codeAndFrame;
     bool stackIsUnobserved = false;
     if (!exception && !rethrownException) {
-        if (removeCodePtrTag(frameRecord->callerFrame->rawReturnPC()) == instance->state->returnAddressOfThrowAfterCleanup) {
+        if (frameRecord->callerFrame->returnPCForInspection() == instance->state->returnAddressOfThrowAfterCleanup()) {
             if (uint64_t kept = instance->state->keptByCleanup)
                 rethrownException = exceptionKeptByCleanup(kept, JSValue::decode(exceptions.thrownValue));
         }
@@ -683,9 +695,12 @@ static ALWAYS_INLINE UGPRPair lookupExceptionHandler(VM& vm, Instance* instance,
         RELEASE_ASSERT(thrown);
         auto scope = DECLARE_THROW_SCOPE(vm);
         auto action = Exception::StackCaptureAction::DoNotCaptureStack;
+        // The stack trace may want the site of an earlier throw there. The unwinder below goes by what the stub saved.
+        void* returnPCOfStub = callFrame->rawReturnPC();
         if (!stackIsUnobserved && !rethrownException)
             action = stackCaptureActionOfThrow(vm, *instance, thrown, frameRecord, found.hasLeftRun ? &found : nullptr);
         Exception* thrownException = throwException(instance->globalObject, scope, rethrownException ? thrown : JSValue(Exception::create(vm, thrown, action)));
+        callFrame->setReturnPC(returnPCOfStub);
         if (isHandled && takesException && !needsException) {
             auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             exceptions.thrownValue = JSValue::encode(thrownException);

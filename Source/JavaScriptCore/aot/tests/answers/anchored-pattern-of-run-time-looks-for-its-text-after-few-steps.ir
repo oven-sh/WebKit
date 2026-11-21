@@ -1,0 +1,52 @@
+# Each step back walks a run over the rest of a long text that lacks what every match holds.
+# const text = JSON.parse(JSON.stringify("a=".repeat(2000000)));
+# const rule = new RegExp(JSON.parse('"^.*?=[^;]*;secret"') + "x".repeat(Date.now() < 0));
+# print(rule.test(text));
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @36
+    v1 = PropGet v0 key="parse" @36
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @36
+    v3 = Builtin builtin=JSON @47
+    v4 = PropGet v3 key="stringify" @47
+    v5 = Convert v4 declared={type=builtin(JSONStringify) flags=[IsExpected]} @47
+    v6 = String string="a=" @62
+    v7 = PropGet v6 key="repeat" @62
+    v8 = Integer integer=2000000 @74
+    v9 = Call v7, v6, v8 calleeKey="repeat" calleeName="repeat" @67
+    v10 = Call v5, v3, v9 calleeKey="stringify" calleeName="JSON.stringify" @52
+    v11 = Call v2, v0, v10 calleeKey="parse" calleeName="JSON.parse" @41
+    v12 = Builtin builtin=RegExp @103
+    v13 = Builtin builtin=JSON @110
+    v14 = PropGet v13 key="parse" @110
+    v15 = Convert v14 declared={type=builtin(JSONParse) flags=[IsExpected]} @110
+    v16 = String string="\"^.*?=[^;]*;secret\"" @121
+    v17 = Call v15, v13, v16 calleeKey="parse" calleeName="JSON.parse" @115
+    v18 = String string="x" @146
+    v19 = PropGet v18 key="repeat" @146
+    v20 = Builtin builtin=GlobalThis @157
+    v21 = PropGet v20 key="Date" [isFreeName] @157
+    v22 = Convert v21 declared={type=builtin(Date) flags=[IsExpected]} @157
+    v23 = PropGet v22 key="now" @157
+    v24 = Convert v23 declared={type=builtin(DateNow) flags=[IsExpected]} @157
+    v25 = Call v24, v22 calleeKey="now" calleeName="Date.now" @162
+    v26 = Integer @170
+    v27 = Less v25, v26 @157
+    v28 = Call v19, v18, v27 calleeKey="repeat" calleeName="repeat" @150
+    v29 = Add v17, v28 @110
+    v30 = Construct v12, -, v29 calleeName="RegExp" @103 @99
+    v31 = Builtin builtin=GlobalThis @175
+    v32 = PropGet v31 key="print" [isFreeName] @175
+    v33 = PropGet v30 key="test" @181
+    v34 = Call v33, v30, v11 calleeKey="test" calleeName="rule.test" @186
+    v35 = Call v32, -, v34 calleeName="print" @175
+    v36 = Undefined @175
+    Return v36 @175
+}

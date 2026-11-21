@@ -184,6 +184,7 @@ public:
         Eager,
         Lazy,
         Reified,
+        Locked,
     };
     enum class SetHasModifiedLengthOrName : uint8_t { Yes, No };
     template <SetHasModifiedLengthOrName set = SetHasModifiedLengthOrName::Yes>

@@ -844,6 +844,8 @@ void CodeGenerator::unrollRotatingLoop(RotatingLoop& loop)
             current[index] = m_out.signExt32To64(m_out.castToInt32(current[index]));
         }
     }
+    if (m_followsNumbersOutOfBytes)
+        m_blocksBegun.quickSet(head.index());
     bool comesRound = true;
     for (const RotatingLoop::Stage& stage : loop.stages) {
         RotatingIteration iterationOfStage = findRotatingIteration(loop, stage);

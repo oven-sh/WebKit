@@ -800,6 +800,7 @@ static void observeDefinitionInLinkLayouts(LinkFlow& flow, const ObservedChangeI
             if (change.setterInSight && !accessorIsKnown) {
                 std::optional<FieldReference> field = findField(flow.program, layout, change.key);
                 flow.addEdge(field ? flow.field(*field) : flow.appendedField(layout, change.key), flow.unseen());
+                flow.addEdge(flow.extraPropertyStoreNode(layout), flow.unseen());
             }
             if (!change.descriptorLaysNoAccessor && !accessorIsKnown) {
                 std::optional<FieldReference> field = findField(flow.program, layout, change.key);
@@ -905,6 +906,7 @@ static void observeChangeOfPrototypeInLinkLayouts(LinkFlow& flow, const Observed
         handToUnseenCodeInLinkLayouts(flow, change.otherNode, change.other);
     handToUnseenCodeInLinkLayouts(flow, change.subjectNode, change.subject);
     addChangesToLayoutsNamedInLinkLayouts(flow, change.subject, changesMadeByInLinkLayouts(SummaryChange::Kind::ChangesPrototype));
+    flow.noteInstancesChangePrototype(change.subject);
     notePrototypesLaidAboveOtherObjects(flow, change.other);
     LinkType anything = LinkType::anything();
     forEachElementsNodeInLinkLayouts(flow, change.subject, [&](FlowNodeID elements) {
@@ -5974,7 +5976,7 @@ NEVER_INLINE bool WriterOfLinkLayouts::appendStoresUnderNames(FunctionID id, con
         if (!holdsPrototypes && !m_flow.holdsOnlyPlainRecords(holders) && !holdsInstancesOfOneClass(m_flow, holders) && !holdsFollowedInstances(m_flow, holders))
             return false;
     } else {
-        if (!holdsFollowedInstances(m_flow, holders) || (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(holders, typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site)))))
+        if (!holdsFollowedInstances(m_flow, holders) || (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(holders, typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))) && !m_flow.hasNameMadeEnumerable(typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site)))))
             return false;
         names = m_flow.findListedNamesOfStore(id, access);
         if (names.isEmpty())
@@ -6073,7 +6075,7 @@ ALWAYS_INLINE void WriterOfLinkLayouts::lookAtAccesses(FunctionID id, const Thin
         case SummaryAccess::Kind::Has:
             continue;
         case SummaryAccess::Kind::Store:
-            if (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(typeAt(id, access.subject), typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))))
+            if (access.isCopySpelledByLoop && m_flow.followsCopySpelledByLoop(typeAt(id, access.subject), typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))) && !m_flow.hasNameMadeEnumerable(typeAt(id, m_flow.sourceOfCopySpelledByLoop(id, access.site))))
                 continue;
             traits.add(Trait::MayRunSetter);
             break;
@@ -10112,6 +10114,11 @@ void WriterOfLinkLayouts::writeMembers()
         if (held == oneClosure && !name.mayHoldAccessor() && !hasEscaped(name.layout.index()))
             linked.function = held.function;
         oneClosure.function = m_flow.typeAt(name.storedInSight).function;
+        linked.isDefinedAsValue = name.key && name.mayHoldAccessor() && name.isDefinedInSight && !name.isAccessorAsWritten && !name.isDefinedUnderSomeSymbol && m_flow.isOfConstructorFunction(name.layout) && m_flow.typeAt(name.storedInSight) == oneClosure;
+        if (linked.isDefinedAsValue) {
+            linked.expected = oneClosure.function;
+            m_flow.build.statistics().count(StatisticID::MethodsExpectedByDescriptors);
+        }
         if (m_flow.typeAt(name.storedInSight) == oneClosure && !name.mayHoldAccessor())
             linked.expected = oneClosure.function;
         if (m_flow.hasOnlyPrimitives(name) && !hasEscaped(name.layout.index()))

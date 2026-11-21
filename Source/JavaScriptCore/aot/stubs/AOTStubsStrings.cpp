@@ -44,6 +44,13 @@ static StubSignature signatureOfCharactersAndImpl()
     return signature;
 }
 StubSignature signatureOfRopeCharacters(StubKey) { return signatureOfCharactersAndImpl(); }
+StubSignature signatureOfRopeCharactersAroundRange(StubKey)
+{
+    StubSignature signature = signatureOfCharactersAndImpl();
+    signature.addOperand(gprOf(StubRegister::T10));
+    signature.addOperand(gprOf(StubRegister::T14));
+    return signature;
+}
 StubSignature signatureOfSubstringCharacters(StubKey) { return signatureOfCharactersAndImpl(); }
 StubSignature signatureOfFlattenString(StubKey) { return signatureOfCharactersInPlace(); }
 StubSignature signatureOfStringCodeUnitAt(StubKey) { return StubSignature::withGPRResult({ gprOf(StubRegister::T12), gprOf(StubRegister::T11) }); }
@@ -330,6 +337,106 @@ void generateRopeCharacters(StubAssembler& jit)
 
     notSubstring.link(&jit);
     jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = impl }, loadImplCharacters);
+}
+
+// As RopeCharacters, but only the range may be read, from where the whole text would begin. Of a long rope no more is resolved than the innermost part that holds the range.
+void generateRopeCharactersAroundRange(StubAssembler& jit)
+{
+    constexpr int32_t isRopeToResolve = 1;
+    const GPRReg string = jit.clobberOperand(0);
+    const GPRReg start = jit.operand(1);
+    const GPRReg end = jit.operand(2);
+    const GPRReg data = jit.result();
+    const GPRReg impl = jit.secondResult();
+    const GPRReg offset = jit.allocateScratch(StubRegister::T13);
+    const GPRReg part = gprOf(StubRegister::T11);
+    const GPRReg third = gprOf(StubRegister::A1);
+    const GPRReg length = gprOf(StubRegister::A2);
+    const GPRReg levelsLeft = gprOf(StubRegister::R0);
+    RELEASE_ASSERT(string == data && noOverlap(string, start, end, impl, offset, part, third, length, levelsLeft));
+
+    JumpList isNotWalked;
+    JumpList nothingIsRead;
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), impl);
+    isNotWalked.append(jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSString::isRopeInPointer)));
+    isNotWalked.append(jit.branchTestPtr(CCallHelpers::NonZero, impl, TrustedImm32(JSRopeString::isSubstringInPointer)));
+    jit.load32(Address(string, JSRopeString::offsetOfLength()), offset);
+    nothingIsRead.append(jit.branch32(CCallHelpers::AboveOrEqual, start, end));
+    nothingIsRead.append(jit.branch32(CCallHelpers::Above, end, offset));
+    isNotWalked.append(jit.branch32(CCallHelpers::Below, offset, TrustedImm32(JSString::minLengthForRopeWalk)));
+
+    // Leaves the place of the range in what holds it in `offset`.
+    jit.preserving({ string, start, end, part, third, length, levelsLeft }, [&] {
+        const GPRReg rope = string;
+        JumpList holdsRange;
+        JumpList liesInSeveralParts;
+        JumpList hasAnswer;
+        auto passPart = [&] {
+            jit.loadPtr(Address(part, JSString::offsetOfValue()), impl);
+            Jump isRope = jit.branchIfRopeStringImpl(impl);
+            jit.load32(Address(impl, StringImpl::lengthMemoryOffset()), length);
+            Jump hasLength = jit.jump();
+            isRope.link(&jit);
+            jit.load32(Address(part, JSRopeString::offsetOfLength()), length);
+            hasLength.link(&jit);
+            holdsRange.append(jit.branch32(CCallHelpers::BelowOrEqual, end, length));
+            liesInSeveralParts.append(jit.branch32(CCallHelpers::Below, start, length));
+            jit.sub32(length, start);
+            jit.sub32(length, end);
+        };
+        jit.move(TrustedImm32(JSString::maxDepthOfWalkToSubstring), levelsLeft);
+        Label nextLevel = jit.label();
+        jit.move(start, offset);
+        jit.move(impl, part);
+        jit.and64(TrustedImm32(static_cast<int32_t>(JSRopeString::stringMask)), part);
+        passPart();
+        loadSubstringBaseAndOffset(jit, rope, part, third);
+        passPart();
+        jit.move(third, part);
+        jit.loadPtr(Address(part, JSString::offsetOfValue()), impl);
+
+        holdsRange.link(&jit);
+        Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, impl, TrustedImm32(JSString::isRopeInPointer));
+        Jump isSubstring = jit.branchTestPtr(CCallHelpers::NonZero, impl, TrustedImm32(JSRopeString::isSubstringInPointer));
+        jit.move(part, rope);
+        jit.branchSub32(CCallHelpers::NonZero, TrustedImm32(1), levelsLeft).linkTo(nextLevel, &jit);
+        jit.move(TrustedImm32(0), impl);
+        hasAnswer.append(jit.jump());
+
+        liesInSeveralParts.link(&jit);
+        jit.or64(TrustedImm32(isRopeToResolve), rope, impl);
+        hasAnswer.append(jit.jump());
+
+        isSubstring.link(&jit);
+        loadSubstringBaseAndOffset(jit, part, impl, third);
+        jit.add32(third, start);
+        jit.loadPtr(Address(impl, JSString::offsetOfValue()), impl);
+        isFlat.link(&jit);
+        jit.move(start, offset);
+        hasAnswer.link(&jit);
+    });
+    isNotWalked.append(jit.branchTestPtr(CCallHelpers::Zero, impl));
+    jit.sub32(start, offset);
+    jit.signExtend32ToPtr(offset, offset);
+    auto loadCharacters = [&] {
+        jit.loadPtr(Address(impl, StringImpl::dataOffset()), data);
+        Jump is8Bit = jit.branchTest32(CCallHelpers::NonZero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
+        jit.lshift64(TrustedImm32(1), offset);
+        is8Bit.link(&jit);
+        jit.addPtr(offset, data);
+    };
+    Jump resolvesPart = jit.branchTestPtr(CCallHelpers::NonZero, impl, TrustedImm32(isRopeToResolve));
+    loadCharacters();
+    jit.returnToCaller();
+
+    resolvesPart.link(&jit);
+    jit.xor64(TrustedImm32(isRopeToResolve), impl, string);
+    jit.callOperationAndReturn(Entry::operationAOTFlatten, { .saves = Saves::CallerSavedRegisters, .secondArgumentIn = string, .valueDestination = impl }, loadCharacters);
+
+    nothingIsRead.link(&jit);
+    jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(emptyString)), string);
+    isNotWalked.link(&jit);
+    jit.jumpToStub(ropeCharacters());
 }
 
 void generateSubstringCharacters(StubAssembler& jit)
@@ -813,7 +920,7 @@ PreludeExit emitStringLocaleComparePrelude(StubAssembler& jit)
 void emitLocaleCompareOfASCII(StubAssembler& jit, const LocaleCompareRegisters& registers, CollatorCheck check, const ScopedLambda<void(int32_t)>& returnOrder, JumpList& callsOperation)
 {
     constexpr int32_t wordSize = sizeof(uint64_t);
-    const ptrdiff_t weightsOffset = check == CollatorCheck::ByWeights ? AOT_INSTANCE_OFFSET(collation.knownLevel1Weights) : AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights);
+    const ptrdiff_t weightsOffset = check == CollatorCheck::ByWeights ? AOT_INSTANCE_OFFSET(defaultCollator.knownLevel1Weights) : AOT_INSTANCE_OFFSET(collation.ducetLevel1Weights);
     auto [left, right, leftCharacters, rightCharacters, remaining, leftUnit, rightUnit, weights] = registers;
     const GPRReg nonASCIIBits = weights;
 

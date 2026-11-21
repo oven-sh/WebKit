@@ -9,6 +9,8 @@
 #if ENABLE(AOT)
 
 #include "AOTBuildContext.h"
+#include "AOTCodeDescription.h"
+#include "AOTFunctionKinds.h"
 #include "AOTIRProgram.h"
 #include "AOTLinkedFunctions.h"
 #include "AOTThreads.h"
@@ -109,6 +111,21 @@ ObfuscatedSites collectObfuscatedSites(const LinkedFunctions& functions, const T
         appendObfuscatedSiteRecords(records, position, functions[position], program, rangeByString);
     });
     return result;
+}
+
+Vector<ModuleOfRuntimeFunctions> listModulesOfRuntimeFunctions(const Typed::Program& program, const Typed::CallingConventions& conventions, const BitVector& functionsWithFrames)
+{
+    Vector<ModuleOfRuntimeFunctions> listed;
+    for (uint32_t index = 0; index < program.functions.size(); ++index) {
+        const Typed::Function& function = program.functions[index];
+        if (!functionsWithFrames.get(index) || !Typed::functionObjectsLieInRuntimeModule(program, function))
+            continue;
+        bool hasModule = function.module && !Typed::positionInBuiltin(program, conventions, FunctionID(index));
+        uint32_t module = hasModule ? function.module.index() : ModuleOfRuntimeFunctions::none;
+        if (listed.isEmpty() || listed.last().module != module)
+            listed.append({ index, module });
+    }
+    return listed;
 }
 
 } } // namespace JSC::AOT

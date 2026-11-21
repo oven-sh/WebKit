@@ -1523,6 +1523,7 @@ private:
 
     void readWhatNobodyAskedFor();
     void findLoops();
+    bool mayLieInLoop(uint32_t block) const;
     PropertyKeyID keySpelledBy(const BodyValue&) const;
     PropertyKeyID keyOfSymbolMadeHere(ValueID written) const;
     void nameKeysOfMembers();
@@ -1860,6 +1861,7 @@ private:
 
     Vector<EdgeLeadingBackInScan> m_openLoops;
     Vector<uint32_t> m_innermostLoopHeads;
+    mutable Vector<uint32_t> m_lowestTargetsBehind;
     Vector<uint32_t> m_firstIncoming;
     Vector<uint32_t> m_incomingByParameter;
     Vector<bool> m_isNeeded;
@@ -2434,6 +2436,7 @@ void ScanOfBody::reset()
     m_handlersOfBlocks.shrink(0);
     m_nodesCaughtByBlocks.shrink(0);
     m_innermostLoopHeads.shrink(0);
+    m_lowestTargetsBehind.shrink(0);
     m_isConvertedToPrimitive.shrink(0);
     m_equalities.shrink(0);
     m_objectsConvertedByEqualities.clear();
@@ -8060,6 +8063,22 @@ PropertyKeyID ScanOfBody::keyOfSymbolMadeHere(ValueID written) const
     return named && named.opcode() == Opcode::Call && m_blocks[named.id().index()] == entryBlock.index() ? keySpelledBy(named) : PropertyKeyID();
 }
 
+bool ScanOfBody::mayLieInLoop(uint32_t block) const
+{
+    if (m_lowestTargetsBehind.isEmpty()) {
+        m_lowestTargetsBehind.fill(noLoop, m_function->body.numberOfBlocks());
+        m_function->body.forEachBlock([&](BodyBlock from) {
+            uint32_t& lowest = m_lowestTargetsBehind[from.id().index()];
+            from.forEachOutgoingEdge([&](BodyTarget target, bool) {
+                lowest = std::min(lowest, target.block().index());
+            });
+        });
+        for (size_t number = m_lowestTargetsBehind.size() - 1; number--;)
+            m_lowestTargetsBehind[number] = std::min(m_lowestTargetsBehind[number], m_lowestTargetsBehind[number + 1]);
+    }
+    return m_lowestTargetsBehind[block] <= block;
+}
+
 PropertyKeyID ScanOfBody::keySpelledBy(const BodyValue& definition) const
 {
     if (!definition)
@@ -8071,7 +8090,10 @@ PropertyKeyID ScanOfBody::keySpelledBy(const BodyValue& definition) const
     if (definition.opcode() != Opcode::Call)
         return { };
     auto record = std::ranges::lower_bound(m_summary.calls, definition.id(), { }, &SummaryCall::site);
-    return record != m_summary.calls.end() && record->site == definition.id() ? keyOfSymbolMadeOnceBy(m_program, *record) : PropertyKeyID();
+    PropertyKeyID key = record != m_summary.calls.end() && record->site == definition.id() ? keyOfSymbolMadeOnceBy(m_program, *record) : PropertyKeyID();
+    if (key && m_program.at(key).kind == PropertyKeyKind::CreatedSymbol && mayLieInLoop(m_blocks[definition.id().index()]))
+        return { };
+    return key;
 }
 
 void ScanOfBody::nameKeysOfMembers()

@@ -23,6 +23,7 @@
 #include "AOTReactionChain.h"
 #include "AOTRepresentationRules.h"
 #include "AOTRuntimeCallEmitter.h"
+#include "AOTSavedCodeAddresses.h"
 #include "AOTSavedFrame.h"
 #include "AOTSort.h"
 #include "AOTStubCatalog.h"
@@ -114,7 +115,7 @@ StubCallResult SavedFrameEmitter::suspend(const ValueContext& value, StubKey key
     if (frameLiesOnHeap) {
         RELEASE_ASSERT(hasMode);
         entrypoint = m_numberOfEntrypoints++;
-        m_out.storePtr(addressOfEntrypoint(entrypoint), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
+        storeResumeAddress(entrypoint, heapFrame());
         clearWordsOfWhatIsDeadAcross(value);
     }
 
@@ -253,6 +254,26 @@ Pointer SavedFrameEmitter::framePointerAtThisPoint()
         jit.move(GPRInfo::callFrameRegister, params[0].gpr());
     });
     return Pointer(patch);
+}
+
+Word32 SavedFrameEmitter::wordBehindReturnAddress(int32_t offset)
+{
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::Int32);
+    patch->effects = Machine::Effects::none();
+    patch->effects.reads = Machine::HeapSet::top();
+    patch->setNeedsFrameRecord(true);
+    patch->clobber(RegisterSet::macroClobberedGPRs());
+    patch->setGenerator([offset](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.load32(ReturnAddressToLookAt::load(jit, GPRInfo::callFrameRegister, params[0].gpr()).at(offset), params[0].gpr());
+    });
+    return Word32(patch);
+#else
+    const Machine::AbstractHeap& frameWords = m_heaps.entire(AbstractHeap::InternalFields);
+    Pointer returnAddress(m_out.loadPtr(m_out.address(frameWords, framePointerAtThisPoint().value(), CallFrame::returnPCOffset())));
+    return Word32(m_out.load32(m_out.address(frameWords, returnAddress.value(), offset)));
+#endif
 }
 
 void SavedFrameEmitter::generateAwaitMayContinue(const ValueContext& value)
@@ -1452,6 +1473,18 @@ void SavedFrameEmitter::generateNewHeapWords(const ValueContext& value)
     define(value, boxCell(frame));
 }
 
+void SavedFrameEmitter::generateNewSuspendedIteration(const ValueContext& value)
+{
+    CellPointer state = callOperation<CellPointer>(value, RuntimeOperation::NewSuspendedIteration, { in<Boxed>(value->subjectOperand()), in<Boxed>(value->positionOperand()), in<Boxed>(value->tableOperand()), word32(static_cast<int32_t>(value->suspendedKind())), word32(value->positionIsBeforeStep()) }, { .isOnRarePath = true });
+    define(value, boxCell(state));
+}
+
+void SavedFrameEmitter::generateNewSuspendedEnumeration(const ValueContext& value)
+{
+    CellPointer state = callOperation<CellPointer>(value, RuntimeOperation::NewSuspendedEnumeration, { in<CellPointer>(value->enumeratorOperand()), in<Boxed>(value->positionOperand()) }, { .isOnRarePath = true });
+    define(value, boxCell(state));
+}
+
 void SavedFrameEmitter::generateGetHeapFrameWord(const ValueContext& value)
 {
     if (Machine::StackSlot* slot = slotOfHeapWordsInFrame(value->frameOperand())) {
@@ -1477,6 +1510,14 @@ void SavedFrameEmitter::generatePutHeapFrameWord(const ValueContext& value)
     m_out.store64(stored, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
     if (value->remembersFrame())
         emitter<BarrierEmitter>().barrierAfterStore(value, frame, storedType);
+}
+
+void SavedFrameEmitter::generatePutHeapFrameScope(const ValueContext& value)
+{
+    CellPointer frame = unboxCell(in<Boxed>(value->frameOperand()));
+    CellPointer scope = in<CellPointer>(value->scopeOperand());
+    m_out.store64(boxCell(scope).value(), m_out.address(m_heaps.entire(AbstractHeap::InternalFields), frame.value(), offsetOfWordInHeapFrame(value->index())));
+    emitter<BarrierEmitter>().barrierAfterStore(value, frame, typeOf(value->scopeOperand()));
 }
 
 bool SavedFrameEmitter::findBlocksBehindFirstYield()
@@ -2488,17 +2529,41 @@ void SavedFrameEmitter::passHandlerArgumentsInLandingPad(BlockID site, const Edg
         generator().nameAgain(argument, lowered);
 }
 
+static void linkToEntrypoint(CCallHelpers& jit, MacroAssembler::Label site, const Machine::PatchParameters& params, unsigned index)
+{
+    jit.addLinkTask([site, procedure = &params.proc(), index](LinkBuffer& linkBuffer) {
+        RELEASE_ASSERT(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), procedure->entrypointLabel(index)));
+    });
+}
+
 LValue SavedFrameEmitter::addressOfEntrypoint(unsigned index)
 {
     Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
     patch->effects = Machine::Effects::none();
     patch->setGenerator([index](CCallHelpers& jit, const Machine::PatchParameters& params) {
-        MacroAssembler::Label site = jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Far);
-        jit.addLinkTask([site, procedure = &params.proc(), index](LinkBuffer& linkBuffer) {
-            RELEASE_ASSERT(linkBuffer.link(site, addressKindFor(PCRelativeReach::Far), procedure->entrypointLabel(index)));
-        });
+        linkToEntrypoint(jit, jit.movePCRelativeAddress(params[0].gpr(), PCRelativeReach::Far), params, index);
     });
     return patch;
+}
+
+void SavedFrameEmitter::storeResumeAddress(unsigned entrypoint, LValue frame)
+{
+    const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::InternalFields);
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    Machine::PatchOperation* patch = m_out.patchpoint(Machine::Void);
+    patch->effects = Machine::Effects::none();
+    m_heaps.decoratePatchpointWrite(&fields, patch);
+    patch->appendSomeRegister(frame);
+    patch->clobber(RegisterSet::macroClobberedGPRs());
+    patch->setGenerator([entrypoint](CCallHelpers& jit, const Machine::PatchParameters& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        emitModifierOfResumeAddress(jit, params[0].gpr());
+        linkToEntrypoint(jit, jit.moveSignedPCRelativeAddress(PCRelativeReach::Far), params, entrypoint);
+        emitStoreResumeAddressThatCallerHasSigned(jit, CCallHelpers::memoryTempRegister, params[0].gpr());
+    });
+#else
+    m_out.storePtr(addressOfEntrypoint(entrypoint), m_out.address(fields, frame, offsetOfResumeAddressWithoutSignature()));
+#endif
 }
 
 void SavedFrameEmitter::clearWordsInMachineFrame()
@@ -2507,13 +2572,17 @@ void SavedFrameEmitter::clearWordsInMachineFrame()
         m_out.store64(m_out.int64Zero, wordInFrame(m_slotOfKeptWords, word));
 }
 
-void SavedFrameEmitter::makeHeapFrame(const ValueContext& firstYield, CellPointer generatorCell, LValue resumeAddress)
+void SavedFrameEmitter::makeHeapFrame(const ValueContext& firstYield, CellPointer generatorCell, unsigned entrypoint)
 {
+    constexpr bool signatureNeedsAddressOfFrame = ENABLE_RETURN_ADDRESS_SIGNING;
+    LValue resumeAddress = signatureNeedsAddressOfFrame ? m_out.int64Zero : addressOfEntrypoint(entrypoint);
     LValue frame;
     if (m_numberOfWordsInHeapFrame <= SavedFrame::maxWordsAllocatedInStub)
         frame = callStub(firstYield, AOT::newHeapFrame(), { m_out.constInt64(m_numberOfWordsInHeapFrame), resumeAddress }).first;
     else
         frame = callOperation<CellPointer>(firstYield, RuntimeOperation::NewHeapFrame, { word32(static_cast<int32_t>(m_numberOfWordsInHeapFrame)), Pointer(resumeAddress) }).value();
+    if (signatureNeedsAddressOfFrame)
+        storeResumeAddress(entrypoint, frame);
 
     const Machine::AbstractHeap& fields = m_heaps.entire(AbstractHeap::InternalFields);
     if (m_numberOfTracedWords != m_numberOfWordsInHeapFrame)
@@ -2549,18 +2618,17 @@ void SavedFrameEmitter::yieldOutOfHeapFrame(const ValueContext& value)
     CellPointer generatorCell = in<CellPointer>(value->generatorOperand());
     Boxed yielded = in<Boxed>(value->valueOperand());
     uint16_t entrypoint = m_numberOfEntrypoints++;
-    LValue resumeAddress = addressOfEntrypoint(entrypoint);
     LValue suspendedAtYield = m_out.constInt32(static_cast<int32_t>(Generator::State::SuspendedAtYield));
 
     if (value.id() == m_firstYield) {
-        makeHeapFrame(value, generatorCell, resumeAddress);
+        makeHeapFrame(value, generatorCell, entrypoint);
         if (kindOfFunction() == CoroutineKind::Generator) {
             LValue state = m_out.load32(stateOf(generatorCell));
             m_out.store32(m_out.select(m_out.equal(state, m_out.constInt32(static_cast<int32_t>(Generator::State::Running))), suspendedAtYield, state), stateOf(generatorCell));
         }
         m_hasPassedFirstYield = true;
     } else {
-        m_out.storePtr(resumeAddress, m_out.address(m_heaps.entire(AbstractHeap::InternalFields), heapFrame(), SavedFrame::offsetOfResumeAddress()));
+        storeResumeAddress(entrypoint, heapFrame());
         m_out.store32(suspendedAtYield, stateOf(generatorCell));
         storeLeafStep(value.id());
     }
@@ -2726,17 +2794,40 @@ void SavedFrameEmitter::generateGetGeneratorPrototype(const ValueContext& value)
 
 void SavedFrameEmitter::generateTakeGeneratorLeftInPlace(const ValueContext& value)
 {
-    define(value, callOperation<Boxed>(value, RuntimeOperation::TakeGeneratorLeftInPlace, { in<CellPointer>(value->holderOperand()), word32(value->leavesAtOnce()) }, { .isOnRarePath = true }));
+    static_assert(SavedFrame::generatorWord == GeneratorFrameLayout::generatorWord);
+    CellPointer holder(m_out.intPtrZero);
+    if (ValueID held = value->holderOperand())
+        holder = in<CellPointer>(held);
+    CellPointer words(m_out.intPtrZero);
+    Pointer resumeAddress(m_out.intPtrZero);
+    if (ValueID held = value->wordsOperand()) {
+        words = unboxCell(in<Boxed>(held));
+        Machine::PatchOperation* patch = m_out.patchpoint(Machine::pointerType());
+        patch->effects = Machine::Effects::none();
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        patch->appendSomeRegister(words.value());
+        patch->clobber(RegisterSet::macroClobberedGPRs());
+        patch->setGenerator([records = &m_records, unit = CodeUnit { value->function(), CodeRole::SlowBody }](CCallHelpers& jit, const Machine::PatchParameters& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            emitModifierOfResumeAddress(jit, params[1].gpr());
+            records->stubCalls.moveSignedAddressOfFunction(unit, primaryEntry);
+            jit.move(CCallHelpers::memoryTempRegister, params[0].gpr());
+        });
+#else
+        patch->setGenerator([records = &m_records, unit = CodeUnit { value->function(), CodeRole::SlowBody }](CCallHelpers&, const Machine::PatchParameters& params) {
+            records->stubCalls.moveAddressOfFunction(unit, primaryEntry, params[0].gpr());
+        });
+#endif
+        resumeAddress = Pointer(patch);
+    }
+    define(value, callOperation<Boxed>(value, RuntimeOperation::TakeGeneratorLeftInPlace, { holder, words, resumeAddress, word32(value->leavesAtOnce()), word32(value->isHeldByIteration()) }, { .isOnRarePath = true }));
 }
 
 void SavedFrameEmitter::generateIsCallDelegated(const ValueContext& value)
 {
     ValueID callee = value->calleeOperand();
     defineTestByBranching(value, [&](BranchTargets targets) {
-        const Machine::AbstractHeap& frameWords = m_heaps.entire(AbstractHeap::InternalFields);
-        Pointer returnAddress(m_out.loadPtr(m_out.address(frameWords, framePointerAtThisPoint().value(), CallFrame::returnPCOffset())));
-        Word32 mark(m_out.load32(m_out.address(frameWords, returnAddress.value(), offsetOfDelegationMark)));
-        branchUnless(equal(mark, word32(delegationMark)), targets.notTaken.block());
+        branchUnless(equal(wordBehindReturnAddress(offsetOfDelegationMark), word32(delegationMark)), targets.notTaken.block());
 
         constexpr ptrdiff_t offsetOfStructureID = FunctionRareData::offsetOfInternalFunctionAllocationProfile() + InternalFunctionAllocationProfile::offsetOfStructureID();
         Pointer taggedRareData = loadField<Pointer>(in<CellPointer>(callee), m_heaps.JSFunction_executableOrRareData);

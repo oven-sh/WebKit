@@ -189,6 +189,9 @@ private:
     std::atomic<size_t> m_numberOfBlocksTaken { 0 };
     OptionSet<ExhaustedHeap> m_exhaustedHeaps;
     unsigned m_numberOfBarrenCollections { 0 };
+    // Room resets it, and so does an error at a live heap smaller than at each error since there was room. No other error does, so a program that catches every error cannot run barren collections forever.
+    unsigned m_numberOfBarrenCollectionsSinceRoom { 0 };
+    size_t m_smallestLiveSizeAtError { std::numeric_limits<size_t>::max() };
     uint64_t m_bytesAllocatedWhenLastFull { 0 };
     Vector<void*> m_reserve;
     Vector<void*, numberOfSpareWeakBlocks> m_spareWeakBlocks;

@@ -868,16 +868,51 @@ static Reference rootOfListInEscapeAnalysis(Walker& walker, Reference name)
     return walker.code().isConstant(cell) ? Reference() : Reference::value(cell);
 }
 
+static bool haveDifferentClassesInEscapeAnalysis(Walker& walker, TypeID made, TypeID named)
+{
+    if (made == named || holdsOnlyPrimitives(named))
+        return false;
+    TypeArena& types = walker.types();
+    auto classOf = [&](const Type& type) {
+        const ClassPart* part = singleBuiltinClassOf(types, type);
+        return part ? part->builtinClass : BuiltinClassID();
+    };
+    BuiltinClassID classOfNamed = classOf(types.recordOf(named));
+    if (classOfNamed != BuiltinClasses::Uint8Array && classOfNamed != BuiltinClasses::Buffer)
+        return false;
+    return holdsOnlyPrimitives(made) || classOf(types.recordOf(made)) != classOfNamed;
+}
+
 void markObjectPristine(Walker& walker, Reference name)
 {
-    if (Reference list = rootOfListInEscapeAnalysis(walker, name))
-        walker.state().noteShape(list, walker.code().at(list.id()).type);
+    Reference list = rootOfListInEscapeAnalysis(walker, name);
+    if (!list)
+        return;
+    TypeID made = walker.code().at(list.id()).type;
+    TypeID named = walker.code().at(name.id()).type;
+    if (haveDifferentClassesInEscapeAnalysis(walker, made, named))
+        walker.state().noteShape(name, named);
+    else
+        walker.state().noteShape(list, made);
 }
 
 bool isKnownPristine(Walker& walker, Reference name)
 {
     Reference list = rootOfListInEscapeAnalysis(walker, name);
-    return list && walker.state().shapeOf(list);
+    if (!list)
+        return false;
+    const Code& code = walker.code();
+    TypeID named = code.at(name.id()).type;
+    if (TypeID made = walker.state().shapeOf(list); made && !haveDifferentClassesInEscapeAnalysis(walker, made, named))
+        return true;
+    if (!haveDifferentClassesInEscapeAnalysis(walker, code.at(list.id()).type, named))
+        return false;
+    for (ValueID passed = name.id(); passed != list.id(); passed = code.at(passed).operand(0)) {
+        TypeID noted = walker.state().shapeOf(Reference::value(passed));
+        if (noted && !haveDifferentClassesInEscapeAnalysis(walker, noted, named))
+            return true;
+    }
+    return false;
 }
 
 std::optional<uint32_t> lengthOfFreshList(Walker& walker, Reference name)

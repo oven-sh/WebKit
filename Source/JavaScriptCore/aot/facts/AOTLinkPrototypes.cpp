@@ -2606,12 +2606,17 @@ bool LinkFlow::takePrototypeHelperStep(const PrototypeHelperStep& step)
         storeOnClassHolder(step.writer, child, step.objectIsPrototype ? ClassSide::Prototype : ClassSide::Static, step.key, value);
         return true;
     }
-    case PrototypeHelper::Step::Kind::CopiesNames:
-        if (!everyFunctionAboveIsConstructorFunction(step.value))
+    case PrototypeHelper::Step::Kind::CopiesNames: {
+        size_t stepsLeft = program.layouts.size();
+        LayoutID above = child;
+        while (above && program.at(above).constructor != step.value)
+            above = stepsLeft-- ? program.at(above).base : LayoutID();
+        if (!above || !everyFunctionAboveIsConstructorFunction(step.value))
             return false;
         noteWhatMayMakeThenableOf(closuresOf(step.object), step.writer, std::nullopt);
         linkFunctionBelow(step.object, step.value);
         return true;
+    }
     case PrototypeHelper::Step::Kind::AsksOwnName:
         return findsOwnNameBuiltin(step);
     case PrototypeHelper::Step::Kind::CallsFunction:

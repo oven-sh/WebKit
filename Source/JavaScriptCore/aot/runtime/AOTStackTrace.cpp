@@ -136,18 +136,28 @@ bool FunctionDescription::isOfCalledBuiltin() const
     return m_record == &traceOfCalledHostFunction || m_record == &traceOfCalledJSBuiltin;
 }
 
+bool FunctionDescription::isOfProgram() const
+{
+    return !isOfCalledBuiltin() && !functionKindData(m_function).isInRuntimeModule;
+}
+
+bool FunctionDescription::hasHiddenName() const
+{
+    return Image::current()->isObfuscated() && isOfProgram();
+}
+
 String FunctionDescription::name(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    return Image::current()->isObfuscated() ? emptyString() : functionName(*this, NameForm::AsWritten);
+    return hasHiddenName() ? emptyString() : functionName(*this, NameForm::AsWritten);
 }
 
 String FunctionDescription::stackTraceName(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    if (Image::current()->isObfuscated())
+    if (hasHiddenName())
         return emptyString();
     String name = functionName(*this, NameForm::InFrames);
     return name.isEmpty() ? computedNameInFrames(vm, *this) : name;
@@ -157,7 +167,7 @@ String FunctionDescription::calculatedDisplayName(VM& vm) const
 {
     if (isOfCalledBuiltin())
         return nameOfBuiltin(vm, builtinOfFunctionInFrames(m_function));
-    if (Image::current()->isObfuscated())
+    if (hasHiddenName())
         return emptyString();
     if (isNamedByComputedKey())
         return emptyString();
@@ -266,7 +276,7 @@ public:
     void findSiteAgain()
     {
         if (m_site)
-            m_site = m_cache.resolve(m_image, removeCodePtrTag(m_rawPC));
+            m_site = m_cache.resolve(m_image, removeReturnAddressSignature(m_rawPC));
     }
     const CompiledFrameExit& exit() const
     {
@@ -373,7 +383,7 @@ private:
     ALWAYS_INLINE void findFunctionFrame()
     {
         for (;;) {
-            const void* pc = removeCodePtrTag(m_rawPC);
+            const void* pc = removeReturnAddressSignature(m_rawPC);
             m_site = m_cache.find(pc);
             if (!m_site) [[unlikely]] {
                 m_site = resolveReturnAddressInRun(m_cache, m_image, pc, m_callFrame);
@@ -615,6 +625,12 @@ static std::optional<RunStart> findRunBelowEntry(VM& vm)
     return RunStart { callerStackPointer(operationRecord), operationRecord->callerFrame(), operationRecord->rawReturnPC(), entry->prevTopEntryFrame(), false, true };
 }
 
+static ALWAYS_INLINE bool returnsIntoImage(VM& vm, CallFrame* frame)
+{
+    std::span<const uint8_t> code = vm.aotState().image->code();
+    return std::bit_cast<uintptr_t>(frame->returnPCForInspection()) - std::bit_cast<uintptr_t>(code.data()) < code.size();
+}
+
 static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy topFramePolicy)
 {
     CallFrame* top = vm.topCallFrame;
@@ -629,7 +645,9 @@ static std::optional<RunStart> findRunBelowHostFunction(VM& vm, TopFramePolicy t
     if (top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
         return findRunBelowEntry(vm);
     }
-    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(removeCodePtrTag(top->rawReturnPC()));
+    if (!returnsIntoImage(vm, top))
+        return std::nullopt;
+    const CallSiteCache::Entry* site = vm.aotState().callSiteCache->find(top->returnPCForInspection());
     if (!site || !site->isStubReturnSite() || site->stubFrameKind != StubFrameKind::HostCall)
         return std::nullopt;
     return RunStart { callerStackPointer(top), top->callerFrame(), top->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -644,8 +662,10 @@ static bool isOnlyTopFrame(VM& vm)
     return !entry->prevTopCallFrame() && !entry->prevTopEntryFrame();
 }
 
-static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy)
+static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy, JSCell* lastConstructorToSkip)
 {
+    if (lastConstructorToSkip && topFramePolicy == TopFramePolicy::Include)
+        return std::nullopt;
     auto isShownInterpretedFrame = [&](CallFrame* frame) {
         if (frame->isZombieFrame() || frame->isNativeCalleeFrame() || vm.aotState().classCalledWithoutNew == frame)
             return false;
@@ -667,7 +687,7 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm
             start = findRunBelowEntry(vm);
             break;
         }
-        const void* returnPC = removeCodePtrTag(frame->rawReturnPC());
+        const void* returnPC = frame->returnPCForInspection();
         if (std::bit_cast<uintptr_t>(returnPC) - std::bit_cast<uintptr_t>(compiledCode.data()) < compiledCode.size()) {
             if (isCallStubReturnSite(vm, returnPC))
                 start = RunStart { callerStackPointer(frame), frame->callerFrame(), frame->rawReturnPC(), vm.topEntryFrame, false, true };
@@ -676,11 +696,18 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm
         if (frames.size() == maxFrames)
             return std::nullopt;
         frame = frame->callerFrame();
+        if (lastConstructorToSkip) {
+            if (frame->isZombieFrame() || frame->isNativeCalleeFrame() || !frame->codeBlock() || vm.aotState().classCalledWithoutNew == frame)
+                return std::nullopt;
+            if (frame->callee().asCell() == lastConstructorToSkip)
+                lastConstructorToSkip = nullptr;
+            continue;
+        }
         if (!isShownInterpretedFrame(frame))
             return std::nullopt;
         frames.append(frame);
     }
-    if (!start || frames.isEmpty())
+    if (!start || lastConstructorToSkip || frames.isEmpty())
         return std::nullopt;
 
     framesOnTop.reserveInitialCapacity(frames.size());
@@ -772,21 +799,26 @@ static ALWAYS_INLINE ReturnAddressTrace* tryCaptureRun(VM& vm, JSCell* owner, si
         return nullptr;
 
     FramesAboveRun framesAbove;
-    if (topFramePolicy == TopFramePolicy::Skip && isTopFrameCompiled(vm))
-        return nullptr;
-    std::optional<RunStart> start = topFramePolicy == TopFramePolicy::Include ? findRunAtTop(vm) : findRunBelowHostFunction(vm, topFramePolicy);
-    if (!start) {
-        if (lastConstructorToSkip)
+    std::optional<RunStart> start;
+    if (topFramePolicy == TopFramePolicy::Include)
+        start = findRunAtTop(vm);
+    else if (CallFrame* top = vm.topCallFrame; returnsIntoImage(vm, top) || top->callerFrameOrEntryFrame() == vm.topEntryFrame) {
+        if (isTopFrameCompiled(vm))
             return nullptr;
-        if (topFramePolicy == TopFramePolicy::Include && maxStackSize >= 2)
+        start = findRunBelowHostFunction(vm, topFramePolicy);
+    }
+    if (!start) {
+        if (topFramePolicy == TopFramePolicy::Include && maxStackSize >= 2 && !lastConstructorToSkip)
             start = findRunBelowHostFunction(vm, topFramePolicy);
         if (start) {
             if (!otherFrames.capacity())
                 otherFrames.reserveInitialCapacity(1);
             otherFrames.append(StackFrame(vm, owner, vm.topCallFrame->callee().asCell()));
         } else {
-            start = findRunBelowInterpretedFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
-            if (!start && !isOnlyTopFrame(vm))
+            start = findRunBelowInterpretedFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy, lastConstructorToSkip);
+            if (start)
+                lastConstructorToSkip = nullptr;
+            else if (!lastConstructorToSkip && !isOnlyTopFrame(vm))
                 start = findRunBelowOtherFrames(vm, owner, otherFrames, maxStackSize, topFramePolicy);
         }
         if (!start)
@@ -1267,10 +1299,10 @@ std::optional<SourcePosition> definitionOf(const TraceFrame& frame)
 std::optional<SourcePosition> positionOf(const TraceFrame& frame)
 {
     const Image& image = *Image::current();
-    if (image.isObfuscated())
-        return SourcePosition { obfuscatedPositionOf(frame), ModuleID() };
     if (builtinOfFunctionInFrames(frame.function) && FunctionDescription(frame.function).builtinKind() == StackTraceBuiltinKind::JSBuiltin) [[unlikely]]
         return SourcePosition { startOfBuiltinFunction, ModuleID() };
+    if (image.isObfuscated())
+        return SourcePosition { obfuscatedPositionOf(frame), moduleShownByObfuscatedImage(frame.function) };
     std::optional<SourcePosition> position = image.positionOf(frame.code.index(), frame.callSite);
     if (position)
         position = position->shown();
@@ -1285,6 +1317,17 @@ std::optional<SourcePosition> positionOf(const TraceFrame& frame)
         position->startIsWhereWritten = false;
     }
     return position;
+}
+
+ModuleID moduleShownByObfuscatedImage(FunctionID function)
+{
+    FunctionDescription description(function);
+    if (!description.isInRuntimeModule())
+        return ModuleID();
+    std::span modules = Image::current()->section<ModuleOfRuntimeFunctions>(ImageSection::Positions);
+    auto next = std::ranges::upper_bound(modules, description.sourceFunction().index(), { }, &ModuleOfRuntimeFunctions::firstFunction);
+    uint32_t module = next == modules.begin() ? ModuleOfRuntimeFunctions::none : std::prev(next)->module;
+    return module == ModuleOfRuntimeFunctions::none ? ModuleID() : ModuleID(module);
 }
 
 LineColumn obfuscatedPositionOf(const TraceFrame& frame)
@@ -1415,7 +1458,7 @@ static ReturnAddresses findAwaitingCallsOnStack(const SavedFrame& saved)
     if (!frame) [[likely]]
         return found;
     for (; SavedFrame::forFrame(instance, frame) != &saved; frame = std::bit_cast<const uint64_t*>(frame[0])) {
-        const void* returnAddress = std::bit_cast<const void*>(frame[1]);
+        const void* returnAddress = removeReturnAddressSignature(std::bit_cast<const void*>(frame[1]));
         const CallSiteCache::Entry* entry = instance.vm->aotState().callSiteCache->resolve(*Image::current(), returnAddress);
         if (!entry || entry->isStubReturnSite())
             return { };

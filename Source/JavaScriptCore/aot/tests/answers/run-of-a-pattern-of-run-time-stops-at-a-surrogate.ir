@@ -1,0 +1,64 @@
+# Each match of a global search meets a surrogate pair.
+# -- source: main.js
+# const flat = s => JSON.parse(JSON.stringify(s));
+# const n = 600000;
+# const text = flat("x\u{1F600}".repeat(n));
+# print(text.match(new RegExp(flat("x[^\u{1F600}]*"), "gu")).length);
+# print(text.replace(new RegExp(flat("x([^\u{1F600}]*)"), "gu"), "<$1>").length);
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: 600000
+# CHECK-NEXT: 2400000
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @36
+    v1 = Integer integer=600000 @82
+    v2 = String string="x\u{1f600}" @108
+    v3 = PropGet v2 key="repeat" @108
+    v4 = Integer integer=600000 @128
+    v5 = Call v3, v2, v4 calleeKey="repeat" calleeName="repeat" @121
+    v6 = Call v0, -, v5 calleeName="flat" @103
+    v7 = Builtin builtin=GlobalThis @133
+    v8 = PropGet v7 key="print" [isFreeName] @133
+    v9 = PropGet v6 key="match" @139
+    v10 = Builtin builtin=RegExp @154
+    v11 = String string="x[^\u{1f600}]*" @166
+    v12 = Call v0, -, v11 calleeName="flat" @161
+    v13 = String string="gu" @185
+    v14 = Construct v10, -, v12, v13 calleeName="RegExp" @154 @150
+    v15 = Call v9, v6, v14 calleeKey="match" calleeName="text.match" @144
+    v16 = PropGet v15 key="length" @190
+    v17 = Call v8, -, v16 calleeName="print" @133
+    v18 = Builtin builtin=GlobalThis @201
+    v19 = PropGet v18 key="print" [isFreeName] @201
+    v20 = PropGet v6 key="replace" @207
+    v21 = Builtin builtin=RegExp @224
+    v22 = String string="x([^\u{1f600}]*)" @236
+    v23 = Call v0, -, v22 calleeName="flat" @231
+    v24 = String string="gu" @257
+    v25 = Construct v21, -, v23, v24 calleeName="RegExp" @224 @220
+    v26 = String string="<$1>" @264
+    v27 = Call v20, v6, v25, v26 calleeKey="replace" calleeName="text.replace" @212
+    v28 = PropGet v27 key="length" @270
+    v29 = Call v19, -, v28 calleeName="print" @201
+    v30 = Undefined @201
+    Return v30 @201
+}
+function f1 name="flat" module=m0 position=36 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=JSON @41
+    v2 = PropGet v1 key="parse" @41
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]} @41
+    v4 = Builtin builtin=JSON @52
+    v5 = PropGet v4 key="stringify" @52
+    v6 = Convert v5 declared={type=builtin(JSONStringify) flags=[IsExpected]} @52
+    v7 = Call v6, v4, v0 calleeKey="stringify" calleeName="JSON.stringify" @57
+    v8 = Call v3, v1, v7 calleeKey="parse" calleeName="JSON.parse" @46
+    ReturnCall v8 @46
+}

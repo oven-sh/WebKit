@@ -301,7 +301,7 @@ bool TestProcedure::compile(void* instance, std::optional<uint32_t> branchReach)
     AOT_TEST_CHECK(ExecutableAllocator::singleton().isValid());
     storage.didGenerate = true;
 
-    CCallHelpers jit;
+    ImageAssembler jit;
     AssemblerPolicy policy = AssemblerPolicy::forImage(features);
     if (branchReach)
         policy.branchReach = *branchReach;

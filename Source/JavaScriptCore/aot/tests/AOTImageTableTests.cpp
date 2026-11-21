@@ -530,6 +530,7 @@ static void testRuntimeFactsNameWhatEmittedCodeTakes()
     for (ASCIILiteral name : {
         "the names of the entries in the table of the run time in the order of their numbers"_s,
         "isHardenedBuild"_s,
+        "ENABLE(RETURN_ADDRESS_SIGNING)"_s,
         "sizeOfLoopPoll"_s,
         "sizeof(InlineAllocationData)"_s,
         "sizeof(BuiltinDirectFunctionBinding)"_s,

@@ -534,7 +534,7 @@ void CodeGenerator::generateNextRow(const Interleaving& nest, LBasicBlock isNoRo
             generateValue(block, value, operation, false, { });
         }
         const Terminator& terminator = code().at(block).terminator;
-        if (terminator.kind == TerminatorKind::Branch && nest.dependentOperations.contains(terminator.conditionOperand())) {
+        if (terminator.kind == TerminatorKind::Branch && (nest.dependentOperations.contains(terminator.conditionOperand()) || std::ranges::contains(parameters, terminator.conditionOperand()))) {
             TerminatorContext context(block, terminator, nullptr);
             SetForScope<const OperationContext*> whileTesting(m_operation, &context);
             require(get(terminator.conditionOperand()).value);
@@ -806,8 +806,12 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
     for (const ElementStream& stream : nest.streams)
         storages.append({ stream.storage, m_values[stream.storage.index()] });
     Vector<LBasicBlock, 8> blocksOfWrittenTurn;
-    for (BlockID block : turn)
+    Vector<std::pair<ValueID, LValue>, 8> phisOfWrittenTurn;
+    for (BlockID block : turn) {
         blocksOfWrittenTurn.append(m_blocks[block.index()]);
+        for (ValueID parameter : code().at(block).parameters())
+            phisOfWrittenTurn.append({ parameter, m_values[parameter.index()] });
+    }
     m_headOfTurnsLaidOut = head;
     m_turnLaidOut = turn;
     m_valuesLeftOutOfTurnsLaidOut.append(loop.poll);
@@ -883,6 +887,10 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
                     m_nextBlockGoesOnHere = true;
                 } else
                     block = goesOnBehindJump(loop.positionsOfTurn[index]) ? nullptr : m_out.newBlock();
+            }
+            for (auto [parameter, phi] : phisOfWrittenTurn) {
+                if (phi)
+                    m_values[parameter.index()] = m_out.phiIn(blockFor(code().blockOf(parameter)), phi->type());
             }
             for (BlockID block : turn) {
                 generateBlock(block);
@@ -1014,6 +1022,8 @@ void CodeGenerator::layOutInterleaved(const CountedLoop& loop, Interleaving& nes
     }
     for (size_t index = 0; index < turn.size(); ++index)
         m_blocks[turn[index].index()] = blocksOfWrittenTurn[index];
+    for (auto [parameter, phi] : phisOfWrittenTurn)
+        m_values[parameter.index()] = phi;
     m_blocks[head.index()] = single;
     for (size_t index = 0; index < parameters.size(); ++index)
         m_values[parameters[index].index()] = phisOfSingle[index];
@@ -1213,6 +1223,8 @@ void CodeGenerator::layOutSteppedStore(const SteppedStore& loop)
             require(m_out.lessThanOrEqual(firstBehind, elements.publicLength(*elementsOfList).value()));
             box = elements.rawElementToStore(form, store.valueOperand(), nullptr);
             RELEASE_ASSERT(box);
+            if (m_rows)
+                zeroRowCounts();
         }
         LValue behindStretch = m_out.add(wide(counter), m_out.mul(step, m_out.constInt64(mostIterationsWithoutPoll)));
         end = m_out.select(m_out.lessThan(behindStretch, lastStart), behindStretch, lastStart);

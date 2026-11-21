@@ -39,6 +39,7 @@ void willCollectForExhaustedCage(VM&);
 void didFindNoRoomWhereCollectionMayRun(VM&);
 String compiledCalleeName(JSCell*);
 bool representsModuleInHeapSnapshot(JSCell*);
+bool isBufferOfGrowingText(JSCell*);
 [[noreturn]] void crashOnCellVisitMismatch(VM&, const JSCell*);
 std::span<const uint32_t> narrowReferenceOffsets(const Structure*);
 

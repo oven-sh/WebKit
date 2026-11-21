@@ -945,16 +945,25 @@ bool someLoopGivesSlowVersionSomethingToReckon(const BodyIndex& index)
     return false;
 }
 
+static bool constructsNamesDefinedAbove(const Program& program, const Function& constructor)
+{
+    return constructor.constructedClass && std::ranges::any_of(program.at(constructor.constructedClass).fields, [](const Field& field) {
+        return field.flags.contains(FieldFlags::MayBeDefinedAbove);
+    });
+}
+
+// It is walked as any other body.
+bool slowBodyGoesByWhatCallersLeave(const Program& program, const Facts& facts, const Plan& plan, FunctionID function)
+{
+    bool hasVersionBeforeEvaluation = facts.beforeEvaluation().holdsIn(function) && plan.conventions().hasParameterGuard(function);
+    return hasVersionBeforeEvaluation || constructsNamesDefinedAbove(program, program.at(function));
+}
+
 void Walker::beginUnit(CodeUnit unit)
 {
     RELEASE_ASSERT(!std::exchange(m_hasBegunUnit, true) && m_newestWalkerOfWorker == this);
     const Function& function = program().at(unit.function);
 
-    auto constructsNamesDefinedAbove = [](const Program& program, const Function& constructor) {
-        return constructor.constructedClass && std::ranges::any_of(program.at(constructor.constructedClass).fields, [](const Field& field) {
-            return field.flags.contains(FieldFlags::MayBeDefinedAbove);
-        });
-    };
     bool hasVersionBeforeEvaluation = facts().beforeEvaluation().holdsIn(unit.function) && plan().conventions().hasParameterGuard(unit.function);
     m_noTextWasEvaluated = hasVersionBeforeEvaluation && unit.role == CodeRole::Body;
     m_comparesElementsOfViews = false;
@@ -4206,7 +4215,8 @@ void Walker::noteOperationBuiltWhereCodeIsVerified(ValueID id, const Draft& draf
         m_code.recordSyntheticVariableRead(id);
     if (draft.opcode == Opcode::GetEnvironmentField && !draft.inputValueGiven && draft.isKnownInitialized())
         m_code.recordSyntheticVariableRead(id);
-    if (!isWrittenInTopFrame(draft) || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
+    bool isMadeOnceAtItsSite = draft.opcode == Opcode::NewTemplateObject;
+    if (!isWrittenInTopFrame(draft) || isMadeOnceAtItsSite || opcodesThatMakeArguments.contains(draft.opcode) || (resultRuleInWalk(draft.opcode) != ResultRule::Allocation && !closuresAndClassesMade.contains(draft.opcode)))
         return;
     const Frame& frame = m_frames.last();
     Reference earlier = referenceBoundIn(frame, draft.inputValueGiven);
@@ -5628,6 +5638,30 @@ std::optional<PassedTest> Walker::findPassedTest(Reference test, bool passesWith
     return PassedTest(test.id(), passesWithYes);
 }
 
+std::optional<PassedTest> Walker::findTestPassedOnPath(Reference test, bool passesWithYes)
+{
+    if (has(Mechanism::Folding) || !test || !test.isValue())
+        return findPassedTest(test, passesWithYes);
+    const ValueID asked = underlyingCellOf(m_code, test.id());
+    for (BlockID block = m_block; block && !m_code.at(block).isLoopHead;) {
+        const Edge* only = nullptr;
+        bool isJoin = false;
+        m_code.forEachIncomingEdgeUnsealed(block, [&](const Edge& edge) {
+            isJoin |= !!std::exchange(only, &edge);
+        });
+        if (!only || isJoin)
+            return std::nullopt;
+        block = only->from;
+        const Terminator& end = m_code.at(block).terminator;
+        if (!end.isConditionalBranch() || underlyingCellOf(m_code, end.conditionOperand()) != asked)
+            continue;
+        if (only != &m_code.at(passesWithYes ? end.taken() : end.notTaken()))
+            return std::nullopt;
+        return PassedTest(test.id(), passesWithYes);
+    }
+    return std::nullopt;
+}
+
 std::optional<PassedTest> Walker::findWhatHoldsWordInsideListMadeByWalk(Reference listInParameter, Reference listAsMade, Reference word)
 {
     if (!listInParameter || !listInParameter.isRecord() || !listAsMade || !listAsMade.isValue() || !word || !word.isConstant() || m_code.at(word.id()).opcode != Opcode::Integer)
@@ -5980,8 +6014,11 @@ Walker::StretchInArms Walker::stretchInArms(BlockID inputBlock, uint32_t begin, 
     }
     for (uint32_t place = 0; place < size; ++place) {
         uint32_t uses = index.useCount(ValueID(first + place));
-        if (uses == BodyIndex::maxCountedUses || uses > mentions[place])
-            stretch.mentionedBehind.append(ValueID(first + place));
+        if (uses != BodyIndex::maxCountedUses && uses <= mentions[place])
+            continue;
+        if (index.opcodeOf(ValueID(first + place)) == Opcode::PropGet && generatorSteppedBy(index.value(ValueID(first + place))))
+            continue;
+        stretch.mentionedBehind.append(ValueID(first + place));
     }
     BodyTerminator terminator = index.terminator(inputBlock);
     stretch.isReturnedAtOnce = terminator.kind() == TerminatorKind::ReturnCall && terminator.operand(0) == ValueID(first + size - 1);
@@ -8457,6 +8494,8 @@ void Walker::enterLoopHead(BlockID inputHead)
     if (m_hasFailed)
         return;
 
+    if (!m_generatorsWalkedInConsumers.isEmpty()) [[unlikely]]
+        chooseInlineFrameOfStep();
     Vector<Reference, 8> entering;
     Vector<TypeID, 8> entryTypes;
     for (uint32_t index = 0; index < numberOfParameters; ++index) {
@@ -8973,6 +9012,9 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         TypeID recorded = m_code.at(judged).type;
         if (!givenByRow || !recorded || !m_types.at(recorded).isJavaScriptValue() || m_types.isSubset(recorded, givenByRow))
             continue;
+        bool isStringOfOperand = draft.opcode == Opcode::Add && draft.form() == OperatorForm::Strings && m_code.at(judged).opcode == Opcode::ToString && m_types.isSubset(m_code.at(m_code.at(judged).operand(0)).type, givenByRow);
+        if (isStringOfOperand)
+            continue;
         bool isFillerOfHeldSlot = draft.opcode == Opcode::NewObject && m_code.isConstant(judged) && !m_types.overlap(recorded, givenByRow);
         if (isFillerOfHeldSlot)
             continue;
@@ -9308,6 +9350,8 @@ template<Opcode known> bool Walker::walkThroughChainOf(const BodyValue& walked)
         return false;
     if (!isBuilt && callThroughTargetResolvedOnce(*this, value))
         return false;
+    if (!isBuilt && known == Opcode::ElemGet && !m_versionedLoops.isEmpty())
+        isBuilt = lookUpVaryingKey(*this, value);
     if (!isBuilt && !replaceOperation(*this, value))
         copy(value);
     return false;
@@ -10032,7 +10076,9 @@ bool Walker::canFollowNotTakenEdge(const BodyTerminator& terminator)
     BodyTarget target = terminator.targets()[1];
     const BodyIndex& index = currentBodyIndex();
     BlockID to = target.block();
-    return target.proofs().empty() && index.numberOfIncomingEdges(to) > 1 && to != terminator.block() && !index.isLoopHead(to) && !index.isEnteredByHandlerEdge(to) && !index.block(to).isHandlerBlock() && !inputBlock(m_frames.last(), to).head;
+    if (!target.proofs().empty() || index.numberOfIncomingEdges(to) <= 1 || to == terminator.block() || index.isLoopHead(to) || index.isEnteredByHandlerEdge(to) || index.block(to).isHandlerBlock() || inputBlock(m_frames.last(), to).head)
+        return false;
+    return letArmsLeadEdgesOf(terminator.block());
 }
 
 void Walker::followNotTakenEdge(const BodyTerminator& terminator)

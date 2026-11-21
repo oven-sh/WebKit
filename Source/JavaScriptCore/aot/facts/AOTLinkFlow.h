@@ -414,8 +414,8 @@ public:
         while (m_isLocked.load(std::memory_order_relaxed) || m_isLocked.exchange(true, std::memory_order_acquire))
             simde_mm_pause();
         uint32_t next = m_size.load(std::memory_order_relaxed);
-        auto added = m_numbers.add(key, next);
-        if (added.isNewEntry) {
+        uint32_t number = next;
+        if (auto added = m_numbers.add(key, next); added.isNewEntry) {
             auto [part, position] = placeOf(next);
             Members* records = m_parts[part].load(std::memory_order_relaxed);
             if (!records) {
@@ -424,8 +424,8 @@ public:
             }
             records[position] = members;
             m_size.store(next + 1, std::memory_order_release);
-        }
-        uint32_t number = added.iterator->value;
+        } else
+            number = added.iterator->value;
         m_isLocked.store(false, std::memory_order_release);
         return number;
     }
@@ -668,6 +668,10 @@ public:
     const Vector<DeclaredSetForFamilies>* setsDeclaredInProgram { nullptr };
     bool leavesOutDirectEvals { false };
     bool listsStoresOfWrappedBodies { false };
+    Vector<FunctionID> functionsToKeepInSight;
+    Vector<FunctionID> functionsNotToReach;
+    bool hasLetGoOfOneToKeepInSight() const;
+    bool hasComeToRest { false };
     const LooksAtBodies& looks;
     Mechanisms mechanisms;
     BuildContext& build;
@@ -999,6 +1003,19 @@ public:
     FlowNodeID joinedExtraProperties(LayoutID);
     void noteCopyOfAppendedFields(FunctionID, uint32_t record);
     void noteNamesOfRecordsRead(const FlowObserver&, FlowNodeID records, size_t numberOfNames);
+    void noteNamesOfRecordsRead(const FlowObserver& access, FlowNodeID records) { noteNamesOfRecordsRead(access, records, countNamesOfRecords(records)); }
+    size_t countNamesOfRecords(FlowNodeID) const;
+    void noteNameMadeEnumerable(LayoutID holder, PropertyKeyID);
+    template<typename Functor> void forEachNameMadeEnumerable(LayoutID layout, const Functor& functor) const
+    {
+        LockerOfWhatIsShared lockerOfWhatIsShared(*this);
+        size_t stepsLeft = m_namesMadeEnumerable.isEmpty() ? 0 : program.layouts.size();
+        for (LayoutID current = layout; current && stepsLeft; current = program.at(current).base, --stepsLeft) {
+            if (auto names = m_namesMadeEnumerable.find(current.index()); names != m_namesMadeEnumerable.end())
+                std::ranges::for_each(names->value, functor);
+        }
+    }
+    bool hasNameMadeEnumerable(const LinkType& objects) const;
     template<typename Functor> void forEachAppendedField(LayoutID layout, const Functor& functor) const
     {
         LockerOfWhatIsShared lockerOfWhatIsShared(*this);
@@ -1332,6 +1349,7 @@ public:
     void noteConstructed(LayoutID);
     void noteAllocatedWithRowAbove(LayoutID);
     void reachEntries();
+    void admitDirectEvals();
     bool enterLibraryInReach();
     void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     BuiltinsInReach& builtinsInReach();
@@ -1448,7 +1466,7 @@ public:
     std::optional<uint32_t> findWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words) const;
     void keepWhatSomeLaneWasGiven(MadeOnDemand, uint64_t words, uint32_t) const;
     void forgetWhatSomeLaneWasGiven(MadeOnDemand);
-    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, WriteThroughUnseenInSight, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldWithUnseenAccessor, LayoutGetsNullAbove, LayoutDeletedUnderUnknownKey, FieldDeletedByName, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
+    enum class Note : uint8_t { NameRead, NameCalled, ReadUnderKeyNobodyKnows, ReadUnderKeyNobodyKnowsOffHolder, ReadUnderNameThatLoopGave, BuiltinRead, BuiltinCalled, BuiltinCalledOutOfSight, FieldWrittenAfterConstruction, LayoutAllocated, ClassConstructed, ChangeOfLayout, WriteOnBuiltin, BuiltinHandedWhatIsNoTextNumberOrBoolean, WriteThroughLostBuiltins, ReadThroughLostBuiltins, WriteThroughUnseenByProgram, NameWrittenThroughUnseenByLibrary, WriteThroughUnseenInSight, OptionThatRunsCodePassed, OperandMayMeetCondition, ObjectHandedToFormatter, TypeHandedToHandler, BuiltinReadThroughAggregate, ExportIsShown, BuiltinCalledAtSite, LostFunctionCalled, LostFunctionsCalledByFamily, EveryLostFunctionCalled, LayoutGainsWhatUnseenCodeGaveSources, LayoutDefinedOnUnderWrittenKeys, LayoutDefinedOnUnderKeyThatIsNotWritten, LayoutGivenAccessorByDescriptorInSight, FieldGivenAccessorByDescriptorInSight, FieldWithUnseenAccessor, LayoutGetsNullAbove, LayoutDeletedUnderUnknownKey, FieldDeletedByName, PrototypeLaidAboveOtherObjects, FieldMayBeEmpty, PrototypeObjectRead, NameReadWithAnswerInSight, NameReadOffInstance, InstancesChangePrototype, BuiltinsReadByNameAreUsed, BuiltinsLostAtJoinsAreUsed, InstanceMadeOutOfSight, InstanceHandedToFormatter, RowApplied, CallLeftToUnseen, InstancesLoseTheirConstructor, BuiltinUsedViaFlow, ReadOfProgramUnderKeyNobodyKnows, BuiltinStandsAboveClass, BuiltinFoundWhereFlowBroughtHolder, BuiltinCalledWithOperandsNobodyRead, NameCalledByNativeCodeOffUnseenObjects };
     void note(Note, uint32_t number, uint32_t more = 0);
     void noteFieldGivenAccessorByDescriptorInSight(FieldReference);
     void noteFieldWithUnseenAccessor(FieldReference);
@@ -1559,6 +1577,7 @@ public:
     bool everyMarkIsUsed() const { return m_marksThatAreUsed == LinkType::everyMark; }
     bool answerOfReadStaysInSight(PropertyKeyID) const;
     void noteAccessorMayBeLaidOn(const LinkType& subject, PropertyKeyID, FunctionID writer);
+    void noteInstancesChangePrototype(const LinkType& instances);
     LinkType anythingBeside(BuiltinID canonical, FunctionID reader) const;
     LinkType unseenObjectsBelow(BuiltinID canonicalPrototype, FunctionID maker) const;
     enum class WhatIsStored : uint8_t { Anything, TextsNumbersAndBooleans, Nothing };
@@ -1654,6 +1673,26 @@ public:
     BitVector exportsShown;
     BitVector modulesWhoseExportHostTakesByCallInSight;
     void showExport(ModuleID, uint32_t index);
+    struct ExportedLocation {
+        VariableID variable;
+        FieldReference field;
+    };
+    Vector<ExportedLocation, 4> resolveExport(ModuleID, uint32_t index) const;
+    void noteEscapedBuiltins(const LinkType&) const;
+    struct ContainersVisited {
+        bool addObjectsOf(const LinkFlow&, const LinkType&);
+        bool addFunctionsOf(const LinkType&);
+
+        BitVector layouts;
+        BitVector holdersOfNames;
+        BitVector setsOfLayouts;
+        BitVector families;
+        BitVector lostFamilies;
+        BitVector familiesOfSites;
+        BitVector functions;
+        BitVector setsOfFunctions;
+    };
+    void forEachContainedNode(const LinkType&, ContainersVisited&, NOESCAPE const ScopedLambda<void(LayoutID)>& visitLayout, NOESCAPE const ScopedLambda<void(FlowNodeID)>&) const;
     void noteExportRead(ModuleID, uint32_t index);
 
     void callObserved(const FlowObserver&, const LinkType& told, const LinkType& before);
@@ -1711,6 +1750,7 @@ public:
     bool appendNamesOfTexts(std::span<const StringID>, Vector<PropertyKeyID, 8>&) const;
     ValueID findCallbackList(FunctionID callback, FunctionID& maker) const;
     ValueID findCallbackListSlow(FunctionID callback, FunctionID& maker) const;
+    ValueID findCallWithCallback(FunctionID callback, FunctionID maker, const BodyIndex& made, ValueID& closure) const;
     std::optional<uint32_t> findCallbackParameterArray(FunctionID, uint32_t callbackParameter) const;
     struct ListedObject {
         FunctionID function;
@@ -1718,13 +1758,15 @@ public:
         uint32_t node { 0 };
         bool givesPairs { false };
         bool isLoop { false };
+        // `Object.keys(v)[0]`: where the list is shorter, the key is `undefined`.
+        bool mayLieBehindList { false };
     };
     std::optional<ListedObject> findListedObject(FunctionID, const BodyIndex&, ValueID key) const;
     bool onlyReadsKeys(FunctionID, const BodyIndex&, ValueID list) const;
     bool storesUnderListedNames(FunctionID, ValueID site) const;
     enum class PrototypeNames : bool { Excluded, Included };
     bool appendPrototypeNames(LayoutID, Vector<PropertyKeyID, 16>&) const;
-    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&, size_t* numberOfNames = nullptr) const;
+    bool appendListedNames(const LinkType& objects, PrototypeNames, Vector<PropertyKeyID, 16>&) const;
     bool isBehindOwnNameTest(FunctionID, const BodyIndex&, ValueID site, ValueID object, ValueID name, const LinkType& objects, Vector<FlowNodeID, 4>& watched) const;
     Vector<PropertyKeyID, 16> findListedNamesOfStore(FunctionID, const SummaryAccess&) const;
     bool iteratesListsAsBuilt() const;
@@ -2434,7 +2476,6 @@ private:
     class CopiesOfMembers;
     bool layMembersThatCopiesBring();
     bool copyAppendedFields();
-    size_t countNamesOfRecords(FlowNodeID) const;
     size_t countPrototypeNames(LayoutID) const;
     FlowNodeID findExtraPropertyStoreNode(LayoutID) const;
     bool tellAccessesUnderNewNames();
@@ -2476,6 +2517,7 @@ private:
     Vector<LayoutID> m_nearestConstructorFunctionsFrom;
     BitVector m_prototypesPassedByLookups;
     BitVector m_prototypesWithDefinitions;
+    HashMap<uint32_t, Vector<PropertyKeyID, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesMadeEnumerable;
     BitVector m_keysDefinedByDescriptors;
     bool m_someAccessorIsWrittenUnderComputedKey { false };
     bool mayBeDefinedUnderUnknownKeyOnPrototypeOf(LayoutID, PropertyKeyID) const;
@@ -2873,6 +2915,8 @@ private:
     mutable uint8_t m_marksThatReachUnseen { 0 };
     uint8_t m_marksThatAreUsed { 0 };
     Vector<PropertyKeyID, 2> m_namesReadWithAnswersInSight;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesReadOffInstances;
+    BitVector m_classesWhoseInstancesChangePrototype;
 
     struct TestOfEdge {
         enum class Passes : uint8_t { Everything, PrimitivesAlone, EveryObject, SomeObjects };
@@ -3182,7 +3226,15 @@ struct TurnsOfReadings {
 };
 LinkTables link(std::unique_ptr<LinkFlow>&&, TurnsOfReadings* = nullptr);
 enum class WrappedBodies : bool { StoreLikeModuleBodies, AreFunctions };
-LinkTables linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies);
+struct FunctionsThatEvaluate {
+    Vector<FunctionID> enteredByCallsAlone;
+    Vector<FunctionID> others;
+};
+struct LinkBeforeEvaluation {
+    std::optional<LinkTables> tables;
+    std::unique_ptr<LinkFlow> flow;
+};
+LinkBeforeEvaluation linkBeforeEvaluation(const LinkFlow& flowAtStart, WrappedBodies, FunctionsThatEvaluate&&);
 void finishReadingsOfLink(Program&, Mechanisms, TurnsOfReadings&, LinkTables& proven, LinkTables& held);
 NamesAskedOfContentsOfFields gatherNamesAskedOfContentsOfFields(const Program&, const LinkFlow&, const LinkTables& held);
 void expectContentsOfFieldsByNamesAsked(Program&, const LinkFlow&, const NamesAskedOfContentsOfFields&, const LayoutsByNames&, LinkTables& held);

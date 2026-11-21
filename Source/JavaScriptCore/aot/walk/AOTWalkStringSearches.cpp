@@ -35,16 +35,16 @@ static Reference booleanForStringSearches(Walker& walker, bool value)
     return walker.constant(PrimitiveKnownToFolding::boolean(value));
 }
 
-static Reference stringReadByStringSearches(Walker& walker, Reference string, Origin origin)
+static Reference stringReadByStringSearches(Walker& walker, Reference string, bool isPiece, StringID text, Origin origin)
 {
-    Reference flat = flatStringForReaderOfCharacters(walker, string, origin);
+    Reference flat = flatStringForReaderOfCharacters(walker, string, origin, false, isPiece || lengthOfTextForStrings(walker, text) == 1);
     return flat ? flat : string;
 }
 
 static Reference buildTestOfWrittenEndForStringSearches(Walker& walker, Reference string, StringID text, bool testsStart, Origin origin)
 {
     Draft test(testsStart ? Opcode::StringStartsWithLiteral : Opcode::StringEndsWithLiteral, origin);
-    test.setStringOperand(stringReadByStringSearches(walker, string, origin));
+    test.setStringOperand(stringReadByStringSearches(walker, string, false, text, origin));
     test.setLiteral(text);
     return walker.isUnreachable() ? Reference() : walker.build(WTF::move(test));
 }
@@ -146,7 +146,7 @@ static Reference buildSearchForWrittenTextForStringSearches(Walker& walker, Refe
         return { };
     std::optional<char16_t> unit = searchesFromEnd ? std::nullopt : onlyCodeUnitOfText(walker, text);
     Draft search(searchesFromEnd ? Opcode::StringLastIndexOfLiteral : unit ? Opcode::StringIndexOfCharacter : Opcode::StringIndexOfLiteral, origin);
-    search.setStringOperand(stringReadByStringSearches(walker, piece ? piece->string : string, origin));
+    search.setStringOperand(stringReadByStringSearches(walker, piece ? piece->string : string, !!piece, text, origin));
     search.setPositionOperand(position);
     if (piece) {
         search.setStartOperand(piece->start);
@@ -235,9 +235,10 @@ bool buildSearchInString(Walker& walker, const CallByOneRow& call)
     };
     Reference found;
     if (isInvariant(call.receiver) && (!hasPosition || isInvariant(call.arguments[1]))) {
-        stringReadByStringSearches(walker, piece ? piece->string : call.receiver, origin);
+        stringReadByStringSearches(walker, piece ? piece->string : call.receiver, !!piece, sought, origin);
         TypeID answers = asksWhetherFound ? TypeTable::boolean : walker.types().integer(Range { -1, std::numeric_limits<int32_t>::max() });
-        found = walker.buildOnFirstArrival(call.call.id(), answers, origin, scopedLambda<Reference()>(buildAnswer));
+        const std::array<Reference, 3> operands { call.receiver, piece ? piece->string : Reference(), hasPosition ? call.arguments[1] : Reference() };
+        found = walker.buildOnFirstArrival(call.call.id(), answers, origin, scopedLambda<Reference()>(buildAnswer), operands);
         if (walker.hasFailed())
             return true;
     }
