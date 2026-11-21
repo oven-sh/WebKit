@@ -53,6 +53,7 @@
 #include "ImmutablePropertyNames.h"
 #include "InitializeThreading.h"
 #include "InterpreterInlines.h"
+#include "IntlObjectInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
 #include "JSAsyncGenerator.h"
@@ -2325,6 +2326,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionIntlLocaleIDsPutIntoSets);
+static JSC_DECLARE_HOST_FUNCTION(functionIntlLookupsThatFoundNoSet);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
@@ -4941,6 +4946,24 @@ JSC_DEFINE_HOST_FUNCTION(functionICUHeaderVersion, (JSGlobalObject*, CallFrame*)
     return JSValue::encode(jsNumber(U_ICU_VERSION_MAJOR_NUM));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Usage: $vm.intlLocaleIDsPutIntoSets()
+// How many locale IDs of ICU this process has put into a set of available locales.
+JSC_DEFINE_HOST_FUNCTION(functionIntlLocaleIDsPutIntoSets, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(intlLocaleIDsPutIntoSetsForTesting()));
+}
+
+// Usage: $vm.intlLookupsThatFoundNoSet()
+// How many lookups of a locale have found no set in the available locales of their service.
+JSC_DEFINE_HOST_FUNCTION(functionIntlLookupsThatFoundNoSet, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(intlLookupsThatFoundNoSetForTesting()));
+}
+#endif
+
 // Usage: $vm.setHostTimeZone("Asia/Tokyo")
 // Overrides the host time zone process-wide and invalidates dependent caches.
 // Returns false (changing nothing) for an invalid identifier.
@@ -6392,6 +6415,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "intlLocaleIDsPutIntoSets"_s, functionIntlLocaleIDsPutIntoSets, 0);
+    addFunction(vm, alwaysAllow, "intlLookupsThatFoundNoSet"_s, functionIntlLookupsThatFoundNoSet, 0);
+#endif
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
     addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);
 
