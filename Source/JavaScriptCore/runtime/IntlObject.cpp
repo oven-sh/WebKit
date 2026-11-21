@@ -660,7 +660,7 @@ const LocaleSet& intlCollatorAvailableLocales()
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-static const LocaleTagSet& intlSegmenterAvailableLocalesSet()
+static const LocaleTagSet& intlSegmenterAvailableLocalesOwnSet()
 #else
 const LocaleSet& intlSegmenterAvailableLocales()
 #endif
@@ -685,6 +685,17 @@ const LocaleSet& intlSegmenterAvailableLocales()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// ICU's ubrk_getAvailable() is its uloc_getAvailable(). Where ICU hands out the same strings for both lists, the set of
+// the other services is the set of the segmenter, and no second one is made.
+static const LocaleTagSet& intlSegmenterAvailableLocalesSet()
+{
+    int32_t count = ubrk_countAvailable();
+    bool isListOfLocales = count == uloc_countAvailable();
+    for (int32_t i = 0; isListOfLocales && i < count; ++i)
+        isListOfLocales = ubrk_getAvailable(i) == uloc_getAvailable(i);
+    return isListOfLocales ? intlAvailableLocalesSet() : intlSegmenterAvailableLocalesOwnSet();
+}
+
 const LocaleSet& intlSegmenterAvailableLocales()
 {
     static constinit IntlAvailableLocales availableLocales { intlSegmenterAvailableLocalesSet };

@@ -1,9 +1,11 @@
 //@ requireOptions("--useDollarVM=1")
 //@ runDefault
 
-// The set of the language tags of ICU's locales is made when an Intl service first looks a locale up in it. Upstream
-// makes the set for the first service that is used, also when no locale is requested. To make a set, every locale ID
-// of one of ICU's lists is converted to a language tag: 906 of them with ICU 79, and 146 for the collator.
+// The set of the language tags of ICU's locales is made when an Intl service first looks a locale up in it, and the
+// segmenter has the set of the other services where ICU has one list of locale IDs for both. Upstream makes the set
+// for the first service that is used, also when no locale is requested, and a second one for the segmenter. To make
+// a set, every locale ID of one of ICU's lists is converted to a language tag: 906 of them with ICU 79, and 146 for
+// the collator.
 //
 // $vm.intlLocaleIDsPutIntoSets() counts the locale IDs that this process has put into a set.
 // $vm.intlLookupsThatFoundNoSet() counts the lookups that found no set in the available locales of their service:
@@ -73,15 +75,16 @@ expect("DisplayNames: en-GB", new Intl.DisplayNames("en-GB", { type: "region" })
 expect("toLocaleString", (1234.5).toLocaleString("en-GB"), "1,234.5");
 expectSoFar("after the lookups of the services of ICU's list of locales", listOfLocales, 1);
 
-// The segmenter makes the set of ICU's list for it, which has as many locale IDs.
+// ICU's list for the segmenter is its list of locales: the segmenter finds no set of its own, takes the set that is
+// there, and makes none.
 expect("Segmenter: en-GB", new Intl.Segmenter("en-GB").resolvedOptions().locale, "en-GB");
 expect("Segmenter: list", Intl.Segmenter.supportedLocalesOf(tags).join(), "en-GB,zh-TW,zh-Hant-TW,sr-RS,en-XX,de-DE-u-nu-latn");
-expectSoFar("after the lookups of the segmenter", 2 * listOfLocales, 2);
+expectSoFar("after the lookups of the segmenter", listOfLocales, 2);
 
 // The collator has a list of its own, which has few regions.
 expect("Collator: en-GB", new Intl.Collator("en-GB").resolvedOptions().locale, "en");
-const listOfCollators = expectList("the collator's list", 2 * listOfLocales, 146);
+const listOfCollators = expectList("the collator's list", listOfLocales, 146);
 expect("Collator: zh-TW", new Intl.Collator("zh-TW").resolvedOptions().locale, "zh-TW");
 expect("Collator: list", Intl.Collator.supportedLocalesOf(tags).join(), "en-GB,zh-TW,zh-Hant-TW,sr-RS,en-XX,de-DE-u-nu-latn");
 expect("localeCompare", "a".localeCompare("b", "en-GB"), -1);
-expectSoFar("after the lookups of the collator", 2 * listOfLocales + listOfCollators, 3);
+expectSoFar("after the lookups of the collator", listOfLocales + listOfCollators, 3);
