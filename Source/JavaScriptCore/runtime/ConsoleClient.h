@@ -38,6 +38,7 @@ class ScriptArguments;
 
 namespace JSC {
 
+class ArgList;
 class CallFrame;
 class JSGlobalObject;
 
@@ -47,28 +48,37 @@ class ConsoleClient : public CanMakeWeakPtr<ConsoleClient>, public CanMakeThread
 public:
     virtual ~ConsoleClient() { }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The arguments of a console call, read where the call left them: nothing is copied, and they
+    // are valid until the client returns. A client that keeps them makes ScriptArguments from them
+    // (Inspector::createScriptArguments).
+    using MessageArguments = ArgList;
+#else
+    using MessageArguments = Ref<Inspector::ScriptArguments>&&;
+#endif
+
     JS_EXPORT_PRIVATE static void printConsoleMessage(MessageSource, MessageType, MessageLevel, const String& message, const String& url, unsigned lineNumber, unsigned columnNumber);
     JS_EXPORT_PRIVATE static void printConsoleMessageWithArguments(MessageSource, MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
 
-    void logWithLevel(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&, MessageLevel);
+    void logWithLevel(JSGlobalObject*, MessageArguments, MessageLevel);
     void clear(JSGlobalObject*);
-    void dir(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void dirXML(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void table(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void trace(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void assertion(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void group(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void groupCollapsed(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
-    void groupEnd(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&);
+    void dir(JSGlobalObject*, MessageArguments);
+    void dirXML(JSGlobalObject*, MessageArguments);
+    void table(JSGlobalObject*, MessageArguments);
+    void trace(JSGlobalObject*, MessageArguments);
+    void assertion(JSGlobalObject*, MessageArguments);
+    void group(JSGlobalObject*, MessageArguments);
+    void groupCollapsed(JSGlobalObject*, MessageArguments);
+    void groupEnd(JSGlobalObject*, MessageArguments);
 
-    virtual void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) = 0;
+    virtual void messageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, MessageArguments) = 0;
     virtual void count(JSGlobalObject*, const String& label) = 0;
     virtual void countReset(JSGlobalObject*, const String& label) = 0;
     virtual void profile(JSGlobalObject*, const String& title) = 0;
     virtual void profileEnd(JSGlobalObject*, const String& title) = 0;
     virtual void takeHeapSnapshot(JSGlobalObject*, const String& title) = 0;
     virtual void time(JSGlobalObject*, const String& label) = 0;
-    virtual void timeLog(JSGlobalObject*, const String& label, Ref<Inspector::ScriptArguments>&&) = 0;
+    virtual void timeLog(JSGlobalObject*, const String& label, MessageArguments) = 0;
     virtual void timeEnd(JSGlobalObject*, const String& label) = 0;
     virtual void timeStamp(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) = 0;
     virtual void record(JSGlobalObject*, Ref<Inspector::ScriptArguments>&&) = 0;
@@ -77,7 +87,7 @@ public:
 
 private:
     enum class ArgumentRequirement { No, Yes };
-    void internalMessageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, Ref<Inspector::ScriptArguments>&&, ArgumentRequirement);
+    void internalMessageWithTypeAndLevel(MessageType, MessageLevel, JSC::JSGlobalObject*, MessageArguments, ArgumentRequirement);
 };
 
 } // namespace JSC

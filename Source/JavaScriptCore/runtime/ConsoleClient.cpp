@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ConsoleClient.h"
 
+#include "ArgList.h"
 #include "JSCJSValueInlines.h"
 #include "JSGlobalObject.h"
 #include "ScriptArguments.h"
@@ -251,60 +252,69 @@ void ConsoleClient::printConsoleMessageWithArguments(MessageSource source, Messa
     }
 }
 
-void ConsoleClient::internalMessageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments, ArgumentRequirement argumentRequirement)
+void ConsoleClient::internalMessageWithTypeAndLevel(MessageType type, MessageLevel level, JSC::JSGlobalObject* globalObject, MessageArguments arguments, ArgumentRequirement argumentRequirement)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (argumentRequirement == ArgumentRequirement::Yes && arguments.isEmpty())
+        return;
+#else
     if (argumentRequirement == ArgumentRequirement::Yes && !arguments->argumentCount())
         return;
+#endif
 
     messageWithTypeAndLevel(type, level, globalObject, WTF::move(arguments));
 }
 
-void ConsoleClient::logWithLevel(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments, MessageLevel level)
+void ConsoleClient::logWithLevel(JSGlobalObject* globalObject, MessageArguments arguments, MessageLevel level)
 {
     internalMessageWithTypeAndLevel(MessageType::Log, level, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }
 
 void ConsoleClient::clear(JSGlobalObject* globalObject)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    internalMessageWithTypeAndLevel(MessageType::Clear, MessageLevel::Log, globalObject, ArgList(), ArgumentRequirement::No);
+#else
     internalMessageWithTypeAndLevel(MessageType::Clear, MessageLevel::Log, globalObject, ScriptArguments::create(globalObject, { }), ArgumentRequirement::No);
+#endif
 }
 
-void ConsoleClient::dir(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::dir(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::Dir, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::Yes);
 }
 
-void ConsoleClient::dirXML(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::dirXML(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::DirXML, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::Yes);
 }
 
-void ConsoleClient::table(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::table(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::Table, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::Yes);
 }
 
-void ConsoleClient::trace(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::trace(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::Trace, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }
 
-void ConsoleClient::assertion(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::assertion(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::Assert, MessageLevel::Error, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }
 
-void ConsoleClient::group(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::group(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::StartGroup, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }
 
-void ConsoleClient::groupCollapsed(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::groupCollapsed(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::StartGroupCollapsed, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }
 
-void ConsoleClient::groupEnd(JSGlobalObject* globalObject, Ref<ScriptArguments>&& arguments)
+void ConsoleClient::groupEnd(JSGlobalObject* globalObject, MessageArguments arguments)
 {
     internalMessageWithTypeAndLevel(MessageType::EndGroup, MessageLevel::Log, globalObject, WTF::move(arguments), ArgumentRequirement::No);
 }

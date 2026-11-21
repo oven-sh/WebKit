@@ -227,4 +227,16 @@ Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject* globalObject, JS
     return ScriptArguments::create(globalObject, WTF::move(arguments));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+Ref<ScriptArguments> createScriptArguments(JSC::JSGlobalObject* globalObject, const JSC::ArgList& argList)
+{
+    VM& vm = globalObject->vm();
+    Vector<JSC::Strong<JSC::Unknown>> arguments;
+    arguments.reserveInitialCapacity(argList.size());
+    for (size_t i = 0; i < argList.size(); ++i)
+        arguments.append({ vm, argList.at(i) });
+    return ScriptArguments::create(globalObject, WTF::move(arguments));
+}
+#endif
+
 } // namespace Inspector
