@@ -1948,29 +1948,49 @@ void Heap::evacuateAuxiliaryBlocksIfDue()
 
 void Heap::collect(Synchronousness synchronousness, GCRequest request)
 {
+    collect(synchronousness, request, std::nullopt);
+}
+
+bool Heap::collect(Synchronousness synchronousness, GCRequest request, std::optional<size_t> minimumBytes)
+{
     if (!Options::useGC()) [[unlikely]]
-        return;
+        return false;
 
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
     if (!m_isSafeToCollect)
-        return;
+        return false;
 
     ASSERT(vm().currentThreadIsHoldingAPILock());
     assertIsAccessHolder();
 
     // A synchronous request needs a collection that starts after it; an asynchronous one doesn't.
     if (synchronousness == Async && m_collector->isSubsumedByQueuedRequest(request))
-        return;
+        return true;
 
     RELEASE_ASSERT(vm().atomStringTable() == Thread::currentSingleton().atomStringTable());
 
     stopIfNecessary();
 
+    if (minimumBytes) {
+        // A request stays queued until its collection ends, and until then what is counted below is that collection's.
+        if (m_collector->hasPendingGCRequest())
+            return true;
+
+        // updateAllocationLimits() asks for a Full collection after an Eden one that left little room, and nothing
+        // but the next collection runs it.
+        bool lastWasFull = m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full;
+        bool isOwedFullCollection = !lastWasFull && wantsFullCollection();
+        bool hasAllocated = *minimumBytes ? totalBytesAllocatedThisCycle() >= *minimumBytes : m_hasAllocatedSinceLastCollectionBegan;
+        if (!hasAllocated && !isOwedFullCollection)
+            return false;
+    }
+
     GCRequest::Ticket ticket = m_collector->requestCollection(*this, request);
     if (synchronousness == Sync)
         waitForCollection(ticket);
+    return true;
 }
 
 void Heap::collectNow(Synchronousness synchronousness, GCRequest request)
@@ -2503,6 +2523,8 @@ void Heap::willStartCollection(CollectionScope scope)
 
     dataLogIf(Options::logGC(), "=> ");
     
+    // The world is stopped: what the mutator has allocated so far is this collection's.
+    m_hasAllocatedSinceLastCollectionBegan = false;
     m_collectionScope = scope;
     if (scope == CollectionScope::Full) {
         m_shouldDoFullCollection = false;
@@ -2761,6 +2783,7 @@ constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
     m_hasAllocatedSinceLastCollection = true;
+    m_hasAllocatedSinceLastCollectionBegan = true;
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversizedAllocationThisCycle = bytes;
@@ -2841,6 +2864,11 @@ bool Heap::shouldSweepSynchronously()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Heap::collectAsyncIfAllocated(size_t minimumBytes)
+{
+    return collect(Async, GCRequest(), minimumBytes);
+}
+
 bool Heap::isIdleCollection() const
 {
     return m_collector->m_currentRequest.isIdle;

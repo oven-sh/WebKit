@@ -44,6 +44,8 @@ public:
         RELEASE_ASSERT(m_heap.m_mutatorState == MutatorState::Allocating);
         m_heap.m_mutatorState = MutatorState::Running;
         m_heap.m_hasAllocatedSinceLastCollection = true;
+        // A collection that the slow path started or waited for began before the cell it then allocated.
+        m_heap.m_hasAllocatedSinceLastCollectionBegan = true;
     }
 
 private:
