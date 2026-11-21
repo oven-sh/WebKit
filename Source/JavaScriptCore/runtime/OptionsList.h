@@ -293,6 +293,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Double, heapGrowthMaxIncrease, 3.00, Normal, nullptr) \
     v(Double, minEdenToOldGenerationRatio, 1.0 / 3.0, Normal, "after an eden GC, schedule a full collection if remainingHeapSize / maxHeapSize falls below this; bounds the usable heap growth factor below at 1 / (1 - value)"_s) \
     v(Unsigned, heapGrowthFunctionThresholdInMB, 16 * 1024, Normal, nullptr) \
+    v(Bool, useCellAllocationLimit, true, Normal, "collect when the cells allocated since the last collection pass a limit of their own, beside the limit for all bytes, which live extra memory raises without bound"_s) \
+    v(Double, cellAllocationLimitMaxExtraMemoryRatio, 1, Normal, "the cell allocation limit grows from the live cells plus the live extra memory; the extra memory counts for at most this many times the bytes of the cells"_s) \
     v(Double, criticalGCMemoryThreshold, 0.80, Normal, "percent memory in use the GC considers critical.  The collector is much more aggressive above this threshold"_s) \
     v(Double, minimumMutatorUtilization, 0, Normal, nullptr) \
     v(Double, maximumMutatorUtilization, 0.7, Normal, nullptr) \

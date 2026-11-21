@@ -307,6 +307,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , m_minBytesPerCycle(minHeapSize(m_heapType, m_ramSize))
     , m_maxEdenSize(m_minBytesPerCycle)
     , m_maxHeapSize(m_minBytesPerCycle)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_maxCellEdenSize(m_minBytesPerCycle)
+#endif
     , m_objectSpace(this)
     , m_machineThreads(makeUnique<MachineThreads>())
     , m_localCollector(Options::useGlobalGC() ? nullptr : makeUnique<Collector>())
@@ -415,6 +418,13 @@ Heap::Heap(VM& vm, HeapType heapType)
     // When memory is critical, allow allocating 25% of the amount above the critical threshold before collecting.
     size_t memoryAboveCriticalThreshold = static_cast<size_t>(static_cast<double>(m_ramSize) * (1.0 - Options::criticalGCMemoryThreshold()));
     m_maxEdenSizeWhenCritical = memoryAboveCriticalThreshold / 4;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useCellAllocationLimit()) {
+        m_maxCellHeapSize = m_minBytesPerCycle;
+        m_cellBytesAllowedThisCycle = m_minBytesPerCycle;
+    }
+#endif
 
     m_validatesCellVisits = Options::verifyGC();
 }
@@ -644,11 +654,20 @@ void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext
     bool shouldCheckForCollection = m_extraMemoryBytesSinceLastCollectionCheck >= MarkedBlock::blockSize;
     if (shouldCheckForCollection) {
         m_extraMemoryBytesSinceLastCollectionCheck = 0;
+#if USE(BUN_JSC_ADDITIONS)
+        size_t lastOversizedCellAllocationThisCycle = m_lastOversizedCellAllocationThisCycle;
         didAllocate(size);
+        m_lastOversizedCellAllocationThisCycle = lastOversizedCellAllocationThisCycle; // didAllocate() took the report for a cell.
+#else
+        didAllocate(size);
+#endif
     } else {
         m_nonOversizedBytesAllocatedThisCycle += size;
         performIncrement(size);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    m_extraMemoryAllocatedThisCycle += size; // After the total, so that it is never more than the total.
+#endif
     if (cell) {
         ASSERT(cell->heap() == this);
         if (isWithinThreshold(cell->cellState(), barrierThreshold())) [[unlikely]]
@@ -701,9 +720,16 @@ bool Heap::overCriticalMemoryThreshold(MemoryThresholdCallType memoryThresholdCa
 
 size_t Heap::effectiveMaxEdenSize()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // A collection that the limit for cells asked for starts far below m_maxEdenSize. The concurrent collector lets the
+    // mutator run on for a share of what this returns while it marks, so it must not be the larger of the two.
+    size_t maxEdenSize = std::min(m_maxEdenSize, m_maxCellEdenSize);
+#else
+    size_t maxEdenSize = m_maxEdenSize;
+#endif
     if (overCriticalMemoryThreshold())
-        return std::min(m_maxEdenSize, m_maxEdenSizeWhenCritical);
-    return m_maxEdenSize;
+        return std::min(maxEdenSize, m_maxEdenSizeWhenCritical);
+    return maxEdenSize;
 }
 
 void Heap::reportAbandonedObjectGraph()
@@ -2630,12 +2656,39 @@ void Heap::updateAllocationLimits()
         size_t limit = memoryLimitForGrowth();
         m_maxHeapSize = std::max(minHeapSize(m_heapType, limit), proportionalHeapSize(currentHeapSize, limit));
         m_maxEdenSize = m_maxHeapSize - currentHeapSize;
+#if USE(BUN_JSC_ADDITIONS)
+        // The limit above grows from everything that is alive. An ArrayBuffer of 2 GB that stays alive makes it 4 GB
+        // or more, and then 2 GB of dead cells fit under it before the next collection. So cells have a limit of their
+        // own, which grows from the cells plus the extra memory, where the extra memory counts for no more than
+        // Options::cellAllocationLimitMaxExtraMemoryRatio() times the cells. With less extra memory than that, it is
+        // the limit above. The limit above stays for all bytes: a program that allocates buffers next to many live
+        // buffers collects as often as before.
+        size_t lastMaxCellHeapSize = m_maxCellHeapSize;
+        m_maxCellEdenSize = m_maxEdenSize;
+        if (Options::useCellAllocationLimit()) {
+            size_t cells = m_oldGenerationCellBytes;
+            double extraMemoryThatCounts = std::max(0.0, Options::cellAllocationLimitMaxExtraMemoryRatio()) * cells;
+            if (computedExtraMemorySize > extraMemoryThatCounts) {
+                size_t sizeToGrowFrom = cells + static_cast<size_t>(extraMemoryThatCounts);
+                m_maxCellEdenSize = proportionalHeapSize(sizeToGrowFrom, limit) - sizeToGrowFrom;
+                // The minimum is for the cells. Applied to sizeToGrowFrom, it would leave a small heap less room
+                // next to a large buffer than it has without the buffer.
+                size_t minimum = minHeapSize(m_heapType, limit);
+                if (minimum > cells)
+                    m_maxCellEdenSize = std::max(m_maxCellEdenSize, minimum - cells);
+            }
+            m_maxCellHeapSize = cells + m_maxCellEdenSize;
+        }
+#endif
         if (m_isInOpportunisticTask && !isCritical) {
             // After an Opportunistic Full GC, we allow eden to occupy all the space we recovered.
             // In this case, m_maxHeapSize may be larger than currentHeapSize + m_maxEdenSize.
             // Note that m_maxEdenSize is still used when we increase m_maxHeapSize after an
             // Eden GC to ensure that eden can grow to at least m_maxHeapSize.
             m_maxHeapSize = std::max(m_maxHeapSize, lastMaxHeapSize);
+#if USE(BUN_JSC_ADDITIONS)
+            m_maxCellHeapSize = std::max(m_maxCellHeapSize, lastMaxCellHeapSize);
+#endif
         }
         dataLogLnIf(verbose, "Full: maxHeapSize = ", m_maxHeapSize);
         dataLogLnIf(verbose, "Full: maxEdenSize = ", m_maxEdenSize);
@@ -2655,6 +2708,13 @@ void Heap::updateAllocationLimits()
         if (edenToOldGenerationRatio < Options::minEdenToOldGenerationRatio())
             m_shouldDoFullCollection = true;
         m_maxHeapSize = std::max(m_maxHeapSize, currentHeapSize + m_maxEdenSize);
+#if USE(BUN_JSC_ADDITIONS)
+        // The same rule for cells alone. Cells that an eden collection promoted can only die in a full collection.
+        size_t remainingCellHeapSize = m_oldGenerationCellBytes > m_maxCellHeapSize ? 0 : m_maxCellHeapSize - m_oldGenerationCellBytes;
+        if (static_cast<double>(remainingCellHeapSize) / static_cast<double>(m_maxCellHeapSize) < Options::minEdenToOldGenerationRatio())
+            m_shouldDoFullCollection = true;
+        m_maxCellHeapSize = std::max(m_maxCellHeapSize, m_oldGenerationCellBytes + m_maxCellEdenSize);
+#endif
         dataLogLnIf(verbose, "Eden: maxHeapSize = ", m_maxHeapSize);
         dataLogLnIf(verbose, "Eden: maxEdenSize = ", m_maxEdenSize);
         if (m_fullActivityCallback) {
@@ -2665,6 +2725,10 @@ void Heap::updateAllocationLimits()
 
     m_sizeAfterLastCollect = currentHeapSize;
 #if USE(BUN_JSC_ADDITIONS)
+    ASSERT(m_maxCellHeapSize > m_oldGenerationCellBytes);
+    m_cellBytesAllowedThisCycle = m_maxCellHeapSize - m_oldGenerationCellBytes;
+    m_extraMemoryAllocatedThisCycle = 0;
+    m_lastOversizedCellAllocationThisCycle = 0;
     if (std::exchange(m_reenableEdenActivityCallback, false) && m_edenActivityCallback)
         m_edenActivityCallback->setEnabled(true);
     if (std::exchange(m_reenableFullActivityCallback, false) && m_fullActivityCallback)
@@ -2764,6 +2828,9 @@ void Heap::didAllocate(size_t bytes)
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversizedAllocationThisCycle = bytes;
+#if USE(BUN_JSC_ADDITIONS)
+        m_lastOversizedCellAllocationThisCycle = bytes;
+#endif
     } else
         m_nonOversizedBytesAllocatedThisCycle += bytes;
 
@@ -2854,6 +2921,11 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         return;
     m_maxEdenSize = bytes;
     m_maxHeapSize = bytes;
+    m_maxCellEdenSize = bytes;
+    if (Options::useCellAllocationLimit()) {
+        m_maxCellHeapSize = bytes;
+        m_cellBytesAllowedThisCycle = bytes;
+    }
     // The allocation-paced timers would otherwise bring the first collection in well under the budget; they come back
     // on as soon as any collection (budget, explicit request, memory pressure) has run.
     if (m_edenActivityCallback && m_edenActivityCallback->isEnabled()) {
@@ -3132,6 +3204,20 @@ void Heap::collectIfNecessaryOrDefer(GCDeferralContext* deferralContext)
         if (Options::gcMaxHeapSize()) {
             if (bytesAllocatedThisCycle > Options::gcMaxHeapSize()) {
                 dataLogLnIf(logRequestGC, "Requesting GC because bytes allocated this cycle: ", bytesAllocatedThisCycle, " exceed Options::gcMaxHeapSize(): ", Options::gcMaxHeapSize());
+                return true;
+            }
+        }
+
+        // The cells alone, against the limit that grows from the cells. This comes before the check of all bytes: the
+        // limit of that check grows from extra memory, and the rule below it about the last oversized allocation lets
+        // a cycle that reported one large buffer run on for twice the size of the buffer. The same rule holds here for
+        // an oversized cell.
+        ASSERT(m_extraMemoryAllocatedThisCycle <= bytesAllocatedThisCycle);
+        size_t cellBytesAllocatedThisCycle = bytesAllocatedThisCycle - m_extraMemoryAllocatedThisCycle;
+        if (cellBytesAllocatedThisCycle > m_cellBytesAllowedThisCycle) {
+            bool lastCellIsMostOfTheCycle = static_cast<double>(m_lastOversizedCellAllocationThisCycle) / cellBytesAllocatedThisCycle > 1.0 / 3.0;
+            if (isCritical || m_heapType != HeapType::Large || !lastCellIsMostOfTheCycle) {
+                dataLogLnIf(logRequestGC, "Requesting GC because cell bytes allocated this cycle: ", cellBytesAllocatedThisCycle, " exceed cell bytes allowed: ", m_cellBytesAllowedThisCycle, " last oversized cell: ", m_lastOversizedCellAllocationThisCycle, " all bytes: ", bytesAllocatedThisCycle, " allowed: ", bytesAllowedThisCycle);
                 return true;
             }
         }

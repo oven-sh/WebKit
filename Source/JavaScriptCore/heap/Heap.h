@@ -973,6 +973,17 @@ private:
     size_t m_maxEdenSize;
     size_t m_maxEdenSizeWhenCritical;
     size_t m_maxHeapSize;
+#if USE(BUN_JSC_ADDITIONS)
+    // m_maxEdenSize and m_maxHeapSize count cells plus the extra memory they keep alive, so extra memory that stays
+    // alive raises them. These are the same two limits for cells alone: see updateAllocationLimits().
+    // A cycle ends when its bytes pass m_maxHeapSize or its cells pass m_maxCellHeapSize.
+    // Without Options::useCellAllocationLimit() the last two stay where they are, and no cycle reaches them.
+    size_t m_maxCellEdenSize;
+    size_t m_maxCellHeapSize { std::numeric_limits<size_t>::max() };
+    size_t m_cellBytesAllowedThisCycle { std::numeric_limits<size_t>::max() };
+    size_t m_extraMemoryAllocatedThisCycle { 0 }; // The part of totalBytesAllocatedThisCycle() that is not cells.
+    size_t m_lastOversizedCellAllocationThisCycle { 0 }; // m_lastOversizedAllocationThisCycle, but never a report of extra memory.
+#endif
 
     // The old generation's cells, in bytes: those the last Full collection marked, plus those each later
     // Eden collection marked. Old cells that die stay counted until the next Full collection.
