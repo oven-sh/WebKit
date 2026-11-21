@@ -494,8 +494,7 @@ void Closure::setNameProperty(VM& vm, JSString* name, unsigned attributes)
     ensureClassObject(vm);
     putDirect(vm, vm.propertyNames->name, name, attributes);
     FunctionRareData* rareData = ensureRareData(vm);
-    rareData->setHasReifiedName();
-    rareData->setHasModifiedNameForBoundOrNonHostFunction();
+    rareData->setHasReifiedName(FunctionRareData::ReifiedName::AssignedAtRunTime);
 }
 
 static bool canDefineStaticMemberWithoutTransition(VM& vm, Closure& classObject, PropertyName key)
