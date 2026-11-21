@@ -4923,8 +4923,13 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
     }
     // A statement has put code in the loader before it runs, and require() with type text loads that.
     bool isCodeInLoader = file && data(*file).kind == ModuleKind::SourceText && m_table.fullPath(target).endsWith("?text"_s) && wasImportedByStatement(*file);
-    if (file && (isCodeInLoader || !hasNotBegun(*file)) && !wasEvictedByRemovedMock(*file))
+    // What the loader holds of data that was imported is its namespace, whichever type a require() names.
+    auto answerWithImportedFile = [&] {
+        answersNamespace = data(*file).kind == ModuleKind::Data;
         return *file;
+    };
+    if (file && (isCodeInLoader || !hasNotBegun(*file)) && !wasEvictedByRemovedMock(*file))
+        return answerWithImportedFile();
     auto wasImported = [&](ModuleID form) {
         return (status(form) == ModuleStatus::Evaluated || hasBeenImported(form)) && !wasEvictedByRemovedMock(form);
     };
@@ -4937,7 +4942,7 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
         return first->value.module;
     }
     if (forms.containsIf(wasImported) && file && (hasBeenImported(*file) || (data(*file).requireResult == RequireResult::Namespace && wasImportedByStatement(*file))) && !wasEvictedByRemovedMock(*file))
-        return *file;
+        return answerWithImportedFile();
     for (bool isJSON : { false, true }) {
         for (ModuleID form : forms) {
             if (m_table.fullPath(form).endsWith("?json"_s) != isJSON || !wasImported(form))
