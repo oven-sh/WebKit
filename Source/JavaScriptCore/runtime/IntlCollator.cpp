@@ -310,8 +310,13 @@ UCollationResult IntlCollator::compareStrings(JSGlobalObject* globalObject, Stri
         return std::nullopt;
     }());
 
-    if (!result)
+    if (!result) {
+        if ((x.is8Bit() && x.length() >= (1u << 30)) || (y.is8Bit() && y.length() >= (1u << 30))) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return { };
+        }
         result = ucol_strcoll(m_collator.get(), x.upconvertedCharacters(), x.length(), y.upconvertedCharacters(), y.length());
+    }
 
     if (U_FAILURE(status)) {
         throwException(globalObject, scope, createError(globalObject, "Failed to compare strings."_s));
