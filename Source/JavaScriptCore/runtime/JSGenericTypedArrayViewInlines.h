@@ -729,7 +729,7 @@ void JSGenericTypedArrayView<Adaptor>::getOwnPropertyNames(
     VM& vm = globalObject->vm();
     JSGenericTypedArrayView* thisObject = uncheckedDowncast<JSGenericTypedArrayView>(object);
 
-    if (array.includeStringProperties()) {
+    if (array.includeIndexedProperties()) {
         uint64_t length = thisObject->length();
         for (uint64_t i = 0; i < length; ++i)
             array.add(Identifier::from(vm, i));

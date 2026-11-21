@@ -148,7 +148,7 @@ void StringObject::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalO
 {
     VM& vm = globalObject->vm();
     StringObject* thisObject = uncheckedDowncast<StringObject>(object);
-    if (propertyNames.includeStringProperties()) {
+    if (propertyNames.includeIndexedProperties()) {
         int size = thisObject->internalValue()->length();
         for (int i = 0; i < size; ++i)
             propertyNames.add(Identifier::from(vm, i));
