@@ -415,27 +415,34 @@ String languageTagForLocaleID(const char* localeID, bool isImmortal)
 }
 
 // Ensure we have xx-ZZ whenever we have xx-Yyyy-ZZ.
-static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView locale)
+static bool scriptlessLocale(StringView locale, Vector<char, 12>& buffer)
 {
     if (locale.length() < 10)
-        return;
+        return false;
 
     Vector<StringView, 3> subtags;
     for (auto subtag : locale.split('-')) {
         if (subtags.size() == 3)
-            return;
+            return false;
         subtags.append(subtag);
     }
 
     if (subtags.size() != 3 || subtags[1].length() != 4 || subtags[2].length() > 3)
-        return;
+        return false;
 
-    Vector<char, 12> buffer;
     ASSERT(subtags[0].is8Bit() && subtags[0].containsOnlyASCII());
     buffer.append(subtags[0].span8());
     buffer.append('-');
     ASSERT(subtags[2].is8Bit() && subtags[2].containsOnlyASCII());
     buffer.append(subtags[2].span8());
+    return true;
+}
+
+static void addScriptlessLocaleIfNeeded(LocaleTagSet& availableLocales, StringView locale)
+{
+    Vector<char, 12> buffer;
+    if (!scriptlessLocale(locale, buffer))
+        return;
 
     // A static StringImpl is never freed, so do not create one that the set would not keep.
     if (availableLocales.contains(String::fromLatin1(buffer.span())))
@@ -443,9 +450,192 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static std::atomic<unsigned> localeIDsConvertedForAvailableLocales;
+
+unsigned intlLocaleIDsConvertedForAvailableLocalesForTesting()
+{
+    return localeIDsConvertedForAvailableLocales.load(std::memory_order_relaxed);
+}
+
+// A locale ID that is a language, a script and a region, spelled as a language tag spells them: "en", "es_419",
+// "zh_Hant_TW". ICU converts such an ID to the language tag that has "-" for "_". "en_US_POSIX" is not one: its tag
+// is "en-US-u-va-posix".
+struct LanguageScriptRegion {
+    unsigned length() const { return languageLength + (scriptLength ? 1 + scriptLength : 0) + (regionLength ? 1 + regionLength : 0); }
+
+    unsigned languageLength { 0 };
+    unsigned scriptLength { 0 };
+    unsigned regionLength { 0 };
+};
+
+static std::optional<LanguageScriptRegion> parseLanguageScriptRegion(const char* localeID)
+{
+    LanguageScriptRegion result;
+    while (isASCIILower(localeID[result.languageLength]))
+        ++result.languageLength;
+    if (result.languageLength < 2 || result.languageLength > 3)
+        return std::nullopt;
+    const char* rest = localeID + result.languageLength;
+    if (!*rest)
+        return result;
+    if (*rest++ != '_')
+        return std::nullopt;
+
+    if (isASCIIUpper(rest[0]) && isASCIILower(rest[1]) && isASCIILower(rest[2]) && isASCIILower(rest[3])) {
+        result.scriptLength = 4;
+        rest += 4;
+        if (!*rest)
+            return result;
+        if (*rest++ != '_')
+            return std::nullopt;
+    }
+
+    if (isASCIIUpper(rest[0]) && isASCIIUpper(rest[1]) && !rest[2])
+        result.regionLength = 2;
+    else if (isASCIIDigit(rest[0]) && isASCIIDigit(rest[1]) && isASCIIDigit(rest[2]) && !rest[3])
+        result.regionLength = 3;
+    else
+        return std::nullopt;
+    return result;
+}
+
+// The tags of upstream's set for one list of ICU. Nothing is written to it once it is made.
+struct IntlAvailableLocales::Index {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Index);
+
+    // A tag: `length` characters of `characters` from `offset`, and the hash that a String of them has. A slot of no
+    // characters is empty.
+    struct Slot {
+        unsigned hash { 0 };
+        unsigned offset { 0 };
+        unsigned length { 0 };
+    };
+
+    Index(CountLocaleIDs, LocaleIDAt);
+
+    Vector<Latin1Character> characters;
+    // Open addressing by the hash.
+    Vector<Slot> slots;
+};
+
+IntlAvailableLocales::Index::Index(CountLocaleIDs countLocaleIDs, LocaleIDAt localeIDAt)
+{
+    int32_t count = countLocaleIDs();
+    // Where each tag ends in `characters`. A tag begins where the tag before it ends.
+    Vector<unsigned> ends;
+    characters.reserveInitialCapacity(count * 8);
+    ends.reserveInitialCapacity(count + count / 4);
+    for (int32_t i = 0; i < count; ++i) {
+        const char* localeID = localeIDAt(i);
+        if (!localeID)
+            continue;
+
+        auto appendWithHyphens = [&](std::span<const char> part) {
+            size_t offset = characters.size();
+            characters.grow(offset + part.size());
+            std::ranges::replace_copy(byteCast<Latin1Character>(part), characters.mutableSpan().subspan(offset).begin(), static_cast<Latin1Character>('_'), static_cast<Latin1Character>('-'));
+        };
+
+        if (auto subtags = parseLanguageScriptRegion(localeID)) [[likely]] {
+            auto id = unsafeMakeSpan(localeID, subtags->length());
+            appendWithHyphens(id);
+            // If ICU converted the ID to another tag, upstream's set would have a tag that is not in this index.
+            ASSERT(languageTagForLocaleID(localeID) == String(characters.subspan(characters.size() - id.size())));
+            ends.append(characters.size());
+            // Upstream's set has xx-ZZ for xx-Yyyy-ZZ: scriptlessLocale().
+            if (subtags->scriptLength && subtags->regionLength) {
+                appendWithHyphens(id.first(subtags->languageLength + 1));
+                appendWithHyphens(id.last(subtags->regionLength));
+                ends.append(characters.size());
+            }
+            continue;
+        }
+
+        // What ICU makes of any other ID is not guessed at.
+        localeIDsConvertedForAvailableLocales.fetch_add(1, std::memory_order_relaxed);
+        String locale = languageTagForLocaleID(localeID);
+        if (locale.isEmpty())
+            continue;
+        characters.append(locale.span8());
+        ends.append(characters.size());
+        Vector<char, 12> scriptless;
+        if (scriptlessLocale(locale, scriptless)) {
+            characters.append(byteCast<Latin1Character>(scriptless.span()));
+            ends.append(characters.size());
+        }
+    }
+
+    slots.fill(Slot { }, std::max<size_t>(8, roundUpToPowerOfTwo(ends.size() * 2)));
+    unsigned mask = slots.size() - 1;
+    unsigned offset = 0;
+    for (unsigned end : ends) {
+        auto languageTag = characters.subspan(offset, end - offset);
+        unsigned hash = StringHasher::computeHashAndMaskTop8Bits(languageTag);
+        unsigned i = hash & mask;
+        // Two locale IDs can have the same tag: sr-RS is the xx-ZZ of sr_Cyrl_RS and of sr_Latn_RS. One slot has it.
+        while (slots[i].length && !(slots[i].hash == hash && equalSpans(characters.subspan(slots[i].offset, slots[i].length), languageTag)))
+            i = (i + 1) & mask;
+        if (!slots[i].length)
+            slots[i] = Slot { hash, offset, end - offset };
+        offset = end;
+    }
+}
+
+// ICU hands out the strings of the other list for this one: its ubrk_getAvailable() is its uloc_getAvailable().
+bool IntlAvailableLocales::isListOf(const IntlAvailableLocales& other) const
+{
+    int32_t count = m_countLocaleIDs();
+    if (count != other.m_countLocaleIDs())
+        return false;
+    for (int32_t i = 0; i < count; ++i) {
+        if (m_localeIDAt(i) != other.m_localeIDAt(i))
+            return false;
+    }
+    return true;
+}
+
+NEVER_INLINE const IntlAvailableLocales::Index& IntlAvailableLocales::makeIndex() const
+{
+    std::call_once(m_initializeOnce, [&] {
+        // A list that is the strings of another list has the index of that list, and no second one.
+        bool hasIndexOfOtherList = m_listThatMayBeTheSame && isListOf(m_listThatMayBeTheSame());
+        m_index.store(hasIndexOfOtherList ? &m_listThatMayBeTheSame().index() : new Index(m_countLocaleIDs, m_localeIDAt), std::memory_order_release);
+    });
+    return *m_index.load(std::memory_order_acquire);
+}
+
+bool IntlAvailableLocales::contains(const String& languageTag) const
+{
+    if (languageTag.isEmpty())
+        return false;
+
+    auto& index = this->index();
+    unsigned hash = languageTag.impl()->hash();
+    unsigned length = languageTag.length();
+    unsigned mask = index.slots.size() - 1;
+    for (unsigned i = hash & mask; ; i = (i + 1) & mask) {
+        auto& slot = index.slots[i];
+        if (!slot.length)
+            return false;
+        if (slot.hash == hash && slot.length == length && equal(StringView { languageTag }, index.characters.subspan(slot.offset, length)))
+            return true;
+    }
+}
+
 const LocaleSet& intlAvailableLocales()
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    static constinit IntlAvailableLocales availableLocales { uloc_countAvailable, uloc_getAvailable };
+    return availableLocales;
+}
+
+// Upstream's intlAvailableLocales().
+const LocaleTagSet& intlAvailableLocalesSetForTesting()
+#else
+const LocaleSet& intlAvailableLocales()
+#endif
+{
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
@@ -583,9 +773,24 @@ const uint8_t ducetLevel3Weights[256] = {
     0, 0, 0, 0, 0, 0, 0, 0,
 };
 
+#if USE(BUN_JSC_ADDITIONS)
 const LocaleSet& intlCollatorAvailableLocales()
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    static constinit IntlAvailableLocales availableLocales { ucol_countAvailable, ucol_getAvailable };
+#if ASSERT_ENABLED
+    // Upstream's set is made for IntlCollator::checkICULocaleInvariants(), as upstream makes it.
+    intlCollatorAvailableLocalesSetForTesting();
+#endif
+    return availableLocales;
+}
+
+// Upstream's intlCollatorAvailableLocales().
+const LocaleTagSet& intlCollatorAvailableLocalesSetForTesting()
+#else
+const LocaleSet& intlCollatorAvailableLocales()
+#endif
+{
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
@@ -605,9 +810,20 @@ const LocaleSet& intlCollatorAvailableLocales()
     return availableLocales;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
 const LocaleSet& intlSegmenterAvailableLocales()
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    static constinit IntlAvailableLocales availableLocales { ubrk_countAvailable, ubrk_getAvailable, intlAvailableLocales };
+    return availableLocales;
+}
+
+// Upstream's intlSegmenterAvailableLocales().
+const LocaleTagSet& intlSegmenterAvailableLocalesSetForTesting()
+#else
+const LocaleSet& intlSegmenterAvailableLocales()
+#endif
+{
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();

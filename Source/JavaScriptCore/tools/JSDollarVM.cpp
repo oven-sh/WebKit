@@ -53,6 +53,7 @@
 #include "ImmutablePropertyNames.h"
 #include "InitializeThreading.h"
 #include "InterpreterInlines.h"
+#include "IntlObjectInlines.h"
 #include "JITSizeStatistics.h"
 #include "JSArray.h"
 #include "JSAsyncGenerator.h"
@@ -2325,6 +2326,11 @@ static JSC_DECLARE_HOST_FUNCTION(functionSetUserPreferredLanguages);
 static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionIntlAvailableLocalesTable);
+static JSC_DECLARE_HOST_FUNCTION(functionIntlIsAvailableLocale);
+static JSC_DECLARE_HOST_FUNCTION(functionIntlLocaleIDsConverted);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
@@ -4941,6 +4947,77 @@ JSC_DEFINE_HOST_FUNCTION(functionICUHeaderVersion, (JSGlobalObject*, CallFrame*)
     return JSValue::encode(jsNumber(U_ICU_VERSION_MAJOR_NUM));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// One of ICU's lists of locales: what Bun looks a tag up in, and upstream's set of the tags of the same list.
+struct IntlAvailableLocalesOfList {
+    const IntlAvailableLocales& availableLocales;
+    const LocaleTagSet& (*upstreamSet)();
+};
+
+static std::optional<IntlAvailableLocalesOfList> intlAvailableLocalesOfList(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String list = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+
+    if (list == "locale"_s)
+        return IntlAvailableLocalesOfList { intlAvailableLocales(), intlAvailableLocalesSetForTesting };
+    if (list == "collator"_s)
+        return IntlAvailableLocalesOfList { intlCollatorAvailableLocales(), intlCollatorAvailableLocalesSetForTesting };
+    if (list == "segmenter"_s)
+        return IntlAvailableLocalesOfList { intlSegmenterAvailableLocales(), intlSegmenterAvailableLocalesSetForTesting };
+    throwTypeError(globalObject, scope, "the list is \"locale\", \"collator\" or \"segmenter\""_s);
+    return std::nullopt;
+}
+
+// Usage: $vm.intlAvailableLocalesTable("collator")
+// The language tags of upstream's set of available locales for one of ICU's lists: "locale" (every service but the
+// two others), "collator" or "segmenter". Bun does not make that set: this does, for a test to hold against what Bun
+// answers for one tag.
+JSC_DEFINE_HOST_FUNCTION(functionIntlAvailableLocalesTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto list = intlAvailableLocalesOfList(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Vector<String> languageTags;
+    for (auto& languageTag : list->upstreamSet())
+        languageTags.append(languageTag);
+    RELEASE_AND_RETURN(scope, JSValue::encode(createArrayFromStringVector(globalObject, languageTags)));
+}
+
+// Usage: $vm.intlIsAvailableLocale("collator", "zh-TW")
+// Whether that set has the tag, found the way Bun finds it: in its index of the locale IDs of ICU's list.
+JSC_DEFINE_HOST_FUNCTION(functionIntlIsAvailableLocale, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto list = intlAvailableLocalesOfList(globalObject, callFrame->argument(0));
+    RETURN_IF_EXCEPTION(scope, { });
+
+    String languageTag = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    return JSValue::encode(jsBoolean(list->availableLocales.contains(languageTag)));
+}
+
+// Usage: $vm.intlLocaleIDsConverted()
+// How many locale IDs of ICU this process has converted to a language tag for those indexes.
+// $vm.intlAvailableLocalesTable() does not count.
+JSC_DEFINE_HOST_FUNCTION(functionIntlLocaleIDsConverted, (JSGlobalObject*, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    return JSValue::encode(jsNumber(intlLocaleIDsConvertedForAvailableLocalesForTesting()));
+}
+#endif
+
 // Usage: $vm.setHostTimeZone("Asia/Tokyo")
 // Overrides the host time zone process-wide and invalidates dependent caches.
 // Returns false (changing nothing) for an invalid identifier.
@@ -6392,6 +6469,11 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuVersion"_s, functionICUVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "intlAvailableLocalesTable"_s, functionIntlAvailableLocalesTable, 1);
+    addFunction(vm, alwaysAllow, "intlIsAvailableLocale"_s, functionIntlIsAvailableLocale, 2);
+    addFunction(vm, alwaysAllow, "intlLocaleIDsConverted"_s, functionIntlLocaleIDsConverted, 0);
+#endif
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
     addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);
 

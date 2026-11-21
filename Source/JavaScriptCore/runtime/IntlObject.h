@@ -30,6 +30,8 @@
 #include "JSCJSValue.h"
 #include "JSCTimeZone.h"
 #include "JSObject.h"
+#include <atomic>
+#include <mutex>
 #include <wtf/RobinHoodHashSet.h>
 
 struct UFieldPositionIterator;
@@ -90,7 +92,58 @@ private:
 };
 
 String defaultLocale(JSGlobalObject*);
-using LocaleSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
+using LocaleTagSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
+#if USE(BUN_JSC_ADDITIONS)
+// The language tags that one of ICU's lists of locales makes available to an Intl service: the [[AvailableLocales]] of
+// ECMA-402. ICU lists locale IDs ("zh_Hant_TW"). Upstream has ICU convert every ID of a list to a language tag before
+// a service looks up its first tag, and keeps the tags in a set (LocaleTagSet). This makes nothing until a tag is
+// looked up. Then it walks the list once and keeps each ID as ICU spells it, with "-" for "_", in one index. ICU
+// converts only the IDs that are more than a language, a script and a region.
+class IntlAvailableLocales {
+    WTF_MAKE_NONCOPYABLE(IntlAvailableLocales);
+public:
+    using CountLocaleIDs = int32_t (*)();
+    using LocaleIDAt = const char* (*)(int32_t);
+    using OtherList = const IntlAvailableLocales& (*)();
+
+    // `listThatMayBeTheSame` is a list that ICU may hand out for this one too: see makeIndex().
+    constexpr IntlAvailableLocales(CountLocaleIDs countLocaleIDs, LocaleIDAt localeIDAt, OtherList listThatMayBeTheSame = nullptr)
+        : m_countLocaleIDs(countLocaleIDs)
+        , m_localeIDAt(localeIDAt)
+        , m_listThatMayBeTheSame(listThatMayBeTheSame)
+    {
+    }
+
+    bool contains(const String& languageTag) const;
+
+private:
+    struct Index;
+    const Index& index() const
+    {
+        if (auto* index = m_index.load(std::memory_order_acquire)) [[likely]]
+            return *index;
+        return makeIndex();
+    }
+    const Index& makeIndex() const;
+    bool isListOf(const IntlAvailableLocales&) const;
+
+    const CountLocaleIDs m_countLocaleIDs;
+    const LocaleIDAt m_localeIDAt;
+    const OtherList m_listThatMayBeTheSame;
+    mutable std::once_flag m_initializeOnce;
+    mutable std::atomic<const Index*> m_index { nullptr };
+};
+using LocaleSet = IntlAvailableLocales;
+
+// For tests. Upstream's sets, which Bun makes only for a test and in a build with assertions, and how many locale IDs
+// ICU has converted for the indexes of this process.
+const LocaleTagSet& intlAvailableLocalesSetForTesting();
+const LocaleTagSet& intlCollatorAvailableLocalesSetForTesting();
+const LocaleTagSet& intlSegmenterAvailableLocalesSetForTesting();
+unsigned intlLocaleIDsConvertedForAvailableLocalesForTesting();
+#else
+using LocaleSet = LocaleTagSet;
+#endif
 const LocaleSet& intlAvailableLocales();
 const LocaleSet& intlCollatorAvailableLocales();
 const LocaleSet& intlSegmenterAvailableLocales();
