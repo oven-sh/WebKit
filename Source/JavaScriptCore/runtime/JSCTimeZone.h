@@ -40,6 +40,12 @@ using TimeZoneID = unsigned;
 // ever assigned this value.
 inline constexpr TimeZoneID offsetTimeZoneID = std::numeric_limits<TimeZoneID>::max();
 
+#if USE(BUN_JSC_ADDITIONS)
+// Bun gives out TimeZoneIDs in the order in which the process first names identifiers, and UTC is always the first
+// (TimeZoneRegistry in IntlObject.cpp). So a TimeZone is made without a question to ICU, and a TimeZoneID means
+// nothing outside the process that it comes from.
+inline constexpr TimeZoneID utcTimeZoneID() { return 0; }
+#else
 extern JS_EXPORT_PRIVATE TimeZoneID utcTimeZoneIDStorage;
 JS_EXPORT_PRIVATE TimeZoneID utcTimeZoneIDSlow();
 
@@ -50,6 +56,7 @@ inline TimeZoneID utcTimeZoneID()
         return utcTimeZoneIDSlow();
     return value;
 }
+#endif
 
 // Look up the as-stored, case-normalized identifier for a TimeZoneID. For Backward-link
 // aliases this returns the alias's own identifier (e.g. "Asia/Calcutta"); the primary's

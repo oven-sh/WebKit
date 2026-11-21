@@ -175,6 +175,23 @@ JS_EXPORT_PRIVATE String toPrimaryIanaTimeZoneIdentifier(StringView timeZone);
 
 void initializeAvailableTimeZones();
 
+#if USE(BUN_JSC_ADDITIONS)
+// An identifier as the table of every time zone spells it, and the identifier of its primary.
+struct TimeZoneIdentifiers {
+    String identifier;
+    String primary;
+};
+
+// For tests. Bun finds a time zone identifier by asking ICU about the one name, and does not build the table of every
+// identifier. Tests build the table and hold the two against each other, and check what a program made ICU list.
+bool intlHasListedICUTimeZoneNamesForTesting();
+bool intlHasListedPrimaryTimeZoneIdentifiersForTesting();
+unsigned intlQuestionsAboutICUTimeZonesForTesting();
+Vector<String> intlTimeZoneTableForTesting();
+std::optional<TimeZoneIdentifiers> intlTimeZoneInTableForTesting(StringView);
+std::optional<TimeZoneIdentifiers> intlTimeZoneByNameForTesting(StringView);
+#endif
+
 TriState intlBooleanOption(JSGlobalObject*, JSObject* options, PropertyName);
 String intlStringOption(JSGlobalObject*, JSObject* options, PropertyName, std::initializer_list<ASCIILiteral> values, ASCIILiteral notFound, ASCIILiteral fallback);
 unsigned intlNumberOption(JSGlobalObject*, JSObject* options, PropertyName, unsigned minimum, unsigned maximum, unsigned fallback);
