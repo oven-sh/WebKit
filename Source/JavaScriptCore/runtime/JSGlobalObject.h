@@ -1490,6 +1490,23 @@ inline JSObject* JSGlobalObject::globalThis() const
     return m_globalThis.get();
 }
 
+// putByIndex() takes no receiver: the code behind it takes the object it stores to for one. A JSGlobalObject and its proxy are
+// one object to script (isThisValueAltered()), and only the proxy can be a `this`: the JSGlobalObject is a JSScope, which a
+// callee reads as no `this` (JSValue::toThis()). So a setter and a Proxy get the proxy in place of the JSGlobalObject.
+//
+// Upstream has this for the setter alone, as wrapGlobalObject() in SparseArrayEntry::put(): 284931@main (bug 225397), which
+// 284962@main reverted and WebKit/WebKit#35527 lands again. A sync that brings it leaves one swap there, and keeps the two
+// calls in JSObject.cpp: upstream has neither.
+ALWAYS_INLINE JSValue receiverForPutByIndex(JSValue thisValue)
+{
+    if (thisValue.isCell() && thisValue.asCell()->type() == GlobalObjectType) [[unlikely]] {
+        // Null until JSGlobalObject::finishCreation() has made the proxy.
+        if (JSObject* globalThis = uncheckedDowncast<JSGlobalObject>(thisValue.asCell())->globalThis())
+            return globalThis;
+    }
+    return thisValue;
+}
+
 ALWAYS_INLINE VM& getVM(JSGlobalObject* globalObject)
 {
     return globalObject->vm();
