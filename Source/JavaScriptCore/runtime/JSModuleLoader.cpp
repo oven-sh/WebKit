@@ -220,8 +220,15 @@ JSModuleLoader::ModuleFailure JSModuleLoader::getErrorInfo(JSGlobalObject* globa
 void JSModuleLoader::attachErrorInfo(JSGlobalObject* globalObject, ErrorInstance* error, AbstractModuleRecord* source, const Identifier& key, ScriptFetchParameters::Type type, JSModuleLoader::ModuleFailure::Kind kind)
 {
     VM& vm = globalObject->vm();
+#if USE(BUN_JSC_ADDITIONS)
+    // The record is not stored. Nothing reads it back: getErrorInfo() feeds ModuleFailure::isEvaluationError(),
+    // which looks at the key, the type and the kind. An error that a program keeps would keep alive the module
+    // graph of the Evaluate() that failed.
+    UNUSED_PARAM(source);
+#else
     if (source)
         error->putDirect(vm, vm.propertyNames->builtinNames().moduleFailureModuleRecordPrivateName(), source);
+#endif
     if (!key.isNull())
         error->putDirect(vm, vm.propertyNames->builtinNames().moduleFailureModuleKeyPrivateName(), identifierToJSValue(vm, key));
     if (type != ScriptFetchParameters::Type::None)
