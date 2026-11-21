@@ -110,6 +110,14 @@ void DeferredWorkTimer::doWork(VM& vm)
         }
     });
 
+    // Tickets cancelled from another thread (cancelPendingWorkCrossThread) are
+    // cancelled here instead, where this VM's API lock is held.
+    while (!m_cancelledTickets.isEmpty()) {
+        Ref<Ticket> cancelledTicket = m_cancelledTickets.takeFirst();
+        if (!cancelledTicket->isCancelled() && m_pendingTickets.contains(cancelledTicket.ptr()))
+            cancelPendingWork(cancelledTicket.get());
+    }
+
     Vector<std::tuple<Ref<Ticket>, Task>> suspendedTasks;
 
     while (!m_tasks.isEmpty()) {
@@ -276,6 +284,32 @@ bool DeferredWorkTimer::cancelPendingWork(Ticket& ticket)
     }
 
     return result;
+}
+
+// Cancels a ticket from any thread, without the ticket's VM's API lock held.
+// Ticket state and the embedder's cancel bookkeeping (onCancelPendingWork) may
+// only be touched on the ticket's VM with its API lock held, so this routes the
+// cancellation through the same channel that delivers cross-thread Atomics
+// notifications and performs it there.
+void DeferredWorkTimer::cancelPendingWorkCrossThread(const WeakTicket& weakTicket)
+{
+    RefPtr ticket = weakTicket.get();
+    if (!ticket || ticket->isCancelled())
+        return;
+
+    if (onScheduleWorkSoon) {
+        onScheduleWorkSoon(ticket.releaseNonNull(), [](Ticket& ticket) {
+            if (ticket.isCancelled())
+                return;
+            ticket.vm().deferredWorkTimer->cancelPendingWork(ticket);
+        });
+        return;
+    }
+
+    Locker locker { m_taskLock };
+    m_cancelledTickets.append(ticket.releaseNonNull());
+    if (!isScheduled() && !m_currentlyRunningTask)
+        setTimeUntilFire(0_s);
 }
 
 void DeferredWorkTimer::cancelPendingWorkSafe(JSGlobalObject* globalObject)
