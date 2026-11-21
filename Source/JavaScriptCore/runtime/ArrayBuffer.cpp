@@ -242,12 +242,22 @@ SharedArrayBufferContents::~SharedArrayBufferContents()
     }
 }
 
-void ArrayBufferContents::copyTo(ArrayBufferContents& other)
+void ArrayBufferContents::copyTo(VM& vm, ArrayBufferContents& other)
 {
     ASSERT(!other.m_data);
-    other.tryAllocate(m_sizeInBytes, sizeof(char), ArrayBufferContents::InitializationPolicy::DontInitialize);
-    if (!other.m_data)
-        return;
+    ASSERT(!m_shared);
+    if (m_hasMaxByteLength) {
+        // The copy of a resizable buffer is resizable with the same maximum, like the contents that a transfer moves.
+        auto handle = tryAllocateResizableMemory(&vm, m_sizeInBytes, m_maxByteLength);
+        if (!handle)
+            return;
+        void* memory = handle->memory();
+        other = ArrayBufferContents(memory, m_sizeInBytes, m_maxByteLength, handle.releaseNonNull());
+    } else {
+        other.tryAllocate(m_sizeInBytes, sizeof(char), ArrayBufferContents::InitializationPolicy::DontInitialize);
+        if (!other.m_data)
+            return;
+    }
     memcpy(other.data(), data(), m_sizeInBytes);
     other.m_sizeInBytes = m_sizeInBytes;
     RELEASE_ASSERT(other.m_sizeInBytes <= MAX_ARRAY_BUFFER_SIZE);
@@ -528,7 +538,7 @@ bool ArrayBuffer::transferTo(VM& vm, ArrayBufferContents& result)
     }
 
     if (!isDetachable()) {
-        m_contents.copyTo(result);
+        m_contents.copyTo(vm, result);
         if (!result.m_data)
             return false;
         return true;

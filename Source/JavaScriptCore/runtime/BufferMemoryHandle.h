@@ -110,12 +110,7 @@ public:
     // We allow people to "commit" more wasm memory than there is on the system since most of the time
     // people don't actually write to most of that memory. There is some chance that this gets us
     // jettisoned but that's possible anyway.
-    inline size_t memoryLimit() const
-    {
-        if (productOverflows<size_t>(ramSize(),  3))
-            return std::numeric_limits<size_t>::max();
-        return ramSize() * 3;
-    }
+    size_t memoryLimit() const;
 
     // FIXME: Ideally, bmalloc would have this kind of mechanism. Then, we would just forward to that
     // mechanism here.
