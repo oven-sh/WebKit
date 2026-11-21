@@ -23,6 +23,7 @@ set(bmalloc_SOURCES
     bmalloc/Gigacage.cpp
     bmalloc/HeapKind.cpp
     bmalloc/Logging.cpp
+    bmalloc/MimallocPrimitiveHeap.cpp
     bmalloc/Mutex.cpp
     bmalloc/TZoneHeap.cpp
     bmalloc/TZoneHeapManager.cpp
@@ -231,6 +232,7 @@ set(bmalloc_PUBLIC_HEADERS
     bmalloc/HeapKind.h
     bmalloc/Logging.h
     bmalloc/Map.h
+    bmalloc/MimallocPrimitiveHeap.h
     bmalloc/Mutex.h
     bmalloc/Sizes.h
     bmalloc/StaticPerProcess.h

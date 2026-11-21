@@ -394,6 +394,14 @@
 #define BUSE_EXTERNAL_MIMALLOC 0
 #endif
 
+/* HeapKind::PrimitiveGigacage has heaps and address ranges of its own (MimallocPrimitiveHeap). Memory that one pool
+   freed cannot serve the other, which raises peak RSS under load, so only hardened builds pay for it. */
+#if BUSE(MIMALLOC) && defined(BUN_HARDENED)
+#define BUSE_MIMALLOC_PRIMITIVE_HEAP 1
+#else
+#define BUSE_MIMALLOC_PRIMITIVE_HEAP 0
+#endif
+
 #if defined(USE_SYSTEM_MALLOC) && USE_SYSTEM_MALLOC
 #define BUSE_SYSTEM_MALLOC 1
 #elif BTSAN_ENABLED

@@ -153,6 +153,25 @@ void freeLargeVirtual(void* object, size_t size, HeapKind kind)
 #endif
 }
 
+bool isInDedicatedRange(const void* pointer, HeapKind kind)
+{
+#if BUSE(MIMALLOC)
+    return kind == HeapKind::PrimitiveGigacage && MimallocPrimitiveHeap::isInRange(pointer);
+#else
+    return isGigacage(kind) && Gigacage::contains(pointer);
+#endif
+}
+
+size_t allocationsOutsideDedicatedRange(HeapKind kind)
+{
+#if BUSE(MIMALLOC)
+    return kind == HeapKind::PrimitiveGigacage ? MimallocPrimitiveHeap::allocationsOutsideRanges() : 0;
+#else
+    BUNUSED(kind);
+    return 0;
+#endif
+}
+
 void scavengeThisThread(bool force)
 {
 #if BENABLE(LIBPAS)
@@ -160,6 +179,7 @@ void scavengeThisThread(bool force)
     pas_thread_local_cache_shrink(pas_thread_local_cache_try_get(),
                                   pas_lock_is_not_held);
 #elif BUSE(MIMALLOC)
+    MimallocPrimitiveHeap::collectThisThread(force);
     mi_theap_collect(mi_theap_get_default(), force);
 #else
     BUNUSED(force);
@@ -189,6 +209,7 @@ void scavenge()
     pas_scavenger_run_synchronously_now();
     scavengeThisThread();
 #elif BUSE(MIMALLOC)
+    MimallocPrimitiveHeap::collectThisThread(/* force */ true);
     mi_collect(/* force */ true);
 #endif
     if (SystemHeap* systemHeap = SystemHeap::tryGetIfShouldSupplantBmalloc()) {
