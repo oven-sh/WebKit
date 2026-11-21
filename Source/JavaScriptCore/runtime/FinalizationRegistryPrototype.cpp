@@ -86,7 +86,10 @@ JSC_DEFINE_HOST_FUNCTION(protoFuncFinalizationRegistryRegister, (JSGlobalObject*
     if (!unregisterToken.isUndefined() && !canBeHeldWeakly(unregisterToken)) [[unlikely]]
         return throwVMTypeError(globalObject, scope, "register requires an object or a non-registered symbol as the unregistration token"_s);
 
-    group->registerTarget(vm, target.asCell(), holdings, unregisterToken);
+    if (!group->registerTarget(vm, target.asCell(), holdings, unregisterToken)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
     return encodedJSUndefined();
 }
 
