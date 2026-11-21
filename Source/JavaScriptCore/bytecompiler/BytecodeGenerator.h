@@ -351,6 +351,13 @@ namespace JSC {
         return node->startOffset() - 1;
     }
 
+    // A place where control flow goes one of several ways, for the control flow profiler. No two have the same offsets.
+    // A decision that can only skip something, as `&&` does, has the offsets of what it skips.
+    struct Decision {
+        int textOffset;
+        int textEndOffset;
+    };
+
     class BytecodeGenerator {
         WTF_MAKE_TZONE_ALLOCATED(BytecodeGenerator);
         WTF_MAKE_NONCOPYABLE(BytecodeGenerator);
@@ -760,6 +767,25 @@ namespace JSC {
             if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
                 return emitProfileControlFlowAfterSlow(statement);
             return false;
+        }
+        // Emitted in code that only this branch reaches.
+        void emitProfileBranch(const Decision& decision, unsigned index)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileBranchSlow(decision, index, false);
+        }
+        // Emitted at the start of the decision, for a branch with no code of its own. Its count is the count here minus the other branches' counts.
+        void emitProfileBranchThatCountsOtherBranches(const Decision& decision, unsigned index)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                emitProfileBranchSlow(decision, index, true);
+        }
+        // For a branch that is a jump to a label that other code reaches too. This label counts the branch and jumps to `target`.
+        Label& newBranchLabel(const Decision& decision, unsigned index, Label& target)
+        {
+            if (shouldEmitControlFlowProfilerHooks()) [[unlikely]]
+                return newBranchLabelSlow(decision, index, target);
+            return target;
         }
         int& statementsEndOffset() { return m_statementsEndOffset; }
         unsigned yieldPoints() const { return m_yieldPoints; }
@@ -1180,6 +1206,8 @@ namespace JSC {
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         void emitProfileControlFlowSlow(int textOffset, int textEndOffset, bool isInLoopHeader = false);
         bool emitProfileControlFlowAfterSlow(StatementNode*);
+        void emitProfileBranchSlow(const Decision&, unsigned index, bool countsOtherBranches);
+        Label& newBranchLabelSlow(const Decision&, unsigned index, Label& target);
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
@@ -1579,6 +1607,14 @@ namespace JSC {
             VirtualRegister completionTypeRegister;
         };
         Vector<CatchEntry> m_exceptionHandlersToEmit;
+
+        struct BranchEntry {
+            Ref<Label> label;
+            Ref<Label> target;
+            Decision decision;
+            unsigned index;
+        };
+        Vector<BranchEntry> m_branchesToEmit;
 
         struct {
             JSTextPosition position;

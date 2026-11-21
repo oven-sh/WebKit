@@ -483,7 +483,7 @@ static constexpr uint64_t bytecodeListFingerprint()
 // opcode numbers that a bytecode cache stores. So the build stops here when the list changes. Give each new opcode its
 // cases, raise cachedTypesFormatRevision (CachedTypes.cpp) where a number moved, and then put the new value here (the
 // compiler prints it).
-static_assert(bytecodeListFingerprint() == 15177338073115851959ull, "The bytecode list changed: classify each new opcode in BytecodeOptimizer.cpp and raise cachedTypesFormatRevision in CachedTypes.cpp");
+static_assert(bytecodeListFingerprint() == 14744609603616607742ull, "The bytecode list changed: classify each new opcode in BytecodeOptimizer.cpp and raise cachedTypesFormatRevision in CachedTypes.cpp");
 
 void BytecodeOptimizerAccess::computeImplicitUses(Insn& insn)
 {
