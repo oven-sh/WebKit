@@ -105,6 +105,8 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     # The patch has to stay a plain diff: in a directory of a repository, git apply skips a "diff --git" one and exits with 0.
     git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/decnum-allocation-failure.patch")
     if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
+    git -C $OutputDir apply --ignore-whitespace (Join-Path $PSScriptRoot "icu/calendar-likely-subtags.patch")
+    if ($LASTEXITCODE -ne 0) { throw "git apply failed with exit code $LASTEXITCODE" }
     Set-Content -Path $ICU_SOURCE_STAMP -Value $ICU_VERSION
 }
 

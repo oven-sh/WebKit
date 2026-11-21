@@ -1,0 +1,117 @@
+ICU asks the likely subtags of a locale only when it uses the answer, and the calendars that ICU makes for
+its own arithmetic do not ask them. Before, the first date format of a process loaded the likely-subtags
+data (LikelySubtags::initLikelySubtags, about 22 million instructions without LTO) for a locale that has a
+region.
+
+- Calendar::setWeekData minimized every locale and read the result only for a locale with a region and a
+  script.
+- The calendar that computes the default century (IMPL_SYSTEM_DEFAULT_CENTURY, ten calendar classes) had a
+  locale without a region, so its week data, which nothing reads, took the region from the likely subtags.
+  en_US is what they give that locale: the same resource bundle and the same week data are read as before.
+- GregorianCalendar::setGregorianChange made a calendar in the default locale to find the year and the era
+  of the cutover date. It copies itself, with the default cutover.
+- SimpleTimeZone::inDaylightTime made a calendar in the default locale to answer false for a zone without
+  a daylight rule.
+
+What a caller can see: the last two leave U_ZERO_ERROR where they passed on the U_USING_FALLBACK_WARNING of
+that calendar (a default locale such as en_GB), and the copy does not report a time zone that it could not
+allocate, as no copy of a Calendar does.
+
+ICU's main branch has the same code at these four places. The change is not reported to ICU.
+
+When ICU is upgraded, check that:
+- uloc_addLikelySubtags("und") still gives en_Latn_US;
+- GregorianCalendar has no field of its own other than the five that setGregorianChange sets on the copy
+  (unicode/gregocal.h), and setLenient(true) is still the one Calendar setting that setTime depends on.
+
+--- a/source/i18n/calendar.cpp
++++ b/source/i18n/calendar.cpp
+@@ -4100,11 +4100,14 @@ Calendar::setWeekData(const Locale& desiredLocale, const char *type, UErrorCode&
+ 
+     UErrorCode myStatus = U_ZERO_ERROR;
+ 
+-    Locale min(desiredLocale);
+-    min.minimizeSubtags(myStatus);
+     Locale useLocale;
+-    if ( uprv_strlen(desiredLocale.getCountry()) == 0 ||
+-         (uprv_strlen(desiredLocale.getScript()) > 0 && uprv_strlen(min.getScript()) == 0) ) {
++    bool useLikelySubtags = uprv_strlen(desiredLocale.getCountry()) == 0;
++    if (!useLikelySubtags && uprv_strlen(desiredLocale.getScript()) > 0) {
++        Locale min(desiredLocale);
++        min.minimizeSubtags(myStatus);
++        useLikelySubtags = uprv_strlen(min.getScript()) == 0;
++    }
++    if (useLikelySubtags) {
+         myStatus = U_ZERO_ERROR;
+         Locale max(desiredLocale);
+         max.addLikelySubtags(myStatus);
+--- a/source/i18n/gregocal.cpp
++++ b/source/i18n/gregocal.cpp
+@@ -320,18 +320,18 @@ GregorianCalendar::setGregorianChange(UDate date, UErrorCode& status)
+ 
+     // Normalize the year so BC values are represented as 0 and negative
+     // values.
+-    GregorianCalendar *cal = new GregorianCalendar(getTimeZone(), status);
+-    /* test for nullptr */
+-    if (cal == nullptr) {
+-        status = U_MEMORY_ALLOCATION_ERROR;
+-        return;
+-    }
+-    if(U_FAILURE(status)) {
+-        return;
+-    }
+-    cal->setTime(date, status);
+-    fGregorianCutoverYear = cal->get(UCAL_YEAR, status);
+-    if (cal->get(UCAL_ERA, status) == BC) {
++    // A copy of this calendar with the default cutover. The year and the era of the date depend on the
++    // time zone and on nothing of a locale, so no calendar of the default locale is made for them.
++    GregorianCalendar cal(*this);
++    cal.fGregorianCutover = kPapalCutover;
++    cal.fCutoverJulianDay = kCutoverJulianDay;
++    cal.fGregorianCutoverYear = kDefaultCutoverYear;
++    cal.fIsGregorian = true;
++    cal.fInvertGregorian = false;
++    cal.setLenient(true);
++    cal.setTime(date, status);
++    fGregorianCutoverYear = cal.get(UCAL_YEAR, status);
++    if (cal.get(UCAL_ERA, status) == BC) {
+         fGregorianCutoverYear = 1 - fGregorianCutoverYear;
+     }
+     // fCutoverJulianDay holds an actual Julian Day count, consistent with
+@@ -348,7 +348,6 @@ GregorianCalendar::setGregorianChange(UDate date, UErrorCode& status)
+     } else {
+         fCutoverJulianDay = static_cast<int32_t>(cutoverJulianDay64);
+     }
+-    delete cal;
+ }
+ 
+ void GregorianCalendar::handleComputeFields(int32_t julianDay, UErrorCode& status) {
+--- a/source/i18n/gregoimp.h
++++ b/source/i18n/gregoimp.h
+@@ -371,7 +371,8 @@ inline int32_t Grego::gregorianShift(int32_t eyear) {
+   static void U_CALLCONV \
+   initializeSystemDefaultCentury() { \
+       UErrorCode status = U_ZERO_ERROR; \
+-      T calendar(U, status); \
++      /* en_US is what the likely subtags give a locale that has no language and no region. */ \
++      T calendar("en_US" U, status); \
+       /* initialize systemDefaultCentury and systemDefaultCenturyYear based */ \
+       /* on the current time.  They'll be set to 80 years before */ \
+       /* the current time. */ \
+--- a/source/i18n/simpletz.cpp
++++ b/source/i18n/simpletz.cpp
+@@ -725,6 +725,14 @@ UBool SimpleTimeZone::inDaylightTime(UDate date, UErrorCode& status) const
+     // deletes it each time it is called.  However, this is a deprecated method
+     // and provided only for Java compatibility as of 8/6/97 [LIU].
+     if (U_FAILURE(status)) return false;
++    // Without a daylight rule the answer is false for every date: Calendar::inDaylightTime gives it
++    // without a look at the date. Calendar::setTime refuses a date that is not a number.
++    if (!useDaylightTime()) {
++        if (uprv_isNaN(date)) {
++            status = U_ILLEGAL_ARGUMENT_ERROR;
++        }
++        return false;
++    }
+     GregorianCalendar *gc = new GregorianCalendar(*this, status);
+     /* test for nullptr */
+     if (gc == nullptr) {
