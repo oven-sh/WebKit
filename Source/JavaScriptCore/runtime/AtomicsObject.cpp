@@ -25,9 +25,12 @@
 
 #include "config.h"
 #include "AtomicsObject.h"
+#include "AtomicsSync.h"
 
 #include "FrameTracers.h"
 #include "JSCInlines.h"
+#include "JSSharedArray.h"
+#include "JSSharedStruct.h"
 #include "JSTypedArrays.h"
 #include "ReleaseHeapAccessScope.h"
 #include "TypedArrayController.h"
@@ -95,6 +98,9 @@ void AtomicsObject::finishCreation(VM& vm, JSGlobalObject* globalObject)
     if (vm.vmType == VM::VMType::Default)
         JSC_NATIVE_INTRINSIC_FUNCTION_WITHOUT_TRANSITION("waitAsync"_s, atomicsFuncWaitAsync, static_cast<unsigned>(PropertyAttribute::DontEnum), 4, ImplementationVisibility::Public, AtomicsWaitAsyncIntrinsic);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+
+    if (Options::useStructs())
+        installAtomicsSync(vm, globalObject, this);
 }
 
 namespace {
@@ -388,6 +394,59 @@ EncodedJSValue atomicStore(JSGlobalObject* globalObject, VM& vm, JSValue base, J
 
 } // anonymous namespace
 
+// Atomics.load/store/exchange/compareExchange on a shared struct field or a SharedArray element. The JIT operations
+// call these too, because the DFG and FTL inline these four whatever the base is, and the typed array paths below
+// must not see a shared struct or a SharedArray. Empty if the base is neither.
+// A mutex or a condition is a shared struct with no fields: there is no such field, and the steps before that are the same.
+static std::optional<EncodedJSValue> sharedSyncAtomic(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue valueToStore, bool isWrite)
+{
+    VM& vm = globalObject->vm();
+    if (!atomicsMutexState(vm, base) && !atomicsConditionState(vm, base))
+        return std::nullopt;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!key.isString() && !key.isSymbol())
+        return throwVMTypeError(globalObject, scope, "The field of an Atomics operation on a shared struct must be a string or a symbol"_s);
+    if (isWrite && !canBeShared(vm, valueToStore))
+        return throwVMTypeError(globalObject, scope, "Only primitives, symbols, shared structs, SharedArrays, Atomics.Mutex and Atomics.Condition can be shared"_s);
+    return throwVMRangeError(globalObject, scope, "The shared struct has no such field"_s);
+}
+
+static std::optional<EncodedJSValue> sharedAtomicLoad(JSGlobalObject* globalObject, JSValue base, JSValue key)
+{
+    if (auto* sharedStruct = dynamicDowncast<JSSharedStruct>(base)) [[unlikely]]
+        return sharedStructAtomicLoad(globalObject, sharedStruct, key);
+    if (auto* sharedArray = dynamicDowncast<JSSharedArray>(base)) [[unlikely]]
+        return sharedArrayAtomicLoad(globalObject, sharedArray, key);
+    return sharedSyncAtomic(globalObject, base, key, jsUndefined(), false);
+}
+
+static std::optional<EncodedJSValue> sharedAtomicStore(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue value)
+{
+    if (auto* sharedStruct = dynamicDowncast<JSSharedStruct>(base)) [[unlikely]]
+        return sharedStructAtomicStore(globalObject, sharedStruct, key, value);
+    if (auto* sharedArray = dynamicDowncast<JSSharedArray>(base)) [[unlikely]]
+        return sharedArrayAtomicStore(globalObject, sharedArray, key, value);
+    return sharedSyncAtomic(globalObject, base, key, value, true);
+}
+
+static std::optional<EncodedJSValue> sharedAtomicExchange(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue value)
+{
+    if (auto* sharedStruct = dynamicDowncast<JSSharedStruct>(base)) [[unlikely]]
+        return sharedStructAtomicExchange(globalObject, sharedStruct, key, value);
+    if (auto* sharedArray = dynamicDowncast<JSSharedArray>(base)) [[unlikely]]
+        return sharedArrayAtomicExchange(globalObject, sharedArray, key, value);
+    return sharedSyncAtomic(globalObject, base, key, value, true);
+}
+
+static std::optional<EncodedJSValue> sharedAtomicCompareExchange(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue expected, JSValue replacement)
+{
+    if (auto* sharedStruct = dynamicDowncast<JSSharedStruct>(base)) [[unlikely]]
+        return sharedStructAtomicCompareExchange(globalObject, sharedStruct, key, expected, replacement);
+    if (auto* sharedArray = dynamicDowncast<JSSharedArray>(base)) [[unlikely]]
+        return sharedArrayAtomicCompareExchange(globalObject, sharedArray, key, expected, replacement);
+    return sharedSyncAtomic(globalObject, base, key, replacement, true);
+}
+
 JSC_DEFINE_HOST_FUNCTION(atomicsFuncAdd, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return atomicReadModifyWrite(globalObject, callFrame, AddFunc());
@@ -400,11 +459,15 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncAnd, (JSGlobalObject* globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(atomicsFuncCompareExchange, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    if (auto shared = sharedAtomicCompareExchange(globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2), callFrame->argument(3)))
+        return *shared;
     return atomicReadModifyWrite(globalObject, callFrame, CompareExchangeFunc());
 }
 
 JSC_DEFINE_HOST_FUNCTION(atomicsFuncExchange, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    if (auto shared = sharedAtomicExchange(globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2)))
+        return *shared;
     return atomicReadModifyWrite(globalObject, callFrame, ExchangeFunc());
 }
 
@@ -415,6 +478,8 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncIsLockFree, (JSGlobalObject* globalObject, C
 
 JSC_DEFINE_HOST_FUNCTION(atomicsFuncLoad, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    if (auto shared = sharedAtomicLoad(globalObject, callFrame->argument(0), callFrame->argument(1)))
+        return *shared;
     return atomicReadModifyWrite(globalObject, callFrame, LoadFunc());
 }
 
@@ -425,6 +490,8 @@ JSC_DEFINE_HOST_FUNCTION(atomicsFuncOr, (JSGlobalObject* globalObject, CallFrame
 
 JSC_DEFINE_HOST_FUNCTION(atomicsFuncStore, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    if (auto shared = sharedAtomicStore(globalObject, callFrame->argument(0), callFrame->argument(1), callFrame->argument(2)))
+        return *shared;
     return atomicStore(globalObject, globalObject->vm(), callFrame->argument(0), callFrame->argument(1), callFrame->argument(2));
 }
 
@@ -659,6 +726,8 @@ JSC_DEFINE_JIT_OPERATION(operationAtomicsCompareExchange, EncodedJSValue, (JSGlo
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto shared = sharedAtomicCompareExchange(globalObject, JSValue::decode(base), JSValue::decode(index), JSValue::decode(expected), JSValue::decode(newValue)))
+        OPERATION_RETURN(scope, *shared);
     JSValue args[] = {JSValue::decode(base), JSValue::decode(index), JSValue::decode(expected), JSValue::decode(newValue)};
     OPERATION_RETURN(scope, atomicReadModifyWrite(globalObject, vm, args, CompareExchangeFunc()));
 }
@@ -669,6 +738,8 @@ JSC_DEFINE_JIT_OPERATION(operationAtomicsExchange, EncodedJSValue, (JSGlobalObje
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto shared = sharedAtomicExchange(globalObject, JSValue::decode(base), JSValue::decode(index), JSValue::decode(operand)))
+        OPERATION_RETURN(scope, *shared);
     JSValue args[] = {JSValue::decode(base), JSValue::decode(index), JSValue::decode(operand)};
     OPERATION_RETURN(scope, atomicReadModifyWrite(globalObject, vm, args, ExchangeFunc()));
 }
@@ -688,6 +759,8 @@ JSC_DEFINE_JIT_OPERATION(operationAtomicsLoad, EncodedJSValue, (JSGlobalObject* 
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto shared = sharedAtomicLoad(globalObject, JSValue::decode(base), JSValue::decode(index)))
+        OPERATION_RETURN(scope, *shared);
     JSValue args[] = {JSValue::decode(base), JSValue::decode(index)};
     OPERATION_RETURN(scope, atomicReadModifyWrite(globalObject, vm, args, LoadFunc()));
 }
@@ -708,6 +781,8 @@ JSC_DEFINE_JIT_OPERATION(operationAtomicsStore, EncodedJSValue, (JSGlobalObject*
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto shared = sharedAtomicStore(globalObject, JSValue::decode(base), JSValue::decode(index), JSValue::decode(operand)))
+        OPERATION_RETURN(scope, *shared);
     OPERATION_RETURN(scope, atomicStore(globalObject, vm, JSValue::decode(base), JSValue::decode(index), JSValue::decode(operand)));
 }
 
