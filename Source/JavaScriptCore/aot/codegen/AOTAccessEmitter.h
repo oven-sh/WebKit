@@ -210,7 +210,7 @@ private:
     Pointer addressOfPlace(Integer place, Integer storage);
     Pointer propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     Pointer addressOfGlobalProperty(Integer place);
-    Pointer addressOfKeyedProperty(CellPointer object, Pointer addressOrPlace);
+    Pointer addressInGlobalObjectBehind(CellPointer proxy, Pointer place);
     TypedPointer globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss);
     bool lookVouchesForPropertyOfHeir(const ValueContext&) const;
     TypedPointer locationOfPropertyOfHeir(const ValueContext&, CellPointer object);
