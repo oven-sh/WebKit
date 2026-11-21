@@ -2326,6 +2326,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionICUVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUMinorVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionICUHeaderVersion);
 static JSC_DECLARE_HOST_FUNCTION(functionSetHostTimeZone);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionHostTimeZoneQuestions);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionOverrideDateNow);
 static JSC_DECLARE_HOST_FUNCTION(functionAssertEnabled);
 static JSC_DECLARE_HOST_FUNCTION(functionSecurityAssertEnabled);
@@ -4956,6 +4959,22 @@ JSC_DEFINE_HOST_FUNCTION(functionSetHostTimeZone, (JSGlobalObject* globalObject,
     return JSValue::encode(jsBoolean(WTF::setHostTimeZoneForTesting(tz)));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Usage: $vm.hostTimeZoneQuestions()
+// What JavaScriptCore has asked ICU about the host's time zone in this process: whether it asked for ICU's default
+// zone (icuDefault), and how often it made ICU look for the host's zone (hostLooks).
+JSC_DEFINE_HOST_FUNCTION(functionHostTimeZoneQuestions, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto questions = hostTimeZoneQuestionsForTesting();
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "icuDefault"_s), jsBoolean(questions.askedForICUDefaultTimeZone));
+    result->putDirect(vm, Identifier::fromString(vm, "hostLooks"_s), jsNumber(questions.looksForHostTimeZone));
+    return JSValue::encode(result);
+}
+#endif
+
 // Usage: $vm.overrideDateNow(819331200000)
 // Pins the current time this global object reports (Date.now(), new Date(), Date(), Intl,
 // Temporal.Now) to the given epoch milliseconds, the way an embedder's setSystemTime() does
@@ -6393,6 +6412,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "icuMinorVersion"_s, functionICUMinorVersion, 0);
     addFunction(vm, allowIfNotFuzz, "icuHeaderVersion"_s, functionICUHeaderVersion, 0);
     addFunction(vm, alwaysAllow, "setHostTimeZone"_s, functionSetHostTimeZone, 1);
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "hostTimeZoneQuestions"_s, functionHostTimeZoneQuestions, 0);
+#endif
     addFunction(vm, alwaysAllow, "overrideDateNow"_s, functionOverrideDateNow, 1);
 
     addFunction(vm, alwaysAllow, "assertEnabled"_s, functionAssertEnabled, 0);

@@ -35,6 +35,9 @@ namespace WTF {
 // host time zone might have changed.
 NODELETE WTF_EXPORT_PRIVATE uint64_t lastTimeZoneID();
 
+// What lastTimeZoneID() returns until the first timeZoneDidChange().
+inline constexpr uint64_t initialTimeZoneID = 1;
+
 // Bumps lastTimeZoneID(). Call after any time-zone change that the platform
 // notifier does not observe, such as a process-local override.
 NODELETE WTF_EXPORT_PRIVATE void timeZoneDidChange();

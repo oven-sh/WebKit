@@ -228,6 +228,15 @@ private:
     String m_timeZoneDSTDisplayNameCache;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// What JavaScriptCore has asked ICU about the host's time zone in this process.
+struct HostTimeZoneQuestions {
+    bool askedForICUDefaultTimeZone { false }; // ucal_getDefaultTimeZone
+    unsigned looksForHostTimeZone { 0 }; // ucal_getHostTimeZone
+};
+JS_EXPORT_PRIVATE HostTimeZoneQuestions hostTimeZoneQuestionsForTesting();
+#endif
+
 ALWAYS_INLINE bool isUTCEquivalent(StringView timeZone)
 {
     return timeZone == "Etc/UTC"_s || timeZone == "Etc/GMT"_s || timeZone == "GMT"_s;

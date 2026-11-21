@@ -112,6 +112,30 @@
           runComplexTest [], [], "TZ=Etc/Unknown", "--useDollarVM=1", "--useTemporal=1"
       end
 
+- path: complex/bun-host-time-zone-found-once.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=America/Los_Angeles", "--useDollarVM=1"
+      end
+
+- path: complex/bun-host-time-zone-asked-again-after-a-change.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=America/Los_Angeles", "--useDollarVM=1"
+      end
+
+- path: complex/bun-host-time-zone-change-before-the-first-need.js
+  cmd: |
+      if ($hostOS == "windows")
+          skip
+      else
+          runComplexTest [], [], "TZ=America/Los_Angeles", "--useDollarVM=1"
+      end
+
 - path: complex/for-in-clobberize.js
   cmd: runComplexTest [], [], nil, "--destroy-vm"
 

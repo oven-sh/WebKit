@@ -32,7 +32,7 @@
 
 namespace WTF {
 
-static std::atomic<uint64_t> g_lastTimeZoneID { 1 };
+static std::atomic<uint64_t> g_lastTimeZoneID { initialTimeZoneID };
 
 uint64_t lastTimeZoneID()
 {

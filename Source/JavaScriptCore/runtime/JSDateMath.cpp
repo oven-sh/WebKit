@@ -516,6 +516,38 @@ struct CachedHostTimeZone {
     uint64_t timeZoneID { 0 };
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+static HostTimeZoneQuestions hostTimeZoneQuestions WTF_GUARDED_BY_LOCK(timeZoneCacheLock);
+
+// ICU looks for the host's time zone in ucal_getHostTimeZone, and once by itself, the first time it needs its default
+// zone: for every calendar and date format it makes. With TZ unset and /etc/localtime a regular file, a look compares
+// that file with the files under /usr/share/zoneinfo. No lock of ICU guards the buffers of a look, so two at once, one
+// from here and ICU's own on another thread, can leave the process with the wrong zone.
+//
+// So the first need of the host's zone asks for ICU's default zone: ICU looks once, for itself and for JavaScriptCore,
+// and has finished before JavaScriptCore ever looks. After that ICU never looks, and JavaScriptCore looks only when a
+// time zone change has been notified, under timeZoneCacheLock.
+static UErrorCode hostTimeZoneID(Vector<char16_t, 32>& timeZoneID, uint64_t currentID) WTF_REQUIRES_LOCK(timeZoneCacheLock)
+{
+    if (!std::exchange(hostTimeZoneQuestions.askedForICUDefaultTimeZone, true)) {
+        auto status = callBufferProducingFunction(ucal_getDefaultTimeZone, timeZoneID);
+        // ICU found this zone now, or when it first needed it. No change has been notified since the process began,
+        // so it is taken for the host's zone. After a notification it is not: ICU can have looked before that.
+        // An ICU that has no default zone to give is asked for the host's zone as before.
+        if (U_SUCCESS(status) && currentID == WTF::initialTimeZoneID)
+            return status;
+    }
+    ++hostTimeZoneQuestions.looksForHostTimeZone;
+    return callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
+}
+
+HostTimeZoneQuestions hostTimeZoneQuestionsForTesting()
+{
+    Locker locker { timeZoneCacheLock };
+    return hostTimeZoneQuestions;
+}
+#endif
+
 static TimeZone retrieveTimeZoneInformation()
 {
     Locker locker { timeZoneCacheLock };
@@ -533,7 +565,11 @@ static TimeZone retrieveTimeZoneInformation()
         TimeZone canonical;
         UErrorCode status = U_ZERO_ERROR;
         if (timeZoneID.isEmpty()) {
+#if USE(BUN_JSC_ADDITIONS)
+            status = hostTimeZoneID(timeZoneID, currentID);
+#else
             status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
+#endif
             ASSERT_UNUSED(status, U_SUCCESS(status));
         }
         if (U_SUCCESS(status)) {
