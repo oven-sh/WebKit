@@ -48,6 +48,12 @@ JSGlobalObjectDebuggerAgent::JSGlobalObjectDebuggerAgent(JSAgentContext& context
 
 JSGlobalObjectDebuggerAgent::~JSGlobalObjectDebuggerAgent() = default;
 
+void JSGlobalObjectDebuggerAgent::discardAgent()
+{
+    // The registry destroys the console agent before this agent.
+    m_consoleAgent = nullptr;
+}
+
 void JSGlobalObjectDebuggerAgent::internalEnable()
 {
     InspectorDebuggerAgent::internalEnable();
