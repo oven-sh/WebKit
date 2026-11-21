@@ -76,6 +76,11 @@ const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
 // requirement silently or gave up cross-language LTO because the matching variant did not exist. A consumer that wants
 // a higher floor for its own code can still set one, it just does not get it inside JSC.
+//
+// bun has to name the same -march and -mtune (cpuTargetFlags in its scripts/build/flags.ts): LLVM 23 for AArch64 inlines
+// no function into one with another tune CPU, so LTO would inline nothing between these libraries and bun. No -mtune
+// where _FORTIFY_SOURCE is on (HARDENING, and musl, whose clang turns it on): clang emits its copies of the always-inline
+// wrappers (memcpy.inline, ...) without a tune CPU. Out of line, a wrapper cannot see the size of the destination.
 const NEHALEM = "-march=nehalem";
 const ARMV8 = "-march=armv8-a+crc";
 
@@ -106,8 +111,7 @@ const variants = {
   "coverage-aot": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage-aot": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
   // "aot", "lto" and "lto-aot" with ICU and WebKit compiled with HARDENING, on arm64 also with SIGNED_RETURN_ADDRESSES,
-  // and nothing else changed but for arm64's -mtune (see MARCH_FLAG of Linux). Only what ships has a twin without the
-  // compiler.
+  // and nothing else changed. Only what ships has a twin without the compiler.
   "hardened-aot": { buildType: "Release", mimalloc: true, hardened: true },
   "lto-hardened": { buildType: "Release", mimalloc: true, lto: true, hardened: true, aot: false },
   "lto-hardened-aot": { buildType: "Release", mimalloc: true, lto: true, hardened: true },
@@ -174,14 +178,7 @@ const platforms = [
       ENABLE_WEBASSEMBLY: v.webAssembly === false ? "OFF" : "ON",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
-      //
-      // No -mtune with HARDENING: clang emits its copies of glibc's always-inline _FORTIFY_SOURCE wrappers (memcpy.inline,
-      // ...) without a tune CPU, and LLVM 23 for AArch64 inlines no such function into one that has one. Out of line, a
-      // wrapper cannot see the size of the destination and calls the plain function: nothing is checked.
-      MARCH_FLAG:
-        arch === "arm64"
-          ? `--target=aarch64-unknown-linux-gnu ${ARMV8}${v.hardened ? "" : " -mtune=ampere1"}`
-          : `--target=x86_64-unknown-linux-gnu ${NEHALEM}`,
+      MARCH_FLAG: arch === "arm64" ? `--target=aarch64-unknown-linux-gnu ${ARMV8}` : `--target=x86_64-unknown-linux-gnu ${NEHALEM}`,
     }),
   },
   {
@@ -196,7 +193,7 @@ const platforms = [
     args: arch => ({
       ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
-      MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
+      MARCH_FLAG: arch === "arm64" ? ARMV8 : NEHALEM,
     }),
   },
   {
@@ -225,17 +222,11 @@ const platforms = [
     label: arch => `bun-webkit-windows-${arch}`,
     dockerfile: "Dockerfile.windows",
     packageOS: "windows",
-    // There is no asan lane for arm64, and no lto one: bun ships its plain release build.
-    lanes: {
-      // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
-      // thunk, DLL) comes from the compiler-rt-windows-* release tag.
-      amd64: ["release", "aot", "lto", "lto-aot", "debug-aot", "asan-aot"],
-      // No arm64 lto: LLVM's CodeView emitter (still true of 23.1) has no register mapping for ARM64 NEON quad-register tuples
-      // ("LLVM ERROR: unknown codeview register Q22_Q23_Q24_Q25") and the LTO codegen allocates values into them.
-      arm64: ["release", "aot", "debug-aot"],
-    },
+    // ASAN is x64 only: LLVM ships no Windows ARM64 ASAN runtime. The sanitizer runtime (import lib, /MT runtime
+    // thunk, DLL) comes from the compiler-rt-windows-* release tag.
+    lanes: { amd64: [...NO_ASAN, "asan-aot"], arm64: NO_ASAN },
     lto: LTO_WINDOWS,
-    bunTests: arch => [arch === "arm64" ? "release" : "lto"],
+    bunTests: () => ["lto"],
     image: () => "windows",
     args: (arch, v) => ({
       ...ICU,
@@ -258,7 +249,7 @@ const platforms = [
       ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       FREEBSD_VERSION: "14.4",
-      MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
+      MARCH_FLAG: arch === "arm64" ? ARMV8 : NEHALEM,
     }),
   },
   {
