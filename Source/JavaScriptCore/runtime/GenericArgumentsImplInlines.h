@@ -101,12 +101,34 @@ void GenericArgumentsImpl<Type>::getOwnPropertyNames(JSObject* object, JSGlobalO
     Type* thisObject = uncheckedDowncast<Type>(object);
 
     if (array.includeStringProperties()) {
-        for (unsigned i = 0; i < thisObject->internalLength(); ++i) {
-            if (!thisObject->isMappedArgument(i))
-                continue;
-            array.add(Identifier::from(vm, i));
+        if (!hasIndexedProperties(thisObject->indexingType())) [[likely]] {
+            // With no indexed storage, every own index is a mapped argument with the default attributes.
+            for (unsigned i = 0; i < thisObject->internalLength(); ++i) {
+                if (!thisObject->isMappedArgument(i))
+                    continue;
+                array.add(Identifier::from(vm, i));
+            }
+        } else {
+            // An index below the argument count can be in the mapping, in the indexed storage, or in both.
+            // Decide each one as getOwnPropertySlotByIndex() does, so that the indices are in ascending order
+            // per step 2 of https://tc39.es/ecma262/#sec-ordinaryownpropertykeys and agree with their descriptors.
+            // The storage is asked only where its answer can change the list.
+            for (unsigned i = 0; i < thisObject->internalLength(); ++i) {
+                bool isMapped = thisObject->isMappedArgument(i);
+                if (!isMapped || (mode == DontEnumPropertiesMode::Exclude && thisObject->isModifiedArgumentDescriptor(i))) {
+                    PropertySlot slot(thisObject, PropertySlot::InternalMethodType::GetOwnProperty);
+                    if (!Base::getOwnPropertySlotByIndex(thisObject, globalObject, i, slot) && !isMapped)
+                        continue;
+                    if (mode == DontEnumPropertiesMode::Exclude && (slot.attributes() & PropertyAttribute::DontEnum))
+                        continue;
+                }
+                array.add(i);
+            }
+            // No index is stored at or past the length of the storage: JSObject::getOwnPropertySlotByIndex() relies
+            // on that too. add() drops an index that is listed above.
+            if (thisObject->getArrayLength() > thisObject->internalLength())
+                thisObject->getOwnIndexedPropertyNames(globalObject, array, mode);
         }
-        thisObject->getOwnIndexedPropertyNames(globalObject, array, mode);
     }
 
     if (mode == DontEnumPropertiesMode::Include && !thisObject->overrodeThings()) {
