@@ -339,7 +339,7 @@ RUN mkdir -p /icu-build && cd /icu-build && \
       ac_cv_c_compiler_gnu=yes ac_cv_cxx_compiler_gnu=yes && \
     sed -i 's/-std=c++11/-std=c++17/' icudefs.mk && \
     sed -i -E "s|^C(XX)?FLAGS = .*|& ${LTO_FLAG//\/clang:/}|" icudefs.mk && \
-    echo 'udata.ao: CXXFLAGS += -fno-lto' >> common/Makefile && \
+    echo 'udata.ao: CXXFLAGS += -fno-lto' >> icudefs.mk && \
     make -j$(nproc) THREADSCPPFLAGS= THREADSCFLAGS= THREADSCXXFLAGS= && \
     test -f lib/libsicuuc.a && test -f lib/libsicuin.a && test -f lib/libsicudt.a && \
     llvm-nm-${LLVM_VERSION} common/udata.ao | grep '\.refptr\.bun_icu_maybe_decompress' && \
