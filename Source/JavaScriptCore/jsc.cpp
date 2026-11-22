@@ -517,6 +517,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionLoad);
 static JSC_DECLARE_HOST_FUNCTION(functionLoadString);
 static JSC_DECLARE_HOST_FUNCTION(functionReadFile);
 static JSC_DECLARE_HOST_FUNCTION(functionWriteFile);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionSetModuleLoaderFetchHook);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionCheckSyntax);
 static JSC_DECLARE_HOST_FUNCTION(functionOpenFile);
 static JSC_DECLARE_HOST_FUNCTION(functionReadline);
@@ -887,6 +890,9 @@ private:
         addFunction(vm, "readFile"_s, functionReadFile, 2);
         addFunction(vm, "read"_s, functionReadFile, 2);
         addFunction(vm, "writeFile"_s, functionWriteFile, 2);
+#if USE(BUN_JSC_ADDITIONS)
+        addFunction(vm, "setModuleLoaderFetchHook"_s, functionSetModuleLoaderFetchHook, 1);
+#endif
         addFunction(vm, "write"_s, functionWriteFile, 2);
         addFunction(vm, "checkSyntax"_s, functionCheckSyntax, 1);
         addFunction(vm, "sleepSeconds"_s, functionSleepSeconds, 1);
@@ -1677,6 +1683,28 @@ static inline SourceCode jscSource(const Vector& utf8, const SourceOrigin& sourc
     return jscSource(str, sourceOrigin, filename);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// setModuleLoaderFetchHook(fn): see functionSetModuleLoaderFetchHook().
+class ModuleLoaderFetchHook final : public SideDataRepository::SideData {
+    WTF_DEPRECATED_MAKE_FAST_ALLOCATED(ModuleLoaderFetchHook);
+public:
+    Strong<JSObject> function;
+    // The objects that the function returned for modules without text, each under the number of its fetch.
+    HashMap<uint64_t, Strong<JSObject>> exportsObjects;
+    uint64_t exportsObjectCount { 0 };
+};
+static char moduleLoaderFetchHookKey;
+// Whether a VM of the process has been given a function. A fetch looks for the function of its VM only then.
+static std::atomic<bool> moduleLoaderFetchHookWasSet;
+
+static ModuleLoaderFetchHook& moduleLoaderFetchHook(VM& vm)
+{
+    return vm.ensureSideData<ModuleLoaderFetchHook>(&moduleLoaderFetchHookKey, [] {
+        return makeUnique<ModuleLoaderFetchHook>();
+    });
+}
+#endif
+
 template<typename Vector>
 static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
 {
@@ -1744,6 +1772,56 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
 
     URL moduleURL({ }, moduleKey);
     ASSERT(moduleURL.protocolIsFile());
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun: setModuleLoaderFetchHook(). What the function throws is thrown by this hook, as a host's fetch hook may.
+    if (moduleLoaderFetchHookWasSet.load(std::memory_order_relaxed) && (!attributes || attributes->type() == ScriptFetchParameters::Type::JavaScript)) [[unlikely]] {
+        if (JSObject* hook = moduleLoaderFetchHook(vm).function.get()) {
+            MarkedArgumentBuffer arguments;
+            arguments.append(key);
+            JSValue text = call(globalObject, hook, arguments, "The fetch hook of the module loader is not a function"_s);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (text.isString()) {
+                String source = asString(text)->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, nullptr);
+                auto sourceCode = JSSourceCode::create(vm, jscSource(source, SourceOrigin { moduleURL }, moduleURL.fileSystemPath(), TextPosition(), SourceProviderSourceType::Module));
+                scope.release();
+                promise->resolve(globalObject, vm, sourceCode);
+                return promise;
+            }
+            if (text.isObject()) {
+                // A module without text, whose exports are read when the graph that imports it is about to be linked
+                // (SyntheticSourceProvider::createDeferred(), AbstractModuleRecord::generateDeferredSyntheticModules()).
+                auto& fetchHook = moduleLoaderFetchHook(vm);
+                uint64_t exportsObject = ++fetchHook.exportsObjectCount;
+                fetchHook.exportsObjects.set(exportsObject, Strong<JSObject> { vm, asObject(text) });
+                Ref provider = SyntheticSourceProvider::createDeferred([exportsObject](JSGlobalObject* globalObject, Identifier, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues) {
+                    VM& vm = globalObject->vm();
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    JSObject* exports = moduleLoaderFetchHook(vm).exportsObjects.get(exportsObject).get();
+                    if (!exports) {
+                        throwTypeError(globalObject, scope, "The fetch hook of the module loader was taken away"_s);
+                        return;
+                    }
+                    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+                    exports->methodTable()->getOwnPropertyNames(exports, globalObject, names, DontEnumPropertiesMode::Exclude);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    for (auto& name : names) {
+                        JSValue value = exports->get(globalObject, name);
+                        RETURN_IF_EXCEPTION(scope, void());
+                        exportNames.append(name);
+                        exportValues.append(value);
+                    }
+                }, SourceOrigin { moduleURL }, moduleKey);
+                auto sourceCode = JSSourceCode::create(vm, SourceCode { WTF::move(provider) });
+                scope.release();
+                promise->resolve(globalObject, vm, sourceCode);
+                return promise;
+            }
+        }
+    }
+#endif
+
     // Strip the URI from our key so Errors print canonical system paths.
     moduleKey = moduleURL.fileSystemPath();
 
@@ -2753,6 +2831,33 @@ JSC_DEFINE_HOST_FUNCTION(functionReadFile, (JSGlobalObject* globalObject, CallFr
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+
+#if USE(BUN_JSC_ADDITIONS)
+// Bun: setModuleLoaderFetchHook(fn). Before the shell reads the file of a JavaScript module, it calls fn(key). If fn
+// returns a string, that is the text of the module and no file is read. If fn returns an object, the module has no
+// text: its exports are the own enumerable properties of the object, which the shell reads when the graph that imports
+// the module is about to be linked (a deferred synthetic module: SyntheticSourceProvider::createDeferred()).
+// Otherwise the file is read. What fn throws is thrown by the fetch hook of the loader. A test uses it to make modules
+// without files, and to run script inside the fetch step of a load. Script that loads through the loader of that
+// load, or that runs its jobs, can finish another request of the module that imports: JSModuleLoader::innerModuleLoading()
+// has assertions against that. setModuleLoaderFetchHook() takes the function away, and the objects with it.
+JSC_DEFINE_HOST_FUNCTION(functionSetModuleLoaderFetchHook, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue function = callFrame->argument(0);
+    if (function.isUndefined()) {
+        moduleLoaderFetchHook(vm).function.clear();
+        moduleLoaderFetchHook(vm).exportsObjects.clear();
+        return JSValue::encode(jsUndefined());
+    }
+    if (!function.isCallable())
+        return throwVMTypeError(globalObject, scope, "expected a function"_s);
+    moduleLoaderFetchHook(vm).function.set(vm, asObject(function));
+    moduleLoaderFetchHookWasSet.store(true, std::memory_order_relaxed);
+    return JSValue::encode(jsUndefined());
+}
+#endif
 
 JSC_DEFINE_HOST_FUNCTION(functionWriteFile, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
