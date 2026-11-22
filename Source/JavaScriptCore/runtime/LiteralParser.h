@@ -163,7 +163,7 @@ public:
         VM& vm = getVM(m_globalObject);
         JSValue result = parseRecursivelyEntry(vm);
         if (m_lexer.currentToken()->type != TokEnd)
-            return JSValue();
+            return didFailToParse();
         return result;
     }
 
@@ -174,7 +174,7 @@ public:
         m_lexer.next();
         JSValue result = parse(getVM(m_globalObject), StartParseExpression, sourceRanges);
         if (m_lexer.currentToken()->type != TokEnd)
-            return JSValue();
+            return didFailToParse();
         return result;
     }
 
@@ -198,11 +198,11 @@ public:
         ASSERT(m_mode == StrictJSON);
         m_lexer.next();
         JSValue result = parsePrimitiveValue(getVM(m_globalObject));
-        if (result) {
-            if (m_lexer.currentToken()->type != TokEnd) {
-                m_parseErrorMessage = "Unexpected content at end of JSON literal"_s;
-                return JSValue();
-            }
+        if (!result)
+            return didFailToParse();
+        if (m_lexer.currentToken()->type != TokEnd) {
+            m_parseErrorMessage = "Unexpected content at end of JSON literal"_s;
+            return JSValue();
         }
         return result;
     }
@@ -331,7 +331,7 @@ private:
         ParserMode m_mode;
         const CharType* m_ptr;
         const CharType* m_end;
-        StringBuilder m_builder;
+        StringBuilder m_builder { OverflowPolicy::RecordOverflow };
         static constexpr size_t maxLengthDecodedInPlace = 256;
         struct Nothing { };
         NO_UNIQUE_ADDRESS std::conditional_t<isUTF8, std::array<char16_t, maxLengthDecodedInPlace>, Nothing> m_decodedCharacters;
@@ -366,6 +366,7 @@ private:
     ALWAYS_INLINE Identifier makeIdentifier(VM&, typename Lexer::LiteralParserTokenPtr);
     ALWAYS_INLINE JSString* tryMakeJSString(VM&, JSONCache&);
 
+    JSValue didFailToParse();
     void setErrorMessageForToken(TokenType);
 
     JSGlobalObject* const m_globalObject;

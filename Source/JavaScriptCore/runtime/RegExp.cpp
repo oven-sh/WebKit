@@ -545,11 +545,17 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
         return m_regExpJITCode->execute(subject, startOffset, offsetVector, &regExpContext).start;
     };
 
+    // To narrow a subject costs its length, and the match may be decided after one unit.
+    constexpr unsigned maxLengthNarrowed = 1024;
+    const bool isTooLongToNarrow = !s.is8Bit() && !m_regExpJITCode->has16BitCode() && s.length() > maxLengthNarrowed;
+
     int result;
     if (s.is8Bit())
         result = execute(s.span8());
     else if (m_regExpJITCode->has16BitCode())
         result = execute(s.span16());
+    else if (isTooLongToNarrow)
+        result = static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure);
     else {
         RELEASE_ASSERT(imageRecord()->hasCodeFor8BitSubjectsAlone);
         std::span<const char16_t> wide = s.span16();
@@ -566,7 +572,7 @@ int RegExp::matchWithImageCode(JSGlobalObject* nullOrGlobalObject, VM& vm, Strin
         return result;
 
     const AOT::ImageRegExp* record = imageRecord();
-    bool isLongSearch = record && record->handsLongSearchesOver;
+    bool isLongSearch = isTooLongToNarrow || (record && record->handsLongSearchesOver);
     byteCodeCompileIfNecessary(&vm, isLongSearch ? BytecodeIsFor::LongSearch : BytecodeIsFor::Interpreter);
     if (m_state == ParseError) {
         if (nullOrGlobalObject) {

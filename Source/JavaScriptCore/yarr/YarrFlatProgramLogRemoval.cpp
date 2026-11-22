@@ -64,7 +64,11 @@ static bool propagateStackState(const FlatProgram& program, unsigned index, Stac
     switch (op.kind) {
     case Kind::Jump:
     case Kind::LoopBack:
+        join(atOp[op.target], state);
+        break;
     case Kind::LoopBackUnlessEmpty:
+        if (op.argument)
+            join(atOp[next], state);
         join(atOp[op.target], state);
         break;
     case Kind::JumpIfBelow:

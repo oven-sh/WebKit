@@ -237,6 +237,8 @@ void AOTHeaps::appendHeapsWrittenByCollection(HeapList& list) const
     list.append(&collectorState);
     list.append(&weakTableStorage);
     list.append(&weakTableEntries);
+    // The end of a collection formats the stacks of errors, which resolves the ropes that name their frames.
+    list.append(&JSRopeString_fiber0);
 }
 
 } } // namespace JSC::AOT

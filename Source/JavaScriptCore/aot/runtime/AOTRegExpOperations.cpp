@@ -654,7 +654,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSCell*, (Instance* instance, JS
         if (RegExp* regExp = vm.aotState().regExpLiterals->regExpFor(vm, *found.record, OptionSet<Yarr::Flags>::fromRaw(flags)); regExp->isValid()) [[likely]]
             OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), regExp));
     }
-    if (found.created)
+    if (found.created && found.created->isValid())
         OPERATION_RETURN(scope, RegExpObject::create(vm, WTF::opaque(globalObject->regExpStructure()), found.created));
     auto pattern = text->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
@@ -959,7 +959,8 @@ static JSString* replaceEveryMatchWithTemplate(JSGlobalObject* globalObject, VM&
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     StringReplaceTemplateParts parts;
-    parseReplacementTemplate(parts, replacementText, regExp, dollar);
+    if (!tryParseReplacementTemplate(parts, replacementText, regExp, dollar)) [[unlikely]]
+        OUT_OF_MEMORY(globalObject, scope);
 
     MatchResult first = match;
     StringBuilder firstReplacement(OverflowPolicy::RecordOverflow);
@@ -1097,8 +1098,9 @@ static size_t countOccurrences(std::span<const Latin1Character> source, std::spa
 
 static size_t lengthOfEveryOccurrence(VM& vm, StringView source, StringView text, size_t start, size_t& startOfLast)
 {
+    constexpr unsigned maxLengthComparedAtEveryPlace = 32;
     startOfLast = start;
-    if (source.is8Bit() && text.is8Bit() && cannotOverlapItself(text.span8())) {
+    if (source.is8Bit() && text.is8Bit() && text.length() <= maxLengthComparedAtEveryPlace && cannotOverlapItself(text.span8())) {
         startOfLast = source.reverseFind(text);
         return countOccurrences(source.span8().subspan(start), text.span8()) * text.length();
     }

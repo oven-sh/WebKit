@@ -25,7 +25,7 @@ runtime GetByValOfPlainList : EncodedJSValue (EncodedJSValue list, EncodedJSValu
 runtime MovedStaticField : EncodedJSValue (JSCell* classObject, uint32_t key) ; reads(ShapeWords, NamedProperties)
 runtime OwnNamedPropertyAddress : uint64_t (EncodedJSValue base, uint32_t key, uint32_t fitsFieldTypes, SiteCache cache) ; reads(ShapeWords, OrderWords, NamedProperties)
 runtime OwnValueUnderKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property) ; reads(ShapeWords, NamedProperties) ; leaf
-runtime OwnPropertyAddress : uint64_t (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t takesFunctions) ; reads(ShapeWords, OrderWords, NamedProperties) ; leaf
+runtime OwnPropertyAddress : uint64_t (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields, uint32_t fitsFieldTypes, uint32_t holders) ; reads(ShapeWords, OrderWords, NamedProperties) ; leaf
 runtime OwnValueByKeyOrEmpty : EncodedJSValue (EncodedJSValue base, EncodedJSValue property, uint32_t findsOnlyFields) ; reads(ShapeWords, OrderWords, NamedProperties, ObjectFields) ; leaf
 runtime BarrierAfterKeyedStore : void (EncodedJSValue base) ; reads(NamedProperties) writes(RuntimeState) ; leaf
 runtime HasDefaultHasInstance : size_t (EncodedJSValue constructor) ; reads(NamedProperties, PrototypeLinks) ; leaf

@@ -1295,7 +1295,12 @@ struct Machine {
     {
         if constexpr (sizeof(CharType) > 1) {
             if (character > 0xff) [[unlikely]] {
-                enclosure.hasMetSurrogate |= U16_IS_SURROGATE(character);
+                if (U16_IS_SURROGATE(character)) [[unlikely]] {
+                    enclosure.hasMetSurrogate = true;
+                    // The match is given up, so a run has no reason to go on.
+                    if (!isFull && program.decodesSurrogatePairs)
+                        return false;
+                }
                 return enclosure.neighbors.contains(wideRanges, set, character);
             }
         }
@@ -2184,7 +2189,7 @@ struct Machine {
     ALWAYS_INLINE Step runLoopBackUnlessEmpty()
     {
         if (registers()[op->registerIndex] == position)
-            return Step::Failed;
+            return nextIf(op->argument);
         return runLoopBack();
     }
 
@@ -2522,6 +2527,10 @@ struct Machine {
     ALWAYS_INLINE Step backtrack()
     {
         for (;;) {
+            if constexpr (!isFull && sizeof(CharType) > 1) {
+                if (enclosure.hasMetSurrogate && program.decodesSurrogatePairs) [[unlikely]]
+                    return Step::NoMatch;
+            }
             if (top == bottom) {
                 if (program.triesOnlyOnce || matchStart >= length)
                     return Step::NoMatch;
@@ -2731,6 +2740,58 @@ static ALWAYS_INLINE JSRegExpResult matchWholeTexts(const FlatProgram::WholeText
     return JSRegExpResult::NoMatch;
 }
 
+// A guess at whether the attempt gets anywhere.
+template<typename CharType>
+static bool firstStepTakes(const FlatProgram& program, CharType unit, unsigned start)
+{
+    using Kind = FlatOp::Kind;
+    auto isMember = [&](const FlatOp& op) {
+        const CharacterSetBits& members = program.characterSets[op.set];
+        return unit > 0xff ? wideRangesContain(program.wideRanges.span(), members, unit) : contains(members, program.wideRanges.span(), static_cast<Latin1Character>(unit));
+    };
+    constexpr size_t mostOpsAsked = 8;
+    for (const FlatOp& op : program.ops.span().first(std::min(mostOpsAsked, program.ops.size()))) {
+        switch (op.kind) {
+        case Kind::InputStart:
+            if (start)
+                return false;
+            break;
+        case Kind::Choice:
+        case Kind::ChoiceByFirst:
+        case Kind::GreedyLoopChoice:
+        case Kind::NeedsInput:
+        case Kind::NeedsInputElseJump:
+        case Kind::CaptureStart:
+        case Kind::LoggedCaptureStart:
+        case Kind::ClearCaptures:
+        case Kind::LoggedClearCaptures:
+            break;
+        case Kind::Character:
+            return unit == op.argument;
+        case Kind::Text:
+            return unit == program.text[op.argument];
+        case Kind::CasedText:
+            return (unit | program.text[op.argument + op.target]) == program.text[op.argument];
+        case Kind::Set:
+        case Kind::SetCount:
+            return isMember(op);
+        case Kind::GreedyRun:
+        case Kind::LazyRun:
+        case Kind::GreedyRunBeforeKnownCharacters:
+        case Kind::LazyRunBeforeKnownCharacters:
+        case Kind::PossessiveRun:
+        case Kind::CapturedRun:
+        case Kind::LoggedCapturedRun:
+            if (isMember(op))
+                return true;
+            break;
+        default:
+            return false;
+        }
+    }
+    return false;
+}
+
 // Whatever is not the common case.
 template<typename CharType>
 static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, std::span<const CharType> input, unsigned start, unsigned* output, FlatMatchPolicy policy)
@@ -2745,7 +2806,8 @@ static NEVER_INLINE JSRegExpResult matchOutOfLine(const FlatProgram& program, st
     if (program.needsFullMachine)
         return matchByPolicy<CharType, true>(program, input, start, output, policy);
     if (program.textOfEveryMatch && policy == FlatMatchPolicy::HandsOverEarly) {
-        if (input.size() >= start + FlatProgram::leastLengthLookedThroughFirst)
+        size_t lengthLeft = input.size() - start;
+        if (lengthLeft >= FlatProgram::leastLengthLookedThroughFirst && lengthLeft <= FlatProgram::greatestLengthLookedThroughFirst && firstStepTakes(program, input[start], start))
             return matchIfSubjectHoldsText(program, input, start, output);
         return matchForgetting(program, input.data(), input.size(), start, output, FlatProgram::stepsBeforeLookingForText);
     }

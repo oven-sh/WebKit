@@ -4,6 +4,7 @@
  */
 
 v(RopeCharacters, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), RopeCharacters)
+v(RopeCharactersAroundRange, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), RopeCharactersAroundRange)
 v(SubstringCharacters, CalledByCode, (), NoAxis, 0, 0, AllISAs, NoISA, NoChoice, Never, Leaf, ClobbersOnlyScratch, reads(StringStorage), SubstringCharacters)
 v(FlattenString, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage), FlattenString)
 v(StringCodeUnitAt, CalledByCode, (), SlowPathRecurs, 0, 0, AllISAs, NoISA, NoChoice, Never, MayCall, ClobbersOnlyScratch, reads(StringStorage) | writes(StringStorage), StringCodeUnitAt)

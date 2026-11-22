@@ -144,7 +144,15 @@ static std::optional<HeldRegExp> findRegExpInBody(const Walker& walker, Function
             return held ? std::optional<HeldRegExp>(*held) : std::nullopt;
         }
         std::optional<Walker::CallOfCopy> copied = walker.callOfCopy(framesOutward);
-        return copied ? findRegExpInBody(walker, copied->caller, *copied->index, findWrittenArgument(copied->index->value(copied->call), holder, *position), framesOutward + 1) : std::nullopt;
+        ValueID written = copied ? findWrittenArgument(copied->index->value(copied->call), holder, *position) : ValueID();
+        if (!written)
+            return std::nullopt;
+        // What apply(), call() or a bound function passes on is not what is written at the same place of the call.
+        Reference arrived = framesOutward ? walker.referenceInCaller(operand, framesOutward - 1) : walker.referenceBoundTo(operand);
+        Reference handed = walker.referenceInCaller(written, framesOutward);
+        if (!arrived || !handed || !arrived.isValue() || !handed.isValue() || underlyingCellOf(walker.code(), arrived.id()) != underlyingCellOf(walker.code(), handed.id()))
+            return std::nullopt;
+        return findRegExpInBody(walker, copied->caller, *copied->index, written, framesOutward + 1);
     }
     if (framesOutward && index.opcodeOf(operand) == Opcode::NewRegExp) {
         auto made = index.value(operand).as<Opcode::NewRegExp>();

@@ -1,0 +1,83 @@
+# The analysis of a long pattern does not take time quadratic in its length.
+# -- source: main.js
+# const n = 250000 + (Math.random() > 2);
+# print(new RegExp("(a)" + "b*\\1".repeat(n)).test("xyzq"));
+# print(new RegExp("(a)" + "(?=\\1)".repeat(n / 2)).test("xyzq"));
+# print(new RegExp("(?:" + "x*?|".repeat(n / 2) + ")" + "(?:)".repeat(n / 2) + "y").test("xyzq"));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: false
+# CHECK-NEXT: false
+# CHECK-NEXT: true
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Integer integer=250000 @33
+    v1 = Builtin builtin=Math @43
+    v2 = PropGet v1 key="random" @43
+    v3 = Convert v2 declared={type=builtin(MathRandom) flags=[IsExpected]} @43
+    v4 = Call v3, v1 calleeKey="random" calleeName="Math.random" @48
+    v5 = Integer integer=2 @59
+    v6 = Greater v4, v5 @43
+    v7 = Add v0, v6 @33
+    v8 = Builtin builtin=GlobalThis @63
+    v9 = PropGet v8 key="print" [isFreeName] @63
+    v10 = Builtin builtin=RegExp @73
+    v11 = String string="(a)" @80
+    v12 = String string="b*\\1" @88
+    v13 = PropGet v12 key="repeat" @88
+    v14 = Call v13, v12, v7 calleeKey="repeat" calleeName="repeat" @96
+    v15 = Add v11, v14 @80
+    v16 = Construct v10, -, v15 calleeName="RegExp" @73 @69
+    v17 = PropGet v16 key="test" @105
+    v18 = String string="xyzq" @112
+    v19 = Call v17, v16, v18 calleeKey="test" calleeName="test" @107
+    v20 = Call v9, -, v19 calleeName="print" @63
+    v21 = Builtin builtin=GlobalThis @122
+    v22 = PropGet v21 key="print" [isFreeName] @122
+    v23 = Builtin builtin=RegExp @132
+    v24 = String string="(a)" @139
+    v25 = String string="(?=\\1)" @147
+    v26 = PropGet v25 key="repeat" @147
+    v27 = Integer integer=2 @168
+    v28 = Div v7, v27 @164
+    v29 = Call v26, v25, v28 calleeKey="repeat" calleeName="repeat" @157
+    v30 = Add v24, v29 @139
+    v31 = Construct v23, -, v30 calleeName="RegExp" @132 @128
+    v32 = PropGet v31 key="test" @170
+    v33 = String string="xyzq" @177
+    v34 = Call v32, v31, v33 calleeKey="test" calleeName="test" @172
+    v35 = Call v22, -, v34 calleeName="print" @122
+    v36 = Builtin builtin=GlobalThis @187
+    v37 = PropGet v36 key="print" [isFreeName] @187
+    v38 = Builtin builtin=RegExp @197
+    v39 = String string="(?:" @204
+    v40 = String string="x*?|" @212
+    v41 = PropGet v40 key="repeat" @212
+    v42 = Integer integer=2 @230
+    v43 = Div v7, v42 @226
+    v44 = Call v41, v40, v43 calleeKey="repeat" calleeName="repeat" @219
+    v45 = Add v39, v44 @204
+    v46 = String string=")" @235
+    v47 = Add v45, v46 @204
+    v48 = String string="(?:)" @241
+    v49 = PropGet v48 key="repeat" @241
+    v50 = Integer integer=2 @259
+    v51 = Div v7, v50 @255
+    v52 = Call v49, v48, v51 calleeKey="repeat" calleeName="repeat" @248
+    v53 = Add v47, v52 @204
+    v54 = String string="y" @264
+    v55 = Add v53, v54 @204
+    v56 = Construct v38, -, v55 calleeName="RegExp" @197 @193
+    v57 = PropGet v56 key="test" @267
+    v58 = String string="xyzq" @274
+    v59 = Call v57, v56, v58 calleeKey="test" calleeName="test" @269
+    v60 = Call v37, -, v59 calleeName="print" @187
+    v61 = Undefined @187
+    Return v61 @187
+}

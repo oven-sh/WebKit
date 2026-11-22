@@ -1,0 +1,106 @@
+# apply, Reflect.apply and bound functions do not hand a parameter the operand written at its place.
+# -- source: main.js
+# function second(re, s) { const m = re.exec(s); return m ? (m[1] === undefined ? "undefined" : m[1].length) : "null"; }
+# const subjects = JSON.parse('["aaaaaaaa' + "b".repeat(40) + '", "\\u3042"]');
+# for (let i = 0; i < subjects.length; i++)
+#   print(second.apply(/a*(b+)/, [/あ/, String(subjects[i])]));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: null
+# CHECK-NEXT: undefined
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/FunctionPrototype.ts" displayPath="/$bun/js/engine/FunctionPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Builtin builtin=JSON @159
+    v3 = PropGet v2 key="parse" @159
+    v4 = Convert v3 declared={type=builtin(JSONParse) flags=[IsExpected]} @159
+    v5 = String string="[\"aaaaaaaa" @170
+    v6 = String string="b" @185
+    v7 = PropGet v6 key="repeat" @185
+    v8 = Integer integer=40 @196
+    v9 = Call v7, v6, v8 calleeKey="repeat" calleeName="repeat" @189
+    v10 = Add v5, v9 @170
+    v11 = String string="\", \"\\u3042\"]" @202
+    v12 = Add v10, v11 @170
+    v13 = Call v4, v2, v12 calleeKey="parse" calleeName="JSON.parse" @164
+    v14 = Integer @233
+    v15 = Convert v14 declared={type=i32 flags=[IsExpected]} @233
+    Jump -> next b1(v15) @229
+  b1(v16):
+    LoopHint @229
+    v18 = PropGet v13 key="length" @240
+    v19 = Less v16, v18 @236
+    Branch v19 -> taken b2(), notTaken b3() @236
+  b2():
+    v20 = Builtin builtin=GlobalThis @264
+    v21 = PropGet v20 key="print" [isFreeName] @264
+    v22 = PropGet v1 key="apply" @270
+    v23 = NewRegExp pattern="a*(b+)" @283
+    v24 = NewRegExp pattern="\\u3042" @294
+    v25 = Builtin builtin=String @301
+    v26 = ElemGet v13, v16 @308
+    v27 = Call v25, -, v26 calleeName="String" @301
+    v28 = NewArray v24, v27 contents=anything @293
+    v29 = Call v22, v1, v23, v28 calleeKey="apply" calleeName="second.apply" @277
+    v30 = Call v21, -, v29 calleeName="print" @264
+    v31 = Increment v16 @257
+    v32 = Convert v31 declared={type=i32 flags=[IsExpected]} @257
+    Jump -> next b1(v32) @257
+  b3():
+    v33 = Undefined @257
+    Return v33 @257
+}
+function f1 name="second" module=m0 position=23 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="exec" @58
+    v3 = Call v2, v0, v1 calleeKey="exec" calleeName="re.exec" @61
+    v4 = ToBoolean v3 @77
+    Branch v4 -> taken b1(| 0), notTaken b5(| 0) @77
+  b1(v5):
+    v6 = NarrowByTest v3, v5 @77
+    v7 = Integer integer=1 @82
+    v8 = ElemGet v6, v7 @82
+    v9 = TypeTest v8 testedType=undefined @82
+    Branch v9 -> taken b2(| 0), notTaken b3(| 0) @82
+  b2(v10):
+    v11 = String string="undefined" @103
+    Jump -> next b4(v11) @103
+  b3(v12):
+    v13 = Integer integer=1 @117
+    v14 = ElemGet v6, v13 @117
+    v15 = PropGet v14 key="length" @119
+    Jump -> next b4(v15) @117
+  b4(v16):
+    Jump -> next b6(v16) @117
+  b5(v17):
+    v18 = String string="null" @132
+    Jump -> next b6(v18) @132
+  b6(v19):
+    Return v19 @132
+}
+function f2 name="apply" module=m1 position=1161 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=2 enclosingRuntimeFunction=FunctionPrototypeApply thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Builtin builtin=FunctionPrototypeCall [isNotReadFromHolder] @1248
+    v4 = StrictEq v0, v3 @1239
+    Branch v4 -> taken b2(), notTaken b1() @1239
+  b1():
+    v5 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1283
+    v6 = StrictEq v0, v5 @1274
+    Branch v6 -> taken b2(), notTaken b3() @1274
+  b2():
+    v7 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1333
+    v8 = Call v7, v0, v1, v2 [isDoneInPlace] @1333
+    ReturnCall v8 @1333
+  b3():
+    v9 = Builtin builtin=FunctionPrototypeApply [isNotReadFromHolder] @1414
+    v10 = Call v9, v0, v1, v2 [isDoneInPlace] @1414
+    ReturnCall v10 @1414
+}
+runtimefunction id=FunctionPrototypeApply function=f2

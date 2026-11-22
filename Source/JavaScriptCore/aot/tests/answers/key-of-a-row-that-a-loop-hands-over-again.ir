@@ -1,0 +1,341 @@
+# The callback changes the row, and the loop comes back to a list or a row that is made outside of it.
+# -- source: main.js
+# const o = { a: "x", b: "y" };
+# function outerList() {
+#   const list = [["a", 1]];
+#   for (let n = 0; n < 2; n++) list.forEach(row => {
+#     o[row[0]] = 5;
+#     row[0] = "b";
+#   });
+# }
+# outerList();
+# print(typeof o.a, typeof o.b);
+# const p = { c: "x", d: "y" };
+# function outerRow(v) {
+#   const one = ["c", v];
+#   for (let n = 0; n < 2; n++) [one].forEach(row => {
+#     p[row[0]] = 5;
+#     row[0] = "d";
+#   });
+# }
+# outerRow(1);
+# outerRow("2");
+# print(typeof p.c, typeof p.d);
+# -- end of source
+# RUN: run-in-shell
+# CHECK: number number
+# CHECK-NEXT: number number
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+module m1 path="/$bun/js/engine/ArrayPrototype.ts" displayPath="/$bun/js/engine/ArrayPrototype.ts" flags=[IsLibrary] namespaceLayout=L(m1)
+entry module=m0
+layout L0 module=m0 position=254 fields=[{key="c" declared={type=anything} flags=[IsRequired]}, {key="d" declared={type=anything} flags=[IsRequired]}] place=254 ownFieldCount=2
+layout L1 module=m0 position=33 fields=[{key="a" declared={type=anything} flags=[IsRequired]}, {key="b" declared={type=anything} flags=[IsRequired]}] place=33 ownFieldCount=2
+data d0 root=Object{layout=L1 members=[{key="a" value=String{value="x"}}, {key="b" value=String{value="y"}}]} module=m0
+data d1 root=Object{layout=L0 members=[{key="c" value=String{value="x"}}, {key="d" value=String{value="y"}}]} module=m0
+data d2 root=Array{contents=anything elements=[Array{contents=anything elements=[String{value="a"}, Number{value=1}]}]} module=m0
+variable g0 name="o" module=m0 declared={type=undefined|null|absent|L1 flags=[IsExpected]} flags=[IsImmutable] place=3
+variable g1 name="p" module=m0 declared={type=undefined|null|absent|L0 flags=[IsExpected]} flags=[IsImmutable] place=4
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Data data=d0 @33
+    PutModuleVariable v4 variable=g0 @29
+    v6 = Call v1 calleeName="outerList" @200
+    v7 = Builtin builtin=GlobalThis @213
+    v8 = PropGet v7 key="print" [isFreeName] @213
+    v9 = PropGet v4 key="a" @226
+    v10 = TypeOf v9 @219
+    v11 = PropGet v4 key="b" @238
+    v12 = TypeOf v11 @231
+    v13 = Call v8, -, v10, v12 calleeName="print" @213
+    v14 = Data data=d1 @254
+    PutModuleVariable v14 variable=g1 @250
+    v16 = Integer integer=1 @428
+    v17 = Call v3, -, v16 calleeName="outerRow" @419
+    v18 = String string="2" @441
+    v19 = Call v3, -, v18 calleeName="outerRow" @432
+    v20 = Builtin builtin=GlobalThis @447
+    v21 = PropGet v20 key="print" [isFreeName] @447
+    v22 = PropGet v14 key="c" @460
+    v23 = TypeOf v22 @453
+    v24 = PropGet v14 key="d" @472
+    v25 = TypeOf v24 @465
+    v26 = Call v21, -, v23, v25 calleeName="print" @447
+    v27 = Undefined @447
+    Return v27 @447
+}
+function f1 name="outerList" module=m0 position=53 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d2 @91
+    v1 = Integer @118
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @118
+    Jump -> next b1(v2) @114
+  b1(v3):
+    LoopHint @114
+    v5 = Integer integer=2 @125
+    v6 = Less v3, v5 @121
+    Branch v6 -> taken b2(), notTaken b3() @121
+  b2():
+    v7 = PropGet v0 key="forEach" @133
+    v8 = NewClosure function=f3 @146
+    v9 = Call v7, v0, v8 calleeKey="forEach" calleeName="list.forEach" @138
+    v10 = Increment v3 @128
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @128
+    Jump -> next b1(v11) @128
+  b3():
+    v12 = Undefined @128
+    Return v12 @128
+}
+function f2 name="outerRow" module=m0 position=274 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|number|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|number|string):
+    v1 = String string="c" @312
+    v2 = NewArray v1, v0 contents=anything @311
+    v3 = Integer @336
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @336
+    Jump -> next b1(v4) @332
+  b1(v5):
+    LoopHint @332
+    v7 = Integer integer=2 @343
+    v8 = Less v5, v7 @339
+    Branch v8 -> taken b2(), notTaken b3() @339
+  b2():
+    v9 = NewArray v2 contents=anything @351
+    v10 = PropGet v9 key="forEach" @351
+    v11 = NewClosure function=f4 @365
+    v12 = Call v10, v9, v11 calleeKey="forEach" calleeName="forEach" @357
+    v13 = Increment v5 @346
+    v14 = Convert v13 declared={type=number flags=[IsExpected]} @346
+    Jump -> next b1(v14) @346
+  b3():
+    v15 = Undefined @346
+    Return v15 @346
+}
+function f3 module=m0 position=146 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string>):
+    v1 = GetModuleVariable variable=g0 @159
+    v2 = CheckInitialized v1 name="o" @159
+    v3 = Integer @161
+    v4 = ElemGet v0, v3 @161
+    v5 = Integer integer=5 @171
+    ElemSet v2, v4, v5 @159
+    v7 = Integer @178
+    v8 = String string="b" @187
+    ElemSet v0, v7, v8 @178
+    v10 = Undefined @178
+    Return v10 @178
+}
+function f4 module=m0 position=365 kind=Arrow length=1 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array):
+    v1 = GetModuleVariable variable=g1 @378
+    v2 = CheckInitialized v1 name="p" @378
+    v3 = Integer @380
+    v4 = ElemGet v0, v3 @380
+    v5 = Integer integer=5 @390
+    ElemSet v2, v4, v5 @378
+    v7 = Integer @397
+    v8 = String string="d" @406
+    ElemSet v0, v7, v8 @397
+    v10 = Undefined @397
+    Return v10 @397
+}
+function f5 name="forEach" module=m1 position=18314 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEachOfList thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Undefined @18344
+    v4 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined" @18406
+    v5 = PropGet v4 key="length" @18523
+    v6 = ToLength v5 @18513
+    v7 = TypeTest v1 testedType=function @18548
+    Branch v7 -> taken b1(| 0), notTaken b8(| 0) @18548
+  b1(v8):
+    v9 = NarrowByTest v1, v8 @18548
+    v10 = Integer @18710
+    v11 = Convert v10 declared={type=undefined|number} @18710
+    Jump -> next b2(v11) @18706
+  b2(v12: undefined|number):
+    LoopHint @18706
+    v14 = Less v12, v6 @18713
+    Branch v14 -> taken b3(), notTaken b7() @18713
+  b3():
+    v15 = ElemHas v4, v12 @18749
+    v16 = ToBoolean v15 @18744
+    Branch v16 -> taken b4(| 0), notTaken b5(| 0) @18744
+  b4(v17):
+    v18 = ElemGet v4, v12 @18792
+    v19 = Call v9, v2, v18, v12, v4 @18768
+    Jump -> next b6() @18768
+  b5(v20):
+    Jump -> next b6() @18744
+  b6():
+    v21 = Increment v12 @18725
+    v22 = Convert v21 declared={type=undefined|number} @18725
+    Jump -> next b2(v22) @18725
+  b7():
+    v23 = Undefined @18725
+    Return v23 @18725
+  b8(v24):
+    v25 = ThrowNewError errorKind=TypeError message="Array.prototype.forEach callback must be a function" @18579
+    Unreachable @18579
+}
+function f6 name="forEachFrom" module=m1 position=18841 kind=Method role=Library flags=[IsChecked, IsHiddenInStackTraces, HasExplicitName] length=5 enclosingRuntimeFunction=ArrayPrototypeForEachFrom thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything, v3: anything, v4: anything):
+    v5 = Undefined @18903
+    v6 = HasJSType v0 @18935
+    v7 = ToBoolean v6 @18935
+    Branch v7 -> taken b1(| 0), notTaken b17(| 0) @18935
+  b1(v8):
+    v9 = Integer @18976
+    v10 = URShift v4, v9 @18976
+    Jump -> next b2(v10) @18969
+  b2(v11):
+    LoopHint @18969
+    v13 = Less v11, v1 @18979
+    Branch v13 -> taken b3(), notTaken b16() @18979
+  b3():
+    Jump -> next b4(v11) @19010
+  b4(v14):
+    LoopHint @19010
+    v16 = Less v14, v1 @19017
+    Branch v16 -> taken b5(), notTaken b7() @19017
+  b5():
+    v17 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @19031
+    v18 = Convert v14 declared={type=int flags=[IsFromCompiler, IsClaim]} @19031
+    v19 = HasContiguousIndex v17, v18 @19031
+    v20 = ToBoolean v19 @19031
+    Branch v20 -> taken b6(| 0), notTaken b7() @19031
+  b6(v21):
+    v22 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @19107
+    v23 = Convert v14 declared={type=int flags=[IsFromCompiler, IsClaim]} @19107
+    v24 = GetOwnContiguousIndex v22, v23 @19107
+    v25 = Call v2, v3, v24, v14, v0 @19083
+    v26 = Increment v14 @19062
+    Jump -> next b4(v26) @19062
+  b7():
+    Jump -> next b8(v14) @19164
+  b8(v27):
+    LoopHint @19164
+    v29 = Less v27, v1 @19171
+    Branch v29 -> taken b9(), notTaken b11() @19171
+  b9():
+    v30 = Convert v0 declared={type=Array flags=[IsFromCompiler, IsClaim]} @19219
+    v31 = Convert v27 declared={type=int flags=[IsFromCompiler, IsClaim]} @19219
+    v32 = GetDoubleIndex v30, v31 @19219
+    v33 = StrictEq v32, v32 @19266
+    Branch v33 -> taken b10(), notTaken b11() @19266
+  b10():
+    v34 = Call v2, v3, v32, v27, v0 @19328
+    v35 = Increment v27 @19183
+    Jump -> next b8(v35) @19183
+  b11():
+    v36 = Less v27, v1 @19401
+    Branch v36 -> taken b12(), notTaken b15() @19401
+  b12():
+    v37 = ElemHas v0, v27 @19420
+    v38 = ToBoolean v37 @19415
+    Branch v38 -> taken b13(| 0), notTaken b14(| 0) @19415
+  b13(v39):
+    v40 = ElemGet v0, v27 @19467
+    v41 = Call v2, v3, v40, v27, v0 @19443
+    Jump -> next b15() @19443
+  b14(v42):
+    Jump -> next b15() @19415
+  b15():
+    v43 = Increment v27 @18991
+    Jump -> next b2(v43) @18991
+  b16():
+    v44 = Undefined @19506
+    Return v44 @19506
+  b17(v45):
+    Jump -> next b18(v4) @19525
+  b18(v46):
+    LoopHint @19525
+    v48 = Less v46, v1 @19532
+    Branch v48 -> taken b19(), notTaken b23() @19532
+  b19():
+    v49 = ElemHas v0, v46 @19568
+    v50 = ToBoolean v49 @19563
+    Branch v50 -> taken b20(| 0), notTaken b21(| 0) @19563
+  b20(v51):
+    v52 = ElemGet v0, v46 @19611
+    v53 = Call v2, v3, v52, v46, v0 @19587
+    Jump -> next b22() @19587
+  b21(v54):
+    Jump -> next b22() @19563
+  b22():
+    v55 = Increment v46 @19544
+    Jump -> next b18(v55) @19544
+  b23():
+    v56 = Undefined @19544
+    Return v56 @19544
+}
+function f7 name="forEach" module=m1 position=19641 kind=Method role=Library flags=[HasThis, IsChecked, HasExplicitName] length=1 enclosingRuntimeFunction=ArrayPrototypeForEach thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Undefined @19665
+    v4 = HasJSType v0 @19757
+    v5 = ToBoolean v4 @19757
+    Branch v5 -> taken b1(| 0), notTaken b2(| 0) @19757
+  b1(v6):
+    v7 = PropGet v0 key="length" @19803
+    v8 = ToLength v7 @19793
+    Jump -> next b3(v8, v0) @19784
+  b2(v9):
+    v10 = ToObject v0 message="Array.prototype.forEach requires that |this| not be null or undefined" @19845
+    v11 = PropGet v10 key="length" @19962
+    v12 = ToLength v11 @19952
+    Jump -> next b3(v12, v10) @19943
+  b3(v13, v14):
+    v15 = TypeTest v1 testedType=function @19993
+    Branch v15 -> taken b4(| 0), notTaken b13(| 0) @19993
+  b4(v16):
+    v17 = NarrowByTest v1, v16 @19993
+    v18 = Integer @20150
+    v19 = Convert v18 declared={type=undefined|number} @20150
+    v20 = Integer @20170
+    v21 = Greater v13, v20 @20161
+    Branch v21 -> taken b5(), notTaken b10(v19) @20161
+  b5():
+    v22 = HasJSType v14 @20175
+    v23 = ToBoolean v22 @20175
+    Branch v23 -> taken b6(| 0), notTaken b10(v19) @20175
+  b6(v24):
+    Jump -> next b7(v19) @20204
+  b7(v25: undefined|number):
+    LoopHint @20204
+    v27 = Less v25, v13 @20211
+    Branch v27 -> taken b8(), notTaken b10(v25) @20211
+  b8():
+    v28 = Convert v14 declared={type=Array flags=[IsFromCompiler, IsClaim]} @20225
+    v29 = Convert v25 declared={type=int flags=[IsFromCompiler, IsClaim]} @20225
+    v30 = HasContiguousIndex v28, v29 @20225
+    v31 = ToBoolean v30 @20225
+    Branch v31 -> taken b9(| 0), notTaken b10(v25) @20225
+  b9(v32):
+    v33 = Convert v14 declared={type=Array flags=[IsFromCompiler, IsClaim]} @20297
+    v34 = Convert v25 declared={type=int flags=[IsFromCompiler, IsClaim]} @20297
+    v35 = GetOwnContiguousIndex v33, v34 @20297
+    v36 = Call v17, v2, v35, v25, v14 @20273
+    v37 = Increment v25 @20256
+    v38 = Convert v37 declared={type=undefined|number} @20256
+    Jump -> next b7(v38) @20256
+  b10(v39: undefined|number):
+    v40 = GreaterEq v39, v13 @20356
+    Branch v40 -> taken b11(), notTaken b12() @20356
+  b11():
+    v41 = Undefined @20377
+    Return v41 @20377
+  b12():
+    v42 = CallDirect v14, v13, v17, v2, v39 function=f6 @20389
+    v43 = Undefined @20389
+    Return v43 @20389
+  b13(v44):
+    v45 = ThrowNewError errorKind=TypeError message="Array.prototype.forEach callback must be a function" @20024
+    Unreachable @20024
+}
+runtimefunction id=ArrayPrototypeForEach function=f7
+runtimefunction id=ArrayPrototypeForEachFrom function=f6 visibility=Private
+runtimefunction id=ArrayPrototypeForEachOfList function=f5

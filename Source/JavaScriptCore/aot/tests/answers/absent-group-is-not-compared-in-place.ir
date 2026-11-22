@@ -1,0 +1,178 @@
+# The interpreter leaves the end of a group that took no part.
+# -- source: main.js
+# const re = /(a)?b/;
+# function held(s) {
+#     let n = 0;
+#     for (let i = 0; i < 2; i++) {
+#         const m = re.exec(s);
+#         if (m) {
+#             if (m[1] === "x")
+#                 n += 10;
+#             if (m[1] === "zz")
+#                 n += 100;
+#             if (m[1] === "zzz")
+#                 n += 1000;
+#             n += 1;
+#         }
+#     }
+#     return n;
+# }
+# function literal(list) {
+#     let n = 0;
+#     for (let i = 0; i < list.length; i++) {
+#         const m = /c(a)|b|x{2147483647}y{2147483647}/.exec(list[i]);
+#         if (m) {
+#             if (m[1] === "xyz")
+#                 n += 100;
+#             n += 1;
+#         }
+#     }
+#     return n;
+# }
+# re.compile("q(x)|(?<n>x)b|(?<n>z)");
+# print(held("xb"));
+# print(literal(["ca", "b"]));
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpWithoutCode
+# CHECK: 2
+# CHECK-NEXT: 2
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything elements=[String{value="ca"}, String{value="b"}]} module=m0
+variable g0 name="re" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=3
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewRegExp pattern="(a)?b" @34
+    PutModuleVariable v4 variable=g0 @29
+    v6 = PropGet v4 key="compile" @661
+    v7 = String string="q(x)|(?<n>x)b|(?<n>z)" @672
+    v8 = Call v6, v4, v7 calleeKey="compile" calleeName="re.compile" @664
+    v9 = Builtin builtin=GlobalThis @698
+    v10 = PropGet v9 key="print" [isFreeName] @698
+    v11 = String string="xb" @709
+    v12 = Call v1, -, v11 calleeName="held" @704
+    v13 = Call v10, -, v12 calleeName="print" @698
+    v14 = Builtin builtin=GlobalThis @717
+    v15 = PropGet v14 key="print" [isFreeName] @717
+    v16 = Data data=d0 @731
+    v17 = Call v3, -, v16 calleeName="literal" @723
+    v18 = Call v15, -, v17 calleeName="print" @717
+    v19 = Undefined @717
+    Return v19 @717
+}
+function f1 name="held" module=m0 position=43 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Integer @74
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @74
+    v3 = Integer @94
+    v4 = Convert v3 declared={type=number flags=[IsExpected]} @94
+    Jump -> next b1(v2, v4) @90
+  b1(v5, v6):
+    LoopHint @90
+    v8 = Integer integer=2 @101
+    v9 = Less v6, v8 @97
+    Branch v9 -> taken b2(), notTaken b11() @97
+  b2():
+    v10 = GetModuleVariable variable=g0 @129
+    v11 = CheckInitialized v10 name="re" @129
+    v12 = PropGet v11 key="exec" @129
+    v13 = Call v12, v11, v0 calleeKey="exec" calleeName="re.exec" @132
+    v14 = ToBoolean v13 @153
+    Branch v14 -> taken b3(| 0), notTaken b10(v5) @153
+  b3(v15):
+    v16 = NarrowByTest v13, v15 @153
+    v17 = Integer integer=1 @174
+    v18 = ElemGet v16, v17 @174
+    v19 = String string="x" @183
+    v20 = StrictEq v18, v19 @174
+    Branch v20 -> taken b4(), notTaken b5(v5) @174
+  b4():
+    v21 = Integer integer=10 @209
+    v22 = Add v5, v21 @209
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @204
+    Jump -> next b5(v23) @204
+  b5(v24):
+    v25 = Integer integer=1 @229
+    v26 = ElemGet v16, v25 @229
+    v27 = String string="zz" @238
+    v28 = StrictEq v26, v27 @229
+    Branch v28 -> taken b6(), notTaken b7(v24) @229
+  b6():
+    v29 = Integer integer=100 @265
+    v30 = Add v24, v29 @265
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @260
+    Jump -> next b7(v31) @260
+  b7(v32):
+    v33 = Integer integer=1 @286
+    v34 = ElemGet v16, v33 @286
+    v35 = String string="zzz" @295
+    v36 = StrictEq v34, v35 @286
+    Branch v36 -> taken b8(), notTaken b9(v32) @286
+  b8():
+    v37 = Integer integer=1000 @323
+    v38 = Add v32, v37 @323
+    v39 = Convert v38 declared={type=number flags=[IsExpected]} @318
+    Jump -> next b9(v39) @318
+  b9(v40):
+    v41 = Integer integer=1 @346
+    v42 = Add v40, v41 @346
+    v43 = Convert v42 declared={type=number flags=[IsExpected]} @341
+    Jump -> next b10(v43) @341
+  b10(v44):
+    v45 = Increment v6 @104
+    v46 = Convert v45 declared={type=number flags=[IsExpected]} @104
+    Jump -> next b1(v44, v46) @104
+  b11():
+    Return v5 @376
+}
+function f2 name="literal" module=m0 position=381 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|string> flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|string>):
+    v1 = Integer @418
+    v2 = Convert v1 declared={type=number flags=[IsExpected]} @418
+    v3 = Integer @438
+    v4 = Convert v3 declared={type=i32 flags=[IsExpected]} @438
+    Jump -> next b1(v2, v4) @434
+  b1(v5, v6):
+    LoopHint @434
+    v8 = PropGet v0 key="length" @445
+    v9 = Less v6, v8 @441
+    Branch v9 -> taken b2(), notTaken b7() @441
+  b2():
+    v10 = NewRegExp pattern="c(a)|b|x{2147483647}y{2147483647}" @483
+    v11 = PropGet v10 key="exec" @483
+    v12 = ElemGet v0, v6 @524
+    v13 = Call v11, v10, v12 calleeKey="exec" calleeName="exec" @519
+    v14 = ToBoolean v13 @546
+    Branch v14 -> taken b3(| 0), notTaken b6(v5) @546
+  b3(v15):
+    v16 = NarrowByTest v13, v15 @546
+    v17 = Integer integer=1 @567
+    v18 = ElemGet v16, v17 @567
+    v19 = String string="xyz" @576
+    v20 = StrictEq v18, v19 @567
+    Branch v20 -> taken b4(), notTaken b5(v5) @567
+  b4():
+    v21 = Integer integer=100 @604
+    v22 = Add v5, v21 @604
+    v23 = Convert v22 declared={type=number flags=[IsExpected]} @599
+    Jump -> next b5(v23) @599
+  b5(v24):
+    v25 = Integer integer=1 @626
+    v26 = Add v24, v25 @626
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @621
+    Jump -> next b6(v27) @621
+  b6(v28):
+    v29 = Increment v6 @458
+    v30 = Convert v29 declared={type=i32 flags=[IsExpected]} @458
+    Jump -> next b1(v28, v30) @458
+  b7():
+    Return v5 @656
+}
