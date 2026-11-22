@@ -112,7 +112,7 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
 if ($Platform -eq "x64") {
     $ArchFlag = "/clang:-march=nehalem"
 } else {
-    $ArchFlag = "/clang:-march=armv8-a+crc"
+    $ArchFlag = "/clang:-march=armv8-a+crc /clang:-moutline-atomics"
 }
 
 # ClangCL for stage 2, on both architectures: clang is what compiles everything else that ships, and -march= only

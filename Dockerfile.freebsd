@@ -13,7 +13,8 @@ ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
 # -g is added per-stage below for Debug only — with -O3 + tmpfs, debug info
 # OOMs the linux-x64-gh runner during Release builds (not seen on Android,
-# but FreeBSD's libc++ headers generate notably more DWARF).
+# but FreeBSD's libc++ headers generate notably more DWARF). The -lto variants
+# get -g1 (line tables only), as in the other Dockerfiles.
 # -fno-standalone-debug is what clang does for Linux by itself: a type is described in full only by the unit that defines
 # it, which lies in the same library. With FreeBSD's default a debug lane's package passes the 2 GiB that GitHub takes.
 ARG DEBUG_CFLAGS="-g -fno-standalone-debug"
@@ -152,8 +153,9 @@ COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
-    export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
-    export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
+    export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
+    export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
+    export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} $G ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && \
     patch -p1 < /icu-bun/udata-decompress-hook.patch && \
@@ -201,7 +203,7 @@ ARG DEBUG_CFLAGS
 #
 # find-structures-decoded-behind-calls.py (Tools/Scripts/aot/README.md) reads the machine code of jsc in the optimized lanes: their code is what ships. Here it only prints its rows so far: the list of expected rows was made on Linux x86-64 with glibc.
 RUN --mount=type=tmpfs,target=/webkitbuild \
-    export G=$([ "${WEBKIT_RELEASE_TYPE}" = "Debug" ] && echo "${DEBUG_CFLAGS}" || echo "") && \
+    export G=$(if [ "${WEBKIT_RELEASE_TYPE}" = "Debug" ]; then echo "${DEBUG_CFLAGS}"; elif [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export TARGET_TRIPLE="${FREEBSD_ARCH}-unknown-freebsd${FREEBSD_VERSION}" && \
     export CROSS="--target=${TARGET_TRIPLE} --sysroot=${FREEBSD_SYSROOT}" && \
     export CFLAGS="${CROSS} ${DEFAULT_CFLAGS} ${G} ${MARCH_FLAG} ${LTO_FLAG} -isystem /icu/include -ffile-prefix-map=/webkit/Source=vendor/WebKit/Source -ffile-prefix-map=/webkitbuild/=." && \
