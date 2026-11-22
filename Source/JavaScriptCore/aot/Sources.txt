@@ -18,7 +18,6 @@ aot/builtins/AOTBuiltinTableRealm.cpp
 aot/builtins/AOTBuiltinTypeFit.cpp
 aot/builtins/AOTBuiltinTypes.cpp
 aot/builtins/AOTDateBuiltinOperations.cpp
-aot/builtins/AOTDecimalOperations.cpp
 aot/builtins/AOTEngineIntrinsicOperations.cpp
 aot/builtins/AOTErrorBuiltinOperations.cpp
 aot/builtins/AOTFunctionBuiltinOperations.cpp
@@ -351,6 +350,7 @@ aot/runtime/AOTCompactTable.cpp
 aot/runtime/AOTCompiledFrameIterator.cpp
 aot/runtime/AOTCoroutineTable.cpp
 aot/runtime/AOTDataBuilder.cpp
+aot/runtime/AOTDecimalOperations.cpp
 aot/runtime/AOTDefinitionOperations.cpp
 aot/runtime/AOTDirectEvalOperations.cpp
 aot/runtime/AOTErrorMessages.cpp

@@ -1159,32 +1159,21 @@ private:
     friend class MoveLoopFinder;
     friend class MoveLoopEmitter;
     void tryEmitMoveLoop(BlockID head);
-    struct EndOfDecimalRun {
-        size_t end { 0 };
-        LBasicBlock continuation { nullptr };
-        Vector<ValueID, 2> madeAhead { };
-        Vector<std::pair<ValueID, ValueFromBlock>, 4> results { };
-    };
     bool mayComputeWithDecimals(BlockID) const;
-    std::optional<EndOfDecimalRun> beginDecimalRun(BlockID, std::span<const ValueID> values, size_t first);
-    void endDecimalRun(std::optional<EndOfDecimalRun>&);
+    // The place among the values where it ends, or notFound.
+    size_t beginDecimalRun(BlockID, std::span<const ValueID> values, size_t first);
+    bool isMadeAheadOfDecimalRun(ValueID);
+    void endDecimalRun();
     void findReusedDecimals();
     bool isReusedDecimal(ValueID) const;
     bool handsOnReusedDecimal(ValueID argument, ValueID parameter) const;
     void letGoOfDecimal(ValueID);
+    void letGoOfDecimalForRestOfBlock(ValueID operand);
     // The reader may be made later than it stands, when the object has the next value.
-    void letGoOfDecimalsReadBy(const auto& reader)
-    {
-        reader.forEachChild([&](ValueID operand) {
-            if (!isReusedDecimal(operand))
-                return;
-            letGoOfDecimal(operand);
-            m_decimalsLetGo.appendIfNotContains(operand);
-        });
-    }
+    void letGoOfDecimalsReadBy(ValueID reader);
+    void letGoOfDecimalsReadAtEndOf(const Block&, size_t numberOfValuesLeftToTerminator);
+    void forgetDecimalsLetGo();
     const ReusedDecimals* m_reusedDecimals { nullptr };
-    // In front of an operation of the block, so for the rest of it.
-    Vector<ValueID, 2> m_decimalsLetGo;
 
     struct ElementMoves {
         struct Read {
@@ -1213,6 +1202,7 @@ private:
     std::optional<ElementMoves> findElementMoves(std::span<const ValueID> values, size_t first);
     void beginElementMoves(BlockID, ElementMoves&);
     void endElementMoves(std::optional<ElementMoves>&);
+    void endElementMovesOrDecimalRun(std::optional<ElementMoves>&);
     friend class ArrayAllocationLoopFinder;
     friend class ArrayAllocationLoopEmitter;
     void tryEmitArrayAllocationLoop(BlockID head);

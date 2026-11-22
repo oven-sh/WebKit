@@ -52,23 +52,54 @@ bool CodeGenerator::handsOnReusedDecimal(ValueID argument, ValueID parameter) co
 
 void CodeGenerator::letGoOfDecimal(ValueID value)
 {
+    DecimalEmitter& decimals = emitter<DecimalEmitter>();
     // A landing pad serves the whole block.
-    if (m_isPassingHandlerArguments || !m_decimalsLetGo.contains(value))
-        emitter<DecimalEmitter>().letGo(value);
+    if (m_isPassingHandlerArguments || !decimals.letGoForRestOfBlock().contains(value))
+        decimals.letGo(value);
 }
 
-auto CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> values, size_t first) -> std::optional<EndOfDecimalRun>
+void CodeGenerator::letGoOfDecimalForRestOfBlock(ValueID operand)
+{
+    if (!isReusedDecimal(operand))
+        return;
+    letGoOfDecimal(operand);
+    emitter<DecimalEmitter>().letGoForRestOfBlock().appendIfNotContains(operand);
+}
+
+void CodeGenerator::letGoOfDecimalsReadBy(ValueID reader)
+{
+    code().at(reader).forEachChild([&](ValueID operand) {
+        letGoOfDecimalForRestOfBlock(operand);
+    });
+}
+
+void CodeGenerator::letGoOfDecimalsReadAtEndOf(const Block& block, size_t numberOfValuesLeftToTerminator)
+{
+    for (ValueID value : code().valuesOf(block).last(numberOfValuesLeftToTerminator))
+        letGoOfDecimalsReadBy(value);
+    block.terminator.forEachChild([&](ValueID operand) {
+        letGoOfDecimalForRestOfBlock(operand);
+    });
+}
+
+void CodeGenerator::forgetDecimalsLetGo()
+{
+    emitter<DecimalEmitter>().letGoForRestOfBlock().shrink(0);
+}
+
+size_t CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> values, size_t first)
 {
     using Step = DecimalRun::Step;
     if (!mayComputeWithDecimals(block))
-        return std::nullopt;
+        return notFound;
     DecimalEmitter& decimals = emitter<DecimalEmitter>();
     std::optional<DecimalRun> run = decimals.findRun(block, values.subspan(first));
     if (!run)
-        return std::nullopt;
+        return notFound;
     build().statistics().count(StatisticID::DecimalRuns);
 
-    EndOfDecimalRun end { first + run->parts.size() - run->endsInReturnedCall };
+    DecimalEmitter::RunAsWritten& end = decimals.runAsWritten();
+    end = { };
     for (const DecimalRun::Part& part : run->parts) {
         if (part.step != Step::IsMadeAhead)
             continue;
@@ -87,15 +118,15 @@ auto CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> valu
     m_isAheadOfWhatMayThrow = false;
     LBasicBlock asWritten = m_out.newBlock();
     ScopeFork scope = m_out.forkScope();
-    size_t numberLetGo = m_decimalsLetGo.size();
+    size_t numberLetGo = decimals.letGoForRestOfBlock().size();
     decimals.beginRun(*run, block, asWritten);
     auto endRun = makeScopeExit([&] { decimals.endRun(); });
     for (const DecimalRun::Part& part : run->parts) {
         if (m_hasFailed)
-            return std::nullopt;
+            return notFound;
         if (part.step == Step::IsMadeTwice) {
             if (m_reusedDecimals)
-                letGoOfDecimalsReadBy(code().at(part.value));
+                letGoOfDecimalsReadBy(part.value);
             generateValue(block, part.value, code().at(part.value), false, { });
         } else if (part.step != Step::IsMadeAhead)
             generateFor(part.value, [&](const ValueContext& context) { decimals.generate(context, part); });
@@ -122,26 +153,41 @@ auto CodeGenerator::beginDecimalRun(BlockID block, std::span<const ValueID> valu
     }
     if (end.continuation)
         m_out.jump(normalEdge(end.continuation));
-    m_decimalsLetGo.shrink(numberLetGo);
+    decimals.letGoForRestOfBlock().shrink(numberLetGo);
     m_out.appendToJoin(asWritten, scope);
-    return end;
+    return first + run->parts.size() - run->endsInReturnedCall;
 }
 
-void CodeGenerator::endDecimalRun(std::optional<EndOfDecimalRun>& run)
+bool CodeGenerator::isMadeAheadOfDecimalRun(ValueID value)
 {
-    if (run->continuation) {
-        Vector<ValueFromBlock, 4> asWritten = run->results.map<Vector<ValueFromBlock, 4>>([&](auto& result) {
-            return m_out.anchor(m_values[result.first.index()]);
-        });
-        m_out.jump(normalEdge(run->continuation));
-        m_out.appendTo(run->continuation);
-        for (size_t index = 0; index < asWritten.size(); ++index) {
-            auto [value, forDecimals] = run->results[index];
-            LValue& word = m_values[value.index()];
-            word = Operand(representationOf(value), m_out.phi(word->type(), forDecimals, asWritten[index])).value;
-        }
+    return emitter<DecimalEmitter>().runAsWritten().madeAhead.contains(value);
+}
+
+void CodeGenerator::endDecimalRun()
+{
+    DecimalEmitter::RunAsWritten run = std::exchange(emitter<DecimalEmitter>().runAsWritten(), { });
+    if (!run.continuation)
+        return;
+    Vector<ValueFromBlock, 4> asWritten = run.results.map<Vector<ValueFromBlock, 4>>([&](auto& result) {
+        return m_out.anchor(m_values[result.first.index()]);
+    });
+    m_out.jump(normalEdge(run.continuation));
+    m_out.appendTo(run.continuation);
+    for (size_t index = 0; index < asWritten.size(); ++index) {
+        auto [value, forDecimals] = run.results[index];
+        LValue& word = m_values[value.index()];
+        word = Operand(representationOf(value), m_out.phi(word->type(), forDecimals, asWritten[index])).value;
     }
-    run = std::nullopt;
+}
+
+void CodeGenerator::endElementMovesOrDecimalRun(std::optional<ElementMoves>& moves)
+{
+    if (moves)
+        endElementMoves(moves);
+    else
+        endDecimalRun();
+    if (m_reusedDecimals)
+        forgetDecimalsLetGo();
 }
 
 } } } // namespace JSC::AOT::Typed

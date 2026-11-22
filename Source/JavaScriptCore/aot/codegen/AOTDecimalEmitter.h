@@ -25,10 +25,20 @@ public:
     void makeObject(const ValueContext&);
     void endRun() { m_run = nullptr; }
 
+    // What is left to do while a run is generated the second time.
+    struct RunAsWritten {
+        LBasicBlock continuation { nullptr };
+        Vector<ValueID, 2> madeAhead;
+        Vector<std::pair<ValueID, ValueFromBlock>, 4> results;
+    };
+    RunAsWritten& runAsWritten() LIFETIME_BOUND { return m_runAsWritten; }
+
     const ReusedDecimals& findReusedDecimals(std::span<const BlockID> order, const ScopedLambda<bool(BlockID home, BlockID user)>& dominates) LIFETIME_BOUND;
     void beginWithoutReusedObjects();
     // Without a branch, so that it can stand wherever a value is read.
     void letGo(ValueID);
+    // In front of an operation of the block, so for the rest of it.
+    Vector<ValueID, 2>& letGoForRestOfBlock() LIFETIME_BOUND { return m_letGoForRestOfBlock; }
 
 private:
     struct FastPathGenerator {
@@ -98,6 +108,8 @@ private:
     bool m_computesInLine { false };
     Vector<KnownDecimal, 8> m_decimals;
     Vector<std::pair<ValueID, Condition>, 2> m_truths;
+    RunAsWritten m_runAsWritten;
+    Vector<ValueID, 2> m_letGoForRestOfBlock;
 };
 
 } } } // namespace JSC::AOT::Typed

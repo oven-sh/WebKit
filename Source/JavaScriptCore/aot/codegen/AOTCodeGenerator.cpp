@@ -4025,8 +4025,9 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         widenCarriedIntegers(block);
     if (m_carriesSums) [[unlikely]]
         takeIntegersOfCarriedSums(block);
-    auto forgetDecimalsLetGo = makeScopeExit([&] {
-        m_decimalsLetGo.shrink(0);
+    auto forgetDecimals = makeScopeExit([&] {
+        if (m_reusedDecimals) [[unlikely]]
+            forgetDecimalsLetGo();
     });
     const bool remakesValues = m_remakesValuesInRareBlocks && block.frequency == BlockFrequency::Rare;
     const size_t numberOfBigIntsInFrame = remakesValues ? remakeValuesInRareBlock(id) : 0;
@@ -4070,33 +4071,28 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     const OpcodeSet& opcodesOfCode = code().opcodesOfValues();
     const bool looksForElementMoves = opcodesOfCode.intersects(storesOfElements) && opcodesOfCode.intersects(readsOfElements) && mayMoveElements(id);
     std::optional<ElementMoves> moves;
-    std::optional<EndOfDecimalRun> decimalRun;
-    // Of either. One begins with the read of an element, and the other has none.
+    // Of the moves or of a run of Decimals. One begins with the read of an element, and the other has none.
     size_t endOfRun = notFound;
-    auto endRun = [&] {
-        if (moves)
-            endElementMoves(moves);
-        else
-            endDecimalRun(decimalRun);
-        m_decimalsLetGo.shrink(0);
-        endOfRun = notFound;
-    };
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
-        if (index == endOfRun) [[unlikely]]
-            endRun();
+        if (index == endOfRun) [[unlikely]] {
+            endElementMovesOrDecimalRun(moves);
+            endOfRun = notFound;
+        }
         if (value == m_readLeftToBranch)
             continue;
         const Operation& operation = code().at(value);
-        if (looksForElementMoves && !moves && !testWaitsForBranch && readsOfElements.contains(operation.opcode)) [[unlikely]] {
-            RELEASE_ASSERT(!decimalRun);
-            if ((moves = findElementMoves(values, index))) {
-                endOfRun = moves->end;
-                beginElementMoves(id, *moves);
+        if (looksForElementMoves) [[unlikely]] {
+            if (!moves && !testWaitsForBranch && readsOfElements.contains(operation.opcode)) {
+                RELEASE_ASSERT(endOfRun == notFound);
+                if ((moves = findElementMoves(values, index))) {
+                    endOfRun = moves->end;
+                    beginElementMoves(id, *moves);
+                }
             }
+            if (moves && moves->madeAhead.contains(value))
+                continue;
         }
-        if (moves && moves->madeAhead.contains(value)) [[unlikely]]
-            continue;
         if (value == test) {
             testWaitsForBranch = true;
             continue;
@@ -4117,17 +4113,17 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
             return;
         }
         if (m_expectsDecimals) [[unlikely]] {
-            if (endOfRun == notFound && (decimalRun = beginDecimalRun(id, values, index))) {
-                endOfRun = decimalRun->end;
-                if (std::ranges::contains(values.subspan(index, endOfRun - index), test))
+            if (endOfRun == notFound) {
+                endOfRun = beginDecimalRun(id, values, index);
+                if (endOfRun != notFound && std::ranges::contains(values.subspan(index, endOfRun - index), test))
                     test = { };
             }
             if (m_hasFailed)
                 return;
-            if (decimalRun && decimalRun->madeAhead.contains(value))
+            if (endOfRun != notFound && !moves && isMadeAheadOfDecimalRun(value))
                 continue;
             if (m_reusedDecimals)
-                letGoOfDecimalsReadBy(operation);
+                letGoOfDecimalsReadBy(value);
         }
         generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
@@ -4146,12 +4142,9 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         return;
     }
     if (endOfRun != notFound) [[unlikely]]
-        endRun();
-    if (m_reusedDecimals) [[unlikely]] {
-        for (ValueID value : code().valuesOf(block).last(owned ? numberOwned : 0))
-            letGoOfDecimalsReadBy(code().at(value));
-        letGoOfDecimalsReadBy(block.terminator);
-    }
+        endElementMovesOrDecimalRun(moves);
+    if (m_reusedDecimals) [[unlikely]]
+        letGoOfDecimalsReadAtEndOf(block, owned ? numberOwned : 0);
     if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
         beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);
