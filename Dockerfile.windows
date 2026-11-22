@@ -272,6 +272,7 @@ ARG WEBKIT_RELEASE_TYPE
 ARG ICU_MARCH_FLAG
 ARG ICU_VERSION
 ARG LLVM_VERSION
+ARG LTO_FLAG
 
 COPY icu/ /icu-bun/
 
@@ -317,6 +318,8 @@ RUN printf '#!/bin/sh\nexec /usr/local/bin/lld-link "$@"\n' > /usr/local/bin/lin
 #                                    configure pins C++11
 #   - _MT without _DLL            -> the STL headers emit DEFAULTLIB:libcpmt
 #                                    (static C++ runtime), matching /MT
+#   - LTO_FLAG behind configure   -> configure looks for the byte order in an
+#                                    object file, and finds none in bitcode
 RUN mkdir -p /icu-build && cd /icu-build && \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH}" && \
     IMSVC="-isystem /winsdk/crt/include -isystem /winsdk/sdk/include/ucrt -isystem /winsdk/sdk/include/um -isystem /winsdk/sdk/include/shared" && \
@@ -332,8 +335,10 @@ RUN mkdir -p /icu-build && cd /icu-build && \
       --prefix=/icu-out \
       ac_cv_c_compiler_gnu=yes ac_cv_cxx_compiler_gnu=yes && \
     sed -i 's/-std=c++11/-std=c++17/' icudefs.mk && \
+    sed -i -E "s|^C(XX)?FLAGS = .*|& ${LTO_FLAG//\/clang:/}|" icudefs.mk && \
     make -j$(nproc) THREADSCPPFLAGS= THREADSCFLAGS= THREADSCXXFLAGS= && \
-    test -f lib/libsicuuc.a && test -f lib/libsicuin.a && test -f lib/libsicudt.a
+    test -f lib/libsicuuc.a && test -f lib/libsicuin.a && test -f lib/libsicudt.a && \
+    { [ -z "${LTO_FLAG}" ] || llvm-bcanalyzer-${LLVM_VERSION} common/udata.ao > /dev/null; }
 
 # Stage the libs under the names CMake's FindICU and Bun's build expect.
 # sicudt.lib is produced by icu/compress-data.ts in COFF mode from the
