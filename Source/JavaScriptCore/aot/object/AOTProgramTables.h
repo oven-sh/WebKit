@@ -175,6 +175,7 @@ struct ProgramTables {
     static constexpr uint32_t expectedMagic = 0x44505943;
     static constexpr uint32_t mayRunInMultipleInstances = 1;
     static constexpr uint32_t neverReadsLegacyRegExpStatics = 2;
+    static constexpr uint32_t neverRecompilesRegExps = 4;
     static constexpr uint32_t shiftOfNearTypeNumbers = 2;
 
     uint32_t magic;

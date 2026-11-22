@@ -281,7 +281,8 @@ const BuiltinCondition* RowsOfProgramFacts::lightFormOf(const BuiltinTable& buil
 
 static bool readsUnderKeyOfCallInProgramFacts(const BuiltinPropertyAction& action)
 {
-    return action.kind == BuiltinPropertyActionKind::ReadsByKey && action.key.kind == BuiltinKeyKind::Operand;
+    bool reads = action.kind == BuiltinPropertyActionKind::ReadsByKey || action.kind == BuiltinPropertyActionKind::ReadsGetter || action.kind == BuiltinPropertyActionKind::ReadsSetter;
+    return reads && action.key.kind == BuiltinKeyKind::Operand;
 }
 
 static bool writesUnderKeyOfCallInProgramFacts(const BuiltinPropertyAction& action)
@@ -5042,7 +5043,8 @@ bool BuilderOfProgramFacts::readersMayBeHandedAnyKey() const
         BuiltinID reader(static_cast<uint32_t>(index));
         BuiltinID holder = m_builtins.at(reader).holder;
         bool comesWithNamespace = holder && m_builtins.at(holder).kind == BuiltinKind::Namespace && handedOn.get(m_builtins.canonicalID(holder).index()) && anyRowMayApply(reader);
-        if (comesWithNamespace || handedOn.get(index))
+        bool isCalledWhereNoRowReadsKey = m_isCalledWithoutRow.quickGet(index) || (m_isFoundOffValuesNobodyKnows.quickGet(index) && m_mayBeHandedOperandsNobodyKnows.quickGet(index));
+        if (comesWithNamespace || handedOn.get(index) || isCalledWhereNoRowReadsKey)
             return true;
     }
     return false;
@@ -7340,6 +7342,9 @@ bool BuilderOfProgramFacts::mayReadRecordOfLastMatch() const
     if (!constructor || m_program.unseenCodeCanRun)
         return true;
     BuiltinID canonical = m_builtins.canonicalID(constructor);
+    // Whoever climbs from a class that extends it holds it as an unknown value, and native code reads under any name.
+    if (m_isLookedThrough.quickGet(canonical.index()) && programMayReachPrototypes())
+        return true;
     bool unknownValuesMayBeIt = m_hasDeferredMembers || m_uses[canonical.index()].contains(BuiltinUse::Escaped) || m_isLookedThrough.quickGet(canonical.index());
     return std::ranges::any_of(m_builtins.membersOf(canonical), [&](BuiltinID member) {
         const Builtin& entry = m_builtins.at(member);

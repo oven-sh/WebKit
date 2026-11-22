@@ -3478,6 +3478,12 @@ class YarrGenerator final : public YarrJITInfo {
                 m_pendingReturns.clear();
                 m_pendingFallthrough = true;
             }
+            constexpr size_t maxJumpsHandedOn = 64;
+            if (m_laterFailures.jumps().size() > maxJumpsHandedOn) {
+                m_laterFailures.link(assembler);
+                m_laterFailures.clear();
+                m_pendingFallthrough = true;
+            }
             if (m_pendingFallthrough)
                 jumpList.append(assembler->jump());
             jumpList.append(m_laterFailures);
@@ -8658,10 +8664,10 @@ class YarrGenerator final : public YarrJITInfo {
                 alternativeEndOpCode = YarrOpCode::NestedAlternativeEnd;
             }
 #if !defined(YARR_FOR_IMAGE)
-        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it doesn't use tail loops.
+        // Tail loops need empty iterations to bail out to the interpreter. Image code handles empty iterations itself, so it only uses tail loops that have none.
         } else if (term->parentheses.isTerminal || term->parentheses.isTailLoop) {
 #else
-        } else if (term->parentheses.isTerminal || (term->possessive() && term->parentheses.disjunction->m_minimumSize)) {
+        } else if (term->parentheses.isTerminal || ((term->possessive() || term->parentheses.isTailLoop) && term->parentheses.disjunction->m_minimumSize)) {
 #endif
             // Select the 'Terminal' nodes.
             parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternTerminalBegin;
@@ -11007,7 +11013,8 @@ class YarrGenerator final : public YarrJITInfo {
         dataLogLnIf(Options::verboseRegExpCompilation() && search.exactUnits, "Searches by exact units");
         if (search.exactUnits) {
             uint64_t repeats = m_charSize == CharSize::Char8 ? 0x01010101 : 0x00010001;
-            if (vectorIsLeft == VectorIsLeft::Unknown) {
+            constexpr unsigned maxUnitsInDisplacement = 0x3fffffff;
+            if (vectorIsLeft == VectorIsLeft::Unknown || claimed > maxUnitsInDisplacement) {
                 m_jit.sub32(MacroAssembler::Imm32(claimed), m_regs.index);
                 moveConstant((*search.exactUnits)[0] * repeats | (*search.exactUnits)[1] * repeats << 32, m_regs.regT1);
                 callRoutine(SharedRoutine::FindFirstOfTwoUnits { m_charSize });

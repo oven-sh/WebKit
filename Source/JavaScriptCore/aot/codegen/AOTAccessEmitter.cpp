@@ -46,6 +46,7 @@
 #include "ClonedArguments.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
+#include "JSGlobalProxy.h"
 #include "PropertyName.h"
 #include "RegExpObject.h"
 #include <limits>
@@ -832,7 +833,8 @@ void AccessEmitter::generateGetKeyedPropertyAddress(const ValueContext& value)
         define(value, Pointer(addresses.finish().as<Integer>().value()));
         return;
     }
-    Integer address = callLeaf<Integer>(RuntimeOperation::OwnPropertyAddress, { object, in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()), word32(value->fitsFieldTypes()), word32(value->takesFunctions()) });
+    AddressHolders holders = value->findsPlaceInGlobalObject() ? AddressHolders::GlobalObject : value->takesFunctions() ? AddressHolders::ObjectsAndFunctions : AddressHolders::Objects;
+    Integer address = callLeaf<Integer>(RuntimeOperation::OwnPropertyAddress, { object, in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()), word32(value->fitsFieldTypes()), word32(static_cast<uint32_t>(holders)) });
     define(value, Pointer(address.value()));
 }
 
@@ -862,6 +864,14 @@ std::array<const Machine::AbstractHeap*, 2> AccessEmitter::heapsOfKeyedProperty(
     return { &m_heaps.entire(AbstractHeap::ObjectFields), &m_heaps.entire(AbstractHeap::NamedProperties) };
 }
 
+// The storage as it is at this use. The proxy may be that of another realm.
+Pointer AccessEmitter::addressInGlobalObjectBehind(CellPointer proxy, Pointer place)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    LValue global = m_out.loadPtr(m_out.address(m_heaps.root, m_out.opaque(proxy.value()), JSGlobalProxy::targetOffset()));
+    return Pointer(add(Integer(place.value()), Integer(m_out.loadPtr(global, m_heaps.JSObject_butterfly))).value());
+}
+
 void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
 {
     CellPointer object(in<Boxed>(value->objectOperand()).value());
@@ -870,6 +880,8 @@ void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
     if (operationAt(value->addressOperand()).findsOnlyFields())
         property = m_out.load64(TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        if (operationAt(value->addressOperand()).findsPlaceInGlobalObject())
+            address = addressInGlobalObjectBehind(object, address);
         Machine::PatchOperation* load = m_out.patchpoint(Machine::Int64);
         load->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointRead(heapsOfKeyedProperty(), load);
@@ -894,6 +906,8 @@ void AccessEmitter::generatePutKeyedProperty(const ValueContext& value)
     if (isField)
         m_out.store64(stored.value(), TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        if (operationAt(value->addressOperand()).findsPlaceInGlobalObject())
+            address = addressInGlobalObjectBehind(cell, address);
         Machine::PatchOperation* store = m_out.patchpoint(Machine::Void);
         store->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointWrite(heapsOfKeyedProperty(), store);
@@ -2056,7 +2070,7 @@ void AccessEmitter::checkStoreSiteInline(Boxed receiver, Pointer site, const Sha
     askReceiver();
     if (shapes.hasMovingStorage) {
         LBasicBlock keepsStorage = newBlock();
-        m_out.branch(hasCellTypeIn(object, typesWithMovingStorage).value(), unlikelyEdge(shapes.hasMovingStorage), normalEdge(keepsStorage));
+        m_out.branch(hasMutableCellType(object, FinalObjectType).value(), normalEdge(keepsStorage), unlikelyEdge(shapes.hasMovingStorage));
         m_out.appendToContinuation(keepsStorage);
     }
     usePlace(object, offsetBy(loadField<Pointer>(object, m_heaps.JSObject_butterfly), signExtended(Word32(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())))), 3));

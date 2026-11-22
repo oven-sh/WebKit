@@ -136,6 +136,7 @@ public:
 
     // Minimum rope length for rope-walk optimizations (tryFindOneChar, tryReplaceOneChar).
     static constexpr unsigned minLengthForRopeWalk = 0x128;
+    static constexpr unsigned maxDepthOfWalkToSubstring = 8;
 
     static constexpr uintptr_t isRopeInPointer = 0x1;
 
@@ -1137,7 +1138,7 @@ inline JSString* tryJSSubstringImpl(VM& vm, JSString* base, unsigned offset, uns
 {
     // Cap traversal depth to avoid O(n^2) slicing on deep ropes (e.g. repeated s += 'A').
     // Exceeding the limit returns nullptr, letting jsSubstring flatten via resolveRope.
-    static constexpr unsigned maxTraversalDepth = 8;
+    static constexpr unsigned maxTraversalDepth = JSString::maxDepthOfWalkToSubstring;
 
     for (unsigned depth = 0; ; ++depth) {
         ASSERT(offset <= base->length());

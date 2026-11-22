@@ -1,0 +1,145 @@
+# A read moves in front of a loop only under the conditions under which the rope is resolved.
+# -- source: main.ts
+# declare function print(...values: unknown[]): void;
+# function rope(n: number) {
+#     let s = "abcdefghijklmnopqrstuvwxyz012345";
+#     for (let i = 0; i < n; i++)
+#         s = s + s;
+#     return s;
+# }
+# function scan(s: string, n: number, m: number, k: number, weights: number[]) {
+#     let t = 0;
+#     for (let i = 0; i < n; i++) {
+#         if (i >= m)
+#             break;
+#         t += s.indexOf("x", i) * weights[i & 1];
+#         if (s[k] === "a")
+#             t++;
+#     }
+#     return t;
+# }
+# const o: any = JSON.parse('{"n":2,"none":0,"weights":[1,2]}');
+# const called: any[] = [scan];
+# for (let i = 0; i < called.length; i++) {
+#     const f = called[i];
+#     print(f(rope(1), o.n, 3, 32, o.weights));
+#     print(f(rope(25), o.n, o.none, 1000000000, o.weights));
+# }
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 71
+# CHECK-NEXT: 0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = Builtin builtin=JSON @513
+    v5 = PropGet v4 key="parse" @513
+    v6 = Convert v5 declared={type=builtin(JSONParse) flags=[IsExpected]} @513
+    v7 = String string="{\"n\":2,\"none\":0,\"weights\":[1,2]}" @524
+    v8 = Call v6, v4, v7 calleeKey="parse" calleeName="JSON.parse" @518
+    v9 = NewArray v3 contents=anything @583
+    v10 = Convert v9 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @583
+    v11 = Integer @604
+    v12 = Convert v11 declared={type=number} @604
+    Jump -> next b1(v12) @600
+  b1(v13: number):
+    LoopHint @600
+    v15 = PropGet v10 key="length" @611
+    v16 = Less v13, v15 @607
+    Branch v16 -> taken b2(), notTaken b3() @607
+  b2():
+    v17 = ElemGet v10, v13 @647
+    v18 = Builtin builtin=GlobalThis @662
+    v19 = PropGet v18 key="print" [isFreeName] @662
+    v20 = Integer integer=1 @675
+    v21 = Call v1, -, v20 calleeName="rope" @670
+    v22 = PropGet v8 key="n" @679
+    v23 = Integer integer=3 @684
+    v24 = Integer integer=32 @687
+    v25 = PropGet v8 key="weights" @691
+    v26 = Call v17, -, v21, v22, v23, v24, v25 calleeName="f" @668
+    v27 = Call v19, -, v26 calleeName="print" @662
+    v28 = Builtin builtin=GlobalThis @708
+    v29 = PropGet v28 key="print" [isFreeName] @708
+    v30 = Integer integer=25 @721
+    v31 = Call v1, -, v30 calleeName="rope" @716
+    v32 = PropGet v8 key="n" @726
+    v33 = PropGet v8 key="none" @731
+    v34 = Integer integer=1000000000 @739
+    v35 = PropGet v8 key="weights" @751
+    v36 = Call v17, -, v31, v32, v33, v34, v35 calleeName="f" @714
+    v37 = Call v29, -, v36 calleeName="print" @708
+    v38 = Increment v13 @626
+    v39 = Convert v38 declared={type=number} @626
+    Jump -> next b1(v39) @626
+  b3():
+    v40 = Undefined @626
+    Return v40 @626
+}
+function f1 name="rope" module=m0 position=75 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = String string="abcdefghijklmnopqrstuvwxyz012345" @114
+    v2 = Convert v1 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @114
+    v3 = Integer @167
+    v4 = Convert v3 declared={type=number} @167
+    Jump -> next b1(v2, v4) @163
+  b1(v5: undefined|null|string, v6: number):
+    LoopHint @163
+    v8 = Less v6, v0 @170
+    Branch v8 -> taken b2(), notTaken b3() @170
+  b2():
+    v9 = Add v5, v5 @194
+    v10 = Convert v9 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @190
+    v11 = Increment v6 @177
+    v12 = Convert v11 declared={type=number} @177
+    Jump -> next b1(v10, v12) @177
+  b3():
+    Return v5 @212
+}
+function f2 name="scan" module=m0 position=217 flags=[IsChecked, HasExplicitName] length=5 thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}, {type=number}, {type=number}, {type=number}, {type=undefined|null|Array<number> flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: number, v2: number, v3: number, v4: undefined|null|Array<number>):
+    v5 = Integer @308
+    v6 = Convert v5 declared={type=number} @308
+    v7 = Integer @328
+    v8 = Convert v7 declared={type=number} @328
+    Jump -> next b1(v6, v8) @324
+  b1(v9: number, v10: number):
+    LoopHint @324
+    v12 = Less v10, v1 @331
+    Branch v12 -> taken b2(), notTaken b6() @331
+  b2():
+    v13 = GreaterEq v10, v2 @357
+    Branch v13 -> taken b6(), notTaken b3() @357
+  b3():
+    v14 = PropGet v0 key="indexOf" @397
+    v15 = String string="x" @407
+    v16 = Call v14, v0, v15, v10 calleeKey="indexOf" calleeName="s.indexOf" @399
+    v17 = Convert v16 declared={type=number} illTypedCause=DeclarationWithoutBody @397
+    v18 = Integer integer=1 @429
+    v19 = BitAnd v10, v18 @425
+    v20 = ElemGet v4, v19 @417
+    v21 = Mul v17, v20 @397
+    v22 = Add v9, v21 @397
+    v23 = Convert v22 declared={type=number} @392
+    v24 = ElemGet v0, v3 @445
+    v25 = String string="a" @454
+    v26 = StrictEq v24, v25 @445
+    Branch v26 -> taken b4(), notTaken b5(v23) @445
+  b4():
+    v27 = Increment v23 @471
+    v28 = Convert v27 declared={type=number} @471
+    Jump -> next b5(v28) @471
+  b5(v29: number):
+    v30 = Increment v10 @338
+    v31 = Convert v30 declared={type=number} @338
+    Jump -> next b1(v29, v31) @338
+  b6():
+    Return v9 @493
+}

@@ -1,0 +1,88 @@
+# A loop at the end of a pattern takes nine million turns.
+# -- source: main.js
+# // The text of a pattern is made at run time, so that the build does not compile it.
+# function make(text) { return new RegExp(text + "|(?!)".repeat(1 + (Math.random() > 2))); }
+# const padding = "a".repeat(9000000);
+# print(make("(?:secret(?:a|bc)*)").test("secret" + padding));
+# print(make("(?:x|(?:a|bc)+)*y?z?(?:a|(?:a|bc)+)*").exec("x")[0].length);
+# print(make("(s(?:a|bc)+)").exec("s" + padding)?.[1].length);
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: true
+# CHECK-NEXT: 1
+# CHECK-NEXT: 9000001
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = String string="a" @215
+    v3 = PropGet v2 key="repeat" @215
+    v4 = Integer integer=9000000 @226
+    v5 = Call v3, v2, v4 calleeKey="repeat" calleeName="repeat" @219
+    v6 = Builtin builtin=GlobalThis @236
+    v7 = PropGet v6 key="print" [isFreeName] @236
+    v8 = String string="(?:secret(?:a|bc)*)" @247
+    v9 = Call v1, -, v8 calleeName="make" @242
+    v10 = PropGet v9 key="test" @268
+    v11 = String string="secret" @275
+    v12 = Add v11, v5 @275
+    v13 = Call v10, v9, v12 calleeKey="test" calleeName="test" @270
+    v14 = Call v7, -, v13 calleeName="print" @236
+    v15 = Builtin builtin=GlobalThis @297
+    v16 = PropGet v15 key="print" [isFreeName] @297
+    v17 = String string="(?:x|(?:a|bc)+)*y?z?(?:a|(?:a|bc)+)*" @308
+    v18 = Call v1, -, v17 calleeName="make" @303
+    v19 = PropGet v18 key="exec" @346
+    v20 = String string="x" @353
+    v21 = Call v19, v18, v20 calleeKey="exec" calleeName="exec" @348
+    v22 = Integer @303
+    v23 = ElemGet v21, v22 @356
+    v24 = PropGet v23 key="length" @358
+    v25 = Call v16, -, v24 calleeName="print" @297
+    v26 = Builtin builtin=GlobalThis @370
+    v27 = PropGet v26 key="print" [isFreeName] @370
+    v28 = String string="(s(?:a|bc)+)" @381
+    v29 = Call v1, -, v28 calleeName="make" @376
+    v30 = PropGet v29 key="exec" @395
+    v31 = String string="s" @402
+    v32 = Add v31, v5 @402
+    v33 = Call v30, v29, v32 calleeKey="exec" calleeName="exec" @397
+    v34 = TypeTest v33 testedType=undefined|null @376
+    Branch v34 -> taken b1(| 0), notTaken b2(| 0) @376
+  b1(v35):
+    v36 = Undefined @376
+    Jump -> next b3(v36) @376
+  b2(v37):
+    v38 = Integer integer=1 @376
+    v39 = ElemGet v37, v38 @415
+    v40 = PropGet v39 key="length" @419
+    Jump -> next b3(v40) @376
+  b3(v41):
+    v42 = Call v27, -, v41 calleeName="print" @370
+    v43 = Undefined @370
+    Return v43 @370
+}
+function f1 name="make" module=m0 position=108 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string):
+    v1 = Builtin builtin=RegExp @141
+    v2 = String string="|(?!)" @155
+    v3 = PropGet v2 key="repeat" @155
+    v4 = Integer integer=1 @170
+    v5 = Builtin builtin=Math @175
+    v6 = PropGet v5 key="random" @175
+    v7 = Convert v6 declared={type=builtin(MathRandom) flags=[IsExpected]} @175
+    v8 = Call v7, v5 calleeKey="random" calleeName="Math.random" @180
+    v9 = Integer integer=2 @191
+    v10 = Greater v8, v9 @175
+    v11 = Add v4, v10 @170
+    v12 = Call v3, v2, v11 calleeKey="repeat" calleeName="repeat" @163
+    v13 = Add v0, v12 @148
+    v14 = Construct v1, -, v13 calleeName="RegExp" @141 @137
+    Return v14 @137
+}

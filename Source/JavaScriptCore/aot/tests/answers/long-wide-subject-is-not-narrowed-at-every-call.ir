@@ -1,0 +1,63 @@
+# A literal with code for 8-bit subjects alone is tried on each rest of a long 16-bit text.
+# -- source: main.js
+# const text = JSON.parse(JSON.stringify("ሴ" + "a".repeat(8000000)));
+# let n = 0;
+# for (let i = 1; i < text.length; i++) if (/^ab$/.test(text.slice(i))) n++;
+# print(n);
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 0
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @36
+    v1 = PropGet v0 key="parse" @36
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @36
+    v3 = Builtin builtin=JSON @47
+    v4 = PropGet v3 key="stringify" @47
+    v5 = Convert v4 declared={type=builtin(JSONStringify) flags=[IsExpected]} @47
+    v6 = String string="\u{1234}" @62
+    v7 = String string="a" @70
+    v8 = PropGet v7 key="repeat" @70
+    v9 = Integer integer=8000000 @81
+    v10 = Call v8, v7, v9 calleeKey="repeat" calleeName="repeat" @74
+    v11 = Add v6, v10 @62
+    v12 = Call v5, v3, v11 calleeKey="stringify" calleeName="JSON.stringify" @52
+    v13 = Call v2, v0, v12 calleeKey="parse" calleeName="JSON.parse" @41
+    v14 = Integer @101
+    v15 = Convert v14 declared={type=number flags=[IsExpected]} @101
+    v16 = Integer integer=1 @117
+    v17 = Convert v16 declared={type=number flags=[IsExpected]} @117
+    Jump -> next b1(v15, v17) @113
+  b1(v18, v19):
+    LoopHint @113
+    v21 = PropGet v13 key="length" @124
+    v22 = Less v19, v21 @120
+    Branch v22 -> taken b2(), notTaken b5() @120
+  b2():
+    v23 = NewRegExp pattern="^ab$" @146
+    v24 = PropGet v23 key="test" @146
+    v25 = PropGet v13 key="slice" @158
+    v26 = Call v25, v13, v19 calleeKey="slice" calleeName="text.slice" @163
+    v27 = Call v24, v23, v26 calleeKey="test" calleeName="test" @153
+    v28 = ToBoolean v27 @146
+    Branch v28 -> taken b3(| 0), notTaken b4(v18) @146
+  b3(v29):
+    v30 = Increment v18 @174
+    v31 = Convert v30 declared={type=number flags=[IsExpected]} @174
+    Jump -> next b4(v31) @174
+  b4(v32):
+    v33 = Increment v19 @137
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @137
+    Jump -> next b1(v32, v34) @137
+  b5():
+    v35 = Builtin builtin=GlobalThis @179
+    v36 = PropGet v35 key="print" [isFreeName] @179
+    v37 = Call v36, -, v18 calleeName="print" @179
+    v38 = Undefined @179
+    Return v38 @179
+}

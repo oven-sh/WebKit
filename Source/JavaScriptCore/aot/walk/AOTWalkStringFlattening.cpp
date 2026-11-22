@@ -111,15 +111,21 @@ static Reference flattenInFrontOfLoopForFlattening(Walker& walker, Reference str
         return { };
     if (!loop)
         return flattenForSpecializedVersion(walker, string, origin);
-    Draft flatten = draftOfFlatStringForFlattening(string, origin);
     Vector<Reference, 2> conditions;
-    if (!walker.tryBuildFirstArrivalConditions(*loop, conditions) && walker.innermostOpenLoop() == loop && !walker.isFlattenedBeforeLoop(*loop, string, conditions.span()))
-        flatten.setMayStayRope(true);
-    if (walker.hasFailed())
+    auto isReadByFirstTurn = [&] {
+        conditions.shrink(0);
+        return walker.tryBuildFirstArrivalConditions(*loop, conditions) || (!walker.hasFailed() && walker.isFlattenedBeforeLoop(*loop, string, conditions.span()));
+    };
+    bool isRead = isReadByFirstTurn();
+    if (std::optional<uint32_t> innermost = walker.innermostOpenLoop(); !isRead && !walker.hasFailed() && innermost && innermost != loop) {
+        loop = innermost;
+        isRead = isReadByFirstTurn();
+    }
+    // Resolving a rope takes time and memory of its size and may throw, so it is only done ahead of a read that is sure to come.
+    if (!isRead || walker.hasFailed())
         return { };
+    Draft flatten = draftOfFlatStringForFlattening(string, origin);
     flatten.setIsReadOperands(conditions.span());
-    if (flatten.mayStayRope())
-        return walker.buildInFrontOfOpenLoop(*loop, WTF::move(flatten));
     if (Reference flat = walker.flatStringOfOtherVersion(string, conditions.span())) {
         walker.count(StatisticID::FlatStringsShared);
         return flat;
@@ -182,7 +188,7 @@ static Reference openBeforeLoopForReads(Walker& walker, Reference string, Origin
     return opened;
 }
 
-Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Origin origin, bool readsCodeUnitsAlone)
+Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Origin origin, bool readsCodeUnitsAlone, bool leavesRopeAlone)
 {
     if (walker.isUnreachable() || !string.isValue())
         return { };
@@ -198,7 +204,7 @@ Reference flatStringForReaderOfCharacters(Walker& walker, Reference string, Orig
         if (Reference opened = openBeforeLoopForReads(walker, string, origin); opened || walker.hasFailed())
             return opened;
     }
-    if (!flat && readerHasBeenHereForFlattening(walker, string))
+    if (!flat && readerHasBeenHereForFlattening(walker, string) && !leavesRopeAlone)
         flat = walker.build(draftOfFlatStringForFlattening(string, origin));
     if (flat)
         noteFlatStringForFlattening(walker, string, flat);

@@ -1,0 +1,54 @@
+# A loop at the end of a literal takes four million turns.
+# -- source: main.js
+# const subject = JSON.parse(JSON.stringify("ab".repeat(4000000)));
+# print(/(?:q|a(?:a|ab|b)+)/.test(subject));
+# print(/(?:x?(?:a|ab|b)*)/.exec(subject)?.[0].length);
+# -- end of source
+# RUN: run-in-shell
+# CHECK: true
+# CHECK-NEXT: 8000000
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @39
+    v1 = PropGet v0 key="parse" @39
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @39
+    v3 = Builtin builtin=JSON @50
+    v4 = PropGet v3 key="stringify" @50
+    v5 = Convert v4 declared={type=builtin(JSONStringify) flags=[IsExpected]} @50
+    v6 = String string="ab" @65
+    v7 = PropGet v6 key="repeat" @65
+    v8 = Integer integer=4000000 @77
+    v9 = Call v7, v6, v8 calleeKey="repeat" calleeName="repeat" @70
+    v10 = Call v5, v3, v9 calleeKey="stringify" calleeName="JSON.stringify" @55
+    v11 = Call v2, v0, v10 calleeKey="parse" calleeName="JSON.parse" @44
+    v12 = Builtin builtin=GlobalThis @89
+    v13 = PropGet v12 key="print" [isFreeName] @89
+    v14 = NewRegExp pattern="(?:q|a(?:a|ab|b)+)" @95
+    v15 = PropGet v14 key="test" @95
+    v16 = Call v15, v14, v11 calleeKey="test" calleeName="test" @116
+    v17 = Call v13, -, v16 calleeName="print" @89
+    v18 = Builtin builtin=GlobalThis @132
+    v19 = PropGet v18 key="print" [isFreeName] @132
+    v20 = NewRegExp pattern="(?:x?(?:a|ab|b)*)" @138
+    v21 = PropGet v20 key="exec" @138
+    v22 = Call v21, v20, v11 calleeKey="exec" calleeName="exec" @158
+    v23 = TypeTest v22 testedType=undefined|null @138
+    Branch v23 -> taken b1(| 0), notTaken b2(| 0) @138
+  b1(v24):
+    v25 = Undefined @138
+    Jump -> next b3(v25) @138
+  b2(v26):
+    v27 = Integer @138
+    v28 = ElemGet v26, v27 @170
+    v29 = PropGet v28 key="length" @174
+    Jump -> next b3(v29) @138
+  b3(v30):
+    v31 = Call v19, -, v30 calleeName="print" @132
+    v32 = Undefined @132
+    Return v32 @132
+}

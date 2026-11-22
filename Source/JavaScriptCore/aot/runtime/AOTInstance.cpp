@@ -1787,6 +1787,12 @@ bool HeapHooks::representsModuleInHeapSnapshot(JSCell* cell)
     return cell->classInfo() == ModuleEnvironment::info();
 }
 
+bool HeapHooks::isBufferOfGrowingText(JSCell* cell)
+{
+    const RuntimeTable* runtimeTable = cell->vm().aotState().runtimeTable.get();
+    return runtimeTable && cell->structure() == runtimeTable->textBufferStructure();
+}
+
 std::span<const VariableData> ProgramStatics::namedVariablesOfModule(uint32_t module) const
 {
     std::span<const uint32_t> first = m_firstNamedVariablesOfModules.span();
