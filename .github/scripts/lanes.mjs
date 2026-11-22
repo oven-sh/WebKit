@@ -232,9 +232,10 @@ const platforms = [
       ...ICU,
       WIN_ARCH: arch === "arm64" ? "arm64" : "x64",
       WIN_TRIPLE_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
-      // WebKit is built by clang-cl, ICU by clang's GNU driver.
-      MARCH_FLAG: `/clang:${arch === "arm64" ? ARMV8 : NEHALEM}`,
-      ICU_MARCH_FLAG: arch === "arm64" ? ARMV8 : NEHALEM,
+      // WebKit is built by clang-cl, ICU by clang's GNU driver. -moutline-atomics is clang's default on the other arm64
+      // targets and rustc's on this one too: without it LTO inlines nothing of bun into these libraries.
+      MARCH_FLAG: arch === "arm64" ? `/clang:${ARMV8} /clang:-moutline-atomics` : `/clang:${NEHALEM}`,
+      ICU_MARCH_FLAG: arch === "arm64" ? `${ARMV8} -moutline-atomics` : NEHALEM,
       ENABLE_SANITIZERS: v.sanitizers ?? "",
     }),
   },
