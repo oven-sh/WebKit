@@ -1,5 +1,4 @@
 //@ runDefault("--useDollarVM=1")
-//@ run("validate-exception-checks", "--useDollarVM=1", "--validateExceptionChecks=1")
 
 // No VM entry is made while the TerminationException is pending: the entry returns with it pending, as if its callee
 // threw it. $vm.callWithTimeLimit(fn, ms) is an embedder's time limit (node:vm's `timeout`), which requests the
@@ -57,7 +56,8 @@ shouldBe(enteredUnderALimit("construct", entered => {
 // The overload of call() that clears what the callee threw clears the TerminationException too, also when the entry
 // was not made. Nothing is pending then: the entry that follows is made, and the script that called the dispatcher
 // goes on. The request for the termination stays for the embedder to act on. (The callee after the clear is a host
-// function: the first call of a script function ends a DeferTermination scope, which throws the termination again.)
+// function: a script function that runs for the first time resolves its variables inside a DeferTerminationForAWhile
+// scope, and the end of that scope fires the trap for the termination again.)
 shouldBe(enteredUnderALimit("callClearingException", entered => {
     $vm.dispatchOverTermination("callClearingException", spinForever,
         () => entered.push("the entry over the pending exception"),

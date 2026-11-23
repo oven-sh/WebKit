@@ -2142,7 +2142,8 @@ JSValue VM::checkVMEntryPermission()
     return jsUndefined();
 }
 
-VM::EntryPermission VM::entryPermissionSlow()
+// Not inlined: the entry that is made then has the code it has without this.
+NEVER_INLINE VM::EntryPermission VM::entryPermissionSlow()
 {
     ASSERT(disallowVMEntryCount);
     if (disallowVMEntryCount & ~thrownTerminationFlag)
