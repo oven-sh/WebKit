@@ -4814,7 +4814,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
 {
     ModuleID file = fileOf(module);
-    if (!hasNotBegun(file) || (data(file).kind == ModuleKind::Data && (wasRequired(file) || hasBeenImported(file))))
+    if (data(file).kind == ModuleKind::Data || !hasNotBegun(file))
         return module;
     String path = m_table.fullPath(file);
     if (size_t mark = path.reverseFind('?'); mark != notFound && data(file).kind == ModuleKind::SourceText) {
