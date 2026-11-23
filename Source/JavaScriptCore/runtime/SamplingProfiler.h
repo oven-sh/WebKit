@@ -37,13 +37,19 @@
 #include "PCToCodeOriginMap.h"
 #include "WasmCompilationMode.h"
 #include "WasmIndexOrName.h"
+#include <wtf/Atomics.h>
 #include <wtf/Box.h>
+#include <wtf/Condition.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
+
+#if OS(WINDOWS)
+#include <wtf/win/Win32Handle.h>
+#endif
 
 #if ENABLE(AOT)
 #include "AOTTraceFrame.h"
@@ -169,7 +175,7 @@ public:
 
         // These are function-level data.
         String nameFromCallee(VM&);
-        String displayName(VM&);
+        JS_EXPORT_PRIVATE String displayName(VM&);
         int functionStartLine();
         unsigned functionStartColumn();
         std::tuple<SourceProvider*, SourceID> sourceProviderAndID();
@@ -195,6 +201,27 @@ public:
         StackTrace(StackTrace&&) = default;
     };
 
+    enum class ThreadState : uint8_t {
+        Idle, // No JavaScript is on the stack, and the embedder says that the thread waits for work.
+        Program, // No JavaScript is on the stack.
+        GarbageCollector,
+        JavaScript, // It had returned by the time the thread was suspended, or its stack could not be walked.
+    };
+
+    // Consecutive samples that have no stack trace and found the thread in the same state.
+    struct SamplesWithoutFrames {
+        ThreadState state;
+        MonotonicTime first;
+        MonotonicTime last;
+        size_t count;
+    };
+
+    // Both are in the order of their timestamps. No stack trace was taken between the first and the last sample of a run.
+    struct Samples {
+        Vector<StackTrace> stackTraces;
+        Vector<SamplesWithoutFrames> withoutFrames;
+    };
+
     SamplingProfiler(VM&, Ref<Stopwatch>&&);
     JS_EXPORT_PRIVATE ~SamplingProfiler();
     void noticeJSLockAcquisition();
@@ -202,16 +229,29 @@ public:
     void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
-    void setTimingInterval(Seconds interval) { m_timingInterval = interval; }
+    JS_EXPORT_PRIVATE void setTimingInterval(Seconds);
+    // A deeper stack loses its outermost frames. A function that was inlined does not count.
+    static constexpr size_t unlimitedStackDepth = std::numeric_limits<size_t>::max();
+    JS_EXPORT_PRIVATE void setMaximumStackDepth(size_t) WTF_REQUIRES_LOCK(m_lock);
+    // With this, every tick of the timer leaves either a stack trace or a sample without frames.
+    void setRecordsSamplesWithoutFrames(bool records) WTF_REQUIRES_LOCK(m_lock)
+    {
+        if (std::exchange(m_recordsSamplesWithoutFrames, records) != records)
+            m_canExtendLastSamplesWithoutFrames = false;
+    }
+    bool isRecordingSamplesWithoutFrames() const WTF_REQUIRES_LOCK(m_lock) { return m_recordsSamplesWithoutFrames && !m_isPaused; }
+    // A wait beneath a JavaScript frame still belongs to that frame.
+    void setExecutionThreadIsIdle(bool isIdle) { m_executionThreadIsIdle.storeRelaxed(isIdle); }
     JS_EXPORT_PRIVATE void start();
     void startWithLock() WTF_REQUIRES_LOCK(m_lock);
     Vector<StackTrace> releaseStackTraces() WTF_REQUIRES_LOCK(m_lock);
+    JS_EXPORT_PRIVATE Samples releaseSamples() WTF_REQUIRES_LOCK(m_lock);
     JS_EXPORT_PRIVATE Ref<JSON::Value> stackTracesAsJSON();
     JS_EXPORT_PRIVATE void noticeCurrentThreadAsJSCExecutionThread();
     void noticeCurrentThreadAsJSCExecutionThreadWithLock() WTF_REQUIRES_LOCK(m_lock);
     void processUnverifiedStackTraces() WTF_REQUIRES_LOCK(m_lock);
     void setStopWatch(Ref<Stopwatch>&& stopwatch) WTF_REQUIRES_LOCK(m_lock) { m_stopwatch = WTF::move(stopwatch); }
-    void pause() WTF_REQUIRES_LOCK(m_lock);
+    JS_EXPORT_PRIVATE void pause() WTF_REQUIRES_LOCK(m_lock);
     void clearData() WTF_REQUIRES_LOCK(m_lock);
 
     // Used for debugging in the JSC shell/DRT.
@@ -227,18 +267,30 @@ public:
 private:
     void createThreadIfNecessary() WTF_REQUIRES_LOCK(m_lock);
     void timerLoop();
-    void takeSample(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
+    void wakeUpTimerLoop() WTF_REQUIRES_LOCK(m_lock);
+    void takeSample() WTF_REQUIRES_LOCK(m_lock);
+    bool takeStackTrace() WTF_REQUIRES_LOCK(m_lock);
+    ThreadState executionThreadState();
 
     Lock m_lock;
+    Condition m_timerCondition;
+#if OS(WINDOWS)
+    Win32Handle m_highResolutionTimer WTF_GUARDED_BY_LOCK(m_lock);
+#endif
     bool m_isPaused WTF_GUARDED_BY_LOCK(m_lock);
     bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock);
+    bool m_recordsSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_canExtendLastSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
+    Atomic<bool> m_executionThreadIsIdle { false };
     bool m_needsReportAtExit { false };
     VM& m_vm;
     WeakRandom m_weakRandom;
     Ref<Stopwatch> m_stopwatch WTF_GUARDED_BY_LOCK(m_lock);
     Vector<StackTrace> m_stackTraces WTF_GUARDED_BY_LOCK(m_lock);
     Vector<UnprocessedStackTrace> m_unprocessedStackTraces WTF_GUARDED_BY_LOCK(m_lock);
-    Seconds m_timingInterval;
+    Vector<SamplesWithoutFrames> m_samplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock);
+    Seconds m_timingInterval WTF_GUARDED_BY_LOCK(m_lock);
+    size_t m_maximumStackDepth WTF_GUARDED_BY_LOCK(m_lock);
     RefPtr<Thread> m_thread;
     RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);

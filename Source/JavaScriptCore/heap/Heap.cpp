@@ -1482,10 +1482,34 @@ void Heap::clearConcurrentRetainedDataIfPossible()
     }
 }
 
+namespace {
+
+class ServingCollectorScope {
+    WTF_MAKE_NONCOPYABLE(ServingCollectorScope);
+public:
+    explicit ServingCollectorScope(Atomic<uint8_t>& depth)
+        : m_depth(depth)
+    {
+        m_depth.exchangeAdd<MemoryOrder::Relaxed>(1);
+    }
+
+    ~ServingCollectorScope()
+    {
+        m_depth.exchangeSub<MemoryOrder::Relaxed>(1);
+    }
+
+private:
+    Atomic<uint8_t>& m_depth;
+};
+
+} // anonymous namespace
+
 void Heap::sweepSynchronously()
 {
     if (!Options::useGC()) [[unlikely]]
         return;
+
+    ServingCollectorScope servingCollectorScope(m_servingCollectorDepth);
 
     MonotonicTime before { };
     if (Options::logGC()) [[unlikely]] {
@@ -2190,6 +2214,8 @@ static NEVER_INLINE void parkWhileWorldStateIs(Atomic<unsigned>& worldState, uns
 
 void Heap::waitForCollector(NOESCAPE const ConstInvocable<bool()> auto& isDone)
 {
+    ServingCollectorScope servingCollectorScope(m_servingCollectorDepth);
+
     for (;;) {
         // Set the waiting bit before checking, so that if what we wait for completes after the check, the Collector
         // always sees that we're waiting, and clears the bit and wakes us.
@@ -2225,6 +2251,8 @@ void Heap::waitForCollector(NOESCAPE const ConstInvocable<bool()> auto& isDone)
 
 void Heap::acquireAccessSlow()
 {
+    ServingCollectorScope servingCollectorScope(m_servingCollectorDepth);
+
     for (;;) {
         unsigned oldState = m_worldState.load();
         RELEASE_ASSERT(!(oldState & hasAccessBit), oldState);
@@ -3616,6 +3644,7 @@ void Heap::performIncrement(size_t bytes)
         return;
     targetBytes = std::min(targetBytes, Options::gcIncrementMaxBytes());
 
+    ServingCollectorScope servingCollectorScope(m_servingCollectorDepth);
     SlotVisitor& visitor = *m_mutatorSlotVisitor;
     ParallelModeEnabler parallelModeEnabler(visitor);
     size_t bytesVisited = visitor.performIncrementOfDraining(static_cast<size_t>(targetBytes));

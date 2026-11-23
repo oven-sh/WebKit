@@ -538,6 +538,10 @@ SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
     }
 
     m_currentFrames.grow(256);
+    {
+        Locker locker { m_lock };
+        setMaximumStackDepth(unlimitedStackDepth);
+    }
     vm.heap.objectSpace().enablePreciseAllocationTracking();
 }
 
@@ -550,24 +554,56 @@ void SamplingProfiler::createThreadIfNecessary()
     if (m_thread)
         return;
 
+#if OS(WINDOWS)
+    // Setting a timer of the other kind does not make it forget that it has expired.
+    if (HANDLE timer = CreateWaitableTimerExW(nullptr, nullptr, CREATE_WAITABLE_TIMER_MANUAL_RESET | CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_MODIFY_STATE | SYNCHRONIZE))
+        m_highResolutionTimer = Win32Handle::adopt(timer);
+#endif
+
     RefPtr<SamplingProfiler> profiler = this;
     m_thread = Thread::create("jsc.sampling-profiler.thread"_s, [profiler] {
         profiler->timerLoop();
     });
+    m_thread->detach();
+#if OS(WINDOWS)
+    // An expired timer earns a thread no boost. On a busy machine it would get to run when a core is free, like when the sampled thread waits.
+    if (m_highResolutionTimer)
+        m_thread->changePriority(THREAD_PRIORITY_HIGHEST);
+#endif
+}
+
+#if OS(WINDOWS)
+static bool setTimer(const Win32Handle& timer, Seconds delay)
+{
+    LARGE_INTEGER dueTime;
+    dueTime.QuadPart = -std::max<LONGLONG>(1, delay.nanosecondsAs<LONGLONG>() / 100); // Negative: from now, in units of 100 ns.
+    return timer && SetWaitableTimer(timer.get(), &dueTime, 0, nullptr, nullptr, FALSE);
+}
+#endif
+
+void SamplingProfiler::wakeUpTimerLoop()
+{
+    m_timerCondition.notifyOne();
+#if OS(WINDOWS)
+    setTimer(m_highResolutionTimer, 0_s);
+#endif
 }
 
 void SamplingProfiler::timerLoop()
 {
-    while (true) {
-        Seconds stackTraceProcessingTime = 0_s;
-        {
-            Locker locker { m_lock };
-            if (m_isShutDown) [[unlikely]]
-                return;
-
-            if (!m_isPaused && m_jscExecutionThread)
-                takeSample(stackTraceProcessingTime);
+    Locker locker { m_lock };
+    while (!m_isShutDown) {
+        if (m_isPaused) {
+            m_timerCondition.wait(m_lock);
+            continue;
         }
+
+        MonotonicTime startTime = MonotonicTime::now();
+        if (m_jscExecutionThread)
+            takeSample();
+        // A stack trace takes longer than a sample without one, and must not stand for more time because of it.
+        // However long it takes, the thread gets to run before it is suspended again.
+        Seconds samplingTime = std::min(MonotonicTime::now() - startTime, m_timingInterval / 2);
 
         // Read section 6.2 of this paper for more elaboration of why we add a random
         // fluctuation here. The main idea is to prevent our timer from being in sync
@@ -575,11 +611,57 @@ void SamplingProfiler::timerLoop()
         // http://plv.colorado.edu/papers/mytkowicz-pldi10.pdf
         double randomSignedNumber = (m_weakRandom.get() * 2.0) - 1.0; // A random number between [-1, 1).
         Seconds randomFluctuation = m_timingInterval * 0.2 * randomSignedNumber;
-        WTF::sleep(m_timingInterval - std::min(m_timingInterval, stackTraceProcessingTime) + randomFluctuation);
+        // A wait that is over before it begins hardly lets go of the lock, which it takes to enter the VM.
+        Seconds delay = std::max(m_timingInterval - samplingTime + randomFluctuation, 10_us);
+
+#if OS(WINDOWS)
+        // Any other timed wait is cut off to whole milliseconds: it spins for less than one, and otherwise lasts until the next
+        // tick of the system's clock, 15.6 ms apart.
+        if (setTimer(m_highResolutionTimer, delay)) {
+            HANDLE timer = m_highResolutionTimer.get();
+            DropLockForScope unlocker { locker };
+            WaitForSingleObject(timer, INFINITE);
+            continue;
+        }
+#endif
+        m_timerCondition.waitFor(m_lock, delay);
     }
 }
 
-void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
+auto SamplingProfiler::executionThreadState() -> ThreadState
+{
+    bool hasJavaScriptOnStack = !!m_vm.topEntryFrame;
+    if (!hasJavaScriptOnStack && m_executionThreadIsIdle.loadRelaxed())
+        return ThreadState::Idle;
+    if (m_vm.heap.isMutatorBusyWithCollectionConcurrently())
+        return ThreadState::GarbageCollector;
+    return hasJavaScriptOnStack ? ThreadState::JavaScript : ThreadState::Program;
+}
+
+void SamplingProfiler::takeSample()
+{
+    ASSERT(m_lock.isLocked());
+    if (!m_recordsSamplesWithoutFrames) {
+        takeStackTrace();
+        return;
+    }
+
+    // The state is that of this instant, whatever the thread gets to before it is suspended. Short calls have often
+    // returned by then, and their time would go to whatever runs between them.
+    MonotonicTime timestamp = MonotonicTime::now();
+    ThreadState state = executionThreadState();
+    if (state == ThreadState::JavaScript && takeStackTrace())
+        return;
+
+    if (!m_canExtendLastSamplesWithoutFrames || m_samplesWithoutFrames.last().state != state) {
+        m_samplesWithoutFrames.append({ state, timestamp, timestamp, 0 });
+        m_canExtendLastSamplesWithoutFrames = true;
+    }
+    m_samplesWithoutFrames.last().last = timestamp;
+    m_samplesWithoutFrames.last().count++;
+}
+
+bool SamplingProfiler::takeStackTrace()
 {
     ASSERT(m_lock.isLocked());
     if (m_vm.entryScope) {
@@ -691,7 +773,6 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 
             m_jscExecutionThread->resume(threadSuspendLocker);
 
-            auto startTime = MonotonicTime::now();
             // We can now use data structures that malloc, and do other interesting things, again.
 
             // FIXME: It'd be interesting to take data about the program's state when
@@ -705,15 +786,15 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 stackTrace.appendRange(m_currentFrames.begin(), m_currentFrames.begin() + walkSize);
 
                 m_unprocessedStackTraces.append(UnprocessedStackTrace { timestamp, nowTime, machinePC, topFrameIsLLInt, llintPC, regExp, WTF::move(stackTrace) });
+                m_canExtendLastSamplesWithoutFrames = false;
 
                 if (didRunOutOfVectorSpace)
-                    m_currentFrames.grow(m_currentFrames.size() * 1.25);
+                    m_currentFrames.grow(std::min(m_currentFrames.size() + m_currentFrames.size() / 4 + 1, m_maximumStackDepth));
+                return true;
             }
-
-            auto endTime = MonotonicTime::now();
-            stackTraceProcessingTime = endTime - startTime;
         }
     }
+    return false;
 }
 
 NODELETE static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC, CodeBlock* codeBlock)
@@ -1033,6 +1114,29 @@ void SamplingProfiler::shutdown()
 {
     Locker locker { m_lock };
     m_isShutDown = true;
+    wakeUpTimerLoop();
+}
+
+void SamplingProfiler::setTimingInterval(Seconds interval)
+{
+    Locker locker { m_lock };
+    if (std::exchange(m_timingInterval, interval) == interval)
+        return;
+    m_canExtendLastSamplesWithoutFrames = false;
+    wakeUpTimerLoop();
+}
+
+void SamplingProfiler::setMaximumStackDepth(size_t depth)
+{
+    ASSERT(m_lock.isLocked());
+    RELEASE_ASSERT(depth);
+    if (Options::samplingProfilerMaxStackDepth())
+        depth = Options::samplingProfilerMaxStackDepth();
+    m_maximumStackDepth = depth;
+    if (m_currentFrames.size() > depth) {
+        m_currentFrames.shrink(depth);
+        m_currentFrames.shrinkToFit();
+    }
 }
 
 void SamplingProfiler::start()
@@ -1046,7 +1150,8 @@ void SamplingProfiler::start()
 void SamplingProfiler::startWithLock()
 {
     ASSERT(m_lock.isLocked());
-    m_isPaused = false;
+    if (std::exchange(m_isPaused, false))
+        wakeUpTimerLoop();
     createThreadIfNecessary();
 }
 
@@ -1054,6 +1159,7 @@ void SamplingProfiler::pause()
 {
     ASSERT(m_lock.isLocked());
     m_isPaused = true;
+    m_canExtendLastSamplesWithoutFrames = false;
     reportStats();
 }
 
@@ -1089,6 +1195,8 @@ void SamplingProfiler::clearData()
     m_stackTraces.clear();
     m_liveCellPointers.clear();
     m_unprocessedStackTraces.clear();
+    m_samplesWithoutFrames.clear();
+    m_canExtendLastSamplesWithoutFrames = false;
 }
 
 String SamplingProfiler::StackFrame::nameFromCallee(VM& vm)
@@ -1305,13 +1413,18 @@ String SamplingProfiler::StackFrame::url()
 
 Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces()
 {
+    return releaseSamples().stackTraces;
+}
+
+auto SamplingProfiler::releaseSamples() -> Samples
+{
     ASSERT(m_lock.isLocked());
     {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
 
-    Vector<StackTrace> result(WTF::move(m_stackTraces));
+    Samples result { WTF::move(m_stackTraces), WTF::move(m_samplesWithoutFrames) };
     clearData();
     return result;
 }

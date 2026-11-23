@@ -562,6 +562,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCreateNoopNativeFunctionWithCapture);
 #if ENABLE(SAMPLING_PROFILER)
 static JSC_DECLARE_HOST_FUNCTION(functionStartSamplingProfiler);
 static JSC_DECLARE_HOST_FUNCTION(functionSamplingProfilerStackTraces);
+static JSC_DECLARE_HOST_FUNCTION(functionPauseSamplingProfiler);
+static JSC_DECLARE_HOST_FUNCTION(functionSetSamplingProfilerThreadIsIdle);
+static JSC_DECLARE_HOST_FUNCTION(functionReleaseSamplingProfilerSamples);
 #endif
 
 static JSC_DECLARE_HOST_FUNCTION(functionMaxArguments);
@@ -963,6 +966,9 @@ private:
 #if ENABLE(SAMPLING_PROFILER)
         addFunction(vm, "startSamplingProfiler"_s, functionStartSamplingProfiler, 0);
         addFunction(vm, "samplingProfilerStackTraces"_s, functionSamplingProfilerStackTraces, 0);
+        addFunction(vm, "pauseSamplingProfiler"_s, functionPauseSamplingProfiler, 0);
+        addFunction(vm, "setSamplingProfilerThreadIsIdle"_s, functionSetSamplingProfilerThreadIsIdle, 1);
+        addFunction(vm, "releaseSamplingProfilerSamples"_s, functionReleaseSamplingProfilerSamples, 0);
 #endif
 
         addFunction(vm, "maxArguments"_s, functionMaxArguments, 0);
@@ -3873,10 +3879,34 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateNoopNativeFunctionWithCapture, (JSGlobalO
 }
 
 #if ENABLE(SAMPLING_PROFILER)
-JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSGlobalObject* globalObject, CallFrame*))
+// Usage: startSamplingProfiler({ intervalInMicroseconds, maximumStackDepth, recordsSamplesWithoutFrames }). What is left out stays as it is.
+JSC_DEFINE_HOST_FUNCTION(functionStartSamplingProfiler, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue interval;
+    JSValue maximumStackDepth;
+    JSValue recordsSamplesWithoutFrames;
+    if (JSObject* options = callFrame->argument(0).getObject()) {
+        interval = options->get(globalObject, Identifier::fromString(vm, "intervalInMicroseconds"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        maximumStackDepth = options->get(globalObject, Identifier::fromString(vm, "maximumStackDepth"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        recordsSamplesWithoutFrames = options->get(globalObject, Identifier::fromString(vm, "recordsSamplesWithoutFrames"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
     SamplingProfiler& samplingProfiler = vm.ensureSamplingProfiler(WTF::Stopwatch::create());
+    if (interval.isUInt32AsAnyInt())
+        samplingProfiler.setTimingInterval(Seconds::fromMicroseconds(interval.asUInt32AsAnyInt()));
+    {
+        Locker locker { samplingProfiler.getLock() };
+        if (maximumStackDepth.isNumber())
+            samplingProfiler.setMaximumStackDepth(maximumStackDepth.isUInt32AsAnyInt() && maximumStackDepth.asUInt32AsAnyInt() ? maximumStackDepth.asUInt32AsAnyInt() : SamplingProfiler::unlimitedStackDepth);
+        if (recordsSamplesWithoutFrames.isBoolean())
+            samplingProfiler.setRecordsSamplesWithoutFrames(recordsSamplesWithoutFrames.asBoolean());
+    }
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
     return JSValue::encode(jsUndefined());
@@ -3896,6 +3926,80 @@ JSC_DEFINE_HOST_FUNCTION(functionSamplingProfilerStackTraces, (JSGlobalObject* g
     EncodedJSValue result = JSValue::encode(JSONParse(globalObject, WTF::move(jsonString)));
     scope.releaseAssertNoException();
     return result;
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPauseSamplingProfiler, (JSGlobalObject* globalObject, CallFrame*))
+{
+    if (auto* samplingProfiler = globalObject->vm().samplingProfiler()) {
+        Locker locker { samplingProfiler->getLock() };
+        samplingProfiler->pause();
+    }
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetSamplingProfilerThreadIsIdle, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    if (auto* samplingProfiler = globalObject->vm().samplingProfiler())
+        samplingProfiler->setExecutionThreadIsIdle(callFrame->argument(0).toBoolean(globalObject));
+    return JSValue::encode(jsUndefined());
+}
+
+// Returns { stackTraces: [{ timestamp, frames: [name] }], withoutFrames: [{ state, first, last, count }] }, with times in milliseconds.
+JSC_DEFINE_HOST_FUNCTION(functionReleaseSamplingProfilerSamples, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    DeferTermination deferScope(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* samplingProfiler = vm.samplingProfiler();
+    if (!samplingProfiler)
+        return JSValue::encode(throwException(globalObject, scope, createError(globalObject, "Sampling profiler was never started"_s)));
+
+    DeferGC deferGC(vm); // Nothing marks the cells of released stack traces.
+    SamplingProfiler::Samples samples;
+    {
+        Locker locker { samplingProfiler->getLock() };
+        samples = samplingProfiler->releaseSamples();
+    }
+
+    auto stackTraces = JSON::Array::create();
+    for (auto& stackTrace : samples.stackTraces) {
+        auto frames = JSON::Array::create();
+        for (auto& frame : stackTrace.frames)
+            frames->pushString(frame.displayName(vm));
+        auto object = JSON::Object::create();
+        object->setDouble("timestamp"_s, stackTrace.timestamp.secondsSinceEpoch().milliseconds());
+        object->setValue("frames"_s, WTF::move(frames));
+        stackTraces->pushValue(WTF::move(object));
+    }
+
+    auto name = [](SamplingProfiler::ThreadState state) {
+        switch (state) {
+        case SamplingProfiler::ThreadState::Idle:
+            return "Idle"_s;
+        case SamplingProfiler::ThreadState::Program:
+            return "Program"_s;
+        case SamplingProfiler::ThreadState::GarbageCollector:
+            return "GarbageCollector"_s;
+        case SamplingProfiler::ThreadState::JavaScript:
+            return "JavaScript"_s;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    auto withoutFrames = JSON::Array::create();
+    for (auto& run : samples.withoutFrames) {
+        auto object = JSON::Object::create();
+        object->setString("state"_s, name(run.state));
+        object->setDouble("first"_s, run.first.secondsSinceEpoch().milliseconds());
+        object->setDouble("last"_s, run.last.secondsSinceEpoch().milliseconds());
+        object->setDouble("count"_s, run.count);
+        withoutFrames->pushValue(WTF::move(object));
+    }
+
+    auto json = JSON::Object::create();
+    json->setValue("stackTraces"_s, WTF::move(stackTraces));
+    json->setValue("withoutFrames"_s, WTF::move(withoutFrames));
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, json->toJSONString())));
 }
 #endif // ENABLE(SAMPLING_PROFILER)
 
