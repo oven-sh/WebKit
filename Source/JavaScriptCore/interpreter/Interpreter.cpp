@@ -1961,6 +1961,27 @@ NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* func
     RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, combinedArgs));
 }
 
+// What executeCallImpl() returns when VM::disallowVMEntryCount is set. executeCallImpl() does not come back from here,
+// so the call that is made has the code it has without this.
+NEVER_INLINE JSValue Interpreter::executeCallWithEntryPermission(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
+{
+    switch (vm.entryPermissionSlow()) {
+    case VM::EntryPermission::Allowed: {
+        // The call is made with the bit out of the way, for it and for the entries beneath it.
+        vm.disallowVMEntryCount &= ~VM::terminatingExecutionFlag;
+        JSValue result = vm.interpreter.executeCall(function, callData, thisValue, context, args);
+        if (vm.hasTerminationRequest())
+            vm.disallowVMEntryCount |= VM::terminatingExecutionFlag;
+        return result;
+    }
+    case VM::EntryPermission::RefusedByTermination:
+        return { };
+    case VM::EntryPermission::Disallowed:
+        return VM::checkVMEntryPermission();
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
 #if ENABLE(AOT)
@@ -2001,16 +2022,8 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]]
         return throwStackOverflowError(globalObject, scope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]] {
-        switch (vm.entryPermissionSlow()) {
-        case VM::EntryPermission::Allowed:
-            break;
-        case VM::EntryPermission::RefusedByTermination:
-            return { };
-        case VM::EntryPermission::Disallowed:
-            return VM::checkVMEntryPermission();
-        }
-    }
+    if (vm.disallowVMEntryCount) [[unlikely]]
+        RELEASE_AND_RETURN(scope, executeCallWithEntryPermission(vm, function, callData, thisValue, context, args));
 
     RefPtr<JSC::JITCode> jitCode;
     ProtoCallFrame protoCallFrame;
