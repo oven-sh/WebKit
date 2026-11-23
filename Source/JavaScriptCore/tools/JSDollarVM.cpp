@@ -2923,6 +2923,8 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWithTimeLimit, (JSGlobalObject* globalObjec
     }
     if (!wasCutShort)
         RELEASE_AND_RETURN(scope, JSValue::encode(result));
+    // The call can return with another exception when C++ swallowed the termination.
+    RETURN_IF_EXCEPTION(scope, { });
     return throwVMRangeError(globalObject, scope, "timed out"_s);
 }
 
@@ -2947,6 +2949,7 @@ JSC_DEFINE_HOST_FUNCTION(functionHasPendingTermination, (JSGlobalObject* globalO
 //   "callClearingException"     call() through the overload that clears what the callee threw, a termination included
 //   "construct"                 construct(), with the exception of the entry before still pending
 //   "callDeferringTermination"  call(), inside a DeferTermination scope
+//   "callSuspendingException"   the second call() inside a SuspendExceptionScope, the ones after it as "call"
 //   "drainMicrotasks"           VM::drainMicrotasks() in place of each call
 // Usage: $vm.dispatchOverTermination(how, function0, function1, ...)
 JSC_DEFINE_HOST_FUNCTION(functionDispatchOverTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -2955,7 +2958,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDispatchOverTermination, (JSGlobalObject* globa
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    enum class How : uint8_t { Call, CallClearingException, Construct, CallDeferringTermination, DrainMicrotasks };
+    enum class How : uint8_t { Call, CallClearingException, Construct, CallDeferringTermination, CallSuspendingException, DrainMicrotasks };
     String howString = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     How how;
@@ -2967,6 +2970,8 @@ JSC_DEFINE_HOST_FUNCTION(functionDispatchOverTermination, (JSGlobalObject* globa
         how = How::Construct;
     else if (howString == "callDeferringTermination"_s)
         how = How::CallDeferringTermination;
+    else if (howString == "callSuspendingException"_s)
+        how = How::CallSuspendingException;
     else if (howString == "drainMicrotasks"_s)
         how = How::DrainMicrotasks;
     else
@@ -3002,6 +3007,13 @@ JSC_DEFINE_HOST_FUNCTION(functionDispatchOverTermination, (JSGlobalObject* globa
             break;
         case How::CallDeferringTermination: {
             DeferTermination deferScope(vm);
+            call(globalObject, function, JSC::getCallData(function), jsUndefined(), ArgList());
+            break;
+        }
+        case How::CallSuspendingException: {
+            std::optional<SuspendExceptionScope> suspendScope;
+            if (i == 2)
+                suspendScope.emplace(vm);
             call(globalObject, function, JSC::getCallData(function), jsUndefined(), ArgList());
             break;
         }

@@ -1966,14 +1966,8 @@ NEVER_INLINE JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* func
 NEVER_INLINE JSValue Interpreter::executeCallWithEntryPermission(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     switch (vm.entryPermissionSlow()) {
-    case VM::EntryPermission::Allowed: {
-        // The call is made with the bit out of the way, for it and for the entries beneath it.
-        vm.disallowVMEntryCount &= ~VM::terminatingExecutionFlag;
-        JSValue result = vm.interpreter.executeCall(function, callData, thisValue, context, args);
-        if (vm.hasTerminationRequest())
-            vm.disallowVMEntryCount |= VM::terminatingExecutionFlag;
-        return result;
-    }
+    case VM::EntryPermission::Allowed:
+        return vm.interpreter.executeCall(function, callData, thisValue, context, args);
     case VM::EntryPermission::RefusedByTermination:
         return { };
     case VM::EntryPermission::Disallowed:

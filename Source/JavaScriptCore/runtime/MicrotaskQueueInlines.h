@@ -145,7 +145,7 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
             case VM::EntryPermission::Allowed:
                 break;
             case VM::EntryPermission::RefusedByTermination:
-                // The tasks stay queued for the checkpoint that follows the end of the termination.
+                // No task is dequeued.
                 return;
             case VM::EntryPermission::Disallowed:
                 VM::checkVMEntryPermission();

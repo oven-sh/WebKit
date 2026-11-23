@@ -336,7 +336,6 @@ public:
     void clearHasTerminationRequest()
     {
         m_hasTerminationRequest = false;
-        disallowVMEntryCount &= ~terminatingExecutionFlag;
         clearEntryScopeService(ConcurrentEntryScopeService::ResetTerminationRequest);
 #if ENABLE(AOT)
         if (hasCompiledCode())
@@ -353,10 +352,9 @@ public:
     // What a VM entry that found disallowVMEntryCount set does next. It is out of line: an entry that is made pays for
     // neither reason.
     enum class EntryPermission : uint8_t {
-        // isTerminatingExecution(), inside a DeferTermination scope: the entry is what the scope defers the termination for.
+        // The TerminationException was thrown and is no longer pending. thrownTerminationFlag is clear again.
         Allowed,
-        // isTerminatingExecution(): the entry is not made, and the TerminationException is pending when this returns
-        // (thrown again if an embedder cleared it and kept the request). The entry returns as if its callee threw it.
+        // The TerminationException is pending: the entry is not made. It returns as if its callee threw it.
         RefusedByTermination,
         // A DisallowVMEntry scope: checkVMEntryPermission() says what the entry does.
         Disallowed,
@@ -433,10 +431,13 @@ public:
     Structure* cellButterflyStructure(IndexingType indexingType) { return rawImmutableButterflyStructure(indexingType).get(); }
 
     // Keep super frequently accessed fields top in VM.
-    // The number of DisallowVMEntry scopes, and in the top bit isTerminatingExecution(). Every VM entry tests this word
+    // The number of DisallowVMEntry scopes, and in the top bit thrownTerminationFlag. Every VM entry tests this word
     // against zero, so that one test refuses an entry for either reason.
     unsigned disallowVMEntryCount { 0 };
-    static constexpr unsigned terminatingExecutionFlag = 1u << 31;
+    // No VM entry is made while the TerminationException is pending. The bit is set wherever it becomes the pending
+    // exception, and it stays set when the exception is cleared: the entry that finds the bit set and nothing pending
+    // clears the bit and is made (entryPermissionSlow()).
+    static constexpr unsigned thrownTerminationFlag = 1u << 31;
 private:
     Exception* m_exception { nullptr };
     Exception* m_terminationException { nullptr };
@@ -1328,13 +1329,6 @@ public:
     // NeedTermination trap, the termination-request flag, or the TerminationException as the pending exception.
     bool hasPendingTermination() const { return traps().needHandling(VMTraps::NeedTermination) || hasTerminationRequest() || hasPendingTerminationException(); }
 
-    // True from the throw of the TerminationException until the request for that termination is withdrawn: by
-    // cancelTermination(), by the exit of the outermost VMEntryScope, or by clearHasTerminationRequest(). Script is
-    // unwinding, and no VM entry is made over it: an entry returns with the TerminationException pending, as if its
-    // callee threw it (entryPermissionSlow()). An embedder that clears the exception and keeps the request does not end
-    // this: its next entry is refused too, and throws the TerminationException again.
-    bool isTerminatingExecution() const { return disallowVMEntryCount & terminatingExecutionFlag; }
-
     // Withdraws whatever termination is pending on this VM (see hasPendingTermination()) — the counterpart of
     // notifyNeedTermination() for a time-limited scope that has ended: what ran under the request stays cut short,
     // what runs next is unaffected. It cannot tell requests apart: if another party's request may be pending too
@@ -1716,7 +1710,7 @@ public:
     ~AllowLazyMaterializationOfImmutableProperties()
     {
 #if ASSERT_ENABLED
-        ASSERT(m_vm.disallowVMEntryCount & ~VM::terminatingExecutionFlag);
+        ASSERT(m_vm.disallowVMEntryCount & ~VM::thrownTerminationFlag);
         --m_vm.disallowVMEntryCount;
 #endif
         --m_vm.allowLazyMaterializationOfImmutablePropertiesCount;

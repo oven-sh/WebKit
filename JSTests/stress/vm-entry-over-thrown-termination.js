@@ -1,10 +1,10 @@
 //@ runDefault("--useDollarVM=1")
+//@ run("validate-exception-checks", "--useDollarVM=1", "--validateExceptionChecks=1")
 
-// From the throw of the TerminationException until the request for that termination is withdrawn
-// (VM::isTerminatingExecution()), no VM entry is made: the entry returns with the TerminationException pending, as if
-// its callee threw it. $vm.callWithTimeLimit(fn, ms) is an embedder's time limit (node:vm's `timeout`), which requests
-// the termination and withdraws it. $vm.dispatchOverTermination(how, ...functions) is an embedder's dispatcher that
-// makes one entry after the other and does not stop at a termination.
+// No VM entry is made while the TerminationException is pending: the entry returns with it pending, as if its callee
+// threw it. $vm.callWithTimeLimit(fn, ms) is an embedder's time limit (node:vm's `timeout`), which requests the
+// termination and withdraws it. $vm.dispatchOverTermination(how, ...functions) is an embedder's dispatcher that makes
+// one entry after the other and does not stop at a termination.
 
 function shouldBe(actual, expected, what) {
     if (actual !== expected)
@@ -54,18 +54,29 @@ shouldBe(enteredUnderALimit("construct", entered => {
     entered.push("script after the dispatcher");
 }), "", "construct");
 
-// A dispatcher that clears what each callee threw clears the TerminationException too. The request is not withdrawn,
-// so its next entries are refused all the same, and so is the first entry that the script beneath it makes.
+// The overload of call() that clears what the callee threw clears the TerminationException too, also when the entry
+// was not made. Nothing is pending then: the entry that follows is made, and the script that called the dispatcher
+// goes on. The request for the termination stays for the embedder to act on. (The callee after the clear is a host
+// function: the first call of a script function ends a DeferTermination scope, which throws the termination again.)
 shouldBe(enteredUnderALimit("callClearingException", entered => {
     $vm.dispatchOverTermination("callClearingException", spinForever,
-        () => entered.push("script function"),
-        Array.prototype.push.bind(entered, "host function"));
-    for (;;)
-        [2, 1].sort(() => entered.push("comparator"));
-}), "", "callClearingException");
+        () => entered.push("the entry over the pending exception"),
+        Array.prototype.push.bind(entered, "host function after the clear"));
+    entered.push("script after the dispatcher");
+}), "host function after the clear,script after the dispatcher", "callClearingException");
 
-// A checkpoint runs no microtask over the termination, and the microtasks stay queued for the checkpoint that
-// follows its end.
+// A SuspendExceptionScope takes the TerminationException away for what runs inside it: that entry is made. The
+// exception is pending again when the scope ends, and the entries that follow are not made.
+shouldBe(enteredUnderALimit("callSuspendingException", entered => {
+    $vm.dispatchOverTermination("callSuspendingException", spinForever,
+        Array.prototype.push.bind(entered, "host function inside the scope"),
+        () => entered.push("script function after the scope"),
+        Array.prototype.push.bind(entered, "host function after the scope"));
+    entered.push("script after the dispatcher");
+}), "host function inside the scope", "callSuspendingException");
+
+// A checkpoint runs no microtask over the pending TerminationException and dequeues none: the microtasks run at the
+// checkpoint that follows.
 {
     let ranMicrotask = false;
     Promise.resolve().then(() => { ranMicrotask = true; });
@@ -78,8 +89,8 @@ shouldBe(enteredUnderALimit("callClearingException", entered => {
     shouldBe(ranMicrotask, true, "drainMicrotasks: the microtask ran at the next checkpoint");
 }
 
-// A DeferTermination scope defers the termination for what runs inside it: that entry is made. The termination goes
-// on when the scope ends.
+// A DeferTermination scope takes the TerminationException away for what runs inside it: that entry is made. The
+// scope throws it again when it ends.
 shouldBe(enteredUnderALimit("callDeferringTermination", entered => {
     $vm.dispatchOverTermination("callDeferringTermination", spinForever,
         () => entered.push("script function"),

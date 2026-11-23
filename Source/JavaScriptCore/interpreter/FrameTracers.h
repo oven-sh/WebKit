@@ -40,6 +40,7 @@ public:
     SuspendExceptionScope(VM& vm)
         : m_vm(vm)
         , m_exceptionWasSet(vm.m_exception)
+        , m_terminationWasPending(vm.hasPendingTerminationException())
         , m_savedException(vm.m_exception, nullptr)
         , m_savedLastException(vm.m_lastException, nullptr)
     {
@@ -48,12 +49,17 @@ public:
     }
     ~SuspendExceptionScope()
     {
-        if (m_exceptionWasSet)
+        if (m_exceptionWasSet) {
             m_vm.traps().fireTrap(VMTraps::NeedExceptionHandling);
+            // The TerminationException is pending again. A VM entry that was made in this scope cleared the bit.
+            if (m_terminationWasPending) [[unlikely]]
+                m_vm.disallowVMEntryCount |= VM::thrownTerminationFlag;
+        }
     }
 private:
     VM& m_vm;
     bool m_exceptionWasSet;
+    bool m_terminationWasPending;
     SetForScope<Exception*> m_savedException;
     SetForScope<Exception*> m_savedLastException;
 };
