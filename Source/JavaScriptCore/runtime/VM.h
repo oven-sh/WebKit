@@ -349,6 +349,18 @@ public:
 
     static JS_EXPORT_PRIVATE JSValue checkVMEntryPermission();
 
+    // What a VM entry that found disallowVMEntryCount set does next. It is out of line: an entry that is made pays for
+    // neither reason.
+    enum class EntryPermission : uint8_t {
+        // The TerminationException was thrown and is no longer pending. thrownTerminationFlag is clear again.
+        Allowed,
+        // The TerminationException is pending: the entry is not made. It returns as if its callee threw it.
+        RefusedByTermination,
+        // A DisallowVMEntry scope: checkVMEntryPermission() says what the entry does.
+        Disallowed,
+    };
+    JS_EXPORT_PRIVATE EntryPermission entryPermissionSlow();
+
     // Setting this means that the VM can never recover from a TerminationException.
     // Currently, we'll only set this for worker threads. Ideally, we want this
     // to always be true. However, we're only limiting it to workers for now until
@@ -419,7 +431,13 @@ public:
     Structure* cellButterflyStructure(IndexingType indexingType) { return rawImmutableButterflyStructure(indexingType).get(); }
 
     // Keep super frequently accessed fields top in VM.
+    // The number of DisallowVMEntry scopes, and in the top bit thrownTerminationFlag. Every VM entry tests this word
+    // against zero, so that one test refuses an entry for either reason.
     unsigned disallowVMEntryCount { 0 };
+    // No VM entry is made while the TerminationException is pending. The bit is set wherever it becomes the pending
+    // exception, and it stays set when the exception is cleared: the entry that finds the bit set and nothing pending
+    // clears the bit and is made (entryPermissionSlow()).
+    static constexpr unsigned thrownTerminationFlag = 1u << 31;
 private:
     Exception* m_exception { nullptr };
     Exception* m_terminationException { nullptr };
@@ -1692,7 +1710,7 @@ public:
     ~AllowLazyMaterializationOfImmutableProperties()
     {
 #if ASSERT_ENABLED
-        ASSERT(m_vm.disallowVMEntryCount);
+        ASSERT(m_vm.disallowVMEntryCount & ~VM::thrownTerminationFlag);
         --m_vm.disallowVMEntryCount;
 #endif
         --m_vm.allowLazyMaterializationOfImmutablePropertiesCount;

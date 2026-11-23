@@ -792,7 +792,7 @@ static NEVER_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const Call
     });
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    scope.assertNoException();
+    scope.assertNoExceptionAtVMEntry();
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
     JSGlobalObject* realm = callData.compiled.realm;
@@ -804,8 +804,16 @@ static NEVER_INLINE JSValue enterFromEngine(VM& vm, JSObject* callee, const Call
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
-        JSValue refused = VM::checkVMEntryPermission();
-        return isConstruct ? JSValue(realm->globalThis()) : refused;
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return { };
+        case VM::EntryPermission::Disallowed: {
+            JSValue refused = VM::checkVMEntryPermission();
+            return isConstruct ? JSValue(realm->globalThis()) : refused;
+        }
+        }
     }
 
     if constexpr (!isConstruct)

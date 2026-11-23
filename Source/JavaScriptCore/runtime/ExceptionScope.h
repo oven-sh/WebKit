@@ -62,6 +62,9 @@ public:
     ALWAYS_INLINE void releaseAssertNoException() { RELEASE_ASSERT_WITH_MESSAGE(!exception(), "%s", unexpectedExceptionMessage()); }
     ALWAYS_INLINE void assertNoExceptionExceptTermination() { RELEASE_ASSERT_WITH_MESSAGE(!exception() || m_vm.hasPendingTerminationException(), "%s", unexpectedExceptionMessage()); }
     ALWAYS_INLINE void releaseAssertNoExceptionExceptTermination() { RELEASE_ASSERT_WITH_MESSAGE(!exception() || m_vm.hasPendingTerminationException(), "%s", unexpectedExceptionMessage()); }
+    // A VM entry is made with no exception pending. A pending TerminationException passes here with
+    // VM::thrownTerminationFlag set: the test of VM::disallowVMEntryCount that follows does not make that entry.
+    ALWAYS_INLINE void assertNoExceptionAtVMEntry() { RELEASE_ASSERT_WITH_MESSAGE(!exception() || (m_vm.hasPendingTerminationException() && (m_vm.disallowVMEntryCount & VM::thrownTerminationFlag)), "%s", unexpectedExceptionMessage()); }
 
 #if ASAN_ENABLED || ENABLE(C_LOOP)
     const void* stackPosition() const {  return m_location.stackPosition; }
@@ -100,6 +103,7 @@ public:
     ALWAYS_INLINE void releaseAssertNoException() { RELEASE_ASSERT(!exception()); }
     ALWAYS_INLINE void assertNoExceptionExceptTermination() { ASSERT(!exception() || m_vm.hasPendingTerminationException()); }
     ALWAYS_INLINE void releaseAssertNoExceptionExceptTermination() { RELEASE_ASSERT(!exception() || m_vm.hasPendingTerminationException()); }
+    ALWAYS_INLINE void assertNoExceptionAtVMEntry() { ASSERT(!exception() || (m_vm.hasPendingTerminationException() && (m_vm.disallowVMEntryCount & VM::thrownTerminationFlag))); }
 
     [[nodiscard]] ALWAYS_INLINE bool tryClearException();
 

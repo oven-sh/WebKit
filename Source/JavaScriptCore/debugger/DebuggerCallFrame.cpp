@@ -270,10 +270,19 @@ JSValue DebuggerCallFrame::evaluateWithScopeExtension(VM& vm, const String& scri
     {
         auto* jsScope = debuggerCallFrame->scope(vm)->jsScope();
         VMEntryScope entryScope(vm, jsScope->realm());
-        if (vm.disallowVMEntryCount) [[unlikely]]
-            result = VM::checkVMEntryPermission();
-        else
+        auto permission = vm.disallowVMEntryCount ? vm.entryPermissionSlow() : VM::EntryPermission::Allowed;
+        switch (permission) {
+        case VM::EntryPermission::Allowed:
             result = vm.interpreter.executeEval(eval, debuggerCallFrame->thisValue(vm), jsScope);
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            // The TerminationException is what the evaluation threw.
+            result = jsUndefined();
+            break;
+        case VM::EntryPermission::Disallowed:
+            result = VM::checkVMEntryPermission();
+            break;
+        }
     }
     if (catchScope.exception()) [[unlikely]] {
         exception = catchScope.exception();

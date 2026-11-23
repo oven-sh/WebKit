@@ -141,8 +141,16 @@ inline void MicrotaskQueue::performMicrotaskCheckpoint(VM& vm, NOESCAPE const In
         clear();
     else {
         if (vm.disallowVMEntryCount) [[unlikely]] {
-            VM::checkVMEntryPermission();
-            return;
+            switch (vm.entryPermissionSlow()) {
+            case VM::EntryPermission::Allowed:
+                break;
+            case VM::EntryPermission::RefusedByTermination:
+                // No task is dequeued.
+                return;
+            case VM::EntryPermission::Disallowed:
+                VM::checkVMEntryPermission();
+                return;
+            }
         }
 
         std::optional<VMEntryScope> entryScope;

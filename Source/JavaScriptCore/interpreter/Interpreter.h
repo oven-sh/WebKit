@@ -223,6 +223,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JSValue executeCachedCall(CachedCall&);
         JSValue executeBoundCall(VM&, JSBoundFunction*, JSCell*, const ArgList&);
         JSValue executeCallImpl(VM&, JSObject*, const CallData&, JSValue, JSCell*, const ArgList&);
+        static JSValue executeCallWithEntryPermission(VM&, JSObject*, const CallData&, JSValue, JSCell*, const ArgList&);
 
     public:
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)

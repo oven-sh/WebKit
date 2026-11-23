@@ -57,9 +57,16 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
-        VM::checkVMEntryPermission();
-        throwStackOverflowError(globalObject, scope);
-        return;
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return;
+        case VM::EntryPermission::Disallowed:
+            VM::checkVMEntryPermission();
+            throwStackOverflowError(globalObject, scope);
+            return;
+        }
     }
 
     m_arguments.ensureCapacity(argumentCount);
@@ -101,9 +108,16 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSObject* compiledCallee, c
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
-        VM::checkVMEntryPermission();
-        throwStackOverflowError(globalObject, scope);
-        return;
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return;
+        case VM::EntryPermission::Disallowed:
+            VM::checkVMEntryPermission();
+            throwStackOverflowError(globalObject, scope);
+            return;
+        }
     }
 
     m_arguments.ensureCapacity(argumentCount);
