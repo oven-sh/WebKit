@@ -1,0 +1,83 @@
+# The attempt fails at the first unit of each rest of a long text.
+# -- source: main.js
+# const text = JSON.parse(JSON.stringify("\u1234" + "a".repeat(8000000)));
+# const rule = new RegExp(JSON.parse('"^b.*#"') + "x".repeat(Date.now() < 0));
+# let n = 0;
+# for (let i = 0; i < text.length; i++) if (rule.test(text.slice(i))) n++;
+# print(n);
+# -- end of source
+# RUN: run-in-shell mechanisms=all
+# DIAGNOSTIC: RegExpPatternNotConstant
+# CHECK: 0
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=JSON @36
+    v1 = PropGet v0 key="parse" @36
+    v2 = Convert v1 declared={type=builtin(JSONParse) flags=[IsExpected]} @36
+    v3 = Builtin builtin=JSON @47
+    v4 = PropGet v3 key="stringify" @47
+    v5 = Convert v4 declared={type=builtin(JSONStringify) flags=[IsExpected]} @47
+    v6 = String string="\u{1234}" @62
+    v7 = String string="a" @73
+    v8 = PropGet v7 key="repeat" @73
+    v9 = Integer integer=8000000 @84
+    v10 = Call v8, v7, v9 calleeKey="repeat" calleeName="repeat" @77
+    v11 = Add v6, v10 @62
+    v12 = Call v5, v3, v11 calleeKey="stringify" calleeName="JSON.stringify" @52
+    v13 = Call v2, v0, v12 calleeKey="parse" calleeName="JSON.parse" @41
+    v14 = Builtin builtin=RegExp @113
+    v15 = Builtin builtin=JSON @120
+    v16 = PropGet v15 key="parse" @120
+    v17 = Convert v16 declared={type=builtin(JSONParse) flags=[IsExpected]} @120
+    v18 = String string="\"^b.*#\"" @131
+    v19 = Call v17, v15, v18 calleeKey="parse" calleeName="JSON.parse" @125
+    v20 = String string="x" @144
+    v21 = PropGet v20 key="repeat" @144
+    v22 = Builtin builtin=GlobalThis @155
+    v23 = PropGet v22 key="Date" [isFreeName] @155
+    v24 = Convert v23 declared={type=builtin(Date) flags=[IsExpected]} @155
+    v25 = PropGet v24 key="now" @155
+    v26 = Convert v25 declared={type=builtin(DateNow) flags=[IsExpected]} @155
+    v27 = Call v26, v24 calleeKey="now" calleeName="Date.now" @160
+    v28 = Integer @168
+    v29 = Less v27, v28 @155
+    v30 = Call v21, v20, v29 calleeKey="repeat" calleeName="repeat" @148
+    v31 = Add v19, v30 @120
+    v32 = Construct v14, -, v31 calleeName="RegExp" @113 @109
+    v33 = Integer @181
+    v34 = Convert v33 declared={type=number flags=[IsExpected]} @181
+    v35 = Integer @197
+    v36 = Convert v35 declared={type=number flags=[IsExpected]} @197
+    Jump -> next b1(v34, v36) @193
+  b1(v37, v38):
+    LoopHint @193
+    v40 = PropGet v13 key="length" @204
+    v41 = Less v38, v40 @200
+    Branch v41 -> taken b2(), notTaken b5() @200
+  b2():
+    v42 = PropGet v32 key="test" @226
+    v43 = PropGet v13 key="slice" @236
+    v44 = Call v43, v13, v38 calleeKey="slice" calleeName="text.slice" @241
+    v45 = Call v42, v32, v44 calleeKey="test" calleeName="rule.test" @231
+    v46 = ToBoolean v45 @226
+    Branch v46 -> taken b3(| 0), notTaken b4(v37) @226
+  b3(v47):
+    v48 = Increment v37 @252
+    v49 = Convert v48 declared={type=number flags=[IsExpected]} @252
+    Jump -> next b4(v49) @252
+  b4(v50):
+    v51 = Increment v38 @217
+    v52 = Convert v51 declared={type=number flags=[IsExpected]} @217
+    Jump -> next b1(v50, v52) @217
+  b5():
+    v53 = Builtin builtin=GlobalThis @257
+    v54 = PropGet v53 key="print" [isFreeName] @257
+    v55 = Call v54, -, v37 calleeName="print" @257
+    v56 = Undefined @257
+    Return v56 @257
+}

@@ -134,14 +134,19 @@ CharacterView StringEmitter::viewOfFlatString(CellPointer flat)
     return viewOfSource(sourceInImpl(loadField<Pointer>(flat, m_heaps.JSString_value)), flat);
 }
 
-CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope)
+CharacterSource StringEmitter::sourceOfRope(const OperationContext& context, CellPointer rope, const RangeInString* rangeThatIsRead)
 {
     Word32 length = loadField<Word32>(rope, m_heaps.JSRopeString_length);
-    StubCallResult charactersAndImpl = callStub(context, ropeCharacters(), { rope.value() });
+    StubCallResult charactersAndImpl;
+    if (rangeThatIsRead) {
+        CodeUnitRange range = (*rangeThatIsRead)(length);
+        charactersAndImpl = callStub(context, ropeCharactersAroundRange(), { rope.value(), range.start.value(), range.end.value() });
+    } else
+        charactersAndImpl = callStub(context, ropeCharacters(), { rope.value() });
     return { Pointer(charactersAndImpl.first), length, flagsInImpl(Pointer(charactersAndImpl.second)) };
 }
 
-CharacterView StringEmitter::viewOfString(const OperationContext& context, CellPointer string)
+CharacterView StringEmitter::viewOfString(const OperationContext& context, CellPointer string, const RangeInString* rangeThatIsRead)
 {
     LBasicBlock flat = newBlock();
     LBasicBlock rope = newBlock();
@@ -165,7 +170,7 @@ CharacterView StringEmitter::viewOfString(const OperationContext& context, CellP
     join(sourceInImpl(fiber));
 
     m_out.appendToArm(rope, fork);
-    join(sourceOfRope(context, string));
+    join(sourceOfRope(context, string, rangeThatIsRead));
 
     m_out.appendToJoin(continuation, fork);
     Pointer joinedCharacters(m_out.phi(machineTypeOf(Pointer::representation), characters));
@@ -747,7 +752,8 @@ void StringEmitter::generateBoundsOfStringSplit(const ValueContext& value)
     Vector<Operand, 9> results;
     for (uint32_t bound = 0; bound < 2 * count; ++bound)
         results.append(Word32(m_out.load32(m_out.address(m_heaps.argumentBuffer, bounds.value(), bound * sizeof(uint32_t)))));
-    results.append(numberOfPieces);
+    // The longest text has 2^31 pieces, which is no int32: the place of the last piece is.
+    results.append(add(numberOfPieces, -1));
     defineResults(value, results.span());
 }
 

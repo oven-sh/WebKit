@@ -265,6 +265,7 @@ private:
         BuiltinName name = m_program.builtins().nameOf(byteCast<uint8_t>(text.span()));
         return name ? m_program.keyOf(name) : PropertyKeyID();
     }
+    bool followsCaptures() const { return !m_literalsOfFields; }
     uint32_t literalOf(ValueID value) const { return value ? m_literals[value.index()] : 0; }
     void escape(ValueID operand)
     {
@@ -319,9 +320,8 @@ private:
             return;
         }
         case Opcode::NewClosure:
-            // Only literals are followed into captures, not what is read out of a field.
-            if (m_literalsOfFields)
-                user.forEachOperand([&](ValueID operand, uint32_t) { escape(operand); });
+            if (!followsCaptures())
+                escapeAll(user.as<Opcode::NewClosure>().capturesOperands());
             return;
         case Opcode::PrivateDefine:
         case Opcode::PrivateSet: {
@@ -339,8 +339,7 @@ private:
         case Opcode::CallDirect: {
             auto call = user.as<Opcode::CallDirect>();
             std::span<const ValueID> operands = call.argumentsOperands();
-            const size_t numberFollowed = m_literalsOfFields ? 0 : std::min<size_t>(operands.size(), m_program.at(call.function()).captures.size());
-            escapeAll(operands.subspan(numberFollowed));
+            escapeAll(operands.subspan(followsCaptures() ? std::min<size_t>(operands.size(), m_program.at(call.function()).captures.size()) : 0));
             return;
         }
         default:

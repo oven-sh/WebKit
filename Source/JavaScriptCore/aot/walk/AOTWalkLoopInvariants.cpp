@@ -1230,7 +1230,8 @@ bool Walker::tryBuildFirstArrivalConditions(uint32_t loopIndex, Vector<Reference
             areAllBuilt &= *outcome;
             continue;
         }
-        if (!holds.isValue() || representationOf(holds) != Representation::Boolean) {
+        // A test among the reloads is asked again with the values of the first turn: it says nothing about the turn that follows.
+        if (!holds.isValue() || representationOf(holds) != Representation::Boolean || m_openLoops[loopIndex].reloadBlocks.contains(m_code.blockOf(holds.id()))) {
             areAllBuilt = false;
             continue;
         }

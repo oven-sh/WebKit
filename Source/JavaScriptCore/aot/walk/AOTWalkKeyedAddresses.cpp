@@ -161,6 +161,14 @@ static bool isGlobalThis(Walker& walker, const Type& type)
     return named && walker.program().builtins().canonicalID(named) == walker.program().builtins().canonicalID(Builtins::GlobalThis);
 }
 
+static bool isExpectedToBeGlobalThis(Walker& walker, const BodyValue& access, TypeID holder)
+{
+    TypeArena& types = walker.types();
+    if (types.isUninformative(holder))
+        holder = findExpectation(walker, access.objectOperand()).type;
+    return holder && isGlobalThis(walker, types.at(types.withoutNullish(holder)));
+}
+
 static bool mayHoldNames(Walker& walker, const BodyValue& access, TypeID holder, bool isStoredInto)
 {
     TypeArena& types = walker.types();
@@ -579,7 +587,7 @@ Effects effectsOfKeyedAccess(Walker& walker, const BodyValue& access, TypeID hol
     return effects;
 }
 
-static Reference buildKeyedAddress(Walker& walker, Reference object, Reference key, PropertyKeyID name, bool fitsFields, bool takesFunctions, Origin origin)
+static Reference buildKeyedAddress(Walker& walker, Reference object, Reference key, PropertyKeyID name, bool fitsFields, bool takesFunctions, bool findsPlaceInGlobalObject, Origin origin)
 {
     constexpr auto purity = Walker::IterationPurity::KnownEffectsOnly;
     Reference address;
@@ -594,6 +602,7 @@ static Reference buildKeyedAddress(Walker& walker, Reference object, Reference k
         lookup.setFindsOnlyFields(findsOnlyFields(walker, walker.typeOf(object)));
         lookup.setFitsFieldTypes(fitsFields);
         lookup.setTakesFunctions(takesFunctions);
+        lookup.setFindsPlaceInGlobalObject(findsPlaceInGlobalObject);
         lookup.setSkipsCompiledObjects(!isInvariant);
         address = walker.build(WTF::move(lookup));
         if (!address || walker.hasFailed())
@@ -868,7 +877,7 @@ bool tryAccessAtKeyedAddressOfItsOpcodes(Walker& walker, const BodyValue& access
     bool isNamed = namedAccesses.contains(access.opcode());
     bool takesFunctions = isNamed && isFunctionOutsideClasses(walker, walker.typeOf(object));
     PropertyKeyID name = isNamed && !takesFunctions ? access.key() : PropertyKeyID();
-    Reference address = buildKeyedAddress(walker, object, key, name, storedFits(walker, access, object), takesFunctions, origin);
+    Reference address = buildKeyedAddress(walker, object, key, name, storedFits(walker, access, object), takesFunctions, !isNamed && isExpectedToBeGlobalThis(walker, access, walker.typeOf(object)), origin);
     if (!address)
         return true;
     auto read = [&] {

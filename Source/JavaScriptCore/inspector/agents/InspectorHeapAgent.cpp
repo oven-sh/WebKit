@@ -26,6 +26,9 @@
 #include "config.h"
 #include "InspectorHeapAgent.h"
 
+#if ENABLE(AOT)
+#include "AOTHeapHooks.h"
+#endif
 #include "HeapProfiler.h"
 #include "HeapSnapshot.h"
 #include "InjectedScript.h"
@@ -189,6 +192,10 @@ Protocol::ErrorStringOr<std::tuple<String, RefPtr<Protocol::Debugger::FunctionDe
 
     // String preview.
     JSCell* cell = optionalNode->cell;
+#if ENABLE(AOT)
+    if (AOT::HeapHooks::isBufferOfGrowingText(cell))
+        return makeUnexpected("Unable to get object details - internal buffer"_s);
+#endif
     if (cell->isString())
         return { { asString(cell)->tryGetValue(), nullptr, nullptr } };
 

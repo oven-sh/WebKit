@@ -1736,7 +1736,6 @@ void generateMapArrayToField(StubAssembler& jit)
     const FieldMap map = static_cast<FieldMap>(jit.key().form());
     const CallbackSource source = map == FieldMap::LengthOfElement ? CallbackSource::Element : CallbackSource::Field;
     const bool isNested = map == FieldMap::FieldOfField;
-    const FPRReg header = isNested ? jit.allocateScratch(FPRInfo::fpRegT0) : InvalidFPRReg;
     const bool measures = map == FieldMap::LengthOfElement || map == FieldMap::LengthOfField;
     RELEASE_ASSERT(length == jit.immediate());
     CallbackExits exits;
@@ -1793,13 +1792,8 @@ void generateMapArrayToField(StubAssembler& jit)
             Jump isNoInt32 = jit.branch64(CCallHelpers::Below, registers.value, numberTag);
             storeElement(nextInteger);
             isNoInt32.link(&jit);
-            if (isNested) {
-                jit.loadDouble(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader)), header);
-                jit.storeDouble(header, Address(made));
-            } else {
-                jit.load64(Address(instanceGPR, AOT_INSTANCE_PREFIX_OFFSET(newArrayWithContiguousHeader)), length);
-                jit.store64(length, Address(made));
-            }
+            // The poll behind a slow allocation may have collected: the array is marked then, and its cell state has to stay.
+            widenStorageOfIntegersForAnyValue(jit, made, OwnedScratchRegister(jit), exits.bailouts);
             Jump hasValue = jit.jump();
             Label nextValue = jit.label();
             loadElement(elementsRead);

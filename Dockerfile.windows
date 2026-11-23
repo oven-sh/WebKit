@@ -317,6 +317,8 @@ RUN printf '#!/bin/sh\nexec /usr/local/bin/lld-link "$@"\n' > /usr/local/bin/lin
 #                                    configure pins C++11
 #   - _MT without _DLL            -> the STL headers emit DEFAULTLIB:libcpmt
 #                                    (static C++ runtime), matching /MT
+#   - no LTO_FLAG                 -> bun links only the data, and for arm64 ThinLTO in
+#                                    LLVM 23 miscompiles the weak hook of udata.cpp
 RUN mkdir -p /icu-build && cd /icu-build && \
     export LIB="/winsdk/crt/lib/${WIN_ARCH};/winsdk/sdk/lib/um/${WIN_ARCH};/winsdk/sdk/lib/ucrt/${WIN_ARCH}" && \
     IMSVC="-isystem /winsdk/crt/include -isystem /winsdk/sdk/include/ucrt -isystem /winsdk/sdk/include/um -isystem /winsdk/sdk/include/shared" && \

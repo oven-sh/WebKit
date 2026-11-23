@@ -1750,6 +1750,7 @@ public:
     bool appendNamesOfTexts(std::span<const StringID>, Vector<PropertyKeyID, 8>&) const;
     ValueID findCallbackList(FunctionID callback, FunctionID& maker) const;
     ValueID findCallbackListSlow(FunctionID callback, FunctionID& maker) const;
+    ValueID findCallWithCallback(FunctionID callback, FunctionID maker, const BodyIndex& made, ValueID& closure) const;
     std::optional<uint32_t> findCallbackParameterArray(FunctionID, uint32_t callbackParameter) const;
     struct ListedObject {
         FunctionID function;

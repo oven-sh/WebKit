@@ -1,0 +1,78 @@
+# The matches of a long text are not counted by a comparison at every place.
+# -- source: main.js
+# function lengthWithout(s, word) {
+#     if (typeof s !== "string" || typeof word !== "string")
+#         throw 0;
+#     let n = 0;
+#     for (let i = 0; i < 20; i++)
+#         n += s.replace(new RegExp(word, "g"), "").length;
+#     return n;
+# }
+# const word = "a".repeat(1000000) + "b";
+# print(lengthWithout("x" + word, word));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: 20
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = String string="a" @268
+    v3 = PropGet v2 key="repeat" @268
+    v4 = Integer integer=1000000 @279
+    v5 = Call v3, v2, v4 calleeKey="repeat" calleeName="repeat" @272
+    v6 = String string="b" @290
+    v7 = Add v5, v6 @268
+    v8 = Builtin builtin=GlobalThis @295
+    v9 = PropGet v8 key="print" [isFreeName] @295
+    v10 = String string="x" @315
+    v11 = Add v10, v7 @315
+    v12 = Call v1, -, v11, v7 calleeName="lengthWithout" @301
+    v13 = Call v9, -, v12 calleeName="print" @295
+    v14 = Undefined @295
+    Return v14 @295
+}
+function f1 name="lengthWithout" module=m0 position=23 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|string flags=[IsExpected]}, {type=undefined|null|string flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string, v1: undefined|null|string):
+    v2 = TypeTest v0 testedType=string @65
+    Branch v2 -> taken b1(| 0), notTaken b6() @65
+  b1(v3):
+    v4 = NarrowByTest v0, v3 @65
+    v5 = TypeTest v1 testedType=string @90
+    Branch v5 -> taken b2(| 0), notTaken b6() @90
+  b2(v6):
+    v7 = NarrowByTest v1, v6 @90
+    v8 = Integer @145
+    v9 = Convert v8 declared={type=number flags=[IsExpected]} @145
+    v10 = Integer @165
+    v11 = Convert v10 declared={type=number flags=[IsExpected]} @165
+    Jump -> next b3(v9, v11) @161
+  b3(v12, v13):
+    LoopHint @161
+    v15 = Integer integer=20 @172
+    v16 = Less v13, v15 @168
+    Branch v16 -> taken b4(), notTaken b5() @168
+  b4():
+    v17 = PropGet v4 key="replace" @194
+    v18 = Builtin builtin=RegExp @208
+    v19 = String string="g" @221
+    v20 = Construct v18, -, v7, v19 calleeName="RegExp" @208 @204
+    v21 = String string="" @227
+    v22 = Call v17, v4, v20, v21 calleeKey="replace" calleeName="s.replace" @196
+    v23 = PropGet v22 key="length" @229
+    v24 = Add v12, v23 @194
+    v25 = Convert v24 declared={type=number flags=[IsExpected]} @189
+    v26 = Increment v13 @176
+    v27 = Convert v26 declared={type=number flags=[IsExpected]} @176
+    Jump -> next b3(v25, v27) @176
+  b5():
+    Return v12 @250
+  b6():
+    v28 = Integer @130
+    Throw v28 @130
+}
