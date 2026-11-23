@@ -44,6 +44,7 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "GlobalObjectMethodTable.h"
 #include "InternalFieldTuple.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunctionGenerator.h"
@@ -2000,20 +2001,28 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
+bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency, bool* acrossHostReaction)
 {
+    // Behind a reaction of the host (GlobalObjectMethodTable::promisesSettledByHostReaction) the walk also follows the loads of the
+    // registry and what is parked on a module that an await resumes. In front of one it follows what it did before there was one.
+    bool isBehindHostReaction = false;
+    Vector<JSPromise*, 16> work;
+    Vector<JSPromise*, 4> settledByHost;
+
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
         UncheckedKeyHashSet<AbstractModuleRecord*> seen;
-        Vector<AbstractModuleRecord*, 8> work;
-        work.append(module);
-        while (!work.isEmpty()) {
-            AbstractModuleRecord* current = work.takeLast();
+        Vector<AbstractModuleRecord*, 8> modules;
+        modules.append(module);
+        while (!modules.isEmpty()) {
+            AbstractModuleRecord* current = modules.takeLast();
             if (current == dependency)
                 return true;
             if (!seen.add(current).isNewEntry)
                 continue;
+            if (JSPromise* capability = isBehindHostReaction ? current->topLevelCapability() : nullptr)
+                work.append(capability);
             for (auto& parent : current->asyncParentModules())
-                work.append(parent.get());
+                modules.append(parent.get());
         }
         return false;
     };
@@ -2032,13 +2041,30 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
     };
 
     UncheckedKeyHashSet<JSPromise*> seen;
-    Vector<JSPromise*, 16> work;
     work.append(importPromise);
     bool found = false;
 
     auto follow = [&](JSValue value) {
         if (JSPromise* promise = JSPromise::promiseForReactionCell(cellOf(value)))
             work.append(promise);
+    };
+
+    // A compiled module record has no realm. The promise of an import() has the realm of the loader that made it.
+    JSGlobalObject* globalObject = importPromise->realmMayBeNull();
+    auto* settledByHostReaction = globalObject ? globalObject->globalObjectMethodTable()->promisesSettledByHostReaction : nullptr;
+    std::optional<bool> hostHasReactions;
+    auto followHostReaction = [&](JSValue context) {
+        if (!settledByHostReaction)
+            return;
+        Vector<JSPromise*, 2> settled;
+        if (!hostHasReactions)
+            hostHasReactions = settledByHostReaction(globalObject, JSValue(), settled);
+        if (!*hostHasReactions || !settledByHostReaction(globalObject, context, settled))
+            return;
+        if (isBehindHostReaction)
+            work.appendVector(settled);
+        else
+            settledByHost.appendVector(settled);
     };
 
     // A promise, or the async function or module body that an await or for-await resumes.
@@ -2098,13 +2124,39 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
             break;
         }
         case InternalMicrotask::None:
+        case InternalMicrotask::PromiseReactionJob:
+            // A reaction with handlers and no promise to settle is the host's: only the host knows what its handlers settle.
+            if (JSPromise* promise = JSPromise::promiseForReactionCell(cellOf(cell)))
+                work.append(promise);
+            else
+                followHostReaction(context);
+            break;
+        case InternalMicrotask::ModuleRegistryFetchSettled:
+        case InternalMicrotask::ModuleRegistryModuleSettled:
+            if (isBehindHostReaction)
+                follow(cell);
+            break;
+        case InternalMicrotask::ModuleGraphLoadingError: {
+            // The load of a graph waits for each module that it requests.
+            JSCell* stateCell = isBehindHostReaction ? cellOf(context) : nullptr;
+            if (auto* state = stateCell ? dynamicDowncast<ModuleGraphLoadingState>(stateCell) : nullptr)
+                work.append(state->promise());
+            break;
+        }
+        case InternalMicrotask::DynamicImportLoadSettled:
+        case InternalMicrotask::DynamicImportDeferLoadSettled: {
+            // Until its graph is loaded, an import() has its promise in the payload.
+            JSCell* payloadCell = isBehindHostReaction ? cellOf(context) : nullptr;
+            if (auto* payload = payloadCell ? dynamicDowncast<ModuleLoaderPayload>(payloadCell) : nullptr)
+                work.append(payload->promise());
+            break;
+        }
         case InternalMicrotask::PromiseResolveThenableJobFast:
         case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast:
         case InternalMicrotask::PromiseResolveThenableJob:
         case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask:
         case InternalMicrotask::PromiseResolveWithoutHandlerJob:
         case InternalMicrotask::PromiseFulfillWithoutHandlerJob:
-        case InternalMicrotask::PromiseReactionJob:
         case InternalMicrotask::ModuleLoadStep:
         case InternalMicrotask::ModuleLoadTopSettled:
         case InternalMicrotask::ModuleLoadTopRejected:
@@ -2116,9 +2168,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
         case InternalMicrotask::ModuleLoadReturnModuleKey:
         case InternalMicrotask::ModuleLoadStoreError:
         case InternalMicrotask::ImportModuleNamespace:
-        case InternalMicrotask::DynamicImportLoadSettled:
         case InternalMicrotask::DynamicImportEvaluateSettled:
-        case InternalMicrotask::DynamicImportDeferLoadSettled:
         case InternalMicrotask::DynamicImportDeferDependencySettled:
 #if ENABLE(AOT)
         case InternalMicrotask::CompiledModuleImportSettled:
@@ -2133,16 +2183,28 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
     };
 
     constexpr size_t maxPromises = 4096;
-    while (!work.isEmpty() && !found) {
+    size_t visited = 0;
+    while (!found) {
+        if (work.isEmpty()) {
+            if (isBehindHostReaction || settledByHost.isEmpty())
+                break;
+            // What the first pass left out behind a promise counts from here on, so the second pass visits that promise again.
+            isBehindHostReaction = true;
+            seen.clear();
+            work.appendVector(settledByHost);
+            continue;
+        }
         JSPromise* promise = work.takeLast();
         if (promise->status() != JSPromise::Status::Pending)
             continue;
         if (!seen.add(promise).isNewEntry)
             continue;
-        if (seen.size() > maxPromises)
+        if (++visited > maxPromises)
             return false;
         promise->forEachPendingReaction(visitReaction);
     }
+    if (acrossHostReaction)
+        *acrossHostReaction = found && isBehindHostReaction;
     return found;
 }
 #endif
