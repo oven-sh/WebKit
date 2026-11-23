@@ -2378,6 +2378,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionWeakBlockCount);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionAsyncContext);
 static JSC_DECLARE_HOST_FUNCTION(functionSetAsyncContext);
+static JSC_DECLARE_HOST_FUNCTION(functionSetStackFramesOfError);
 #endif
 #if ENABLE(FFI)
 static JSC_DECLARE_HOST_FUNCTION(functionFFIFunction);
@@ -4542,6 +4543,24 @@ JSC_DEFINE_HOST_FUNCTION(functionSetAsyncContext, (JSGlobalObject* globalObject,
     globalObject->m_asyncContextData.get()->putInternalField(globalObject->vm(), 0, callFrame->argument(0));
     return JSValue::encode(jsUndefined());
 }
+
+// What a host does to an error that was made without frames: gives it the frames of the caller
+// (ErrorInstance::setStackFrames), from which the engine then materializes line, column, sourceURL and stack.
+// Returns false for a value that is not an Error, and for an Error that is materialized.
+// Usage: $vm.setStackFramesOfError(error)
+JSC_DEFINE_HOST_FUNCTION(functionSetStackFramesOfError, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto* error = dynamicDowncast<ErrorInstance>(callFrame->argument(0));
+    if (!error || error->hasMaterializedErrorInfo())
+        return JSValue::encode(jsBoolean(false));
+    Vector<StackFrame> frames;
+    const size_t framesToSkip = 1;
+    vm.interpreter.getStackTrace(error, frames, framesToSkip);
+    error->setStackFrames(vm, WTF::move(frames));
+    return JSValue::encode(jsBoolean(true));
+}
 #endif
 
 JSC_DEFINE_HOST_FUNCTION(functionGetGetterSetter, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -6460,6 +6479,7 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "asyncContext"_s, functionAsyncContext, 0);
     addFunction(vm, alwaysAllow, "setAsyncContext"_s, functionSetAsyncContext, 1);
+    addFunction(vm, alwaysAllow, "setStackFramesOfError"_s, functionSetStackFramesOfError, 1);
 #endif
 #if ENABLE(FFI)
     addFunction(vm, allowIfNotFuzz, "ffiFunction"_s, functionFFIFunction, 4);
