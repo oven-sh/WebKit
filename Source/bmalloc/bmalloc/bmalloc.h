@@ -418,7 +418,12 @@ BEXPORT void scavengeThisThread(bool force = true);
 // The calling thread is idle and about to block for a while. Return what its thread-local
 // allocator state holds for it: retired pages, blocks that other threads freed into its pages,
 // and the free runs inside the pages it still uses. Only the owning thread can do this.
-BEXPORT void scavengeThisThreadOnIdle();
+//
+// One call does not return everything. The allocator leaves the large blocks that the thread used
+// a moment ago, because a thread that is only between two tasks takes them again at once. Returns
+// true when it left some in pages of this thread: a thread that is still idle 100 ms later calls
+// this again, three more times at the most. WTF::IdleFreeMemoryRelease does that.
+BEXPORT bool scavengeThisThreadOnIdle();
 
 BEXPORT void scavenge();
 
