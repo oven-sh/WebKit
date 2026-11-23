@@ -68,9 +68,23 @@ public:
     NODELETE static std::optional<uint16_t> defaultPortForProtocol(StringView);
     WTF_EXPORT_PRIVATE static std::optional<String> formURLDecode(StringView input);
 
+    // https://url.spec.whatwg.org/#concept-basic-url-parser with the URL and a state override: the host state for the
+    // `host` setter of the URL API, the hostname state for its `hostname` setter. Only the string is parsed, and only
+    // as a host and a port. Returns false, and leaves the URL as it is, when the string does not set the host.
+    enum class HostStateOverride : bool { Host, Hostname };
+    WTF_EXPORT_PRIVATE static bool setHost(URL&, StringView, HostStateOverride);
+    // The hostname state on the string alone: the serialized host that it gives a URL with this scheme, and without
+    // credentials or a port. nullopt when the string does not set the host.
+    WTF_EXPORT_PRIVATE static std::optional<String> maybeCanonicalizeHostname(StringView, StringView scheme);
+
 private:
     // Parses into `result`, which must be a default-constructed URL.
     URLParser(URL& result, String&&, const URL& base = { }, const URLTextEncoding* = nullptr);
+    // For setHost and maybeCanonicalizeHostname: `scratch` takes what the host parser writes to m_url.
+    explicit URLParser(URL& scratch)
+        : m_url(scratch)
+    {
+    }
 
     friend class URL;
 
@@ -91,6 +105,9 @@ private:
     enum class HostParsingResult : uint8_t { InvalidHost, IPv6WithPort, IPv6WithoutPort, IPv4WithPort, IPv4WithoutPort, DNSNameWithPort, DNSNameWithoutPort, NonSpecialHostWithoutPort, NonSpecialHostWithPort };
     template<typename CharacterType> HostParsingResult parseHostAndPort(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool parsePort(CodePointIterator<CharacterType>&);
+    enum class HostStateResult : uint8_t { Failure, Host, HostAndPort };
+    template<typename CharacterType> HostStateResult parseHostWithStateOverride(StringView urlScheme, std::span<const CharacterType>, HostStateOverride);
+    HostStateResult parseHostWithStateOverride(StringView urlScheme, StringView, HostStateOverride);
 
     void failure();
     enum class ReportSyntaxViolation : bool { No, Yes };
