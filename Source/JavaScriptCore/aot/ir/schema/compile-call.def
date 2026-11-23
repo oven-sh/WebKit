@@ -11,7 +11,7 @@ enum TypeTestFailure { TakesGenericPath Throws ExitsToSlowVersion }
 enum CodeForm { Open Closed Generic }
 
 enum ImageVerdict {
-    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned LowPagesAccessible NoCode CannotMapCode NeedsCellCage OptionsConflict
+    Unsupported Accepted CompiledCodeDisabled NotAnImage Truncated Misaligned NoCode CannotMapCode NeedsCellCage OptionsConflict
     MalformedTables StampMismatch IdentityMismatch CodeAtFixedAddress OutsideItsSegments CannotReadExecutable
 }
 flags AllocationEscapeReason { Returned Thrown }

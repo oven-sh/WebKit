@@ -822,6 +822,11 @@ static void testMemoryTrapIsHandedOverOrStays()
         out.retVoid();
         return stored;
     });
+    checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::MayBeHandedOver, [](Output& out, const AbstractHeap& heap, LValue base, LValue) {
+        LValue loaded = out.load64(out.address(heap, base, static_cast<ptrdiff_t>(trapReach()) - 8));
+        out.ret(loaded);
+        return loaded;
+    });
     checkTrapAheadOfAccessInMemoryTest(TrapInMemoryTest::Stays, [](Output& out, const AbstractHeap& heap, LValue base, LValue) {
         LValue loaded = out.load64(out.address(heap, base, static_cast<ptrdiff_t>(trapReach()) - 4));
         out.ret(loaded);

@@ -24,7 +24,10 @@ enum class FaultSiteKind : uint8_t {
 };
 
 struct FaultSite {
-    static constexpr uintptr_t reach = 16 * KB;
+    // How far from null, or from the start of the cell cage, an access may lie and stand for a null check. Every target leaves one page unmapped at address 0, and no
+    // more than that can be counted on: WTF::Config::initialize() never puts lowestAccessibleAddress() below one page, and where /proc/sys/vm/mmap_min_addr says
+    // 4096 (RHEL) a process may map the second page. A page has 4 KB or more.
+    static constexpr uintptr_t reach = 4 * KB;
     static constexpr size_t maxThrowSiteWords = 3;
 
     FaultSiteKind kind;
