@@ -13,6 +13,8 @@
 #include "AOTRelocation.h"
 #include "AOTVector.h"
 #include "CCallHelpers.h"
+#include "LineColumn.h"
+#include <optional>
 
 namespace JSC { namespace AOT {
 
@@ -20,6 +22,8 @@ class BuildContext;
 
 namespace Typed {
 
+class CallingConventions;
+class Program;
 struct CodeGenerationInputs;
 struct CodeRecords;
 struct StackCheckState;
@@ -32,6 +36,7 @@ struct EmittedCode {
 };
 
 CompiledCode describeCode(BuildContext&, const CodeGenerationInputs&, const Code&, CodeRecords&, EmittedCode&&);
+std::optional<LineColumn> positionInBuiltin(const Program&, const CallingConventions&, FunctionID shown);
 
 JS_EXPORT_PRIVATE void printOriginOutsideOperations(PrintStream&, uint32_t origin);
 

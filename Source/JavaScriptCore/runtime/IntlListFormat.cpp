@@ -163,7 +163,8 @@ static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JS
         }
         String item = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        result.append(item);
+        if (!StringImpl::isValidLength<char16_t>(item.length()) || !result.tryAppend(WTF::move(item))) [[unlikely]]
+            throwOutOfMemoryError(globalObject, scope);
     });
     return result;
 }
@@ -181,6 +182,10 @@ JSValue IntlListFormat::format(JSGlobalObject* globalObject, JSValue list) const
 
     Vector<char16_t, 32> result;
     auto status = callBufferProducingFunction(ulistfmt_format, m_listFormat.get(), input.stringPointers(), input.stringLengths(), input.size(), result);
+    if (isICUMemoryAllocationError(status)) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return { };
+    }
     if (U_FAILURE(status))
         return throwTypeError(globalObject, scope, "failed to format list of strings"_s);
 

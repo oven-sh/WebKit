@@ -533,6 +533,8 @@ static bool argumentsPassGuards(Walker& walker, FunctionID callee, std::span<con
     return true;
 }
 
+bool directEntryTakesArguments(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
+
 Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee, std::span<const Reference> entryArguments, bool isConstruction, bool entersAsCallWould)
 {
     Draft direct(Opcode::CallDirect, site.origin());
@@ -541,6 +543,8 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.inputValueGiven = site.inputValueGiven;
     direct.setFunction(callee);
     bool hasSlowVersion = walker.plan().conventions().hasParameterGuard(callee);
+    if (entersAsCallWould && hasSlowVersion)
+        entersAsCallWould = directEntryTakesArguments(walker, callee, entryArguments);
     bool entersBody = !entersAsCallWould && (!hasSlowVersion || (!isConstruction && argumentsPassGuards(walker, callee, entryArguments)));
     direct.setRole(entersAsCallWould ? walker.plan().conventions().directEntryOf(callee).role : entersBody ? CodeRole::Body : CodeRole::SlowBody);
     if (site.opcode == Opcode::Call)
@@ -550,12 +554,12 @@ Reference callInPlaceOfCopy(Walker& walker, const Draft& site, FunctionID callee
     direct.setIsRemovableWhenUnused(callOnlyMakesGenerator(walker, callee));
     direct.setVariadicOperands(entryArguments);
     Effects effects = effectsOfDirectCall(walker, callee, entryArguments);
-    if (entersAsCallWould || entersBody)
+    const bool entersSlowBodyThatGoesByArrivals = !entersAsCallWould && !entersBody && slowBodyGoesByWhatCallersLeave(walker.program(), walker.facts(), walker.plan(), callee);
+    walker.count(StatisticID::SlowBodiesToldWhatCopiesHandThem, entersSlowBodyThatGoesByArrivals);
+    if (entersAsCallWould || entersBody || entersSlowBodyThatGoesByArrivals)
         walker.leaveArrivals(callee, entryArguments);
     return walker.buildCallThatMayBorrowScopes(WTF::move(direct), &effects);
 }
-
-bool directEntryTakesArguments(Walker&, FunctionID callee, std::span<const Reference> entryArguments);
 
 bool unitTakesWhatCopyIsHanded(Walker& walker, FunctionID callee, std::span<const Reference> entryArguments)
 {
@@ -1229,12 +1233,13 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     walker.chooseConservativeFields(finish);
     if (lookMayFinishBirthOf(walker, object))
         walker.build(WTF::move(finish));
-    showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
     if (walker.isUnreachable())
         return true;
 
     if (givesThis) {
-        walker.bind(call.id(), object);
+        showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
+        if (!walker.isUnreachable())
+            walker.bind(call.id(), object);
         return true;
     }
     if (ofWhatCameBack && types.isSubset(ofWhatCameBack, TypeTable::object))
@@ -1265,7 +1270,9 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     }
     walker.jumpTo(behind, singleElementSpan(objectReturned));
     walker.continueIn(takesThis);
-    walker.jumpTo(behind, singleElementSpan(object));
+    showWhatIsHeldFilledWhereConstructionEnds(walker, request.callee, object, origin);
+    if (!walker.isUnreachable())
+        walker.jumpTo(behind, singleElementSpan(object));
     walker.continueIn(behind);
     walker.bind(call.id(), result);
     return true;

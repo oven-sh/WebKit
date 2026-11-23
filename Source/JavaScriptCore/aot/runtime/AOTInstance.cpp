@@ -41,6 +41,7 @@
 #include "AOTObjectModel.h"
 #include "AOTOperationData.h"
 #include "AOTOperationScope.h"
+#include "AOTPoisonedCell.h"
 #include "AOTPrefixCode.h"
 #include "AOTProgramIdentifiers.h"
 #include "AOTProgramStatics.h"
@@ -204,7 +205,7 @@ static void fillHeaderAndPrefix(Instance& instance, VM& vm, JSGlobalObject* real
         instance.typeStrings[type] = vm.smallStrings.typeString(static_cast<TypeofType>(type));
     static constexpr uint8_t unknownLevel1Weights[256] { };
     instance.collation.ducetLevel1Weights = ducetLevel1Weights;
-    instance.collation.knownLevel1Weights = unknownLevel1Weights;
+    instance.defaultCollator.knownLevel1Weights = unknownLevel1Weights;
 
     InstancePrefix& prefix = instance.prefix();
     prefix.structureIDBase = JSC::structureIDBase();
@@ -517,8 +518,6 @@ Instance* Instance::create(JSGlobalObject* realm)
 {
     VM& vm = realm->vm();
     RELEASE_ASSERT(vm.hasCompiledCode());
-    if (const ModuleHost* host = realm->globalObjectMethodTable()->moduleHost)
-        vm.aotState().image->setDecompressSource(host->decompressSource);
     takeFaultsOfThisThreadOnAnotherStack();
     DeferGCForAWhile deferGC(vm);
     destroyDeadInstances(vm);
@@ -1091,6 +1090,7 @@ void VMState::attachImage(VM& vm)
     caches = makeUnique<CacheRegistry>();
     caches->add(CacheKind::WeakByKey, "structures with fast indexing"_s, structuresWithFastIndexing);
     hasCompiledCode = true;
+    mayLockBuiltins = true;
     vm.setMayHaveUncacheableTransitions();
 
     vm.heap.setValidatesCellVisits(Options::verifyGC());
@@ -1153,6 +1153,7 @@ void VMState::releaseImage(VM& vm)
     runtimeTable = nullptr;
     identifiers = nullptr;
     countedFiles = { };
+    poisonedCellSites = nullptr;
     caches = nullptr;
     pages = nullptr;
 
@@ -1616,12 +1617,12 @@ void ProgramStatics::VariableWithViewMirror::refreshViewsOfOneBuffer(std::span<V
     bool haveOneVector = true;
     for (VariableWithViewMirror& mirrored : views) {
         mirrored.refresh();
-        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector;
+        haveOneVector &= mirrored.length && mirrored.vector == views.front().vector && logElementSizeOf(mirrored) == mirrored.plannedLogElementSize;
         if (haveOneVector)
-            size = std::min(size, mirrored.length << logElementSizeOf(mirrored));
+            size = std::min(size, mirrored.length << mirrored.plannedLogElementSize);
     }
     for (VariableWithViewMirror& mirrored : views)
-        mirrored.lengthOfBuffer = haveOneVector ? size >> logElementSizeOf(mirrored) : 0;
+        mirrored.lengthOfBuffer = haveOneVector ? static_cast<uint32_t>(size >> mirrored.plannedLogElementSize) : 0;
 }
 
 void ProgramStatics::didWriteVariable(uint32_t offset)
@@ -1780,6 +1781,12 @@ const ClassInfo ModuleEnvironment::s_info = { "JSModuleEnvironment"_s, nullptr, 
 bool HeapHooks::representsModuleInHeapSnapshot(JSCell* cell)
 {
     return cell->classInfo() == ModuleEnvironment::info();
+}
+
+bool HeapHooks::isBufferOfGrowingText(JSCell* cell)
+{
+    const RuntimeTable* runtimeTable = cell->vm().aotState().runtimeTable.get();
+    return runtimeTable && cell->structure() == runtimeTable->textBufferStructure();
 }
 
 std::span<const VariableData> ProgramStatics::namedVariablesOfModule(uint32_t module) const

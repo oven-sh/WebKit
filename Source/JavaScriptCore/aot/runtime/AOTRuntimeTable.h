@@ -211,6 +211,7 @@ constexpr ArgumentBufferAccess argumentBufferAccessOf(Entry entry)
     v(ModuleFailureOperations, IsLinkedBelow) \
     v(ModuleFailureOperations, RecordRequire) \
     v(ModuleFailureOperations, RecordRequireWithRequirer) \
+    v(ModuleFailureOperations, ResumeLoadAfterThrow) \
     v(ModuleFailureOperations, SeesMockOf) \
     v(ModuleFailureOperations, StopLoadingBehindFile) \
     v(ModuleFailureOperations, ThrowModuleFailure) \

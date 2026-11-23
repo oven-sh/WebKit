@@ -572,6 +572,25 @@ LayoutID LinkFlow::findConstructedParent(const ConstructedPrototype& constructed
     return constructionKeepsThis(parent) && namesParentOfPrototype(prototype, constructed.below) ? parent : LayoutID();
 }
 
+bool LinkFlow::addAppendedFieldsToPrototype(LayoutID below, LayoutID parent)
+{
+    bool hasAdded = false;
+    for (uint32_t place = m_newestAppendedFieldOfLayout[parent.index()]; place != UINT32_MAX;) {
+        AppendedField appended = m_appendedFields[place];
+        place = appended.next;
+        if (!appended.layoutStoreNode && typeAt(appended.node).isNever())
+            continue;
+        FlowNodeID storedInSight = storedOnPrototypeOf(below, appended.key, false, false);
+        uint32_t record = recordOfNameOnPrototype(below, appended.key);
+        if (std::exchange(m_namesOnPrototypes[record].hasAppendedField, true))
+            continue;
+        addEdge(appended.node, storedInSight);
+        addEdge(m_namesOnPrototypes[record].stored, appended.node);
+        hasAdded = true;
+    }
+    return hasAdded;
+}
+
 bool LinkFlow::layConstructedPrototypes()
 {
     bool hasLaid = false;
@@ -594,6 +613,8 @@ bool LinkFlow::layConstructedPrototypes()
         if (type.objects == LinkType::Objects::Layout && isOfConstructorFunction(type.layout) && !onlyForwardsThis(type.layout))
             continue;
         LayoutID parent = findConstructedParent(constructed);
+        if (parent)
+            hasLaid |= addAppendedFieldsToPrototype(constructed.below, parent);
         if (parent && parent == constructed.parent)
             continue;
         hasLaid = true;
@@ -2585,12 +2606,17 @@ bool LinkFlow::takePrototypeHelperStep(const PrototypeHelperStep& step)
         storeOnClassHolder(step.writer, child, step.objectIsPrototype ? ClassSide::Prototype : ClassSide::Static, step.key, value);
         return true;
     }
-    case PrototypeHelper::Step::Kind::CopiesNames:
-        if (!everyFunctionAboveIsConstructorFunction(step.value))
+    case PrototypeHelper::Step::Kind::CopiesNames: {
+        size_t stepsLeft = program.layouts.size();
+        LayoutID above = child;
+        while (above && program.at(above).constructor != step.value)
+            above = stepsLeft-- ? program.at(above).base : LayoutID();
+        if (!above || !everyFunctionAboveIsConstructorFunction(step.value))
             return false;
         noteWhatMayMakeThenableOf(closuresOf(step.object), step.writer, std::nullopt);
         linkFunctionBelow(step.object, step.value);
         return true;
+    }
     case PrototypeHelper::Step::Kind::AsksOwnName:
         return findsOwnNameBuiltin(step);
     case PrototypeHelper::Step::Kind::CallsFunction:

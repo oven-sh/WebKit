@@ -38,6 +38,7 @@ class CallSiteCache;
 class Image;
 class Modules;
 class PagesOfVM;
+class PoisonedCellSites;
 class ProgramIdentifiers;
 class RegExpLiterals;
 class RuntimeCounts;
@@ -165,6 +166,7 @@ public:
     JSCell* parentOfSuperCall { nullptr };
     JSCell* newTargetOfSuperCall { nullptr };
     bool hasCompiledCode { false };
+    bool mayLockBuiltins { false };
     bool nativeTestChangesObjectsUnseen { false };
     bool didFinishCollection { false };
     bool hasObjectsBeingFilled { false };
@@ -222,6 +224,7 @@ public:
     WriteBarrier<Structure> moduleRecordStructure;
     WriteBarrier<Structure> stringBuilderStorageStructure;
     WriteBarrier<Structure> poisonedCellStructure;
+    std::unique_ptr<PoisonedCellSites> poisonedCellSites;
     Lock instancesLock;
     Vector<Instance*, 1> instances;
     Vector<Instance*> instancesToDestroy;

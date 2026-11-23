@@ -21,7 +21,7 @@ static constexpr size_t reachOfInstanceWord = isARM64() ? static_cast<size_t>(st
 static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && InstanceLayout::reachBelowInstance <= reachOfInstanceWord);
 
 // LinkBuffer's shouldPerformBranchCompaction must stay true: on ARM64 only its compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
-ImageLinkBuffer::ImageLinkBuffer(CCallHelpers& jit, LinkBuffer::Profile profile)
+ImageLinkBuffer::ImageLinkBuffer(ImageAssembler& jit, LinkBuffer::Profile profile)
     : m_end(jit.label())
     , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize() + planBranchIslands(jit), sizeof(uint32_t))))
     , m_linkBuffer(jit, CodePtr<LinkBufferPtrTag>::fromUntaggedPtr(m_storage.mutableSpan().data()), m_storage.size(), profile)
@@ -87,7 +87,7 @@ void emitUnreachable(CCallHelpers& jit)
 #endif
 }
 
-RelocationRecorder::RelocationRecorder(CCallHelpers& jit, const AssemblerPolicy& policy)
+RelocationRecorder::RelocationRecorder(ImageAssembler& jit, const AssemblerPolicy& policy)
     : m_jit(jit)
 {
     RELEASE_ASSERT(policy.recordsProcessAddresses && !policy.blindsConstants);
@@ -150,6 +150,16 @@ void RelocationRecorder::moveInstanceAddress(CodeSymbol symbol, GPRReg instance,
     append(m_jit.moveInstanceAddress(instance, dest), RelocationKind::InstanceOffset, symbol);
 }
 
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+// The assembler has to know the offset of an access that it signs.
+CCallHelpers::Address RelocationRecorder::moveInstanceAddressForLinkRegister(CodeSymbol symbol, GPRReg instance)
+{
+    GPRReg address = m_jit.getCachedMemoryTempRegisterIDAndInvalidate();
+    moveInstanceAddress(symbol, instance, address);
+    return CCallHelpers::Address(address);
+}
+#endif
+
 void RelocationRecorder::loadInstanceWord(CodeSymbol symbol, InstanceWordWidth width, GPRReg instance, GPRReg dest)
 {
     switch (width) {
@@ -160,6 +170,10 @@ void RelocationRecorder::loadInstanceWord(CodeSymbol symbol, InstanceWordWidth w
         append(m_jit.loadInstanceWord32(instance, dest), RelocationKind::InstanceAccess, symbol);
         return;
     case InstanceWordWidth::Word64:
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        if (dest == MacroAssembler::linkRegister)
+            return m_jit.load64(moveInstanceAddressForLinkRegister(symbol, instance), dest);
+#endif
         append(m_jit.loadInstanceWord64(instance, dest), RelocationKind::InstanceAccess, symbol);
         return;
     }
@@ -184,6 +198,10 @@ void RelocationRecorder::storeInstanceWord(CodeSymbol symbol, InstanceWordWidth 
         append(m_jit.storeInstanceWord32(source, instance), RelocationKind::InstanceAccess, symbol);
         return;
     case InstanceWordWidth::Word64:
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+        if (source == MacroAssembler::linkRegister)
+            return m_jit.store64(source, moveInstanceAddressForLinkRegister(symbol, instance));
+#endif
         append(m_jit.storeInstanceWord64(source, instance), RelocationKind::InstanceAccess, symbol);
         return;
     }
@@ -372,7 +390,7 @@ std::expected<CodeTemplates, LinkFailure> CodeTemplates::create(const AssemblerP
 {
     std::optional<LinkFailure> failure;
     auto emit = [&](const auto& emitCode) -> RelocatableCode {
-        CCallHelpers jit;
+        ImageAssembler jit;
         RelocationRecorder recorder(jit, policy);
         emitCode(jit, recorder);
         auto code = recorder.finalize(LinkBuffer::Profile::Thunk, context);

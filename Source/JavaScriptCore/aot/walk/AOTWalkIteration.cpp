@@ -681,23 +681,50 @@ static uint32_t endOfRowOfAppendsInIteration(const BodyIndex& index, const BodyB
 
 static FunctionID functionWrittenUnderNextOfIteratorOf(Walker&, ValueID iterated);
 
-static bool returnsFreshIterator(const Walker& walker, FunctionID function)
+static ValueID callHandedBack(const Walker& walker, FunctionID function)
 {
     const BodyIndex* body = walker.facts().bodies().find(function);
     if (!body || walker.program().at(function).isCoroutine())
-        return false;
+        return { };
     ValueID returned;
     for (uint32_t number = 0; number < body->numberOfBlocks(); ++number) {
         BodyTerminator end = body->terminator(BlockID(number));
         if (!body->isReachable(BlockID(number)) || (end.kind() != TerminatorKind::Return && end.kind() != TerminatorKind::ReturnCall))
             continue;
         if (returned || !end.operand(0))
-            return false;
+            return { };
         returned = end.operand(0);
         while (!body->isParameter(returned) && inputPassThroughOpcodes.contains(body->opcodeOf(returned)) && body->useCount(returned) == 1)
             returned = body->value(returned).operand(0);
     }
-    return returned && !body->isParameter(returned) && body->opcodeOf(returned) == Opcode::Call && body->useCount(returned) == 1 && body->value(returned).as<Opcode::Call>().argumentsOperands().empty();
+    bool isFresh = returned && !body->isParameter(returned) && body->opcodeOf(returned) == Opcode::Call && body->useCount(returned) == 1 && body->value(returned).as<Opcode::Call>().argumentsOperands().empty();
+    return isFresh ? returned : ValueID();
+}
+
+static bool returnsFreshIterator(const Walker& walker, FunctionID function)
+{
+    return !!callHandedBack(walker, function);
+}
+
+static bool isHandedBackUntouched(const Walker& walker, Reference value, uint32_t firstFrame)
+{
+    const auto& frames = walker.code().inlineFrames();
+    const Operation& made = walker.code().at(underlyingCellOf(walker.code(), value.id()));
+    if (made.inlineFrame < firstFrame)
+        return false;
+    uint32_t position = made.position;
+    for (uint32_t frame = made.inlineFrame; frame != walker.inlineFrameAtWork(); frame = frames[frame].parent) {
+        if (!frame || !frames[frame].callee)
+            return false;
+        if (!frames[frame].calledBuiltin) {
+            const FunctionID function(frames[frame].callee);
+            ValueID call = callHandedBack(walker, function);
+            if (!call || walker.facts().bodies().find(function)->value(call).origin().position != position)
+                return false;
+        }
+        position = frames[frame].callPosition;
+    }
+    return true;
 }
 
 static std::optional<ClassSteppedUnseen> findCollectionOfIterator(Walker& walker, Reference iterator, Reference& collection)
@@ -843,6 +870,8 @@ public:
     {
         m_origin.isTailCall = false;
     }
+
+    static bool mayTakePairApartWhenDone(const Walker::IndexedIteration& iteration) { return iteration.isEntryPairElided && !iteration.inputHead; }
 
     void standFor(const BodyValue& site) { m_site = &site; }
     void expectUnderNext(FunctionID function) { m_expectedUnderNext = function; }
@@ -1313,12 +1342,13 @@ public:
             return m_walker.isUnreachable() ? std::optional(Walker::IndexedIteration()) : std::nullopt;
 
         m_walker.count(StatisticID::IteratorMethodsCalledDirectly);
+        const uint32_t firstFrameOfCall = static_cast<uint32_t>(m_walker.code().inlineFrames().size());
         Reference iterator = call(method, iterable);
         if (m_walker.isUnreachable())
             return Walker::IndexedIteration();
         Reference collection;
         std::optional<ClassSteppedUnseen> stepped = findCollectionOfIterator(m_walker, iterator, collection);
-        if (!stepped)
+        if (!stepped || !isHandedBackUntouched(m_walker, iterator, firstFrameOfCall))
             return openByProtocolAlone(iterable, iterator);
         m_walker.count(StatisticID::IteratorAllocationsElidedInInlinees);
         if (stepped->contents == ContentsStepped::List) {
@@ -1405,7 +1435,7 @@ public:
         Walker::IndexedIteration pattern;
         pattern.builtinClass = BuiltinClasses::Array;
         pattern.hasPrecomputedSteps = true;
-        if (!stepping.hasProtocolFallback) {
+        if (!stepping.hasProtocolFallback && !stepping.pairIsInParts) {
             pattern.precomputedSteps.append(stepping.keyOfPair);
             pattern.precomputedSteps.append(stepping.valueOfPair);
             m_walker.count(StatisticID::MapEntryAllocationsElided);
@@ -1415,8 +1445,14 @@ public:
         pattern.precomputedSteps.append(m_walker.addParameter(after, { }, Representation::JSValue));
         pattern.precomputedSteps.append(m_walker.addParameter(after, { }, Representation::JSValue));
         BlockID byProtocol = addBlock(BlockFrequency::Unlikely);
-        if (!m_walker.shouldSkipPairGuard()) [[likely]]
-            continueIfIndexedIteration(stepping, byProtocol);
+        if (!m_walker.shouldSkipPairGuard()) [[likely]] {
+            if (stepping.pairIsInParts) {
+                BlockID isInParts = addBlock();
+                branch(stepping.pairIsInParts, isInParts, byProtocol);
+                continueIn(isInParts);
+            } else
+                continueIfIndexedIteration(stepping, byProtocol);
+        }
         if (m_walker.checksProofs() && !m_walker.isUnreachable()) {
             Draft again = draft(Opcode::TypeTest);
             again.setValueOperand(stepping.list);
@@ -1644,6 +1680,7 @@ public:
         Reference table = iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
         Reference keyOfPair = !iteration.isEntryPairElided ? Reference() : iteration.table ? m_walker.addParameter(after, { }, Representation::JSValue) : m_walker.addParameter(after, { }, m_walker.formOfParameter(m_walker.types().integer(Range { 0, Walker::doneIterationPosition }), { }));
         Reference valueOfPair = iteration.isEntryPairElided ? m_walker.addParameter(after, { }, Representation::JSValue) : Reference();
+        Reference pairIsInParts = mayTakePairApartWhenDone(iteration) ? m_walker.addParameter(after, TypeTable::boolean, m_walker.formOfParameter(TypeTable::boolean, { })) : Reference();
 
         if (iteration.hasProtocolFallback)
             iteration.elementsProven = { };
@@ -1652,6 +1689,7 @@ public:
         iteration.table = table;
         iteration.keyOfPair = keyOfPair;
         iteration.valueOfPair = valueOfPair;
+        iteration.pairIsInParts = pairIsInParts;
         return resultsOf(done, value);
     }
 
@@ -3419,6 +3457,8 @@ private:
             endThreadedStep(after, done, { value, position });
         else if (iteration.isProtocolOnly)
             jumpTo(after, { done, value });
+        else if (mayTakePairApartWhenDone(iteration))
+            jumpTo(after, { done, value, position, keyOfPair ? keyOfPair : integer(0), valueOfPair ? valueOfPair : undefined(), boolean(!!keyOfPair) });
         else if (iteration.isEntryPairElided)
             jumpTo(after, { done, value, position, keyOfPair ? keyOfPair : integer(0), valueOfPair ? valueOfPair : undefined() });
         else
@@ -3442,6 +3482,8 @@ private:
             endThreadedStep(after, done, { value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined() });
         else if (m_doneBlock)
             endThreadedStep(after, done, { value, position, table });
+        else if (mayTakePairApartWhenDone(iteration))
+            jumpTo(after, { done, value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined(), boolean(!!keyOfPair) });
         else if (iteration.isEntryPairElided)
             jumpTo(after, { done, value, position, table, keyOfPair ? keyOfPair : undefined(), valueOfPair ? valueOfPair : undefined() });
         else
@@ -5034,6 +5076,7 @@ bool appendMembersInPlaceOfIteratorThatEngineMakesOfItsOpcodes(Walker& walker, c
         builder.appendMembersOrWalkAsWritten(array, receiver, tables.span(), block.id(), place, placeBehindSpread);
         walker.recordSpeculation();
     }
+    walkTypesStatedOfOtherValues(walker, callID, callID, spreadID);
     walker.walkStretch(block.id(), placeBehindSpread, placeBehindSpread);
     return true;
 }
@@ -5177,6 +5220,7 @@ static bool takePatternOffCollection(Walker& walker, const BodyValue& read, cons
     });
     if (!walker.isUnreachable())
         walker.bind(open.id(), walker.addIndexedIteration(WTF::move(pattern)));
+    walkTypesStatedOfOtherValues(walker, call.id(), call.id(), open.id());
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }
@@ -5374,6 +5418,7 @@ static bool openLoopOverSpeculatedStringParts(Walker& walker, const BodyValue& r
     walker.count(takesMatches ? StatisticID::MatchIterationsInlined : StatisticID::SplitIterationsInlined);
     if (!walker.isUnreachable())
         walker.bind(openID, walker.addIndexedIteration(WTF::move(iteration)));
+    walkTypesStatedOfOtherValues(walker, read.id(), callID, openID);
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }
@@ -5471,6 +5516,7 @@ bool openLoopOverIteratorThatEngineMakesOfItsOpcodes(Walker& walker, const BodyV
     }
     if (!walker.isUnreachable())
         walker.bind(openID, walker.addIndexedIteration(WTF::move(iteration)));
+    walkTypesStatedOfOtherValues(walker, callID, callID, openID);
     walker.walkStretch(block.id(), placeOfOpen + 1, placeOfOpen + 1);
     return true;
 }

@@ -962,6 +962,7 @@ struct ProcedureTraits {
     bool shouldAssumeClearUpperHalves { false };
     bool shouldIgnoreCollectorSpillReads { false };
     bool notesRangesOfOrigins { false };
+    bool checksProofs { false };
     CPUFeatureSet features;
 
     bool setsUpFrameAtEntry() const { return savesFrameOnSuspend || hasHandlers || rejectsOnThrow; }

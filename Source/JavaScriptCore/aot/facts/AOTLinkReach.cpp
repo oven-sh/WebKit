@@ -192,6 +192,7 @@ public:
     void stopUnlessRecordsHandedOutFrozenStayAsBorn();
     bool somebodyCanClimbToWhatIsLaidAbovePrototype();
     BuiltinsInReach& builtinsInReach() { return m_builtinsInReach; }
+    void admitDirectEvals();
     void finish();
 
 private:
@@ -223,6 +224,8 @@ private:
 
     void enterProgram();
     void fillVariables();
+    void findWhatBodiesStoreFirst();
+    void arriveInitialValueOf(VariableID);
     void evaluate(ModuleID);
     void evaluateModule(ModuleID);
     void noteCodeOfModule(ModuleID);
@@ -232,6 +235,7 @@ private:
     bool hostReadsNamesAloneOff(ModuleID) const;
     enum class HostWith : bool { Looks, Takes };
     void showExportsThatHostReadsOff(const Entry&, HostWith);
+    void escapeExportedBuiltins();
     bool globalObjectExposesModules() const;
     bool exposeModulesOnGlobalObject();
     void escapeFacadesWithGetters();
@@ -266,6 +270,7 @@ private:
     void bringAlive(FunctionID);
     void giveMoreToNodesOf(FunctionID);
     void letGoWhatDirectEvalsShowIn(FunctionID);
+    void admitDirectEvalsOf(FunctionID);
     void prefetchSummaryOf(FunctionID) const;
     void prefetchRecordsOf(FunctionID, const ThinSummary&) const;
     SiteID siteAt(FunctionID, std::span<const uint32_t> classInstancesInSummary, uint32_t classInstanceInSummary);
@@ -965,6 +970,68 @@ void StateOfLinkReach::showExportsThatHostReadsOff(const Entry& entry, HostWith 
     }
 }
 
+void StateOfLinkReach::escapeExportedBuiltins()
+{
+    BitVector visitedNodes(m_flow.numberOfNodes());
+    BitVector visitedModules(m_program.modules.size());
+    LinkFlow::ContainersVisited visitedContainers;
+    Vector<FlowNodeID, 16> nodes;
+    Vector<ModuleID, 8> modules;
+    auto addNode = [&](FlowNodeID node) {
+        if (node && node != m_flow.unseen() && node.index() < visitedNodes.size() && !visitedNodes.set(node.index()))
+            nodes.append(node);
+    };
+    auto addModule = [&](ModuleID id) {
+        if (id && !visitedModules.set(id.index()))
+            modules.append(id);
+    };
+    for (const Entry& entry : m_program.entries) {
+        if (hostReadsNamesAloneOff(entry.module))
+            addModule(entry.module);
+    }
+    while (!modules.isEmpty() || !nodes.isEmpty()) {
+        if (!modules.isEmpty()) {
+            ModuleID id = modules.takeLast();
+            const Module& module = m_program.at(id);
+            if (module.exportsVariable)
+                addNode(m_flow.variable(module.exportsVariable));
+            for (const SyntheticExport& synthetic : module.syntheticExports) {
+                if (synthetic.variable)
+                    addNode(m_flow.variable(synthetic.variable));
+            }
+            addModule(commonJsModuleCapturedBy(m_program, module));
+            for (uint32_t index = 0; index < module.exports.size(); ++index) {
+                const ModuleExport& exported = module.exports[index];
+                for (const LinkFlow::ExportedLocation& location : m_flow.resolveExport(id, index))
+                    addNode(location.variable ? m_flow.variable(location.variable) : m_flow.field(location.field));
+                if (exported.kind == ModuleExportKind::Namespace && exported.module) {
+                    m_flow.noteLossOfObjectOfBuiltinModule(exported.module);
+                    addModule(exported.module);
+                }
+                if (exported.kind == ModuleExportKind::Indirect && exported.module && exported.importName)
+                    m_flow.noteLossOfExportOfBuiltinModule(exported.module, exported.importName);
+            }
+            for (const ModuleRequest& request : module.requests) {
+                if (!request.isDynamicStarExport)
+                    continue;
+                m_flow.noteLossOfObjectOfBuiltinModule(request.target);
+                addModule(request.target);
+            }
+            continue;
+        }
+        LinkType type = m_flow.typeAt(nodes.takeLast());
+        if (type.isNever())
+            continue;
+        m_flow.noteEscapedBuiltins(type);
+        m_flow.forEachContainedNode(type, visitedContainers, scopedLambda<void(LayoutID)>([&](LayoutID layout) {
+            if (m_program.at(layout).kind == LayoutKind::ModuleNamespace)
+                addModule(m_program.at(layout).namespaceOf);
+        }), scopedLambda<void(FlowNodeID)>([&](FlowNodeID node) {
+            addNode(node);
+        }));
+    }
+}
+
 BitVector StateOfLinkReach::findFilesThatHaveRunToTheirEndWhereOthersNameThem() const
 {
     static constexpr OptionSet<ModuleFlags> flagsOfModulesThatOthersMayFindUnfinished {
@@ -1297,10 +1364,22 @@ void StateOfLinkReach::findVariablesStoredFirst(LinkFlow& flow, std::span<const 
     std::ranges::sort(firstReaders);
 }
 
-void StateOfLinkReach::fillVariables()
+void StateOfLinkReach::arriveInitialValueOf(VariableID id)
 {
-    LinkType absent = m_flow.fromTypeID(TypeTable::absent);
-    LinkType undefined = m_flow.fromTypeID(TypeTable::undefined);
+    switch (m_program.at(id).initialization) {
+    case VariableInitialization::Uninitialized:
+        m_flow.arrive(m_flow.variable(id), m_flow.fromTypeID(TypeTable::absent));
+        return;
+    case VariableInitialization::Undefined:
+        m_flow.arrive(m_flow.variable(id), m_flow.fromTypeID(TypeTable::undefined));
+        return;
+    case VariableInitialization::Function:
+        return;
+    }
+}
+
+void StateOfLinkReach::findWhatBodiesStoreFirst()
+{
     m_flow.firstReadersOfVariablesStoredFirst.shrink(0);
     m_flow.classesInVariables.shrink(0);
     m_flow.unitsInVariables.shrink(0);
@@ -1318,6 +1397,12 @@ void StateOfLinkReach::fillVariables()
         }
     }
     std::ranges::stable_sort(m_flow.storesBeforeInstances, { }, &SummaryStoreOnPrototype::function);
+}
+
+void StateOfLinkReach::fillVariables()
+{
+    LinkType absent = m_flow.fromTypeID(TypeTable::absent);
+    findWhatBodiesStoreFirst();
     const BitVector& isStoredFirst = m_flow.variablesStoredFirst;
     for (uint32_t index = 0; index < m_program.modules.size(); ++index) {
         const Module& module = m_program.modules[index];
@@ -1338,19 +1423,10 @@ void StateOfLinkReach::fillVariables()
             m_flow.arrive(node, absent);
             continue;
         }
-        switch (variable.initialization) {
-        case VariableInitialization::Uninitialized:
-            if (!isStoredFirst.quickGet(index))
-                m_flow.arrive(node, absent);
-            break;
-        case VariableInitialization::Undefined:
-            if (!isStoredFirst.quickGet(index))
-                m_flow.arrive(node, undefined);
-            break;
-        case VariableInitialization::Function:
+        if (variable.initialization == VariableInitialization::Function)
             m_flow.arrive(node, typeOfClosuresForLinkReach(variable.function));
-            break;
-        }
+        else if (!isStoredFirst.quickGet(index))
+            arriveInitialValueOf(VariableID(index));
         const Module& module = m_program.at(variable.module);
         if (!module.body && module.flags.contains(ModuleFlags::IsLibrary)) {
             m_variablesOfLibraryFiles.append({ variable.module, VariableID(index) });
@@ -1384,6 +1460,43 @@ void StateOfLinkReach::letGoWhatDirectEvalsShowIn(FunctionID id)
                 letGo(m_program.at(scope.outer));
         }
     }
+}
+
+void StateOfLinkReach::admitDirectEvalsOf(FunctionID id)
+{
+    LinkFlow::LockerOfWhatIsShared locker(m_flow);
+    for (uint32_t handed : m_flow.summaries.at(id).nodesHandedToEvals)
+        m_flow.addEdge(m_flow.nodeOf(id, handed), m_flow.unseen());
+    letGoWhatDirectEvalsShowIn(id);
+}
+
+void StateOfLinkReach::admitDirectEvals()
+{
+    finish();
+    if (std::exchange(m_flow.listsStoresOfWrappedBodies, false)) {
+        BitVector wereStoredFirst = m_flow.variablesStoredFirst;
+        findWhatBodiesStoreFirst();
+        wereStoredFirst.exclude(m_flow.variablesStoredFirst);
+        for (size_t index : wereStoredFirst) {
+            VariableID id(static_cast<uint32_t>(index));
+            if (!m_program.at(id).owner)
+                arriveInitialValueOf(id);
+        }
+    }
+    m_flow.leavesOutDirectEvals = false;
+    m_builtinsInReach.admitDirectEvals();
+    Vector<FunctionID> functionsThatEvaluate;
+    for (size_t index : m_flow.reached) {
+        FunctionID id(static_cast<uint32_t>(index));
+        if (m_flow.summaries.at(id).has(SummaryTrait::HasDirectEval))
+            functionsThatEvaluate.append(id);
+    }
+    for (FunctionID id : functionsThatEvaluate) {
+        LinkFlow::CodeAtWork codeAtWork(m_flow, id);
+        LinkFlow::UnknownByEscapeAlone unknownByEscapeAlone(false);
+        admitDirectEvalsOf(id);
+    }
+    finish();
 }
 
 void StateOfLinkReach::fillFields()
@@ -2041,6 +2154,7 @@ bool StateOfLinkReach::enterLibraryInReach()
     escapeFacadesWithGetters();
     tellWhatHostFindsAtEntries();
     readAccessorsOfExports();
+    escapeExportedBuiltins();
     bool somethingHasLeft = m_flow.letGoWhoWaitsForAccessorsLaidAbove();
     if (m_flow.objectsReachUnseen() && !std::exchange(m_nativeCodeMayHoldObjects, true)) {
         m_builtinsInReach.noteNativeCodeMayHoldObjects();
@@ -2191,12 +2305,8 @@ void StateOfLinkReach::bringAlive(FunctionID id)
             escapeValueOf(module);
         }
     }
-    if (summary.has(SummaryTrait::HasDirectEval) && !m_flow.leavesOutDirectEvals) {
-        LinkFlow::LockerOfWhatIsShared locker(m_flow);
-        for (uint32_t handed : summary.nodesHandedToEvals)
-            m_flow.addEdge(m_flow.nodeOf(id, handed), m_flow.unseen());
-        letGoWhatDirectEvalsShowIn(id);
-    }
+    if (summary.has(SummaryTrait::HasDirectEval) && !m_flow.leavesOutDirectEvals)
+        admitDirectEvalsOf(id);
     for (PropertyKeyID key : summary.textsThatNameEvents)
         m_flow.note(LinkFlow::Note::NameRead, key.bits(), true);
     for (const ThinSummary::AnswerOfRequire& answer : summary.answersOfRequire) {
@@ -2526,7 +2636,7 @@ void StateOfLinkReach::arriveFromSource(FlowNodeID node, LinkType type)
     if (type.objects == LinkType::Objects::Layout && m_program.at(type.layout).kind != LayoutKind::ModuleNamespace) {
         uint32_t layout = type.layout.index();
         if (m_flow.escapedLayouts.get(layout)) {
-            type.isUnknownEscapeOnly = !type.hasUnknownObjects;
+            type.isUnknownEscapeOnly = !type.hasDirectUnknownObjects();
             type.hasUnknownObjects = true;
         }
         else if (!m_flow.listsSourceOfObjectsBehindPass(node, type.layout))
@@ -2863,7 +2973,10 @@ bool LinkFlow::isWorthFollowingToWrites(BuiltinID canonical) const
 
 bool LinkFlow::staysAbsentUnseen(BuiltinID canonicalHolder, PropertyKeyID key) const
 {
-    return isPrototypeWithTrackedNames(program.builtins(), canonicalHolder) && !m_stateOfLinkReach->builtinsInReach().mayHaveNameLaid({ canonicalHolder, key });
+    if (!isPrototypeWithTrackedNames(program.builtins(), canonicalHolder))
+        return false;
+    LockerOfWhatIsShared locker(*this);
+    return !m_stateOfLinkReach->builtinsInReach().mayHaveNameLaid({ canonicalHolder, key });
 }
 
 bool LinkFlow::isOutOfSight(BuiltinID canonical) const
@@ -3027,6 +3140,15 @@ void LinkFlow::reachEntries()
     state.queueEntries();
     runWithDeferredUpdates(scopedLambda<void()>([&] {
         state.finish();
+    }));
+}
+
+void LinkFlow::admitDirectEvals()
+{
+    functionsToKeepInSight.clear();
+    functionsNotToReach.clear();
+    runWithDeferredUpdates(scopedLambda<void()>([&] {
+        stateOfLinkReach().admitDirectEvals();
     }));
 }
 

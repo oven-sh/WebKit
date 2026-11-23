@@ -48,6 +48,17 @@ const InstanceAuxiliarySpace = constexpr (AOT_INSTANCE_OFFSET(allocation.auxilia
 const InstanceCellSpace = constexpr (AOT_INSTANCE_OFFSET(allocation.cellSpace))
 const InstanceCustomAccessors = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.customAccessors))
 const InstanceEnumerators = constexpr (AOT_INSTANCE_OFFSET(objects.enumerators))
+# JSMapIterator has the same fields.
+const EntryOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Entry
+const StorageOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Storage
+const KindOfCollectionIterator = JSInternalFieldObjectImpl_internalFields + SlotSize * constexpr JSSetIterator::Field::Kind
+const CompactTableUsed = constexpr (AOT::CompactTable::offsetOfUsed())
+const CompactTableCapacity = constexpr (AOT::CompactTable::offsetOfCapacity())
+const CompactTableKeysShift = constexpr (AOT::CompactTable::offsetOfKeysShift())
+const CompactTableValueWidth = constexpr (AOT::CompactTable::offsetOfValueWidth())
+const CompactTableStatus = constexpr (AOT::CompactTable::offsetOfStatus())
+const CompactTableIndex = constexpr (AOT::CompactTable::offsetOfIndex())
+
 const InstanceHasInstanceUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.hasInstanceUID))
 const InstancePrototypeUID = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.prototypeUID))
 const InstanceDefaultHasInstanceFunction = constexpr (AOT_INSTANCE_OFFSET(propertyCaches.defaultHasInstanceFunction))
@@ -224,6 +235,17 @@ end
 macro loadIdentifier(size, opcodeStruct, fieldName, uid, scratch)
     getu(size, opcodeStruct, fieldName, scratch)
     loadp CodeBlock[cfr], uid
+    loadp CodeBlock::m_unlinkedCode[uid], uid
+    loadp UnlinkedCodeBlock::m_identifiers + IdentifierFixedVector::m_storage[uid], uid
+    loadp (constexpr (IdentifierFixedVector::Storage::offsetOfData()))[uid, scratch, PtrSize], uid
+end
+
+macro loadTableInstanceAndIdentifier(size, opcodeStruct, fieldName, instance, uid, scratch, hasNone)
+    loadp CodeBlock[cfr], uid
+    loadp CodeBlock::m_globalObject[uid], instance
+    loadp JSGlobalObject::m_aotTableInstance[instance], instance
+    btpz instance, hasNone
+    getu(size, opcodeStruct, fieldName, scratch)
     loadp CodeBlock::m_unlinkedCode[uid], uid
     loadp UnlinkedCodeBlock::m_identifiers + IdentifierFixedVector::m_storage[uid], uid
     loadp (constexpr (IdentifierFixedVector::Storage::offsetOfData()))[uid, scratch, PtrSize], uid
@@ -530,13 +552,18 @@ end
 # PropertyTable::findImpl() for an atom that is no symbol. t0: the object, t1: the name, which stay. Leaves the offset and the attributes
 # as a compact entry has them in t2.
 macro findInPropertyTable(isAbsent, cannot)
+    loadi StringImpl::m_hashAndFlags[t1], t7
+    findHashInPropertyTable(isAbsent, cannot)
+end
+
+# t7 is StringImpl::existingSymbolAwareHash() above the flags.
+macro findHashInPropertyTable(isAbsent, cannot)
     loadi JSCell::m_structureID[t0], t2
     structureIDToStructureWithScratch(t2, t3)
     loadp (constexpr (Structure::propertyTableUnsafeOffset()))[t2], t2
     btpz t2, cannot
     loadp (constexpr (PropertyTable::offsetOfIndexVector()))[t2], t5
     loadi (constexpr (PropertyTable::offsetOfIndexSize()))[t2], t6
-    loadi StringImpl::m_hashAndFlags[t1], t7
     urshifti constexpr (StringImpl::s_flagCount), t7
     move 0, t3
     btpz t5, (constexpr PropertyTable::flagOfCompactIndexVector), .nextWide
@@ -575,6 +602,30 @@ macro findInPropertyTable(isAbsent, cannot)
     loadb 12[t2], t2
     ori t3, t2
 .isFound:
+end
+
+# What a cacheable one has is filed.
+macro branchIfUncacheableDictionary(structureID, scratch, isDictionary)
+    structureIDToStructureWithScratch(structureID, scratch)
+    btinz (constexpr (Structure::bitFieldOffset()))[structureID], constexpr (Structure::s_dictionaryKindBits - 1), isDictionary
+end
+
+# The name is in a2, the value in a3.
+macro putToDictionary(object)
+    move object, a1
+    storePC()
+    move cfr, a0
+    cCall4(_llint_aot_put_to_dictionary)
+    loadPC()
+end
+
+# The name is in a2.
+macro deleteFromDictionary(object)
+    move object, a1
+    storePC()
+    move cfr, a0
+    cCall3(_llint_aot_delete_from_dictionary)
+    loadPC()
 end
 
 # The kinds that any object may have. t3: the object, t5: the instance, t0: the kind of the slot in entry. Leaves the value in t0.
@@ -797,7 +848,7 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     # The slow path sees whether the cache of a site that holds nothing yet can hold the property, and takes a site that cannot out of the default mode.
 .holdsNothing:
     bbeq JSCell::m_type[t3], CompiledObjectType, .slow
-    bbeq JSCell::m_type[t3], constexpr ProxyObjectType, .slow
+    bbeq JSCell::m_type[t3], constexpr ProxyObjectType, .proxy
 
     # What the cache of the site does not hold.
 .probe:
@@ -887,6 +938,10 @@ aotOp(op_get_by_id, OpGetById, macro (size, get, dispatch, metadata, return)
     callSlowPath(_llint_slow_path_aot_get_uncached)
     dispatch()
 
+.proxy:
+    callSlowPath(_llint_slow_path_aot_get_from_proxy)
+    dispatch()
+
 .baseIsNotObject:
     # Its Structure is the VM's, its prototype the realm's.
     loadRealmInstance(t5, .slow)
@@ -972,9 +1027,80 @@ aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     subq numberTag, t0
     return(t0)
 
+    # loadTypedArrayVector(), where an index that the array lacks is undefined. What has no number of its own here, a NaN and a resizable one are left.
+.mayBeTypedArray:
+    subi FirstTypedArrayType, t2
+    biaeq t2, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, .otherAccess
+    btbnz JSArrayBufferView::m_mode[t0], (constexpr isResizableOrGrowableSharedMode), .otherAccess
+    sxi2q t3, t3
+    if LARGE_TYPED_ARRAYS
+        bqaeq t3, JSArrayBufferView::m_length[t0], .isNoElement
+    else
+        biaeq t3, JSArrayBufferView::m_length[t0], .isNoElement
+    end
+    loadp JSArrayBufferView::m_vector[t0], t1
+    cagedPrimitive(t1, t0)
+    bia t2, Uint32ArrayType - FirstTypedArrayType, .holdsFloats
+    bia t2, Uint16ArrayType - FirstTypedArrayType, .holdsWords
+    bia t2, Uint8ClampedArrayType - FirstTypedArrayType, .holdsHalfwords
+    bieq t2, Int8ArrayType - FirstTypedArrayType, .holdsSignedBytes
+    loadb [t1, t3], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsSignedBytes:
+    loadbsi [t1, t3], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsHalfwords:
+    bieq t2, Int16ArrayType - FirstTypedArrayType, .holdsSignedHalfwords
+    loadh [t1, t3, 2], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsSignedHalfwords:
+    loadhsi [t1, t3, 2], t0
+    orq numberTag, t0
+    return(t0)
+
+.holdsWords:
+    loadi [t1, t3, 4], t0
+    bieq t2, Uint32ArrayType - FirstTypedArrayType, .holdsUnsignedWords
+.isInt32Element:
+    orq numberTag, t0
+    return(t0)
+
+.holdsUnsignedWords:
+    bigteq t0, 0, .isInt32Element
+    cq2ds t0, ft0
+    fd2q ft0, t0
+    subq numberTag, t0
+    return(t0)
+
+.holdsFloats:
+    bineq t2, Float64ArrayType - FirstTypedArrayType, .holdsNoDoubles
+    loadd [t1, t3, 8], ft0
+.isDoubleElement:
+    bdnequn ft0, ft0, .otherAccess
+    fd2q ft0, t0
+    subq numberTag, t0
+    return(t0)
+
+.holdsNoDoubles:
+    bineq t2, Float32ArrayType - FirstTypedArrayType, .otherAccess
+    loadf [t1, t3, 4], ft0
+    cf2d ft0, ft0
+    jmp .isDoubleElement
+
+.isNoElement:
+    move ValueUndefined, t0
+    return(t0)
+
     # A character of a whole string, as a string.
 .holdsNoValues:
-    bbneq JSCell::m_type[t0], StringType, .otherAccess
+    loadb JSCell::m_type[t0], t2
+    bineq t2, StringType, .mayBeTypedArray
     loadp JSString::m_fiber[t0], t1
     btpnz t1, isRopeInPointer, .otherAccess
     biaeq t3, StringImpl::m_length[t1], .otherAccess
@@ -989,13 +1115,39 @@ aotOp(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
 .isNoIndex:
     btqnz t3, notCellMask, .otherAccess
     bbneq JSCell::m_type[t0], FinalObjectType, .otherAccess
-    bbneq JSCell::m_type[t3], StringType, .otherAccess
+    bbneq JSCell::m_type[t3], StringType, .isNoStringKey
     loadNameOfKey(t3, t1, .otherAccess)
     findInPropertyTable(.otherAccess, .otherAccess)
     btinz t2, constexpr PropertyAttribute::AccessorOrCustomAccessorOrValue, .otherAccess
     urshifti 8, t2
     loadPropertyAtVariableOffset(t2, t0, t1)
     return(t1)
+
+.isNoStringKey:
+    bbneq JSCell::m_type[t3], SymbolType, .otherAccess
+    loadp (constexpr (Symbol::offsetOfSymbolImpl()))[t3], t1
+    loadi (constexpr AOT::Interpreter::offsetOfHashOfSymbol)[t1], t7
+    findHashInPropertyTable(.isNoOwnSymbol, .isNoOwnSymbol)
+    btinz t2, constexpr PropertyAttribute::AccessorOrCustomAccessorOrValue, .isNoOwnSymbol
+    urshifti 8, t2
+    loadPropertyAtVariableOffset(t2, t0, t1)
+    return(t1)
+
+    # What the slow path has filed of objects of this Structure: what stands above them, or nowhere.
+.isNoOwnSymbol:
+    loadTableInstance(t5, .asksForSymbol)
+    move t0, t3
+    loadi JSCell::m_structureID[t3], t2
+    findHashedSlot(t5, t2, t1, makeKeyOfRead, t6, t0, .asksForSymbol)
+    loadb SlotKind[t6], t0
+    getFromHashedSlot(t6, .asksForSymbol, .asksForSymbol, .hasValueOfSymbol)
+
+.hasValueOfSymbol:
+    return(t0)
+
+.asksForSymbol:
+    callSlowPath(_llint_slow_path_aot_get_by_symbol)
+    dispatch()
 
 .otherAccess:
     getByVal(size, get, dispatch, metadata, return, macro ()
@@ -1179,7 +1331,7 @@ aotOp(op_get_property_enumerator, OpGetPropertyEnumerator, macro (size, get, dis
     return(t0)
 
 .slow:
-    callSlowPath(_slow_path_get_property_enumerator)
+    callSlowPath(_llint_slow_path_aot_get_property_enumerator)
     dispatch()
 end)
 
@@ -1444,12 +1596,11 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
     getu(size, OpPutById, m_flags, t1)
     btinz t1, constexpr PutByIdFlagsFits::s_isDirectBit, .ordinary
-    loadTableInstance(t5, .ordinary)
-    loadIdentifier(size, OpPutById, m_property, t1, t2)
-    loadi JSCell::m_structureID[t0], t2
-    findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .ordinary)
+    loadTableInstanceAndIdentifier(size, OpPutById, m_property, t5, t1, t3, .ordinary)
+    loadi JSCell::m_structureID[t0], t7
+    findHashedSlot(t5, t7, t1, makeKeyOfStore, t6, t3, .isNotFiled)
     loadb SlotKind[t6], t1
-    bbeq t1, constexpr AOT::Slot::Kind::Value, .storesValue
+    bbeq t1, constexpr AOT::Slot::Kind::Value, .storesFiledValue
     bbeq t1, constexpr AOT::Slot::Kind::Transition, .addsByTransition
     if X86_64 or ARM64
         bbeq t1, constexpr AOT::Slot::Kind::Setter, .setter
@@ -1457,12 +1608,44 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
 .ordinary:
     jumpToOrdinaryHandler(size, op_put_by_id)
 
+    # The ordinary handler would compare the Structure with the site's once more.
+.isNotFiled:
+    if X86_64 or ARM64
+        branchIfUncacheableDictionary(t7, t3, .isDictionary)
+    .asksForStore:
+        callSlowPath(_llint_slow_path_put_by_id)
+        dispatch()
+
+    .isDictionary:
+        loadIdentifier(size, OpPutById, m_property, t2, t5)
+        get(m_value, t5)
+        loadConstantOrVariable(size, t5, t3)
+        putToDictionary(t0)
+        btpz r0, .asksForStore
+        dispatch()
+    else
+        jmp .ordinary
+    end
+
+.storesFiledValue:
+    loadhsq SlotLocation[t6], t1
+    btinz t2, .hasPlaceOfValue
+    bilt t1, 0, .hasPlaceOfValue
+    locateSite(size, OpPutById, t5, t3)
+    makeSiteAddress(t5)
+    btinz OpPutById::Metadata::m_offset[t5], .hasPlaceOfValue
+    move t1, t3
+    addi constexpr AOT::Interpreter::replacingSiteAboveWordIndex, t3
+    storei t3, OpPutById::Metadata::m_offset[t5]
+    storei t7, OpPutById::Metadata::m_oldStructureID[t5]
+    jmp .hasPlaceOfValue
+
 .addsByTransition:
     btbnz SlotFlags[t6], constexpr AOT::Slot::growsStorage, .growsStorage
     loadi SlotPayload[t6], t2
     storei t2, JSCell::m_structureID[t0]
-.storesValue:
     loadhsq SlotLocation[t6], t1
+.hasPlaceOfValue:
     get(m_value, t2)
     loadConstantOrVariable(size, t2, t3)
     move t0, t6
@@ -1560,12 +1743,26 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     findHashedSlot(t5, t2, t1, makeKeyOfStore, t6, t3, .slow)
     loadb SlotKind[t6], t1
     bbeq t1, constexpr AOT::Slot::Kind::Field, .field
+    bbeq t1, constexpr AOT::Slot::Kind::ExtraProperty, .extraProperty
     bbeq t1, constexpr AOT::Slot::Kind::ExtraPropertyAddition, .addsExtraProperty
     bbneq t1, constexpr AOT::Slot::Kind::FieldCreation, .slow
     # In place of the type such a slot holds an order word.
     btbnz SlotFlags[t6], constexpr AOT::Slot::remembersOrder, .slow
 .field:
     btinz (constexpr AOT::offsetOfOrderWord)[t0], constexpr AOT::orderWordIsFrozen, .slow
+    btbz SlotFlags[t6], constexpr AOT::Slot::fieldTakesAnyValue, .fieldHasType
+    # SlotRepresentation::JSValue adds no bits to the offset. An absent field is the run time's.
+    loadi SlotPayload[t6], t1
+    get(m_value, t5)
+    loadConstantOrVariable(size, t5, t3)
+    btqz [t0, t1, 1], .slow
+    storeq t3, [t0, t1, 1]
+    btqnz t3, notCellMask, .storedAnyValue
+    writeBarrierOnCell(t0, t1)
+.storedAnyValue:
+    dispatch()
+
+.fieldHasType:
     locateField(t5, t6, t0, t1, t2, t3, t7, .slow)
     loadi SlotSecondPayloadWord[t6], t6
     addp InstanceTables[t5], t6
@@ -1712,6 +1909,22 @@ aotOp(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     storeq t3, [t1]
     dispatch()
 
+    # storeExtraProperty() in the stubs. t2: the StructureID of the object.
+.extraProperty:
+    loadExtraProperties(t5, t0, t2, t1, t3, .slow)
+    get(m_value, t3)
+    loadConstantOrVariable(size, t3, t5)
+    loadis SlotSecondPayloadWord[t6], t3
+    move t1, t2
+    bigteq t3, 0, .extraPropertyIsInCell
+    loadp JSObjectWithButterfly::m_butterfly[t1], t2
+.extraPropertyIsInCell:
+    storeq t5, [t2, t3, 8]
+    btqnz t5, notCellMask, .storedExtraProperty
+    writeBarrierOnCell(t1, t3)
+.storedExtraProperty:
+    dispatch()
+
     # addExtraProperty() in the stubs, for a property that lies in the cell of the extra properties. t2: the StructureID of the object.
 .addsExtraProperty:
     btbnz SlotFlags[t6], constexpr AOT::Slot::isOutOfLine, .slow
@@ -1828,8 +2041,49 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
     storei t5, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t2]
     jmp .hasRoomForInt32
 
+    # A number of the kind that the array holds. The index and the value of what is left are loaded anew.
+.isNoArray:
+    sxi2q t3, t3
+    loadTypedArrayVector(t0, t3, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, macro (scratch) end, t1, .ordinary)
+    loadConstantOrVariable(size, t5, t0)
+    bia t2, Uint32ArrayType - FirstTypedArrayType, .storesFloat
+    bqb t0, numberTag, .ordinary
+    bia t2, Uint8ClampedArrayType - FirstTypedArrayType, .storesMoreThanByte
+    bineq t2, Uint8ClampedArrayType - FirstTypedArrayType, .storesByte
+    bibeq t0, 255, .storesByte
+    bilt t0, 0, .clampsToZero
+    move 255, t0
+    jmp .storesByte
+.clampsToZero:
+    move 0, t0
+.storesByte:
+    storeb t0, [t1, t3]
+    dispatch()
+
+.storesMoreThanByte:
+    bia t2, Uint16ArrayType - FirstTypedArrayType, .storesWord
+    storeh t0, [t1, t3, 2]
+    dispatch()
+
+.storesWord:
+    storei t0, [t1, t3, 4]
+    dispatch()
+
+.storesFloat:
+    btqz t0, numberTag, .ordinary
+    numberToDouble(t0, ft0)
+    bineq t2, Float64ArrayType - FirstTypedArrayType, .storesNoDouble
+    stored ft0, [t1, t3, 8]
+    dispatch()
+
+.storesNoDouble:
+    bineq t2, Float32ArrayType - FirstTypedArrayType, .ordinary
+    cd2f ft0, ft0
+    storef ft0, [t1, t3, 4]
+    dispatch()
+
 .isNotInt32:
-    bineq t2, DoubleShape, .ordinary
+    bineq t2, DoubleShape, .isNoArray
     loadp JSObjectWithButterfly::m_butterfly[t0], t2
     biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t2], .ordinary
     loadConstantOrVariable(size, t5, t1)
@@ -1843,9 +2097,11 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
 .isNoIndex:
     btqnz t3, notCellMask, .ordinary
     bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
-    bbneq JSCell::m_type[t3], StringType, .ordinary
+    bbneq JSCell::m_type[t3], StringType, .isNoStringKey
     loadNameOfKey(t3, t1, .ordinary)
-    findInPropertyTable(.ordinary, .ordinary)
+    loadi StringImpl::m_hashAndFlags[t1], t7
+.hasHash:
+    findHashInPropertyTable(.ordinary, .ordinary)
     move constexpr (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue), t3
     btinz t2, t3, .ordinary
     loadi JSCell::m_structureID[t0], t3
@@ -1862,12 +2118,59 @@ aotOp(op_put_by_val, OpPutByVal, macro (size, get, dispatch, metadata, return)
     writeBarrierOnCell(t0, t1)
     dispatch()
 
+.isNoStringKey:
+    bbneq JSCell::m_type[t3], SymbolType, .ordinary
+    loadp (constexpr (Symbol::offsetOfSymbolImpl()))[t3], t1
+    loadi (constexpr AOT::Interpreter::offsetOfHashOfSymbol)[t1], t7
+    jmp .hasHash
+
 .propertyIsConstant:
     loadConstantOperand(size, t1, t3, .hasProperty)
 
 .ordinary:
     jumpToOrdinaryHandler(size, op_put_by_val)
 end)
+
+if X86_64 or ARM64
+aotOp(op_del_by_id, OpDelById, macro (size, get, dispatch, metadata, return)
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .ordinary)
+    btqnz t0, notCellMask, .ordinary
+    bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
+    loadi JSCell::m_structureID[t0], t2
+    branchIfUncacheableDictionary(t2, t5, .isDictionary)
+.ordinary:
+    jumpToOrdinaryHandler(size, op_del_by_id)
+
+.isDictionary:
+    loadIdentifier(size, OpDelById, m_property, t2, t5)
+    deleteFromDictionary(t0)
+    btpz r0, .ordinary
+    move ValueTrue, t0
+    return(t0)
+end)
+
+aotOp(op_del_by_val, OpDelByVal, macro (size, get, dispatch, metadata, return)
+    get(m_base, t1)
+    loadOperandInRegister(size, t1, t0, .ordinary)
+    btqnz t0, notCellMask, .ordinary
+    bbneq JSCell::m_type[t0], FinalObjectType, .ordinary
+    loadi JSCell::m_structureID[t0], t2
+    branchIfUncacheableDictionary(t2, t5, .isDictionary)
+.ordinary:
+    jumpToOrdinaryHandler(size, op_del_by_val)
+
+.isDictionary:
+    get(m_property, t1)
+    loadConstantOrVariable(size, t1, t3)
+    btqnz t3, notCellMask, .ordinary
+    loadNameOfKey(t3, t2, .ordinary)
+    deleteFromDictionary(t0)
+    btpz r0, .ordinary
+    move ValueTrue, t0
+    return(t0)
+end)
+end
 
 macro allocateCell(allocator, result, scratch, slow)
     loadp LocalAllocatorIntervalStart[allocator], result
@@ -3945,6 +4248,271 @@ aotOp(op_construct, OpConstruct, macro (size, get, dispatch, metadata, return)
 end)
 end
 
+# iteratorNextFastArray(), JSSetIterator::nextWithAdvance() and JSMapIterator::nextWithAdvance() of a collection that is a compact table, and the call of a next() that belongs to none of these.
+aotOp(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, return)
+    loadVariable(get, m_next, t3)
+    bqb t3, numberTag, .isNoIndex
+    # An array or a string is walked. The indexing type of a string is none of an array's.
+    loadVariable(get, m_iterator, t0)
+    bbneq JSCell::m_type[t0], constexpr SentinelType, .ordinary
+    loadVariable(get, m_iterable, t2)
+    btqnz t2, notCellMask, .ordinary
+    loadb JSCell::m_indexingTypeAndMisc[t2], t1
+    andi IndexingTypeMask, t1
+    bieq t1, ArrayWithContiguous, .hasElements
+    bineq t1, ArrayWithInt32, .mayHaveDoubles
+.hasElements:
+    loadp JSObjectWithButterfly::m_butterfly[t2], t0
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .ordinary
+    zxi2q t3, t2
+    loadq [t0, t2, 8], t1
+    btqz t1, .ordinary
+.hasElement:
+    storeVariable(get, m_value, t1, t0)
+    addq 1, t3
+    storeVariable(get, m_next, t3, t0)
+    move ValueFalse, t1
+    storeVariable(get, m_done, t1, t0)
+    dispatch()
+
+.mayHaveDoubles:
+    bineq t1, constexpr ArrayWithDouble, .mayBeString
+    loadp JSObjectWithButterfly::m_butterfly[t2], t0
+    biaeq t3, -sizeof IndexingHeader + IndexingHeader::u.lengths.publicLength[t0], .ordinary
+    zxi2q t3, t2
+    loadd [t0, t2, 8], ft0
+    bdnequn ft0, ft0, .ordinary
+    fd2q ft0, t1
+    subq numberTag, t1
+    jmp .hasElement
+
+.mayBeString:
+    bbneq JSCell::m_type[t2], StringType, .ordinary
+    loadp JSString::m_fiber[t2], t0
+    btpnz t0, isRopeInPointer, .ordinary
+    biaeq t3, StringImpl::m_length[t0], .ordinary
+    zxi2q t3, t1
+    loadStringCharacter(t0, t1, t2, .ordinary)
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp VM::smallStrings + SmallStrings::m_singleCharacterStrings[t1, t2, PtrSize], t1
+    jmp .hasElement
+
+.isNoIndex:
+    btqnz t3, notCellMask, .ordinary
+    bbneq JSCell::m_type[t3], constexpr SentinelType, .callsNext
+    loadVariable(get, m_iterator, t0)
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isCollectionIterator
+    bbneq JSCell::m_type[t0], constexpr JSMapIteratorType, .ordinary
+
+    # The entries of a table that was walked stay where they are. The key of a deleted entry is empty.
+.isCollectionIterator:
+    loadp StorageOfCollectionIterator[t0], t2
+    btpz t2, .ordinary
+    bbneq JSCell::m_type[t2], constexpr CellType, .ordinary
+    btbnz CompactTableStatus[t2], .ordinary
+    loadb CompactTableKeysShift[t2], t7
+    btinz t7, constexpr AOT::CompactTable::keysAreInImage, .ordinary
+    loadi EntryOfCollectionIterator[t0], t6
+    biaeq t6, CompactTableUsed[t2], .isPastLastEntry
+    btinz t7, constexpr AOT::CompactTable::wasWalked, .isMarked
+    ori constexpr AOT::CompactTable::wasWalked, t7
+    storeb t7, CompactTableKeysShift[t2]
+.isMarked:
+    move t7, t3
+    andi constexpr AOT::CompactTable::keysShiftMask, t3
+    move 2, t5
+    lshiftp t3, t5
+    addp t2, t5
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Entries, .isPair
+    btinz t7, constexpr AOT::CompactTable::keysAreWide, .hasWideKey
+    loadi CompactTableIndex[t5, t6, 4], t3
+    btiz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .hasNarrowValue
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Keys, .hasNarrowValue
+    loadi CompactTableCapacity[t2], t3
+    leap [t5, t3, 4], t5
+    jmp .loadsValue
+
+.hasWideKey:
+    loadq CompactTableIndex[t5, t6, 8], t3
+    btqz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .hasValue
+    bieq KindOfCollectionIterator[t0], constexpr IterationKind::Keys, .hasValue
+    loadi CompactTableCapacity[t2], t3
+    leap [t5, t3, 8], t5
+.loadsValue:
+    bbneq CompactTableValueWidth[t2], constexpr AOT::CompactTable::Width::Wide, .loadsNarrowValue
+    loadq CompactTableIndex[t5, t6, 8], t3
+    jmp .hasValue
+
+    # AOT::CompactTable::decodeNarrow().
+.loadsNarrowValue:
+    loadi CompactTableIndex[t5, t6, 4], t3
+.hasNarrowValue:
+    bib t3, constexpr AOT::minCell32, .hasValue
+    loadTableInstance(t5, .ordinary)
+    lshiftp constexpr AOT::cell32Shift, t3
+    addp InstanceCellCageBase[t5], t3
+.hasValue:
+    storeVariable(get, m_value, t3, t1)
+    addi 1, t6
+    orq numberTag, t6
+    storeq t6, EntryOfCollectionIterator[t0]
+    move ValueFalse, t0
+    storeVariable(get, m_done, t0, t1)
+    dispatch()
+
+.isPastLastEntry:
+    loadp CodeBlock[cfr], t1
+    loadp CodeBlock::m_vm[t1], t1
+    loadp (constexpr (VM::offsetOfOrderedHashTableSentinel()))[t1], t1
+    storep t1, StorageOfCollectionIterator[t0]
+    move 0, t0
+    storeVariable(get, m_value, t0, t1)
+    move ValueTrue, t0
+    storeVariable(get, m_done, t0, t1)
+    dispatch()
+
+    # constructArrayPair() of the key, which goes to t3, and the value, which goes to t7. Nobody sees a storage whose array cannot be allocated.
+.isPair:
+    loadRealmInstance(t1, .ordinary)
+    btiz InstanceNewArrayWithContiguousHeader[t1], .ordinary
+    btinz t7, constexpr AOT::CompactTable::keysAreWide, .hasWideKeyOfPair
+    loadi CompactTableIndex[t5, t6, 4], t3
+    btiz t3, .ordinary
+    bib t3, constexpr AOT::minCell32, .hasNarrowKeyOfPair
+    lshiftp constexpr AOT::cell32Shift, t3
+    addp InstanceCellCageBase[t1], t3
+.hasNarrowKeyOfPair:
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isPairOfSet
+    loadi CompactTableCapacity[t2], t7
+    leap [t5, t7, 4], t5
+    jmp .loadsValueOfPair
+
+.hasWideKeyOfPair:
+    loadq CompactTableIndex[t5, t6, 8], t3
+    btqz t3, .ordinary
+    bbeq JSCell::m_type[t0], constexpr JSSetIteratorType, .isPairOfSet
+    loadi CompactTableCapacity[t2], t7
+    leap [t5, t7, 8], t5
+.loadsValueOfPair:
+    bbneq CompactTableValueWidth[t2], constexpr AOT::CompactTable::Width::Wide, .loadsNarrowValueOfPair
+    loadq CompactTableIndex[t5, t6, 8], t7
+    jmp .hasPair
+
+.loadsNarrowValueOfPair:
+    loadi CompactTableIndex[t5, t6, 4], t7
+    bib t7, constexpr AOT::minCell32, .hasPair
+    lshiftp constexpr AOT::cell32Shift, t7
+    addp InstanceCellCageBase[t1], t7
+    jmp .hasPair
+
+.isPairOfSet:
+    move t3, t7
+.hasPair:
+    loadp InstanceAuxiliarySpace[t1], t2
+    loadp (constexpr (CompleteSubspace::offsetOfAllocatorForSizeStep())) + ((constexpr BASE_CONTIGUOUS_VECTOR_LEN) + 1) * 4[t2], t2
+    btpz t2, .ordinary
+    allocateCell(t2, t5, t0, .ordinary)
+    storei 2, IndexingHeader::u.lengths.publicLength[t5]
+    storei constexpr BASE_CONTIGUOUS_VECTOR_LEN, IndexingHeader::u.lengths.vectorLength[t5]
+    storeq t3, sizeof IndexingHeader[t5]
+    storeq t7, sizeof IndexingHeader + 8[t5]
+    storeq ValueEmpty, sizeof IndexingHeader + 16[t5]
+    loadp InstanceArrayAllocator[t1], t2
+    allocateCell(t2, t3, t0, .ordinary)
+    loadq InstanceNewArrayWithContiguousHeader[t1], t2
+    storeq t2, [t3]
+    addp sizeof IndexingHeader, t5
+    storep t5, JSObjectWithButterfly::m_butterfly[t3]
+    fenceAfterAllocation(t2)
+    loadVariable(get, m_iterator, t0)
+    jmp .hasValue
+
+    # What next() answers is in m_value till its value is there. A compiled object has no properties that the cache of the site holds.
+.callsNext:
+    if ARM64E or C_LOOP
+        jmp .ordinary
+    else
+        macro readsResult()
+            jmp .readsDone
+        end
+
+        macro getCallee(dst)
+            get(m_next, dst)
+        end
+
+        macro getArgumentIncludingThisStart(dst)
+            getu(size, OpIteratorNext, m_stackOffset, dst)
+        end
+
+        macro getArgumentIncludingThisCount(dst)
+            move 1, dst
+        end
+
+        macro loadNameAndReadCompiledResult(offsetOfName, slow, done)
+            loadp CodeBlock[cfr], t1
+            loadp CodeBlock::m_vm[t1], t1
+            loadp VM::propertyNames[t1], t1
+            loadp offsetOfName[t1], t1
+            getFromCompiledObject(slow, done)
+        end
+
+        metadata(t5, t0)
+        callHelper(aot_op_iterator_next, OpIteratorNext, dispatchAfterCallWithoutProfile, m_nextResultValueProfile, m_value, prepareForRegularCall, invokeCallWithoutProfile, prepareForSlowRegularCall, prepareCallSiteForConstruct, size, readsResult, metadata, getCallee, getArgumentIncludingThisStart, getArgumentIncludingThisCount)
+
+    .readsDone:
+        loadVariable(get, m_value, t3)
+        btqnz t3, notCellMask, .asksForDone
+        bbeq JSCell::m_type[t3], CompiledObjectType, .readsDoneOfCompiledResult
+        metadata(t2, t1)
+        performGetByIDHelper(OpIteratorNext, m_doneModeMetadata, m_doneValueProfile, .asksForDone, size, macro (value)
+            move value, t0
+            jmp .hasDone
+        end)
+
+    .readsDoneOfCompiledResult:
+        loadNameAndReadCompiledResult(constexpr AOT::Interpreter::offsetOfDoneAmongPropertyNames, .asksForDone, .hasDone)
+
+    .hasDone:
+        storeVariable(get, m_done, t0, t1)
+    .testsDone:
+        btqnz t0, ~0xf, .asksForValue
+        btiz t0, 1, .isNotDone
+        dispatch()
+
+    .isNotDone:
+        loadVariable(get, m_value, t3)
+        bbeq JSCell::m_type[t3], CompiledObjectType, .readsValueOfCompiledResult
+        metadata(t2, t1)
+        performGetByIDHelper(OpIteratorNext, m_valueModeMetadata, m_valueValueProfile, .asksForValue, size, macro (value)
+            move value, t0
+            jmp .hasValueOfResult
+        end)
+
+    .readsValueOfCompiledResult:
+        loadNameAndReadCompiledResult(constexpr AOT::Interpreter::offsetOfValueAmongPropertyNames, .asksForValue, .hasValueOfResult)
+
+    .hasValueOfResult:
+        storeVariable(get, m_value, t0, t1)
+        dispatch()
+
+    .asksForDone:
+        callSlowPath(_llint_slow_path_iterator_next_get_done)
+        branchIfException(_llint_throw_from_slow_path_trampoline)
+        loadVariable(get, m_done, t0)
+        jmp .testsDone
+
+    .asksForValue:
+        callSlowPath(_llint_slow_path_iterator_next_get_value)
+        dispatch()
+    end
+
+.ordinary:
+    jumpToOrdinaryHandler(size, op_iterator_next)
+end)
+
 macro loadInstanceOfCompiledCallee(callee, instance, scratch)
     loadStructureWithScratch(callee, instance, scratch)
     loadp Structure::m_realm[instance], instance
@@ -4134,16 +4702,18 @@ _llint_aot_char_code_at_thunk:
     jmp _llint_native_call_trampoline
 
 # The same for String.prototype.indexOf: one character of one byte looked for in a whole string of such characters, from the start or from an int32 that is not negative: text that is made at run time to
-# take a URL apart asks for this. Everything else is the host function's.
+# take a URL apart asks for this. Everything else is the host function's. t3: the characters, t0: how many, t2: the one that is looked for, t1: the place.
 global _llint_aot_string_index_of_thunk
 _llint_aot_string_index_of_thunk:
     loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
-    bib t0, 2, .indexOfIsHostFunctions
+    move 0, t1
+    bineq t0, 2, .indexOfMayHaveStart
+.indexOfHasStart:
     loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], t3
     loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], t2
-    move constexpr JSValue::NotCellMask, t1
-    btqnz t3, t1, .indexOfIsHostFunctions
-    btqnz t2, t1, .indexOfIsHostFunctions
+    move constexpr JSValue::NotCellMask, t5
+    btqnz t3, t5, .indexOfIsHostFunctions
+    btqnz t2, t5, .indexOfIsHostFunctions
     bbneq JSCell::m_type[t3], StringType, .indexOfIsHostFunctions
     bbneq JSCell::m_type[t2], StringType, .indexOfIsHostFunctions
     loadp JSString::m_fiber[t3], t3
@@ -4153,25 +4723,21 @@ _llint_aot_string_index_of_thunk:
     bineq StringImpl::m_length[t2], 1, .indexOfIsHostFunctions
     btiz StringImpl::m_hashAndFlags[t2], HashFlags8BitBuffer, .indexOfIsHostFunctions
     btiz StringImpl::m_hashAndFlags[t3], HashFlags8BitBuffer, .indexOfIsHostFunctions
-    move 0, t1
-    bib t0, 3, .indexOfHasStart
-    loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t1
-    move constexpr JSValue::NumberTag, t5
-    bqb t1, t5, .indexOfIsHostFunctions
-    bilt t1, 0, .indexOfIsHostFunctions
-    zxi2q t1, t1
-.indexOfHasStart:
     loadp StringImpl::m_data8[t2], t2
     loadb [t2], t2
     loadi StringImpl::m_length[t3], t0
     loadp StringImpl::m_data8[t3], t3
-.indexOfNextCharacter:
-    biaeq t1, t0, .indexOfFindsNothing
-    loadb [t3, t1], t5
-    bieq t5, t2, .indexOfFindsCharacter
-    addi 1, t1
-    jmp .indexOfNextCharacter
-
+.indexOfNextCharacters:
+    addq 4, t1, t5
+    bqa t5, t0, .indexOfAtEnd
+    bbeq [t3, t1], t2, .indexOfFindsCharacter
+    bbeq 1[t3, t1], t2, .indexOfFindsSecond
+    bbeq 2[t3, t1], t2, .indexOfFindsThird
+    bbeq 3[t3, t1], t2, .indexOfFindsFourth
+    move t5, t1
+    # The rest of a long string is looked at by many characters at a time.
+    btqnz t5, 28, .indexOfNextCharacters
+    bqb t5, t0, .indexOfLooksFar
 .indexOfFindsNothing:
     move 0xffffffff, t1
 .indexOfFindsCharacter:
@@ -4180,6 +4746,36 @@ _llint_aot_string_index_of_thunk:
     orq t5, r0
     ret
 
+.indexOfFindsFourth:
+    addi 1, t1
+.indexOfFindsThird:
+    addi 1, t1
+.indexOfFindsSecond:
+    addi 1, t1
+    jmp .indexOfFindsCharacter
+
+.indexOfAtEnd:
+    bqaeq t1, t0, .indexOfFindsNothing
+    bbeq [t3, t1], t2, .indexOfFindsCharacter
+    addq 1, t1
+    jmp .indexOfAtEnd
+
+.indexOfLooksFar:
+    # a1 is t1, a2 is t2.
+    lshiftq 32, t1
+    orq t0, t1
+    move t3, a0
+    preserveCallerPCAndCFR()
+    cCall3(_llint_aot_index_of_character)
+    restoreCallerPCAndCFR()
+    ret
+
+.indexOfMayHaveStart:
+    bib t0, 2, .indexOfIsHostFunctions
+    loadq CalleeFrameAtEntry + FirstArgumentOffset + 8[sp], t1
+    move constexpr JSValue::NumberTag, t5
+    subq t5, t1
+    bqbeq t1, 0x7fffffff, .indexOfHasStart
 .indexOfIsHostFunctions:
     jmp _llint_native_call_trampoline
 
@@ -4622,6 +5218,60 @@ _llint_aot_math_clz32_thunk:
 .clz32HostFunction:
     jmp _llint_native_call_trampoline
 
+# A collection whose table answers for a string, a number or an object without running code.
+macro findInThunk(collectionType, helper, hostFunction)
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bib t0, 2, hostFunction
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], a0
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], a1
+    move constexpr JSValue::NotCellMask, t5
+    btqnz a0, t5, hostFunction
+    bbneq JSCell::m_type[a0], collectionType, hostFunction
+    btqnz a1, t5, .isNoCell
+    bbeq JSCell::m_type[a1], StringType, .asks
+    bbb JSCell::m_type[a1], ObjectType, hostFunction
+    jmp .asks
+.isNoCell:
+    move constexpr JSValue::NumberTag, t5
+    btqz a1, t5, hostFunction
+.asks:
+    preserveCallerPCAndCFR()
+    cCall2(helper)
+    restoreCallerPCAndCFR()
+    btqz r0, hostFunction
+    ret
+end
+
+global _llint_aot_map_get_thunk
+_llint_aot_map_get_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_map_get, .mapGetHostFunction)
+.mapGetHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_map_has_thunk
+_llint_aot_map_has_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_collection_has, .mapHasHostFunction)
+.mapHasHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_has_thunk
+_llint_aot_set_has_thunk:
+    findInThunk(constexpr JSSetType, _llint_aot_collection_has, .setHasHostFunction)
+.setHasHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_map_delete_thunk
+_llint_aot_map_delete_thunk:
+    findInThunk(constexpr JSMapType, _llint_aot_remove_from_collection, .mapDeleteHostFunction)
+.mapDeleteHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_delete_thunk
+_llint_aot_set_delete_thunk:
+    findInThunk(constexpr JSSetType, _llint_aot_remove_from_collection, .setDeleteHostFunction)
+.setDeleteHostFunction:
+    jmp _llint_native_call_trampoline
+
 # Array.prototype.push() of one value that fits behind the elements of an array of int32s or of values: JSArray::pushInline().
 global _llint_aot_array_push_thunk
 _llint_aot_array_push_thunk:
@@ -4696,6 +5346,38 @@ _llint_aot_array_push_thunk:
 
 .pushHostFunction:
     jmp _llint_native_call_trampoline
+
+macro addInThunk(collectionType, fewestArguments, loadValue, hostFunction)
+    loadi CalleeFrameAtEntry + ArgumentCountIncludingThis + LowWordOffset[sp], t0
+    bib t0, fewestArguments + 1, hostFunction
+    loadq CalleeFrameAtEntry + ThisArgumentOffset[sp], a0
+    loadq CalleeFrameAtEntry + FirstArgumentOffset[sp], a1
+    move constexpr JSValue::NotCellMask, t5
+    btqnz a0, t5, hostFunction
+    bbneq JSCell::m_type[a0], collectionType, hostFunction
+    btqz a1, t5, .isNumberOrCell
+    move constexpr JSValue::NumberTag, t5
+    btqz a1, t5, hostFunction
+.isNumberOrCell:
+    loadValue(a2)
+    preserveCallerPCAndCFR()
+    cCall3(_llint_aot_collection_add)
+    restoreCallerPCAndCFR()
+    btqz r0, hostFunction
+    ret
+end
+
+global _llint_aot_map_set_thunk
+_llint_aot_map_set_thunk:
+    addInThunk(constexpr JSMapType, 2, macro (value) loadq CalleeFrameAtEntry + FirstArgumentOffset + SlotSize[sp], value end, .mapSetHostFunction)
+.mapSetHostFunction:
+    jmp _llint_native_call_trampoline
+
+global _llint_aot_set_add_thunk
+_llint_aot_set_add_thunk:
+    addInThunk(constexpr JSSetType, 1, macro (value) move ValueEmpty, value end, .setAddHostFunction)
+.setAddHostFunction:
+    jmp _llint_native_call_trampoline
 end
 
 if not C_LOOP
@@ -4722,6 +5404,10 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpEnumeratorNext, op_enumerator_next)
     setEntryAddresses(OpEnumeratorPutByVal, op_enumerator_put_by_val)
     setEntryAddresses(OpBitand, op_bitand)
+    if X86_64 or ARM64
+        setEntryAddresses(OpDelById, op_del_by_id)
+        setEntryAddresses(OpDelByVal, op_del_by_val)
+    end
     setEntryAddresses(OpDiv, op_div)
     if X86_64 or ARM64
         setEntryAddresses(OpMod, op_mod)
@@ -4742,6 +5428,7 @@ entry(llint_aot, macro ()
     setEntryAddresses(OpInByVal, op_in_by_val)
     setEntryAddresses(OpInc, op_inc)
     setEntryAddresses(OpInstanceof, op_instanceof)
+    setEntryAddresses(OpIteratorNext, op_iterator_next)
     setEntryAddresses(OpJfalse, op_jfalse)
     setEntryAddresses(OpJgreater, op_jgreater)
     setEntryAddresses(OpJgreatereq, op_jgreatereq)

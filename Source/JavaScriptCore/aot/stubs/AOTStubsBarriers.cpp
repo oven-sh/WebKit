@@ -100,6 +100,12 @@ static void returnUnlessOperationRemembers(StubAssembler& jit, GPRReg owner, GPR
 
 static void rememberOwnerAndReturn(StubAssembler& jit, GPRReg owner)
 {
+    if (jit.key().family() == StubFamily::ReflectSet) {
+        jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = owner }, [&] {
+            jit.move(TrustedImm32(1), jit.result());
+        });
+        return;
+    }
     jit.callOperationAndReturn(Entry::operationAOTBarrierSlow, { .returns = Returns::Void, .saves = Saves::CallerSavedRegisters, .checksException = false, .secondArgumentIn = owner });
 }
 
@@ -201,7 +207,7 @@ Label returnAfterStoring(StubAssembler& jit, GPRReg owner, GPRReg value)
 
     isWithinThreshold.link(&jit);
     returnUnlessOperationRemembers(jit, owner, state);
-    if (descriptorOf(jit.key().family()).clobbers == StubClobbers::ClobbersLikeCall) {
+    if (descriptorOf(jit.key().family()).clobbers == StubClobbers::ClobbersLikeCall && jit.key().family() != StubFamily::ReflectSet) {
         jit.move(owner, operationArgumentGPR(1));
         jit.tailCallOperation(Entry::operationAOTBarrierSlow, OperationCall::FirstArgument::Instance);
     } else

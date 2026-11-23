@@ -151,6 +151,10 @@ GenerationResult CodeGenerator::run()
 
     m_generatesWatched = m_watchesOperations || m_looksBehindEachOperation;
     definePinnedValues(m_out, m_pinned);
+    if (!m_checksEffects && code().opcodesOfValues().contains(Opcode::TakeGeneratorLeftInPlace))
+        emitter<OperatorEmitter>().bigIntValues();
+    if (!m_checksEffects && BigIntValues::mayGoAroundLoops(code(), order()))
+        emitter<OperatorEmitter>().bigIntValues();
     emitter<EntryEmitter>().generateEntries();
     for (size_t position = 0; position < m_order.size(); ++position) {
         if (m_hasFailed)
@@ -2133,8 +2137,11 @@ bool CodeGenerator::isJoinWithRareCode(BlockID join) const
     unsigned edges = 0;
     unsigned rareEdges = 0;
     for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
-        const Block& from = code().at(code().at(id).from);
-        if (from.terminator.kind != TerminatorKind::Jump || !code().isReached(code().at(id).from))
+        BlockID source = code().at(id).from;
+        if (!code().isReached(source))
+            continue;
+        const Block& from = code().at(source);
+        if (from.terminator.kind != TerminatorKind::Jump)
             return false;
         ++edges;
         rareEdges += from.frequency == BlockFrequency::Rare;
@@ -2151,7 +2158,9 @@ bool CodeGenerator::isBackEdgeOfSimpleLoop(BlockID from, BlockID head)
     BlockID entering;
     for (EdgeID id = block.firstEdgeIn(); id; id = code().at(id).nextInto()) {
         BlockID source = code().at(id).from;
-        if (code().at(source).terminator.kind != TerminatorKind::Jump || !code().isReached(source))
+        if (!code().isReached(source))
+            continue;
+        if (code().at(source).terminator.kind != TerminatorKind::Jump)
             return false;
         ++edges;
         if (source != from)
@@ -2164,7 +2173,8 @@ bool CodeGenerator::isKnownAtEveryEdgeInto(BlockID block, ValueID list)
 {
     BlockID home = code().blockOf(list);
     for (EdgeID id = code().at(block).firstEdgeIn(); id; id = code().at(id).nextInto()) {
-        if (!blockDominates(home, code().at(id).from))
+        BlockID source = code().at(id).from;
+        if (code().isReached(source) && !blockDominates(home, source))
             return false;
     }
     return true;
@@ -3294,6 +3304,7 @@ NEVER_INLINE void CodeGenerator::endScheduledLifetimes(const ValueContext& conte
 NEVER_INLINE void CodeGenerator::generateWatched(const ValueContext& context)
 {
     const OperationContext* user = std::exchange(m_operation, &context);
+    const bool userDeclaresAccesses = user && m_out.hasDeclaredAccesses();
     Machine::Origin originOfUser = m_out.origin();
     m_out.setOrigin(machineOriginOf(context.id()));
     bool userOwesFenceBehindStores = std::exchange(m_owesFenceBehindStores, false);
@@ -3313,7 +3324,7 @@ NEVER_INLINE void CodeGenerator::generateWatched(const ValueContext& context)
     if (m_looksBehindEachOperation) [[unlikely]] {
         if (barrierIsCountedOn(context.id()) && !m_storesBehindWhichOwnerIsRemembered.get(context.id().index()) && !m_hasFailed)
             fail(context, InternalErrorKind::OpcodeNotInForm, "the barrier of an earlier store is left to this one, and the code of this one does not remember its owner"_s);
-        if (m_checksAllocation && user)
+        if (m_checksAllocation && userDeclaresAccesses)
             declareAccessesSlow(*user);
         else if (m_checksAllocation)
             m_out.clearDeclaredAccesses();
@@ -6439,7 +6450,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
                 build().statistics().count(StatisticID::KnownKindsCheckedAtLoopEntry);
                 continue;
             }
-            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
+            Condition hasKind = asked.isStoredInto ? emitter<ElementAccessEmitter>().listTakesStoresInArrayStorage(asked.list, asked.kind) : asked.otherKindsAreNotAsked || !loop.viewsAskedForKind.isEmpty() ? emitter<ElementAccessEmitter>().listHasArrayStorage(asked.list, asked.kind) : emitter<ElementAccessEmitter>().numericListHasArrayStorage(asked.list, asked.kind);
             m_out.branch(answerTo(hasKind.value()), normalEdge(holds), normalEdge(otherKind ? otherKind : written));
             m_out.appendTo(holds);
         }
@@ -6662,6 +6673,17 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         for (LValue word : wordsWidenedBeforeIterations)
             emitter<ConversionEmitter>().forgetSignExtended(Word32(word));
     });
+    auto blockWhereTurnsRunAgain = [&] {
+        return blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
+            const SumOfIntegers* sum = sumAt(index);
+            if (sum && !(comesBack && !single))
+                return m_out.doubleAdd(sum->base, m_out.intToDouble(phisOfTurns[index]));
+            if (sum)
+                return passSumToExit(*sum, phisOfTurns[index]);
+            LValue left = indexesOfWide.contains(index) ? m_out.castToInt32(phisOfTurns[index]) : phisOfTurns[index];
+            return comesBack ? left : forWrittenLoop(index, left);
+        });
+    };
     auto emitIterations = [&](unsigned numberOfIterations) -> bool {
         for (unsigned turnLaidOut = 0; turnLaidOut < numberOfIterations; ++turnLaidOut) {
             forgetTurn();
@@ -6674,6 +6696,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             }
             LBasicBlock blockLeavingTurn = nullptr;
             m_blockLeavingTurnLaidOut = [&] {
+                if (!blockLeavingTurn && turnLaidOut && m_boxedWordsOfElementsInTurns)
+                    blockLeavingTurn = blockWhereTurnsRunAgain();
                 if (!blockLeavingTurn) {
                     blockLeavingTurn = blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
                         if (const SumOfIntegers* sum = sumAt(index))
@@ -6731,15 +6755,7 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
         return;
     m_asksElementsBehindTurns = false;
     if (LValue words = std::exchange(m_boxedWordsOfElementsInTurns, nullptr)) {
-        LBasicBlock someIsAbsent = blockHandingOver(comesBack ? phisOfLeaving : noTurnComesToNextFront ? phisOfRest : phisOfWrittenHead, comesBack ? leaving : noTurnComesToNextFront ? headOfRest : writtenHead, [&](size_t index) -> LValue {
-            const SumOfIntegers* sum = sumAt(index);
-            if (sum && !(comesBack && !single))
-                return m_out.doubleAdd(sum->base, m_out.intToDouble(phisOfTurns[index]));
-            if (sum)
-                return passSumToExit(*sum, phisOfTurns[index]);
-            LValue left = indexesOfWide.contains(index) ? m_out.castToInt32(phisOfTurns[index]) : phisOfTurns[index];
-            return comesBack ? left : forWrittenLoop(index, left);
-        });
+        LBasicBlock someIsAbsent = blockWhereTurnsRunAgain();
         LBasicBlock everyOneIsThere = m_out.newBlock();
         m_out.branch(emitter<ElementAccessEmitter>().areInt32Elements(words).value(), normalEdge(everyOneIsThere), rareEdge(someIsAbsent));
         m_out.appendTo(everyOneIsThere);
@@ -6810,7 +6826,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
     LValue counterBehindTurns = valuesBehindTurns[indexOfCounter];
     RELEASE_ASSERT(counterBehindTurns->type() != Machine::Int32 || Machine::clearsUpperHalf(counterBehindTurns->opcode()));
     auto goingRound = [&](LValue nextEndOfStretch) {
-        return blockHandingOver(phisOfTurns, turns, [&](size_t index) {
+        size_t numberOfNumbersKnown = m_numbersOfIntegers.size();
+        LBasicBlock handsOver = blockHandingOver(phisOfTurns, turns, [&](size_t index) {
             if (index == indexOfCounter && endOfStretch)
                 m_out.upsilon(nextEndOfStretch ? nextEndOfStretch : endOfStretchFrom(m_out.opaque(counterBehindTurns), lastStart), endOfStretch);
             const SumOfIntegers* sum = sumAt(index);
@@ -6821,6 +6838,8 @@ void CodeGenerator::layOutTurns(const CountedLoop& loop)
             }
             return sum ? sum->added : asCarriedByLoop(index, valuesBehindTurns[index]);
         });
+        m_numbersOfIntegers.shrink(numberOfNumbersKnown);
+        return handsOver;
     };
     if (pollsBetweenStretches) {
         LBasicBlock stretchHasEnded = m_out.newBlock();

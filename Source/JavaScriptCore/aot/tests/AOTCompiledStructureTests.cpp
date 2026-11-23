@@ -294,7 +294,7 @@ static void testVisitOfPoisonedObject(LoadedProgram& program)
     AOT_TEST_CHECK(holds(before));
 
     object->setCellState(CellState::PossiblyBlack);
-    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, object, 0, 0));
+    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, object, 0));
     AOT_TEST_CHECK(object->classInfo() == PoisonedCell::info() && object->cellState() == CellState::PossiblyBlack);
     object->setCellState(CellState::DefinitelyWhite);
     VisitRecorder after;
@@ -315,12 +315,34 @@ static void testVisitOfPoisonedEnvironment(LoadedProgram& program)
     AOT_TEST_CHECK(before.values.contains(JSValue(held)));
 
     environment->setCellState(CellState::PossiblyGrey);
-    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, environment, 0, 0));
+    AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, environment, 0));
     AOT_TEST_CHECK(environment->classInfo() == PoisonedCell::info() && environment->cellState() == CellState::PossiblyGrey);
     environment->setCellState(CellState::DefinitelyWhite);
     VisitRecorder after;
     AOT_TEST_CHECK(!Environment::tryVisitFields(environment, structure, after));
     AOT_TEST_CHECK(after.values.isEmpty());
+}
+
+static void testSitesOfPoisonedCells(LoadedProgram& program)
+{
+    VM& vm = program.vm();
+    constexpr size_t numberOfCells = 20000;
+    auto sites = [&]() -> const PoisonedCellSites& {
+        return *vm.aotState().poisonedCellSites;
+    };
+    Strong<JSCell> kept;
+    for (size_t i = 0; i < numberOfCells; ++i) {
+        Environment* environment = allocateEnvironment(program);
+        AOT_TEST_CHECK(PoisonedCell::tryPoison(vm, environment, i));
+        AOT_TEST_CHECK(!PoisonedCell::tryPoison(vm, environment, i + 1));
+        AOT_TEST_CHECK(sites().findFunction(environment) == i);
+        if (i == numberOfCells / 2)
+            kept.set(vm, environment);
+    }
+    vm.heap.collectSync(CollectionScope::Full);
+    AOT_TEST_CHECK(sites().size() < numberOfCells / 10);
+    AOT_TEST_CHECK(sites().findFunction(kept.get()) == numberOfCells / 2);
+    AOT_TEST_CHECK(!sites().findFunction(program.realm()));
 }
 
 static FunctionID slimFunctionNamed(LoadedProgram& program, ASCIILiteral name)
@@ -639,6 +661,7 @@ std::span<const NativeTest> compiledStructureTests()
         { "compiled-structures/collector-takes-a-link-between-environments-for-no-cell"_s, withProgram<testCollectorTakesLinkBetweenEnvironmentsForNoCell> },
         { "compiled-structures/visit-of-poisoned-object"_s, withProgram<testVisitOfPoisonedObject> },
         { "compiled-structures/visit-of-poisoned-environment"_s, withProgram<testVisitOfPoisonedEnvironment> },
+        { "compiled-structures/sites-of-poisoned-cells"_s, withProgram<testSitesOfPoisonedCells> },
         { "compiled-structures/closure-moved-to-the-heap-marks-the-environment-that-it-holds"_s, withProgram<testClosureMovedToHeapMarksEnvironmentThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-takes-along-the-closures-of-frames-that-it-holds"_s, withProgram<testClosureMovedToHeapTakesAlongClosuresOfFramesThatItHolds> },
         { "compiled-structures/closure-moved-to-the-heap-twice-is-one-cell"_s, withProgram<testClosureMovedToHeapTwiceIsOneCell> },

@@ -70,6 +70,7 @@ bool isSteppedWithCounter(const Code&, const TypeArena&, const SteppedWithCounte
 bool everyWayStepsUpFrom(const Code&, const TypeArena&, ValueID, ValueID from, ValueID stepNonNegativeCheck, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);
 bool everyWayStepsDownFrom(const Code&, const TypeArena&, ValueID, ValueID from, NOESCAPE const ScopedLambda<bool(ValueID)>& mayGoThrough, NOESCAPE const ScopedLambda<bool(BlockID)>& isReached);
 bool groundsShowPositionInside(const Code&, const TypeArena&, ValueID position, const GroundsOfPosition&, NOESCAPE const ScopedLambda<bool(ValueID, bool testResult)>& holds);
+bool isSameConstantNumber(const Code&, ValueID one, ValueID other);
 bool testsShowElementPresent(const Code&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
 bool testsProveElementAtOrAfter(const Code&, const TypeArena&, ValueID list, ValueID position, std::span<const PassedTest::Side>);
 

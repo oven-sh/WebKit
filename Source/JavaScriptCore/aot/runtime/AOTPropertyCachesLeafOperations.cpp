@@ -437,7 +437,7 @@ static GetterSetter* findAndFileAccessorAboveCompiledObject(Instance* instance, 
         slot.setCacheableGetterSlot(walk.holder, walk.attributes, accessor, walk.offset);
         ReadQuery query { instance->globalObject, &object, structure, uid, slot, ChainWalkMode::AllocatesNothing };
         PropertyAnswer answer = classifyRead(query);
-        answerByGetterField(&object, structure, answer);
+        answerByGetterField(&object, structure, uid, answer);
         if (answer.isCacheable())
             caches.cache({ structure, name, SlotAccess::Read }, answer);
     }

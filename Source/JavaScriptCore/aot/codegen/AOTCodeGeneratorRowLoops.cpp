@@ -97,6 +97,8 @@ struct RowLoop {
     std::unique_ptr<RowLoop> nested;
     Vector<Step, 8> stepsAtEnd;
     Vector<Step, 24> stepsOfNest;
+    // Whether the gather and the sums are known to end at one bound. Otherwise that is asked in front.
+    bool hasOneBound { false };
     bool isTiled { false };
     Vector<Step, 24> stepsOfStoredRow;
 };
@@ -203,6 +205,7 @@ private:
     bool dependsOnCounter(ValueID, unsigned depth = 0) const;
     bool dependsOnSum(ValueID, unsigned depth = 0) const;
     bool findOrderOfSteps();
+    bool isUntouchedByStores(const Step&) const;
     bool finish(const Edge& back);
     bool readsStoredColumn();
     void dropImpliedTests();
@@ -305,8 +308,12 @@ void RowLoopFinder::restorePlace(const Place& place, bool hadInnerLoop)
     m_nestedBlocks.shrink(0);
 }
 
+static bool onlyReads(const Operation&);
+
 bool RowLoopFinder::addTest(BlockID block, ValueID test, bool isOwnTest, bool expected)
 {
+    if (isOwnTest && !onlyReads(at(test)))
+        return false;
     if (!isOwnTest && !isInLoop(test) && !isAvailableBefore(test))
         return false;
     const Operation& operation = at(test);
@@ -318,7 +325,7 @@ bool RowLoopFinder::addTest(BlockID block, ValueID test, bool isOwnTest, bool ex
         if (step.kind != Step::Kind::OwnTest && step.kind != Step::Kind::Test)
             continue;
         const Operation& earlier = at(step.value);
-        if (isCongruent(test, step.value))
+        if (isCongruent(test, step.value) && (test == step.value || operation.traits().isPure() || (isInLoop(test) && isInLoop(step.value))))
             return step.expected == expected;
         bool bothHold = expected && step.expected;
         if (bothHold && testsOfClass.contains(operation.opcode) && testsOfClass.contains(earlier.opcode) && representative(operation.operand(0)) == representative(earlier.operand(0)))
@@ -528,7 +535,7 @@ bool RowLoopFinder::addInnerOperation(Body& body, BlockID block, ValueID value)
 bool RowLoopFinder::isColumnIndex(ValueID position) const
 {
     Representation representation = at(position).representation;
-    return (isAvailableBefore(position) || (m_isNest && passed(position) == m_found.counter)) && (representation == Representation::Int32 || representation == Representation::Int64) && m_generator.typeOf(position).integers.minimum >= 0;
+    return (m_isNest ? passed(position) == m_found.counter : isAvailableBefore(position)) && (representation == Representation::Int32 || representation == Representation::Int64) && m_generator.typeOf(position).integers.minimum >= 0;
 }
 
 bool RowLoopFinder::isInvariant(ValueID value, unsigned depth) const
@@ -608,6 +615,8 @@ bool RowLoopFinder::exploreBody(const Edge& edge, const Body& before)
     for (size_t index = 0; index < block.parameters().size(); ++index) {
         ValueID parameter = block.parameters()[index];
         ValueID argument = edge.arguments()[index];
+        if (!m_code.isNeeded(parameter))
+            continue;
         if (m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(argument).representation || isNeverType(at(argument).type))
             return false;
         body.operations.append({ Step::Kind::Name, id, parameter, argument, true, 0 });
@@ -711,6 +720,8 @@ bool RowLoopFinder::followInnerLoop(const Edge& entry)
         body.blocks.append(id);
         for (size_t index = 0; index < next.parameters().size(); ++index) {
             ValueID parameter = next.parameters()[index];
+            if (!m_code.isNeeded(parameter))
+                continue;
             if (m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(edge->arguments()[index]).representation)
                 return false;
             body.operations.append({ Step::Kind::Name, id, parameter, edge->arguments()[index], true, 0 });
@@ -794,6 +805,8 @@ bool RowLoopFinder::follow(const Edge& edge)
         ValueID argument = edge.arguments()[index];
         if (m_found.store)
             break;
+        if (!m_code.isNeeded(parameter))
+            continue;
         if (isBehindNested() || m_generator.isCarriedBoxed(parameter) || at(parameter).representation != at(argument).representation || isNeverType(at(argument).type) || (!isConstant(argument) && !isInLoop(argument) && !m_generator.m_values[argument.index()])) {
             restorePlace(place, hadInnerLoop);
             return false;
@@ -914,7 +927,23 @@ bool RowLoopFinder::readsStoredColumn()
     }
     if (!isAvailableBefore(position) || (representation != Representation::Int32 && representation != Representation::Int64))
         return true;
-    return std::ranges::any_of(m_found.bodies[0].reads, [&](const ElementRead& read) { return !read.isColumn && !m_generator.isArrayWithoutRows(read.list); });
+    ValueID stored = m_generator.withoutNames(store.arrayOperand());
+    return std::ranges::any_of(m_found.bodies[0].reads, [&](const ElementRead& read) { return !read.isColumn && (!m_generator.isArrayWithoutRows(read.list) || m_generator.withoutNames(read.list) == stored); });
+}
+
+// The iterations store numbers into arrays of doubles, and nothing else. What reads no element of such an array is the same in front of all iterations, and where an iteration is run again.
+bool RowLoopFinder::isUntouchedByStores(const Step& step) const
+{
+    static constexpr OpcodeSet readsNoElement {
+        Opcode::HasStructureOfClass, Opcode::ShapeTest, Opcode::HasLayoutPrototype, Opcode::AreMembersUnchanged, Opcode::IsSlotFilled, Opcode::IsPristine, Opcode::HasArrayStorage, Opcode::TypeTest,
+        Opcode::GetSlot, Opcode::GetPropertyOfHeir, Opcode::GetCapture, Opcode::GetArrayStorage, Opcode::GetArrayLength, Opcode::RequireObjectCoercible, Opcode::Narrowed, Opcode::Unbox, Opcode::Box,
+    };
+    if (step.kind == Step::Kind::Row || step.kind == Step::Kind::Name || isConstant(step.value) || !isInLoop(step.value))
+        return true;
+    const Operation& operation = at(step.value);
+    if (operation.opcode == Opcode::GetArrayElement || operation.opcode == Opcode::IsElementPresent)
+        return operation.arrayStorage() == ArrayStorage::Contiguous;
+    return operation.traits().isPure() || readsNoElement.contains(operation.opcode);
 }
 
 bool RowLoopFinder::findOrderOfSteps()
@@ -939,7 +968,7 @@ bool RowLoopFinder::findOrderOfSteps()
         bool readsElement = step.kind != Step::Kind::Row && step.kind != Step::Kind::Name && !isConstant(step.value) && isInLoop(step.value) && elementReads.contains(opcodeOf(step.value));
         hasRow |= step.kind == Step::Kind::Row || (readsElement && opcodeOf(step.value) == Opcode::IsElementPresent && step.expected && passed(at(step.value).positionOperand()) == m_found.counter);
         bool mayChange = readsElement && !(at(step.value).arrayStorage() == ArrayStorage::Contiguous);
-        if (mayChange)
+        if (mayChange || (!isDependent && !isUntouchedByStores(step)))
             return false;
         (isDependent ? dependent : independent).append(step);
     }
@@ -984,7 +1013,7 @@ bool RowLoopFinder::findOrderOfSteps()
     }
     if (m_found.form == RowLoop::Form::Map) {
         for (const Step& step : m_found.stepsAfter) {
-            if (dependsOnCounter(step.kind == Step::Kind::Name ? step.source : step.value))
+            if (!isUntouchedByStores(step) || dependsOnCounter(step.kind == Step::Kind::Name ? step.source : step.value))
                 return false;
         }
     }
@@ -1011,7 +1040,8 @@ bool RowLoopFinder::findOrderOfNest()
     m_found.stepsBefore.appendRange(gather.decisions.begin(), gather.decisions.end());
     gather.decisions.shrink(0);
     for (const ElementRead& read : gather.reads) {
-        if (!read.isColumn && isKnown(read.list) && !m_generator.isArrayWithoutRows(read.list))
+        bool isStored = m_generator.withoutNames(read.list) == m_generator.withoutNames(gather.stores[0].list);
+        if (!read.isColumn && isKnown(read.list) && (isStored || !m_generator.isArrayWithoutRows(read.list)))
             return false;
     }
     if (m_found.innerGuard && !isKnown(m_generator.m_rows->guards[*m_found.innerGuard].array))
@@ -1037,6 +1067,12 @@ bool RowLoopFinder::findOrderOfNest()
             return false;
     }
     m_found.stepsAtEnd.removeAllMatching([&](const Step& step) { return !isKnown(step.value); });
+
+    auto isUntouched = [&](const Step& step) { return step.value == nested.store || isUntouchedByStores(step); };
+    for (std::span<const Step> steps : { m_found.stepsBefore.span(), m_found.stepsAfter.span(), m_found.stepsAtEnd.span(), nested.stepsBefore.span(), nested.stepsWithSum.span(), nested.stepsAfter.span() }) {
+        if (!std::ranges::all_of(steps, isUntouched))
+            return false;
+    }
 
     auto split = [&](Vector<Step, 24>& steps, Vector<Step, 24>& known) {
         Vector<Step, 24> dependent;
@@ -1078,6 +1114,23 @@ bool RowLoopFinder::findTiledOrder()
             return self(self, at(term).valueOperand(), part);
         return self(self, at(term).leftOperand(), part) || self(self, at(term).rightOperand(), part);
     };
+    auto isOfAllColumns = [&](auto& self, ValueID term) -> bool {
+        term = sums.numberOf(m_code, term);
+        if (isConstant(term) || term == nested.sum || term == sums.reads[0].access || term == sums.reads[1].access)
+            return true;
+        if (!sums.blocks.contains(m_code.blockOf(term)))
+            return !dependsOnCounter(term);
+        if (opcodeOf(term) == Opcode::Parameter || opcodeOf(term) == Opcode::GetArrayElement)
+            return false;
+        return self(self, at(term).leftOperand()) && self(self, at(term).rightOperand());
+    };
+    ValueID boundOfGather = passed(m_found.innerBound);
+    ValueID boundOfSums = passed(nested.innerBound);
+    auto isOfNest = [&](ValueID bound) { return isConstant(bound) || isInLoop(bound) || at(bound).traits().isPure(); };
+    bool isOneBound = representative(boundOfGather) == representative(boundOfSums) || (isOfNest(boundOfGather) && isOfNest(boundOfSums) && isCongruent(boundOfGather, boundOfSums));
+    m_found.hasOneBound = isOneBound;
+    if (!isOfAllColumns(isOfAllColumns, nested.nextSum))
+        return false;
     for (ValueID part : { nested.sum, sums.reads[0].access, sums.reads[1].access }) {
         if (!includes(includes, nested.nextSum, part))
             return false;
@@ -3063,14 +3116,18 @@ void RowLoopEmitter::emitNest()
     });
     if (m_loop.isTiled) {
         bool readsColumns = nested.form == RowLoop::Form::ColumnSum;
-        LBasicBlock others = readsColumns ? m_out.newBlock() : nullptr;
-        if (readsColumns) {
+        LBasicBlock others = readsColumns || !m_loop.hasOneBound ? m_out.newBlock() : nullptr;
+        auto requireForTiles = [&](LValue condition) {
             LBasicBlock tiles = m_out.newBlock();
-            m_out.branch(m_out.greaterThanOrEqual(m_out.sub(m_limit, m_first), sums.m_limit), normalEdge(tiles), normalEdge(others));
+            m_out.branch(condition, normalEdge(tiles), normalEdge(others));
             m_out.appendTo(tiles);
-        }
+        };
+        if (!m_loop.hasOneBound)
+            requireForTiles(m_out.equal(m_lengthAsWord, sums.m_lengthAsWord));
+        if (readsColumns)
+            requireForTiles(m_out.greaterThanOrEqual(m_out.sub(m_limit, m_first), sums.m_limit));
         emitTiles(sums, storedRows);
-        if (m_generator.m_hasFailed || !readsColumns)
+        if (m_generator.m_hasFailed || !others)
             return;
         m_out.appendTo(others);
         m_out.setOrigin(Machine::Origin());
@@ -3486,7 +3543,7 @@ void ArrayAllocationLoopEmitter::emit(LValue first, LBasicBlock written, LValue 
     ArrayElements elements = m_elements.elementsOf(CellPointer(m_array));
     LValue bound = valueOf(m_loop.bound);
     LValue length = m_elements.publicLengthAsWord(elements).value();
-    LValue limit = m_out.select(m_out.below(length, bound), length, bound);
+    LValue limit = m_out.select(m_out.lessThan(length, bound), length, bound);
     leaveUnless(m_out.lessThan(first, limit));
 
     LValue word = m_out.load32(wordOfProfile());

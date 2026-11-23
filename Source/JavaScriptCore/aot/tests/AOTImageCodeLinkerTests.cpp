@@ -53,7 +53,7 @@ static constexpr uint32_t linkedRegExpMention = 2;
 template<typename Emit>
 static uint32_t appendRelocated(CodeSketch& sketch, const Emit& emit)
 {
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, testAssemblerPolicy());
     emit(recorder);
     auto unit = recorder.finalize(LinkBuffer::Profile::FTL, nullptr);
@@ -823,7 +823,7 @@ static void testFarInstanceWordsAreReached()
     auto symbol = [](uint32_t index) {
         return CodeSymbol { SymbolSpace::InstanceWord, index };
     };
-    CCallHelpers jit;
+    ImageAssembler jit;
     RelocationRecorder recorder(jit, testAssemblerPolicy());
     recorder.loadInstanceWord(symbol(0), InstanceWordWidth::Word64, instance, sum);
     recorder.moveInstanceAddress(symbol(1), instance, word);

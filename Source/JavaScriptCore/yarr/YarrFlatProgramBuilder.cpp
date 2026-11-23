@@ -35,6 +35,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/Hasher.h>
 #include <wtf/SetForScope.h>
+#include <wtf/StackCheck.h>
 #include <wtf/StdUnorderedMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -177,11 +178,15 @@ private:
         }
         found.places.fill(0, std::bit_ceil(found.texts.size() * 4));
         unsigned mask = found.places.size() - 1;
+        size_t takenPlacesLeftToPass = maxTakenPlacesPassedPerWholeText * found.texts.size();
         for (unsigned index = 0; index < found.texts.size(); ++index) {
             auto [begin, length] = found.texts[index];
             unsigned place = FlatProgram::WholeTexts::placeOf(length, found.units[begin], found.units[begin + length - 1]) & mask;
-            while (found.places[place])
+            while (found.places[place]) {
+                if (!takenPlacesLeftToPass--)
+                    return;
                 place = (place + 1) & mask;
+            }
             found.places[place] = index + 1;
         }
         found.units.shrinkToFit();
@@ -223,9 +228,10 @@ private:
     // The parser has made classes of the letters that have other cases. RegExp::matchInline keeps a match from beginning inside a surrogate pair.
     static Steps whatStepsConsume(const PatternDisjunction& disjunction, unsigned depth = 0)
     {
-        Steps steps = Steps::SingleCodeUnits;
+        // Not looked at, and atomicRunAt() takes a run from this deep.
         if (depth > maxNestingDepth)
-            return steps;
+            return Steps::Surrogates;
+        Steps steps = Steps::SingleCodeUnits;
         for (auto& alternative : disjunction.m_alternatives) {
             for (const PatternTerm& term : alternative->m_terms) {
                 switch (term.type) {
@@ -266,6 +272,8 @@ private:
     static constexpr unsigned maxNestingDepth = 64;
     static constexpr unsigned maxTermsVisitedForEmptiness = 64;
     static constexpr unsigned maxSharedPrefixDepth = 32;
+    static constexpr unsigned maxGroupsPassedByBranch = 256;
+    static constexpr unsigned maxTakenPlacesPassedPerWholeText = 32;
     static constexpr size_t maxIndexCount = std::numeric_limits<uint16_t>::max();
 
     // What the search goes on with behind a group that is taken exactly once.
@@ -409,8 +417,9 @@ private:
                 return { 0, 0, true, true };
             case Kind::Jump:
             case Kind::LoopBack:
-            case Kind::LoopBackUnlessEmpty:
                 return { 0, 0, false, true };
+            case Kind::LoopBackUnlessEmpty:
+                return { 0, 0, !!op.argument, true };
             case Kind::Match:
             case Kind::RecordFailure:
             case Kind::NegativeLookaheadEnd:
@@ -503,7 +512,11 @@ private:
             break;
         case Kind::Jump:
         case Kind::LoopBack:
+            functor(op.target);
+            break;
         case Kind::LoopBackUnlessEmpty:
+            if (op.argument)
+                functor(i + 1);
             functor(op.target);
             break;
         default:
@@ -1627,7 +1640,7 @@ private:
                     home = &group;
                     break;
                 }
-                if (!mayPassOthers || !group.first || intersects(*group.first, *first))
+                if (!mayPassOthers || !group.first || intersects(*group.first, *first) || groups.size() - i > maxGroupsPassedByBranch)
                     break;
             }
             if (!home) {
@@ -1682,6 +1695,8 @@ private:
     {
         if (hasExceededIndexLimit())
             return decline(FlatProgramDecline::TooManySetsOrRegisters);
+        if (!m_stackCheck.isSafeToRecurse()) [[unlikely]]
+            return decline(FlatProgramDecline::NestedTooDeep);
         auto groups = groupBranches(branches, branches.size() > 2 && context.sharedPrefixDepth < maxSharedPrefixDepth);
         unsigned count = groups.size();
         if (count == 1)
@@ -1754,7 +1769,7 @@ private:
 
     bool emitAlternatives(Alternatives alternatives, EmitContext context)
     {
-        if (context.nestingDepth >= maxNestingDepth)
+        if (context.nestingDepth >= maxNestingDepth || !m_stackCheck.isSafeToRecurse())
             return decline(FlatProgramDecline::NestedTooDeep);
         ++context.nestingDepth;
         if (m_countsTurns || m_readsBackward)
@@ -1843,6 +1858,8 @@ private:
         std::optional<CaptureRange> captures;
         bool countsTurns { false };
         bool makesNoChoice { false };
+        // Nothing behind a turn that has matched can fail: see YarrPatternConstructor::markTailLoops().
+        bool dropsFramesOfTurns { false };
     };
 
     static bool leavesFrameToResumeAt(const FlatOp& op)
@@ -1866,10 +1883,12 @@ private:
     template<typename Body>
     bool emitLoop(const Loop& loop, const Body& emitBody)
     {
-        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns, makesNoChoice] = loop;
+        auto [min, max, isLazy, canBeEmpty, neededForAnotherIteration, captures, countsTurns, makesNoChoice, dropsFramesOfTurns] = loop;
         bool needsCounter = min > 1 || max != quantifyInfinite;
         unsigned counter = needsCounter ? m_nextRegister++ : 0;
         unsigned start = canBeEmpty ? m_nextRegister++ : 0;
+        // As Interpreter::matchTurnsWithoutChoices(): the turn behind one that takes no input ends as that ended, and so does every turn that is left.
+        bool endsAtEmptyTurn = canBeEmpty && makesNoChoice && needsCounter;
 
         std::optional<unsigned> jumpToBody;
         std::optional<unsigned> jumpToMandatory;
@@ -1879,6 +1898,10 @@ private:
             for (unsigned group = captures->first; group <= captures->last; ++group)
                 emit(Kind::LoggedCaptureEmpty, group << 1);
         }
+        unsigned positionRegister = dropsFramesOfTurns ? m_nextRegister++ : 0;
+        unsigned frameDepthRegister = dropsFramesOfTurns ? m_nextRegister++ : 0;
+        if (dropsFramesOfTurns)
+            emitWithRegister(Kind::LookaheadBegin, positionRegister, frameDepthRegister);
         unsigned loopBegin = here();
         if (needsCounter)
             emitWithRegister(Kind::LoggedSetRegister, counter, 0);
@@ -1928,7 +1951,9 @@ private:
                 setTarget(*jumpToMandatory);
                 if (countsTurns)
                     emit(Kind::CountTurn);
-                if (canBeEmpty)
+                if (endsAtEmptyTurn)
+                    emitWithRegister(Kind::LoggedSavePosition, start);
+                else if (canBeEmpty)
                     emitWithRegister(Kind::LoggedSetRegister, start, offsetNoMatch);
                 if (skip)
                     setTarget(*skip);
@@ -1944,13 +1969,17 @@ private:
             emit(Kind::LoggedClearCaptures, captures->first, captures->last);
         if (!emitBody())
             return false;
+        if (dropsFramesOfTurns) {
+            emitWithRegister(Kind::SavePosition, positionRegister);
+            emitWithRegister(Kind::LookaheadEnd, positionRegister, frameDepthRegister);
+        }
         // A failure in a loop that leaves no frame to resume at goes back to before the loop. Its registers are set again on the way in, and what its captures held is logged in front of it,
         // so that no turn keeps a frame. Its turns are not steps of a search either: each takes input.
         bool keepsNoFrames = min == max && (makesNoChoice || !captures) && std::ranges::none_of(m_program->ops.span().subspan(loopBegin), leavesFrameToResumeAt);
         if (keepsNoFrames)
             removeLogging(m_program->ops.mutableSpan().subspan(loopBegin));
         if (canBeEmpty)
-            emitWithRegister(Kind::LoopBackUnlessEmpty, start, 0, head);
+            emitWithRegister(Kind::LoopBackUnlessEmpty, start, endsAtEmptyTurn, head);
         else
             emit(keepsNoFrames ? Kind::Jump : Kind::LoopBack, 0, head);
         if (canBeEmpty)
@@ -2043,7 +2072,8 @@ private:
         // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
         if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice };
+        bool dropsFramesOfTurns = !m_countsTurns && (term.parentheses.isTerminal || term.parentheses.isTailLoop) && disjunction.m_minimumSize;
+        Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice, dropsFramesOfTurns };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
         });
@@ -2317,9 +2347,9 @@ private:
     }
 
     // As findSinglePathOps(): nothing in front of the run makes a choice.
-    bool hasEmittedOnlyFixedSteps() const
+    bool hasEmittedOnlyFixedSteps()
     {
-        return std::ranges::all_of(m_program->ops, [](const FlatOp& op) {
+        m_mayHaveEmittedOnlyFixedSteps = m_mayHaveEmittedOnlyFixedSteps && std::ranges::all_of(m_program->ops, [](const FlatOp& op) {
             switch (op.kind) {
             case Kind::Character:
             case Kind::Text:
@@ -2342,6 +2372,7 @@ private:
                 return false;
             }
         });
+        return m_mayHaveEmittedOnlyFixedSteps;
     }
 
     // In ([\"']).*?\1 and \[(.+?)\]\(\1 nearly every end of the run fails at the back reference, after a frame, a capture and the steps between. Enclosure::endOfRunBeforeReference() goes
@@ -2495,7 +2526,7 @@ private:
         bool isFixed = term.quantityType == QuantifierType::FixedCount;
         if (isFixed && max == 1)
             return emitReference();
-        return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt }, emitReference);
+        return emitLoop({ isFixed ? max : 0, max, term.quantityType == QuantifierType::NonGreedy, true, 0, std::nullopt, false, isFixed }, emitReference);
     }
 
     bool emitAtomReadBackward(const PatternTerm& term)
@@ -2656,9 +2687,11 @@ private:
     static constexpr unsigned maxTrackedReferencedGroups = 32;
     bool m_decodesSurrogatePairs { false };
     bool m_readsBackward { false };
+    bool m_mayHaveEmittedOnlyFixedSteps { true };
     unsigned m_nextRegister { 0 };
     const PatternAlternative* m_firstRepeatedAlternative { nullptr };
     KnownBacktrackableContent m_knownBacktrackableContent;
+    StackCheck m_stackCheck;
     const bool m_countsTurns;
     const bool m_findsEndsOfRuns;
 };
@@ -2674,10 +2707,12 @@ size_t FlatProgram::estimatedSizeInBytes() const
 }
 
 // As YarrGenerator::disjunctionContainsBacktrackableContent().
-static bool containsBacktrackableContent(const PatternDisjunction& disjunction, KnownBacktrackableContent& known)
+static bool containsBacktrackableContent(const PatternDisjunction& disjunction, KnownBacktrackableContent& known, StackCheck& stackCheck)
 {
     if (auto found = known.find(&disjunction); found != known.end())
         return found->value;
+    if (!stackCheck.isSafeToRecurse()) [[unlikely]]
+        return true;
     bool result = [&] {
         if (disjunction.m_alternatives.size() > 1)
             return true;
@@ -2687,7 +2722,7 @@ static bool containsBacktrackableContent(const PatternDisjunction& disjunction, 
                     return true;
                 if (term.type == PatternTerm::Type::NumberedBackReference || term.type == PatternTerm::Type::NamedBackReference)
                     return true;
-                if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction, known))
+                if ((term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) && containsBacktrackableContent(*term.parentheses.disjunction, known, stackCheck))
                     return true;
             }
         }
@@ -2704,7 +2739,8 @@ bool jitCountsTurnsOf(const PatternTerm& term, KnownBacktrackableContent& known)
         return false;
     if (term.quantityType != QuantifierType::FixedCount)
         return true;
-    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction, known));
+    StackCheck stackCheck;
+    return term.parentheses.disjunction->m_alternatives.size() != 1 || (term.quantityMaxCount > 1 && containsBacktrackableContent(*term.parentheses.disjunction, known, stackCheck));
 }
 
 std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgram(const YarrPattern& pattern, FlatProgramForm form)

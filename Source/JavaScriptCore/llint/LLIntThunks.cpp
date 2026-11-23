@@ -123,7 +123,9 @@ static MacroAssemblerCodeRef<tag> generateThunkWithJumpToPrologue(OpcodeID opcod
 #else
     CCallHelpers::RegisterID scratch = JSInterfaceJIT::regT0;
 #endif
+#if !ENABLE(RETURN_ADDRESS_SIGNING)
     jit.tagReturnAddress();
+#endif
     jit.move(JSInterfaceJIT::TrustedImmPtr(target), scratch);
     jit.farJump(scratch, OperationPtrTag);
 

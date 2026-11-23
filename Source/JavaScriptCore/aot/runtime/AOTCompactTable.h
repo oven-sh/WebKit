@@ -345,6 +345,7 @@ public:
         return found ? Lookup { QuickLookup::Found, *found } : Lookup { QuickLookup::Absent, 0 };
     }
 
+    Lookup tryFindNumberOrObject(JSValue key) const;
     QuickLookup tryFindSubstringInImage(JSRopeString* key, StringView characters, unsigned hash, bool isMembershipTest, JSValue& value) const;
     template<typename CharacterType>
     ALWAYS_INLINE Lookup tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash) const
@@ -484,6 +485,7 @@ public:
 
     static bool add(JSGlobalObject*, JSObject* owner, JSValue key, JSValue value);
     static bool remove(JSGlobalObject*, JSObject* owner, JSValue key);
+    bool tryRemoveEntry(JSObject* owner, uint32_t entry);
     JS_EXPORT_PRIVATE static uint32_t& deletedPrefixOf(JSObject* owner);
     JS_EXPORT_PRIVATE uint32_t numberOfTakenSlots() const;
     static void clear(JSGlobalObject*, JSObject* owner);
@@ -581,6 +583,10 @@ public:
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
+    bool tryAddQuickly(JSGlobalObject*, JSValue key, JSValue);
+    ALWAYS_INLINE bool tryAddNumberQuickly(VM&, JSValue normalizedNumber, JSValue);
+    bool tryAddCellToWideKeys(VM&, JSValue key, JSValue);
+
 private:
     CompactTable(VM& vm, Structure* structure)
         : Base(vm, structure)
@@ -618,6 +624,7 @@ private:
 
     void setKey(uint32_t entry, JSValue);
     void setValue(uint32_t entry, JSValue);
+    ALWAYS_INLINE void setValueInline(uint32_t entry, JSValue);
     template<typename Matches>
     ALWAYS_INLINE std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches& matches) const
     {
@@ -634,6 +641,7 @@ private:
     JS_EXPORT_PRIVATE JSValue valueInImage(uint32_t entry) const;
     void addToIndex(uint32_t entry, unsigned hash);
     void removeFromIndex(uint32_t entry, unsigned hash);
+    void removeEntry(VM&, uint32_t entry);
     void fillIndex(uint32_t count);
     template<SlotKind kind> void fillLargeTableIndex(uint8_t* index, unsigned indexBits, uint32_t count);
     uint32_t copyAliveEntriesTo(CompactTable&) const;
@@ -643,8 +651,7 @@ private:
     template<SlotKind> uint32_t fillWithIdentities(uintptr_t cageBase, std::span<const WriteBarrier<Unknown>>);
     void append(VM&, JSValue key, unsigned hash, JSValue value);
     void resolveSubstringKey(JSRopeString*) const;
-    bool tryAddQuickly(JSGlobalObject*, JSValue normalizedKey, JSValue);
-    bool tryAddNumberQuickly(VM&, JSValue key, JSValue value);
+    template<SlotKind> ALWAYS_INLINE bool addNumber(VM&, JSValue normalizedNumber, JSValue);
     CompactTable* tryCopyWithWidths(JSGlobalObject*, Width key, Width value, std::optional<uint32_t> capacity = std::nullopt) const;
     std::optional<unsigned> hashIfAbsent(JSValue normalizedKey) const;
     std::optional<unsigned> hashIfNumberAbsent(JSValue normalizedNumber) const;

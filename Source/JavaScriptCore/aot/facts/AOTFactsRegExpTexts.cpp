@@ -34,6 +34,7 @@
 #include "ObjectConstructor.h"
 #include "ProxyObject.h"
 #include "RegExpObject.h"
+#include "RegExpPrototype.h"
 #include "StringObject.h"
 #include "TopExceptionScope.h"
 #include "YarrFlags.h"
@@ -81,6 +82,8 @@ enum class GrowthOfWork : uint32_t {
     MakesCellsOfCharactersHanded = 1 << 15,
     TouchesOnePlaceOfWhatIsHanded = 1 << 16,
     RepeatsText = 1 << 17,
+    ConvertsReceiverToText = 1 << 18,
+    ReadsLengthsOnItsWay = 1 << 19,
 };
 
 static constexpr ASCIILiteral builtinsWhoseWorkGrowsWithWhatIsHanded[] = {
@@ -135,6 +138,10 @@ static constexpr ASCIILiteral builtinsThatTouchOnePlaceOfWhatTheyAreHanded[] = {
 
 static constexpr ASCIILiteral builtinsThatGoOverTheirArguments[] = {
     "ArrayFrom"_s, "Set"_s, "Map"_s, "WeakMap"_s, "WeakSet"_s, "ObjectFromEntries"_s,
+};
+
+static constexpr ASCIILiteral builtinsThatReadLengthsOnTheirWay[] = {
+    "ArrayFrom"_s, "Set"_s, "Map"_s, "WeakMap"_s, "WeakSet"_s, "ObjectFromEntries"_s, "ArrayPrototypeConcat"_s, "ArrayPrototypeFlat"_s,
 };
 
 static constexpr ASCIILiteral builtinsThatAskWhetherWhatIsGivenBackIsTrue[] = {
@@ -277,6 +284,12 @@ private:
         bool goesBothWays() const { return !regions.isEmpty(); }
     };
 
+    struct BuiltinThatRuns {
+        JSValue callee;
+        JSValue thisValue;
+        std::span<const JSValue> arguments;
+    };
+
     struct ClosureOfProgram {
         FunctionID function;
         JSArray* captures { nullptr };
@@ -367,6 +380,7 @@ private:
     bool pay(const PriceOfBuiltin&);
     bool payForWalkThatEndedInRefusal(const PriceOfBuiltin&);
     bool payForBuiltin(JSValue callee, JSValue thisValue, std::span<const JSValue> arguments, uint64_t& charactersHanded, Values& ropesHanded);
+    bool payAgainBehindCodeOfProgram(const BuiltinThatRuns*, JSValue closure);
     bool wouldBeConverted(OptionSet<GrowthOfWork>, JSValue thisValue, std::span<const JSValue> arguments) const;
     bool wouldMakeMoreThanAnybodyKeeps(OptionSet<GrowthOfWork>, JSValue thisValue, std::span<const JSValue> arguments, const PriceOfBuiltin&);
     bool payToLayOut(JSValue);
@@ -507,6 +521,8 @@ private:
     UncheckedKeyHashSet<JSCell*> m_handsOnItsReceiver;
     JSValue m_functionPrototypeApply;
     JSValue m_objectSetPrototypeOf;
+    JSValue m_arrayFrom;
+    const BuiltinThatRuns* m_builtinThatRuns { nullptr };
     UncheckedKeyHashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfData;
     bool m_callGoesStraightToProgram { false };
     bool m_receiverOfBuiltinIsText { false };
@@ -730,7 +746,13 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     mark(builtinsThatGoIntoWhatTheyAreHandedFirst, GrowthOfWork::GoesIntoWhatItIsHandedFirst);
     mark(builtinsThatAskIdentityOfWhatIsHeld, GrowthOfWork::AsksIdentityOfWhatIsHeld);
     mark(textRepeatingBuiltins, GrowthOfWork::RepeatsText);
+    mark(builtinsThatReadLengthsOnTheirWay, GrowthOfWork::ReadsLengthsOnItsWay);
+    for (ASCIILiteral token : builtinsWhoseWorkGrowsWithWhatIsHanded) {
+        if (StringView(token).startsWith("StringPrototype"_s))
+            mark(std::span(&token, 1), GrowthOfWork::ConvertsReceiverToText);
+    }
     m_objectSetPrototypeOf = inRealmByToken("ObjectSetPrototypeOf"_s);
+    m_arrayFrom = inRealmByToken("ArrayFrom"_s);
     for (auto [token, growth] : { std::pair { "ArrayPrototypeJoin"_s, GrowthOfWork::LaysTextBetweenPlaces }, std::pair { "StringPrototypeReplace"_s, GrowthOfWork::LaysTextOverFind }, std::pair { "StringPrototypeReplaceAll"_s, GrowthOfWork::LaysTextOverEveryFind }, std::pair { "JSONParse"_s, GrowthOfWork::MakesCellsOfCharactersHanded } })
         mark(std::span(&token, 1), growth);
     for (ASCIILiteral token : { "FunctionPrototypeCall"_s, "FunctionPrototypeApply"_s }) {
@@ -766,6 +788,14 @@ RehearsalOfRegExpTexts::RehearsalOfRegExpTexts(VM& vm, const Program& program, c
     addHelper("CompilerHelpersFilledArray"_s, filledArray, growsWithLength);
     addHelper("CompilerHelpersArrayFromLength"_s, arrayFromLength, growsWithLength);
     addHelper("CompilerHelpersArrayFromList"_s, arrayFromList, { GrowthOfWork::WithWhatIsHanded, GrowthOfWork::WithLengthOfWhatIsHanded });
+
+    // The engine finds these when it converts an object, wherever that object lies and whatever has happened to it since a price was taken.
+    auto payWhereEngineCalls = [&](JSObject* holder, const Identifier& name, ASCIILiteral token) {
+        holder->putDirect(vm, name, inHandsOfProgram(inRealmByToken(token)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    };
+    payWhereEngineCalls(realm->arrayPrototype(), vm.propertyNames->join, "ArrayPrototypeJoin"_s);
+    payWhereEngineCalls(realm->errorPrototype(), vm.propertyNames->toString, "ErrorPrototypeToString"_s);
+    payWhereEngineCalls(realm->regExpPrototype(), vm.propertyNames->toString, "RegExpPrototypeToString"_s);
 }
 
 String RehearsalOfRegExpTexts::charactersOf(StringID id) const
@@ -1005,6 +1035,10 @@ JSValue RehearsalOfRegExpTexts::closureOf(FunctionID function, std::span<const J
         for (unsigned index = 0; index < frame->argumentCount(); ++index)
             arguments.append(frame->uncheckedArgument(index));
         JSValue given = enter(function, captures.span(), frame->thisValue(), frame->jsCallee(), jsUndefined(), arguments.span());
+        if (!payAgainBehindCodeOfProgram(m_builtinThatRuns, frame->jsCallee())) {
+            auto scope = DECLARE_THROW_SCOPE(*m_vm);
+            return throwVMTypeError(caller, scope, "nobody knows the value"_s);
+        }
         if (givesBackToBuiltin && isKnown(given)) {
             PriceOfBuiltin price;
             bool isTaken = !(receiverOfBuiltinIsText && given.isObject()) && take(given, { GrowthOfWork::WithWhatIsHanded }, price, 0);
@@ -1100,8 +1134,11 @@ JSValue RehearsalOfRegExpTexts::valueOfCommonJsModule(ModuleID id)
 {
     runModule(id);
     const Module& module = m_program.at(id);
-    if (JSValue object = m_moduleObjects[id.index()])
-        return asObject(object)->getDirect(*m_vm, Identifier::fromString(*m_vm, "exports"_s));
+    if (JSValue object = m_moduleObjects[id.index()]) {
+        unsigned attributes = 0;
+        JSValue exported = asObject(object)->getDirect(*m_vm, Identifier::fromString(*m_vm, "exports"_s), attributes);
+        return exported && !(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) ? exported : unknown();
+    }
     if (!module.exportsVariable)
         return unknown();
     JSValue exported = m_variables[module.exportsVariable.index()];
@@ -1367,18 +1404,18 @@ ALWAYS_INLINE JSValue RehearsalOfRegExpTexts::inHandsOfProgram(JSValue value)
         for (unsigned index = 0; index < frame->argumentCount(); ++index)
             arguments.append(frame->uncheckedArgument(index));
         JSValue result = arguments.hasOverflowed() ? unknown() : call(original, frame->thisValue(), arguments.span());
-        if (!isKnown(result)) {
+        if (!isKnown(result) || !payAgainBehindCodeOfProgram(m_builtinThatRuns, frame->jsCallee())) {
             auto scope = DECLARE_THROW_SCOPE(*m_vm);
             return throwVMTypeError(caller, scope, "nobody knows the value"_s);
         }
-        return JSValue::encode(result);
+        return JSValue::encode(inHandsOfProgram(result));
     }, original);
     wrapper->setPrototypeDirect(vm, original->getPrototypeDirect());
     PropertyNameArrayBuilder names(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
     original->methodTable()->getOwnPropertyNames(original, realm, names, DontEnumPropertiesMode::Include);
     letGoOfWhatWasThrown(scope);
     for (const Identifier& name : names) {
-        if (name == vm.propertyNames->name || name == vm.propertyNames->length)
+        if (name == vm.propertyNames->name || name == vm.propertyNames->length || parseIndex(name))
             continue;
         PropertySlot slot(original, PropertySlot::InternalMethodType::VMInquiry, &vm);
         bool isFound = original->methodTable()->getOwnPropertySlot(original, realm, name, slot);
@@ -1497,6 +1534,8 @@ JSValue RehearsalOfRegExpTexts::call(JSValue callee, JSValue thisValue, std::spa
     NakedPtr<Exception> exception;
     SetForScope goesStraightToProgram(m_callGoesStraightToProgram, isOfProgram || onlyHandsOn);
     SetForScope receiverIsText(m_receiverOfBuiltinIsText, thisValue.isString());
+    BuiltinThatRuns runs { callee, thisValue, arguments };
+    SetForScope builtinThatRuns(m_builtinThatRuns, workOf(callee).contains(GrowthOfWork::ReadsLengthsOnItsWay) ? &runs : nullptr);
     SetForScope asksWhetherTrue(m_builtinAsksWhetherWhatIsGivenBackIsTrue, !isOfProgram && workOf(callee).contains(GrowthOfWork::AsksWhetherWhatIsGivenBackIsTrue));
     std::optional<StoreThatMayMakeRoom> intoReceiver;
     std::optional<StoreThatMayMakeRoom> intoFirstArgument;
@@ -1590,6 +1629,15 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         price.takeText(asString(value), false);
         return true;
     }
+    bool lengthIsRead = work.contains(GrowthOfWork::WithLengthOfWhatIsHanded) || (!depth && work.contains(GrowthOfWork::GoesOverItsArguments));
+    auto takeLengthFoundFrom = [&](JSObject* holder) {
+        uint64_t holdersPassed = 0;
+        std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(holder, true, &holdersPassed);
+        price.handed += elements.value_or(0) + holdersPassed / charactersGoneOverAtPriceOfOneOperation * (1 + elements.value_or(0));
+        return !!elements;
+    };
+    if (lengthIsRead && !depth && (value.isNumber() || value.isBoolean() || value.isSymbol() || value.isBigInt()) && !takeLengthFoundFrom(value.synthesizePrototype(m_realm.get())))
+        return false;
     if (value.isNumber())
         return !work.contains(GrowthOfWork::WithNumbersHanded) || value.asNumber() <= m_longestText;
     if (value.isHeapBigInt()) {
@@ -1606,6 +1654,8 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
     if (depth >= deepestCall)
         return false;
     JSObject* object = asObject(value);
+    if (lengthIsRead && (object->inherits<RegExpObject>() || object->inherits<JSMapIterator>()) && !takeLengthFoundFrom(object))
+        return false;
     if (auto* pattern = dynamicDowncast<RegExpObject>(object)) {
         if ((depth && isPatternMadeHere(value)) || !isAsRealmMadeIt(pattern) || mayMatchWithoutEnd(pattern->regExp()))
             return false;
@@ -1673,7 +1723,7 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
         return true;
     };
     uint64_t holdersPassed = 0;
-    std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(object, work.contains(GrowthOfWork::WithLengthOfWhatIsHanded), &holdersPassed);
+    std::optional<uint64_t> elements = elementsOfObjectHandedToBuiltin(object, lengthIsRead, &holdersPassed);
     auto* list = dynamicDowncast<JSArray>(object);
     uint64_t placesThatAreRead = touchesOnePlace ? 1 : list ? list->length() : elements.value_or(0);
     price.handed += holdersPassed / charactersGoneOverAtPriceOfOneOperation * (1 + placesThatAreRead);
@@ -1701,8 +1751,10 @@ bool RehearsalOfRegExpTexts::take(JSValue value, OptionSet<GrowthOfWork> work, P
 
 bool RehearsalOfRegExpTexts::takeRawOf(JSValue value, OptionSet<GrowthOfWork> work, PriceOfBuiltin& price)
 {
-    if (!isKnown(value) || !value.isObject())
+    if (!isKnown(value))
         return true;
+    if (!value.isObject())
+        return false;
     JSObject* object = asObject(value);
     for (JSObject* holder = object; holder; holder = holder->getPrototypeDirect().getObject()) {
         if (holder->inherits<ProxyObject>())
@@ -1813,7 +1865,9 @@ bool RehearsalOfRegExpTexts::wouldBeConverted(OptionSet<GrowthOfWork> work, JSVa
     };
     if (isBoxed(thisValue) || std::ranges::any_of(arguments, isBoxed))
         return true;
-    if (work.contains(GrowthOfWork::MakesCellsOfCharactersHanded) && !arguments.empty() && isKnown(arguments[0]) && arguments[0].isObject())
+    if (work.contains(GrowthOfWork::ConvertsReceiverToText) && !thisValue.isString())
+        return true;
+    if ((work.contains(GrowthOfWork::MakesCellsOfCharactersHanded) || thisValue.inherits<RegExpObject>()) && !arguments.empty() && isKnown(arguments[0]) && arguments[0].isObject())
         return true;
     bool takesFunctionThatGivesWhatIsLaid = work.containsAny({ GrowthOfWork::LaysTextOverFind, GrowthOfWork::LaysTextOverEveryFind });
     for (size_t index = 0; thisValue.isString() && index < arguments.size(); ++index) {
@@ -1923,6 +1977,15 @@ bool RehearsalOfRegExpTexts::payForBuiltin(JSValue callee, JSValue thisValue, st
         return false;
     m_bytesThatParsesMayHaveMade += mayBeMadeOfCharacters;
     return !wouldMakeMoreThanAnybodyKeeps(work, thisValue, arguments, price);
+}
+
+bool RehearsalOfRegExpTexts::payAgainBehindCodeOfProgram(const BuiltinThatRuns* builtin, JSValue closure)
+{
+    if (!builtin || (builtin->callee == m_arrayFrom && builtin->arguments.size() > 1 && builtin->arguments[1] == closure))
+        return true;
+    uint64_t charactersHanded = 0;
+    Values ropesHanded;
+    return payForBuiltin(builtin->callee, builtin->thisValue, builtin->arguments, charactersHanded, ropesHanded);
 }
 
 void RehearsalOfRegExpTexts::payForPlacesMadeOutOfCharacters(uint64_t places, uint64_t characters)
@@ -2044,6 +2107,8 @@ JSValue RehearsalOfRegExpTexts::construct(JSValue callee, JSValue newTarget, std
         return unknown();
 
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    BuiltinThatRuns runs { callee, newTarget, arguments };
+    SetForScope builtinThatRuns(m_builtinThatRuns, workOf(callee).contains(GrowthOfWork::ReadsLengthsOnItsWay) ? &runs : nullptr);
     JSObject* result = JSC::construct(realm, callee, constructData, list, newTarget);
     noteLaidOutByBuiltin(ropesHanded);
     if (Exception* exception = scope.exception()) {
@@ -3235,6 +3300,7 @@ JSValue RehearsalOfRegExpTexts::enterWithEntryParameters(FunctionID function, st
     m_operationsLeft -= price;
     m_operationsLeftInAll -= price;
     SetForScope deeper(m_depth, m_depth + 1);
+    SetForScope noBuiltinRuns(m_builtinThatRuns, nullptr);
     Activation activation { *index, function, { }, { }, { } };
     activation.values.fill(*m_vm, index->numberOfValues(), [](JSValue*) { });
     BodyBlock entry = index->block(entryBlock);

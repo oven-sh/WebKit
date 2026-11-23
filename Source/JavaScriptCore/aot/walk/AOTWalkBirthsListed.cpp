@@ -805,8 +805,10 @@ static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID c
     TypeArena& types = walker.types();
     TypeID provenOfBody = walker.plan().typeHeldOfResult(walker.program(), walker.facts().linked(), callee);
     TypeID typeOfReturned = walker.typeOf(returned);
-    if ((provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) || (typeOfReturned && !types.overlap(typeOfReturned, TypeTable::object)))
-        return object;
+    if ((provenOfBody && !types.overlap(provenOfBody, TypeTable::object)) || (typeOfReturned && !types.overlap(typeOfReturned, TypeTable::object))) {
+        showWhatIsHeldFilledWhereConstructionEnds(walker, callee, object, origin);
+        return walker.isUnreachable() ? Reference() : object;
+    }
     if (typeOfReturned && types.isSubset(typeOfReturned, TypeTable::object))
         return returned;
 
@@ -825,7 +827,9 @@ static Reference buildWhatConstructionGivesInBirths(Walker& walker, FunctionID c
     walker.continueIn(takesReturned);
     walker.jumpTo(behind, singleElementSpan(returned));
     walker.continueIn(takesThis);
-    walker.jumpTo(behind, singleElementSpan(object));
+    showWhatIsHeldFilledWhereConstructionEnds(walker, callee, object, origin);
+    if (!walker.isUnreachable())
+        walker.jumpTo(behind, singleElementSpan(object));
     walker.continueIn(behind);
     return result;
 }
@@ -1089,8 +1093,6 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
             walker.chooseConservativeFields(finish);
             walker.build(WTF::move(finish));
         }
-        if (returned)
-            showWhatIsHeldFilledWhereConstructionEnds(walker, callee, object, origin);
         endArm(returned && !walker.isUnreachable() ? buildWhatConstructionGivesInBirths(walker, callee, returned, object, origin) : Reference());
     } else
         walkAsWritten();

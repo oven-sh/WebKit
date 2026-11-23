@@ -224,7 +224,7 @@ static void reportFailedLookupCheck(const Parts&... detail)
 static bool isReadByFieldGetter(const Instance& instance, JSValue receiver, const FreshAnswer& fresh, JSValue value, bool isTruth = false)
 {
     Object* object = fresh.kind == KindOfAnswer::Accessor && fresh.value && receiver.isCell() ? compiledObjectOrNull(receiver.asCell()) : nullptr;
-    const FieldData* field = object ? findFieldReadByGetter(*object, asObject(fresh.value)) : nullptr;
+    const FieldData* field = object ? findFieldReadByGetter(*object, asObject(fresh.value), nullptr) : nullptr;
     if (!field)
         return false;
     JSValue held = object->read(*field);

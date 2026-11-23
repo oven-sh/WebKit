@@ -48,6 +48,15 @@ bool BigIntValues::isArithmetic(const Operation& operation)
     return arithmeticInFrame.contains(operation.opcode) && hasBigIntRepresentation(operation) && (operation.representation == Representation::JSValue || operation.representation == Representation::Cell);
 }
 
+bool BigIntValues::mayGoAroundLoops(const Code& code, std::span<const BlockID> blocks)
+{
+    if (!code.hasLoops() || code.hasSuspensions() || !code.opcodesOfValues().intersects(arithmeticInFrame))
+        return false;
+    return std::ranges::any_of(blocks, [&](BlockID id) {
+        return std::ranges::any_of(code.at(id).parameters(), [&](ValueID parameter) { return mayHoldBigInt(code.at(parameter)); });
+    });
+}
+
 BigIntValues::BigIntValues(const Code& code, const TypeArena& types, FrameUse frameUse)
     : m_code(code)
     , m_types(types)

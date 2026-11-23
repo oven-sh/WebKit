@@ -332,20 +332,25 @@ static void emitCompareLatin1Characters(StubAssembler& jit, GPRReg first, GPRReg
     differ.append(jit.jump());
 }
 
-static void emitLoadCharactersOfSubstring(StubAssembler& jit, GPRReg substring, GPRReg characters, GPRReg scratch)
+static void emitLoadImplOfBaseOfSubstring(StubAssembler& jit, GPRReg substring, GPRReg impl, GPRReg scratch)
 {
-    ASSERT(noOverlap(substring, characters, scratch));
+    ASSERT(noOverlap(substring, impl, scratch));
     static_assert(JSRopeString::offsetOfFiber1Lower() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == JSRopeString::offsetOfFiber2());
-    jit.load16(Address(substring, JSRopeString::offsetOfFiber2()), characters);
+    jit.load16(Address(substring, JSRopeString::offsetOfFiber2()), impl);
     jit.load32(Address(substring, JSRopeString::offsetOfFiber1Lower()), scratch);
-    jit.lshift64(TrustedImm32(32), characters);
-    jit.or64(scratch, characters);
-    jit.loadPtr(Address(characters, JSString::offsetOfValue()), characters);
-    Jump baseIsRope = jit.branchIfRopeStringImpl(characters);
+    jit.lshift64(TrustedImm32(32), impl);
+    jit.or64(scratch, impl);
+    jit.loadPtr(Address(impl, JSString::offsetOfValue()), impl);
+    Jump baseIsRope = jit.branchIfRopeStringImpl(impl);
     jit.addOutOfLinePart([=](StubAssembler& jit) {
         baseIsRope.link(&jit);
         jit.breakpoint();
     });
+}
+
+static void emitLoadCharactersOfSubstring(StubAssembler& jit, GPRReg substring, GPRReg characters, GPRReg scratch)
+{
+    emitLoadImplOfBaseOfSubstring(jit, substring, characters, scratch);
     jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
     jit.load64(Address(substring, JSRopeString::offsetOfFiber2()), scratch);
     jit.urshift64(TrustedImm32(16), scratch);
@@ -994,6 +999,9 @@ static void emitFindStringKey(StubAssembler& jit, const HashTableRegisters& regi
             isLeftToFormForAnyValue.append(jit.jump());
             return;
         }
+        // The base may be 16-bit by now: a string that is atomized adopts the atom's characters.
+        emitLoadImplOfBaseOfSubstring(jit, registers.key, impl, registers.cursor);
+        exits.unknown.append(jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
         HashTableLookup lookupOfSubstring = lookup;
         lookupOfSubstring.keyIsSubstring = true;
         emitReloadTable(jit, registers);

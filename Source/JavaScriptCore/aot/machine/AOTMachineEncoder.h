@@ -484,6 +484,7 @@ public:
     ArenaVector<PendingLatePath> m_latePaths;
     ArenaVector<SharedLatePath> m_sharedLatePaths;
     std::span<uint32_t> m_sharedLatePathSlots;
+    ArenaVector<AssemblerBuffer::PlaceToDescribe> m_beginsOfRangesOfOrigins;
     ArenaVector<Block*> m_blocksAsWritten;
     mutable UncheckedSpan<uint32_t> m_indexAsWritten;
     uint32_t m_beginOfRareCodeAsWritten { 0 };

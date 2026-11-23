@@ -1,0 +1,121 @@
+# The field of a constant is no known key where the constant may be a primitive.
+# -- source: main.js
+# function pick(n) { return n > 1; }
+# const K = pick(2) ? "hello" : { length: "secret" };
+# const K2 = pick([1, 2].length) ? 5 : { name: "secret" };
+# function f(o) { return o[K.length]; }
+# function g(o) { return o[K2.name]; }
+# function h(o) { o[K2.name] = 7; return o; }
+# print(f({ secret: "leak", 5: "five" }));
+# print(g({ secret: "leak", undefined: "undef" }));
+# print(JSON.stringify(h({ secret: "leak", undefined: "undef" })));
+# -- end of source
+# RUN: run-in-shell
+# CHECK: five
+# CHECK-NEXT: undef
+# CHECK-NEXT: {"secret":"leak","undefined":7}
+# CHECK-NEXT: exited with 0
+# CHECK-NEXT: the source prints the same
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=147 fields=[{key="name" declared={type=anything} flags=[IsRequired]}] place=147 ownFieldCount=1
+layout L1 module=m0 position=335 fields=[{key="secret" declared={type=anything} flags=[IsRequired]}, {key="undefined" declared={type=anything} flags=[IsRequired]}] place=335 ownFieldCount=2
+layout L2 module=m0 position=294 fields=[{key="secret" declared={type=anything} flags=[IsRequired]}] place=294 ownFieldCount=1
+layout L3 module=m0 position=88 fields=[{key="length" declared={type=anything} flags=[IsRequired]}] place=88 ownFieldCount=1
+data d0 root=Object{layout=L3 members=[{key="length" value=String{value="secret"}}]} module=m0
+data d1 root=Array{contents=anything elements=[Number{value=1}, Number{value=2}]} module=m0
+data d2 root=Object{layout=L0 members=[{key="name" value=String{value="secret"}}]} module=m0
+data d3 root=Object{layout=L2 members=[{key="secret" value=String{value="leak"}}, {key="5" value=String{value="five"}}]} module=m0
+data d4 root=Object{layout=L1 members=[{key="secret" value=String{value="leak"}}, {key="undefined" value=String{value="undef"}}]} module=m0
+data d5 root=Object{layout=L1 members=[{key="secret" value=String{value="leak"}}, {key="undefined" value=String{value="undef"}}]} module=m0
+variable g0 name="K" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=5
+variable g1 name="K2" module=m0 declared={type=anything|absent} flags=[IsImmutable] place=6
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = NewClosure function=f4 @0
+    v7 = Convert v6 declared={type=f4 flags=[IsFromCompiler]} @0
+    v8 = Integer integer=2 @73
+    v9 = Call v1, -, v8 calleeName="pick" @68
+    v10 = ToBoolean v9 @68
+    Branch v10 -> taken b1(| 0), notTaken b2(| 0) @68
+  b1(v11):
+    v12 = String string="hello" @78
+    Jump -> next b3(v12) @78
+  b2(v13):
+    v14 = Data data=d0 @88
+    Jump -> next b3(v14) @88
+  b3(v15):
+    PutModuleVariable v15 variable=g0 @64
+    v17 = Data data=d1 @126
+    v18 = PropGet v17 key="length" @126
+    v19 = Call v1, -, v18 calleeName="pick" @121
+    v20 = ToBoolean v19 @121
+    Branch v20 -> taken b4(| 0), notTaken b5(| 0) @121
+  b4(v21):
+    v22 = Integer integer=5 @143
+    Jump -> next b6(v22) @143
+  b5(v23):
+    v24 = Data data=d2 @147
+    Jump -> next b6(v24) @147
+  b6(v25):
+    PutModuleVariable v25 variable=g1 @116
+    v27 = Builtin builtin=GlobalThis @286
+    v28 = PropGet v27 key="print" [isFreeName] @286
+    v29 = Data data=d3 @294
+    v30 = Call v3, -, v29 calleeName="f" @292
+    v31 = Call v28, -, v30 calleeName="print" @286
+    v32 = Builtin builtin=GlobalThis @327
+    v33 = PropGet v32 key="print" [isFreeName] @327
+    v34 = Data data=d4 @335
+    v35 = Call v5, -, v34 calleeName="g" @333
+    v36 = Call v33, -, v35 calleeName="print" @327
+    v37 = Builtin builtin=GlobalThis @377
+    v38 = PropGet v37 key="print" [isFreeName] @377
+    v39 = Builtin builtin=JSON @383
+    v40 = PropGet v39 key="stringify" @383
+    v41 = Convert v40 declared={type=builtin(JSONStringify) flags=[IsExpected]} @383
+    v42 = Data data=d5 @400
+    v43 = Call v7, -, v42 calleeName="h" @398
+    v44 = Call v41, v39, v43 calleeKey="stringify" calleeName="JSON.stringify" @388
+    v45 = Call v38, -, v44 calleeName="print" @377
+    v46 = Undefined @377
+    Return v46 @377
+}
+function f1 name="pick" module=m0 position=23 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Integer integer=1 @53
+    v2 = Greater v0, v1 @49
+    Return v2 @49
+}
+function f2 name="f" module=m0 position=167 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L2 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L2):
+    v1 = GetModuleVariable variable=g0 @192
+    v2 = CheckInitialized v1 name="K" @192
+    v3 = PropGet v2 key="length" @192
+    v4 = ElemGet v0, v3 @190
+    Return v4 @190
+}
+function f3 name="g" module=m0 position=205 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = GetModuleVariable variable=g1 @230
+    v2 = CheckInitialized v1 name="K2" @230
+    v3 = PropGet v2 key="name" @230
+    v4 = ElemGet v0, v3 @228
+    Return v4 @228
+}
+function f4 name="h" module=m0 position=242 flags=[HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L1 flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|L1):
+    v1 = GetModuleVariable variable=g1 @260
+    v2 = CheckInitialized v1 name="K2" @260
+    v3 = PropGet v2 key="name" @260
+    v4 = Integer integer=7 @271
+    ElemSet v0, v3, v4 @258
+    Return v0 @281
+}

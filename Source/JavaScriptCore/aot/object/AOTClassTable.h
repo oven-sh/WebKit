@@ -454,6 +454,8 @@ private:
     static size_t indexOfInstanceBelowObject(const JSCell* newTarget) { return std::bit_cast<uintptr_t>(newTarget) >> 4 & (numberOfInstancesBelowObject - 1); }
     std::array<InstanceBelowObject, numberOfInstancesBelowObject> m_instancesBelowObject { };
     std::array<ThisBesideCallee, numberOfCalleesWithThisBeside> m_thisBesideCallees { };
+    std::array<JSCell*, numberOfCalleesWithThisBeside> m_calleesConstructedOnce { };
+    bool mayGainLayoutAbove(VM&, JSObject* prototype) const;
     UncheckedKeyHashMap<uint32_t, UniqueArray<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_wordsOfObjectsWithoutFields;
     std::array<PrivateFieldPlace, numberOfPrivateFieldPlaces> m_privateFieldPlaces { };
     Vector<InstanceBelowPrototype> m_instancesBelowPrototypes;

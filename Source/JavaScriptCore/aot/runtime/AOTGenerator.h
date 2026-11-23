@@ -66,6 +66,12 @@ public:
         m_leavesAtOnce = leavesAtOnce;
     }
 
+    void suspendAtYield(VM& vm, SavedFrame* frame)
+    {
+        m_state = State::SuspendedAtYield;
+        setSavedFrame(vm, frame);
+    }
+
     static constexpr int32_t generatorSlotInStubFrame = -1;
 
     static constexpr ptrdiff_t offsetOfSavedFrame() { return OBJECT_OFFSETOF(Generator, m_savedFrame); }

@@ -72,12 +72,15 @@ struct ClosurePropertyNameData {
 static_assert(sizeof(ClosurePropertyNameData) == 8 && isImageRecord<ClosurePropertyNameData>);
 
 struct FieldGetterData {
+    static constexpr uint32_t answersUnderAnyName = UINT32_MAX;
+
     uint32_t function;
     uint32_t field;
+    uint32_t answeredName;
 
     friend auto operator<=>(const FieldGetterData&, const FieldGetterData&) = default;
 };
-static_assert(sizeof(FieldGetterData) == 8 && isImageRecord<FieldGetterData>);
+static_assert(sizeof(FieldGetterData) == 12 && isImageRecord<FieldGetterData>);
 
 struct ReturnedCaptureData {
     static constexpr uint32_t multiplier = 0x9e3779b1;
@@ -172,6 +175,7 @@ struct ProgramTables {
     static constexpr uint32_t expectedMagic = 0x44505943;
     static constexpr uint32_t mayRunInMultipleInstances = 1;
     static constexpr uint32_t neverReadsLegacyRegExpStatics = 2;
+    static constexpr uint32_t neverRecompilesRegExps = 4;
     static constexpr uint32_t shiftOfNearTypeNumbers = 2;
 
     uint32_t magic;

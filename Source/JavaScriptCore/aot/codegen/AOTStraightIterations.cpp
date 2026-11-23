@@ -24,16 +24,28 @@ static StraightCallOptions optionsOfIterationInStraightForm(const BodyValue& val
 
 static void generateIteratorOpen(StraightEmitter& emitter, const BodyValue& value)
 {
-    if (value.iteratorKind() != IteratorKind::Sync || value.isDelegating()) {
+    if (value.iteratorKind() != IteratorKind::Sync) {
         emitter.fail(value);
         return;
     }
-    emitter.callOperation(value, RuntimeOperation::OpenIteration, { value.iterableOperand() }, optionsOfIterationInStraightForm(value));
+    emitter.callOperation(value, value.isDelegating() ? RuntimeOperation::OpenDelegation : RuntimeOperation::OpenIteration, { value.iterableOperand() }, optionsOfIterationInStraightForm(value));
     emitter.define(value);
+}
+
+static bool isDelegationState(const BodyIndex& index, ValueID state)
+{
+    return !index.isParameter(state) && index.opcodeOf(state) == Opcode::IteratorOpen && index.value(state).as<Opcode::IteratorOpen>().isDelegating();
 }
 
 static void generateIteratorResume(StraightEmitter& emitter, const BodyValue& value)
 {
+    if (value.iteratorKind() == IteratorKind::Sync && isDelegationState(emitter.index(), value.iteratorOperand())) {
+        StraightArgument sent = value.sentOperand() ? StraightArgument(value.sentOperand()) : StraightArgument::boxed(jsUndefined());
+        emitter.callOperation(value, RuntimeOperation::StepDelegation, { value.iteratorOperand(), sent, StraightArgument::word(static_cast<uint32_t>(value.resumeMode())) }, optionsOfIterationInStraightForm(value));
+        emitter.defineResult(value, static_cast<uint32_t>(IteratorResumeResult::Done), emitter.resultOfCall());
+        emitter.defineResult(value, static_cast<uint32_t>(IteratorResumeResult::Value), GPRInfo::returnValueGPR2);
+        return;
+    }
     if (value.iteratorKind() != IteratorKind::Sync || value.resumeMode() != ResumeMode::Next || value.sentOperand() || value.readsValueWhenDone() || !value.heldOperands().empty()) {
         emitter.fail(value);
         return;

@@ -1,0 +1,88 @@
+# A loop in straight code polls as a walked one does: by a load that faults, or by a comparison with a call behind it.
+# function spins() { try { for (;;) { } } catch (error) { print(error); } }
+# function sum(label, limit) { let total = 0; for (let i = 0; i < limit; i++) total += i; return label + total; }
+# print("begins");
+# if (globalThis.isEndless) spins();
+# print(sum("sum ", 10));
+# OPTIONS: testing=ForceStraightCompilation
+# RUN(COUNT): compile StraightUnitsCompiled
+# COUNT: statistic StraightUnitsCompiled 3
+# RUN(ENDS): run-in-shell
+# ENDS: begins
+# ENDS-NEXT: sum 45
+# ENDS-NEXT: exited with 0
+# The loop of `spins` has nothing but its poll, so nothing else can stop it. No handler sees a termination.
+# RUN(ENDLESS): run-in-shell --watchdog=300 globalThis.isEndless = true;
+# ENDLESS: begins
+# ENDLESS-NEXT: exited with 3
+# With a request to stop that never goes away, a poll that calls does so in every turn, and the loop goes on with what it holds.
+# REQUIRES(ALWAYS): calling-loop-polls
+# RUN(ALWAYS): run-in-shell --forceTrapAwareStackChecks=true
+# ALWAYS: begins
+# ALWAYS-NEXT: sum 45
+# ALWAYS-NEXT: exited with 0
+# REQUIRES(CALLING): calling-loop-polls
+# RUN(CALLING): bytes f1
+# CALLING: polls=0
+# CALLING: operationAOTPollSlow
+# CALLING: handler Catch at {{*}} for site 1
+# REQUIRES(FAULTING): faulting-loop-polls
+# RUN(FAULTING): bytes f1
+# FAULTING: polls=1
+# FAULTING-NOT: operationAOTPollSlow
+# FAULTING: handler Catch at {{*}} for site 1
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="print" [isFreeName]
+    v2 = String string="begins"
+    v3 = Call v1, -, v2 calleeName="print"
+    v4 = PropGet v0 key="isEndless"
+    v5 = ToBoolean v4
+    Branch v5 -> taken b1(), notTaken b2()
+  b1():
+    v6 = NewClosure function=f1
+    v7 = Call v6 calleeName="spins" [isNeverInlined]
+    Jump -> next b2()
+  b2():
+    v8 = NewClosure function=f2
+    v9 = String string="sum "
+    v10 = Integer integer=10
+    v11 = Call v8, -, v9, v10 calleeName="sum" [isNeverInlined]
+    v12 = Call v1, -, v11 calleeName="print"
+    v13 = Undefined
+    Return v13
+}
+function f1 name="spins" module=m0 flags=[HasExplicitName] thisType={type=anything} results=[{type=anything}] {
+  b0():
+    Jump -> next b1()
+  b1() handler=b2():
+    LoopHint
+    Jump -> next b1()
+  b2() role=CatchHandler:
+    v1 = CatchValue
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="print" [isFreeName]
+    v4 = Call v3, -, v1 calleeName="print"
+    v5 = Undefined
+    Return v5
+}
+function f2 name="sum" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Integer
+    Jump -> next b1(v2, v2)
+  b1(v3, v4):
+    LoopHint
+    v6 = Less v4, v1
+    Branch v6 -> taken b2(), notTaken b3()
+  b2():
+    v7 = Add v3, v4
+    v8 = Increment v4
+    Jump -> next b1(v7, v8)
+  b3():
+    v9 = Add v0, v3
+    Return v9
+}

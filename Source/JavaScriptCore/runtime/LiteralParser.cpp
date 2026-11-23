@@ -1548,6 +1548,13 @@ slowPathBegin:
         return TokError;
     }
 
+    if (m_builder.hasOverflowed()) [[unlikely]] {
+        m_failedToAllocate = true;
+        m_lexErrorMessage = "Out of memory"_s;
+        token.type = TokError;
+        return TokError;
+    }
+
     if (m_builder.isEmpty()) {
         setParserTokenString<CharType>(token, runStart);
         token.stringOrIdentifierLength = m_ptr - runStart;
@@ -1792,6 +1799,17 @@ NEVER_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::lexNumberErr
     ASSERT_NOT_REACHED();
     m_lexErrorMessage = "Invalid number"_s;
     return TokError;
+}
+
+template<typename CharType, JSONReviverMode reviverMode>
+JSValue LiteralParser<CharType, reviverMode>::didFailToParse()
+{
+    if (m_lexer.failedToAllocate()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(getVM(m_globalObject));
+        if (!scope.exception())
+            throwOutOfMemoryError(m_globalObject, scope);
+    }
+    return { };
 }
 
 template<typename CharType, JSONReviverMode reviverMode>
@@ -2387,8 +2405,9 @@ JSValue LiteralParser<CharType, reviverMode>::parseRecursively(VM& vm, uint8_t* 
                 if (object->structure() != originalStructure && std::holds_alternative<ExistingProperty>(property)) [[unlikely]]
                     property = Identifier::fromUid(vm, std::get<ExistingProperty>(property).structure->transitionPropertyName());
             } else {
-                // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure.
-                ASSERT(object->structure() == originalStructure);
+                // A strict JSON value cannot run user code, so parsing it cannot have changed the parent's Structure,
+                // but for a dictionary that was being filled and has been given its shared Structure meanwhile.
+                ASSERT(object->structure() == originalStructure || (originalStructure->isDictionary() && std::holds_alternative<Identifier>(property)));
             }
 
             if (std::holds_alternative<ExistingProperty>(property)) {
@@ -2551,8 +2570,10 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
             array->putDirectIndex(m_globalObject, array->length(), lastValue);
             RETURN_IF_EXCEPTION(scope, { });
             if constexpr (reviverMode == JSONReviverMode::Enabled) {
-                if (sourceRanges)
-                    std::get<JSONRanges::Array>(m_rangesStack.last().properties).append(WTF::move(lastValueRange));
+                if (sourceRanges && !std::get<JSONRanges::Array>(m_rangesStack.last().properties).tryAppend(WTF::move(lastValueRange))) [[unlikely]] {
+                    throwOutOfMemoryError(m_globalObject, scope);
+                    return { };
+                }
             }
 
             if (m_lexer.currentToken()->type == TokComma)
@@ -2605,8 +2626,11 @@ JSValue LiteralParser<CharType, reviverMode>::parse(VM& vm, ParserState initialS
 
                     TokenType nextType = m_lexer.next();
                     if (nextType == TokLBrace || nextType == TokLBracket) {
+                        if (!m_identifierStack.tryAppend(WTF::move(ident))) [[unlikely]] {
+                            throwOutOfMemoryError(m_globalObject, scope);
+                            return { };
+                        }
                         m_objectStack.appendWithCrashOnOverflow(object);
-                        m_identifierStack.append(WTF::move(ident));
                         m_stateStack.append(DoParseObjectEndExpression);
                         if (nextType == TokLBrace)
                             goto startParseObject;

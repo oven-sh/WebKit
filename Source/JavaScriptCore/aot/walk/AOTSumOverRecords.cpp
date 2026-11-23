@@ -10,6 +10,7 @@
 
 #include "AOTOpcodeSets.h"
 #include "AOTTypeArena.h"
+#include <bit>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -519,10 +520,17 @@ std::optional<EnteringCounters> findEnteringCounters(const Code& code, const Typ
     };
     followEdgesInto(header, second.stepped, second.counter, EnteringCounters { Range::full(), Range::full() });
     EnteringCounters entering;
+    std::optional<Opcode> emptiedBy;
     for (size_t next = 0; next < arrivals.size() && isBounded; ++next) {
         auto [stepped, counter, bounds] = arrivals[next];
-        if (stepsSecondCounter(code, types, second, stepped, counter))
+        if (stepsSecondCounter(code, types, second, stepped, counter)) {
+            if (second.counterEmpties) {
+                Opcode step = code.at(rootInSumOverRecords(code, counter)).opcode;
+                isBounded &= emptiedBy.value_or(step) == step;
+                emptiedBy = step;
+            }
             continue;
+        }
         if (isIntegerInSumOverRecords(code, types, stepped))
             bounds.stepped = bounds.stepped.intersectWith(types.at(code.at(stepped).type).integers);
         if (isIntegerInSumOverRecords(code, types, counter))
@@ -739,11 +747,22 @@ static ValueID recordThroughNamesForSumOverRecords(const Code& code, ValueID rec
     return record;
 }
 
+bool isSameConstantNumber(const Code& code, ValueID one, ValueID other)
+{
+    const Operation& first = code.at(one);
+    const Operation& second = code.at(other);
+    if (first.opcode != second.opcode)
+        return false;
+    if (first.opcode == Opcode::Double)
+        return std::bit_cast<uint64_t>(first.number()) == std::bit_cast<uint64_t>(second.number());
+    return first.opcode == Opcode::Integer && first.integer() == second.integer();
+}
+
 static bool isSameForSumOverRecords(const Code& code, ValueID one, ValueID other)
 {
     one = recordThroughNamesForSumOverRecords(code, one);
     other = recordThroughNamesForSumOverRecords(code, other);
-    return one == other || (code.at(one).opcode == Opcode::Integer && code.at(other).opcode == Opcode::Integer && code.at(one).integer() == code.at(other).integer());
+    return one == other || isSameConstantNumber(code, one, other);
 }
 
 bool testsShowElementPresent(const Code& code, ValueID list, ValueID position, std::span<const PassedTest::Side> sides)

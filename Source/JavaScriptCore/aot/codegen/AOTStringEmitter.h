@@ -15,6 +15,7 @@
 #include <optional>
 #include <span>
 #include <wtf/HashMap.h>
+#include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -49,6 +50,8 @@ struct CodeUnitRange {
     Word32 start;
     Word32 end;
 };
+
+using RangeInString = ScopedLambda<CodeUnitRange(Word32 lengthOfString)>;
 
 struct StringPosition {
     Integer value;
@@ -111,6 +114,7 @@ public:
     void generateStringRangeParseInt(const ValueContext&);
     void generateFindStringRangeInMap(const ValueContext&);
     CharacterView viewOfRange(const ValueContext&);
+    Condition isLongRope(ValueID string);
     void holdRangeInside(const ValueContext&, Word32 start, Word32 end);
 
     void continueIf(Condition, BlockEdge otherwise);
@@ -135,7 +139,7 @@ public:
     }
     std::optional<FlatStringCell> flatStringByType(ValueID string);
     Pointer implOfFlatString(FlatStringCell);
-    CharacterView viewOfString(const OperationContext&, CellPointer string);
+    CharacterView viewOfString(const OperationContext&, CellPointer string, const RangeInString* rangeThatIsRead = nullptr);
     CharacterView viewWithoutResolving(const OperationContext&, CellPointer string, BlockEdge otherwise);
     CharacterView viewOfCharacters(const OwnedCharacters& characters) { return viewOfSource(characters.source, characters.owner); }
     OwnedCharacters loadCharacters(const OperationContext&, CellPointer string, std::optional<SubstringBounds> = std::nullopt);
@@ -169,6 +173,7 @@ public:
     void makeCellsHoldAtomOf(StringID);
     void makeCellsHoldAtomOf(StringID, const String& text);
     void branchOnTextAt(const CharacterView&, Word32 offset, StringID, BranchTargets);
+    void branchOnTextAtEnd(const OperationContext&, ValueID string, LiteralEnd, StringID, BranchTargets);
     bool canCompareInline(StringID) const;
     static bool canCompareInline(const String& text) { return text.length() <= maxLengthComparedInPlace; }
 
@@ -229,7 +234,10 @@ private:
     };
     ShortText shortTextOf(CellPointer string, BlockEdge otherwise);
     CharacterSource sourceInImpl(Pointer impl);
-    CharacterSource sourceOfRope(const OperationContext&, CellPointer rope);
+    CharacterSource sourceOfRope(const OperationContext&, CellPointer rope, const RangeInString* rangeThatIsRead = nullptr);
+    bool isNoRopeByItsForm(ValueID string);
+    CharacterView viewForReadOfRange(const ValueContext&, CodeUnitRange);
+    CharacterView viewForReadOfRange(const OperationContext&, ValueID string, const RangeInString&);
     CharacterView viewOfSource(const CharacterSource&, CellPointer owner);
     Word32 loadCodeUnit(Pointer characters, Word32 index, bool is8Bit, std::optional<Integer> indexInWholeNumber = std::nullopt);
 

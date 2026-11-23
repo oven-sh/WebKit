@@ -123,7 +123,7 @@ struct FlatOp {
     uint16_t laterFirstSet { 0 }; // Index into FlatProgram::firstSets. ChoiceByFirst: what any later alternative can begin with. *RunBeforeReference: 0 if the group ended before the run, else one more than the units between the run and the end of the group.
     uint16_t registerIndex { 0 }; // DotStarEnclosure: a FlatStepBackward.
     uint16_t memoRow { 0 }; // One more than this op's first row of the table of failed searches. 0: the search from here on depends on more than the position, or makes no choice.
-    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins.
+    uint32_t argument { 0 }; // Lookahead ops: the register that holds the frame depth at the lookahead's begin. ChoiceByTable: where this alternative's row of FlatProgram::dispatchEntries begins. LoopBackUnlessEmpty: whether a turn that took nothing ends the loop instead of failing.
     uint32_t target { 0 }; // *RunBeforeReference: the units between the run and the reference, and from bit 16 up the register that holds the least end of a greedy run.
     uint32_t needed { 0 }; // ChoiceByTable: where its table's part of FlatProgram::dispatchClasses begins. FlatStepBackward::BackReference: whether it ignores case. GreedyRunBeforeReference: the least length of the run.
 };
@@ -282,9 +282,12 @@ public:
     bool asksRequiredTextsLate { false };
     static constexpr unsigned unitsWalkedBeforeTextsAreAsked = 128;
     // Of a program that makes one attempt, with a run in front of the text: `^(?:.*\/)?[^\/]*\.pem$` walks a path once for each of its folders.
-    // A long subject is looked through for the text first: the run alone costs more. A shorter one when the attempt has gone back this often, and then the attempt begins anew: a short attempt pays nothing.
+    // A subject of middling length whose first unit fits is looked through for the text first: the run alone costs more. Any other when the attempt has gone back this often,
+    // and then the attempt begins anew: a short attempt pays nothing, or a bounded look, however long the subject is.
     std::optional<RequiredText> textOfEveryMatch;
     static constexpr unsigned leastLengthLookedThroughFirst = 256;
+    static constexpr unsigned greatestLengthLookedThroughFirst = 4096;
+    // A step may walk a run again, so the number does not grow with the subject.
     static constexpr unsigned stepsBeforeLookingForText = 9;
     uint8_t stepsPerCharacterBehindLookForText { 0 };
 

@@ -10,6 +10,7 @@
 #if ENABLE(AOT)
 
 #include "AOTIRProgram.h"
+#include "AOTWalkKnown.h"
 #include "AOTWalkListReadsInLoops.h"
 #include "AOTWalkStrings.h"
 
@@ -729,7 +730,7 @@ bool Walker::isQuietOnceUnswitched(LoopID loop, std::span<const ValueID> ranOthe
 ValueID Walker::siteReadBehind(ValueID record) const
 {
     const Operation& narrowed = m_code.at(record);
-    if (narrowed.opcode != Opcode::Narrowed || m_code.isConstant(narrowed.operand(0)) || m_code.at(narrowed.operand(0)).opcode != Opcode::GetValueAtSiteOrAbsent || m_code.isConstant(narrowed.testOperand()))
+    if (narrowed.opcode != Opcode::Narrowed || m_code.isConstant(narrowed.operand(0)) || m_code.at(narrowed.operand(0)).opcode != Opcode::GetValueAtSiteOrAbsent || !narrowed.testOperand() || m_code.isConstant(narrowed.testOperand()))
         return { };
     const Operation& test = m_code.at(narrowed.testOperand());
     bool asksForAbsence = test.opcode == Opcode::TypeTest && test.testedType() == TypeArena::fromPrimitives(Primitive::Absent) && test.valueOperand() == narrowed.operand(0);
@@ -748,7 +749,7 @@ Reference Walker::lookupThatAnswers(Reference value) const
     };
     for (; isNameOfOperand(m_code.at(record)); record = m_code.at(record).operand(0)) {
         const Operation& narrowed = m_code.at(record);
-        if (narrowed.isOnTakenEdge() || m_code.isConstant(narrowed.testOperand()))
+        if (narrowed.isOnTakenEdge() || !narrowed.testOperand() || m_code.isConstant(narrowed.testOperand()))
             continue;
         const Operation& test = m_code.at(narrowed.testOperand());
         Reference lookup = Reference::value(narrowed.operand(0));
@@ -888,14 +889,18 @@ Reference Walker::buildUnswitchRead(uint32_t openLoop, ValueID record, unsigned 
         reads.add(program(), MemoryLocation::objectField(made.key()));
     if (made.opcode != Opcode::GetSlot || made.level() != KnowledgeLevel::Proven || reads.overlaps(m_openLoops[openLoop].effects.writes))
         return { };
-    Draft read(Opcode::GetSlot, m_origin);
-    chooseConservativeFields(read);
-    read.setKey(made.key());
-    read.setReceivers(made.receivers());
-    read.setLevel(KnowledgeLevel::Proven);
+    const PropertyKeyID key = made.key();
+    const LayoutSetID receivers = made.receivers();
+    const TypeID typeOfHolder = m_code.at(made.objectOperand()).type;
     Reference object = buildUnswitchRead(openLoop, made.objectOperand(), depth - 1);
-    if (!object || m_hasFailed || !m_types.isSubset(typeOf(object), m_code.at(made.objectOperand()).type))
+    if (!object || m_hasFailed || !m_types.isSubset(typeOf(object), typeOfHolder))
         return { };
+    const bool isFilled = areReceiversFilledAtAllReads(*this, typeOfHolder, key) || (m_openLoops[openLoop].stateAtHeader && findKnown(*this, *m_openLoops[openLoop].stateAtHeader, KnownNote::FilledSlot, object, { }, key.bits()));
+    Draft read(isFilled ? Opcode::GetSlot : Opcode::GetSlotOrUndefined, m_origin);
+    chooseConservativeFields(read);
+    read.setKey(key);
+    read.setReceivers(receivers);
+    read.setLevel(KnowledgeLevel::Proven);
     read.setObjectOperand(object);
     return build(WTF::move(read));
 }
@@ -1251,8 +1256,25 @@ BlockID Walker::closeFrontOfQuietTurns(const OpenLoop& loop)
         count(StatisticID::LoopReloadBlocksEmitted);
         count(StatisticID::ReloadingBackEdgesEmitted, loop.edgesHeldBack.size());
     }
-    for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack)
-        m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
+    for (const OpenLoop::EdgeHeldBack& held : loop.edgesHeldBack) {
+        if (!loop.holdsReadsInFront || loop.carriedSlotsThatHangOnFront.isEmpty()) {
+            m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
+            continue;
+        }
+        ArgumentsOfEdge arguments = held.arguments;
+        for (uint32_t slot : loop.carriedSlotsThatHangOnFront) {
+            size_t place = arguments.m_records.size() - loop.carriedResultCount + slot;
+            Representation form = m_code.at(m_code.at(loop.head).parameters()[place]).representation;
+            Reference absent = convertWithoutCode(absentResult(form), form);
+            if (!absent) {
+                if (!m_hasFailed)
+                    fail("an answer that is not there has no form in which the front takes it"_s);
+                break;
+            }
+            arguments.m_records[place] = absent.id();
+        }
+        m_code.closeEdge(held.edge, loop.firstReloadBlock, arguments);
+    }
     for (const OpenLoop::EdgeHeldBack& held : loop.edgesThatRunIterationAgain)
         m_code.closeEdge(held.edge, loop.holdsReadsInFront ? loop.firstReloadBlock : loop.head, held.arguments);
     BlockID last = loop.reloadBlocks.last();

@@ -16,6 +16,7 @@
 #include "AOTVector.h"
 #include "ArrayAllocationProfile.h"
 #include "ArrayConventions.h"
+#include "CommonIdentifiers.h"
 #include "CompleteSubspace.h"
 #include "GetPutInfo.h"
 #include "IndexingHeader.h"
@@ -35,6 +36,7 @@
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/text/SymbolImpl.h>
 #include <wtf/text/UniquedStringImpl.h>
 
 namespace JSC {
@@ -107,7 +109,7 @@ inline constexpr ptrdiff_t offsetOfExecutablesInStorage = FixedVector<WriteBarri
 void rememberSwitchTarget(JSGlobalObject*, const JSInstruction*, const StringImpl& atom, int32_t offset);
 
 void didGetById(JSGlobalObject*, JSCell* base, Structure* structureBefore, const Identifier&, const PropertySlot&, bool isStoredInTable);
-void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, const PutPropertySlot&);
+void didPutById(JSGlobalObject*, JSObject* base, Structure* structureBefore, const Identifier&, PutPropertySlot&);
 
 inline constexpr PropertyOffset narrowReferenceInSiteCache = 1 << 30;
 inline constexpr PropertyOffset extraPropertyInSiteCache = 1 << 29;
@@ -127,6 +129,7 @@ inline unsigned storeSiteOffset(PropertyOffset offset, StoreSiteKind kind)
 {
     return isInlineOffset(offset) ? offset | static_cast<unsigned>(kind) << storeSiteKindShift : offset;
 }
+inline constexpr int32_t replacingSiteAboveWordIndex = static_cast<int32_t>(static_cast<unsigned>(StoreSiteKind::Replaces) << storeSiteKindShift) - static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue));
 std::optional<PropertyOffset> fieldOffsetForSiteCache(JSGlobalObject*, Structure* before, const Identifier&);
 
 bool isClassWithLazyMembers(VM&, JSCell* closure);
@@ -214,6 +217,13 @@ struct SymbolTableOffsets {
     static constexpr uintptr_t invalidatedSingleton = IsInvalidated << 1 | 1;
 };
 void checkSymbolTableOffsets(SymbolTable&);
+
+inline constexpr ptrdiff_t offsetOfDoneAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, done);
+inline constexpr ptrdiff_t offsetOfValueAmongPropertyNames = OBJECT_OFFSETOF(CommonIdentifiers, value);
+
+inline constexpr ptrdiff_t offsetOfHashOfSymbol = sizeof(StringImpl) + sizeof(StringImpl*);
+void checkOffsetOfHash(SymbolImpl&);
+JSValue getBySymbol(JSGlobalObject*, JSObject& base, SymbolImpl&);
 
 inline constexpr unsigned customAccessorRecordShift = 5;
 static_assert(sizeof(CustomAccessorRecord) == 1u << customAccessorRecordShift);

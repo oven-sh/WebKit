@@ -5712,6 +5712,8 @@ public:
     {
         static_assert(dataTempRegister == ARM64Registers::x16 && memoryTempRegister == ARM64Registers::x17);
         RELEASE_ASSERT(modifier != memoryTempRegister && pointer != dataTempRegister);
+        if (m_assembler.signsLinkRegister())
+            return;
         move(modifier, getCachedDataTempRegisterIDAndInvalidate());
         move(pointer, getCachedMemoryTempRegisterIDAndInvalidate());
         m_assembler.hint(hint);
@@ -5722,6 +5724,8 @@ public:
     {
         // XPACLRI has its operand in the link register.
         RELEASE_ASSERT(target != memoryTempRegister && target != ARM64Registers::lr);
+        if (m_assembler.signsLinkRegister())
+            return;
         RegisterID savedLinkRegister = getCachedMemoryTempRegisterIDAndInvalidate();
         move(ARM64Registers::lr, savedLinkRegister);
         move(target, ARM64Registers::lr);
@@ -6215,6 +6219,24 @@ public:
         }
         return start;
     }
+
+#if ENABLE(RETURN_ADDRESS_SIGNING)
+    // Into memoryTempRegister, with the modifier in dataTempRegister.
+    Label moveSignedPCRelativeAddress(PCRelativeReach reach)
+    {
+        (void)getCachedMemoryTempRegisterIDAndInvalidate();
+        Label start = label();
+        switch (reach) {
+        case PCRelativeReach::Near:
+            m_assembler.signNearPCRelativeAddressInX17();
+            break;
+        case PCRelativeReach::Far:
+            m_assembler.signFarPCRelativeAddressInX17();
+            break;
+        }
+        return start;
+    }
+#endif
 
     Label loadPCRelative64(RegisterID dest)
     {

@@ -58,9 +58,9 @@ public:
     const BuiltinTable& builtins() const { return m_builtins; }
     void unlockReplaceableBuiltins();
     std::span<const BuiltinID> unlockedBuiltins() const LIFETIME_BOUND { return m_tableOfBuild.unlockedMembers(); }
-    bool isUnlocked(BuiltinID member) const { return std::ranges::binary_search(unlockedBuiltins(), member); }
+    bool isUnlocked(BuiltinID member) const { return m_tableOfBuild.isUnlocked(member); }
     std::span<const BuiltinID> builtinsWhoseLockIsLeftToProgram() const LIFETIME_BOUND { return m_tableOfBuild.membersWhoseLockIsLeftToProgram(); }
-    bool isLockLeftToProgram(BuiltinID member) const { return std::ranges::binary_search(builtinsWhoseLockIsLeftToProgram(), member); }
+    bool isLockLeftToProgram(BuiltinID member) const { return m_tableOfBuild.isLockLeftToProgram(member); }
     void openNameForTestRun(BuiltinID canonicalHolder, StringID name);
     bool isOpened(BuiltinID canonicalHolder, StringID name) const { return m_namesOpened.contains(static_cast<uint64_t>(canonicalHolder.index()) << 32 | name.index()); }
     bool isOpenedSomewhere(StringID name) const { return m_namesOpenedSomewhere.get(name.index()); }

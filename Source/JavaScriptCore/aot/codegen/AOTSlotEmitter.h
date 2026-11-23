@@ -43,7 +43,7 @@ public:
     Word32 narrowOptionalInt32(OptionalInteger, uint16_t primitives);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord, const Type& storedType);
     void storeSlot(CellPointer, const PlacedSlot&, const MemoryLocation&, Operand, const PlacedSlot* extensionWord = nullptr);
-    Condition isFilled(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
+    Condition isFilled(CellPointer object, CellPointer baseOfSlot, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Condition holdsValue(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     Condition holdsDeclaredType(CellPointer, const PlacedSlot&, const MemoryLocation&, const PlacedSlot* extensionWord = nullptr);
     bool holdsRawValueFromBirthInSomeMember(LayoutSetID receivers, PropertyKeyID) const;

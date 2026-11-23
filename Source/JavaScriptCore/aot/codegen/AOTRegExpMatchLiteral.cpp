@@ -492,24 +492,36 @@ void ResolvedCallEmitter::recordMatch(const OperationContext& context, const Reg
     emitter<BarrierEmitter>().barrier(context, globalObject);
 }
 
-void ResolvedCallEmitter::clearAbsentGroupBounds(const RegExpMatch& match, unsigned count)
+void ResolvedCallEmitter::clearAbsentGroupBounds(const RegExpMatch& match)
 {
     const CellPointer regExpObject = match.regExpObject;
     const Machine::AbstractHeap& state = m_heaps.entire(AbstractHeap::RegExpState);
+    const RegExpSummary& summary = build().regExpSummaries().summaryOf(match.pattern, toYarrFlags(match.flags), emitter<StringEmitter>().textOf(match.pattern));
+    const unsigned numberOfParts = summary.numSubpatterns + 1;
     LBasicBlock isRecompiled = newBlock();
+    LBasicBlock loop = newBlock();
+    LBasicBlock isAbsent = newBlock();
+    LBasicBlock isCleared = newBlock();
     LBasicBlock done = newBlock();
     Condition isAsWritten = match.isExpected ? isMadeByLiteral(match) : isZero(Word32(m_out.load8ZeroExt32(mutableInstanceField(AOT_INSTANCE_OFFSET(regExpsAreRecompiled)))));
     branch(isAsWritten, { normalEdge(done), rareEdge(isRecompiled) });
     m_out.appendTo(isRecompiled);
     LValue regExp = m_out.bitAnd(m_out.load64(m_out.address(state, regExpObject.value(), RegExpObject::offsetOfRegExpAndFlags())), static_cast<int64_t>(RegExpObject::regExpMask));
-    Word32 numberOfGroups(m_out.load32(m_out.address(state, regExp, RegExp::offsetOfNumSubpatterns())));
     Pointer output = matchOutput();
-    for (unsigned group = 1; group < count; ++group) {
-        for (unsigned bound = 2 * group; bound < 2 * (group + 1); ++bound) {
-            TypedPointer address = m_out.address(state, output.value(), bound * sizeof(int));
-            m_out.store32(m_out.select(m_out.aboveOrEqual(numberOfGroups.value(), m_out.constInt32(group)), m_out.load32(address), m_out.constInt32(-1)), address);
-        }
-    }
+    ValueFromBlock firstAbsent = m_out.anchor(m_out.add(m_out.zeroExtPtr(m_out.load32(m_out.address(state, regExp, RegExp::offsetOfNumSubpatterns()))), 1));
+    m_out.jump(loop);
+
+    m_out.appendTo(loop);
+    LValue group = m_out.phi(Machine::Int64, firstAbsent);
+    m_out.branch(m_out.below(group, numberOfParts), normalEdge(isAbsent), normalEdge(isCleared));
+    m_out.appendTo(isAbsent);
+    m_out.store64(m_out.constInt64(-1), m_out.address(state, m_out.add(output.value(), m_out.shl(group, 3))));
+    m_out.addIncomingToPhi(group, m_out.anchor(m_out.add(group, 1)));
+    m_out.jump(loop);
+
+    m_out.appendTo(isCleared);
+    for (unsigned name = 0; name < summary.numDuplicateNamedCaptureGroups; ++name)
+        m_out.store32(m_out.constInt32(0), m_out.address(state, output.value(), (2 * numberOfParts + name) * sizeof(int)));
     m_out.jump(done);
     m_out.appendTo(done);
 }
@@ -564,7 +576,7 @@ void ResolvedCallEmitter::generateMatchHeldRegExpParts(const ValueContext& value
             m_out.store64(in<Boxed>(operationAt(deferredStore).valueOperand()).value(), m_out.address(m_heaps.entire(AbstractHeap::RegExpState), match.regExpObject.value(), RegExpObject::offsetOfLastIndex()));
         Condition isFound = unboxBoolean(Boxed(callStub(value, regExpMatch(RegExpMatchResult::Parts), { match.regExpObject.value(), match.string.value() }, { .calledBuiltin = functionOf(value->overload()) }).first));
         if (match.isExpected || (!match.isPrivate && m_facts.mayRecompileRegExps()))
-            clearAbsentGroupBounds(match, value->count());
+            clearAbsentGroupBounds(match);
         return isFound;
     };
     const RegExpMatchPlan* plan = matchPlanOf(value.block(), match);

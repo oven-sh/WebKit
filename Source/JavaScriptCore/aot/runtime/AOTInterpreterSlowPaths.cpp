@@ -282,7 +282,7 @@ std::optional<JSValue> tryGetById(JSGlobalObject* globalObject, JSCell* base, co
     return tryGetByName(globalObject, base, ident, CacheOfOperation::HoldsOwnValues);
 }
 
-void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, const PutPropertySlot& slot)
+void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structureBefore, const Identifier& ident, PutPropertySlot& slot)
 {
     Instance* instance = instanceOfTables(globalObject);
     UniquedStringImpl* uid = ident.impl();
@@ -292,10 +292,14 @@ void didPutById(JSGlobalObject* globalObject, JSObject* base, Structure* structu
     bool isAddition = slot.type() == PutPropertySlot::NewProperty;
     if ((isAddition || structure != structureBefore) && (structureBefore->isDictionary() || structure->isDictionary() || (structureBefore->outOfLineCapacity() && structure->outOfLineCapacity() != structureBefore->outOfLineCapacity())))
         return;
+    const bool keepsOffset = structureBefore->propertyAccessesAreCacheable() && structure->propertyAccessesAreCacheable();
     PropertyCaches& caches = *instance->state->propertyCaches;
     if (!caches.findByKey(structureBefore, uid, SlotAccess::Store) && caches.shouldFile(structureBefore->id(), uid, SlotAccess::Store))
         caches.cache({ structureBefore, { uid, std::nullopt }, SlotAccess::Store }, classifyStore({ instance->globalObject, base, structureBefore, uid, slot, slot.isStrictMode() ? PutMode::Strict : PutMode::Sloppy, std::nullopt }));
-    if (!slot.isCacheableSetter())
+    const bool isSetter = slot.isCacheableSetter();
+    if (!keepsOffset)
+        slot.disableCaching();
+    if (!isSetter)
         return;
     if (const Slot* filed = caches.findByKey(base->structure(), uid, SlotAccess::Store); filed && filed->kind == Slot::Kind::Setter) {
         if (GetterSetter* pair = accessorPairInStorage(*filed, base))
@@ -632,6 +636,29 @@ void planObjectLiteral(JSGlobalObject* globalObject, CodeBlock* codeBlock, const
         plans = makeUnique<ObjectLiteralPlans>();
     if (const ObjectLiteralPlan* plan = plans->findOrCreate(*instance, names.span()))
         allocatorWord(profile) = std::bit_cast<uintptr_t>(plan) | ObjectLiteralPlan::allocatorTag;
+}
+
+void checkOffsetOfHash(SymbolImpl& symbol)
+{
+    RELEASE_ASSERT(*reinterpret_cast<const unsigned*>(reinterpret_cast<const uint8_t*>(&symbol) + offsetOfHashOfSymbol) >> StringImpl::s_flagCount == symbol.hashForSymbol());
+}
+
+JSValue getBySymbol(JSGlobalObject* globalObject, JSObject& base, SymbolImpl& symbol)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    checkOffsetOfHash(symbol);
+    Identifier ident = Identifier::fromUid(vm, &symbol);
+    std::optional<JSValue> known = tryGetByName(globalObject, &base, ident, CacheOfOperation::None);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (known)
+        return *known;
+    Structure* structureBefore = WTF::opaque(base.structure());
+    PropertySlot slot(&base, PropertySlot::InternalMethodType::Get);
+    JSValue result = JSValue(&base).get<true>(globalObject, ident, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    didGetById(globalObject, &base, structureBefore, ident, slot, true);
+    return result;
 }
 
 void checkSymbolTableOffsets(SymbolTable& table)

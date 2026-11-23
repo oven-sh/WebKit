@@ -8,6 +8,8 @@
 
 #if ENABLE(AOT)
 
+#include "AOTCodeSites.h"
+#include "AOTHintEmitter.h"
 #include "AOTInstanceLayout.h"
 #include "AllowMacroScratchRegisterUsage.h"
 #include "LinkBuffer.h"
@@ -16,8 +18,6 @@ namespace JSC { namespace AOT { namespace Typed {
 
 OpcodeSet StraightEmitter::opcodesOfHints()
 {
-    if (!hasFaultingLoopPolls)
-        return { };
     return { Opcode::LoopHint };
 }
 
@@ -25,6 +25,12 @@ static void generateLoopHint(StraightEmitter& emitter, const BodyValue& value)
 {
     CCallHelpers& jit = emitter.jit();
     AllowMacroScratchRegisterUsage allowScratch(jit);
+    if (!hasFaultingLoopPolls) {
+        CCallHelpers::Jump goesOn = branchIfStopRequest(jit, StopRequest::IsAbsent);
+        emitter.callOperation(value, RuntimeOperation::PollSlow, { });
+        goesOn.link(&jit);
+        return;
+    }
     uint32_t site = emitter.addSite(value.origin(), { }, value.opcode());
     emitter.noteSiteMayThrow(site);
     CCallHelpers::Label label = jit.labelIgnoringWatchpoints();

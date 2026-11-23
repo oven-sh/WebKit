@@ -46,6 +46,7 @@
 #include "ClonedArguments.h"
 #include "ECMAMode.h"
 #include "GetterSetter.h"
+#include "JSGlobalProxy.h"
 #include "PropertyName.h"
 #include "RegExpObject.h"
 #include <limits>
@@ -623,7 +624,7 @@ Pointer AccessEmitter::globalBindingAddress(PropertyKeyID key, OptionSet<GlobalB
     return Pointer(m_out.valueOf(instanceWord(m_heaps.AOTInstance_globalBindings, m_mentions.globalBinding(key, flags))));
 }
 
-Pointer AccessEmitter::propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
+Integer AccessEmitter::placeOfPropertyOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
 {
     static_assert(OBJECT_OFFSETOF(GlobalBinding, lexicalBindingEpoch) == OBJECT_OFFSETOF(GlobalBinding, structureID) + sizeof(uint32_t));
     const Machine::AbstractHeap& records = m_heaps.AOTInstance_globalBindings;
@@ -638,10 +639,27 @@ Pointer AccessEmitter::propertyAddressOrElse(Pointer record, bool seesScriptBind
     } else
         branchUnless(equal(structureID, Word32(m_out.load32(filedStructureID))), miss);
 
-    Integer location(m_out.load64(m_out.address(records, record.value(), OBJECT_OFFSETOF(GlobalBinding, location))));
-    Integer butterfly(loadField<Pointer>(global, m_heaps.JSObject_butterfly).value());
-    Integer butterflyIfNegative = bitAnd(butterfly, Integer(m_out.aShr(location.value(), m_out.constInt32(63))));
-    return Pointer(add(location, butterflyIfNegative).value());
+    return Integer(m_out.load64(m_out.address(records, record.value(), OBJECT_OFFSETOF(GlobalBinding, location))));
+}
+
+// A place in the storage of the global object is negative.
+Pointer AccessEmitter::addressOfPlace(Integer place, Integer storage)
+{
+    Integer storageIfNegative = bitAnd(storage, Integer(m_out.aShr(place.value(), m_out.constInt32(63))));
+    return Pointer(add(place, storageIfNegative).value());
+}
+
+Pointer AccessEmitter::propertyAddressOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
+{
+    Integer place = placeOfPropertyOrElse(record, seesScriptBindings, miss);
+    return addressOfPlace(place, Integer(loadField<Pointer>(globalObject(), m_heaps.JSObject_butterfly).value()));
+}
+
+// The storage as it is at this use.
+Pointer AccessEmitter::addressOfGlobalProperty(Integer place)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    return addressOfPlace(place, Integer(m_out.loadPtr(m_out.opaque(globalObject().value()), m_heaps.JSObject_butterfly)));
 }
 
 TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool seesScriptBindings, LBasicBlock miss)
@@ -721,9 +739,9 @@ void AccessEmitter::generateGetGlobalPropertyAddress(const ValueContext& value)
 
         m_out.appendTo(isNotConstant);
     }
-    Pointer address = propertyAddressOrElse(record, value->seesScriptBindings(), isNotFiled);
-    branchUnless(isNotEmpty(Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address.value())))), isNotFiled);
-    join.add(address);
+    Integer place = placeOfPropertyOrElse(record, value->seesScriptBindings(), isNotFiled);
+    branchUnless(isNotEmpty(Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), addressOfGlobalProperty(place).value())))), isNotFiled);
+    join.add(Pointer(place.value()));
 
     m_out.appendTo(isNotFiled);
     join.add(pointerConstant(0));
@@ -737,13 +755,15 @@ void AccessEmitter::generateIsPropertyFiled(const ValueContext& value)
 
 void AccessEmitter::generateGetGlobalProperty(const ValueContext& value)
 {
-    define(value, Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), in<Pointer>(value->addressOperand()).value()))));
+    Pointer address = addressOfGlobalProperty(Integer(in<Pointer>(value->addressOperand()).value()));
+    define(value, Boxed(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address.value()))));
 }
 
 void AccessEmitter::generatePutGlobalBinding(const ValueContext& value)
 {
     Boxed stored = in<Boxed>(value->valueOperand());
-    m_out.store64(stored.value(), TypedPointer(m_heaps.properties.atAnyNumber(), in<Pointer>(value->addressOperand()).value()));
+    Pointer address = addressOfGlobalProperty(Integer(in<Pointer>(value->addressOperand()).value()));
+    m_out.store64(stored.value(), TypedPointer(m_heaps.properties.atAnyNumber(), address.value()));
     barrierAfterStore(value, globalObject(), typeOf(value->valueOperand()));
 }
 
@@ -806,7 +826,8 @@ void AccessEmitter::generateGetKeyedPropertyAddress(const ValueContext& value)
         define(value, Pointer(addresses.finish().as<Integer>().value()));
         return;
     }
-    Integer address = callLeaf<Integer>(RuntimeOperation::OwnPropertyAddress, { object, in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()), word32(value->fitsFieldTypes()), word32(value->takesFunctions()) });
+    AddressHolders holders = value->findsPlaceInGlobalObject() ? AddressHolders::GlobalObject : value->takesFunctions() ? AddressHolders::ObjectsAndFunctions : AddressHolders::Objects;
+    Integer address = callLeaf<Integer>(RuntimeOperation::OwnPropertyAddress, { object, in<Boxed>(value->propertyOperand()), word32(value->findsOnlyFields()), word32(value->fitsFieldTypes()), word32(static_cast<uint32_t>(holders)) });
     define(value, Pointer(address.value()));
 }
 
@@ -836,6 +857,14 @@ std::array<const Machine::AbstractHeap*, 2> AccessEmitter::heapsOfKeyedProperty(
     return { &m_heaps.entire(AbstractHeap::ObjectFields), &m_heaps.entire(AbstractHeap::NamedProperties) };
 }
 
+// The storage as it is at this use. The proxy may be that of another realm.
+Pointer AccessEmitter::addressInGlobalObjectBehind(CellPointer proxy, Pointer place)
+{
+    Machine::DeclaredAccessesSuspension suspension(m_out);
+    LValue global = m_out.loadPtr(m_out.address(m_heaps.root, m_out.opaque(proxy.value()), JSGlobalProxy::targetOffset()));
+    return Pointer(add(Integer(place.value()), Integer(m_out.loadPtr(global, m_heaps.JSObject_butterfly))).value());
+}
+
 void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
 {
     CellPointer object(in<Boxed>(value->objectOperand()).value());
@@ -844,6 +873,8 @@ void AccessEmitter::generateGetKeyedProperty(const ValueContext& value)
     if (operationAt(value->addressOperand()).findsOnlyFields())
         property = m_out.load64(TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        if (operationAt(value->addressOperand()).findsPlaceInGlobalObject())
+            address = addressInGlobalObjectBehind(object, address);
         Machine::PatchOperation* load = m_out.patchpoint(Machine::Int64);
         load->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointRead(heapsOfKeyedProperty(), load);
@@ -868,6 +899,8 @@ void AccessEmitter::generatePutKeyedProperty(const ValueContext& value)
     if (isField)
         m_out.store64(stored.value(), TypedPointer(m_heaps.entire(AbstractHeap::ObjectFields), address.value()));
     else {
+        if (operationAt(value->addressOperand()).findsPlaceInGlobalObject())
+            address = addressInGlobalObjectBehind(cell, address);
         Machine::PatchOperation* store = m_out.patchpoint(Machine::Void);
         store->effects = Machine::Effects::none();
         m_heaps.decoratePatchpointWrite(heapsOfKeyedProperty(), store);
@@ -2030,7 +2063,7 @@ void AccessEmitter::checkStoreSiteInline(Boxed receiver, Pointer site, const Sha
     askReceiver();
     if (shapes.hasMovingStorage) {
         LBasicBlock keepsStorage = newBlock();
-        m_out.branch(hasCellTypeIn(object, typesWithMovingStorage).value(), unlikelyEdge(shapes.hasMovingStorage), normalEdge(keepsStorage));
+        m_out.branch(hasMutableCellType(object, FinalObjectType).value(), normalEdge(keepsStorage), unlikelyEdge(shapes.hasMovingStorage));
         m_out.appendToContinuation(keepsStorage);
     }
     usePlace(object, offsetBy(loadField<Pointer>(object, m_heaps.JSObject_butterfly), signExtended(Word32(m_out.load16SignExt32(partOfSlot(Slot::offsetOfLocation())))), 3));

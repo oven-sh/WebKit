@@ -189,7 +189,7 @@ static std::unique_ptr<RegExpCode> generate(const Yarr::YarrPattern& pattern, St
         .sampleString = std::nullopt,
         .codeBlock = &codeBlock,
         .policy = policy,
-        .createCodeAddressing = [&](CCallHelpers& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
+        .createCodeAddressing = [&](ImageAssembler& jit) -> std::unique_ptr<Yarr::CodeAddressing> {
             return makeUnique<ImageCodeAddressing>(jit, PCRelativeReach::Near, assemblerPolicy, nullptr);
         },
     };

@@ -22,6 +22,10 @@ namespace JSC { namespace AOT { namespace Machine {
 
 namespace {
 
+#if COMPILER(CLANG)
+#pragma clang attribute push(__attribute__((minsize)), apply_to = function)
+#endif
+
 class MachineValidator {
     WTF_MAKE_NONCOPYABLE(MachineValidator);
 public:
@@ -639,6 +643,10 @@ bool MachineValidator::checkUpsilons()
     }
     return true;
 }
+
+#if COMPILER(CLANG)
+#pragma clang attribute pop
+#endif
 
 void MachineValidator::computeDominators()
 {

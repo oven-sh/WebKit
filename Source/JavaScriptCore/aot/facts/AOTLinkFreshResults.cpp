@@ -1228,7 +1228,7 @@ private:
     {
         const ThinSummary& summary = m_flow.summaries.at(function);
         std::optional<uint32_t> place = findOnlyCallAt(function, summary, site);
-        if (!place || summary.calls[*place].passesList || summary.calls[*place].isMadeByProtocol)
+        if (!place || summary.calls[*place].passesList || summary.calls[*place].isMadeByProtocol || summary.calls[*place].callee == SummaryCall::Callee::Builtin)
             return std::nullopt;
         Vector<FunctionID, 4> callees;
         if (summary.calls[*place].callee == SummaryCall::Callee::Binding) {

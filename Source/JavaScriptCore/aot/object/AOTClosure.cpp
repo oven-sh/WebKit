@@ -16,6 +16,7 @@
 #include "AOTErrorMessages.h"
 #include "AOTFunctionDescription.h"
 #include "AOTFunctionNames.h"
+#include "AOTHeapCacheRegistry.h"
 #include "AOTHeapHooks.h"
 #include "AOTInstance.h"
 #include "AOTLayoutData.h"
@@ -25,6 +26,7 @@
 #include "AOTProgramStatics.h"
 #include "AOTPropertyWalk.h"
 #include "AOTRuntimeCheckFailure.h"
+#include "AOTRuntimeHooks.h"
 #include "AOTRuntimeReporter.h"
 #include "AOTSlimClosure.h"
 #include "AOTState.h"
@@ -828,7 +830,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
 {
     VM& vm = globalObject->vm();
     Closure* closure = uncheckedDowncast<Closure>(cell);
-    if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name)) [[unlikely]] {
+    if (slot.thisValue() == JSValue(closure) && closure->refusesOwnProperty(vm, name) && !closure->structure()->isImmutablePropertyForReader(name.uid())) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
         slot.disableCaching();
         bool isTold = slot.isStrictMode() || (slot.context() != PutPropertySlot::ReflectSet && name != vm.propertyNames->hasInstanceSymbol);
@@ -905,15 +907,18 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Closure* closure = uncheckedDowncast<Closure>(object);
-    if (closure->refusesOwnProperty(vm, name)) [[unlikely]]
+    const bool isClosedName = closure->refusesOwnProperty(vm, name);
+    if (isClosedName && !closure->structure()->isImmutablePropertyForReader(name.uid()) && !RuntimeHooks::definesInheritedValue(closure, name, descriptor)) [[unlikely]]
         return typeError(globalObject, scope, shouldThrow, assignmentToNameThatBuiltinFunctionInheritsMessage(name.uid()));
     if (tryDefineInitialName(vm, *closure, name, descriptor))
         return true;
     ClassTable& classes = closure->state().objects->classes;
     const LayoutData* classLayout = closure->classData();
-    if (classLayout && tryDefineStaticFieldInVariable(*closure, name, descriptor))
+    if (classLayout && !isClosedName && tryDefineStaticFieldInVariable(*closure, name, descriptor))
         return true;
     closure->ensureClassObject(vm);
+    if (isClosedName) [[unlikely]]
+        RuntimeHooks::closeNamesOfFunction(vm, closure, name);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);

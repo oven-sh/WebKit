@@ -713,11 +713,11 @@ ValueID findFirstFill(TypeArena& types, const BodyIndex& index, BlockID block)
     return { };
 }
 
-static ValueID checkedConstantVariable(const Program& program, const Code& code, ValueID cell)
+static ValueID checkedConstantVariable(const Program& program, const Plan& plan, const Code& code, ValueID cell)
 {
     while (!code.isConstant(cell) && code.at(cell).opcode == Opcode::CheckInitialized)
         cell = underlyingCellOf(code, code.at(cell).operand(0));
-    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::GetModuleVariable || !program.at(code.at(cell).variable()).flags.contains(VariableFlags::IsImmutable))
+    if (code.isConstant(cell) || code.at(cell).opcode != Opcode::GetModuleVariable || !plan.isImmutable(program, code.at(cell).variable()))
         return { };
     return cell;
 }
@@ -730,9 +730,9 @@ void Walker::noteSlotReadOnEveryIteration(Reference object, Reference read)
         m_trialVisits.last().slotsReadOnEveryIteration.append(held);
 }
 
-bool isConstantOfFile(const Program& program, const Code& code, ValueID object)
+bool isConstantOfFile(const Program& program, const Plan& plan, const Code& code, ValueID object)
 {
-    return !!checkedConstantVariable(program, code, underlyingCellOf(code, object));
+    return !!checkedConstantVariable(program, plan, code, underlyingCellOf(code, object));
 }
 
 void Walker::noteSlotRead(Reference object, PropertyKeyID key, Reference read)
@@ -863,7 +863,7 @@ void Walker::noteSlotStore(Reference object, PropertyKeyID key, Reference before
     for (size_t place = m_trialVisits.size(); place--;) {
         TrialVisit& visit = m_trialVisits[place];
         if (cell.index() >= visit.firstRecord) {
-            cell = isFirstFill ? checkedConstantVariable(program(), m_code, cell) : ValueID();
+            cell = isFirstFill ? checkedConstantVariable(program(), plan(), m_code, cell) : ValueID();
             if (!cell)
                 return;
         }
@@ -1012,7 +1012,7 @@ bool Walker::recordLoopSlots(LoopSummary& summary, TrialVisit& visit)
                     Reference held = m_frames[visit.frameIndex].references[operation.id().index()];
                     if (held && held.isValue() && !m_code.isConstant(held.id())) {
                         ValueID cell = underlyingCellOf(m_code, held.id());
-                        ValueID variable = cell.index() >= visit.firstRecord ? checkedConstantVariable(program(), m_code, cell) : ValueID();
+                        ValueID variable = cell.index() >= visit.firstRecord ? checkedConstantVariable(program(), plan(), m_code, cell) : ValueID();
                         holders.add((variable ? variable : cell).index(), operation.id());
                     }
                     continue;
@@ -1262,7 +1262,7 @@ void Walker::findSlotsStoredByCopies(std::span<const SlotOfLoop> slots, const Ef
         if (!slot.variable)
             found.scope = slot.scope ? slot.scope : unspecifiedConstant(slot.typeOfScope);
         bool isListed = slot.scope && known.containsIf([&](const FieldOfScope& other) { return !other.slotKey && other.scope == found.scope && other.field == found.field; });
-        if (isListed)
+        if (isListed || (!valueKnownOf(found) && isBeforeFirstStore(found)))
             continue;
         if (shouldReadBeforeHeader && isUnreachable())
             return;
@@ -1654,6 +1654,8 @@ void Walker::findFieldsOfScopesFromOutsideThatQuietTurnsStore(BlockID inputHead,
             if (Draft read = draftVariableRead(found); variable && !found.anticipatedRead && !m_state.isPastDeadZone(variable) && excludesInitialPrimitive(read, resultTypeOf(read)) && !shouldAssumeVariablesInitialized())
                 continue;
             Reference value = valueKnownOf(found);
+            if (!value && isBeforeFirstStore(found))
+                continue;
             if (!value && shouldReadBeforeHeader && !mayBeInDeadZone(found)) {
                 if (variable)
                     count(StatisticID::LoopStoredVariableReadsHoisted);
@@ -1759,6 +1761,17 @@ bool Walker::mayBeInDeadZone(const FieldOfScope& field) const
         return false;
     TypeID written = program().at(field.field.layout).fields[field.field.field].declared.written();
     return written && (program().at(written).primitives & Primitive::Absent) && !m_state.isPastDeadZone(field.scope, field.field);
+}
+
+bool Walker::isBeforeFirstStore(const FieldOfScope& field) const
+{
+    if (field.variable || field.slotKey || !field.scope || m_state.isPastDeadZone(field.scope, field.field))
+        return false;
+    return std::ranges::any_of(m_frames, [&](const Frame& frame) {
+        return frame.index && std::ranges::any_of(facts().summaries().at(frame.function).scopesStoredFirst.span(), [&](const SummaryScopeStoredFirst& scope) {
+            return frame.index->value(scope.allocation).as<Opcode::NewObject>().layout() == field.field.layout && std::ranges::binary_search(scope.fields, field.field.field);
+        });
+    });
 }
 
 Draft Walker::draftVariableRead(const FieldOfScope& field)

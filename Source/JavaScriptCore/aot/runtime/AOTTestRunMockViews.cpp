@@ -25,7 +25,17 @@ JSValue Modules::handedOnInPlaceOfNamespace(const ModuleExportData& moduleExport
     if (m_namespacesReplacedByMock.isEmpty()) [[likely]]
         return { };
     LoadedModule* reexportedModule = loadedIfExists(moduleExport.targetModule());
-    return reexportedModule ? reexportedModule->handedOnInPlaceOfNamespace.get() : JSValue();
+    if (!reexportedModule)
+        return { };
+    if (!m_moduleReadBeforeItsPatch || !reexportedModule->mocksThatReplaceNamespace.contains(*m_moduleReadBeforeItsPatch)) [[likely]]
+        return reexportedModule->handedOnInPlaceOfNamespace.get();
+    JSValue earlier;
+    for (ModuleID mocked : reexportedModule->mocksThatReplaceNamespace) {
+        if (mocked == *m_moduleReadBeforeItsPatch)
+            break;
+        earlier = storedValue(m_instance.globalObject, reexportedModule->handedOnByMocks, Identifier::from(*m_instance.vm, mocked.index()));
+    }
+    return earlier;
 }
 
 bool Modules::tryReplaceNamespaceHandedOn(ModuleID reexportedModule, JSValue value)
@@ -781,6 +791,8 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     uint32_t momentLoaded = m_momentsOfLoads[importer.index()];
     if (!momentLoaded || momentLoaded > mock->value.momentLaid)
         return true;
+    if (hasInstances(importer) && !m_linkedInstances.get(importer.index()) && status(importer) <= ModuleStatus::Linked)
+        return true;
     return !m_loadedInPreload.get(importer.index()) && !wasReleasedByLoader(importer) && momentLinked(importer) < mock->value.momentOfTestFile;
 }
 
@@ -915,6 +927,7 @@ bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID imp
 
 void Modules::noteMomentMockComesInPlace(ModuleID fileOrModule, JSObject* mock, bool stoodInPlace, bool keepsEarlierMockForImporters)
 {
+    m_evictedActiveMocks.clear(fileOrModule.index());
     std::optional<MomentMockWasLaid> waiting = m_pendingMockCalls.takeOptional(fileOrModule);
     if (JSObject* earlier = keepsEarlierMockForImporters ? activeMock(fileOrModule) : nullptr; earlier && earlier != mock && earlier == ensureLoaded(fileOrModule).preloadMock.get()) {
         ModuleID module = moduleWithExportsOf(fileOrModule);

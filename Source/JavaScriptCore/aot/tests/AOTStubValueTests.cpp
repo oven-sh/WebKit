@@ -70,14 +70,14 @@ struct RopeAllocation {
     void leaveOnlyNextInterval()
     {
         room.bytes.fill(0);
-        room.at<uint64_t>(FreeCell::offsetOfScrambledBits()) = (static_cast<uint64_t>(sizeof(room.bytes)) << 32 | FakeAllocator::noNextInterval) ^ secretOfFreeList;
+        room.at<uint64_t>(FreeCell::offsetOfScrambledBits()) = (static_cast<uint64_t>(room.bytes.size()) << 32 | FakeAllocator::noNextInterval) ^ secretOfFreeList;
         allocator.makeRoomAt(0, 0);
         allocator.nextInterval() = room.address();
     }
 
     bool tookFirstCellOfNextInterval()
     {
-        return allocator.intervalStart() == room.address() + sizeOfRope && allocator.intervalEnd() == room.address() + sizeof(room.bytes) && allocator.nextInterval() == room.address() + FakeAllocator::noNextInterval;
+        return allocator.intervalStart() == room.address() + sizeOfRope && allocator.intervalEnd() == room.address() + room.bytes.size() && allocator.nextInterval() == room.address() + FakeAllocator::noNextInterval;
     }
 
     uint64_t word(unsigned index) { return room.at<uint64_t>(index * sizeof(uint64_t)); }
@@ -104,7 +104,7 @@ static void testRopesFromEveryStateOfTheFreeList()
             && ropes.word(2) == (second.address() << CompactFibers::shiftOfFiber1LowerInLengthWord | 5) && ropes.word(3) == second.address() >> CompactFibers::widthOfFiber1LowerInLengthWord;
     };
 
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(concatenate(2), { first.address(), second.address() });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && isRopeOfBoth());
     AOT_TEST_CHECK(ropes.allocator.intervalStart() == ropes.room.address() + sizeOfRope);
@@ -133,7 +133,7 @@ static void testSubstringsFromEveryStateOfTheFreeList()
             && ropes.word(3) == (string.address() >> CompactFibers::widthOfFiber1LowerInLengthWord | 2ull << CompactFibers::shiftOfFiber2InUpperWord);
     };
 
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(substring(), { string.address(), 2, 5 });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && isSubstring());
 
@@ -156,7 +156,7 @@ static void testJoinedTextCharacter()
     Ref<StringImpl> secondText = StringImpl::create("cde"_span);
     FakeFlatString first(firstText.get());
     FakeFlatString second(secondText.get());
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     uint64_t joined = ropes.runner.run(concatenate(2), { first.address(), second.address() }).result;
     constexpr std::string_view letters = "abcde";
     for (uint64_t position = 0; position < letters.size(); ++position) {
@@ -180,7 +180,7 @@ static void testLongPairKeyJoined()
     FakeFlatString first(longText.get());
     FakeFlatString second(shortText.get());
     StubKey stub = concatenateKeyOfPair(ConcatenatedKeyForm::Name);
-    ropes.allocator.makeRoomAt(ropes.room.address(), sizeof(ropes.room.bytes));
+    ropes.allocator.makeRoomAt(ropes.room.address(), ropes.room.bytes.size());
     StubRun run = ropes.runner.run(stub, { first.address(), second.address() });
     AOT_TEST_CHECK(!run.calledOperation && run.result == ropes.room.address() && ropes.word(1) == (first.address() | JSString::isRopeInPointer | JSRopeString::is8BitInPointer));
     AOT_TEST_CHECK(ropes.runner.run(stub, { second.address(), second.address() }).calledOperation);

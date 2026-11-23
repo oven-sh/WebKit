@@ -372,7 +372,7 @@ public:
         std::optional<MixedOperands> operands = value.isBranchCondition() ? mixedOperandsOf(value, &Type::isInt32) : std::nullopt;
         if (!operands)
             return false;
-        m_out.noteForm(Form::Open, StateOfKnowledge::Int32AndValue);
+        m_out.noteForm(Form::Open, value.opcode() == Opcode::Eq ? StateOfKnowledge::Bits : StateOfKnowledge::Int32AndValue);
         BranchTargets targets = value.branchTargets();
         Word32 expected = in<Word32>(operands->typed);
         Boxed other = in<Boxed>(operands->boxed);
@@ -397,7 +397,7 @@ public:
         std::optional<MixedOperands> operands = mixedOperandsOf(value, &Type::isInt32);
         if (!operands)
             return { };
-        m_out.noteForm(Form::Open, StateOfKnowledge::Int32AndValue);
+        m_out.noteForm(Form::Open, value.opcode() == Opcode::Eq ? StateOfKnowledge::Bits : StateOfKnowledge::Int32AndValue);
         Word32 expected = in<Word32>(operands->typed);
         Boxed other = in<Boxed>(operands->boxed);
         LBasicBlock isSameInt32 = newBlock();
@@ -822,7 +822,7 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             return;
         }
         if (bool isRightBigInt = isBigInt(right); isRightBigInt != isBigInt(left) && expectsBigInts(value.block(), left)) {
-            m_out.noteForm(Form::Open, StateOfKnowledge::BigInts);
+            m_out.noteForm(Form::Open, StateOfKnowledge::BigIntAndValue);
             Boxed known = boxedOperand(isRightBigInt ? right : left);
             Boxed other = in<Boxed>(isRightBigInt ? left : right);
             defineTestByBranching(value, [&](BranchTargets targets) {

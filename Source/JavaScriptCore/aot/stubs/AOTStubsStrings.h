@@ -16,6 +16,7 @@
 namespace JSC { namespace AOT {
 
 constexpr StubKey ropeCharacters() { return StubKey(StubFamily::RopeCharacters); }
+constexpr StubKey ropeCharactersAroundRange() { return StubKey(StubFamily::RopeCharactersAroundRange); }
 constexpr StubKey substringCharacters() { return StubKey(StubFamily::SubstringCharacters); }
 constexpr StubKey flattenString() { return StubKey(StubFamily::FlattenString); }
 constexpr StubKey stringCodeUnitAt() { return StubKey(StubFamily::StringCodeUnitAt); }
@@ -126,7 +127,7 @@ constexpr unsigned numberOfOperands(ConcatenatedInteger form)
 }
 
 static_assert(descriptorOf(StubFamily::ConvertAndConcatenate).numberOfForms == std::size(convertingConcatenations));
-static_assert(exists(ropeCharacters()) && exists(substringCharacters()) && exists(flattenString()));
+static_assert(exists(ropeCharacters()) && exists(ropeCharactersAroundRange()) && exists(substringCharacters()) && exists(flattenString()));
 static_assert(exists(stringsAreEqual()) && exists(compareStrings()) && exists(integerToString()) && exists(substring()));
 static_assert(exists(distinctStringsAreEqual()) && bodyOf(distinctStringsAreEqual()) == stringsAreEqual());
 static_assert(exists(stringEqualsValue()) && bodyOf(stringEqualsValue()) == stringsAreEqual());

@@ -513,7 +513,7 @@ Operand SlotAccessEmitter::readSlot(const ValueContext& value, CellPointer cell,
             return readIfMemberHasField(value, cell, access, [&] {
                 CellPointer base = baseOfSlot(cell, access);
                 if (sourcesOfProofsCheckedUnder(build().options().testing) & bitOfSourceOfProofs(ProofSource::Field))
-                    emitter<ThrowEmitter>().requireOrCrash(value, emitter<SlotEmitter>().isFilled(base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
+                    emitter<ThrowEmitter>().requireOrCrash(value, emitter<SlotEmitter>().isFilled(cell, base, access.slot, locationOfSlotAccess(access), extensionWordOfSlotAccess(access)), std::nullopt, ProofSource::Field);
                 return inResultRepresentation(value, loadFilledSlot(value, base, access));
             });
         }

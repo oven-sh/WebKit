@@ -154,7 +154,7 @@ ALWAYS_INLINE bool StackVisitor::WithCompiledFrames::isCalledByCompiledCode(Call
     CallFrame* callee = m_frame.m_callFrame;
     bool isPublished = callee ? m_frame.m_callerIsEntryFrame : m_nextFrameIsPublished;
     void* returnPC = isPublished ? std::bit_cast<CallerFrameAndPC*>(callFrame)->returnPC : callee ? callee->rawReturnPC() : m_previousReturnPC;
-    return std::bit_cast<uintptr_t>(removeCodePtrTag(returnPC)) - std::bit_cast<uintptr_t>(m_compiledCode.data()) < m_compiledCode.size();
+    return std::bit_cast<uintptr_t>(removeReturnAddressSignature(returnPC)) - std::bit_cast<uintptr_t>(m_compiledCode.data()) < m_compiledCode.size();
 }
 
 bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFrame)
@@ -179,7 +179,7 @@ bool StackVisitor::WithCompiledFrames::tryEnterCompiledFrames(CallFrame* callFra
         callFrame = record->callerFrame;
         returnPC = record->returnPC;
     }
-    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, removeCodePtrTag(returnPC), m_frame.m_entryFrame, operationState, calleeFrame ? AOT::callerStackPointer(calleeFrame) : nullptr);
+    auto frames = AOT::CompiledFrameIterator::tryCreate(m_vm, callFrame, returnPC, m_frame.m_entryFrame, operationState, calleeFrame ? AOT::callerStackPointer(calleeFrame) : nullptr);
     RELEASE_ASSERT(frames || !isPublished);
     if (!frames)
         return false;
