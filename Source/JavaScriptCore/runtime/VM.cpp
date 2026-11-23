@@ -1503,6 +1503,7 @@ void VM::throwTerminationException()
     // doesGC assertion.
     setDoesGCExpectation(true, DoesGCCheck::Special::Termination);
     setException(terminationException());
+    disallowVMEntryCount |= terminatingExecutionFlag;
     if (m_executionForbiddenOnTermination)
         setExecutionForbidden();
 }
@@ -1537,6 +1538,7 @@ NEVER_INLINE Exception* VM::throwException(JSGlobalObject* globalObject, Excepti
         // from C++ functions to propagate it. If we're throwing it for the first
         // time, we would have gone through VM::throwTerminationException().
         setException(exceptionToThrow);
+        disallowVMEntryCount |= terminatingExecutionFlag;
         return exceptionToThrow;
     }
 
@@ -2137,6 +2139,19 @@ JSValue VM::checkVMEntryPermission()
     if (Options::crashOnDisallowedVMEntry() || g_jscConfig.vmEntryDisallowed)
         CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMEntryDisallowed, "VM entry disallowed"_s);
     return jsUndefined();
+}
+
+VM::EntryPermission VM::entryPermissionSlow()
+{
+    ASSERT(disallowVMEntryCount);
+    if (disallowVMEntryCount != terminatingExecutionFlag)
+        return EntryPermission::Disallowed;
+    ASSERT(hasTerminationRequest());
+    if (traps().isDeferringTermination())
+        return EntryPermission::Allowed;
+    throwTerminationExceptionIfNeeded();
+    ASSERT(hasPendingTerminationException());
+    return EntryPermission::RefusedByTermination;
 }
 
 JSPropertyNameEnumerator* VM::emptyPropertyNameEnumeratorSlow()

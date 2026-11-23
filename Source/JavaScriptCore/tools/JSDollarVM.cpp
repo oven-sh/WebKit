@@ -2202,6 +2202,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionGC);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
+static JSC_DECLARE_HOST_FUNCTION(functionDispatchOverTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
@@ -2937,6 +2938,80 @@ JSC_DEFINE_HOST_FUNCTION(functionHasPendingTermination, (JSGlobalObject* globalO
 {
     DollarVMAssertScope assertScope;
     return JSValue::encode(jsBoolean(globalObject->vm().hasPendingTermination()));
+}
+
+// What an embedder's dispatcher does when it makes several VM entries in a row and does not stop at a termination
+// that one of them ran into (a loop over the listeners of an event, over the frames of one read): it calls each of
+// `functions` in turn. `how` says how the entries after the first call() are made:
+//   "call"                      call(), with the exception of the entry before still pending
+//   "callClearingException"     call() through the overload that clears what the callee threw, a termination included
+//   "construct"                 construct(), with the exception of the entry before still pending
+//   "callDeferringTermination"  call(), inside a DeferTermination scope
+//   "drainMicrotasks"           VM::drainMicrotasks() in place of each call
+// Usage: $vm.dispatchOverTermination(how, function0, function1, ...)
+JSC_DEFINE_HOST_FUNCTION(functionDispatchOverTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    enum class How : uint8_t { Call, CallClearingException, Construct, CallDeferringTermination, DrainMicrotasks };
+    String howString = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    How how;
+    if (howString == "call"_s)
+        how = How::Call;
+    else if (howString == "callClearingException"_s)
+        how = How::CallClearingException;
+    else if (howString == "construct"_s)
+        how = How::Construct;
+    else if (howString == "callDeferringTermination"_s)
+        how = How::CallDeferringTermination;
+    else if (howString == "drainMicrotasks"_s)
+        how = How::DrainMicrotasks;
+    else
+        return throwVMTypeError(globalObject, scope, "unknown kind of entry"_s);
+
+    for (unsigned i = 1; i < callFrame->argumentCount(); ++i) {
+        JSValue function = callFrame->uncheckedArgument(i);
+        bool isConstructed = how == How::Construct && i > 1;
+        auto callData = isConstructed ? JSC::getConstructData(function) : JSC::getCallData(function);
+        if (callData.type == CallData::Type::None)
+            return throwVMTypeError(globalObject, scope, isConstructed ? "expected a constructor"_s : "expected a function"_s);
+    }
+
+    for (unsigned i = 1; i < callFrame->argumentCount(); ++i) {
+        // A dispatcher goes on over a termination only. Any other exception at an entry is a bug of the embedder.
+        if (scope.exception() && !vm.hasPendingTerminationException())
+            return { };
+        JSValue function = callFrame->uncheckedArgument(i);
+        if (i == 1 || how == How::Call) {
+            call(globalObject, function, JSC::getCallData(function), jsUndefined(), ArgList());
+            continue;
+        }
+        switch (how) {
+        case How::Call:
+            RELEASE_ASSERT_NOT_REACHED();
+        case How::CallClearingException: {
+            NakedPtr<Exception> thrown;
+            call(globalObject, function, JSC::getCallData(function), jsUndefined(), ArgList(), thrown);
+            break;
+        }
+        case How::Construct:
+            construct(globalObject, function, JSC::getConstructData(function), ArgList());
+            break;
+        case How::CallDeferringTermination: {
+            DeferTermination deferScope(vm);
+            call(globalObject, function, JSC::getCallData(function), jsUndefined(), ArgList());
+            break;
+        }
+        case How::DrainMicrotasks:
+            vm.drainMicrotasks();
+            break;
+        }
+    }
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsUndefined());
 }
 
 // Runs a full GC synchronously.
@@ -6215,6 +6290,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "callWithTimeLimit"_s, functionCallWithTimeLimit, 2);
     addFunction(vm, allowIfNotFuzz, "cancelTermination"_s, functionCancelTermination, 0);
     addFunction(vm, allowIfNotFuzz, "hasPendingTermination"_s, functionHasPendingTermination, 0);
+    addFunction(vm, allowIfNotFuzz, "dispatchOverTermination"_s, functionDispatchOverTermination, 1);
     addFunction(vm, allowIfNotFuzz, "breakpoint"_s, functionBreakpoint, 0);
     addFunction(vm, allowIfNotFuzz, "exit"_s, functionExit, 0);
 

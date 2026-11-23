@@ -53,7 +53,7 @@ public:
 
     ~DisallowVMEntryImpl()
     {
-        RELEASE_ASSERT(m_vm->disallowVMEntryCount);
+        RELEASE_ASSERT(m_vm->disallowVMEntryCount & ~VMType::terminatingExecutionFlag);
         m_vm->disallowVMEntryCount--;
         m_vm = nullptr;
     }
@@ -61,7 +61,7 @@ public:
     DisallowVMEntryImpl& operator=(const DisallowVMEntryImpl& other)
     {
         RELEASE_ASSERT(m_vm && m_vm == other.m_vm);
-        RELEASE_ASSERT(m_vm->disallowVMEntryCount);
+        RELEASE_ASSERT(m_vm->disallowVMEntryCount & ~VMType::terminatingExecutionFlag);
         // Conceptually, we need to decrement the disallowVMEntryCount of the
         // old m_vm, and increment the disallowVMEntryCount of the new m_vm.
         // But since the old and the new m_vm should always be the same, the

@@ -1719,8 +1719,16 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError(globalObject, throwScope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
-        return VM::checkVMEntryPermission();
+    if (vm.disallowVMEntryCount) [[unlikely]] {
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return { };
+        case VM::EntryPermission::Disallowed:
+            return VM::checkVMEntryPermission();
+        }
+    }
 
 #if USE(BUN_JSC_ADDITIONS)
     // Earlier than ScriptExecutable::prepareForExecutionImpl: a program acts before it has a CodeBlock. JSONP needs none, and its global declarations come first.
@@ -1967,7 +1975,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
 
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    scope.assertNoException();
+    scope.assertNoExceptionAtVMEntry();
 
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
@@ -1993,8 +2001,16 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]]
         return throwStackOverflowError(globalObject, scope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
-        return VM::checkVMEntryPermission();
+    if (vm.disallowVMEntryCount) [[unlikely]] {
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return { };
+        case VM::EntryPermission::Disallowed:
+            return VM::checkVMEntryPermission();
+        }
+    }
 
     RefPtr<JSC::JITCode> jitCode;
     ProtoCallFrame protoCallFrame;
@@ -2049,7 +2065,7 @@ JSValue Interpreter::executeConstructAllowingPrimitiveResult(JSObject* construct
         vm.didEnterVM = true;
     });
 
-    throwScope.assertNoException();
+    throwScope.assertNoExceptionAtVMEntry();
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
 #if ENABLE(AOT)
@@ -2078,8 +2094,15 @@ JSValue Interpreter::executeConstructAllowingPrimitiveResult(JSObject* construct
     }
 
     if (vm.disallowVMEntryCount) [[unlikely]] {
-        VM::checkVMEntryPermission();
-        return globalObject->globalThis();
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return { };
+        case VM::EntryPermission::Disallowed:
+            VM::checkVMEntryPermission();
+            return globalObject->globalThis();
+        }
     }
 
     RefPtr<JSC::JITCode> jitCode;
@@ -2385,7 +2408,7 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     });
 
     ASSERT_UNUSED(lexicalGlobalObject, &vm == &lexicalGlobalObject->vm());
-    throwScope.assertNoException();
+    throwScope.assertNoExceptionAtVMEntry();
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
     RELEASE_ASSERT(vm.currentThreadIsHoldingAPILock());
 
@@ -2394,8 +2417,16 @@ JSValue Interpreter::executeModuleProgram(JSModuleRecord* record, ModuleProgramE
     if (!vm.isSafeToRecurseSoft()) [[unlikely]]
         return throwStackOverflowError(globalObject, throwScope);
 
-    if (vm.disallowVMEntryCount) [[unlikely]]
-        return VM::checkVMEntryPermission();
+    if (vm.disallowVMEntryCount) [[unlikely]] {
+        switch (vm.entryPermissionSlow()) {
+        case VM::EntryPermission::Allowed:
+            break;
+        case VM::EntryPermission::RefusedByTermination:
+            return { };
+        case VM::EntryPermission::Disallowed:
+            return VM::checkVMEntryPermission();
+        }
+    }
 
     if (scope->structure()->isUncacheableDictionary())
         scope->flattenDictionaryObject(vm);
