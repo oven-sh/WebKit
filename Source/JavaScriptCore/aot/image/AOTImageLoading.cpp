@@ -13,7 +13,6 @@
 #include "AOTRuntimeReporter.h"
 #include "Options.h"
 #include "WasmCodeInImage.h"
-#include <wtf/AccessibleAddress.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/Lock.h>
 #include <wtf/OSAllocator.h>
@@ -50,46 +49,6 @@
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC { namespace AOT {
-
-static bool tryReserveLowPages()
-{
-    static bool s_hasReservedPages;
-    if (lowestAccessibleAddress() >= FaultSite::reach || s_hasReservedPages)
-        return true;
-#if OS(FREEBSD) || (OS(LINUX) && defined(MAP_FIXED_NOREPLACE))
-#if OS(FREEBSD)
-    constexpr int fixedWithoutReplacing = MAP_FIXED | MAP_EXCL;
-    constexpr int outOfRangeError = EINVAL;
-    char isResident;
-#else
-    constexpr int fixedWithoutReplacing = MAP_FIXED_NOREPLACE;
-    constexpr int outOfRangeError = EPERM;
-    unsigned char isResident;
-#endif
-    size_t pageBytes = pageSize();
-    for (uintptr_t page = 0; page < FaultSite::reach; page += pageBytes) {
-        void* mapped = mmap(std::bit_cast<void*>(page), pageBytes, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | fixedWithoutReplacing, -1, 0);
-        bool zeroPageWasRelocated = !page && mapped != MAP_FAILED && mapped;
-        if (zeroPageWasRelocated)
-            munmap(mapped, pageBytes);
-        if (mapped == MAP_FAILED || zeroPageWasRelocated) {
-            if (!zeroPageWasRelocated && errno != outOfRangeError && errno != EPERM && errno != EACCES && errno != ENOMEM)
-                return false;
-            if (mincore(std::bit_cast<void*>(page), pageBytes, &isResident) != -1 || errno != ENOMEM)
-                return false;
-            continue;
-        }
-        if (mapped != std::bit_cast<void*>(page)) {
-            munmap(mapped, pageBytes);
-            return false;
-        }
-    }
-    s_hasReservedPages = true;
-    return true;
-#else
-    return false;
-#endif
-}
 
 #if OS(DARWIN) || OS(LINUX) || OS(FREEBSD)
 
@@ -628,9 +587,6 @@ Wire::ImageVerdict useImage(std::span<const uint8_t> bytes, std::optional<ImageF
     if (header.sizeOfCodeOfStart)
         readAheadOfStart(bytes, header);
 #endif
-    if (header.sections[static_cast<size_t>(ImageSection::FaultSites)].size && !tryReserveLowPages())
-        return ImageVerdict::LowPagesAccessible;
-
     if (!relocateLoadedImage(bytes.first(header.size)))
         return ImageVerdict::CannotMapCode;
     if (!removeWriteAccessFromLoadedSection(bytes.first(header.size)))

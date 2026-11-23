@@ -7,6 +7,7 @@ AOT_RUNTIME_FACT("the names of the entries in the table of the run time in the o
 AOT_RUNTIME_FACT("isHardenedBuild", isHardenedBuild)
 AOT_RUNTIME_FACT("ENABLE(RETURN_ADDRESS_SIGNING)", ENABLE_RETURN_ADDRESS_SIGNING)
 AOT_RUNTIME_FACT("sizeOfLoopPoll", sizeOfLoopPoll)
+AOT_RUNTIME_FACT("FaultSite::reach", FaultSite::reach)
 
 AOT_RUNTIME_FACT("the built-ins that the engine names (low word)", static_cast<uint32_t>(engineListStamp))
 AOT_RUNTIME_FACT("the built-ins that the engine names (high word)", static_cast<uint32_t>(engineListStamp >> 32))

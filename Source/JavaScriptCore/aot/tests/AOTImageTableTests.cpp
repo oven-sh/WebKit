@@ -532,6 +532,7 @@ static void testRuntimeFactsNameWhatEmittedCodeTakes()
         "isHardenedBuild"_s,
         "ENABLE(RETURN_ADDRESS_SIGNING)"_s,
         "sizeOfLoopPoll"_s,
+        "FaultSite::reach"_s,
         "sizeof(InlineAllocationData)"_s,
         "sizeof(BuiltinDirectFunctionBinding)"_s,
         "OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function)"_s,
