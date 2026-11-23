@@ -1109,8 +1109,8 @@ public:
         Vector<LinkedColdData> coldData;
         uint64_t rank { 0 }; // of the head (its module's index) or body being encoded
         OrderHashRankMap hotRanks;
-        // The functions the recorded build had and its run did not decode. Empty: the order file does not say, and
-        // nothing is UNKNOWN.
+        // The functions the recorded build had and its run did not decode. Empty: its run decoded every function it
+        // had. A function in neither this set nor hotRanks is UNKNOWN.
         OrderHashSet knownFunctions;
         std::array<Vector<LinkedBody>, numberOfLinkClasses> queues; // min-heaps on (rank, sequence); heads have none
         // Every function code block of every module, from the moment the module is added until the link ends: a collection
@@ -1185,7 +1185,7 @@ public:
         if (around <= LinkClass::Unknown) {
             if (hot != link.hotRanks.end())
                 placement = { LinkClass::Hot, hot->value };
-            else if (!link.knownFunctions.isEmpty() && !(name && link.knownFunctions.contains(*name)))
+            else if (!(name && link.knownFunctions.contains(*name)))
                 placement.linkClass = LinkClass::Unknown;
         }
         if (!link.placements.add(&executable, placement).isNewEntry)
