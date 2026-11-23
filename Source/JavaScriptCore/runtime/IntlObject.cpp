@@ -76,6 +76,7 @@
 #include <wtf/HashSet.h>
 #include <wtf/Language.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/UniqueArray.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringHash.h>
@@ -2049,6 +2050,14 @@ String toPrimaryIanaTimeZoneIdentifier(StringView timeZone)
     return toPrimaryIanaTimeZoneIdentifier(timeZone.span16());
 }
 
+// The primary identifier that a name of ICU's canonical enumeration gives the table below, when it gives one.
+static std::optional<String> primaryTimeZoneIdentifierOfCanonicalICUTimeZone(StringView canonical)
+{
+    if (!isValidTimeZoneNameFromICUTimeZone(canonical))
+        return std::nullopt;
+    return canonicalizeTimeZoneNameFromICUTimeZone(toPrimaryIanaTimeZoneIdentifier(canonical));
+}
+
 // Combined table of all accepted IANA time zone identifiers (primaries + Backward links),
 // indexed by TimeZoneID. Primaries come first (sorted by code-point order), aliases follow
 // (also sorted). Each entry carries its as-stored, case-normalized identifier and a
@@ -2093,11 +2102,8 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
                 const char* pointer = uenum_next(enumeration.get(), &length, &status);
                 ASSERT(U_SUCCESS(status));
                 StringView timeZone(unsafeMakeSpan(pointer, static_cast<size_t>(length)));
-                if (!isValidTimeZoneNameFromICUTimeZone(timeZone))
-                    continue;
-                String primary = toPrimaryIanaTimeZoneIdentifier(timeZone);
-                if (auto mapped = canonicalizeTimeZoneNameFromICUTimeZone(WTF::move(primary)))
-                    primaryNames.append(WTF::move(mapped.value()));
+                if (auto primary = primaryTimeZoneIdentifierOfCanonicalICUTimeZone(timeZone))
+                    primaryNames.append(WTF::move(primary.value()));
             }
             std::ranges::sort(primaryNames, WTF::codePointCompareLessThan);
             auto end = std::unique(primaryNames.begin(), primaryNames.end());
@@ -2171,16 +2177,6 @@ static const Vector<TimeZoneEntry>& intlAvailableTimeZoneEntries()
     return entries;
 }
 
-const String& intlTimeZoneIDToString(TimeZoneID id)
-{
-    return intlAvailableTimeZoneEntries()[id].identifier;
-}
-
-TimeZoneID intlPrimaryTimeZoneID(TimeZoneID id)
-{
-    return intlAvailableTimeZoneEntries()[id].primary;
-}
-
 // Index from any accepted time zone string (case-insensitive) to that string's own
 // TimeZoneID. Backward-link aliases like "Asia/Calcutta" map to the alias's TimeZoneID
 // (whose entry's `primary` field points to "Asia/Kolkata"); equality and ICU access
@@ -2202,7 +2198,8 @@ static const UncheckedKeyHashMap<String, TimeZoneID, ASCIICaseInsensitiveHash>& 
     return index.get();
 }
 
-std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
+// The entry of the table for a name, as an index into intlAvailableTimeZoneEntries().
+static std::optional<TimeZoneID> findAvailableTimeZoneEntry(StringView name)
 {
     const auto& entries = intlAvailableTimeZoneEntries();
     unsigned primaryCount = primaryTimeZoneCount;
@@ -2227,12 +2224,447 @@ std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
     return entry->value;
 }
 
+#if !USE(BUN_JSC_ADDITIONS)
+
+const String& intlTimeZoneIDToString(TimeZoneID id)
+{
+    return intlAvailableTimeZoneEntries()[id].identifier;
+}
+
+TimeZoneID intlPrimaryTimeZoneID(TimeZoneID id)
+{
+    return intlAvailableTimeZoneEntries()[id].primary;
+}
+
+std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
+{
+    return findAvailableTimeZoneEntry(name);
+}
+
+#else
+
+// Bun names one time zone without listing every time zone.
+//
+// The table above takes two enumerations of ICU's zones and a primary identifier for every name: about 21 million
+// instructions, once per process. To ask ICU about one name takes about 30 thousand for a primary identifier and up to
+// 60 thousand for an alias, and the host's zone is the first name of a process (the first local-time read of a Date).
+// So here a TimeZoneID is the order in which the process first named an identifier, with UTC first. No code orders
+// TimeZoneIDs or keeps one beyond the process.
+//
+// Which names are zones, how a zone is spelled and what its primary is are the rules of the table, asked of ICU for
+// one name. Intl.supportedValuesOf("timeZone") asks them about every name that ICU lists, at the cost of the table.
+// So in Bun only the tests build the table: JSTests/stress/bun-time-zone-by-name-agrees-with-table.js holds the two
+// against each other.
+
+// How many times the code below has asked ICU about a name. A test reads here that a name was answered without ICU.
+static std::atomic<unsigned> questionsAboutICUTimeZones { 0 };
+
+static void willAskICUAboutTimeZone()
+{
+    questionsAboutICUTimeZones.fetch_add(1, std::memory_order_relaxed);
+}
+
+// ICU's canonical (CLDR) identifier of `name`, when `name` is one of ICU's zones.
+static bool canonicalIDOfICUTimeZone(std::span<const char16_t> name, Vector<char16_t, 32>& canonical)
+{
+    if (name.empty())
+        return false;
+    willAskICUAboutTimeZone();
+    UBool isSystemID = false;
+    auto status = callBufferProducingFunction(ucal_getCanonicalTimeZoneID, name.data(), static_cast<int32_t>(name.size()), canonical, &isSystemID);
+    return U_SUCCESS(status) && isSystemID;
+}
+
+// What step 1 of the table gives each canonical identifier of ICU that a name has asked for. An alias has the canonical
+// identifier of its primary, and the table asks ICU once for the two. The strings never leave the map, so they are
+// read under its lock only.
+static Lock primaryOfCanonicalICUTimeZoneLock;
+static UncheckedKeyHashMap<String, String>& primaryOfCanonicalICUTimeZone() WTF_REQUIRES_LOCK(primaryOfCanonicalICUTimeZoneLock)
+{
+    static NeverDestroyed<UncheckedKeyHashMap<String, String>> map;
+    return map;
+}
+
+// Whether step 1 of the table has `name`.
+//
+// ICU lists a name in its canonical enumeration when the name is one of its zones and is its own canonical identifier
+// (initMap in ICU's timezone.cpp). The canonical identifier of `name` is the one such name that can give `name`, so it
+// is the only one to ask.
+static bool isPrimaryTimeZoneIdentifier(StringView name)
+{
+    // ICU takes no identifier longer than this (ZID_KEY_MAX in its zonemeta.cpp), so a longer name is not copied.
+    constexpr unsigned longestICUIdentifier = 128;
+    if (name.length() > longestICUIdentifier)
+        return false;
+    auto characters = name.upconvertedCharacters();
+    Vector<char16_t, 32> canonical;
+    if (!canonicalIDOfICUTimeZone(characters.span(), canonical))
+        return false;
+    StringView canonicalName { canonical.span() };
+
+    {
+        Locker locker { primaryOfCanonicalICUTimeZoneLock };
+        auto& primaryOfCanonical = primaryOfCanonicalICUTimeZone();
+        auto known = primaryOfCanonical.find<StringViewHashTranslator>(canonicalName);
+        if (known != primaryOfCanonical.end())
+            return StringView(known->value) == name;
+    }
+
+    // ICU is asked without the lock. Its answer does not depend on who asks.
+    bool isOwnCanonical = canonicalName == name;
+    if (!isOwnCanonical) {
+        Vector<char16_t, 32> canonicalOfCanonical;
+        isOwnCanonical = canonicalIDOfICUTimeZone(canonical.span(), canonicalOfCanonical) && equalSpans(canonicalOfCanonical.span(), canonical.span());
+    }
+    String primary;
+    if (isOwnCanonical) {
+        willAskICUAboutTimeZone();
+        primary = primaryTimeZoneIdentifierOfCanonicalICUTimeZone(canonicalName).value_or(String());
+    }
+    bool isPrimary = StringView(primary) == name;
+
+    Locker locker { primaryOfCanonicalICUTimeZoneLock };
+    primaryOfCanonicalICUTimeZone().add(canonicalName.toString(), WTF::move(primary));
+    return isPrimary;
+}
+
+// Immortal, because the threads of every VM read the identifiers. 8-bit, as the characters of an identifier allow.
+static String immortalTimeZoneIdentifier(StringView identifier)
+{
+    if (identifier.is8Bit())
+        return StringImpl::createStaticStringImpl(identifier.span8());
+    auto characters = identifier.span16();
+    if (!WTF::charactersAreAllLatin1(characters))
+        return StringImpl::createStaticStringImpl(characters);
+    Vector<Latin1Character, 64> narrow(characters.size(), [&](size_t index) {
+        return static_cast<Latin1Character>(characters[index]);
+    });
+    return StringImpl::createStaticStringImpl(narrow.span());
+}
+
+// The names that ucal_openTimeZones gives. Step 2 of the table takes its names from there, and every primary of step 1
+// is one of them. This lists the names and asks ICU nothing about them: a tenth of the cost of the table.
+struct ICUTimeZoneNames {
+    // In ICU's order.
+    Vector<String> names;
+    // Any case of a name finds its place in `names`.
+    UncheckedKeyHashMap<String, unsigned, ASCIICaseInsensitiveHash> indexes;
+    // Set once the rules have said that the name is no zone: the registry keeps only the names that are zones.
+    UniqueArray<std::atomic<bool>> isNoTimeZone;
+};
+
+static std::atomic<bool> hasListedICUTimeZoneNames { false };
+
+static const ICUTimeZoneNames& icuTimeZoneNames()
+{
+    static LazyNeverDestroyed<ICUTimeZoneNames> names;
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [&] {
+        Vector<String> list;
+        UncheckedKeyHashMap<String, unsigned, ASCIICaseInsensitiveHash> indexes;
+        UErrorCode status = U_ZERO_ERROR;
+        auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucal_openTimeZones(&status));
+        ASSERT(U_SUCCESS(status));
+        if (enumeration) {
+            int32_t count = uenum_count(enumeration.get(), &status);
+            ASSERT(U_SUCCESS(status));
+            list.reserveInitialCapacity(std::max(count, 0));
+            indexes.reserveInitialCapacity(std::max(count, 0));
+        }
+        while (enumeration) {
+            status = U_ZERO_ERROR;
+            int32_t length = 0;
+            const char16_t* name = uenum_unext(enumeration.get(), &length, &status);
+            ASSERT(U_SUCCESS(status));
+            if (!name)
+                break;
+            String identifier = immortalTimeZoneIdentifier(std::span { name, static_cast<size_t>(length) });
+            if (indexes.add(identifier, list.size()).isNewEntry)
+                list.append(WTF::move(identifier));
+        }
+        auto isNoTimeZone = makeUniqueArray<std::atomic<bool>>(list.size());
+        names.construct(ICUTimeZoneNames { WTF::move(list), WTF::move(indexes), WTF::move(isNoTimeZone) });
+        hasListedICUTimeZoneNames.store(true, std::memory_order_release);
+    });
+    return names.get();
+}
+
+// Steps 1 and 2 of the table for one name: the identifier as ICU spells it, and its primary.
+static std::optional<TimeZoneIdentifiers> availableTimeZoneIdentifiers(StringView name)
+{
+    // A primary identifier as ICU spells it needs no list. Once there is a list, a name that is not on it costs one
+    // lookup, where ICU takes about 20 thousand instructions to say that it does not know a name.
+    if (!hasListedICUTimeZoneNames.load(std::memory_order_acquire) && isPrimaryTimeZoneIdentifier(name))
+        return TimeZoneIdentifiers { name.toString(), name.toString() };
+
+    auto& names = icuTimeZoneNames();
+    auto iterator = names.indexes.find<ASCIICaseInsensitiveStringViewHashTranslator>(name);
+    if (iterator == names.indexes.end())
+        return std::nullopt;
+    auto& isNoTimeZone = names.isNoTimeZone[iterator->value];
+    if (isNoTimeZone.load(std::memory_order_relaxed))
+        return std::nullopt;
+    const String& icuName = iterator->key;
+    if (isPrimaryTimeZoneIdentifier(icuName))
+        return TimeZoneIdentifiers { icuName, icuName };
+    if (!isNonIANA(icuName)) {
+        willAskICUAboutTimeZone();
+        String primary = toPrimaryIanaTimeZoneIdentifier(StringView(icuName));
+        if (isPrimaryTimeZoneIdentifier(primary))
+            return TimeZoneIdentifiers { icuName, WTF::move(primary) };
+    }
+    isNoTimeZone.store(true, std::memory_order_relaxed);
+    return std::nullopt;
+}
+
+// The identifiers that the process has named. A read takes no lock: a zone is complete before another thread can find
+// it and is never changed, moved or freed after that, and an index that is replaced stays as it is.
+class TimeZoneRegistry {
+    WTF_MAKE_NONCOPYABLE(TimeZoneRegistry);
+public:
+    struct Zone {
+        String identifier;
+        TimeZoneID id;
+        TimeZoneID primary;
+        unsigned hash;
+    };
+
+    constexpr TimeZoneRegistry() = default;
+
+    const Zone& zone(TimeZoneID id)
+    {
+        if (id >= m_zoneCount.load(std::memory_order_acquire)) [[unlikely]]
+            didAskForUnknownZone(id);
+        auto place = placeOf(id);
+        return m_segments[place.segment].load(std::memory_order_acquire)[place.offset];
+    }
+
+    std::optional<TimeZoneID> resolve(StringView name)
+    {
+        unsigned hash = ASCIICaseInsensitiveStringViewHashTranslator::hash(name);
+        if (auto* zone = find(name, hash)) [[likely]]
+            return zone->id;
+        return resolveSlow(name, hash);
+    }
+
+private:
+    struct Index {
+        using Slot = std::atomic<const Zone*>;
+
+        static Index* create(unsigned slotCount, Index* replaced)
+        {
+            // One allocation of fastMalloc, slots behind the header: a find() reads the index and then its slots.
+            auto* index = new (NotNull, fastMalloc(sizeof(Index) + slotCount * sizeof(Slot))) Index { slotCount - 1, replaced };
+            for (unsigned slot = 0; slot < slotCount; ++slot)
+                new (NotNull, index->slots() + slot) Slot { nullptr };
+            return index;
+        }
+
+        Slot* slots() { return std::bit_cast<Slot*>(this + 1); }
+        const Slot* slots() const { return std::bit_cast<const Slot*>(this + 1); }
+
+        void place(const Zone& zone)
+        {
+            unsigned slot = zone.hash & mask;
+            while (slots()[slot].load(std::memory_order_relaxed))
+                slot = (slot + 1) & mask;
+            slots()[slot].store(&zone, std::memory_order_release);
+        }
+
+        unsigned mask;
+        // A reader may still be in an index that was replaced, so it is kept.
+        Index* replaced;
+    };
+    static_assert(!(sizeof(Index) % alignof(Index::Slot)));
+
+    // Segment n has room for zonesInFirstSegment << n zones, so a zone never moves.
+    static constexpr unsigned zonesInFirstSegment = 8;
+    static constexpr unsigned segmentCount = 29;
+    struct Place {
+        unsigned segment;
+        unsigned offset;
+    };
+    static Place placeOf(TimeZoneID id)
+    {
+        unsigned segment = std::bit_width(id / zonesInFirstSegment + 1) - 1;
+        return { segment, id - ((1u << segment) - 1) * zonesInFirstSegment };
+    }
+
+    // Any case of an identifier finds it, as in the index of the table.
+    const Zone* find(StringView name, unsigned hash) const
+    {
+        auto* index = m_index.load(std::memory_order_acquire);
+        if (!index)
+            return nullptr;
+        auto* slots = index->slots();
+        for (unsigned slot = hash & index->mask;; slot = (slot + 1) & index->mask) {
+            auto* zone = slots[slot].load(std::memory_order_acquire);
+            if (!zone)
+                return nullptr;
+            if (zone->hash == hash && equalIgnoringASCIICase(StringView(zone->identifier), name))
+                return zone;
+        }
+    }
+
+    // TimeZone() is UTC and asks no one, so UTC is the first identifier, whatever the process names first.
+    void addUTCIfEmpty() WTF_REQUIRES_LOCK(m_lock)
+    {
+        if (!m_zoneCount.load(std::memory_order_relaxed))
+            RELEASE_ASSERT(add("UTC"_s, std::nullopt).id == utcTimeZoneID());
+    }
+
+    NEVER_INLINE void didAskForUnknownZone(TimeZoneID id)
+    {
+        Locker locker { m_lock };
+        addUTCIfEmpty();
+        RELEASE_ASSERT(id < m_zoneCount.load(std::memory_order_relaxed));
+    }
+
+    NEVER_INLINE std::optional<TimeZoneID> resolveSlow(StringView name, unsigned hash)
+    {
+        if (!m_zoneCount.load(std::memory_order_acquire)) {
+            {
+                Locker locker { m_lock };
+                addUTCIfEmpty();
+            }
+            if (auto* zone = find(name, hash))
+                return zone->id;
+        }
+        // ICU is asked without the lock. Its answer does not depend on who asks, and add() keeps the first one.
+        auto identifiers = availableTimeZoneIdentifiers(name);
+        if (!identifiers)
+            return std::nullopt;
+        Locker locker { m_lock };
+        auto& primary = add(identifiers->primary, std::nullopt);
+        if (identifiers->identifier == identifiers->primary)
+            return primary.id;
+        return add(identifiers->identifier, primary.id).id;
+    }
+
+    const Zone& add(const String& identifier, std::optional<TimeZoneID> primary) WTF_REQUIRES_LOCK(m_lock)
+    {
+        unsigned hash = ASCIICaseInsensitiveStringViewHashTranslator::hash(identifier);
+        if (auto* existing = find(identifier, hash))
+            return *existing;
+
+        TimeZoneID id = m_zoneCount.load(std::memory_order_relaxed);
+        auto place = placeOf(id);
+        RELEASE_ASSERT(place.segment < segmentCount);
+        Zone* segment = m_segments[place.segment].load(std::memory_order_relaxed);
+        if (!segment) {
+            segment = static_cast<Zone*>(fastMalloc((zonesInFirstSegment << place.segment) * sizeof(Zone)));
+            m_segments[place.segment].store(segment, std::memory_order_release);
+        }
+        String immortal = identifier.impl()->isStatic() ? identifier : immortalTimeZoneIdentifier(identifier);
+        auto* zone = new (NotNull, &segment[place.offset]) Zone { WTF::move(immortal), id, primary.value_or(id), hash };
+        m_zoneCount.store(id + 1, std::memory_order_release);
+
+        Index* index = m_index.load(std::memory_order_relaxed);
+        if (!index || 2 * (id + 1) > index->mask + 1) {
+            // What a reader does not find in the index that this replaces, it asks for under the lock.
+            index = Index::create(std::max<unsigned>(16, std::bit_ceil(4 * (id + 1))), index);
+            for (TimeZoneID earlier = 0; earlier < id; ++earlier)
+                index->place(this->zone(earlier));
+            m_index.store(index, std::memory_order_release);
+        }
+        index->place(*zone);
+        return *zone;
+    }
+
+    Lock m_lock;
+    std::atomic<Zone*> m_segments[segmentCount] { };
+    std::atomic<unsigned> m_zoneCount { 0 };
+    std::atomic<Index*> m_index { nullptr };
+};
+
+static constinit TimeZoneRegistry timeZoneRegistry;
+
+const String& intlTimeZoneIDToString(TimeZoneID id)
+{
+    return timeZoneRegistry.zone(id).identifier;
+}
+
+TimeZoneID intlPrimaryTimeZoneID(TimeZoneID id)
+{
+    return timeZoneRegistry.zone(id).primary;
+}
+
+std::optional<TimeZoneID> intlResolveTimeZoneID(StringView name)
+{
+    return timeZoneRegistry.resolve(name);
+}
+
+static std::atomic<bool> hasListedPrimaryTimeZoneIdentifiers { false };
+
+// The primary identifiers, sorted: what the rules say about every name that ICU lists. The cost of the table, once,
+// and after it the registry has every zone.
+static const Vector<String>& primaryTimeZoneIdentifiers()
+{
+    static LazyNeverDestroyed<Vector<String>> primaries;
+    static std::once_flag onceKey;
+    std::call_once(onceKey, [&] {
+        Vector<String> identifiers;
+        for (auto& name : icuTimeZoneNames().names) {
+            auto id = timeZoneRegistry.resolve(name);
+            if (!id)
+                continue;
+            auto& zone = timeZoneRegistry.zone(*id);
+            if (zone.primary == zone.id)
+                identifiers.append(zone.identifier);
+        }
+        // ICU lists its names in this order.
+        if (!std::ranges::is_sorted(identifiers, WTF::codePointCompareLessThan))
+            std::ranges::sort(identifiers, WTF::codePointCompareLessThan);
+        primaries.construct(WTF::move(identifiers));
+        hasListedPrimaryTimeZoneIdentifiers.store(true, std::memory_order_release);
+    });
+    return primaries.get();
+}
+
+bool intlHasListedICUTimeZoneNamesForTesting()
+{
+    return hasListedICUTimeZoneNames.load(std::memory_order_acquire);
+}
+
+bool intlHasListedPrimaryTimeZoneIdentifiersForTesting()
+{
+    return hasListedPrimaryTimeZoneIdentifiers.load(std::memory_order_acquire);
+}
+
+unsigned intlQuestionsAboutICUTimeZonesForTesting()
+{
+    return questionsAboutICUTimeZones.load(std::memory_order_relaxed);
+}
+
+Vector<String> intlTimeZoneTableForTesting()
+{
+    return intlAvailableTimeZoneEntries().map([](auto& entry) {
+        return entry.identifier;
+    });
+}
+
+std::optional<TimeZoneIdentifiers> intlTimeZoneInTableForTesting(StringView name)
+{
+    auto entry = findAvailableTimeZoneEntry(name);
+    if (!entry)
+        return std::nullopt;
+    auto& entries = intlAvailableTimeZoneEntries();
+    return TimeZoneIdentifiers { entries[*entry].identifier, entries[entries[*entry].primary].identifier };
+}
+
+std::optional<TimeZoneIdentifiers> intlTimeZoneByNameForTesting(StringView name)
+{
+    return availableTimeZoneIdentifiers(name);
+}
+
+#endif // USE(BUN_JSC_ADDITIONS)
+
 std::optional<AvailableNamedTimeZone> intlAvailableNamedTimeZone(StringView name)
 {
     auto id = intlResolveTimeZoneID(name);
     if (!id)
         return std::nullopt;
-    return AvailableNamedTimeZone { *id, intlAvailableTimeZoneEntries()[*id].identifier };
+    return AvailableNamedTimeZone { *id, intlTimeZoneIDToString(*id) };
 }
 
 String TimeZone::toString() const
@@ -2261,6 +2693,7 @@ String TimeZone::toICUString() const
     return makeString("GMT"_s, negative ? '-' : '+', pad('0', 2, totalMinutes / 60), pad('0', 2, totalMinutes % 60));
 }
 
+#if !USE(BUN_JSC_ADDITIONS)
 TimeZoneID utcTimeZoneIDStorage { std::numeric_limits<TimeZoneID>::max() };
 TimeZoneID utcTimeZoneIDSlow()
 {
@@ -2272,6 +2705,7 @@ TimeZoneID utcTimeZoneIDSlow()
     });
     return utcTimeZoneIDStorage;
 }
+#endif
 
 void initializeAvailableTimeZones()
 {
@@ -2281,12 +2715,16 @@ void initializeAvailableTimeZones()
 // https://tc39.es/ecma402/#sec-availableprimarytimezoneidentifiers
 static JSArray* availablePrimaryTimeZoneIdentifiers(JSGlobalObject* globalObject)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    return createArrayFromStringVector(globalObject, primaryTimeZoneIdentifiers());
+#else
     const auto& entries = intlAvailableTimeZoneEntries();
     unsigned primaryCount = primaryTimeZoneCount;
     Vector<String> primaries(ReserveCapacityTag { }, primaryCount);
     for (unsigned i = 0; i < primaryCount; ++i)
         primaries.append(entries[i].identifier);
     return createArrayFromStringVector(globalObject, primaries);
+#endif
 }
 
 // https://tc39.es/proposal-intl-enumeration/#sec-availableunits
