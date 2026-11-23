@@ -36,6 +36,11 @@ namespace JSC {
 
 const ClassInfo ModuleRegistryEntry::s_info = { "ModuleRegistryEntry"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(ModuleRegistryEntry) };
 
+#if USE(BUN_JSC_ADDITIONS)
+// m_asyncContext does not grow the cell: an entry takes 96 bytes with it and without it.
+static_assert(sizeof(ModuleRegistryEntry) <= 96);
+#endif
+
 ModuleRegistryEntry::ModuleRegistryEntry(VM& vm, Structure* structure, JSModuleLoader* loader, Identifier key, ScriptFetchParameters::Type type, RefPtr<ScriptFetcher> scriptFetcher)
     : Base(vm, structure)
     , m_key(WTF::move(key))
@@ -69,6 +74,9 @@ void ModuleRegistryEntry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_modulePromise);
     visitor.append(thisObject->m_loadPromise);
     visitor.append(thisObject->m_error);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleRegistryEntry);
@@ -121,8 +129,16 @@ JSPromise* ModuleRegistryEntry::ensureFetchPromise(JSGlobalObject* globalObject)
     return promise;
 }
 
-JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject)
+JSPromise* ModuleRegistryEntry::ensureModulePromise(JSGlobalObject* globalObject, JSValue asyncContext)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // The first load that asks says under which async context the record is made, until it is made. Not for a loader
+    // that has an async context of its own: the host runs the body of its modules in that one.
+    if (asyncContext && !m_asyncContext && !m_record && m_status <= Status::Fetching && !m_loader->asyncContext())
+        m_asyncContext.set(globalObject->vm(), this, asyncContext);
+#else
+    UNUSED_PARAM(asyncContext);
+#endif
     if (m_modulePromise)
         return m_modulePromise.get();
 
@@ -227,21 +243,34 @@ void ModuleRegistryEntry::setEvaluationError(JSGlobalObject* globalObject, JSVal
 void ModuleRegistryEntry::setStatus(Status status)
 {
     m_status = status;
+#if USE(BUN_JSC_ADDITIONS)
+    // A settled entry keeps no async context: see takeAsyncContext().
+    if (status > Status::Fetching)
+        m_asyncContext.clear();
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void ModuleRegistryEntry::giveBackAsyncContext(VM& vm, JSValue asyncContext)
+{
+    if (asyncContext && m_status <= Status::Fetching)
+        m_asyncContext.set(vm, this, asyncContext);
+}
+#endif
 
 void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, SourceCode&& sourceCode)
 {
     provideFetch(globalObject, JSSourceCode::create(globalObject->vm(), WTF::move(sourceCode)));
 }
 
-void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSValue moduleData)
+void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSValue moduleData, JSValue asyncContext)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(m_status == Status::New);
 
-    ensureModulePromise(globalObject);
+    ensureModulePromise(globalObject, asyncContext);
     RETURN_IF_EXCEPTION(scope, void());
 
     scope.release();
@@ -255,7 +284,7 @@ void ModuleRegistryEntry::provideModule(VM& vm, AbstractModuleRecord* record)
     ASSERT(!m_record);
     ASSERT(m_status == Status::New || m_status == Status::Fetching);
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
+    setStatus(Status::Fetched);
     // Promises some in-flight load already created for this entry are settled now (with the record standing in for
     // the source: moduleLoadTopSettled has nothing to provide for it); their pending reactions see the settled module
     // promise and bail.
@@ -289,7 +318,7 @@ void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractMo
         return;
     VM& vm = globalObject->vm();
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
+    setStatus(Status::Fetched);
     JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
     modulePromise->markAsHandled();
     modulePromise->fulfill(vm, record);
@@ -311,7 +340,7 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
     ASSERT(m_status == Status::Fetching);
 #endif
     m_record.set(vm, this, record);
-    m_status = Status::Fetched;
+    setStatus(Status::Fetched);
 }
 
 } // namespace JSC

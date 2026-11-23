@@ -147,6 +147,8 @@ class MicrotaskCallCache;
 class MicrotaskQueue;
 class NativeExecutable;
 #if USE(BUN_JSC_ADDITIONS)
+class ModuleEvaluationAsyncContextScope;
+class ModuleLoaderJobAsyncContextScope;
 class QueuedTask;
 enum class InternalMicrotask : uint8_t;
 namespace FFI { class CallbackEntryScope; }
@@ -1570,9 +1572,24 @@ public:
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
+    // The scope of whoever evaluates modules now: a job of the module loader, or a host function for the script that
+    // calls it. CyclicModuleRecord::executeAsync() asks it for the async context of the modules that wait for a
+    // top-level await.
+    ModuleEvaluationAsyncContextScope* m_moduleEvaluationAsyncContextScope { nullptr };
+    // For the host: what no load of a module may keep of the async context of its caller. It is given what is current
+    // where a load begins, and returns what the load keeps (JSModuleLoader::asyncContextForLoad()). Bun.ModuleGraph
+    // has the context of a graph in the slot, beside the stores of AsyncLocalStorage, and what runs in the context of a
+    // graph ends with the graph: a hook of the host, or a module of another loader, must not. So Bun lets a load that
+    // begins in the context of a graph keep nothing. One filter for every loader of the VM, node:vm contexts included:
+    // they share the slot.
+    JSValue (*asyncContextOfLoadFilter)(JSGlobalObject*, JSValue asyncContext) { nullptr };
 #if ENABLE(AOT)
     // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
     SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
+    // The scope of the innermost job of the module loader on the stack that entered an async context:
+    // ModuleLoaderJobAsyncContextScope. The AOT run time notes it where the files of a load begin to run ahead of the
+    // loader. It points into the stack, and the scope takes itself out at its end.
+    ModuleLoaderJobAsyncContextScope* m_asyncContextScopeOfModuleLoaderJob { nullptr };
 #endif
     // The queue that reactions are diverted to.
     SynchronousModuleQueue* synchronousModuleQueue() const
@@ -1595,6 +1612,8 @@ public:
     private:
         VM& m_vm;
         SynchronousModuleQueue m_queue;
+        // What a synchronous load evaluates by itself is no job of the module loader.
+        ModuleEvaluationAsyncContextScope* m_moduleEvaluationAsyncContextScope;
     };
 private:
 #endif

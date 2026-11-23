@@ -12,6 +12,7 @@
 #include "AOTDriver.h"
 #include "AOTIRParser.h"
 #include "AOTImageFormat.h"
+#include "AOTModules.h"
 #include "AOTNativeTest.h"
 #include "AOTNativeTestReasons.h"
 #include "AOTOptionWords.h"
@@ -22,6 +23,11 @@
 #include "AOTTestHarness.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "AsyncContextSwapScope.h"
+#include "JSCInlines.h"
+#include "JSLock.h"
+#include "JSModuleLoader.h"
+#include "Strong.h"
 #include <initializer_list>
 #include <stdlib.h>
 #include <wtf/DataLog.h>
@@ -865,6 +871,60 @@ function f5 name="requireLate" results=[{type=anything}] {
 }
 )IR"_s;
 
+static constexpr ASCIILiteral fileOfImportThatCallsImport = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+module m1 path="/graph.js" displayPath="graph.js" body=f1 requests=[{target=m4 completes=true}]
+module m2 path="/file.cjs" displayPath="file.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
+module m3 path="/inner.js" displayPath="inner.js" body=f3
+module m4 path="#4" displayPath="file.cjs" exportRule=CommonJs body=f4 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
+entry module=m0
+variable g0 name="exports" module=m2 declared={type=anything} initialization=Undefined
+variable g1 name="default" module=m4 declared={type=anything}
+function f0 name="main" kind=Module results=[{type=anything}] {
+    v0 = NewClosure function=f5
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="register" [isFreeName]
+    v3 = Call v2, -, v0
+    Return
+}
+function f1 name="graph" module=m1 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="graph.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f2 name="file" module=m2 kind=CommonJsModule flags=[IsSloppy] results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="file.cjs"
+    v3 = String string="begins"
+    v4 = Call v1, -, v3, v2
+    v5 = ImportModule module=m3 referrer=m2
+    v6 = String string="goes on behind import()"
+    v7 = Call v1, -, v6, v2
+    v8 = NewDictionary
+    PutModuleVariable v8 variable=g0
+    Return
+}
+function f3 name="inner" module=m3 kind=Module results=[{type=anything}] {
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="report" [isFreeName]
+    v2 = String string="runs"
+    v3 = String string="inner.js"
+    v4 = Call v1, -, v2, v3
+    Return
+}
+function f4 name="facadeOfFile" module=m2 kind=Module results=[{type=anything}] {
+    EvaluateModule module=m2 referrer=m4 [isBare]
+    Return
+}
+function f5 name="importGraph" results=[{type=anything}] {
+    v0 = ImportModule module=m1 referrer=m0
+    Return v0
+}
+)IR"_s;
+
 static constexpr ASCIILiteral scriptStart = R"js(
 globalThis.report = (label, value) => print(label + ": " + value);
 globalThis.id = value => value;
@@ -897,7 +957,7 @@ static std::unique_ptr<CompileOutput> compileOnThisThread(const String& programT
     return output;
 }
 
-static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+static String runInShell(const String& programText, ASCIILiteral referencesWord, OptionWords optionWords, const String& scriptAfterEntryPoint = scriptEnd, OptionWords optionsOfShell = { })
 {
     std::unique_ptr<CompileOutput> output;
     runOnBuildThread([&] {
@@ -911,17 +971,20 @@ static String runInShell(const String& programText, ASCIILiteral referencesWord,
     };
 
     String shell = shellPath();
-    ChildProcessResult result = ChildProcessLauncher(String(shell), { }).run(arguments.span());
+    Vector<String> sharedArguments;
+    for (ASCIILiteral option : optionsOfShell)
+        sharedArguments.append(String(option));
+    ChildProcessResult result = ChildProcessLauncher(String(shell), WTF::move(sharedArguments)).run(arguments.span());
     if (!result.exitedWith(EXIT_SUCCESS))
         dataLogLn(shell, " ", result.description(), "\n", result.output);
     checkThatChildSucceeded(__FILE__, __LINE__, optionWordsOfReason(referencesWord, optionWords), result, EXIT_SUCCESS);
     return makeStringByReplacingAll(result.output, "\r\n"_s, "\n"_s);
 }
 
-static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, ASCIILiteral scriptAfterEntryPoint = scriptEnd)
+static void checkShellOutput(const String& programText, OptionWords optionWords, ASCIILiteral expectedOutput, const String& scriptAfterEntryPoint = scriptEnd, OptionWords optionsOfShell = { })
 {
     for (ASCIILiteral referencesWord : { "references=wide"_s, "references=narrow"_s }) {
-        String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint);
+        String output = runInShell(programText, referencesWord, optionWords, scriptAfterEntryPoint, optionsOfShell);
         checkPrintedLines(__FILE__, __LINE__, optionWordsOfReason(referencesWord, optionWords), output, expectedOutput);
     }
 }
@@ -1062,6 +1125,384 @@ runs: later.js
     report("the jobs behind it", "have run");
 }).catch(error => print("the script threw " + error));
 )js"_s);
+}
+
+// The jobs of other loads that run behind a file of an import() under an async context read no async context of that import().
+static void testImportsInFlightWhereFileOfImportUnderAsyncContextCallsImport()
+{
+    auto textOfModule = [](ASCIILiteral name) {
+        return makeString("report(\"runs\", \""_s, name, "\");\n"_s).utf8();
+    };
+    auto textOfFirst = textOfModule("first.js"_s);
+    auto textOfSecond = textOfModule("second.js"_s);
+    auto textOfThird = textOfModule("third.js"_s);
+    auto textOfFourth = textOfModule("fourth.js"_s);
+    TemporaryFile first(".js"_s, byteCast<uint8_t>(textOfFirst.span()));
+    TemporaryFile second(".js"_s, byteCast<uint8_t>(textOfSecond.span()));
+    TemporaryFile third(".js"_s, byteCast<uint8_t>(textOfThird.span()));
+    TemporaryFile fourth(".js"_s, byteCast<uint8_t>(textOfFourth.span()));
+    auto quoted = [](const TemporaryFile& file) {
+        return makeString('"', makeStringByReplacingAll(file.path(), "\\"_s, "\\\\"_s), '"');
+    };
+    String script = makeString(R"js(.catch(error => print("the script threw " + error));
+drainMicrotasks();
+globalThis.report = (label, value) => print(label + ": " + value + ", under " + $vm.asyncContext());
+(async () => {
+    const others = [import()js"_s, quoted(first), R"js()];
+    await null;
+    others.push(import()js"_s, quoted(second), R"js());
+    await null;
+    others.push(import()js"_s, quoted(third), R"js());
+    await null;
+    others.push(import()js"_s, quoted(fourth), R"js());
+    $vm.setAsyncContext("the context of the import");
+    const graph = registered();
+    $vm.setAsyncContext(undefined);
+    await graph;
+    await Promise.all(others);
+    report("every import", "is loaded");
+})().catch(error => print("the script threw " + error));
+drainMicrotasks();
+)js"_s);
+    checkShellOutput(fileOfImportThatCallsImport, { }, R"(runs: first.js, under undefined
+runs: second.js, under undefined
+begins: file.cjs, under the context of the import
+runs: third.js, under undefined
+runs: fourth.js, under undefined
+goes on behind import(): file.cjs, under the context of the import
+runs: graph.js, under the context of the import
+every import: is loaded, under undefined
+runs: inner.js, under the context of the import
+)"_s, script, { "--useDollarVM=1"_s });
+}
+
+class RealmWithAsyncContext {
+    WTF_MAKE_NONCOPYABLE(RealmWithAsyncContext);
+public:
+    RealmWithAsyncContext()
+        : m_vm(VM::create())
+        , m_lock(*m_vm)
+    {
+        m_globalObject.set(vm(), JSGlobalObject::create(vm(), JSGlobalObject::createStructure(vm(), jsNull())));
+        vm().setAsyncContextTrackingEnabled();
+    }
+
+    ~RealmWithAsyncContext()
+    {
+        m_globalObject.clear();
+        m_vm = nullptr;
+    }
+
+    VM& vm() { return *m_vm; }
+    JSGlobalObject* globalObject() { return m_globalObject.get(); }
+    JSValue slot() { return AsyncContextSwapScope::current(vm(), globalObject()); }
+    void setSlot(JSValue value) { globalObject()->m_asyncContextData->putInternalField(vm(), 0, value); }
+    ModuleLoaderJobAsyncContextScope* innermostJob() { return vm().m_asyncContextScopeOfModuleLoaderJob; }
+
+private:
+    RefPtr<VM> m_vm;
+    JSLockHolder m_lock;
+    Strong<JSGlobalObject> m_globalObject;
+};
+
+// Steps inside a job of the loader read what the job found in the slot, and the job puts back what they leave there.
+static void testStepsInsideOneJobOfLoader()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofLoad = jsNumber(2);
+    const JSValue ofFile = jsNumber(3);
+    const JSValue leftBySteps = jsNumber(4);
+
+    AOT_TEST_CHECK(!realm.innermostJob());
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope job(vm, realm.globalObject(), ofLoad);
+        AOT_TEST_CHECK(job.didEnter());
+        AOT_TEST_CHECK(realm.slot() == ofLoad);
+        AOT_TEST_CHECK(realm.innermostJob() == &job);
+        AOT_TEST_CHECK(!job.outerJob());
+        realm.setSlot(ofFile);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope outsideOfJobs(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofQueue);
+            realm.setSlot(leftBySteps);
+        }
+        AOT_TEST_CHECK(realm.slot() == ofFile);
+        AOT_TEST_CHECK(realm.innermostJob() == &job);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// A job of a load that keeps no async context enters nothing: the VM does not have it, and steps inside it run under what the slot holds.
+static void testJobOfLoaderThatEntersNothing()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofFile = jsNumber(3);
+    const JSValue leftBySteps = jsNumber(4);
+
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope job(vm, realm.globalObject(), jsUndefined());
+        AOT_TEST_CHECK(!job.didEnter());
+        AOT_TEST_CHECK(!realm.innermostJob());
+        AOT_TEST_CHECK(realm.slot() == ofQueue);
+        realm.setSlot(ofFile);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope outsideOfJobs(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofFile);
+            realm.setSlot(leftBySteps);
+        }
+        AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// Steps inside two jobs of the loader read what the outermost job inside of `around` found, and each job takes itself out of the VM at its end.
+static void testStepsInsideJobsOfLoaderThatNest()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofOuterLoad = jsNumber(2);
+    const JSValue insideOuter = jsNumber(3);
+    const JSValue ofInnerLoad = jsNumber(4);
+    const JSValue insideInner = jsNumber(5);
+    const JSValue leftForInner = jsNumber(6);
+    const JSValue leftForOuter = jsNumber(7);
+
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope outer(vm, realm.globalObject(), ofOuterLoad);
+        AOT_TEST_CHECK(realm.innermostJob() == &outer);
+        realm.setSlot(insideOuter);
+        {
+            ModuleLoaderJobAsyncContextScope inner(vm, realm.globalObject(), ofInnerLoad);
+            AOT_TEST_CHECK(realm.innermostJob() == &inner);
+            AOT_TEST_CHECK(inner.outerJob() == &outer);
+            AOT_TEST_CHECK(!outer.outerJob());
+            AOT_TEST_CHECK(realm.slot() == ofInnerLoad);
+            realm.setSlot(insideInner);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfNoJob(vm, &inner);
+                AOT_TEST_CHECK(realm.slot() == insideInner);
+            }
+            AOT_TEST_CHECK(realm.slot() == insideInner);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfInner(vm, &outer);
+                AOT_TEST_CHECK(realm.slot() == insideOuter);
+                realm.setSlot(leftForInner);
+            }
+            AOT_TEST_CHECK(realm.slot() == insideInner);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfBoth(vm, nullptr);
+                AOT_TEST_CHECK(realm.slot() == ofQueue);
+                realm.setSlot(leftForOuter);
+            }
+            AOT_TEST_CHECK(realm.slot() == insideInner);
+        }
+        AOT_TEST_CHECK(realm.slot() == leftForInner);
+        AOT_TEST_CHECK(realm.innermostJob() == &outer);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftForOuter);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// Steps that run twice inside one job of the loader, one after the other: the second time they read what the first left, and the job puts back what the second left.
+static void testStepsInsideOneJobOfLoaderTwice()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofLoad = jsNumber(2);
+    const JSValue leftByFirst = jsNumber(3);
+    const JSValue leftBySecond = jsNumber(4);
+
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope job(vm, realm.globalObject(), ofLoad);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope first(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofQueue);
+            realm.setSlot(leftByFirst);
+        }
+        AOT_TEST_CHECK(realm.slot() == ofLoad);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope second(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == leftByFirst);
+            realm.setSlot(leftBySecond);
+        }
+        AOT_TEST_CHECK(realm.slot() == ofLoad);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySecond);
+}
+
+// A call of import() that is made again is a job of the loader: steps inside it read what the slot held before the call, and the call puts back what they leave.
+static void testCallMadeAgainUnderStoreIsJobOfLoader()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofFile = jsNumber(1);
+    const JSValue ofCall = jsNumber(2);
+    const JSValue leftBySteps = jsNumber(3);
+
+    realm.setSlot(ofFile);
+    {
+        ModuleEvaluationAsyncContextScope jobOfImport(vm, realm.globalObject(), ofCall, ModuleEvaluationAsyncContextScope::CallMadeAgain);
+        AOT_TEST_CHECK(jobOfImport.didEnter());
+        AOT_TEST_CHECK(realm.slot() == ofCall);
+        AOT_TEST_CHECK(realm.innermostJob() == &jobOfImport);
+        AOT_TEST_CHECK(!jobOfImport.outerJob());
+        {
+            AsyncContextOutsideModuleLoaderJobsScope outsideOfCall(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofFile);
+            realm.setSlot(leftBySteps);
+        }
+        AOT_TEST_CHECK(realm.slot() == ofCall);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// A call with no context goes on under none, over what the slot holds, and it is a job too: steps inside it read what the slot held before the call.
+static void testCallMadeAgainWithoutStoreIsJobOfLoader()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofFile = jsNumber(1);
+    const JSValue leftBySteps = jsNumber(3);
+
+    realm.setSlot(ofFile);
+    {
+        ModuleEvaluationAsyncContextScope jobOfImport(vm, realm.globalObject(), JSValue(), ModuleEvaluationAsyncContextScope::CallMadeAgain);
+        AOT_TEST_CHECK(jobOfImport.didEnter());
+        AOT_TEST_CHECK(realm.slot().isUndefined());
+        AOT_TEST_CHECK(realm.innermostJob() == &jobOfImport);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope outsideOfCall(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofFile);
+            realm.setSlot(leftBySteps);
+        }
+        AOT_TEST_CHECK(realm.slot().isUndefined());
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// In the drain of a synchronous load no job of the loader enters the context of its load. A call that is made again there still does. The steps of the synchronous load read what the caller of require() has, and a module that begins to evaluate among them hands on what is current there, and not the context of the call.
+static void testCallMadeAgainInsideSynchronousLoadIsJobOfLoader()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofCallerOfRequire = jsNumber(1);
+    const JSValue ofCall = jsNumber(2);
+    const JSValue leftBySteps = jsNumber(3);
+
+    realm.setSlot(ofCallerOfRequire);
+    {
+        VM::SynchronousModuleQueueScope synchronousLoad(vm);
+        {
+            ModuleEvaluationAsyncContextScope stepOfAnotherLoad(vm, realm.globalObject(), ofCall);
+            AOT_TEST_CHECK(!stepOfAnotherLoad.didEnter());
+            AOT_TEST_CHECK(realm.slot() == ofCallerOfRequire);
+            AOT_TEST_CHECK(JSModuleLoader::asyncContextOfModulesThatWait(vm, realm.globalObject()) == ofCall);
+        }
+        ModuleEvaluationAsyncContextScope jobOfImport(vm, realm.globalObject(), ofCall, ModuleEvaluationAsyncContextScope::CallMadeAgain);
+        AOT_TEST_CHECK(jobOfImport.didEnter());
+        AOT_TEST_CHECK(realm.slot() == ofCall);
+        AOT_TEST_CHECK(realm.innermostJob() == &jobOfImport);
+        AOT_TEST_CHECK(JSModuleLoader::asyncContextOfModulesThatWait(vm, realm.globalObject()) == ofCall);
+        {
+            AsyncContextOutsideModuleLoaderJobsScope outsideOfCall(vm, nullptr);
+            AOT_TEST_CHECK(realm.slot() == ofCallerOfRequire);
+            AOT_TEST_CHECK(JSModuleLoader::asyncContextOfModulesThatWait(vm, realm.globalObject()) == ofCallerOfRequire);
+            realm.setSlot(leftBySteps);
+        }
+        AOT_TEST_CHECK(realm.slot() == ofCall);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// A synchronous load that a job of a load under a store began: a call is made again in its drain, and the steps of the synchronous load read what the file of that job has, and not what the queue had in front of the job.
+static void testStepsOfSynchronousLoadInsideJobOfLoaderAndCallMadeAgain()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofLoad = jsNumber(2);
+    const JSValue ofCall = jsNumber(3);
+    const JSValue leftBySteps = jsNumber(4);
+
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope jobOfLoad(vm, realm.globalObject(), ofLoad);
+        ModuleLoaderJobAsyncContextScope* jobAroundStepsInFront = realm.innermostJob();
+        AOT_TEST_CHECK(jobAroundStepsInFront == &jobOfLoad);
+        {
+            VM::SynchronousModuleQueueScope synchronousLoad(vm);
+            ModuleEvaluationAsyncContextScope jobOfImport(vm, realm.globalObject(), ofCall, ModuleEvaluationAsyncContextScope::CallMadeAgain);
+            AOT_TEST_CHECK(jobOfImport.outerJob() == &jobOfLoad);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfCall(vm, jobAroundStepsInFront);
+                AOT_TEST_CHECK(realm.slot() == ofLoad);
+                realm.setSlot(leftBySteps);
+            }
+            AOT_TEST_CHECK(realm.slot() == ofCall);
+        }
+        AOT_TEST_CHECK(realm.slot() == leftBySteps);
+        AOT_TEST_CHECK(realm.innermostJob() == &jobOfLoad);
+    }
+    AOT_TEST_CHECK(realm.slot() == ofQueue);
+    AOT_TEST_CHECK(!realm.innermostJob());
+}
+
+// A file of a load under a store waits, and a call of import() is made again there. The load of the file goes on as inside its own job, and the steps in front of the file run as in front of that job: two scopes, one after the other, as in Modules::transferGraphToLoader().
+static void testLoadGoesOnAndStepsRunInsideCallMadeAgain()
+{
+    RealmWithAsyncContext realm;
+    VM& vm = realm.vm();
+    const JSValue ofQueue = jsNumber(1);
+    const JSValue ofLoad = jsNumber(2);
+    const JSValue ofFile = jsNumber(3);
+    const JSValue ofCall = jsNumber(4);
+    const JSValue leftByLoad = jsNumber(5);
+    const JSValue leftBySteps = jsNumber(6);
+
+    realm.setSlot(ofQueue);
+    {
+        ModuleLoaderJobAsyncContextScope jobOfLoad(vm, realm.globalObject(), ofLoad);
+        ModuleLoaderJobAsyncContextScope* jobAroundFiles = realm.innermostJob();
+        ModuleLoaderJobAsyncContextScope* jobAroundStepsInFront = jobAroundFiles->outerJob();
+        AOT_TEST_CHECK(jobAroundFiles == &jobOfLoad);
+        realm.setSlot(ofFile);
+        {
+            ModuleEvaluationAsyncContextScope jobOfImport(vm, realm.globalObject(), ofCall, ModuleEvaluationAsyncContextScope::CallMadeAgain);
+            AOT_TEST_CHECK(realm.innermostJob() == &jobOfImport);
+            AOT_TEST_CHECK(jobOfImport.outerJob() == &jobOfLoad);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfLaterJobs(vm, jobAroundFiles);
+                AOT_TEST_CHECK(realm.slot() == ofFile);
+                realm.setSlot(leftByLoad);
+            }
+            AOT_TEST_CHECK(realm.slot() == ofCall);
+            {
+                AsyncContextOutsideModuleLoaderJobsScope outsideOfJobs(vm, jobAroundStepsInFront);
+                AOT_TEST_CHECK(realm.slot() == ofQueue);
+                realm.setSlot(leftBySteps);
+            }
+            AOT_TEST_CHECK(realm.slot() == ofCall);
+        }
+        AOT_TEST_CHECK(realm.slot() == leftByLoad);
+        AOT_TEST_CHECK(realm.innermostJob() == &jobOfLoad);
+    }
+    AOT_TEST_CHECK(realm.slot() == leftBySteps);
+    AOT_TEST_CHECK(!realm.innermostJob());
 }
 
 static constexpr ASCIILiteral outputOfTextsInTurns = R"(runs: asks.cjs
@@ -1220,6 +1661,16 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
         { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
         { "module-programs/import-called-during-load"_s, testImportCalledDuringLoad },
+        { "module-programs/imports-in-flight-where-file-of-import-under-async-context-calls-import"_s, testImportsInFlightWhereFileOfImportUnderAsyncContextCallsImport },
+        { "module-programs/steps-inside-one-job-of-loader"_s, testStepsInsideOneJobOfLoader },
+        { "module-programs/job-of-loader-that-enters-nothing"_s, testJobOfLoaderThatEntersNothing },
+        { "module-programs/steps-inside-jobs-of-loader-that-nest"_s, testStepsInsideJobsOfLoaderThatNest },
+        { "module-programs/steps-inside-one-job-of-loader-twice"_s, testStepsInsideOneJobOfLoaderTwice },
+        { "module-programs/call-made-again-under-store-is-job-of-loader"_s, testCallMadeAgainUnderStoreIsJobOfLoader },
+        { "module-programs/call-made-again-without-store-is-job-of-loader"_s, testCallMadeAgainWithoutStoreIsJobOfLoader },
+        { "module-programs/call-made-again-inside-synchronous-load-is-job-of-loader"_s, testCallMadeAgainInsideSynchronousLoadIsJobOfLoader },
+        { "module-programs/steps-of-synchronous-load-inside-job-of-loader-and-call-made-again"_s, testStepsOfSynchronousLoadInsideJobOfLoaderAndCallMadeAgain },
+        { "module-programs/load-goes-on-and-steps-run-inside-call-made-again"_s, testLoadGoesOnAndStepsRunInsideCallMadeAgain },
         { "module-programs/texts-in-turns"_s, testTextsInTurns },
         { "module-programs/texts-in-turns-while-other-jobs-wait"_s, testTextsInTurnsWhileOtherJobsWait },
         { "module-programs/throw-through-start-of-module"_s, testThrowThroughStartOfModule },
