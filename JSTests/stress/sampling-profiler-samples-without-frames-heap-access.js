@@ -60,4 +60,21 @@ if (platformSupportsSamplingProfiler()) {
 
     Atomics.store(requests, 1, 1);
     request();
+
+    // So does leaving the VM.
+    runAsyncTest(async () => {
+        setSamplingProfilerThreadIsIdle(true);
+        for (let inARow = 0; inARow < 3;) {
+            failIfOutOfTime(() => "a wait for heap access is not idle");
+            const timer = new Promise(resolve => setTimeout(resolve, 5));
+            startSamplingProfiler();
+            const startTime = $.agent.monotonicNow();
+            await timer;
+            pauseSamplingProfiler();
+            const runs = releaseSamplingProfilerSamples().withoutFrames.filter(run => startTime < run.first);
+            const lastIdle = runs.findLastIndex(run => run.state === "Idle");
+            const next = lastIdle >= 0 && runs[lastIdle + 1];
+            inARow = next?.state === "GarbageCollector" && next.count >= 2 ? inARow + 1 : 0;
+        }
+    });
 }

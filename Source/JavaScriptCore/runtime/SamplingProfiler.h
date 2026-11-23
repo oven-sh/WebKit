@@ -229,7 +229,7 @@ public:
     void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
-    JS_EXPORT_PRIVATE void setTimingInterval(Seconds);
+    JS_EXPORT_PRIVATE void setTimingInterval(Seconds) WTF_EXCLUDES_LOCK(m_lock);
     // A deeper stack loses its outermost frames. A function that was inlined does not count.
     static constexpr size_t unlimitedStackDepth = std::numeric_limits<size_t>::max();
     JS_EXPORT_PRIVATE void setMaximumStackDepth(size_t) WTF_REQUIRES_LOCK(m_lock);
@@ -240,7 +240,7 @@ public:
             m_canExtendLastSamplesWithoutFrames = false;
     }
     bool isRecordingSamplesWithoutFrames() const WTF_REQUIRES_LOCK(m_lock) { return m_recordsSamplesWithoutFrames && !m_isPaused; }
-    // A wait beneath a JavaScript frame still belongs to that frame.
+    // A wait beneath a JavaScript frame still belongs to that frame, and one for the collector to the collector.
     void setExecutionThreadIsIdle(bool isIdle) { m_executionThreadIsIdle.storeRelaxed(isIdle); }
     JS_EXPORT_PRIVATE void start();
     void startWithLock() WTF_REQUIRES_LOCK(m_lock);
@@ -268,8 +268,8 @@ private:
     void createThreadIfNecessary() WTF_REQUIRES_LOCK(m_lock);
     void timerLoop();
     void wakeUpTimerLoop() WTF_REQUIRES_LOCK(m_lock);
-    void takeSample() WTF_REQUIRES_LOCK(m_lock);
-    bool takeStackTrace() WTF_REQUIRES_LOCK(m_lock);
+    void takeSample(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
+    bool takeStackTrace(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
     ThreadState executionThreadState();
 
     Lock m_lock;

@@ -598,12 +598,9 @@ void SamplingProfiler::timerLoop()
             continue;
         }
 
-        MonotonicTime startTime = MonotonicTime::now();
+        Seconds stackTraceProcessingTime = 0_s;
         if (m_jscExecutionThread)
-            takeSample();
-        // A stack trace takes longer than a sample without one, and must not stand for more time because of it.
-        // However long it takes, the thread gets to run before it is suspended again.
-        Seconds samplingTime = std::min(MonotonicTime::now() - startTime, m_timingInterval / 2);
+            takeSample(stackTraceProcessingTime);
 
         // Read section 6.2 of this paper for more elaboration of why we add a random
         // fluctuation here. The main idea is to prevent our timer from being in sync
@@ -612,7 +609,7 @@ void SamplingProfiler::timerLoop()
         double randomSignedNumber = (m_weakRandom.get() * 2.0) - 1.0; // A random number between [-1, 1).
         Seconds randomFluctuation = m_timingInterval * 0.2 * randomSignedNumber;
         // A wait that is over before it begins hardly lets go of the lock, which it takes to enter the VM.
-        Seconds delay = std::max(m_timingInterval - samplingTime + randomFluctuation, 10_us);
+        Seconds delay = std::max(m_timingInterval - std::min(m_timingInterval, stackTraceProcessingTime) + randomFluctuation, 10_us);
 
 #if OS(WINDOWS)
         // Any other timed wait is cut off to whole milliseconds: it spins for less than one, and otherwise lasts until the next
@@ -630,19 +627,18 @@ void SamplingProfiler::timerLoop()
 
 auto SamplingProfiler::executionThreadState() -> ThreadState
 {
-    bool hasJavaScriptOnStack = !!m_vm.topEntryFrame;
-    if (!hasJavaScriptOnStack && m_executionThreadIsIdle.loadRelaxed())
-        return ThreadState::Idle;
     if (m_vm.heap.isMutatorBusyWithCollectionConcurrently())
         return ThreadState::GarbageCollector;
-    return hasJavaScriptOnStack ? ThreadState::JavaScript : ThreadState::Program;
+    if (m_vm.topEntryFrame)
+        return ThreadState::JavaScript;
+    return m_executionThreadIsIdle.loadRelaxed() ? ThreadState::Idle : ThreadState::Program;
 }
 
-void SamplingProfiler::takeSample()
+void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
     if (!m_recordsSamplesWithoutFrames) {
-        takeStackTrace();
+        takeStackTrace(stackTraceProcessingTime);
         return;
     }
 
@@ -650,8 +646,14 @@ void SamplingProfiler::takeSample()
     // returned by then, and their time would go to whatever runs between them.
     MonotonicTime timestamp = MonotonicTime::now();
     ThreadState state = executionThreadState();
-    if (state == ThreadState::JavaScript && takeStackTrace())
-        return;
+    if (state == ThreadState::JavaScript) {
+        bool didTakeStackTrace = takeStackTrace(stackTraceProcessingTime);
+        // It takes longer than a sample in another state, and must not stand for more time because of that.
+        // However long it takes, the thread gets to run before it is suspended again.
+        stackTraceProcessingTime = std::min(MonotonicTime::now() - timestamp, m_timingInterval / 2);
+        if (didTakeStackTrace)
+            return;
+    }
 
     if (!m_canExtendLastSamplesWithoutFrames || m_samplesWithoutFrames.last().state != state) {
         m_samplesWithoutFrames.append({ state, timestamp, timestamp, 0 });
@@ -661,7 +663,7 @@ void SamplingProfiler::takeSample()
     m_samplesWithoutFrames.last().count++;
 }
 
-bool SamplingProfiler::takeStackTrace()
+bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
     if (m_vm.entryScope) {
@@ -773,6 +775,7 @@ bool SamplingProfiler::takeStackTrace()
 
             m_jscExecutionThread->resume(threadSuspendLocker);
 
+            auto startTime = MonotonicTime::now();
             // We can now use data structures that malloc, and do other interesting things, again.
 
             // FIXME: It'd be interesting to take data about the program's state when
@@ -790,8 +793,11 @@ bool SamplingProfiler::takeStackTrace()
 
                 if (didRunOutOfVectorSpace)
                     m_currentFrames.grow(std::min(m_currentFrames.size() + m_currentFrames.size() / 4 + 1, m_maximumStackDepth));
-                return true;
             }
+
+            auto endTime = MonotonicTime::now();
+            stackTraceProcessingTime = endTime - startTime;
+            return wasValidWalk && walkSize;
         }
     }
     return false;

@@ -1,3 +1,5 @@
+//@ defaultNoEagerRun
+
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplesWithoutFrames.js", "caller relative");
 

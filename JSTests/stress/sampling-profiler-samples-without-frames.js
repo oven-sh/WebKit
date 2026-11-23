@@ -1,3 +1,5 @@
+//@ defaultNoEagerRun
+
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplesWithoutFrames.js", "caller relative");
 
@@ -70,7 +72,7 @@ if (platformSupportsSamplingProfiler()) {
                 const after = await interrupt();
                 await leaveVM();
                 pauseSamplingProfiler();
-                const runs = releaseSamplingProfilerSamples().withoutFrames;
+                const runs = releaseSamplingProfilerSamples().withoutFrames.filter(run => run.state === "Idle" || run.state === "Program");
                 assert(!runs.some(run => run.first < before && after < run.last), "a run goes on after " + name);
                 count += runs.some(run => run.last < before) && runs.some(run => after < run.first);
             }

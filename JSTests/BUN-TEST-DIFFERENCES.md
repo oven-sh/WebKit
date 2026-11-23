@@ -266,6 +266,13 @@ Not upstream's: a sync neither brings nor changes them. Most are named `stress/b
 | `stress/bun-frozen-array-push.js` | `push()` throws for an array that was frozen in place, with copy-on-write storage (`JSObject::tryFreezeArrayInPlace`), in every tier and with no arguments too: the DFG makes no `GetArrayLength` of that push (`ArrayPushIntrinsic` in `dfg/DFGByteCodeParser.cpp`) |
 | `stress/regexp-flat-program-builder-at-end-of-stack.js` | the builder of flat programs checks the stack: a deep nest of groups near the end of the stack is declined, and the process goes on |
 | `stress/regexp-image-start-search-large-minimum-size.js` | with `--useRegExpImageMode=1`: the search for a start reads inside the subject also where the minimum size of a match is 2^30 units |
+| `stress/sampling-profiler-samples-without-frames.js` | on request the sampling profiler keeps the ticks that have no stack trace, in runs of one state. The thread is idle only if the embedder says so and no JavaScript is on the stack. `stress/sampling-profiler/samplesWithoutFrames.js` is the helper of this test and the six below |
+| `stress/sampling-profiler-samples-without-frames-short-calls.js` | between two microtasks the state is `Program`, and a call that is over before the thread is suspended still counts as `JavaScript` |
+| `stress/sampling-profiler-samples-without-frames-gc.js` | the wait for the collector and a synchronous sweep are `GarbageCollector` |
+| `stress/sampling-profiler-samples-without-frames-gc-increments.js` | so is what the mutator marks when it allocates |
+| `stress/sampling-profiler-samples-without-frames-heap-access.js` | so is the wait for heap access, but not what the collector does while the mutator waits for something else |
+| `stress/sampling-profiler-timer-wakes-up.js` | the profiler's thread wakes up for `start()` and for a new interval, and for nothing else |
+| `stress/sampling-profiler-maximum-stack-depth.js` | `setMaximumStackDepth()` and `--samplingProfilerMaxStackDepth` limit a stack trace to its innermost frames |
 | the fr-CA block of `stress/intl-date-pattern-includes-literal-text.js` (the file is upstream's) | keeps the file's coverage on CLDR 49, where fr's pattern no longer has literal text: an `h` inside literal text is not mistaken for the hour field |
 | the last block of `stress/regexp-test-sticky-first-char-filter.js` (the file is upstream's; nothing of upstream's text changes) | the first-character filter of a sticky `test()` comes from the first sets of the alternatives (`yarr/YarrFirstFollowSets.*`): behind a leading lookbehind, forward reference or lookahead, and in groups nested more than eight deep, a byte that passes the filter still reaches the matcher |
 
