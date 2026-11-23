@@ -11,6 +11,7 @@
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
 #include "AOTSavedFrame.h"
+#include "AOTStubsArrayCallbacks.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsCoroutines.h"
 #include "AOTStubsElements.h"
@@ -20,6 +21,8 @@
 #include "CellState.h"
 #include "CompleteSubspace.h"
 #include "IndexingType.h"
+#include "JSGlobalObject.h"
+#include "JSTypeInfo.h"
 #include "MarkedSpace.h"
 #include "PureNaN.h"
 #include <algorithm>
@@ -644,6 +647,113 @@ static void testWhatIsNoNumberWidensIntegers()
     checkThatIntegersAreWidened(appendByStoreAtIndexInSloppyCode);
 }
 
+enum class PollBehindAllocation : uint8_t { IsNotDue, Collects, CollectsAndForgetsHeaders };
+
+static FakeArray* arrayThatPollMarks;
+static PollBehindAllocation whatPollDoes;
+
+static UGPRPair JIT_OPERATION_ATTRIBUTES markArrayAtPoll(Instance* instance, uint64_t)
+{
+    arrayThatPollMarks->cellState = stateOfOldCell;
+    if (whatPollDoes == PollBehindAllocation::CollectsAndForgetsHeaders)
+        instance->prefix().newArrayWithContiguousHeader = 0;
+    return makeUGPRPair(0, 0);
+}
+
+template<uint32_t length>
+static void checkListMappedToFields(StubRunner& runner, FieldMap map, bool readsByShape, PollBehindAllocation poll, uint32_t numberOfIntegers)
+{
+    constexpr uint32_t structureIDOfRows = 0x2000;
+    constexpr uint32_t offsetOfField = 16;
+    constexpr uint16_t indexOfAnswers = 60000;
+    constexpr uint64_t distance = WTF::roundUpToMultipleOf<64>(sizeof(Instance)) + 64;
+    constexpr ptrdiff_t offsetOfAnswers = InstanceLayout::offsetOfSiteAnswers + static_cast<ptrdiff_t>(indexOfAnswers * sizeof(uint64_t));
+    static_assert(-offsetOfAnswers <= static_cast<ptrdiff_t>(StubEnvironment::bytesBelowInstance) && -offsetOfAnswers >= static_cast<ptrdiff_t>(sizeof(InstancePrefix) + sizeof(SiteAnswers)));
+    static_assert(distance + sizeof(uint16_t) <= InstanceLayout::offsetOfStringCells && !(offsetOfAnswers % static_cast<ptrdiff_t>(alignof(SiteAnswers))));
+    using Row = FakeObject<offsetOfField + sizeof(EncodedJSValue)>;
+    const ArrayKind integers = arrayOfIntegers();
+    const ArrayKind values = arrayKinds().back();
+    auto headerOf = [](const ArrayKind& kind, uint8_t cellState) {
+        FakeArray array(kind, nullptr);
+        array.flags = IsPristine;
+        array.cellState = cellState;
+        return *std::bit_cast<const uint64_t*>(&array);
+    };
+
+    Instance& instance = runner.instance();
+    FakeObject<sizeof(JSGlobalObject)> realm;
+    realm.at<uintptr_t>(OBJECT_OFFSETOF(JSGlobalObject, m_arraySpeciesWatchpointSet) + InlineWatchpointSet::offsetOfData()) = InlineWatchpointSet::encodeState(IsWatched);
+    instance.globalObject = std::bit_cast<JSGlobalObject*>(static_cast<uintptr_t>(realm.address()));
+    instance.prefix().newArrayWithInt32Header = headerOf(integers, stateOfNewCell);
+    instance.prefix().newArrayWithContiguousHeader = headerOf(values, stateOfNewCell);
+    FakeObject<CompleteSubspace::offsetOfAllocatorForSizeStep() + (maxHoleArrayCapacity + 1) * sizeof(void*)> cellSpaceWithoutAllocators;
+    instance.allocation.cellSpace = cellSpaceWithoutAllocators.bytes.data();
+
+    uint8_t* bytesOfInstance = reinterpret_cast<uint8_t*>(&instance);
+    *reinterpret_cast<uint16_t*>(bytesOfInstance + distance) = indexOfAnswers;
+    SiteAnswers& answers = *reinterpret_cast<SiteAnswers*>(bytesOfInstance + offsetOfAnswers);
+    answers = SiteAnswers::forPlacesWithout();
+    if (readsByShape)
+        answers.first = SiteAnswers::byShape(shapeWordOf(1), offsetOfField);
+    else
+        answers.second = *SiteAnswers::tryByStructure(SiteUse::Read, std::bit_cast<StructureID>(structureIDOfRows), SiteAnswers::Form::OwnValueInStorage, offsetOfField / sizeof(EncodedJSValue));
+
+    auto fill = [&](Row& row, uint64_t field) {
+        row.setHeader(structureIDOfRows, FinalObjectType);
+        row.template at<uint32_t>(offsetOfShapeWord) = readsByShape ? shapeWordOf(1) : 0;
+        row.template at<uint64_t>(offsetOfField) = field;
+    };
+    const bool isNested = map == FieldMap::FieldOfField;
+    Row held;
+    std::array<Row, length> rows;
+    std::array<Row, length> innerRows;
+    std::array<uint64_t, length> expected;
+    FakeVector<length> given;
+    given.publicLength = length;
+    for (uint32_t index = 0; index < length; ++index) {
+        expected[index] = index < numberOfIntegers ? boxedInteger(index) : held.address();
+        fill(innerRows[index], expected[index]);
+        fill(rows[index], isNested ? innerRows[index].address() : expected[index]);
+        given.elements[index] = rows[index].address();
+    }
+    FakeArray list(values, given.butterfly());
+    list.flags = IsPristine;
+
+    FakeVector<length> holes;
+    holes.publicLength = length;
+    FakeArray made(integers, holes.butterfly());
+    made.flags = IsPristine;
+    runner.recordCallsOf(length > maxHoleArrayCapacity ? Entry::operationAOTNewArrayWithHoles : Entry::operationAOTNewArrayOfHoles);
+    runner.setResultOfRecordedOperation(made.address());
+    runner.install(Entry::operationAOTPollBeforeEntering, markArrayAtPoll);
+    arrayThatPollMarks = &made;
+    whatPollDoes = poll;
+    instance.pollIsDue = poll != PollBehindAllocation::IsNotDue;
+
+    constexpr uint64_t callback = 0;
+    StubRun run = runner.runCall(mapArrayToField(map), 0, list.address(), { callback, isNested ? distance << 32 | distance : distance, ArrayCallbackFlags::encode(CompiledMethodOfArray::Map, ArrayCallbackFlags::onlyTries) }, 0);
+    const bool widens = numberOfIntegers < length;
+    const bool isServed = !widens || poll != PollBehindAllocation::CollectsAndForgetsHeaders;
+    const uint8_t cellState = poll == PollBehindAllocation::IsNotDue ? stateOfNewCell : stateOfOldCell;
+    AOT_TEST_CHECK(run.numberOfRecordedCalls == 1 && run.result == (isServed ? made.address() : 0));
+    AOT_TEST_CHECK(*std::bit_cast<const uint64_t*>(&made) == headerOf(widens && isServed ? values : integers, cellState));
+    AOT_TEST_CHECK(!isServed || holes.elements == expected);
+}
+
+static void testListMappedToFieldsKeepsStateThatCollectorGaveIt()
+{
+    StubRunner runner;
+    for (FieldMap map : { FieldMap::Field, FieldMap::FieldOfField }) {
+        for (bool readsByShape : { false, true }) {
+            for (PollBehindAllocation poll : { PollBehindAllocation::IsNotDue, PollBehindAllocation::Collects, PollBehindAllocation::CollectsAndForgetsHeaders }) {
+                for (uint32_t numberOfIntegers : { 0u, 1u, 3u })
+                    checkListMappedToFields<3>(runner, map, readsByShape, poll, numberOfIntegers);
+                checkListMappedToFields<maxHoleArrayCapacity + 1>(runner, map, readsByShape, poll, 5);
+            }
+        }
+    }
+}
+
 namespace {
 
 class LiteralsBornHoldingLists {
@@ -884,6 +994,7 @@ std::span<const NativeTest> stubVectorGrowthTests()
         { "stubs/vector-growth/store-beyond-length-leaves-holes"_s, ImageTests::whenExecutable<testStoreBeyondLengthLeavesHoles> },
         { "stubs/vector-growth/value-of-other-kind-still-reaches-operation"_s, ImageTests::whenExecutable<testValueOfOtherKindStillReachesOperation> },
         { "stubs/vector-growth/what-is-no-number-widens-integers-where-it-stands"_s, ImageTests::whenExecutable<testWhatIsNoNumberWidensIntegers> },
+        { "stubs/list-mapped-to-fields/keeps-the-state-that-the-collector-gave-it"_s, ImageTests::whenExecutable<testListMappedToFieldsKeepsStateThatCollectorGaveIt> },
         { "stubs/definition-under-an-index/is-stored-in-place-or-left-whole-to-the-operation"_s, ImageTests::whenExecutable<testDefinitionUnderIndexIsStoredInPlaceOrLeftWhole> },
         { "stubs/heap-frame/is-born-with-every-word-zero-and-nothing-written-beside-it"_s, ImageTests::whenExecutable<testHeapFrameIsBornWithEveryWordZeroAndNothingWrittenBesideIt> },
         { "stubs/heap-frame/released-frame-is-born-again"_s, ImageTests::whenExecutable<testReleasedHeapFrameIsReused> },
