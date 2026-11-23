@@ -204,10 +204,13 @@ void writeFaultSites(std::span<CollectedSite> sites, const CompiledCode& code, u
 {
     RELEASE_ASSERT(code.frame.hasFrame() || !code.frame.calleeSaveRegisters.registerCount());
     std::span frameRanges = code.frame.frameRanges.span();
-    auto hasFrameAt = [&](uint32_t ascendingOffset) {
-        while (!frameRanges.empty() && frameRanges.front().end <= ascendingOffset)
-            frameRanges = frameRanges.subspan(1);
-        return !frameRanges.empty() && frameRanges.front().begin <= ascendingOffset;
+    // Image::hasFrameAtReturnOffset() has the frame of a site from here or from the side table. The two agree for ranges that are in order and apart.
+    RELEASE_ASSERT(std::ranges::adjacent_find(frameRanges, [](const CodeRange& range, const CodeRange& next) { return range.end > next.begin; }) == frameRanges.end());
+    std::span frameRangesAtEndsOfCalls = frameRanges;
+    auto hasFrameAt = [](std::span<const CodeRange>& ranges, uint32_t ascendingOffset) {
+        while (!ranges.empty() && ranges.front().end <= ascendingOffset)
+            ranges = ranges.subspan(1);
+        return !ranges.empty() && ranges.front().begin <= ascendingOffset;
     };
     auto add = [&](uint32_t offsetInBody, bool isFrameless, bool isLoopPoll, std::span<const uint32_t> words) {
         uint64_t offset = static_cast<uint64_t>(bodyStart) + offsetInBody;
@@ -222,12 +225,15 @@ void writeFaultSites(std::span<CollectedSite> sites, const CompiledCode& code, u
         if (polls.empty() || (!accesses.empty() && accesses.front().codeOffset < polls.front().offset)) {
             const FaultingAccess& access = accesses.front();
             RELEASE_ASSERT(!access.throwSite.isEmpty());
-            add(access.codeOffset, !hasFrameAt(access.codeOffset), false, access.throwSite.span());
+            bool hasFrame = hasFrameAt(frameRanges, access.codeOffset);
+            // The site of a call that throws lies sizeOfNearCall in front of where the call returns, and has the frame of the call: Image::hasFrameAtReturnOffset() answers with either.
+            RELEASE_ASSERT(access.callSite || hasFrame == hasFrameAt(frameRangesAtEndsOfCalls, access.codeOffset + static_cast<uint32_t>(sizeOfNearCall) - 1));
+            add(access.codeOffset, !hasFrame, false, access.throwSite.span());
             accesses = accesses.subspan(1);
             continue;
         }
         const PollSite& poll = polls.front();
-        RELEASE_ASSERT(poll.callerIsFrameless == !hasFrameAt(poll.offset));
+        RELEASE_ASSERT(poll.callerIsFrameless == !hasFrameAt(frameRanges, poll.offset));
         add(poll.offset, poll.callerIsFrameless, true, { });
         polls = polls.subspan(1);
     }

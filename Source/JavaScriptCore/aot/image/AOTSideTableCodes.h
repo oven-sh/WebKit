@@ -261,11 +261,28 @@ struct InlineFrameCursor {
 struct SideTableFrame {
     ALWAYS_INLINE static SideTableFrame read(SideTableReader& reader, uint32_t offset)
     {
+        uint64_t position = offset / codeOffsetUnit;
+        bool covers = false;
+        SideTableFrame result = readWithChanges(reader, [&](uint64_t change) ALWAYS_INLINE_LAMBDA {
+            covers ^= position >= change;
+        });
+        result.coversOffset = covers;
+        return result;
+    }
+
+    bool hasFrame { false };
+    bool coversOffset { false };
+    uint32_t number { 0 };
+
+protected:
+    // The functor is called with where each change of frame lies, in ascending order.
+    template<typename Functor>
+    ALWAYS_INLINE static SideTableFrame readWithChanges(SideTableReader& reader, const Functor& functor)
+    {
         SideTableFrame result;
         uint64_t size = reader.nextVarint(SideTableByte::FrameChangesSize);
         if (!size)
             return result;
-        uint64_t position = offset / codeOffsetUnit;
         uint64_t change = 0;
         uint64_t distance = 0;
         unsigned shift = 0;
@@ -279,7 +296,7 @@ struct SideTableFrame {
                 continue;
             }
             change += distance;
-            result.coversOffset ^= position >= change;
+            functor(change);
             distance = 0;
             shift = 0;
         }
@@ -287,18 +304,36 @@ struct SideTableFrame {
         result.number = static_cast<uint32_t>(reader.nextVarint(SideTableByte::Frame));
         return result;
     }
-
-    bool hasFrame { false };
-    bool coversOffset { false };
-    uint32_t number { 0 };
 };
 
+// For an offset that code returns to: the frame of the unit in front of it.
+struct SideTableFrameAtReturnOffset : SideTableFrame {
+    ALWAYS_INLINE static SideTableFrameAtReturnOffset read(SideTableReader& reader, uint32_t returnOffset)
+    {
+        uint64_t position = (returnOffset ? returnOffset - 1 : 0) / codeOffsetUnit;
+        bool covers = false;
+        uint64_t lastChangeInFront = 0;
+        SideTableFrameAtReturnOffset result { readWithChanges(reader, [&](uint64_t change) ALWAYS_INLINE_LAMBDA {
+            bool isInFront = position >= change;
+            covers ^= isInFront;
+            lastChangeInFront = isInFront ? change : lastChangeInFront;
+        }) };
+        result.coversOffset = covers;
+        if constexpr (!hasFixedInstructionSize)
+            result.changesInsideNearCall = returnOffset >= sizeOfNearCall && position - lastChangeInFront < sizeOfNearCall - 1;
+        return result;
+    }
+
+    // A change of frame lies behind the start of a near call that ends at the offset.
+    bool changesInsideNearCall { false };
+};
+
+// What follows the frame in the side table of a function.
 struct SideTableParts {
-    JS_EXPORT_PRIVATE static SideTableParts read(ImageFunction, std::span<const uint8_t> section, uint32_t offset = 0);
+    JS_EXPORT_PRIVATE static SideTableParts read(ImageFunction, std::span<const uint8_t> section);
 
     std::optional<uint32_t> constructedCalleeAt(uint32_t site) const;
 
-    SideTableFrame frame;
     uint32_t firstFrameMapWord { 0 };
     uint32_t numberOfFrameMapWords { 0 };
     Vector<uint8_t, 16> constructedCallees;

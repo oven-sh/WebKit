@@ -105,8 +105,6 @@ void Image::forEachPublishedImage(const ScopedLambda<IterationStatus(const Image
 static_assert(!offsetof(ImageHeader, magic) && offsetof(ImageHeader, stamp) == 8 && offsetof(ImageHeader, identity) == 16 && offsetof(ImageHeader, size) == 32, "check() reads magic, stamp and identity before it knows that the rest of the header has this build's layout");
 static_assert(alignof(ImageHeader) <= imageSectionAlignment && alignof(ProgramTables) <= imageSectionAlignment);
 
-static constexpr bool hasFixedInstructionSize = sizeOfNearCall == codeOffsetUnit;
-
 #if ENABLE(AOT_POSITION_INDEPENDENT_IMAGE)
 using ImageStringHeaderOrRecord = ImageStringRecord;
 #else
@@ -440,16 +438,11 @@ bool Image::hasFrameAt(uint32_t function, uint32_t offset) const
     return SideTableFrame::read(reader, offset).coversOffset;
 }
 
-static uint32_t offsetBeforeReturn(uint32_t returnOffset)
-{
-    return returnOffset ? returnOffset - 1 : 0;
-}
-
 bool Image::hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const
 {
     SideTableReader reader = sideTable(function);
     reader.next(SideTableByte::Flags);
-    return hasFrameAtReturnOffset(function, SideTableFrame::read(reader, offsetBeforeReturn(returnOffset)), returnOffset);
+    return hasFrameAtReturnOffset(function, SideTableFrameAtReturnOffset::read(reader, returnOffset), returnOffset);
 }
 
 ImageFrame Image::frameAtReturnOffset(uint32_t function, uint32_t returnOffset) const
@@ -457,7 +450,7 @@ ImageFrame Image::frameAtReturnOffset(uint32_t function, uint32_t returnOffset) 
     ImageFrame frame { };
     SideTableReader reader = sideTable(function);
     auto flags = OptionSet<ImageFunctionFlag>::fromRaw(reader.next(SideTableByte::Flags));
-    SideTableFrame frameInTable = SideTableFrame::read(reader, offsetBeforeReturn(returnOffset));
+    SideTableFrameAtReturnOffset frameInTable = SideTableFrameAtReturnOffset::read(reader, returnOffset);
     if (hasFrameAtReturnOffset(function, frameInTable, returnOffset) && frameInTable.hasFrame)
         frame = section<ImageFrame>(ImageSection::Frames)[frameInTable.number];
     if (flags.contains(ImageFunctionFlag::SpillsArgumentRegisters))
@@ -465,13 +458,14 @@ ImageFrame Image::frameAtReturnOffset(uint32_t function, uint32_t returnOffset) 
     return frame;
 }
 
-bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableFrame& frame, uint32_t returnOffset) const
+bool Image::hasFrameAtReturnOffset(uint32_t function, const SideTableFrameAtReturnOffset& frame, uint32_t returnOffset) const
 {
     if (!returnOffset)
         return false;
     if constexpr (!hasFixedInstructionSize) {
-        constexpr uint8_t opcodeOfNearCall = 0xe8;
-        if (returnOffset >= sizeOfNearCall && codeOf(function)[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
+        // A faulting access returns as a near call from its start would (handleNullCheck()), and has the frame of its start. The side table has that frame for the
+        // unit in front of the return offset unless a change of frame lies between the two. No code is read to tell: a process that is crashing may be unable to.
+        if (frame.changesInsideNearCall) {
             std::optional<FaultSite> fault = faultSiteAt(codeOf(function) + (returnOffset - sizeOfNearCall));
             if (fault && fault->kind == FaultSiteKind::NullCheck)
                 return fault->hasFrame;
