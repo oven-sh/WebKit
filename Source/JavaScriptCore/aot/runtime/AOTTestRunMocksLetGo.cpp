@@ -665,6 +665,7 @@ void Modules::evictFailedRecords()
     }
     for (ModuleID module : failed) {
         loader()->removeEntry(moduleKey(module));
+        clearMockLoadError(module);
         ensureLoaded(module).cachedLoadError.set(*this, JSValue());
         loader()->removeEntriesForRecord(m_records.get(module));
         takeOutRecord(module);
