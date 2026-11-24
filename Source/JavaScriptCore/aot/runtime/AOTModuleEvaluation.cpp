@@ -4978,6 +4978,8 @@ JSValue Modules::require(ModuleID target, ModuleID referrer, RequiredBy required
         willLoad(m_instance.globalObject, referrer ? fileOf(referrer) : ModuleID(), fileOf(target), LoadKind::Require);
     if (referrer && m_loadsModulesIndividually) [[unlikely]]
         noteRequireThatRunTimeAnswers(target, referrer);
+    if (referrer && !m_retainedModulesToRestore.isEmpty()) [[unlikely]]
+        m_requirersBesideFilesToRestore.add(fileOf(target).index(), ModuleIndexSet()).iterator->value.add(fileOf(referrer).index());
     if (m_hasReloadableModules && referrer && recordsRequireEdges(referrer) && (!staleRequirerObject || requirerIndex(referrer) != referrer.index())) [[unlikely]]
         noteRequireEdge(target, referrer);
     if (m_hasReloadableModules && referrer && recordsRequireEdges(referrer) && (m_activeMockCount || isMockPending(fileOf(target))) && !m_showsWaysBetweenModuleObjects) [[unlikely]] {

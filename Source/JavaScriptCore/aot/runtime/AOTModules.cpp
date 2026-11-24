@@ -437,6 +437,36 @@ void Modules::takeBackFromHost(std::span<const ModuleID> files)
         delegatesWithoutPlugins(ModuleID(index));
 }
 
+void Modules::evictRequirersOfReplacedFiles(Vector<ModuleID, 16>&& replaced, const WTF::Function<void(const String&)>& functor)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    auto requirers = std::exchange(m_requirersBesideFilesToRestore, { });
+    if (requirers.isEmpty())
+        return;
+    listImportersAndRequirers();
+    BitVector seen;
+    auto evictIfLoadedSince = [&](uint32_t index) {
+        ModuleID file = fileOf(ModuleID(index));
+        if (seen.set(file.index()) || !wouldBeEvicted(file) || !mayBeEvicted(file) || isEvicted(file) || m_retainedModules.get(file.index()) || isStartedByHost(file) || isMocked(file) || activeMock(file) || data(file).isOfLibrary())
+            return;
+        didResetModule(m_instance.globalObject, file);
+        functor(m_table.fullPath(file));
+        replaced.append(file);
+    };
+    while (!replaced.isEmpty()) {
+        ModuleID file = replaced.takeLast();
+        if (auto found = requirers.find(file.index()); found != requirers.end()) {
+            for (uint32_t requirer : found->value)
+                evictIfLoadedSince(requirer);
+        }
+        for (ModuleID imported : { file, moduleWithExportsOf(file) }) {
+            for (uint32_t importer : m_importersByStatement[imported.index()])
+                evictIfLoadedSince(importer);
+        }
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+}
+
 void Modules::restoreRetainedModules(const WTF::Function<void(const String&)>& functor)
 {
     if (m_retainedModulesToRestore.isEmpty())
@@ -445,7 +475,12 @@ void Modules::restoreRetainedModules(const WTF::Function<void(const String&)>& f
     Vector<ModuleID, 16> back;
     for (size_t index : std::exchange(m_retainedModulesToRestore, { }))
         back.append(ModuleID(index));
+    Vector<ModuleID, 16> replaced(back.span());
+    for (size_t index : m_filesEvictedWithImports)
+        replaced.append(ModuleID(index));
     takeBackFromHost(back.span());
+    evictRequirersOfReplacedFiles(WTF::move(replaced), functor);
+    RETURN_IF_EXCEPTION(scope, void());
     for (ModuleID file : back) {
         functor(m_table.fullPath(file));
         if (data(file).kind != ModuleKind::CommonJs)

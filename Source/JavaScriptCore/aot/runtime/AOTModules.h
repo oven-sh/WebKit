@@ -1173,6 +1173,7 @@ public:
     void snapshotEvaluatedModules();
     void retainNewlyEvaluatedModules();
     void restoreRetainedModules(const WTF::Function<void(const String&)>&);
+    void evictRequirersOfReplacedFiles(Vector<ModuleID, 16>&&, const WTF::Function<void(const String&)>&);
     void resetEntryPointEvaluation(ModuleID);
     bool hasResettablePackageFailure(ModuleID) const;
     bool hasFailedWithoutMock(ModuleID module) const { return hasResettablePackageFailure(module) && !m_originalsEvaluatedUnderMock.get(module.index()) && !errorOfModuleThatRanBesideMock(module); }
@@ -2641,6 +2642,7 @@ private:
     BitVector m_evaluatedModulesSnapshot;
     std::optional<bool> m_holdsCodeThatMayBeEvicted;
     BitVector m_retainedModulesToRestore;
+    ModuleIndexMap<ModuleIndexSet> m_requirersBesideFilesToRestore;
     BitVector m_filesEvictedWithImports;
     bool m_runsCopyFromDisk { false };
     bool m_hostRunsCopiesFromDisk { false };
