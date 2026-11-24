@@ -964,10 +964,12 @@ void Modules::didThrowInBody(ModuleID module, JSValue error)
         return;
     }
     if (data(module).kind == ModuleKind::CommonJs && (mayBeEvicted(module) || (data(module).runsAgainAfterThrow() && !isAwaitedByImportFromBeforeItRan(module))) && status(module) == ModuleStatus::Evaluating && !loaderHasFileThatThrew(module)) [[unlikely]] {
-        if (mayBeEvicted(module))
+        // The loader of the load that is under way has fetched the file, and would read it a second time.
+        bool isFetched = hasSynchronousLoadFetched(module);
+        if (mayBeEvicted(module) && !(isFetched && data(module).runsAgainAfterThrow()))
             evict(module);
         else {
-            if (hasSynchronousLoadFetched(module))
+            if (isFetched)
                 ensureLoaded(module).throwAfterFetchLoad = m_outermostSynchronousLoad;
             if (LoadedModule* loaded = loadedIfExists(module); loaded && !loaded->wasFetchedDuringEvaluation)
                 loaded->wasLoadedDuringEvaluation = false;
