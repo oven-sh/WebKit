@@ -1306,14 +1306,18 @@ void URLParser::copyURLPartsUntil(const URL& base, URLPart part, const CodePoint
 
 constexpr std::array<uint8_t, 2> dotASCIICode { '2', 'e' };
 
-template<typename CharacterType>
+// '\\' has the SlashQuestionOrHash class, but it ends a path segment only in a special URL
+// (https://url.spec.whatwg.org/#path-state). With URLIsKnownSpecial::Yes the test of m_urlIsSpecial is not compiled:
+// it is for the pass that only special URLs take.
+template<typename CharacterType, URLParser::URLIsKnownSpecial urlIsKnownSpecial>
 ALWAYS_INLINE bool URLParser::isSingleDotPathSegment(CodePointIterator<CharacterType> c)
 {
+    ASSERT(urlIsKnownSpecial == URLIsKnownSpecial::No || m_urlIsSpecial);
     if (c.atEnd())
         return false;
     if (*c == '.') {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return c.atEnd() || isSlashQuestionOrHash(*c);
+        return c.atEnd() || (isSlashQuestionOrHash(*c) && (*c != '\\' || urlIsKnownSpecial == URLIsKnownSpecial::Yes || m_urlIsSpecial));
     }
     if (*c != '%')
         return false;
@@ -1325,19 +1329,19 @@ ALWAYS_INLINE bool URLParser::isSingleDotPathSegment(CodePointIterator<Character
         return false;
     if (isASCIIAlphaCaselessEqual(*c, dotASCIICode[1])) {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return c.atEnd() || isSlashQuestionOrHash(*c);
+        return c.atEnd() || (isSlashQuestionOrHash(*c) && (*c != '\\' || urlIsKnownSpecial == URLIsKnownSpecial::Yes || m_urlIsSpecial));
     }
     return false;
 }
 
-template<typename CharacterType>
+template<typename CharacterType, URLParser::URLIsKnownSpecial urlIsKnownSpecial>
 ALWAYS_INLINE bool URLParser::isDoubleDotPathSegment(CodePointIterator<CharacterType> c)
 {
     if (c.atEnd())
         return false;
     if (*c == '.') {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return isSingleDotPathSegment(c);
+        return isSingleDotPathSegment<CharacterType, urlIsKnownSpecial>(c);
     }
     if (*c != '%')
         return false;
@@ -1349,7 +1353,7 @@ ALWAYS_INLINE bool URLParser::isDoubleDotPathSegment(CodePointIterator<Character
         return false;
     if (isASCIIAlphaCaselessEqual(*c, dotASCIICode[1])) {
         advance<CharacterType, ReportSyntaxViolation::No>(c);
-        return isSingleDotPathSegment(c);
+        return isSingleDotPathSegment<CharacterType, urlIsKnownSpecial>(c);
     }
     return false;
 }
@@ -1757,7 +1761,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         m_url.m_pathAfterLastSlash = p - inputBegin;
 
         while (p != inputEnd) {
-            if ((*p == '.' || *p == '%') && (isSingleDotPathSegment(iteratorAt(p)) || isDoubleDotPathSegment(iteratorAt(p)))) [[unlikely]]
+            if ((*p == '.' || *p == '%') && (isSingleDotPathSegment<CharacterType, URLIsKnownSpecial::Yes>(iteratorAt(p)) || isDoubleDotPathSegment<CharacterType, URLIsKnownSpecial::Yes>(iteratorAt(p)))) [[unlikely]]
                 break;
             const CharacterType* lastSlash;
             p = findPathRunEnd(p, inputEnd, lastSlash);

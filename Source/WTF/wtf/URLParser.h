@@ -103,8 +103,9 @@ private:
     template<typename CharacterType> void beginSyntaxViolation(const CodePointIterator<CharacterType>&);
     template<typename CharacterType> bool isPercentEncodedDot(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool isWindowsDriveLetter(CodePointIterator<CharacterType>);
-    template<typename CharacterType> bool isSingleDotPathSegment(CodePointIterator<CharacterType>);
-    template<typename CharacterType> bool isDoubleDotPathSegment(CodePointIterator<CharacterType>);
+    enum class URLIsKnownSpecial : bool { No, Yes };
+    template<typename CharacterType, URLIsKnownSpecial = URLIsKnownSpecial::No> bool isSingleDotPathSegment(CodePointIterator<CharacterType>);
+    template<typename CharacterType, URLIsKnownSpecial = URLIsKnownSpecial::No> bool isDoubleDotPathSegment(CodePointIterator<CharacterType>);
     template<typename CharacterType> bool shouldCopyFileURL(CodePointIterator<CharacterType>);
     template<typename CharacterType> NODELETE bool checkLocalhostCodePoint(CodePointIterator<CharacterType>&, char32_t);
     template<typename CharacterType> NODELETE bool isAtLocalhost(CodePointIterator<CharacterType>);
