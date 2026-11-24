@@ -322,7 +322,6 @@ void ElementAccessEmitter::appendInVector(const ValueContext& store, const Array
     LBasicBlock growsList = newBlock();
     LBasicBlock done = newBlock();
     branchUnless(below(index, vectorLength(elements)), isBeyondVector);
-    replaceElement(store, form, elements, index, rawElement);
     ScopeFork fork = m_out.forkScope();
     m_out.branch(below(index, publicLength(elements)).value(), unlikelyEdge(done), normalEdge(growsList));
 
@@ -330,6 +329,8 @@ void ElementAccessEmitter::appendInVector(const ValueContext& store, const Array
     setPublicLength(elements, add(index, integer(1)));
     m_out.jump(done);
     m_out.appendToJoin(done, fork);
+    // The order of storeInVector().
+    replaceElement(store, form, elements, index, rawElement);
 }
 
 void ElementAccessEmitter::replaceElement(const ValueContext& store, const ArrayStorageForm& form, const ArrayElements& elements, Integer index, Operand rawElement)
