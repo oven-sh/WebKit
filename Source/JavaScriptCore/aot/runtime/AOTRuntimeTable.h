@@ -482,7 +482,6 @@ constexpr std::optional<RemovableFeature> featureOf(Entry entry)
     case Entry::operationAOTRegExpMatchFlatProgram16:
     case Entry::operationAOTRegExpTest:
     case Entry::operationAOTRegExpTestBoxed:
-    case Entry::operationAOTRegExpTestOfObject:
     case Entry::operationAOTRegExpMatchLiteral:
     case Entry::operationAOTRegExpMatchLiteralWithoutObject:
     case Entry::operationAOTRegExpMatchInParts:
