@@ -747,7 +747,7 @@ static NEVER_INLINE bool isAmbiguityResolvedByMock(VM& vm, bool someRecordHasLiv
 {
     auto isMockBinding = [&](const AbstractModuleRecord::Resolution& found) {
         auto* compiled = dynamicDowncast<AOT::ModuleRecord>(found.moduleRecord);
-        return (compiled && compiled->isReplacedByMock() && found.localName != vm.propertyNames->starNamespacePrivateName) || (someRecordHasLiveExports && found.isLiveExport(vm) && found.moduleRecord->hasLiveExports());
+        return (compiled && ((compiled->isReplacedByMock() && found.localName != vm.propertyNames->starNamespacePrivateName) || compiled->isPatchedByMock())) || (someRecordHasLiveExports && found.isLiveExport(vm) && found.moduleRecord->hasLiveExports());
     };
     bool isFromRemovedMock = (first.isFromRemovedMock || second.isFromRemovedMock) && !first.cameFromStarExportEntry && !second.cameFromStarExportEntry;
     return (isFromRemovedMock || isMockBinding(first) || isMockBinding(second)) && !first.isSameBinding(second);

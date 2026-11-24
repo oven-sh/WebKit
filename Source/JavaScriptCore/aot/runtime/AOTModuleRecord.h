@@ -179,6 +179,7 @@ public:
     const Resolution* storedResolution(UniquedStringImpl* exportName);
     void storeResolution(UniquedStringImpl* exportName, const Resolution&);
     bool isReplacedByMock() const;
+    bool isPatchedByMock() const;
     void collectExportedNames(JSGlobalObject*, WTF::Vector<Identifier>&, StarExportTargets&);
     JSValue readExport(JSGlobalObject*, const Identifier& exportName, std::optional<unsigned> exportIndex);
     JSValue readExportIfInitialized(const Identifier& exportName, JSValue ifDeferred);
