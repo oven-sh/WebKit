@@ -4503,12 +4503,14 @@ bool goOverListInPlaceOfCallOfBuiltin(Walker& walker, const BodyValue& call, Dra
             walker.jumpTo(behind, singleElementSpan(answer));
     }
     walker.continueIn(asWritten);
+    const bool returnsAtOnce = walker.unitReturnsAtOnce(written);
     Draft closed = written;
-    closed.setOrigin(origin);
-    closed.resultIsReturnedAtOnce = false;
+    closed.resultIsReturnedAtOnce = returnsAtOnce;
     walker.chooseConservativeFields(closed);
     Reference answered = walker.build(WTF::move(closed));
-    if (answered && !walker.isUnreachable())
+    if (answered && returnsAtOnce)
+        walker.returnAtOnce(answered);
+    else if (answered && !walker.isUnreachable())
         walker.jumpTo(behind, singleElementSpan(answered));
     walker.continueIn(behind);
     walker.bind(call.id(), result);
