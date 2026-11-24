@@ -487,14 +487,12 @@ void GuessedAccessEmitter::generateSlotStore(const ValueContext& value)
         finish();
         return;
     }
-    if (!overwritesLateField)
-        slotAccesses.askObjectWhatStandsInWayOfStore(value, cell);
+    slotAccesses.askObjectWhatStandsInWayOfStore(value, cell);
     slotAccesses.markCellIfMarkerReplacesRawValue(cell, access, storedValue);
     if (overwritesLateField) {
         slotAccesses.storeIntoLateField(value, cell, access, location, inFormOfSlot, storedType, scopedLambda<void()>([&] {
             branchUnless(hasNoBits(emitter<ShapeTestEmitter>().orderWordOf(cell), orderWordIntegrityBits | orderWordHasFieldOutsideSlot), failure);
             checkCreationConditions();
-            slotAccesses.askObjectWhatStandsInWayOfStore(value, cell);
         }));
         finish();
         return;
