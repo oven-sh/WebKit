@@ -518,6 +518,14 @@ static void testThrowWordsThatNameOneStringShareThunk()
     }
     for (uint32_t number : { ThrowSiteWord::narrowNone, end })
         AOT_TEST_CHECK(!ThrowSiteWord::withNarrowA(std::bit_cast<uint32_t>(binding), number));
+
+    binding.representation = static_cast<uint32_t>(Typed::Representation::JSValue);
+    for (uint32_t number : { 0u, ThrowSiteWord::maxNarrowA }) {
+        std::optional<uint32_t> narrow = ThrowSiteWord::withNarrowA(std::bit_cast<uint32_t>(binding), number);
+        AOT_TEST_CHECK(narrow && std::bit_cast<ThrowSiteWord>(*narrow).narrowA() == number && std::bit_cast<ThrowSiteWord>(*narrow).registerNumber == binding.registerNumber);
+    }
+    for (uint32_t number : { ThrowSiteWord::narrowNone, ThrowSiteWord::narrowNone + 1, end - 1, end })
+        AOT_TEST_CHECK(!ThrowSiteWord::withNarrowA(std::bit_cast<uint32_t>(binding), number));
 }
 
 static CompiledCode bodyThatReadsByName(uint32_t function, uint32_t mentionOfName)

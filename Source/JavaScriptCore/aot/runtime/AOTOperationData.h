@@ -516,9 +516,11 @@ struct ThrowSiteWord {
     static constexpr Typed::Representation runtimeErrorRepresentation = Typed::Representation::RawWord;
 
     bool isUninitializedBinding() const { return static_cast<ThrowKind>(kind) == ThrowKind::UninitializedBinding; }
+    bool holdsNameInRegisterNumber() const { return isUninitializedBinding() && calleeIsReadFromReceiver; }
+    bool faultSiteChecksRegister() const { return static_cast<Typed::Representation>(representation) == Typed::Representation::JSValue; }
     uint32_t narrowA() const
     {
-        if (isUninitializedBinding() && calleeIsReadFromReceiver)
+        if (holdsNameInRegisterNumber())
             return registerNumber << narrowABits | a;
         return a == narrowNone ? none : a;
     }
@@ -536,7 +538,7 @@ struct ThrowSiteWord {
         RELEASE_ASSERT(word.hasWideA && !word.a);
         if (a > maxNarrowA) {
             uint32_t above = a >> narrowABits;
-            if (!word.isUninitializedBinding() || word.calleeIsReadFromReceiver || !above || above >= numberOfRegistersPerBank)
+            if (!word.isUninitializedBinding() || word.calleeIsReadFromReceiver || word.faultSiteChecksRegister() || !above || above >= numberOfRegistersPerBank)
                 return std::nullopt;
             word.registerNumber = above;
             word.calleeIsReadFromReceiver = true;
