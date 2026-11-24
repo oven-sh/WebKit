@@ -7650,7 +7650,7 @@ static bool isFoundBehindFalsyEntry(Modules& modules, ModuleID module)
     return modules.data(module).isOfLibrary() || modules.wasLoadedByImport(module);
 }
 
-static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy takenOutBy)
+static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy takenOutBy, JSObject* entry = nullptr)
 {
     Modules* modules = modulesOf(realm);
     if (!modules)
@@ -7660,6 +7660,8 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
         modules->didDeleteEntry(module);
     if (takenOutBy == TakenOutBy::FalsyStore && isFoundBehindFalsyEntry(*modules, module))
         return modules->answerRequireWithNamespaceOfFile(module);
+    if (entry && modules->isKeptByImportBesideEntry(module))
+        return modules->answerRequireWithEntry(module, entry);
     if (modules->data(module).isOfLibrary()) {
         String path = modules->table().fullPath(module);
         if (takenOutBy == TakenOutBy::EntryOfProgram && modules->data(module).rejectsRequireCacheOverride() && !path.startsWith("node:"_s))
@@ -7872,9 +7874,9 @@ void willClearRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
     evictModule(realm, module, TakenOutBy::FalsyStore);
 }
 
-void willReplaceRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
+void willReplaceRequireCacheEntry(JSGlobalObject* realm, ModuleID module, JSValue entry)
 {
-    evictModule(realm, module, TakenOutBy::EntryOfProgram);
+    evictModule(realm, module, TakenOutBy::EntryOfProgram, entry.getObject());
 }
 
 bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)

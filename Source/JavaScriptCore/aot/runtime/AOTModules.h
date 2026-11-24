@@ -1490,6 +1490,19 @@ public:
         loaded.moduleObjectFromRequire.set(*this, nullptr);
         loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
     }
+    bool isKeptByImportBesideEntry(ModuleID module)
+    {
+        return (data(module).kind == ModuleKind::CommonJs || data(module).isESModuleOfProgram()) && !data(module).isOfLibrary() && status(module) == ModuleStatus::Evaluated && !isEvicted(module) && !isMocked(module) && !activeMock(module) && !hasIntactOriginal(module) && mayBeEvicted(module) && wasLoadedByImport(module);
+    }
+    void answerRequireWithEntry(ModuleID module, JSObject* entry)
+    {
+        answerRequireWithNamespaceOfFile(module);
+        LoadedModule& loaded = ensureLoaded(module);
+        loaded.moduleObjectFromRequire.set(*this, entry);
+        loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+        if (data(module).kind != ModuleKind::CommonJs)
+            loaded.requiredValue.set(*this, jsUndefined());
+    }
     void answerRequireWithExportsOfFile(ModuleID module)
     {
         if (LoadedModule* loaded = loadedIfExists(module))
