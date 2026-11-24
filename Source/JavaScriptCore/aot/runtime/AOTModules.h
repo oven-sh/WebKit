@@ -1371,7 +1371,8 @@ public:
     void releaseLoadsOfEndedTestFiles();
     void releaseInstancesOfEndedTestFiles();
     void releaseLoads(ModuleID testFile);
-    bool canReleaseLoads(ModuleID testFile);
+    bool holdsLoads(ModuleID testFile) const;
+    bool isReadThroughRequests(ModuleID testFile) const;
     bool hasFixedNamespace(ModuleID module) const { return m_linkedInstances.get(module.index()) && hasInstances(module); }
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target) const;
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target, Environment* instance) const;
@@ -3367,6 +3368,7 @@ private:
     void bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock);
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
     bool isSomeLoadUnderWay() const;
+    bool isLoaderBusy() const;
     BitVector m_namespacesReplacedByMock;
     std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;

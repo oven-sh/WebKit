@@ -4327,20 +4327,28 @@ void Modules::noteLoadsOfEndedTestFile()
     }
 }
 
-bool Modules::canReleaseLoads(ModuleID testFile)
+bool Modules::holdsLoads(ModuleID testFile) const
 {
-    bool handsOnNames = data(testFile).hasDynamicStarExport();
-    for (const ModuleExportData& entry : m_table.exports(testFile))
-        handsOnNames |= entry.kind() == ModuleExportKind::Indirect;
     bool holdsLoads = false;
     for (const ModuleRequestData& request : m_table.imports(testFile))
         holdsLoads |= data(request.targetModule()).isUncompiledCode();
-    return holdsLoads && !handsOnNames;
+    return holdsLoads;
+}
+
+// The namespace object of the file reads what the file hands on through its requests.
+bool Modules::isReadThroughRequests(ModuleID testFile) const
+{
+    if (!namespaceIfCreated(testFile, ModulePhase::Evaluation))
+        return false;
+    bool handsOnNames = data(testFile).hasDynamicStarExport();
+    for (const ModuleExportData& entry : m_table.exports(testFile))
+        handsOnNames |= entry.kind() == ModuleExportKind::Indirect;
+    return handsOnNames;
 }
 
 void Modules::releaseLoadsOfEndedTestFiles()
 {
-    if (m_resetWithReleasedLoads == m_momentOfModuleReset || m_testFilesHoldingLoads.isEmpty() || isSomeLoadUnderWay()) [[likely]]
+    if (m_resetWithReleasedLoads == m_momentOfModuleReset || m_testFilesHoldingLoads.isEmpty() || isLoaderBusy()) [[likely]]
         return;
     m_resetWithReleasedLoads = m_momentOfModuleReset;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
@@ -4350,6 +4358,8 @@ void Modules::releaseLoadsOfEndedTestFiles()
             continue;
         if (data(testFile).kind == ModuleKind::CommonJs) {
             m_testFilesHoldingLoads.clear(index);
+            if (LoadedModule* loaded = loadedIfExists(testFile))
+                loaded->failedModuleObject.set(*this, nullptr);
             if (m_filesToLoadAgain.get(index))
                 discardModuleObject(testFile);
             continue;
@@ -4358,6 +4368,8 @@ void Modules::releaseLoadsOfEndedTestFiles()
         if (current != ModuleStatus::Evaluated && current != ModuleStatus::Failed)
             continue;
         m_testFilesHoldingLoads.clear(index);
+        if (isReadThroughRequests(testFile))
+            continue;
         releaseLoads(testFile);
         ensureInstance(testFile);
         if (scope.exception()) [[unlikely]]
@@ -6426,7 +6438,7 @@ bool Modules::isOfKindWhoseTextHostKeeps(ModuleID file) const
 bool Modules::delegatesToStartingHost(ModuleID module)
 {
     m_instance.vm->aotState().filesStartedByHost.set(fileOf(module).index());
-    if (data(module).kind == ModuleKind::CommonJs || (hasInstances(module) && canReleaseLoads(module)))
+    if (data(module).kind == ModuleKind::CommonJs || (hasInstances(module) && holdsLoads(module)))
         m_testFilesHoldingLoads.set(module.index());
     if (m_hasBegunTestFile)
         m_startMoments.set(fileOf(module), m_instance.vm->aotState().momentOfLoads);

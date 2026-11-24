@@ -22,11 +22,14 @@ namespace JSC { namespace AOT {
 
 bool Modules::isSomeLoadUnderWay() const
 {
+    return isLoaderBusy() || !m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating;
+}
+
+bool Modules::isLoaderBusy() const
+{
     if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootAwaitingLoader || m_moduleWithDeferredJobs || !m_queuedFetches.isEmpty())
         return true;
     if (std::ranges::any_of(m_levelsOfLoads.values(), [&](auto& level) { return !hasGraphRun(*level); }))
-        return true;
-    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
         return true;
     for (const LoadInFlight& load : m_loadsInFlight) {
         if (load.promise->status() == JSPromise::Status::Pending)
