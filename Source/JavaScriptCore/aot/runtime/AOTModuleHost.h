@@ -417,6 +417,7 @@ JS_EXPORT_PRIVATE bool wasReleasedByLoader(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void letGoUntilEndOfTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasInstances(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void tellIfMockedBelowImport(JSGlobalObject*, ModuleID file, std::optional<ModuleID> caller);
+JS_EXPORT_PRIVATE Vector<String, 2> importersFetchedByRunningTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isReloadableImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isReleased(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isMockLoadedInPreload(JSGlobalObject*, ModuleID);

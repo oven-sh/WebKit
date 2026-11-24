@@ -913,6 +913,7 @@ public:
     bool importsModuleWithPendingMock(ModuleID root);
     bool evaluateLinkedModuleBeforeMock(ModuleID, bool keepsOriginalIntact);
     bool isFetchedByRunningTestFile(ModuleID) const;
+    Vector<String, 2> importersFetchedByRunningTestFile(ModuleID) const;
     JSPromise* pendingEvaluation(ModuleID, bool hasAlreadyWaited);
     JSPromise* pendingEvaluationInGraph(ModuleID file);
     bool isImportedByGraphUnderEvaluation(ModuleID, bool forIntactOriginal = false);

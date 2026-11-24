@@ -3603,6 +3603,12 @@ void tellIfMockedBelowImport(JSGlobalObject* realm, ModuleID file, std::optional
         modules->tellIfMockedBelowImport(file, caller);
 }
 
+Vector<String, 2> importersFetchedByRunningTestFile(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules ? modules->importersFetchedByRunningTestFile(module) : Vector<String, 2>();
+}
+
 bool hasInstances(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
