@@ -26,6 +26,7 @@
 #include "ButterflyInlines.h"
 #include "CPUFeatureSet.h"
 #include "DeferTermination.h"
+#include "GCMemoryOperations.h"
 #include "JSArrayInlines.h"
 #include "JSArrayIterator.h"
 #include "JSCInlines.h"
@@ -1794,14 +1795,14 @@ static JSArray* trySpliceInPlace(JSGlobalObject* globalObject, JSArray* array, J
         else
             elements[from + index].setWithoutWriteBarrier(JSValue::decode(items[index]));
     }
-    for (unsigned index = static_cast<unsigned>(newLength); index < length; ++index) {
-        if (mode == ArrayWithDouble)
-            butterfly->contiguousDouble().atUnsafe(index) = PNaN;
-        else
-            elements[index].clear();
-    }
-    if (newLength < length)
+    if (newLength < length) {
+        if (mode == ArrayWithDouble) {
+            for (unsigned index = static_cast<unsigned>(newLength); index < length; ++index)
+                butterfly->contiguousDouble().atUnsafe(index) = PNaN;
+        } else
+            gcSafeZeroMemory(elements + newLength, static_cast<size_t>(length - newLength) * sizeof(JSValue));
         butterfly->setPublicLength(static_cast<unsigned>(newLength));
+    }
     vm.writeBarrier(array);
     return removed;
 }
