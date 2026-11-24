@@ -3290,8 +3290,6 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         }
         if (piecePointer == 6 || (compressPointer && piecePointer < 6)) {
             if (std::optional<IPv4Address> ipv4Address = parseIPv4AddressInsideIPv6(std::span(p, end))) {
-                if (compressPointer && piecePointer == 5)
-                    return std::nullopt;
                 syntaxViolation(hostBegin);
                 address[piecePointer++] = ipv4Address.value() >> 16;
                 address[piecePointer++] = ipv4Address.value() & 0xFFFF;
@@ -3329,8 +3327,9 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
         if (piecePointer == 8 || *p != ':')
             return std::nullopt;
         ++p;
+        // Bun: the IPv6 parser of the URL Standard fails when the address ends here. Upstream drops the ':' and parses the rest (https://bugs.webkit.org/show_bug.cgi?id=199627).
         if (p == end)
-            syntaxViolation(hostBegin);
+            return std::nullopt;
 
         immediatelyAfterCompress = false;
     }
