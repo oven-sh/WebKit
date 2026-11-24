@@ -883,6 +883,7 @@ inline bool shouldOMGJIT(JSWebAssemblyInstance* instance, unsigned functionIndex
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerTierUpNow, void, (CallFrame* callFrame, JSWebAssemblyInstance* instance))
 {
+    NativeCallFrameTracer tracer(instance->vm(), callFrame);
     BBQCallee& callee = uncheckedDowncast<BBQCallee>(uncheckedDowncast<Wasm::Callee>(*callFrame->callee().asNativeCallee()));
     ASSERT(callee.compilationMode() == CompilationMode::BBQMode);
 
@@ -909,6 +910,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe:
     auto functionIndex = osrEntryData.functionIndex();
     uint32_t loopIndex = osrEntryData.loopIndex();
     JSWebAssemblyInstance* instance = context.gpr<JSWebAssemblyInstance*>(GPRInfo::wasmContextInstancePointer);
+    NativeCallFrameTracer tracer(instance->vm(), context.fp<CallFrame*>());
     BBQCallee& callee = uncheckedDowncast<BBQCallee>(uncheckedDowncast<Wasm::Callee>(*context.gpr<CallFrame*>(MacroAssembler::framePointerRegister)->callee().asNativeCallee()));
     ASSERT(callee.compilationMode() == Wasm::CompilationMode::BBQMode);
     ASSERT(callee.refCount());
@@ -1121,6 +1123,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTriggerOSREntryNow, void, (Probe:
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe::Context & context))
 {
+    NativeCallFrameTracer tracer(context.gpr<JSWebAssemblyInstance*>(GPRInfo::wasmContextInstancePointer)->vm(), context.fp<CallFrame*>());
+
     // We just populated the callee in the frame before we entered this operation, so let's use it.
     BBQCallee& callee = uncheckedDowncast<BBQCallee>(uncheckedDowncast<Wasm::Callee>(*context.fp<CallFrame*>()->callee().asNativeCallee()));
     ASSERT(callee.compilationMode() == Wasm::CompilationMode::BBQMode);
@@ -1189,6 +1193,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmLoopOSREnterBBQJIT, void, (Probe:
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMaterializeBaselineData, void, (CallFrame* callFrame, JSWebAssemblyInstance* instance))
 {
+    NativeCallFrameTracer tracer(instance->vm(), callFrame);
     BBQCallee& callee = uncheckedDowncast<BBQCallee>(uncheckedDowncast<Wasm::Callee>(*callFrame->callee().asNativeCallee()));
     ASSERT(callee.compilationMode() == CompilationMode::BBQMode);
 
@@ -1500,16 +1505,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGrowMemory, int64_t, (JSWebAssemblyIn
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMemorySizeInPages, int64_t, (JSWebAssemblyInstance* instance, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return instance->memory(memoryIndex)->memory().size() >> 16;
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryFill, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t dstAddress, uint32_t targetValue, uint64_t count, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryFill(instance, dstAddress, targetValue, count, memoryIndex));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryCopy, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t dstAddress, uint64_t srcAddress, uint64_t count, uint8_t dstMemoryIndex, uint8_t srcMemoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryCopy(instance, dstAddress, srcAddress, count, dstMemoryIndex, srcMemoryIndex));
 }
 
@@ -1525,6 +1533,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableElement, EncodedJSValue, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSetWasmTableElement, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint64_t signedIndex, EncodedJSValue encValue))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(tableSet(instance, tableIndex, signedIndex, encValue));
 }
 
@@ -1539,21 +1548,25 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableInit, UCPUStrictInt32, (JSWe
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmElemDrop, void, (JSWebAssemblyInstance* instance, unsigned elementIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return elemDrop(instance, elementIndex);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableGrow, int64_t, (JSWebAssemblyInstance* instance, unsigned tableIndex, EncodedJSValue fill, uint64_t delta))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return tableGrow(instance, tableIndex, fill, delta);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableFill, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned tableIndex, uint64_t offset, EncodedJSValue fill, uint64_t count))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(tableFill(instance, tableIndex, offset, fill, count));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmTableCopy, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned dstTableIndex, unsigned srcTableIndex, uint64_t dstOffset, uint64_t srcOffset, uint64_t length))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(tableCopy(instance, dstTableIndex, srcTableIndex, dstOffset, srcOffset, length));
 }
 
@@ -1586,26 +1599,31 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationGetWasmTableSize, UCPUStrictInt32, (J
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMemoryAtomicWait32, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t base, uint64_t offset, int32_t value, int64_t timeoutInNanoseconds, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryAtomicWait32(instance, base, offset, value, timeoutInNanoseconds, memoryIndex));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMemoryAtomicWait64, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t base, uint64_t offset, int64_t value, int64_t timeoutInNanoseconds, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryAtomicWait64(instance, base, offset, value, timeoutInNanoseconds, memoryIndex));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMemoryAtomicNotify, UCPUStrictInt32, (JSWebAssemblyInstance* instance, uint64_t base, uint64_t offset, int32_t countValue, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryAtomicNotify(instance, base, offset, countValue, memoryIndex));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmMemoryInit, UCPUStrictInt32, (JSWebAssemblyInstance* instance, unsigned dataSegmentIndex, uint64_t dstAddress, uint32_t srcAddress, uint32_t length, uint8_t memoryIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(memoryInit(instance, dataSegmentIndex, dstAddress, srcAddress, length, memoryIndex));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmDataDrop, void, (JSWebAssemblyInstance* instance, unsigned dataSegmentIndex))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return dataDrop(instance, dataSegmentIndex);
 }
 
@@ -1828,6 +1846,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayInitElem, UCPUStrictInt32, (
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmArrayInitData, UCPUStrictInt32, (JSWebAssemblyInstance* instance, EncodedJSValue dst, uint32_t dstOffset, uint32_t srcDataIndex, uint32_t srcOffset, uint32_t size))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     return toUCPUStrictInt32(arrayInitData(instance, dst, dstOffset, srcDataIndex, srcOffset, size));
 }
 
@@ -1838,6 +1857,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmAnyConvertExtern, EncodedJSValue,
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRefTest, UCPUStrictInt32, (JSWebAssemblyInstance* instance, EncodedJSValue reference, uint32_t allowNull, int32_t heapType, bool shouldNegate))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     // Explicitly return 1 or 0 because bool in C++ only reqiures that the bottom bit match the other bits can be anything.
     int32_t truth = shouldNegate ? 0 : 1;
     int32_t falsity = shouldNegate ? 1 : 0;
@@ -1854,6 +1874,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRefTest, UCPUStrictInt32, (JSWebA
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationWasmRefCast, EncodedJSValue, (JSWebAssemblyInstance* instance, EncodedJSValue reference, uint32_t allowNull, int32_t heapType))
 {
+    WasmOperationPrologueCallFrameTracer tracer(instance->vm(), DECLARE_WASM_CALL_FRAME(instance), OUR_RETURN_ADDRESS);
     if (!Wasm::isTypeIndexHeapType(heapType)) {
         if (!Wasm::refCast(reference, static_cast<bool>(allowNull), Wasm::typeIndexFromTypeKind(static_cast<Wasm::TypeKind>(heapType)))) [[unlikely]]
             return encodedJSValue();

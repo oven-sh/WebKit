@@ -1737,6 +1737,8 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
             storepairq a1, a5, VMEntryRecord::m_vm[sp]
             loadpairq VM::topCallFrame[a1], t8, t9 # topCallFrame and topEntryFrame
             storepairq t8, t9, VMEntryRecord::m_prevTopCallFrame[sp]
+            bpneq VM::previousEntryFrameOfOutermost[a1], t9, .isNotOutermost
+            storepairq a2, a3, VM::outermostCodeBlock[a1]
         else
             storeq a1, VMEntryRecord::m_vm[sp]
             storeq a5, VMEntryRecord::m_context[sp]
@@ -1744,7 +1746,11 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
             storeq t0, VMEntryRecord::m_prevTopCallFrame[sp]
             loadq VM::topEntryFrame[a1], t0
             storeq t0, VMEntryRecord::m_prevTopEntryFrame[sp]
+            bpneq VM::previousEntryFrameOfOutermost[a1], t0, .isNotOutermost
+            storeq a2, VM::outermostCodeBlock[a1]
+            storeq a3, VM::outermostCallee[a1]
         end
+    .isNotOutermost:
     end
 
     macro vmEntryToJavaScriptStoreHeader(scratch, argCount)
@@ -1765,8 +1771,8 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
             move sp, t8
             storepairq t8, cfr, VM::topCallFrame[a1] # topCallFrame and topEntryFrame
         else
-            storeq sp, VM::topCallFrame[a1]
             storeq cfr, VM::topEntryFrame[a1]
+            storeq sp, VM::topCallFrame[a1]
         end
     end
 
@@ -2066,6 +2072,11 @@ if not C_LOOP
         tagReturnAddress sp
         vmEntryRecord(a0, r0)
         ret
+
+    # Nothing before this runs in a frame of JavaScript.
+    global _llintVMEntryPCRangeEnd
+    _llintVMEntryPCRangeEnd:
+        break
 end
 
 if ARM64E

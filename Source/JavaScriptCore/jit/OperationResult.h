@@ -34,6 +34,10 @@
 
 namespace JSC {
 
+class JSGlobalObject;
+class JSWebAssemblyInstance;
+class VM;
+
 // This is wrapped in a lambda since it's used by static_asserts thus needs to be an expression.
 // Additionally, it should not participate in SFINAE: substitution failure IS an error when used in
 // a type name below.
@@ -87,6 +91,20 @@ struct IsExceptionOperationResult<ExceptionOperationResult<T>> : std::true_type 
 
 template<typename T>
 concept isExceptionOperationResult = IsExceptionOperationResult<T>::value;
+
+// An operation whose first argument leads to the VM has a call frame tracer, even if it cannot throw. For any other, optimized code
+// stores VM::topCallFrame before the call: while the thread is in C code, the sampling profiler has nothing else to go by.
+template<typename OperationType>
+constexpr bool operationStoresTopCallFrame = [] {
+    using Traits = FunctionTraits<OperationType>;
+    if constexpr (isExceptionOperationResult<typename Traits::ResultType>)
+        return true;
+    else if constexpr (Traits::arity) {
+        using FirstArgument = typename Traits::template ArgumentType<0>;
+        return std::is_same_v<FirstArgument, VM*> || std::is_same_v<FirstArgument, JSGlobalObject*> || std::is_same_v<FirstArgument, JSWebAssemblyInstance*>;
+    } else
+        return false;
+}();
 
 // Note: We always return an exception in a register if the operation's return type is void on all platforms (assuming it throws).
 template<typename T>

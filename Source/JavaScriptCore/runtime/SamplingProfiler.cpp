@@ -59,6 +59,7 @@
 #include "AOTCompiledFrame.h"
 #include "AOTFunctionDescription.h"
 #include "AOTImage.h"
+#include "AOTSavedFrame.h"
 #include "AOTStackTrace.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -90,10 +91,10 @@ ALWAYS_INLINE static void reportStats()
 
 class FrameWalker {
 public:
-    FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+    FrameWalker(VM& vm, CallFrame* callFrame, EntryFrame* entryFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
-        , m_entryFrame(vm.topEntryFrame)
+        , m_entryFrame(entryFrame)
         , m_codeBlockSetLocker(codeBlockSetLocker)
         , m_machineThreadsLocker(machineThreadsLocker)
     {
@@ -246,8 +247,8 @@ class CFrameWalker : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, callFrame, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, EntryFrame* entryFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, callFrame, entryFrame, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -326,8 +327,8 @@ class FrameWalkerWithCompiledFrames : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    FrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, const AOT::SampledTop& top, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, top.callFrame, codeBlockSetLocker, machineThreadsLocker)
+    FrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, const AOT::SampledTop& top, EntryFrame* entryFrame, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, top.callFrame, entryFrame, codeBlockSetLocker, machineThreadsLocker)
         , m_image(image)
         , m_stack { stackBounds }
         , m_pc(top.pc)
@@ -436,8 +437,8 @@ class CFrameWalkerWithCompiledFrames : public FrameWalkerWithCompiledFrames {
 public:
     typedef FrameWalkerWithCompiledFrames Base;
 
-    CFrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, void* machineFrame, const AOT::SampledTop& top, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, image, { top.callFrame, top.pc, nullptr, top.framePointer }, stackBounds, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalkerWithCompiledFrames(VM& vm, const AOT::Image& image, void* machineFrame, const AOT::SampledTop& top, EntryFrame* entryFrame, const StackBounds& stackBounds, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, image, { top.callFrame, top.pc, nullptr, top.framePointer }, entryFrame, stackBounds, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -531,6 +532,7 @@ SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
     , m_weakRandom()
     , m_stopwatch(WTF::move(stopwatch))
     , m_timingInterval(Seconds::fromMicroseconds(Options::sampleInterval()))
+    , m_jscExecutionThread(&Thread::currentSingleton())
 {
     if (sReportStats) {
         sNumTotalWalks = 0;
@@ -542,7 +544,8 @@ SamplingProfiler::SamplingProfiler(VM& vm, Ref<Stopwatch>&& stopwatch)
         Locker locker { m_lock };
         setMaximumStackDepth(unlimitedStackDepth);
     }
-    vm.heap.objectSpace().enablePreciseAllocationTracking();
+    if (!vm.heap.objectSpace().preciseAllocationSet())
+        vm.heap.objectSpace().enablePreciseAllocationTracking();
 }
 
 SamplingProfiler::~SamplingProfiler() = default;
@@ -551,7 +554,7 @@ void SamplingProfiler::createThreadIfNecessary()
 {
     ASSERT(m_lock.isLocked());
 
-    if (m_thread)
+    if (m_thread || m_isShutDown)
         return;
 
 #if OS(WINDOWS)
@@ -599,8 +602,7 @@ void SamplingProfiler::timerLoop()
         }
 
         Seconds stackTraceProcessingTime = 0_s;
-        if (m_jscExecutionThread)
-            takeSample(stackTraceProcessingTime);
+        takeSample(stackTraceProcessingTime);
 
         // Read section 6.2 of this paper for more elaboration of why we add a random
         // fluctuation here. The main idea is to prevent our timer from being in sync
@@ -608,7 +610,7 @@ void SamplingProfiler::timerLoop()
         // http://plv.colorado.edu/papers/mytkowicz-pldi10.pdf
         double randomSignedNumber = (m_weakRandom.get() * 2.0) - 1.0; // A random number between [-1, 1).
         Seconds randomFluctuation = m_timingInterval * 0.2 * randomSignedNumber;
-        // A wait that is over before it begins hardly lets go of the lock, which it takes to enter the VM.
+        // A wait that is over before it begins hardly lets go of the lock, and of the thread.
         Seconds delay = std::max(m_timingInterval - std::min(m_timingInterval, stackTraceProcessingTime) + randomFluctuation, 10_us);
 
 #if OS(WINDOWS)
@@ -625,15 +627,7 @@ void SamplingProfiler::timerLoop()
     }
 }
 
-auto SamplingProfiler::executionThreadState() -> ThreadState
-{
-    if (m_vm.heap.isMutatorBusyWithCollectionConcurrently())
-        return ThreadState::GarbageCollector;
-    if (m_vm.topEntryFrame)
-        return ThreadState::JavaScript;
-    return m_executionThreadIsIdle.loadRelaxed() ? ThreadState::Idle : ThreadState::Program;
-}
-
+SUPPRESS_TSAN
 void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
@@ -642,18 +636,41 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
         return;
     }
 
-    // The state is that of this instant, whatever the thread gets to before it is suspended. Short calls have often
+    // What counts is this instant, whatever the thread gets to before it is suspended. Short calls have often
     // returned by then, and their time would go to whatever runs between them.
-    MonotonicTime timestamp = MonotonicTime::now();
-    ThreadState state = executionThreadState();
-    if (state == ThreadState::JavaScript) {
+    auto [ nowTime, timestamp ] = m_stopwatch->elapsedTimeAndTimestamp();
+    ThreadState state = ThreadState::Program;
+    if (m_vm.heap.isMutatorBusyWithCollectionConcurrently())
+        state = ThreadState::GarbageCollector;
+    else if (m_vm.topEntryFrame) {
+        WTF::loadLoadFence();
+        CodeBlock* outermostCodeBlock = m_vm.outermostCodeBlock;
+        CalleeBits outermostCallee = std::bit_cast<CalleeBits>(m_vm.outermostCallee);
+
         bool didTakeStackTrace = takeStackTrace(stackTraceProcessingTime);
         // It takes longer than a sample in another state, and must not stand for more time because of that.
         // However long it takes, the thread gets to run before it is suspended again.
         stackTraceProcessingTime = std::min(MonotonicTime::now() - timestamp, m_timingInterval / 2);
         if (didTakeStackTrace)
             return;
-    }
+
+        if (outermostCallee.rawPtr()) {
+            // The frame may have left it, by a tail call or an OSR exit. Then it is only safe if the collector is yet to visit this
+            // profiler before it removes anything from the set, which is certain as long as it has not stopped the world.
+            auto canUseCodeBlock = [&] {
+                if (m_vm.heap.worldIsStopped())
+                    return false;
+                Locker codeBlockSetLocker { m_vm.heap.codeBlockSet().getLock() };
+                return m_vm.heap.codeBlockSet().contains(codeBlockSetLocker, outermostCodeBlock);
+            };
+            if (!canUseCodeBlock())
+                outermostCodeBlock = nullptr;
+            m_unprocessedStackTraces.append(UnprocessedStackTrace { timestamp, nowTime, nullptr, false, nullptr, nullptr, { { outermostCodeBlock, outermostCallee, CallSiteIndex() } }, false });
+            m_canExtendLastSamplesWithoutFrames = false;
+            return;
+        }
+    } else if (m_vm.isIdle())
+        state = ThreadState::Idle;
 
     if (!m_canExtendLastSamplesWithoutFrames || m_samplesWithoutFrames.last().state != state) {
         m_samplesWithoutFrames.append({ state, timestamp, timestamp, 0 });
@@ -666,10 +683,12 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
 {
     ASSERT(m_lock.isLocked());
-    if (m_vm.entryScope) {
+    if (m_vm.entryScope && !Options::forceSamplingProfilerToMissStacks()) {
         auto [ nowTime, timestamp ] = m_stopwatch->elapsedTimeAndTimestamp();
 
         Locker machineThreadsLocker { m_vm.heap.machineThreads().getLock() };
+        if (!m_vm.heap.machineThreads().threads(machineThreadsLocker).contains(m_jscExecutionThread.get()))
+            return false; // It has exited, and would never answer.
         Locker codeBlockSetLocker { m_vm.heap.codeBlockSet().getLock() };
         std::optional<Locker<Lock>> executableAllocatorLocker;
         if (Options::useJIT())
@@ -688,6 +707,7 @@ bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
             // may be holding the malloc lock.
             void* machineFrame;
             CallFrame* callFrame;
+            EntryFrame* entryFrame = m_vm.topEntryFrame;
             void* machinePC;
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
@@ -721,7 +741,7 @@ bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
                 regExp = m_vm.m_executingRegExp;
                 if (regExp)
                     callFrame = m_vm.topCallFrame; // We need to do this or else we'd fail our backtrace validation b/c this isn't a JS frame.
-            } else if (LLInt::isLLIntPC(machinePC)) {
+            } else if (LLInt::isLLIntPC(machinePC) && (machineFrame == entryFrame || !LLInt::isVMEntryPC(machinePC))) {
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
@@ -739,6 +759,17 @@ bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
                     shouldAppendTopFrameAsCCode = true;
             }
 
+            if (entryFrame && static_cast<void*>(callFrame) == entryFrame) {
+                // What was entered has no frame yet, or no longer.
+#if ENABLE(AOT)
+                sampledRegisters = { entryFrame, nullptr, nullptr, entryFrame };
+#endif
+                VMEntryRecord* entryRecord = vmEntryRecord(entryFrame);
+                callFrame = entryRecord->unsafePrevTopCallFrame();
+                entryFrame = entryRecord->unsafePrevTopEntryFrame();
+                topFrameIsLLInt = false;
+            }
+
             size_t walkSize;
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
@@ -753,22 +784,22 @@ bool SamplingProfiler::takeStackTrace(Seconds& stackTraceProcessingTime)
                         top.pc = nullptr;
                 }
                 if (Options::sampleCCode()) {
-                    CFrameWalkerWithCompiledFrames walker(m_vm, *image, machineFrame, top, stackBounds, codeBlockSetLocker, machineThreadsLocker);
+                    CFrameWalkerWithCompiledFrames walker(m_vm, *image, machineFrame, top, entryFrame, stackBounds, codeBlockSetLocker, machineThreadsLocker);
                     walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                     wasValidWalk = walker.wasValidWalk();
                 } else {
-                    FrameWalkerWithCompiledFrames walker(m_vm, *image, top, stackBounds, codeBlockSetLocker, machineThreadsLocker);
+                    FrameWalkerWithCompiledFrames walker(m_vm, *image, top, entryFrame, stackBounds, codeBlockSetLocker, machineThreadsLocker);
                     walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                     wasValidWalk = walker.wasValidWalk();
                 }
             } else
 #endif
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, entryFrame, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, entryFrame, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }
@@ -954,6 +985,12 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 stackFrame.compiledFrame = { { }, AOT::FunctionDescription(*function).sourceFunction(), CallSiteIndex(), false, false };
                 return;
             }
+            if (auto* savedFrame = unprocessedStackTrace.wasWalked ? nullptr : dynamicDowncast<AOT::SavedFrame>(calleeCell)) {
+                const AOT::Image& image = *m_vm.aotState().image;
+                if (AOT::CodeLocation code = image.locate(savedFrame->resumeAddress()); code.kind == AOT::CodeKind::Function)
+                    stackFrame.compiledFrame = { AOT::CompiledFunctionID(code.function), AOT::FunctionDescription(image.rootFunctionOf(code.function)).sourceFunction(), CallSiteIndex(), false, false };
+                return;
+            }
 #endif
 
             if (!isJSFunctionType(calleeCell->type())) {
@@ -1100,6 +1137,17 @@ void SamplingProfiler::processUnverifiedStackTraces()
             if (!unprocessedStackFrame.cCodePC)
                 storeCalleeIntoLastFrame(unprocessedStackFrame);
         }
+
+        if (!unprocessedStackTrace.wasWalked) {
+            StackFrame& frame = stackTrace.frames.last();
+            bool isShown = frame.frameType != FrameType::Unknown;
+#if ENABLE(AOT)
+            if (frame.isCompiledFrame())
+                isShown = shownFrames.shows(AOT::FunctionDescription(frame.compiledFrame.function).visibility(), false);
+#endif
+            if (!isShown)
+                stackTrace.frames.clear();
+        }
     }
 
     m_unprocessedStackTraces.clear();
@@ -1118,9 +1166,14 @@ template void SamplingProfiler::visit(SlotVisitor&);
 
 void SamplingProfiler::shutdown()
 {
-    Locker locker { m_lock };
-    m_isShutDown = true;
-    wakeUpTimerLoop();
+    {
+        Locker locker { m_lock };
+        if (std::exchange(m_isShutDown, true))
+            return; // The VM may be gone.
+        clearData();
+        wakeUpTimerLoop();
+    }
+    m_vm.didShutDownSamplingProfiler(*this);
 }
 
 void SamplingProfiler::setTimingInterval(Seconds interval)
@@ -1179,20 +1232,6 @@ void SamplingProfiler::noticeCurrentThreadAsJSCExecutionThread()
 {
     Locker locker { m_lock };
     noticeCurrentThreadAsJSCExecutionThreadWithLock();
-}
-
-void SamplingProfiler::noticeJSLockAcquisition()
-{
-    Locker locker { m_lock };
-    noticeCurrentThreadAsJSCExecutionThreadWithLock();
-}
-
-void SamplingProfiler::noticeVMEntry()
-{
-    Locker locker { m_lock };
-    ASSERT(m_vm.entryScope);
-    noticeCurrentThreadAsJSCExecutionThreadWithLock();
-    createThreadIfNecessary();
 }
 
 void SamplingProfiler::clearData()
@@ -1425,6 +1464,9 @@ Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces()
 auto SamplingProfiler::releaseSamples() -> Samples
 {
     ASSERT(m_lock.isLocked());
+    if (m_isShutDown)
+        return { };
+
     {
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();

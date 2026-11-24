@@ -51,6 +51,7 @@ bool CodeBlockSet::contains(const AbstractLocker&, void* candidateCodeBlock)
 void CodeBlockSet::clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM& vm)
 {
     ASSERT(vm.heap.isInPhase(CollectorPhase::End));
+    Locker locker { m_lock }; // The sampling profiler does not stop with the world.
     m_currentlyExecuting.clear();
     HeapVersion markingVersion = vm.heap.objectSpace().markingVersion();
     m_codeBlocks.removeIf([&](CodeBlock* codeBlock) {

@@ -190,6 +190,7 @@ public:
         void* llintPC;
         RegExp* regExp;
         Vector<UnprocessedStackFrame> frames;
+        bool wasWalked { true };
     };
 
     struct StackTrace {
@@ -202,10 +203,9 @@ public:
     };
 
     enum class ThreadState : uint8_t {
-        Idle, // No JavaScript is on the stack, and the embedder says that the thread waits for work.
+        Idle, // No JavaScript is on the stack, and VM::isIdle(). A wait beneath a JavaScript frame still belongs to that frame.
         Program, // No JavaScript is on the stack.
         GarbageCollector,
-        JavaScript, // It had returned by the time the thread was suspended, or its stack could not be walked.
     };
 
     // Consecutive samples that have no stack trace and found the thread in the same state.
@@ -224,24 +224,22 @@ public:
 
     SamplingProfiler(VM&, Ref<Stopwatch>&&);
     JS_EXPORT_PRIVATE ~SamplingProfiler();
-    void noticeJSLockAcquisition();
-    void noticeVMEntry();
-    void shutdown();
+    // For good. What has not been released is dropped.
+    JS_EXPORT_PRIVATE void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
     JS_EXPORT_PRIVATE void setTimingInterval(Seconds) WTF_EXCLUDES_LOCK(m_lock);
     // A deeper stack loses its outermost frames. A function that was inlined does not count.
     static constexpr size_t unlimitedStackDepth = std::numeric_limits<size_t>::max();
     JS_EXPORT_PRIVATE void setMaximumStackDepth(size_t) WTF_REQUIRES_LOCK(m_lock);
-    // With this, every tick of the timer leaves either a stack trace or a sample without frames.
+    // With this, every tick of the timer leaves either a stack trace or a sample without frames. If JavaScript has returned by the
+    // time the thread is suspended, or its stack cannot be walked, the stack trace is cut down to its outermost frame.
+    // That frame is known unless it was called while the VM had no profiler.
     void setRecordsSamplesWithoutFrames(bool records) WTF_REQUIRES_LOCK(m_lock)
     {
         if (std::exchange(m_recordsSamplesWithoutFrames, records) != records)
             m_canExtendLastSamplesWithoutFrames = false;
     }
-    bool isRecordingSamplesWithoutFrames() const WTF_REQUIRES_LOCK(m_lock) { return m_recordsSamplesWithoutFrames && !m_isPaused; }
-    // A wait beneath a JavaScript frame still belongs to that frame, and one for the collector to the collector.
-    void setExecutionThreadIsIdle(bool isIdle) { m_executionThreadIsIdle.storeRelaxed(isIdle); }
     JS_EXPORT_PRIVATE void start();
     void startWithLock() WTF_REQUIRES_LOCK(m_lock);
     Vector<StackTrace> releaseStackTraces() WTF_REQUIRES_LOCK(m_lock);
@@ -270,7 +268,6 @@ private:
     void wakeUpTimerLoop() WTF_REQUIRES_LOCK(m_lock);
     void takeSample(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
     bool takeStackTrace(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
-    ThreadState executionThreadState();
 
     Lock m_lock;
     Condition m_timerCondition;
@@ -281,7 +278,6 @@ private:
     bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock);
     bool m_recordsSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_canExtendLastSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
-    Atomic<bool> m_executionThreadIsIdle { false };
     bool m_needsReportAtExit { false };
     VM& m_vm;
     WeakRandom m_weakRandom;

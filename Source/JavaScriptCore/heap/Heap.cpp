@@ -3253,12 +3253,13 @@ constexpr bool samplingProfilerSupported = true;
 template<typename Visitor>
 static ALWAYS_INLINE void visitSamplingProfiler(VM& vm, Visitor& visitor)
 {
-    SamplingProfiler* samplingProfiler = vm.samplingProfiler();
-    if (samplingProfiler) [[unlikely]] {
+    if (!vm.samplingProfilers().isEmpty()) [[unlikely]] {
         JSC_BEGIN_REMOVABLE_ENTRY_POINT(Profilers, Abort, void)
-        Locker locker { samplingProfiler->getLock() };
-        samplingProfiler->processUnverifiedStackTraces();
-        samplingProfiler->visit(visitor);
+        for (auto& samplingProfiler : vm.samplingProfilers()) {
+            Locker locker { samplingProfiler->getLock() };
+            samplingProfiler->processUnverifiedStackTraces();
+            samplingProfiler->visit(visitor);
+        }
         if (Options::logGC() == GCLogging::Verbose)
             dataLog("Sampling Profiler data:\n", visitor);
         JSC_END_REMOVABLE_ENTRY_POINT

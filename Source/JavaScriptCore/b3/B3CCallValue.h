@@ -43,6 +43,7 @@ public:
     void appendArgs(const Vector<Value*>&);
     
     Effects effects;
+    bool needsTopCallFrameStore { true };
 
     B3_SPECIALIZE_VALUE_FOR_VARARGS_CHILDREN
     B3_SPECIALIZE_VALUE_FOR_FINAL_SIZE_VARARGS_CHILDREN

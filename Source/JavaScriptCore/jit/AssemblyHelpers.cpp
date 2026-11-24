@@ -1632,6 +1632,12 @@ void AssemblyHelpers::prepareWasmCallOperation(GPRReg instanceGPR)
     UNUSED_PARAM(instanceGPR);
 }
 
+void AssemblyHelpers::storeTopCallFrameFromWasm(GPRReg scratchGPR)
+{
+    loadPtr(Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfVM()), scratchGPR);
+    storePtr(GPRInfo::callFrameRegister, Address(scratchGPR, VM::offsetOfTopCallFrame()));
+}
+
 #endif // ENABLE(WEBASSEMBLY)
 
 void AssemblyHelpers::copyCalleeSavesToEntryFrameCalleeSavesBufferImpl(GPRReg calleeSavesBuffer)

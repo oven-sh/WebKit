@@ -28,13 +28,22 @@ if (platformSupportsSamplingProfiler()) {
 
     startSamplingProfiler({ intervalInMicroseconds: 500, recordsSamplesWithoutFrames: true });
 
-    // It has to hold for some three waits in a row: for how long a thread is kept from running is up to the machine.
-    // So is how much there has to be to mark for a collection to outlast a wait.
+    // How much there has to be to mark for a collection to outlast a wait is up to the machine.
     globalThis.list = null;
-    for (let result, length = 0; ;) {
-        failIfOutOfTime(() => JSON.stringify(result));
-        for (const newLength = Math.min(2 * length || 50000, 3200000); length < newLength; length++)
+    for (let length = 0, duration = 0; duration < 10;) {
+        for (const newLength = 2 * length || 5000; length < newLength; length++)
             list = { next: list };
+        duration = Infinity;
+        for (let i = 0; i < 3; i++) {
+            const startTime = $.agent.monotonicNow();
+            fullGC();
+            duration = Math.min(duration, $.agent.monotonicNow() - startTime);
+        }
+    }
+
+    // So is for how long a thread is kept from running. It has to hold for some three waits in a row.
+    for (let result; ;) {
+        failIfOutOfTime(() => JSON.stringify(result));
 
         result = { before: { inCall: 0, inCollector: 0 }, after: { inCall: 0, inCollector: 0 } };
         for (let i = 0; i < 3; i++) {

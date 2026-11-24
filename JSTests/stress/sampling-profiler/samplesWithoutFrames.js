@@ -14,24 +14,38 @@ class Tally {
     Idle = 0;
     Program = 0;
     GarbageCollector = 0;
-    JavaScript = 0;
     stackTraces = 0;
     longestRun = 0;
     topFrames = new Map;
+    #stacks = new Map;
+    #notYetInStacks = [];
+    #releaseSamples;
 
-    constructor() {
-        releaseSamplingProfilerSamples();
+    constructor(releaseSamples = releaseSamplingProfilerSamples) {
+        this.#releaseSamples = releaseSamples;
+        releaseSamples();
     }
 
-    get withoutFrames() { return this.Idle + this.Program + this.GarbageCollector + this.JavaScript; }
+    get withoutFrames() { return this.Idle + this.Program + this.GarbageCollector; }
     get total() { return this.withoutFrames + this.stackTraces; }
     withTopFrame(name) { return this.topFrames.get(name) ?? 0; }
-    toString() { return JSON.stringify({ ...this, topFrames: [...this.topFrames] }); }
+    // Only on demand: what a test does with its samples is sampled too, and has to take less time than it took to collect them.
+    get stacks() {
+        for (const { frames } of this.#notYetInStacks.splice(0).flat()) {
+            const stack = frames.length ? frames.join(" < ") : "(no frames)";
+            this.#stacks.set(stack, (this.#stacks.get(stack) ?? 0) + 1);
+        }
+        return this.#stacks;
+    }
+    withStack(...names) { return this.stacks.get(names.join(" < ")) ?? 0; }
+    withStackIncluding(...names) { return [...this.stacks].reduce((sum, [stack, count]) => sum + (stack.includes(names.join(" < ")) ? count : 0), 0); }
+    toString() { return JSON.stringify({ ...this, topFrames: undefined, stacks: [...this.stacks] }); }
 
     update() {
-        const { stackTraces, withoutFrames } = releaseSamplingProfilerSamples();
+        const { stackTraces, withoutFrames } = this.#releaseSamples();
 
         this.stackTraces += stackTraces.length;
+        this.#notYetInStacks.push(stackTraces);
         for (const { frames } of stackTraces)
             this.topFrames.set(frames[0], this.withTopFrame(frames[0]) + 1);
 
@@ -76,7 +90,7 @@ class Tally {
 function sampleOnly(run, prepare) {
     return () => {
         pauseSamplingProfiler();
-        prepare();
+        prepare?.();
         releaseSamplingProfilerSamples();
         startSamplingProfiler();
         run();
@@ -89,6 +103,14 @@ function expectCollectorRatherThan(name, step) {
     for (let tally; !(tally?.GarbageCollector > 4 * tally?.withTopFrame(name));) {
         failIfOutOfTime(() => `${name}: ${tally}`);
         tally = new Tally().repeatUntil(tally => tally.GarbageCollector + tally.withTopFrame(name) >= 100, step);
+    }
+}
+
+// Most of those that include the last of the names.
+function expectMostStacksToInclude(names, step) {
+    for (let tally; !(tally?.withStackIncluding(...names) > tally?.withStackIncluding(names.at(-1)) / 2);) {
+        failIfOutOfTime(() => `${names}: ${tally}`);
+        tally = new Tally().repeatUntil(tally => tally.withStackIncluding(names.at(-1)) >= 30, step);
     }
 }
 

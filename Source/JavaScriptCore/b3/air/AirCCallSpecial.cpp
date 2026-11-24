@@ -28,6 +28,11 @@
 
 #if ENABLE(B3_JIT)
 
+#include "AirCode.h"
+#include "AirGenerationContext.h"
+#include "B3CCallValue.h"
+#include "B3Procedure.h"
+#include "B3ValueInlines.h"
 #include "CCallHelpers.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -124,8 +129,14 @@ void CCallSpecial::reportUsedRegisters(Inst&, const RegisterSet&)
 {
 }
 
-CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext&)
+CCallHelpers::Jump CCallSpecial::generate(Inst& inst, CCallHelpers& jit, GenerationContext& context)
 {
+    if (auto* generator = context.code->proc().topCallFrameStoreGenerator(); generator && inst.origin->as<CCallValue>()->needsTopCallFrameStore) {
+        // Neither holds an argument, nor a value that outlives the call.
+        bool calleeUsesScratchRegister = inst.args()[calleeArgOffset].usesTmp(Tmp(scratchRegister));
+        generator->run(jit, calleeUsesScratchRegister ? GPRInfo::nonPreservedNonArgumentGPR1 : scratchRegister);
+    }
+
     switch (inst.args()[calleeArgOffset].kind()) {
     case Arg::Imm:
     case Arg::BigImm:

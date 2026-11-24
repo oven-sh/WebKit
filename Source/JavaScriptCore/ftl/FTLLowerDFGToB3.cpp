@@ -3473,8 +3473,11 @@ private:
         }
 
         case DoubleRepUse: {
-            setDouble(
-                m_out.doubleMod(lowDouble(m_node->child1()), lowDouble(m_node->child2())));
+            LValue numerator = lowDouble(m_node->child1());
+            LValue denominator = lowDouble(m_node->child2());
+            if (!denominator->hasDouble() || !powerOfTwoDivisorForDoubleMod(denominator->asDouble()))
+                callPreflight();
+            setDouble(m_out.doubleMod(numerator, denominator));
             break;
         }
 
@@ -3549,7 +3552,9 @@ private:
     {
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
         if (m_node->child1().useKind() == DoubleRepUse) {
-            setDouble(m_out.doubleUnary(m_node->arithUnaryType(), lowDouble(m_node->child1())));
+            LValue argument = lowDouble(m_node->child1());
+            callPreflight();
+            setDouble(m_out.doubleUnary(m_node->arithUnaryType(), argument));
             return;
         }
         LValue argument = lowJSValue(m_node->child1());
@@ -3580,9 +3585,12 @@ private:
 
     void compileArithPow()
     {
-        if (m_node->child2().useKind() == Int32Use)
-            setDouble(m_out.doublePowi(lowDouble(m_node->child1()), lowInt32(m_node->child2())));
-        else {
+        if (m_node->child2().useKind() == Int32Use) {
+            LValue base = lowDouble(m_node->child1());
+            LValue exponent = lowInt32(m_node->child2());
+            callPreflight();
+            setDouble(m_out.doublePowi(base, exponent));
+        } else {
             LValue base = lowDouble(m_node->child1());
             LValue exponent = lowDouble(m_node->child2());
 
@@ -3698,6 +3706,7 @@ private:
             m_out.jump(continuation);
 
             m_out.appendTo(powBlock, continuation);
+            callPreflight();
             ValueFromBlock powResult = m_out.anchor(m_out.doubleStdPow(base, exponent));
             m_out.jump(continuation);
 
@@ -15866,6 +15875,7 @@ IGNORE_CLANG_WARNINGS_END
                 break;
             }
             LValue rawReturn = m_out.call(returnLType, callee, directOperands);
+            rawReturn->as<CCallValue>()->needsTopCallFrameStore = false;
             TypedPointer returnSlot = slotPointer(nativeArgumentCount);
             switch (returnType) {
             case FFI::Type::Void:
@@ -15909,12 +15919,12 @@ IGNORE_CLANG_WARNINGS_END
         } else if (needsArena) {
             callPreflight();
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
-            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots)->as<CCallValue>()->needsTopCallFrameStore = false;
             exceptionCheckWithArenaExit(nullptr);
         } else {
             callPreflight();
             m_out.storePtr(m_callFrame, m_out.absolute(&vm().topCallFrame));
-            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots);
+            m_out.call(Void, m_out.constIntPtr(invokeThunk.taggedPtr()), targetValue, slots)->as<CCallValue>()->needsTopCallFrameStore = false;
             operationExceptionCheck<void>(nullptr);
         }
 
@@ -21998,6 +22008,7 @@ IGNORE_CLANG_WARNINGS_END
         if (m_node->isBinaryUseKind(StringIdentUse)) {
             LValue left = lowStringIdent(m_node->child1());
             LValue right = lowStringIdent(m_node->child2());
+            callPreflight();
             setBoolean(m_out.callWithoutSideEffects(Int32, stringIdentFunction, left, right));
             return;
         }
@@ -23639,6 +23650,7 @@ IGNORE_CLANG_WARNINGS_END
         LValue shift = m_out.constInt32(logElementSize(type));
         LValue basePointer = m_out.add(caged(Gigacage::Primitive, baseVector, base), m_out.shl(offsetPtr, shift));
         LValue sourcePointer = caged(Gigacage::Primitive, sourceVector, source);
+        callPreflight();
         m_out.memoryMove(basePointer, sourcePointer, m_out.shl(sourceLength, shift), &m_heaps.TypedArrayProperties, &m_heaps.TypedArrayProperties);
         ensureStillAliveHere(base);
         ensureStillAliveHere(source);
@@ -26273,6 +26285,7 @@ IGNORE_CLANG_WARNINGS_END
                 rarely(slowPath), usually(continuation));
 
             LBasicBlock lastNext = m_out.appendTo(slowPath, continuation);
+            callPreflight();
             ValueFromBlock slowResult = m_out.anchor(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationToInt32SensibleSlow, doubleValue)));
             m_out.jump(continuation);
 
@@ -26311,6 +26324,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.jump(continuation);
 
             m_out.appendTo(slowPath, continuation);
+            callPreflight();
             results.append(m_out.anchor(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationToInt32, doubleValue))));
             m_out.jump(continuation);
 
@@ -28525,6 +28539,7 @@ IGNORE_CLANG_WARNINGS_END
         callPreflight();
         using ResultType = typename FunctionTraits<OperationType>::ResultType;
         LValue result = m_out.call(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
+        result->as<CCallValue>()->needsTopCallFrameStore = !operationStoresTopCallFrame<OperationType>;
         return operationExceptionCheckAndExtractResultIfNeeded<ResultType>(result);
     }
 
@@ -28536,6 +28551,7 @@ IGNORE_CLANG_WARNINGS_END
         callPreflight();
         using ResultType = typename FunctionTraits<OperationType>::ResultType;
         LValue result = m_out.call(resultTypeForOperation<ResultType>(type), m_out.operation(function), std::forward<Args>(args)...);
+        result->as<CCallValue>()->needsTopCallFrameStore = !operationStoresTopCallFrame<OperationType>;
         return operationExceptionCheckAndExtractResultIfNeeded<ResultType>(result);
     }
 

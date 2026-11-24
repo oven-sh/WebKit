@@ -80,6 +80,11 @@ State::State(Graph& graph)
             out.print(origin.dfgOrigin());
         });
 
+    proc->setTopCallFrameStoreGenerator([topCallFrame = &graph.m_vm.topCallFrame](CCallHelpers& jit, GPRReg scratch) {
+        jit.move(CCallHelpers::TrustedImmPtr(topCallFrame), scratch);
+        jit.storePtr(GPRInfo::callFrameRegister, CCallHelpers::Address(scratch));
+    });
+
     proc->setFrontendData(&graph);
     if (RefPtr passes = graph.ionGraphPasses())
         proc->setIonGraphPasses(passes.releaseNonNull());

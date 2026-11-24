@@ -153,6 +153,7 @@ namespace JSC {
         // and return value. Like any sensible architecture would.
         void callDoubleToDouble(CodePtr<CFunctionPtrTag> function)
         {
+            storeTopCallFrame(*vm());
             m_calls.append(std::make_pair(call(OperationPtrTag), function.retagged<OperationPtrTag>()));
         }
         

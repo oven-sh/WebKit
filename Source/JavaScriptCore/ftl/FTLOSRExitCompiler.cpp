@@ -38,6 +38,7 @@
 #include "FTLOperations.h"
 #include "FTLSaveRestore.h"
 #include "FTLState.h"
+#include "FrameTracers.h"
 #include "JSCJSValueInlines.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
@@ -655,6 +656,7 @@ static MacroAssemblerCodeRef<OSRExitPtrTag> compileStub(VM& vm, unsigned exitID,
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationCompileFTLOSRExit, void*, (CallFrame* callFrame, void* returnPC))
 {
     VM& vm = callFrame->deprecatedVM();
+    NativeCallFrameTracer tracer(vm, callFrame);
     // Don't need an ActiveScratchBufferScope here because we DeferGCForAWhile below.
 
     if constexpr (validateDFGDoesGC) {

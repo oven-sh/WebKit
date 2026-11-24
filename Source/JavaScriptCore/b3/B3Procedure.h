@@ -89,6 +89,9 @@ class StackSlot;
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
 
+typedef void TopCallFrameStoreGeneratorFunction(CCallHelpers&, GPRReg scratch);
+typedef SharedTask<TopCallFrameStoreGeneratorFunction> TopCallFrameStoreGenerator;
+
 // This represents B3's view of a piece of code. Note that this object must exist in a 1:1
 // relationship with Air::Code. B3::Procedure and Air::Code are just different facades of the B3
 // compiler's knowledge about a piece of code. Some kinds of state aren't perfect fits for either
@@ -387,6 +390,15 @@ public:
         setWasmBoundsCheckGenerator(RefPtr<WasmBoundsCheckGenerator>(createSharedTask<WasmBoundsCheckGeneratorFunction>(functor)));
     }
 
+    // Runs right before each C call, including those that B3 lowers an opcode to, unless CCallValue::needsTopCallFrameStore
+    // is cleared. While the thread is in C code, the sampling profiler has nothing but VM::topCallFrame to go by.
+    template<typename Functor>
+    void setTopCallFrameStoreGenerator(const Functor& functor)
+    {
+        m_topCallFrameStoreGenerator = createSharedTask<TopCallFrameStoreGeneratorFunction>(functor);
+    }
+    TopCallFrameStoreGenerator* topCallFrameStoreGenerator() const { return m_topCallFrameStoreGenerator.get(); }
+
     JS_EXPORT_PRIVATE RegisterSet mutableGPRs();
 
     NODELETE void setNeedsPCToOriginMap();
@@ -475,6 +487,7 @@ private:
     std::unique_ptr<Air::Code> m_code;
     std::unique_ptr<AbstractHeapRepository> m_heaps;
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
+    RefPtr<TopCallFrameStoreGenerator> m_topCallFrameStoreGenerator;
     const void* m_frontendData;
     uint32_t m_subjectOfClient { 0 };
     String m_name;

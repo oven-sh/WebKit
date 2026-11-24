@@ -27,6 +27,7 @@
 
 #if ENABLE(WEBASSEMBLY_BBQJIT)
 
+#include "OperationResult.h"
 #include "WasmBBQJIT.h"
 #include "WasmCallingConvention.h"
 #include "WasmCompilationContext.h"
@@ -543,6 +544,8 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments)
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
 
+    if constexpr (!operationStoresTopCallFrame<Func>)
+        m_jit.storeTopCallFrameFromWasm(wasmScratchGPR);
     emitCallOfOperation(tagCFunctionPtr<void*, OperationPtrTag>(function));
 }
 
@@ -570,6 +573,8 @@ void BBQJIT::emitCCall(Func function, std::span<const Value> arguments, Value& r
     prepareForExceptions();
     saveValuesAcrossCallAndPassArguments(arguments, callInfo, functionRTT.get());
 
+    if constexpr (!operationStoresTopCallFrame<Func>)
+        m_jit.storeTopCallFrameFromWasm(wasmScratchGPR);
     emitCallOfOperation(tagCFunctionPtr<void*, OperationPtrTag>(function));
 
     Location resultLocation;

@@ -1082,6 +1082,15 @@ public:
         return Base::appendCall(function);
     }
 
+    template<typename OperationType>
+    requires std::is_function_v<std::remove_pointer_t<OperationType>>
+    JITCompiler::Call appendCall(OperationType operation)
+    {
+        if constexpr (!operationStoresTopCallFrame<OperationType>)
+            storeTopCallFrame(vm());
+        return appendCall(CodePtr<OperationPtrTag> { operation });
+    }
+
     void appendCall(Address address)
     {
         prepareForExternalCall();

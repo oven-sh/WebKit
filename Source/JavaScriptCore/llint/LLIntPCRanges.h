@@ -37,6 +37,7 @@ namespace LLInt {
 extern "C" {
     void llintPCRangeStart();
     void llintPCRangeEnd();
+    void llintVMEntryPCRangeEnd();
     void llintBytecodePCRangeStart();
     void llintBytecodePCRangeEnd();
 #if ENABLE(WEBASSEMBLY)
@@ -57,6 +58,15 @@ ALWAYS_INLINE bool isLLIntPC(void* pc)
     return (config.bytecodePCRangeStart <= pcAsInt && pcAsInt < config.bytecodePCRangeEnd)
         || (config.wasmIPIntPCRangeStart <= pcAsInt && pcAsInt < config.wasmIPIntPCRangeEnd);
 }
+
+#if !ENABLE(C_LOOP)
+// vmEntryToJavaScript(), sanitizeStackForVMImpl() and the like.
+ALWAYS_INLINE bool isVMEntryPC(void* pc)
+{
+    uintptr_t pcAsInt = std::bit_cast<uintptr_t>(pc);
+    return untagCodePtr<uintptr_t, CFunctionPtrTag>(llintPCRangeStart) <= pcAsInt && pcAsInt < untagCodePtr<uintptr_t, CFunctionPtrTag>(llintVMEntryPCRangeEnd);
+}
+#endif
 
 #if ENABLE(WEBASSEMBLY)
 ALWAYS_INLINE bool isWasmIPIntPC(void* pc)

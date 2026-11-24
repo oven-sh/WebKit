@@ -963,7 +963,9 @@ private:
         emitPrepareWasmOperation(block);
         static_assert(FunctionTraits<OperationType>::cCallArity() == sizeof...(Args), "Sanity check");
         Value* operationValue = processPointer(block, ProcessPointerKind::Operation, std::bit_cast<void*>(tagCFunction<OperationPtrTag>(operation)));
-        return block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, std::forward<Args>(args)...);
+        auto* call = block->appendNew<CCallValue>(m_proc, resultType, origin(), operationValue, std::forward<Args>(args)...);
+        call->needsTopCallFrameStore = !operationStoresTopCallFrame<OperationType>;
+        return call;
     }
 
     enum class ProcessPointerKind : uint8_t { Operation, TypeDefinition, OwnCallee, InterpreterCallee };
@@ -1464,6 +1466,10 @@ OMGIRGenerator::OMGIRGenerator(AbstractHeapRepository& heaps, CompilationContext
     // use it. We actively don't restore this register in many cases anyway e.g. tail calls.
     if (mode == MemoryMode::BoundsChecking)
         m_proc.pinRegister(GPRInfo::wasmBoundsCheckingSizeRegister);
+
+    m_proc.setTopCallFrameStoreGenerator([](CCallHelpers& jit, GPRReg scratch) {
+        jit.storeTopCallFrameFromWasm(scratch);
+    });
 
     if (info.memoryCount()) {
         m_proc.setWasmBoundsCheckGenerator([=, this](CCallHelpers& jit, WasmBoundsCheckValue* originValue, GPRReg pinnedGPR) {
