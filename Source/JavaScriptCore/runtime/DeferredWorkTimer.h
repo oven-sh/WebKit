@@ -70,6 +70,11 @@ public:
         inline void cancelAndClear();
         bool isCancelled() const { return m_isCancelled; }
 
+        // A byte for the embedder, written from onAddPendingWork (before the ticket is handed
+        // out) and read back from onScheduleWorkSoon, on whichever thread schedules the work.
+        uint8_t embedderData() const { return m_embedderData; }
+        void setEmbedderData(uint8_t data) { m_embedderData = data; }
+
     private:
         inline Ticket(WorkType, JSObject* scriptExecutionOwner, Vector<JSCell*>&& dependencies);
 
@@ -77,6 +82,7 @@ public:
         FixedVector<JSCell*> m_dependencies;
         JSObject* m_scriptExecutionOwner { nullptr };
         bool m_isCancelled { false };
+        uint8_t m_embedderData { 0 };
     };
 
     using WeakTicket = ThreadSafeWeakPtr<Ticket>;
@@ -113,17 +119,43 @@ public:
 
     static Ref<DeferredWorkTimer> create(VM& vm) { return adoptRef(*new DeferredWorkTimer(vm)); }
 
-    WTF::Function<void(Ref<Ticket>&&, WorkType)> onAddPendingWork;
+    // An embedder that runs the tasks from its own event loop installs all three hooks.
+    // The timer still owns the tickets: m_pendingTickets holds every ticket from
+    // addPendingWork until it is cancelled or taken, so cancelPendingWork(VM&) cancels
+    // the tickets of dead realms at the end of every collection exactly as it does when
+    // doWork runs the tasks.
+    //
+    //   onAddPendingWork     a ticket became pending. Called on the VM's thread, or on a
+    //                        collector thread with the world stopped. The place to set
+    //                        the ticket's embedderData().
+    //   onScheduleWorkSoon   run this task for this ticket from the event loop. Before
+    //                        running it, call takePendingWork(); run the task only if it
+    //                        returns true. May be called from any thread.
+    //   onCancelPendingWork  a pending ticket was cancelled. Called once per ticket, and
+    //                        never for a ticket that takePendingWork() returned true for.
+    //                        The ticket's dependencies may already be cleared; its type()
+    //                        and embedderData() are still valid. May be called from any
+    //                        thread, including a collector thread at the end of a collection
+    //                        with the world stopped: it must not run script, allocate JS
+    //                        cells, or take the API lock.
+    WTF::Function<void(Ticket&)> onAddPendingWork;
     WTF::Function<void(Ref<Ticket>&&, Task&&)> onScheduleWorkSoon;
     WTF::Function<void(Ticket&)> onCancelPendingWork;
+    JS_EXPORT_PRIVATE bool takePendingWork(Ticket&);
+
 private:
     JS_EXPORT_PRIVATE DeferredWorkTimer(VM&);
 
-    Lock m_taskLock;
+    RefPtr<Ticket> takePendingTicket(Ticket&);
+
+    mutable Lock m_taskLock;
     bool m_runTasks { true };
     bool m_shouldStopRunLoopWhenAllTicketsFinish { false };
     bool m_currentlyRunningTask { false };
     Deque<std::tuple<Ref<Ticket>, Task>> m_tasks WTF_GUARDED_BY_LOCK(m_taskLock);
+    // With the hooks installed, every access to this set happens under m_taskLock:
+    // a cancellation can come from a collector thread, or from another VM's thread
+    // through WaiterListManager, while the embedder takes tickets on the VM's thread.
     UncheckedKeyHashSet<Ref<Ticket>> m_pendingTickets;
 };
 
