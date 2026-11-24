@@ -66,11 +66,6 @@ static BuiltinID engineFunctionFor(OwnKeysKind kind)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-static BuiltinID engineFunctionFor(OwnPropertyList list)
-{
-    return list == OwnPropertyList::Values ? Builtins::ObjectValues : Builtins::ObjectEntries;
-}
-
 static JSArray* tryCreateFlatEntriesArray(JSGlobalObject* globalObject, unsigned count, const Invocable<JSValue(unsigned)> auto& keyAt, const Invocable<JSValue(unsigned)> auto& valueAt)
 {
     VM& vm = globalObject->vm();
@@ -428,8 +423,12 @@ static JSValue listOwnProperties(Instance* instance, JSValue value, OwnPropertyL
         }
     }
     JSValue listed;
-    if (!value.isObject() || !isListedWithoutRunningCode(asObject(value)))
-        listed = callInEngine(instance, engineFunctionFor(list), value);
+    if (value.isUndefinedOrNull() && list != OwnPropertyList::FlatEntries) {
+        throwTypeError(globalObject, scope, makeString("Object."_s, list == OwnPropertyList::Values ? "values"_s : "entries"_s, " requires that input parameter not be null or undefined"_s));
+        return { };
+    }
+    if (list == OwnPropertyList::FlatEntries && (!value.isObject() || !isListedWithoutRunningCode(asObject(value))))
+        listed = callInEngine(instance, Builtins::ObjectEntries, value);
     else if (JSArray* entries = list == OwnPropertyList::FlatEntries ? tryListFlatEntriesOfOrdinaryObject(globalObject, asObject(value)) : nullptr)
         return entries;
     else
