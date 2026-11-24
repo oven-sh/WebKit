@@ -2624,7 +2624,7 @@ bool Walker::takeGeneratorForConsumer(const BodyValue& call)
     if (passedGenerator) {
         m_environmentCellsOfUnit.mayNameSome |= isHandedEnvironmentWithByte(*this, callee);
         for (ValueID operand : m_code.at(passedGenerator.id()).variadicOperands())
-            taken.entryArguments.append(Reference::value(operand));
+            taken.entryArguments.append(referenceTo(operand));
     } else {
         Vector<Reference, 8> passedOperands = collectPassedOperands(site, program().at(callee));
         if (hasFailed() || !callMayEnterCopyOfBody(*this, site, callee, passedOperands.span()))

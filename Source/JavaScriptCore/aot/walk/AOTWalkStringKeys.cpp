@@ -257,6 +257,20 @@ static const LinkedLayout* layoutThatStaysInSightInStringKeys(const Walker& walk
     return &linked.layout(id);
 }
 
+// A test makes the closure of the field that it finds, as GetDeferredClosureSlot does, and writes no other field.
+static void addWritesOfMakingClosuresOfFields(const Walker& walker, LayoutID layout, Effects& effects)
+{
+    const Program& program = walker.program();
+    const SlotPlan& slots = walker.plan().slots();
+    for (LayoutID current = layout; current; current = program.at(current).base) {
+        for (const Field& field : program.at(current).fields) {
+            std::optional<FieldIndex> index = slots.findField(program, layout, field.key);
+            if (index && slots.slot(layout, *index).representation == SlotRepresentation::DeferredClosure)
+                effects.writes.add(program, MemoryLocation::objectField(field.key));
+        }
+    }
+}
+
 bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& access, const InputsOfTypedOperation& inputs)
 {
     if ((access.opcode() != Opcode::ElemGet && access.opcode() != Opcode::ElemHas) || inputs.areOnlyTypes())
@@ -272,14 +286,19 @@ bool buildLookupUnderAnyKeyOnPlainRecords(Walker& walker, const BodyValue& acces
     if (access.opcode() == Opcode::ElemGet && !lockedObjectPrototypeInStringKeys(walker.program()))
         return false;
     bool mayMakeClosureOfField = false;
+    Effects effects = Effects::ofReadByNameThatRunsNoCode();
     for (LayoutID layout : membersOf(types, object)) {
         const LinkedLayout* known = isRecordBelowObjectPrototypeInStringKeys(walker.program(), layout) ? layoutThatStaysInSightInStringKeys(walker, layout) : nullptr;
         if (!known || known->possibleChanges.containsAny({ LayoutChange::GetsAccessor, LayoutChange::ChangesPrototype }))
             return false;
-        mayMakeClosureOfField |= access.opcode() == Opcode::ElemGet && walker.plan().layout(layout).environmentOfDeferredClosures;
+        if (!walker.plan().layout(layout).environmentOfDeferredClosures)
+            continue;
+        if (access.opcode() == Opcode::ElemGet)
+            mayMakeClosureOfField = true;
+        else
+            addWritesOfMakingClosuresOfFields(walker, layout, effects);
     }
 
-    Effects effects = Effects::ofReadByNameThatRunsNoCode();
     if (mayMakeClosureOfField)
         effects.writes.add(AbstractHeap::ObjectFields);
     if (object.mayBeUndefinedOrNull())
