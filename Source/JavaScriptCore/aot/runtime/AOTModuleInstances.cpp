@@ -3527,7 +3527,8 @@ bool Modules::requiresPatch(ModuleID module, JSObject*& exports) const
 {
     ModuleID file = fileOf(module);
     const LoadedModule* loaded = loadedIfExists(module);
-    if (!host().requiresPatch || (loaded && (loaded->requiredValue || loaded->wasRequiredByHost)) || !data(file).isESModuleOfProgram() || data(file).isFacade() || !m_table.hasFilePath(file))
+    bool mayBePatched = data(file).isOfLibrary() || (!(loaded && (loaded->requiredValue || loaded->wasRequiredByHost)) && data(file).isESModuleOfProgram() && !data(file).isFacade() && m_table.hasFilePath(file));
+    if (!host().requiresPatch || !mayBePatched)
         return false;
     return host().requiresPatch(m_instance.globalObject, scopedLambda<String()>([&] {
         return m_table.fullPath(file);

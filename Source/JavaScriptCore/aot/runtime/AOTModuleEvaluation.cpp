@@ -5518,6 +5518,8 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         RELEASE_AND_RETURN(scope, loadEvictedFile(fileOf(target), referrer));
     if (targetData.isOfLibrary() && isRequiredByProgram && isKeptInRequireCache(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, requireThroughCache(target, referrer));
+    if (JSObject* exports = nullptr; m_hasBegunTestFile && targetData.isOfLibrary() && isRequiredByProgram && requiresPatch(target, exports) && exports) [[unlikely]]
+        RELEASE_AND_RETURN(scope, requiredExportsOfMock(exports));
     if (targetData.isOfLibrary() && isRequiredByProgram && isMockedLibraryModule(target)) [[unlikely]]
         RELEASE_AND_RETURN(scope, answerRequireWithMock(target, referrer));
 
@@ -5576,7 +5578,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
                 loaded.moduleObjectFromRequire.set(*this, nullptr);
             return { };
         }
-    } else if (JSObject* exports = nullptr; m_hasBegunTestFile && requiresPatch(target, exports)) [[unlikely]] {
+    } else if (JSObject* exports = nullptr; m_hasBegunTestFile && !targetData.isOfLibrary() && requiresPatch(target, exports)) [[unlikely]] {
         if (exports)
             RELEASE_AND_RETURN(scope, requiredExportsOfMock(exports));
         throwException(m_instance.globalObject, scope, host().createAsyncModuleRequiredError(m_instance.globalObject, m_table.fullPath(target)));
