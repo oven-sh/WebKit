@@ -39,7 +39,7 @@ operation ReadScope (values...: Convertible/inspects) -> none ; none ; AsRead..A
 
 family Module AsRead..Placed
 operation ModuleNamespace (module: Module(Target), phase: ImportPhase) [ofModuleItself asksAnew] -> declared(module) ; unknownCode ; runtime = GetModuleNamespace ; flow = Copies ; flowRule = Module ; form = Open
-operation ImportModule (module: Module(Target), options?: Any/retains, referrer: Module(Referrer)) -> allocation(Promise) ; unknownCode ; runtime = ImportModule ; flow = Allocates ; flowRule = Module ; form = Runtime
+operation ImportModule (module: Module(Target), options?: Any/retains, referrer: Module(Referrer)) [hasUnreadType] -> allocation(Promise) ; unknownCode ; runtime = ImportModule ; flow = Allocates ; flowRule = Module ; form = Runtime
 operation RequireModule (module: Module(Target), referrer: Module(Referrer), specifier: String, requirerObject?: Any/retains) [onlyIfImported] -> unknown ; unknownCode ; runtime = RequireModule ; flow = Copies ; flowRule = Module ; form = Open
 operation EvaluateModule (module: Module(Target), referrer: Module(Referrer)) [isBare isCallOfRequire] -> none ; unknownCode ; AsRead..Prepared ; flow = Copies ; flowRule = Module
 operation RecordRequire (module: Module(Target), referrer: Module(Referrer), requirerObject?: Any/retains) [fromCreatedRequire followsLoad] -> none ; unknownCode ; runtime = RecordRequire ; flow = Copies ; form = Runtime

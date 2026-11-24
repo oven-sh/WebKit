@@ -1887,7 +1887,7 @@ public:
     JSObject* takeHostRequestRequirerObject() { return std::exchange(m_hostRequestRequirerObject, nullptr); }
     JSValue resolveDynamic(JSValue specifier, ModuleID referrer, ResolvedSpecifierForm);
 
-    JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined());
+    JSPromise* import(ModuleID, ModuleID referrer, JSValue options = jsUndefined(), bool hasUnreadType = false);
     void resumeDelayedImport(JSArray* deferredCall);
     bool m_isResumingDelayedImport { false };
     bool m_wasHeldForBody { false };
