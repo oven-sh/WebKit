@@ -843,6 +843,7 @@ JSArray* IntlLocale::calendars(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// https://tc39.es/ecma402/#sec-collationsoflocale
 JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -856,9 +857,18 @@ JSArray* IntlLocale::collations(JSGlobalObject* globalObject)
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    // LookupMatchingLocaleByPrefix. ICU answers for a locale that it has no data for from the data of its default
+    // locale, which comes from the host, so ICU only gets a locale of Intl.Collator.
+    String dataLocale = bestAvailableLocale(intlCollatorAvailableLocales(), baseName());
+    if (dataLocale.isNull()) {
+        elements.append("emoji"_s);
+        elements.append("eor"_s);
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
+    }
+
     UErrorCode status = U_ZERO_ERROR;
     constexpr bool commonlyUsed = true;
-    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", m_localeID.data(), commonlyUsed, &status));
+    auto enumeration = std::unique_ptr<UEnumeration, ICUDeleter<uenum_close>>(ucol_getKeywordValuesForLocale("collation", dataLocale.ascii().data(), commonlyUsed, &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
@@ -944,6 +954,7 @@ JSArray* IntlLocale::hourCycles(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
 }
 
+// https://tc39.es/ecma402/#sec-numberingsystemsoflocale
 JSArray* IntlLocale::numberingSystems(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -956,8 +967,15 @@ JSArray* IntlLocale::numberingSystems(JSGlobalObject* globalObject)
         RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
     }
 
+    // As in collations(), with the locales of Intl.NumberFormat.
+    String dataLocale = bestAvailableLocale(intlNumberFormatAvailableLocales(), baseName());
+    if (dataLocale.isNull()) {
+        elements.append("latn"_s);
+        RELEASE_AND_RETURN(scope, createArrayFromStringVector(globalObject, WTF::move(elements)));
+    }
+
     UErrorCode status = U_ZERO_ERROR;
-    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(m_localeID.data(), &status));
+    auto numberingSystem = std::unique_ptr<UNumberingSystem, ICUDeleter<unumsys_close>>(unumsys_open(dataLocale.ascii().data(), &status));
     if (!U_SUCCESS(status)) {
         throwTypeError(globalObject, scope, "invalid locale"_s);
         return nullptr;
