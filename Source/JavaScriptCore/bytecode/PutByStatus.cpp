@@ -169,7 +169,7 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
     return computeForPropertyInlineCache(locker, baselineBlock, propertyCache, CallLinkStatus::computeExitSiteData(baselineBlock, codeOrigin.bytecodeIndex()), codeOrigin);
 }
 
-PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, PropertyInlineCache* propertyCache, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin)
+PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker& locker, CodeBlock* profiledBlock, PropertyInlineCache* propertyCache, CallLinkStatus::ExitSiteData callExitSiteData, CodeOrigin codeOrigin)
 {
     PropertyInlineCacheSummary summary = PropertyInlineCache::summary(locker, profiledBlock->vm(), propertyCache);
     if (!isInlineable(summary))
@@ -264,8 +264,10 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
                 if (auto* object = access.tryGetAlternateBase())
                     currStructure = object->structure();
 
-                // For now, we only support cases which JSGlobalObject is the same to the currently profiledBlock.
-                if (currStructure->realm() != profiledBlock->globalObject())
+                // For now, we only support the case where the realm of the object that holds the custom accessor is the
+                // realm of the code origin. See the comment in GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback().
+                JSGlobalObject* customAccessorRealm = currStructure->realm();
+                if (customAccessorRealm != profiledBlock->globalObjectFor(codeOrigin))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
 
                 auto customAccessorSetter = access.as<GetterSetterAccessCase>().customAccessor();
@@ -275,6 +277,9 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
                 result.m_state = CustomAccessor;
 
                 auto variant = PutByVariant::customSetter(access.identifier(), access.structure(), viaGlobalProxy, WTF::move(conditionSet), customAccessorSetter, WTF::move(domAttribute));
+#if ASSERT_ENABLED
+                variant.setCustomAccessorRealm(customAccessorRealm);
+#endif
                 if (!result.appendVariant(variant))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
                 break;
@@ -354,6 +359,8 @@ PutByStatus PutByStatus::computeFor(CodeBlock* baselineBlock, ICStatusMap& basel
                 return bless(result);
         }
         
+        // An earlier compilation recorded this status for a code origin that has the same baseline CodeBlock at every
+        // inline level (CodeOrigin::isApproximatelyEqualTo()), so for the realm of this code origin.
         if (status.putStatus)
             return bless(*status.putStatus);
     }
