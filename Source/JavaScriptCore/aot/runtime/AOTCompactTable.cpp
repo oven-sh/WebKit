@@ -1143,6 +1143,8 @@ void CompactTable::clear(JSGlobalObject* globalObject, JSObject* owner)
     if (tryClearInPlace(owner))
         return;
     if (table->m_capacity <= maxCapacityWithTags && table->m_used * 2 <= table->m_capacity) {
+        // As in removeAllEntries().
+        Locker locker { table->cellLock() };
         for (uint32_t entry = 0; entry < table->m_used; ++entry) {
             table->setKey(entry, JSValue());
             table->setValue(entry, JSValue());

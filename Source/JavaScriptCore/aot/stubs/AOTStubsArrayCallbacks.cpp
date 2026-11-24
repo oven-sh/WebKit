@@ -1685,6 +1685,7 @@ static void loadPreservedDistance(StubAssembler& jit, const std::array<GPRReg, 5
     jit.load64(Address(CCallHelpers::stackPointerRegister, bytesBelow + (preserved.size() - 1) * sizeof(CPURegister)), distance);
 }
 
+// A stub that stores cells in the array fences before it returns.
 static void makeArray(StubAssembler& jit, const CallbackRegisters& registers, ArrayElementKind kind, std::initializer_list<GPRReg> kept)
 {
     jit.preserving(kept, [&] {
@@ -1828,6 +1829,8 @@ void generateMapArrayToField(StubAssembler& jit)
     });
     jit.emitFunctionEpilogueWithEmptyFrame();
     exits.methodCalls.append(jit.branchTest64(CCallHelpers::Zero, registers.value));
+    if (!measures)
+        fenceAfterAllocation(jit);
     jit.move(registers.value, jit.result());
     jit.returnToCaller();
     checkOtherArray(jit, registers, check, source, false, exits);
@@ -2584,6 +2587,7 @@ void generateFilterArray(StubAssembler& jit)
         filter(true);
     }
     isMade.link(&jit);
+    fenceAfterAllocation(jit);
     jit.move(registers.value, jit.result());
     jit.returnToCaller();
     callMethod(jit, registers, exits, false);
@@ -2693,6 +2697,7 @@ void generateFilterFieldPairs(StubAssembler& jit)
     });
     jit.emitFunctionEpilogueWithEmptyFrame();
     exits.methodCalls.append(jit.branchTest64(CCallHelpers::Zero, value));
+    fenceAfterAllocation(jit);
     jit.move(value, jit.result());
     jit.returnToCaller();
     checkOtherArray(jit, registers, check, CallbackSource::Field, false, exits);

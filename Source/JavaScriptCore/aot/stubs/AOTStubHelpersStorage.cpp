@@ -139,6 +139,8 @@ void widenStorageOfIntegersForAnyValue(StubAssembler& jit, GPRReg array, GPRReg 
     isLeftToOthers.append(jit.branch32(CCallHelpers::NotEqual, scratch, Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithInt32))));
     jit.load32(Address(instanceGPR, Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), scratch);
     isLeftToOthers.append(jit.branchTest32(CCallHelpers::Zero, scratch));
+    // Elements first, then the structure.
+    fenceAfterAllocation(jit);
     jit.store32(scratch, Address(array, JSCell::structureIDOffset()));
     jit.store8(TrustedImm32(ArrayWithContiguous), Address(array, JSCell::indexingTypeAndMiscOffset()));
 }
