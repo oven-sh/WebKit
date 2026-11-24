@@ -4481,6 +4481,11 @@ static ASCIILiteral typeThatReadsTextAsData(const ScriptFetchParameters& attribu
     return { };
 }
 
+static bool mayBeCodeThatPluginGaveForType(const String& path, ASCIILiteral type)
+{
+    return path.contains('?') && (!isAbsoluteFileSystemPath(path) || path.endsWith(makeString('?', type)));
+}
+
 static JSPromise* importPromiseRejectedByLoader(JSGlobalObject* realm, ThrowScope& scope)
 {
     JSPromise* rejected = JSPromise::rejectedPromiseWithCaughtException(realm, scope);
@@ -4742,7 +4747,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !m_table.fullPath(file).contains('?')) [[unlikely]] {
+            else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
             } else
