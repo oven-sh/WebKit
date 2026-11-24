@@ -5425,7 +5425,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         SetForScope currentRequireTarget(m_currentRequireTarget, target);
         SetForScope requiringModule(m_requiringModule, referrer);
         std::optional<VM::SynchronousModuleQueueScope> loadsOfFactories;
-        if (m_mocks && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue) [[unlikely]]
+        if ((m_mocks || hasPendingMocks()) && targetData.kind == ModuleKind::SourceText && !isMocked(target) && !vm.m_synchronousModuleQueue) [[unlikely]]
             loadsOfFactories.emplace(vm);
         SetForScope shouldContinuePastPendingFactories(m_shouldContinuePastPendingFactories, !!loadsOfFactories);
         bool factoryHasNotSettled = runMocksInGraph(target);
