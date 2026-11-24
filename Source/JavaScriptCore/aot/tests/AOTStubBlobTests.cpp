@@ -705,6 +705,19 @@ static void testOperationsCalled()
     checkAdapterOperations(catalog);
 }
 
+static void testStubsThatWidenArraysFence()
+{
+#if CPU(ARM64)
+    constexpr std::array<uint8_t, 4> storeFence { 0xbf, 0x3a, 0x03, 0xd5 };
+    StubCatalog catalog(StubOptions { });
+    for (StubKey key : { storeWideningIntegers(), arrayPutAtIndex(ArrayStoredValue::Value) }) {
+        StubBlob blob = buildBlob(catalog, std::array { key }, EntrySet { });
+        uint32_t size = sizeOfBody(blob, key);
+        AOT_TEST_CHECK(!std::ranges::search(blob.code.bytes.span().subspan(*blob.offsetOf(key), size), storeFence).empty());
+    }
+#endif
+}
+
 static void testSmallTableTagsAreStoredWhole()
 {
 #if CPU(X86_64)
@@ -922,6 +935,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/start-of-module"_s, testStartOfModule },
         { "stub-blob/missing-keys"_s, testMissingKeys },
         { "stub-blob/summaries"_s, testSummaries },
+        { "stub-blob/stubs-that-widen-arrays-fence"_s, testStubsThatWidenArraysFence },
         { "stub-blob/operations-called"_s, testOperationsCalled },
         { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testSmallTableTagsAreStoredWhole },
         { "stub-blob/wide-references"_s, testWideReferences },
