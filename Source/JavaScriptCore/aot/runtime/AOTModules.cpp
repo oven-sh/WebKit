@@ -4458,6 +4458,14 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
             modules->didRunFirstImportStep(promise);
             if (modules->tryRestartReleasedImport(promise))
                 return;
+            bool isImportedAnew = false;
+            if (modules->hasEvictedFiles()) [[unlikely]] {
+                withModuleOfJob(promise->realm(), module, [&](Modules& modules, ModuleID imported) {
+                    isImportedAnew = modules.tryImportFileEvictedSinceCall(promise, imported);
+                });
+            }
+            if (isImportedAnew) [[unlikely]]
+                return;
         }
     }
     if (--stepsLeft)
@@ -4466,6 +4474,28 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
         withModuleOfJob(promise->realm(), module, [&](Modules& modules, ModuleID imported) {
             modules.finishImportOfEvaluatedModule(promise, imported, error);
         });
+}
+
+static void settleAsLoaderDoes(JSGlobalObject*, JSPromise* promiseOfProgram, JSPromise* loaded);
+
+// import() looks the module up in this step.
+bool Modules::tryImportFileEvictedSinceCall(JSPromise* promise, ModuleID module)
+{
+    if (!isTestRun() || !isEvicted(module) || activeMock(module))
+        return false;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    m_importsInFlight.remove(promise);
+    Identifier key = keyWithoutForm(fileOf(module));
+    JSPromise* loaded = loader()->requestImportModuleForKey(realm, key, Identifier(), nullptr, nullptr, false, -1);
+    if (!scope.exception())
+        tellHostOfImport(loaded, key.string());
+    if (scope.exception()) [[unlikely]]
+        promise->rejectWithCaughtException(vm, scope);
+    else
+        settleAsLoaderDoes(realm, promise, loaded);
+    return true;
 }
 
 void runCompiledModuleImportSettled(JSGlobalObject*, JSValue importPromise, JSValue resolution, JSValue module, JSPromise::Status status)
