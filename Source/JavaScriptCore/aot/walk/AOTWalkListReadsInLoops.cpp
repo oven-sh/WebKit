@@ -3834,6 +3834,13 @@ static Reference bearLiteralAgainBehindItsRoom(Walker& walker, const BodyIndex& 
     }
     if (!first || (first->kind == BodyUseKind::Operand ? index.blockOf(first->value).index() : first->block.index()) < inputHead.index())
         return { };
+    Vector<ValueID, 4> held(born.elementsOperands());
+    size_t place = 0;
+    index.value(written).forEachOperand([&](ValueID operand, uint32_t) {
+        if (operand && place < held.size() && !walker.referenceOf(operand))
+            walker.bind(operand, walker.code().isConstant(held[place]) ? Reference::constant(held[place]) : Reference::value(held[place]));
+        ++place;
+    });
     buildFreshObject(walker, index.value(written));
     Reference again = walker.isUnreachable() ? Reference() : walker.referenceBoundTo(written);
     if (!again || !again.isValue() || again == list || walker.code().at(again.id()).opcode != Opcode::NewArray)
