@@ -681,18 +681,17 @@ void AllocationEmitter::storeFieldsInExtension(const ValueContext& value, CellPo
         callVoidOperation(value, RuntimeOperation::EnsureExtensionGranules, { cell, integer(static_cast<int64_t>(granuleBits)) });
 
     SlotEmitter& slots = emitter<SlotEmitter>();
-    bool storesCellInHeap = value->storage() == AllocationStorage::Heap && std::ranges::any_of(initialFields, [&](const InitialField& field) {
-        return takesGranule(field) && traitsOf(field.slot->representation).holdsCell && typeOf(field.value).hasCells();
-    });
+    // The fence does not depend on what the fields hold.
+    bool isInHeap = value->storage() == AllocationStorage::Heap;
     {
-        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(storesCellInHeap));
+        CodeGenerator::InitializationScope scope(generator(), CodeGenerator::FillsCellOfHeap(isInHeap));
         Pointer extension = slots.extensionOf(cell, extensionWord);
         for (const InitialField& field : initialFields) {
             if (takesGranule(field))
                 slots.storeInExtension(extension, *field.slot, locationOfField(m_program, m_plan.slots(), layout, field.field), takeForSlot(field));
         }
     }
-    if (storesCellInHeap)
+    if (isInHeap)
         emitter<BarrierEmitter>().fenceAfterLateStores();
     ensureStillAliveHere(cell);
 }
