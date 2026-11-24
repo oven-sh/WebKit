@@ -1462,6 +1462,7 @@ public:
     }
     enum class DelegatedBy : bool { Host, RequireCache };
     void delegateToHostUnlessEvaluated(ModuleID, DelegatedBy = DelegatedBy::Host);
+    void delegateImportsOfRequiredFile(ModuleID);
     void takeOutOfLoader(ModuleID);
     bool hasNoEntryBehindMock(ModuleID);
     void retainMockForLinkedImporters(ModuleID);
@@ -2664,6 +2665,7 @@ private:
     bool m_runsCopyFromDisk { false };
     bool m_hostRunsCopiesFromDisk { false };
     BitVector m_filesToLoadAgain;
+    BitVector m_requiredFilesThatHostImports;
     BitVector m_uncompiledNamespacesAskedFor;
     BitVector m_uncompiledNamespacesNotShownYet;
     BitVector m_modulesThatRanWithImporters;
