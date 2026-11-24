@@ -35,6 +35,8 @@ OperatorForm operatorFormFor(Walker&, const Draft&);
 
 static constexpr OpcodeSet opcodesOfWalkCalls { Opcode::Call, Opcode::Construct, Opcode::SuperConstruct, Opcode::CallList, Opcode::CallDirect, Opcode::ConstructList, Opcode::SuperConstructList };
 static constexpr int64_t lengthOfShortListInWalkCalls = defaultLimitValue(LimitID::MaxReservedStackArguments, hostArchitecture());
+// A longer list lies on the stack, so that a recursion that hands on a longer list each time ends there, and not for want of memory.
+static constexpr int64_t lengthOfShortListInRecursionInWalkCalls = 1023;
 static constexpr OpcodeSet appendsToListInWalkCalls { Opcode::AppendElement, Opcode::AppendSpread };
 static_assert(!OperandIndex::AppendElement::array && !OperandIndex::AppendSpread::array);
 
@@ -473,7 +475,8 @@ static Reference buildSpreadArrayLength(Walker& walker, Reference array, Origin 
 static bool buildCallAsWrittenForLongListInWalkCalls(Walker& walker, const Draft& written, const CallInWalkCalls& request, Origin originInFrontOfCall, BlockID& continuationBlock, Reference& mergedResult)
 {
     Draft lengthOfShortList(Opcode::Integer, originInFrontOfCall);
-    lengthOfShortList.setInteger(lengthOfShortListInWalkCalls);
+    bool mayRecurWithList = request.restList && (walker.plan().conventions().stackTests().functionsInCycles.get(request.callee.index()) || walker.program().at(request.callee).isCoroutine());
+    lengthOfShortList.setInteger(mayRecurWithList ? lengthOfShortListInRecursionInWalkCalls : lengthOfShortListInWalkCalls);
 
     Draft test(Opcode::LessEq, originInFrontOfCall);
     walker.chooseConservativeFields(test);

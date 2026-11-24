@@ -304,6 +304,7 @@ StackTestPlan CounterOfCoveredFrames::run()
             m_traits[index] = traitsOf(FunctionID(static_cast<uint32_t>(index)), methodsOfTable);
     });
     countCoveredFrames();
+    m_plan.functionsInCycles = WTF::move(m_functionsInCycles);
     return WTF::move(m_plan);
 }
 

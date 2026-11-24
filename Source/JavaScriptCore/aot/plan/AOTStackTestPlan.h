@@ -35,6 +35,7 @@ struct StackTestPlan {
     BitVector bodiesWhoseCallsAreCountedBelowCallers;
     Vector<uint8_t> coveredFramesOfCall;
     Vector<std::pair<FunctionID, FunctionID>> callsCountedAtBareSites;
+    BitVector functionsInCycles;
 
     bool isCoveredByCallers(CodeUnit) const;
     bool countsCallsOfBodyBelowCallers(FunctionID id) const { return bodiesWhoseCallsAreCountedBelowCallers.get(id.index()); }
