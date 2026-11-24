@@ -78,6 +78,9 @@ InjectedScriptHost& InjectedScriptManager::injectedScriptHost()
 
 InjectedScript InjectedScriptManager::injectedScriptForId(int id)
 {
+    if (!m_idToInjectedScript.isValidKey(id))
+        return InjectedScript();
+
     auto it = m_idToInjectedScript.find(id);
     if (it != m_idToInjectedScript.end())
         return it->value;
@@ -112,7 +115,7 @@ InjectedScript InjectedScriptManager::injectedScriptForObjectId(const String& ob
         return InjectedScript();
 
     auto injectedScriptId = resultObject->getInteger("injectedScriptId"_s);
-    if (!injectedScriptId)
+    if (!injectedScriptId || !m_idToInjectedScript.isValidKey(*injectedScriptId))
         return InjectedScript();
 
     return m_idToInjectedScript.get(*injectedScriptId);
