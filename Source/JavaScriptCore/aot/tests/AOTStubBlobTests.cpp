@@ -761,13 +761,20 @@ static void testStubsThatFillArraysFence()
 #if CPU(ARM64)
     constexpr std::array<uint8_t, 4> storeFence { 0xbf, 0x3a, 0x03, 0xd5 };
     StubCatalog catalog(StubOptions { });
-    auto hasStoreFence = [&](StubKey key) {
+    auto numberOfStoreFences = [&](StubKey key) {
         StubBlob blob = buildBlob(catalog, std::array { key }, EntrySet { });
         uint32_t size = sizeOfBody(blob, key);
-        return !std::ranges::search(blob.code.bytes.span().subspan(*blob.offsetOf(key), size), storeFence).empty();
+        auto body = blob.code.bytes.span().subspan(*blob.offsetOf(key), size);
+        unsigned count = 0;
+        for (size_t offset = 0; offset + storeFence.size() <= body.size(); offset += storeFence.size())
+            count += std::ranges::equal(body.subspan(offset, storeFence.size()), storeFence);
+        return count;
     };
-    for (StubKey key : { filterArray(CallbackSource::Element, ElementTest::HasType), filterArray(CallbackSource::Field, ElementTest::Equals), filterFieldPairs(FieldPairTest::IsLess), mapArrayToField(FieldMap::Field), mapArrayToField(FieldMap::FieldOfField) })
-        AOT_TEST_CHECK(hasStoreFence(key));
+    for (StubKey key : { filterArray(CallbackSource::Element, ElementTest::HasType), filterArray(CallbackSource::Field, ElementTest::Equals), filterFieldPairs(FieldPairTest::IsLess) })
+        AOT_TEST_CHECK(numberOfStoreFences(key) >= 1);
+    // A map stub has two loops, each of which fences where it widens the array, and one more fence before it returns.
+    for (StubKey key : { mapArrayToField(FieldMap::Field), mapArrayToField(FieldMap::FieldOfField) })
+        AOT_TEST_CHECK(numberOfStoreFences(key) >= 3);
 #endif
 }
 
