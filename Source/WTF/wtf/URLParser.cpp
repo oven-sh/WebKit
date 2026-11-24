@@ -2232,16 +2232,11 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     m_url.m_hostEnd = currentPosition(p);
                     m_url.m_portLength = 0;
                     c = iteratorAt(p);
-                    if (p == inputEnd) {
+                    if (p == inputEnd || *p == '?' || *p == '#') {
                         if (m_urlIsSpecial) {
                             syntaxViolation(c);
                             appendToASCIIBuffer('/');
                         }
-                        m_url.m_pathAfterLastSlash = currentPosition(c);
-                    } else if (*p == '?' || *p == '#') {
-                        // FIXME: This inserts a '/' for non-special schemes too, unlike the AuthorityOrHost state; kept for now to preserve behavior.
-                        syntaxViolation(c);
-                        appendToASCIIBuffer('/');
                         m_url.m_pathAfterLastSlash = currentPosition(c);
                     }
                     state = State::Path;
@@ -2263,8 +2258,10 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                         return;
                     }
                     if (*c == '?' || *c == '#') {
-                        syntaxViolation(c);
-                        appendToASCIIBuffer('/');
+                        if (m_urlIsSpecial) {
+                            syntaxViolation(c);
+                            appendToASCIIBuffer('/');
+                        }
                         m_url.m_pathAfterLastSlash = currentPosition(c);
                     }
                     state = State::Path;
