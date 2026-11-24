@@ -660,10 +660,12 @@ void Modules::evictFailedRecords()
         if (record->status() > CyclicModuleRecord::Status::Unlinked || !data(module).isESModuleOfProgram() || data(module).isFacade())
             continue;
         ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
-        if (entry && entry->record() == record && entry->status() >= ModuleRegistryEntry::Status::FetchFailed)
+        if (entry && entry->record() == record && (entry->status() >= ModuleRegistryEntry::Status::FetchFailed || record->hasUnresolvableRequest()))
             failed.append(module);
     }
     for (ModuleID module : failed) {
+        loader()->removeEntry(moduleKey(module));
+        ensureLoaded(module).cachedLoadError.set(*this, JSValue());
         loader()->removeEntriesForRecord(m_records.get(module));
         takeOutRecord(module);
         if (storedStatus(module) == StoredModuleStatus::InRecord)
