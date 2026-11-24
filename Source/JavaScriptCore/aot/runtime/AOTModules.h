@@ -3644,7 +3644,7 @@ private:
         uint64_t precedingDiskReads { 0 };
     };
     Deque<QueuedFetch, 2> m_queuedFetches;
-    bool m_canJobsOfFileTellWhenTextsCome { false };
+    bool m_canProgramTellWhenTextsCome { false };
     std::optional<uint32_t> m_resumingCallLoaderSteps;
     std::optional<uint32_t> m_resumingCallSequenceNumber;
     void forgetMockLaidBehindCallWhoseTextHasCome(ModuleID);

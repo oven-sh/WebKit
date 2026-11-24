@@ -5459,7 +5459,7 @@ bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* request
 {
     ModuleID file = fileOf(requested->module());
     bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && (m_loadsInFlight.numberBeingLoaded() > 1 || hasLoadedGraphThatIsNotRunning());
-    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
+    bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canProgramTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
     if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
         return false;
