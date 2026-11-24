@@ -422,6 +422,9 @@ bool Modules::noteEntryParent(ModuleID target, ModuleID referrer)
     if (referrer && requiresOriginalUnderMock(fileOf(target), referrer)) [[unlikely]]
         return false;
     m_modulesWithKnownParent.set(target.index());
+    bool wasMadeByImport = m_hasBegunTestFile && data(target).kind == ModuleKind::CommonJs && status(target) == ModuleStatus::Evaluated && !activeMock(target) && wasLoadedByImport(target);
+    if (wasMadeByImport)
+        return false;
     if (!hasInstances(target) && !m_hasBegunTestFile && data(target).kind != ModuleKind::CommonJs)
         return false;
     ModuleID parent = referrer ? referrer : callingModule().value_or(ModuleID());
