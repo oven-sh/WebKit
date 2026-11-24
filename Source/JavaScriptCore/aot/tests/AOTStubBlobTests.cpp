@@ -16,6 +16,7 @@
 #include "AOTStubRecording.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
+#include "AOTStubsArrayCallbacks.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsBoxedCalls.h"
@@ -742,6 +743,21 @@ static void testInt32LiteralsStoreWholeWords()
 #endif
 }
 
+static void testStubsThatFillArraysFence()
+{
+#if CPU(ARM64)
+    constexpr std::array<uint8_t, 4> storeFence { 0xbf, 0x3a, 0x03, 0xd5 };
+    StubCatalog catalog(StubOptions { });
+    auto hasStoreFence = [&](StubKey key) {
+        StubBlob blob = buildBlob(catalog, std::array { key }, EntrySet { });
+        uint32_t size = sizeOfBody(blob, key);
+        return !std::ranges::search(blob.code.bytes.span().subspan(*blob.offsetOf(key), size), storeFence).empty();
+    };
+    for (StubKey key : { filterArray(CallbackSource::Element, ElementTest::HasType), filterArray(CallbackSource::Field, ElementTest::Equals), filterFieldPairs(FieldPairTest::IsLess), mapArrayToField(FieldMap::Field), mapArrayToField(FieldMap::FieldOfField) })
+        AOT_TEST_CHECK(hasStoreFence(key));
+#endif
+}
+
 static void testImmediatesInKeys()
 {
     constexpr StubKey cell = builtinCell().withImmediate(7);
@@ -910,6 +926,7 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testSmallTableTagsAreStoredWhole },
         { "stub-blob/wide-references"_s, testWideReferences },
         { "stub-blob/int32-literals-store-whole-words"_s, testInt32LiteralsStoreWholeWords },
+        { "stub-blob/stubs-that-fill-arrays-fence"_s, testStubsThatFillArraysFence },
         { "stub-blob/immediates-in-keys"_s, testImmediatesInKeys },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
     };
