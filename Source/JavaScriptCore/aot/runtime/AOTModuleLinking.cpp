@@ -403,8 +403,10 @@ ModuleLinkWalk::ModuleLinkWalk(const Modules& modules, ModuleID root, RefPtr<Lin
     };
 
     const ModuleTable& table = modules.table();
-    if (table.data(root).hasLinkPlan()) {
-        if (modules.status(root) == ModuleStatus::Unlinked)
+    bool isUnlinked = modules.status(root) == ModuleStatus::Unlinked;
+    // The plan is of the first link alone. One that was released since is linked like any other module.
+    if (table.data(root).hasLinkPlan() && !(isUnlinked && modules.isEntryPointLinked())) {
+        if (isUnlinked)
             m_plan = table.entryPointLinkPlan();
         return;
     }
@@ -1015,7 +1017,7 @@ void Modules::finishLink(const ModuleLinkWalk& walk, LinkContext& context)
         m_instancesLinkedByLoader.appendVector(linkInstances(walk.root()));
         RETURN_IF_EXCEPTION(scope, void());
     }
-    if (data(walk.root()).hasLinkPlan()) {
+    if (walk.hasPlan()) {
         didLinkEntryPoint(walk.root(), mocks);
         return;
     }

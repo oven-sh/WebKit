@@ -196,6 +196,7 @@ public:
     const ModuleTable& table() const { return m_table; }
     const Instance& instance() const { return m_instance; }
     unsigned linkEpoch() const { return m_linkEpoch; }
+    bool isEntryPointLinked() const { return m_entryPointIsLinked; }
     bool loadsModulesIndividually() const { return m_loadsModulesIndividually; }
     bool linkGoesByAllRequestsOf(ModuleID module) const { return m_loadsModulesIndividually || m_leadersWhoseLinkGoesByAllRequests.get(module.index()); }
     void didGetStateOfItsOwn(ModuleID) const;
