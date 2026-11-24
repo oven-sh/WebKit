@@ -2881,6 +2881,9 @@ void CodeVerifier::verifyWordsInPlaceOfCaptures()
             bool makesClosure = operation.opcode == Opcode::NewClosure;
             if ((!makesClosure && operation.opcode != Opcode::CallDirect) || operation.origin().inlineFrame)
                 continue;
+            bool readsClosureTable = makesClosure && operation.isHeldByClosureTable() && operation.variadicOperands().empty();
+            if (readsClosureTable)
+                continue;
             auto mustBeFilled = [&](VariableID word) {
                 if (!isFilledByThisFunction(word))
                     return;
@@ -2892,7 +2895,8 @@ void CodeVerifier::verifyWordsInPlaceOfCaptures()
             for (const RemovedCapture& removed : promoted.removedCapturesOf(operation.function())) {
                 if (removed.variable) {
                     ValueID handed = removed.capture < passedOperands.size() ? passedOperands[removed.capture] : ValueID();
-                    if (makesClosure || (handed && m_code.at(handed).opcode != Opcode::Unspecified))
+                    bool passesWordItself = handed && m_code.at(handed).opcode == Opcode::GetModuleVariable && m_code.at(handed).variable() == removed.variable;
+                    if (makesClosure || (handed && !passesWordItself && m_code.at(handed).opcode != Opcode::Unspecified))
                         mustBeFilled(removed.variable);
                     continue;
                 }
