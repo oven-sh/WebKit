@@ -1176,7 +1176,8 @@ static bool walkConstructOfFunctionInWalkCalls(Walker& walker, const BodyValue& 
     if (guardOfPrototype && !continueIfPrototypeUnchanged(walker, call, request, *guardOfPrototype, origin))
         return true;
     bool allocationNamesPrototype = guardOfPrototype || isPrototypeProven || (classObjectBelow && walker.facts().isEvaluatedAtMostOnce(constructed) && walker.plan().hasClassRecord(constructed));
-    Reference prototype = allocationNamesPrototype ? Reference() : walker.build(WTF::move(read), &ofRead);
+    bool mayRunGetter = !classObjectBelow && isLibraryCode(program, constructor);
+    Reference prototype = allocationNamesPrototype ? Reference() : walker.build(WTF::move(read), mayRunGetter ? nullptr : &ofRead);
     if (!prototype && !allocationNamesPrototype)
         return true;
     Draft allocation(Opcode::NewObject, origin);
