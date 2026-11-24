@@ -1281,8 +1281,6 @@ public:
     bool hasMockRegisteredAfter(ModuleID, uint32_t moment) const;
     JSObject* takeReleasedImportNamespace(JSPromise*, ModuleID);
     bool tryRestartReleasedImport(JSPromise*);
-    bool tryImportFileEvictedSinceCall(JSPromise*, ModuleID);
-    bool hasEvictedFiles() const { return !m_evictedFiles.isEmpty(); }
     void restorePreloadInstances();
     void noteRestoredModule(ModuleID module) { m_restoredModules.set(module.index()); }
     Vector<ModuleID, 16> linkInstances(ModuleID root);
