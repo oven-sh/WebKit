@@ -1110,7 +1110,7 @@ public:
     void throwNewFailure(ModuleFailureID, bool isForRequire);
     std::optional<ModuleFailureID> loadFailure(ModuleID module) const { return m_table.loadFailure(module); }
     std::optional<ModuleFailureID> findUnmockedFileFailure(ModuleID root) const;
-    bool hasUnresolvableRequestInGraph(ModuleID root);
+    bool loadEndsBeforeEvaluation(ModuleID root);
     void throwExportNotFound(const RequiredNameData&);
     bool dropExportThatFindsNothing(ModuleID importer, const RequiredNameData&);
     void throwExportAmbiguous(const RequiredNameData&);
