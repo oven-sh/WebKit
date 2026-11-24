@@ -965,6 +965,7 @@ struct Draft : DraftWords {
     ExpectedType expected;
     bool resultIsReturnedAtOnce { false };
     bool restIsDefinedBehind { false };
+    bool undefinedTakesSlowPath { false };
     bool standsForNoValueOfInput { false };
     ValueID inputValueGiven;
     std::optional<PassedTest> testsPassed;
@@ -983,6 +984,7 @@ struct Draft : DraftWords {
         expected = { };
         resultIsReturnedAtOnce = false;
         restIsDefinedBehind = false;
+        undefinedTakesSlowPath = false;
         standsForNoValueOfInput = false;
         inputValueGiven = { };
         testsPassed = std::nullopt;

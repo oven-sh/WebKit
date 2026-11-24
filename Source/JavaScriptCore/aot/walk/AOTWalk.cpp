@@ -1939,8 +1939,12 @@ void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
     case Opcode::PutSlotOrAdd:
     case Opcode::GetSlotOrUndefined:
     case Opcode::GetDeferredClosureSlotOrUndefined:
-        if (draft.level() == KnowledgeLevel::Proven && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size())
-            checkFactsRememberedOfCell(draft.objectOperand(), origin, factsThatSlotOperationLeansOn(*this, draft));
+        if (draft.level() == KnowledgeLevel::Proven && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size()) {
+            OptionSet<CellFact> leanedOn = factsThatSlotOperationLeansOn(*this, draft);
+            if (draft.undefinedTakesSlowPath)
+                leanedOn.remove(CellFact::HasLayoutPrototype);
+            checkFactsRememberedOfCell(draft.objectOperand(), origin, leanedOn);
+        }
         if (isUnreachable() || (draft.level() == KnowledgeLevel::Proven && (draft.opcode != Opcode::PutSlotOrAdd || draft.isDefinition())))
             return;
         if ((draft.opcode == Opcode::GetSlotOrUndefined || draft.opcode == Opcode::PutSlotOrAdd) && !m_isBuildingInPlace && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size())

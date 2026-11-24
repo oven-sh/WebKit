@@ -2106,6 +2106,7 @@ Reference buildHoistedFieldRead(Walker& walker, const BodyValue& read, Reference
     Draft held(Opcode::GetSlotOrUndefined, origin);
     walker.chooseConservativeFields(held);
     fillSlotOperationForTypedAccess(held, object, *receivers, read.key());
+    held.undefinedTakesSlowPath = true;
     return walker.build(WTF::move(held));
 }
 
