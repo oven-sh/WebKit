@@ -544,13 +544,13 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
         //
         // For async functions without await, the body is inlined directly - no body function exists.
         // So we don't need to capture parameters for the body function to access them.
+        //
+        // A parameter is captured only when the body refers to it: a read, a write, a nested function, or a `var`
+        // of the same name (the parser records that one, see captureWrapperParametersRedeclaredInBody). A closure
+        // that the body returns then keeps the parameters it can reach, and not every parameter.
         if (!(isAsyncFunctionWrapperParseMode(parseMode) && functionNode->isAsyncFunctionWithoutAwait())) {
             if (m_needsArguments)
                 shouldCaptureSomeOfTheThings = true;
-            if (parameters.size()) {
-                shouldCaptureSomeOfTheThings = true;
-                shouldCaptureAllOfTheThings = true;
-            }
         }
     }
 
