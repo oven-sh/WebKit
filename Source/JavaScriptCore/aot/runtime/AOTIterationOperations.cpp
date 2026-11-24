@@ -893,6 +893,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfView, JSCell*, (Instance
         isFilled = copyFractionsOfView<JSFloat32Array>(view, array->butterfly()->indexingPayload<double>());
     else
         copyNumbersOfView(view, array->butterfly()->indexingPayload<EncodedJSValue>(), length);
+    vm.mutatorFence();
     OPERATION_RETURN(scope, isFilled ? array : nullptr);
 }
 
