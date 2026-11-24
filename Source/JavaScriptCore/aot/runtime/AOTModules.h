@@ -1765,6 +1765,7 @@ public:
     enum class LoaderForRequire : uint8_t { IsNotNeeded, ComesBehindImportedFiles, IsNeeded };
     LoaderForRequire loaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
+    bool hasLoadedGraphThatIsNotRunning() const;
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
     bool wasAbandonedByFailedLoad(ModuleID) const;

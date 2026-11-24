@@ -5458,7 +5458,7 @@ void Modules::fulfillFirstQueuedFetch()
 bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && m_loadsInFlight.numberBeingLoaded() > 1;
+    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && (m_loadsInFlight.numberBeingLoaded() > 1 || hasLoadedGraphThatIsNotRunning());
     bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
     if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
@@ -6524,6 +6524,16 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
     RELEASE_AND_RETURN(scope, appendRequestsOfUncompiledCode(module, record));
 }
 
+// The call of import() settles in a later job.
+bool Modules::hasLoadedGraphThatIsNotRunning() const
+{
+    for (const LoadInFlight& load : m_loadsInFlight) {
+        if (load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync)
+            return true;
+    }
+    return false;
+}
+
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
@@ -6533,10 +6543,8 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
         return false;
     if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
-    for (const LoadInFlight& load : m_loadsInFlight) {
-        if (load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync)
-            return true;
-    }
+    if (hasLoadedGraphThatIsNotRunning())
+        return true;
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
         if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
             return true;
