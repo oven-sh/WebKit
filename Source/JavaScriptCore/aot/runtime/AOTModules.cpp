@@ -7386,9 +7386,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
-    // The loader has an entry for the file without a type already.
-    if (std::optional<ModuleID> file = fileOfForm(modules, ModuleID(module)); file && *file != ModuleID(module) && modules.isAwaitedByPendingImport(*file))
-        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))) || (wasPathRequiredInPlaceOfCode(modules, ModuleID(module)) && isImportedEmptyFile(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {

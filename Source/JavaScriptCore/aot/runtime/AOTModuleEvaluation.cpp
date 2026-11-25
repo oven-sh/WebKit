@@ -4942,8 +4942,6 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
     }
     if (file && !hasNotBegun(*file) && !wasEvictedByRemovedMock(*file))
         return *file;
-    if (file && isAwaitedByPendingImport(*file))
-        return target;
     auto wasImported = [&](ModuleID form) {
         return (status(form) == ModuleStatus::Evaluated || hasBeenImported(form)) && !wasEvictedByRemovedMock(form);
     };
