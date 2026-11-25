@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBuiltinTypes.h"
 #include "AOTCurrentWork.h"
 #include "AOTDiagnostics.h"
 #include "AOTEffectsDeclared.h"
@@ -298,7 +299,7 @@ static bool isAllocationOfUnitForEffectsAgainstLink(const Code& code, ValueID va
     return true;
 }
 
-static String findPartThatLinkHasNotCounted(const Code& code, const Operation& operation, const Effects& counted)
+static String findPartThatLinkHasNotCounted(const Code& code, const Operation& operation, const Effects& counted, AbstractHeapSet written)
 {
     EffectTraits traits = operation.traits();
     bool isOperator = effectRuleOf(operation.opcode) == EffectRule::Operator || operation.opcode == Opcode::Strcat;
@@ -319,7 +320,7 @@ static String findPartThatLinkHasNotCounted(const Code& code, const Operation& o
         return traitsCounted.mayWriteObservableState() || fillsWhatUnitMakes ? String() : String("may write what is seen"_s);
     }
     for (AbstractHeap heap : allMembersOf<AbstractHeap>) {
-        if (!observableHeaps.contains(heap) || !declared.writes.contains(heap) || counted.writes.contains(heap))
+        if (!observableHeaps.contains(heap) || !written.contains(heap) || !declared.writes.contains(heap) || counted.writes.contains(heap))
             continue;
         if (!fillsWhatUnitMakes || !perObjectHeaps.contains(heap))
             return makeString("writes "_s, nameOf(heap));
@@ -392,23 +393,41 @@ static ClosuresThatCalledParametersHold findClosuresThatCalledParametersHold(con
     return held;
 }
 
+static std::optional<size_t> placeOfEntryParameter(const Code& code, std::span<const LinkedParameter> parameters, ValueID operand)
+{
+    ValueID cell = underlyingCellOf(code, operand);
+    const Operation& parameter = code.at(cell);
+    if (parameter.opcode != Opcode::Parameter || !parameter.block() || !code.at(parameter.block()).isEntry)
+        return std::nullopt;
+    size_t place = code.at(parameter.block()).placeOfParameter(cell);
+    return place < parameters.size() ? std::optional(place) : std::nullopt;
+}
+
 static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, const Function& function, std::span<const LinkedParameter> parameters, const Operation& operation)
 {
     return std::ranges::any_of(operation.operands(), [&](ValueID operand) {
         if (!operand)
             return false;
-        ValueID cell = underlyingCellOf(code, operand);
-        const Operation& parameter = code.at(cell);
-        if (parameter.opcode != Opcode::Parameter || !parameter.block() || !code.at(parameter.block()).isEntry)
+        std::optional<size_t> place = placeOfEntryParameter(code, parameters, operand);
+        if (!place)
             return false;
-        size_t place = code.at(parameter.block()).placeOfParameter(cell);
-        if (place >= parameters.size())
-            return false;
-        TypeID arrives = parameters[place].seenToArrive;
-        if (operation.opcode == Opcode::RequireObjectCoercible && arrives && function.entryParameterKind(place) == EntryParameter::Parameter && !types.at(arrives).hasOnlyClosures() && !(types.at(arrives).primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
+        TypeID arrives = parameters[*place].seenToArrive;
+        if (operation.opcode == Opcode::RequireObjectCoercible && arrives && function.entryParameterKind(*place) == EntryParameter::Parameter && !types.at(arrives).hasOnlyClosures() && !(types.at(arrives).primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
             return true;
-        return parameters[place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
+        return parameters[*place].nothingArrives || (arrives && !types.overlap(code.at(operand).type, arrives));
     });
+}
+
+static AbstractHeapSet heapsWrittenThroughTarget(const Program& program, TypeArena& types, const Code& code, std::span<const LinkedParameter> parameters, const Operation& operation)
+{
+    static constexpr OpcodeSet copies { Opcode::CopyElements, Opcode::CopyElementsDown, Opcode::FillElements };
+    if (!copies.contains(operation.opcode))
+        return allHeaps;
+    TypeID target = code.at(operation.targetOperand()).type;
+    std::optional<size_t> place = placeOfEntryParameter(code, parameters, operation.targetOperand());
+    if (TypeID arrives = place ? parameters[*place].seenToArrive : TypeID())
+        target = types.intersectionOf(target, arrives);
+    return isTypedView(typedArrayTypeOf(BuiltinTypeContext { program, types }, target)) ? AbstractHeapSet { AbstractHeap::TypedArrayElements } : allHeaps;
 }
 
 static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeArena& types, const Code& code)
@@ -418,6 +437,7 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
         return { };
     const LinkTables& tables = inputs.facts.linked();
     const LinkedFunction& linked = tables.function(unit.function);
+    std::span<const LinkedParameter> parameters = unit.role == CodeRole::Body ? tables.parametersOf(unit.function) : std::span<const LinkedParameter>();
     Effects counted = linked.effectsOnReturn();
     counted.merge(linked.effectsOnThrow());
     const LinkedEffectsGivenArguments* given = code.isEntryThatWalksBody() ? nullptr : tables.known.findEffectsGivenArguments(unit.function);
@@ -439,13 +459,14 @@ static String findOperationThatLinkHasNotCounted(const WalkInputs& inputs, TypeA
             continue;
         if (operation.opcode == Opcode::CheckIterationRestart || operation.opcode == Opcode::CheckInlineeFallback || operation.opcode == Opcode::CheckReloadBypass)
             continue;
-        String part = findPartThatLinkHasNotCounted(code, operation, counted);
+        AbstractHeapSet written = heapsWrittenThroughTarget(inputs.program, types, code, parameters, operation);
+        String part = findPartThatLinkHasNotCounted(code, operation, counted, written);
         ASCIILiteral summary = "Link's effects of the function"_s;
         if (part.isNull() && given && code.at(operation.block()).frequency == BlockFrequency::Normal && !leftToCaller.run(operation)) {
-            part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments);
+            part = findPartThatLinkHasNotCounted(code, operation, countedGivenArguments, written);
             summary = "Link's effects of the function given its arguments"_s;
         }
-        if (part.isNull() || (unit.role == CodeRole::Body && isBehindTypeThatNeverArrives(types, code, inputs.program.at(unit.function), tables.parametersOf(unit.function), operation)))
+        if (part.isNull() || isBehindTypeThatNeverArrives(types, code, inputs.program.at(unit.function), parameters, operation))
             continue;
         return makeString('f', unit.function.index(), " v"_s, index, " ("_s, nameOf(operation.opcode), ") "_s, part, ", and "_s, summary, " say that it does not"_s);
     }
