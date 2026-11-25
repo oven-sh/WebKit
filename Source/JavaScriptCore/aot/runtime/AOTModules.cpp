@@ -10597,12 +10597,6 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
 }
 
-bool ModuleRecord::isPatchedByMock() const
-{
-    ModuleID file = modules().table().moduleBehindFacade(m_module).value_or(m_module);
-    return modules().data(file).kind == ModuleKind::CommonJs && (modules().isPatchedByMock(m_module) || modules().isPatchedByMock(file));
-}
-
 bool ModuleRecord::isReplacedByMock() const
 {
     return !keepsToModule() && modules().displacedRecord(m_module) != this && (modules().isMocked(m_module) || modules().activeMock(m_module)) && !modules().isPatchedByMock(m_module);
