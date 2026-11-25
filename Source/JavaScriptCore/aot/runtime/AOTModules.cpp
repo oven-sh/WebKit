@@ -7776,7 +7776,7 @@ static bool isFoundBehindFalsyEntry(Modules& modules, ModuleID module)
     return modules.data(module).isOfLibrary() || modules.wasLoadedByImport(module);
 }
 
-static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy takenOutBy, JSObject* entry = nullptr)
+static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy takenOutBy)
 {
     Modules* modules = modulesOf(realm);
     if (!modules)
@@ -7784,12 +7784,8 @@ static void evictModule(JSGlobalObject* realm, ModuleID module, TakenOutBy taken
     modules->noteWhetherProgramStoredFalsyEntry(module, takenOutBy == TakenOutBy::FalsyStore);
     if ((takenOutBy == TakenOutBy::FalsyStore || takenOutBy == TakenOutBy::EntryOfProgram) && modules->data(module).kind == ModuleKind::CommonJs)
         modules->didDeleteEntry(module);
-    if (takenOutBy == TakenOutBy::FalsyStore && isFoundBehindFalsyEntry(*modules, module)) {
-        modules->forgetEntryBesideImport(module);
+    if (takenOutBy == TakenOutBy::FalsyStore && isFoundBehindFalsyEntry(*modules, module))
         return modules->answerRequireWithNamespaceOfFile(module);
-    }
-    if (entry && modules->keepsModuleBesideEntry(module))
-        return modules->answerRequireWithEntry(module, entry);
     if (modules->data(module).isOfLibrary()) {
         String path = modules->table().fullPath(module);
         if (takenOutBy == TakenOutBy::EntryOfProgram && modules->data(module).rejectsRequireCacheOverride() && !path.startsWith("node:"_s))
@@ -8002,9 +7998,9 @@ void willClearRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
     evictModule(realm, module, TakenOutBy::FalsyStore);
 }
 
-void willReplaceRequireCacheEntry(JSGlobalObject* realm, ModuleID module, JSValue entry)
+void willReplaceRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
 {
-    evictModule(realm, module, TakenOutBy::EntryOfProgram, entry.getObject());
+    evictModule(realm, module, TakenOutBy::EntryOfProgram);
 }
 
 bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)
@@ -10169,8 +10165,6 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
         modules.mockWhatRequireCacheHolds(module, exports);
         return;
     }
-    if (modules.forgetEntryBesideImport(module))
-        modules.answerRequireWithExportsOfFile(module);
     bool isFirstMock = !modules.isMocked(module);
     modules.willMock(module);
     if (modules.data(module).kind != ModuleKind::CommonJs) {
