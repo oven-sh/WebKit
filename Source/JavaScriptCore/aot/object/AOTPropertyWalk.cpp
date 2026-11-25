@@ -381,11 +381,10 @@ Result forEachOwnPropertyAsCreated(VM& vm, JSObject* object, const Visitor& visi
     }
     if (!extraPropertiesAreWalkedDirectly(extra, elements))
         return Result::NeedsGenericPath;
-    // An ordinary object with such a Structure is walked by its own keys, names first.
-    if (extra->structure()->isUncacheableDictionary())
-        return visitKeysInOrder(vm, *typed, extra, Filter::StringsAndSymbols, visitor);
-    if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
-        return *result;
+    if (!extra->structure()->isUncacheableDictionary()) {
+        if (auto result = tryVisitCachedList(vm, *typed, extra, visitor))
+            return *result;
+    }
     return visitKeysInOrder(vm, *typed, extra, std::nullopt, visitor);
 }
 
