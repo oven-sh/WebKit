@@ -5262,12 +5262,7 @@ bool Modules::namesFormByQuery(ModuleID module) const
         return false;
     String path = m_table.fullPath(module);
     size_t mark = path.reverseFind('?');
-    if (mark == notFound || path.find('/', mark) != notFound)
-        return false;
-    StringView file = StringView(path).left(mark);
-    return isTestRun() || std::ranges::any_of(std::initializer_list<ASCIILiteral> { ".js"_s, ".mjs"_s, ".cjs"_s, ".jsx"_s, ".ts"_s, ".mts"_s, ".cts"_s, ".tsx"_s }, [&](ASCIILiteral end) {
-        return file.endsWith(end);
-    });
+    return mark != notFound && path.find('/', mark) == notFound;
 }
 
 std::optional<ModuleID> Modules::findByName(const Identifier& key)
@@ -6523,6 +6518,13 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         checkModuleAccess(realm, *found, LoadKind::Import);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         RELEASE_AND_RETURN(scope, import(m_table.facadeOf(*found).value_or(*found), referrer));
+    }
+    if (!*fetchParameters && !key.isSymbol() && !isTestRun()) {
+        // The loader has an entry under the path where the program has loaded the form.
+        if (std::optional<ModuleID> form = m_table.findByPath(key.string()); form && namesFormByQuery(*form)) [[unlikely]] {
+            throwException(realm, scope, createQueryOnDataError(realm, key.string()));
+            return importPromiseRejectedByLoader(realm, scope);
+        }
     }
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
 }
