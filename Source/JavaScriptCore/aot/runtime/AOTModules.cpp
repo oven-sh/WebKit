@@ -4892,12 +4892,6 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
         if (const ScriptFetchParameters* attributes = fetchParameters->get()) {
             ModuleID file = fileOf(module);
             Identifier key = keyWithoutForm(file);
-            // A form that can't be read is code that throws. It has the loader's entry of the forms that can be read.
-            if (data(file).bodyThrowsAtLoad()) [[unlikely]] {
-                String path = m_table.fullPath(file);
-                if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && path.endsWith(makeString('?', type)))
-                    key = Identifier::fromString(*m_instance.vm, path.left(path.length() - type.length() - 1));
-            }
             if (registryEntry(key, attributes)) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
             std::optional<ModuleID> form = findWithAttributes(key, attributes);
