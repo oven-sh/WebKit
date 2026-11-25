@@ -86,7 +86,7 @@ public:
     bool hasChainDependentCell(StructureID, uint32_t column) const;
     size_t removeChainDependentCells(StructureID, uint32_t column);
 
-    bool hasRow(StructureID id) const { return !!baseOf(id); }
+    bool hasRow(StructureID id) const { return !!baseOfOwnRow(id); }
     void releaseRowOf(StructureID);
     void clear();
 
@@ -182,6 +182,7 @@ private:
     bool dependsOnChain(SlotAccess access, uint32_t index) const { return m_dependsOnChain[static_cast<unsigned>(access)].get(index); }
 
     uint32_t baseOf(StructureID id) const { return m_structureRows.rowOf(id); }
+    uint32_t baseOfOwnRow(StructureID) const;
     uint32_t indexOfReservedCell(StructureID, uint32_t column) const;
     Row& rowAt(uint32_t base) { return m_rows[reservationAt(base).payload]; }
     uint32_t baseOfOccupant(uint32_t index) const { return reservationAt(index).name == rowMarkerTag ? index : index - reservationAt(index).name; }

@@ -16,6 +16,7 @@
 #include "AOTStubRecording.h"
 #include "AOTStubRunner.h"
 #include "AOTStubTestSupport.h"
+#include "AOTStubsArrayCallbacks.h"
 #include "AOTStubsArrays.h"
 #include "AOTStubsBarriers.h"
 #include "AOTStubsBoxedCalls.h"
@@ -704,6 +705,19 @@ static void testOperationsCalled()
     checkAdapterOperations(catalog);
 }
 
+static void testStubsThatWidenArraysFence()
+{
+#if CPU(ARM64)
+    constexpr std::array<uint8_t, 4> storeFence { 0xbf, 0x3a, 0x03, 0xd5 };
+    StubCatalog catalog(StubOptions { });
+    for (StubKey key : { storeWideningIntegers(), arrayPutAtIndex(ArrayStoredValue::Value) }) {
+        StubBlob blob = buildBlob(catalog, std::array { key }, EntrySet { });
+        uint32_t size = sizeOfBody(blob, key);
+        AOT_TEST_CHECK(!std::ranges::search(blob.code.bytes.span().subspan(*blob.offsetOf(key), size), storeFence).empty());
+    }
+#endif
+}
+
 static void testSmallTableTagsAreStoredWhole()
 {
 #if CPU(X86_64)
@@ -739,6 +753,28 @@ static void testInt32LiteralsStoreWholeWords()
         StubBlob blob = buildBlob(catalog, std::array { arrayLiteralWithInt32(count) }, EntrySet { });
         AOT_TEST_CHECK(std::ranges::search(blob.code.bytes, storeOfUpperHalf).empty());
     }
+#endif
+}
+
+static void testStubsThatFillArraysFence()
+{
+#if CPU(ARM64)
+    constexpr std::array<uint8_t, 4> storeFence { 0xbf, 0x3a, 0x03, 0xd5 };
+    StubCatalog catalog(StubOptions { });
+    auto numberOfStoreFences = [&](StubKey key) {
+        StubBlob blob = buildBlob(catalog, std::array { key }, EntrySet { });
+        uint32_t size = sizeOfBody(blob, key);
+        auto body = blob.code.bytes.span().subspan(*blob.offsetOf(key), size);
+        unsigned count = 0;
+        for (size_t offset = 0; offset + storeFence.size() <= body.size(); offset += storeFence.size())
+            count += std::ranges::equal(body.subspan(offset, storeFence.size()), storeFence);
+        return count;
+    };
+    for (StubKey key : { filterArray(CallbackSource::Element, ElementTest::HasType), filterArray(CallbackSource::Field, ElementTest::Equals), filterFieldPairs(FieldPairTest::IsLess) })
+        AOT_TEST_CHECK(numberOfStoreFences(key) >= 1);
+    // A map stub has two loops, each of which fences where it widens the array, and one more fence before it returns.
+    for (StubKey key : { mapArrayToField(FieldMap::Field), mapArrayToField(FieldMap::FieldOfField) })
+        AOT_TEST_CHECK(numberOfStoreFences(key) >= 3);
 #endif
 }
 
@@ -906,10 +942,12 @@ std::span<const NativeTest> stubBlobTests()
         { "stub-blob/start-of-module"_s, testStartOfModule },
         { "stub-blob/missing-keys"_s, testMissingKeys },
         { "stub-blob/summaries"_s, testSummaries },
+        { "stub-blob/stubs-that-widen-arrays-fence"_s, testStubsThatWidenArraysFence },
         { "stub-blob/operations-called"_s, testOperationsCalled },
         { "stub-blob/tags-of-small-tables-are-stored-whole"_s, testSmallTableTagsAreStoredWhole },
         { "stub-blob/wide-references"_s, testWideReferences },
         { "stub-blob/int32-literals-store-whole-words"_s, testInt32LiteralsStoreWholeWords },
+        { "stub-blob/stubs-that-fill-arrays-fence"_s, testStubsThatFillArraysFence },
         { "stub-blob/immediates-in-keys"_s, testImmediatesInKeys },
         { "stub-blob/push-stubs-preserve-fprs"_s, ImageTests::whenExecutable<testPushStubRegisters> },
     };

@@ -186,6 +186,14 @@ static Jump branchAtEnd(StubAssembler& jit, const CallbackRegisters& registers)
     return jit.branchPtr(CCallHelpers::AboveOrEqual, registers.cursor, registers.end);
 }
 
+// A sum of int32 numbers is kept in 64 bits. It equals the sum that is rounded at each step while no step can leave 2 ** 53.
+static void bailOutIfSumCouldRound(StubAssembler& jit, const CallbackRegisters& registers, JumpList& bailouts)
+{
+    constexpr int32_t mostSummands = (1 << 22) - 1;
+    jit.load32(Address(registers.cursor, Butterfly::offsetOfPublicLength()), registers.value);
+    bailouts.append(jit.branch32(CCallHelpers::Above, registers.value, TrustedImm32(mostSummands)));
+}
+
 #if CPU(X86_64)
 static constexpr GPRReg scratchOfLoad = CCallHelpers::s_scratchRegister;
 #else
@@ -1512,6 +1520,8 @@ void generateFoldArray(StubAssembler& jit)
     saveOperand();
     saveCallback(jit, registers);
     loadCursorAndEnd(jit, registers);
+    if (fold == NumberFold::Sum)
+        bailOutIfSumCouldRound(jit, registers, exits.bailouts);
     Jump hasShape;
     if (!isElement)
         hasShape = loadPlaceOfField(jit, registers, exits.bailouts);
@@ -1685,6 +1695,7 @@ static void loadPreservedDistance(StubAssembler& jit, const std::array<GPRReg, 5
     jit.load64(Address(CCallHelpers::stackPointerRegister, bytesBelow + (preserved.size() - 1) * sizeof(CPURegister)), distance);
 }
 
+// A stub that stores cells in the array fences before it returns.
 static void makeArray(StubAssembler& jit, const CallbackRegisters& registers, ArrayElementKind kind, std::initializer_list<GPRReg> kept)
 {
     jit.preserving(kept, [&] {
@@ -1828,6 +1839,8 @@ void generateMapArrayToField(StubAssembler& jit)
     });
     jit.emitFunctionEpilogueWithEmptyFrame();
     exits.methodCalls.append(jit.branchTest64(CCallHelpers::Zero, registers.value));
+    if (!measures)
+        fenceAfterAllocation(jit);
     jit.move(registers.value, jit.result());
     jit.returnToCaller();
     checkOtherArray(jit, registers, check, source, false, exits);
@@ -2269,6 +2282,7 @@ void generateFoldFieldPairs(StubAssembler& jit)
     const ArrayCheck check = checkArray(jit, registers, exits);
     save();
     loadCursorAndEnd(jit, registers);
+    bailOutIfSumCouldRound(jit, registers, exits.bailouts);
     exits.bailouts.append(branchAtEnd(jit, registers));
 
     const bool isNested = operation == FieldPairOperation::FieldOfField;
@@ -2584,6 +2598,7 @@ void generateFilterArray(StubAssembler& jit)
         filter(true);
     }
     isMade.link(&jit);
+    fenceAfterAllocation(jit);
     jit.move(registers.value, jit.result());
     jit.returnToCaller();
     callMethod(jit, registers, exits, false);
@@ -2693,6 +2708,7 @@ void generateFilterFieldPairs(StubAssembler& jit)
     });
     jit.emitFunctionEpilogueWithEmptyFrame();
     exits.methodCalls.append(jit.branchTest64(CCallHelpers::Zero, value));
+    fenceAfterAllocation(jit);
     jit.move(value, jit.result());
     jit.returnToCaller();
     checkOtherArray(jit, registers, check, CallbackSource::Field, false, exits);
