@@ -154,7 +154,6 @@ public:
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;
     bool importsAbsentExport(ModuleID) const;
-    bool hasFailures() const { return !m_tables->moduleFailures().empty(); }
     bool hasLoadFailures() const { return !m_tables->moduleFailures().empty() && m_tables->moduleFailures().back().isLoadOfModule(); }
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }

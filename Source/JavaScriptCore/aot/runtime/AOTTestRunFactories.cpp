@@ -2409,20 +2409,11 @@ bool Modules::isHeldByDetachedLoad(ModuleID mocked) const
     });
 }
 
-bool Modules::loadEndsBeforeEvaluation(ModuleID root)
+bool Modules::hasUnresolvableRequestInGraph(ModuleID root)
 {
-    if (m_table.modulesOfUncompiledCode().empty() && !m_table.hasFailures()) [[likely]]
+    if (m_table.modulesOfUncompiledCode().empty()) [[likely]]
         return false;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(*m_instance.vm);
-    auto failsToLink = [&](ModuleID module) {
-        if (!m_table.importsAbsentExport(module))
-            return false;
-        for (size_t index : modulesInLoadGraph(module)) {
-            if (isMocked(ModuleID(index)) || m_modulesWithPendingMock.get(index))
-                return false;
-        }
-        return true;
-    };
     BitVector seen(m_table.size());
     Vector<ModuleID, 16> work { root };
     while (!work.isEmpty()) {
@@ -2438,8 +2429,6 @@ bool Modules::loadEndsBeforeEvaluation(ModuleID root)
         }
         if (!data(module).isESModuleOfProgram() || status(module) > ModuleStatus::Linked || (module != root && isMocked(module) && !needsOriginalBeforeFactory(module)))
             continue;
-        if (failsToLink(module))
-            return true;
         for (const ModuleRequestData& request : m_table.imports(module)) {
             if (!request.isHoisted && !request.isDeferred)
                 work.append(moduleLoadedBy(request));
@@ -2563,7 +2552,7 @@ bool Modules::runMocksInGraphSlow(ModuleID root, LoadRootKind rootOfLoad)
         bool isPutAside = runsMock && isImportedByStatement && m_mocksRetriedAfterFailure.get(module.index());
         if (isPutAside) {
             if (!endsBeforeLink)
-                endsBeforeLink = loadEndsBeforeEvaluation(root);
+                endsBeforeLink = hasUnresolvableRequestInGraph(root);
             isPutAside = !hasCalledOrdinaryFactories || *endsBeforeLink;
             hasPutMockAside |= isPutAside && !*endsBeforeLink;
         }
