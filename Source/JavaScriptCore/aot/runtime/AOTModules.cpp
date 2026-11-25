@@ -8525,16 +8525,16 @@ void throwCompiledModuleAccessError(JSGlobalObject* realm, ModuleID module, Load
     throwException(realm, scope, createCompiledModuleAccessError(realm, path, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s));
 }
 
-static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadKind form)
+static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadKind form, IsCompiledFile isCompiledFile)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     notifyRejectedChangeListener(realm, makeString("Cannot reach '"_s, name, '\''));
-    throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s));
+    throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s, isCompiledFile));
 }
 
 void Modules::refuseToShowExportsOf(ModuleID module)
 {
-    throwLoadByNameRefused(m_instance.globalObject, m_table.fullPath(m_table.moduleBehindFacade(module).value_or(module)), LoadKind::Import);
+    throwLoadByNameRefused(m_instance.globalObject, m_table.fullPath(m_table.moduleBehindFacade(module).value_or(module)), LoadKind::Import, IsCompiledFile::Yes);
 }
 
 void Modules::refuseToHandOutExportOf(ModuleID module, StringView name)
@@ -8709,7 +8709,8 @@ void willLoadByName(JSGlobalObject* realm, JSValue specifier, LoadKind form)
     if (modules ? modules->rejectsLoadsByName() && modules->rejectsUncompiledCode() : !Image::current()->loadsModulesByName()) {
         String name = specifier.isString() ? asString(specifier)->value(realm) : String();
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name, form));
+        bool isCompiledFile = modules && modules->table().findByPath(name);
+        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name, form, isCompiledFile ? IsCompiledFile::Yes : IsCompiledFile::No));
     }
     if (modules)
         RELEASE_AND_RETURN(scope, modules->admitCodeNamedBy(specifier));
@@ -8724,7 +8725,7 @@ static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadKind 
         if (modules->hasUncompiledRequester() && Image::current()->loadsCodeOutsideImage())
             throwCompiledModuleAccessError(realm, module, form);
         else
-            throwLoadByNameRefused(realm, modulePath(module), form);
+            throwLoadByNameRefused(realm, modulePath(module), form, IsCompiledFile::Yes);
         return nullptr;
     }
     auto scope = DECLARE_THROW_SCOPE(realm->vm());

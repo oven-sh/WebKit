@@ -59,7 +59,8 @@ JSObject* createBuiltinBehindTargetOfEventNotCompiledError(JSGlobalObject*, cons
 JSObject* createBuiltinFunctionNotCompiledError(JSGlobalObject*, const String& functionName);
 JSObject* createBuiltinsNotCompiledError(JSGlobalObject*, std::span<const String> builtins);
 JSObject* createExternalModuleNotLoadedError(JSGlobalObject*, const String& path);
-JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code);
+enum class IsCompiledFile : bool { No, Yes };
+JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code, IsCompiledFile);
 JSObject* createCompiledModuleAccessError(JSGlobalObject*, StringView path, ASCIILiteral code);
 JSObject* createFormNotHeldError(JSGlobalObject*, StringView path, ASCIILiteral type);
 JSObject* createExportNotHandedOutError(JSGlobalObject*, StringView path, StringView name);
