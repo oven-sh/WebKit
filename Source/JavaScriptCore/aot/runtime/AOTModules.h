@@ -1110,6 +1110,7 @@ public:
     static uint64_t bitOfHash(const Identifier& name) { return 1ULL << (name.impl()->symbolAwareHash() & 63); }
     bool mayNameDeferredExport(const Identifier& name) const { return m_hashesOfDeferredExports & bitOfHash(name); }
     bool hasCapturedExport(ModuleID, const Identifier&);
+    void fillDeferredExportUnlessOmitted(ModuleID, const Identifier&, MockMode);
     bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);

@@ -16,6 +16,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleNamespace.h"
@@ -43,6 +44,7 @@
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
@@ -3967,6 +3969,27 @@ bool Modules::hasCapturedExport(ModuleID module, const Identifier& name)
         return !!capturedField(loaded, name.impl());
     RELEASE_ASSERT(loaded.capturedExports);
     return !!storedValue(m_instance.globalObject, loaded.capturedExports, name);
+}
+
+// Listing the names reads each export, and its first read fixes its value. An export that was not compiled in stays unread.
+void Modules::fillDeferredExportUnlessOmitted(ModuleID module, const Identifier& name, MockMode mode)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!isDeferredExportOfBuiltinModule(module, name))
+        return;
+    JSObject* source = loadedIfExists(module)->deferredExportsSource.get();
+    PropertySlot slot(source, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwnMember = source->methodTable()->getOwnPropertySlot(source, realm, name, slot);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isOwnMember && (slot.isAccessor() || slot.isValue())) {
+        JSValue member = slot.isAccessor() ? JSValue(slot.getterSetter()->getter()) : slot.getValue(realm, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (member.isCell() && isPlaceholderForOmittedBuiltin(member.asCell()))
+            return;
+    }
+    scope.release();
+    capturedValue(module, name, mode);
 }
 
 bool Modules::isExportAmbiguous(ModuleID module, unsigned index) const
@@ -11948,6 +11971,10 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
             RETURN_IF_EXCEPTION(scope, void());
             if (!hasProperty)
                 continue;
+            if (isTakenFromValue) {
+                modules.fillDeferredExportUnlessOmitted(thisObject->m_module, name, thisObject->keepsToModule() ? Modules::MockMode::Bypass : Modules::MockMode::Use);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
         names.add(name);
     }
