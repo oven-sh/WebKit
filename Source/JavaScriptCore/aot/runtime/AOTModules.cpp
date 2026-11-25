@@ -475,6 +475,8 @@ void Modules::resetEntryPointEvaluation(ModuleID module)
     if (moduleData.kind == ModuleKind::CommonJs && current == ModuleStatus::Evaluated && !wasEvictedFromRequireCache(module))
         return;
     if (moduleData.runsAgainAfterThrow()) {
+        if (ModuleID facade = moduleWithExportsOf(module); facade != module)
+            releaseExportsOfLoad(facade);
         for (ModuleID each : { moduleWithExportsOf(module), module }) {
             if (ModuleRecord* record = m_records.get(each)) {
                 loader()->removeEntriesForRecord(record);
