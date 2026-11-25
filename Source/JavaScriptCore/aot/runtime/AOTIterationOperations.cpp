@@ -736,6 +736,9 @@ static void throwIfTooLongForList(JSGlobalObject* globalObject, JSCell* source)
     if (auto* view = dynamicDowncast<JSArrayBufferView>(source)) {
         if (!view->isOutOfBounds() && view->isIteratorProtocolFastAndNonObservable())
             count = view->length();
+    } else if (isJSArray(source)) {
+        if (asArray(source)->isIteratorProtocolFastAndNonObservable())
+            count = asArray(source)->length();
     } else if (globalObject->isStringPrototypeIteratorProtocolFastAndNonObservable()) {
         JSString* string = asString(source);
         count = string->length();
@@ -1036,6 +1039,9 @@ static void appendIterable(Instance& instance, JSGlobalObject* globalObject, JSA
                     members->close(vm);
                 RELEASE_AND_RETURN(scope, appendElementsOfList(globalObject, target, list));
             }
+        } else {
+            throwIfTooLongForList(globalObject, cell);
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
 
