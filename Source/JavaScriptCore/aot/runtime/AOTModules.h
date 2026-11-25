@@ -2490,6 +2490,7 @@ private:
     };
     ModuleMap<FormAnsweredFirst> m_formsAnsweredFirst;
     BitVector m_mockEvictedDataModules;
+    BitVector m_codeFilesWhoseMockEnded;
     BitVector m_evictedDataFiles;
     bool m_hasEvictedDataFiles { false };
     BitVector m_mockedEvictedDataFiles;

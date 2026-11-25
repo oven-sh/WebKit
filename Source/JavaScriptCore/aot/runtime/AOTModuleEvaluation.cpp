@@ -4872,6 +4872,8 @@ JSValue Modules::execute(ModuleID module, ReadsExports readsExports)
 
 void Modules::didMockEvictDataModule(ModuleID file)
 {
+    if (data(file).kind == ModuleKind::SourceText)
+        m_codeFilesWhoseMockEnded.set(file.index());
     if (data(file).kind != ModuleKind::Data)
         return;
     m_mockEvictedDataModules.set(file.index());

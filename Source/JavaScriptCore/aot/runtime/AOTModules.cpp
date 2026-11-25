@@ -4904,8 +4904,13 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
                 return importPromiseRejectedByLoader(realm, scope);
             } else {
                 noteFormAnsweredFirst(key, *attributes, file);
-                if (isTypeOfCode(*attributes))
+                if (isTypeOfCode(*attributes)) {
                     m_filesImportedUnderTypesOfCode.set(file.index());
+                    if (!m_codeFilesWhoseMockEnded.isEmpty()) [[unlikely]] {
+                        if (std::optional<ModuleID> code = m_table.findByPath(key.string()))
+                            m_codeFilesWhoseMockEnded.clear(code->index());
+                    }
+                }
             }
         } else if (m_table.mayHaveAttributeVariants() && !isTestRun()) [[unlikely]]
             module = textRequiredInPlaceOf(module);
@@ -7336,7 +7341,9 @@ bool Modules::answersRequireOfFile(ModuleID form)
         return file && loadedModuleForm(*file) == form;
     if (isEvicted(*file) || isEvicted(form) || isMocked(*file) || activeMock(*file) || wasRequired(*file))
         return false;
-    return wasRequired(form) || (hasNotBegun(*file) && status(form) == ModuleStatus::Evaluated);
+    // The loader lost the entry of the form to the mock.
+    bool hasEntry = !m_codeFilesWhoseMockEnded.get(file->index());
+    return wasRequired(form) || (hasEntry && hasNotBegun(*file) && status(form) == ModuleStatus::Evaluated);
 }
 
 static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
