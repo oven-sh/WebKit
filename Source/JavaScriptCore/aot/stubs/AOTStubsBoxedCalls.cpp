@@ -1700,7 +1700,10 @@ static constexpr CallWithoutHostFunction arrayUnshiftCalls[] = { { { anything, a
 static constexpr CallWithoutHostFunction mapClearCalls[] = { { { anything, anything }, Entry::operationAOTMapClearGeneric } };
 static constexpr CallWithoutHostFunction setClearCalls[] = { { { anything, anything }, Entry::operationAOTSetClearGeneric } };
 static constexpr CallWithoutHostFunction regExpExecCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::Array) } };
-static constexpr CallWithoutHostFunction regExpTestCalls[] = { { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) } };
+static constexpr CallWithoutHostFunction regExpTestCalls[] = {
+    { { aText, anything }, std::nullopt, regExpMatch(RegExpMatchResult::BoxedBoolean) },
+    { { ArgumentGuard::IsObject, anything }, Entry::operationAOTRegExpTestOfObject },
+};
 static constexpr CallWithoutHostFunction stringEndsWithCalls[] = { { { aText, anything }, Entry::operationAOTStringEndsWith } };
 static constexpr CallWithoutHostFunction stringIncludesCalls[] = { { { aText, anything }, Entry::operationAOTStringIncludes } };
 static constexpr CallWithoutHostFunction stringMatchCalls[] = { { { aPattern, anything }, std::nullopt, regExpMatch(RegExpMatchResult::ArrayForStringMatch) } };

@@ -94,6 +94,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRegExpTestBoxed, EncodedJSValue, (Instance*
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(testRegExp(globalObject, vm, cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpTestBoxed), cellArgument<JSString>(string, Entry::operationAOTRegExpTestBoxed)))));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTRegExpTestOfObject, EncodedJSValue, (Instance* instance, JSCell* regExp, JSCell* operand))
+{
+    AOT_OPERATION_BEGIN(instance, Entry::operationAOTRegExpTestOfObject);
+    auto* object = cellArgument<RegExpObject>(regExp, Entry::operationAOTRegExpTestOfObject);
+    JSString* string = operand->type() == CompiledObjectType ? toStringOfCompiledObject(instance, *uncheckedDowncast<Object>(operand)) : JSValue(operand).toString(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (object->structure() == globalObject->regExpStructure() && globalObject->regExpPrimordialPropertiesWatchpointSet().isStillValid()) [[likely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(testRegExp(globalObject, vm, object, string))));
+    JSValue match = regExpExec(globalObject, object->isSharedLiteral() ? object->copyOfSharedLiteral(vm) : object, string);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(!match.isNull())));
+}
+
 static RegExp* regExpOfRecord(VM& vm, uint32_t record)
 {
     RegExpRecordID id(record);
