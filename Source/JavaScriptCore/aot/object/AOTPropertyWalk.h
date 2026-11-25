@@ -91,10 +91,15 @@ JS_EXPORT_PRIVATE Presence tryGetOwnValue(JSObject* compiledObject, UniquedStrin
 using DescriptorMembers = std::array<JSValue, 6>;
 JS_EXPORT_PRIVATE bool tryReadDescriptorMembers(JSObject* compiledObject, DescriptorMembers&);
 JS_EXPORT_PRIVATE void putDirect(VM&, JSObject*, PropertyName, JSValue, unsigned attributes);
-JS_EXPORT_PRIVATE unsigned countPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject*);
+struct ObjectsOnChain {
+    MarkedArgumentBuffer objects;
+    size_t numberBelowProxies { 0 };
+};
+JS_EXPORT_PRIVATE void getPropertyNames(JSGlobalObject*, JSObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode, ObjectsOnChain&);
+JS_EXPORT_PRIVATE unsigned countPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject*, ObjectsOnChain&);
 JS_EXPORT_PRIVATE bool hasOwnPrivateField(JSGlobalObject*, JSObject*);
 JS_EXPORT_PRIVATE bool isRuntimeProperty(VM&, UniquedStringImpl*, JSValue);
-JS_EXPORT_PRIVATE bool matchPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches);
+JS_EXPORT_PRIVATE bool matchPrivateFieldsOfCompiledClasses(JSGlobalObject*, JSObject* object, JSObject* pattern, ObjectsOnChain& chainOfPattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches);
 void prepareForFreeze(JSObject* compiledObject);
 void setIntegrity(VM&, JSObject*, Integrity);
 bool tryFreezeFields(VM&, JSObject*);
