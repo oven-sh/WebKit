@@ -124,7 +124,8 @@ struct FieldTableEntry {
 struct FieldRecordIndex {
     static constexpr uint16_t isStoredWithoutTypeTest = 1u << 15;
     static constexpr uint16_t takesEveryInt32 = 1u << 14;
-    static constexpr uint16_t indexMask = takesEveryInt32 - 1;
+    static constexpr uint16_t isDefinedByEveryInt32 = 1u << 13;
+    static constexpr uint16_t indexMask = isDefinedByEveryInt32 - 1;
 
     static FieldRecordIndex create(const FieldData& field, uint16_t indexInLayoutRecord, const RuntimeType& type, uint16_t numberOfAnyType)
     {
@@ -134,8 +135,11 @@ struct FieldRecordIndex {
         uint16_t bits = indexInLayoutRecord;
         if (typeAcceptsWhatSlotHolds(field, type, numberOfAnyType) && !(field.flags & flagsBarringStore))
             bits |= isStoredWithoutTypeTest;
-        if (field.slot.representation() == SlotRepresentation::JSValue && typeAcceptsIntegersFrom(type, INT32_MIN) && !(field.flags & flagsBarringStoreOfInt32))
+        if (field.slot.representation() == SlotRepresentation::JSValue && typeAcceptsIntegersFrom(type, INT32_MIN) && !(field.flags & flagsBarringStoreOfInt32)) {
             bits |= takesEveryInt32;
+            if (!(field.flags & fieldAttributeFlags))
+                bits |= isDefinedByEveryInt32;
+        }
         return { bits };
     }
 
