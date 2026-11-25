@@ -3814,6 +3814,7 @@ private:
 public:
     void noteTestSeenInTries(Reference value, ValueID operation = { }, TypeID tested = { });
     void noteGuardOfStoresAskedInTries(const MemberConditionRecord&);
+    void noteGuardOfReadsAskedInTries(const MemberConditionRecord&);
     bool isAllocatedInTrialIteration(Reference object) const { return !m_trialVisits.isEmpty() && object && object.isValue() && object.id().index() >= m_trialVisits.last().firstRecord; }
     void noteBirthInTries(LayoutID classLayout);
     void noteGuardsBegunInTries(LayoutID classLayout);

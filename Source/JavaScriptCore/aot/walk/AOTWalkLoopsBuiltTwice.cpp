@@ -5779,10 +5779,11 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             findGuardsOfMethodAboveObjectsOf(*this, made, key, guardsAskedOfObjectsOfTurns);
     };
     BlockID lastHandler;
+    BackEdgeDominators runsInEveryIteration(index, loop);
     for (BlockID member : index.membersOf(loop)) {
         BodyBlock block = index.block(member);
         for (BodyValue operation : block.values()) {
-            if (operation.opcode() == Opcode::PropGet && !operation.isFreeName())
+            if (operation.opcode() == Opcode::PropGet && !operation.isFreeName() && (index.loopOf(member) != loop || runsInEveryIteration.contains(member)))
                 guardMethodOfIterationObject(operation.objectOperand(), operation.key());
         }
         if (!block.hasHandler() || std::exchange(lastHandler, block.handler().block()) == block.handler().block())

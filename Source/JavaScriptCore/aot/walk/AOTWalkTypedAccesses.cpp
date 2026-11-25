@@ -4375,7 +4375,7 @@ void noteGuardsShownByTest(Walker& walker, std::span<const MemberConditionRecord
         bool speaksOfReads = condition.kind == MemberConditionKind::MemberUnchanged || condition.kind == MemberConditionKind::MemberUnchangedAbove;
         if (speaksOfReads && (!state.guardsHaveBegun(condition.layout) || walker.turnBeginsGuardsOf(condition.layout))) {
             if (walker.turnMakesObjectAtOrBelow(condition.layout)) {
-                walker.noteGuardOfStoresAskedInTries(condition);
+                walker.noteGuardOfReadsAskedInTries(condition);
                 walker.noteClassesOfBirthsAtOrBelowInTries(condition.layout);
             } else if (condition.side == ClassSide::Static && walker.program().at(condition.layout).has(LayoutFlags::IsConstructorFunction))
                 walker.noteGuardOfStoresAskedInTries(condition);
