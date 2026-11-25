@@ -2087,6 +2087,11 @@ std::tuple<unsigned, InlineAttribute> ByteCodeParser::inliningCost(CallVariant c
         return { UINT_MAX, InlineAttribute::None };
     }
 
+    if (!inlineCallFrame() && m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex.withCheckpoint(noCheckpoints), TailCallInliningFailed)) {
+        VERBOSE_LOG("    Failing because exits into this tail call made the stack grow.\n");
+        return { UINT_MAX, InlineAttribute::None };
+    }
+
     FunctionExecutable* executable = callee.functionExecutable();
     if (!executable) {
         VERBOSE_LOG("    Failing because there is no function executable.\n");
