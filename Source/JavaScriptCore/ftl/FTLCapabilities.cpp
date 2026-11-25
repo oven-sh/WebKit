@@ -536,6 +536,9 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case DateGetInt32OrNaN:
     case DateGetMilliseconds:
     case DateGetTime:
+    case TemporalCompare:
+    case TemporalEquals:
+    case TemporalGetNumber:
     case DateSetTime:
     case ResolvePromiseFirstResolving:
     case RejectPromiseFirstResolving:

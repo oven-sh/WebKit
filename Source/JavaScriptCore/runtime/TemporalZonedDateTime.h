@@ -31,6 +31,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/TemporalEnums.h>
 #include <JavaScriptCore/TemporalObject.h>
+#include <JavaScriptCore/TimeZoneICUBridge.h>
 #include <optional>
 #include <wtf/Packed.h>
 
@@ -56,6 +57,21 @@ public:
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item);
     static TemporalZonedDateTime* from(JSGlobalObject*, JSValue item, JSValue options);
 
+    // https://tc39.es/proposal-temporal/#sec-temporal.zoneddatetime.prototype.equals
+    static bool equals(const TemporalZonedDateTime* zonedDateTime, const TemporalZonedDateTime* other)
+    {
+        // Step 4: If zonedDateTime.[[EpochNanoseconds]] ≠ other.[[EpochNanoseconds]], return false.
+        if (zonedDateTime->exactTime() != other->exactTime())
+            return false;
+
+        // Step 5: If TimeZoneEquals(zonedDateTime.[[TimeZone]], other.[[TimeZone]]) is false, return false.
+        if (!TemporalCore::timeZoneEquals(zonedDateTime->timeZone(), other->timeZone()))
+            return false;
+
+        // Step 6: Return CalendarEquals(zonedDateTime.[[Calendar]], other.[[Calendar]]).
+        return zonedDateTime->calendarID() == other->calendarID();
+    }
+
     DECLARE_INFO;
 
     ISO8601::ExactTime exactTime() const { return m_exactTime; }
@@ -76,13 +92,20 @@ public:
 
     static std::optional<ISO8601::ExactTime> getEpochNanosecondsFor(JSGlobalObject*, const TimeZone&, const ISO8601::PlainDate&, const ISO8601::PlainTime&, TemporalDisambiguation);
 
+    static constexpr ptrdiff_t offsetOfExactTime() { return OBJECT_OFFSETOF(TemporalZonedDateTime, m_exactTime); }
+
 private:
     TemporalZonedDateTime(VM&, Structure*, ISO8601::ExactTime, TimeZone, CalendarID);
     DECLARE_DEFAULT_FINISH_CREATION;
 
-    ISO8601::ExactTime m_exactTime;
-    TimeZone m_timeZone;
-    CalendarID m_calendarID { 0 };
+    // Fills m_localDateTime and returns the offset it was computed with.
+    std::optional<int64_t> computeLocalDateTime(JSGlobalObject*) const;
+
+    const ISO8601::ExactTime m_exactTime;
+    const TimeZone m_timeZone;
+    const CalendarID m_calendarID { 0 };
+    // GetISODateTimeFor([[TimeZone]], [[EpochNanoseconds]]), computed on first use; PlainDate::sentinel() means not yet.
+    mutable ISO8601::PlainDateTime m_localDateTime { ISO8601::PlainDate::sentinel(), { } };
 };
 
 TemporalZonedDateTime* createTemporalZonedDateTime(JSGlobalObject*, ISO8601::ExactTime, TimeZone, CalendarID);

@@ -35,6 +35,7 @@
 #include "ObjectConstructor.h"
 #include "TemporalCalendar.h"
 #include "TemporalDuration.h"
+#include "TemporalObject.h"
 #include "TemporalPlainDate.h"
 #include "TemporalPlainDateTime.h"
 #include "TemporalPlainMonthDay.h"
@@ -229,7 +230,7 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainMonthDayPrototypeFuncEquals, (JSGlobalObje
         return throwVMTypeError(globalObject, scope, "Temporal.PlainMonthDay.prototype.equals called on value that's not a PlainMonthDay"_s);
 
     // Step 3: other = ? ToTemporalMonthDay(other).
-    auto* other = TemporalPlainMonthDay::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto* other = toTemporalObjectForReading<TemporalPlainMonthDay>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 4: If CompareISODate(monthDay.[[ISODate]], other.[[ISODate]]) != 0, return false.

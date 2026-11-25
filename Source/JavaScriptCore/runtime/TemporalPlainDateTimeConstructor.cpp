@@ -40,7 +40,6 @@ namespace JSC {
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(TemporalPlainDateTimeConstructor);
 
 static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimeConstructorFuncFrom);
-static JSC_DECLARE_HOST_FUNCTION(temporalPlainDateTimeConstructorFuncCompare);
 
 }
 
@@ -53,7 +52,7 @@ const ClassInfo TemporalPlainDateTimeConstructor::s_info = { "Function"_s, &Base
 /* Source for TemporalPlainDateTimeConstructor.lut.h
 @begin temporalPlainDateTimeConstructorTable
   from             temporalPlainDateTimeConstructorFuncFrom             DontEnum|Function 1
-  compare          temporalPlainDateTimeConstructorFuncCompare          DontEnum|Function 2
+  compare          temporalPlainDateTimeConstructorFuncCompare          DontEnum|Function 2 TemporalIntrinsic
 @end
 */
 
@@ -162,15 +161,15 @@ JSC_DEFINE_HOST_FUNCTION(temporalPlainDateTimeConstructorFuncCompare, (JSGlobalO
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Step 1: one = ToTemporalDateTime(one).
-    auto* one = TemporalPlainDateTime::from(globalObject, callFrame->argument(0), jsUndefined());
+    auto one = TemporalPlainDateTime::toISODateTimeWithCalendar(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 2: two = ToTemporalDateTime(two).
-    auto* two = TemporalPlainDateTime::from(globalObject, callFrame->argument(1), jsUndefined());
+    auto two = TemporalPlainDateTime::toISODateTimeWithCalendar(globalObject, callFrame->argument(1));
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 3: CompareISODateTime(one.[[ISODateTime]], two.[[ISODateTime]]).
-    return JSValue::encode(jsNumber(TemporalCore::compareISODateTime(one->plainDate(), one->plainTime(), two->plainDate(), two->plainTime())));
+    return JSValue::encode(jsNumber(TemporalCore::compareISODateTime(one.isoDateTime.date, one.isoDateTime.time, two.isoDateTime.date, two.isoDateTime.time)));
 }
 
 } // namespace JSC

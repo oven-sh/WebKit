@@ -63,7 +63,6 @@ static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncSince);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncRound);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncStartOfDay);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncGetTimeZoneTransition);
-static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncEquals);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToInstant);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToPlainDateTime);
 static JSC_DECLARE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToPlainDate);
@@ -122,7 +121,7 @@ const ClassInfo TemporalZonedDateTimePrototype::s_info = { "Temporal.ZonedDateTi
   round              temporalZonedDateTimePrototypeFuncRound              DontEnum|Function 1
   startOfDay         temporalZonedDateTimePrototypeFuncStartOfDay         DontEnum|Function 0
   getTimeZoneTransition temporalZonedDateTimePrototypeFuncGetTimeZoneTransition DontEnum|Function 1
-  equals             temporalZonedDateTimePrototypeFuncEquals             DontEnum|Function 1
+  equals             temporalZonedDateTimePrototypeFuncEquals             DontEnum|Function 1 TemporalIntrinsic
   toInstant          temporalZonedDateTimePrototypeFuncToInstant          DontEnum|Function 0
   toPlainDateTime    temporalZonedDateTimePrototypeFuncToPlainDateTime    DontEnum|Function 0
   toPlainDate        temporalZonedDateTimePrototypeFuncToPlainDate        DontEnum|Function 0
@@ -528,18 +527,15 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncRound, (JSGlobalObjec
         // Step 20.a: roundResult = RoundISODateTime(isoDateTime, roundingIncrement, smallestUnit, roundingMode).
         Int128 unitLen = static_cast<Int128>(lengthInNanoseconds(smallestUnit));
         Int128 incrementNs = unitLen * static_cast<Int128>(static_cast<int64_t>(roundingIncrement));
-        auto curOffsetResult = TemporalCore::getOffsetNanosecondsFor(zdt->timeZone(), zdt->exactTime());
-        if (!curOffsetResult) [[unlikely]] {
-            throwRangeError(globalObject, scope, curOffsetResult.error().message);
-            return { };
-        }
+        auto curOffset = zdt->getOffsetNanoseconds(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
         auto [roundedDate, roundedTime] = TemporalCore::roundISODateTime(date, time, incrementNs, smallestUnit, roundingMode);
         // Step 20.b: offsetNanoseconds = GetOffsetNanosecondsFor(timeZone, thisNs).
         // Step 20.c: epochNanoseconds = ? InterpretISODateTimeOffset(...).
         auto epochNsResult = TemporalCore::interpretISODateTimeOffset(
             roundedDate, roundedTime, TemporalCore::UseStartOfDay::No,
             OffsetBehaviour::Option, TemporalOffsetDisambiguation::Prefer,
-            *curOffsetResult, TemporalCore::MatchBehaviour::MatchExactly,
+            *curOffset, TemporalCore::MatchBehaviour::MatchExactly,
             zdt->timeZone(), TemporalDisambiguation::Compatible);
         if (!epochNsResult) [[unlikely]] {
             throwTemporalError(globalObject, scope, epochNsResult.error());
@@ -579,12 +575,10 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncGetTimeZoneTransition
                 return throwVMTypeError(globalObject, scope, "Temporal.ZonedDateTime.prototype.getTimeZoneTransition requires a 'direction' option"_s);
             return throwVMTypeError(globalObject, scope, "Temporal.ZonedDateTime.prototype.getTimeZoneTransition requires an options object or string"_s);
         }
-        JSValue dirVal = options->get(globalObject, Identifier::fromString(vm, "direction"_s));
+        dirStr = temporalStringOption(globalObject, options, Identifier::fromString(vm, "direction"_s));
         RETURN_IF_EXCEPTION(scope, { });
-        if (dirVal.isUndefined())
+        if (dirStr.isNull())
             return throwVMRangeError(globalObject, scope, "Temporal.ZonedDateTime.prototype.getTimeZoneTransition requires a 'direction' option"_s);
-        dirStr = dirVal.toWTFString(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
     }
     // Step 7: Let direction be ? GetDirectionOption(directionParam).
     TransitionDirection direction;
@@ -762,17 +756,12 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncEquals, (JSGlobalObje
         return throwVMTypeError(globalObject, scope, "Temporal.ZonedDateTime.prototype.equals called on value that's not a ZonedDateTime"_s);
 
     // Step 3: Set other to ? ToTemporalZonedDateTime(other).
-    auto* other = TemporalZonedDateTime::from(globalObject, callFrame->argument(0));
+    auto* other = toTemporalObjectForReading<TemporalZonedDateTime>(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     ASSERT(other);
 
-    // Step 4: If zonedDateTime.[[EpochNanoseconds]] ≠ other.[[EpochNanoseconds]], return false.
-    // Step 5: If TimeZoneEquals(...) is false, return false.
-    // Step 6: Return CalendarEquals(zonedDateTime.[[Calendar]], other.[[Calendar]]).
-    return JSValue::encode(jsBoolean(
-        zdt->exactTime() == other->exactTime()
-        && TemporalCore::timeZoneEquals(zdt->timeZone(), other->timeZone())
-        && zdt->calendarID() == other->calendarID()));
+    // Steps 4-6: [[EpochNanoseconds]] equality + TimeZoneEquals + CalendarEquals.
+    return JSValue::encode(jsBoolean(TemporalZonedDateTime::equals(zdt, other)));
 }
 
 // temporal_rs: ZonedDateTime::to_instant
@@ -896,12 +885,9 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToString, (JSGlobalOb
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 7: Let showOffset be ? GetTemporalShowOffsetOption(resolvedOptions).
-    String offsetOpt = "auto"_s;
-    if (options) {
-        offsetOpt = intlStringOption(globalObject, options, vm.propertyNames->offset,
-            { "auto"_s, "never"_s }, "offset must be \"auto\" or \"never\""_s, "auto"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    String offsetOpt = options ? temporalStringOption(globalObject, options, vm.propertyNames->offset,
+        { "auto"_s, "never"_s }, "offset must be \"auto\" or \"never\""_s, "auto"_s) : "auto"_s;
+    RETURN_IF_EXCEPTION(scope, { });
 
     // Step 8: roundingMode
     auto roundingMode = temporalRoundingMode(globalObject, options, RoundingMode::Trunc);
@@ -912,12 +898,9 @@ JSC_DEFINE_HOST_FUNCTION(temporalZonedDateTimePrototypeFuncToString, (JSGlobalOb
     RETURN_IF_EXCEPTION(scope, { });
 
     // Step 10: Let showTimeZone be ? GetTemporalShowTimeZoneNameOption(resolvedOptions).
-    String tzNameOpt = "auto"_s;
-    if (options) {
-        tzNameOpt = intlStringOption(globalObject, options, Identifier::fromString(vm, "timeZoneName"_s),
-            { "auto"_s, "never"_s, "critical"_s }, "timeZoneName must be \"auto\", \"never\", or \"critical\""_s, "auto"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    String tzNameOpt = options ? temporalStringOption(globalObject, options, vm.propertyNames->timeZoneName,
+        { "auto"_s, "never"_s, "critical"_s }, "timeZoneName must be \"auto\", \"never\", or \"critical\""_s, "auto"_s) : "auto"_s;
+    RETURN_IF_EXCEPTION(scope, { });
 
     // Step 11: Perform ? ValidateTemporalUnitValue(smallestUnit, ~time~).
     validateTemporalUnitValue(globalObject, smallestUnitResult, UnitGroup::Time, AllowedUnit::None, "smallestUnit"_s);

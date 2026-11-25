@@ -100,6 +100,8 @@ JS_EXPORT_PRIVATE TemporalResult<Int128> add24HourDaysToTimeDuration(Int128 time
 
 JS_EXPORT_PRIVATE TemporalResult<ISO8601::InternalDuration> toInternalDurationRecordWith24HourDays(ISO8601::Duration);
 
+JS_EXPORT_PRIVATE TemporalResult<Int128> timeDurationForCompareWithoutRelativeTo(ISO8601::Duration);
+
 JS_EXPORT_PRIVATE TemporalResult<ISO8601::Duration> toDateDurationRecordWithoutTime(ISO8601::Duration);
 
 JS_EXPORT_PRIVATE Int128 getUTCEpochNanoseconds(ISO8601::PlainDate, ISO8601::PlainTime);
