@@ -7199,6 +7199,12 @@ static bool wasPathRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
     return wasRequiredInPlaceOfCode(modules, form) && modules.table().fullPath(form).endsWith("?file"_s);
 }
 
+static bool isImportedEmptyFile(const Modules& modules, ModuleID form)
+{
+    std::optional<ModuleID> file = fileOfForm(modules, form);
+    return file && modules.data(*file).kind == ModuleKind::SourceText && !modules.data(*file).needsEvaluation() && modules.wasImportedByStatement(*file);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfImported);
@@ -7208,7 +7214,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
-    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))))
+    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))) || (wasPathRequiredInPlaceOfCode(modules, ModuleID(module)) && isImportedEmptyFile(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
         String path = modules.table().fullPath(ModuleID(module));
