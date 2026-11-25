@@ -403,14 +403,48 @@ static std::optional<size_t> placeOfEntryParameter(const Code& code, std::span<c
     return place < parameters.size() ? std::optional(place) : std::nullopt;
 }
 
+static bool neverHoldsForEffectsAgainstLink(TypeArena& types, const Code& code, std::span<const LinkedParameter> parameters, ValueID value, TypeID asked, Vector<ValueID, 8>& parametersAsked)
+{
+    if (!value)
+        return false;
+    value = underlyingCellOf(code, value);
+    const Operation& made = code.at(value);
+    if (made.opcode != Opcode::Parameter || !made.block())
+        return made.opcode != Opcode::Parameter && made.type && !types.overlap(made.type, asked);
+    if (parametersAsked.contains(value))
+        return true;
+    parametersAsked.append(value);
+    const Block& block = code.at(made.block());
+    size_t place = block.placeOfParameter(value);
+    if (block.isEntry) {
+        if (place >= parameters.size())
+            return false;
+        TypeID proven = parameters[place].proven;
+        return proven && !types.overlap(proven, asked);
+    }
+    if (block.isHandlerBlock() || !block.firstEdgeIn())
+        return false;
+    for (EdgeID edge = block.firstEdgeIn(); edge; edge = code.at(edge).nextInto()) {
+        std::span<const ValueID> arguments = code.at(edge).arguments();
+        if (place >= arguments.size() || !neverHoldsForEffectsAgainstLink(types, code, parameters, arguments[place], asked, parametersAsked))
+            return false;
+    }
+    return true;
+}
+
 static bool isBehindTypeThatNeverArrives(TypeArena& types, const Code& code, const Function& function, std::span<const LinkedParameter> parameters, const Operation& operation)
 {
     return std::ranges::any_of(operation.operands(), [&](ValueID operand) {
         if (!operand)
             return false;
         std::optional<size_t> place = placeOfEntryParameter(code, parameters, operand);
-        if (!place)
-            return false;
+        if (!place) {
+            const Operation& parameter = code.at(underlyingCellOf(code, operand));
+            if (parameters.empty() || parameter.opcode != Opcode::Parameter || !parameter.block() || code.at(parameter.block()).isEntry)
+                return false;
+            Vector<ValueID, 8> parametersAsked;
+            return neverHoldsForEffectsAgainstLink(types, code, parameters, operand, code.at(operand).type, parametersAsked);
+        }
         TypeID arrives = parameters[*place].seenToArrive;
         if (operation.opcode == Opcode::RequireObjectCoercible && arrives && function.entryParameterKind(*place) == EntryParameter::Parameter && !types.at(arrives).hasOnlyClosures() && !(types.at(arrives).primitives & (Primitive::UndefinedOrNull | Primitive::Absent)))
             return true;
