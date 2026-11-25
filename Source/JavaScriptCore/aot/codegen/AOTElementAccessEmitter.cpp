@@ -130,7 +130,7 @@ static_assert([] {
 Condition ElementAccessEmitter::hasArrayStorage(CellPointer array, ArrayStorage kind, bool isWritable)
 {
     if (isWritable)
-        return hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), arrayStorageFormOf(kind));
+        return hasWritableShape(indexingMode(array, AllArrayTypesAndHistory), arrayStorageFormOf(kind));
     if (IndexingType otherShapes = bitsThatOtherShapesHave(kind))
         return hasNoBits(loadByte(array, m_heaps.JSArray_indexingTypeAndMisc), otherShapes);
     return hasShape(indexingMode(array, arrayStorageTestMask), arrayStorageFormOf(kind));
@@ -164,7 +164,7 @@ Condition ElementAccessEmitter::numericListHoldsInt32s(CellPointer list)
     return hasNoBits(loadByte(list, m_heaps.JSArray_indexingTypeAndMisc), doubleBitAmongNumericShapes);
 }
 
-// The byte of an array with storage of its own of a plain kind has the bits of the kind and no other, so hasWritableShape() compares all of it. A lock bit that another thread holds for a moment sends the access the slow way.
+// IndexingShapeAndWritabilityMask returns the whole byte: use it only where a failed test takes a slow way. Elsewhere ask with AllArrayTypesAndHistory.
 Word32 ElementAccessEmitter::indexingMode(CellPointer array, IndexingType mask)
 {
     Word32 byte = loadByte(array, m_heaps.JSArray_indexingTypeAndMisc);
@@ -213,7 +213,7 @@ static_assert(std::ranges::all_of(shapesOfArrays, [](IndexingType shape) {
 
 Condition ElementAccessEmitter::holdsWritableBoxedElements(CellPointer array)
 {
-    return hasNoBits(indexingMode(array, IndexingShapeAndWritabilityMask), bitsOfByteOutsideWritableBoxedShapes);
+    return hasNoBits(indexingMode(array, AllArrayTypesAndHistory), bitsOfByteOutsideWritableBoxedShapes);
 }
 
 static constexpr uint32_t bitsOutsideDoubleAndContiguousShapes = ~static_cast<uint32_t>(ContiguousShape - DoubleShape);
@@ -221,7 +221,7 @@ static constexpr uint32_t bitsOutsidePlainShapes = ~static_cast<uint32_t>((Doubl
 
 Condition ElementAccessEmitter::takesNumbersByKindOfStorage(CellPointer array, bool admitsInt32Storage)
 {
-    Word32 mode = indexingMode(array, IndexingShapeAndWritabilityMask);
+    Word32 mode = indexingMode(array, AllArrayTypesAndHistory);
     if (!admitsInt32Storage)
         return hasNoBits(sub(mode, word32(IsArray | DoubleShape)), bitsOutsideDoubleAndContiguousShapes);
     return logicalAnd(hasNoBits(sub(mode, word32(IsArray | Int32Shape)), bitsOutsidePlainShapes), notEqual(mode, word32(IsArray | ArrayStorageShape)));
@@ -241,7 +241,7 @@ static_assert([] {
 
 Condition ElementAccessEmitter::hasWritableNumericStorage(CellPointer array)
 {
-    return equal(bitAnd(indexingMode(array, IndexingShapeAndWritabilityMask), word32(0xff & ~(DoubleShape - Int32Shape))), word32(IsArray | Int32Shape));
+    return equal(bitAnd(indexingMode(array, AllArrayTypesAndHistory), word32(0xff & ~(DoubleShape - Int32Shape))), word32(IsArray | Int32Shape));
 }
 
 static_assert([] {
@@ -272,7 +272,7 @@ Boxed ElementAccessEmitter::loadArrayStorageElement(CellPointer object, Integer 
 Condition ElementAccessEmitter::listTakesBox(ValueID list, ValueID stored)
 {
     CellPointer array = in<CellPointer>(list);
-    return typeOf(stored).isInt32() ? holdsWritableBoxedElements(array) : hasWritableShape(indexingMode(array, IndexingShapeAndWritabilityMask), arrayStorageFormOf(ArrayStorage::Contiguous));
+    return typeOf(stored).isInt32() ? holdsWritableBoxedElements(array) : hasWritableShape(indexingMode(array, AllArrayTypesAndHistory), arrayStorageFormOf(ArrayStorage::Contiguous));
 }
 
 TypedPointer ElementAccessEmitter::elementAt(const ArrayStorageForm& form, const ArrayElements& elements, Integer index)
@@ -864,7 +864,7 @@ std::optional<ArrayStorage> ElementAccessEmitter::kindOfListFoundInFrontOfTurns(
         if (!isStoredInto)
             stopUnlessInside(access, hasArrayStorage(asked, *found));
         else if (*found == ArrayStorage::Double)
-            stopUnlessInside(access, hasWritableShape(indexingMode(asked, IndexingShapeAndWritabilityMask), arrayStorageFormOf(ArrayStorage::Double)));
+            stopUnlessInside(access, hasWritableShape(indexingMode(asked, AllArrayTypesAndHistory), arrayStorageFormOf(ArrayStorage::Double)));
         else
             stopUnlessInside(access, holdsWritableBoxedElements(asked));
         build().statistics().count(StatisticID::UnrolledLoopTypeProofsChecked);

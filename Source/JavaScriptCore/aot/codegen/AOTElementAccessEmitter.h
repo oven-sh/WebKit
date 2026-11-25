@@ -103,7 +103,7 @@ public:
     Condition numericListHoldsDoubles(CellPointer);
     Condition numericListHoldsInt32s(CellPointer);
     Condition numericListHasArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? numericListHoldsDoubles(in<CellPointer>(list)) : numericListHoldsInt32s(in<CellPointer>(list)); }
-    Condition listTakesStoresInArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? hasWritableShape(indexingMode(in<CellPointer>(list), IndexingShapeAndWritabilityMask), arrayStorageFormOf(ArrayStorage::Double)) : holdsWritableBoxedElements(in<CellPointer>(list)); }
+    Condition listTakesStoresInArrayStorage(ValueID list, ArrayStorage kind) { return kind == ArrayStorage::Double ? hasWritableShape(indexingMode(in<CellPointer>(list), AllArrayTypesAndHistory), arrayStorageFormOf(ArrayStorage::Double)) : holdsWritableBoxedElements(in<CellPointer>(list)); }
     Condition viewIsOfKind(ValueID view, TypedArrayType);
     Condition isRangeInsideView(const ValueContext& access, Integer least, Integer greatest);
     Pointer storageOfList(CellPointer list) { return elementsOf(list).butterfly; }

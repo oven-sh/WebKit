@@ -1,0 +1,6 @@
+# Without the option nobody defines the second name either.
+# OPTIONS: exclude=CodeOutsideImage,UnlistedGlobals
+# PROGRAM-OF: decimal-is-defined-by-an-option.ir
+# RUN: link functions mechanisms=all
+# CHECK: function f1 callers-known
+# CHECK: function f2 callers-known

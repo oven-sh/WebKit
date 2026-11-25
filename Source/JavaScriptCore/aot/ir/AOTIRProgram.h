@@ -109,6 +109,7 @@ public:
     Vector<OpenedName> openedNames;
     Vector<BuiltinUsedAtStart> builtinsUsedAtStart;
     Wire::ExcludedCode excludedCode { };
+    bool expectsDecimals { false };
     bool admitsReplacedBuiltins { false };
     bool shouldAssumeNullishHostResults { false };
     uint16_t builtinInjectedAsMinimumInteger { 0 };
@@ -149,6 +150,10 @@ public:
         std::array<StringID, numberOfDecimalOperations> methods;
     };
     const NamesOfDecimals& namesOfDecimals() const LIFETIME_BOUND { return m_derivedTables.namesOfDecimals; }
+    bool namesDecimalConstructor(PropertyKeyID id) const
+    {
+        return expectsDecimals && at(id).kind == PropertyKeyKind::Text && at(id).text == namesOfDecimals().constructor;
+    }
     PropertyKeyID keyOfWordOnWhatSeesAccesses() const { return m_derivedTables.keyOfWordOnWhatSeesAccesses; }
     ALWAYS_INLINE BuiltinName builtinNameOf(PropertyKeyID id) const
     {

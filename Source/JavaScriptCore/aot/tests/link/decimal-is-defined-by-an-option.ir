@@ -1,5 +1,6 @@
 # Nobody stores either name on the global object. The first is undefined, so its call hands the closure to nobody.
 # An option of the engine defines the second, so its call hands the closure to code outside the program.
+# JSC-OPTIONS: --useDecimal=1
 # OPTIONS: exclude=CodeOutsideImage,UnlistedGlobals
 # RUN: link functions mechanisms=all
 # CHECK: function f1 callers-known

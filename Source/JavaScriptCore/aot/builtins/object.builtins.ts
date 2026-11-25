@@ -99,7 +99,7 @@ const ownPropertyTest = (inlineBuiltin: string) =>
     runsOnlyOperandCode: true,
     uses: { this: [b.testedByKey(b.keyFrom("key")), ...b.ownPropertyTraps] },
     reads: ownProperties,
-    writes: madeByListingOfKeys,
+    writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead],
     implementation: b.inline(inlineBuiltin, { otherwise: b.hostCall }),
   }) satisfies b.FunctionField;
 
@@ -272,6 +272,7 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
+        writes: closuresMadeAtFirstRead,
         privateAlias: true,
         implementation: b.inline("ObjectGetOwnPropertyDescriptor", { otherwise: b.hostCall }),
       },
@@ -290,6 +291,7 @@ export default b.declarations(
           ],
         },
         reads: ownProperties,
+        writes: closuresMadeAtFirstRead,
         implementation: b.hostCall,
       },
       getOwnPropertyNames: ownKeyList("Names", b.string),
@@ -321,7 +323,7 @@ export default b.declarations(
         runsOnlyOperandCode: true,
         uses: { object: [b.testedByKey(b.keyFrom("key")), ...b.ownPropertyTraps] },
         reads: ownProperties,
-        writes: madeByListingOfKeys,
+        writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead],
         privateAlias: true,
         implementation: b.inline("ObjectHasOwn", { otherwise: b.hostCall }),
       },
@@ -388,7 +390,7 @@ export default b.declarations(
         reads: prototypeLink,
         implementation: b.inline("ObjectIsPrototypeOf", { otherwise: b.hostCall }),
       },
-      propertyIsEnumerable: { ...ownPropertyTest("ObjectPropertyIsEnumerable"), writes: [...madeByListingOfKeys, ...closuresMadeAtFirstRead] },
+      propertyIsEnumerable: ownPropertyTest("ObjectPropertyIsEnumerable"),
       toLocaleString: {
         this: b.any.refusing(b.null),
         returns: b.any,
