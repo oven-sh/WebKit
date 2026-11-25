@@ -6456,6 +6456,9 @@ bool Modules::delegatesToStartingHost(ModuleID module)
     if (m_hasBegunTestFile)
         m_startMoments.set(fileOf(module), m_instance.vm->aotState().momentOfLoads);
         m_evictedTestFiles.clear(fileOf(module).index());
+    // An earlier test file may have written this one.
+    if (isTestRun() && isChangedOnDisk(fileOf(module))) [[unlikely]]
+        delegateToHostUnlessEvaluated(fileOf(module));
     return isEvicted(module);
 }
 
