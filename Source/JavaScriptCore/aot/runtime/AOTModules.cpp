@@ -4618,17 +4618,6 @@ void Modules::restoreFormEvictedDuringImport(ModuleID module)
     m_formsAnsweredFirst.set(keyOfLoader, FormAnsweredFirst { key, form });
 }
 
-static bool mayBeCodeThatPluginGaveForType(const String& path, ASCIILiteral type)
-{
-    return path.contains('?') && (!isAbsoluteFileSystemPath(path) || path.endsWith(makeString('?', type)));
-}
-
-// The loader has one entry of a path for all types but JSON. Code that has begun under its own type answers for the others.
-static bool isPathOfFormUnderTypeOfCode(const String& path)
-{
-    return path.endsWith("?js"_s) || path.endsWith("?jsx"_s) || path.endsWith("?ts"_s) || path.endsWith("?tsx"_s);
-}
-
 static JSPromise* importPromiseRejectedByLoader(JSGlobalObject* realm, ThrowScope& scope)
 {
     JSPromise* rejected = JSPromise::rejectedPromiseWithCaughtException(realm, scope);
@@ -4903,7 +4892,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
                 if (isFileOfProgram(file) && mayBeEvicted(file) && !isTypeOfCode(*attributes))
                     delegateToHostUnlessEvaluated(file);
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
-            } else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type) && !(attributes->type() == ScriptFetchParameters::Type::HostDefined && isPathOfFormUnderTypeOfCode(m_table.fullPath(file)) && !hasNotBegun(file))) [[unlikely]] {
+            } else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !m_table.fullPath(file).contains('?')) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
             } else {
