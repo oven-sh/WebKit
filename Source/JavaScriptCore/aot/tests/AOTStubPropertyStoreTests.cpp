@@ -1734,10 +1734,19 @@ static void testStoresLeftToTheCaches()
         AOT_TEST_CHECK(isLeft(FieldTable::shapeThatTakesAnyValue, 0, CreatedFieldOrders::orderBefore));
         stores.structure.at<uint32_t>(Structure::bitFieldOffset()) = 0;
 
-        for (uint16_t flags : { fieldIsReadOnly, fieldIsNotEnumerable, fieldIsNotConfigurable, fieldIsAccessor, fieldIsPrivate }) {
+        for (uint16_t flags : { fieldIsReadOnly, fieldIsNotEnumerable, fieldIsNotConfigurable, fieldIsAccessor, fieldIsPrivate, static_cast<uint16_t>(fieldIsNotEnumerable | fieldIsNotConfigurable), static_cast<uint16_t>(fieldIsNotEnumerable | fieldIsReadOnly), static_cast<uint16_t>(fieldIsNotConfigurable | fieldIsAccessor) }) {
             FieldData& record = stores.fieldRecord(FieldTable::recordOf(FieldTable::shapeWithTypedField, PropertyStores::storedName));
             record.flags = flags;
-            AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0));
+            // A store of a value keeps the attributes of a field that has one. Creating the field or defining it doesn't.
+            bool keepsAttributes = storeCase.mode != PutMode::Define && !(flags & ~(fieldIsNotEnumerable | fieldIsNotConfigurable));
+            if (keepsAttributes) {
+                FakeObjectWithShape object(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0);
+                StubRun run = stores.store(storeCase, object.address(), bitsOf(jsNumber(42)));
+                AOT_TEST_CHECK(!run.calledOperation && object.field() == bitsOf(jsNumber(42)) && object.wordAfterFieldIsUntouched() && !object.at<uint32_t>(offsetOfOrderWord));
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0, jsBoolean(true)));
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), frozen));
+            } else
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0));
             AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, 0, 0));
             record.flags = 0;
         }
