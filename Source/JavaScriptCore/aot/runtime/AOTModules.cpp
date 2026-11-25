@@ -643,7 +643,7 @@ void Modules::delegateToHost(ModuleID file)
 bool Modules::isChangedOnDisk(ModuleID file)
 {
     std::optional<uint64_t> stampOfBuild = m_table.sourceStamp(file);
-    if (!stampOfBuild || !host().isFileOfStamp)
+    if (!stampOfBuild || !host().computeFileStamp)
         return false;
     if (data(file).kind == ModuleKind::Data && host().printsDataFileAsJavaScript(m_instance.globalObject, m_table.fullPath(file)))
         m_dataFilesThatHostPrintsAsJavaScript.set(file.index());
@@ -660,7 +660,7 @@ bool Modules::isChangedOnDisk(ModuleID file)
     countEvent(*m_instance.vm, RuntimeCounterID::FilesComparedWithDisk);
     ModuleTable::PathInUTF8 path = m_table.pathInUTF8(file);
     path.append('\0');
-    if (!host().isFileOfStamp(path.span().first(path.size() - 1), *stampOfBuild))
+    if (host().computeFileStamp(path.span().first(path.size() - 1)) != *stampOfBuild)
         return true;
     evictHostCachedSource(file);
     return false;
@@ -669,7 +669,7 @@ bool Modules::isChangedOnDisk(ModuleID file)
 bool Modules::wasWrittenSinceBuild(ModuleID file) const
 {
     std::optional<uint64_t> stampOfBuild = m_table.sourceStamp(file);
-    return stampOfBuild && host().isFileOfStamp && !host().isFileOfStamp(m_table.pathInUTF8(file).span(), *stampOfBuild);
+    return stampOfBuild && host().computeFileStamp && host().computeFileStamp(m_table.pathInUTF8(file).span()) != *stampOfBuild;
 }
 
 void Modules::evictHostCachedSource(ModuleID file)

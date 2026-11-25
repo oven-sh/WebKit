@@ -94,7 +94,7 @@ struct ModuleHost {
     String (*resolveWithoutPlugins)(JSGlobalObject*, const String& name, const String& importer);
     void (*beginOrEndPluginResolutions)(JSGlobalObject*, const ScopedLambda<bool(const String& importer)>* shouldCacheForLoader);
     const MockOperations* (*mockOperations)();
-    bool (*isFileOfStamp)(std::span<const char> path, uint64_t stamp);
+    uint64_t (*computeFileStamp)(std::span<const char> path);
     bool (*shouldBypassMock)(JSGlobalObject*, const String& path, const String& importer, bool isImport);
     bool (*wasLinkedBeforeMock)(JSGlobalObject*, const ScopedLambda<String()>& path, const ScopedLambda<String()>& importer);
     bool (*isMockHiddenFromRequirer)(JSGlobalObject*, const String& path, const String& requirer);
