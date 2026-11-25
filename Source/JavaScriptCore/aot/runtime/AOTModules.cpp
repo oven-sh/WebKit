@@ -4958,7 +4958,8 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
     for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
         std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
-        if (sharesEntry && wasRequired(*form))
+        // What an import has loaded under a type has an entry of its own in the loader, also where a require() is answered with it.
+        if (sharesEntry && wasRequired(*form) && loadedIfExists(*form)->isKeptByRequire)
             return looksInRequireCache || mark == "?text"_s ? *form : module;
     }
     return module;
@@ -7376,8 +7377,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))) || (wasPathRequiredInPlaceOfCode(modules, ModuleID(module)) && isImportedEmptyFile(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
-        String path = modules.table().fullPath(ModuleID(module));
-        if (std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?'))); file && modules.data(*file).kind == ModuleKind::Data && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
+        std::optional<ModuleID> file = fileOfForm(modules, ModuleID(module));
+        if (file && modules.data(*file).kind != ModuleKind::Data)
+            OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+        if (file && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
             modules.moduleNamespace(*file, Modules::ModulePhase::Evaluation);
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
