@@ -772,12 +772,16 @@ static ALWAYS_INLINE bool needsHomeObject(ExpressionNode* node)
 
 RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dstOrConstructor, RegisterID* prototype, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* instanceElementDefinitions, Vector<UnlinkedFunctionExecutable::ClassElementDefinition>* staticElementDefinitions)
 {
-    auto makeClassElementDefinition = [](const PropertyListNode* p) {
+    auto makeClassElementDefinition = [&](const PropertyListNode* p) {
         using Kind = UnlinkedFunctionExecutable::ClassElementDefinition::Kind;
 
         std::optional<JSTextPosition> initializerPosition;
-        if (ExpressionNode* initializer = p->m_node->m_assign)
+        if (ExpressionNode* initializer = p->m_node->m_assign) {
             initializerPosition = initializer->position();
+            // It is parsed again from here, and its position is inside of its parentheses.
+            if (initializer->hasCoveragePlaces()) [[unlikely]]
+                initializerPosition->offset = generator.coveragePlacesOf(initializer).front().offset;
+        }
 
         Kind kind = Kind::FieldWithLiteralPropertyKey;
         if (p->m_node->isStaticClassBlock())
@@ -2402,9 +2406,11 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
         generator.move(callArguments.thisRegister(), generator.ensureThis());
     else if (shouldGetArgumentsDotLengthFast)
         generator.emitLoad(callArguments.thisRegister(), jsUndefined());
-    else if (m_base->isRegExpNode())
+    else if (m_base->isRegExpNode()) {
         static_cast<RegExpNode*>(m_base)->emitBytecodeAsReceiverOfCallTo(generator, callArguments.thisRegister(), m_ident);
-    else {
+        if (m_base->isOptionalChainBase())
+            generator.emitCountReachedAt(m_base->endOffset());
+    } else {
         generator.emitNode(callArguments.thisRegister(), m_base);
         if (m_base->isOptionalChainBase())
             generator.emitOptionalCheck(callArguments.thisRegister(), m_base->endOffset());
@@ -4560,7 +4566,7 @@ bool IfElseNode::tryFoldBreakAndContinue(BytecodeGenerator& generator, Statement
     Label*& trueTarget, FallThroughMode& fallThroughMode)
 {
     StatementNode* singleStatement = JSC::singleStatement(ifBlock);
-    if (!singleStatement)
+    if (!singleStatement || ifBlock->hasCoveragePlaces() || singleStatement->hasCoveragePlaces())
         return false;
 
     if (singleStatement->isBreak()) {
@@ -4608,11 +4614,14 @@ void IfElseNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
     if (!didFoldIfBlock) {
         generator.emitNodeInTailPosition(dst, m_ifBlock);
-        if (m_elseBlock)
+        if (m_elseBlock || m_ifBlock->hasCoveragePlaces())
             generator.emitJump(afterElse.get());
     }
 
     generator.emitLabel(beforeElse.get());
+
+    if (m_ifBlock->hasCoveragePlaces()) [[unlikely]]
+        generator.emitCountCoverage(m_ifBlock, CoverageCounters::Event::Skipped);
 
     if (m_elseBlock) {
         generator.emitProfileControlFlow(m_ifBlock->endOffset(), m_elseBlock->endOffset());
@@ -5091,6 +5100,7 @@ void WithNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 
 inline void CaseClauseNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+    generator.emitCountReachedAt(m_startOffset);
     generator.emitProfileControlFlow(m_startOffset, m_endOffset);
     if (!m_statements)
         return;

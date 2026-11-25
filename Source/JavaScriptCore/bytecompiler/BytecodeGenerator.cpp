@@ -2121,6 +2121,37 @@ void BytecodeGenerator::emitProfileType(RegisterID* registerToProfile, const Var
     emitTypeProfilerExpressionInfo(startDivot, endDivot);
 }
 
+CoverageCounters::Places BytecodeGenerator::coveragePlacesOf(const Node* node) const
+{
+    return parserArena().coveragePlaces().get(node);
+}
+
+void BytecodeGenerator::emitCountCoverage(CoverageCounters::Places places, CoverageCounters::Event event)
+{
+    for (auto& place : places) {
+        if (place.event() == event)
+            OpCountCoverage::emit(this, place.counter());
+    }
+}
+
+void BytecodeGenerator::emitCountCoverage(const Node* node, CoverageCounters::Event event)
+{
+    emitCountCoverage(coveragePlacesOf(node), event);
+}
+
+void BytecodeGenerator::emitCountReachedAtSlow(unsigned offset)
+{
+    emitCountCoverage(m_coverageCounters->placesAt(offset), CoverageCounters::Event::Reached);
+}
+
+void BytecodeGenerator::emitCountedNodeInConditionContext(ExpressionNode* node, Label& trueTarget, Label& falseTarget, FallThroughMode fallThroughMode)
+{
+    emitCountCoverage(node, CoverageCounters::Event::Reached);
+    // It may go on to emitNode(node).
+    SetForScope counted(m_nodeCountedInConditionContext, node);
+    node->emitBytecodeInConditionContext(*this, trueTarget, falseTarget, fallThroughMode);
+}
+
 void BytecodeGenerator::emitProfileControlFlow(int textOffset)
 {
     if (shouldEmitControlFlowProfilerHooks()) {
@@ -6185,6 +6216,7 @@ void BytecodeGenerator::emitOptionalCheck(RegisterID* src, int textOffset)
     ASSERT(m_optionalChainTargetStack.size());
     auto& target = m_optionalChainTargetStack.last();
     emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), src), target.label.get());
+    emitCountReachedAt(textOffset);
     emitProfileControlFlowOutsideOfCaseTest(textOffset, target.textEndOffset);
 }
 

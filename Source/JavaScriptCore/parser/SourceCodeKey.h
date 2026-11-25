@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "CoverageCounters.h"
 #include "ExecutableInfo.h"
 #include "ParserModes.h"
 #include "UnlinkedSourceCode.h"
@@ -44,8 +45,9 @@ public:
     SourceCodeFlags(
         SourceCodeType codeType, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode,
         DerivedContextType derivedContextType, EvalContextType evalContextType, bool isArrowFunctionContext,
-        OptionSet<CodeGenerationMode> codeGenerationMode)
+        OptionSet<CodeGenerationMode> codeGenerationMode, bool countsCoverage)
         : m_flags(
+            (countsCoverage ? countsCoverageFlag : 0) |
             (static_cast<unsigned>(codeGenerationMode.toRaw()) << 6) |
             (static_cast<unsigned>(scriptMode) << 5) |
             (static_cast<unsigned>(isArrowFunctionContext) << 4) |
@@ -60,8 +62,11 @@ public:
     friend bool operator==(const SourceCodeFlags&, const SourceCodeFlags&) = default;
 
     unsigned bits() { return m_flags; }
+    bool countsCoverage() const { return m_flags & countsCoverageFlag; }
 
 private:
+    static constexpr unsigned countsCoverageFlag = 1 << (6 + 8 * sizeof(CodeGenerationMode));
+
     unsigned m_flags { 0 };
 };
 
@@ -80,7 +85,7 @@ public:
         OptionSet<CodeGenerationMode> codeGenerationMode, std::optional<int> functionConstructorParametersEndPosition)
             : m_sourceCode(sourceCode)
             , m_name(name)
-            , m_flags(codeType, lexicallyScopedFeatures, scriptMode, derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode)
+            , m_flags(codeType, lexicallyScopedFeatures, scriptMode, derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode, sourceCode.provider().coverageCounters())
             , m_functionConstructorParametersEndPosition(functionConstructorParametersEndPosition.value_or(-1))
             , m_hash(sourceCode.hash() ^ m_flags.bits())
     {
@@ -117,7 +122,7 @@ public:
             && m_functionConstructorParametersEndPosition == other.m_functionConstructorParametersEndPosition
             && m_name == other.m_name
             && host() == other.host()
-            && (m_sourceCode == other.m_sourceCode || string() == other.string());
+            && (m_sourceCode == other.m_sourceCode || (string() == other.string() && countsLike(other)));
     }
 
     struct HashTraits : SimpleClassHashTraits<SourceCodeKey> {
@@ -126,6 +131,17 @@ public:
     };
 
 private:
+    bool countsLike(const SourceCodeKey& other) const
+    {
+        if (!m_flags.countsCoverage()) [[likely]]
+            return true;
+        auto* counters = m_sourceCode.provider().coverageCounters();
+        auto* otherCounters = other.m_sourceCode.provider().coverageCounters();
+        return counters && otherCounters
+            && m_sourceCode.startOffset() == other.m_sourceCode.startOffset()
+            && std::ranges::equal(counters->places, otherCounters->places);
+    }
+
     UnlinkedSourceCode m_sourceCode;
     String m_name;
     SourceCodeFlags m_flags;

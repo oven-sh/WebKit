@@ -39,6 +39,7 @@
 #include "CodeBlock.h"
 #include "Completion.h"
 #include "ControlFlowProfiler.h"
+#include "CoverageCounters.h"
 #include "DOMAttributeGetterSetter.h"
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "DOMJITGetterSetter.h"
@@ -2282,6 +2283,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionFlattenDictionaryObject);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpBasicBlockExecutionRanges);
 static JSC_DECLARE_HOST_FUNCTION(functionHasBasicBlockExecuted);
 static JSC_DECLARE_HOST_FUNCTION(functionBasicBlockExecutionCount);
+static JSC_DECLARE_HOST_FUNCTION(functionEvaluateWithCoverage);
+static JSC_DECLARE_HOST_FUNCTION(functionCoverageCounts);
 static JSC_DECLARE_HOST_FUNCTION(functionEnableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDisableDebuggerModeWhenIdle);
 static JSC_DECLARE_HOST_FUNCTION(functionDeleteAllCodeWhenIdle);
@@ -4227,6 +4230,65 @@ JSC_DEFINE_HOST_FUNCTION(functionBasicBlockExecutionCount, (JSGlobalObject* glob
     
     size_t executionCount = vm.controlFlowProfiler()->basicBlockExecutionCountAtTextOffset(offset, executable->sourceID(), vm);
     return JSValue::encode(JSValue(executionCount));
+}
+
+class CoveredSourceProvider final : public StringSourceProvider {
+public:
+    CoveredSourceProvider(const String& source, const SourceOrigin& sourceOrigin, Vector<CoverageCounters::Place>&& places, unsigned numberOfCounters)
+        : StringSourceProvider(source, sourceOrigin, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+        , m_places(WTF::move(places))
+        , m_counts(FillWith { }, numberOfCounters, 0)
+        , m_counters { m_places.span(), m_counts.mutableSpan() }
+    {
+    }
+
+    const CoverageCounters* coverageCounters() const final { return &m_counters; }
+
+private:
+    Vector<CoverageCounters::Place> m_places;
+    Vector<uint64_t> m_counts;
+    CoverageCounters m_counters;
+};
+
+// Usage: $vm.evaluateWithCoverage(source, new Uint32Array([offset, counterAndEvent, ...]), numberOfCounters)
+JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String program = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned numberOfCounters = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* numbers = dynamicDowncast<JSUint32Array>(callFrame->argument(1));
+    RELEASE_ASSERT(numbers);
+    Vector<CoverageCounters::Place> places(numbers->length() / 2, [&](size_t i) {
+        return CoverageCounters::Place { numbers->typedSpan()[2 * i], numbers->typedSpan()[2 * i + 1] };
+    });
+
+    SourceCode source(adoptRef(*new CoveredSourceProvider(program, callFrame->callerSourceOrigin(vm), WTF::move(places), numberOfCounters)));
+    NakedPtr<Exception> exception;
+    JSValue result = evaluate(globalObject, source, JSValue(), exception);
+    if (exception)
+        return throwVMException(globalObject, scope, exception);
+    return JSValue::encode(result);
+}
+
+// The counts of the source that the function is in.
+// Usage: $vm.coverageCounts(function)
+JSC_DEFINE_HOST_FUNCTION(functionCoverageCounts, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0));
+    RELEASE_ASSERT(function && !function->isHostFunction());
+    auto* counters = function->jsExecutable()->source().provider()->coverageCounters();
+    RELEASE_ASSERT(counters);
+    MarkedArgumentBuffer counts;
+    for (uint64_t count : counters->counts)
+        counts.append(jsNumber(count));
+    RELEASE_ASSERT(!counts.hasOverflowed());
+    return JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), counts));
 }
 
 class DoNothingDebugger final : public Debugger {
@@ -6339,6 +6401,8 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "dumpBasicBlockExecutionRanges"_s, functionDumpBasicBlockExecutionRanges , 0);
     addFunction(vm, allowIfNotFuzz, "hasBasicBlockExecuted"_s, functionHasBasicBlockExecuted, 2);
     addFunction(vm, allowIfNotFuzz, "basicBlockExecutionCount"_s, functionBasicBlockExecutionCount, 2);
+    addFunction(vm, allowIfNotFuzz, "evaluateWithCoverage"_s, functionEvaluateWithCoverage, 3);
+    addFunction(vm, allowIfNotFuzz, "coverageCounts"_s, functionCoverageCounts, 1);
 
     addFunction(vm, alwaysAllow, "enableDebuggerModeWhenIdle"_s, functionEnableDebuggerModeWhenIdle, 0);
     addFunction(vm, alwaysAllow, "disableDebuggerModeWhenIdle"_s, functionDisableDebuggerModeWhenIdle, 0);

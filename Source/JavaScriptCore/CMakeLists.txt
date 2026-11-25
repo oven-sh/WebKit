@@ -1110,6 +1110,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     lol/LOLRegisterAllocator.h
 
     parser/ASTBuilder.h
+    parser/CoverageCounters.h
     parser/Lexer.h
     parser/LexerUnicodeProperties.h
     parser/ModuleAnalyzer.h

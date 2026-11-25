@@ -53,6 +53,12 @@
 #define consumeOrFail(tokenType, ...) do { if (!consume(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define consumeOrFailWithFlags(tokenType, flags, ...) do { if (!consume(tokenType, flags)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define matchOrFail(tokenType, ...) do { if (!match(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
+#define findCoveragePlacesOfResult(thisFunction, ...) do { \
+    if constexpr (TreeBuilder::CreatesAST) { \
+        if (context.mayHaveCoveragePlacesAt(tokenStart())) [[unlikely]] \
+            return parseAndFindCoveragePlaces(&Parser::thisFunction<TreeBuilder>, __VA_ARGS__); \
+    } \
+} while (0)
 #define failIfStackOverflow() do { if (!canRecurse()) [[unlikely]] failWithStackOverflow(); } while (0)
 #define semanticFail(...) do { internalFailWithMessage(false, __VA_ARGS__); } while (0)
 #define semanticFailIfTrue(cond, ...) do { if ((cond)) [[unlikely]] internalFailWithMessage(false, __VA_ARGS__); } while (0)
@@ -477,8 +483,10 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseModuleSo
         switch (m_token.m_type) {
         case EXPORT_:
             statement = parseExportDeclaration(context);
-            if (statement)
+            if (statement) {
                 recordPauseLocation(context.breakpointLocation(statement));
+                context.findCoveragePlaces(statement);
+            }
             break;
 
         case IMPORT: {
@@ -488,8 +496,10 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseModuleSo
             restoreSavePoint(context, savePoint);
             if (isImportDeclaration) {
                 statement = parseImportDeclaration(context);
-                if (statement)
+                if (statement) {
                     recordPauseLocation(context.breakpointLocation(statement));
+                    context.findCoveragePlaces(statement);
+                }
                 break;
             }
 
@@ -754,8 +764,20 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSingleFu
 
     
 template <typename LexerType>
+template <typename Result, typename... Parameters> Result Parser<LexerType>::parseAndFindCoveragePlaces(Result (Parser::*parse)(ASTBuilder&, Parameters...), ASTBuilder& context, std::type_identity_t<Parameters>... arguments)
+{
+    SetForScope taken(context.offsetOfTakenCoveragePlaces(), tokenStart());
+    Result result = (this->*parse)(context, arguments...);
+    if (result)
+        context.findCoveragePlaces(result, context.offsetOfTakenCoveragePlaces());
+    return result;
+}
+
+template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementListItem(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
+    findCoveragePlacesOfResult(parseStatementListItem, context, directive, directiveLiteralLength);
+
     // The grammar is documented here:
     // http://www.ecma-international.org/ecma-262/6.0/index.html#sec-statements
     DepthManager statementDepth(&m_statementDepth);
@@ -2053,12 +2075,14 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseTryStatement(
             ASSERT(functionStack.isEmpty());
             RELEASE_ASSERT(!ident || (catchEnvironment.size() == 1 && catchEnvironment.contains(ident->impl())));
         }
+        context.findCoveragePlaces(catchBlock);
     }
     
     if (consume(FINALLY)) {
         matchOrFail(OPENBRACE, "Expected block statement for finally body");
         finallyBlock = parseBlockStatement(context);
         failIfFalse(finallyBlock, "Cannot parse finally body");
+        context.findCoveragePlaces(finallyBlock);
     }
     failIfFalse(catchBlock || finallyBlock, "Try statements must have at least a catch or finally block");
 
@@ -2145,6 +2169,8 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseBlockStatemen
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatement(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
+    findCoveragePlacesOfResult(parseStatement, context, directive, directiveLiteralLength);
+
     DepthManager statementDepth(&m_statementDepth);
     m_statementDepth++;
     int nonTrivialExpressionCount = 0;
@@ -3672,6 +3698,8 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
             trailingElse = true;
             break;
         }
+        // From the `else` up to the `if`.
+        tempLocation.endOffset = tokenStart();
         next();
         
         handleProductionOrFail2(OPENPAREN, "(", "start", "'if' condition");
@@ -3692,6 +3720,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         auto [condition, location] = exprStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, 0);
+        context.findCoveragePlaces(ifStatement, location.endOffset);
         context.setEndOffset(ifStatement, context.endOffset(trueBlock));
         statementStack.append(ifStatement);
     }
@@ -3701,6 +3730,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseIfStatement(T
         TreeStatement falseBlock = statementStack.takeLast();
         TreeStatement trueBlock = statementStack.takeLast();
         TreeStatement ifStatement = context.createIfStatement(location, condition, trueBlock, falseBlock);
+        context.findCoveragePlaces(ifStatement, location.endOffset);
         context.setEndOffset(ifStatement, context.endOffset(falseBlock));
         statementStack.append(ifStatement);
     }
@@ -4336,6 +4366,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseAssignmen
 {
     ASSERT(!hasError());
     
+    findCoveragePlacesOfResult(parseAssignmentExpression, context);
     failIfStackOverflow();
 
     if (match(YIELD) && !canUseIdentifierYield())
@@ -5639,7 +5670,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             semanticFailIfTrue(baseIsSuper, "Cannot use super as the base of an optional chain");
             optionalChainBase = base;
             optionalChainLocation = tokenLocation();
-            context.setEndOffset(base, m_lastTokenLocation.endOffset);
+            context.setEndOffset(base, tokenStart());
 
             SavePoint savePoint = createSavePoint(context);
             next();

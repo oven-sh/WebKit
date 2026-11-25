@@ -46,6 +46,10 @@ bool clobbersExitState(Graph& graph, Node* node)
     case KillStack:
         return true;
 
+    case CountCoverage:
+        // An exit to its bytecode would count again.
+        return true;
+
     case SetLocal:
     case PutStack:
         // These nodes write to the stack, but they may only do so after we have already had a MovHint

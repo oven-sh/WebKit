@@ -134,6 +134,8 @@ struct ModuleHost {
     bool (*evictOriginal)(JSGlobalObject*, const String& mocked);
     bool (*requiresPatch)(JSGlobalObject*, const ScopedLambda<String()>& path, JSObject*& exports);
     bool (*isESModuleInNode)(JSGlobalObject*, const String& path);
+    // Where CountExecution counts, for as long as the VM lives.
+    std::span<uint64_t> (*coverageCounts)(JSGlobalObject*, const String& description);
 };
 
 const ModuleHost& moduleHostOf(JSGlobalObject*);
@@ -185,7 +187,6 @@ JS_EXPORT_PRIVATE void willLoadCopyFromDisk(JSGlobalObject*, ModuleID, LoadKind)
 JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const String& path, bool wasSynchronous)>&);
 JS_EXPORT_PRIVATE void recordFirstLoadFromEarlierProcess(VM&, const String& path, bool wasSynchronous);
 JS_EXPORT_PRIVATE void forEachModule(const ScopedLambda<IterationStatus(ModuleID)>&);
-JS_EXPORT_PRIVATE void forEachCountedFile(VM&, const ScopedLambda<void(const String& description, std::span<const uint64_t> counts)>&);
 JS_EXPORT_PRIVATE void forEachFilePathWithPrefix(StringView start, const ScopedLambda<IterationStatus(const String&)>&);
 JS_EXPORT_PRIVATE bool rejectsUncompiledCode(JSGlobalObject*, StringView path);
 JS_EXPORT_PRIVATE bool wasModifiedSinceBuild(JSGlobalObject*, StringView path);

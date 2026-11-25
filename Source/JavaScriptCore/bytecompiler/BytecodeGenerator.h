@@ -528,8 +528,8 @@ namespace JSC {
                 emitThrowExpressionTooDeepException();
                 return;
             }
-            if (n->needsDebugHook()) [[unlikely]]
-                emitDebugHook(n);
+            if (n->needsHooks()) [[unlikely]]
+                emitHooks(n);
             n->emitBytecode(*this, dst);
         }
 
@@ -585,8 +585,8 @@ namespace JSC {
             ASSERT(!dst || dst == ignoredResult() || !dst->isTemporary() || dst->refCount());
             if (!m_vm.isSafeToRecurse()) [[unlikely]]
                 return emitThrowExpressionTooDeepException();
-            if (n->needsDebugHook()) [[unlikely]]
-                emitDebugHook(n);
+            if (n->needsHooks()) [[unlikely]]
+                emitHooks(n);
             return n->emitBytecode(*this, dst);
         }
 
@@ -628,6 +628,10 @@ namespace JSC {
         {
             if (!m_vm.isSafeToRecurse()) [[unlikely]] {
                 emitThrowExpressionTooDeepException();
+                return;
+            }
+            if (n->hasCoveragePlaces()) [[unlikely]] {
+                emitCountedNodeInConditionContext(n, trueTarget, falseTarget, fallThroughMode);
                 return;
             }
             n->emitBytecodeInConditionContext(*this, trueTarget, falseTarget, fallThroughMode);
@@ -724,6 +728,15 @@ namespace JSC {
         void emitProfileType(RegisterID* registerToProfile, ProfileTypeBytecodeFlag, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
         // These are not associated with variables and don't have a global id.
         void emitProfileType(RegisterID* registerToProfile, const JSTextPosition& startDivot, const JSTextPosition& endDivot);
+
+        // Inlined, these make the frames of the functions that recurse over the tree larger.
+        NEVER_INLINE CoverageCounters::Places coveragePlacesOf(const Node*) const;
+        NEVER_INLINE void emitCountCoverage(const Node*, CoverageCounters::Event);
+        void emitCountReachedAt(unsigned offset)
+        {
+            if (m_coverageCounters) [[unlikely]]
+                emitCountReachedAtSlow(offset);
+        }
 
         void emitProfileControlFlow(int);
         // For what does not always run: a part of an expression, or a statement that is a part of another. The basic block
@@ -1465,6 +1478,7 @@ namespace JSC {
         void pushTDZVariables(const VariableEnvironment&, TDZCheckOptimization, TDZRequirement);
 
         ScopeNode* const m_scopeNode;
+        const CoverageCounters* const m_coverageCounters { m_scopeNode->source().provider()->coverageCounters() };
 
         // Some of these objects keep pointers to one another. They are arranged
         // to ensure a sane destruction order that avoids references to freed memory.
@@ -1579,6 +1593,18 @@ namespace JSC {
             VirtualRegister completionTypeRegister;
         };
         Vector<CatchEntry> m_exceptionHandlersToEmit;
+
+        template<typename NodeType> NEVER_INLINE void emitHooks(NodeType* node)
+        {
+            if (node->hasCoveragePlaces() && node != m_nodeCountedInConditionContext)
+                emitCountCoverage(node, CoverageCounters::Event::Reached);
+            if (node->needsDebugHook())
+                emitDebugHook(node);
+        }
+        void emitCountCoverage(CoverageCounters::Places, CoverageCounters::Event);
+        NEVER_INLINE void emitCountReachedAtSlow(unsigned offset);
+        NEVER_INLINE void emitCountedNodeInConditionContext(ExpressionNode*, Label& trueTarget, Label& falseTarget, FallThroughMode);
+        const Node* m_nodeCountedInConditionContext { nullptr };
 
         struct {
             JSTextPosition position;

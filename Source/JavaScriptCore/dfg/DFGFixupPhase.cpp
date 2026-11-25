@@ -3789,6 +3789,7 @@ private:
         case TailCallInlinedCallerWasm:
         case CallFFI:
         case ProfileControlFlow:
+        case CountCoverage:
         case NewObject:
         case NewInternalFieldObject:
         case NewPromise:

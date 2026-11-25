@@ -1822,6 +1822,7 @@ private:
         case Switch:
         case ProfileType:
         case ProfileControlFlow:
+        case CountCoverage:
         case ForceOSRExit:
         case SetArgumentDefinitely:
         case SetArgumentMaybe:

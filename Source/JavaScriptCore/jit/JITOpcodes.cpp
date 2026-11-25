@@ -2008,6 +2008,12 @@ void JIT::emit_op_profile_control_flow(const JSInstruction* currentInstruction)
     basicBlockLocation->emitExecuteCode(*this);
 }
 
+void JIT::emit_op_count_coverage(const JSInstruction* currentInstruction)
+{
+    loadPtrFromMetadata(currentInstruction->as<OpCountCoverage>(), OpCountCoverage::Metadata::offsetOfCount(), regT0);
+    add64(TrustedImm32(1), Address(regT0));
+}
+
 void JIT::emit_op_argument_count(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpArgumentCount>();

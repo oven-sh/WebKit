@@ -100,13 +100,6 @@ struct FormatPatternStateDeleter {
     void operator()(FormatPatternState*) const;
 };
 
-struct CountedFiles {
-    using Counts = Vector<uint64_t>;
-
-    UncheckedKeyHashMap<String, std::unique_ptr<Counts>> byDescription;
-    Vector<Counts*> byModule;
-};
-
 struct VMState {
     WTF_MAKE_NONCOPYABLE(VMState);
 public:
@@ -203,7 +196,7 @@ public:
     std::unique_ptr<IdentifierArena> identifiersOfLastSource;
     size_t lengthOfSourcesSincePrune { 0 };
     void didParseSource(VM&, size_t length, std::unique_ptr<IdentifierArena>&&);
-    CountedFiles countedFiles;
+    Vector<std::optional<std::span<uint64_t>>> coverageCountsByModule;
     struct ComputedFunctionName {
         Weak<JSString> name;
         unsigned hash { 0 };

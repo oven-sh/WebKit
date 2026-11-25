@@ -606,6 +606,7 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
     case LoopHint:
     case ProfileType:
     case ProfileControlFlow:
+    case CountCoverage:
     case PutHint:
     case InitializeEntrypointArguments:
     case FilterCallLinkStatus:

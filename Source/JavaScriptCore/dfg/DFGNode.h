@@ -3050,6 +3050,12 @@ public:
         return m_opInfo.as<Profiler::ExecutionCounter*>();
     }
 
+    uint64_t* coverageCount()
+    {
+        ASSERT(op() == CountCoverage);
+        return m_opInfo.as<uint64_t*>();
+    }
+
     unsigned entrypointIndex()
     {
         ASSERT(op() == InitializeEntrypointArguments);

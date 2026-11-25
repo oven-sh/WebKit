@@ -26,10 +26,12 @@
 #pragma once
 
 #include "CommonIdentifiers.h"
+#include "CoverageCounters.h"
 #include "Identifier.h"
 #include "MathCommon.h"
 #include <array>
 #include <type_traits>
+#include <wtf/HashMap.h>
 #include <wtf/SegmentedVector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
@@ -37,6 +39,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
     class ParserArenaDeletable;
+    class ParserArenaFreeable;
 
     DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(IdentifierArena);
     class IdentifierArena {
@@ -162,6 +165,7 @@ namespace JSC {
             m_identifierArena.swap(otherArena.m_identifierArena);
             m_freeablePools.swap(otherArena.m_freeablePools);
             m_deletableObjects.swap(otherArena.m_deletableObjects);
+            m_coveragePlaces.swap(otherArena.m_coveragePlaces);
         }
 
         void* allocateFreeable(size_t size)
@@ -199,6 +203,9 @@ namespace JSC {
             return *m_identifierArena;
         }
 
+        // Of each Node that hasCoveragePlaces().
+        UncheckedKeyHashMap<const ParserArenaFreeable*, CoverageCounters::Places>& coveragePlaces() LIFETIME_BOUND { return m_coveragePlaces; }
+
     private:
         static const size_t freeablePoolSize = 8000;
 
@@ -217,6 +224,7 @@ namespace JSC {
         std::unique_ptr<IdentifierArena> m_identifierArena;
         Vector<void*> m_freeablePools;
         Vector<ParserArenaDeletable*> m_deletableObjects;
+        UncheckedKeyHashMap<const ParserArenaFreeable*, CoverageCounters::Places> m_coveragePlaces;
     };
 
 } // namespace JSC

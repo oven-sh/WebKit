@@ -133,6 +133,7 @@ bool doesGC(Graph& graph, Node* node)
     case CompareBelowEq:
     case CompareEqPtr:
     case ProfileControlFlow:
+    case CountCoverage:
     case OverridesHasInstance:
     case IsEmpty:
     case IsEmptyStorage:

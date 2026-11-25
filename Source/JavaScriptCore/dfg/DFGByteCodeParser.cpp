@@ -10052,6 +10052,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_profile_control_flow);
         }
 
+        case op_count_coverage: {
+            addToGraph(CountCoverage, OpInfo(currentInstruction->as<OpCountCoverage>().metadata(codeBlock).m_count));
+            NEXT_OPCODE(op_count_coverage);
+        }
+
         // === Block terminators. ===
 
         case op_jmp: {

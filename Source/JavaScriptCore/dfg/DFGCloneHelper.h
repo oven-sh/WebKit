@@ -204,6 +204,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, NOESCAPE const Cust
     CLONE_STATUS(ConstantStoragePointer, Common) \
     CLONE_STATUS(Construct, Common) \
     CLONE_STATUS(ConstructVarargs, Special) \
+    CLONE_STATUS(CountCoverage, Common) \
     CLONE_STATUS(CreateActivation, Common) \
     CLONE_STATUS(CreateDirectArguments, Common) \
     CLONE_STATUS(CreateRest, Common) \

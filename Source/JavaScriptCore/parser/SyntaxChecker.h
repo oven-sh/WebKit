@@ -270,6 +270,8 @@ public:
     int createForInLoop(const JSTokenLocation&, int, int, int, const JSTokenLocation&, int, int, int, VariableEnvironment&&) { return StatementResult; }
     int createForOfLoop(bool, const JSTokenLocation&, int, int, int, const JSTokenLocation&, int, int, int, VariableEnvironment&&) { return StatementResult; }
     int createEmptyStatement(const JSTokenLocation&) { return StatementResult; }
+    void findCoveragePlaces(int) { }
+    void findCoveragePlaces(int, unsigned) { }
     int createDeclarationStatement(const JSTokenLocation&, int) { return StatementResult; }
     int createReturnStatement(const JSTokenLocation&, int, int, int) { return StatementResult; }
     int createBreakStatement(const JSTokenLocation&, int, int) { return StatementResult; }

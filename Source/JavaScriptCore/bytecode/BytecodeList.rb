@@ -487,6 +487,14 @@ op :profile_control_flow,
         basicBlockLocation: BasicBlockLocation.*,
     }
 
+op :count_coverage,
+    args: {
+        counter: unsigned,
+    },
+    metadata: {
+        count: uint64_t.*,
+    }
+
 op :new_array_with_species,
     args: {
         dst: VirtualRegister,
