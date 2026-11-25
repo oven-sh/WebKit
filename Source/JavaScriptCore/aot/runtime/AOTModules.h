@@ -2190,6 +2190,7 @@ private:
     bool hasFileCapturedAfterEvaluation(const ModuleLinkWalk&) const;
     bool resolvesNamesOutsideLibrary(const ModuleLinkWalk&, ThrowScope&) const;
     void captureSyntheticExports(const ModuleLinkWalk&, VisitedModuleRecords&);
+    BitVector modulesBelowPackageOriginals(const ModuleLinkWalk&, const MocksInGraph&);
     void finishLink(const ModuleLinkWalk&, LinkContext&);
     void didLinkEntryPoint(ModuleID, const MocksInGraph&);
     bool didCaptureExports(ModuleID) const;

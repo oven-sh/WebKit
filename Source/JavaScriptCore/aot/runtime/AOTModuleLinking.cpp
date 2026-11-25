@@ -856,6 +856,33 @@ bool Modules::resolvesNamesOutsideLibrary(const ModuleLinkWalk& walk, ThrowScope
     return resolvesNames;
 }
 
+// A package gets the original of a mocked package, and what lies below that is loaded with it.
+BitVector Modules::modulesBelowPackageOriginals(const ModuleLinkWalk& walk, const MocksInGraph& mocks)
+{
+    BitVector below(m_table.size());
+    BitVector originals(m_table.size());
+    Vector<ModuleID, 32> importers;
+    walk.forEachModuleOfProgram([&](ModuleID module) {
+        bool runsItself = !isMocked(module) || (module == walk.root() && mocks.loadsRootOriginal());
+        if (runsItself && !mocks.hides(module))
+            importers.append(module);
+    });
+    while (!importers.isEmpty()) {
+        ModuleID importer = importers.takeLast();
+        if (!data(importer).isESModuleOfProgram() || !isOfPackage(importer))
+            continue;
+        for (const ModuleRequestData& request : m_table.imports(importer)) {
+            ModuleID original = moduleLoadedBy(request);
+            if (request.isHoisted || request.isRequire || request.isDeferred || !runsBesideMockFor(original, importer) || originals.quickSet(original.index()))
+                continue;
+            importers.append(original);
+            for (const ModuleRequestData& requestOfOriginal : m_table.imports(original))
+                below.merge(staticImportClosure(moduleLoadedBy(requestOfOriginal), MockTraversal::Stop));
+        }
+    }
+    return below;
+}
+
 void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleRecords& visited)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -872,6 +899,7 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
     SetForScope walksOfLink(m_walksOfLink, walks);
     Vector<ModuleID, 16> path;
     size_t visitedPathLength = 0;
+    std::optional<BitVector> belowOriginals;
 
     bool didEnterRoot = walk.replay(scope, [&](ModuleID module) {
         if (status(module) != ModuleStatus::Unlinked)
@@ -883,8 +911,18 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
             path.append(module);
         return true;
     }, [&](ModuleLinkWalk::Leaf leaf, ModuleID module) {
-        if (mocks.hides(module)) [[unlikely]]
-            return;
+        if (mocks.hides(module)) [[unlikely]] {
+            if (leaf != ModuleLinkWalk::Leaf::CapturesExports)
+                return;
+            if (!belowOriginals)
+                belowOriginals = modulesBelowPackageOriginals(walk, mocks);
+            if (!belowOriginals->quickGet(module.index()))
+                return;
+            if (isMocked(fileOf(module))) {
+                evaluatePastPendingMock(module);
+                return;
+            }
+        }
         if (leaf == ModuleLinkWalk::Leaf::CapturesExports) {
             if (isDisplacedRunKept(module, walk.root())) [[unlikely]]
                 return;
@@ -922,6 +960,20 @@ void Modules::captureSyntheticExports(const ModuleLinkWalk& walk, VisitedModuleR
         visitedPathLength = std::min(visitedPathLength, path.size());
     });
     RETURN_IF_EXCEPTION(scope, void());
+    if (m_mocks && didEnterRoot) [[unlikely]] {
+        if (!belowOriginals)
+            belowOriginals = modulesBelowPackageOriginals(walk, mocks);
+        // The walk goes past barrels that only hand names on.
+        for (size_t index : *belowOriginals) {
+            if (!data(ModuleID(index)).capturesExports() || didCaptureExports(ModuleID(index)))
+                continue;
+            if (isMocked(fileOf(ModuleID(index))))
+                evaluatePastPendingMock(ModuleID(index));
+            else
+                captureExports(ModuleID(index));
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
     if (!walks || !didEnterRoot)
         return;
     if (walks->modulesWalked.isEmpty())
