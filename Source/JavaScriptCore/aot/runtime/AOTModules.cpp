@@ -4536,6 +4536,20 @@ static ASCIILiteral typeThatReadsTextAsData(const ScriptFetchParameters& attribu
     return { };
 }
 
+// The file itself answers for its own type.
+bool Modules::isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchParameters& attributes) const
+{
+    String type;
+    if (attributes.type() == ScriptFetchParameters::Type::JSON)
+        type = "json"_s;
+    else if (attributes.type() == ScriptFetchParameters::Type::HostDefined)
+        type = attributes.hostDefinedImportType();
+    if (type.isNull() || path.endsWith(makeString('.', type)) || (type == "text"_s && path.endsWith(".txt"_s)) || (type == "yaml"_s && path.endsWith(".yml"_s)))
+        return false;
+    std::optional<ModuleID> form = m_table.findByPath(makeString(path, '?', type));
+    return form && isEvicted(*form);
+}
+
 static bool mayBeCodeThatPluginGaveForType(const String& path, ASCIILiteral type)
 {
     return path.contains('?') && (!isAbsoluteFileSystemPath(path) || path.endsWith(makeString('?', type)));
@@ -4809,7 +4823,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (m_table.importAttributeVariants(key.string()).containsIf([&](ModuleID variant) { return isEvicted(variant); }) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index()))))) [[unlikely]]
+            else if (isFormOfAnotherTypeEvicted(key.string(), *attributes) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index()))))) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
             else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
