@@ -8089,6 +8089,12 @@ static bool hasRequireCacheEntry(Modules* modules, ModuleID module, bool& import
     return !isNamedByNumber(modules->table().fullPath(module), module);
 }
 
+bool wasRequired(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasRequired(module);
+}
+
 bool hasRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);

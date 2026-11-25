@@ -208,6 +208,7 @@ JS_EXPORT_PRIVATE bool requireRunsMocks(VM&);
 JS_EXPORT_PRIVATE bool isCurrentRequireTarget(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isEvictedDataFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasOnlyBeenRequired(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool wasRequired(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willReplaceRequiredDataFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willImportEvictedDataOriginal(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void setMockedAfterEviction(JSGlobalObject*, ModuleID file, bool isMockedAfterEviction);
