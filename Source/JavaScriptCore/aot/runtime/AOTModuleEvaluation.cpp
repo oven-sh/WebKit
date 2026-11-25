@@ -2978,7 +2978,7 @@ void Modules::layWayOfLoad(PlanOfLoad& plan, LevelOfLoad* above)
         above->next = below;
 }
 
-void Modules::countStepsOfLevel(PlanOfLoad& plan, size_t depth)
+void Modules::countStepsOfLevel(PlanOfLoad& plan, size_t depth, bool isInStep)
 {
     uint32_t laterRequests = plan.levels[depth].laterRequests;
     if (laterRequests && !isLeftToLoad(plan, plan.found[plan.levels[depth].placeOfMostLaterRequests])) {
@@ -2989,9 +2989,12 @@ void Modules::countStepsOfLevel(PlanOfLoad& plan, size_t depth)
         }
     }
     uint32_t stepsToLevel = depth * PlanOfLoad::jobsOfLevel;
-    plan.steps = plan.isWhole && plan.stepsOfWholeGraph ? plan.stepsOfWholeGraph : std::max(plan.steps, stepsToLevel + laterRequests);
+    if (plan.isWhole && plan.stepsOfWholeGraph)
+        plan.steps = plan.stepsOfWholeGraph;
+    else if (isInStep)
+        plan.steps = std::max(plan.steps, stepsToLevel + laterRequests);
     if (ModuleRecord* root = recordIfExists(plan.found[0].module))
-        root->setExtraLoadSteps(plan.steps - stepsToLevel);
+        root->setExtraLoadSteps(plan.steps > stepsToLevel ? plan.steps - stepsToLevel : 0);
 }
 
 bool Modules::isLeftToLoad(PlanOfLoad& plan, PlanOfLoad::Found& found)
