@@ -161,6 +161,11 @@ TypeID Walker::typeOfMergedSlot(const FieldOfScope& slot, bool isWidened)
     TypeID own = ownTypeOf(slot.values[0]);
     if (!isWidened && own && m_types.isSubset(own, TypeTable::number) && !m_types.isSubset(type, TypeTable::number) && m_types.isSubset(TypeTable::number, type))
         type = TypeTable::number;
+    if (TypeID proven = plan().slot(slot.field.layout, slot.field.field).provenType) {
+        proven = m_types.withoutPrimitives(proven, Primitive::Absent);
+        if (own && m_types.isSubset(own, proven) && !m_types.isSubset(type, proven))
+            type = proven;
+    }
     return m_types.at(type).isJavaScriptValue() ? type : TypeID();
 }
 
