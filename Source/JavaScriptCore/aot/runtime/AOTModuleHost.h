@@ -321,6 +321,7 @@ JS_EXPORT_PRIVATE bool mayBeMocked(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE String mockModuleErrorMessage(JSGlobalObject*, const String& path, const String& uncompiledCaller);
 JS_EXPORT_PRIVATE bool hasStartedLoading(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasOnlyBeenLinked(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool isAwaitedByPendingImport(JSGlobalObject*, ModuleID file);
 JS_EXPORT_PRIVATE bool hasImportStartedLoading(JSGlobalObject*, ModuleID moduleOrFacade);
 JS_EXPORT_PRIVATE bool wasLoadedByImport(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool isMockAwaitedByRefusedRequire(JSGlobalObject*, ModuleID);

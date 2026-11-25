@@ -9386,6 +9386,12 @@ bool hasOnlyBeenLinked(JSGlobalObject* realm, ModuleID module)
     return modules && modules->hasOnlyBeenLinked(module);
 }
 
+bool isAwaitedByPendingImport(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isAwaitedByPendingImport(file);
+}
+
 std::optional<ModuleID> findVariantToMock(JSGlobalObject* realm, StringView path, std::optional<ModuleID> file)
 {
     Modules* modules = modulesOf(realm);
