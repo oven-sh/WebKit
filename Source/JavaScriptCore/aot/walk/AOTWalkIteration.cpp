@@ -642,6 +642,23 @@ static Reference elementInRecordOfLiteral(Walker& walker, Reference list, uint32
     return code.isConstant(element) ? Reference::constant(element) : Reference::value(element);
 }
 
+std::optional<Vector<Reference, 4>> stepsLeftOfPattern(Walker& walker, const BodyIndex& index, const Walker::IndexedIteration& iteration, uint32_t stepsTaken, Reference hole)
+{
+    Vector<Reference, 4> left;
+    if (iteration.hasPrecomputedSteps) {
+        if (iteration.restList)
+            return std::nullopt;
+        for (size_t step = stepsTaken; step < iteration.precomputedSteps.size(); ++step)
+            left.append(iteration.precomputedSteps[step]);
+        return left;
+    }
+    for (uint32_t position = stepsTaken; position < lengthOfLiteralInIteration(index, iteration.literal); ++position) {
+        StepOfListLiteral step = stepAtPlaceOfLiteral(index, iteration.literal, position);
+        left.append(step.element ? elementInRecordOfLiteral(walker, iteration.list, position) : hole);
+    }
+    return left;
+}
+
 static constexpr OpcodeSet appendsToLiteralsInIteration = appendsToListsInIteration | OpcodeSet { Opcode::AppendSpread };
 static_assert(!OperandIndex::AppendElement::array && !OperandIndex::AppendHole::array && !OperandIndex::AppendSpread::array);
 

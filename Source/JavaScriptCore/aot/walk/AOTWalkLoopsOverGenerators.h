@@ -16,6 +16,7 @@ struct RestOfPattern {
     ValueID step;
 };
 bool stepsOfPatternStandInRow(const BodyIndex&, const BodyValue& open, RestOfPattern* = nullptr);
+std::optional<Vector<Reference, 4>> stepsLeftOfPattern(Walker&, const BodyIndex&, const Walker::IndexedIteration&, uint32_t stepsTaken, Reference hole);
 
 inline constexpr uint32_t maxGeneratorPatternSteps = 4;
 
