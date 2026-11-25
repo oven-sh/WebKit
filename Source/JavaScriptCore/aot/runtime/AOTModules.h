@@ -1300,7 +1300,7 @@ public:
     bool hasMockRegisteredAfter(ModuleID, uint32_t moment) const;
     JSObject* takeReleasedImportNamespace(JSPromise*, ModuleID);
     bool tryRestartReleasedImport(JSPromise*);
-    void takeBackFormThatLeftUnderImport(ModuleID);
+    void restoreFormEvictedDuringImport(ModuleID);
     bool hasEvictedFiles() const { return !m_evictedFiles.isEmpty(); }
     void restorePreloadInstances();
     void noteRestoredModule(ModuleID module) { m_restoredModules.set(module.index()); }
@@ -1485,10 +1485,10 @@ public:
     }
     enum class DelegatedBy : bool { Host, RequireCache };
     // An import() that was called before a plugin was laid doesn't ask it. One that is called while the first is under way does, and its answer is the answer of both.
-    void delegateToHostOnceAskedAgain(ModuleID);
+    void delegateToHostOnNextRequest(ModuleID);
     void willAskAgain(ModuleID module)
     {
-        if (!m_filesDelegatedOnceAskedAgain.isEmpty() && m_filesDelegatedOnceAskedAgain.clear(fileOf(module).index())) [[unlikely]]
+        if (!m_filesToDelegateOnNextRequest.isEmpty() && m_filesToDelegateOnNextRequest.clear(fileOf(module).index())) [[unlikely]]
             delegateToHostUnlessEvaluated(module);
     }
     void delegateToHostUnlessEvaluated(ModuleID, DelegatedBy = DelegatedBy::Host);
@@ -2691,7 +2691,7 @@ private:
     BitVector m_filesToLoadAgain;
     BitVector m_hostImportedFiles;
     BitVector m_filesAskingPlugins;
-    BitVector m_filesDelegatedOnceAskedAgain;
+    BitVector m_filesToDelegateOnNextRequest;
     BitVector m_filesAskedOfHost;
     bool m_hasHostImportedFiles { false };
     BitVector m_uncompiledNamespacesAskedFor;
@@ -3664,8 +3664,8 @@ private:
     bool hasFileOfGraphBeingLoadedBegun() const;
     bool hasUnreadSource(ModuleID);
     JSPromise* startImportInLaterTurn(ModuleID, std::optional<int64_t> referrerAsyncOrder);
-    bool isDataThatDoesNotParse(ModuleID);
-    JSPromise* rejectImportOfDataThatDoesNotParse(JSPromise*, ModuleID);
+    bool isUnparsableData(ModuleID);
+    JSPromise* rejectImportOfUnparsableData(JSPromise*, ModuleID);
     struct QueuedFetch {
         uint64_t place;
         Strong<JSPromise> promise;

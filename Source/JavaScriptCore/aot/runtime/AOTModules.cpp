@@ -613,7 +613,7 @@ bool Modules::isImportedByHost(ModuleID module)
 void Modules::didClearPlugins()
 {
     m_filesAskingPlugins.clearAll();
-    m_filesDelegatedOnceAskedAgain.clearAll();
+    m_filesToDelegateOnNextRequest.clearAll();
 }
 
 // Behind Bun.plugin.clearAll(), an import follows one that the host has begun, and else finds the file.
@@ -647,12 +647,12 @@ void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegat
     setStoredStatus(file, StoredModuleStatus::InRecord);
 }
 
-void Modules::delegateToHostOnceAskedAgain(ModuleID module)
+void Modules::delegateToHostOnNextRequest(ModuleID module)
 {
     ModuleID file = fileOf(module);
     if (isEvicted(file) || status(file) >= ModuleStatus::Evaluating || hasRun(file) || !isAwaitedByPendingImport(file))
         return delegateToHostUnlessEvaluated(module);
-    m_filesDelegatedOnceAskedAgain.set(file.index());
+    m_filesToDelegateOnNextRequest.set(file.index());
 }
 
 void Modules::delegateToHost(ModuleID file)
@@ -4510,7 +4510,7 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
             modules->didRunFirstImportStep(promise);
             if (modules->hasEvictedFiles()) [[unlikely]] {
                 withModuleOfJob(promise->realm(), module, [](Modules& modules, ModuleID imported) {
-                    modules.takeBackFormThatLeftUnderImport(imported);
+                    modules.restoreFormEvictedDuringImport(imported);
                 });
             }
             if (modules->tryRestartReleasedImport(promise))
@@ -4593,7 +4593,7 @@ bool Modules::isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchPa
 }
 
 // The loader keeps the text that an import() under way has fetched, also where a reset takes the file out in between.
-void Modules::takeBackFormThatLeftUnderImport(ModuleID module)
+void Modules::restoreFormEvictedDuringImport(ModuleID module)
 {
     ModuleID form = fileOf(module);
     String path = m_table.fullPath(form);
@@ -5603,14 +5603,14 @@ bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* request
 }
 
 // The host parses data where it is asked for, so that the fetch has failed when import() returns. Code that does not parse fails on another thread.
-bool Modules::isDataThatDoesNotParse(ModuleID module)
+bool Modules::isUnparsableData(ModuleID module)
 {
     if (data(module).kind != ModuleKind::SourceText || status(module) == ModuleStatus::Evaluated || data(module).isOfLibrary() || !isTestRun() || isMocked(module) || activeMock(module)) [[likely]]
         return false;
     return host().isParsedAsData && host().isParsedAsData(m_table.fullPath(fileOf(module)));
 }
 
-JSPromise* Modules::rejectImportOfDataThatDoesNotParse(JSPromise* promise, ModuleID module)
+JSPromise* Modules::rejectImportOfUnparsableData(JSPromise* promise, ModuleID module)
 {
     static constexpr InternalMicrotask jobsOfFailedFetch[] = {
         InternalMicrotask::ModuleLoadTopSettled,
@@ -5858,8 +5858,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     currentImportWaitState.reset();
     currentImportTarget.reset();
     didLoadDataFile(module, LoadKind::Import);
-    if (text == ImportSourceState::MayArriveLater && isDataThatDoesNotParse(module)) [[unlikely]]
-        RELEASE_AND_RETURN(scope, rejectImportOfDataThatDoesNotParse(promiseForCaller(), module));
+    if (text == ImportSourceState::MayArriveLater && isUnparsableData(module)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, rejectImportOfUnparsableData(promiseForCaller(), module));
     if (text == ImportSourceState::MayArriveLater && (!m_queuedFetches.isEmpty() || hasFileOfGraphBeingLoadedBegun() || data(module).isLoadedByLoader() || m_importDeferringMocks == module) && hasUnreadSource(module)) [[unlikely]] {
         if (isNewCallAfterTests)
             return promiseForCaller();
@@ -8067,7 +8067,7 @@ bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)
     if (!modules->mayBeEvicted(module))
         return false;
     modules->delegateImportsToHost(module);
-    modules->delegateToHostOnceAskedAgain(module);
+    modules->delegateToHostOnNextRequest(module);
     return true;
 }
 

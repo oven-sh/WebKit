@@ -759,7 +759,7 @@ bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSum
     return callsMethods;
 }
 
-static bool hasThisForKeyOrders(const Function& record)
+static bool hasThisValue(const Function& record)
 {
     return record.kind == FunctionKind::Initializer || record.thisParameterIndex() || (isClassConstructorOf(record.kind) && record.constructedClass);
 }
@@ -768,7 +768,7 @@ FunctionID CollectorOfKeyOrders::firstConstructorWithEvents(const LinkTables& li
 {
     Vector<FunctionID, 16> passed;
     FunctionID found = constructor;
-    while (found && passed.size() < m_program.layouts.size() && hasThisForKeyOrders(m_program.at(found))) {
+    while (found && passed.size() < m_program.layouts.size() && hasThisValue(m_program.at(found))) {
         if (auto known = m_firstConstructorsWithEvents.getOptional(found.index())) {
             found = *known;
             break;
@@ -787,7 +787,7 @@ FunctionID CollectorOfKeyOrders::firstConstructorWithEvents(const LinkTables& li
 
 bool CollectorOfKeyOrders::collectThisKeysBelow(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered)
 {
-    if (!hasThisForKeyOrders(m_program.at(function)) || m_isEntered.set(function.index()))
+    if (!hasThisValue(m_program.at(function)) || m_isEntered.set(function.index()))
         return false;
     entered.append(function);
     Vector<EventOnThis, 32> events;

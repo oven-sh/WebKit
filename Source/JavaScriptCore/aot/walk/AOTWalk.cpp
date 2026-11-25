@@ -8402,7 +8402,7 @@ void Walker::noteGuardOfStoresAskedInTries(const MemberConditionRecord& conditio
     m_trialVisits.last().guardsOfStoresAsked.append(condition);
 }
 
-void Walker::noteGuardOfReadsAskedInTries(const MemberConditionRecord& condition)
+void Walker::noteReadGuardInTrialIterations(const MemberConditionRecord& condition)
 {
     std::optional<uint32_t> loop = innermostOpenLoop();
     if (!loop || executesOnEveryIteration(*loop, currentHoistPoint()))

@@ -693,8 +693,8 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
             return;
         size_t place = entry - entries.data();
         bool isBehindNamedKey = place && entries[place - 1] >= numberOfFields;
-        bool isInFrontOfField = place + 1 < entries.size() && entries[place + 1] < numberOfFields;
-        if (!isBehindNamedKey || isInFrontOfField) {
+        bool precedesField = place + 1 < entries.size() && entries[place + 1] < numberOfFields;
+        if (!isBehindNamedKey || precedesField) {
             structure.removeFromKeyOrderOfOneObject(place);
             return;
         }
