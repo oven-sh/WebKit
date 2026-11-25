@@ -1473,6 +1473,9 @@ public:
     bool wouldBeEvicted(ModuleID);
     bool isLoadInFlight(ModuleID module) const { return status(fileOf(module)) == ModuleStatus::EvaluatingAsync; }
     bool wasLoadedByImport(ModuleID);
+    // An import of a file that a test only required, and then mocked, gives the mock's own module. The mock of a preload's file outlives the test file, which ours does not do.
+    void notePatchedBeforeImport(ModuleID file) { m_filesPatchedBeforeImport.set(file.index(), status(file) == ModuleStatus::Evaluated && !isEvicted(file) && evaluatedBy(file) != LoadedBy::Preload && !wasLoadedByImport(file)); }
+    bool wasPatchedBeforeImport(ModuleID file) const { return m_filesPatchedBeforeImport.get(file.index()) && isPatchedByMock(file); }
     bool mayBeEvicted(ModuleID module) const
     {
         const ModuleData& file = data(fileOf(module));
@@ -2678,6 +2681,7 @@ private:
     }
     BitVector m_evictedFiles;
     BitVector m_filesDelegatedByHost;
+    BitVector m_filesPatchedBeforeImport;
     BitVector m_filesModifiedSinceBuild;
     bool m_hasNotedTextsThatHostKeeps { false };
     BitVector m_dataFilesThatHostPrintsAsJavaScript;

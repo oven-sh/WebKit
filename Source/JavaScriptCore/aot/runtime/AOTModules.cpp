@@ -10016,6 +10016,8 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
     MockDoor door(found, module, "willMockModule"_s);
     Modules& modules = *found;
     modules.tryLinkFailedLoads();
+    if (modules.data(module).kind == ModuleKind::CommonJs && !modules.isMocked(module))
+        modules.notePatchedBeforeImport(module);
     modules.leaveImportersAbove(module);
     JSObject* exports = requireReturnValue.isObject() ? asObject(requireReturnValue) : constructEmptyObject(realm);
     modules.setMockHasCommonJSExports(module, hasCommonJSExports);
@@ -10649,6 +10651,11 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, void());
     }
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+}
+
+bool ModuleRecord::wasPatchedBeforeImport() const
+{
+    return modules().wasPatchedBeforeImport(modules().table().moduleBehindFacade(m_module).value_or(m_module));
 }
 
 bool ModuleRecord::isReplacedByMock() const
