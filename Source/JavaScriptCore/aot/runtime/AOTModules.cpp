@@ -4622,6 +4622,13 @@ std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, Mod
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, RefPtr { fetchParameters }));
 }
 
+// The loader finds a CommonJS module that has run under any of these.
+static bool isTypeOfCode(const ScriptFetchParameters& attributes)
+{
+    const String& type = attributes.hostDefinedImportType();
+    return type == "js"_s || type == "jsx"_s || type == "ts"_s || type == "tsx"_s;
+}
+
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4801,7 +4808,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (m_table.importAttributeVariants(key.string()).containsIf([&](ModuleID variant) { return isEvicted(variant); }) || wasWrittenSinceBuild(file)) [[unlikely]]
+            else if (m_table.importAttributeVariants(key.string()).containsIf([&](ModuleID variant) { return isEvicted(variant); }) || (wasWrittenSinceBuild(file) && !(data(file).kind == ModuleKind::CommonJs && isTypeOfCode(*attributes)))) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
             else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
