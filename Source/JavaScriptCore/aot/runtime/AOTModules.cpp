@@ -647,6 +647,7 @@ void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegat
 void Modules::delegateToHost(ModuleID file)
 {
     m_evictedFiles.set(file.index());
+    m_filesImportedUnderTypesOfCode.clear(file.index());
     didChangeLinkState();
     m_filesAskedAbout.clear(file.index());
     m_filesWhoseGraphHasBegun.clear(file.index());
@@ -4622,7 +4623,7 @@ std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, Mod
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, RefPtr { fetchParameters }));
 }
 
-// The loader finds a CommonJS module that has run under any of these.
+// The loader finds a CommonJS module that has run under any of these, and what an import() has loaded under one of them.
 static bool isTypeOfCode(const ScriptFetchParameters& attributes)
 {
     const String& type = attributes.hostDefinedImportType();
@@ -4808,13 +4809,16 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (m_table.importAttributeVariants(key.string()).containsIf([&](ModuleID variant) { return isEvicted(variant); }) || (wasWrittenSinceBuild(file) && !(data(file).kind == ModuleKind::CommonJs && isTypeOfCode(*attributes)))) [[unlikely]]
+            else if (m_table.importAttributeVariants(key.string()).containsIf([&](ModuleID variant) { return isEvicted(variant); }) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index()))))) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
             else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
-            } else
+            } else {
                 noteFormAnsweredFirst(key, *attributes, file);
+                if (isTypeOfCode(*attributes))
+                    m_filesImportedUnderTypesOfCode.set(file.index());
+            }
         } else if (m_table.mayHaveAttributeVariants() && !isTestRun()) [[unlikely]]
             module = textRequiredInPlaceOf(module);
         return start(module);
