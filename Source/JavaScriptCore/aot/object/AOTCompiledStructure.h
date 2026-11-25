@@ -197,6 +197,11 @@ public:
         }
         rareData->outOfLineKeyOrder.append(field);
     }
+    void removeFromKeyOrderOfOneObject(size_t place) const
+    {
+        ASSERT(hasKeyOrderOfOneObject());
+        const_cast<RareData*>(rareData())->outOfLineKeyOrder.removeAt(place);
+    }
     void replaceKeyNamedByOrder(size_t index, UniquedStringImpl* key) const
     {
         ASSERT(hasKeyOrderOfOneObject());
