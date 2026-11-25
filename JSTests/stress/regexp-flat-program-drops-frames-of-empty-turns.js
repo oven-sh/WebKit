@@ -1,4 +1,4 @@
-//@ runDefault("--useRegExpJIT=0", "--useRegExpImageMode=1", "--maxRegExpStackSize=65536")
+//@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1", "--maxRegExpStackSize=65536")
 //@ runDefault("--useRegExpJIT=0", "--validateRegExpFlatProgram=1")
 //@ runDefault
 
