@@ -1353,7 +1353,7 @@ void CodeVerifier::verifyBlock(BlockID block)
         const Operation& operation = m_code.at(id);
         if (operation.opcode != Opcode::Narrowed)
             standsAtHead &= operationsThatStandAmongNarrowedValues.contains(operation.opcode);
-        else if (!standsAtHead && !m_code.isSwept())
+        else if (!standsAtHead && (operation.narrowsHolderOfOperand() || !numberRepresentations.contains(operation.representation)) && !m_code.isSwept())
             return fail(block, id, "a Narrowed stands behind another operation of its block"_s);
         if (familyOf(operation.opcode) != OperationFamily::Exception)
             followsOnlyCatches = false;
@@ -1479,13 +1479,8 @@ void CodeVerifier::verifyNarrowedValues()
 {
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
-            if (operationsThatStandAmongNarrowedValues.contains(m_code.at(id).opcode))
+            if (m_code.at(id).opcode != Opcode::Narrowed)
                 continue;
-            if (m_code.at(id).opcode != Opcode::Narrowed) {
-                if (m_code.isSwept())
-                    continue;
-                break;
-            }
             verifyNarrowed(block, id, m_code.at(id));
             if (hasFailed())
                 return;
