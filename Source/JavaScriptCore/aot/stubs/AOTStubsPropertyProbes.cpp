@@ -1069,7 +1069,7 @@ void storeFieldByTable(StubAssembler& jit, const FieldTableProbe& probe, GPRReg 
         Jump isNotBoxed = jit.branch32(CCallHelpers::Above, operand, TrustedImm32(FieldTableEntry::maxOperand));
         (mayRepeatCreation ? createsBoxedField : goesByItsRecord).append(jit.branchTest64(CCallHelpers::Zero, boxedSlot));
         leaveIfFieldIsFixed();
-        if (!jit.options().checksProofs) {
+        if (operation != SlotOperation::Define && !jit.options().checksProofs) {
             Jump isNotInt32 = jit.branchIfNotInt32(value);
             goesByItsRecord.append(jit.branchTest32(CCallHelpers::Zero, scratch, TrustedImm32(FieldRecordIndex::takesEveryInt32)));
             jit.store64(value, boxedSlot);

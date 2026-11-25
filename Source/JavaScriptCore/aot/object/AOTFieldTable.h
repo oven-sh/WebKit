@@ -130,7 +130,7 @@ struct FieldRecordIndex {
     {
         RELEASE_ASSERT(indexInLayoutRecord <= indexMask);
         constexpr uint16_t flagsBarringStore = fieldAttributeFlags;
-        constexpr uint16_t flagsBarringStoreOfInt32 = flagsBarringStore | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldTypeIsLeftToRunTime;
+        constexpr uint16_t flagsBarringStoreOfInt32 = fieldIsReadOnly | fieldIsAccessor | fieldIsPrivate | fieldIsBrand | fieldIsOutOfLine | fieldMayExistWithoutStorage | fieldTypeIsLeftToRunTime;
         uint16_t bits = indexInLayoutRecord;
         if (typeAcceptsWhatSlotHolds(field, type, numberOfAnyType) && !(field.flags & flagsBarringStore))
             bits |= isStoredWithoutTypeTest;
