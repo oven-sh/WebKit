@@ -18,6 +18,7 @@ namespace JSC { namespace AOT {
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDateNow, double, (Instance* instance))
 {
+    AOTOperationPrologueCallFrameTracer tracer(*instance->vm, AOT_OPERATION_FRAME_RECORD());
     return instance->globalObject->jsDateNow();
 }
 

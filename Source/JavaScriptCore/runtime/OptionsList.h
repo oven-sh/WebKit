@@ -540,6 +540,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, sampleInterval, 1000, Normal, "Time between stack traces in microseconds."_s) \
     v(Unsigned, samplingProfilerMaxStackDepth, 0, Normal, "If not zero, the number of frames that a stack trace has at most, whatever the embedder asks for."_s) \
     v(Bool, forceSamplingProfilerToMissStacks, false, Normal, "For testing what is recorded when JavaScript returns before the thread is suspended."_s) \
+    v(Unsigned, forceSamplingProfilerToFailAtStackDepth, 0, Normal, "If not zero, the frame with that many above it passes for invalid. For testing."_s) \
     v(Bool, collectExtraSamplingProfilerData, false, Normal, "This corresponds to the JSC shell's --sample option, or if we're wanting to use the sampling profiler via the Debug menu in the browser."_s) \
     v(Unsigned, samplingProfilerTopFunctionsCount, 12, Normal, "Number of top functions to report when using the command line interface."_s) \
     v(Unsigned, samplingProfilerTopBytecodesCount, 40, Normal, "Number of top bytecodes to report when using the command line interface."_s) \

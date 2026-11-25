@@ -99,7 +99,7 @@ static void generatePollAtPrologue(StubAssembler& jit, Entry operation)
     leaveFunctionAtPrologue(jit, throwStackOverflow(false));
 #else
     jit.linkToStub(jit.branchPtr(CCallHelpers::Below, sp, StubAssembler::softStackLimitWord()), throwStackOverflow(true));
-    jit.preservingCallerSavedRegisters(false, [&](unsigned bytes) {
+    jit.preservingRegistersClobberedBy(StubCallee::Operation, false, [&](unsigned bytes) {
         jit.loadCallerReturnAddress(bytes, A1);
         jit.move(instanceGPR, A0);
         jit.callOperation(operation, T11);

@@ -17,18 +17,26 @@
 #include "AOTImage.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageTestSupport.h"
+#include "AOTInstance.h"
 #include "AOTNumbering.h"
 #include "AOTOperationData.h"
 #include "AOTPlan.h"
 #include "AOTPrefixCode.h"
 #include "AOTPropertyCachesFront.h"
 #include "AOTRepresentation.h"
+#include "AOTStubCalls.h"
+#include "AOTStubFrames.h"
 #include "AOTStubsBarriers.h"
+#include "AOTStubsCallLists.h"
 #include "AOTStubsCalls.h"
 #include "AOTStubsExceptions.h"
+#include "AOTStubsPropertyKeys.h"
 #include "AOTTableParts.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "FFIStubs.h"
+#include "LLIntData.h"
+#include "LLIntThunks.h"
 #include <algorithm>
 #include <array>
 #include <bit>
@@ -37,7 +45,9 @@
 #include <limits>
 #include <optional>
 #include <span>
+#include <tuple>
 #include <wtf/MathExtras.h>
+#include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
@@ -171,7 +181,7 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
     stack[recordOfCaller] = &stack[recordOfOuter];
     stack[recordOfCaller + 1] = returnAddressIn(2);
     auto isTop = [&](const SampledRegisters& registers, size_t record, const void* pc) {
-        std::optional<SampledTop> top = findSampledTop(loaded, registers, nullptr, bounds);
+        std::optional<SampledTop> top = findSampledTop(loaded, registers, nullptr, nullptr, bounds);
         return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[record]) && top->pc == pc && !top->framelessTopCallerPC && !top->framePointer;
     };
 
@@ -226,6 +236,827 @@ static SUPPRESS_ASAN void testSampleInNativeCode()
 #endif
     }
 }
+
+static void* findReturnSiteInStubs(const Image& image, StubFrameKind kind, const void* behind = nullptr)
+{
+    auto looksLikeEndOfCall = [](const uint8_t* end) {
+        return !isX86_64() || end[-static_cast<ptrdiff_t>(sizeOfNearCall)] == 0xe8 || (end[-2] == 0xff && end[-1] >> 3 == 0x1a) || (end[-3] == 0xff && end[-2] >> 3 == 0x0a);
+    };
+    for (const uint8_t& byte : image.code().subspan(sizeOfNearCall)) {
+        CodeLocation location = image.locate(&byte);
+        if (&byte > behind && location.kind == CodeKind::Stub && location.stubFrameKind == kind && (kind != StubFrameKind::Plain || looksLikeEndOfCall(&byte)))
+            return const_cast<uint8_t*>(&byte);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+#if CPU(ARM64)
+static SUPPRESS_ASAN void testSampleInNativeCodeThatLeavesAddressInLinkRegister()
+{
+    TestBuild build(3);
+    CodeSketch outer(2);
+    outer.withFrame(48);
+    outer.plain(0x1002);
+    outer.callStub(callValue(1), outer.addSite());
+    outer.end();
+    TestImage image = build.build(bodies(plainBody(1, 32), outer.take()));
+    const Image& loaded = *image.image;
+    auto returnAddressIn = [&](uint32_t function) -> void* {
+        return const_cast<uint8_t*>(image.address(function, sizeof(uint32_t) + sizeOfNearCall));
+    };
+    auto behindInstructionsInStub = [&](uint32_t first, uint32_t second) -> void* {
+        auto* code = reinterpret_cast<uint32_t*>(const_cast<uint8_t*>(loaded.code().data()));
+        code[0] = first;
+        code[1] = second;
+        AOT_TEST_CHECK(loaded.locate(code + 2).kind == CodeKind::Stub && loaded.locate(code + 2).stubFrameKind == StubFrameKind::Plain);
+        return code + 2;
+    };
+    void* nativeCode = reinterpret_cast<void*>(&testSampleInNativeCodeThatLeavesAddressInLinkRegister);
+    void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
+
+    alignas(16) std::array<void*, 48> stack { };
+    constexpr size_t lowerRecord = 28;
+    constexpr size_t upperRecord = 32;
+    constexpr size_t recordOfOuter = 40;
+    stack[lowerRecord] = &stack[upperRecord];
+    stack[upperRecord] = &stack[recordOfOuter];
+    stack[upperRecord + 1] = returnAddressIn(2);
+    enum class Answer : bool { IsPassedOver, IsTop };
+    auto check = [&](void* linkRegister, void* returnAddressInRecord, Answer answer, size_t stackPointer = 0) {
+        stack[lowerRecord + 1] = returnAddressInRecord;
+        std::optional<SampledTop> top = findSampledTop(loaded, { &stack[lowerRecord], nativeCode, linkRegister, &stack[stackPointer] }, nullptr, nullptr, Thread::currentSingleton().stack());
+        bool isCalledByCompiledCode = loaded.locate(returnAddressInRecord).runsCompiledCode();
+        size_t callFrame = answer == Answer::IsTop ? lowerRecord : isCalledByCompiledCode ? upperRecord : recordOfOuter;
+        void* pc = answer == Answer::IsTop ? linkRegister : isCalledByCompiledCode ? returnAddressInRecord : returnAddressIn(2);
+        AOT_TEST_CHECK(top && top->callFrame == std::bit_cast<CallFrame*>(&stack[callFrame]) && top->pc == pc);
+    };
+
+    void* afterOperation = findReturnSiteInStubs(loaded, StubFrameKind::ReturnsAfterOperation);
+    void* adapter = findReturnSiteInStubs(loaded, StubFrameKind::Adapter);
+    for (void* linkRegister : { returnAddressIn(1), afterOperation, adapter })
+        check(linkRegister, nativeCode, Answer::IsPassedOver);
+
+    check(returnAddressIn(1), returnAddressIn(2), Answer::IsTop);
+    check(returnAddressIn(1), adapter, Answer::IsTop);
+    check(returnAddressIn(1), afterOperation, Answer::IsPassedOver);
+    check(returnAddressIn(1), inInterpreter, Answer::IsPassedOver);
+    check(afterOperation, returnAddressIn(2), Answer::IsTop);
+    check(adapter, inInterpreter, Answer::IsTop);
+    check(adapter, inInterpreter, Answer::IsPassedOver, lowerRecord);
+    check(adapter, returnAddressIn(2), Answer::IsPassedOver);
+
+    constexpr uint32_t load = 0xf940016b; // ldr x11, [x11]
+    constexpr uint32_t additionOfOffsetOfCode = 0x8b2e4a0e; // add x14, x16, w14, uxtw #2
+    constexpr uint32_t nearCall = 0x94000001;
+    constexpr uint32_t callThroughX11 = 0xd63f0160;
+    constexpr uint32_t callThroughX14 = 0xd63f01c0;
+    check(returnAddressIn(1), behindInstructionsInStub(load, callThroughX11), Answer::IsPassedOver);
+    check(returnAddressIn(1), behindInstructionsInStub(additionOfOffsetOfCode, callThroughX14), Answer::IsTop);
+    check(returnAddressIn(1), behindInstructionsInStub(load, nearCall), Answer::IsTop);
+    static_cast<uint32_t*>(returnAddressIn(2))[-1] = callThroughX11;
+    check(returnAddressIn(1), returnAddressIn(2), Answer::IsTop);
+}
+#endif
+
+static SUPPRESS_ASAN void testSampleInNativeCodeThatFramePointerDoesNotLeadOutOf()
+{
+    TestBuild build(5, { .admittedCode = Wire::AdmittedCode::Inspector });
+    CodeSketch outer(2);
+    outer.withFrame(48);
+    outer.plain(0x1002);
+    outer.callFunction(1, outer.addSite());
+    uint32_t afterIndirectCall = outer.callStub(callValue(1), outer.addSite()) + sizeOfNearCall;
+    uint32_t afterCallToNativeCode = outer.callStub(writeBarrier(), outer.addSite()) + sizeOfNearCall;
+    outer.end();
+    CodeSketch withoutRecord = sketchWithSite(4, 16);
+    withoutRecord.code().frame.hasFrameRecord = false;
+    withoutRecord.end();
+    TestImage image = build.build(bodies(plainBody(1, 32), outer.take(), plainBody(3, 64), withoutRecord.take()));
+    const Image& loaded = *image.image;
+    const StackBounds& bounds = Thread::currentSingleton().stack();
+    auto addressIn = [&](uint32_t function, uint32_t offset = sizeof(uint32_t) + sizeOfNearCall) {
+        return const_cast<uint8_t*>(image.address(function, offset));
+    };
+    void* nativeCode = reinterpret_cast<void*>(&testSampleInNativeCodeThatFramePointerDoesNotLeadOutOf);
+
+    constexpr size_t wordsSearched = 16 * KB / sizeof(void*);
+    alignas(16) std::array<void*, wordsSearched + 64> stack;
+    constexpr size_t recordOfCaller = wordsSearched + 32;
+    constexpr size_t recordOfOuter = recordOfCaller + 2 + 48 / sizeof(void*);
+    constexpr size_t entryFrame = recordOfOuter + 8;
+    constexpr size_t recordOfNativeCode = recordOfCaller - 32 / sizeof(void*) - 2;
+    constexpr size_t stackPointer = recordOfNativeCode - 24;
+    auto setRecord = [&](size_t record, size_t callerFrame, void* returnPC) {
+        stack[record] = &stack[callerFrame];
+        stack[record + 1] = returnPC;
+    };
+    auto reset = [&] {
+        stack.fill(nullptr);
+        setRecord(recordOfOuter, entryFrame, nativeCode);
+        setRecord(recordOfCaller, recordOfOuter, addressIn(2));
+        setRecord(recordOfNativeCode, recordOfCaller, addressIn(1));
+    };
+    auto find = [&](std::optional<size_t> topCallFrame = std::nullopt, size_t sampledStackPointer = stackPointer, void* framePointer = nullptr) {
+        return findSampledTop(loaded, { framePointer, nativeCode, nullptr, &stack[sampledStackPointer] }, topCallFrame ? std::bit_cast<CallFrame*>(&stack[*topCallFrame]) : nullptr, std::bit_cast<EntryFrame*>(&stack[entryFrame]), bounds);
+    };
+    auto isTop = [&](const std::optional<SampledTop>& top, size_t callFrame, const void* pc, std::optional<size_t> framePointer = std::nullopt) {
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[callFrame]) && top->pc == pc && !top->framelessTopCallerPC
+            && top->framePointer == (framePointer ? std::bit_cast<CallFrame*>(&stack[*framePointer]) : nullptr);
+    };
+    auto isCaller = [&](const std::optional<SampledTop>& top) {
+        return isTop(top, recordOfCaller, addressIn(1));
+    };
+
+    // What called the VM is on the other side of the entry frame.
+    stack.fill(nullptr);
+    setRecord(recordOfOuter, entryFrame, nativeCode);
+    setRecord(entryFrame, entryFrame + 4, nativeCode);
+    setRecord(entryFrame + 4, entryFrame + 12, addressIn(2, afterCallToNativeCode));
+    AOT_TEST_CHECK(!find(std::nullopt, recordOfOuter - 4, &stack[recordOfOuter]));
+
+    reset();
+    if constexpr (!isX86_64()) {
+        AOT_TEST_CHECK(!find());
+        return;
+    }
+
+    for (void* framePointer : { static_cast<void*>(nullptr), std::bit_cast<void*>(static_cast<uintptr_t>(1)), static_cast<void*>(&stack[stackPointer + 4]), nativeCode })
+        AOT_TEST_CHECK(isCaller(find(std::nullopt, stackPointer, framePointer)));
+
+    // At an entry frame it only goes by what was stored.
+    auto findAtEntryFrame = [&](void* topCallFrame) {
+        return findSampledTop(loaded, { &stack[stackPointer], nullptr, nullptr, &stack[stackPointer] }, static_cast<CallFrame*>(topCallFrame), std::bit_cast<EntryFrame*>(&stack[entryFrame]), bounds);
+    };
+    AOT_TEST_CHECK(isCaller(findAtEntryFrame(&stack[recordOfNativeCode])));
+    AOT_TEST_CHECK(!findAtEntryFrame(nullptr));
+
+    // How far it looks.
+    AOT_TEST_CHECK(isCaller(find(std::nullopt, recordOfNativeCode - wordsSearched + 1)));
+    AOT_TEST_CHECK(!find(std::nullopt, recordOfNativeCode - wordsSearched));
+    AOT_TEST_CHECK(isCaller(find(recordOfNativeCode, recordOfNativeCode - wordsSearched)));
+    AOT_TEST_CHECK(!find(std::nullopt, recordOfNativeCode + 1));
+    AOT_TEST_CHECK(!find(recordOfNativeCode, recordOfNativeCode + 1));
+
+    // What is no record of native code.
+    stack[recordOfNativeCode + 1] = addressIn(1, sizeof(uint32_t));
+    AOT_TEST_CHECK(!find());
+    stack[recordOfNativeCode + 1] = addressIn(3);
+    AOT_TEST_CHECK(!find());
+    reset();
+    stack[recordOfNativeCode] = nullptr;
+    AOT_TEST_CHECK(!find());
+    reset();
+    AOT_TEST_CHECK(isCaller(find(recordOfCaller)));
+
+    // A callee of the caller has returned.
+    constexpr size_t recordBelowDeadCallee = recordOfNativeCode - 64 / sizeof(void*) - 2;
+    setRecord(recordBelowDeadCallee, recordOfNativeCode, addressIn(3));
+    AOT_TEST_CHECK(isCaller(find()));
+    AOT_TEST_CHECK(isCaller(find(recordBelowDeadCallee)));
+
+    // So has a function that was in the place of the caller. Only topCallFrame tells which of them.
+    reset();
+    constexpr size_t recordBelowLargerFrame = recordOfCaller - 64 / sizeof(void*) - 2;
+    stack[recordOfCaller + 1] = addressIn(2, afterIndirectCall);
+    setRecord(recordBelowLargerFrame, recordOfCaller, addressIn(3));
+    AOT_TEST_CHECK(isCaller(find(recordOfNativeCode)));
+    AOT_TEST_CHECK(isTop(find(recordBelowLargerFrame), recordOfCaller, addressIn(3)));
+
+    // The engine runs the frame at the top.
+    reset();
+    setRecord(stackPointer + 8, recordOfNativeCode, nativeCode);
+    AOT_TEST_CHECK(!find(stackPointer + 8));
+    AOT_TEST_CHECK(isCaller(find()));
+
+    // How a run of compiled frames ends.
+    void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
+    void* inEntry = untagCFunctionPtr<void*, CFunctionPtrTag>(vmEntryToJavaScript);
+    void* inOtherCodeOfImage = const_cast<uint8_t*>(loaded.ffiCode().data());
+    AOT_TEST_CHECK(loaded.ffiCode().empty() == !FFI_STUBS_SUPPORTED);
+    for (auto [returnPC, endsRun] : { std::pair { nativeCode, false }, { inEntry, false }, { inInterpreter, true }, { inOtherCodeOfImage, !!FFI_STUBS_SUPPORTED }, { g_jscConfig.startExecutableMemory, !!g_jscConfig.startExecutableMemory } }) {
+        reset();
+        setRecord(recordOfOuter, recordOfOuter + 4, returnPC);
+        AOT_TEST_CHECK(endsRun ? isCaller(find()) : !find());
+        for (void* entryFrameOfOtherThread : { static_cast<void*>(nullptr), static_cast<void*>(static_cast<uint8_t*>(bounds.origin()) + 1 * MB) })
+            AOT_TEST_CHECK(!findSampledTop(loaded, { nullptr, nativeCode, nullptr, &stack[stackPointer] }, nullptr, static_cast<EntryFrame*>(entryFrameOfOtherThread), bounds));
+    }
+    reset();
+    setRecord(recordOfCaller, entryFrame + 2, addressIn(2));
+    setRecord(entryFrame + 2, entryFrame, nativeCode);
+    AOT_TEST_CHECK(!find());
+    reset();
+    constexpr size_t recordInLongRun = recordOfOuter - 2 * 300;
+    for (size_t record = recordInLongRun; record < recordOfOuter; record += 2)
+        setRecord(record, record + 2, addressIn(2));
+    setRecord(recordInLongRun - 32 / sizeof(void*) - 2, recordInLongRun, addressIn(1));
+    AOT_TEST_CHECK(isTop(find(std::nullopt, recordInLongRun - 16), recordInLongRun, addressIn(1)));
+
+    // A caller without a frame record.
+    reset();
+    constexpr size_t frameWithoutRecord = recordOfNativeCode;
+    constexpr size_t recordBelowIt = frameWithoutRecord - 16 / sizeof(void*) - 2;
+    setRecord(recordBelowIt, recordOfCaller, addressIn(4));
+    AOT_TEST_CHECK(isCaller(find()));
+    reset();
+    constexpr size_t recordBelowCalleeOfOuter = recordOfCaller - 16 / sizeof(void*) - 2;
+    stack[recordOfNativeCode + 1] = nullptr;
+    stack[recordOfCaller] = nullptr;
+    stack[recordOfCaller + 1] = addressIn(2, afterIndirectCall);
+    setRecord(recordBelowCalleeOfOuter, recordOfOuter, addressIn(4));
+    AOT_TEST_CHECK(isTop(find(), recordOfCaller, addressIn(4), recordOfOuter));
+
+    stack[recordOfCaller + 1] = findReturnSiteInStubs(loaded, StubFrameKind::ArgumentList);
+    AOT_TEST_CHECK(isTop(find(), recordOfCaller, addressIn(4), recordOfOuter));
+
+    reset();
+    setRecord(stackPointer + 8, recordOfNativeCode, findReturnSiteInStubs(loaded, StubFrameKind::Plain));
+    AOT_TEST_CHECK(isTop(find(), recordOfNativeCode, findReturnSiteInStubs(loaded, StubFrameKind::Plain)));
+    setRecord(stackPointer + 8, recordOfNativeCode, findReturnSiteInStubs(loaded, StubFrameKind::EngineCallee));
+    AOT_TEST_CHECK(!find(stackPointer + 8));
+    setRecord(stackPointer - 4, recordOfCaller, addressIn(1));
+    setRecord(stackPointer + 8, stackPointer - 4, findReturnSiteInStubs(loaded, StubFrameKind::Plain));
+    AOT_TEST_CHECK(isCaller(find()));
+}
+
+static SUPPRESS_ASAN void testSampleInHostFunction()
+{
+    TestBuild build(3);
+    CodeSketch outer(2);
+    outer.withFrame(48);
+    outer.plain(0x1002);
+    outer.callFunction(1, outer.addSite());
+    outer.end();
+    CodeSketch caller = sketchWithSite(1, 32);
+    uint32_t afterIndirectCall = caller.callStub(callValue(1), caller.addSite()) + sizeOfNearCall;
+    caller.end();
+    TestImage image = build.build(bodies(caller.take(), outer.take()));
+    const Image& loaded = *image.image;
+    auto returnAddressIn = [&](uint32_t function) {
+        return const_cast<uint8_t*>(image.address(function, sizeof(uint32_t) + sizeOfNearCall));
+    };
+    void* nativeCode = reinterpret_cast<void*>(&testSampleInHostFunction);
+    void* mark = findReturnSiteInStubs(loaded, StubFrameKind::HostCall);
+    void* afterCallInFrontOfMark = findReturnSiteInStubs(loaded, StubFrameKind::Plain);
+    void* afterHostCall = findReturnSiteInStubs(loaded, StubFrameKind::Plain, mark);
+    void* afterCallBehindNextSite = findReturnSiteInStubs(loaded, StubFrameKind::Plain, findReturnSiteInStubs(loaded, StubFrameKind::HostCall, mark));
+    AOT_TEST_CHECK(afterCallInFrontOfMark < mark);
+
+    alignas(16) std::array<void*, 64> stack;
+    constexpr size_t recordOfCaller = 40;
+    constexpr size_t recordOfOuter = recordOfCaller + 2 + 48 / sizeof(void*);
+    constexpr size_t entryFrame = recordOfOuter + 8;
+    constexpr size_t recordOfStub = recordOfCaller - 32 / sizeof(void*) - 2;
+    constexpr size_t frameOfHostCall = recordOfStub - 8;
+    constexpr size_t recordOfHostFunction = frameOfHostCall - 2;
+    constexpr size_t stackPointer = recordOfHostFunction - 12;
+    auto setRecord = [&](size_t record, size_t callerFrame, void* returnPC) {
+        stack[record] = &stack[callerFrame];
+        stack[record + 1] = returnPC;
+    };
+    auto reset = [&] {
+        stack.fill(nullptr);
+        setRecord(recordOfOuter, entryFrame, nativeCode);
+        setRecord(recordOfCaller, recordOfOuter, returnAddressIn(2));
+        setRecord(recordOfStub, recordOfCaller, returnAddressIn(1));
+        setRecord(frameOfHostCall, recordOfStub, mark);
+        setRecord(recordOfHostFunction, recordOfStub, afterHostCall);
+        setRecord(stackPointer + 2, recordOfHostFunction, nativeCode);
+    };
+    auto find = [&](const SampledRegisters& registers, CallFrame* topCallFrame) {
+        return findSampledTop(loaded, registers, topCallFrame, std::bit_cast<EntryFrame*>(&stack[entryFrame]), Thread::currentSingleton().stack());
+    };
+    auto isTop = [&](size_t callFrame, const SampledRegisters& registers, CallFrame* topCallFrame) {
+        std::optional<SampledTop> top = find(registers, topCallFrame);
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[callFrame]) && !top->framelessTopCallerPC && !top->framePointer
+            && loaded.locate(top->pc).runsCompiledCode() == (callFrame != frameOfHostCall);
+    };
+    auto* topCallFrame = std::bit_cast<CallFrame*>(&stack[frameOfHostCall]);
+    auto check = [&](size_t expected, CallFrame* topCallFrame) {
+        void* returnAddress = stack[recordOfHostFunction + 1];
+        AOT_TEST_CHECK(isTop(expected, { &stack[recordOfHostFunction], nativeCode, nullptr, &stack[stackPointer] }, topCallFrame));
+        AOT_TEST_CHECK(isTop(expected, { &stack[stackPointer + 2], nativeCode, nullptr, &stack[stackPointer] }, topCallFrame));
+        AOT_TEST_CHECK(!isX86_64() || isTop(expected, { nullptr, nativeCode, nullptr, &stack[stackPointer] }, topCallFrame));
+        AOT_TEST_CHECK(!isARM64() || isTop(expected, { &stack[recordOfStub], nativeCode, returnAddress, &stack[frameOfHostCall] }, topCallFrame));
+    };
+
+    reset();
+    check(frameOfHostCall, topCallFrame);
+    check(recordOfStub, nullptr);
+    check(recordOfStub, std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(topCallFrame) + 1));
+    check(recordOfStub, std::bit_cast<CallFrame*>(sizeof(void*)));
+    stack[frameOfHostCall] = &stack[recordOfCaller];
+    check(recordOfStub, topCallFrame);
+
+    // It has returned, and nothing has written over it.
+    for (void* returnAddress : { afterCallInFrontOfMark, afterCallBehindNextSite }) {
+        reset();
+        stack[recordOfHostFunction + 1] = returnAddress;
+        check(recordOfStub, topCallFrame);
+    }
+
+    // It is in the place of a function that has returned.
+    reset();
+    setRecord(frameOfHostCall - 32 / sizeof(void*) - 2, frameOfHostCall, returnAddressIn(1));
+    check(frameOfHostCall, topCallFrame);
+
+    reset();
+    AOT_TEST_CHECK(isTop(recordOfCaller, { &stack[recordOfStub], nativeCode, nullptr, &stack[stackPointer] }, topCallFrame));
+
+    // It has no frame record. The search does not go past the stub, unless that has returned.
+    if (isX86_64()) {
+        const SampledRegisters registers { nullptr, nativeCode, nullptr, &stack[stackPointer] };
+        stack[recordOfHostFunction] = nullptr;
+        AOT_TEST_CHECK(isTop(recordOfCaller, registers, topCallFrame));
+        stack[recordOfStub + 1] = const_cast<uint8_t*>(image.address(1, afterIndirectCall));
+        setRecord(recordOfOuter, recordOfOuter + 2, findReturnSiteInStubs(loaded, StubFrameKind::ArgumentList));
+        setRecord(recordOfOuter + 2, recordOfOuter + 4, afterCallInFrontOfMark);
+        setRecord(recordOfOuter + 4, entryFrame, nativeCode);
+        AOT_TEST_CHECK(isTop(recordOfOuter + 4, registers, nullptr));
+        AOT_TEST_CHECK(!find(registers, topCallFrame));
+        stack[recordOfStub] = nullptr;
+        AOT_TEST_CHECK(isTop(recordOfOuter + 4, registers, topCallFrame));
+    }
+
+    reset();
+    setRecord(frameOfHostCall, recordOfStub, findReturnSiteInStubs(loaded, StubFrameKind::Adapter));
+    stack[recordOfHostFunction + 1] = findReturnSiteInStubs(loaded, StubFrameKind::Plain, stack[frameOfHostCall + 1]);
+    check(recordOfStub, topCallFrame);
+}
+
+static SUPPRESS_ASAN void testSampleInStub()
+{
+    if (!isX86_64())
+        return;
+
+    TestBuild build(5);
+    CodeSketch outer(2);
+    outer.withFrame(48);
+    outer.plain(0x1002);
+    outer.callFunction(1, outer.addSite());
+    outer.end();
+    CodeSketch caller = sketchWithSite(1, 32);
+    uint32_t afterIndirectCall = caller.callStub(callValue(1), caller.addSite()) + sizeOfNearCall;
+    caller.end();
+    auto bodyWithoutFrame = [](uint32_t function, bool spillsArgumentRegisters) {
+        CodeSketch sketch(function);
+        sketch.plain(0x1000 + function);
+        sketch.callStub(writeBarrier());
+        sketch.end();
+        sketch.code().frame.spillsArgumentRegisters = spillsArgumentRegisters;
+        return sketch.take();
+    };
+    TestImage image = build.build(bodies(caller.take(), outer.take(), bodyWithoutFrame(3, false), bodyWithoutFrame(4, true)));
+    const Image& loaded = *image.image;
+    auto addressIn = [&](uint32_t function, uint32_t offset = sizeof(uint32_t) + sizeOfNearCall) {
+        return const_cast<uint8_t*>(image.address(function, offset));
+    };
+    void* inStub = findReturnSiteInStubs(loaded, StubFrameKind::Plain);
+
+    alignas(16) std::array<void*, 48> stack { };
+    constexpr size_t recordOfCaller = 32;
+    constexpr size_t recordOfOuter = recordOfCaller + 2 + 48 / sizeof(void*);
+    constexpr size_t returnAddress = recordOfCaller - 32 / sizeof(void*) - 1;
+    stack[recordOfCaller] = &stack[recordOfOuter];
+    stack[recordOfCaller + 1] = addressIn(2);
+    auto isTop = [&](size_t framePointer, size_t stackPointer, size_t callFrame, const void* pc, bool hasFrameRecord = true) {
+        std::optional<SampledTop> top = findSampledTop(loaded, { &stack[framePointer], inStub, nullptr, &stack[stackPointer] }, nullptr, nullptr, Thread::currentSingleton().stack());
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[callFrame]) && top->pc == pc && !top->framelessTopCallerPC
+            && top->framePointer == (hasFrameRecord ? nullptr : std::bit_cast<CallFrame*>(&stack[framePointer]));
+    };
+
+    void* startOfStubs = const_cast<uint8_t*>(loaded.code().data());
+    AOT_TEST_CHECK(loaded.locate(startOfStubs).kind == CodeKind::Stub);
+    for (void* caller : { addressIn(1, afterIndirectCall), addressIn(1) }) {
+        stack[returnAddress] = caller;
+        for (void* pushed : { static_cast<void*>(nullptr), static_cast<void*>(&stack[recordOfCaller]), startOfStubs, findReturnSiteInStubs(loaded, StubFrameKind::AtStubEntry) }) {
+            stack[returnAddress - 2] = pushed;
+            AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress, recordOfCaller, caller));
+            AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 2, recordOfCaller, caller));
+        }
+    }
+
+    // A stub that calls a stub has a frame record.
+    stack[returnAddress - 2] = inStub;
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 2, recordOfCaller, inStub));
+
+    stack[returnAddress + 1] = addressIn(2);
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress, recordOfCaller, addressIn(1)));
+    stack[returnAddress + 1] = nullptr;
+    stack[returnAddress - 2] = nullptr;
+
+    // The function has returned, and the frame record is that of a stub which is called like one.
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 1, recordOfCaller, inStub));
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 3, recordOfCaller, inStub));
+
+    stack[returnAddress - 1] = &stack[recordOfCaller];
+    AOT_TEST_CHECK(isTop(returnAddress - 1, returnAddress - 3, returnAddress - 1, inStub));
+
+    // The caller has no frame.
+    stack[returnAddress] = addressIn(1, afterIndirectCall);
+    stack[returnAddress - 1] = addressIn(3);
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 1, returnAddress - 1, addressIn(3), false));
+    AOT_TEST_CHECK(isTop(recordOfCaller, returnAddress - 3, returnAddress - 1, addressIn(3), false));
+
+    // It has got a frame record.
+    stack[returnAddress - 1] = &stack[recordOfCaller];
+    stack[returnAddress - 2] = addressIn(3);
+    AOT_TEST_CHECK(isTop(returnAddress - 1, returnAddress - 2, returnAddress - 1, addressIn(3)));
+
+    // It lies below the arguments that it has spilled.
+    constexpr size_t movedReturnAddress = returnAddress - sizeOfSpilledArgumentRegisters / sizeof(void*);
+    stack.fill(nullptr);
+    stack[recordOfCaller] = &stack[recordOfOuter];
+    stack[recordOfCaller + 1] = addressIn(2);
+    stack[movedReturnAddress] = addressIn(1, afterIndirectCall);
+    stack[movedReturnAddress - 1] = addressIn(4);
+    AOT_TEST_CHECK(isTop(recordOfCaller, movedReturnAddress - 3, movedReturnAddress - 1, addressIn(4), false));
+}
+
+#if CPU(X86_64)
+namespace {
+
+class SampledThread {
+public:
+    enum Function : uint32_t { WithRecord = 1, Outer, OtherWithRecord, WithoutFrame, WithoutRecord, SpillsWithoutFrame, SpillsWithoutRecord, End };
+
+    static constexpr size_t record = 40;
+    static constexpr size_t returnToWithRecord = record - 32 / sizeof(void*) - 1;
+
+    explicit SampledThread(std::span<const ArgumentMoves> thunksOfOuter = { })
+        : m_build(End)
+    {
+        auto body = [&](Function function, std::optional<unsigned> frameSize, bool hasFrameRecord = true, bool spillsArgumentRegisters = false) {
+            CodeSketch sketch(function);
+            if (frameSize)
+                sketch.withFrame(*frameSize);
+            auto site = [&] {
+                return frameSize ? sketch.addSite() : OptionalIndex();
+            };
+            sketch.plain(0x1000 + function);
+            sketch.callStub(writeBarrier(), site());
+            sketch.callStub(callValue(1), site());
+            AOT_TEST_CHECK(sketch.pinnedBytes(sizeOfRoomForCode) == offsetOfRoomForCode);
+            if (function == WithRecord)
+                sketch.code().sites.faultingAccesses.append(FaultingAccess { sketch.pinnedBytes(2 * sizeOfNearCall), site(), { 1 } });
+            if (function == Outer) {
+                for (const ArgumentMoves& moves : thunksOfOuter)
+                    sketch.callThunk(moves, site());
+                sketch.callFunction(WithRecord, site());
+                sketch.callStub(constructValue(ConstructSyntax::NewExpression), site());
+            }
+            sketch.end();
+            sketch.code().frame.hasFrameRecord = hasFrameRecord;
+            sketch.code().frame.spillsArgumentRegisters = spillsArgumentRegisters;
+            return sketch.take();
+        };
+        m_image = m_build.build(bodies(body(WithRecord, 32), body(Outer, 48), body(OtherWithRecord, 64), body(WithoutFrame, std::nullopt), body(WithoutRecord, 16, false), body(SpillsWithoutFrame, std::nullopt, true, true), body(SpillsWithoutRecord, 16, false, true)));
+        reset();
+    }
+
+    void reset(void* returnAddressInRecord = nullptr)
+    {
+        stack.fill(nullptr);
+        stack[record] = &stack[record + 8];
+        stack[record + 1] = returnAddressInRecord ? returnAddressInRecord : afterCall(Outer);
+        macroScratchRegister = nullptr;
+        entryFrame = nullptr;
+    }
+
+    uint8_t* afterCallOfStub(Function function) { return address(function, sizeof(uint32_t) + sizeOfNearCall); }
+    uint8_t* afterCall(Function function) { return address(function, offsetOfRoomForCode); }
+    uint8_t* behindRoomForCode(Function function, unsigned numberOfCalls) { return address(function, offsetOfRoomForCode + sizeOfRoomForCode + numberOfCalls * sizeOfNearCall); }
+    void* returnSite(StubFrameKind kind) { return findReturnSiteInStubs(*m_image.image, kind, startOfStubs() + 2 * sizeOfRoomForCode); }
+
+    uint8_t* codeIn(Function function, std::initializer_list<uint8_t> code = { }) { return write(address(function, offsetOfRoomForCode), code); }
+    uint8_t* codeInStub(std::initializer_list<uint8_t> code = { }) { return write(startOfStubs(), code); }
+    uint8_t* afterCodeInOtherStub(std::initializer_list<uint8_t> code) { return write(startOfStubs() + sizeOfRoomForCode, code) + code.size(); }
+
+    struct Top {
+        size_t callFrame;
+        const void* pc;
+        const void* framelessTopCallerPC { nullptr };
+    };
+
+    std::optional<SampledTop> find(void* pc, size_t stackPointer, size_t framePointer = record)
+    {
+        return findSampledTop(*m_image.image, { &stack[framePointer], pc, nullptr, &stack[stackPointer], macroScratchRegister }, nullptr, static_cast<EntryFrame*>(entryFrame), Thread::currentSingleton().stack());
+    }
+
+    bool finds(const Top& expected, void* pc, size_t stackPointer, size_t framePointer = record)
+    {
+        std::optional<SampledTop> top = find(pc, stackPointer, framePointer);
+        return top && top->callFrame == std::bit_cast<CallFrame*>(&stack[expected.callFrame]) && top->pc == expected.pc && top->framelessTopCallerPC == expected.framelessTopCallerPC
+            && top->framePointer == (expected.callFrame < record ? std::bit_cast<CallFrame*>(&stack[record]) : nullptr);
+    }
+
+    bool findsOwnerOfRecord(void* pc, size_t stackPointer) { return finds({ record, pc }, pc, stackPointer); }
+
+    alignas(16) std::array<void*, 64> stack;
+    void* macroScratchRegister;
+    void* entryFrame;
+
+private:
+    static constexpr uint32_t offsetOfRoomForCode = sizeof(uint32_t) + 2 * sizeOfNearCall;
+    static constexpr uint32_t sizeOfRoomForCode = 32;
+
+    uint8_t* address(Function function, uint32_t offset) { return const_cast<uint8_t*>(m_image.address(function, offset)); }
+    uint8_t* startOfStubs() { return const_cast<uint8_t*>(m_image.image->code().data()); }
+
+    static uint8_t* write(uint8_t* room, std::initializer_list<uint8_t> code)
+    {
+        constexpr uint8_t noOperation = 0x90;
+        std::span bytes = unsafeMakeSpan(room, sizeOfRoomForCode);
+        std::ranges::fill(bytes, noOperation);
+        std::ranges::copy(code, bytes.begin() + sizeOfRoomForCode / 2);
+        return room + sizeOfRoomForCode / 2;
+    }
+
+    TestBuild m_build;
+    TestImage m_image;
+};
+
+} // anonymous namespace
+
+static SUPPRESS_ASAN void testSampleAtEdgeOfFrame()
+{
+    using enum SampledThread::Function;
+    using Code = std::initializer_list<uint8_t>;
+    constexpr size_t record = SampledThread::record;
+    constexpr size_t returnAddress = SampledThread::returnToWithRecord;
+    SampledThread thread;
+    auto& stack = thread.stack;
+
+    stack[returnAddress] = thread.afterCall(WithRecord);
+    for (Code code : { Code { }, Code { 0x55, 0x48, 0x89, 0xe5 }, Code { 0xc3 } }) {
+        void* pc = thread.codeIn(OtherWithRecord, code);
+        AOT_TEST_CHECK(thread.finds({ record, pc, stack[returnAddress] }, pc, returnAddress));
+    }
+    for (Code code : { Code { 0xc9 }, Code { 0x48, 0x89, 0xec }, Code { 0x5b }, Code { 0x41, 0x54 }, Code { 0x48, 0x83, 0xc4, 0x08 }, Code { 0x48, 0x83, 0xec, 0x08 }, Code { 0x48, 0x81, 0xec, 0x08, 0x01, 0x00, 0x00 } })
+        AOT_TEST_CHECK(thread.findsOwnerOfRecord(thread.codeIn(OtherWithRecord, code), returnAddress));
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(thread.codeIn(WithRecord), returnAddress));
+
+    // What only looks like a return address.
+    void* pc = thread.codeIn(OtherWithRecord);
+    stack[record + 1] = thread.afterCallOfStub(Outer);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(pc, returnAddress));
+    thread.reset();
+    stack[returnAddress] = thread.codeIn(WithRecord);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(pc, returnAddress));
+    stack[returnAddress - 2] = thread.afterCall(WithRecord);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(pc, returnAddress - 2));
+    stack[returnAddress] = thread.afterCall(WithRecord);
+    stack[returnAddress - 1] = thread.afterCallOfStub(WithoutFrame);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(pc, returnAddress - 1));
+
+    // A frame without a record that is being set up, or taken down.
+    thread.reset();
+    stack[returnAddress] = thread.afterCall(WithRecord);
+    auto findsFrameWithoutRecord = [&](size_t wordsBelowReturnAddress, Code code) {
+        pc = thread.codeIn(WithoutRecord, code);
+        return thread.finds({ returnAddress - 1, pc }, pc, returnAddress - wordsBelowReturnAddress);
+    };
+    AOT_TEST_CHECK(findsFrameWithoutRecord(0, { }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(0, { 0x53, 0x41, 0x54, 0x55 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(1, { 0x48, 0x83, 0xec, 0x10 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(1, { 0x48, 0x81, 0xec, 0x10, 0x00, 0x00, 0x00 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(2, { 0x55 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(3, { }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(3, { 0x5b, 0x48, 0x83, 0xc4, 0x10 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(2, { 0x41, 0x5c, 0x5b }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(1, { 0x5b, 0x50 }));
+    AOT_TEST_CHECK(findsFrameWithoutRecord(1, { 0x5b, 0x41, 0x5b, 0x48, 0x83, 0xc4, 0x20, 0x41, 0x53 }));
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(thread.codeIn(WithoutRecord), returnAddress - 7));
+
+    // The return address is in a register, and an argument that was not passed looks like one.
+    constexpr size_t spilledArguments = returnAddress + 1 - numberOfArgumentGPRs;
+    thread.reset();
+    thread.macroScratchRegister = stack[spilledArguments + 2] = thread.afterCall(WithRecord);
+    pc = thread.codeIn(SpillsWithoutRecord, { 0x41, 0x53 });
+    AOT_TEST_CHECK(thread.finds({ record, pc, thread.macroScratchRegister }, pc, spilledArguments));
+
+    constexpr size_t frameOfCaller = returnAddress - 1;
+    constexpr size_t movedReturnAddress = frameOfCaller - 16 / sizeof(void*) - numberOfArgumentGPRs - 1;
+    thread.reset();
+    stack[returnAddress] = thread.afterCall(WithRecord);
+    thread.macroScratchRegister = stack[movedReturnAddress] = stack[movedReturnAddress + numberOfArgumentGPRs] = thread.afterCall(WithoutRecord);
+    auto findsFrameAboveSpilledArguments = [&](size_t stackPointer, Code code) {
+        pc = thread.codeIn(SpillsWithoutFrame, code);
+        return thread.finds({ frameOfCaller, pc, thread.macroScratchRegister }, pc, stackPointer);
+    };
+    AOT_TEST_CHECK(findsFrameAboveSpilledArguments(movedReturnAddress, { }));
+    AOT_TEST_CHECK(findsFrameAboveSpilledArguments(movedReturnAddress + 1, { 0x41, 0x53 }));
+    AOT_TEST_CHECK(findsFrameAboveSpilledArguments(movedReturnAddress + 1, { 0x48, 0x83, 0xc4, 0x20, 0x41, 0x53 }));
+
+    thread.reset();
+    stack[returnAddress] = thread.afterCallOfStub(WithRecord);
+    AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, thread.codeInStub({ 0x4c, 0x89, 0x0c, 0x24, 0xc3 }), returnAddress));
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(thread.codeInStub({ 0x4c, 0x89, 0x0c, 0x24 }), returnAddress));
+    for (Code code : { Code { 0x50 }, Code { 0x58 } })
+        AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, thread.codeInStub(code), returnAddress - 1));
+    stack[returnAddress] = thread.behindRoomForCode(WithRecord, 1);
+    AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, thread.codeInStub(), returnAddress));
+
+    stack[returnAddress] = thread.afterCall(WithRecord);
+    stack[returnAddress - 1] = thread.afterCallOfStub(WithoutFrame);
+    AOT_TEST_CHECK(thread.finds({ returnAddress - 1, stack[returnAddress - 1] }, thread.codeInStub({ 0x55, 0x48, 0x89, 0xe5 }), returnAddress - 1));
+
+    // A stub polls at its entry, and it has not spilled what is above its return address.
+    constexpr size_t returnToLargerFrame = record - 64 / sizeof(void*) - 1;
+    stack[returnToLargerFrame] = thread.afterCallOfStub(OtherWithRecord);
+    stack[returnToLargerFrame - 1] = thread.returnSite(StubFrameKind::AtStubEntry);
+    stack[returnToLargerFrame - 2] = &stack[record];
+    AOT_TEST_CHECK(thread.finds({ returnToLargerFrame - 1, stack[returnToLargerFrame - 1] }, thread.codeInStub(), returnToLargerFrame - 2, returnToLargerFrame - 2));
+    stack[returnToLargerFrame] = nullptr;
+    stack[returnAddress] = thread.codeIn(WithRecord);
+    AOT_TEST_CHECK(thread.finds({ returnToLargerFrame - 1, stack[returnToLargerFrame - 1] }, thread.codeInStub(), returnToLargerFrame - 2, returnToLargerFrame - 2));
+}
+
+static SUPPRESS_ASAN void testSampleBelowFrameRecordOfOther()
+{
+    using enum SampledThread::Function;
+    constexpr size_t record = SampledThread::record;
+    SampledThread thread;
+    auto& stack = thread.stack;
+    void* inStub = thread.codeInStub();
+    void* nativeCode = reinterpret_cast<void*>(&testSampleBelowFrameRecordOfOther);
+    void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
+
+    constexpr size_t returnAddress = SampledThread::returnToWithRecord;
+    thread.reset(thread.afterCallOfStub(Outer));
+    stack[returnAddress] = thread.afterCallOfStub(WithRecord);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(inStub, returnAddress));
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(inStub, returnAddress - 2));
+
+    auto findsFunctionCalledAt = [&](void* returnSite, void* returnAddressInRecord, void* pc, size_t bytesBelowRecord = AdapterFrame::saveAreaSize, void* codeBlock = nullptr) {
+        size_t frame = record - bytesBelowRecord / sizeof(void*) - 2;
+        size_t returnToFunction = frame - 16 / sizeof(void*) - 1;
+        thread.reset(returnAddressInRecord);
+        stack[record + static_cast<int>(CallFrameSlot::codeBlock)] = codeBlock;
+        stack[frame + 1] = returnSite;
+        stack[returnToFunction] = thread.afterCallOfStub(WithoutRecord);
+        return thread.finds({ frame, stack[returnToFunction] }, pc, returnToFunction - 2);
+    };
+    for (void* pc : { inStub, nativeCode }) {
+        for (StubFrameKind kind : { StubFrameKind::Adapter, StubFrameKind::ConstructAdapter, StubFrameKind::HandlerOfJob }) {
+            void* adapter = thread.returnSite(kind);
+            AOT_TEST_CHECK(findsFunctionCalledAt(adapter, inInterpreter, pc));
+            AOT_TEST_CHECK(findsFunctionCalledAt(adapter, inInterpreter, pc, AdapterFrame::saveAreaSize + 32));
+            AOT_TEST_CHECK(findsFunctionCalledAt(adapter, thread.returnSite(StubFrameKind::EngineCallee), pc));
+            AOT_TEST_CHECK(!findsFunctionCalledAt(adapter, inInterpreter, pc, AdapterFrame::saveAreaSize - 16));
+            AOT_TEST_CHECK(!findsFunctionCalledAt(adapter, inInterpreter, pc, AdapterFrame::saveAreaSize, nativeCode));
+            for (void* returnAddressInRecord : { nativeCode, thread.returnSite(StubFrameKind::MethodRead), static_cast<void*>(thread.afterCall(Outer)) })
+                AOT_TEST_CHECK(!findsFunctionCalledAt(adapter, returnAddressInRecord, pc));
+        }
+        for (StubFrameKind kind : { StubFrameKind::ArgumentList, StubFrameKind::PlainFunctionConstruct }) {
+            AOT_TEST_CHECK(findsFunctionCalledAt(thread.returnSite(kind), thread.afterCall(Outer), pc, 0));
+            AOT_TEST_CHECK(!findsFunctionCalledAt(thread.returnSite(kind), thread.afterCallOfStub(Outer), pc));
+        }
+    }
+    AOT_TEST_CHECK(!findsFunctionCalledAt(thread.returnSite(StubFrameKind::Adapter), inInterpreter, inInterpreter));
+
+    thread.entryFrame = stack[record];
+    AOT_TEST_CHECK(!thread.find(nativeCode, record - 2));
+    stack[record - 1] = thread.returnSite(StubFrameKind::ConstructAdapterMakesThis);
+    AOT_TEST_CHECK(thread.finds({ record, stack[record - 1] }, nativeCode, record - 1));
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(inStub, record - 1));
+    stack[record + 1] = nativeCode;
+    AOT_TEST_CHECK(!thread.find(nativeCode, record - 1));
+
+    // What the engine has entered is native code, in the place of a function that has returned.
+    thread.reset(inInterpreter);
+    thread.entryFrame = stack[record];
+    stack[returnAddress] = thread.afterCallOfStub(WithRecord);
+    stack[returnAddress - 1] = &stack[record];
+    stack[returnAddress + 1] = thread.entryFrame;
+    AOT_TEST_CHECK(!thread.find(nativeCode, returnAddress - 3, returnAddress + 1));
+    stack[returnAddress + 1] = nullptr;
+    AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, nativeCode, returnAddress - 3, returnAddress + 1));
+
+    constexpr uint16_t offsetOfCode = AOT_INSTANCE_OFFSET(image.code);
+    AOT_TEST_CHECK(findsFunctionCalledAt(thread.afterCodeInOtherStub({ 0x49, 0x03, 0xbd, offsetOfCode & 0xff, offsetOfCode >> 8, 0x00, 0x00, 0xff, 0xd7 }), thread.afterCallOfStub(Outer), inStub));
+    AOT_TEST_CHECK(findsFunctionCalledAt(thread.afterCodeInOtherStub({ 0x4d, 0x03, 0x8d, offsetOfCode & 0xff, offsetOfCode >> 8, 0x00, 0x00, 0x41, 0xff, 0xd1 }), thread.afterCallOfStub(Outer), inStub));
+    AOT_TEST_CHECK(!findsFunctionCalledAt(thread.afterCodeInOtherStub({ 0x49, 0x03, 0xbd, offsetOfCode & 0xff, offsetOfCode >> 8, 0x00, 0x00, 0xff, 0xd7 }), nativeCode, inStub));
+    AOT_TEST_CHECK(!findsFunctionCalledAt(thread.afterCodeInOtherStub({ 0xff, 0xd7 }), thread.afterCallOfStub(Outer), inStub));
+
+    // Frames that cannot be where they would have to be.
+    thread.reset();
+    stack[record - 4] = thread.returnSite(StubFrameKind::ArgumentList);
+    stack[record - 8] = thread.afterCallOfStub(WithoutRecord);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(inStub, record - 10));
+    stack[record - 1] = thread.returnSite(StubFrameKind::ArgumentList);
+    stack[record - 2] = thread.afterCallOfStub(SpillsWithoutFrame);
+    AOT_TEST_CHECK(thread.findsOwnerOfRecord(inStub, record - 2));
+    stack[record - 2] = thread.afterCallOfStub(WithoutFrame);
+    AOT_TEST_CHECK(thread.finds({ record - 2, stack[record - 2] }, inStub, record - 2));
+    AOT_TEST_CHECK(thread.finds({ record + 8, stack[record + 1] }, nativeCode, record - 2));
+
+    thread.reset();
+    stack[returnAddress] = thread.afterCallOfStub(WithRecord);
+    stack[returnAddress - 2] = thread.returnSite(StubFrameKind::ArgumentList);
+    AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, nativeCode, returnAddress - 4));
+    stack[returnAddress - 2] = thread.returnSite(StubFrameKind::PlainFunctionConstructMakesThis);
+    AOT_TEST_CHECK(thread.finds({ record + 8, stack[record + 1] }, nativeCode, returnAddress - 4));
+    stack[record + 1] = thread.behindRoomForCode(Outer, 1);
+    AOT_TEST_CHECK(thread.finds({ record, stack[returnAddress] }, nativeCode, returnAddress - 4));
+}
+
+static SUPPRESS_ASAN void testSampleBelowManyFramesWithoutRecord()
+{
+    TestBuild build(2);
+    CodeSketch recursive = sketchWithSite(1, 16);
+    uint32_t afterRecursiveCall = recursive.callFunction(1, recursive.addSite()) + sizeOfNearCall;
+    recursive.code().frame.hasFrameRecord = false;
+    recursive.end();
+    TestImage image = build.build(bodies(recursive.take()));
+    void* afterCallOfStub = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t) + sizeOfNearCall));
+    void* nativeCode = reinterpret_cast<void*>(&testSampleBelowManyFramesWithoutRecord);
+    void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
+
+    constexpr size_t framesChecked = 256;
+    constexpr size_t wordsInFrame = 16 / sizeof(void*) + 2;
+    constexpr size_t returnAddress = 3;
+    constexpr size_t record = returnAddress + 1 + (framesChecked + 2) * wordsInFrame;
+    alignas(16) std::array<void*, record + 8> stack;
+    auto findsCaller = [&](void* pc, size_t numberOfFrames) {
+        stack.fill(nullptr);
+        stack[record] = &stack[record + 4];
+        stack[record + 1] = inInterpreter;
+        stack[returnAddress] = afterCallOfStub;
+        for (size_t frame = 1; frame <= numberOfFrames; ++frame)
+            stack[returnAddress + frame * wordsInFrame] = const_cast<uint8_t*>(image.address(1, afterRecursiveCall));
+        stack[returnAddress + wordsInFrame / 2] = findReturnSiteInStubs(*image.image, StubFrameKind::ReturnsAfterOperation);
+        std::optional<SampledTop> top = findSampledTop(*image.image, { &stack[record], pc, nullptr, &stack[returnAddress - 2] }, nullptr, nullptr, Thread::currentSingleton().stack());
+        return top && top->pc == afterCallOfStub && top->callFrame == std::bit_cast<CallFrame*>(&stack[returnAddress + wordsInFrame - 1]);
+    };
+    for (void* pc : { static_cast<void*>(const_cast<uint8_t*>(image.image->code().data())), nativeCode }) {
+        AOT_TEST_CHECK(findsCaller(pc, framesChecked));
+        AOT_TEST_CHECK(!findsCaller(pc, framesChecked - 1));
+    }
+}
+
+static SUPPRESS_ASAN void testSampleFarBelowFrameRecord()
+{
+    TestBuild build(3);
+    CodeSketch outer = sketchWithSite(2, 48);
+    uint32_t afterCall = outer.callFunction(1, outer.addSite()) + sizeOfNearCall;
+    outer.end();
+    TestImage image = build.build(bodies(plainBody(1, 32), outer.take()));
+    void* afterCallOfStub = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t) + sizeOfNearCall));
+    void* inStub = const_cast<uint8_t*>(image.image->code().data());
+
+    constexpr size_t wordsSearchedAtEitherEnd = 32 * KB / sizeof(void*);
+    constexpr size_t firstWord = 1;
+    constexpr size_t record = 3 * wordsSearchedAtEitherEnd;
+    alignas(16) std::array<void*, record + 8> stack { };
+    stack[record] = &stack[record + 4];
+    stack[record + 1] = const_cast<uint8_t*>(image.address(2, afterCall));
+    stack[record - 32 / sizeof(void*) - 1] = afterCallOfStub;
+    // A return address in a stub puts an end to the search.
+    auto isSearched = [&](size_t word, size_t stackPointer = firstWord) {
+        SetForScope returnAddress(stack[word], findReturnSiteInStubs(*image.image, StubFrameKind::ReturnsAfterOperation));
+        std::optional<SampledTop> top = findSampledTop(*image.image, { &stack[record], inStub, nullptr, &stack[stackPointer] }, nullptr, nullptr, Thread::currentSingleton().stack());
+        return top->pc != afterCallOfStub;
+    };
+    AOT_TEST_CHECK(isSearched(firstWord + wordsSearchedAtEitherEnd - 2));
+    AOT_TEST_CHECK(!isSearched(firstWord + wordsSearchedAtEitherEnd));
+    AOT_TEST_CHECK(!isSearched(record - wordsSearchedAtEitherEnd - 3));
+    AOT_TEST_CHECK(isSearched(record - wordsSearchedAtEitherEnd - 1));
+    AOT_TEST_CHECK(isSearched(record - wordsSearchedAtEitherEnd / 4 - 1, firstWord + record / 2));
+}
+
+static SUPPRESS_ASAN void testSampleBelowCallThroughThunk()
+{
+    auto thunk = [](StubKey key, std::initializer_list<std::tuple<GPRReg, ArgumentSource, uint64_t>> list) {
+        ArgumentMoves moves;
+        moves.append(key.bits());
+        moves.append(signatureOf(key).immediate ? hasImmediate : 0);
+        for (auto [destination, source, payload] : list)
+            appendArgumentMove(moves, destination, source, payload);
+        return moves;
+    };
+    using enum ArgumentSource;
+    const ArgumentMoves thunks[] = {
+        thunk(writeBarrier(), { { signatureOf(writeBarrier()).operands[0].gpr(), Register, X86Registers::ebx } }),
+        thunk(callValue(2), { { calleeGPR, Register, X86Registers::ebx }, { thisGPR, Register, X86Registers::r14 } }),
+        thunk(callValue(2), { { argumentGPR(0), Register, argumentGPR(1) }, { argumentGPR(1), Register, argumentGPR(0) } }),
+        thunk(callValue(2), { { calleeGPR, Register, thisGPR }, { thisGPR, Register, calleeGPR } }),
+        thunk(callValue(2), { { calleeGPR, Stack64, -8 }, { thisGPR, Stack32, -1000 } }),
+        thunk(callValue(2), { { calleeGPR, Stack64OffStackPointer, 0 }, { thisGPR, Stack32OffStackPointer, 8 }, { argumentGPR(0), Stack64OffStackPointer, 1000 } }),
+        thunk(callMethodById(1), { { thisGPR, Register, X86Registers::ebx } }),
+        thunk(callMethodById(1), { { thisGPR, Register, X86Registers::r14 } }),
+        thunk(constructWithArray(ConstructSyntax::NewExpression), { { calleeGPR, Register, X86Registers::ebx } }),
+        thunk(superConstructWithArray(), { { calleeGPR, Register, X86Registers::ebx } }),
+        thunk(callValue(4), { { argumentGPR(0), Constant, 0 }, { argumentGPR(1), Constant, 7 }, { argumentGPR(2), Constant, -7 }, { argumentGPR(3), Constant, JSValue::NumberTag }, { calleeGPR, Constant, 7 } }),
+    };
+    SampledThread thread(thunks);
+    void* inStub = thread.codeInStub();
+    for (unsigned index = 0; index < std::size(thunks); ++index) {
+        thread.reset(thread.behindRoomForCode(SampledThread::Outer, index + 1));
+        void* returnAddress = thread.stack[SampledThread::returnToWithRecord] = thread.afterCallOfStub(SampledThread::WithRecord);
+        AOT_TEST_CHECK(thread.finds({ SampledThread::record, index ? returnAddress : inStub }, inStub, SampledThread::returnToWithRecord));
+    }
+}
+#endif
 
 static CompiledCode bodyWithFrameMap(uint32_t function, const Vector<uint32_t>& frameMapWords)
 {
@@ -888,6 +1719,19 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/image-function-of"_s, testImageFunctionOf },
         { "image/functions/records"_s, testRecords },
         { "image/functions/sample-in-native-code"_s, testSampleInNativeCode },
+#if CPU(ARM64)
+        { "image/functions/sample-in-native-code-that-leaves-an-address-in-the-link-register"_s, testSampleInNativeCodeThatLeavesAddressInLinkRegister },
+#endif
+        { "image/functions/sample-in-native-code-that-the-frame-pointer-does-not-lead-out-of"_s, testSampleInNativeCodeThatFramePointerDoesNotLeadOutOf },
+        { "image/functions/sample-in-host-function"_s, testSampleInHostFunction },
+        { "image/functions/sample-in-stub"_s, testSampleInStub },
+#if CPU(X86_64)
+        { "image/functions/sample-at-edge-of-frame"_s, testSampleAtEdgeOfFrame },
+        { "image/functions/sample-below-frame-record-of-other"_s, testSampleBelowFrameRecordOfOther },
+        { "image/functions/sample-below-many-frames-without-record"_s, testSampleBelowManyFramesWithoutRecord },
+        { "image/functions/sample-far-below-frame-record"_s, testSampleFarBelowFrameRecord },
+        { "image/functions/sample-below-call-through-thunk"_s, testSampleBelowCallThroughThunk },
+#endif
         { "image/functions/frame-maps"_s, testFrameMaps },
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
 #if CPU(X86_64)

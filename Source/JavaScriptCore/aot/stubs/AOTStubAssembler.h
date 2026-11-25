@@ -19,6 +19,7 @@
 #include "AllowMacroScratchRegisterUsage.h"
 #include "CCallHelpers.h"
 #include "DisallowMacroScratchRegisterUsage.h"
+#include "MathCommon.h"
 #include "StackAlignment.h"
 #include <array>
 #include <initializer_list>
@@ -65,6 +66,24 @@ struct OperationCall {
     std::optional<GPRReg> valueDestination { };
     std::optional<SpilledArguments> spilledArguments { };
 };
+
+constexpr bool mayJumpToCLibrary(Entry entry)
+{
+    switch (entry) {
+#define AOT_CASE_OF_MATH_FUNCTION(capitalizedName, lowerName) case Entry::operationAOTMath ## capitalizedName:
+    FOR_EACH_ARITH_UNARY_OP(AOT_CASE_OF_MATH_FUNCTION)
+#undef AOT_CASE_OF_MATH_FUNCTION
+    case Entry::operationAOTMathATan2:
+    case Entry::operationAOTMathHypot:
+    case Entry::operationAOTMathHypot3:
+    case Entry::operationAOTFmod:
+    case Entry::operationAOTPow:
+    case Entry::operationAOTMoveBytes:
+        return true;
+    default:
+        return false;
+    }
+}
 
 constexpr bool mayFailToAllocate(Entry entry, OperationCall::FirstArgument firstArgument, const Typed::Effects& effects)
 {
@@ -174,8 +193,11 @@ public:
 
     template<typename Functor> void preserving(std::span<const GPRReg>, const Functor&);
     template<typename Functor> void preserving(std::initializer_list<GPRReg> saved, const Functor& functor) { preserving(std::span<const GPRReg>(saved.begin(), saved.end()), functor); }
+    template<typename Functor> void preservingInFrame(std::span<const GPRReg>, const Functor&);
+    template<typename Functor> void preservingInFrame(std::initializer_list<GPRReg> saved, const Functor& functor) { preservingInFrame(std::span<const GPRReg>(saved.begin(), saved.end()), functor); }
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee callee, bool hasResult, const Functor& functor) { preservingRegistersClobberedBy(callee, hasResult, { }, functor); }
     template<typename Functor> void preservingRegistersClobberedBy(StubCallee, bool hasResult, const RegisterSet& lostAnyway, const Functor&);
+    template<typename Functor> void preservingRegistersClobberedByInFrame(StubCallee, bool hasResult, const RegisterSet& lostAnyway, const Functor&);
     template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const Functor& functor) { preservingCallerSavedRegisters(hasResult, { }, functor); }
     template<typename Functor> void preservingCallerSavedRegisters(bool hasResult, const RegisterSet& lostAnyway, const Functor&);
     template<typename Functor> void withSavedRegisters(const RegisterSet&, const Functor&);
@@ -189,7 +211,8 @@ public:
     void callOperationAndReturn(GPRReg offsetInRuntimeTable, const OperationCall& operationCall) { emitOperationCallAndReturn(offsetInRuntimeTable, operationCall, [] { }, SavedRegistersAreRead::ByCallerAlone); }
     void tailCallOperation(Entry entry, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(entry, firstArgument); }
     void tailCallOperation(GPRReg offsetInRuntimeTable, OperationCall::FirstArgument firstArgument) { emitOperationTailCall(offsetInRuntimeTable, firstArgument); }
-    void callLeaf(Entry, unsigned bytesPushed = 0);
+    void callLeaf(Entry);
+    void callLeafInFrame(Entry);
     void jumpToOperationCallOf(Entry);
     void jumpToCallOfOperation(Entry);
     void jumpToStubTakingImmediate();
@@ -247,13 +270,16 @@ public:
     void returnFlagsTest32(GPRReg, TrustedImm32 mask);
     void returnFlagsConstant(bool);
 
-    void addOutOfLinePart(Function<void(StubAssembler&)>&& part) { m_outOfLineParts.append(WTF::move(part)); }
+    Jump loadVMAndBranchIfItHasSamplingProfiler(GPRReg vm);
+
+    void addOutOfLinePart(Function<void(StubAssembler&)>&& part) { m_outOfLineParts.append({ WTF::move(part), isUnderSavedRegisters() }); }
 
     Call call(GPRReg, PtrTag);
     Call call(Address, PtrTag);
     void farJump(GPRReg, PtrTag);
     void farJump(Address, PtrTag);
     void farJump(BaseIndex, PtrTag);
+    void jumpToReturnAddress(GPRReg);
     Call nearCall() = delete;
     Call nearTailCall() = delete;
     Call threadSafePatchableNearCall() = delete;
@@ -299,7 +325,9 @@ private:
     void emitOperationCallHead();
     void recordSignatureRegisters(StubKey entry);
     NO_RETURN_DUE_TO_CRASH void crashWhileGenerating(ASCIILiteral reason) const;
+    bool isUnderSavedRegisters() const { return m_partIsUnderSavedRegisters || !m_savedRegisterStack.isEmpty(); }
     void checkHasNoBorrowedFPRs() const;
+    void emitPrologueUnderReturnAddress();
 
     static constexpr unsigned alignedSizeOfRegisters(size_t numberOfRegisters) { return WTF::roundUpToMultipleOf<stackAlignmentBytes()>(numberOfRegisters * sizeof(CPURegister)); }
 
@@ -312,7 +340,8 @@ private:
     void recordCall(Entry);
     void recordCallee(StubCallee);
     void recordCallee(PtrTag);
-    void recordFarJump(PtrTag);
+    enum class FarJumpTarget : bool { Any, ReturnAddress };
+    void recordFarJump(PtrTag, FarJumpTarget = FarJumpTarget::Any);
     void addReference(StubKey, StubReference::Kind);
 
     void storePreservedRegisters(std::span<const GPRReg>);
@@ -357,7 +386,12 @@ private:
     Vector<RegisterSet, 4> m_savedRegisterStack;
     bool m_boxesBooleanAtEveryReturn { false };
     std::optional<StubKey> m_stubBehindEveryReturn;
-    Vector<Function<void(StubAssembler&)>> m_outOfLineParts;
+    struct OutOfLinePart {
+        Function<void(StubAssembler&)> generate;
+        bool isUnderSavedRegisters;
+    };
+    Vector<OutOfLinePart> m_outOfLineParts;
+    bool m_partIsUnderSavedRegisters { false };
 
     Vector<BoundEntry> m_boundEntries;
     Vector<BoundReturnLabel> m_boundReturnLabels;
@@ -437,18 +471,29 @@ void StubAssembler::preserving(std::span<const GPRReg> saved, const Functor& fun
 }
 
 template<typename Functor>
+void StubAssembler::preservingInFrame(std::span<const GPRReg> saved, const Functor& functor)
+{
+    emitPrologueUnderReturnAddress();
+    preserving(saved, functor);
+    emitFunctionEpilogueWithEmptyFrame();
+}
+
+template<typename Functor>
 void StubAssembler::preservingCallerSavedRegisters(bool hasResult, const RegisterSet& lostAnyway, const Functor& functor)
 {
-#if CPU(X86_64)
-    emitFunctionPrologue();
-    subPtr(TrustedImm32(sizeof(CPURegister)), stackPointerRegister);
-    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, lostAnyway, [&](unsigned bytes) {
-        functor(bytes + 2 * static_cast<unsigned>(sizeof(CPURegister)));
+    preservingRegistersClobberedByInFrame(StubCallee::Operation, hasResult, lostAnyway, functor);
+}
+
+template<typename Functor>
+void StubAssembler::preservingRegistersClobberedByInFrame(StubCallee callee, bool hasResult, const RegisterSet& lostAnyway, const Functor& functor)
+{
+    emitPrologueUnderReturnAddress();
+    SavedRegisterArea area = storeRegistersClobberedBy(callee, hasResult, lostAnyway, { }, isX86_64() ? sizeof(CPURegister) : 0);
+    withSavedRegisters(RegisterSet::fromIterable(area.registers), [&] {
+        functor(area.bytes + 2 * static_cast<unsigned>(sizeof(CPURegister)));
     });
+    loadSavedRegisters(area, StackPointerAfterLoads::IsLeftToEpilogue);
     emitFunctionEpilogue();
-#else
-    preservingRegistersClobberedBy(StubCallee::Operation, hasResult, lostAnyway, functor);
-#endif
 }
 
 template<typename Functor>

@@ -1739,6 +1739,7 @@ if ((ARM64E or ARM64) or X86_64) and ADDRESS64 and not C_LOOP
             storepairq t8, t9, VMEntryRecord::m_prevTopCallFrame[sp]
             bpneq VM::previousEntryFrameOfOutermost[a1], t9, .isNotOutermost
             storepairq a2, a3, VM::outermostCodeBlock[a1]
+            emit "dmb ishst" # The sampling profiler reads topEntryFrame first.
         else
             storeq a1, VMEntryRecord::m_vm[sp]
             storeq a5, VMEntryRecord::m_context[sp]

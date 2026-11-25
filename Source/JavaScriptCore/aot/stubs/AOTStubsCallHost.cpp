@@ -78,12 +78,23 @@ void generateCallDirectFunction(StubAssembler& jit)
     const GPRReg function = jit.reuseScratch(StubRegister::Operation);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(builtinBindings.directFunctions)), function);
     jit.loadPtr(CCallHelpers::BaseIndex(function, jit.immediate(), CCallHelpers::TimesOne), function);
+    const GPRReg vm = jit.clobberRegister(stubImmediateRegister);
     if (form == DirectFunctionCall::Leaf || form == DirectFunctionCall::LeafReturningNumber) {
+        if (isX86_64()) {
+            Jump hasSamplingProfiler = jit.loadVMAndBranchIfItHasSamplingProfiler(vm);
+            jit.addOutOfLinePart([=](StubAssembler& jit) {
+                hasSamplingProfiler.link(&jit);
+                jit.emitFunctionPrologue();
+                jit.storePtr(GPRInfo::callFrameRegister, Address(vm, VM::offsetOfTopCallFrame()));
+                jit.call(function, HostFunctionPtrTag);
+                jit.emitFunctionEpilogueWithEmptyFrame();
+                jit.returnToCaller();
+            });
+        }
         jit.farJump(function, HostFunctionPtrTag);
         return;
     }
 
-    const GPRReg vm = jit.clobberRegister(stubImmediateRegister);
     if (form == DirectFunctionCall::WithFrame)
         jit.emitFunctionPrologue();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);

@@ -247,8 +247,8 @@ struct Collections {
         runner.instance().cellCageBase = heap.cageBase();
         runner.instance().allocation.cellSpace = m_cellSpace.bytes.data();
         runner.instance().allocation.compactTableHeader = headerOfCreatedTables;
-        runner.install(Entry::operationAOTStringImplsAreEqual, operationAOTStringImplsAreEqual);
-        runner.install(Entry::operationAOTHashStringImpl, operationAOTHashStringImpl);
+        runner.installLeaf<operationAOTStringImplsAreEqual>(Entry::operationAOTStringImplsAreEqual);
+        runner.installLeaf<operationAOTHashStringImpl>(Entry::operationAOTHashStringImpl);
     }
 
     void setAllocator(size_t cellSize, FakeAllocator* allocator)

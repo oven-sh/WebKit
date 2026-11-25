@@ -3952,7 +3952,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetSamplingProfilerThreadIsIdle, (JSGlobalObjec
     return JSValue::encode(jsUndefined());
 }
 
-// Returns { stackTraces: [{ timestamp, frames: [name] }], withoutFrames: [{ state, first, last, count }] }, with times in milliseconds.
+// Returns { stackTraces: [{ timestamp, stopwatchTimestamp, frames: [name] }], withoutFrames: [{ state, first, last, count }] }, with times in milliseconds.
 static EncodedJSValue releaseSamples(JSGlobalObject* globalObject, SamplingProfiler& samplingProfiler)
 {
     VM& vm = globalObject->vm();
@@ -3972,6 +3972,7 @@ static EncodedJSValue releaseSamples(JSGlobalObject* globalObject, SamplingProfi
             frames->pushString(frame.displayName(vm));
         auto object = JSON::Object::create();
         object->setDouble("timestamp"_s, stackTrace.timestamp.secondsSinceEpoch().milliseconds());
+        object->setDouble("stopwatchTimestamp"_s, stackTrace.stopwatchTimestamp.milliseconds());
         object->setValue("frames"_s, WTF::move(frames));
         stackTraces->pushValue(WTF::move(object));
     }
@@ -4014,13 +4015,15 @@ JSC_DEFINE_HOST_FUNCTION(functionReleaseSamplingProfilerSamples, (JSGlobalObject
     RELEASE_AND_RETURN(scope, releaseSamples(globalObject, *samplingProfiler));
 }
 
-// Starts one that the functions above do not know of. Takes the options of startSamplingProfiler(). Returns { releaseSamples(), shutdown() }.
+// Starts one that the functions above do not know of. Takes the options of startSamplingProfiler(). Returns { releaseSamples(), start(), pause(), shutdown() }.
 JSC_DEFINE_HOST_FUNCTION(functionCreateSamplingProfiler, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Ref samplingProfiler = vm.createSamplingProfiler(WTF::Stopwatch::create());
+    Ref stopwatch = WTF::Stopwatch::create();
+    stopwatch->start();
+    Ref samplingProfiler = vm.createSamplingProfiler(WTF::move(stopwatch));
     configureSamplingProfiler(globalObject, samplingProfiler, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, { });
     samplingProfiler->start();
@@ -4028,6 +4031,15 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateSamplingProfiler, (JSGlobalObject* global
     JSObject* result = constructEmptyObject(globalObject);
     result->putDirect(vm, Identifier::fromString(vm, "releaseSamples"_s), JSNativeStdFunction::create(vm, globalObject, 0, "releaseSamples"_s, [samplingProfiler](JSGlobalObject* globalObject, CallFrame*) {
         return releaseSamples(globalObject, samplingProfiler);
+    }));
+    result->putDirect(vm, Identifier::fromString(vm, "start"_s), JSNativeStdFunction::create(vm, globalObject, 0, "start"_s, [samplingProfiler](JSGlobalObject*, CallFrame*) {
+        samplingProfiler->start();
+        return JSValue::encode(jsUndefined());
+    }));
+    result->putDirect(vm, Identifier::fromString(vm, "pause"_s), JSNativeStdFunction::create(vm, globalObject, 0, "pause"_s, [samplingProfiler](JSGlobalObject*, CallFrame*) {
+        Locker locker { samplingProfiler->getLock() };
+        samplingProfiler->pause();
+        return JSValue::encode(jsUndefined());
     }));
     result->putDirect(vm, Identifier::fromString(vm, "shutdown"_s), JSNativeStdFunction::create(vm, globalObject, 0, "shutdown"_s, [samplingProfiler](JSGlobalObject*, CallFrame*) {
         samplingProfiler->shutdown();

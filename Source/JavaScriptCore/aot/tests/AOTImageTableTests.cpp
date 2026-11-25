@@ -403,6 +403,25 @@ static void testStubReturnSites()
     }
 }
 
+static void testStubsThatMayJumpToFunction()
+{
+    const Image& loaded = *smallImage().image;
+    BitVector offsets;
+    for (const StubAddressInImage& address : loaded.section<StubAddressInImage>(ImageSection::StubAddresses)) {
+        StubKey key = StubKey::fromBits(address.key);
+        if (address.mayJumpToFunction)
+            offsets.set(address.offset);
+        else if (isX86_64() && mayJumpToFunction(key))
+            AOT_TEST_CHECK(loaded.isStubThatMayJumpToFunction(address.offset));
+        bool isOnlyCalled = descriptorOf(key.family()).linkage == StubLinkage::CalledByCode || descriptorOf(key.family()).linkage == StubLinkage::InternalEntry;
+        AOT_TEST_CHECK(loaded.stubAddress(key) == (isOnlyCalled ? nullptr : loaded.sharedCodeCopy(0) + address.offset));
+    }
+    AOT_TEST_CHECK(!loaded.stubAddressesOf(StubFamily::CallBoxedBuiltin).empty());
+    AOT_TEST_CHECK(offsets.isEmpty() == !isX86_64());
+    for (uint32_t offset = 0; offset <= loaded.header().code.sharedCodeSize; ++offset)
+        AOT_TEST_CHECK(loaded.isStubThatMayJumpToFunction(offset) == offsets.get(offset));
+}
+
 #if defined(BUN_HARDENED)
 static void testWordsInThePlaceOfAReturnAddress()
 {
@@ -920,6 +939,7 @@ std::span<const NativeTest> imageTableTests()
         { "image/check/stubs-in-header"_s, testStubsInHeader },
         { "image/check/no-code"_s, testNoCode },
         { "image/locate/stub-return-sites"_s, testStubReturnSites },
+        { "image/locate/stubs-that-may-jump-to-function"_s, testStubsThatMayJumpToFunction },
 #if defined(BUN_HARDENED)
         { "image/locate/words-in-the-place-of-a-return-address"_s, testWordsInThePlaceOfAReturnAddress },
 #endif

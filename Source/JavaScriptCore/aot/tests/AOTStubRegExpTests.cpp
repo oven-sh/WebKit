@@ -252,10 +252,10 @@ static void testMatchesWithoutArray()
 static void testMatchesOfAtoms()
 {
     Matches matches;
-    matches.runner.install(Entry::operationAOTStringFindCharacter8, operationAOTStringFindCharacter8);
-    matches.runner.install(Entry::operationAOTStringFind8, operationAOTStringFind8);
-    matches.runner.install(Entry::operationAOTRegExpMatchFlatProgram8, operationAOTRegExpMatchFlatProgram8);
-    matches.runner.install(Entry::operationAOTRegExpMatchFlatProgram16, operationAOTRegExpMatchFlatProgram16);
+    matches.runner.installLeaf<operationAOTStringFindCharacter8>(Entry::operationAOTStringFindCharacter8);
+    matches.runner.installLeaf<operationAOTStringFind8>(Entry::operationAOTStringFind8);
+    matches.runner.installLeaf<operationAOTRegExpMatchFlatProgram8>(Entry::operationAOTRegExpMatchFlatProgram8);
+    matches.runner.installLeaf<operationAOTRegExpMatchFlatProgram16>(Entry::operationAOTRegExpMatchFlatProgram16);
     Ref<StringImpl> text = StringImpl::create("abcdef"_span);
     FakeSubject subject(text.get());
 
@@ -549,6 +549,13 @@ static void testMatchArraysLeftToOperation()
     AOT_TEST_CHECK(isLeftToOperation({ }, [](MatchArrayMemory&) { }));
 }
 
+static constexpr uint64_t keptStringOfTwoCharacters = 0x7770;
+
+static size_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES findKeptStringOfTwoCharacters(void*, uint32_t units)
+{
+    return units == ('c' | 'd' << 16) ? keptStringOfTwoCharacters : 0;
+}
+
 static void testMatchArraysWithoutObject()
 {
     constexpr StubKey finish = finishRegExpExec(FinishRegExpExecForm::WithoutObject);
@@ -566,6 +573,18 @@ static void testMatchArraysWithoutObject()
         AOT_TEST_CHECK(memory.element(0) == memory.addressOfRope(0) && memory.isSubstring(0, subject, 1, 3, true));
         AOT_TEST_CHECK(memory.element(1) == memory.addressOfRope(1) && memory.isSubstring(1, subject, 2, 2, true));
         AOT_TEST_CHECK(matches.hasRecordedNothing());
+    }
+    {
+        const char16_t units[] = { 'a', 'b', 'c', 'd' };
+        Ref<StringImpl> wideText = StringImpl::create(std::span<const char16_t>(units));
+        FakeSubject wideSubject(wideText.get());
+        matches.runner.installLeaf<findKeptStringOfTwoCharacters>(Entry::operationAOTFindKeptStringOfTwoCharacters);
+        matches.reset({ }, jsNumber(9));
+        MatchArrayMemory memory(matches, 1);
+        std::ranges::copy(offsets, matches.outputOfVM.begin());
+        StubRun run = matches.runner.run(finish, { record, wideSubject.address(), 1 });
+        checkMatchArray(matches, memory, wideSubject, run, 1, 1);
+        AOT_TEST_CHECK(memory.element(1) == keptStringOfTwoCharacters);
     }
 
     auto isLeftToOperation = [&](uint64_t numberOfGroups, const Invocable<void()> auto& change) {

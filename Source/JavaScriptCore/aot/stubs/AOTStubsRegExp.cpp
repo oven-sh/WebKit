@@ -169,12 +169,12 @@ static void narrowSubject(StubAssembler& jit, const MatchRegisters& registers, R
         saved.append(reg.gpr());
     });
     RELEASE_ASSERT(noOverlap(registers.subjectLength, leafArgumentGPR(0), leafArgumentGPR(1)) && registers.characters == leafArgumentGPR(0));
-    jit.preserving(saved.span(), [&] {
+    jit.preservingInFrame(saved.span(), [&] {
         jit.recordClobbers(RegisterSet { leafArgumentGPR(1), leafArgumentGPR(2) });
         jit.move(registers.characters, leafArgumentGPR(1));
         jit.move(registers.subjectLength, leafArgumentGPR(2));
         jit.move(instanceGPR, leafArgumentGPR(0));
-        jit.callLeaf(Entry::operationAOTNarrowSubject, WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved.size() * sizeof(CPURegister)));
+        jit.callLeafInFrame(Entry::operationAOTNarrowSubject);
         jit.move(GPRInfo::returnValueGPR, registers.characters);
     });
     misses.append(jit.branchTestPtr(CCallHelpers::Zero, registers.characters));
@@ -272,7 +272,7 @@ static void searchForAtom(StubAssembler& jit, const MatchRegisters& registers, s
     jit.load32(Address(atom, StringImpl::lengthMemoryOffset()), atomLength);
     Jump isOneCharacter = jit.branch32(CCallHelpers::Equal, atomLength, TrustedImm32(1));
     jit.move(TrustedImm32(0), jit.reuseScratch(StubRegister::A4));
-    jit.callLeaf(Entry::operationAOTStringFind8, bytesPushedInMatchFrame);
+    jit.callLeafInFrame(Entry::operationAOTStringFind8);
     Jump isSearched = jit.jump();
 
     isOneCharacter.link(&jit);
@@ -280,7 +280,7 @@ static void searchForAtom(StubAssembler& jit, const MatchRegisters& registers, s
     const GPRReg start = atomLength;
     jit.load8(Address(atomCharacters), character);
     jit.move(TrustedImm32(0), start);
-    jit.callLeaf(Entry::operationAOTStringFindCharacter8, bytesPushedInMatchFrame);
+    jit.callLeafInFrame(Entry::operationAOTStringFindCharacter8);
 
     isSearched.link(&jit);
     popMatchFrame(jit, scratch, savedOperands);
@@ -421,11 +421,11 @@ static void matchOnFlatProgram(StubAssembler& jit, const MatchRegisters& registe
     jit.move(program, programArgument);
     Jump is16Bit = jit.branchTest32(CCallHelpers::Zero, Address(impl, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit()));
     jit.move(instanceGPR, instanceArgument);
-    jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram8, bytesPushedInMatchFrame);
+    jit.callLeafInFrame(Entry::operationAOTRegExpMatchFlatProgram8);
     Jump isSearched = jit.jump();
     is16Bit.link(&jit);
     jit.move(instanceGPR, instanceArgument);
-    jit.callLeaf(Entry::operationAOTRegExpMatchFlatProgram16, bytesPushedInMatchFrame);
+    jit.callLeafInFrame(Entry::operationAOTRegExpMatchFlatProgram16);
     isSearched.link(&jit);
     popMatchFrame(jit, scratch, operands.all());
     Jump didNotMiss = jit.branch64(CCallHelpers::NotEqual, scratch, noMatchImmediate);
@@ -691,7 +691,7 @@ static void tryCreateMatchArray(StubAssembler& jit, const MatchArrayRegisters& r
     tookNoPart.append(jit.branchSub32(CCallHelpers::Signed, start, length));
     if (isOnSubstring)
         jit.add32(offsetInBase, start);
-    AssemblyHelpers::FreeListRefill pieceRefill = makeSubstringOfFlatString(jit, { .string = string, .start = start, .length = length, .result = piece, .firstScratch = allocator, .secondScratch = array, .alsoKept = RegisterSet(butterfly, offsets, index) }, fails);
+    AssemblyHelpers::FreeListRefill pieceRefill = makeSubstringOfFlatStringInFrame(jit, { .string = string, .start = start, .length = length, .result = piece, .firstScratch = allocator, .secondScratch = array, .alsoKept = RegisterSet(butterfly, offsets, index) }, fails);
     tookNoPart.link(&jit);
     jit.store64(piece, BaseIndex(butterfly, index, CCallHelpers::TimesEight));
     jit.add32(TrustedImm32(1), index);
@@ -751,7 +751,7 @@ void generateFinishRegExpExec(StubAssembler& jit)
     needsOperation.append(jit.branchTestPtr(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(allocation.inlineAllocations[kind].allocator))));
 
     const std::array saved { objectOrRecord, string };
-    jit.preserving(std::span(saved).first(isOnSubstring ? 2 : 1), [&] {
+    jit.preservingInFrame(std::span(saved).first(isOnSubstring ? 2 : 1), [&] {
         tryCreateMatchArray(jit, {
             .string = string,
             .butterfly = butterfly,

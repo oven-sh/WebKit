@@ -295,12 +295,12 @@ static void emitBranchUnlessQueueMaySettle(StubAssembler& jit, GPRReg awaited, J
 
 static void emitSettleAwaitedPromise(StubAssembler& jit, GPRReg awaited, GPRReg siteWord, JumpList& mustSuspend)
 {
-    jit.preserving({ awaited, siteWord }, [&] {
+    jit.preservingInFrame({ awaited, siteWord }, [&] {
         jit.recordClobbers(RegisterSet { leafArgumentGPR(0), leafArgumentGPR(1) });
         if (awaited != leafArgumentGPR(1))
             jit.move(awaited, leafArgumentGPR(1));
         jit.move(instanceGPR, leafArgumentGPR(0));
-        jit.callLeaf(Entry::operationAOTSettleAwaitedPromise, 2 * sizeof(CPURegister));
+        jit.callLeafInFrame(Entry::operationAOTSettleAwaitedPromise);
         jit.move(GPRInfo::returnValueGPR, leafFunctionGPR);
     });
     mustSuspend.append(jit.branchTest32(CCallHelpers::Zero, leafFunctionGPR));
@@ -367,11 +367,11 @@ static void emitLeaveFunctionOfJob(StubAssembler& jit, GPRReg siteWord, GPRReg s
     Jump isNotJob = HeldReturnAddress::loadLosingLinkRegister(jit, fp, scratch).branch(jit, CCallHelpers::NotEqual, loopOfJobs);
     jit.emitFunctionEpilogue();
     jit.addPtr(TrustedImm32(sizeof(void*)), sp);
-    jit.farJump(scratch, JSEntryPtrTag);
+    jit.jumpToReturnAddress(scratch);
 #else
     Jump isNotJob = emitBranchOnReturnAddressOfFrameRecord(jit, CCallHelpers::NotEqual, fp, loopOfJobs, scratch);
     jit.emitFunctionEpilogue();
-    jit.farJump(CCallHelpers::linkRegister, JSEntryPtrTag);
+    jit.jumpToReturnAddress(CCallHelpers::linkRegister);
 #endif
     fewJobsWait.link(&jit);
     isNotJob.link(&jit);

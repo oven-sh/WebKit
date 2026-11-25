@@ -560,7 +560,7 @@ static void testShiftOfFewValuesInLanguageCallTests()
     FakeObject<sizeof(JSFunction)> callee;
     constexpr StubKey key = callBoxedBuiltin(BoxedCallForm::ArrayShift, 0);
     constexpr uint64_t answerOfOperation = int32InLanguageCallTests(99);
-    runner.install(Entry::operationAOTMoveBytes, operationAOTMoveBytes);
+    runner.installLeaf<operationAOTMoveBytes>(Entry::operationAOTMoveBytes);
     runner.recordCallsOf(Entry::operationAOTArrayShiftGeneric);
     runner.setResultOfRecordedOperation(answerOfOperation);
 

@@ -39,17 +39,11 @@
 #include "WasmIndexOrName.h"
 #include <wtf/Atomics.h>
 #include <wtf/Box.h>
-#include <wtf/Condition.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Stopwatch.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
-#include <wtf/WeakRandom.h>
-
-#if OS(WINDOWS)
-#include <wtf/win/Win32Handle.h>
-#endif
 
 #if ENABLE(AOT)
 #include "AOTTraceFrame.h"
@@ -183,8 +177,6 @@ public:
     };
 
     struct UnprocessedStackTrace {
-        MonotonicTime timestamp;
-        Seconds stopwatchTimestamp;
         void* topPC;
         bool topFrameIsLLInt;
         void* llintPC;
@@ -193,13 +185,23 @@ public:
         bool wasWalked { true };
     };
 
+    // The profilers that take a sample at the same time keep it once.
+    struct SharedStackTrace : public ThreadSafeRefCounted<SharedStackTrace> {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED_EXPORT(SharedStackTrace, JS_EXPORT_PRIVATE);
+
+        explicit SharedStackTrace(UnprocessedStackTrace&& unprocessed)
+            : unprocessed(WTF::move(unprocessed))
+        { }
+
+        std::optional<UnprocessedStackTrace> unprocessed;
+        Vector<StackFrame> frames;
+    };
+
     struct StackTrace {
         MonotonicTime timestamp;
         Seconds stopwatchTimestamp;
-        Vector<StackFrame> frames;
-        StackTrace()
-        { }
-        StackTrace(StackTrace&&) = default;
+        std::span<StackFrame> frames;
+        Ref<SharedStackTrace> ownerOfFrames;
     };
 
     enum class ThreadState : uint8_t {
@@ -227,6 +229,7 @@ public:
     // For good. What has not been released is dropped.
     JS_EXPORT_PRIVATE void shutdown();
     template<typename Visitor> void visit(Visitor&) WTF_REQUIRES_LOCK(m_lock);
+    // It is the same for all the profilers of a VM.
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
     JS_EXPORT_PRIVATE void setTimingInterval(Seconds) WTF_EXCLUDES_LOCK(m_lock);
     // A deeper stack loses its outermost frames. A function that was inlined does not count.
@@ -263,34 +266,30 @@ public:
     NODELETE JS_EXPORT_PRIVATE Thread* thread() const;
 
 private:
-    void createThreadIfNecessary() WTF_REQUIRES_LOCK(m_lock);
-    void timerLoop();
-    void wakeUpTimerLoop() WTF_REQUIRES_LOCK(m_lock);
-    void takeSample(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
-    bool takeStackTrace(Seconds& stackTraceProcessingTime) WTF_REQUIRES_LOCK(m_lock);
+    class Sampler;
 
-    Lock m_lock;
-    Condition m_timerCondition;
-#if OS(WINDOWS)
-    Win32Handle m_highResolutionTimer WTF_GUARDED_BY_LOCK(m_lock);
-#endif
-    bool m_isPaused WTF_GUARDED_BY_LOCK(m_lock);
-    bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock);
+    void appendStackTrace(MonotonicTime, SharedStackTrace&) WTF_REQUIRES_LOCK(m_lock);
+    void appendSampleWithoutFrames(MonotonicTime, ThreadState) WTF_REQUIRES_LOCK(m_lock);
+    std::pair<Vector<StackTrace>, Seconds> stackTracesAndTimingInterval() WTF_EXCLUDES_LOCK(m_lock);
+
+    const Ref<Sampler> m_sampler;
+    Lock& m_lock;
+    bool m_isRunning WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_hasJustStarted WTF_GUARDED_BY_LOCK(m_lock) { false };
+    bool m_isShutDown WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_recordsSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_canExtendLastSamplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock) { false };
     bool m_needsReportAtExit { false };
     VM& m_vm;
-    WeakRandom m_weakRandom;
     Ref<Stopwatch> m_stopwatch WTF_GUARDED_BY_LOCK(m_lock);
     Vector<StackTrace> m_stackTraces WTF_GUARDED_BY_LOCK(m_lock);
-    Vector<UnprocessedStackTrace> m_unprocessedStackTraces WTF_GUARDED_BY_LOCK(m_lock);
+    size_t m_numberOfVerifiedStackTraces WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     Vector<SamplesWithoutFrames> m_samplesWithoutFrames WTF_GUARDED_BY_LOCK(m_lock);
     Seconds m_timingInterval WTF_GUARDED_BY_LOCK(m_lock);
+    MonotonicTime m_nextSampleTime WTF_GUARDED_BY_LOCK(m_lock);
+    Seconds m_stopwatchTimestamp WTF_GUARDED_BY_LOCK(m_lock); // Of the sample that is being taken.
     size_t m_maximumStackDepth WTF_GUARDED_BY_LOCK(m_lock);
-    RefPtr<Thread> m_thread;
-    RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
     UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
-    Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

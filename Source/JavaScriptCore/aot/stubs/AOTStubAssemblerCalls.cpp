@@ -16,7 +16,28 @@
 
 namespace JSC { namespace AOT {
 
-void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
+CCallHelpers::Jump StubAssembler::loadVMAndBranchIfItHasSamplingProfiler(GPRReg vm)
+{
+    loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), vm);
+    return branchTestPtr(Zero, Address(vm, VM::offsetOfPreviousEntryFrameOfOutermost()));
+}
+
+void StubAssembler::emitPrologueUnderReturnAddress()
+{
+    if (isUnderSavedRegisters())
+        crashWhileGenerating("a frame record is made under saved registers, not under the return address"_s);
+    emitFunctionPrologue();
+}
+
+void StubAssembler::callLeaf(Entry entry)
+{
+    preservingInFrame(std::span<const GPRReg> { }, [&] {
+        callLeafInFrame(entry);
+    });
+}
+
+// Without a frame record of the stub's, the sampling profiler would take that of the caller for it.
+void StubAssembler::callLeafInFrame(Entry entry)
 {
     std::optional<RuntimeOperation> operation = runtimeOperationOf(entry);
     RELEASE_ASSERT(operation && isLeaf(*operation));
@@ -28,20 +49,20 @@ void StubAssembler::callLeaf(Entry entry, unsigned bytesPushed)
     else
         recordClobbers(registersClobberedByOperations());
 #if CPU(X86_64)
-    RELEASE_ASSERT(!(bytesPushed % sizeof(CPURegister)));
-    const unsigned padding = (bytesPushed + sizeof(CPURegister)) % stackAlignmentBytes() ? sizeof(CPURegister) : 0;
-    if (padding)
-        subPtr(TrustedImm32(padding), stackPointerRegister);
+#if OS(WINDOWS)
+    constexpr bool framePointerLeadsToFrameRecord = false;
+#else
+    const bool framePointerLeadsToFrameRecord = !mayJumpToCLibrary(entry);
+#endif
+    if (!framePointerLeadsToFrameRecord) {
+        loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(vm)), leafFunctionGPR);
+        storePtr(GPRInfo::callFrameRegister, Address(leafFunctionGPR, VM::offsetOfTopCallFrame()));
+    }
     loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(runtimeTable)), leafFunctionGPR);
     CCallHelpers::call(Address(leafFunctionGPR, offsetInRuntimeTable(entry)), OperationPtrTag);
-    if (padding)
-        addPtr(TrustedImm32(padding), stackPointerRegister);
 #else
-    RELEASE_ASSERT(!(bytesPushed % stackAlignmentBytes()));
-    emitPushLinkRegister(*this);
     loadEntry(entry, leafFunctionGPR);
     CCallHelpers::call(leafFunctionGPR, OperationPtrTag);
-    emitPopLinkRegister(*this);
 #endif
 }
 

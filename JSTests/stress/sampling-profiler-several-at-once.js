@@ -7,7 +7,7 @@ if (platformSupportsSamplingProfiler()) {
     const never = 1000 * 1000 * 1000;
     const create = options => {
         const profiler = createSamplingProfiler({ intervalInMicroseconds: 500, ...options });
-        return Object.assign(new Tally(profiler.releaseSamples), { shutdown: profiler.shutdown });
+        return Object.assign(new Tally(profiler.releaseSamples), { start: profiler.start, shutdown: profiler.shutdown });
     };
     const sample = (tally, count = 10, start = tally.total) => tally.repeatUntil(tally => tally.total >= start + count, () => spin(1));
     const update = tally => (tally.update(), tally);
@@ -16,9 +16,14 @@ if (platformSupportsSamplingProfiler()) {
         setSamplingProfilerThreadIsIdle(true);
         const records = create({ recordsSamplesWithoutFrames: true });
         const doesNotRecord = create();
+        const neverReleases = create({ recordsSamplesWithoutFrames: true });
         await records.repeatAsyncUntil(tally => tally.Idle >= 5, () => new Promise(resolve => setTimeout(resolve, 2)));
         assert(!update(doesNotRecord).withoutFrames, "it did not ask for them: " + doesNotRecord);
+        neverReleases.shutdown();
+        assert(!update(neverReleases).total, "it has kept samples: " + neverReleases);
         records.shutdown();
+        records.shutdown();
+        sample(doesNotRecord);
         doesNotRecord.shutdown();
 
         const slow = create({ intervalInMicroseconds: never });
@@ -41,7 +46,7 @@ if (platformSupportsSamplingProfiler()) {
         }
 
         shallow.shutdown();
-        shallow.shutdown();
+        shallow.start();
         const total = shallow.total;
         sample(deep);
         assert(update(shallow).total === total, "sampled after its shutdown: " + shallow);

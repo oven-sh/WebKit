@@ -14,14 +14,17 @@
 
 #include "AOTBuildContext.h"
 #include "AOTCompileOptionWords.h"
+#include "AOTCompiledFrame.h"
 #include "AOTIRParser.h"
 #include "AOTIRProgram.h"
 #include "AOTImageBuilder.h"
 #include "AOTImageTestSupport.h"
 #include "AOTProgramFile.h"
 #include "AOTWasmModules.h"
+#include "CallFrame.h"
 #include "JSCPtrTag.h"
 #include "JSLock.h"
+#include "LLIntData.h"
 #include "Options.h"
 #include "VM.h"
 #include "WasmCodeInImage.h"
@@ -29,10 +32,14 @@
 #include "WasmOperations.h"
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <bmalloc/Gigacage.h>
+#include <optional>
 #include <wtf/BitVector.h>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
+#include <wtf/Threading.h>
 
 namespace JSC { namespace AOT {
 
@@ -64,6 +71,13 @@ constexpr uint8_t catchModule[] = {
     0x03, 0x03, 0x02, 0x00, 0x01,
     0x0d, 0x03, 0x01, 0x00, 0x00,
     0x0a, 0x14, 0x02, 0x04, 0x00, 0x08, 0x00, 0x0b, 0x0d, 0x00, 0x06, 0x7f, 0x10, 0x00, 0x41, 0x01, 0x07, 0x00, 0x41, 0x02, 0x0b, 0x0b,
+};
+
+constexpr uint8_t moduleWithOptimizedCallerOfCast[] = {
+    0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+    0x01, 0x09, 0x02, 0x60, 0x00, 0x01, 0x7f, 0x60, 0x01, 0x70, 0x00,
+    0x03, 0x03, 0x02, 0x01, 0x01,
+    0x0a, 0x15, 0x02, 0x06, 0x00, 0x20, 0x00, 0x10, 0x01, 0x0b, 0x0c, 0x00, 0x06, 0x40, 0x20, 0x00, 0xfb, 0x16, 0x00, 0x1a, 0x19, 0x0b, 0x0b,
 };
 
 constexpr uint8_t indirectCallModule[] = {
@@ -274,6 +288,67 @@ static void testMemoryModuleHasCopyPerFlavor()
     AOT_TEST_CHECK(module.functions[trapping][0].size < module.functions[checking][0].size);
     AOT_TEST_CHECK(module.functions[trapping][1].entry != module.functions[checking][1].entry);
     AOT_TEST_CHECK(module.functions[trapping][2].entry != module.functions[checking][2].entry);
+}
+
+static void testFunctionWithoutFrameIsFoundByPlace()
+{
+    BuildContext context(makeDefaultCompileOptions());
+    std::unique_ptr<Typed::Program> program = parseProgramWithTwoImporters(moduleWithOptimizedCallerOfCast, memoryModule, context);
+    WebAssemblyImageInputs section = compileWebAssemblyModules(*program, testTemplates(), context);
+    std::span<const uint8_t> directory = section.directory.span();
+
+    Vector<std::optional<Wasm::FunctionCodeIndex>> expected(section.code.size());
+    for (const Wasm::ModuleInImage& module : modulesOf(section)) {
+        auto ranges = spanReinterpretCast<const Wasm::FramelessRangeInImage>(directory.subspan(module.framelessRanges, module.numberOfFramelessRanges * sizeof(Wasm::FramelessRangeInImage)));
+        HashSet<uint64_t> copiesWithRange;
+        for (uint32_t offset : module.functions) {
+            auto functions = spanReinterpretCast<const Wasm::FunctionInImage>(directory.subspan(offset, module.numberOfFunctions * sizeof(Wasm::FunctionInImage)));
+            for (uint32_t index = 0; index < functions.size(); ++index) {
+                for (const Wasm::FramelessRangeInImage& range : ranges) {
+                    if (range.begin - functions[index].entry >= functions[index].size)
+                        continue;
+                    copiesWithRange.add(functions[index].entry);
+                    std::ranges::fill(expected.mutableSpan().subspan(range.begin, range.end - range.begin), Wasm::FunctionCodeIndex(index));
+                }
+            }
+        }
+        AOT_TEST_CHECK(copiesWithRange.size() >= 2);
+    }
+    for (size_t place = 0; place < expected.size(); ++place)
+        AOT_TEST_CHECK(Wasm::CodeInImage::framelessFunctionAt(directory, place) == expected[place]);
+}
+
+static SUPPRESS_ASAN void testCallerOfSampledFunctionWithoutFrame()
+{
+    std::array<uint8_t, 3> otherInstruction { 0x48, 0x89, 0xc0 };
+    std::array<uint8_t, 3> moveOfStackPointerToFramePointer { 0x48, 0x89, 0xe5 };
+    const CalleeBits callee(0x1000);
+    auto* returnAddress = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr<uint8_t*>();
+    auto* returnAddressOfCaller = returnAddress + 4;
+
+    alignas(16) std::array<void*, 32> stack { };
+    constexpr size_t frameOfCaller = 24;
+    constexpr size_t frameRecord = 12;
+    stack[frameOfCaller] = &stack[frameOfCaller + 4];
+    stack[frameOfCaller + 1] = returnAddressOfCaller;
+    auto findsCaller = [&](size_t framePointer, size_t stackPointer, void* linkRegister, bool isAtMove = false) {
+        SampledRegisters registers { &stack[framePointer], (isAtMove ? moveOfStackPointerToFramePointer : otherInstruction).data(), linkRegister, &stack[stackPointer] };
+        return findCallerOfFramelessWebAssembly(registers, callee, Thread::currentSingleton().stack()) == std::bit_cast<CallFrame*>(&stack[frameOfCaller]);
+    };
+
+    stack[frameRecord + 1] = returnAddress;
+    AOT_TEST_CHECK(findsCaller(frameOfCaller, isX86_64() ? frameRecord + 1 : frameRecord + 2, returnAddress));
+    stack[frameRecord] = &stack[frameOfCaller];
+    AOT_TEST_CHECK(findsCaller(frameOfCaller, frameRecord, returnAddress, true));
+    for (size_t stackPointer : { frameRecord, frameRecord - 1, frameRecord - 2 })
+        AOT_TEST_CHECK(findsCaller(frameRecord, stackPointer, returnAddress));
+
+    // It has made a call since.
+    stack[frameRecord + static_cast<int>(CallFrameSlot::callee)] = callee.rawPtr();
+    AOT_TEST_CHECK(findsCaller(frameRecord, frameRecord, returnAddress + 8));
+
+    SampledRegisters withoutFramePointer { nullptr, otherInstruction.data(), nullptr, &stack[frameRecord] };
+    AOT_TEST_CHECK(!findCallerOfFramelessWebAssembly(withoutFramePointer, callee, Thread::currentSingleton().stack()));
 }
 
 static void testHandlersLieInTheirFunction()
@@ -503,6 +578,8 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/indirect-call-with-six-arguments-has-code"_s, testIndirectCallWithSixArgumentsHasCode },
         { "webassembly-image/module-without-memory-has-one-flavor"_s, testModuleWithoutMemoryHasOneFlavor },
         { "webassembly-image/memory-module-has-copy-per-flavor"_s, testMemoryModuleHasCopyPerFlavor },
+        { "webassembly-image/function-without-frame-is-found-by-place"_s, testFunctionWithoutFrameIsFoundByPlace },
+        { "webassembly-image/caller-of-sampled-function-without-frame"_s, testCallerOfSampledFunctionWithoutFrame },
         { "webassembly-image/handlers-lie-in-their-function"_s, testHandlersLieInTheirFunction },
         { "webassembly-image/same-bytes-each-time"_s, testSameBytesEachTime },
         { "webassembly-image/dump-leaves-code-as-it-is"_s, testDumpLeavesCodeAsItIs },

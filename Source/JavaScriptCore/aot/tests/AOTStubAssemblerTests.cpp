@@ -418,6 +418,12 @@ static void checkRecordedStubReferences(StubKey plain, StubRegister scratch)
     });
     AOT_TEST_CHECK(labeledCall.returnLabels.size() == 1);
     AOT_TEST_CHECK(labeledCall.returnLabels[0] == StubFrameKind::EngineCallee);
+
+    StubRecording hostCall = recordStubBody(plain, [](StubAssembler& jit) {
+        jit.bindReturnLabel(StubFrameKind::HostCall);
+    });
+    AOT_TEST_CHECK(hostCall.returnLabels.size() == 2);
+    AOT_TEST_CHECK(hostCall.returnLabels[1] != StubFrameKind::HostCall);
 }
 
 static void testRecordedStubReferences()
@@ -502,7 +508,7 @@ static void testLeafCalls()
 
     constexpr GPRReg saved = GPRInfo::returnValueGPR;
     StubRecording preserving = recordStubBody(body, [&](StubAssembler& jit) {
-        jit.preserving({ saved }, [&] { jit.callLeaf(preserveMostLeaf, stackAlignmentBytes()); });
+        jit.preservingInFrame({ saved }, [&] { jit.callLeafInFrame(preserveMostLeaf); });
     });
     AOT_TEST_CHECK(containsRegister(registersClobberedByPreserveMostLeaves(), saved) && !containsRegister(preserving.clobbered(), saved));
 }
@@ -625,6 +631,17 @@ static void checkReferenceAssertions(StubKey plain, StubRegister scratch)
     }, [&](StubAssembler& jit) {
         jit.preserving({ gprOf(scratch) }, [&] { jit.jumpToStub(calledStub); });
     });
+
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        jit.callStub(StubKey(StubFamily::CallValue));
+    }, [](StubAssembler& jit) {
+        jit.jumpToStub(StubKey(StubFamily::CallValue));
+    });
+    checkAssemblerAssertion(plain, [&](StubAssembler& jit) {
+        jit.jumpToReturnAddress(gprOf(scratch));
+    }, [&](StubAssembler& jit) {
+        jit.farJump(gprOf(scratch), JSEntryPtrTag);
+    });
 }
 
 static void checkFaultLinkAssertion()
@@ -640,6 +657,30 @@ static void checkLeafAssertion(StubKey plain)
         jit.callLeaf(ordinaryLeaf);
     }, [](StubAssembler& jit) {
         jit.callLeaf(calledOperation);
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        jit.preservingInFrame({ GPRInfo::returnValueGPR }, [&] { jit.callLeafInFrame(ordinaryLeaf); });
+    }, [](StubAssembler& jit) {
+        jit.preserving({ GPRInfo::returnValueGPR }, [&] { jit.callLeaf(ordinaryLeaf); });
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        jit.preservingCallerSavedRegisters(false, [](unsigned) { });
+    }, [](StubAssembler& jit) {
+        jit.preserving({ GPRInfo::returnValueGPR }, [&] { jit.preservingCallerSavedRegisters(false, [](unsigned) { }); });
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        jit.addOutOfLinePart([](StubAssembler& part) { part.callLeaf(ordinaryLeaf); });
+    }, [](StubAssembler& jit) {
+        jit.preserving({ GPRInfo::returnValueGPR }, [&] {
+            jit.addOutOfLinePart([](StubAssembler& part) { part.callLeaf(ordinaryLeaf); });
+        });
+    });
+    checkAssemblerAssertion(plain, [](StubAssembler& jit) {
+        jit.bindReturnLabel(StubFrameKind::HostCall);
+        jit.call(GPRInfo::returnValueGPR, HostFunctionPtrTag);
+    }, [](StubAssembler& jit) {
+        jit.bindReturnLabel(StubFrameKind::MethodRead);
+        jit.call(GPRInfo::returnValueGPR, HostFunctionPtrTag);
     });
 }
 

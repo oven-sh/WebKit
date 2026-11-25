@@ -307,7 +307,7 @@ public:
 #if ENABLE(SAMPLING_PROFILER)
     SamplingProfiler* samplingProfiler() { return m_samplingProfiler.get(); }
     JS_EXPORT_PRIVATE SamplingProfiler& ensureSamplingProfiler(Ref<WTF::Stopwatch>&&);
-    // One that shares nothing with any other. It lives until SamplingProfiler::shutdown(), or else as long as the VM.
+    // One with settings and samples of its own. It lives until SamplingProfiler::shutdown(), or else as long as the VM.
     JS_EXPORT_PRIVATE Ref<SamplingProfiler> createSamplingProfiler(Ref<WTF::Stopwatch>&&);
     void didShutDownSamplingProfiler(SamplingProfiler&);
     const Vector<Ref<SamplingProfiler>>& samplingProfilers() const LIFETIME_BOUND { return m_samplingProfilers; }
@@ -447,7 +447,7 @@ public:
     // What the outermost entry frame calls, for a sampling profiler to read while the thread runs. Stale without a topEntryFrame. Also a pair.
     CodeBlock* outermostCodeBlock { nullptr };
     JSCell* outermostCallee { nullptr };
-    // An entry stores those two if this is its previous topEntryFrame. Without a profiler none does.
+    // An entry stores those two if this is its previous topEntryFrame. It is zero as long as there is a profiler. Without one none does.
     static constexpr uintptr_t matchesNoEntryFrame = 1;
     uintptr_t previousEntryFrameOfOutermost { matchesNoEntryFrame };
 private:

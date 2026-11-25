@@ -193,6 +193,7 @@ macro doVMEntry(makeCall)
         bpneq VM::previousEntryFrameOfOutermost[vm], t3, .isNotOutermost
         loadpairq ProtoCallFrame::codeBlockValue[protoCallFrame], t4, t3
         storepairq t4, t3, VM::outermostCodeBlock[vm]
+        emit "dmb ishst" # The sampling profiler reads topEntryFrame first.
     else
         loadp ProtoCallFrame::context[protoCallFrame], t4
         storep vm, VMEntryRecord::m_vm[sp]

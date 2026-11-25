@@ -26,6 +26,7 @@
 #include "AOTStubsAllocation.h"
 #include "AOTStubsArithmetic.h"
 #include "AOTStubsBoxedCalls.h"
+#include "AOTStubsCallHost.h"
 #include "AOTStubsClosures.h"
 #include "AOTStubsOperations.h"
 #include "AOTStubsPrimitiveFastPaths.h"
@@ -246,8 +247,8 @@ static int64_t AOT_PRESERVE_MOST_LEAF_ATTRIBUTES cannotCompare(JSCell*, JSCell*)
 static void testBinaryOperationStringOrder()
 {
     StubRunner runner;
-    runner.install(Entry::operationAOTCompareStringImpls, operationAOTCompareStringImpls);
-    runner.install(Entry::operationAOTCompareStringsInPlace, cannotCompare);
+    runner.installLeaf<operationAOTCompareStringImpls>(Entry::operationAOTCompareStringImpls);
+    runner.installLeaf<cannotCompare>(Entry::operationAOTCompareStringsInPlace);
 
     FakeString flat("order"_s, CharacterWidth::Is8Bit);
     FakeString wideFlat("order"_s, CharacterWidth::Is16Bit);
@@ -449,7 +450,7 @@ static constexpr BinaryCase binaryCasesOnNumbers[] = {
 static void testBinaryOperationsOnNumbers()
 {
     StubRunner runner;
-    runner.install(Entry::operationAOTFmod, operationAOTFmod);
+    runner.installLeaf<operationAOTFmod>(Entry::operationAOTFmod);
     FakeString string("7"_s, CharacterWidth::Is8Bit);
     Vector<NumericStrings::StringWithJSString> integersWithoutStrings(NumericStrings::cacheSize);
     runner.instance().realm.smallIntStrings = integersWithoutStrings.span().data();
@@ -2041,6 +2042,59 @@ static void testInstructionsOfOperationCall()
 #endif
 }
 
+static VM* vmOfCallIntoLibrary;
+static bool wasCalledBelowRecordAtTopCallFrame;
+
+static NEVER_INLINE double JIT_OPERATION_ATTRIBUTES lookForRecordAtTopCallFrame()
+{
+    CallerFrameAndPC* record = AOT_FRAME_RECORD_OF_THIS_FUNCTION();
+    wasCalledBelowRecordAtTopCallFrame = record->callerFrame == vmOfCallIntoLibrary->topCallFrame && isJITPC(record->callerFrame->returnPCForInspection());
+    return 1.5;
+}
+
+static void testCallsIntoCLibraryLeaveFrameRecordForSamplingProfiler()
+{
+    auto headOf = [](Entry entry) {
+        return tailCallOperation(OperationCall::FirstArgument::None).withImmediate(offsetInRuntimeTable(entry));
+    };
+    const std::pair<Entry, bool> entries[] = { { Entry::operationAOTMathSin, true }, { Entry::operationAOTMathLog1p, true }, { Entry::operationAOTMathATan2, true }, { Entry::operationAOTMathHypot, true }, { Entry::operationAOTMathHypot3, true },
+        { Entry::operationAOTFmod, true }, { Entry::operationAOTPow, true }, { Entry::operationAOTMoveBytes, true }, { Entry::operationAOTMathF16Round, false }, { Entry::operationAOTToInt32, false } };
+    WTF::Vector<StubKey> heads;
+    for (auto [entry, callsLibrary] : entries)
+        heads.append(headOf(entry));
+    StubRunner runner(heads.span());
+    VM& vm = *runner.instance().vm;
+    vmOfCallIntoLibrary = &vm;
+    const BuiltinDirectFunctionBinding directFunction { .function = tagCFunctionPtr<void*, HostFunctionPtrTag>(lookForRecordAtTopCallFrame) };
+    runner.instance().builtinBindings.directFunctions = &directFunction;
+
+    for (bool hasSamplingProfiler : { false, true }) {
+        vm.previousEntryFrameOfOutermost = hasSamplingProfiler ? 0 : VM::matchesNoEntryFrame;
+        auto check = [&](bool leavesRecord, const auto& run) {
+            vm.topCallFrame = nullptr;
+            wasCalledBelowRecordAtTopCallFrame = !leavesRecord;
+            run();
+            AOT_TEST_CHECK(wasCalledBelowRecordAtTopCallFrame == leavesRecord);
+            AOT_TEST_CHECK(leavesRecord || ASSERT_ENABLED || !vm.topCallFrame);
+        };
+        for (auto [entry, callsLibrary] : entries) {
+            runner.install(entry, lookForRecordAtTopCallFrame);
+            check(isX86_64() && hasSamplingProfiler && callsLibrary, [&] {
+                runner.runOperationCall(headOf(entry), { });
+            });
+        }
+        check(isX86_64(), [&] {
+            AOT_TEST_CHECK(runner.run(binaryOperation(BinaryOperator::Mod, false), { encoded(jsNumber(5.5)), encoded(jsNumber(2)) }).result == encoded(jsNumber(1.5)));
+        });
+        check(isX86_64() && hasSamplingProfiler, [&] {
+            runner.run(callDirectFunction(DirectFunctionCall::Leaf), { }, OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function));
+        });
+        check(isX86_64() && hasSamplingProfiler, [&] {
+            AOT_TEST_CHECK(runner.run(callDirectFunction(DirectFunctionCall::LeafReturningNumber), { }, OBJECT_OFFSETOF(BuiltinDirectFunctionBinding, function)).result == std::bit_cast<uint64_t>(1.5));
+        });
+    }
+}
+
 static void testFramesOfSlowPathsHaveNoWordThatNobodyWrote()
 {
     constexpr Entry operation = Entry::operationAOTValueAdd;
@@ -2081,6 +2135,7 @@ std::span<const NativeTest> stubRuntimeTests()
         { "stubs/first-field-in-the-extension-of-an-object-without-one"_s, ImageTests::whenExecutable<testFirstFieldInExtensionOfObjectWithoutOne> },
         { "stubs/created-fields-of-objects-with-extra-properties"_s, ImageTests::whenExecutable<testCreatedFieldsOfObjectsWithExtraProperties> },
         { "stubs/created-fields-of-slots-known-to-the-caller"_s, ImageTests::whenExecutable<testCreatedFieldsOfSlotsKnownToCaller> },
+        { "stubs/calls-into-the-c-library-leave-a-frame-record-for-the-sampling-profiler"_s, ImageTests::whenExecutable<testCallsIntoCLibraryLeaveFrameRecordForSamplingProfiler> },
         { "stubs/binary-operation-string-order"_s, ImageTests::whenExecutable<testBinaryOperationStringOrder> },
         { "stubs/binary-operation-bigint-order"_s, ImageTests::whenExecutable<testBinaryOperationBigIntOrder> },
         { "stubs/binary-operations-on-numbers"_s, ImageTests::whenExecutable<testBinaryOperationsOnNumbers> },

@@ -168,7 +168,7 @@ public:
     template<typename Functor> void* frequentStub(FrequentStub, const Functor&) const;
     JS_EXPORT_PRIVATE std::span<const StubAddressInImage> stubAddressesOf(StubFamily) const;
     std::span<const StubAddressInImage> stubAddressesSortedWith(StubFamily) const;
-    bool usesCallConvention(uint32_t offsetInSharedCode) const;
+    bool isStubThatMayJumpToFunction(uint32_t offsetInSharedCode) const;
     std::span<const StubReturnSite> stubReturnSites() const;
     std::span<const uint32_t> sharedCodeCopies() const { return section<uint32_t>(ImageSection::SharedCodeCopies); }
     std::span<const uint32_t> slotHandlerOffsets() const { return section<uint32_t>(ImageSection::SlotHandlers); }

@@ -244,7 +244,7 @@ struct ImagePointerTable {
     JS_EXPORT_PRIVATE static std::optional<uint32_t> slotOfOperation(const void* taggedOperation);
     JS_EXPORT_PRIVATE static ImagePointerTable forModule(const ModuleInformation&, uint32_t numberOfJSEntrypoints);
 
-    uint32_t callee(FunctionCodeIndex function) const { return numberOfSharedPointers + static_cast<uint32_t>(function.rawIndex()); }
+    static uint32_t callee(FunctionCodeIndex function) { return numberOfSharedPointers + static_cast<uint32_t>(function.rawIndex()); }
     uint32_t rtt(TypeSignatureIndex type) const { return numberOfSharedPointers + numberOfFunctions + type.rawIndex(); }
     uint32_t jsEntrypointCallee(uint32_t entry) const { return numberOfSharedPointers + numberOfFunctions + numberOfTypes + entry; }
     uint32_t size() const { return numberOfSharedPointers + numberOfFunctions + numberOfTypes + numberOfJSEntrypoints; }
