@@ -2456,6 +2456,7 @@ private:
     void clearDeferredRequireMark(ModuleID);
     void clearRejectedFirstRequire(ModuleID);
 
+    bool namesFormByQuery(ModuleID) const;
     std::optional<ModuleID> findByName(const Identifier& key);
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
     bool isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchParameters&) const;

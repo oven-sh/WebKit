@@ -5247,9 +5247,26 @@ JSObject* Modules::requireCacheEntry(ModuleID module)
     return objects.module;
 }
 
+// A file under a query that spells a type has the path of the file's form. In a test run no compiled file has a query, and a file of code is no data under one.
+bool Modules::namesFormByQuery(ModuleID module) const
+{
+    if (data(module).kind != ModuleKind::Data || data(module).isOfLibrary())
+        return false;
+    String path = m_table.fullPath(module);
+    size_t mark = path.reverseFind('?');
+    if (mark == notFound || path.find('/', mark) != notFound)
+        return false;
+    StringView file = StringView(path).left(mark);
+    return isTestRun() || std::ranges::any_of(std::initializer_list<ASCIILiteral> { ".js"_s, ".mjs"_s, ".cjs"_s, ".jsx"_s, ".ts"_s, ".mts"_s, ".cts"_s, ".tsx"_s }, [&](ASCIILiteral end) {
+        return file.endsWith(end);
+    });
+}
+
 std::optional<ModuleID> Modules::findByName(const Identifier& key)
 {
     std::optional<ModuleID> found = m_table.findByPath(key.string());
+    if (found && namesFormByQuery(*found)) [[unlikely]]
+        return std::nullopt;
     if (found && isReplacedByHost(*found, LoadKind::Import))
         return std::nullopt;
     if (found && !data(*found).isOfLibrary() && host().hasMatchingLoadPlugin && host().hasMatchingLoadPlugin(m_instance.globalObject, key.string()) && !hasRun(*found) && !namespaceIfCreated(*found, ModulePhase::Evaluation))
