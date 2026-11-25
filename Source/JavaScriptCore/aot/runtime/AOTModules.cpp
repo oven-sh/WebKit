@@ -624,6 +624,39 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
     }
 }
 
+// The loader has not seen a file that only a require() has loaded. The first import() asks the plugins.
+void Modules::delegateImportsToHost(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (data(file).kind != ModuleKind::CommonJs || status(file) != ModuleStatus::Evaluated || !isTestRun() || isEvicted(file) || isMocked(file) || activeMock(file) || wasLoadedByImport(file))
+        return;
+    m_hasHostImportedFiles = true;
+    m_hostImportedFiles.set(file.index());
+    m_filesAskingPlugins.set(file.index());
+}
+
+bool Modules::isImportedByHost(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    return m_hostImportedFiles.get(file.index()) && status(file) == ModuleStatus::Evaluated && !isEvicted(file) && !isMocked(file) && !activeMock(file);
+}
+
+void Modules::didClearPlugins()
+{
+    m_filesAskingPlugins.clearAll();
+}
+
+// Behind Bun.plugin.clearAll(), an import follows one that the host has begun, and else finds the file.
+bool Modules::asksHostForImport(ModuleID module)
+{
+    ModuleID file = fileOf(module);
+    if (!isImportedByHost(file) || m_modulesWithPendingMock.get(file.index()) || m_instance.vm->synchronousModuleQueue())
+        return false;
+    if (m_filesAskedOfHost.get(file.index()))
+        return true;
+    return !wasLoadedByImport(file) && (m_filesAskingPlugins.get(file.index()) || loader()->registryEntry(moduleKey(file)));
+}
+
 void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegatedBy)
 {
     ModuleID file = fileOf(module);
@@ -5020,6 +5053,8 @@ void Modules::didCallFactoryOfLoad(ModuleID file)
 
 bool Modules::isReplacedByHost(ModuleID module, LoadKind way)
 {
+    if (m_hasHostImportedFiles && way == LoadKind::Import && asksHostForImport(module)) [[unlikely]]
+        return true;
     const ModuleData& replaced = data(module);
     bool isNative = replaced.kind == ModuleKind::Runtime;
     bool isCodeOfLibrary = replaced.kind == ModuleKind::RuntimeSource || (replaced.kind == ModuleKind::SourceText && replaced.isOfLibrary());
@@ -6436,6 +6471,8 @@ JSPromise* Modules::importUncompiled(const Identifier& key, ModuleID referrer, R
         return loader()->requestImportModuleForKey(realm, key, moduleKey(referrer), WTF::move(fetchParameters), nullptr, false, asyncEvaluationOrder(referrer).value_or(-1));
     };
     std::optional<ModuleID> found = fetchParameters ? std::nullopt : m_table.findByPath(key.string());
+    if (found && m_hostImportedFiles.get(found->index())) [[unlikely]]
+        m_filesAskedOfHost.set(found->index());
     if (found && mockLoadError(*found)) [[unlikely]]
         RELEASE_AND_RETURN(scope, rejectImportWithErrorOfLoad(*found, ImportCaller::CompiledCode));
     if (found) {
@@ -7943,8 +7980,15 @@ bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)
         return true;
     if (!modules->mayBeEvicted(module))
         return false;
+    modules->delegateImportsToHost(module);
     modules->delegateToHostUnlessEvaluated(module);
     return true;
+}
+
+bool isImportedByHost(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isImportedByHost(module);
 }
 
 bool Modules::hasRun(ModuleID module)
@@ -10024,6 +10068,14 @@ void didRemoveMock(JSGlobalObject* realm, ModuleID module, RetainedOriginalPolic
         RELEASE_AND_RETURN(scope, modules->endMockOfLibraryModule(module));
     if (!stoodInPlace)
         RELEASE_AND_RETURN(scope, modules->endMockLaidOverFile(module));
+}
+
+void didClearPlugins(JSGlobalObject* realm)
+{
+    if (Modules* modules = modulesOf(realm)) {
+        modules->forgetWhatNamesResolvedTo();
+        modules->didClearPlugins();
+    }
 }
 
 void didChangePlugins(JSGlobalObject* realm)
