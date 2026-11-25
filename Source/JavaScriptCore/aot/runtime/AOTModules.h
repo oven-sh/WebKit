@@ -1917,6 +1917,7 @@ public:
     JSObject* childModuleObject(ModuleID);
     std::optional<ModuleID> moduleFormOf(ModuleID file) const;
     std::optional<ModuleID> loadedModuleForm(ModuleID file);
+    bool answersRequireOfFile(ModuleID form);
     bool canExposeModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     bool hidesModuleObject(ModuleID module) const { return !canExposeModuleObject(module) || data(module).hasUnescapedExports(); }
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);

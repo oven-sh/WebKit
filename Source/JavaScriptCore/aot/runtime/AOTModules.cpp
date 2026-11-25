@@ -7284,11 +7284,15 @@ std::optional<ModuleID> loadedModuleForm(JSGlobalObject* realm, ModuleID file)
     return modules ? modules->loadedModuleForm(file) : std::nullopt;
 }
 
-static bool answersRequireOfFile(Modules& modules, ModuleID form)
+bool Modules::answersRequireOfFile(ModuleID form)
 {
-    String path = modules.table().fullPath(form);
-    std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?')));
-    return file && modules.loadedModuleForm(*file) == form;
+    String path = m_table.fullPath(form);
+    std::optional<ModuleID> file = m_table.findByPath(StringView(path).left(path.reverseFind('?')));
+    if (!file || data(*file).kind != ModuleKind::SourceText)
+        return file && loadedModuleForm(*file) == form;
+    if (isEvicted(*file) || isEvicted(form) || isMocked(*file) || activeMock(*file) || wasRequired(*file))
+        return false;
+    return wasRequired(form) || (hasNotBegun(*file) && status(form) == ModuleStatus::Evaluated);
 }
 
 static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
@@ -7314,7 +7318,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfImported);
     Modules& modules = modulesOf(*instance);
     if (modules.data(ModuleID(module)).kind == ModuleKind::SourceText) {
-        if (!answersRequireOfFile(modules, ModuleID(module)))
+        if (!modules.answersRequireOfFile(ModuleID(module)))
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
