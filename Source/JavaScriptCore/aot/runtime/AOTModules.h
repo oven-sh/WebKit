@@ -1510,6 +1510,32 @@ public:
         loaded.moduleObjectFromRequire.set(*this, nullptr);
         loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
     }
+    bool keepsModuleBesideEntry(ModuleID module)
+    {
+        return (data(module).kind == ModuleKind::CommonJs || data(module).isESModuleOfProgram()) && !data(module).isOfLibrary() && status(module) == ModuleStatus::Evaluated && !isEvicted(module) && !isMocked(module) && !activeMock(module) && !hasIntactOriginal(module) && mayBeEvicted(module) && wasLoadedByImport(module);
+    }
+    void answerRequireWithEntry(ModuleID module, JSObject* entry)
+    {
+        answerRequireWithNamespaceOfFile(module);
+        LoadedModule& loaded = ensureLoaded(module);
+        loaded.moduleObjectFromRequire.set(*this, entry);
+        loaded.exportsGivenToObjectMadeByRequire.set(*this, JSValue());
+        if (data(module).kind != ModuleKind::CommonJs)
+            loaded.requiredValue.set(*this, jsUndefined());
+    }
+    // The entry of the program that answerRequireWithEntry() has put beside what an import loaded.
+    bool forgetEntryBesideImport(ModuleID module)
+    {
+        LoadedModule* loaded = data(module).isOfLibrary() ? nullptr : loadedIfExists(module);
+        if (!loaded || !loaded->moduleObjectFromRequire || loaded->exportsGivenToObjectMadeByRequire.get())
+            return false;
+        bool isBesideImport = data(module).kind == ModuleKind::CommonJs ? loaded->isAnsweredWithNamespace : data(module).isESModuleOfProgram() && loaded->requiredValue.get().isUndefined();
+        if (!isBesideImport)
+            return false;
+        loaded->requiredValue.set(*this, JSValue());
+        loaded->moduleObjectFromRequire.set(*this, nullptr);
+        return true;
+    }
     void answerRequireWithExportsOfFile(ModuleID module)
     {
         if (LoadedModule* loaded = loadedIfExists(module))

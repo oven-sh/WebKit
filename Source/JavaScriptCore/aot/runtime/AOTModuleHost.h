@@ -294,7 +294,7 @@ JS_EXPORT_PRIVATE bool isEvicted(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didCacheSourceInHost(VM&, ModuleID, bool isPluginSource);
 JS_EXPORT_PRIVATE bool rejectsReload(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willClearRequireCacheEntry(JSGlobalObject*, ModuleID);
-JS_EXPORT_PRIVATE void willReplaceRequireCacheEntry(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE void willReplaceRequireCacheEntry(JSGlobalObject*, ModuleID, JSValue entry);
 JS_EXPORT_PRIVATE bool tryDelegateModuleToHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willReevaluateEntryPoint(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasRequireCacheEntry(JSGlobalObject*, ModuleID);
