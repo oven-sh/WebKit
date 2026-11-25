@@ -3453,8 +3453,7 @@ bool Modules::keepsOriginalNames(const ModuleNamespace& word) const
 
 void Modules::registerEvaluatedModule(ModuleID module)
 {
-    bool isKnownToLoader = hasInstances(module) ? !!currentInstance(module) : isBuiltinModuleOfLoader(module) ? !isBuiltinModuleNewToLoader(module) : data(module).kind == ModuleKind::SourceText && !isNotLoaded(module);
-    if (!isKnownToLoader || status(module) != ModuleStatus::Evaluated || isMocked(module) || activeMock(module) || loader()->registryEntry(moduleKey(module)))
+    if (!currentInstance(module) || status(module) != ModuleStatus::Evaluated || isMocked(module) || activeMock(module) || loader()->registryEntry(moduleKey(module)))
         return;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     ModuleRecord* record = registerWithLoader(module, RecordHolder::Loader);
