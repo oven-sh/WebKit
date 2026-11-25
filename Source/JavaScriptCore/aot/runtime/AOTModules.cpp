@@ -5602,6 +5602,29 @@ bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* request
     return true;
 }
 
+// The host parses data where it is asked for, so that the fetch has failed when import() returns. Code that does not parse fails on another thread.
+bool Modules::isDataThatDoesNotParse(ModuleID module)
+{
+    if (data(module).kind != ModuleKind::SourceText || status(module) == ModuleStatus::Evaluated || data(module).isOfLibrary() || !isTestRun() || isMocked(module) || activeMock(module)) [[likely]]
+        return false;
+    return host().isParsedAsData && host().isParsedAsData(m_table.fullPath(fileOf(module)));
+}
+
+JSPromise* Modules::rejectImportOfDataThatDoesNotParse(JSPromise* promise, ModuleID module)
+{
+    static constexpr InternalMicrotask jobsOfFailedFetch[] = {
+        InternalMicrotask::ModuleLoadTopSettled,
+        InternalMicrotask::ModuleLoadTopRejected,
+        InternalMicrotask::ImportModuleNamespace,
+    };
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    JSValue error = scope.exception() ? scope.exception()->value() : jsUndefined();
+    TRY_CLEAR_EXCEPTION(scope, promise);
+    queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfFailedFetch), error);
+    return promise;
+}
+
 JSPromise* Modules::startImportInLaterTurn(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
 {
     JSPromise* importPromise = JSPromise::create(*m_instance.vm, m_instance.globalObject->promiseStructure());
@@ -5835,6 +5858,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     currentImportWaitState.reset();
     currentImportTarget.reset();
     didLoadDataFile(module, LoadKind::Import);
+    if (text == ImportSourceState::MayArriveLater && isDataThatDoesNotParse(module)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, rejectImportOfDataThatDoesNotParse(promiseForCaller(), module));
     if (text == ImportSourceState::MayArriveLater && (!m_queuedFetches.isEmpty() || hasFileOfGraphBeingLoadedBegun() || data(module).isLoadedByLoader() || m_importDeferringMocks == module) && hasUnreadSource(module)) [[unlikely]] {
         if (isNewCallAfterTests)
             return promiseForCaller();

@@ -112,6 +112,7 @@ struct ModuleHost {
     bool (*isLoadingUnderVitest)(JSGlobalObject*);
     void (*evictCachedSource)(JSGlobalObject*, const String& path);
     bool (*printsDataFileAsJavaScript)(JSGlobalObject*, const String& path);
+    bool (*isParsedAsData)(const String& path);
     void (*didDiscardModuleEvaluation)(JSGlobalObject*, JSObject* module, bool willEvaluateAgain);
     bool (*isPatchPending)(JSGlobalObject*, const ScopedLambda<String()>& path);
     bool (*hasRunningFactory)(JSGlobalObject*);

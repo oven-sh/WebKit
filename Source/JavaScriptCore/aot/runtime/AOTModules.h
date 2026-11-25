@@ -3664,6 +3664,8 @@ private:
     bool hasFileOfGraphBeingLoadedBegun() const;
     bool hasUnreadSource(ModuleID);
     JSPromise* startImportInLaterTurn(ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    bool isDataThatDoesNotParse(ModuleID);
+    JSPromise* rejectImportOfDataThatDoesNotParse(JSPromise*, ModuleID);
     struct QueuedFetch {
         uint64_t place;
         Strong<JSPromise> promise;
