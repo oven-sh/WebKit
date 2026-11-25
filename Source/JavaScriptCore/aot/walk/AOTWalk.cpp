@@ -9038,6 +9038,14 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
         bool isNumberSpelledByKey = givenByRow == TypeTable::string && m_types.isSubset(recorded, TypeTable::number) && written.opcode() == Opcode::ElemGet && operandWritten == written.propertyOperand();
         if (isNumberSpelledByKey)
             continue;
+        static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
+        static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
+        if (maker == Opcode::ToPropertyKey && accessesByKey.contains(written.opcode()) && operandIndex == OperandIndex::ElemGet::property && m_code.isConstant(judged) && m_code.at(judged).opcode == Opcode::Integer) {
+            Reference name = nameBehindStandIn(m_frames.size() - 1, operandWritten, referenceBoundTo(operandWritten));
+            Vector<char16_t> buffer;
+            if (name && name.isConstant() && m_code.at(name.id()).opcode == Opcode::String && m_types.viewOf(m_code.at(name.id()).string(), buffer) == String::number(static_cast<double>(m_code.at(judged).integer())))
+                continue;
+        }
         dataLogLn("AOT: f", currentFunction().index(), " v", draft.inputValueGiven.index(), ": ", nameOf(draft.opcode), " takes ", TypeInText { m_types, recorded }, " as operand ", operandIndex, ", which the input makes by ", nameOf(maker), ": its row gives ", TypeInText { m_types, givenByRow });
         return true;
     }
