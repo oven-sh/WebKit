@@ -436,7 +436,7 @@ struct alignas(128) LinkFlow::Lane {
     };
     static constexpr unsigned log2OfJoinedHeads = 7;
     using TableOfJoinedHeads = std::array<JoinedHeads, 1 << log2OfJoinedHeads>;
-    std::array<TableOfJoinedHeads, 6> joinedHeads;
+    std::array<TableOfJoinedHeads, 8> joinedHeads;
     HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> nodesThatAccessorsFoundAsked;
     EdgesOfBusyNodesInLinkFlow edgesOfBusyNodes;
     Vector<uint64_t> numbersOfNodesToTell;
@@ -2668,7 +2668,7 @@ ALWAYS_INLINE void LinkFlow::joinHeads(FlowNodeID node, Node& target, const Link
     target.head = after.head();
 }
 
-enum class NamesOfHeadsInLinkFlow : uint8_t { None, OfArrival, OfNode };
+enum class NamesOfHeadsInLinkFlow : uint8_t { None, OfArrival, OfNode, OfBoth };
 
 static NEVER_INLINE uint64_t joinHeadsInLinkFlow(uint64_t heldHead, uint64_t arrivingHead, NamesOfHeadsInLinkFlow names, bool isBounded)
 {
@@ -2680,7 +2680,7 @@ static NEVER_INLINE uint64_t joinHeadsInLinkFlow(uint64_t heldHead, uint64_t arr
         return heldHead;
     if (isBounded) {
         arriving.primitives &= LinkType::closed(Primitive::All);
-        if (names != NamesOfHeadsInLinkFlow::OfArrival && !arriving.primitives && arriving.isNever())
+        if (names != NamesOfHeadsInLinkFlow::OfArrival && names != NamesOfHeadsInLinkFlow::OfBoth && !arriving.primitives && arriving.isNever())
             return heldHead;
     }
     if (held.holdsOneSymbolInAnyPart() || arriving.holdsOneSymbolInAnyPart())
@@ -2692,7 +2692,8 @@ static NEVER_INLINE uint64_t joinHeadsInLinkFlow(uint64_t heldHead, uint64_t arr
     }
     case NamesOfHeadsInLinkFlow::OfArrival:
         return joinedWithoutReferencesInLinkFlow(held, arriving).head();
-    case NamesOfHeadsInLinkFlow::OfNode: {
+    case NamesOfHeadsInLinkFlow::OfNode:
+    case NamesOfHeadsInLinkFlow::OfBoth: {
         LinkType after = joinedWithUninformativeType(held, arriving);
         return after.holdsSameWithShadowsAs(held) ? heldHead : after.head();
     }
@@ -2733,7 +2734,7 @@ ALWAYS_INLINE bool LinkFlow::tryJoinByHeads(Lane& lane, const ArrivalHeldBack& a
             return false;
         if (!arrivesWithoutNames && ((head ^ arrivingHead) & wordOfNames || !(sent == unknownReferences ? LinkType::areSameReferences(references, held) : sent == target.references)))
             return false;
-        names = Names::OfNode;
+        names = arrivesWithoutNames ? Names::OfNode : Names::OfBoth;
     }
     uint64_t held = (head & ~wordOfNames) | (nothing & wordOfNames);
     uint64_t arriving = (arrivingHead & ~wordOfNames) | (nothing & wordOfNames);
