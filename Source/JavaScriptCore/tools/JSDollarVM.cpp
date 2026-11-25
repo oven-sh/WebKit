@@ -4234,8 +4234,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBasicBlockExecutionCount, (JSGlobalObject* glob
 
 class CoveredSourceProvider final : public StringSourceProvider {
 public:
-    CoveredSourceProvider(const String& source, const SourceOrigin& sourceOrigin, Vector<CoverageCounters::Place>&& places, unsigned numberOfCounters)
-        : StringSourceProvider(source, sourceOrigin, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+    CoveredSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceProviderSourceType sourceType, Vector<CoverageCounters::Place>&& places, unsigned numberOfCounters)
+        : StringSourceProvider(source, sourceOrigin, SourceTaintedOrigin::Untainted, String(), TextPosition(), sourceType)
         , m_places(WTF::move(places))
         , m_counts(FillWith { }, numberOfCounters, 0)
         , m_counters { m_places.span(), m_counts.mutableSpan() }
@@ -4250,7 +4250,8 @@ private:
     CoverageCounters m_counters;
 };
 
-// Usage: $vm.evaluateWithCoverage(source, new Uint32Array([offset, counterAndEvent, ...]), numberOfCounters)
+// With a symbol for a key it is imported as a module, by a new loader.
+// Usage: $vm.evaluateWithCoverage(source, new Uint32Array([offset, counterAndEvent, ...]), numberOfCounters, moduleKey?)
 JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -4267,7 +4268,16 @@ JSC_DEFINE_HOST_FUNCTION(functionEvaluateWithCoverage, (JSGlobalObject* globalOb
         return CoverageCounters::Place { numbers->typedSpan()[2 * i], numbers->typedSpan()[2 * i + 1] };
     });
 
-    SourceCode source(adoptRef(*new CoveredSourceProvider(program, callFrame->callerSourceOrigin(vm), WTF::move(places), numberOfCounters)));
+    auto* moduleKey = dynamicDowncast<Symbol>(callFrame->argument(3));
+    auto sourceType = moduleKey ? SourceProviderSourceType::Module : SourceProviderSourceType::Program;
+    SourceCode source(adoptRef(*new CoveredSourceProvider(program, callFrame->callerSourceOrigin(vm), sourceType, WTF::move(places), numberOfCounters)));
+    if (moduleKey) {
+        Identifier key = Identifier::fromUid(moduleKey->privateName());
+        JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, globalObject->globalLexicalEnvironment());
+        loader->provideFetch(globalObject, key, ScriptFetchParameters::Type::JavaScript, WTF::move(source));
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(loader->requestImportModuleForKey(globalObject, key, Identifier(), nullptr, nullptr)));
+    }
     NakedPtr<Exception> exception;
     JSValue result = evaluate(globalObject, source, JSValue(), exception);
     if (exception)

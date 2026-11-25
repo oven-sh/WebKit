@@ -84,6 +84,35 @@ for (const marked of [`@1 1; @1 ;`, `@1 1; @1 if (false) @0 @!1 2;`, `@1 1; @1 d
     shouldBe($vm.coverageCounts(third), [even], "third");
 }
 
+// Nor do the records of a module.
+{
+    const key = Symbol();
+    const modules = [];
+    for (const arms of [`@1 1 : @0 2`, `@1 1 : @0 2`, `1 : @0 2`]) {
+        const { source, places, expected } = parse(`@1 export const a = 1; export function f() @1 { return a ? ${arms}; }`);
+        $vm.evaluateWithCoverage(source, places, expected.length, key).then(({ f }) => modules.push({ f, expected }));
+        drainMicrotasks();
+    }
+    shouldBe(modules.map(({ f }) => f()), [1, 1, 1], "results");
+    for (const { f, expected } of modules) shouldBe($vm.coverageCounts(f), expected, "module");
+}
+
+// What has no place takes no more stack to parse.
+{
+    const deepest = (evaluate) => {
+        let depth = 0;
+        for (let step = 1 << 16; step; step >>= 1) {
+            try {
+                evaluate(`${"(".repeat(depth + step)}1${")".repeat(depth + step)}`);
+                depth += step;
+            } catch { }
+        }
+        return depth;
+    };
+    const [plain, counted] = [eval, (source) => $vm.evaluateWithCoverage(source, new Uint32Array(), 0)].map(deepest);
+    shouldBe(counted > plain * 0.99, true, `${counted} of ${plain} levels`);
+}
+
 // A loop that is entered in one tier and left in another.
 {
     const { source, places, expected } = parse(`(function (n) { let sum = 0; for (let i = 0; i < n; i++) @0 { if (i & 1) @0 @!0 do @0 sum++; while (false); } return sum; })`);

@@ -55,7 +55,7 @@
 #define matchOrFail(tokenType, ...) do { if (!match(tokenType)) [[unlikely]] { handleErrorToken(); internalFailWithMessage(true, __VA_ARGS__); } } while (0)
 #define findCoveragePlacesOfResult(thisFunction, ...) do { \
     if constexpr (TreeBuilder::CreatesAST) { \
-        if (context.mayHaveCoveragePlacesAt(tokenStart())) [[unlikely]] \
+        if (context.hasFreeCoveragePlacesAt(tokenStart())) [[unlikely]] \
             return parseAndFindCoveragePlaces(&Parser::thisFunction<TreeBuilder>, __VA_ARGS__); \
     } \
 } while (0)

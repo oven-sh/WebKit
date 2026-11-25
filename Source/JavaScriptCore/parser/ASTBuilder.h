@@ -619,7 +619,7 @@ public:
         return result;
     }
 
-    bool mayHaveCoveragePlacesAt(unsigned offset) const { return m_coverageCounters && offset != m_offsetOfTakenCoveragePlaces; }
+    bool hasFreeCoveragePlacesAt(unsigned offset) const { return m_coverageCounters && hasFreeCoveragePlacesAtSlow(offset); }
     // While a node is parsed, what it starts with does not get its places.
     unsigned& offsetOfTakenCoveragePlaces() LIFETIME_BOUND { return m_offsetOfTakenCoveragePlaces; }
     void findCoveragePlaces(StatementNode* node) { findCoveragePlaces(node, node->startOffset()); }
@@ -1217,6 +1217,11 @@ private:
             metadata->setEcmaName(ident);
         } else if (defaultValue->isClassExprNode())
             static_cast<ClassExprNode*>(defaultValue)->setEcmaName(ident);
+    }
+
+    NEVER_INLINE bool hasFreeCoveragePlacesAtSlow(unsigned offset) const
+    {
+        return offset != m_offsetOfTakenCoveragePlaces && !m_coverageCounters->placesAt(offset).empty();
     }
 
     NEVER_INLINE void findCoveragePlacesSlow(Node* node, unsigned offset)

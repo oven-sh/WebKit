@@ -64,6 +64,11 @@ struct CoverageCounters {
     }
     Places placesAt(unsigned offset) const { return placesIn(offset, offset); }
 
+    static bool canShareLinkedCode(const CoverageCounters* a, const CoverageCounters* b)
+    {
+        return a == b || (a && b && a->counts.data() == b->counts.data() && std::ranges::equal(a->places, b->places));
+    }
+
     Places places; // Sorted by offset.
     std::span<uint64_t> counts; // Added to without synchronization, so code of one thread only.
 };
