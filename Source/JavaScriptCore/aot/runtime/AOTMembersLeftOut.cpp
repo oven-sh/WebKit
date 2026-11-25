@@ -217,12 +217,12 @@ static JSValue createThrowingPlaceholder(JSGlobalObject* realm, String&& message
     return standIn;
 }
 
-JSValue takeOmittedMemberPlaceholder(JSGlobalObject* realm, const String& nameOfMember)
+JSValue takeOmittedMemberPlaceholder(JSGlobalObject* realm, const String& nameOfMember, JSObject* owner)
 {
     String message = takeOmittedCodeErrorMessage(realm->vm());
     if (message.isNull())
         return { };
-    return createThrowingPlaceholder(realm, WTF::move(message), nameOfMember, nullptr);
+    return createThrowingPlaceholder(realm, WTF::move(message), nameOfMember, owner);
 }
 
 JSValue takeOmittedFunctionPlaceholder(JSGlobalObject* realm, const OmittedFunction& function, JSObject* owner)

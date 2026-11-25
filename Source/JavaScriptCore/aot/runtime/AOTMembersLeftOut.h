@@ -22,7 +22,7 @@ class VM;
 namespace AOT {
 
 void noteOmittedCodeError(JSGlobalObject*, JSObject* error);
-JS_EXPORT_PRIVATE JSValue takeOmittedMemberPlaceholder(JSGlobalObject*, const String& nameOfMember);
+JS_EXPORT_PRIVATE JSValue takeOmittedMemberPlaceholder(JSGlobalObject*, const String& nameOfMember, JSObject* owner = nullptr);
 struct OmittedFunction {
     ASCIILiteral name;
     unsigned length { 0 };
