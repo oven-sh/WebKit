@@ -1123,7 +1123,7 @@ public:
     JSObject* instanceImportMeta(ModuleID, Environment* instance);
     JSCell* builtinCell(BuiltinID, ModuleID);
     JSString* pathString(ModuleID);
-    JSString* resolve(ModuleID, ResolvedSpecifierForm);
+    JSString* resolve(ModuleID, ResolvedSpecifierForm, StringView specifier);
     const SourceOrigin& sourceOrigin(ModuleID);
     bool hasMadeOrigin(const SourceOrigin&) const;
     void throwFailure(ModuleFailureID, bool isForRequire);

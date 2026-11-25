@@ -4309,7 +4309,7 @@ bool Modules::standsForFileOutsideImage(ModuleID module) const
 
 static String withoutQuery(const ModuleTable&, ModuleID, const String& path);
 
-JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
+JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form, StringView specifierInImage)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4317,6 +4317,10 @@ JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
     if (m_table.hasFilePath(module) && isURL) {
         String path = m_table.fullPath(module);
         String pathOfFile = withoutQuery(m_table, module, path);
+        // A file above the build folder or of an obfuscated build has no display path that ends its path.
+        size_t query = specifierInImage.find('?');
+        if (pathOfFile.length() == path.length() && query != notFound && path.endsWith(specifierInImage.substring(query)) && !m_table.displayPathText(module).contains('?'))
+            pathOfFile = path.left(path.length() - specifierInImage.length() + query);
         return jsString(vm, makeString(URL::fileURLWithFileSystemPath(pathOfFile).string(), StringView(path).substring(pathOfFile.length())));
     }
     JSString* specifier = pathString(module);
@@ -7451,10 +7455,11 @@ void forEachCountedFile(VM& vm, const ScopedLambda<void(const String& descriptio
         each(description, counts->span());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t, uint32_t isURL))
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t specifier, uint32_t isURL))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTResolveModule);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).resolve(ModuleID(module), isURL ? ResolvedSpecifierForm::URL : ResolvedSpecifierForm::Path)));
+    Modules& modules = modulesOf(*instance);
+    OPERATION_RETURN(scope, JSValue::encode(modules.resolve(ModuleID(module), isURL ? ResolvedSpecifierForm::URL : ResolvedSpecifierForm::Path, ProgramStrings::viewInImage(modules.table().programTables(), StringID(specifier)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instance, uint32_t failure, uint32_t isForRequire))
