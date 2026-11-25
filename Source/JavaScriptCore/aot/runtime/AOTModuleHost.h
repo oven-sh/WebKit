@@ -515,6 +515,7 @@ JS_EXPORT_PRIVATE AbstractModuleRecord* originalModuleRecord(JSGlobalObject*, Mo
 JS_EXPORT_PRIVATE void didBeginTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasBegunTestFile(JSGlobalObject*);
 JS_EXPORT_PRIVATE void didEvictTestFile(JSGlobalObject*, ModuleID);
+JS_EXPORT_PRIVATE bool didEndMocksOfTestFile(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void releaseEndedTestFiles(JSGlobalObject*);
 JS_EXPORT_PRIVATE bool hasActiveMock(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool hasUnevaluatedActiveMockImporter(JSGlobalObject*, ModuleID, std::optional<ModuleID> asking);

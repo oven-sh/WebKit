@@ -530,7 +530,7 @@ void Modules::resetEvictedTestFiles()
         return;
     for (size_t index : BitVector(m_evictedTestFiles)) {
         ModuleID file(index);
-        if (data(file).kind != ModuleKind::CommonJs || !data(file).runsAgainAfterThrow() || status(file) != ModuleStatus::Evaluated || m_loadedInPreload.get(index))
+        if (!runsAgainOnceEvicted(file) || status(file) != ModuleStatus::Evaluated)
             continue;
         resetEntryPointEvaluation(file);
         m_evictedTestFiles.clear(index);
@@ -9242,6 +9242,12 @@ void didEvictTestFile(JSGlobalObject* realm, ModuleID file)
 {
     if (Modules* modules = modulesOf(realm))
         modules->didEvictTestFile(file);
+}
+
+bool didEndMocksOfTestFile(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->didEndMocksOfTestFile(file);
 }
 
 void releaseEndedTestFiles(JSGlobalObject* realm)

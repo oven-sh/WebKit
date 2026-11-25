@@ -258,6 +258,18 @@ public:
         if (isStartedByHost(file))
             m_evictedTestFiles.set(file.index());
     }
+    bool runsAgainOnceEvicted(ModuleID testFile) const
+    {
+        return data(testFile).kind == ModuleKind::CommonJs && data(testFile).runsAgainAfterThrow() && !m_loadedInPreload.get(testFile.index());
+    }
+    // Returns whether the file runs again for the next module that loads it.
+    bool didEndMocksOfTestFile(ModuleID file)
+    {
+        if (!data(file).isEntryPoint() || !runsAgainOnceEvicted(file))
+            return false;
+        m_evictedTestFiles.set(file.index());
+        return true;
+    }
     void resetEvictedTestFiles();
     void releaseEndedTestFiles()
     {
