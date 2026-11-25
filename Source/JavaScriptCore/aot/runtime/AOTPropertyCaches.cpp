@@ -238,10 +238,20 @@ void RowDisplacementTable::clearCell(SlotAccess access, uint32_t index)
     writeCell(access, index, access == SlotAccess::Read ? emptyCellNamed(reservationAt(index).name) : PackedSlot { }, false);
 }
 
+// The base of the row, if this table owns it.
+uint32_t RowDisplacementTable::baseOfOwnRow(StructureID id) const
+{
+    uint32_t base = baseOf(id);
+    if (!base || base >= m_endOfBases)
+        return 0;
+    const PackedSlot& marker = reservationAt(base);
+    return marker.name == rowMarkerTag && m_rows[marker.payload].owner == id ? base : 0;
+}
+
 uint32_t RowDisplacementTable::indexOfReservedCell(StructureID id, uint32_t column) const
 {
     ASSERT(hasColumn(column));
-    uint32_t base = baseOf(id);
+    uint32_t base = baseOfOwnRow(id);
     return base && reservationAt(base + column).name == column ? base + column : 0;
 }
 
@@ -266,7 +276,7 @@ bool RowDisplacementTable::trySet(Structure* structure, uint32_t column, SlotAcc
 std::optional<Slot> RowDisplacementTable::find(StructureID id, uint32_t column, SlotAccess access) const
 {
     ASSERT(hasColumn(column));
-    uint32_t base = baseOf(id);
+    uint32_t base = baseOfOwnRow(id);
     if (!base)
         return std::nullopt;
     const PackedSlot& cell = cellAt(access, base + column);
@@ -278,7 +288,7 @@ std::optional<Slot> RowDisplacementTable::find(StructureID id, uint32_t column, 
 void RowDisplacementTable::remove(StructureID id, uint32_t column, SlotAccess access)
 {
     ASSERT(hasColumn(column));
-    uint32_t base = baseOf(id);
+    uint32_t base = baseOfOwnRow(id);
     if (base && cellAt(access, base + column).name == column)
         clearCell(access, base + column);
 }
@@ -306,7 +316,7 @@ size_t RowDisplacementTable::removeChainDependentCells(StructureID id, uint32_t 
 
 void RowDisplacementTable::releaseRowOf(StructureID id)
 {
-    if (uint32_t base = baseOf(id))
+    if (uint32_t base = baseOfOwnRow(id))
         release(base);
 }
 

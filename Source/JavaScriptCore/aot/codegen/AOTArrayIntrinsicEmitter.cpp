@@ -164,7 +164,7 @@ Integer ArrayIntrinsicEmitter::positionThatLibraryVouchesFor(const ValueContext&
     }
     if (elements().checksBounds()) {
         bool writes = access == AccessVouchedFor::Writes;
-        Word32 mode = elements().indexingMode(elements().askedAnew(storage.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
+        Word32 mode = elements().indexingMode(elements().askedAnew(storage.array), writes ? AllArrayTypesAndHistory : arrayStorageTestMask);
         Condition hasKind = writes ? elements().hasWritableShape(mode, form) : elements().hasShape(mode, form);
         if (form.holdsCells)
             hasKind = writes ? isOneOfBoxedForms(mode, int32s.indexingType, contiguous.indexingType) : isOneOfBoxedForms(mode, int32s.shape, contiguous.shape);
@@ -185,7 +185,7 @@ Integer ArrayIntrinsicEmitter::countThatLibraryVouchesFor(const ValueContext& va
     if (elements().checksBounds())
     {
         bool writes = access == AccessVouchedFor::Writes;
-        Word32 mode = elements().indexingMode(elements().askedAnew(vouchedFor.array), writes ? IndexingShapeAndWritabilityMask : arrayStorageTestMask);
+        Word32 mode = elements().indexingMode(elements().askedAnew(vouchedFor.array), writes ? AllArrayTypesAndHistory : arrayStorageTestMask);
         elements().stopUnlessInside(value, writes ? elements().hasWritableShape(mode, contiguous) : elements().hasShape(mode, contiguous));
         elements().stopUnlessInside(value, belowOrEqual(count, elements().publicLength(vouchedFor)));
     }
@@ -232,7 +232,7 @@ void ArrayIntrinsicEmitter::generatePutOwnContiguousIndex(const ValueContext& va
     ArrayElements storage = elements().elementsOf(value, array);
     Integer position = positionThatLibraryVouchesFor(value, storage, contiguous, AccessVouchedFor::Writes);
     if (elements().checksBounds())
-        elements().stopUnlessInside(value, logicalOr(elements().hasWritableShape(elements().indexingMode(elements().askedAnew(storage.array), IndexingShapeAndWritabilityMask), contiguous), isInt32(rawElement)));
+        elements().stopUnlessInside(value, logicalOr(elements().hasWritableShape(elements().indexingMode(elements().askedAnew(storage.array), AllArrayTypesAndHistory), contiguous), isInt32(rawElement)));
     m_out.store64(rawElement.value(), elements().elementOfUnknownForm(storage, position));
     barrierAfterStore(value, array, typeOf(stored));
 }
@@ -331,7 +331,7 @@ void ArrayIntrinsicEmitter::generatePutContiguousIndex(const ValueContext& value
     LBasicBlock holdsBoxes = newBlock();
     LBasicBlock done = newBlock();
     ScopeFork fork = m_out.forkScope();
-    branch(elements().hasWritableShape(elements().indexingMode(array, IndexingShapeAndWritabilityMask), doubles), { normalEdge(holdsDoubles), normalEdge(holdsBoxes) });
+    branch(elements().hasWritableShape(elements().indexingMode(array, AllArrayTypesAndHistory), doubles), { normalEdge(holdsDoubles), normalEdge(holdsBoxes) });
     m_out.appendToArm(holdsDoubles, fork);
     putNumberInBounds(value, doubles);
     m_out.jump(done);
