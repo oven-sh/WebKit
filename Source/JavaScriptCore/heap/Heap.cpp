@@ -2434,6 +2434,15 @@ void Heap::sweepAndClearCachesInEpilogue()
         observer->clearCachesInEpilogue();
 }
 
+// The caches that are not cells and that sweepAndClearCachesInEpilogue() ages through the heap's observers. An Eden
+// collection with nothing to mark or sweep still owes that: one that skipped marking (canSkipMarking()), and one whose
+// request collectAsyncIfNecessary() turned down.
+void Heap::clearCachesAfterEmptyEdenCollection()
+{
+    for (auto* observer : m_observers)
+        observer->clearCachesInEpilogue();
+}
+
 void Heap::runCollectionEpilogue()
 {
     MonotonicTime before;
@@ -2444,6 +2453,8 @@ void Heap::runCollectionEpilogue()
 
     if (!m_didSkipMarkingInLastCollection)
         sweepAndClearCachesInEpilogue();
+    else
+        clearCachesAfterEmptyEdenCollection();
 
     for (const GCCompletionCallback& callback : m_gcCompletionCallbacks)
         callback.run(vm());
@@ -2841,6 +2852,48 @@ bool Heap::shouldSweepSynchronously()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool Heap::collectAsyncIfNecessary()
+{
+    if (!Options::useGC() || !m_isSafeToCollect) [[unlikely]]
+        return false;
+
+    ASSERT(vm().currentThreadIsHoldingAPILock());
+    assertIsAccessHolder();
+
+    // As collect(Async) begins: a queued request that covers this one is left as it is, without a safepoint, so that
+    // its collection ends where it ends for collectAsync(). A request that does not cover this one (an Eden one, from
+    // EdenGCActivityCallback) gets its safepoint. What was allocated before a collection ends is that collection's, so
+    // the heap answers only when none is queued or under way.
+    if (m_collector->isSubsumedByQueuedRequest(GCRequest()))
+        return true;
+    stopIfNecessary();
+    if (m_collector->hasPendingGCRequest())
+        return true;
+
+    // A Full collection can free what was allocated before the last collection, so the heap turns down only a request
+    // that would run as an Eden one (Collector::decideCollectionScope()). An Eden collection sweeps what was allocated
+    // since the last collection ended. Memory is counted without a cell (reported extra memory), and a cell is allocated
+    // before its block is counted. The threshold is read anew: a heap that allocates nothing does not find out
+    // otherwise that the process went over it.
+    bool wouldSweepNothing = !Collector::collectsOnlyFull() && !totalBytesAllocatedThisCycle() && m_objectSpace.isEdenEmpty()
+        && !wantsFullCollection(MemoryThresholdCallType::Direct);
+    if (!wouldSweepNothing) {
+        collectAsync();
+        return true;
+    }
+
+    // What an Eden collection that frees nothing leaves behind. The death rate of EdenGCActivityCallback is 0, which
+    // keeps that timer off until a collection frees something again. One thing is left out: after a Full collection
+    // that left little room, updateAllocationLimits() would make the next collection a Full one again, with nothing
+    // allocated in between.
+    m_sizeBeforeLastEdenCollect = m_sizeAfterLastEdenCollect = m_sizeAfterLastCollect;
+    clearCachesAfterEmptyEdenCollection();
+    // The epilogue also drops the old buffers of strings that became atoms, if no scanned stack refers to them. No
+    // stack was scanned here, so they go as the sweeper drops them. Only a collection arms the sweeper.
+    clearConcurrentRetainedDataIfPossible();
+    return false;
+}
+
 bool Heap::isIdleCollection() const
 {
     return m_collector->m_currentRequest.isIdle;

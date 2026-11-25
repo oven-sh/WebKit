@@ -108,6 +108,10 @@ public:
     JS_EXPORT_PRIVATE static Vector<size_t> sizeClassesFor(double progression);
     
     void prepareForAllocation();
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether no cell was allocated since the last prepareForAllocation(): an Eden collection would sweep nothing.
+    bool isEdenEmpty();
+#endif
 
     void reapWeakSets();
 
