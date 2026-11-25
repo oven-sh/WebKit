@@ -782,6 +782,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
         if (!base->tryPutDirectByExistingTransition(vm, uid, defined, attributesOfNameWithoutField)) [[unlikely]] {
             PutPropertySlot slot(base, true);
             base->definePrivateField(globalObject, uid, defined, slot, attributesOfNameWithoutField);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
         }
         ensureRecordsOfKnownStructures(vm, state, classToken);
         bool needsBrand = !isBrand && location.hasBrand;

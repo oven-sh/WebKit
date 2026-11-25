@@ -417,7 +417,9 @@ JSValue sourceText(JSGlobalObject* globalObject, JSObject* callee)
     bool isWrittenWithoutName = callableKind == CallableKind::Arrow || (!isProgramFunction && kindData.hasInferredName);
     if (isProgramFunction && callableKind == CallableKind::Arrow)
         made = jsMakeNontrivialString(globalObject, async, "() => { [native code] }"_s);
-    else if (String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function); kindData.isConstructor)
+    else if (String name = isWrittenWithoutName ? emptyString() : initialNameProperty(function); kindData.isOfRuntimeFunction)
+        made = jsMakeNontrivialString(globalObject, "function "_s, name, "() { [native code] }"_s);
+    else if (kindData.isConstructor)
         made = jsMakeNontrivialString(globalObject, "class "_s, name, name.isEmpty() ? ""_s : " "_s, "{ [native code] }"_s);
     else if (isProgramFunction && callableKind == CallableKind::Method)
         made = jsMakeNontrivialString(globalObject, async, kindData.isGenerator ? "*"_s : ""_s, name, "() { [native code] }"_s);

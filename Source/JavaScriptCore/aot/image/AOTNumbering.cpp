@@ -499,6 +499,16 @@ StringNumbers::StringNumbers(const BitVector& named, Vector<StringID>&& sortedCo
         m_numbers[id.index()] = number++;
 }
 
+Vector<StringID> StringNumbers::stringsByNumber() const
+{
+    Vector<StringID> strings(m_numberOfWords + m_coded.size());
+    for (size_t index = 0; index < m_numbers.size(); ++index) {
+        if (m_numbers[index] != noNumber)
+            strings[m_numbers[index]] = StringID(index);
+    }
+    return strings;
+}
+
 static uint64_t countThingsNumbered(const ImageNumbers& numbers)
 {
     const PlacedStatics& statics = numbers.statics();
