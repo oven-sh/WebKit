@@ -4604,7 +4604,7 @@ void Modules::restoreFormEvictedDuringImport(ModuleID module)
     if (!file || !isFileOfProgram(*file))
         return;
     Identifier key = keyWithoutForm(form);
-    auto type = path.endsWith("?json"_s) ? ScriptFetchParameters::Type::JSON : ScriptFetchParameters::Type::HostDefined;
+    auto type = m_table.isFormOfType(form, "?json"_s) ? ScriptFetchParameters::Type::JSON : ScriptFetchParameters::Type::HostDefined;
     ModuleMapKey keyOfLoader { key.impl(), type };
     if (loader()->moduleMap().contains(keyOfLoader))
         return;
