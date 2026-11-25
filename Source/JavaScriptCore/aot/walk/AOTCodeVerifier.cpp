@@ -1171,22 +1171,35 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         return findIn(block, m_places[ground.index()], m_places[access.index()]);
     if (ValueID found = findIn(block, 0, m_places[access.index()]))
         return found;
+    auto placeAfterLastThrow = [&](BlockID in, EdgeID edge) -> uint32_t {
+        const auto& contents = m_code.at(in);
+        if (contents.handler != edge || !contents.hasEnded() || declaredBoundOf(contents.terminator.kind).mayThrow)
+            return UINT32_MAX;
+        uint32_t end = UINT32_MAX;
+        for (ValueID each : operationsOf(in)) {
+            if (m_code.at(each).traits().mayThrow())
+                end = m_places[each.index()] + 1;
+        }
+        return end;
+    };
     BitVector seen(m_code.numberOfBlocks());
+    BitVector seenAtThrows(m_code.numberOfBlocks());
     Vector<BlockID, 16> waiting;
-    bool searchedBehindAccess = false;
     seen.set(block.index());
+    seenAtThrows.set(block.index());
     waiting.append(block);
     while (!waiting.isEmpty()) {
         BlockID to = waiting.takeLast();
         for (EdgeID edge = m_code.at(to).firstEdgeIn(); edge; edge = m_code.at(edge).nextInto()) {
             BlockID from = m_code.at(edge).from;
-            if (from == block && from != home && !std::exchange(searchedBehindAccess, true)) {
-                if (ValueID found = findIn(block, m_places[access.index()], UINT32_MAX))
+            uint32_t end = placeAfterLastThrow(from, edge);
+            if (from == block && from != home) {
+                if (ValueID found = findIn(block, m_places[access.index()], end))
                     return found;
             }
-            if (seen.set(from.index()))
+            if ((end == UINT32_MAX ? seen : seenAtThrows).set(from.index()))
                 continue;
-            if (ValueID found = findIn(from, from == home ? m_places[ground.index()] : 0, UINT32_MAX))
+            if (ValueID found = findIn(from, from == home ? m_places[ground.index()] : 0, end))
                 return found;
             if (from != home)
                 waiting.append(from);

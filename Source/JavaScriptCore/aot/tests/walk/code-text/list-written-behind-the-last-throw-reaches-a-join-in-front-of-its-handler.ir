@@ -1,0 +1,36 @@
+# As above, with the two ways in the other order.
+# RUN: verify-code
+# CHECK: the storage of an array is written between the read of a pointer into it and an access through that pointer
+# -- code
+# code f0:Body {
+#   constants:
+#     v1: 1 @Int32 = Integer integer=1
+#     v2: fractional[2, 3] @Double = Double number=2.5
+#     v3: "abcdefgh" @Cell = String string="abcdefgh"
+#   b0(v0: anything @JSValue) entry=0:
+#     v4: Array @Cell = NewArray v0, v0 contents=anything traits=[mayCollect, mayTouchMemory]
+#     v5: opaque(ArrayStoragePointer) @RawWord = GetArrayStorage v4 traits=[mayTouchMemory]
+#     Jump -> next b1()
+#   b1() handler=b3():
+#     v6: opaque(FlatString) @Cell = FlattenString v3 traits=[mayThrow, mayCollect, mayTouchMemory]
+#     v7 @Void = ReserveArrayCapacity v4, v2 traits=[mayCollect, mayWriteObservableState, mayTouchMemory]
+#     Jump -> next b2()
+#   b2():
+#     Jump -> next b4()
+#   b3() role=CatchHandler:
+#     v8: anything?CaughtException @JSValue = CatchValue traits=[mayCollect, mayTouchMemory]
+#     Jump -> next b4()
+#   b4():
+#     v9: int[0, 4294967295] @Int64 = GetArrayLength v4 traits=[mayTouchMemory]
+#     v10: boolean @Boolean = IsElementPresent v4, v1, v5, -, v9 arrayStorage=Contiguous [keyIsIntegral] traits=[mayTouchMemory]
+#     Return v0
+# }
+# -- end of code
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="asks" parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = String string="abcdefgh"
+    Return v0
+}
+entry module=m0
