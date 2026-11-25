@@ -1,0 +1,6 @@
+# The link took the name for undefined, so the image does not run where the option defines it.
+# OPTIONS: exclude=UnlistedGlobals
+# PROGRAM-OF: number-of-a-decimal.ir
+# RUN: run-in-shell --useDecimal=1 print("ran");
+# CHECK: OptionsConflict
+# CHECK-NOT: ran

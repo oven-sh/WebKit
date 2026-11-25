@@ -73,6 +73,8 @@ bool listsEveryMemberUnder(const Program& program, BuiltinID holder, PropertyKey
     constexpr OptionSet<BuiltinFlag> flagsOfCompleteLists { BuiltinFlag::ListsAllMembers, BuiltinFlag::IsGlobalObject };
     if (BuiltinName name = program.builtinNameOf(key); name && program.builtins().isClosedOnHostFunctions(name) && program.builtins().isNativeFunctionOfHost(holder))
         return true;
+    if (program.namesDecimalConstructor(key) && program.builtins().at(holder).flags.contains(BuiltinFlag::IsGlobalObject)) [[unlikely]]
+        return false;
     return program.builtins().at(holder).flags.containsAny(flagsOfCompleteLists) && program.at(key).kind != PropertyKeyKind::EnginePrivateName;
 }
 

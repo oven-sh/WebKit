@@ -421,8 +421,11 @@ static void checkOwnKeys(RealmComparison& comparison, BuiltinID holder, JSObject
         if (table.existsOn(member, currentPlatform))
             members.add(table.identifierOf(vm, table.at(member).name).impl());
     }
-    if (table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject))
+    if (table.at(holder).flags.contains(BuiltinFlag::IsGlobalObject)) {
         members.add(table.identifierOf(vm, table.at(holder).name).impl());
+        if (Options::useDecimal())
+            members.add(Identifier::fromString(vm, "Decimal"_s).impl());
+    }
     BuiltinKind kind = table.at(holder).kind;
     if (kind == BuiltinKind::Function || kind == BuiltinKind::Method || kind == BuiltinKind::Constructor) {
         for (BuiltinID member : table.membersOf(Builtins::FunctionPrototype)) {

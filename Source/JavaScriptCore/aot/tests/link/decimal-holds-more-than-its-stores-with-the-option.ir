@@ -1,0 +1,7 @@
+# globalThis.Decimal ??= function () { }; may leave the class of the engine where it is, so what the call is handed may reach it.
+# JSC-OPTIONS: --useDecimal=1
+# OPTIONS: exclude=CodeOutsideImage,UnlistedGlobals
+# PROGRAM-OF: decimal-holds-its-stores-without-the-option.ir
+# RUN: link functions accesses mechanisms=all
+# CHECK: function f1 cycle=
+# CHECK: function f2 cycle=

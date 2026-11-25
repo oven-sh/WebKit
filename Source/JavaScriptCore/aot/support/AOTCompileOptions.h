@@ -77,7 +77,7 @@ struct RecordedOptions {
     uint8_t admittedCode { 0 };
     uint8_t imageForm { static_cast<uint8_t>(imageFormOfThisRuntime()) };
     bool verifiesFastPathAnswers { false };
-    uint8_t reserved { 0 };
+    bool takesDecimalForAbsent { false };
 
     bool useWideReferences() const { return referenceWidth == static_cast<uint8_t>(ReferenceWidth::Wide); }
     ImageForm form() const { return static_cast<ImageForm>(imageForm); }
