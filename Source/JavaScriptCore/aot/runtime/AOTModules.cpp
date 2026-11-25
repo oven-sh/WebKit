@@ -4616,7 +4616,7 @@ std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, Mod
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, RefPtr { fetchParameters }));
 }
 
-JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options, bool hasUnreadType)
+JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -4795,7 +4795,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options, 
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); hasUnreadType && !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
+            else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !mayBeCodeThatPluginGaveForType(m_table.fullPath(file), type)) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
             } else
@@ -7090,10 +7090,10 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTIsNamespaceOfModule, size_t, (JSCe
     return moduleNamespace && moduleNamespace->hasNamespaceLayoutOf(ModuleID(module));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* instance, uint32_t module, EncodedJSValue options, uint32_t referrer, uint32_t hasUnreadType))
+JSC_DEFINE_JIT_OPERATION(operationAOTImportModule, EncodedJSValue, (Instance* instance, uint32_t module, EncodedJSValue options, uint32_t referrer))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTImportModule);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer), JSValue::decode(options), hasUnreadType)));
+    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).import(ModuleID(module), ModuleID(referrer), JSValue::decode(options))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))

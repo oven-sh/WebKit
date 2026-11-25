@@ -135,7 +135,7 @@ void ModuleEmitter::generateModuleNamespace(const ValueContext& value)
 void ModuleEmitter::generateImportModule(const ValueContext& value)
 {
     Boxed options = inOptional<Boxed>(value->optionsOperand()).value_or(undefined());
-    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::ImportModule, { moduleIndex(value->module()), options, moduleIndex(value->referrer()), word32(value->hasUnreadType()) })));
+    define(value, unboxCell(callOperation<Boxed>(value, RuntimeOperation::ImportModule, { moduleIndex(value->module()), options, moduleIndex(value->referrer()) })));
 }
 
 void ModuleEmitter::generateRequireModule(const ValueContext& value)

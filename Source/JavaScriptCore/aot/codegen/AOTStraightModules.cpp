@@ -192,7 +192,7 @@ void StraightEmitter::generateModule(const BodyValue& value)
         define(value);
         return;
     case Opcode::ImportModule:
-        callOperation(value, RuntimeOperation::ImportModule, { moduleIndexArgument(value.module()), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexArgument(value.referrer()), StraightArgument::word(value.hasUnreadType()) });
+        callOperation(value, RuntimeOperation::ImportModule, { moduleIndexArgument(value.module()), operandOrUndefinedInStraightModule(value.optionsOperand()), moduleIndexArgument(value.referrer()) });
         define(value);
         return;
     case Opcode::RequireModule:
