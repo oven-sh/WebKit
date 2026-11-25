@@ -413,7 +413,8 @@ public:
 // CountsTurns: makes the same search as the bytecode, which tests for input where the JIT does, and takes one off matchLimit where the JIT does: see jitCountsTurnsOf(). Where no turn is left there is no match.
 // It still gives up at matchLimit steps between two turns.
 // FindsEndsOfRuns: Fast, but for a run in front of a back reference: see FlatProgramBuilder::tryEmitRunBeforeReference(). It needs the full machine, which costs a short search more than the form saves.
-enum class FlatProgramForm : uint8_t { Fast, CountsTurns, FindsEndsOfRuns };
+// DropsEmptyTurnFrames: Fast, but a loop at the end of the pattern whose turns may take nothing keeps no frames for the turns it has made. It takes more ops a turn, so it is for a match that Fast has given up for want of frames.
+enum class FlatProgramForm : uint8_t { Fast, CountsTurns, FindsEndsOfRuns, DropsEmptyTurnFrames };
 
 // A search that goes back far more often than its subject is long is making the same searches again. From an op that has a memoRow the search depends on the position alone, so where it has failed once
 // it fails again: a table of rows by positions says where, and how many turns the failed search began. With the table a match takes time in proportion to ops times positions.
@@ -430,6 +431,7 @@ enum class FlatProgramDecline : uint8_t {
     NestedTooDeep,
     TooManySetsOrRegisters,
     NoTurnsToCount,
+    NoFramesToDrop,
 };
 
 struct RegExpMatchOutcome {

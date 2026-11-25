@@ -3559,6 +3559,35 @@ static std::optional<JSRegExpResult> matchCountingTurns(BytecodePattern* bytecod
     return result;
 }
 
+static bool hasGivenUp(JSRegExpResult);
+
+// Answers nothing where the pattern has no such program, or it has given up too.
+static std::optional<JSRegExpResult> matchDroppingFrames(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
+{
+    FlatProgram* program { nullptr };
+    {
+        ConcurrentJSLocker locker(bytecode->m_lock);
+        if (!bytecode->m_triedFrameDroppingProgram) {
+            bytecode->m_triedFrameDroppingProgram = true;
+            if (bytecode->m_source.isNull())
+                return std::nullopt;
+            ErrorCode errorCode { ErrorCode::NoError };
+            YarrPattern pattern(bytecode->m_source, bytecode->m_flags, errorCode, ExecutionMode::IncludeSubpatterns, PatternAnalysis::Performed);
+            if (hasError(errorCode))
+                return std::nullopt;
+            if (auto made = compileFlatProgram(pattern, FlatProgramForm::DropsEmptyTurnFrames))
+                bytecode->m_frameDroppingProgram = WTF::move(*made);
+        }
+        program = bytecode->m_frameDroppingProgram.get();
+    }
+    if (!program)
+        return std::nullopt;
+    JSRegExpResult result = matchFlatProgramWithSurrogates(*program, input, start, output);
+    if (hasGivenUp(result))
+        return std::nullopt;
+    return result;
+}
+
 static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& program, StringView input, unsigned start, JSRegExpResult flatResult, const unsigned* output)
 {
     JSRegExpResult bytecodeResult { JSRegExpResult::NoMatch };
@@ -3575,6 +3604,10 @@ static void validateFlatProgram(BytecodePattern* bytecode, const FlatProgram& pr
     Vector<unsigned, 32> memoOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
     JSRegExpResult memoResult = matchFlatProgramWithSurrogates(program, input, start, memoOutput.mutableSpan().data(), FlatMatchPolicy::RemembersFromStart);
     validateFlatProgramResult(program, input, start, { memoResult, memoOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
+
+    Vector<unsigned, 32> droppingOutput(FillWith { }, bytecode->m_offsetsSize, offsetNoMatch);
+    if (auto droppingResult = matchDroppingFrames(bytecode, input, start, droppingOutput.mutableSpan().data()))
+        validateFlatProgramResult(program, input, start, { *droppingResult, droppingOutput.span().data() }, { bytecodeResult, bytecodeOutput.span().data() });
 
     if (const FlatProgram* second = program.programThatFindsEndsOfRuns.get()) {
         for (FlatMatchPolicy policy : { FlatMatchPolicy::HandsOverEarly, FlatMatchPolicy::RemembersFromStart }) {
@@ -3615,6 +3648,10 @@ static NEVER_INLINE unsigned interpretBehindFlatProgram(BytecodePattern* bytecod
     if (flatResult == JSRegExpResult::ErrorHitLimit) {
         unsigned remainingTurns { 0 };
         if (auto result = matchCountingTurns(bytecode, input, start, output, remainingTurns))
+            return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
+    }
+    if (flatResult == JSRegExpResult::ErrorNoMemory) {
+        if (auto result = matchDroppingFrames(bytecode, input, start, output))
             return *result == JSRegExpResult::Match ? output[0] : offsetNoMatch;
     }
     if (!bytecode->m_body) {
