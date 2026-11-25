@@ -445,7 +445,7 @@ bool IntlCollator::updateCanDoASCIIUCADUCETComparison() const
 }
 
 #if ASSERT_ENABLED
-void IntlCollator::checkICULocaleInvariants(const LocaleSet& locales)
+void IntlCollator::checkICULocaleInvariants(const LocaleTagSet& locales)
 {
     for (auto& locale : locales) {
         auto checkASCIIOrderingWithDUCET = [](const String& locale, UCollator& collator) {

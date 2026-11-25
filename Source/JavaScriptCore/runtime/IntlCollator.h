@@ -75,9 +75,9 @@ public:
     }
 
 #if ASSERT_ENABLED
-    static void checkICULocaleInvariants(const LocaleSet&);
+    static void checkICULocaleInvariants(const LocaleTagSet&);
 #else
-    static inline void checkICULocaleInvariants(const LocaleSet&) { }
+    static inline void checkICULocaleInvariants(const LocaleTagSet&) { }
 #endif
 
 private:

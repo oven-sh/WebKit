@@ -396,6 +396,22 @@ Vector<char, 32> canonicalizeUnicodeExtensionsAfterICULocaleCanonicalization(Vec
     return result;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// For tests. They are written only while a set is made, and when a lookup finds no set in its IntlAvailableLocales.
+static std::atomic<unsigned> localeIDsPutIntoSets;
+static std::atomic<unsigned> lookupsThatFoundNoSet;
+
+unsigned intlLocaleIDsPutIntoSetsForTesting()
+{
+    return localeIDsPutIntoSets.load(std::memory_order_relaxed);
+}
+
+unsigned intlLookupsThatFoundNoSetForTesting()
+{
+    return lookupsThatFoundNoSet.load(std::memory_order_relaxed);
+}
+#endif
+
 String languageTagForLocaleID(const char* localeID, bool isImmortal)
 {
     Vector<char, 32> buffer;
@@ -415,8 +431,11 @@ String languageTagForLocaleID(const char* localeID, bool isImmortal)
 }
 
 // Ensure we have xx-ZZ whenever we have xx-Yyyy-ZZ.
-static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView locale)
+static void addScriptlessLocaleIfNeeded(LocaleTagSet& availableLocales, StringView locale)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    localeIDsPutIntoSets.fetch_add(1, std::memory_order_relaxed);
+#endif
     if (locale.length() < 10)
         return;
 
@@ -443,9 +462,24 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 
-const LocaleSet& intlAvailableLocales()
+#if USE(BUN_JSC_ADDITIONS)
+// Threads that find no set in the handle at the same time all get the one set: m_makeLanguageTags makes it once.
+NEVER_INLINE const LocaleTagSet& IntlAvailableLocales::makeLanguageTags() const
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    lookupsThatFoundNoSet.fetch_add(1, std::memory_order_relaxed);
+    auto& languageTags = m_makeLanguageTags();
+    m_languageTags.store(&languageTags, std::memory_order_release);
+    return languageTags;
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+static const LocaleTagSet& intlAvailableLocalesSet()
+#else
+const LocaleSet& intlAvailableLocales()
+#endif
+{
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
@@ -464,6 +498,14 @@ const LocaleSet& intlAvailableLocales()
     });
     return availableLocales;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+const LocaleSet& intlAvailableLocales()
+{
+    static constinit IntlAvailableLocales availableLocales { intlAvailableLocalesSet };
+    return availableLocales;
+}
+#endif
 
 // This table is total ordering indexes for ASCII characters in UCA DUCET.
 // It is generated from CLDR common/uca/allkeys_DUCET.txt.
@@ -583,9 +625,13 @@ const uint8_t ducetLevel3Weights[256] = {
     0, 0, 0, 0, 0, 0, 0, 0,
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+static const LocaleTagSet& intlCollatorAvailableLocalesSet()
+#else
 const LocaleSet& intlCollatorAvailableLocales()
+#endif
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
@@ -605,9 +651,21 @@ const LocaleSet& intlCollatorAvailableLocales()
     return availableLocales;
 }
 
-const LocaleSet& intlSegmenterAvailableLocales()
+#if USE(BUN_JSC_ADDITIONS)
+const LocaleSet& intlCollatorAvailableLocales()
 {
-    static LazyNeverDestroyed<LocaleSet> availableLocales;
+    static constinit IntlAvailableLocales availableLocales { intlCollatorAvailableLocalesSet };
+    return availableLocales;
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+static const LocaleTagSet& intlSegmenterAvailableLocalesOwnSet()
+#else
+const LocaleSet& intlSegmenterAvailableLocales()
+#endif
+{
+    static LazyNeverDestroyed<LocaleTagSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
@@ -625,6 +683,25 @@ const LocaleSet& intlSegmenterAvailableLocales()
     });
     return availableLocales;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// ICU's ubrk_getAvailable() is its uloc_getAvailable(). Where ICU hands out the same strings for both lists, the set of
+// the other services is the set of the segmenter, and no second one is made.
+static const LocaleTagSet& intlSegmenterAvailableLocalesSet()
+{
+    int32_t count = ubrk_countAvailable();
+    bool isListOfLocales = count == uloc_countAvailable();
+    for (int32_t i = 0; isListOfLocales && i < count; ++i)
+        isListOfLocales = ubrk_getAvailable(i) == uloc_getAvailable(i);
+    return isListOfLocales ? intlAvailableLocalesSet() : intlSegmenterAvailableLocalesOwnSet();
+}
+
+const LocaleSet& intlSegmenterAvailableLocales()
+{
+    static constinit IntlAvailableLocales availableLocales { intlSegmenterAvailableLocalesSet };
+    return availableLocales;
+}
+#endif
 
 // https://tc39.es/ecma402/#sec-getoption
 TriState intlBooleanOption(JSGlobalObject* globalObject, JSObject* options, PropertyName property)

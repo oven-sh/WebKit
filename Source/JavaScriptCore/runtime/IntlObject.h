@@ -30,6 +30,7 @@
 #include "JSCJSValue.h"
 #include "JSCTimeZone.h"
 #include "JSObject.h"
+#include <atomic>
 #include <wtf/RobinHoodHashSet.h>
 
 struct UFieldPositionIterator;
@@ -90,7 +91,44 @@ private:
 };
 
 String defaultLocale(JSGlobalObject*);
-using LocaleSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
+using LocaleTagSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
+#if USE(BUN_JSC_ADDITIONS)
+// The [[AvailableLocales]] of an Intl service. Every constructor and every supportedLocalesOf() takes it, also when no
+// locale is requested, and upstream makes the set of every language tag of ICU for that. This makes the set when a
+// language tag is first looked up in it, so a call that requests no locale makes none.
+class IntlAvailableLocales {
+    WTF_MAKE_NONCOPYABLE(IntlAvailableLocales);
+public:
+    using MakeLanguageTags = const LocaleTagSet& (*)();
+
+    explicit constexpr IntlAvailableLocales(MakeLanguageTags makeLanguageTags)
+        : m_makeLanguageTags(makeLanguageTags)
+    {
+    }
+
+    bool contains(const String& languageTag) const
+    {
+        auto* languageTags = m_languageTags.load(std::memory_order_acquire);
+        if (!languageTags) [[unlikely]]
+            languageTags = &makeLanguageTags();
+        return languageTags->contains(languageTag);
+    }
+
+private:
+    const LocaleTagSet& makeLanguageTags() const;
+
+    const MakeLanguageTags m_makeLanguageTags;
+    mutable std::atomic<const LocaleTagSet*> m_languageTags { nullptr };
+};
+using LocaleSet = IntlAvailableLocales;
+
+// For tests. How many locale IDs of ICU this process has put into a set of language tags, and how many lookups have
+// found no set in their IntlAvailableLocales.
+unsigned intlLocaleIDsPutIntoSetsForTesting();
+unsigned intlLookupsThatFoundNoSetForTesting();
+#else
+using LocaleSet = LocaleTagSet;
+#endif
 const LocaleSet& intlAvailableLocales();
 const LocaleSet& intlCollatorAvailableLocales();
 const LocaleSet& intlSegmenterAvailableLocales();
