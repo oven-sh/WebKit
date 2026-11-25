@@ -145,13 +145,6 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     };
     HashMap<uint32_t, std::unique_ptr<ReceiversOfSet>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> receiversOfSets;
     HashMap<std::pair<uint64_t, uint32_t>, FieldOfTypedAccess> fieldsOfFamilies;
-    struct MembersByKey {
-        uint32_t numberOfKeysAsked { 0 };
-        bool areListed { false };
-        Vector<uint32_t> askedAboutEveryKey;
-        HashMap<uint32_t, Vector<uint32_t, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> withKey;
-    };
-    Vector<MembersByKey> membersOfFamiliesByKey;
     struct AnswersAbove {
         bool somebodyAnswersForEveryMember { false };
         Vector<LayoutID, 2> classesWhoseGuardsAnswer;
@@ -522,59 +515,20 @@ static FieldOfTypedAccess describeFieldOfTypedAccess(Walker& walker, const Recei
 
 static ALWAYS_INLINE bool listMembersThatMayHaveKeyForTypedAccess(Walker& walker, const ReceiversOfTypedAccess& receivers, PropertyKeyID key, Vector<uint32_t, 16>& places)
 {
-    static constexpr size_t mostMembersAskedOneByOne = 16;
-    static constexpr uint32_t mostKeysAskedOfEveryMember = 8;
     FamilyID family = receivers.family ? receivers.family : receivers.familyAround;
-    if (!family || receivers.members.size() <= mostMembersAskedOneByOne || liesInThread(key))
+    if (!family || receivers.members.size() <= SlotPlan::mostMembersAskedOneByOne)
         return false;
-    const std::optional<ReceiversOfTypedAccess>& ofFamily = receiversOfFamilyForTypedAccess(walker, family);
-    if (!ofFamily)
+    Vector<LayoutID, 16> asked;
+    uint32_t numberInUse = 0;
+    if (!walker.plan().slots().listMembersAskedAbout(walker.program(), key, familiesForTypedAccesses(walker).layoutsOf(family), SlotPlan::WhatIsWrittenAbove::IsNotAsked, asked, numberInUse))
         return false;
-    std::span<const LayoutID> membersOfFamily = ofFamily->members.span();
-    auto& membersOfFamiliesByKey = keptByTypedAccesses(walker).membersOfFamiliesByKey;
-    if (membersOfFamiliesByKey.isEmpty())
-        membersOfFamiliesByKey.grow(familiesForTypedAccesses(walker).size());
-    KeptByTypedAccesses::MembersByKey& members = membersOfFamiliesByKey[family.index()];
-    if (!members.areListed) {
-        if (members.numberOfKeysAsked++ < mostKeysAskedOfEveryMember)
-            return false;
-        members.areListed = true;
-        const Program& program = walker.program();
-        const SlotPlan& slots = walker.plan().slots();
-        for (uint32_t place = 0; place < membersOfFamily.size(); ++place) {
-            const Layout& layout = program.at(membersOfFamily[place]);
-            if (writtenBaseOf(layout) && layout.inheritedFields != InheritedFields::AllOfRow) {
-                members.askedAboutEveryKey.append(place);
-                continue;
-            }
-            auto list = [&](PropertyKeyID listed) {
-                if (!listed)
-                    return;
-                Vector<uint32_t, 1>& withKey = members.withKey.add(listed.bits(), Vector<uint32_t, 1>()).iterator->value;
-                if (withKey.isEmpty() || withKey.last() != place)
-                    withKey.append(place);
-            };
-            for (const Field& declared : layout.fields)
-                list(declared.key);
-            for (PropertyKeyID appended : slots.layout(membersOfFamily[place]).appendedKeys)
-                list(appended);
-        }
+    if (!receivers.family && asked.size() >= receivers.members.size() / 4)
+        return false;
+    for (LayoutID member : asked) {
+        auto inSet = std::ranges::lower_bound(receivers.members, member);
+        if (inSet != receivers.members.end() && *inSet == member)
+            places.append(inSet - receivers.members.begin());
     }
-    auto withKey = members.withKey.find(key.bits());
-    std::span<const uint32_t> found = withKey == members.withKey.end() ? std::span<const uint32_t>() : withKey->value.span();
-    if (!receivers.family && members.askedAboutEveryKey.size() + found.size() >= receivers.members.size() / 4)
-        return false;
-    places.grow(members.askedAboutEveryKey.size() + found.size());
-    std::ranges::merge(members.askedAboutEveryKey, found, places.begin());
-    if (receivers.family)
-        return true;
-    size_t numberInSet = 0;
-    for (uint32_t place : places) {
-        auto inSet = std::ranges::lower_bound(receivers.members, membersOfFamily[place]);
-        if (inSet != receivers.members.end() && *inSet == membersOfFamily[place])
-            places[numberInSet++] = inSet - receivers.members.begin();
-    }
-    places.shrink(numberInSet);
     return true;
 }
 

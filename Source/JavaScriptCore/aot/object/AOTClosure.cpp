@@ -381,10 +381,24 @@ void Closure::ensureClassObject(VM& vm)
         StaticFields::moveToProperties(vm, *this);
 }
 
+bool Closure::hasStaticFieldNamed(UniquedStringImpl* uid) const
+{
+    const LayoutData* classLayout = classData();
+    return classLayout && state().objects->classes.staticField(*classLayout, uid);
+}
+
 void Closure::ensureStaticMethods(VM&)
 {
     if (isLazyClassObject())
         createClassObject(this, ClassTable::StaticFieldsOfPart::StayInVariables);
+}
+
+void Closure::ensureClassObjectForProperty(VM& vm, PropertyName name)
+{
+    if (name.isSymbol() && !hasStaticFieldNamed(name.uid()))
+        ensureStaticMethods(vm);
+    else
+        ensureClassObject(vm);
 }
 
 static Structure* structureSharedWithClassesInheritingFrom(VM& vm, const Closure& classObject, JSObject* parent)
@@ -853,7 +867,7 @@ bool Closure::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name,
     if (slot.thisValue() == JSValue(closure) && tryReplaceStaticFieldOfClassObject(vm, *closure, name, value, slot))
         return true;
     Structure* structureBefore = closure->structure();
-    closure->ensureClassObject(vm);
+    closure->ensureClassObjectForProperty(vm, name);
     if (name == vm.propertyNames->prototype)
         closure->ensurePrototypeProperty(vm);
     bool result = canPutDirectly(vm, *closure, name, slot) ? closure->putInlineFast(globalObject, name, value, slot) : Base::put(cell, globalObject, name, value, slot);
@@ -916,7 +930,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     const LayoutData* classLayout = closure->classData();
     if (classLayout && !isClosedName && tryDefineStaticFieldInVariable(*closure, name, descriptor))
         return true;
-    closure->ensureClassObject(vm);
+    closure->ensureClassObjectForProperty(vm, name);
     if (isClosedName) [[unlikely]]
         RuntimeHooks::closeNamesOfFunction(vm, closure, name);
     if (name == vm.propertyNames->prototype)

@@ -145,7 +145,6 @@ FieldAccess SlotPlan::fieldAccess(const Program& program, PropertyKeyID key, Lay
 
 bool SlotPlan::listMembersAskedAbout(const Program& program, PropertyKeyID key, LayoutSetID set, WhatIsWrittenAbove whatIsWrittenAbove, Vector<LayoutID, 16>& asked, uint32_t& numberInUse) const
 {
-    static constexpr size_t mostMembersAskedOneByOne = 64;
     if (!m_fieldAccessesOfSets || !set || !key || holdsOneMember(set) || liesInThread(set) || liesInThread(key))
         return false;
     std::span<const LayoutID> members = membersOf(program.types, set);

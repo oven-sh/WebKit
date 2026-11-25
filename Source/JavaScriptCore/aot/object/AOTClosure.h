@@ -75,6 +75,8 @@ public:
     bool hasStaticFieldsLeft() const;
     bool canHoldStaticFieldInVariable(UniquedStringImpl*) const;
     void ensureClassObject(VM&);
+    void ensureClassObjectForProperty(VM&, PropertyName);
+    bool hasStaticFieldNamed(UniquedStringImpl*) const;
     void ensureStaticMethods(VM&);
     void initializeClassObject(VM&, JSObject* parent, JSObject* prototype);
     JSValue prototypeProperty(VM&);

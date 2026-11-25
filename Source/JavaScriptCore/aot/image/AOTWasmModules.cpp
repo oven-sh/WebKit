@@ -1199,6 +1199,41 @@ static std::optional<Vector<uint8_t>> decodeEmbeddedModule(std::span<const uint8
     return bytes;
 }
 
+static constexpr std::array<uint8_t, 8> headerOfWasmModule { 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00 };
+
+static std::optional<uint8_t> byteInData(const Typed::DataNode& node)
+{
+    const auto* number = node.tryAs<Typed::DataNode::Number>();
+    if (!number || !(number->value >= 0 && number->value <= 255) || number->value != static_cast<uint8_t>(number->value))
+        return std::nullopt;
+    return static_cast<uint8_t>(number->value);
+}
+
+static const Typed::DataNode::Array* findEmbeddedModuleInData(const Typed::DataNode& root)
+{
+    const auto* list = root.tryAs<Typed::DataNode::Array>();
+    if (!list || list->elements.size() < headerOfWasmModule.size())
+        return nullptr;
+    for (size_t index = 0; index < headerOfWasmModule.size(); ++index) {
+        if (byteInData(list->elements[index]) != headerOfWasmModule[index])
+            return nullptr;
+    }
+    return list;
+}
+
+static std::optional<Vector<uint8_t>> decodeEmbeddedModule(const Typed::DataNode::Array& list)
+{
+    Vector<uint8_t> bytes;
+    bytes.reserveInitialCapacity(list.elements.size());
+    for (const Typed::DataNode& element : list.elements) {
+        std::optional<uint8_t> byte = byteInData(element);
+        if (!byte)
+            return std::nullopt;
+        bytes.append(*byte);
+    }
+    return bytes;
+}
+
 namespace {
 
 struct WasmModuleSet final : EarlyWasmModules {
@@ -1293,10 +1328,14 @@ WebAssemblyImageInputs compileWebAssemblyModules(const Typed::Program& program, 
         if (bytes)
             set->add(bytes->span(), noSourceLocation, true);
     }
-    constexpr std::array<uint8_t, 8> moduleHeader { 0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00 };
+    for (const auto& data : program.data) {
+        const Typed::DataNode::Array* list = findEmbeddedModuleInData(data.root);
+        if (std::optional<Vector<uint8_t>> bytes = list ? decodeEmbeddedModule(*list) : std::nullopt)
+            set->add(bytes->span(), noSourceLocation, true);
+    }
     for (size_t position = 0; functions && position < functions->size(); ++position) {
         for (const ConstantData& constant : (*functions)[position].body.rareLists->constants) {
-            if (constant.kind == ConstantKind::ByteLiteral && spanHasPrefix(constant.bytes.span(), std::span<const uint8_t>(moduleHeader)))
+            if (constant.kind == ConstantKind::ByteLiteral && spanHasPrefix(constant.bytes.span(), std::span<const uint8_t>(headerOfWasmModule)))
                 set->add(constant.bytes.span(), noSourceLocation, true);
         }
     }
@@ -1330,7 +1369,9 @@ bool mayHaveWebAssemblyModules(const Typed::Program& program)
         if (!base64OfEmbeddedModule(program.strings[Typed::StringID(index)]).empty() || isHexOfEmbeddedModule(program.strings[Typed::StringID(index)]))
             return true;
     }
-    return false;
+    return std::ranges::any_of(program.data, [](const auto& data) {
+        return !!findEmbeddedModuleInData(data.root);
+    });
 }
 
 #else
