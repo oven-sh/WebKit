@@ -181,6 +181,7 @@ JS_EXPORT_PRIVATE bool isReplacedByHost(JSGlobalObject*, ModuleID, LoadKind);
 JS_EXPORT_PRIVATE bool isInRequireCache(JSGlobalObject*, ModuleID);
 enum class StartedBy : uint8_t { Code, Host };
 JS_EXPORT_PRIVATE bool delegatesModuleToHost(JSGlobalObject*, ModuleID, StartedBy = StartedBy::Code);
+JS_EXPORT_PRIVATE void willRequireAgain(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void willLoadCopyFromDisk(JSGlobalObject*, ModuleID, LoadKind);
 JS_EXPORT_PRIVATE void forEachFirstLoad(VM&, const ScopedLambda<void(const String& path, bool wasSynchronous)>&);
 JS_EXPORT_PRIVATE void recordFirstLoadFromEarlierProcess(VM&, const String& path, bool wasSynchronous);

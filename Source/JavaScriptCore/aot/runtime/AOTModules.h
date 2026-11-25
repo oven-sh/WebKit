@@ -1481,6 +1481,13 @@ public:
         return (file.kind != ModuleKind::SourceText && file.kind != ModuleKind::CommonJs) || file.mayBeEvicted();
     }
     enum class DelegatedBy : bool { Host, RequireCache };
+    // An import() that was called before a plugin was laid doesn't ask it. One that is called while the first is under way does, and its answer is the answer of both.
+    void delegateToHostOnceAskedAgain(ModuleID);
+    void willAskAgain(ModuleID module)
+    {
+        if (!m_filesDelegatedOnceAskedAgain.isEmpty() && m_filesDelegatedOnceAskedAgain.clear(fileOf(module).index())) [[unlikely]]
+            delegateToHostUnlessEvaluated(module);
+    }
     void delegateToHostUnlessEvaluated(ModuleID, DelegatedBy = DelegatedBy::Host);
     void delegateImportsToHost(ModuleID);
     bool isImportedByHost(ModuleID);
@@ -2705,6 +2712,7 @@ private:
     BitVector m_filesToLoadAgain;
     BitVector m_hostImportedFiles;
     BitVector m_filesAskingPlugins;
+    BitVector m_filesDelegatedOnceAskedAgain;
     BitVector m_filesAskedOfHost;
     bool m_hasHostImportedFiles { false };
     BitVector m_uncompiledNamespacesAskedFor;
