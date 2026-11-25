@@ -349,11 +349,6 @@ JSObject* createFormNotHeldError(JSGlobalObject* globalObject, StringView path, 
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot import '"_s, path, "' as "_s, type, ": it was compiled, and its source isn't in this executable. Write the type out in the call: import(path, { with: { type: \""_s, type, "\" } })."_s)), "ERR_MODULE_NOT_FOUND"_s);
 }
 
-JSObject* createQueryOnDataError(JSGlobalObject* globalObject, StringView path)
-{
-    return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot import '"_s, path, "': a query string works on an import of code, not on a data file. Import the file without it."_s)), "ERR_MODULE_NOT_FOUND"_s);
-}
-
 JSObject* createExportNotHandedOutError(JSGlobalObject* globalObject, StringView path, StringView name)
 {
     name = clampedForErrorMessage(name);

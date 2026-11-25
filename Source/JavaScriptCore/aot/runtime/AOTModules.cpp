@@ -5265,21 +5265,9 @@ JSObject* Modules::requireCacheEntry(ModuleID module)
     return objects.module;
 }
 
-// A file under a query that spells a type has the path of the file's form. In a test run the form answers.
-bool Modules::namesFormByQuery(ModuleID module) const
-{
-    if (isTestRun() || data(module).kind != ModuleKind::Data || data(module).isOfLibrary())
-        return false;
-    String path = m_table.fullPath(module);
-    size_t mark = path.reverseFind('?');
-    return mark != notFound && path.find('/', mark) == notFound;
-}
-
 std::optional<ModuleID> Modules::findByName(const Identifier& key)
 {
     std::optional<ModuleID> found = m_table.findByPath(key.string());
-    if (found && namesFormByQuery(*found)) [[unlikely]]
-        return std::nullopt;
     if (found && isReplacedByHost(*found, LoadKind::Import))
         return std::nullopt;
     if (found && !data(*found).isOfLibrary() && host().hasMatchingLoadPlugin && host().hasMatchingLoadPlugin(m_instance.globalObject, key.string()) && !hasRun(*found) && !namespaceIfCreated(*found, ModulePhase::Evaluation))
@@ -6528,13 +6516,6 @@ JSPromise* Modules::importDynamic(JSValue specifier, JSValue options, ModuleID r
         checkModuleAccess(realm, *found, LoadKind::Import);
         RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
         RELEASE_AND_RETURN(scope, import(m_table.facadeOf(*found).value_or(*found), referrer));
-    }
-    if (!*fetchParameters && !key.isSymbol() && !isTestRun()) {
-        // The loader has an entry under the path where the program has loaded the form.
-        if (std::optional<ModuleID> form = m_table.findByPath(key.string()); form && namesFormByQuery(*form)) [[unlikely]] {
-            throwException(realm, scope, createQueryOnDataError(realm, key.string()));
-            return importPromiseRejectedByLoader(realm, scope);
-        }
     }
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
 }

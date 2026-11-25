@@ -63,7 +63,6 @@ enum class IsCompiledFile : bool { No, Yes };
 JSObject* createLoadByNameRefusedError(JSGlobalObject*, StringView name, ASCIILiteral code, IsCompiledFile);
 JSObject* createCompiledModuleAccessError(JSGlobalObject*, StringView path, ASCIILiteral code);
 JSObject* createFormNotHeldError(JSGlobalObject*, StringView path, ASCIILiteral type);
-JSObject* createQueryOnDataError(JSGlobalObject*, StringView path);
 JSObject* createExportNotHandedOutError(JSGlobalObject*, StringView path, StringView name);
 JSObject* createModuleInOtherRealmError(JSGlobalObject*, StringView path);
 JSObject* createLoaderChangeError(JSGlobalObject*, LoaderChange, StringView changed);
