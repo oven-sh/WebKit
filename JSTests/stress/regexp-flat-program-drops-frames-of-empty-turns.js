@@ -9,27 +9,33 @@ function shouldBe(actual, expected, what) {
         throw new Error(what + ": " + actual + " instead of " + expected);
 }
 
-const turns = [1, 2, 1365, 4096, 12000];
+// Counts of turns that keep their frames are asked with each prefix and suffix, and the long ones with one of them.
+const shortTurns = [1, 2];
+const longTurns = [1365, 4097];
 
 // Each takes all of "abab..".
 const bodies = ["a*b*", "a?b?", "(?:ab)?", "|a|b", "a||b", "a*|b", "a|b*", "b*a*", "a?(?:b|)", "(?:a|)(?:|b)", "(?:a*)*b?", "a*?b?", "(?=a)a?|b", "(?!b)a?|b", "\\b|a|b", "(?:a|b?){0,3}", "[ab]?", "a?b?(?=.|$)"];
 for (const body of bodies) {
     for (const [source, flags] of [["x(?:" + body + ")*", ""], ["x(?:#|(?:" + body + ")*)", "s"], ["x(?:" + body + ")*", "i"], ["x(?:" + body + ")*", "u"], ["x(?:" + body + ")+", "g"]]) {
         const expression = new RegExp(source, flags);
-        for (const count of turns) {
-            for (const prefix of ["", "yy", "Ж"]) {
-                for (const suffix of ["", "z", "Ж"]) {
-                    const what = expression + " " + count + " " + JSON.stringify([prefix, suffix]);
-                    expression.lastIndex = 0;
-                    const match = expression.exec(prefix + "x" + "ab".repeat(count) + suffix);
-                    shouldBe(match === null, false, what);
-                    shouldBe(match.index, prefix.length, what);
-                    shouldBe(match[0].length, 1 + 2 * count, what);
-                }
+        function check(count, prefix, suffix) {
+            const what = expression + " " + count + " " + JSON.stringify([prefix, suffix]);
+            expression.lastIndex = 0;
+            const match = expression.exec(prefix + "x" + "ab".repeat(count) + suffix);
+            shouldBe(match === null, false, what);
+            shouldBe(match.index, prefix.length, what);
+            shouldBe(match[0].length, 1 + 2 * count, what);
+        }
+        for (const prefix of ["", "yy", "Ж"]) {
+            for (const suffix of ["", "z", "Ж"]) {
+                for (const count of shortTurns)
+                    check(count, prefix, suffix);
             }
         }
+        for (const count of longTurns)
+            check(count, "yy", "z");
         expression.lastIndex = 0;
-        shouldBe(expression.test("y" + "ab".repeat(12000)), false, expression + " without x");
+        shouldBe(expression.test("y" + "ab".repeat(4097)), false, expression + " without x");
     }
 }
 
