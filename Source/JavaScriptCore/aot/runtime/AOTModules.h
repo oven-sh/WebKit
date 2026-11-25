@@ -253,8 +253,15 @@ public:
     void didFinishTests();
     void markFactoryAbandoned(ModuleID module) { m_modulesWithAbandonedFactory.set(module.index()); }
     void markMockPassthrough(ModuleID module) { m_modulesWithPassthroughMock.set(fileOf(module).index()); }
+    void didEvictTestFile(ModuleID file)
+    {
+        if (isStartedByHost(file))
+            m_evictedTestFiles.set(file.index());
+    }
+    void resetEvictedTestFiles();
     void releaseEndedTestFiles()
     {
+        resetEvictedTestFiles();
         releaseLoadsOfEndedTestFiles();
         releaseInstancesOfEndedTestFiles();
     }

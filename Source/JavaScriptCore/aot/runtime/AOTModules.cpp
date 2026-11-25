@@ -523,6 +523,20 @@ void Modules::resetEntryPointEvaluation(ModuleID module)
     makeESModuleReadyToRunAgain(module);
 }
 
+// Whoever loads a test file that `bun test` has evicted runs it again.
+void Modules::resetEvictedTestFiles()
+{
+    if (m_evictedTestFiles.isEmpty() || m_innermostEvaluation) [[likely]]
+        return;
+    for (size_t index : BitVector(m_evictedTestFiles)) {
+        ModuleID file(index);
+        if (data(file).kind != ModuleKind::CommonJs || !data(file).runsAgainAfterThrow() || status(file) != ModuleStatus::Evaluated || m_loadedInPreload.get(index))
+            continue;
+        resetEntryPointEvaluation(file);
+        m_evictedTestFiles.clear(index);
+    }
+}
+
 bool Modules::hasResettablePackageFailure(ModuleID module) const
 {
     if (!data(module).bodyOfESModuleMayRunAgain() || !mayBeMocked(module) || isEvicted(module))
@@ -9222,6 +9236,12 @@ bool isDisplacedByMock(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->isDisplacedByMock(module);
+}
+
+void didEvictTestFile(JSGlobalObject* realm, ModuleID file)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didEvictTestFile(file);
 }
 
 void releaseEndedTestFiles(JSGlobalObject* realm)
