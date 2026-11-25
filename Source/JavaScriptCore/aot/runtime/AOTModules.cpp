@@ -1763,7 +1763,7 @@ std::optional<ModuleID> Modules::findVariantToMock(StringView path, std::optiona
     for (ModuleID form : forms) {
         if (!hasStartedLoading(form))
             continue;
-        if (!m_table.fullPath(form).endsWith("?json"_s))
+        if (!m_table.isFormOfType(form, "?json"_s))
             return form;
         json = form;
     }
@@ -4588,7 +4588,7 @@ bool Modules::isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchPa
         type = attributes.hostDefinedImportType();
     if (type.isNull() || path.endsWith(makeString('.', type)) || (type == "text"_s && path.endsWith(".txt"_s)) || (type == "yaml"_s && path.endsWith(".yml"_s)))
         return false;
-    std::optional<ModuleID> form = m_table.findByPath(makeString(path, '?', type));
+    std::optional<ModuleID> form = m_table.findForm(path, makeString('?', type));
     return form && isEvicted(*form);
 }
 
@@ -4956,7 +4956,7 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
     // It leaves a path in the require cache, where only the import of a CommonJS module looks.
     bool looksInRequireCache = data(file).kind == ModuleKind::CommonJs && !data(file).isImportedAsESModule();
     for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
-        std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
+        std::optional<ModuleID> form = m_table.findForm(path, mark);
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
         // What an import has loaded under a type has an entry of its own in the loader, also where a require() is answered with it.
         if (sharesEntry && wasRequired(*form) && loadedIfExists(*form)->isKeptByRequire)
@@ -5297,7 +5297,7 @@ std::optional<ModuleID> Modules::findFormThatStatementLoaded(const Identifier& k
         return std::nullopt;
     Vector<ModuleID, 2> forms = m_table.importAttributeVariants(key.string());
     forms.removeAllMatching([&](ModuleID form) {
-        return data(form).kind != ModuleKind::Data || m_table.fullPath(form).endsWith("?json"_s);
+        return data(form).kind != ModuleKind::Data || m_table.isFormOfType(form, "?json"_s);
     });
     if (forms.isEmpty() || (forms.size() == 1 && asked == forms[0]))
         return std::nullopt;
@@ -5334,7 +5334,7 @@ void Modules::giveStatementsFormsThatLoaderHas(ModuleID importer)
                 continue;
             if (data(target).kind == ModuleKind::SourceText)
                 importers.append(target);
-            else if (data(target).kind == ModuleKind::Data && !m_table.fullPath(target).endsWith("?json"_s))
+            else if (data(target).kind == ModuleKind::Data && !m_table.isFormOfType(target, "?json"_s))
                 forms.append(target);
         }
     }
@@ -5350,7 +5350,7 @@ bool Modules::takeWhatFormAnsweredFirstHolds(ModuleID form)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     String path = m_table.fullPath(form);
-    if (!path.contains('?') || path.endsWith("?json"_s))
+    if (!path.contains('?') || m_table.isFormOfType(form, "?json"_s))
         return false;
     Identifier key = keyWithoutForm(form);
     auto first = m_formsAnsweredFirst.find(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::HostDefined });
@@ -7308,7 +7308,7 @@ std::optional<ModuleID> Modules::moduleFormOf(ModuleID file) const
         return std::nullopt;
     String path = m_table.fullPath(file);
     ASCIILiteral type = path.endsWith(".cts"_s) ? "?ts"_s : "?js"_s;
-    std::optional<ModuleID> form = m_table.findByPath(makeString(path, type));
+    std::optional<ModuleID> form = m_table.findForm(path, type);
     return form && data(*form).kind == ModuleKind::SourceText ? form : std::nullopt;
 }
 
@@ -7356,7 +7356,7 @@ static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
 // The path stays in the require cache where an import runs the file as an ES module.
 static bool wasPathRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
 {
-    return wasRequiredInPlaceOfCode(modules, form) && modules.table().fullPath(form).endsWith("?file"_s);
+    return wasRequiredInPlaceOfCode(modules, form) && modules.table().isFormOfType(form, "?file"_s);
 }
 
 static bool isImportedEmptyFile(const Modules& modules, ModuleID form)
@@ -9589,6 +9589,12 @@ std::optional<ModuleID> findVariantToMock(JSGlobalObject* realm, StringView path
         return file;
     modules->startLoadingModulesIndividually();
     return modules->findVariantToMock(path, file);
+}
+
+bool isFormOfType(JSGlobalObject* realm, ModuleID module, ASCIILiteral queryOfType)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->table().isFormOfType(module, queryOfType);
 }
 
 Vector<ModuleID, 2> importAttributeVariants(JSGlobalObject* realm, StringView path)

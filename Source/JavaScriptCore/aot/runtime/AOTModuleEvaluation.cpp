@@ -4957,7 +4957,7 @@ ModuleID Modules::formThatRequireFinds(ModuleID target, bool& answersNamespace)
         return *file;
     for (bool isJSON : { false, true }) {
         for (ModuleID form : forms) {
-            if (m_table.fullPath(form).endsWith("?json"_s) != isJSON || !wasImported(form))
+            if (m_table.isFormOfType(form, "?json"_s) != isJSON || !wasImported(form))
                 continue;
             if (!isUnevaluatedTextForm(form)) {
                 answersNamespace = true;
@@ -5126,7 +5126,7 @@ bool Modules::hasEvaluationPassedImport(ModuleID importer, ModuleID target) cons
 
 bool Modules::isUnevaluatedTextForm(ModuleID form) const
 {
-    if (!m_table.fullPath(form).endsWith("?text"_s) || status(form) == ModuleStatus::Evaluated || (m_mocks && namespaceIfCreated(form, ModulePhase::Evaluation)))
+    if (!m_table.isFormOfType(form, "?text"_s) || status(form) == ModuleStatus::Evaluated || (m_mocks && namespaceIfCreated(form, ModulePhase::Evaluation)))
         return false;
     return std::ranges::none_of(m_table.importsOfHeldFile(form), [&](const ImportOfHeldFileData& import) {
         return hasEvaluationPassedImport(ModuleID(import.importer), form);
@@ -5572,7 +5572,7 @@ JSValue Modules::answerRequire(ModuleID target, ModuleID referrer, RequiredBy re
         return loaded.exportsWhileRequired.get();
     }
     bool isAnsweredAsByLoader = requiredBy == RequiredBy::Program && targetData.loaderReturnsNamespace();
-    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target)) && !m_table.fullPath(target).endsWith("?text"_s)));
+    bool answersDefaultExport = !isAnsweredAsByLoader && !answersNamespace && !isMocked(target) && (targetData.requireResult == RequireResult::DefaultExport || (targetData.requireResult == RequireResult::NamespaceIfImported && !loaded.requiredValue && (loadsEvictedDataFile || !hasBeenImported(target)) && !m_table.isFormOfType(target, "?text"_s)));
     if (loaded.isKeptByRequire && loaded.requiredValue && !isAnsweredAsByLoader && status(target) == ModuleStatus::Failed) [[unlikely]]
         return loaded.requiredValue.get();
     bool wasBeingRequired = false;

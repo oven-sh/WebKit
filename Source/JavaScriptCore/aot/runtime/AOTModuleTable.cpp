@@ -502,6 +502,22 @@ bool ModuleTable::mayHaveAttributeVariant(StringView publicPath) const
     return mayHaveAttributeVariants() && mayContainPrefixWithHash(HashOfDirectory::with(hashOfPathPrefix(publicPath), '?'));
 }
 
+// Where the program also loads the file under a query that spells the type, the form's path has this behind it.
+static constexpr char markOfFormBesideQuery = '#';
+
+std::optional<ModuleID> ModuleTable::findForm(StringView publicPath, StringView queryOfType) const
+{
+    if (std::optional<ModuleID> form = findByPath(makeString(publicPath, queryOfType, markOfFormBesideQuery)))
+        return form;
+    return findByPath(makeString(publicPath, queryOfType));
+}
+
+bool ModuleTable::isFormOfType(ModuleID module, ASCIILiteral queryOfType) const
+{
+    String path = fullPath(module);
+    return path.endsWith(queryOfType) || (path.endsWith(markOfFormBesideQuery) && StringView(path).left(path.length() - 1).endsWith(queryOfType));
+}
+
 bool ModuleTable::hasAttributeVariant(StringView publicPath) const
 {
     if (!mayHaveAttributeVariant(publicPath))
