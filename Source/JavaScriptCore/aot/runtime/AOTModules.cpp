@@ -610,14 +610,6 @@ void Modules::makeESModuleReadyToRunAgain(ModuleID module)
     }
 }
 
-// The loader has not seen a file that only a require() has loaded. The first import() asks the plugins.
-void Modules::delegateImportsOfRequiredFile(ModuleID module)
-{
-    ModuleID file = fileOf(module);
-    if (data(file).kind == ModuleKind::CommonJs && status(file) == ModuleStatus::Evaluated && isTestRun() && !isEvicted(file) && !isMocked(file) && !activeMock(file) && !wasLoadedByImport(file))
-        m_requiredFilesThatHostImports.set(file.index());
-}
-
 void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegatedBy)
 {
     ModuleID file = fileOf(module);
@@ -4987,8 +4979,6 @@ void Modules::didCallFactoryOfLoad(ModuleID file)
 
 bool Modules::isReplacedByHost(ModuleID module, LoadKind way)
 {
-    if (way == LoadKind::Import && m_requiredFilesThatHostImports.get(fileOf(module).index())) [[unlikely]]
-        return true;
     const ModuleData& replaced = data(module);
     bool isNative = replaced.kind == ModuleKind::Runtime;
     bool isCodeOfLibrary = replaced.kind == ModuleKind::RuntimeSource || (replaced.kind == ModuleKind::SourceText && replaced.isOfLibrary());
@@ -7902,7 +7892,6 @@ bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)
         return true;
     if (!modules->mayBeEvicted(module))
         return false;
-    modules->delegateImportsOfRequiredFile(module);
     modules->delegateToHostUnlessEvaluated(module);
     return true;
 }
