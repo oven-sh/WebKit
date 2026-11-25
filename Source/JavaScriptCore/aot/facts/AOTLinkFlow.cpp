@@ -7742,9 +7742,14 @@ bool LinkFlow::tieReadThroughClassesThatDeclare(const SortedMembersOfFamily& sor
     std::span<const DeclarerOfMember> declarers = classesThatDeclareOnPrototype(key);
     if (program.layoutsWithName(key).size() + declarers.size() > sorted.instancesOfClasses.size())
         return false;
+    Vector<LayoutID, 4> membersThatListIt;
     for (LayoutID listing : program.layoutsWithName(key)) {
-        if (isMemberOf(family, listing))
+        if (!isMemberOf(family, listing))
+            continue;
+        std::optional<FieldReference> field = findField(program, listing, key);
+        if (!field || fieldAt(program, *field).form.contains(FieldForm::IsAccessor))
             return false;
+        membersThatListIt.append(listing);
     }
     for (LayoutID leftOut : sorted.instancesOfClassesThatIndexOfNamesLeavesOut) {
         if (findField(program, leftOut, key))
@@ -7762,6 +7767,8 @@ bool LinkFlow::tieReadThroughClassesThatDeclare(const SortedMembersOfFamily& sor
     build.statistics().count(StatisticID::FamilyReadsLinkedToDeclarers);
     for (LayoutID topmost : sorted.topmostInstancesOfClasses)
         tieRead(aggregate, topmost, key);
+    for (LayoutID listing : membersThatListIt)
+        tieRead(aggregate, listing, key);
     LayoutID last;
     for (const DeclarerOfMember& declarer : declarers) {
         if (declarer.classLayout != std::exchange(last, declarer.classLayout) && isMemberOf(family, declarer.classLayout) && !m_layoutsBelowFollowedPrototypes.get(declarer.classLayout.index()))
