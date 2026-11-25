@@ -5265,10 +5265,10 @@ JSObject* Modules::requireCacheEntry(ModuleID module)
     return objects.module;
 }
 
-// A file under a query that spells a type has the path of the file's form. In a test run no compiled file has a query, and a file of code is no data under one.
+// A file under a query that spells a type has the path of the file's form. In a test run the form answers.
 bool Modules::namesFormByQuery(ModuleID module) const
 {
-    if (data(module).kind != ModuleKind::Data || data(module).isOfLibrary())
+    if (isTestRun() || data(module).kind != ModuleKind::Data || data(module).isOfLibrary())
         return false;
     String path = m_table.fullPath(module);
     size_t mark = path.reverseFind('?');
