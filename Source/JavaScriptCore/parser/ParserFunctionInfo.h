@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ConstructorKind.h"
 #include "Identifier.h"
 
 namespace JSC {
@@ -44,6 +45,9 @@ struct ParserClassInfo {
     const Identifier* className { nullptr };
     unsigned startOffset { 0 };
     unsigned endOffset { 0 };
+    StructKind structKind { StructKind::None };
+    // Names of the declared struct fields, separated by U+0000.
+    String structFieldNames;
 };
 
 }

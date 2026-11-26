@@ -1,0 +1,113 @@
+name: Structs JSC
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - "feat/structs-*"
+
+concurrency:
+  group: structs-jsc-${{ github.ref }}
+  cancel-in-progress: true
+
+# Builds jsc from this tree and runs JSTests/structs/*.js against it with --useStructs=true. The tree is only ever
+# built here: nothing is built locally.
+jobs:
+  jsc:
+    name: Build jsc and run the struct tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      JIT_LOW_THRESHOLDS: >-
+        --useConcurrentJIT=false
+        --thresholdForJITAfterWarmUp=10 --thresholdForJITSoon=10
+        --thresholdForOptimizeAfterWarmUp=100 --thresholdForOptimizeSoon=100
+        --thresholdForFTLOptimizeAfterWarmUp=1000 --thresholdForFTLOptimizeSoon=1000
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        run: |
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-23 main" | sudo tee /etc/apt/sources.list.d/llvm.list > /dev/null
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends cmake ninja-build ccache clang-23 lld-23 ruby perl python3 gperf libicu-dev pkg-config libstdc++-14-dev
+
+      - name: ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.ccache
+          key: ccache-jsc-${{ github.sha }}
+          restore-keys: ccache-jsc-
+
+      - name: Configure
+        env:
+          CCACHE_DIR: ${{ github.workspace }}/.ccache
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DPORT=JSCOnly -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang-23 -DCMAKE_CXX_COMPILER=clang++-23 \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DENABLE_STATIC_JSC=ON -DUSE_BUN_JSC_ADDITIONS=ON -DUSE_BUN_EVENT_LOOP=ON -DENABLE_FTL_JIT=ON -DENABLE_API_TESTS=OFF \
+            -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld-23
+          ccache --max-size=3G
+
+      - name: Build jsc
+        run: |
+          # Leave the cache usable if the job is cancelled by the time limit.
+          cmake --build build --target jsc -j"$(nproc)"
+          ccache -s
+
+      # The whole suite runs three times. Each pass continues on error, so one failure does not hide the others, and
+      # the last step fails the job if any pass failed.
+      - name: Test (default options)
+        id: test_default
+        continue-on-error: true
+        run: node JSTests/structs/run.mjs build/bin/jsc
+
+      # Low thresholds and no concurrent compiler push the hot loops of the *-perf tests into the DFG and FTL tiers
+      # early and deterministically, so that the inline caches of struct and shared struct accesses are compiled.
+      - name: Test (low JIT thresholds, DFG and FTL early)
+        id: test_jit
+        continue-on-error: true
+        run: node JSTests/structs/run.mjs build/bin/jsc $JIT_LOW_THRESHOLDS
+
+      - name: Test (no JIT, interpreter only)
+        id: test_nojit
+        continue-on-error: true
+        run: node JSTests/structs/run.mjs build/bin/jsc --useJIT=false
+
+      # Generic crash diagnostics, only on failure: a crash prints nothing, so run every test again under each
+      # option set and put each one that died on a signal under gdb.
+      - name: Backtrace crashes
+        if: steps.test_default.outcome == 'failure' || steps.test_jit.outcome == 'failure' || steps.test_nojit.outcome == 'failure'
+        continue-on-error: true
+        run: |
+          sudo apt-get install -y -qq gdb
+          backtrace_set() {
+            for f in JSTests/structs/*.js; do
+              status=0
+              timeout 120 build/bin/jsc --useStructs=true "$@" "$f" > /dev/null 2>&1 || status=$?
+              if [ "$status" -ge 128 ] && [ "$status" -ne 124 ]; then
+                echo "=== $f ($*) died with status $status"
+                timeout 300 gdb -batch -ex run -ex "thread apply all bt 14" --args build/bin/jsc --useStructs=true "$@" "$f" 2>&1 | tail -90 || true
+              fi
+            done
+          }
+          backtrace_set
+          backtrace_set $JIT_LOW_THRESHOLDS
+          backtrace_set --useJIT=false
+
+      - name: Result
+        if: steps.test_default.outcome == 'failure' || steps.test_jit.outcome == 'failure' || steps.test_nojit.outcome == 'failure'
+        run: exit 1

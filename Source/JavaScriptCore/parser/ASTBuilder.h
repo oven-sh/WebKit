@@ -426,7 +426,7 @@ public:
         ExpressionNode* parentClass, PropertyListNode* classElements, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
     {
         SourceCode source = m_sourceCode->subExpression(classInfo.startOffset, classInfo.endOffset);
-        ClassExprNode* node = new (m_parserArena) ClassExprNode(location, *classInfo.className, source, WTF::move(classHeadEnvironment), WTF::move(classEnvironment), constructor, parentClass, classElements);
+        ClassExprNode* node = new (m_parserArena) ClassExprNode(location, *classInfo.className, source, WTF::move(classHeadEnvironment), WTF::move(classEnvironment), constructor, parentClass, classElements, classInfo.structKind, String(classInfo.structFieldNames));
         setExceptionLocation(node, start, divot, end);
         return node;
     }

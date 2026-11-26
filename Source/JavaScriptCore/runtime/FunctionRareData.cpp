@@ -114,7 +114,21 @@ void FunctionRareData::initializeObjectAllocationProfile(VM& vm, JSGlobalObject*
             JSValue initializerValue = currentFunction->getDirect(vm, vm.propertyNames->builtinNames().instanceFieldInitializerPrivateName());
             if (initializerValue) {
                 if (JSFunction* initializerFunction = dynamicDowncast<JSFunction>(initializerValue)) {
-                    if (FunctionExecutable* initializerExec = initializerFunction->jsExecutable()) {
+                    if (initializerFunction->isHostFunction()) {
+                        // The initializer of a struct class (see JSStruct.cpp); its layout names every field of the chain.
+                        if (!fieldCount) {
+                            JSValue fields = initializerFunction->getDirect(vm, vm.propertyNames->builtinNames().structFieldsPrivateName());
+                            if (fields && fields.isString()) {
+                                if (StringImpl* names = asString(fields)->tryGetValueImpl(); names && names->length()) {
+                                    fieldCount = 1;
+                                    for (unsigned i = 0; i < names->length(); ++i) {
+                                        char16_t character = names->is8Bit() ? static_cast<char16_t>(names->span8()[i]) : names->span16()[i];
+                                        fieldCount += !character;
+                                    }
+                                }
+                            }
+                        }
+                    } else if (FunctionExecutable* initializerExec = initializerFunction->jsExecutable()) {
                         if (UnlinkedFunctionExecutable* unlinkedExec = initializerExec->unlinkedExecutable()) {
                             if (const auto* defs = unlinkedExec->classElementDefinitions())
                                 fieldCount += defs->size();

@@ -203,11 +203,26 @@ namespace JSC {
     macro(meta) \
     macro(moduleLoader) \
     macro(instanceFieldInitializer) \
+    macro(structInitializer) \
+    macro(structFields) \
+    macro(structShared) \
+    macro(structParent) \
+    macro(structBrand) \
+    macro(structMethod) \
+    macro(structSetup) \
+    macro(structSource) \
     macro(privateBrand) \
     macro(privateClassBrand) \
     macro(hasOwnPropertyFunction) \
     macro(reflectConstructFunction) \
     macro(createPrivateSymbol) \
+    macro(structDefine) \
+    macro(atomicsMutexState) \
+    macro(atomicsConditionState) \
+    macro(atomicsMutexToken) \
+    macro(atomicsTokenPrototype) \
+    macro(atomicsMutexPrototype) \
+    macro(atomicsConditionPrototype) \
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \
     macro(sentinelString) \
