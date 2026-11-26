@@ -101,15 +101,16 @@ private:
         bool isOnStack;
         bool wasLinkedMeanwhile { false };
     };
-    Vector<Importer, 16> m_path;
+    // There is one of these on the stack for each load that runs inside another, so the buffers are not inline.
+    Vector<Importer> m_path;
     // As in InnerModuleEvaluation. The indices start at 1.
-    Vector<Module, 16> m_stack;
+    Vector<Module> m_stack;
     UncheckedKeyHashMap<EncodedJSValue, unsigned, EncodedJSValueHash, EncodedJSValueHashTraits> m_indicesOnStack;
     unsigned m_lastIndex { 0 };
     unsigned m_ancestorIndex { std::numeric_limits<unsigned>::max() };
 
-    MarkedArgumentBuffer m_modulesAhead;
-    Vector<unsigned, 8> m_indicesOfImporters;
+    MarkedArgumentBufferWithSize<1> m_modulesAhead;
+    Vector<unsigned> m_indicesOfImporters;
     size_t m_numberOfModulesEvaluated { 0 };
     Module m_moduleBeingEvaluated;
     struct HoldUp {

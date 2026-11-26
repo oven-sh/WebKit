@@ -175,9 +175,9 @@ private:
     VisitedRecords& m_visited;
     EvaluationAheadOfLink& m_evaluation;
     JSModuleLoader::PassedImports* m_passed { nullptr };
-    Vector<CyclicModuleRecord*, 16> m_path;
+    Vector<CyclicModuleRecord*> m_path;
     Vector<std::pair<CyclicModuleRecord*, ModuleRequest>> m_postponed;
-    MarkedArgumentBuffer m_importersThatPostponed; // What runs meanwhile can take them out of the graph.
+    MarkedArgumentBufferWithSize<1> m_importersThatPostponed; // What runs meanwhile can take them out of the graph.
     const ModuleRequest* m_importOfDeferredModule { nullptr }; // It is reached once the modules ahead of it have been evaluated.
     JSPromise* m_importInFlight { nullptr };
     JSPromise* m_importInFlightInScript { nullptr };
@@ -200,7 +200,7 @@ private:
     bool m_hasFactoryBehindImportHeldBack { false };
     bool m_didLeaveFactoryToFetch { false };
     JSPromise* m_factoriesAheadOfFailure { nullptr };
-    MarkedArgumentBuffer m_compiledModulesToLink;
+    MarkedArgumentBufferWithSize<1> m_compiledModulesToLink;
     Vector<Identifier> m_keysPostponedForCompiledModules;
 #endif
 };

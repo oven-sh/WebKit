@@ -2665,6 +2665,9 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         AOT::willMakeRecordFromSource(globalObject, moduleKey);
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    EnsureStillAliveScope ownerOfSourceCode(jsSourceCode);
+#endif
     const SourceCode& sourceCode = jsSourceCode->sourceCode();
 
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());

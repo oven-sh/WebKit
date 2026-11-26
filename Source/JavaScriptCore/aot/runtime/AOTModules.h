@@ -2507,7 +2507,7 @@ private:
         std::optional<ModuleID> fileStarted { };
         std::optional<ModuleID> originalThatWaitsForModulesAhead { };
         std::optional<ModuleID> lastReached { };
-        Vector<Importer, 16> path { };
+        Vector<Importer> path { };
         std::optional<BitVector> modulesBelowRoot { };
         BitVector originalsReachedBesideMocks { };
         BitVector mocksYetToBeReachedBesideOriginals { };
