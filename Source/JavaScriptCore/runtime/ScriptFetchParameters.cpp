@@ -82,6 +82,7 @@ auto ScriptFetchParameters::hostDefinedType(StringView name) -> Type
 
 String ScriptFetchParameters::nameOfHostDefinedType(Type type)
 {
+    ASSERT(isHostDefined(type));
     Locker locker { ScriptFetchParametersInternal::lock };
     return ScriptFetchParametersInternal::hostDefinedTypes().names[type - Type::FirstHostDefined].isolatedCopy();
 }

@@ -1574,7 +1574,11 @@ std::optional<ModuleID> Modules::moduleImportedFor(ModuleID importer, const Abst
     const String& name = requestOfCopy.m_specifier.string();
     String path = host().resolveWithoutPlugins(m_instance.globalObject, name, m_table.fullPath(importer));
     Type typeOfForm = path.isNull() ? Type::JavaScript : loader()->keyInModuleMap(Identifier::fromString(*m_instance.vm, path).impl(), requestOfCopy.type()).second;
-    String pathOfForm = typeOfForm == Type::JavaScript ? String() : makeString(path, '?', typeOfForm == Type::JSON ? "json"_s : ScriptFetchParameters::nameOfHostDefinedType(typeOfForm));
+    String pathOfForm;
+    if (typeOfForm == Type::JSON)
+        pathOfForm = makeString(path, "?json"_s);
+    else if (ScriptFetchParameters::isHostDefined(typeOfForm))
+        pathOfForm = makeString(path, '?', ScriptFetchParameters::nameOfHostDefinedType(typeOfForm));
     for (const ModuleRequestData& request : m_table.requests(importer)) {
         ModuleID imported = request.targetModule();
         if (request.isHoisted || request.isRequire)
