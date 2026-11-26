@@ -1966,12 +1966,18 @@ bool JSModuleLoader::tryToRecoverLoad(JSGlobalObject* globalObject, ModuleLoadin
         return false;
 #endif
     };
-    if (!hasWaited && !hasGivenWayToCopy() && (!mayRecover || context->flags().contains(ModuleLoadFlag::IsSecondAttempt) || context->step() == ModuleLoadingContext::Step::LoadsAgain)) {
-        // Another load has settled what this one fails with.
-        JSValue errorOfEntry = entry && entry == context->entry() && entry->isFailureFinal() ? entry->error(globalObject) : JSValue();
-        RETURN_IF_EXCEPTION(scope, true);
+    auto takeErrorOfEntry = [&] {
+        JSValue errorOfEntry = entry->error(globalObject);
+        // A fetch error is copied, and reading its message can throw.
+        TRY_CLEAR_EXCEPTION(scope, void());
         if (errorOfEntry)
             error = errorOfEntry;
+    };
+    if (!hasWaited && !hasGivenWayToCopy() && (!mayRecover || context->flags().contains(ModuleLoadFlag::IsSecondAttempt) || context->step() == ModuleLoadingContext::Step::LoadsAgain)) {
+        // Another load has settled what this one fails with.
+        if (entry && entry == context->entry() && entry->isFailureFinal())
+            takeErrorOfEntry();
+        RETURN_IF_EXCEPTION(scope, true);
         return false;
     }
 
@@ -1990,9 +1996,10 @@ bool JSModuleLoader::tryToRecoverLoad(JSGlobalObject* globalObject, ModuleLoadin
             TRY_CLEAR_EXCEPTION(scope, true);
             if (!ImportOrderWalk::isOnPathOfWalk(vm, entry->record()))
                 entry->setDidFailToRecoverLoad();
-            JSValue errorOfEntry = entry->isFailureFinal() ? entry->error(globalObject) : JSValue();
+            error = exception->value();
+            if (entry->isFailureFinal())
+                takeErrorOfEntry();
             RETURN_IF_EXCEPTION(scope, true);
-            error = errorOfEntry ? errorOfEntry : exception->value();
             return false;
         }
         if (importInFlight) {
