@@ -340,6 +340,7 @@ ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()
         WTF::storeStoreFence();
         m_mode = WastefulTypedArray; // There is no possibility that FastTypedArray or OversizeTypedArray becomes resizable ones since resizable ones do not start with FastTypedArray or OversizeTypedArray.
     }
+    vm.writeBarrier(this);
     didMoveStorage();
     heap->addReference(this, buffer.get(), bytesAlreadyReported);
 
