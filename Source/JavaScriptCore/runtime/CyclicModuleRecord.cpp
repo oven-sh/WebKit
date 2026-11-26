@@ -29,6 +29,7 @@
 #if ENABLE(AOT)
 #include "AOTModuleRecord.h"
 #endif
+#include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
@@ -795,7 +796,11 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     // 7. Let onRejected be CreateBuiltinFunction(rejectedClosure, 0, "", « »).
     // Also handled in JSMicrotask.cpp.
     // 8. Perform PerformPromiseThen(capability.[[Promise]], onFulfilled, onRejected).
+#if USE(BUN_JSC_ADDITIONS)
+    promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this, AsyncContextSwapScope::current(vm, globalObject));
+#else
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+#endif
     // 9. Perform ! module.ExecuteModule(capability).
     execute(globalObject, promise);
     RETURN_IF_EXCEPTION(scope, void());
@@ -803,7 +808,7 @@ void CyclicModuleRecord::executeAsync(JSGlobalObject* globalObject)
     RELEASE_AND_RETURN(scope, void());
 }
 
-static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, size_t firstParent = 0, [[maybe_unused]] bool skipsRefusedRequires = false)
+static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicModuleRecord*, 8>& execList, size_t firstParent = 0)
 {
     // GatherAvailableAncestors(module, execList)
     // https://tc39.es/ecma262/#sec-gather-available-ancestors
@@ -823,10 +828,6 @@ static void gatherAvailableAncestors(CyclicModuleRecord* module, Vector<CyclicMo
         // 1. For each Cyclic Module Record m of module.[[AsyncParentModules]], do
         for (const WriteBarrier<AbstractModuleRecord>& barrier : record->asyncParentModules().subspan(std::exchange(firstParent, 0))) {
             auto* m = uncheckedDowncast<CyclicModuleRecord>(barrier.get());
-#if ENABLE(AOT)
-            if (skipsRefusedRequires && AOT::ModuleRecord::wasRequireRefused(m)) [[unlikely]]
-                continue;
-#endif
             // 1.a. If execList does not contain m and m.[[CycleRoot]].[[EvaluationError]] is empty, then
             // (Probable spec bug (https://github.com/tc39/ecma262/issues/3766). We need an additional check here that m.[[CycleRoot]] isn't empty.)
             ASSERT_IMPLIES(!m->cycleRoot(), m->evaluationError());
@@ -966,12 +967,12 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
     std::ranges::sort(execList, [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
         return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
     });
-#if ENABLE(AOT)
-    // require(esm) in the body of one element evaluates modules while the list is being executed. One of them may start waiting for a later
+#if USE(BUN_JSC_ADDITIONS)
+    // require(esm) in the body of one element evaluates modules while the list is being executed. One of them may start waiting for an
     // element whose parents were already gathered, so the parents added since then are gathered after that element has run.
     Vector<size_t, 8> gatheredParents;
     auto noteGatheredParents = [&] {
-        while (vm.hasCompiledCode() && gatheredParents.size() < execList.size())
+        while (gatheredParents.size() < execList.size())
             gatheredParents.append(execList[gatheredParents.size()]->asyncParentModules().size());
     };
     noteGatheredParents();
@@ -1015,11 +1016,11 @@ void CyclicModuleRecord::asyncExecutionFulfilled(JSGlobalObject* globalObject)
                     // 12.c.iii.3.b. Perform ! Call(m.[[TopLevelCapability]].[[Resolve]], undefined, « undefined »).
                     capability->fulfill(vm, jsUndefined());
                 }
-#if ENABLE(AOT)
-                if (vm.hasCompiledCode() && m->asyncParentModules().size() > gatheredParents[index]) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                if (m->asyncParentModules().size() > gatheredParents[index]) [[unlikely]] {
                     // They started after everything in the list, so they sort after it.
                     size_t sorted = execList.size();
-                    gatherAvailableAncestors(m, execList, gatheredParents[index], true);
+                    gatherAvailableAncestors(m, execList, gatheredParents[index]);
                     std::ranges::sort(execList.mutableSpan().subspan(sorted), [](CyclicModuleRecord* left, CyclicModuleRecord* right) {
                         return left->asyncEvaluationOrder().order() < right->asyncEvaluationOrder().order();
                     });

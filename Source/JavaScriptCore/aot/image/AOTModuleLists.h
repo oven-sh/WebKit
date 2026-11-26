@@ -29,6 +29,7 @@ struct ModuleLists {
     Vector<ModuleDirectoryData> directories;
     Vector<ModuleDisplayPathData> displayPaths;
     Vector<ModuleRequestData> requests;
+    Vector<ModuleAheadOfFileData> modulesAheadOfFiles;
     Vector<ModuleExportData> exports;
     Vector<IndirectExportData> indirectExports;
     Vector<SyntheticExportData> syntheticExports;

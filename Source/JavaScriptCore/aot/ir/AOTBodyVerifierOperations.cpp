@@ -308,7 +308,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     case Opcode::LoopHint:
     case Opcode::ResolveHeritage: case Opcode::NewClassToken: case Opcode::GetConstructPrototype:
     case Opcode::IteratorOpen: case Opcode::IteratorResume: case Opcode::IteratorClose: case Opcode::ForInOpen: case Opcode::ForInStep: case Opcode::ReadScope:
-    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::IsLinkedBelow: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
+    case Opcode::ModuleNamespace: case Opcode::ImportModule: case Opcode::RequireModule: case Opcode::WasLoadedSynchronously: case Opcode::SeesMockOf: case Opcode::MockSeenBy: case Opcode::NamespaceSeenBy:
     case Opcode::InstanceNamespace: case Opcode::InstanceImportMeta: case Opcode::OriginalArgument: case Opcode::LinkedMock: case Opcode::KeepsOriginalNames: case Opcode::HasNameInMock: case Opcode::DeclareGlobal: case Opcode::CheckEvaluation:
     case Opcode::AreLoaderFunctionsStored: case Opcode::ResolveModule: case Opcode::ThrowModuleFailure: case Opcode::ImportDynamic: case Opcode::RequireDynamic: case Opcode::ResolveDynamic:
     case Opcode::IsConstructor: case Opcode::ReadsIteratorOfListUnseen: case Opcode::ArraySpeciesCreate: case Opcode::GetByValWithThis: case Opcode::GetOwnProperty: case Opcode::ToLength:

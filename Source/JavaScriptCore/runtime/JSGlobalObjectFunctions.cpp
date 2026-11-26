@@ -46,6 +46,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
 #include <wtf/HexNumber.h>
+#include <wtf/SetForScope.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/ASCIIFastPath.h>
 #include <wtf/text/ParsingUtilities.h>
@@ -825,6 +826,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     JSValue parameters = callFrame->argument(1);
     bool deferred = callFrame->argument(2).isTrue();
     auto* loader = uncheckedDowncast<JSModuleLoader>(callFrame->argument(3));
+#if USE(BUN_JSC_ADDITIONS)
+    // It is no part of a synchronous load that is evaluating the caller.
+    SetForScope suspendedQueue(vm.m_suspendedSynchronousModuleQueue, vm.m_synchronousModuleQueue);
+#endif
     auto* importPromise = loader->importModule(globalObject, specifier, parameters, sourceOrigin, deferred);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();

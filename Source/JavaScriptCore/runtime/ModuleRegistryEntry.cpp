@@ -26,11 +26,16 @@
 #include "config.h"
 #include "ModuleRegistryEntry.h"
 
+#if ENABLE(AOT)
+#include "AOTModuleRecord.h"
+#endif
+#include "ImportOrderWalk.h"
 #include "JSCInlines.h"
 #include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "Microtask.h"
+#include "SyntheticModuleRecord.h"
 
 namespace JSC {
 
@@ -42,6 +47,9 @@ ModuleRegistryEntry::ModuleRegistryEntry(VM& vm, Structure* structure, JSModuleL
     , m_type(type)
     , m_scriptFetcher(WTF::move(scriptFetcher))
     , m_loader(loader, WriteBarrierEarlyInit)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_requestedAt(vm.importOrderState().clock)
+#endif
 {
 }
 
@@ -282,18 +290,84 @@ JSPromise* ModuleRegistryEntry::loadedPromise(JSGlobalObject* globalObject)
     return m_loadPromise.get();
 }
 
-// The entry holds the record of a CommonJS module as the module was when a load that it started came back to it. Whoever asks from now on gets the record of the whole module.
-void ModuleRegistryEntry::replaceRecord(JSGlobalObject* globalObject, AbstractModuleRecord* record)
+void ModuleRegistryEntry::failToLoad(JSGlobalObject* globalObject, JSValue error, IsFinal isFinal, bool wasThrownByModule)
 {
-    if (m_status == Status::FetchFailed)
-        return;
     VM& vm = globalObject->vm();
-    m_record.set(vm, this, record);
+    m_isFailureFinal |= isFinal == IsFinal::Yes;
+    m_wasErrorThrownByModule = wasThrownByModule;
+    m_error.set(vm, this, error);
+    m_status = Status::EvaluationFailed;
+    if (m_loadPromise && m_loadPromise->status() == JSPromise::Status::Pending)
+        m_loadPromise->reject(vm, error);
+    if (m_record && m_isFailureFinal)
+        m_record->setWasReached(false);
+    auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(m_record.get());
+    if (!synthetic)
+        return;
+    m_isFailureOfDeferredModule = synthetic->isOfDeferredModule();
+    // It has no exports to link against.
+    m_record.clear();
+    m_isLoaded = false;
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    promise->rejectAsHandled(vm, error);
+    m_modulePromise.set(vm, this, promise);
+    m_loadPromise.set(vm, this, promise);
+}
+
+void ModuleRegistryEntry::forgetFailureToLoad(JSGlobalObject* globalObject)
+{
+    ASSERT(m_record && !m_isFailureFinal);
+    if (!m_error && (!m_loadPromise || m_loadPromise->status() == JSPromise::Status::Fulfilled))
+        return;
+    m_record->setDidLoadAfterFailure();
+    m_error.clear();
+    m_didFailToRecoverLoad = false;
     m_status = Status::Fetched;
-    JSPromise* modulePromise = JSPromise::create(vm, globalObject->promiseStructure());
-    modulePromise->markAsHandled();
-    modulePromise->fulfill(vm, record);
-    m_modulePromise.set(vm, this, modulePromise);
+    // If it is pending, the steps that settle it may yet report the failure.
+    m_loadPromise.clear();
+    m_isLoaded = true;
+    loadedPromise(globalObject);
+}
+
+void ModuleRegistryEntry::forgetFailureToLink()
+{
+    auto* module = m_error && !m_isFailureFinal ? dynamicDowncast<CyclicModuleRecord>(m_record.get()) : nullptr;
+    if (!module || module->status() != CyclicModuleRecord::Status::Unlinked)
+        return;
+    m_error.clear();
+    m_status = Status::Fetched;
+}
+
+bool ModuleRegistryEntry::hasRunWithoutError() const
+{
+    auto* module = dynamicDowncast<CyclicModuleRecord>(m_record.get());
+    if (!module || module->status() < CyclicModuleRecord::Status::Evaluating || module->evaluationError())
+        return false;
+    return !module->cycleRoot() || !module->cycleRoot()->evaluationError();
+}
+
+bool ModuleRegistryEntry::ignoresFailureToLoad(JSGlobalObject* globalObject)
+{
+    if (m_isFailureFinal)
+        return !!m_error;
+    auto* module = dynamicDowncast<CyclicModuleRecord>(m_record.get());
+    if (!module || module->status() == CyclicModuleRecord::Status::New)
+        return false;
+#if ENABLE(AOT)
+    if (AOT::compiledModule(globalObject->vm(), module))
+        return module->didLoadAfterFailure();
+#endif
+    module->setDidLoadAfterFailure();
+    if (!m_error)
+        forgetFailureToLoad(globalObject);
+    return true;
+}
+
+void ModuleRegistryEntry::supersede(VM& vm, AbstractModuleRecord::SupersededFor imports)
+{
+    m_isSuperseded = true;
+    if (m_record)
+        m_record->supersede(ImportOrderWalk::noteChange(vm), imports);
 }
 #endif
 
@@ -312,6 +386,10 @@ void ModuleRegistryEntry::fetchComplete(JSGlobalObject* globalObject, AbstractMo
 #endif
     m_record.set(vm, this, record);
     m_status = Status::Fetched;
+#if ENABLE(AOT)
+    if (auto* fromSource = vm.hasCompiledCode() && loader() == globalObject->moduleLoader() ? dynamicDowncast<JSModuleRecord>(record) : nullptr)
+        AOT::didMakeRecordFromSource(globalObject, fromSource);
+#endif
 }
 
 } // namespace JSC

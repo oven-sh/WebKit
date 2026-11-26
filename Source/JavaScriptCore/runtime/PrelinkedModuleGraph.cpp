@@ -97,22 +97,6 @@ PrelinkedModuleGraph::PrelinkedModuleGraph(VM& vm, DecoderStringTable& strings, 
 
 PrelinkedModuleGraph::~PrelinkedModuleGraph() = default;
 
-ScriptFetchParameters::Type PrelinkedModuleGraph::Request::type() const
-{
-    switch (fetchKind()) {
-    case FetchKind::None:
-    case FetchKind::JavaScript:
-        return ScriptFetchParameters::Type::JavaScript;
-    case FetchKind::WebAssembly:
-        return ScriptFetchParameters::Type::WebAssembly;
-    case FetchKind::JSON:
-        return ScriptFetchParameters::Type::JSON;
-    case FetchKind::HostDefined:
-        return ScriptFetchParameters::Type::HostDefined;
-    }
-    return ScriptFetchParameters::Type::JavaScript;
-}
-
 RefPtr<ScriptFetchParameters> PrelinkedModuleGraph::fetchParameters(const Request& request)
 {
     ScriptFetchParameters::Type type;
@@ -129,7 +113,7 @@ RefPtr<ScriptFetchParameters> PrelinkedModuleGraph::fetchParameters(const Reques
         type = ScriptFetchParameters::Type::JSON;
         break;
     case FetchKind::HostDefined:
-        return ScriptFetchParameters::create(identifier(request.hostDefinedTypeSid).string());
+        return ScriptFetchParameters::create(ScriptFetchParameters::hostDefinedType(identifier(request.hostDefinedTypeSid).string()));
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

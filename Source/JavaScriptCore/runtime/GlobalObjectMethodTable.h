@@ -99,6 +99,10 @@ struct GlobalObjectMethodTable {
 #if USE(BUN_JSC_ADDITIONS)
     JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
     JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
+    // Types that make the same module of what the key names share one of them. JavaScript: the one that an import without a type gets.
+    ScriptFetchParameters::Type (*moduleTypeInRegistry)(JSGlobalObject*, StringView key, ScriptFetchParameters::Type) { nullptr };
+    // What the modules that an import() runs get of the async context of the call.
+    JSValue (*asyncContextOfImport)(JSGlobalObject*, JSValue asyncContext) { nullptr };
     const AOT::ModuleHost* moduleHost { nullptr };
 #endif
 };

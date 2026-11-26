@@ -142,6 +142,10 @@ auto Modules::momentsAtWhichSomeModuleMayLook(uint32_t since) const -> Vector<Mo
         take(anew.moment);
     for (uint32_t moment : m_momentsLinkedInRefusedLoads.values())
         take(moment);
+    for (const MomentsFilesWereKept& files : m_importsKeptAheadOfLink.values()) {
+        for (uint32_t moment : files.values())
+            take(moment);
+    }
     for (const LinksBeforeLoad* before = m_linksBeforeLoadInFlight; before; before = before->outer)
         takeWhatMayComeBack(*before);
     for (const LinksOfLoadThatMayFail& links : m_linksOfLoadsThatMayFail)
@@ -282,6 +286,21 @@ uint32_t Modules::momentLinked(ModuleID importer) const
     return moment;
 }
 
+uint32_t Modules::momentImportWasKept(ModuleID importer, ModuleID imported) const
+{
+    if (!keepsImport(importer, imported)) [[likely]]
+        return 0;
+    uint32_t moment = m_importsKeptAheadOfLink.find(importer.index())->value.get(fileOf(imported).index());
+    auto anew = m_momentsLoadedAnew.find(importer);
+    return anew != m_momentsLoadedAnew.end() && anew->value.moment > moment ? 0 : moment;
+}
+
+uint32_t Modules::momentLinkedTo(ModuleID importer, ModuleID imported) const
+{
+    uint32_t kept = momentImportWasKept(importer, imported);
+    return kept ? kept : momentLinked(importer);
+}
+
 uint32_t Modules::momentLinkedAsOf(ModuleID importer, ModuleID reader) const
 {
     uint32_t last = momentLinked(importer);
@@ -330,7 +349,8 @@ std::optional<unsigned> Modules::indexOfEndedMockSeenBy(ModuleID fileOrModule, M
         if (!got->value.isGivenItNoMore || anew == m_momentsLoadedAnew.end() || anew->value.moment <= got->value.moment)
             return std::nullopt;
     }
-    std::optional<unsigned> index = indexOfEndedMockSeenAt(fileOrModule, momentLinkedAsOf(importer, reader));
+    uint32_t kept = momentImportWasKept(importer, fileOrModule);
+    std::optional<unsigned> index = indexOfEndedMockSeenAt(fileOrModule, kept ? kept : momentLinkedAsOf(importer, reader));
     if (index && m_loadedInPreload.get(importer.index())) [[unlikely]] {
         if (std::optional<unsigned> patched = m_removedMocksInUse.find(fileOrModule)->value[*index].placeOfMockThatWasPatched)
             return patched;
@@ -776,7 +796,7 @@ bool Modules::seesMockOf(ModuleID mocked, ModuleID importer) const
     if (importsOriginalDespiteMock(mocked, importer) || keepsOriginalAfterReplacement(mocked, importer)) [[unlikely]]
         return false;
     if (isLibraryOriginalDisplaced(mocked)) [[unlikely]] {
-        uint32_t linked = momentLinked(importer);
+        uint32_t linked = momentLinkedTo(importer, mocked);
         return !linked || linked > loadedIfExists(mocked)->momentOfDisplacement;
     }
     if (m_mocksWithIntactOriginal.isEmpty()) [[likely]]
@@ -815,7 +835,7 @@ bool Modules::wasLoadedUnderMockInPlaceByThisTestFile(ModuleID fileOrModule)
 
 bool Modules::isLinkedToRetainedMock(ModuleID fileOrModule, ModuleID importer) const
 {
-    std::optional<unsigned> ended = indexOfEndedMockSeenAt(fileOrModule, momentLinked(importer));
+    std::optional<unsigned> ended = indexOfEndedMockSeenAt(fileOrModule, momentLinkedTo(importer, fileOrModule));
     return ended && m_removedMocksInUse.find(fileOrModule)->value[*ended].isRetainedForLinkedImporters;
 }
 
@@ -848,7 +868,7 @@ bool Modules::hasImporterLinkedSince(ModuleID fileOrModule, uint32_t moment) con
         return false;
     for (uint32_t index = 0; index < m_table.size(); ++index) {
         ModuleID importer(index);
-        if (momentLinked(importer) <= moment || hasInstances(importer))
+        if (momentLinkedTo(importer, fileOrModule) <= moment || hasInstances(importer))
             continue;
         for (const ModuleRequestData& request : m_table.requests(importer)) {
             if (fileOf(request.targetModule()) == fileOrModule)
@@ -921,7 +941,7 @@ bool Modules::keepsMockThatStandsWhileAnotherWaits(ModuleID mocked, ModuleID imp
     if (!m_modulesWithPendingMock.get(fileOrModule.index()) || !activeMock(fileOrModule) || m_table.moduleBehindFacade(importer) == std::optional(fileOrModule))
         return false;
     auto waiting = m_pendingMockCalls.find(fileOrModule);
-    uint32_t linked = momentLinked(importer);
+    uint32_t linked = momentLinkedTo(importer, fileOrModule);
     return waiting != m_pendingMockCalls.end() && waiting->value.keepsActiveMock && linked && linked < waiting->value.moment;
 }
 

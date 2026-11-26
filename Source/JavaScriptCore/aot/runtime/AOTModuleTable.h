@@ -90,6 +90,7 @@ public:
 
     const ModuleData& data(ModuleID module) const { return m_modules[checkedIndex(module)]; }
     std::span<const ModuleRequestData> requests(ModuleID module) const { return listOf(m_tables->moduleRequests(), module, &ModuleData::firstRequest); }
+    ModuleID checkOfNames(ModuleID importer) const { return requests(importer).front().targetModule(); }
     auto imports(ModuleID module) const { return requests(module) | std::views::filter(isImport); }
     DynamicStars dynamicStars(ModuleID module) const { return { requests(module), m_tables->starsAsWritten().empty() ? std::span<const StarAsWrittenData> { } : starsAsWritten(module) }; }
     std::span<const ModuleRequestData> allRequests() const { return m_tables->moduleRequests(); }
@@ -101,7 +102,7 @@ public:
         size_t index = checkedIndex(module);
         const ModuleData& record = m_modules[index];
         const ModuleData& nextRecord = m_modules[index + 1];
-        return !record.capturesExports() && (record.firstRequiredName != nextRecord.firstRequiredName || record.firstSyntheticExport != nextRecord.firstSyntheticExport);
+        return !record.capturesExports() && (record.firstRequiredName != nextRecord.firstRequiredName || record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.hasCheckOfNames());
     }
     uint32_t endOfLinkRequests(ModuleID module) const { return m_modules[checkedIndex(module) + 1].firstLinkRequest; }
     ModuleID leaderInLink(ModuleID module) const { return ModuleID(allLinkRequests()[data(module).firstLinkRequest]); }
@@ -150,6 +151,7 @@ public:
     std::span<const NameOfStatementData> namesOfStatements(ModuleID) const;
     bool listsNamesOfStatements() const { return !m_tables->namesOfStatements().empty(); }
     std::span<const StarAsWrittenData> starsAsWritten(ModuleID) const;
+    std::span<const ModuleAheadOfFileData> modulesAheadOfFiles(ModuleID root) const;
     std::optional<ModuleID> writerOfExport(ModuleID, unsigned place) const;
     const ModuleFailureData& failure(ModuleFailureID) const;
     std::optional<ModuleFailureID> loadFailure(ModuleID) const;

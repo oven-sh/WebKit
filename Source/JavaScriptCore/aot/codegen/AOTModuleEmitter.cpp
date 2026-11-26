@@ -196,11 +196,6 @@ void ModuleEmitter::generateSeesMockOf(const ValueContext& value)
     defineTest(value, callWithoutSite<Condition>(RuntimeOperation::SeesMockOf, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()), word32(value->keepingOriginalNames()) }));
 }
 
-void ModuleEmitter::generateIsLinkedBelow(const ValueContext& value)
-{
-    defineTest(value, callWithoutSite<Condition>(RuntimeOperation::IsLinkedBelow, { moduleIndex(value->module()), moduleIndex(value->referrer()) }));
-}
-
 void ModuleEmitter::generateMockSeenBy(const ValueContext& value)
 {
     define(value, callWithoutSite<Boxed>(RuntimeOperation::MockSeenBy, { moduleIndex(value->module()), moduleIndex(value->referrer()), moduleIndex(value->reader()) }));

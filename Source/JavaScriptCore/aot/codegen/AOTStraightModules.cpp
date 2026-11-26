@@ -20,7 +20,7 @@ OpcodeSet StraightEmitter::opcodesOfModules()
 {
     return {
         Opcode::ModuleNamespace, Opcode::ImportModule, Opcode::RequireModule, Opcode::EvaluateModule, Opcode::RecordRequire,
-        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::IsLinkedBelow, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::InstanceNamespace, Opcode::InstanceImportMeta, Opcode::OriginalArgument, Opcode::LinkedMock, Opcode::KeepsOriginalNames, Opcode::HasNameInMock, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
+        Opcode::WasLoadedSynchronously, Opcode::SeesMockOf, Opcode::MockSeenBy, Opcode::NamespaceSeenBy, Opcode::InstanceNamespace, Opcode::InstanceImportMeta, Opcode::OriginalArgument, Opcode::LinkedMock, Opcode::KeepsOriginalNames, Opcode::HasNameInMock, Opcode::AreLoaderFunctionsStored, Opcode::CountExecution,
         Opcode::ResolveModule, Opcode::ThrowModuleFailure, Opcode::ImportDynamic, Opcode::RequireDynamic, Opcode::ResolveDynamic
     };
 }
@@ -215,10 +215,6 @@ void StraightEmitter::generateModule(const BodyValue& value)
         return;
     case Opcode::SeesMockOf:
         callOperation(value, RuntimeOperation::SeesMockOf, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()), moduleIndexArgument(value.reader()), StraightArgument::word(value.keepingOriginalNames()) });
-        defineBoolean(value);
-        return;
-    case Opcode::IsLinkedBelow:
-        callOperation(value, RuntimeOperation::IsLinkedBelow, { moduleIndexArgument(value.module()), moduleIndexArgument(value.referrer()) });
         defineBoolean(value);
         return;
     case Opcode::MockSeenBy:

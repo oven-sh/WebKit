@@ -255,7 +255,6 @@ runtime RecordRequireWithRequirer : void (uint32_t module, uint32_t referrer, ui
 runtime RequireIfImported : EncodedJSValue (uint32_t module, uint32_t referrer) ; unknownCode
 runtime WasLoadedSynchronously : size_t (uint32_t module) ; reads(ExternalState) writes(ExternalState)
 runtime SeesMockOf : size_t (uint32_t module, uint32_t referrer, uint32_t reader, uint32_t keepingOriginalNames) ; reads(ExternalState) writes(ExternalState)
-runtime IsLinkedBelow : size_t (uint32_t module, uint32_t referrer) ; reads(ExternalState) writes(ExternalState)
 runtime MockSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; reads(ExternalState) writes(ExternalState)
 runtime NamespaceSeenBy : EncodedJSValue (uint32_t module, uint32_t referrer, uint32_t reader) ; unknownCode
 runtime InstanceNamespace : EncodedJSValue (JSCell* instance, uint32_t module, uint32_t phase) ; unknownCode
@@ -270,9 +269,7 @@ runtime ResolveModule : EncodedJSValue (uint32_t module, uint32_t referrer, uint
 runtime ThrowModuleFailure : void (uint32_t failure, uint32_t isForRequire) ; reads(all) writes(AllocatorState, RuntimeState) throws collects
 runtime EnterBodyThatRunsOnce : void (uint32_t function) ; reads(RuntimeState) writes(RuntimeState)
 runtime BeginModuleEvaluation : size_t (uint32_t module) ; unknownCode
-runtime StopLoadingBehindFile : size_t (uint32_t module) ; unknownCode
 runtime AbandonModuleEvaluation : void (uint32_t module, JSCell* exception) ; reads(all) writes(ExternalState, AllocatorState, RuntimeState) collects
-runtime ResumeLoadAfterThrow : size_t (uint32_t module, JSCell* exception, uint32_t failedStep) ; unknownCode
 runtime ImportDynamic : EncodedJSValue (EncodedJSValue specifier, EncodedJSValue options, uint32_t referrer) ; unknownCode
 runtime RequireDynamic : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer) ; unknownCode
 runtime RequireDynamicWithRequirer : EncodedJSValue (EncodedJSValue specifier, uint32_t referrer, EncodedJSValue requirerObject) ; unknownCode

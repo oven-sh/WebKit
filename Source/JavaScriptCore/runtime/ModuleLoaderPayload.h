@@ -59,6 +59,15 @@ public:
     bool deferred() const { return m_deferred; }
 #if USE(BUN_JSC_ADDITIONS)
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+    // See JSModuleLoader::runDeferredModules().
+    bool waitsForImport() const { return m_waitsForImport; }
+    void setWaitsForImport() { m_waitsForImport = true; }
+    // See ModuleLoadingContext::queueOfLoad().
+    uint32_t queueOfLoad() const { return m_queueOfLoad; }
+    void setQueueOfLoad(uint32_t queue) { m_queueOfLoad = queue; }
+    // See JSModuleLoader::asyncContextOfImport().
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
     bool decrementRemaining()
@@ -75,10 +84,15 @@ private:
     WriteBarrier<JSPromise> m_promise;
     WriteBarrier<Unknown> m_fulfillment;
 #if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
     int64_t m_referrerAsyncOrder { -1 };
 #endif
     uint8_t m_remainingFulfillments { 2 };
     bool m_deferred { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_waitsForImport { false };
+    uint32_t m_queueOfLoad { 0 };
+#endif
 };
 
 } // namespace JSC

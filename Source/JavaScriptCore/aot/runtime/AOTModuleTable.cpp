@@ -438,6 +438,12 @@ std::span<const StarAsWrittenData> ModuleTable::starsAsWritten(ModuleID module) 
     return { ofModule.begin(), ofModule.end() };
 }
 
+std::span<const ModuleAheadOfFileData> ModuleTable::modulesAheadOfFiles(ModuleID root) const
+{
+    auto ofRoot = std::ranges::equal_range(m_tables->modulesAheadOfFiles(), root.index(), { }, &ModuleAheadOfFileData::rootIndex);
+    return { ofRoot.begin(), ofRoot.end() };
+}
+
 std::optional<ModuleID> ModuleTable::writerOfExport(ModuleID module, unsigned place) const
 {
     auto key = [](const WriterOfExportData& entry) {

@@ -360,7 +360,6 @@ static void checkModuleTables(const JoinedTables& check)
         case ModuleStartStepData::Operation::Return:
             return !step.operand() && !step.hasFlag();
         case ModuleStartStepData::Operation::CallStart:
-        case ModuleStartStepData::Operation::CallStartUnlessStopped:
             return step.operand() < starts.size() && starts[step.operand()] && !step.hasFlag();
         case ModuleStartStepData::Operation::CallBody:
             return step.operand() < check.encoder.inputs.functions.size() && !step.hasFlag();
@@ -369,9 +368,7 @@ static void checkModuleTables(const JoinedTables& check)
         case ModuleStartStepData::Operation::Finish:
         case ModuleStartStepData::Operation::FinishAndReturn:
             return step.operand() < numberOfModules;
-        case ModuleStartStepData::Operation::ReturnIfLoadingStops:
         case ModuleStartStepData::Operation::AbandonOnThrow:
-        case ModuleStartStepData::Operation::ResumeLoadOnThrow:
             return step.operand() < numberOfModules && !step.hasFlag();
         }
         return false;
@@ -497,6 +494,7 @@ static void checkOrderOfProgramTables(const JoinedTables& check)
     checkSorted(tables.quotedSourceGroups(), [](const QuotedSourceGroupData& group) { return std::tuple { group.module, group.line, group.column }; }, "quotedSourceGroups"_s);
     checkSorted(tables.sourceStamps(), &SourceStampData::module, "sourceStamps"_s);
     checkSorted(tables.starsAsWritten(), &StarAsWrittenData::module, "starsAsWritten"_s);
+    checkSorted(tables.modulesAheadOfFiles(), [](const ModuleAheadOfFileData& entry) { return static_cast<uint64_t>(entry.root) << 32 | entry.place; }, "modulesAheadOfFiles"_s);
     checkSorted(tables.writersOfExports(), [](const WriterOfExportData& entry) { return static_cast<uint64_t>(entry.module) << 32 | entry.place; }, "writersOfExports"_s);
     checkAscending(tables.staticsRoots(), &StaticsRange::offset, "staticsRoots"_s);
     checkAscending(tables.staticsNarrowRoots(), &StaticsRange::offset, "staticsNarrowRoots"_s);

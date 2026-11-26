@@ -28,8 +28,10 @@
 
 #include "ArgList.h"
 #include "BuiltinNames.h"
+#include "ImportOrderWalk.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
+#include "JSModuleLoader.h"
 #include "JSModuleNamespaceObject.h"
 #include "JSONObject.h"
 
@@ -75,7 +77,10 @@ void SyntheticModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_lazyExportsSource);
-    visitor.append(thisObject->m_deferredGeneratorError);
+    visitor.append(thisObject->m_recordOfLaterExports);
+    visitor.append(thisObject->m_errorOfGenerator);
+    Locker locker { thisObject->cellLock() };
+    visitor.append(thisObject->m_namespacesOfExportsSoFar.begin(), thisObject->m_namespacesOfExportsSoFar.end());
 #endif
 }
 
@@ -91,56 +96,145 @@ SyntheticModuleRecord* SyntheticModuleRecord::createWithDeferredGenerator(JSGlob
 {
     VM& vm = globalObject->vm();
     auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleLoader, moduleKey, SourceProviderSourceType::Module);
-    moduleRecord->m_deferredGenerator = WTF::move(generator);
+    moduleRecord->m_generator = WTF::move(generator);
+    moduleRecord->m_isOfDeferredModule = true;
     return moduleRecord;
 }
 
-void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
+void SyntheticModuleRecord::setGeneratorOfMutableExports(Ref<SyntheticSourceProvider>&& generator)
+{
+    ASSERT(generator->copiesMutableExports() && !hasLiveExports());
+    m_generator = WTF::move(generator);
+}
+
+void SyntheticModuleRecord::runDeferredModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (JSValue error = m_deferredGeneratorError.get()) {
-        throwException(globalObject, scope, error);
-        return;
+    MarkedArgumentBuffer exportValues;
+    Vector<Identifier, 4> exportNames;
+    Ref generator = *m_generator;
+    bool isStillRunning = std::exchange(m_isRunningDeferredModule, true);
+    JSObject* lazyExportsSource = generator->deferredModule()->generate(globalObject, this, exportNames, exportValues, isStillRunning);
+    m_isRunningDeferredModule = isStillRunning;
+
+    if (scope.exception()) [[unlikely]] {
+    } else if (!moduleEnvironmentMayBeNull()) [[likely]]
+        initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
+    else if (updateExports(globalObject, exportNames, exportValues, lazyExportsSource)) {
+        moduleLoader()->forgetFailuresToLink();
+        for (unsigned index = 0; index < m_namespacesOfExportsSoFar.size() && !scope.exception(); ++index)
+            m_namespacesOfExportsSoFar[index]->listExportsAgain(globalObject);
     }
-    if (!m_deferredGenerator)
+    if (isStillRunning) [[unlikely]]
+        RELEASE_AND_RETURN(scope, void());
+    didGenerate(vm, scope);
+    Locker locker { cellLock() };
+    m_namespacesOfExportsSoFar.clear();
+}
+
+void SyntheticModuleRecord::didListExportsSoFar(VM& vm, JSModuleNamespaceObject* namespaceObject)
+{
+    Locker locker { cellLock() };
+    m_namespacesOfExportsSoFar.append(WriteBarrier<JSModuleNamespaceObject>(vm, this, namespaceObject));
+}
+
+void SyntheticModuleRecord::copyMutableExportsIfOutdated(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!deferredModule());
+
+    RefPtr generator = std::exchange(m_generator, nullptr);
+    if (!generator || wasReached() || loadedAt() == vm.importOrderState().clock)
         return;
 
-    // The generator runs once. A failure here or in initializeExports() is what every later link reports.
-    auto failed = [&](Exception* exception) {
-        if (vm.isTerminationException(exception))
-            return;
-        m_deferredGeneratorError.set(vm, this, exception->value());
-        m_deferredGenerator = nullptr;
-    };
-
-    Ref generator = *m_deferredGenerator;
     MarkedArgumentBuffer exportValues;
     Vector<Identifier, 4> exportNames;
     JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
-    if (Exception* exception = scope.exception()) [[unlikely]] {
-        failed(exception);
-        return;
+    // A getter among the properties may have loaded a graph that imports this module.
+    if (wasReached()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, void());
+    if (!scope.exception()) [[likely]] {
+        clearExports();
+        m_lazyExportsSource.clear();
+        initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
     }
+    didGenerate(vm, scope);
+}
 
-    // The generator can run code that loads a graph containing this record (a CommonJS module that require()s an ES
-    // module importing it back). That load ran the generator again, got the exports as they were at that point, and
-    // linked its importers against them.
-    if (!m_deferredGenerator)
+void SyntheticModuleRecord::didGenerate(VM& vm, ThrowScope& scope)
+{
+    Exception* exception = scope.exception();
+    if (exception && vm.isTerminationException(exception)) [[unlikely]]
         return;
+    m_generator = nullptr;
+    if (exception) [[unlikely]]
+        m_errorOfGenerator.set(vm, this, exception->value());
+}
 
-    initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
-    if (Exception* exception = scope.exception()) [[unlikely]] {
-        failed(exception);
-        return;
+// Importers may be bound to the names the record has, so it keeps them all. Returns whether it has new ones.
+bool SyntheticModuleRecord::updateExports(JSGlobalObject* globalObject, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (lazyExportsSource)
+        m_lazyExportsSource.set(vm, this, lazyExportsSource);
+
+    bool hasNewNames = false;
+    Vector<Identifier, 4> laterNames;
+    MarkedArgumentBuffer laterValues;
+    for (unsigned index = 0; index < exportNames.size(); ++index) {
+        const Identifier& exportName = exportNames[index];
+        JSValue exportValue = exportValues.at(index);
+        std::optional<ExportEntry> entry = tryGetExportEntry(exportName.impl());
+        if (!entry || entry->type == ExportEntry::Type::Indirect) {
+            hasNewNames |= !entry;
+            laterNames.append(exportName);
+            laterValues.appendWithCrashOnOverflow(exportValue);
+            continue;
+        }
+        if (!exportValue)
+            continue;
+        constexpr bool shouldThrowReadOnlyError = false;
+        constexpr bool ignoreReadOnlyErrors = true;
+        bool putResult = false;
+        symbolTablePutTouchWatchpointSet(moduleEnvironment(), globalObject, exportName, exportValue, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        RETURN_IF_EXCEPTION(scope, false);
+        ASSERT(putResult);
     }
-    m_deferredGenerator = nullptr;
+    if (laterNames.isEmpty())
+        return false;
+
+    if (m_recordOfLaterExports) {
+        m_recordOfLaterExports->updateExports(globalObject, laterNames, laterValues, lazyExportsSource);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else {
+        auto* record = tryCreateWithExportNamesAndValues(globalObject, moduleLoader(), moduleKey(), laterNames, laterValues, lazyExportsSource);
+        RETURN_IF_EXCEPTION(scope, false);
+        record->setWasReached();
+        m_recordOfLaterExports.set(vm, this, record);
+    }
+    for (const Identifier& exportName : laterNames) {
+        if (!exportEntries().contains(exportName.impl()))
+            addExportEntry(ExportEntry::createIndirect(exportName, exportName, moduleKey(), ScriptFetchParameters::Type::JavaScript));
+    }
+    return hasNewNames;
 }
 #endif
 
-JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
+JSValue SyntheticModuleRecord::evaluate([[maybe_unused]] JSGlobalObject* globalObject)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // An importer can have been linked to what it had exported by then.
+    if (JSValue error = errorOfGenerator()) [[unlikely]] {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        throwException(globalObject, scope, error);
+        return { };
+    }
+#endif
     return jsUndefined();
 }
 

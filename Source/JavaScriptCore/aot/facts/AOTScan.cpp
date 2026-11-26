@@ -934,6 +934,8 @@ bool requireAnswersWithResultOfBody(const Program& program, ModuleID referrer, M
         break;
     case RequireResult::Namespace:
     case RequireResult::NamespaceIfImported:
+    case RequireResult::HeldDefaultExport:
+    case RequireResult::HeldNamespace:
         return false;
     }
     if (!module.body)

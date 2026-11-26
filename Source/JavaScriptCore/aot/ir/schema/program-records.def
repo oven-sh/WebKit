@@ -67,13 +67,12 @@ enum ModuleKind (| engine hoistsFunctionsIntoVariables: Bool, isFoundByPath: Boo
 enum CommonJsParameter { Exports Require Module Filename Dirname }
 enum ExternalKind { UncompiledCode HostValue }
 enum SyntheticExportRule { None CommonJs CommonJsIgnoringAnnotation RuntimeModule }
-enum RequireResult { Namespace ModuleExports DefaultExport NamespaceIfImported }
+enum RequireResult { Namespace ModuleExports DefaultExport NamespaceIfImported HeldDefaultExport HeldNamespace }
 enum ImportPhase { Evaluation Defer }
 enum ModuleRequestKind { Import Require }
 enum ModuleExportKind { Variable Namespace Indirect Field }
 flags ModuleFlags {
-    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects CachesEvaluationError IsBundlerHelper ReachesModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad IsImportableDuringEvaluation IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache MayBeReevaluated LoaderReturnsNamespace RejectsRequireCacheOverride IsChangedOnDiskByRun IsExposedByRequireCache RejectsUncompiledCode HasReadOnlyBuiltins IsExposedByTestRunner IsImportedWithoutExtension IsImportedWithOtherExtension IsImportedAsDirectory ThrowsAtLoad IsImportedAsESModule DependsOnMoreThanSource IsReloadable
-    | engine EvaluatesItself
+    HasTopLevelAwait IsLibrary IsLoadedByImportOnly HasNoSideEffects CachesEvaluationError IsBundlerHelper ReachesModuleObjects HasInstalledPositions IsLoadedByLoader IsRequiredDuringLoad IsImportableDuringEvaluation IsImportedAsNamespace IsFoundByName MayBeMocked MayBeEvicted IsListedInCache MayBeReevaluated LoaderReturnsNamespace RejectsRequireCacheOverride IsChangedOnDiskByRun IsExposedByRequireCache RejectsUncompiledCode HasReadOnlyBuiltins IsExposedByTestRunner IsImportedWithoutExtension IsImportedWithOtherExtension IsImportedAsDirectory ThrowsAtLoad DependsOnMoreThanSource IsReloadable IsCheckOfNames
 }
 record ColumnAdjustment wire { offset: UInt32 line: UInt32 column: UInt32 }
 record QuotedSource wire { position: UInt32 start: UInt32 end: UInt32 }

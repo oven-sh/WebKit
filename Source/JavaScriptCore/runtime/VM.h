@@ -127,6 +127,10 @@ class FuzzerAgent;
 class HasOwnPropertyCache;
 class HeapAnalyzer;
 class HeapProfiler;
+#if USE(BUN_JSC_ADDITIONS)
+class EvaluationAheadOfLink;
+class ImportOrderWalk;
+#endif
 class IntlCache;
 enum Intrinsic : uint8_t;
 class JSCellButterfly;
@@ -1565,25 +1569,38 @@ public:
     // so VM::visitAggregateImpl walks the full prev-linked chain and marks
     // every queued JSValue. The chain exists because module evaluation can
     // re-enter loadModuleSync (require(esm) inside an evaluated module).
+    struct PostponedModuleRequest {
+        JSCell* loadingState;
+        JSCell* importer;
+        unsigned index;
+    };
     struct SynchronousModuleQueue {
         Vector<SynchronousModuleTask> tasks;
+        // See JSModuleLoader::mayPostponeFetch().
+        Vector<PostponedModuleRequest> postponedRequests;
+        bool keepsPostponedRequests { false };
+        uint32_t number { 0 };
         SynchronousModuleQueue* prev { nullptr };
     };
     SynchronousModuleQueue* m_synchronousModuleQueue { nullptr };
-#if ENABLE(AOT)
+    uint32_t m_synchronousModuleQueueCount { 0 };
     // While the innermost queue is this one, reactions go to the normal microtask queue. It stays in the chain so that the collector still visits it.
     SynchronousModuleQueue* m_suspendedSynchronousModuleQueue { nullptr };
-#endif
     // The queue that reactions are diverted to.
     SynchronousModuleQueue* synchronousModuleQueue() const
     {
         if (!m_synchronousModuleQueue) [[likely]]
             return nullptr;
-#if ENABLE(AOT)
         if (m_synchronousModuleQueue == m_suspendedSynchronousModuleQueue) [[unlikely]]
             return nullptr;
-#endif
         return m_synchronousModuleQueue;
+    }
+    // For as long as the host does not finish the fetches that it has in flight. It answers new ones at once, so a load that needs one repeats it.
+    bool m_areFetchesOfHostOnHold { false };
+    uint32_t numberOfSynchronousModuleQueue() const
+    {
+        SynchronousModuleQueue* queue = synchronousModuleQueue();
+        return queue ? queue->number : 0;
     }
 
     class SynchronousModuleQueueScope {
@@ -1596,7 +1613,23 @@ public:
         VM& m_vm;
         SynchronousModuleQueue m_queue;
     };
+
+    // See ImportOrderWalk.
+    struct ImportOrderState {
+        ImportOrderWalk* innermostWalk { nullptr };
+        EvaluationAheadOfLink* innermostEvaluationAheadOfLink { nullptr };
+        // Moves when a deferred module begins or ends, and when what an import is answered with changes.
+        uint64_t clock { 1 };
+        uint64_t lastChange { 0 };
+        uint64_t lastChangeOfResolution { 0 };
+        uint32_t numberOfResolvedRequests { 0 };
+        bool isRunningDeferredModule { false }; // Or a module that is evaluated ahead of one.
+        bool isInBatchOfChanges { false };
+        bool isHostResolving { false }; // What a load has been answered stands against what the code that answers it changes.
+    };
+    ImportOrderState& importOrderState() LIFETIME_BOUND { return m_importOrderState; }
 private:
+    ImportOrderState m_importOrderState;
 #endif
 
     double m_startupJITDeferralScale { 1 };

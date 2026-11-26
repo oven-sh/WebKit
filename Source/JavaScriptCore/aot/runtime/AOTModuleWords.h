@@ -23,7 +23,6 @@ enum class StoredModuleStatus : uint8_t {
 struct ModuleWords {
     uint8_t* status;
     uint32_t evaluatingMark;
-    uint32_t runsImportedFilesAlone;
     uint32_t moduleThatRunTimeStartsPlusOne;
 };
 

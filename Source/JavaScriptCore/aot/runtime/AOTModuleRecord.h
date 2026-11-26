@@ -10,6 +10,7 @@
 #include "AOTRecordTypes.h"
 #include "AOTVector.h"
 #include "CyclicModuleRecord.h"
+#include "ImportOrderWalk.h"
 #include "VM.h"
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
@@ -71,19 +72,25 @@ public:
     unsigned innerModuleEvaluation(JSGlobalObject*, ModuleEvaluationStack&, unsigned index, int64_t referrerAsyncOrder, JSPromise* dynamicImportPromise);
     void recordTerminationAfterEvaluation(VM&, Exception*);
     void didChangeStatus();
-    void generateDeferredSyntheticModules(JSGlobalObject*, VisitedModuleRecords&);
+    ImportOrderWalk::Outcome reachImports(ImportOrderWalk&);
+    ImportOrderWalk::Outcome reachImportsAheadOfFetch(ImportOrderWalk&);
+    EvaluationAheadOfLink::Module moduleAheadOfLink();
+    bool keepsToModuleWithNothingLeftToRun() const;
+    static ModuleRecord* behindFetchOf(JSGlobalObject*, UniquedStringImpl* key);
+    bool requestImportsBelow(ImportOrderWalk&);
+    void forgetAnswerTo(const ModuleRequest&);
+    bool isKeyOfCompiledModule(const Identifier&);
+    bool tryGiveWayToCopyFromDisk();
+    bool tryGiveWayToCopyAfterChangeOfPlugins();
+    bool hasGivenWayToCopy() const { return m_hasGivenWayToCopy; }
+    void setHasGivenWayToCopy() { m_hasGivenWayToCopy = true; }
+    JSPromise* callFactoriesInGraph();
+    void captureSyntheticExports(VisitedModuleRecords&);
+    bool mayRecoverLoad() const;
     void willLoadRequests(ModuleGraphLoadingState&);
     void countLoaderStep();
     void setMomentFetched(uint32_t moment) { m_momentFetched = moment; }
     void setMayMeetNewMocks() { m_mayMeetNewMocks = true; }
-    void didResumeLoadReentrantly(ModuleGraphLoadingState& load) { m_reentrantlyResumedLoad = &load; }
-    bool takeReentrantlyResumedLoad(ModuleGraphLoadingState& load)
-    {
-        if (m_reentrantlyResumedLoad != &load)
-            return false;
-        m_reentrantlyResumedLoad = nullptr;
-        return true;
-    }
     void setWasReleasedDuringFetch(bool isFetchedByOwnFactory)
     {
         m_wasReleasedDuringFetch = true;
@@ -93,30 +100,16 @@ public:
     AbstractModuleRecord* recordToLoad(JSGlobalObject*);
     void didLoad();
     static void didFailToLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
-    void didReplaceRecordInRegistry();
-    bool isFileYetToBeEvaluated();
-    void setIsMadeAndNotStored(bool);
-    bool takeIsMadeAndNotStored();
-    static std::optional<ModuleID> findEvaluatingCommonJSModule(JSGlobalObject*, const Identifier& key);
-    static bool isModuleBeingTransferred(JSGlobalObject*, const Identifier& key);
-    static bool tryDeferLinkStep(JSGlobalObject*, const VM::SynchronousModuleTask&);
-    static bool wasRequestedByEnclosingLoad(JSGlobalObject*, const Identifier& key);
-    static bool isBlockedOnModuleTransfer(JSGlobalObject*, const Identifier& key, bool& shouldRequeueStep);
-    static JSPromise* deferRequest(JSGlobalObject*, ModuleID file, ModuleLoadingContext*, bool useImportMap);
-    static void didRequestModule(JSGlobalObject*, const Identifier& key, JSCell* payload);
-    static void didSettleLoad(JSGlobalObject*, const ModuleGraphLoadingState&);
-    static void didFailToMakeModule(JSGlobalObject*, const Identifier& key);
-    static void didDiscardModuleError(JSGlobalObject*, const Identifier& key);
+    static void didRequestModule(JSGlobalObject*);
     void willBeLoadedByImport();
     bool takeMainModuleLoadStep();
     bool isLoadedByLoader();
-    bool importsEvaluatingCommonJSModule();
     bool takeMainPromiseSplit();
+    bool runsWhenFetched();
+    bool isOrImportsRunningFile();
+    bool isOnPathOfWalk(const ImportOrderWalk* otherThan);
     JSPromise* evaluateMainModule(JSPromise* evaluation);
     static void didEvaluateModulesInJob(JSGlobalObject*);
-    static bool wasRequireRefused(CyclicModuleRecord*);
-    bool wasRequireRefused() const { return m_wasRequireRefused; }
-    void setWasRequireRefused() { m_wasRequireRefused = true; }
     static void didFailModulesInJob(JSGlobalObject*);
     static void didFailLink(JSGlobalObject*);
     void setExtraLoadSteps(uint32_t steps) { m_extraLoadSteps = steps; }
@@ -129,16 +122,12 @@ public:
     void setKeepsToModule(bool keepsToModule = true) { m_keepsToModule = keepsToModule; }
     void bindModuleInstance(VM& vm, JSCell* instance) { m_moduleInstance.set(vm, this, instance); }
     bool belongsToReleasedInstance() const { return !!m_moduleInstance; }
+    bool keepsToInstance() const { return m_keepsToModule && m_moduleInstance; }
     bool isOfReleasedFile() const;
     JSCell* moduleInstance() const { return m_moduleInstance.get(); }
-    void setRunsWhenLoaded() { m_runsWhenLoaded = true; }
-    bool runsWhenLoaded() const { return m_runsWhenLoaded; }
-    void setRunsInItsTurn() { m_runsInItsTurn = true; }
-    bool takeRunsInItsTurn() { return std::exchange(m_runsInItsTurn, false); }
-    bool markStepQueued(uint32_t synchronousLoad) { return std::exchange(m_synchronousLoadWithQueuedStep, synchronousLoad) != synchronousLoad; }
     bool isRequestedByWalkedModule() const { return m_isRequestedByWalkedModule; }
     void setIsRequestedByWalkedModule() { m_isRequestedByWalkedModule = true; }
-    void setHasUnresolvableRequest() { m_hasUnresolvableRequest = true; }
+    void setHasUnresolvableRequest(bool hasUnresolvableRequest = true) { m_hasUnresolvableRequest = hasUnresolvableRequest; }
     bool hasUnresolvableRequest() const { return m_hasUnresolvableRequest; }
     uint8_t willLoadImportedModule(const Identifier& key);
     static BitVector willRefetchFromHost(JSGlobalObject*);
@@ -205,7 +194,6 @@ private:
     Vector<UniquedStringImpl*, 2> m_resolveSet;
     Vector<std::pair<UniquedStringImpl*, ModuleID>, 2> m_compiledRequests;
     unsigned m_nextCompiledRequest { 0 };
-    ModuleGraphLoadingState* m_reentrantlyResumedLoad { nullptr };
     uint32_t m_extraLoadSteps { 0 };
     std::optional<uint32_t> m_momentFetched;
     bool m_wasReleasedDuringFetch { false };
@@ -214,14 +202,10 @@ private:
     bool m_ownsStatus { false };
     bool m_isRetained { false };
     bool m_isHeldByLoader { false };
-    bool m_runsWhenLoaded { false };
-    bool m_runsInItsTurn { false };
-    uint32_t m_synchronousLoadWithQueuedStep { std::numeric_limits<uint32_t>::max() };
     bool m_isRequestedByWalkedModule { false };
     bool m_hasUnresolvableRequest { false };
     bool m_keepsToModule { false };
-    bool m_wasRequireRefused { false };
-    bool m_isMadeAndNotStored { false };
+    bool m_hasGivenWayToCopy { false };
     WriteBarrier<JSCell> m_moduleInstance;
 };
 
@@ -230,6 +214,15 @@ ALWAYS_INLINE ModuleRecord* compiledModule(const VM& vm, T module)
 {
     return vm.hasCompiledCode() ? dynamicDowncast<ModuleRecord>(module) : nullptr;
 }
+
+bool isToBeEvaluatedAheadOfLink(JSGlobalObject*, EvaluationAheadOfLink::Module, bool isLeftForLater);
+void linkAheadOfImporters(JSGlobalObject*, EvaluationAheadOfLink::Module);
+JSPromise* evaluateAheadOfImporters(JSGlobalObject*, EvaluationAheadOfLink::Module, const JSModuleLoader::EvaluationOfLoad&);
+bool takeBackImporterLinkedMeanwhile(JSGlobalObject*, EvaluationAheadOfLink::Module);
+void catchUpWithListsOfImports(JSGlobalObject*);
+void keepImportsThatWalksHold(JSGlobalObject*);
+void willMakeRecordFromSource(JSGlobalObject*, const Identifier& key);
+void didMakeRecordFromSource(JSGlobalObject*, JSModuleRecord*);
 
 void tryBindOriginal(JSGlobalObject*, JSModuleRecord*);
 void noteOriginalsRequestedBySource(JSGlobalObject*, JSModuleRecord* importer);

@@ -1,12 +1,12 @@
-# A CommonJS file on the second level of a graph throws while jobs of the program wait. The load of the root hears of it as many jobs later as where the loader goes through every module.
-# What was left of the way belongs to a load that has ended: a second graph that imports y.js loads y.js and z.js and runs them.
+# A CommonJS file two imports below the root throws while jobs of the program wait. It runs once the graph has loaded, behind the modules imported in front of it, and its error rejects the import.
+# A second graph that imports y.js does not run it again.
 # RUN: run-in-shell --aotCountsPath=/dev/null const atJob = now => { }; const begin = () => { first().then(() => print("imported"), error => { print("rejected with " + error + " behind job " + job); return second().then(() => { isDone = true; print("second imported behind job " + job); walked(); }); }); }; let job = 0; let isDone = false; globalThis.report = (label, value) => print(label + ": " + value + " behind job " + job); const walked = () => print("walked " + aotRuntimeCounters().match(/^(\d+)\tcounter:CompiledModulesWalkedByLoader$/m)[1]); globalThis.register = (first, second) => { globalThis.first = first; globalThis.second = second; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => { const next = () => { if (isDone) return; ++job; atJob(job); Promise.resolve().then(next); }; Promise.resolve().then(next); begin(); }); return result; };
-# CHECK: runs: bad.cjs behind job 10
-# CHECK-NEXT: rejected with boom behind job 23
-# CHECK-NEXT: runs: z.js behind job 29
-# CHECK-NEXT: runs: y.js behind job 29
-# CHECK-NEXT: runs: other.js behind job 29
-# CHECK-NEXT: second imported behind job 36
+# CHECK: runs: z.js behind job 21
+# CHECK-NEXT: runs: y.js behind job 21
+# CHECK-NEXT: runs: bad.cjs behind job 21
+# CHECK-NEXT: rejected with boom behind job 27
+# CHECK-NEXT: runs: other.js behind job 33
+# CHECK-NEXT: second imported behind job 40
 # CHECK: exited with 0
 
 module m0 path="/main.js" displayPath="main.js" body=f0

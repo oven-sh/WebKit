@@ -258,7 +258,7 @@ VerdictOnStoredStrings ReaderOfImage::reportSection(StringSection& section, std:
     return VerdictOnStoredStrings::BytesBesideStringsAreNotZero;
 }
 
-static_assert(imageFormatVersion == 5 && sizeof(ImageHeader) == 576 && sizeof(ProgramTables) == 892 && sizeof(FunctionSources) == 16 && sizeof(FunctionSourceEntry) == 11 && sizeof(QuotedSourceGroupData) == 16, "an image of another build is read by its format alone: whoever changes one of these raises imageFormatVersion");
+static_assert(imageFormatVersion == 6 && sizeof(ImageHeader) == 576 && sizeof(ProgramTables) == 900 && sizeof(FunctionSources) == 16 && sizeof(FunctionSourceEntry) == 11 && sizeof(QuotedSourceGroupData) == 16, "an image of another build is read by its format alone: whoever changes one of these raises imageFormatVersion");
 
 VerdictOnStoredStrings ReaderOfImage::read()
 {

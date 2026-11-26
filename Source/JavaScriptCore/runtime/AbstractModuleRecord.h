@@ -48,6 +48,7 @@ class JSModuleLoader;
 class JSModuleNamespaceObject;
 class JSMap;
 class JSPromise;
+class SyntheticModuleRecord;
 #if ENABLE(AOT)
 namespace AOT {
 class ModuleRecord;
@@ -111,7 +112,7 @@ public:
 
     enum class ModulePhase : uint8_t { Evaluation, Defer };
 
-    enum class ImportEntryType {
+    enum class ImportEntryType : uint8_t {
         Single,
 #if USE(BUN_JSC_ADDITIONS)
         // If the corresponding export is not found, do not emit an error.
@@ -162,6 +163,10 @@ public:
     struct LoadedModuleRequest : ModuleRequest {
         LoadedModuleRequest() = default;
         LoadedModuleRequest(VM&, ModuleRequest, AbstractModuleRecord* loadedModule, JSCell* owner);
+#if USE(BUN_JSC_ADDITIONS)
+        // An ImportOrderWalk has come to this request.
+        bool m_wasReached { false };
+#endif
         WriteBarrier<AbstractModuleRecord> m_module;
     };
 
@@ -212,10 +217,34 @@ public:
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
-    // Caches the key the host resolved each static import to while that import is still loading. See
+    // The key the host resolved each static import to, until that import has loaded. See
     // JSModuleLoader::hostLoadImportedModule(). The map's keys point into requestedModules(), which keeps them alive.
-    ModuleMap<RefPtr<UniquedStringImpl>>& resolvedRequests() LIFETIME_BOUND { return m_resolvedRequests; }
+    struct ResolvedRequest {
+        enum class State : uint8_t {
+            Loading,
+            Postponed, // See JSModuleLoader::mayPostponeFetch().
+            Failed,
+            Obsolete, // See ImportOrderWalk.
+        };
+        RefPtr<UniquedStringImpl> key;
+        State state { State::Loading };
+        bool wasLeftForLater { false }; // By an ImportOrderWalk, which has gone on.
+        uint32_t number { 0 }; // Tells the loads that were started for it from those of an earlier request for the same key.
+        // The value of VM::ImportOrderState::clock when the host last failed to supply it, which the registry need not remember.
+        uint64_t failedAt { 0 };
+    };
+    ModuleMap<ResolvedRequest>& resolvedRequests() LIFETIME_BOUND { return m_resolvedRequests; }
     void removeResolvedRequest(const ModuleRequest& request) { m_resolvedRequests.remove(ModuleMapKey { request.m_specifier.impl(), request.type() }); }
+    void setStateOfResolvedRequest(const ModuleRequest&, ResolvedRequest::State);
+    void didFailForRequest(const ModuleRequest&);
+    bool hasRequestBeingLoaded() const;
+    void forEachKeyBeingLoaded(NOESCAPE const auto& function) const
+    {
+        for (const ResolvedRequest& resolved : m_resolvedRequests.values()) {
+            if (resolved.state != ResolvedRequest::State::Failed)
+                function(resolved.key.get());
+        }
+    }
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
     const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
     const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
@@ -299,6 +328,7 @@ public:
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
 
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation, bool shouldPreventExtensions = true);
+    JSModuleNamespaceObject* createModuleNamespace(JSGlobalObject*, ModulePhase, bool shouldPreventExtensions, Vector<SyntheticModuleRecord*>& modulesYetToFinish);
 #if USE(BUN_JSC_ADDITIONS)
     JSModuleNamespaceObject* getModuleNamespace(JSGlobalObject* globalObject, bool shouldPreventExtensions)
     {
@@ -328,7 +358,10 @@ public:
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+    // link() for a caller that has JSModuleLoader::runDeferredModules() behind it.
+    void linkAfterDeferredModules(JSGlobalObject*, RefPtr<ScriptFetcher>);
+    enum class IsBehindWalk : bool { No, Yes };
+    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited, IsBehindWalk = IsBehindWalk::No);
     static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency);
 #endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
@@ -353,6 +386,44 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
+
+private:
+    bool m_wasReached : 1 { false };
+    bool m_hasStartedLinking : 1 { false };
+    bool m_didLoadAfterFailure : 1 { false };
+    bool m_isSupersededForEarlierImports : 1 { false };
+    bool m_isValue : 1 { false };
+    bool m_isOtherFormOfFile : 1 { false };
+    uint64_t m_supersededAt { 0 };
+
+public:
+    // What an ImportOrderWalk keeps on the record. The times are values of VM::ImportOrderState::clock.
+    bool wasReached() const { return m_wasReached; }
+    void setWasReached(bool wasReached = true) { m_wasReached = wasReached; }
+    // From then on it keeps what it imports: resolutions and environments may point there.
+    bool hasStartedLinking() const { return m_hasStartedLinking; }
+    void setHasStartedLinking() { m_hasStartedLinking = true; }
+    bool didLoadAfterFailure() const { return m_didLoadAfterFailure; }
+    void setDidLoadAfterFailure() { m_didLoadAfterFailure = true; }
+    // When the record was created or last asked for what it imports.
+    uint64_t loadedAt() const { return m_loadedAt; }
+    void setLoadedAt(uint64_t time) { m_loadedAt = time; }
+    // The modules that have yet to be linked ask for this one's key again.
+    enum class SupersededFor : bool { LaterImports, AllImports };
+    void supersede(uint64_t time, SupersededFor imports)
+    {
+        m_supersededAt = time;
+        m_isSupersededForEarlierImports |= imports == SupersededFor::AllImports;
+    }
+    uint64_t supersededAt() const { return m_supersededAt; }
+    bool isSupersededForEarlierImports() const { return m_isSupersededForEarlierImports; }
+
+    // A file of data. require() returns its default export.
+    bool isValue() const { return m_isValue; }
+    void setIsValue(bool isValue) { m_isValue = isValue; }
+    // An import attribute made something else of the file than its name does.
+    bool isOtherFormOfFile() const { return m_isOtherFormOfFile; }
+    void setIsOtherFormOfFile(bool isOtherFormOfFile) { m_isOtherFormOfFile = isOtherFormOfFile; }
 
     // Live exports, used for module mocks. Exports of a live record are never cached: every read, through an import binding or a
     // namespace object, does liveExportsSource()->get(exportName).
@@ -391,6 +462,7 @@ public:
     // GetImportedModule for requestedModules()[i]: the loader's record for the graph module the request names, else
     // [[LoadedModules]], else null (not loaded yet).
     JS_EXPORT_PRIVATE AbstractModuleRecord* prelinkedRequestedModule(unsigned requestIndex) const;
+    bool requestsPrelinkedModule(unsigned requestIndex) const { return m_prelinked && m_prelinked->requests(prelinkedModule())[requestIndex].moduleIndex != PrelinkedModuleGraph::noModule; }
     // Same, for a `request` of this record (an element of requestedModules(), or a copy of one).
     AbstractModuleRecord* prelinkedRequestedModule(const ModuleRequest&) const;
     JS_EXPORT_PRIVATE bool hasAllPrelinkedRequestedModules() const;
@@ -412,6 +484,8 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
+    // Before anything has resolved an export of the record.
+    void clearExports();
 #endif
 #if ENABLE(AOT)
     void forgetCachedResolutions() { m_resolutionCache.clear(); }
@@ -481,7 +555,7 @@ protected:
 
     ModuleMap<LoadedModuleRequest> m_loadedModules;
 #if USE(BUN_JSC_ADDITIONS)
-    ModuleMap<RefPtr<UniquedStringImpl>> m_resolvedRequests;
+    ModuleMap<ResolvedRequest> m_resolvedRequests;
 #endif
 
     Vector<WriteBarrier<AbstractModuleRecord>> m_asyncParentModules;
@@ -502,6 +576,7 @@ protected:
     bool m_isCompiledOriginal { false };
     WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
+    uint64_t m_loadedAt;
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
     // reachable through the loader's table or, once that slot is forgotten, [[LoadedModules]] -- JSModuleLoader::pinPrelinkedEdges);

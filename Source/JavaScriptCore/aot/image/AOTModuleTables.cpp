@@ -200,7 +200,7 @@ static void appendModulesThatEvaluationVisitsNext(const ModuleLists& lists, uint
     size_t first = targets.size();
     for (const ModuleRequestData& request : requestsInModuleTables(lists, module)) {
         uint32_t target = request.target();
-        if (target == module || request.isRequire)
+        if (target == module || request.isRequire || (request.isHoisted && lists.modules[target].kind != ModuleKind::Data))
             continue;
         if (!evaluationVisitsModule(lists.modules[target]) || isListed.quickSet(target))
             continue;
@@ -217,12 +217,10 @@ static void appendImportsOfHeldFiles(const ModuleLists& lists, uint32_t importer
     for (const ModuleRequestData& request : requestsInModuleTables(lists, importer)) {
         if (request.isRequire)
             continue;
-        const ModuleData& target = lists.modules[request.target()];
-        uint32_t file = target.isFacade() ? lists.requests[target.firstRequest].target() : request.target();
-        const ModuleData& held = lists.modules[file];
+        const ModuleData& held = lists.modules[request.target()];
         bool isOfLibraryAndMayBeMocked = (held.kind == ModuleKind::RuntimeSource || held.kind == ModuleKind::Runtime) && held.mayBeMocked();
-        if (held.requireResult == RequireResult::NamespaceIfImported || held.isImportableDuringEvaluation() || isOfLibraryAndMayBeMocked)
-            result.append(ImportOfHeldFileData { file, importer });
+        if (held.requireAsksWhatLoaderHolds() || isOfLibraryAndMayBeMocked)
+            result.append(ImportOfHeldFileData { request.target(), importer });
     }
 }
 
@@ -507,16 +505,7 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
                     encoder.fail("StartOfModuleCallsStartThatNothingReaches"_s, start.module, makeString("the body is f"_s, operation.callee.index()));
                     break;
                 }
-                Operation call = Operation::CallStart;
-                if (std::span<const ModuleStartStepData> row = result.steps.span().subspan(firstStep); row.size() > 1) {
-                    ModuleStartStepData last = row.back();
-                    ModuleStartStepData callInFront = row[row.size() - 2];
-                    if (last.operation() == Operation::ReturnIfLoadingStops && callInFront.callsStart() && callInFront.operand() == last.operand()) {
-                        result.steps.removeLast();
-                        call = Operation::CallStartUnlessStopped;
-                    }
-                }
-                result.steps.append(ModuleStartStepData::create(call, evaluation.numberOf(*called)));
+                result.steps.append(ModuleStartStepData::create(Operation::CallStart, evaluation.numberOf(*called)));
                 break;
             }
             case Kind::CallBody:
@@ -532,14 +521,8 @@ static StartsOfModules listStartsOfModules(const TableEncoder& encoder)
             case Kind::Finish:
                 result.steps.append(ModuleStartStepData::create(Operation::Finish, operation.module.index(), evaluation.finishLeavesStatusInRecord(program, operation.module)));
                 break;
-            case Kind::ReturnIfLoadingStops:
-                result.steps.append(ModuleStartStepData::create(Operation::ReturnIfLoadingStops, operation.module.index()));
-                break;
             case Kind::AbandonOnThrow:
                 result.steps.append(ModuleStartStepData::create(Operation::AbandonOnThrow, operation.module.index()));
-                break;
-            case Kind::ResumeLoadOnThrow:
-                result.steps.append(ModuleStartStepData::create(Operation::ResumeLoadOnThrow, operation.module.index()));
                 break;
             case Kind::NeverComesBack:
                 returns = false;
@@ -638,7 +621,7 @@ void encodeModuleTables(TableEncoder& encoder)
     auto roomFor = [](const auto&... tables) {
         return (... + (tables.sizeInBytes() + sizeof(uint64_t)));
     };
-    part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
+    part.reserveRoomFor(roomFor(lists.modules, lists.directories, lists.displayPaths, lists.requests, lists.modulesAheadOfFiles, linkRequests, evaluationRequests, groupsLoadedWithGroups, entryPointLinkPlan,
         lists.exports, lists.indirectExports, lists.syntheticExports, lists.requiredNames, lists.exportStatements, lists.ambiguousExports, lists.sourceStamps,
         moduleFailures, modulesOfUncompiledCode, modulesRejectingUncompiledCode, modulesWithReadOnlyBuiltins, importedModuleAliases, modulesThatDependOnMoreThanSource, followed.importsOfHeldFiles, asyncFunctionsWithoutAwait, functionsImportingOwnOriginal, requestedOriginals,
         byPath.modulesByPath, byPath.modulesByHashOfPath, byPath.firstModulesByHashOfPath, byPath.directoriesOfModulesByPath, compiledRuntimeModules, compiledRuntimeFunctions, stateOfLibraryModules,
@@ -647,6 +630,7 @@ void encodeModuleTables(TableEncoder& encoder)
     part.setTable(ProgramTableIndex::moduleDirectories, lists.directories);
     part.setTable(ProgramTableIndex::moduleDisplayPaths, lists.displayPaths);
     part.setTable(ProgramTableIndex::moduleRequests, lists.requests);
+    part.setTable(ProgramTableIndex::modulesAheadOfFiles, lists.modulesAheadOfFiles);
     part.setTable(ProgramTableIndex::linkRequests, linkRequests);
     part.setTable(ProgramTableIndex::evaluationRequests, evaluationRequests);
     part.setTable(ProgramTableIndex::groupsLoadedWithGroups, groupsLoadedWithGroups);

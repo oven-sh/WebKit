@@ -103,7 +103,6 @@ struct ModuleStartFrame {
     static constexpr unsigned size = 32;
 
     static constexpr uint64_t hasThrownBit = 1;
-    static constexpr uint32_t resumesLoad = 1;
 };
 
 struct PlainFunctionConstructFrame {

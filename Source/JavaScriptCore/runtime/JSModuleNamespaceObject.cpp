@@ -120,6 +120,9 @@ void JSModuleNamespaceObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleRecord);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_laterList);
+#endif
     for (auto& entry : thisObject->m_exports.values())
         visitor.appendHidden(entry.moduleRecord);
 }
@@ -196,8 +199,9 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     }
 #endif
 
-    auto iterator = m_exports.find(propertyName.uid());
-    if (iterator == m_exports.end()) {
+    ExportMap& exports = this->exports();
+    auto iterator = exports.find(propertyName.uid());
+    if (iterator == exports.end()) {
 #if USE(BUN_JSC_ADDITIONS)
         if (propertyName == vm.propertyNames->__esModule) {
             return Base::getOwnPropertySlot(this, globalObject, propertyName, slot);
@@ -316,8 +320,9 @@ std::optional<bool> JSModuleNamespaceObject::getOwnPropertySlotIfDeferredOrLive(
 
     if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get && slot.internalMethodType() != PropertySlot::InternalMethodType::GetOwnProperty)
         return std::nullopt;
-    auto iterator = m_exports.find(propertyName.uid());
-    if (iterator == m_exports.end())
+    ExportMap& exports = this->exports();
+    auto iterator = exports.find(propertyName.uid());
+    if (iterator == exports.end())
         return std::nullopt;
     ExportEntry& exportEntry = iterator->value;
     if (!exportEntry.moduleRecord->hasLiveExports() || exportEntry.localName == vm.propertyNames->starNamespacePrivateName)
@@ -385,7 +390,7 @@ bool JSModuleNamespaceObject::put(JSCell* cell, JSGlobalObject* globalObject, Pr
     auto* thisObject = uncheckedDowncast<JSModuleNamespaceObject>(cell);
     if (thisObject->m_isOverridingValue) {
         return true;
-    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) [[unlikely]] {
+    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->exports().contains(propertyName.uid())) [[unlikely]] {
         RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
     }
     if (JSObject* source = thisObject->liveExportsSource()) [[unlikely]] {
@@ -450,7 +455,7 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
     }
 #endif
 
-    return !thisObject->m_exports.contains(propertyName.uid());
+    return !thisObject->exports().contains(propertyName.uid());
 }
 
 bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned propertyName)
@@ -469,7 +474,7 @@ bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject
         RELEASE_AND_RETURN(scope, source->methodTable()->deletePropertyByIndex(source, globalObject, propertyName));
     }
 #endif
-    return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
+    return !thisObject->exports().contains(Identifier::from(vm, propertyName).impl());
 }
 
 void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
@@ -499,7 +504,7 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         return;
     }
 #endif
-    for (const auto& [name, exportEntry] : thisObject->m_exports) {
+    for (const auto& [name, exportEntry] : thisObject->exports()) {
 #if USE(BUN_JSC_ADDITIONS)
         // A live export is never uninitialized, and reading it can run an accessor of the source.
         if (exportEntry.moduleRecord->hasLiveExports() && exportEntry.localName != vm.propertyNames->starNamespacePrivateName) {
@@ -552,7 +557,7 @@ bool JSModuleNamespaceObject::defineOwnProperty(JSObject* cell, JSGlobalObject* 
 #if USE(BUN_JSC_ADDITIONS)
     if (thisObject->m_isOverridingValue) {
         return true;
-    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->m_exports.contains(propertyName.uid())) {
+    } else if (propertyName == vm.propertyNames->__esModule && !thisObject->exports().contains(propertyName.uid())) {
         RELEASE_AND_RETURN(scope, Base::defineOwnProperty(thisObject, globalObject, propertyName, descriptor, shouldThrow));
     }
 #endif
@@ -624,7 +629,7 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    for (auto& pair : m_exports) {
+    for (auto& pair : exports()) {
         JSValue value = jsUndefined();
         const Identifier& name = pair.value.localName;
 
@@ -650,6 +655,21 @@ void JSModuleNamespaceObject::overrideExports(JSGlobalObject* globalObject, cons
             moduleNamespaceObject->m_isOverridingValue = false;
         }
     }
+}
+
+void JSModuleNamespaceObject::listExportsAgain(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    constexpr bool shouldPreventExtensions = true;
+    Vector<SyntheticModuleRecord*> modulesYetToFinish;
+    auto* list = m_moduleRecord->createModuleNamespace(globalObject, AbstractModuleRecord::ModulePhase::Evaluation, shouldPreventExtensions, modulesYetToFinish);
+    RETURN_IF_EXCEPTION(scope, void());
+    JSModuleNamespaceObject* last = this;
+    while (last->m_laterList)
+        last = last->m_laterList.get();
+    last->m_laterList.set(vm, last, list);
 }
 
 bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, PropertyName name, JSValue value)

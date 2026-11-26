@@ -386,9 +386,6 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
             case Operation::CallStart:
                 out.print(" start ", step.operand());
                 break;
-            case Operation::CallStartUnlessStopped:
-                out.print(" return-if-loading-stops-behind m", steps[place - 1].operand(), ", start ", step.operand());
-                break;
             case Operation::CallBody:
                 out.print(" body ", step.operand());
                 break;
@@ -404,9 +401,6 @@ static void printStartsOfModulesInImage(PrintStream& out, const ProgramTables& t
             case Operation::FinishAndReturn:
                 out.print(" finish m", step.operand(), step.hasFlag() ? " unless in a record"_s : ""_s, ", return");
                 hasEnded = true;
-                break;
-            case Operation::ReturnIfLoadingStops:
-                out.print(" return-if-loading-stops-behind m", step.operand());
                 break;
             case Operation::AbandonOnThrow:
                 out.print(" abandon-on-throw m", step.operand());

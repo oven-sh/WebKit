@@ -464,7 +464,7 @@ Vector<ModuleID, 16> Modules::collectUnlinkedInstances(ModuleID root)
             continue;
         found.append(module);
         auto visit = [&](ModuleID target) {
-            if (!seen.get(target.index()) && !isMockSeenByLoad(target, module)) {
+            if (!seen.get(target.index()) && !isMockSeenByLoad(target, module) && !isLinkedToReleasedInstance(module, target)) {
                 seen.quickSet(target.index());
                 work.append(target);
             }
@@ -601,6 +601,59 @@ void Modules::tellOfFailedLoad(ModuleID module, ModuleID target)
         host().didRunOriginal(m_instance.globalObject, m_table.fullPath(target), OriginalRun::LoadFailsToLink);
 }
 
+void Modules::writeLink(ModuleID module, Environment* instance, const ModuleLinkData& link)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    ModuleID target = link.targetModule();
+    if (link.hasLink) {
+        Environment* earlier = instanceBeforePendingMock(target);
+        writeField(instance, link.link, earlier ? earlier : currentInstance(target));
+    }
+    if (!link.hasMock || link.isResolved)
+        return;
+    if (data(target).isUncompiledCode()) [[unlikely]] {
+        JSObject* namespaceObject = absentModuleNamespace(target);
+        RETURN_IF_EXCEPTION(scope, void());
+        writeField(instance, link.mock, namespaceObject ? JSValue(namespaceObject) : jsUndefined());
+        return;
+    }
+    bool seesMock = isMockSeenByLoad(target, module);
+    ModuleNamespace* word = wordForLoad(target, seesMock);
+    if (seesMock && m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
+        tellIfOriginalImports(target, module);
+    if (!m_failedLoadTestFiles.isEmpty() && word && !word->isLoadWord()) [[unlikely]]
+        tellOfFailedLoad(module, target);
+    if (!word)
+        didLoadDataFile(target, LoadKind::Import);
+    if (data(target).isOfLibrary())
+        noteLibraryModuleLoaded(target);
+    if (!word && isReloadedLibraryModule(target)) [[unlikely]]
+        word = reloadedLibraryWord(target);
+    if (word && !m_table.hasFilePath(target) && wasActiveMockEntryRemoved(target))
+        noteAskUnderMockInPlace(target);
+    writeField(instance, link.mock, word ? JSValue(word) : jsUndefined());
+    if (word && word->linkedExports() && !word->namesOfMock())
+        RELEASE_AND_RETURN(scope, fixMockNames(word));
+}
+
+void Modules::linkAheadOfOtherImports(ModuleID importer, ModuleID imported)
+{
+    const ModuleLinkData* link = hasInstances(importer) ? findModuleLink(importer, imported) : nullptr;
+    if (!link)
+        return;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    startLoadingModulesIndividually();
+    Environment* instance = ensureInstance(importer);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (link->hasLink) {
+        ensureInstance(link->targetModule());
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    scope.release();
+    writeLink(importer, instance, *link);
+    didChangeLinkState();
+}
+
 void Modules::linkInstances(std::span<const ModuleID> modules)
 {
     if (modules.empty())
@@ -613,7 +666,7 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
         ensureInstance(module);
         RETURN_IF_EXCEPTION(scope, void());
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
-            if (!link.hasLink || instanceBeforePendingMock(link.targetModule()))
+            if (!link.hasLink || instanceBeforePendingMock(link.targetModule()) || (!link.isResolved && keepsImport(module, link.targetModule())))
                 continue;
             ensureInstance(link.targetModule());
             RETURN_IF_EXCEPTION(scope, void());
@@ -630,38 +683,10 @@ void Modules::linkInstances(std::span<const ModuleID> modules)
     for (ModuleID module : modules) {
         Environment* instance = currentInstance(module);
         for (const ModuleLinkData& link : m_table.moduleLinks(module)) {
-            ModuleID target = link.targetModule();
-            if (link.hasLink) {
-                Environment* earlier = instanceBeforePendingMock(target);
-                writeField(instance, link.link, earlier ? earlier : currentInstance(target));
-            }
-            if (!link.hasMock || link.isResolved)
+            if (!link.isResolved && keepsImport(module, link.targetModule())) [[unlikely]]
                 continue;
-            if (data(target).isUncompiledCode()) [[unlikely]] {
-                JSObject* namespaceObject = absentModuleNamespace(target);
-                RETURN_IF_EXCEPTION(scope, void());
-                writeField(instance, link.mock, namespaceObject ? JSValue(namespaceObject) : jsUndefined());
-                continue;
-            }
-            bool seesMock = isMockSeenByLoad(target, module);
-            ModuleNamespace* word = wordForLoad(target, seesMock);
-            if (seesMock && m_mocks && isMocked(target) && !activeMock(target)) [[unlikely]]
-                tellIfOriginalImports(target, module);
-            if (!m_failedLoadTestFiles.isEmpty() && word && !word->isLoadWord()) [[unlikely]]
-                tellOfFailedLoad(module, target);
-            if (!word)
-                didLoadDataFile(target, LoadKind::Import);
-            if (data(target).isOfLibrary())
-                noteLibraryModuleLoaded(target);
-            if (!word && isReloadedLibraryModule(target)) [[unlikely]]
-                word = reloadedLibraryWord(target);
-            if (word && !m_table.hasFilePath(target) && wasActiveMockEntryRemoved(target))
-                noteAskUnderMockInPlace(target);
-            writeField(instance, link.mock, word ? JSValue(word) : jsUndefined());
-            if (word && word->linkedExports() && !word->namesOfMock()) {
-                fixMockNames(word);
-                RETURN_IF_EXCEPTION(scope, void());
-            }
+            writeLink(module, instance, link);
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
     resolveLinks(modules);
@@ -2179,12 +2204,14 @@ bool Modules::tryReadLinkedExport(ModuleID module, unsigned index, Environment* 
 
 bool Modules::isLinkedToReleasedInstance(ModuleID importer, ModuleID target) const
 {
-    if (!m_hasReleasedInstances) [[likely]]
+    if (!m_hasReleasedInstances && !m_hasMockEnded) [[likely]]
         return false;
     Environment* instance = currentInstance(importer);
-    const ModuleLinkData* link = instance && m_linkedInstances.get(importer.index()) ? findModuleLink(importer, target) : nullptr;
+    const ModuleLinkData* link = instance && (m_linkedInstances.get(importer.index()) || keepsImport(importer, target)) ? findModuleLink(importer, target) : nullptr;
     if (!link)
         return false;
+    if (status(importer) <= ModuleStatus::Evaluating && isLinkedToEndedMock(*link, instance))
+        return true;
     if (link->hasLink)
         return readLink(instance, link->link) != currentInstance(target);
     JSValue stored = link->hasMock ? readField(instance, link->mock) : JSValue();
@@ -2305,7 +2332,7 @@ bool Modules::isActiveMockRegistered(ModuleID module) const
 
 std::optional<bool> Modules::isLinkedToCurrentEntry(ModuleID importer, ModuleID target) const
 {
-    return isLinkedToCurrentEntry(importer, target, m_linkedInstances.get(importer.index()) ? currentInstance(importer) : nullptr);
+    return isLinkedToCurrentEntry(importer, target, m_linkedInstances.get(importer.index()) || keepsImport(importer, target) ? currentInstance(importer) : nullptr);
 }
 
 std::optional<bool> Modules::isLinkedToCurrentEntry(ModuleID importer, ModuleID target, Environment* instance) const
@@ -2342,6 +2369,43 @@ std::optional<bool> Modules::isLinkedToCurrentEntry(ModuleID importer, ModuleID 
     return !link->hasLink || readLink(instance, link->link) == currentInstance(link->targetModule());
 }
 
+bool Modules::keepsDataFileThatWasMockedSince(ModuleID importer, ModuleID imported) const
+{
+    if (!keepsImport(importer, imported) || data(imported).kind != ModuleKind::Data || !isMocked(imported)) [[likely]]
+        return false;
+    return !keepsMock(importer, imported);
+}
+
+bool Modules::keepsMock(ModuleID importer, ModuleID imported) const
+{
+    return keepsImport(importer, imported) && isLinkedToMock(importer, imported);
+}
+
+bool Modules::isLinkedToMock(ModuleID importer, ModuleID imported) const
+{
+    Environment* instance = currentInstance(importer);
+    const ModuleLinkData* link = instance ? findModuleLink(importer, imported) : nullptr;
+    ModuleNamespace* word = link ? mockWord(*link, instance) : nullptr;
+    return word && !word->isLoadWord();
+}
+
+bool Modules::isLinkedToEndedMock(const ModuleLinkData& link, const Environment* instance) const
+{
+    JSValue stored = !link.isResolved && link.hasMock ? readField(instance, link.mock) : JSValue();
+    auto* word = stored ? dynamicDowncast<ModuleNamespace>(stored) : nullptr;
+    return word && isOfEndedMock(*word, link.targetModule());
+}
+
+bool Modules::isOfEndedMock(const ModuleNamespace& word, ModuleID file) const
+{
+    if (word.isLoadWord() || (word.keepsToModule() && data(file).isOfLibrary()))
+        return false;
+    if (const LoadedModule* patched = loadedIfExists(moduleWithExportsOf(file)); patched && patched->patchWord.get() == &word)
+        return false;
+    const LoadedModule* held = loadedIfExists(file);
+    return !held || !((held->mockWord.get() == &word && activeMock(file)) || held->pendingMockWord.get() == &word);
+}
+
 void Modules::releaseEndedMockImporters()
 {
     m_stashesRestoredByPass.clearAll();
@@ -2353,15 +2417,7 @@ void Modules::releaseEndedMockImporters()
         Environment* instance = currentInstance(module);
         if (!instance || !m_linkedInstances.get(index) || m_loadedInPreload.get(index))
             continue;
-        bool isLinkedToEndedMock = std::ranges::any_of(m_table.moduleLinks(module), [&](const ModuleLinkData& link) {
-            JSValue stored = !link.isResolved && link.hasMock ? readField(instance, link.mock) : JSValue();
-            auto* word = stored ? dynamicDowncast<ModuleNamespace>(stored) : nullptr;
-            const LoadedModule* held = word ? loadedIfExists(link.targetModule()) : nullptr;
-            bool isReloadedLibraryState = word && word->keepsToModule() && data(link.targetModule()).isOfLibrary();
-            const LoadedModule* patched = word ? loadedIfExists(moduleWithExportsOf(link.targetModule())) : nullptr;
-            return word && !(patched && patched->patchWord.get() == word) && !word->isLoadWord() && !isReloadedLibraryState && !(held && ((held->mockWord.get() == word && activeMock(link.targetModule())) || held->pendingMockWord.get() == word));
-        });
-        if (isLinkedToEndedMock)
+        if (std::ranges::any_of(m_table.moduleLinks(module), [&](const ModuleLinkData& link) { return isLinkedToEndedMock(link, instance); }))
             modules.append(module);
     }
     for (ModuleID module : modules)
@@ -2592,7 +2648,7 @@ bool Modules::mayReleaseCommonJSFile(ModuleID file)
     const LoadedModule* exporting = loadedIfExists(facade);
     if (!exporting)
         return true;
-    if (exporting->didDropError || exporting->exportsWhatMockNamesAlone || exporting->deferredExportsSource)
+    if (exporting->exportsWhatMockNamesAlone || exporting->deferredExportsSource)
         return false;
     auto* word = static_cast<ModuleNamespace*>(exporting->loadWord.get());
     if (!word || word->isFilled())
@@ -3059,7 +3115,7 @@ bool Modules::takeReleaseUnderPendingPatch(ModuleID module)
     bool isOwed = m_modulesReloadedUnderPatch.remove(module.index());
     isOwed |= m_modulesReloadedUnderPatch.remove(fileOf(module).index());
     if (isOwed)
-        m_loadsInFlight.removeSettledIf([&](const LoadInFlight& load) { return m_rootAwaitingLoader != load.root; });
+        m_loadsInFlight.removeSettled();
     return isOwed;
 }
 
@@ -3149,7 +3205,7 @@ void Modules::releaseLoadedModule(ModuleID module)
         if (!data(target).isOfLibrary() || !wasImporterLoaded(module))
             continue;
         uint32_t& last = m_lastLinksOfReleasedImporters.add(target, 0).iterator->value;
-        last = std::max(last, momentLinked(module));
+        last = std::max(last, momentLinkedTo(module, target));
     }
     if (m_loadedByPreloadHooks.clear(module.index())) [[unlikely]]
         m_releasedLoadsOfPreloadHooks.set(module.index());
@@ -3228,6 +3284,8 @@ void Modules::forgetLoad(ModuleID module)
     m_importersLinkedToMock.removeIf([&](auto& entry) { return isOfImporter(entry.key); });
     m_importersLinkedToOriginal.removeIf([&](auto& entry) { return isOfImporter(entry.key); });
     m_importersAskedAboutOriginal.removeIf([&](auto& entry) { return isOfImporter(entry.key); });
+    if (host().didForgetLoadOfImporter && m_table.hasFilePath(module))
+        host().didForgetLoadOfImporter(m_instance.globalObject, scopedLambda<String()>([&] { return m_table.fullPath(module); }));
     for (auto& importers : m_displacedRunImporters.values())
         importers.remove(module.index());
     forgetEntryParent(module);
@@ -3238,7 +3296,7 @@ void Modules::forgetLoad(ModuleID module)
     m_modulesOwedToImportersThatRan.clear(module.index());
     m_importersRetainedAboveMock.clear(module.index());
     m_originalsKeptUnderMock.clear(fileOf(module).index());
-    m_modulesLoadedBesideGroups.clear(module.index());
+    forgetThatModuleWasLoaded(module);
     m_modulesWithNothingOwedBelow.clearAll();
     m_modulesWithNoNamesOwedBelow.clearAll();
     followImportsAnewAtNextQuestion();
@@ -3330,7 +3388,7 @@ void Modules::restoreOriginalLeftByEarlierMock(ModuleID module)
     m_modulesThatRanBesideMockAlone.clear(module.index());
     startLoadingModulesIndividually();
     setStatus(module, ModuleStatus::Evaluated);
-    m_modulesLoadedBesideGroups.clear(module.index());
+    forgetThatModuleWasLoaded(module);
     followImportsAnewAtNextQuestion();
     ++m_linkEpoch;
 }
@@ -3606,13 +3664,6 @@ bool hasInstances(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->hasInstances(module);
-}
-
-void releaseCommonJSFile(JSGlobalObject* realm, ModuleID file)
-{
-    Modules* modules = modulesOf(realm);
-    if (modules && modules->data(file).isReloadable())
-        modules->releaseModuleWithImporters(file);
 }
 
 void releaseModule(JSGlobalObject* realm, ModuleID module)

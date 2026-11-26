@@ -1,19 +1,18 @@
-# a text comes in the order in which it was asked for, and a module asks for what it imports when its own text has come
 # main.js: import "./asks.cjs"; import "./first.js"; print("main")      asks.cjs: import("./late.js"); print("asks")      first.js: import "./second.js"; print("first")
-# asks.cjs runs while the graph of main.js is loaded. The text of first.js comes behind that of asks.cjs, so second.js is asked for behind late.js: late.js runs ahead of the graph
+# asks.cjs runs once the graph of main.js has loaded, in the job that evaluates it: late.js runs behind the graph
 # RUN: run-in-shell mechanisms=none
 # CHECK: asks
-# CHECK-NEXT: late
 # CHECK-NEXT: second
 # CHECK-NEXT: first
 # CHECK-NEXT: main
+# CHECK-NEXT: late
 # CHECK-NEXT: exited with 0
 # RUN(ALL): run-in-shell mechanisms=all
 # ALL: asks
-# ALL-NEXT: late
 # ALL-NEXT: second
 # ALL-NEXT: first
 # ALL-NEXT: main
+# ALL-NEXT: late
 # ALL-NEXT: exited with 0
 
 module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m2 completes=true isHoisted=true}, {target=m2 completes=true}, {target=m3 completes=true}]

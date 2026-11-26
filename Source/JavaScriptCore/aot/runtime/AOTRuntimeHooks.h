@@ -68,7 +68,6 @@ bool shouldUseDictionaryForAddition(VM&, JSObject*, Structure*, UniquedStringImp
 void didCreateAdditionTransition(VM&, Structure* made);
 Structure* addBrandForSuperCall(VM&, JSFunction* newTarget, Structure*);
 void finishFillingObjects(VM&);
-void transferEagerLoadsToLoader(VM&);
 void didStartWatchingReplacements(VM&);
 void didChangeMicrotaskQueueing(VM&);
 void didMoveStorageOf(VM&, JSCell* view);

@@ -43,9 +43,6 @@ static std::expected<RefPtr<ScriptFetchParameters>, std::tuple<ErrorType, String
     // https://tc39.es/proposal-import-attributes/#sec-AllImportAttributesSupported
     // Currently, only "type" is supported.
     std::optional<ScriptFetchParameters::Type> type;
-#if USE(BUN_JSC_ADDITIONS)
-    String hostDefinedImportType = String();
-#endif
 // Ignore unsupported attributes in Bun
 #if !USE(BUN_JSC_ADDITIONS)
     for (auto& [key, value] : attributesList->attributes()) {
@@ -65,24 +62,11 @@ static std::expected<RefPtr<ScriptFetchParameters>, std::tuple<ErrorType, String
 
             if (!type)
                 return makeUnexpected(std::tuple { ErrorType::TypeError, makeString("Import attribute type \""_s, StringView(value->impl()), "\" is not valid"_s) });
-
-#if USE(BUN_JSC_ADDITIONS)
-            if (type.value() == ScriptFetchParameters::Type::HostDefined) {
-                hostDefinedImportType = value->impl();
-            }
-#endif
         }
     }
 
-    if (type) {
-#if USE(BUN_JSC_ADDITIONS)
-        if (type.value() == ScriptFetchParameters::Type::HostDefined) {
-            return RefPtr<ScriptFetchParameters>(ScriptFetchParameters::create(hostDefinedImportType));
-        }
-#endif
-
+    if (type)
         return RefPtr<ScriptFetchParameters>(ScriptFetchParameters::create(type.value()));
-    }
     return RefPtr<ScriptFetchParameters> {};
 }
 

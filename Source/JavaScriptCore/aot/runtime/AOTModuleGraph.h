@@ -130,11 +130,13 @@ void walkModulesToLink(const World& world, uint32_t root, Steps& steps)
         while (true) {
             uint32_t target;
             if (goesByAllRequests) [[unlikely]] {
-                while (next != end && (modulesPassedOver[allRequests[next].target() / 64] >> (allRequests[next].target() % 64) & 1))
+                while (next != end && (allRequests[next].isHoisted || modulesPassedOver[allRequests[next].target() / 64] >> (allRequests[next].target() % 64) & 1))
                     ++next;
                 if (next == end)
                     break;
                 target = allRequests[next++].target();
+                if (world.isLinkedToReleasedInstance(steps.moduleAt(path[depth - 1].enter), target)) [[unlikely]]
+                    continue;
             } else {
                 next = static_cast<uint32_t>(linkRequests.findFirstOutside(modulesPassedOver, next, end));
                 if (next == end)

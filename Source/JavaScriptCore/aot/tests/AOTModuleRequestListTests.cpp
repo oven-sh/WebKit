@@ -365,6 +365,7 @@ struct LinksOfGraph {
     std::span<const uint64_t> modulesSettledForLinks() const { return settled.span(); }
     bool loadsModulesIndividually() const { return goesOneByOne; }
     bool goesByAllRequests(uint32_t module) const { return goesOneByOne || leadersThatGoByAllRequests.get(module); }
+    bool isLinkedToReleasedInstance(uint32_t, uint32_t) const { return false; }
     void didGetStateOfItsOwn(uint32_t module) const
     {
         if (!goesOneByOne)

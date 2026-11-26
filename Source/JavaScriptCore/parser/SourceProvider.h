@@ -59,6 +59,7 @@ class SourceCode;
 class SourceCodeKey;
 class UnlinkedCodeBlock;
 class SourceProvider;
+class SyntheticModuleRecord;
 class UnlinkedFunctionExecutable;
 class UnlinkedFunctionCodeBlock;
 class VM;
@@ -172,6 +173,12 @@ public:
     // For a SyntheticSourceProvider, use createWithLazyExports(): the object the generator returns becomes liveExportsSource().
     bool moduleHasLiveExports() const { return m_moduleHasLiveExports; }
     void setModuleHasLiveExports() { m_moduleHasLiveExports = true; }
+
+    // See AbstractModuleRecord::isValue() and isOtherFormOfFile().
+    bool moduleIsValue() const { return m_moduleIsValue; }
+    void setModuleIsValue() { m_moduleIsValue = true; }
+    bool moduleIsOtherFormOfFile() const { return m_moduleIsOtherFormOfFile; }
+    void setModuleIsOtherFormOfFile() { m_moduleIsOtherFormOfFile = true; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -318,7 +325,9 @@ private:
     SourceTaintedness m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
     SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
-    bool m_moduleHasLiveExports { false };
+    bool m_moduleHasLiveExports : 1 { false };
+    bool m_moduleIsValue : 1 { false };
+    bool m_moduleIsOtherFormOfFile : 1 { false };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
@@ -423,18 +432,33 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
-        // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
-        // It does not run when the module record is created, which happens whenever that module's fetch completes, but
-        // once the whole graph importing it has loaded, in import order, right before that graph is linked. See
-        // AbstractModuleRecord::generateDeferredSyntheticModules().
-        static Ref<SyntheticSourceProvider> createDeferred(SyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
+        // A module written by the user that has to run to tell what it exports (a CommonJS module).
+        class DeferredModule {
+        public:
+            virtual ~DeferredModule() = default;
+            // A LazySyntheticSourceGenerator that first runs the module, unless it has been started. If it has yet to come to
+            // its end, this reports what it has exported so far. A host that started it by itself then sets isStillRunning,
+            // and calls JSModuleLoader::didRunDeferredModule() at the end.
+            virtual JSObject* generate(JSGlobalObject*, SyntheticModuleRecord*, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues, bool& isStillRunning) = 0;
+            // Whether the host started it by itself and it has yet to come to its end.
+            virtual bool isBeingRunByHost(JSGlobalObject*, SyntheticModuleRecord*) = 0;
+        };
+
+        // The module does not run when its record is created, which happens whenever its fetch completes, but once the graph
+        // importing it has loaded, in import order, right before that graph is linked. See ImportOrderWalk.
+        static Ref<SyntheticSourceProvider> createDeferred(std::unique_ptr<DeferredModule>&& module, const SourceOrigin& sourceOrigin, String sourceURL)
         {
-            Ref provider = create(WTF::move(generator), sourceOrigin, WTF::move(sourceURL));
-            provider->m_isDeferred = true;
+            Ref provider = adoptRef(*new SyntheticSourceProvider(nullptr, nullptr, sourceOrigin, WTF::move(sourceURL)));
+            provider->m_deferredModule = WTF::move(module);
             return provider;
         }
 
-        bool isDeferred() const { return m_isDeferred; }
+        DeferredModule* deferredModule() const { return m_deferredModule.get(); }
+
+        // For a generator that copies the properties of an object that user code can change (a built-in module). It runs
+        // again at the module's place in import order if a deferred module has run since the record was created.
+        bool copiesMutableExports() const { return m_copiesMutableExports; }
+        void setCopiesMutableExports() { m_copiesMutableExports = true; }
 
         unsigned hash() const final
         {
@@ -468,7 +492,8 @@ private:
         String m_source;
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
-        bool m_isDeferred { false };
+        std::unique_ptr<DeferredModule> m_deferredModule;
+        bool m_copiesMutableExports { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

@@ -67,6 +67,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool overrideExportValue(JSGlobalObject*, PropertyName, JSValue);
     void overrideExports(JSGlobalObject* globalObject, const WTF::Function<bool(JSGlobalObject* globalObject, const Identifier& exportName, JSC::JSValue &result)>& iter);
+    // It lists the exports of a deferred module (SyntheticSourceProvider::createDeferred()) that has exported more since.
+    void listExportsAgain(JSGlobalObject*);
 #endif
     DECLARE_VISIT_CHILDREN;
 
@@ -100,6 +102,16 @@ private:
 
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
 
+    ExportMap& exports()
+    {
+        JSModuleNamespaceObject* object = this;
+#if USE(BUN_JSC_ADDITIONS)
+        while (object->m_laterList) [[unlikely]]
+            object = object->m_laterList.get();
+#endif
+        return object->m_exports;
+    }
+
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;
     const bool m_isDeferred;
@@ -108,6 +120,8 @@ private:
     // m_isDeferred, or the record or one it re-exports from has live exports. A record has them from the time it is created.
     // Where upstream tests m_isDeferred, this is tested instead. So any other namespace object does no more work than upstream's.
     bool m_isDeferredOrLive;
+    // m_exports never changes: the collector reads it, and so do loops that run script.
+    WriteBarrier<JSModuleNamespaceObject> m_laterList;
 #endif
 
     friend size_t cellSize(JSCell*);

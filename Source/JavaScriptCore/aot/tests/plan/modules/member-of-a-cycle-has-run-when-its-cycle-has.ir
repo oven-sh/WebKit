@@ -9,14 +9,14 @@
 # NONE-NEXT: while x.js runs: none
 # NONE-NEXT: while below.js runs: /x.js,/y.js
 # NONE-NEXT: while alone.js runs: /x.js,/y.js,/below.js
-# NONE-NEXT: behind the cycle: /x.js,/alone.js,/y.js,/below.js
+# NONE-NEXT: behind the cycle: /x.js,/y.js,/alone.js,/below.js
 # NONE-NEXT: exited with 0
 # RUN(ALL): run-in-shell mechanisms=all globalThis.report = when => print(when + ": " + (filesInRequireCache() || "none"));
 # ALL: while y.js runs: none
 # ALL-NEXT: while x.js runs: none
 # ALL-NEXT: while below.js runs: /x.js,/y.js
 # ALL-NEXT: while alone.js runs: /x.js,/y.js,/below.js
-# ALL-NEXT: behind the cycle: /x.js,/alone.js,/y.js,/below.js
+# ALL-NEXT: behind the cycle: /x.js,/y.js,/alone.js,/below.js
 # ALL-NEXT: exited with 0
 
 module m0 path="/suite.js" displayPath="suite.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true}, {target=m3 completes=true}]

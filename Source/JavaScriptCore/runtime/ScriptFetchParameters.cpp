@@ -28,7 +28,9 @@
 
 #include <array>
 #include <mutex>
+#include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
+#include <wtf/text/StringHash.h>
 
 namespace JSC {
 
@@ -47,5 +49,42 @@ Ref<ScriptFetchParameters> ScriptFetchParameters::create(Type type)
     });
     return *shared.get()[static_cast<size_t>(type)];
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+namespace ScriptFetchParametersInternal {
+
+struct HostDefinedTypes {
+    UncheckedKeyHashMap<String, ScriptFetchParameters::Type> byName;
+    Vector<String> names;
+};
+
+static Lock lock;
+
+static HostDefinedTypes& hostDefinedTypes() WTF_REQUIRES_LOCK(lock)
+{
+    static NeverDestroyed<HostDefinedTypes> types;
+    return types;
+}
+
+}
+
+auto ScriptFetchParameters::hostDefinedType(StringView name) -> Type
+{
+    Locker locker { ScriptFetchParametersInternal::lock };
+    auto& types = ScriptFetchParametersInternal::hostDefinedTypes();
+    if (auto known = types.byName.find<StringViewHashTranslator>(name); known != types.byName.end())
+        return known->value;
+    auto type = static_cast<Type>(Type::FirstHostDefined + types.names.size());
+    types.names.append(name.toString().isolatedCopy());
+    types.byName.add(types.names.last(), type);
+    return type;
+}
+
+String ScriptFetchParameters::nameOfHostDefinedType(Type type)
+{
+    Locker locker { ScriptFetchParametersInternal::lock };
+    return ScriptFetchParametersInternal::hostDefinedTypes().names[type - Type::FirstHostDefined].isolatedCopy();
+}
+#endif
 
 } // namespace JSC

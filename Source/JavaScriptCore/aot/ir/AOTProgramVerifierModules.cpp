@@ -131,7 +131,7 @@ static bool isCommonJsRule(SyntheticExportRule rule)
 
 static bool hasValidInterop(const Program& program, const Module& module)
 {
-    if (module.requireResult == RequireResult::NamespaceIfImported && module.kind != ModuleKind::Data)
+    if (requireAsksWhatLoaderHolds(module) && module.kind != ModuleKind::Data)
         return false;
     if (module.flags.contains(ModuleFlags::LoaderReturnsNamespace) && module.kind != ModuleKind::Data)
         return false;
@@ -259,6 +259,15 @@ static bool isValidRequest(const ModuleRequest& request)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
+static bool namesCheckOfNamesFirstIfAtAll(const Program& program, const Module& module)
+{
+    return std::ranges::all_of(module.requests, [&](const ModuleRequest& request) {
+        if (!program.at(request.target).flags.contains(ModuleFlags::IsCheckOfNames))
+            return true;
+        return &request == &module.requests[0] && request.isHoisted && module.kind == ModuleKind::SourceText;
+    });
+}
+
 static bool isFileOfProgram(const Module& module)
 {
     return (module.kind == ModuleKind::SourceText || module.kind == ModuleKind::CommonJs) && !module.flags.contains(ModuleFlags::IsLibrary);
@@ -318,6 +327,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         && (rules.hasRequiredNames || module.requiredNames.isEmpty())
         && std::ranges::all_of(module.requests, isValidRequest)
         && std::ranges::is_partitioned(module.requests, &ModuleRequest::isHoisted)
+        && namesCheckOfNamesFirstIfAtAll(program, module)
         && hasValidPlacesOfStars(module);
     bool hasValidLibraryFlag = !isLibrary || (rules.body != BodyRule::Absent && !module.body && module.exports.isEmpty());
     bool hasValidImportOnlyFlag = !module.flags.contains(ModuleFlags::IsLoadedByImportOnly) || module.runtimeModule;
@@ -328,7 +338,7 @@ static std::optional<InternalErrorKind> findModuleError(const Program& program, 
         : !rules.hasRuntimeModule || isLibrary;
     bool hasValidLinks = (!!module.referrer == rules.hasReferrer || (module.referrer && module.kind == ModuleKind::CommonJs))
         && (!module.data || rules.canHaveData)
-        && (!module.typeAttribute || isUncompiledCode(module))
+        && (!module.typeAttribute || isUncompiledCode(module) || module.kind == ModuleKind::Data)
         && !!module.namespaceLayout == hasNamespaceLayout(module.kind);
     auto isBound = [&](const ModuleExport& entry) {
         return hasOneBinding(program, entry, modulesWithVariableThatHoldsMock, modulesWithInstances);

@@ -255,7 +255,7 @@ function f1 name="child" module=m1 kind=CommonJsModule flags=[IsSloppy] results=
 }
 )IR"_s;
 
-static constexpr ASCIILiteral parentsByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m4 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
+static constexpr ASCIILiteral parentsOfImportedFiles = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m4 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}]
 module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m2 kind=Require completes=true}, {target=m4 kind=Require completes=true}]
 module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1
 module m3 path="/deeper.js" displayPath="deeper.js" body=f3 requests=[{target=m4 completes=true}]
@@ -307,7 +307,7 @@ function f4 name="below" module=m4 kind=CommonJsModule flags=[IsSloppy] results=
 }
 )IR"_s;
 
-static constexpr ASCIILiteral cacheByLevel = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
+static constexpr ASCIILiteral cacheInImportOrder = R"IR(module m0 path="/main.js" displayPath="main.js" flags=[IsListedInCache] body=f0 requests=[{target=m1 completes=true isHoisted=true}, {target=m2 completes=true isHoisted=true}, {target=m3 completes=true isHoisted=true}, {target=m5 completes=true isHoisted=true}, {target=m1 completes=true}, {target=m2 completes=true}, {target=m3 completes=true}, {target=m4 completes=true}]
 module m1 path="/first.cjs" displayPath="first.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f1 exportsVariable=g0 requests=[{target=m6 kind=Require completes=true}]
 module m2 path="/beside.cjs" displayPath="beside.cjs" kind=CommonJs flags=[CachesEvaluationError, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g1 requests=[{target=m3 kind=Require completes=true}]
 module m3 path="/last.cjs" displayPath="last.cjs" kind=CommonJs flags=[CachesEvaluationError, ReachesModuleObjects, IsListedInCache] exportRule=CommonJs requireResult=ModuleExports body=f3 exportsVariable=g2
@@ -569,7 +569,7 @@ function f5 name="describesWrapper" module=m1 captures=[{type=anything}] results
 }
 )IR"_s;
 
-static constexpr ASCIILiteral fileThatImportsAheadOfLoader = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
+static constexpr ASCIILiteral importedFileThatImports = R"IR(module m0 path="/main.js" displayPath="main.js" body=f0
 module m1 path="/root.js" displayPath="root.js" body=f1 requests=[{target=m3 completes=true}, {target=m4 completes=true}]
 module m2 path="/asks.cjs" displayPath="asks.cjs" kind=CommonJs flags=[CachesEvaluationError] exportRule=CommonJs requireResult=ModuleExports body=f2 exportsVariable=g0
 module m3 path="#3" displayPath="asks.cjs" exportRule=CommonJs body=f3 requests=[{target=m2 kind=Require completes=true}] syntheticExports=[{name="default" variable=g1}]
@@ -976,18 +976,18 @@ the child shows what it exports: true
 )"_s);
 }
 
-static void testParentsByLevel()
+static void testParentsOfImportedFiles()
 {
-    checkShellOutput(parentsByLevel, { }, R"(the parent of a file that is imported as near to the root as its requirer: undefined
+    checkShellOutput(parentsOfImportedFiles, { }, R"(the parent of a file that is imported as near to the root as its requirer: object
 the parent of a file that is imported farther from the root: object
 )"_s);
 }
 
-static void testCacheByLevel()
+static void testCacheInImportOrder()
 {
-    checkShellOutput(cacheByLevel, { }, R"(while first.cjs runs: /first.cjs,/beside.cjs,/last.cjs
-while what first.cjs requires runs: /first.cjs,/beside.cjs,/last.cjs,/own.cjs
-behind the deletion of last.cjs: /first.cjs,/beside.cjs,/own.cjs
+    checkShellOutput(cacheInImportOrder, { }, R"(while first.cjs runs: /first.cjs
+while what first.cjs requires runs: /first.cjs,/own.cjs
+behind the deletion of last.cjs: /first.cjs,/own.cjs,/beside.cjs
 the parent of last.cjs, which is required behind that: object
 )"_s);
 }
@@ -1024,9 +1024,9 @@ the closure, called later: true
 )"_s);
 }
 
-static void testTerminationDuringImportHandoff()
+static void testTerminationWhileImportedFileRuns()
 {
-    checkShellOutput(fileThatImportsAheadOfLoader, { }, R"(begins: asks.cjs
+    checkShellOutput(importedFileThatImports, { }, R"(begins: asks.cjs
 termination was pending: true
 runs: other.js
 another graph: is loaded
@@ -1036,7 +1036,12 @@ every job: has run
 )"_s, R"js(;
 drainMicrotasks();
 importFirst().then(() => report("the graph", "is loaded"), error => report("the graph", "failed with " + error));
-requestTerminationOnResolve("/beside.js");
+const reportAlone = report;
+globalThis.report = (label, value) => {
+    reportAlone(label, value);
+    if (label === "begins")
+        requestTerminationAndCall(() => { });
+};
 report("termination was pending", callAndCancelTermination(drainMicrotasks));
 importSecond().then(() => report("another graph", "is loaded"));
 drainMicrotasks();
@@ -1065,12 +1070,12 @@ runs: later.js
 }
 
 static constexpr ASCIILiteral outputOfTextsInTurns = R"(runs: asks.cjs
-runs: late.js
 runs: third.js
 runs: second.js
 runs: first.js
 runs: root.js
 the graph: is loaded
+runs: late.js
 )"_s;
 
 static void testTextsInTurns()
@@ -1169,14 +1174,12 @@ static uint32_t operationsInRowsOfStarts(const String& programText)
         for (size_t place = firstStep;; ++place) {
             AOT_TEST_CHECK(place < steps.size());
             ModuleStartStepData step = steps[place];
-            AOT_TEST_CHECK(step.operation() != Operation::Trap && step.operation() <= Operation::CallStartUnlessStopped);
+            AOT_TEST_CHECK(step.operation() != Operation::Trap && step.operation() <= Operation::FinishAndReturn);
             if (step.operation() == Operation::FinishAndReturn)
                 found |= 1u << static_cast<uint32_t>(Operation::Finish) | 1u << static_cast<uint32_t>(Operation::Return);
-            else if (step.operation() == Operation::CallStartUnlessStopped)
-                found |= 1u << static_cast<uint32_t>(Operation::ReturnIfLoadingStops) | 1u << static_cast<uint32_t>(Operation::CallStart);
             else
                 found |= 1u << static_cast<uint32_t>(step.operation());
-            if (step.callsStart())
+            if (step.operation() == Operation::CallStart)
                 AOT_TEST_CHECK(step.operand() < starts.size() && starts[step.operand()]);
             if (step.operation() == Operation::CallBody)
                 AOT_TEST_CHECK(step.operand() < numberOfFunctions);
@@ -1196,9 +1199,9 @@ static void testEveryKindOfStepOfStart()
             bits |= 1u << static_cast<uint32_t>(operation);
         return bits;
     };
-    uint32_t whereFilesAreListed = operationsInRowsOfStarts(cacheByLevel);
+    uint32_t whereFilesAreListed = operationsInRowsOfStarts(cacheInImportOrder);
     uint32_t whereModuleMayFail = operationsInRowsOfStarts(moduleThatMayFailWhereItIsRequired);
-    uint32_t onlyWhereFilesAreListed = bitsOf({ Operation::CallStart, Operation::Begin, Operation::ReturnIfLoadingStops });
+    uint32_t onlyWhereFilesAreListed = bitsOf({ Operation::CallStart, Operation::Begin });
     uint32_t inBoth = bitsOf({ Operation::Trap, Operation::CallBody, Operation::BeginOrReturn, Operation::Finish, Operation::Return });
     AOT_TEST_CHECK((whereFilesAreListed & onlyWhereFilesAreListed) == onlyWhereFilesAreListed);
     AOT_TEST_CHECK(whereModuleMayFail == (inBoth | bitsOf({ Operation::AbandonOnThrow })));
@@ -1212,13 +1215,13 @@ std::span<const NativeTest> moduleProgramTests()
         { "module-programs/imported-commonjs-modules"_s, testImportedCommonJSModules },
         { "module-programs/commonjs-entry-point"_s, testCommonJSEntryPoint },
         { "module-programs/records-of-require"_s, testRecordsOfRequire },
-        { "module-programs/parents-by-level"_s, testParentsByLevel },
-        { "module-programs/cache-by-level"_s, testCacheByLevel },
+        { "module-programs/parents-of-imported-files"_s, testParentsOfImportedFiles },
+        { "module-programs/cache-in-import-order"_s, testCacheInImportOrder },
         { "module-programs/nothing-to-run"_s, testNothingToRun },
         { "module-programs/import-meta-kept"_s, testImportMetaKept },
         { "module-programs/import-meta-passed-on"_s, testImportMetaPassedOn },
         { "module-programs/module-builtins-in-every-position"_s, testModuleBuiltinsInEveryPosition },
-        { "module-programs/termination-during-import-handoff"_s, testTerminationDuringImportHandoff },
+        { "module-programs/termination-while-imported-file-runs"_s, testTerminationWhileImportedFileRuns },
         { "module-programs/import-called-during-load"_s, testImportCalledDuringLoad },
         { "module-programs/texts-in-turns"_s, testTextsInTurns },
         { "module-programs/texts-in-turns-while-other-jobs-wait"_s, testTextsInTurnsWhileOtherJobsWait },

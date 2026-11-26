@@ -1,14 +1,12 @@
 # root.js: import "./x.js"; import "./k.cjs"    x.js: import "./y.js"    y.js: import "./x.js"    k.cjs: require("./other.js")    other.js: import "./y.js"; import "./k.cjs"
-# k.cjs runs while the graph of root.js is loaded, ahead of x.js and y.js. If its require() entered their cycle, at y.js, x.js would run ahead of y.js
-# and read what y.js has yet to declare. other.js imports k.cjs, which is all that the graph of root.js waits for, so that graph runs before the require() returns. It was asked for first:
-# it runs first and enters the cycle, at x.js, so y.js runs ahead of x.js.
+# k.cjs runs ahead of the ES modules of the graph of root.js. other.js imports k.cjs back and takes what it has exported so far. root.js waits for the end of k.cjs.
 # RUN: run-in-shell globalThis.register = closure => { globalThis.registered = closure; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => registered()).then(() => print("imported")); return result; };
 # CHECK: k.cjs begins
-# CHECK-NEXT: y.js
 # CHECK-NEXT: x.js
-# CHECK-NEXT: root.js
+# CHECK-NEXT: y.js
 # CHECK-NEXT: other.js
 # CHECK-NEXT: k.cjs ends
+# CHECK-NEXT: root.js
 # CHECK-NEXT: imported
 # CHECK: exited with 0
 
