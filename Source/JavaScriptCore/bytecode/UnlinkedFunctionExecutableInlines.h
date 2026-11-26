@@ -25,14 +25,47 @@
 
 #pragma once
 
+#include "BuiltinNames.h"
+#include "CommonIdentifiers.h"
 #include "StructureCreateInlines.h"
 #include "UnlinkedFunctionExecutable.h"
+#include "VM.h"
 
 namespace JSC {
 
 inline Structure* UnlinkedFunctionExecutable::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
 {
     return Structure::create(vm, globalObject, proto, TypeInfo(UnlinkedFunctionExecutableType, StructureFlags), info());
+}
+
+// https://tc39.es/ecma262/#sec-exports-runtime-semantics-evaluation
+// The parser binds an anonymous default export to the private name "*default*" and gives the function or class the name
+// of that binding. SetFunctionName gives it the name "default".
+inline const Identifier& UnlinkedFunctionExecutable::nameFromSyntaxTree(VM& vm, const Identifier& nameInSyntaxTree)
+{
+    // Every function gets here. The private name is one object for all VMs, so the compare is with a constant address.
+    if (nameInSyntaxTree.impl() == std::bit_cast<SymbolImpl*>(&Symbols::starDefaultPrivateName)) [[unlikely]]
+        return vm.propertyNames->defaultKeyword;
+    return nameInSyntaxTree;
+}
+
+inline const Identifier& UnlinkedFunctionExecutable::bindingName(VM& vm) const
+{
+    ASSERT(m_hasName);
+    const Identifier& name = ecmaName();
+    // No declaration is written with the name "default": it is a reserved word.
+    if (name == vm.propertyNames->defaultKeyword) [[unlikely]]
+        return vm.propertyNames->starDefaultPrivateName;
+    return name;
+}
+
+inline void UnlinkedFunctionExecutable::setEcmaName(VM& vm, const Identifier& nameInSyntaxTree)
+{
+    if (m_nameIsDeferred) [[unlikely]]
+        materializeDeferredNameSlow();
+    const Identifier& name = nameFromSyntaxTree(vm, nameInSyntaxTree);
+    ASSERT(!m_hasName || name == m_ecmaName);
+    m_ecmaName = name;
 }
 
 } // namespace JSC
