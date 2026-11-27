@@ -4512,11 +4512,6 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
     if (stepsLeft == std::size(jobsOfImportOfEvaluatedModule)) {
         if (Modules* modules = modulesOf(promise->realm())) {
             modules->didRunFirstImportStep(promise);
-            if (modules->hasEvictedFiles()) [[unlikely]] {
-                withModuleOfJob(promise->realm(), module, [](Modules& modules, ModuleID imported) {
-                    modules.noteFormThatLeftUnderImport(imported);
-                });
-            }
             if (modules->tryRestartReleasedImport(promise))
                 return;
         }
@@ -4580,40 +4575,6 @@ static ASCIILiteral typeThatReadsTextAsData(const ScriptFetchParameters& attribu
             return type;
     }
     return { };
-}
-
-// The file itself answers for its own type.
-bool Modules::isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchParameters& attributes) const
-{
-    String type;
-    if (attributes.type() == ScriptFetchParameters::Type::JSON)
-        type = "json"_s;
-    else if (attributes.type() == ScriptFetchParameters::Type::HostDefined)
-        type = attributes.hostDefinedImportType();
-    if (type.isNull() || path.endsWith(makeString('.', type)) || (type == "text"_s && path.endsWith(".txt"_s)) || (type == "yaml"_s && path.endsWith(".yml"_s)))
-        return false;
-    std::optional<ModuleID> form = m_table.findForm(path, makeString('?', type));
-    return form && isEvicted(*form);
-}
-
-// The loader keeps the text that an import() under way has fetched, also where a reset takes the file out. The program does not hold it any more.
-void Modules::noteFormThatLeftUnderImport(ModuleID module)
-{
-    ModuleID form = fileOf(module);
-    String path = m_table.fullPath(form);
-    size_t mark = path.reverseFind('?');
-    if (!isTestRun() || data(form).kind != ModuleKind::Data || !isEvicted(form) || mark == notFound)
-        return;
-    std::optional<ModuleID> file = m_table.findByPath(StringView(path).left(mark));
-    if (file && isFileOfProgram(*file))
-        m_formsThatLeftUnderImport.set(form.index());
-}
-
-bool Modules::hasFormLeftUnderImport(const String& path, const ScriptFetchParameters& attributes) const
-{
-    ASCIILiteral type = m_formsThatLeftUnderImport.isEmpty() ? ASCIILiteral { } : typeThatReadsTextAsData(attributes);
-    std::optional<ModuleID> form = type.isNull() ? std::nullopt : m_table.findByPath(makeString(path, '?', type));
-    return form && m_formsThatLeftUnderImport.get(form->index());
 }
 
 static JSPromise* importPromiseRejectedByLoader(JSGlobalObject* realm, ThrowScope& scope)
@@ -4885,12 +4846,9 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (!hasFormLeftUnderImport(key.string(), *attributes) && (isTypeOfCode(*attributes) ? wasWrittenSinceBuild(file) && data(file).kind != ModuleKind::CommonJs && !m_filesImportedUnderTypesOfCode.get(file.index()) : isFormOfAnotherTypeEvicted(key.string(), *attributes) && !wasWrittenSinceBuild(file))) [[unlikely]] {
-                // The loader that has the form has the file from then on.
-                if (isFileOfProgram(file) && mayBeEvicted(file) && !isTypeOfCode(*attributes))
-                    delegateToHostUnlessEvaluated(file);
+            else if (isTypeOfCode(*attributes) && wasWrittenSinceBuild(file) && data(file).kind != ModuleKind::CommonJs && !m_filesImportedUnderTypesOfCode.get(file.index())) [[unlikely]]
                 RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, WTF::move(*fetchParameters)));
-            } else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !m_table.fullPath(file).contains('?')) [[unlikely]] {
+            else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !m_table.fullPath(file).contains('?')) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
             } else {
