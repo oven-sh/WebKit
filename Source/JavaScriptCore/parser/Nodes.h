@@ -568,12 +568,12 @@ namespace JSC {
         RegExpNode(const JSTokenLocation&, UniquedStringImpl* pattern, UniquedStringImpl* flags);
 
         // For a literal that is the receiver of a call to the method with that name, as in /x/.test(string).
-        RegisterID* emitBytecodeAsReceiverOfCallTo(BytecodeGenerator&, RegisterID* dst, const Identifier& method);
+        RegisterID* emitBytecodeAsReceiverOfCallTo(BytecodeGenerator&, RegisterID* dst, UniquedStringImpl* method);
 
     private:
         bool isRegExpNode() const final { return true; }
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-        RegisterID* emit(BytecodeGenerator&, RegisterID* dst, const Identifier* receiverOfCallTo);
+        RegisterID* emit(BytecodeGenerator&, RegisterID* dst, UniquedStringImpl* receiverOfCallTo);
 
         SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_pattern;
         SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_flags;

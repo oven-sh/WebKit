@@ -37,7 +37,7 @@ UnlinkedFunctionExecutable* createBuiltinExecutable(VM& vm, const SourceCode& so
 
 UnlinkedFunctionExecutable* createBuiltinExecutable(VM& vm, const SourceCode& source, const BuiltinSourceMetadata& metadata, const Identifier& ident, ImplementationVisibility implementationVisibility, ConstructorKind kind, ConstructAbility ability, InlineAttribute inlineAttribute)
 {
-    return BuiltinExecutables::createExecutable(vm, source, metadata, ident, implementationVisibility, kind, ability, inlineAttribute, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    return BuiltinExecutables::createExecutable(vm, source, metadata, ident.impl(), implementationVisibility, kind, ability, inlineAttribute, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
 }
     
 } // namespace JSC

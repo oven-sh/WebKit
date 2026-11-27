@@ -674,7 +674,7 @@ namespace JSC {
 #if ENABLE(AOT)
             // Reading a constant checks that it is initialized, and nothing stores to its register afterwards.
             if (Options::runsCompiledImage() && leftHandSide->isResolveNode()) {
-                Variable constant = variable(static_cast<ResolveNode*>(leftHandSide)->identifier());
+                Variable constant = variable(static_cast<ResolveNode*>(leftHandSide)->ident());
                 if (constant.local() && constant.isConst())
                     return false;
             }
@@ -1514,7 +1514,7 @@ namespace JSC {
         Strong<SymbolTable> m_generatorFrameSymbolTable;
         // ModuleCode: the heap allocated function declarations of the module environment (see ResolvedLazyClosureVar).
         std::optional<int> m_moduleEnvironmentSymbolTableConstantIndex;
-        UncheckedKeyHashSet<UniquedStringImpl*> m_lazyModuleFunctionDeclarations;
+        HashSet<UniquedStringImpl*> m_lazyModuleFunctionDeclarations;
         int m_generatorFrameSymbolTableIndex { 0 };
 
         enum FunctionVariableType : uint8_t { NormalFunctionVariable, TopLevelFunctionVariable };
