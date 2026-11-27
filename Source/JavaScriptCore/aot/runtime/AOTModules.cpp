@@ -4885,7 +4885,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if (!hasFormLeftUnderImport(key.string(), *attributes) && ((!isTypeOfCode(*attributes) && isFormOfAnotherTypeEvicted(key.string(), *attributes)) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index())))))) [[unlikely]] {
+            else if (!hasFormLeftUnderImport(key.string(), *attributes) && (isTypeOfCode(*attributes) ? wasWrittenSinceBuild(file) && data(file).kind != ModuleKind::CommonJs && !m_filesImportedUnderTypesOfCode.get(file.index()) : isFormOfAnotherTypeEvicted(key.string(), *attributes) && !wasWrittenSinceBuild(file))) [[unlikely]] {
                 // The loader that has the form has the file from then on.
                 if (isFileOfProgram(file) && mayBeEvicted(file) && !isTypeOfCode(*attributes))
                     delegateToHostUnlessEvaluated(file);
