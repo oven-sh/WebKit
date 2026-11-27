@@ -20803,7 +20803,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -21295,7 +21297,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -21866,7 +21870,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -36471,7 +36477,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -36988,7 +36996,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -38031,7 +38041,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -44197,7 +44209,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -44689,7 +44703,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -45727,7 +45743,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -53692,7 +53710,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -54208,7 +54228,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -55247,7 +55269,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -62146,7 +62170,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -62678,7 +62704,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -63194,7 +63222,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -69970,7 +70000,9 @@ struct validating_transcoder {
       input.store(reinterpret_cast<int8_t *>(output + (pos - start)));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -70503,7 +70535,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf16<endian>(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
@@ -71020,7 +71054,9 @@ struct validating_transcoder {
       input.store_ascii_as_utf32(output + (pos - start));
       pos += 64;
     }
-    if (pos == size || size < 64) {
+    // Bun: the last block must not begin before `start`. Its store trusts an
+    // earlier read of those bytes, and another thread may have changed them.
+    if (pos == size || size < 64 || size - 64 < start) {
       return pos - start;
     }
     simd8x64<int8_t> input(reinterpret_cast<const int8_t *>(in + size - 64));
