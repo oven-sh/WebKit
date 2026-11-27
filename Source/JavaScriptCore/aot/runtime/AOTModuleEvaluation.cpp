@@ -1853,8 +1853,6 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
 
     MocksInGraph mocks = mocksInGraph(root);
 
-    // The caller of import() hears of the error that ends its load before another text of the load comes.
-    bool textsComeBehindError = jobs == EagerLoadJobPolicy::DeferJobs && error == ErrorOfImportedFile::IsLeftToLoader && !isEntryPointOfRealm(root);
     bool didCaptureLibraryModules = false;
     for (const ModuleRequestData& request : m_table.requests(root)) {
         if (request.isRequire)
@@ -1867,11 +1865,6 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
         }
         if (mocks.hides(imported)) [[unlikely]]
             continue;
-        if (textsComeBehindError && status(imported) == ModuleStatus::Failed) [[unlikely]] {
-            m_canProgramTellWhenTextsCome = true;
-            m_rootAwaitingLoader = root;
-            return false;
-        }
         if (!std::exchange(didCaptureLibraryModules, true)) {
             captureExportsOfLibraryModules(root);
             RETURN_IF_EXCEPTION(scope, false);
@@ -2073,7 +2066,6 @@ bool Modules::evaluateImportedCommonJSModules(ModuleID root, EagerLoadJobPolicy 
                         setFailed(imported, exception->value());
                     if (queuedJobCount(jobs) != numberOfJobs)
                         holdJobsBehind(numberOfJobs, imported, jobs);
-                    m_canProgramTellWhenTextsCome |= textsComeBehindError;
                     m_rootAwaitingLoader = root;
                 }
                 return didRunFile;
@@ -2148,7 +2140,7 @@ void Modules::transferGraphToLoader(EagerLoad& files, std::optional<ModuleID> fi
     MicrotaskQueue& queue = vm.defaultMicrotaskQueue();
     Ref<MicrotaskQueue> jobsOfFile = MicrotaskQueue::create(vm);
     queue.moveTasksAfter(files.jobCountBeforeModule, jobsOfFile.get());
-    m_canProgramTellWhenTextsCome |= !jobsOfFile->isEmpty() && isTestRun();
+    m_canJobsOfFileTellWhenTextsCome |= !jobsOfFile->isEmpty() && isTestRun();
     m_rootAwaitingLoader = files.root;
     files.transferredModule = running;
     {
@@ -2370,7 +2362,7 @@ unsigned Modules::numberOfGraphsBeingLoaded()
     });
     bool hostLoadsGraph = m_rootAwaitingLoader && !m_loadsInFlight.hasRoot(*m_rootAwaitingLoader);
     unsigned number = hostLoadsGraph + m_loadsInFlight.numberBeingLoaded();
-    m_canProgramTellWhenTextsCome &= !!number;
+    m_canJobsOfFileTellWhenTextsCome &= !!number;
     return number;
 }
 
