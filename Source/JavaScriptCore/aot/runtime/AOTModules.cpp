@@ -613,7 +613,6 @@ bool Modules::isImportedByHost(ModuleID module)
 void Modules::didClearPlugins()
 {
     m_filesAskingPlugins.clearAll();
-    m_filesToDelegateOnNextRequest.clearAll();
 }
 
 // Behind Bun.plugin.clearAll(), an import follows one that the host has begun, and else finds the file.
@@ -640,14 +639,6 @@ void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegat
         return;
     m_filesToLoadAgain.set(file.index());
     setStoredStatus(file, StoredModuleStatus::InRecord);
-}
-
-void Modules::delegateToHostOnNextRequest(ModuleID module)
-{
-    ModuleID file = fileOf(module);
-    if (isEvicted(file) || status(file) >= ModuleStatus::Evaluating || hasRun(file) || !isAwaitedByPendingImport(file))
-        return delegateToHostUnlessEvaluated(module);
-    m_filesToDelegateOnNextRequest.set(file.index());
 }
 
 void Modules::delegateToHost(ModuleID file)
@@ -4665,7 +4656,6 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     evictLoadedModules();
-    willAskAgain(module);
     SetForScope currentImportCallerModule(m_currentImportCallerModule, referrer);
     SetForScope currentImportRequestedModule(m_currentImportRequestedModule, module);
     uint32_t callSequenceNumber = m_delayedImportSequenceNumber;
@@ -7999,7 +7989,7 @@ bool tryDelegateModuleToHost(JSGlobalObject* realm, ModuleID module)
     if (!modules->mayBeEvicted(module))
         return false;
     modules->delegateImportsToHost(module);
-    modules->delegateToHostOnNextRequest(module);
+    modules->delegateToHostUnlessEvaluated(module);
     return true;
 }
 
@@ -8456,12 +8446,6 @@ void recordFirstLoadFromEarlierProcess(VM& vm, const String& path, bool wasSynch
     ModuleID file = table.moduleBehindFacade(*found).value_or(*found);
     if (!state.filesWithKnownFirstLoad.set(file.index()))
         state.filesFirstLoadedSynchronously.set(file.index(), wasSynchronous);
-}
-
-void willRequireAgain(JSGlobalObject* realm, ModuleID module)
-{
-    if (Modules* modules = modulesOf(realm))
-        modules->willAskAgain(module);
 }
 
 bool delegatesModuleToHost(JSGlobalObject* realm, ModuleID module, StartedBy startedBy)
