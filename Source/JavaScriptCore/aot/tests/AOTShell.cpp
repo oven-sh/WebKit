@@ -571,7 +571,7 @@ public:
             line.append(text);
         }
         line.append('\n');
-        CString bytes = line.toString().utf8();
+        CString bytes = makeUTF8CString(line.toString());
         FILE* stream = level == MessageLevel::Error || level == MessageLevel::Warning ? stderr : stdout;
         fwrite(bytes.data(), 1, bytes.length(), stream);
         fflush(stream);
