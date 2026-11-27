@@ -158,3 +158,34 @@ for (const tailLength of [63, 64, 65, 300, 4095, 4096, 4097, 20000]) {
         check(`the long string alone`, unit.repeat(tailLength));
     }
 }
+
+// What an object of a prepared Structure holds is written in place: another such object, a list, "[]" for an empty list.
+// An undefined element of such a list is null, as in every list.
+shouldBe(JSON.stringify([{ list: [undefined, "x"] }, { list: [undefined] }, { list: [] }]), '[{"list":[null,"x"]},{"list":[null]},{"list":[]}]');
+check("undefined elements of lists in objects", [{ list: [undefined, "x"] }, undefined, { list: [undefined] }, { list: [] }, [undefined, { list: [1, undefined] }]]);
+
+// A ring through objects of a prepared Structure, and one through such an object and its list, is a TypeError like every
+// other ring. No indent: where nothing finds a ring early the fast path goes on until the stack says stop, and with an
+// indent every level is longer than the last.
+function isRefusedAsRing(value) {
+    try {
+        JSON.stringify(value);
+    } catch (error) {
+        if (error instanceof TypeError)
+            return true;
+        throw error;
+    }
+    return false;
+}
+
+{
+    const makeItem = a => ({ a, next: null });
+    const item = makeItem(3);
+    item.next = item;
+    shouldBe(isRefusedAsRing([makeItem(1), makeItem(2), item]), true);
+
+    const makeOwner = a => ({ a, list: [] });
+    const owner = makeOwner(3);
+    owner.list.push(owner);
+    shouldBe(isRefusedAsRing([makeOwner(1), makeOwner(2), owner]), true);
+}

@@ -1,4 +1,4 @@
-// Bun: upstream runs this in every mode. It expects the second match, the one that RegExp.lastMatch starts for the captures, to run out of stack.
+// Bun: upstream runs this in every mode. It expects the second match, the one that RegExp.lastParen, RegExp.$1 and the setter of RegExp.input start for the captures, to run out of stack.
 // A flat program and the code of an image make that match within --maxRegExpStackSize, so nothing throws.
 //@ $skipModes << "regexp-flat-program".to_sym
 //@ $skipModes << "regexp-image-mode".to_sym
