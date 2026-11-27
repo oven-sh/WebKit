@@ -696,6 +696,8 @@ void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+// A tick callback counts for as long as it is installed, whether or not a call is requested: requestMicrotaskTickCallback() can
+// run on another thread and callMicrotaskTickCallback() ends the request at every call, and neither updates this.
 void VM::updateHostObservesMicrotaskBoundaries()
 {
     m_hostObservesMicrotaskBoundaries = m_microtaskTickCallback || m_crossTaskToken;

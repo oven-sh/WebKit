@@ -10880,7 +10880,8 @@ class YarrGenerator final : public YarrJITInfo {
     // candidate fails no other alternative can match at this position and the
     // right action is to advance the search -- a static decision, needing no
     // per-match state and hence no Yarr frame. (Overlapping sets are left to
-    // the plain alternative chain, whose per-alternative first-character
+    // setUpBodyAlternativeDispatch(), which takes sets that are identical, or
+    // to the plain alternative chain, whose per-alternative first-character
     // rejection is already as cheap as a decision-tree node.)
     BodyDispatchInfo* tryPrepareBodyDispatch(PatternDisjunction* disjunction, size_t firstRepeated)
     {

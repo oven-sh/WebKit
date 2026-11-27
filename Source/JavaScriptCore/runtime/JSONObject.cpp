@@ -3514,7 +3514,7 @@ template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE auto FastStringifier<CharType, bufferMode>::writePrimitiveArray(Cursor& cursor, JSArray& array) -> ArrayResult
 {
     if constexpr (std::same_as<CharType, Latin1Character>) {
-        // append() checks the prototype of arrays at the first array.
+        // appendArray() checks the prototype of arrays at the first array.
         if (!m_checkedArrayPrototype || !m_globalObject.isOriginalArrayStructure(array.structure()))
             return ArrayResult::No;
         IndexingType indexingType = array.indexingType();
@@ -3637,7 +3637,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
     unsigned length = elements.size();
     if constexpr (growsBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
-            // append() has already reported the array.
+            // Whoever called appendContiguousArray() has already reported the array.
             if (!hasStackSpaceAtWatchedLevel(jsUndefined(), currentStackPointer()))
                 return;
         }
