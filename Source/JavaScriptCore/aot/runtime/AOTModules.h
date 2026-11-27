@@ -2366,7 +2366,7 @@ private:
     bool isStillToBeLoaded(ModuleID);
     void layWayOfLoad(PlanOfLoad&, LevelOfLoad* above);
     void layWayOfLoadAgain(LevelOfLoad&);
-    void countStepsOfLevel(PlanOfLoad&, size_t depth, bool isInStep);
+    void countStepsOfLevel(PlanOfLoad&, size_t depth);
     uint32_t countStepsOfWholeGraph(const PlanOfLoad&, std::span<uint32_t> firstRequestOfPlace, std::span<uint32_t> allRequestedPlaces);
     void takeUpWaysOfLoads();
     void markModulesOfPlan(const PlanOfLoad&);
@@ -3117,7 +3117,6 @@ private:
         BitVector modulesComeTo;
         uint32_t levelsReached { 0 };
         uint32_t levelsRequested { 0 };
-        uint32_t levelsItCameTo { 0 };
         uint32_t steps { 0 };
         uint32_t stepsOfWholeGraph { 0 };
         bool asksAcrossLevels { false };

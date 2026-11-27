@@ -6684,11 +6684,8 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
             level->plan->levelsRequested = std::max(level->plan->levelsRequested, level->depth + 1);
         if (level->next && level->plan && (!m_levelsOfLoads.contains(*level->next) || !isStillToBeLoaded(*level->next)))
             layWayOfLoadAgain(*level);
-        bool isInStep = level->plan && level->depth <= level->plan->levelsItCameTo;
-        if (isInStep)
-            level->plan->levelsItCameTo = std::max(level->plan->levelsItCameTo, level->depth + 1);
         if (level->next && level->plan && !m_instance.vm->synchronousModuleQueue())
-            countStepsOfLevel(*level->plan, level->depth + 1, isInStep);
+            countStepsOfLevel(*level->plan, level->depth + 1);
         if (m_showsWaysBetweenModuleObjects && level->next && level->plan && level->depth + 1 < level->plan->levels.size()) {
             for (const PlanOfLoad::Found& found : level->plan->level(level->depth + 1))
                 noteRequestByLoader(found.module);
