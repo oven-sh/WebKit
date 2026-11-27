@@ -25,12 +25,14 @@
 
 #include "AXObjectCache.h"
 #include "BackgroundPainter.h"
+#include "BoxDecorationPainter.h"
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
 #include "FloatRoundedRect.h"
 #include "HTMLFrameOwnerElement.h"
 #include "HitTestResult.h"
 #include "LocalFrame.h"
+#include "MaskPainter.h"
 #include "NaturalDimensions.h"
 #include "RemoteFrame.h"
 #include "RemoteFrameView.h"
@@ -101,7 +103,7 @@ static void moveWidgetToParentSoon(Widget& child, LocalFrameView* parent)
     WidgetHierarchyUpdatesSuspensionScope::scheduleWidgetToMove(child, parent);
 }
 
-RenderWidget::RenderWidget(Type type, HTMLFrameOwnerElement& element, Style::ComputedStyle&& style)
+RenderWidget::RenderWidget(Type type, HTMLFrameOwnerElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderReplaced(type, element, WTF::move(style), ReplacedFlag::IsWidget)
 {
     setInline(false);
@@ -135,7 +137,7 @@ NODELETE static inline IntRect roundedIntRect(const LayoutRect& rect)
 
 bool RenderWidget::setWidgetGeometry(const LayoutRect& frame)
 {
-    IntRect clipRect = roundedIntRect(enclosingLayer()->childrenClipRect());
+    IntRect clipRect = roundedIntRect(protect(enclosingLayer())->childrenClipRect());
     IntRect newFrameRect = roundedIntRect(frame);
     IntRect oldFrameRect = protect(m_widget)->frameRect();
     bool clipChanged = m_clipRect != clipRect;
@@ -159,7 +161,7 @@ bool RenderWidget::setWidgetGeometry(const LayoutRect& frame)
     // An embedded SVG document can also move within the content box, which moves its composited layers.
     bool sizeChanged = oldFrameRect.size() != newFrameRect.size();
     if (sizeChanged || (boundsChanged && embeddedSVGRoot()))
-        view().compositor().widgetDidChangeSize(*this);
+        protect(protect(view())->compositor())->widgetDidChangeSize(*this);
 
     return sizeChanged;
 }
@@ -202,16 +204,20 @@ void RenderWidget::setWidget(RefPtr<Widget>&& widget)
     if (is<RemoteFrameView>(m_widget) != is<RemoteFrameView>(widget))
         protect(frameOwnerElement())->scheduleInvalidateStyleAndLayerComposition();
 
+    Ref frameView = view().frameView();
     if (RefPtr oldWidget = m_widget) {
         moveWidgetToParentSoon(*oldWidget, nullptr);
-        view().frameView().willRemoveWidgetFromRenderTree(*oldWidget);
+        frameView->willRemoveWidgetFromRenderTree(*oldWidget);
         widgetRendererMap().remove(*oldWidget);
         m_widget = nullptr;
     }
     m_widget = widget;
     if (widget) {
         widgetRendererMap().add(*widget, *this);
-        view().frameView().didAddWidgetToRenderTree(*m_widget);
+        frameView->didAddWidgetToRenderTree(*widget);
+        // The content's style may have been resolved without this owner's zoom.
+        if (RefPtr localFrameView = dynamicDowncast<LocalFrameView>(m_widget); localFrameView && hasInitializedStyle())
+            protect(localFrameView->frame())->frameOwnerZoomDidChange();
         // If we've already received a layout, apply the calculated space to the
         // widget immediately, but we have to have really been fully constructed.
         if (hasInitializedStyle()) {
@@ -231,7 +237,7 @@ void RenderWidget::setWidget(RefPtr<Widget>&& widget)
             if (CheckedPtr cache = document().existingAXObjectCache())
                 cache->onWidgetVisibilityChanged(*this);
         }
-        moveWidgetToParentSoon(*widget, &view().frameView());
+        moveWidgetToParentSoon(*widget, frameView.ptr());
     }
 
     if (CheckedPtr cache = document().existingAXObjectCache())
@@ -262,13 +268,10 @@ void RenderWidget::styleDidChange(Style::Difference diff, const Style::ComputedS
     if (oldStyle && embeddedSVGRoot() && (oldStyle->objectFit() != style().objectFit() || oldStyle->objectPosition() != style().objectPosition() || oldStyle->objectViewBox() != style().objectViewBox()))
         setNeedsLayout();
 
-    // If this is an iframe and the zoom property changed, notify the iframe's content frame
-    // to trigger a resize event since devicePixelRatio will have changed.
-    if (oldStyle && oldStyle->zoom() != style().zoom()) {
-        if (RefPtr frameView = dynamicDowncast<LocalFrameView>(m_widget.get())) {
-            protect(frameView->frame())->deviceOrPageScaleFactorChanged();
-            frameView->scheduleResizeEventIfNeeded();
-        }
+    // If this is an iframe and its zoom or an ancestor's changed, the content's root zoom changes.
+    if (oldStyle && oldStyle->usedZoom() != style().usedZoom()) {
+        if (RefPtr frameView = dynamicDowncast<LocalFrameView>(m_widget))
+            protect(frameView->frame())->frameOwnerZoomDidChange();
     }
 }
 
@@ -327,17 +330,18 @@ void RenderWidget::paintContents(PaintInfo& paintInfo, const LayoutPoint& paintO
         paintRect.move(-widgetPaintOffset.width(), -widgetPaintOffset.height());
     }
 
-    if (paintInfo.regionContext) {
+    CheckedPtr regionContext = paintInfo.regionContext;
+    if (regionContext) {
         AffineTransform transform;
         transform.translate(snappedPaintOffset);
-        paintInfo.regionContext->pushTransform(transform);
+        regionContext->pushTransform(transform);
     }
 
     // FIXME: Remove repaintrect enclosing/integral snapping when RenderWidget becomes device pixel snapped.
-    protect(m_widget)->paint(paintInfo.context(), enclosingIntRect(paintRect), paintInfo.requireSecurityOriginAccessForWidgets ? Widget::SecurityOriginPaintPolicy::AccessibleOriginOnly : Widget::SecurityOriginPaintPolicy::AnyOrigin, paintInfo.regionContext);
+    protect(m_widget)->paint(paintInfo.context(), enclosingIntRect(paintRect), paintInfo.requireSecurityOriginAccessForWidgets ? Widget::SecurityOriginPaintPolicy::AccessibleOriginOnly : Widget::SecurityOriginPaintPolicy::AnyOrigin, regionContext);
 
-    if (paintInfo.regionContext)
-        paintInfo.regionContext->popTransform();
+    if (regionContext)
+        regionContext->popTransform();
 
     if (!widgetPaintOffset.isZero())
         paintInfo.context().translate(-widgetPaintOffset);
@@ -364,10 +368,10 @@ void RenderWidget::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     LayoutPoint adjustedPaintOffset = paintOffset + location();
 
     if (hasVisibleBoxDecorations() && (paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::Selection))
-        paintBoxDecorations(paintInfo, adjustedPaintOffset);
+        Paint::BoxDecorationPainter { *this, paintInfo, adjustedPaintOffset }.paintBoxDecorations();
 
     if (paintInfo.phase == PaintPhase::Mask) {
-        paintMask(paintInfo, adjustedPaintOffset);
+        Paint::MaskPainter { *this, paintInfo, adjustedPaintOffset }.paintMask();
         return;
     }
 
@@ -377,12 +381,12 @@ void RenderWidget::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     // FIXME: Shouldn't check if the frame view needs layout during event region painting. This is a workaround
     // for the fact that non-composited frames depend on their enclosing compositing layer to perform an event
     // region update on their behalf. See <https://webkit.org/b/210311> for more details.
-    RefPtr frameView = dynamicDowncast<LocalFrameView>(m_widget.get());
+    RefPtr frameView = dynamicDowncast<LocalFrameView>(m_widget);
     bool needsEventRegionContentPaint = paintInfo.phase == PaintPhase::EventRegion && frameView && !frameView->needsLayout();
     if (paintInfo.phase != PaintPhase::Foreground && !needsEventRegionContentPaint)
         return;
 
-    if (style().border().hasBorderRadius()) {
+    if (usedStyle().hasBorderRadius()) {
         LayoutRect borderRect = LayoutRect(adjustedPaintOffset, borderBoxSize());
 
         if (borderRect.isEmpty())
@@ -396,7 +400,7 @@ void RenderWidget::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     if (m_widget && !isSkippedContentRoot(*this))
         paintContents(paintInfo, paintOffset);
 
-    if (style().border().hasBorderRadius())
+    if (usedStyle().hasBorderRadius())
         paintInfo.context().restore();
 
     if (paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::Accessibility)
@@ -410,9 +414,10 @@ void RenderWidget::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     }
 
     if (hasLayer() && layer()->canResize()) {
-        ASSERT(layer()->scrollableArea());
-        auto controlsRects = layer()->scrollableArea()->overflowControlsRects();
-        layer()->scrollableArea()->paintResizer(paintInfo.context(), roundedIntPoint(adjustedPaintOffset), controlsRects.resizer, paintInfo.rect);
+        CheckedPtr scrollableArea = layer()->scrollableArea();
+        ASSERT(scrollableArea);
+        auto controlsRects = scrollableArea->overflowControlsRects();
+        scrollableArea->paintResizer(paintInfo.context(), roundedIntPoint(adjustedPaintOffset), controlsRects.resizer, paintInfo.rect);
     }
 }
 
@@ -440,7 +445,7 @@ RenderWidget::ChildWidgetState RenderWidget::updateWidgetPosition()
         if ((widgetSizeChanged || frameView->needsLayout())
             && localFrame->page()
             && localFrame->document())
-            frameView->layoutContext().layout();
+            protect(frameView->layoutContext())->layout();
     }
     return ChildWidgetState::Valid;
 }

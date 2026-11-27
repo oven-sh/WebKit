@@ -192,11 +192,17 @@ public:
 template<typename Validator, typename T>
 struct IsValidationProcedureFor<Validator, std::optional<T>> : IsValidationProcedureFor<Validator, T> { };
 
-// HashSet's last template parameter is a non-type parameter, so it must be spelled out.
-template<typename Validator, typename T, typename HashArg, typename TraitsArg, typename TableTraitsArg, WTF::ShouldValidateKey shouldValidateKey>
-struct IsValidationProcedureFor<Validator, HashSet<T, HashArg, TraitsArg, TableTraitsArg, shouldValidateKey>> : IsValidationProcedureFor<Validator, T> { };
+template<typename Validator, typename T, typename HashArg, typename TraitsArg, typename TableTraitsArg>
+struct IsValidationProcedureFor<Validator, HashSet<T, HashArg, TraitsArg, TableTraitsArg>> : IsValidationProcedureFor<Validator, T> { };
 
 } // namespace IPC
+
+namespace WebKit {
+
+// Yes runs a validation procedure's check even when the sending process does not use site isolation.
+enum class ShouldCheckWithoutSiteIsolation : bool { No, Yes };
+
+} // namespace WebKit
 
 /* Validates an untrusted value and binds the plain one: MESSAGE_CHECKs if the value is
  * illegitimate; completes and returns if we can't be sure; continues past the macro

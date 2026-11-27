@@ -75,10 +75,10 @@ SourceCode name##Source();
     FunctionExecutable* linkFromText(BuiltinCodeIndex, Intrinsic);
 
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
-    UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
+    UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, UniquedStringImpl* name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
-    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
-    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
+    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, UniquedStringImpl* name, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
+    static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, UniquedStringImpl* name, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     DECLARE_VISIT_AGGREGATE;
 

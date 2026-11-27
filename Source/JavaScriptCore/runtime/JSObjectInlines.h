@@ -589,7 +589,7 @@ ALWAYS_INLINE bool JSObject::tryPutDirectByExistingTransition(VM& vm, PropertyNa
 template<JSObject::PutMode mode>
 ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName propertyName, JSValue value, unsigned newAttributes, PutPropertySlot& slot)
 {
-    ASSERT(value);
+    RELEASE_ASSERT(value);
     ASSERT(value.isGetterSetter() == !!(newAttributes & PropertyAttribute::Accessor));
     ASSERT(value.isCustomGetterSetter() == !!(newAttributes & PropertyAttribute::CustomAccessorOrValue));
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
@@ -1092,22 +1092,28 @@ inline void JSObject::setPrivateField(JSGlobalObject* globalObject, PropertyName
     putDirect(vm, propertyName, value, putSlot);
 }
 
+inline bool JSObject::isExtensible(JSGlobalObject* globalObject)
+{
+#if ENABLE(AOT)
+    // A compiled object keeps "not extensible" in its order word, and its structure's didPreventExtensions stays false (CompiledStructure's constructor).
+    if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]]
+        return methodTable()->isExtensible(this, globalObject);
+#endif
+    if (isStructureExtensible()) [[likely]]
+        return true;
+    return methodTable()->isExtensible(this, globalObject);
+}
+
 inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& putSlot, unsigned attributes)
 {
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (type() == WebAssemblyGCObjectType) {
-        throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
-        return;
-    }
+    bool isExtensible = this->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
-    // Freezing an object does not keep private fields from being added to it.
-    if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
-        moveFrozenElementsToSparseMap(vm);
-
-    if (structure()->hasImmutableProperties()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
+    if (!isExtensible) [[unlikely]] {
+        throwTypeError(globalObject, scope, NonExtensibleObjectPrivateFieldDefineError);
         return;
     }
 
@@ -1191,17 +1197,21 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    Structure* structure = this->structure();
-    if (structure->isBrandedStructure() && uncheckedDowncast<BrandedStructure>(structure)->checkBrand(asSymbol(brand))) {
+    bool isExtensible = this->isExtensible(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+
+    if (!isExtensible) [[unlikely]] {
+        throwTypeError(globalObject, scope, NonExtensibleObjectPrivateMethodDefineError);
+        return;
+    }
+
+    // isExtensible can run a Proxy trap, and that trap can install this very brand or otherwise
+    // transition this object, so both the brand check and the structure must follow it.
+    if (hasPrivateBrand(globalObject, brand)) {
         throwException(globalObject, scope, createReinstallPrivateMethodError(globalObject));
         return;
     }
     EXCEPTION_ASSERT(!scope.exception());
-
-    if (type() == WebAssemblyGCObjectType) {
-        throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
-        return;
-    }
 
 #if ENABLE(AOT)
     if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]] {
@@ -1213,24 +1223,13 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         AOT::PropertyWalk::putDirect(vm, this, uid, jsBoolean(true), static_cast<unsigned>(PropertyAttribute::DontEnum));
         return;
     }
-    if (type() == SlimClosureType) [[unlikely]] {
+    if (type() == SlimClosureType) [[unlikely]]
         AOT::PropertyWalk::materializeLazyProperties(vm, this);
-        structure = this->structure();
-    }
 #endif
-
-    if (structure->hasFrozenElementsInPlace()) [[unlikely]] {
-        moveFrozenElementsToSparseMap(vm);
-        structure = this->structure();
-    }
-
-    if (structure->hasImmutableProperties()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
-        return;
-    }
 
     scope.release();
 
+    Structure* structure = this->structure();
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
 
     Structure* newStructure = Structure::setBrandTransition(vm, structure, asSymbol(brand), &deferredWatchpointFire);

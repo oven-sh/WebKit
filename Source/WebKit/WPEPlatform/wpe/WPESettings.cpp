@@ -29,6 +29,7 @@
 #include <glib.h>
 #include <wpe/WPEDisplay.h>
 #include <wtf/HashMap.h>
+#include <wtf/NeverDestroyed.h>
 #include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
@@ -89,7 +90,7 @@ struct _WPESettingsPrivate {
         };
 
         // We convert all floating refs to normal as multiple instances share the same static objects.
-        static const std::vector<Setting> defaultSettings = {
+        static NeverDestroyed<const std::vector<Setting>> defaultSettings(std::initializer_list<Setting> {
             { WPE_SETTING_FONT_NAME, G_VARIANT_TYPE_STRING, g_variant_ref_sink(g_variant_new_string("Sans 10")) },
             { WPE_SETTING_DARK_MODE, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(false)) },
             { WPE_SETTING_REDUCED_MOTION, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(false)) },
@@ -107,9 +108,9 @@ struct _WPESettingsPrivate {
             { WPE_SETTING_DRAG_THRESHOLD, G_VARIANT_TYPE_UINT32, g_variant_ref_sink(g_variant_new_uint32(8)) },
             { WPE_SETTING_CREATE_VIEWS_WITH_A_TOPLEVEL, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(true)) },
             { WPE_SETTING_OVERLAY_SCROLLBARS, G_VARIANT_TYPE_BOOLEAN, g_variant_ref_sink(g_variant_new_boolean(true)) },
-        };
+        });
 
-        for (auto& setting : defaultSettings)
+        for (auto& setting : defaultSettings.get())
             settings.add(UTF8CString::unsafeFromUTF8(setting.key), SettingEntry(setting.defaultValue, GUniquePtr<GVariantType>(g_variant_type_copy(setting.type))));
     }
 };
@@ -326,6 +327,9 @@ gboolean wpe_settings_set_value(WPESettings* settingsObject, const char* key, GV
     g_return_val_if_fail(!error || !*error, FALSE);
     g_return_val_if_fail(key && *key == '/', FALSE);
 
+    // Consume the floating reference now, so that it's released on every return path.
+    GRefPtr<GVariant> protectedValue = value;
+
     auto iter = settingsObject->priv->settings.find(UTF8CString::unsafeFromUTF8(key));
     if (iter == settingsObject->priv->settings.end()) {
         g_set_error(error, WPE_SETTINGS_ERROR, WPE_SETTINGS_ERROR_NOT_REGISTERED, "Key %s not registered", key);
@@ -351,7 +355,7 @@ gboolean wpe_settings_set_value(WPESettings* settingsObject, const char* key, GV
     }
 
     auto previousValue = iter->value.value();
-    iter->value.setValue = value;
+    iter->value.setValue = WTF::move(protectedValue);
     iter->value.setByApplication = source == WPE_SETTINGS_SOURCE_APPLICATION;
 
     if (g_variant_compare(previousValue.get(), value))

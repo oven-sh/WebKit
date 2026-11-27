@@ -49,7 +49,7 @@ struct ModuleInImage;
 
 struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> {
 
-    using BranchHints = UncheckedKeyHashMap<uint32_t, BranchHintMap, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using BranchHints = HashMap<uint32_t, BranchHintMap>;
 
     ModuleInformation();
     ModuleInformation(const ModuleInformation&) = delete;

@@ -64,8 +64,14 @@ class RemoteAnimationTimeline;
 class RemoteLayerTreeHost {
     WTF_MAKE_TZONE_ALLOCATED(RemoteLayerTreeHost);
 public:
-    explicit RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy&);
+    // Secondary hosts build another tree from the same transactions, without page-wide side effects.
+    enum class Role : uint8_t { Primary, DebugIndicator, Mirror };
+
+    RemoteLayerTreeHost(RemoteLayerTreeDrawingAreaProxy&, Role);
     ~RemoteLayerTreeHost();
+
+    Role role() const { return m_role; }
+    bool isPrimary() const { return m_role == Role::Primary; }
 
     RemoteLayerTreeNode* nodeForID(std::optional<WebCore::PlatformLayerIdentifier>) const;
     RefPtr<RemoteLayerTreeNode> rootNode() const { return m_rootNode.get(); }
@@ -87,9 +93,6 @@ public:
     bool completeDisplayOnlyImage(RemoteSnapshotIdentifier, ImageBufferBackendHandle&&);
     void releaseDisplayOnlyImage(RemoteSnapshotIdentifier);
     void removeDisplayOnlyImagesForProcess(WebCore::ProcessIdentifier);
-
-    void setIsDebugLayerTreeHost(bool flag) { m_isDebugLayerTreeHost = flag; }
-    bool isDebugLayerTreeHost() const { return m_isDebugLayerTreeHost; }
 
     typedef HashMap<WebCore::PlatformLayerIdentifier, RetainPtr<WKAnimationDelegate>> LayerAnimationDelegateMap;
     LayerAnimationDelegateMap& animationDelegates() LIFETIME_BOUND { return m_animationDelegates; }
@@ -122,6 +125,9 @@ public:
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
     void updateOrDeferInteractionRegions(RemoteLayerTreeNode&);
     void updateDeferredInteractionRegions();
+
+    RetainPtr<CALayer> takeInteractionRegionGlowLayer();
+    void reclaimInteractionRegionGlowLayer(RetainPtr<CALayer>&&);
 #endif
 
 private:
@@ -156,9 +162,10 @@ private:
 #if ENABLE(GAZE_GLOW_FOR_INTERACTION_REGIONS)
     HashSet<WebCore::PlatformLayerIdentifier> m_layersWithDeferredInteractionRegionUpdates;
     Vector<RetainPtr<UIScrollView>> m_scrollViewsHidingInteractionRegions;
+    Vector<RetainPtr<CALayer>> m_interactionRegionGlowLayerPool;
     bool m_mainScrollViewHidesInteractionRegions { false };
 #endif
-    bool m_isDebugLayerTreeHost { false };
+    const Role m_role;
 };
 
 } // namespace WebKit

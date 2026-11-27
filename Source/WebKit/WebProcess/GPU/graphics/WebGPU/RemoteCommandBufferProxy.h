@@ -34,43 +34,37 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteCommandBufferProxy final : public ::WebGPU::CommandBuffer {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCommandBufferProxy);
 public:
-    static Ref<RemoteCommandBufferProxy> create(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteCommandBufferProxy> create(RemoteGPUProxy& root, WebGPUCommandBufferIdentifier identifier)
     {
-        return adoptRef(*new RemoteCommandBufferProxy(root, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteCommandBufferProxy(root, identifier));
     }
 
     virtual ~RemoteCommandBufferProxy();
 
     RemoteGPUProxy& root() const { return m_root; }
+    WebGPUCommandBufferIdentifier backing() const { return m_backing; }
 
     void setLabel(String&&) final;
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteCommandBufferProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteCommandBufferProxy(RemoteGPUProxy&, WebGPUCommandBufferIdentifier);
 
     RemoteCommandBufferProxy(const RemoteCommandBufferProxy&) = delete;
     RemoteCommandBufferProxy(RemoteCommandBufferProxy&&) = delete;
     RemoteCommandBufferProxy& operator=(const RemoteCommandBufferProxy&) = delete;
     RemoteCommandBufferProxy& operator=(RemoteCommandBufferProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
         return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUCommandBufferIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_root;
 };
 

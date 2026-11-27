@@ -64,7 +64,6 @@ public:
         IFrame,
         LineBreak,
         WordBreakOpportunity,
-        ListMarker,
         ImplicitFlexBox // These boxes are implicit flex boxes with no flex display type and they should probably turned into proper flex boxes.
     };
 
@@ -82,11 +81,16 @@ public:
     };
 
     // Counts CheckedPtrs to the box. RenderElement and RenderText add it to the RenderObject counter.
+    // The deletion check also covers CheckedPtrs to the inline style.
     NODELETE ALWAYS_INLINE uint32_t checkedPtrCount() const { return m_checkedPtrCounter.checkedPtrCount(); }
-    ALWAYS_INLINE uint32_t checkedPtrCountWithoutThreadCheck() const { return m_checkedPtrCounter.checkedPtrCountWithoutThreadCheck(); }
+    ALWAYS_INLINE uint32_t checkedPtrCountWithoutThreadCheck() const { return m_checkedPtrCounter.checkedPtrCountWithoutThreadCheck() + m_style.checkedPtrCountWithoutThreadCheck(); }
     NODELETE ALWAYS_INLINE void incrementCheckedPtrCount() const { m_checkedPtrCounter.incrementCheckedPtrCount(); }
     NODELETE SUPPRESS_NODELETE ALWAYS_INLINE void decrementCheckedPtrCount() const { m_checkedPtrCounter.decrementCheckedPtrCount(); }
-    ALWAYS_INLINE void setDidBeginCheckedPtrDeletion() { m_checkedPtrCounter.setDidBeginCheckedPtrDeletion(); }
+    ALWAYS_INLINE void setDidBeginCheckedPtrDeletion()
+    {
+        m_checkedPtrCounter.setDidBeginCheckedPtrDeletion();
+        m_style.setDidBeginCheckedPtrDeletion();
+    }
 
     bool establishesFormattingContext() const;
     bool establishesBlockFormattingContext() const;
@@ -141,8 +145,7 @@ public:
     bool isLineBreakBox() const { return m_nodeType == NodeType::LineBreak || m_nodeType == NodeType::WordBreakOpportunity; }
     bool isIFrame() const { return m_nodeType == NodeType::IFrame; }
     bool isImage() const { return m_nodeType == NodeType::Image; }
-    bool isListMarkerBox() const { return m_nodeType == NodeType::ListMarker; }
-    bool isReplacedBox() const { return m_nodeType == NodeType::ReplacedElement || m_nodeType == NodeType::Image || m_nodeType == NodeType::ListMarker; }
+    bool isReplacedBox() const { return m_nodeType == NodeType::ReplacedElement || m_nodeType == NodeType::Image; }
     bool isWordBreakOpportunity() const { return m_nodeType == NodeType::WordBreakOpportunity; }
     NODELETE bool isInternalTableBox() const;
     NODELETE inline bool isRuby() const;
@@ -170,7 +173,7 @@ public:
     bool isIntegrationRoot() const { return m_isInlineIntegrationRoot || m_isGridIntegrationRoot; }
     bool isAnonymousTextIndentCandidateForIntegration() const { return m_isAnonymousTextIndentCandidateForIntegration; }
 
-    // Navigation follows the render tree, skipping excluded list markers. The initial containing block is the parent of
+    // Navigation follows the render tree, skipping outside list markers. The initial containing block is the parent of
     // RenderView and of renderers without a parent. parent() is defined in RenderElement.h, the siblings in RenderText.h.
     inline const ElementBox& parent() const;
     inline const Box* nextSibling() const;
@@ -223,7 +226,9 @@ public:
     void clearFormattingContextData();
 
 protected:
-    Box(Style::ComputedStyle&&, ElementAttributes, EnumSet<BaseTypeFlag>);
+    Box(UniqueRef<Style::ComputedStyle>&&, ElementAttributes, EnumSet<BaseTypeFlag>);
+    // Clones the style directly into the box, without a temporary heap allocation.
+    Box(const Style::ComputedStyle&, ElementAttributes, EnumSet<BaseTypeFlag>);
     ~Box();
 
     ALWAYS_INLINE Style::ComputedStyle& mutableStyle() LIFETIME_BOUND { return m_style; }
@@ -270,6 +275,13 @@ private:
     bool m_isAnonymousTextIndentCandidateForIntegration : 1 { false }; // Either first anonymous block box child or simple anonymous block container (e.g flex item).
     // Set when the box may have a first-line style, or for text, its parent. Use of first-line styles is rare.
     bool m_mayHaveFirstLineStyle : 1 { false };
+
+    // InlineTextBox state, packed into the padding before m_style. Byte-sized types so MSVC packs them next to the bools.
+    friend class InlineTextBox;
+    bool m_isCombinedText : 1 { false };
+    bool m_textInheritsStyleFromDisplayContentsParent : 1 { false };
+    uint8_t m_textContentGlyph : 2 { 0 }; // std::optional<SynthesizedGlyph>, 0 is none.
+    uint8_t m_textContentCharacteristics : 6 { 0 }; // EnumSet<InlineTextBox::ContentCharacteristic>
 
     Style::ComputedStyle m_style;
 

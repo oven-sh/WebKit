@@ -264,7 +264,7 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
         const zoomValues = zoomLevels.map((level) => [level, Number.percentageString(level, 0)]);
 
         let zoomEditor = generalSettingsView.addGroupWithCustomSetting(WI.UIString("Zoom:"), WI.SettingEditor.Type.Select, {values: zoomValues});
-        zoomEditor.value = WI.getZoomFactor();
+        zoomEditor.value = WI.getZoomFactor().maxDecimals(2);
         zoomEditor.addEventListener(WI.SettingEditor.Event.ValueDidChange, function(event) {
             WI.setZoomFactor(this.value);
         }, zoomEditor);
@@ -294,8 +294,8 @@ WI.SettingsTabContentView = class SettingsTabContentView extends WI.TabContentVi
         if (InspectorBackend.hasCommand("DOM.setInspectModeEnabled", "showRulers")) {
             let elementSelectionGroup = elementsSettingsView.addGroup(WI.UIString("Element Selection:"));
             elementSelectionGroup.addSetting(WI.settings.showRulersDuringElementSelection, WI.UIString("Show page rulers and node border lines"));
-            elementSelectionGroup.addSetting(WI.settings.showFlexOverlayDuringElementSelection, WI.UIString("Show grid overlay"));
-            elementSelectionGroup.addSetting(WI.settings.showGridOverlayDuringElementSelection, WI.UIString("Show flexbox overlay"));
+            elementSelectionGroup.addSetting(WI.settings.showGridOverlayDuringElementSelection, WI.UIString("Show grid overlay"));
+            elementSelectionGroup.addSetting(WI.settings.showFlexOverlayDuringElementSelection, WI.UIString("Show flexbox overlay"));
 
             elementsSettingsView.addSeparator();
         }

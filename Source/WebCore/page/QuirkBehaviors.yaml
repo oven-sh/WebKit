@@ -104,9 +104,6 @@ MayNeedToIgnoreContentObservation:
   accessor: shouldIgnoreContentObservationForClick
   export: true
 
-# airindiaexpress.com https://webkit.org/b/317375
-NeedsAirIndiaExpressLayeringQuirk:
-
 # spotify.com rdar://138918575
 NeedsBodyScrollbarWidthNoneDisabledQuirk:
 
@@ -114,9 +111,6 @@ NeedsBodyScrollbarWidthNoneDisabledQuirk:
 NeedsBoxAnnotationQuirk:
   available: mac
   conditions: [ElementSelector]
-
-# bbc.co.uk, bbc.com: rdar://162447105
-NeedsDarkAppearanceWithoutColorSchemeQuirk:
 
 # hulu.com rdar://55041979
 NeedsCanPlayAfterSeekedQuirk:
@@ -174,10 +168,6 @@ NeedsDeferKeyDownAndKeyPressTimersUntilNextEditingCommandQuirk:
 NeedsDisableDOMPasteAccessQuirk:
   implementation: custom
 
-# facebook.com https://webkit.org/b/295071
-# FIXME: https://webkit.org/b/295318
-NeedsFacebookRemoveNotSupportedQuirk:
-
 # facebook.com rdar://141103350
 # Matched against the live top URL because quirks are not re-resolved on same-document navigations.
 NeedsFacebookStoriesCreationFormQuirk:
@@ -228,21 +218,9 @@ NeedsGoogleMapsEmbedManipulationSurfaceQuirk:
 NeedsGoogleMapsMagnificationWheelDeltaScalingQuirk:
   available: mac
 
-# maps.google.com rdar://67358928
-NeedsGoogleMapsScrollingQuirk:
-  available: iOSFamily
-
 # translate.google.com rdar://106539018
 NeedsGoogleTranslateScrollingQuirk:
   available: iOSFamily
-
-# netflix.com rdar://178545839
-NeedsNetflixVolumeSliderQuirk:
-  available: "iOS || vision"
-
-# Expedia Group sites (hotels.com, expedia.*, orbitz.com, …) rdar://126631968
-NeedsExpediaGroupAnimationQuirk:
-  conditions: [ElementSelector]
 
 # This section is dedicated to UA override for iPad. iPads (but iPad Mini) are sending a desktop user agent
 # to websites. In some cases, the website breaks in some ways, not expecting a touch interface for the website.
@@ -324,15 +302,17 @@ NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk:
   conditionsRequired: true
   implementation: custom
 
+# nest.com, google.com: rdar://73582895
+NeedsSingleOwnerLoginStorageAccessQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
+
 NeedsSupportsProgressMonitoringQuirk:
   available: mediaSource
   accessor: needsSupportsProgressMonitoring
 
 NeedsSuppressPostLayoutBoundaryEventsQuirk:
-
-# tiktok.com rdar://problem/183445905
-NeedsTikTokCaptchaSliderTouchActionQuirk:
-  conditions: [ElementSelector]
 
 NeedsTikTokCommentsOverflowingContentQuirk:
   conditions: [ElementSelector]
@@ -484,6 +464,8 @@ ShouldDelayReloadWhenRegisteringServiceWorker:
 ShouldDisableAdSkippingInPip:
   available: pipSkipPreroll
   export: true
+
+ShouldDisableCSSSizeShorthandQuirk:
 
 # Microsoft office online generates data URLs with incorrect padding on Safari only (rdar://114573089).
 ShouldDisableDataURLPaddingValidation:
@@ -738,10 +720,6 @@ ShouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreasQuirk:
   accessor: shouldSuppressAutocorrectionAndAutocapitalizationInHiddenEditableAreas
   export: true
 
-# webex.com rdar://143715630
-NeedsWebExScrollabilityQuirk:
-  available: appleTV
-
 # rdar://138806698
 ShouldSupportHoverMediaQueriesQuirk:
   available: appleTV
@@ -778,9 +756,6 @@ ShouldAllowNotificationPermissionWithoutUserGesture:
 NeedsInstagramResizingReelsQuirk:
   conditions: [ElementSelector]
   implementation: custom
-
-# yahoo.com rdar://170502516
-NeedsYahooVolumeSliderQuirk:
 
 NeedsChromeOSNavigatorUserAgentQuirk:
   available: iOSFamily
@@ -825,6 +800,14 @@ NeedsStorageAccessOnLoginButtonClickQuirk:
 
 NeedsStorageAccessForYouTubeWatchLaterQuirk:
   conditions: [ElementSelector]
+  implementation: custom
+
+NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk:
+  conditions: [SecondaryURL]
+  conditionsRequired: true
+  implementation: custom
+
+ShouldSkipStorageAccessIframeDomainListQuirk:
   implementation: custom
 
 # Outlook on the web: rdar://187832523

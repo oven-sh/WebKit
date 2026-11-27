@@ -183,7 +183,7 @@ void Debugger::attach(JSGlobalObject* globalObject)
     m_vm.setShouldBuildPCToCodeOriginMapping();
 
     // Call `sourceParsed` after iterating because it will execute JavaScript in Web Inspector.
-    UncheckedKeyHashSet<RefPtr<SourceProvider>> sourceProviders;
+    HashSet<RefPtr<SourceProvider>> sourceProviders;
 #if ENABLE(WEBASSEMBLY)
     MarkedVector<JSWebAssemblyModule*> wasmModules;
 #endif
@@ -1084,6 +1084,7 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         return;
 
     bool afterBlackboxedScript = m_afterBlackboxedScript;
+    bool hadPauseAtNextOpportunity = m_pauseAtNextOpportunity;
     bool pauseNow = false;
     bool didPauseForStep = false;
     if (m_pauseAtNextOpportunity) {
@@ -1180,8 +1181,16 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         }
 
         if (shouldContinue) {
-            if (!didPauseForStep)
+            if (!didPauseForStep) {
+                // FIXME: <https://webkit.org/b/332051> A pause deferred past a blackboxed script is dropped here too,
+                // even when a step or Debugger.pause asked for it.
+                if (hadPauseAtNextOpportunity) {
+                    dispatchFunctionToObservers([&](Observer& observer) {
+                        observer.didDropPauseAtNextOpportunity();
+                    });
+                }
                 return;
+            }
         } else if (pausingBreakpointID)
             m_pausingBreakpointID = *pausingBreakpointID;
     }
@@ -1501,6 +1510,8 @@ NEVER_INLINE void Debugger::didExecuteProgram(CallFrame* callFrame)
 
     // Do not continue stepping into an unknown future program.
     if (!m_currentCallFrame) {
+        bool hadPauseAtNextOpportunity = m_pauseAtNextOpportunity;
+
         resetImmediatePauseState();
         resetEventualPauseState();
         m_deferredBreakpoints.clear();
@@ -1508,6 +1519,10 @@ NEVER_INLINE void Debugger::didExecuteProgram(CallFrame* callFrame)
         if (shouldKeepPause) {
             schedulePauseAtNextOpportunity();
             m_afterBlackboxedScript = wasAfterBlackboxedScript;
+        } else if (hadPauseAtNextOpportunity) {
+            dispatchFunctionToObservers([&](Observer& observer) {
+                observer.didDropPauseAtNextOpportunity();
+            });
         }
     }
 }

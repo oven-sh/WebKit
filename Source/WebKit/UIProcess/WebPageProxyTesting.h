@@ -26,13 +26,17 @@
 #pragma once
 
 #include "MessageSender.h"
+#include "NavigationResponseProcessSwap.h"
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/PageIdentifier.h>
+#include <wtf/CompletionHandler.h>
+#include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 class IntPoint;
+enum class ScrollbarStyle : uint8_t;
 }
 
 namespace WebKit {
@@ -46,6 +50,7 @@ public:
     static Ref<WebPageProxyTesting> create(WebPageProxy& page) { return adoptRef(*new WebPageProxyTesting(page)); }
 
     void isLayerTreeFrozen(CompletionHandler<void(bool)>&&);
+    void isLayerTreeFrozen(WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
     void numberOfLiveDocuments(CompletionHandler<void(uint64_t)>&&);
 
     void setDisplayForTesting(uint32_t displayID, unsigned nominalFramesPerSecond);
@@ -57,8 +62,16 @@ public:
     bool isEditingCommandEnabled(const String& commandName);
     void resetStateBetweenTests();
 
+    using NavigationResponseProcessSwapReplyHandler = Function<void(NavigationResponseProcessSwapResult, CompletionHandler<void()>&& sendReply)>;
+    void setNavigationResponseProcessSwapReplyHandler(NavigationResponseProcessSwapReplyHandler&& handler) { m_navigationResponseProcessSwapReplyHandler = WTF::move(handler); }
+    CompletionHandler<void(NavigationResponseProcessSwapResult&&)> holdNavigationResponseProcessSwapReply(CompletionHandler<void(NavigationResponseProcessSwapResult&&)>&&);
+
 #if PLATFORM(IOS_FAMILY)
     void screenIsBeingCaptured(WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
+#endif
+
+#if USE(UICONTEXTMENU)
+    void hasActiveContextMenuInteraction(WebCore::FrameIdentifier, CompletionHandler<void(bool)>&&);
 #endif
 
     void dumpPrivateClickMeasurement(CompletionHandler<void(const String&)>&&);
@@ -85,11 +98,19 @@ public:
 #if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
     NODELETE void setIndexOfGetDisplayMediaDeviceSelectedForTesting(std::optional<unsigned>);
     NODELETE void setSystemCanPromptForGetDisplayMediaForTesting(bool);
+    void setTabPickedForGetDisplayMediaForTesting(WebPageProxy*);
+    WebPageProxy* tabPickedForGetDisplayMediaForTesting() const;
+#endif
+
+#if ENABLE(EXTENSION_CAPABILITIES)
+    bool isDisplayCaptureCapabilityActive() const;
 #endif
 
     void setObscuredContentInsets(float top, float right, float bottom, float left, CompletionHandler<void()>&&);
+    void setScrollbarStyleOverride(std::optional<WebCore::ScrollbarStyle>, CompletionHandler<void()>&&);
 
     void clearBackForwardList(CompletionHandler<void()>&&);
+    String dumpBackForwardList(const String& directory);
 
     void setTracksRepaints(bool, CompletionHandler<void()>&&);
     void displayAndTrackRepaints(CompletionHandler<void()>&&);
@@ -109,6 +130,10 @@ private:
 
     WeakRef<WebPageProxy> m_page;
     std::optional<unsigned> m_displayNominalFramesPerSecondOverride;
+    NavigationResponseProcessSwapReplyHandler m_navigationResponseProcessSwapReplyHandler;
+#if PLATFORM(COCOA) && ENABLE(MEDIA_STREAM)
+    WeakPtr<WebPageProxy> m_tabPickedForGetDisplayMediaForTesting;
+#endif
 };
 
 } // namespace WebKit

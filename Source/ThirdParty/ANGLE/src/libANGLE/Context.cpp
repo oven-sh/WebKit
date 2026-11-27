@@ -739,6 +739,7 @@ Context::Context(egl::Display *display,
       mProgramPipelineObserverBinding(this, kProgramPipelineSubjectIndex),
       mFrameCapture(new angle::FrameCapture),
       mRefCount(0),
+      mIsCurrentOnAnyThread(false),
       mIsDestroyed(false),
       mDestroyedManagers(false)
 {
@@ -945,9 +946,11 @@ egl::Error Context::onDestroy(const egl::ThreadSafeDisplay *display)
 
     mState.ensureNoPendingLink(this);
 
-    // eglDestoryContext() must have been called for this Context and there must not be any Threads
+    // eglDestroyContext() must have been called for this Context and there must not be any thread
     // that still have it current.
-    ASSERT(mIsDestroyed == true && mRefCount == 0);
+    ASSERT(mIsDestroyed == true && !isCurrentOnAnyThread());
+    // No other references should exist for this context.
+    ASSERT(mRefCount == 0);
 
     ANGLE_TRY(unMakeCurrent());
 
@@ -3671,40 +3674,7 @@ const char *Context::makeStaticString(const std::string &str)
 
 void Context::initRendererString()
 {
-    std::ostringstream frontendRendererString;
-
-    constexpr char kRendererString[]        = "ANGLE_GL_RENDERER";
-    constexpr char kAndroidRendererString[] = "debug.angle.gl_renderer";
-
-    std::string overrideRenderer =
-        angle::GetEnvironmentVarOrAndroidProperty(kRendererString, kAndroidRendererString);
-    if (!overrideRenderer.empty())
-    {
-        frontendRendererString << overrideRenderer;
-    }
-    else
-    {
-        std::string vendorString(mDisplay->getBackendVendorString());
-        std::string rendererString(mDisplay->getBackendRendererDescription());
-        std::string versionString(mDisplay->getBackendVersionString(!isWebGL()));
-        // Commas are used as a separator in ANGLE's renderer string, so remove commas from each
-        // element.
-        vendorString.erase(std::remove(vendorString.begin(), vendorString.end(), ','),
-                           vendorString.end());
-        rendererString.erase(std::remove(rendererString.begin(), rendererString.end(), ','),
-                             rendererString.end());
-        versionString.erase(std::remove(versionString.begin(), versionString.end(), ','),
-                            versionString.end());
-        frontendRendererString << "ANGLE (";
-        frontendRendererString << vendorString;
-        frontendRendererString << ", ";
-        frontendRendererString << rendererString;
-        frontendRendererString << ", ";
-        frontendRendererString << versionString;
-        frontendRendererString << ")";
-    }
-
-    mRendererString = makeStaticString(frontendRendererString.str());
+    mRendererString = makeStaticString(mDisplay->generateRendererString(!isWebGL()));
 }
 
 void Context::initVendorString()
@@ -4958,7 +4928,7 @@ angle::Result Context::prepareForClearBuffer(GLenum buffer, GLint drawbuffer)
     return syncStateForClear();
 }
 
-ANGLE_INLINE angle::Result Context::prepareForCopyImage()
+angle::Result Context::prepareForCopyImage()
 {
     ANGLE_TRY(syncDirtyObjects(mCopyImageDirtyObjects, Command::CopyImage));
     return syncDirtyBits(mCopyImageDirtyBits, kCopyImageExtendedDirtyBits, Command::CopyImage);

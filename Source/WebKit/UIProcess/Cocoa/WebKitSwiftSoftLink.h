@@ -44,6 +44,9 @@ SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKSLinearMediaSpatialVideoMetadata)
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKStageModeInteractionDriver)
 #endif
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, CredentialUpdaterShim)
+#if ENABLE(PHONE_NUMBER_POSSESSION)
+SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKPhoneNumberPossessionPlatformManager)
+#endif
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKIdentityDocumentRawRequestValidator);
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKISO18013Request);
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKIdentityDocumentPresentmentRawRequest);
@@ -63,7 +66,7 @@ SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKIdentityDocumentPresentmentOpenID4VPVerifie
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKIdentityDocumentPresentmentRequest);
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKIdentityDocumentPresentmentRequestAuthenticationCertificate);
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKTextAnimationManager)
-#if ENABLE(WEBXR) && PLATFORM(MAC) && USE(APPLE_INTERNAL_SDK)
+#if ENABLE(WEBXR) && (PLATFORM(MAC) || PLATFORM(VISION))
 SOFT_LINK_CLASS_FOR_HEADER(WebKit, WKWebXRImmersiveSpaceHost)
 #endif
 

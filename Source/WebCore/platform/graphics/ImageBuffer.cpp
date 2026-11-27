@@ -34,10 +34,10 @@
 #include "GraphicsClient.h"
 #include "GraphicsContext.h"
 #include "HostWindow.h"
-#include "ImageBufferDisplayListBackend.h"
 #include "ImageBufferPlatformBackend.h"
 #include "ImageUtilities.h"
 #include "MIMETypeRegistry.h"
+#include "NativeImage.h"
 #include "NullImageBufferBackend.h"
 #include "ProcessCapabilities.h"
 #include <wtf/NeverDestroyed.h>
@@ -73,6 +73,11 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(SerializedImageBuffer);
 static const float MaxClampedLength = 4096;
 static const float MaxClampedArea = MaxClampedLength * MaxClampedLength;
 
+// A side longer than a GPU texture can be only tiles or falls back to an unaccelerated
+// buffer, and no destination shows that many pixels of one. A long, thin strip, such as a
+// generated image tiled along a very wide box, stays under the area limit without this.
+static const float MaxClampedDimension = 16384;
+
 RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode renderingMode, RenderingPurpose purpose, float resolutionScale, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat, GraphicsClient* graphicsClient)
 {
     RefPtr<ImageBuffer> imageBuffer;
@@ -103,11 +108,9 @@ RefPtr<ImageBuffer> ImageBuffer::create(const FloatSize& size, RenderingMode ren
     case RenderingMode::Unaccelerated:
         return create<ImageBufferPlatformBitmapBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
 
-    case RenderingMode::DisplayList:
-        return ImageBuffer::create<ImageBufferDisplayListBackend>(size, resolutionScale, colorSpace, pixelFormat, purpose, { });
-
     case RenderingMode::PDFDocument:
-        // FIXME: PDFDocument is only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that it cannot be passed here.
+    case RenderingMode::DisplayList:
+        // FIXME: PDFDocument and DisplayList are only meaningful for a GraphicsContext. Add a type-specific rendering mode, such as ImageBufferRenderingMode, so that they cannot be passed here.
         RELEASE_ASSERT_NOT_REACHED();
     }
 
@@ -143,7 +146,8 @@ bool ImageBuffer::sizeNeedsClamping(const FloatSize& size)
     if (size.isEmpty())
         return false;
 
-    return floorf(size.height()) * floorf(size.width()) > MaxClampedArea;
+    return floorf(size.height()) * floorf(size.width()) > MaxClampedArea
+        || floorf(std::max(size.width(), size.height())) > MaxClampedDimension;
 }
 
 RefPtr<ImageBuffer> SerializedImageBuffer::sinkIntoImageBuffer(std::unique_ptr<SerializedImageBuffer> buffer, GraphicsClient* graphicsClient)
@@ -186,7 +190,7 @@ private:
 
 std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffer()
 {
-    ASSERT(hasOneRef());
+    RELEASE_ASSERT(hasOneRef());
     ASSERT(!controlBlock().weakRefCount());
 #if USE(SKIA)
     return makeUnique<SkiaSerializedImageBuffer>(*this);
@@ -197,7 +201,7 @@ std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffe
 
 std::unique_ptr<SerializedImageBuffer> ImageBuffer::sinkIntoSerializedImageBuffer(RefPtr<ImageBuffer>&& image)
 {
-    ASSERT(image->hasOneRef());
+    RELEASE_ASSERT(image->hasOneRef());
     RefPtr<ImageBuffer> move = WTF::move(image);
     return move->sinkIntoSerializedImageBuffer();
 }
@@ -210,8 +214,12 @@ bool ImageBuffer::sizeNeedsClamping(const FloatSize& size, FloatSize& scale)
     if (!sizeNeedsClamping(scaledSize))
         return false;
 
-    // The area of scaled size is bigger than the upper limit, adjust the scale to fit.
-    scale.scale(sqrtf(MaxClampedArea / (scaledSize.width() * scaledSize.height())));
+    // The scaled size's area or longest side is over its limit: scale uniformly to fit both,
+    // except that a side is never shrunk below a pixel, which would lose a thin strip entirely.
+    float areaScale = sqrtf(MaxClampedArea / (scaledSize.width() * scaledSize.height()));
+    float dimensionScale = MaxClampedDimension / std::max(scaledSize.width(), scaledSize.height());
+    float uniformScale = std::min({ areaScale, dimensionScale, 1.f });
+    scale.scale(std::max(uniformScale, std::min(1 / scaledSize.width(), 1.f)), std::max(uniformScale, std::min(1 / scaledSize.height(), 1.f)));
     ASSERT(!sizeNeedsClamping(size, scale));
     return true;
 }
@@ -351,13 +359,13 @@ RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread(RefPtr<ImageBu
 {
     if (!buffer)
         return nullptr;
-    ASSERT(buffer->hasOneRef());
+    RELEASE_ASSERT(buffer->hasOneRef());
     return buffer->sinkIntoBufferForDifferentThread();
 }
 
 RefPtr<ImageBuffer> ImageBuffer::sinkIntoBufferForDifferentThread()
 {
-    ASSERT(hasOneRef());
+    RELEASE_ASSERT(hasOneRef());
     return this;
 }
 
@@ -486,6 +494,13 @@ void ImageBuffer::releaseGraphicsContext()
 {
     if (auto* backend = m_backend.get())
         return backend->releaseGraphicsContext();
+}
+
+bool ImageBuffer::hasGraphicsContext() const
+{
+    if (auto* backend = m_backend.get())
+        return backend->hasGraphicsContext();
+    return false;
 }
 
 bool ImageBuffer::setVolatile()

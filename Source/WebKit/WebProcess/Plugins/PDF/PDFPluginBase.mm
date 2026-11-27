@@ -973,6 +973,13 @@ void PDFPluginBase::scrollbarStyleChanged(ScrollbarStyle style, bool forceUpdate
     updateScrollbars();
 }
 
+std::optional<ScrollbarStyle> PDFPluginBase::scrollbarStyleOverride() const
+{
+    if (RefPtr page = this->page())
+        return page->scrollbarStyleOverride();
+    return std::nullopt;
+}
+
 IntRect PDFPluginBase::convertFromScrollbarToContainingView(const Scrollbar& scrollbar, const IntRect& scrollbarRect) const
 {
     Ref view = *m_view;
@@ -1389,7 +1396,7 @@ bool PDFPluginBase::showContextMenuAtPoint(const IntPoint& point)
         .globalPosition = contentsPoint,
         .clickCount = 1,
         .force = WebCore::ForceAtClick,
-        .inputSource = WebEventInputSource::UserDriven,
+        .inputSource = WebEventInputSource::Default,
     });
     return handleContextMenuEvent(event);
 }
@@ -1409,7 +1416,7 @@ bool PDFPluginBase::performImmediateActionHitTestAtLocation(const WebCore::Float
 
 WebCore::AXObjectCache* PDFPluginBase::axObjectCache() const
 {
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     RefPtr frame = m_frame.get();
     if (!frame)
         return nullptr;
@@ -1531,7 +1538,7 @@ static void verboseLog(PDFIncrementalLoader* incrementalLoader, std::optional<ui
         stream << " not";
     stream << " complete";
 
-    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8());
+    LOG(IncrementalPDFVerbose, "%s", makeUTF8CString(stream.release()));
 }
 #endif
 

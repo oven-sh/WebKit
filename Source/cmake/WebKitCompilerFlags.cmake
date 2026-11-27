@@ -258,6 +258,10 @@ if (COMPILER_IS_GCC_OR_CLANG)
         )
     endif ()
 
+    if ((CMAKE_CXX_COMPILER_ID STREQUAL Clang) AND (CMAKE_CXX_COMPILER_VERSION VERSION_LESS 22))
+        WEBKIT_PREPEND_GLOBAL_CXX_FLAGS(-Wno-dangling)
+    endif ()
+
     # GCC gives false warnings for subobject-linkage <https://gcc.gnu.org/bugzilla/show_bug.cgi?id=105595>
     if (CMAKE_CXX_COMPILER_ID MATCHES "GNU")
         WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS(-Wno-subobject-linkage)
@@ -460,12 +464,13 @@ if (COMPILER_IS_GCC_OR_CLANG)
                     add_compile_options(--param=asan-use-after-return=0)
                 endif ()
             elseif (${SANITIZER} MATCHES "undefined")
-                # Please keep these options synchronized with Tools/sanitizer/ubsan.xcconfig
+                # Please keep these options synchronized with WK_UNDEFINED_BEHAVIOR_SANITIZER_OTHER_CFLAGS_YES in Configurations/Sanitizers.xcconfig
                 WEBKIT_PREPEND_GLOBAL_COMPILER_FLAGS("-fno-omit-frame-pointer -fno-delete-null-pointer-checks -fno-optimize-sibling-calls")
                 # -fsanitize=vptr is disabled because incompatible with -fno-rtti.
-                # swiftc rejects -fno-sanitize=, so that one is C-family only.
+                # swiftc rejects -fno-sanitize= and -fsanitize=local-bounds, so those are C-family only.
                 add_compile_options("${_cc_sanitize}=undefined"
-                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>")
+                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fno-sanitize=vptr>"
+                                    "$<$<NOT:$<COMPILE_LANGUAGE:Swift>>:-fsanitize=local-bounds>")
                 add_link_options("${_ld_sanitize}=undefined")
                 list(APPEND ENABLED_COMPILER_SANITIZERS "-fsanitize=undefined")
 

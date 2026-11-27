@@ -22,6 +22,19 @@
         baseLayer
       ];
       const layersFeatureEnabled = xrSession.enabledFeatures.includes('layers');
+      const binding = new XRWebGLBinding(xrSession, gl);
+      const projLayer = binding.createProjectionLayer({ depthFormat: 0 });
+
+      if (!layersFeatureEnabled) {
+        t.step(() => {
+          assert_equals(xrSession.maxRenderLayers, 1, "maxRenderLayers should be 1 when layers feature is not enabled");
+          try {
+            xrSession.updateRenderState({ layers: [projLayer] });
+          } catch (err) {
+            reject("XRSession should support a single projection layer even when layers feature is not enabled: " + err);
+          }
+        });
+      }
 
       t.step(() => {
         assert_throws_dom('NotSupportedError', () => xrSession.updateRenderState({ baseLayer, layers: singleLayer }), "XRSession should throw an error when updating render state with both a baseLayer and layers set.");
@@ -50,6 +63,7 @@
       navigator.xr.requestSession('inline', {}).then((otherSession) => {
         const otherSessionLayer = [ new XRWebGLLayer(otherSession, gl) ];
         assert_throws_js(TypeError, () => xrSession.updateRenderState({ layers: otherSessionLayer }), "XRSession should throw a TypeError when updating render state with a layer created for a different session.");
+        assert_throws_js(TypeError, () => otherSession.updateRenderState({ layers: [projLayer] }), "XRSession should throw a TypeError when updating render state with a composition layer created for a different session.");
         resolve();
       });
      });

@@ -31,10 +31,11 @@
 #include "HTMLNames.h"
 #include "HTMLPlugInElement.h"
 #include "NodeDocument.h"
-#include "RenderElement.h"
+#include "RenderBlockFlow.h"
 #include "Settings.h"
 #include "ShadowRoot.h"
 #include "YouTubeEmbedShadowElement.h"
+#include <wtf/Borrow.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -66,20 +67,20 @@ YouTubePluginReplacement::YouTubePluginReplacement(HTMLPlugInElement& plugin, co
 {
     ASSERT(paramNames.size() == paramValues.size());
     for (size_t i = 0; i < paramNames.size(); ++i)
-        m_attributes.add(paramNames[i], paramValues[i]);
+        m_attributes.add(borrow(paramNames)[i], borrow(paramValues)[i]);
 }
 
 YouTubePluginReplacement::~YouTubePluginReplacement() = default;
 
-RenderPtr<RenderElement> YouTubePluginReplacement::createElementRenderer(HTMLPlugInElement& plugin, Style::ComputedStyle&& style, const RenderTreePosition& insertionPosition)
+RenderPtr<RenderElement> YouTubePluginReplacement::createElementRenderer(HTMLPlugInElement& plugin, UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
-    ASSERT_UNUSED(plugin, m_parentElement == &plugin);
+    ASSERT(m_parentElement == &plugin);
 
-    RefPtr embedShadowElement = m_embedShadowElement;
-    if (!embedShadowElement)
+    if (!m_embedShadowElement)
         return nullptr;
-    
-    return embedShadowElement->createElementRenderer(WTF::move(style), insertionPosition);
+
+    // The renderer belongs to the plugin element, so it must be created with the plugin element as its node.
+    return createRenderer<RenderBlockFlow>(RenderObject::Type::BlockFlow, plugin, WTF::move(style));
 }
 
 void YouTubePluginReplacement::installReplacement(ShadowRoot& root)

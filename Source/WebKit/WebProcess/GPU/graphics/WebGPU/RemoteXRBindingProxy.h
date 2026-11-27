@@ -36,20 +36,19 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteXRBindingProxy final : public ::WebGPU::XRBinding {
     WTF_MAKE_TZONE_ALLOCATED(RemoteXRBindingProxy);
 public:
-    static Ref<RemoteXRBindingProxy> create(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteXRBindingProxy> create(RemoteDeviceProxy& parent, WebGPUXRBindingIdentifier identifier)
     {
-        return adoptRef(*new RemoteXRBindingProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteXRBindingProxy(parent, identifier));
     }
 
     virtual ~RemoteXRBindingProxy();
 
     RemoteDeviceProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
+    WebGPUXRBindingIdentifier backing() const { return m_backing; }
 
     RefPtr<::WebGPU::XRProjectionLayer> createProjectionLayer(const ::WebGPU::XRProjectionLayerDescriptor&) final;
     RefPtr<::WebGPU::XRSubImage> getViewSubImage(::WebGPU::XRProjectionLayer&) final;
@@ -57,16 +56,12 @@ public:
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteXRBindingProxy(RemoteDeviceProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteXRBindingProxy(RemoteDeviceProxy&, WebGPUXRBindingIdentifier);
 
     RemoteXRBindingProxy(const RemoteXRBindingProxy&) = delete;
     RemoteXRBindingProxy(RemoteXRBindingProxy&&) = delete;
     RemoteXRBindingProxy& operator=(const RemoteXRBindingProxy&) = delete;
     RemoteXRBindingProxy& operator=(RemoteXRBindingProxy&&) = delete;
-
-    WebGPUIdentifier backing() const { return m_backing; }
 
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
@@ -79,8 +74,7 @@ private:
         return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUXRBindingIdentifier m_backing;
     const Ref<RemoteDeviceProxy> m_parent;
 };
 

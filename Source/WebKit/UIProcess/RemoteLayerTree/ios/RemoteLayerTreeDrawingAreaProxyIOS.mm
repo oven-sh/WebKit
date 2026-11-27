@@ -31,7 +31,6 @@
 #import "CAFrameRateRangeUtilities.h"
 #import "PageClient.h"
 #import "RemoteLayerTreeCommitBundle.h"
-#import "RemoteLayerTreeScrollingPerformanceData.h"
 #import "RemoteScrollingCoordinatorProxyIOS.h"
 #import "WebPageProxy.h"
 #import "WebPreferences.h"
@@ -154,7 +153,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)displayLinkFired:(CADisplayLink *)sender
 {
-    ASSERT(isUIThread());
+    RELEASE_ASSERT(isUIThread());
 
     _lastDisplayLinkFireTime = MonotonicTime::now();
 
@@ -184,7 +183,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 - (void)_forcedRefreshTimerFired
 {
-    ASSERT(isUIThread());
+    RELEASE_ASSERT(isUIThread());
 
     if (MonotonicTime::now() >= _forcedRefreshStateWhileDisplayIsNotUpdating.deadline) {
         [self _stopForcedDisplayRefresh];
@@ -214,7 +213,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 #if ENABLE(TIMER_DRIVEN_DISPLAY_REFRESH_FOR_TESTING)
 - (void)timerFired
 {
-    ASSERT(isUIThread());
+    RELEASE_ASSERT(isUIThread());
     _lastDisplayLinkFireTime = MonotonicTime::now();
     if (RefPtr drawingArea = _drawingAreaProxy)
         drawingArea->didRefreshDisplay();
@@ -461,37 +460,36 @@ void RemoteLayerTreeDrawingAreaProxyIOS::startForcedDisplayRefreshWindow(Seconds
     [protect(displayLinkHandler()) startForcedDisplayRefreshWindowWithInterval:interval duration:duration];
 }
 
-void RemoteLayerTreeDrawingAreaProxyIOS::scheduleDisplayRefreshCallbacksForMonotonicAnimations()
+void RemoteLayerTreeDrawingAreaProxyIOS::updateDisplayRefreshCallbacksForMonotonicAnimations()
 {
-    m_needsDisplayRefreshCallbacksForMonotonicAnimations = true;
-    if (!m_hasHighImpactMonotonicAnimations) {
-        if (RefPtr page = this->page()) {
-            if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
-                m_hasHighImpactMonotonicAnimations = scrollingCoordinatorProxy->hasHighImpactMonotonicAnimations();
+    bool needsDisplayRefreshCallbacks = false;
+    bool hasHighImpactMonotonicAnimations = false;
+    if (RefPtr page = this->page()) {
+        if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy()) {
+            scrollingCoordinatorProxy->updateAnimatedContentVisibilityIfNeeded();
+            needsDisplayRefreshCallbacks = scrollingCoordinatorProxy->hasVisibleMonotonicAnimations();
+            hasHighImpactMonotonicAnimations = needsDisplayRefreshCallbacks && scrollingCoordinatorProxy->hasHighImpactMonotonicAnimations();
         }
     }
-    scheduleDisplayLinkAndSetFrameRate();
-}
 
-void RemoteLayerTreeDrawingAreaProxyIOS::highImpactMonotonicAnimationsWereRemoved()
-{
-    if (!m_hasHighImpactMonotonicAnimations)
+    bool needsDisplayRefreshCallbacksChanged = needsDisplayRefreshCallbacks != m_needsDisplayRefreshCallbacksForMonotonicAnimations;
+    m_needsDisplayRefreshCallbacksForMonotonicAnimations = needsDisplayRefreshCallbacks;
+    m_hasHighImpactMonotonicAnimations = hasHighImpactMonotonicAnimations;
+
+    RetainPtr displayLinkHandler = this->displayLinkHandler();
+    if (needsDisplayRefreshCallbacks) {
+        if (needsDisplayRefreshCallbacksChanged || wantsHighFrameRate() != [displayLinkHandler wantsHighFrameRate])
+            scheduleDisplayLinkAndSetFrameRate();
         return;
-
-    if (RefPtr page = this->page()) {
-        if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
-            m_hasHighImpactMonotonicAnimations = scrollingCoordinatorProxy->hasHighImpactMonotonicAnimations();
     }
+
+    if (wantsHighFrameRate() != [displayLinkHandler wantsHighFrameRate])
+        [displayLinkHandler setWantsHighFrameRate:wantsHighFrameRate()];
+    if (needsDisplayRefreshCallbacksChanged)
+        pauseDisplayLinkIfNeeded();
 }
 
-void RemoteLayerTreeDrawingAreaProxyIOS::pauseDisplayRefreshCallbacksForMonotonicAnimations()
-{
-    m_needsDisplayRefreshCallbacksForMonotonicAnimations = false;
-    m_hasHighImpactMonotonicAnimations = false;
-    pauseDisplayLinkIfNeeded();
-}
-
-void RemoteLayerTreeDrawingAreaProxyIOS::scheduleDisplayLinkAndSetFrameRate()
+bool RemoteLayerTreeDrawingAreaProxyIOS::wantsHighFrameRate() const
 {
     auto shouldUpdateMonotonicAnimationsAtHighFrameRate = [&] {
         return page() && protect(page()->preferences())->threadedTimeBasedAnimationsAtHighFrameRateEnabled();
@@ -502,10 +500,14 @@ void RemoteLayerTreeDrawingAreaProxyIOS::scheduleDisplayLinkAndSetFrameRate()
     };
 
     ASSERT_IMPLIES(m_hasHighImpactMonotonicAnimations, m_needsDisplayRefreshCallbacksForMonotonicAnimations);
-    auto wantsHighFrameRate = (m_hasHighImpactMonotonicAnimations && shouldUpdateMonotonicAnimationsAtHighFrameRate())
+    return (m_hasHighImpactMonotonicAnimations && shouldUpdateMonotonicAnimationsAtHighFrameRate())
         || (m_needsDisplayRefreshCallbacksForDrawing && shouldUpdatePageRenderingAtHighFrameRate());
+}
+
+void RemoteLayerTreeDrawingAreaProxyIOS::scheduleDisplayLinkAndSetFrameRate()
+{
     RetainPtr displayLinkHandler = this->displayLinkHandler();
-    [displayLinkHandler setWantsHighFrameRate:wantsHighFrameRate];
+    [displayLinkHandler setWantsHighFrameRate:wantsHighFrameRate()];
     [displayLinkHandler schedule];
 }
 
@@ -537,8 +539,16 @@ UIView *RemoteLayerTreeDrawingAreaProxyIOS::viewWithLayerIDForTesting(WebCore::P
     return nil;
 }
 
-void RemoteLayerTreeDrawingAreaProxyIOS::didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction& transaction, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>& mainFrameData, const TransactionID&)
+void RemoteLayerTreeDrawingAreaProxyIOS::didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>& mainFrameData, const TransactionID&)
 {
+#if ENABLE(THREADED_ANIMATIONS)
+    if (RefPtr page = this->page()) {
+        if (RefPtr scrollingCoordinatorProxy = page->scrollingCoordinatorProxy())
+            scrollingCoordinatorProxy->setAnimatedContentVisibilityNeedsUpdate();
+    }
+    updateDisplayRefreshCallbacksForMonotonicAnimations();
+#endif
+
     if (!mainFrameData)
         return;
 
@@ -548,13 +558,6 @@ void RemoteLayerTreeDrawingAreaProxyIOS::didCommitLayerTree(IPC::Connection&, co
 
     Ref scrollingCoordinatorProxy = *page->scrollingCoordinatorProxy();
     page->setScrollPerformanceDataCollectionEnabled(scrollingCoordinatorProxy->scrollingPerformanceTestingEnabled());
-
-    if (transaction.createdLayers().size() > 0) {
-        if (auto* scrollPerfData = page->scrollingPerformanceData()) {
-            auto visibleRect = WebCore::FloatRect(transaction.scrollPosition(), mainFrameData->baseLayoutViewportSize);
-            scrollPerfData->didCommitLayerTree(visibleRect);
-        }
-    }
 }
 
 } // namespace WebKit

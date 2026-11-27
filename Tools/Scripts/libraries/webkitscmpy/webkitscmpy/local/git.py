@@ -452,6 +452,7 @@ class Git(Scm):
         'webkitscmpy.cc-radar': ['true', 'false'],
         'webkitscmpy.set-upstream-on-push': ['false', 'true'],
         'webkitscmpy.update-title': ['true', 'false'],
+        'webkitscmpy.title-style': ['top-commit', 'common-prefix'],
     }
     CONFIG_LOCATIONS = ['global', 'repository', 'project']
     MERGE_BASE_SHARD_SIZE = 512  # Windows has a maximum of ~32K characters in a single command
@@ -1405,23 +1406,17 @@ class Git(Scm):
                         candidate_remotes.append(candidate)
 
             for remote_name in candidate_remotes:
-                rc = run(
-                    [self.executable(), 'checkout'] + ['-B', branch, 'remotes/{}/{}'.format(remote_name, branch)],
-                    cwd=self.root_path, capture_output=True,
-                ).returncode
-                if not rc:
-                    return self.commit()
-                if rc == 128:
-                    command = [self.executable(), 'fetch', remote_name]
-                    if prune is None:
-                        if self.config()['webkitscmpy.auto-prune'] == 'true':
-                            command.append('--prune')
-                        elif name in self.source_remotes() and self.config()['webkitscmpy.auto-prune'] == 'only-source':
-                            command.append('--prune')
-                    log.info(f'Fetching {remote_name}...')
-                    run(command, cwd=self.root_path, capture_output=True)
+                command = [self.executable(), 'fetch', remote_name]
+                if prune is None:
+                    if self.config()['webkitscmpy.auto-prune'] == 'true':
+                        command.append('--prune')
+                    elif name in self.source_remotes() and self.config()['webkitscmpy.auto-prune'] == 'only-source':
+                        command.append('--prune')
+                log.info(f'Fetching {remote_name}...')
+                if run(command, cwd=self.root_path, capture_output=True).returncode:
+                    log.warning(f'Failed to fetch {remote_name}, local {remote_name}/{branch} may be stale')
                 if not run(
-                    [self.executable(), 'checkout'] + ['-B', branch, '{}/{}'.format(remote_name, branch)] + log_arg,
+                    [self.executable(), 'checkout'] + ['-B', branch, 'remotes/{}/{}'.format(remote_name, branch)] + log_arg,
                     cwd=self.root_path,
                 ).returncode:
                     return self.commit()

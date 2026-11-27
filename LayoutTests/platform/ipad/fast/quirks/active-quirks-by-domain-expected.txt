@@ -19,7 +19,8 @@ https://actesting.org/
 https://www.affirm.com/
     (none)
 https://www.airindiaexpress.com/
-    NeedsAirIndiaExpressLayeringQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .new-trip-type-and-guest-selection-container { z-index: 2; }
 https://www.amazon.com/
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
         elementSelector: #magnifierLens, :has(+ #magnifierLens)
@@ -39,6 +40,8 @@ https://amazon.design/
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.apple.com/
     EnsureCaptionVisibilityInFullscreenAndPictureInPicture
+https://www.arbor-technology.com/
+    ShouldDisableCSSSizeShorthandQuirk
 https://as.com/
     (none)
 https://www.att.com/
@@ -52,10 +55,10 @@ https://tieba.baidu.com/
 https://www.notbaidu.com/
     (none)
 https://www.bbc.co.uk/
-    NeedsDarkAppearanceWithoutColorSchemeQuirk
+    NeedsPerDocumentAutoplayBehaviorQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://www.bbc.com/
-    NeedsDarkAppearanceWithoutColorSchemeQuirk
+    NeedsPerDocumentAutoplayBehaviorQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://codepen.io/
     ShouldEnableSpeakerSelectionPermissionsPolicyQuirk
@@ -138,9 +141,10 @@ https://www.espn.com/
     NeedsSuppressedPauseEventOnFullscreenExitQuirk
     ShouldDisableEndFullscreenEventWhenEnteringPictureInPictureFromFullscreenQuirk
 https://www.facebook.com/
-    NeedsFacebookRemoveNotSupportedQuirk
     NeedsFacebookStoriesCreationFormQuirk
         secondaryURL: [*://*/stories/create*]
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.xnw9j1v { display: none; }
     RequiresUserGestureToPauseInPictureInPictureQuirk
     ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
@@ -157,8 +161,10 @@ https://www.forbes.com/
 https://gizmodo.com/
     NeedsFullscreenDisplayNoneQuirk
 https://play.geforcenow.com/
+    (none)
+https://www.goodreads.com/
     NeedsStyleSheetInjectedQuirk
-        styleSheet: div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }
+        styleSheet: .TruncatedContent:focus-visible, .TruncatedContent__text:focus-visible { outline-offset: inset; }
 https://www.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
@@ -184,9 +190,10 @@ https://www.google.co.jp/search
 https://www.google.com/maps
     MayNeedToIgnoreContentObservation
         elementSelector: [aria-label=Suggestions], [aria-label=Suggestions] *
-    NeedsGoogleMapsScrollingQuirk
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: body.PUtLdf { touch-action: auto; }
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -194,9 +201,10 @@ https://www.google.com/maps
 https://www.google.com/maps/
     MayNeedToIgnoreContentObservation
         elementSelector: [aria-label=Suggestions], [aria-label=Suggestions] *
-    NeedsGoogleMapsScrollingQuirk
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: body.PUtLdf { touch-action: auto; }
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -204,9 +212,10 @@ https://www.google.com/maps/
 https://www.google.com/maps/@37.33,-122.01,15z
     MayNeedToIgnoreContentObservation
         elementSelector: [aria-label=Suggestions], [aria-label=Suggestions] *
-    NeedsGoogleMapsScrollingQuirk
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: body.PUtLdf { touch-action: auto; }
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -219,15 +228,18 @@ https://www.google.com/mapsearch
 https://maps.google.com/maps/
     MayNeedToIgnoreContentObservation
         elementSelector: [aria-label=Suggestions], [aria-label=Suggestions] *
-    NeedsGoogleMapsScrollingQuirk
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: body.PUtLdf { touch-action: auto; }
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldDispatchSimulatedMouseEventsQuirk
 https://docs.google.com/
     InputMethodUsesCorrectKeyEventOrder
+    MayNeedToIgnoreContentObservation
+        elementSelector: .navigation-item-list, .navigation-item-list *
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
@@ -271,49 +283,49 @@ https://www.hbomax.com/
 https://play.hbomax.com/
     ShouldEnableFontLoadingAPIQuirk
 https://www.carrentals.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.cheaptickets.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.chess.com/
     (none)
 https://www.ebookers.de/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.expedia.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.expedia.fr/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hoteis.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hoteles.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hotels.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.mrjet.se/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.orbitz.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.travelocity.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.travelocity.ca/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.wotif.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.wotif.co.nz/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hulu.com/
     ImplicitMuteWhenVolumeSetToZero
     NeedsCanPlayAfterSeekedQuirk
@@ -400,9 +412,10 @@ https://www.messenger.com/
     ShouldEnableRTCEncodedStreamsQuirk
     ShouldEnableRemoteTrackLabelQuirk
 https://www.netflix.com/
-    NeedsNetflixVolumeSliderQuirk
     NeedsPerDocumentAutoplayBehaviorQuirk
     NeedsSeekingSupportDisabledQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div[data-uia="scrubber"][aria-orientation="vertical"] { touch-action: none; }
 https://www.nba.com/
     NeedsPerDocumentAutoplayBehaviorQuirk
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
@@ -448,12 +461,16 @@ https://www.premierleague.com/
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldDispatchPlayPauseEventsOnResume
     ShouldIgnorePlaysInlineRequirementQuirk
+https://www.purpletie.com/
+    ShouldDisableCSSSizeShorthandQuirk
 https://www.ralphlauren.com/
     ShouldIgnoreAriaForFastPathContentObservationCheckQuirk
 https://www.reddit.com/
     RequiresUserGestureToPauseInPictureInPictureQuirk
     ShouldDisableScrollAnchoringQuirk
         documentSelector: #sink-it-back-to-top
+https://routine.co/
+    ShouldDisableCSSSizeShorthandQuirk
 https://www.scribd.com/
     NeedsReuseLiveRangeForSelectionUpdateQuirk
 https://www.sfusd.edu/
@@ -539,8 +556,8 @@ https://www.thetimes.com/
 https://www.tiktok.com/
     NeedsChromeCompatibilityUserAgentQuirk
         chromeCompatibilityVersion: 136
-    NeedsTikTokCaptchaSliderTouchActionQuirk
-        elementSelector: #secsdk-captcha-drag-wrapper
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: #secsdk-captcha-drag-wrapper { touch-action: none; }
     NeedsTikTokCommentsOverflowingContentQuirk
         elementSelector: [class*=DivBrowserModeContainer] > [class*=DivContentContainer]
     NeedsTikTokVideoOverflowingContentQuirk
@@ -602,8 +619,13 @@ https://x.com/
 https://twitter.com/
     (none)
 https://www.yahoo.com/
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.vjs-volume-control { min-height: 100%; align-items: center; }
+    ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
+https://news.yahoo.co.jp/
     NeedsYahooVolumeSliderQuirk
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
+    ShouldDisableCSSSizeShorthandQuirk
 https://news.ycombinator.com/
     ShouldIgnoreTextAutoSizingQuirk
 https://ycombinator.com/

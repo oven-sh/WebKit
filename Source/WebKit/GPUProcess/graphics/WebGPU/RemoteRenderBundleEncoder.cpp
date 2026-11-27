@@ -43,7 +43,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteRenderBundleEncoder);
 
-RemoteRenderBundleEncoder::RemoteRenderBundleEncoder(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, ::WebGPU::RenderBundleEncoder& renderBundleEncoder, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
+RemoteRenderBundleEncoder::RemoteRenderBundleEncoder(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, ::WebGPU::RenderBundleEncoder& renderBundleEncoder, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPURenderBundleEncoderIdentifier identifier)
     : m_backing(renderBundleEncoder)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
@@ -66,9 +66,9 @@ void RemoteRenderBundleEncoder::stopListeningForIPC()
     protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteRenderBundleEncoder::messageReceiverName(), m_identifier.toUInt64());
 }
 
-void RemoteRenderBundleEncoder::setPipeline(WebGPUIdentifier renderPipeline)
+void RemoteRenderBundleEncoder::setPipeline(WebGPURenderPipelineIdentifier renderPipeline)
 {
-    auto convertedRenderPipeline = protect(m_objectHeap)->convertRenderPipelineFromBacking(renderPipeline);
+    auto convertedRenderPipeline = protect(m_objectHeap)->get(renderPipeline);
     ASSERT(convertedRenderPipeline);
     if (!convertedRenderPipeline)
         return;
@@ -76,9 +76,9 @@ void RemoteRenderBundleEncoder::setPipeline(WebGPUIdentifier renderPipeline)
     protect(m_backing)->setPipeline(protect(*convertedRenderPipeline));
 }
 
-void RemoteRenderBundleEncoder::setIndexBuffer(WebGPUIdentifier buffer, ::WebGPU::IndexFormat indexFormat, uint64_t offset, std::optional<uint64_t> size)
+void RemoteRenderBundleEncoder::setIndexBuffer(WebGPUBufferIdentifier buffer, ::WebGPU::IndexFormat indexFormat, uint64_t offset, std::optional<uint64_t> size)
 {
-    RefPtr convertedBuffer = protect(m_objectHeap)->convertBufferFromBacking(buffer);
+    RefPtr convertedBuffer = protect(m_objectHeap)->get(buffer);
     ASSERT(convertedBuffer);
     if (!convertedBuffer)
         return;
@@ -86,9 +86,9 @@ void RemoteRenderBundleEncoder::setIndexBuffer(WebGPUIdentifier buffer, ::WebGPU
     protect(m_backing)->setIndexBuffer(protect(*convertedBuffer), indexFormat, offset, size);
 }
 
-void RemoteRenderBundleEncoder::setVertexBuffer(uint32_t slot, WebGPUIdentifier buffer, uint64_t offset, std::optional<uint64_t> size)
+void RemoteRenderBundleEncoder::setVertexBuffer(uint32_t slot, WebGPUBufferIdentifier buffer, uint64_t offset, std::optional<uint64_t> size)
 {
-    RefPtr convertedBuffer = protect(m_objectHeap)->convertBufferFromBacking(buffer);
+    RefPtr convertedBuffer = protect(m_objectHeap)->get(buffer);
     ASSERT(convertedBuffer);
     if (!convertedBuffer)
         return;
@@ -115,9 +115,9 @@ void RemoteRenderBundleEncoder::drawIndexed(uint32_t indexCount, uint32_t instan
     protect(m_backing)->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
 }
 
-void RemoteRenderBundleEncoder::drawIndirect(WebGPUIdentifier indirectBuffer, uint64_t indirectOffset)
+void RemoteRenderBundleEncoder::drawIndirect(WebGPUBufferIdentifier indirectBuffer, uint64_t indirectOffset)
 {
-    RefPtr convertedIndirectBuffer = protect(m_objectHeap)->convertBufferFromBacking(indirectBuffer);
+    RefPtr convertedIndirectBuffer = protect(m_objectHeap)->get(indirectBuffer);
     ASSERT(convertedIndirectBuffer);
     if (!convertedIndirectBuffer)
         return;
@@ -125,9 +125,9 @@ void RemoteRenderBundleEncoder::drawIndirect(WebGPUIdentifier indirectBuffer, ui
     protect(m_backing)->drawIndirect(protect(*convertedIndirectBuffer), indirectOffset);
 }
 
-void RemoteRenderBundleEncoder::drawIndexedIndirect(WebGPUIdentifier indirectBuffer, uint64_t indirectOffset)
+void RemoteRenderBundleEncoder::drawIndexedIndirect(WebGPUBufferIdentifier indirectBuffer, uint64_t indirectOffset)
 {
-    RefPtr convertedIndirectBuffer = protect(m_objectHeap)->convertBufferFromBacking(indirectBuffer);
+    RefPtr convertedIndirectBuffer = protect(m_objectHeap)->get(indirectBuffer);
     ASSERT(convertedIndirectBuffer);
     if (!convertedIndirectBuffer)
         return;
@@ -135,7 +135,7 @@ void RemoteRenderBundleEncoder::drawIndexedIndirect(WebGPUIdentifier indirectBuf
     protect(m_backing)->drawIndexedIndirect(protect(*convertedIndirectBuffer), indirectOffset);
 }
 
-void RemoteRenderBundleEncoder::setBindGroup(uint32_t index, std::optional<WebGPUIdentifier> bindGroup,
+void RemoteRenderBundleEncoder::setBindGroup(uint32_t index, std::optional<WebGPUBindGroupIdentifier> bindGroup,
     std::optional<Vector<uint32_t>>&& dynamicOffsets)
 {
     if (!bindGroup) {
@@ -143,7 +143,7 @@ void RemoteRenderBundleEncoder::setBindGroup(uint32_t index, std::optional<WebGP
         return;
     }
 
-    RefPtr convertedBindGroup = protect(m_objectHeap)->convertBindGroupFromBacking(*bindGroup);
+    RefPtr convertedBindGroup = protect(m_objectHeap)->get(*bindGroup);
     ASSERT(convertedBindGroup);
     if (!convertedBindGroup)
         return;
@@ -166,13 +166,18 @@ void RemoteRenderBundleEncoder::insertDebugMarker(String&& markerLabel)
     protect(m_backing)->insertDebugMarker(WTF::move(markerLabel));
 }
 
-void RemoteRenderBundleEncoder::finish(const WebGPU::RenderBundleDescriptor& descriptor, WebGPUIdentifier identifier)
+void RemoteRenderBundleEncoder::finish(const WebGPU::RenderBundleDescriptor& descriptor, WebGPURenderBundleIdentifier identifier)
 {
     Ref objectHeap = m_objectHeap.get();
     auto renderBundle = protect(m_backing)->finish(descriptor);
     MESSAGE_CHECK(renderBundle);
     auto remoteRenderBundle = RemoteRenderBundle::create(*renderBundle, objectHeap, protect(m_streamConnection), protect(m_gpu), identifier);
     objectHeap->addObject(identifier, remoteRenderBundle);
+}
+
+void RemoteRenderBundleEncoder::makeInvalid(String&& error)
+{
+    protect(m_backing)->makeInvalid(WTF::move(error));
 }
 
 void RemoteRenderBundleEncoder::setLabel(String&& label)

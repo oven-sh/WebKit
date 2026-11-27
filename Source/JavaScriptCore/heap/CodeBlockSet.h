@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CollectionScope.h"
+#include <JavaScriptCore/GCConductor.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -52,7 +53,7 @@ public:
 
     void mark(const AbstractLocker&, CodeBlock* candidateCodeBlock);
     
-    void clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM&);
+    void clearCurrentlyExecutingAndRemoveDeadCodeBlocks(VM&) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
     bool contains(const AbstractLocker&, void* candidateCodeBlock);
     Lock& getLock() LIFETIME_BOUND WTF_RETURNS_LOCK(m_lock) { return m_lock; }
@@ -75,8 +76,8 @@ public:
     void remove(CodeBlock*);
 
 private:
-    UncheckedKeyHashSet<CodeBlock*> m_codeBlocks;
-    UncheckedKeyHashSet<CodeBlock*> m_currentlyExecuting;
+    HashSet<CodeBlock*> m_codeBlocks;
+    HashSet<CodeBlock*> m_currentlyExecuting;
     Lock m_lock;
 };
 

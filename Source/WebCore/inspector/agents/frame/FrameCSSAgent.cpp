@@ -417,12 +417,14 @@ Inspector::CommandResult<void> FrameCSSAgent::setStyleSheetText(const Inspector:
     if (!inspectorStyleSheet)
         return makeUnexpected(errorString);
 
-    // FIXME <https://webkit.org/b/314244>: Integrate with InspectorHistory for undo/redo support.
-    auto result = inspectorStyleSheet->setText(text);
-    if (result.hasException())
-        return makeUnexpected(InspectorDOMAgent::toErrorString(result.releaseException()));
+    CheckedPtr domAgent = protect(m_instrumentingAgents)->persistentFrameDOMAgent();
+    if (!domAgent)
+        return makeUnexpected("DOM domain must be enabled"_s);
 
-    inspectorStyleSheet->reparseStyleSheet(text);
+    auto performResult = domAgent->history()->perform(makeUnique<SetStyleSheetTextAction>(inspectorStyleSheet.get(), text));
+    if (performResult.hasException())
+        return makeUnexpected(InspectorDOMAgent::toErrorString(performResult.releaseException()));
+
     return { };
 }
 
@@ -531,12 +533,14 @@ Inspector::CommandResult<Ref<Inspector::Protocol::CSS::CSSRule>> FrameCSSAgent::
 
     auto action = makeUnique<AddRuleAction>(inspectorStyleSheet.get(), selector);
     auto& rawAction = *action;
-    auto performResult = domAgent->history()->perform(WTF::move(action));
+    InspectorCSSId newRuleId;
+    auto performResult = domAgent->history()->perform(WTF::move(action), [&] {
+        newRuleId = rawAction.newRuleId();
+    });
     if (performResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(performResult.releaseException()));
 
-    // FIXME <https://webkit.org/b/317684>: Reconsider whether accessing rawAction.newRuleId here is safe.
-    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(rawAction.newRuleId())));
+    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(newRuleId)));
     if (!rule)
         return makeUnexpected("Internal error: missing style sheet"_s);
 
@@ -616,8 +620,7 @@ Inspector::CommandResult<Ref<JSON::ArrayOf<Inspector::Protocol::CSS::CSSProperty
 
 Inspector::CommandResult<Ref<JSON::ArrayOf<String>>> FrameCSSAgent::getSupportedSystemFontFamilyNames()
 {
-    // FIXME: <https://webkit.org/b/316844>: Consider how to deal with global CSS commands.
-    return makeUnexpected("Not supported on frame targets"_s);
+    return InspectorCSSAgent::systemFontFamilyNames();
 }
 
 Inspector::CommandResult<void> FrameCSSAgent::forcePseudoState(Inspector::Protocol::DOM::NodeId nodeId, Ref<JSON::Array>&& forcedPseudoClasses)

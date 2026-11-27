@@ -63,6 +63,7 @@ public:
     DECLARE_VISIT_AGGREGATE;
 
     RegExp* lookup(VM&, const WTF::String& patternString, OptionSet<Yarr::Flags>);
+    RegExp* lookup(VM&, StringImpl* patternString, OptionSet<Yarr::Flags>);
 #if ENABLE(AOT)
     RegExp* lookup(StringView pattern, unsigned hashOfPattern, OptionSet<Yarr::Flags>);
 #endif

@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS)
+#if USE(COORDINATED_GRAPHICS) && !OS(ANDROID)
 #include "DMABufBufferAttributes.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
@@ -83,6 +83,7 @@ public:
 #endif
     bool isQualcommVideoFrameBuffer() const;
     static std::optional<Vector<EGLint>> buildEGLImageAttributes(const Attributes&, Attributes::EnableModifiers = Attributes::EnableModifiers::Yes);
+    static Vector<uint32_t, 4> allPlaneFormats(uint32_t fourcc);
 
     bool importIfNeeded();
     sk_sp<SkColorSpace> skiaColorSpace() const;
@@ -109,4 +110,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS)
+#endif // USE(COORDINATED_GRAPHICS) && !OS(ANDROID)

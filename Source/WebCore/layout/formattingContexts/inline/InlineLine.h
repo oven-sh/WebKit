@@ -36,8 +36,7 @@
 #include <unicode/ubidi.h>
 #include <wtf/Range.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct ExpansionInfo;
 class InlineContentAligner;
@@ -198,7 +197,7 @@ inline bool Line::hasContent() const
     if (m_runs.isEmpty())
         return false;
     for (auto& run : m_runs | std::views::reverse) {
-        if (run.isContentful() && !run.isListMarker())
+        if (run.isContentful())
             return true;
     }
     return false;
@@ -241,5 +240,4 @@ inline size_t Line::HangingContent::length() const
     return length;
 }
 
-}
 }

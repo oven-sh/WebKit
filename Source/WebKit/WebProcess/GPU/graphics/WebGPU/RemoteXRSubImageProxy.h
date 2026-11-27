@@ -27,6 +27,7 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "RemoteDeviceProxy.h"
 #include "RemoteGPUProxy.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUCppAPI.h>
@@ -34,21 +35,22 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
 class RemoteTextureProxy;
 
 class RemoteXRSubImageProxy final : public ::WebGPU::XRSubImage {
     WTF_MAKE_TZONE_ALLOCATED(RemoteXRSubImageProxy);
 public:
-    static Ref<RemoteXRSubImageProxy> create(Ref<RemoteGPUProxy>&& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    // The device is the one of the XR binding, which creates the textures of the sub-image.
+    static Ref<RemoteXRSubImageProxy> create(RemoteDeviceProxy& device, WebGPUXRSubImageIdentifier identifier)
     {
-        return adoptRef(*new RemoteXRSubImageProxy(WTF::move(parent), convertToBackingContext, identifier));
+        return adoptRef(*new RemoteXRSubImageProxy(device, identifier));
     }
 
     virtual ~RemoteXRSubImageProxy();
 
     RemoteGPUProxy& parent() { return m_parent; }
     RemoteGPUProxy& root() { return m_parent; }
+    WebGPUXRSubImageIdentifier backing() const { return m_backing; }
 
     RefPtr<::WebGPU::Texture> colorTexture() final;
     RefPtr<::WebGPU::Texture> depthStencilTexture() final;
@@ -56,16 +58,12 @@ public:
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteXRSubImageProxy(Ref<RemoteGPUProxy>&&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteXRSubImageProxy(RemoteDeviceProxy&, WebGPUXRSubImageIdentifier);
 
     RemoteXRSubImageProxy(const RemoteXRSubImageProxy&) = delete;
     RemoteXRSubImageProxy(RemoteXRSubImageProxy&&) = delete;
     RemoteXRSubImageProxy& operator=(const RemoteXRSubImageProxy&) = delete;
     RemoteXRSubImageProxy& operator=(RemoteXRSubImageProxy&&) = delete;
-
-    WebGPUIdentifier backing() const { return m_backing; }
 
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
@@ -78,9 +76,9 @@ private:
         return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUXRSubImageIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_parent;
+    const Ref<RemoteDeviceProxy> m_device;
 
     const RefPtr<RemoteTextureProxy> m_currentTexture;
     const RefPtr<RemoteTextureProxy> m_currentDepthTexture;

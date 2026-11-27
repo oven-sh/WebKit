@@ -37,7 +37,7 @@ class RenderMultiColumnFlow final : public RenderFragmentedFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMultiColumnFlow);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMultiColumnFlow);
 public:
-    RenderMultiColumnFlow(Document&, Style::ComputedStyle&&);
+    RenderMultiColumnFlow(Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMultiColumnFlow();
 
     RenderBlockFlow* multiColumnBlockFlow() const { return downcast<RenderBlockFlow>(parent()); }
@@ -45,7 +45,7 @@ public:
     NODELETE RenderMultiColumnSet* firstMultiColumnSet() const;
     NODELETE RenderMultiColumnSet* lastMultiColumnSet() const;
     NODELETE RenderBox* firstColumnSetOrSpanner() const;
-    bool hasColumnSpanner() const { return !m_spannerMap.isEmptyIgnoringNullReferences(); }
+    bool hasColumnSpanner() const { return !m_spannerMap.computeIsEmpty(); }
     NODELETE static RenderBox* nextColumnSetOrSpannerSiblingOf(const RenderBox*);
     NODELETE static RenderBox* previousColumnSetOrSpannerSiblingOf(const RenderBox*);
 

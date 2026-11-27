@@ -29,7 +29,7 @@ extension WTF.String {
     var description: Swift.String {
         // We could possibly make this quicker by treating a C++ span as
         // a Sequence. For now, we want to avoid unsafe as much as possible.
-        Swift.String(utf8(WTF.LenientConversion).toStdString())
+        Swift.String(WTF.makeUTF8CString(self).toStdString())
     }
 }
 
@@ -73,13 +73,13 @@ extension WTF.String {
         #if compiler(>=6.4)
         self = string.utf8CString.span.withUnsafeBufferPointer { ptr in
             // swift-format-ignore: NeverForceUnwrap
-            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: string.utf8CString.count))
+            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: ptr.count - 1))
             return unsafe WTF.String.fromUTF8(cppspan)
         }
         #else
         self = unsafe string.utf8CString.span.withUnsafeBufferPointer { ptr in
             // swift-format-ignore: NeverForceUnwrap
-            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: string.utf8CString.count))
+            let cppspan = unsafe SpanConstChar(UnsafeBufferPointer(start: ptr.baseAddress!, count: ptr.count - 1))
             return unsafe WTF.String.fromUTF8(cppspan)
         }
         #endif

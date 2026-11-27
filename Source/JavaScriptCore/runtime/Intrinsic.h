@@ -43,6 +43,7 @@ namespace JSC {
     /* Call intrinsics. */ \
     macro(NoIntrinsic) \
     macro(AbsIntrinsic) \
+    macro(SignIntrinsic) \
     macro(ACosIntrinsic) \
     macro(ASinIntrinsic) \
     macro(ATanIntrinsic) \
@@ -249,6 +250,7 @@ namespace JSC {
     macro(TypedArrayByteLengthIntrinsic) \
     macro(DataViewByteLengthIntrinsic) \
     macro(TypedArrayByteOffsetIntrinsic) \
+    macro(TypedArrayBufferIntrinsic) \
     macro(UnderscoreProtoIntrinsic) \
     macro(SpeciesGetterIntrinsic) \
     macro(WebAssemblyInstanceExportsIntrinsic) \

@@ -43,10 +43,10 @@ public:
 
     void updateEnabledState(Scrollbar&) override;
 
-    bool paint(Scrollbar&, GraphicsContext&, const IntRect& damageRect) override;
+    bool paint(Scrollbar&, GraphicsContext&, const IntRect& damageRect, OptionSet<ScrollbarPaintBehavior>) override;
     void paintScrollCorner(ScrollableArea&, GraphicsContext&, const IntRect& cornerRect) override;
 
-    int scrollbarThickness(ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override;
+    int scrollbarThickness(ScrollbarStyle, ScrollbarWidth = ScrollbarWidth::Auto, OverlayScrollbarSizeRelevancy = OverlayScrollbarSizeRelevancy::IncludeOverlayScrollbarSize) override;
     
     bool supportsControlTints() const override { return true; }
     bool usesOverlayScrollbars() const  override;
@@ -63,7 +63,7 @@ public:
 
     NODELETE static NSScrollerImp *scrollerImpForScrollbar(Scrollbar&);
 
-    void setPaintCharacteristicsForScrollbar(Scrollbar&);
+    static void setPaintCharacteristicsForScrollbar(NSScrollerImp *, Scrollbar&);
 
     NODELETE static bool isCurrentlyDrawingIntoLayer();
     NODELETE static void setIsCurrentlyDrawingIntoLayer(bool);

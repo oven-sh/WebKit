@@ -30,8 +30,7 @@
 #include "InlineLineBuilder.h"
 #include <WebCore/TextUtil.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class Box;
 class ElementBox;
@@ -46,23 +45,23 @@ public:
 
 private:
     void setVerticalPropertiesForInlineLevelBox(const LineBox&, InlineLevelBox&) const;
+    void setAlignmentBaselineOffsetIfApplicable(const LineBox&, InlineLevelBox&) const;
     void setLayoutBoundsForInlineBox(InlineLevelBox&, FontBaseline) const;
     void adjustInlineBoxHeightsForLineBoxContainIfApplicable(LineBox&);
     void computeLineBoxGeometry(LineBox&) const;
     InlineLevelBox::AscentAndDescent enclosingAscentDescentWithFallbackFonts(const InlineLevelBox&, const TextUtil::FallbackFontList& fallbackFontsForContent, FontBaseline) const;
     TextUtil::FallbackFontList collectFallbackFonts(const InlineLevelBox& parentInlineBox, const Line::Run&, const Style::ComputedStyle&);
-    void adjustMarginStartForListMarker(const ElementBox& listMarkerBox, LayoutUnit nestedListMarkerMarginStart, InlineLayoutUnit rootInlineBoxOffset) const;
     InlineLayoutUnit applyTextBoxTrimOnLineBoxIfNeeded(InlineLayoutUnit lineBoxLogicalHeight, LineBox&) const;
 
     void constructInlineLevelBoxes(LineBox&);
     void constructBlockContent(LineBox&);
     void adjustIdeographicBaselineIfApplicable(LineBox&);
-    void adjustOutsideListMarkersPosition(LineBox&);
-    NODELETE void stretchRootInlineBoxForExcludedMarkers(LineBox&) const;
+    NODELETE void stretchRootInlineBoxForOutsideMarkers(LineBox&) const;
     NODELETE void expandAboveRootInlineBox(LineBox&, InlineLayoutUnit) const;
 
     bool isFirstFormattedLine() const { return lineLayoutResult().isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes; }
     bool isLastLine() const { return lineLayoutResult().isFirstLast.isLastLineWithInlineContent; }
+    bool isLastLineBeforeClampPointWithTrimEnd() const;
     const InlineFormattingContext& formattingContext() const LIFETIME_BOUND { return m_inlineFormattingContext; }
     const LineLayoutResult& lineLayoutResult() const LIFETIME_BOUND { return m_lineLayoutResult; }
     const ElementBox& rootBox() const { return formattingContext().root(); }
@@ -77,9 +76,6 @@ private:
     bool m_fallbackFontRequiresIdeographicBaseline { false };
     bool m_lineHasNonLineSpanningRubyContent { false };
     HashMap<const InlineLevelBox*, TextUtil::FallbackFontList> m_fallbackFontsForInlineBoxes;
-    Vector<size_t> m_outsideListMarkers;
 };
 
 }
-}
-

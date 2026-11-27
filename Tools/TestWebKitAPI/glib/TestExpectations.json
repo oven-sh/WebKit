@@ -13,25 +13,6 @@
             }
         }
     },
-    "TestWebKitAccessibility": {
-        "subtests": {
-            "/webkit/WebKitAccessibility/accessible/basic-hierarchy": {
-                "expected": {"gtk": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/246471"}}
-            },
-            "/webkit/WebKitAccessibility/text/state-changed": {
-                "expected": {"gtk": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/256557"}}
-            },
-            "/webkit/WebKitAccessibility/selection/listbox": {
-                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/273682"}}
-            },
-            "/webkit/WebKitAccessibility/document/load-events": {
-                "expected": {"gtk": {"status": ["FAIL"], "bug": "webkit.org/b/273682"}}
-            },
-            "/webkit/WebKitAccessibility/accessible/state-changed/focus": {
-                "expected": {"gtk": {"status": ["FAIL", "PASS"], "bug": "webkit.org/b/279009"}}
-            }
-        }
-    },
     "TestPrinting": {
         "subtests": {
             "/webkit/WebKitPrintOperation/custom-widget": {
@@ -72,6 +53,9 @@
             },
             "/webkit/WebKitWebView/fullscreen": {
                 "expected": {"gtk": {"status": ["SKIP"], "bug": "webkit.org/b/248203"}}
+            },
+            "/webkit/WebKitWebView/fullscreen-web-process-terminated": {
+                "expected": {"gtk": {"status": ["SKIP"], "bug": "webkit.org/b/248203"}}
             }
         }
     },
@@ -80,6 +64,13 @@
     },
     "TestInspectorServer": {
         "expected": {"all": {"slow": true}}
+    },
+    "TestAutomationSession": {
+        "subtests": {
+            "/webkit/WebKitAutomationSession/request-session": {
+                "expected": {"all": {"slow": true }}
+            }
+        }
     },
     "TestLoaderClient": {
         "subtests": {
@@ -104,15 +95,6 @@
             },
             "RunLoopObserver.CrossThread_TwoObserversOnDifferentLoops": {
                 "expected": {"all": {"status": ["CRASH", "PASS"], "bug": "webkit.org/b/315297"}}
-            },
-            "PushDatabase.ManyInFlightOps": {
-                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
-            },
-            "PushDatabase.StartsFromScratchOnDowngrade": {
-                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
-            },
-            "PushDatabase.CanMigrateV2DatabaseToCurrentSchema": {
-                "expected": {"all": {"status": ["CRASH"], "bug": "webkit.org/b/323618"}}
             },
             "FontCascadeTest.ComplexTextRetainsSystemFallbackFonts": {
                 "expected": {"all": {"status": ["FAIL"], "bug": "webkit.org/b/323619"}}
@@ -240,11 +222,7 @@
     "TestWebKitPolicyClient": {
         "subtests": {
             "/webkit/WebKitPolicyClient/autoplay-policy": {
-                "expected": {"gtk": {"status": ["TIMEOUT", "PASS"], "bug": "webkit.org/b/222091"},
-                             "wpe": {"status": ["PASS", "FAIL", "TIMEOUT"], "bug": "webkit.org/b/281986"}}
-            },
-            "/webkit/WebKitPolicyClient/new-window-policy": {
-                "expected": {"all": {"status": ["FAIL", "PASS"], "bug": "webkit.org/b/281812"}}
+                "expected": {"all": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/222091"}}
             }
         }
     },
@@ -275,9 +253,6 @@
     },
     "TestWebProcessExtensions": {
         "subtests": {
-            "/webkit/WebKitWebProcessExtension/dom-document-title": {
-                "expected": {"gtk": {"status": ["FAIL", "PASS"]}}
-            },
             "/webkit/WebKitWebProcessExtension/page-id": {
                 "expected": {
                     "all": {"status": ["FAIL", "PASS"], "bug": "webkit.org/b/264505"},
@@ -319,16 +294,6 @@
         "subtests": {
             "/webkit/WebKitWebView/file-chooser-request": {
                 "expected": {"gtk": {"status": ["PASS", "TIMEOUT"], "bug": "webkit.org/b/279352"}}
-            },
-            "/webkit/WebKitWebView/javascript-dialogs": {
-                "expected": {"gtk@Debug": {"status": ["FAIL", "PASS"]}}
-            }
-        }
-    },
-    "TestWebsiteData": {
-        "subtests": {
-            "/webkit/WebKitWebsiteData/configuration": {
-                "expected": {"all" : { "status": ["PASS", "FAIL", "TIMEOUT"], "bug": "webkit.org/b/301570"}}
             }
         }
     },

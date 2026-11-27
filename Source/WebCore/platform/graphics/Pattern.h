@@ -67,11 +67,10 @@ struct PatternParameters {
 class Pattern final : public ThreadSafeRefCounted<Pattern> {
 public:
     using Parameters = PatternParameters;
-    NODELETE WEBCORE_EXPORT static Ref<Pattern> create(SourceImage&& tileImage, const Parameters& = { });
+    NODELETE WEBCORE_EXPORT static Ref<const Pattern> create(SourceImage&& tileImage, const Parameters& = { });
     WEBCORE_EXPORT ~Pattern();
 
     NODELETE WEBCORE_EXPORT const SourceImage& tileImage() const;
-    WEBCORE_EXPORT void setTileImage(SourceImage&&);
 
     WEBCORE_EXPORT RefPtr<NativeImage> tileNativeImage() const;
     WEBCORE_EXPORT RefPtr<ImageBuffer> tileImageBuffer() const;
@@ -85,11 +84,14 @@ public:
     PlatformPatternPtr createPlatformPattern(const AffineTransform& userSpaceTransform) const;
 #endif
 
-    NODELETE void setPatternSpaceTransform(const AffineTransform&);
+    // A new pattern with the same tile and repeat flags, and another pattern space transform.
+    Ref<const Pattern> withPatternSpaceTransform(const AffineTransform&) const;
 
     const AffineTransform& patternSpaceTransform() const { return m_parameters.patternSpaceTransform; };
     bool repeatX() const { return m_parameters.repeatX; }
     bool repeatY() const { return m_parameters.repeatY; }
+
+    Ref<const Pattern> scaled(float scale) const;
 
 private:
     Pattern(SourceImage&&, const Parameters&);
@@ -98,5 +100,20 @@ private:
     Parameters m_parameters;
 };
 
+inline Ref<const Pattern> Pattern::scaled(float scale) const
+{
+#if !USE(SKIA) && !USE(CAIRO)
+    if (scale == 1.)
+        return Ref { *this };
+    // The scale is prepended: patternSpaceTransform maps the tile into user space, and the caller
+    // has scaled user space by 1 / scale. Appending the scale would compensate the tile size but
+    // leave the tile origin divided by scale.
+    return withPatternSpaceTransform(AffineTransform::makeScale({ scale, scale }) * patternSpaceTransform());
+#else
+    // Skia and Cairo patterns are relative to the CTM, see their createPlatformPattern().
+    UNUSED_PARAM(scale);
+    return Ref { *this };
+#endif
+}
 
 } //namespace

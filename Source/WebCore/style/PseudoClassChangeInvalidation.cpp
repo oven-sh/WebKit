@@ -30,8 +30,7 @@
 #include "ElementRareData.h"
 #include "StyleInvalidationFunctions.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 Vector<PseudoClassInvalidationKey, 4> makePseudoClassInvalidationKeys(CSSSelector::PseudoClass pseudoClass, const Element& element)
 {
@@ -129,7 +128,7 @@ void PseudoClassChangeInvalidation::collectRuleSets(const PseudoClassInvalidatio
     collect(protect(m_element)->styleResolver().ruleSets());
 
     if (RefPtr shadowRoot = m_element.shadowRoot())
-        collect(shadowRoot->styleScope().resolver().ruleSets(), MatchElement::Relation::Host);
+        collect(protect(shadowRoot->styleScope())->resolver().ruleSets(), MatchElement::Relation::Host);
 }
 
 void PseudoClassChangeInvalidation::invalidateBeforeChange()
@@ -142,6 +141,4 @@ void PseudoClassChangeInvalidation::invalidateAfterChange()
     Invalidator::invalidateWithMatchElementRuleSets(protect(m_element), m_afterChangeRuleSets);
 }
 
-
-}
 }

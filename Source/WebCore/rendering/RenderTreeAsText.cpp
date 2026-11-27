@@ -64,7 +64,6 @@
 #include "RenderLayerScrollableArea.h"
 #include "RenderLineBreak.h"
 #include "RenderListItem.h"
-#include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGContainer.h"
 #include "RenderSVGGradientStop.h"
@@ -366,31 +365,6 @@ void RenderTreeAsText::writeRenderObject(TextStream& ts, const RenderObject& o, 
     if (auto* cell = dynamicDowncast<RenderTableCell>(o))
         ts << " [r="_s << cell->rowIndex() << " c="_s << cell->col() << " rs="_s << cell->rowSpan() << " cs="_s << cell->colSpan() << ']';
 
-    if (auto* listMarker = dynamicDowncast<RenderListOutsideMarker>(o)) {
-        CheckedPtr listItem = listMarker->listItem();
-        auto text = listItem ? listItem->markerText(ListMarkerIncludeSuffix::No) : String();
-        if (!text.isEmpty()) {
-            if (text.length() != 1)
-                text = quoteAndEscapeNonPrintables(text);
-            else {
-                switch (text[0]) {
-                    case bullet:
-                        text = "bullet"_s;
-                        break;
-                    case blackSquare:
-                        text = "black square"_s;
-                        break;
-                    case whiteBullet:
-                        text = "white bullet"_s;
-                        break;
-                    default:
-                        text = quoteAndEscapeNonPrintables(text);
-                }
-            }
-            ts << ": "_s << text;
-        }
-    }
-    
     writeDebugInfo(ts, o, behavior);
 }
 
@@ -475,7 +449,7 @@ static inline void writeTextRuns(TextStream& ts, auto& textRenderer)
     auto writeTextRun = [&] (auto& textRun) {
         ts << indent;
 
-        auto rect = textRun.visualRectIgnoringBlockDirection();
+        auto rect = textRun.blockStartRelativePhysicalRect();
         int x = rect.x();
         int y = rect.y();
         // FIXME: Use non-logical width. webkit.org/b/206809.
@@ -551,9 +525,6 @@ void write(TextStream& ts, const RenderObject& renderer, OptionSet<RenderAsTextF
         writeTextRuns(ts, *textRenderer);
         return;
     }
-
-    if (is<RenderListOutsideMarker>(renderer))
-        return;
 
     for (CheckedRef child : childrenOfType<RenderObject>(downcast<RenderElement>(renderer))) {
         if (child->hasLayer())

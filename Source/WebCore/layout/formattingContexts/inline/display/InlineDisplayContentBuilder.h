@@ -30,8 +30,7 @@
 #include <WebCore/LayoutUnits.h>
 #include <wtf/Range.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct AncestorStack;
 class ElementBox;
@@ -76,7 +75,6 @@ private:
     NODELETE void setLogicalLeft(BoxType&, LayoutUnitType logicalLeft, WritingMode) const;
     NODELETE void setLogicalRight(InlineDisplay::Box&, InlineLayoutUnit logicalRight, WritingMode) const;
     InlineLayoutPoint movePointHorizontallyForWritingMode(const InlineLayoutPoint& topLeft, InlineLayoutUnit horizontalOffset, WritingMode) const;
-    InlineLayoutUnit outsideListMarkerVisualPosition(const ElementBox&) const;
     void setGeometryForBlockLevelOutOfFlowBoxes(const Vector<size_t>& indexList, const Line::RunList&, const Vector<int32_t>& visualOrderList = { });
 
     bool isLineFullyTruncatedInBlockDirection() const { return m_lineIsFullyTruncatedInBlockDirection; }
@@ -143,5 +141,3 @@ inline InlineRect InlineDisplayContentBuilder::mapInlineRectLogicalToVisual(cons
 }
 
 }
-}
-

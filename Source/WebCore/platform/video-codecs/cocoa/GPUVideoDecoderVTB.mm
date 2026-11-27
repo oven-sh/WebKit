@@ -30,9 +30,11 @@
 
 #import "MediaReorderQueue.h"
 #import <WebCore/CMUtilities.h>
+#import <WebCore/PlanarImageConverterCV.h>
 #import <wtf/ThreadSafeWeakPtr.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/cf/TypeCastsCF.h>
+#import <wtf/cf/VectorCF.h>
 
 #import "CoreVideoSoftLink.h"
 #import "VideoToolboxSoftLink.h"
@@ -56,8 +58,38 @@ static int bitDepthFromFormat(CMVideoFormatDescriptionRef format)
     return bitDepth;
 }
 
+static PlanarImageConverter::ChromaSubsampling chromaSubsamplingFromFormat(CMVideoFormatDescriptionRef format)
+{
+    using enum PlanarImageConverter::ChromaSubsampling;
+    RetainPtr atoms = dynamic_cf_cast<CFDictionaryRef>(PAL::CMFormatDescriptionGetExtension(format, PAL::kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms));
+    if (!atoms)
+        return HorizontalAndVertical;
+    RetainPtr hvcC = dynamic_cf_cast<CFDataRef>(CFDictionaryGetValue(atoms, CFSTR("hvcC")));
+    if (!hvcC)
+        return HorizontalAndVertical;
+    // ISO/IEC 14496-15 8.3.3.1: chroma_format_idc is in byte 16 of the 23-byte fixed part of the HEVCDecoderConfigurationRecord.
+    auto record = span(hvcC);
+    if (record.size() < 23)
+        return HorizontalAndVertical;
+    switch (record[16] & 0x3) {
+    case 2:
+        return Horizontal;
+    case 3:
+        return None;
+    default:
+        return HorizontalAndVertical;
+    }
+}
+
 static RetainPtr<CFDictionaryRef> createPixelBufferAttributes(CMVideoFormatDescriptionRef format)
 {
+    auto sampleFormat = PlanarImageConverter::pixelBufferSampleFormat({ static_cast<uint8_t>(bitDepthFromFormat(format)), false });
+    if (!sampleFormat)
+        return nullptr;
+    auto pixelFormatType = PlanarImageConverter::pixelFormat(chromaSubsamplingFromFormat(format), *sampleFormat, shouldUseFullRange(format));
+    if (!pixelFormatType)
+        return nullptr;
+
     static size_t const attributesSize = 3;
     CFTypeRef keys[attributesSize] = {
 #if PLATFORM(MAC) || PLATFORM(MACCATALYST)
@@ -70,16 +102,8 @@ static RetainPtr<CFDictionaryRef> createPixelBufferAttributes(CMVideoFormatDescr
     };
 
     RetainPtr ioSurfaceValue = adoptCF(CFDictionaryCreate(kCFAllocatorDefault, nullptr, nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-    bool isFullRange = shouldUseFullRange(format);
-    int bitDepth = bitDepthFromFormat(format);
-    ASSERT(bitDepth == 8 || bitDepth == 10);
-
-    int64_t pixelFormatType;
-    if (bitDepth > 8)
-        pixelFormatType = isFullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
-    else
-        pixelFormatType = isFullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    RetainPtr pixelFormat = adoptCF(CFNumberCreate(nullptr, kCFNumberLongType, &pixelFormatType));
+    int64_t pixelFormatValue = *pixelFormatType;
+    RetainPtr pixelFormat = adoptCF(CFNumberCreate(nullptr, kCFNumberLongType, &pixelFormatValue));
     CFTypeRef values[attributesSize] = { kCFBooleanTrue, ioSurfaceValue.get(), pixelFormat.get() };
     return adoptCF(CFDictionaryCreate(kCFAllocatorDefault, keys, values, attributesSize, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
 }
@@ -148,7 +172,26 @@ static VideoDecoderVTBSession::CallbackMultiImage createMultiImageCallback(GPUVi
     });
 }
 
-int32_t GPUVideoDecoderVTB::decodeFrameInternal(int64_t timeStamp, std::span<const uint8_t> data)
+bool GPUVideoDecoderVTB::ensureDecoder()
+{
+    assertIsCurrent(queue());
+
+    if (!m_format)
+        return false;
+
+    if (m_decoder && protect(m_decoder)->canAccept(m_format.get()))
+        return true;
+
+    if (RefPtr decoder = std::exchange(m_decoder, { }))
+        decoder->flush();
+    RetainPtr attributes = createPixelBufferAttributes(m_format);
+    if (!attributes)
+        return false;
+    m_decoder = VideoDecoderVTBSession::create(m_format, attributes);
+    return !!m_decoder;
+}
+
+int32_t GPUVideoDecoderVTB::decodeFrame(int64_t timeStamp, std::span<const uint8_t> data)
 {
     assertIsCurrent(queue());
 
@@ -159,13 +202,8 @@ int32_t GPUVideoDecoderVTB::decodeFrameInternal(int64_t timeStamp, std::span<con
     if (!sample)
         return -1;
 
-    if (!m_decoder || !protect(m_decoder)->canAccept(m_format.get())) {
-        if (RefPtr decoder = std::exchange(m_decoder, { }))
-            decoder->flush();
-        m_decoder = VideoDecoderVTBSession::create(m_format.get(), createPixelBufferAttributes(m_format.get()).get());
-        if (!m_decoder)
-            return -1;
-    }
+    if (!ensureDecoder())
+        return -1;
 
     PAL::CMSampleBufferSetOutputPresentationTimeStamp(sample.get(), PAL::CMTimeMake(timeStamp, 1));
     VTDecodeInfoFlags decodeInfoFlags = kVTDecodeFrame_EnableAsynchronousDecompression;
@@ -173,7 +211,7 @@ int32_t GPUVideoDecoderVTB::decodeFrameInternal(int64_t timeStamp, std::span<con
     return 0;
 }
 
-void GPUVideoDecoderVTB::setVideoInfo(Ref<VideoInfo>&& videoInfo)
+bool GPUVideoDecoderVTB::setVideoInfo(Ref<VideoInfo>&& videoInfo)
 {
     assertIsCurrent(queue());
 
@@ -181,7 +219,9 @@ void GPUVideoDecoderVTB::setVideoInfo(Ref<VideoInfo>&& videoInfo)
     m_reorderQueueMaxSize = videoInfo->reorderQueueMaxSize().value_or(0);
     m_videoInfo = WTF::move(videoInfo);
     if (m_reorderQueueMaxSize && !m_queue)
-        m_queue = GPUVideoDecoderVTBQueue::create(m_reorderQueueMaxSize);
+        lazyInitialize(m_queue, GPUVideoDecoderVTBQueue::create(m_reorderQueueMaxSize));
+
+    return ensureDecoder();
 }
 
 void GPUVideoDecoderVTB::colorSpaceOverrideChanged()
@@ -216,34 +256,6 @@ void GPUVideoDecoderVTB::flush()
         decoder->flush();
     if (RefPtr queue = m_queue)
         queue->flush(m_callback.get());
-}
-
-void GPUVideoDecoderVTB::setFormat(std::span<const uint8_t>, uint16_t width, uint16_t height, RefPtr<VideoInfo>&& videoInfo)
-{
-    assertIsCurrent(queue());
-
-    setFrameSize(width, height);
-
-    if (videoInfo)
-        setVideoInfo(videoInfo.releaseNonNull());
-}
-
-int32_t GPUVideoDecoderVTB::decodeFrame(int64_t timeStamp, std::span<const uint8_t> data, RefPtr<VideoInfo>&& videoInfo)
-{
-    assertIsCurrent(queue());
-
-    if (videoInfo)
-        setVideoInfo(videoInfo.releaseNonNull());
-
-    return decodeFrameInternal(timeStamp, data);
-}
-
-void GPUVideoDecoderVTB::setFrameSize(uint16_t width, uint16_t height)
-{
-    assertIsCurrent(queue());
-
-    m_width = width;
-    m_height = height;
 }
 
 uint8_t GPUVideoDecoderVTBQueue::reorderQueueMaxSize() const

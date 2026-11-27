@@ -330,9 +330,9 @@ private:
 
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
-    using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+    using LineColumnMap = HashMap<InstPC, LineColumn>;
 
-    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
+    HashMap<InstPC, Entry> m_cachedEntries;
 
     LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;

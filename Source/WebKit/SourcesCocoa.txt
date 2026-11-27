@@ -190,6 +190,8 @@ Shared/Cocoa/AuxiliaryProcessCocoa.mm @nonARC
 Shared/Cocoa/CodeSigning.mm @nonARC
 Shared/Cocoa/CompletionHandlerCallChecker.mm @nonARC
 Shared/Cocoa/DefaultWebBrowserChecks.mm @nonARC
+Shared/Cocoa/DigitalCredentialsPresentment.mm @nonARC
+Shared/Cocoa/DigitalCredentialsRequestValidatorBridge.mm @nonARC
 Shared/Cocoa/EnhancedSecurityLinkUtilities.mm @nonARC
 Shared/Cocoa/InteractionInformationAtPosition.mm @nonARC
 Shared/Cocoa/InteractionInformationRequest.cpp
@@ -345,6 +347,7 @@ UIProcess/API/Cocoa/_WKWebPushDaemonConnection.mm @nonARC
 UIProcess/API/Cocoa/_WKWebPushMessage.mm @nonARC
 UIProcess/API/Cocoa/_WKWebPushSubscriptionData.mm @nonARC
 UIProcess/API/Cocoa/_WKWebExtension.mm @nonARC
+UIProcess/API/Cocoa/_WKWebExtensionBookmarkConfiguration.mm
 UIProcess/API/Cocoa/_WKWebExtensionNotification.mm
 UIProcess/API/Cocoa/_WKWebExtensionSidebar.mm
 UIProcess/API/Cocoa/_WKWebPushAction.mm @nonARC
@@ -478,6 +481,8 @@ UIProcess/Cocoa/SecItemShimProxy.cpp
 UIProcess/Cocoa/SecurityFlagsControllerCocoa.mm @nonARC
 UIProcess/Cocoa/SessionStateCoding.mm @nonARC
 UIProcess/Cocoa/SystemPreviewControllerCocoa.mm @nonARC
+UIProcess/Cocoa/TabCapturePicker.mm
+UIProcess/Cocoa/TabCaptureWindow.mm @nonARC
 UIProcess/Cocoa/TextCheckingController.mm @nonARC
 UIProcess/Cocoa/TextExtraction/WKTextExtractionUtilities.mm @nonARC
 UIProcess/Cocoa/UIDelegate.mm @nonARC @cost:3
@@ -535,6 +540,7 @@ UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIWebNavigationCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionContextAPIWindowsCocoa.mm
 UIProcess/Extensions/Cocoa/API/WebExtensionControllerAPITestCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionActionCocoa.mm
+UIProcess/Extensions/Cocoa/WebExtensionBookmarkCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionCommandCocoa.mm
 UIProcess/Extensions/Cocoa/WebExtensionContextCocoa.mm
@@ -643,6 +649,7 @@ UIProcess/ios/WKWebGeolocationPolicyDeciderIOS.mm @nonARC
 UIProcess/Launcher/cocoa/ProcessLauncherCocoa.mm @nonARC
 
 UIProcess/mac/AppKitGestures/WKAppKitGestureController.mm @nonARC
+UIProcess/mac/CapturePromptUtilities.mm
 UIProcess/mac/CorrectionPanel.mm @nonARC
 UIProcess/mac/DisplayLinkMac.cpp
 UIProcess/mac/PageClientImplMac.mm @nonARC
@@ -659,12 +666,12 @@ UIProcess/mac/WebPopupMenuProxyMac.mm @nonARC
 UIProcess/mac/WebProcessProxyMac.mm @nonARC
 UIProcess/mac/WindowServerConnection.mm @nonARC
 UIProcess/mac/WKCapturePreviewPrompt.mm @nonARC
+UIProcess/mac/WKDocumentPictureInPictureWindowController.mm @nonARC
 UIProcess/mac/WKFullScreenWindowController.mm @nonARC
 UIProcess/mac/WKImmediateActionController.mm @nonARC
 UIProcess/mac/PositionInformationManager.cpp
 UIProcess/mac/WKPrintingView.mm @nonARC
 UIProcess/mac/WKQuickLookPreviewController.mm @nonARC
-UIProcess/mac/WKRevealItemPresenter.mm @nonARC
 UIProcess/mac/WKSharingServicePickerDelegate.mm @nonARC
 UIProcess/mac/WKTextFinderClient.mm @nonARC
 UIProcess/mac/WKTextAnimationManagerMac.mm @nonARC
@@ -704,11 +711,13 @@ UIProcess/RemoteLayerTree/RemoteAnimation.cpp
 UIProcess/RemoteLayerTree/RemoteAnimationStack.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteAnimationTimeline.cpp
 UIProcess/RemoteLayerTree/RemoteAnimationUtilities.cpp
+UIProcess/RemoteLayerTree/RemoteAnimationVisibility.mm
 UIProcess/RemoteLayerTree/RemoteMonotonicTimeline.cpp
 UIProcess/RemoteLayerTree/RemoteMonotonicTimelineRegistry.cpp
 UIProcess/RemoteLayerTree/RemoteLayerTreeDrawingAreaProxy.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteLayerTreeHost.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteLayerTreeInteractionRegionLayers.mm @nonARC
+UIProcess/RemoteLayerTree/RemoteLayerTreeMirror.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteLayerTreeNode.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteLayerTreeScrollingPerformanceData.mm @nonARC
 UIProcess/RemoteLayerTree/RemoteScrollingCoordinatorProxy.cpp @cost:3
@@ -766,7 +775,6 @@ WebProcess/cocoa/UserMediaCaptureManager.cpp
 WebProcess/cocoa/VideoPresentationManager.mm @nonARC @cost:7
 WebProcess/cocoa/WebProcessCocoa.mm @nonARC @cost:4
 
-WebProcess/cocoa/IdentityDocumentServices/DigitalCredentialsRequestValidatorBridge.mm @nonARC
 
 WebProcess/EntryPoint/Cocoa/XPCService/WebContentServiceEntryPoint.mm @nonARC
 

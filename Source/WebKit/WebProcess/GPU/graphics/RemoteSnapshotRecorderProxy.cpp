@@ -29,6 +29,8 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteSnapshotRecorderMessages.h"
+#include <WebCore/NativeImage.h>
+#include <WebCore/SharedBuffer.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebKit {
@@ -36,10 +38,12 @@ using namespace WebCore;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteSnapshotRecorderProxy);
 
-RemoteSnapshotRecorderProxy::RemoteSnapshotRecorderProxy(const FloatRect& initialClip, RenderingMode renderingMode, RemoteRenderingBackendProxy& renderingBackend)
-    : RemoteGraphicsContextProxy(GraphicsContextState::initialIndeterminate(), initialClip, { }, ColorSpace::SRGB(), DrawGlyphsMode::Normal, std::nullopt, renderingMode, RemoteGraphicsContextIdentifier::generate(), renderingBackend)
+RemoteSnapshotRecorderProxy::RemoteSnapshotRecorderProxy(const FloatRect& initialClip, const FloatSize& scale, RenderingMode renderingMode, RemoteRenderingBackendProxy& renderingBackend)
+    : RemoteGraphicsContextProxy(GraphicsContextState::initialIndeterminate(), initialClip, AffineTransform::makeScale(scale), ColorSpace::SRGB(), DrawGlyphsMode::Normal, std::nullopt, renderingMode, RemoteGraphicsContextIdentifier::generate(), renderingBackend)
 {
     ASSERT(renderingMode == RenderingMode::DisplayList || renderingMode == RenderingMode::PDFDocument);
+    // The GPU process recorder starts at identity: an absolute CTM includes the scale, which the recording does not.
+    setCTMToRemote(AffineTransform::makeScale(scale).inverse().value_or(AffineTransform { }));
 }
 
 void RemoteSnapshotRecorderProxy::drawSnapshotFrame(FrameIdentifier frameIdentifier)
@@ -47,6 +51,16 @@ void RemoteSnapshotRecorderProxy::drawSnapshotFrame(FrameIdentifier frameIdentif
     sendPendingDrawsIfNecessary();
     appendStateChangeItemIfNecessary();
     send(Messages::RemoteSnapshotRecorder::DrawSnapshotFrame(frameIdentifier));
+}
+
+void RemoteSnapshotRecorderProxy::drawPDFPage(RenderingResourceIdentifier documentIdentifier, RefPtr<SharedBuffer>&& data, unsigned pageIndex, const FloatRect& pageRect, RefPtr<NativeImage>&& fallbackImage)
+{
+    sendPendingDrawsIfNecessary();
+    appendStateChangeItemIfNecessary();
+    std::optional<RenderingResourceIdentifier> fallbackImageIdentifier;
+    if (fallbackImage && recordResourceUse(*fallbackImage))
+        fallbackImageIdentifier = fallbackImage->renderingResourceIdentifier();
+    send(Messages::RemoteSnapshotRecorder::DrawPDFPage(documentIdentifier, WTF::move(data), pageIndex, pageRect, fallbackImageIdentifier));
 }
 
 }

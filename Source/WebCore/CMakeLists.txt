@@ -32,6 +32,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/Modules/cookie-store"
     "${WEBCORE_DIR}/Modules/credentialmanagement"
     "${WEBCORE_DIR}/Modules/device-posture"
+    "${WEBCORE_DIR}/Modules/documentpip"
     "${WEBCORE_DIR}/Modules/encryptedmedia"
     "${WEBCORE_DIR}/Modules/encryptedmedia/legacy"
     "${WEBCORE_DIR}/Modules/entriesapi"
@@ -75,6 +76,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/Modules/web-locks"
     "${WEBCORE_DIR}/Modules/webaudio"
     "${WEBCORE_DIR}/Modules/webauthn"
+    "${WEBCORE_DIR}/Modules/webauthn/apdu"
     "${WEBCORE_DIR}/Modules/webauthn/cbor"
     "${WEBCORE_DIR}/Modules/webauthn/fido"
     "${WEBCORE_DIR}/Modules/webcodecs"
@@ -208,6 +210,7 @@ set(WebCore_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBCORE_DIR}/plugins"
     "${WEBCORE_DIR}/rendering"
     "${WEBCORE_DIR}/rendering/mathml"
+    "${WEBCORE_DIR}/rendering/paint"
     "${WEBCORE_DIR}/rendering/shapes"
     "${WEBCORE_DIR}/rendering/style"
     "${WEBCORE_DIR}/rendering/svg"
@@ -406,6 +409,9 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/device-posture/DevicePostureType.idl
     Modules/device-posture/Navigator+DevicePosture.idl
 
+    Modules/documentpip/DocumentPictureInPicture.idl
+    Modules/documentpip/DocumentPictureInPictureEvent.idl
+
     Modules/encryptedmedia/MediaKeyEncryptionScheme.idl
     Modules/encryptedmedia/MediaKeyMessageEvent.idl
     Modules/encryptedmedia/MediaKeyMessageEventInit.idl
@@ -429,7 +435,10 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/entriesapi/FileSystemEntryCallback.idl
     Modules/entriesapi/FileSystemFileEntry.idl
 
+    Modules/fetch/DOMWindow+FetchLater.idl
+    Modules/fetch/DeferredRequestInit.idl
     Modules/fetch/FetchHeaders.idl
+    Modules/fetch/FetchLaterResult.idl
     Modules/fetch/FetchReferrerPolicy.idl
     Modules/fetch/FetchRequest.idl
     Modules/fetch/FetchRequestCache.idl
@@ -667,6 +676,10 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/permissions/PermissionStatus.idl
     Modules/permissions/Permissions.idl
 
+    Modules/phonenumberpossession/PhoneNumberPossessionCredential.idl
+    Modules/phonenumberpossession/PhoneNumberPossessionRequestOptions.idl
+    Modules/phonenumberpossession/PhoneNumberPossessionResponseType.idl
+
     Modules/pictureinpicture/PictureInPictureEvent.idl
     Modules/pictureinpicture/PictureInPictureWindow.idl
 
@@ -751,7 +764,6 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webaudio/AnalyserNode.idl
     Modules/webaudio/AnalyserOptions.idl
     Modules/webaudio/AudioBuffer.idl
-    Modules/webaudio/AudioBufferCallback.idl
     Modules/webaudio/AudioBufferOptions.idl
     Modules/webaudio/AudioBufferSourceNode.idl
     Modules/webaudio/AudioBufferSourceOptions.idl
@@ -794,6 +806,8 @@ set(WebCore_NON_SVG_IDL_FILES
     Modules/webaudio/ConstantSourceOptions.idl
     Modules/webaudio/ConvolverNode.idl
     Modules/webaudio/ConvolverOptions.idl
+    Modules/webaudio/DecodeErrorCallback.idl
+    Modules/webaudio/DecodeSuccessCallback.idl
     Modules/webaudio/DelayNode.idl
     Modules/webaudio/DelayOptions.idl
     Modules/webaudio/DistanceModelType.idl
@@ -1062,6 +1076,7 @@ set(WebCore_NON_SVG_IDL_FILES
     css/DOMMatrixInit.idl
     css/DOMMatrixReadOnly.idl
     css/FontFace.idl
+    css/FontFaceLoadStatus.idl
     css/FontFaceSet.idl
     css/MediaList.idl
     css/MediaQueryList.idl
@@ -1224,6 +1239,9 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/Range.idl
     dom/ReducerCallback.idl
     dom/RequestAnimationFrameCallback.idl
+    dom/Scheduler.idl
+    dom/SchedulerPostTaskCallback.idl
+    dom/SchedulerPostTaskOptions.idl
     dom/SecurityPolicyViolationEvent.idl
     dom/SecurityPolicyViolationEventDisposition.idl
     dom/ShadowRoot.idl
@@ -1238,6 +1256,7 @@ set(WebCore_NON_SVG_IDL_FILES
     dom/SubscriberCallback.idl
     dom/SubscriptionObserver.idl
     dom/SubscriptionObserverCallback.idl
+    dom/TaskPriority.idl
     dom/Text.idl
     dom/TextDecoder.idl
     dom/TextDecoderStream.idl
@@ -1396,6 +1415,8 @@ set(WebCore_NON_SVG_IDL_FILES
     html/canvas/CanvasRenderingContext2DSettings.idl
     html/canvas/CanvasTextAlign.idl
     html/canvas/CanvasTextBaseline.idl
+    html/canvas/CanvasToneMapping.idl
+    html/canvas/CanvasToneMappingMode.idl
     html/canvas/ImageBitmapRenderingContext.idl
     html/canvas/ImageBitmapRenderingContextSettings.idl
     html/canvas/ImageSmoothingQuality.idl
@@ -1721,9 +1742,13 @@ if (ENABLE_GAMEPAD)
 endif ()
 
 list(APPEND WebCore_NON_SVG_IDL_FILES
+    Modules/webxr/WebXRAnchor.idl
+    Modules/webxr/WebXRAnchorSet.idl
     Modules/webxr/WebXRBoundedReferenceSpace.idl
+    Modules/webxr/WebXRFrame+Anchors.idl
     Modules/webxr/WebXRFrame.idl
     Modules/webxr/WebXRHand.idl
+    Modules/webxr/WebXRHitTestResult+Anchors.idl
     Modules/webxr/WebXRHitTestResult.idl
     Modules/webxr/WebXRHitTestSource.idl
     Modules/webxr/WebXRInputSource.idl
@@ -1976,6 +2001,8 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
 
     Modules/credentialmanagement/Navigator+Credentials.idl
 
+    Modules/documentpip/DOMWindow+DocumentPictureInPicture.idl
+
     Modules/encryptedmedia/Navigator+EME.idl
 
     Modules/entriesapi/HTMLInputElement+EntriesAPI.idl
@@ -2107,6 +2134,7 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     dom/Range+DOMParsing.idl
     dom/Slotable.idl
     dom/ViewTransition+Types.idl
+    dom/WindowOrWorkerGlobalScope+Scheduler.idl
     dom/WindowOrWorkerGlobalScope+TrustedTypes.idl
 
     html/HTMLBodyElement+Compat.idl
@@ -2133,6 +2161,7 @@ set(WebCore_SUPPLEMENTAL_IDL_FILES
     html/canvas/CanvasPath.idl
     html/canvas/CanvasPathDrawingStyles.idl
     html/canvas/CanvasRect.idl
+    html/canvas/CanvasSettings.idl
     html/canvas/CanvasShadowStyles.idl
     html/canvas/CanvasState.idl
     html/canvas/CanvasText.idl
@@ -2249,9 +2278,9 @@ set(WebCore_USER_AGENT_STYLE_SHEETS
     ${WEBCORE_DIR}/css/popover.css
     ${WEBCORE_DIR}/css/quirks.css
     ${WEBCORE_DIR}/css/selectMultipleAndListBox.css
-    ${WEBCORE_DIR}/css/selectMultipleSelectedContent.css
     ${WEBCORE_DIR}/css/svg.css
     ${WEBCORE_DIR}/css/viewTransitions.css
+    ${WEBCORE_DIR}/html/shadow/attachmentElementInlineProgressShadow.css
     ${WEBCORE_DIR}/html/shadow/attachmentElementShadow.css
     ${WEBCORE_DIR}/html/shadow/detailsElementShadow.css
     ${WEBCORE_DIR}/html/shadow/imageOverlay.css
@@ -2668,6 +2697,8 @@ list(APPEND WebCoreTestSupport_SOURCES
 
 if (ENABLE_WEBXR)
     list(APPEND WebCoreTestSupport_IDL_FILES
+        testing/FakeXRAnchorCreationCallback.idl
+        testing/FakeXRAnchorCreationParameters.idl
         testing/FakeXRBoundsPoint.idl
         testing/FakeXRButtonStateInit.idl
         testing/FakeXRJointStateInit.idl
@@ -2675,18 +2706,23 @@ if (ENABLE_WEBXR)
         testing/FakeXRRigidTransformInit.idl
         testing/FakeXRViewInit.idl
         testing/FakeXRWorldInit.idl
+        testing/WebFakeXRAnchorController.idl
         testing/WebFakeXRDevice.idl
         testing/WebFakeXRInputController.idl
         testing/WebXRTest.idl
         testing/XRSimulateUserActivationFunction.idl
     )
     list(APPEND WebCoreTestSupport_SOURCES
+        testing/WebFakeXRAnchorController.cpp
         testing/WebFakeXRDevice.cpp
         testing/WebFakeXRInputController.cpp
         testing/WebXRTest.cpp
     )
 endif ()
 
+# The style sheets below are concatenated into one sheet that every media element shares through
+# the style sheet contents cache. Do not use CSS nesting in them: one nested rule makes the whole
+# sheet uncacheable, and each media element would parse its own copy.
 set(MODERN_MEDIA_CONTROLS_STYLE_SHEETS
     "${WEBCORE_DIR}/Modules/modern-media-controls/controls/activity-indicator.css"
     "${WEBCORE_DIR}/Modules/modern-media-controls/controls/airplay-button.css"
@@ -3360,6 +3396,13 @@ WEBKIT_SYMLINK_FILES(WebCore_CopyPrivateHeaders
     FILES ${WebCore_PRIVATE_FRAMEWORK_HEADERS}
     FLATTENED
 )
+if (APPLE)
+    # WebCore_Private.modulemap's umbrella is PrivateHeaders.
+    WEBKIT_ADD_UMBRELLA_INVALIDATION_HEADER(WebCore_CopyPrivateHeaders
+        DESTINATION ${WebCore_PRIVATE_HEADERS_DIR}
+        FILES ${WebCore_PRIVATE_FRAMEWORK_HEADERS}
+    )
+endif ()
 if (NOT USE_HEADER_MAPS)
     list(APPEND WebCore_INTERFACE_DEPENDENCIES WebCore_CopyPrivateHeaders)
     if (ENABLE_WEBCORE_TEST_SUPPORT)

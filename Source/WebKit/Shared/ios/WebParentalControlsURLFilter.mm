@@ -26,7 +26,7 @@
 #import "config.h"
 #import "WebParentalControlsURLFilter.h"
 
-#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER)
+#if HAVE(BROWSERENGINEKIT_WEBCONTENTFILTER) && PLATFORM(IOS)
 
 #import "Logging.h"
 #import <UIKit/UIView.h>
@@ -138,7 +138,7 @@ void WebParentalControlsURLFilter::allowURL(const URL& url, CompletionHandler<vo
 void WebParentalControlsURLFilter::setSharedParentalControlsURLFilterIfNecessary()
 {
 #if !HAVE(WEBCONTENTRESTRICTIONS_PATH_SPI)
-    ASSERT(isMainRunLoop());
+    RELEASE_ASSERT(isMainRunLoop());
     if (!WebCore::ParentalControlsURLFilter::hasGlobalFilter()) {
         WebCore::ParentalControlsURLFilter::setGlobalFilter(WebParentalControlsURLFilter::create());
     }

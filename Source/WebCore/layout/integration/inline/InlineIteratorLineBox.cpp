@@ -34,8 +34,7 @@
 #include "RenderView.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
-namespace WebCore {
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 static_assert(std::ranges::bidirectional_range<LineBoxRange> && std::ranges::common_range<LineBoxRange> && std::ranges::view<LineBoxRange> && std::ranges::borrowed_range<LineBoxRange>);
 
@@ -117,15 +116,15 @@ LeafBoxIterator closestBoxForHorizontalPosition(const LineBox& lineBox, float ho
     if (firstBox == lastBox && (!editableOnly || isEditable(firstBox)))
         return firstBox;
 
-    if (firstBox && horizontalPosition <= firstBox->logicalLeft() && !firstBox->renderer().isRenderListOutsideMarker() && (!editableOnly || isEditable(firstBox)))
+    if (firstBox && horizontalPosition <= firstBox->logicalLeft() && (!editableOnly || isEditable(firstBox)))
         return firstBox;
 
-    if (lastBox && horizontalPosition >= lastBox->logicalRight() && !lastBox->renderer().isRenderListOutsideMarker() && (!editableOnly || isEditable(lastBox)))
+    if (lastBox && horizontalPosition >= lastBox->logicalRight() && (!editableOnly || isEditable(lastBox)))
         return lastBox;
 
     auto closestBox = lastBox;
     for (auto box = firstBox; box; box = box.traverseLogicalRightwardOnLineIgnoringLineBreak()) {
-        if (!box->renderer().isRenderListOutsideMarker() && (!editableOnly || isEditable(box))) {
+        if (!editableOnly || isEditable(box)) {
             if (horizontalPosition < box->logicalRight())
                 return box;
             closestBox = box;
@@ -166,5 +165,3 @@ LeafBoxIterator LineBox::blockLevelBox() const
 }
 
 }
-}
-

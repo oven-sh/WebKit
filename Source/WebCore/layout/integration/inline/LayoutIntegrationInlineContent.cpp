@@ -32,8 +32,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TextPainter.h"
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 InlineContent::InlineContent(const RenderBlockFlow& formattingContextRoot)
     : m_formattingContextRoot(&formattingContextRoot)
@@ -80,6 +79,8 @@ IteratorRange<const InlineDisplay::Box*> InlineContent::boxesForRect(const Layou
 
     auto height = lines.last().lineBoxBottom() - lines.first().lineBoxTop();
     auto averageLineHeight = height / lines.size();
+    if (averageLineHeight <= 0)
+        return { boxes.begin(), boxes.end() };
 
     auto approximateLine = [&](LayoutUnit y) {
         y = std::max(y, 0_lu);
@@ -222,5 +223,4 @@ void InlineContent::shrinkToFit()
     m_displayContent.lines.shrinkToFit();
 }
 
-}
 }

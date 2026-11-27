@@ -33,8 +33,7 @@
 #include "SVGTextBoxPainter.h"
 #include "SVGTextFragment.h"
 
-namespace WebCore {
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 static_assert(std::ranges::bidirectional_range<SVGTextBoxRange> && std::ranges::common_range<SVGTextBoxRange> && std::ranges::view<SVGTextBoxRange> && std::ranges::borrowed_range<SVGTextBoxRange>);
 
@@ -46,6 +45,21 @@ SVGTextBox::SVGTextBox(const LayoutIntegration::InlineContent& inlineContent, si
 FloatRect SVGTextBox::calculateBoundariesIncludingSVGTransform() const
 {
     return calculateBoundariesIncludingSVGTransform(protect(renderer()), textFragments());
+}
+
+LayoutSize SVGTextBox::localToUserSpaceOffset() const
+{
+    CheckedRef textRoot = formattingContextRoot();
+    if (!textRoot->settings().layerBasedSVGEngineEnabled())
+        return { };
+    return toLayoutSize(textRoot->nominalSVGLayoutLocation());
+}
+
+FloatRect SVGTextBox::localBoundariesIncludingSVGTransform() const
+{
+    auto boundaries = calculateBoundariesIncludingSVGTransform();
+    boundaries.move(-localToUserSpaceOffset());
+    return boundaries;
 }
 
 FloatRect SVGTextBox::calculateBoundariesIncludingSVGTransform(const RenderSVGInlineText& text, std::span<const SVGTextFragment> fragments)
@@ -97,6 +111,10 @@ LayoutRect SVGTextBox::localSelectionRect(unsigned start, unsigned end) const
         selectionRect.unite(fragmentRect);
     }
 
+    if (selectionRect.isEmpty())
+        return LayoutRect();
+
+    selectionRect.move(-localToUserSpaceOffset());
     return enclosingIntRect(selectionRect);
 }
 
@@ -143,5 +161,4 @@ BoxIterator lastBoxFor(const RenderSVGText& svgText)
     return { };
 }
 
-}
 }

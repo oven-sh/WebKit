@@ -29,15 +29,20 @@
 #if ENABLE(B3_JIT)
 
 #include "AirArg.h"
+#include "B3BasicBlockInlines.h"
 #include "B3BlockInsertionSet.h"
 #include "B3BulkMemoryValue.h"
 #include "B3CCallValue.h"
+#include "B3Const32Value.h"
 #include "B3ConstDoubleValue.h"
 #include "B3ConstFloatValue.h"
 #include "B3InsertionSetInlines.h"
+#include "B3MemoryValueInlines.h"
 #include "B3Operations.h"
 #include "B3PhaseScope.h"
 #include "B3RelocatableValue.h"
+#include "B3SIMDValue.h"
+#include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
 
 namespace JSC { namespace B3 {
@@ -60,7 +65,11 @@ constexpr bool isLoweredByLowerMacrosAfterOptimizations(Opcode opcode)
     case RotL:
     case PopCount:
     case MemoryMove:
-    case MemoryFill:
+    case MemoryFill8:
+    case MemoryFill16:
+    case MemoryFill32:
+    case MemoryFill64:
+    case MemoryFill128:
         return true;
     default:
         return false;
@@ -250,36 +259,17 @@ private:
                 break;
             }
 
-            case MemoryMove: {
-                RuntimeFunction function = m_value->as<BulkMemoryValue>()->isGCSafe() ? RuntimeFunction::GCSafeMemoryMove : RuntimeFunction::MemoryMove;
-                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, function, m_origin));
-                Value* result = m_insertionSet.insert<CCallValue>(
-                    m_index,
-                    m_value->type(),
-                    m_origin,
-                    m_value->effects(),
-                    functionAddress,
-                    m_value->child(0),
-                    m_value->child(1),
-                    m_value->child(2));
-                m_value->replaceWithIdentity(result);
+            case MemoryMove:
+                lowerMemoryMove();
                 break;
-            }
 
-            case MemoryFill: {
-                Value* functionAddress = m_insertionSet.insertValue(m_index, addressOf(m_proc, RuntimeFunction::MemoryFill, m_origin));
-                Value* result = m_insertionSet.insert<CCallValue>(
-                    m_index,
-                    m_value->type(),
-                    m_origin,
-                    m_value->effects(),
-                    functionAddress,
-                    m_value->child(0),
-                    m_value->child(1),
-                    m_value->child(2));
-                m_value->replaceWithIdentity(result);
+            case MemoryFill8:
+            case MemoryFill16:
+            case MemoryFill32:
+            case MemoryFill64:
+            case MemoryFill128:
+                lowerMemoryFill();
                 break;
-            }
 
             default:
                 RELEASE_ASSERT(!isLoweredByLowerMacrosAfterOptimizations(m_value->opcode()));
@@ -289,7 +279,300 @@ private:
         m_didInsertValues |= !m_insertionSet.isEmpty();
         m_insertionSet.execute(m_block);
     }
-    
+
+    void appendJump(BasicBlock* block, BasicBlock* target)
+    {
+        block->appendNew<Value>(m_proc, Jump, m_origin);
+        block->setSuccessors(FrequentedBlock(target));
+    }
+
+    void appendStore(BasicBlock* block, Width width, Value* value, Value* pointer, int32_t offset, HeapRange range)
+    {
+        block->appendNew<MemoryValue>(m_proc, storeOpcode(width == Width128 ? FP : GP, width), m_origin, value, pointer, offset, range);
+    }
+
+    // Returns where control continues when byteCount is at least limit and when it is below,
+    // with the below side sent straight to belowTarget if there is one. A constant byteCount
+    // decides the branch here: the side it never takes comes back null and the side it takes
+    // continues in block, so no dead blocks are built. New blocks are inserted before done.
+    std::pair<BasicBlock*, BasicBlock*> branchOnByteCount(BasicBlock* block, Value* byteCount, uint64_t limit, BasicBlock* done, BasicBlock* belowTarget = nullptr)
+    {
+        if (byteCount->hasInt()) {
+            if (static_cast<uint64_t>(byteCount->asInt()) >= limit)
+                return { block, nullptr };
+            if (!belowTarget)
+                return { nullptr, block };
+            appendJump(block, belowTarget);
+            return { nullptr, nullptr };
+        }
+        BasicBlock* atLeast = m_blockInsertionSet.insertBefore(done);
+        BasicBlock* below = belowTarget ? belowTarget : m_blockInsertionSet.insertBefore(done);
+        Value* condition = block->appendNew<Value>(m_proc, AboveEqual, m_origin, byteCount, block->appendIntConstant(m_proc, m_origin, pointerType(), limit));
+        block->appendNew<Value>(m_proc, Branch, m_origin, condition);
+        block->setSuccessors(FrequentedBlock(atLeast), FrequentedBlock(below));
+        return { atLeast, belowTarget ? nullptr : below };
+    }
+
+    // Short moves are inlined as a pair of overlapping chunks of the widest width that fits, both
+    // loaded before either is stored so that overlapping ranges still move correctly. A GC safe
+    // move has an 8-byte aligned count and addresses, so its chunks are 8-byte aligned 64-bit or
+    // 128-bit accesses, which are single-copy atomic per word.
+    void lowerMemoryMove()
+    {
+        constexpr uint64_t maxInlineByteCount = 32;
+
+        auto* memoryMove = m_value->as<BulkMemoryValue>();
+        Value* destination = memoryMove->child(0);
+        Value* source = memoryMove->child(1);
+        Value* byteCount = memoryMove->child(2);
+        HeapRange readRange = memoryMove->readRange();
+        HeapRange writeRange = memoryMove->writeRange();
+        bool usesVectors = m_proc.usesSIMD();
+        uint64_t elementSize = memoryMove->isGCSafe() ? sizeof(uint64_t) : 1;
+        if (memoryMove->isGCSafe() && byteCount->hasInt())
+            RELEASE_ASSERT(!(static_cast<uint64_t>(byteCount->asInt()) % sizeof(uint64_t)));
+
+        BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
+        BasicBlock* done = m_block;
+        before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
+
+        auto load = [&](BasicBlock* block, Width width, Value* pointer, int32_t offset) -> Value* {
+            switch (width) {
+            case Width8:
+                return block->appendNew<MemoryValue>(m_proc, Load8Z, m_origin, pointer, offset, readRange);
+            case Width16:
+                return block->appendNew<MemoryValue>(m_proc, Load16Z, m_origin, pointer, offset, readRange);
+            case Width32:
+                return block->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, pointer, offset, readRange);
+            case Width64:
+                return block->appendNew<MemoryValue>(m_proc, Load, Int64, m_origin, pointer, offset, readRange);
+            case Width128:
+                return block->appendNew<MemoryValue>(m_proc, Load, V128, m_origin, pointer, offset, readRange);
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+        };
+        auto [callBlock, inlineBlock] = branchOnByteCount(before, byteCount, maxInlineByteCount + 1, done);
+        if (callBlock) {
+            RuntimeFunction function = memoryMove->isGCSafe() ? RuntimeFunction::GCSafeMemoryMove : RuntimeFunction::MemoryMove;
+            Value* functionAddress = addressOf(m_proc, function, m_origin);
+            callBlock->append(functionAddress);
+            callBlock->appendNew<CCallValue>(m_proc, Void, m_origin, memoryMove->effects(), functionAddress, destination, source, byteCount);
+            appendJump(callBlock, done);
+        }
+
+        if (inlineBlock) {
+            Value* sourceEnd = inlineBlock->appendNew<Value>(m_proc, Add, m_origin, source, byteCount);
+            Value* destinationEnd = inlineBlock->appendNew<Value>(m_proc, Add, m_origin, destination, byteCount);
+            BasicBlock* check = inlineBlock;
+            for (uint64_t size = 16; check && size >= elementSize; size /= 2) {
+                auto [sizeBlock, next] = branchOnByteCount(check, byteCount, size, done, size > elementSize ? nullptr : done);
+                if (sizeBlock) {
+                    // Each chunk covers at least half of any count from size to 2 * size, so the head
+                    // and the tail chunk together cover it. A move shorter than two elements is
+                    // exactly one element.
+                    Width width = widthForBytes(size);
+                    Vector<std::pair<int32_t, Value*>, 2> heads;
+                    Vector<std::pair<int32_t, Value*>, 2> tails;
+                    if (size == 16 && !usesVectors) {
+                        for (int32_t offset : { 0, 8 }) {
+                            heads.append({ offset, load(sizeBlock, Width64, source, offset) });
+                            tails.append({ offset - 16, load(sizeBlock, Width64, sourceEnd, offset - 16) });
+                        }
+                        width = Width64;
+                    } else {
+                        heads.append({ 0, load(sizeBlock, width, source, 0) });
+                        if (size > elementSize)
+                            tails.append({ -static_cast<int32_t>(size), load(sizeBlock, width, sourceEnd, -static_cast<int32_t>(size)) });
+                    }
+                    for (auto [offset, value] : heads)
+                        appendStore(sizeBlock, width, value, destination, offset, writeRange);
+                    for (auto [offset, value] : tails)
+                        appendStore(sizeBlock, width, value, destinationEnd, offset, writeRange);
+                    appendJump(sizeBlock, done);
+                }
+                check = next;
+            }
+            ASSERT(!check);
+        }
+
+        m_value->replaceWithNop();
+        before->updatePredecessorsAfter();
+        m_changed = true;
+    }
+
+    // Short fills are inlined as a pair of overlapping stores of the widest width that fits, or a
+    // loop of paired widest stores whose final pair ends exactly at the end. Every store writes the
+    // same repeating pattern, so the overlap is harmless. Long fills call out of line instead, where
+    // libc, when it can do the fill, handles large ranges faster than a store loop does.
+    void lowerMemoryFill()
+    {
+        constexpr uint64_t maxInlineByteCount = 512;
+
+        auto* memoryFill = m_value->as<BulkMemoryValue>();
+        Value* destination = memoryFill->child(0);
+        Value* count = memoryFill->child(2);
+        HeapRange range = memoryFill->writeRange();
+        uint64_t elementSize = bytesForWidth(memoryFill->fillWidth());
+        Width unitWidth = memoryFill->widestFillStoreWidth(m_proc);
+        int32_t unitSize = bytesForWidth(unitWidth);
+
+        BasicBlock* before = m_blockInsertionSet.splitForward(m_block, m_index, &m_insertionSet);
+        BasicBlock* done = m_block;
+        before->replaceLastWithNew<Value>(m_proc, Nop, m_origin);
+
+        Value* byteCount = count;
+        if (count->hasInt() && static_cast<uint64_t>(count->asInt()) <= UINT64_MAX / elementSize)
+            byteCount = before->appendIntConstant(m_proc, m_origin, pointerType(), static_cast<uint64_t>(count->asInt()) * elementSize);
+        else if (elementSize > 1)
+            byteCount = before->appendNew<Value>(m_proc, Shl, m_origin, count, before->appendNew<Const32Value>(m_proc, m_origin, std::countr_zero(elementSize)));
+
+        auto splat = [&](BasicBlock* block, Width width) {
+            return memoryFill->splatFillPattern(m_proc, width, [&](Value* value) {
+                block->append(value);
+            });
+        };
+
+        auto [callBlock, inlineBlock] = branchOnByteCount(before, byteCount, maxInlineByteCount + 1, done);
+        if (callBlock) {
+            emitMemoryFillCall(callBlock, memoryFill, byteCount);
+            appendJump(callBlock, done);
+        }
+
+        if (inlineBlock) {
+            Value* end = inlineBlock->appendNew<Value>(m_proc, Add, m_origin, destination, byteCount);
+            auto [wideBlock, narrowBlock] = branchOnByteCount(inlineBlock, byteCount, unitSize, done, elementSize < static_cast<uint64_t>(unitSize) ? nullptr : done);
+
+            if (wideBlock) {
+                Value* pattern = splat(wideBlock, unitWidth);
+                auto [loopPreheader, pairBlock] = branchOnByteCount(wideBlock, byteCount, 2 * unitSize, done);
+
+                if (pairBlock) {
+                    appendStore(pairBlock, unitWidth, pattern, destination, 0, range);
+                    appendStore(pairBlock, unitWidth, pattern, end, -unitSize, range);
+                    appendJump(pairBlock, done);
+                }
+
+                if (loopPreheader) {
+                    BasicBlock* loopBody = m_blockInsertionSet.insertBefore(done);
+                    BasicBlock* loopExit = m_blockInsertionSet.insertBefore(done);
+
+                    Value* last = loopPreheader->appendNew<Value>(m_proc, Sub, m_origin, end, loopPreheader->appendIntConstant(m_proc, m_origin, pointerType(), 2 * unitSize));
+                    UpsilonValue* initialCursor = loopPreheader->appendNew<UpsilonValue>(m_proc, m_origin, destination);
+                    appendJump(loopPreheader, loopBody);
+
+                    Value* cursor = loopBody->appendNew<Value>(m_proc, Phi, pointerType(), m_origin);
+                    initialCursor->setPhi(cursor);
+                    appendStore(loopBody, unitWidth, pattern, cursor, 0, range);
+                    appendStore(loopBody, unitWidth, pattern, cursor, unitSize, range);
+                    Value* nextCursor = loopBody->appendNew<Value>(m_proc, Add, m_origin, cursor, loopBody->appendIntConstant(m_proc, m_origin, pointerType(), 2 * unitSize));
+                    loopBody->appendNew<UpsilonValue>(m_proc, m_origin, nextCursor, cursor);
+                    loopBody->appendNew<Value>(m_proc, Branch, m_origin, loopBody->appendNew<Value>(m_proc, Below, m_origin, nextCursor, last));
+                    loopBody->setSuccessors(FrequentedBlock(loopBody), FrequentedBlock(loopExit));
+
+                    appendStore(loopExit, unitWidth, pattern, last, 0, range);
+                    appendStore(loopExit, unitWidth, pattern, last, unitSize, range);
+                    appendJump(loopExit, done);
+                }
+            }
+
+            BasicBlock* check = narrowBlock;
+            for (uint64_t size = unitSize / 2; check && size >= elementSize; size /= 2) {
+                Width width = widthForBytes(size);
+                auto [sizeBlock, next] = branchOnByteCount(check, byteCount, size, done, size > elementSize ? nullptr : done);
+                if (sizeBlock) {
+                    Value* pattern = splat(sizeBlock, width);
+                    appendStore(sizeBlock, width, pattern, destination, 0, range);
+                    // A fill shorter than two elements is exactly one element.
+                    if (size > elementSize)
+                        appendStore(sizeBlock, width, pattern, end, -static_cast<int32_t>(size), range);
+                    appendJump(sizeBlock, done);
+                }
+                check = next;
+            }
+            ASSERT(!check);
+        }
+
+        m_value->replaceWithNop();
+        before->updatePredecessorsAfter();
+        m_changed = true;
+    }
+
+    void emitMemoryFillCall(BasicBlock* block, BulkMemoryValue* memoryFill, Value* byteCount)
+    {
+        Value* destination = memoryFill->child(0);
+        Value* pattern = memoryFill->child(1);
+        Value* count = memoryFill->child(2);
+        auto call = [&](RuntimeFunction function, auto... arguments) {
+            Value* functionAddress = addressOf(m_proc, function, m_origin);
+            block->append(functionAddress);
+            block->appendNew<CCallValue>(m_proc, Void, m_origin, memoryFill->effects(), functionAddress, destination, arguments...);
+        };
+
+        // A pattern whose bytes are all the same is a byte fill, and memset is faster than any
+        // wider pattern fill. A byte fill does not keep words whole, though.
+        if (memoryFill->fillWidth() > Width8 && !memoryFill->isGCSafe()) {
+            if (auto byte = repeatedFillByte(memoryFill)) {
+                call(RuntimeFunction::MemoryFill8, block->appendIntConstant(m_proc, m_origin, Int32, *byte), byteCount);
+                return;
+            }
+        }
+
+        switch (memoryFill->opcode()) {
+        case MemoryFill8:
+            call(RuntimeFunction::MemoryFill8, pattern, count);
+            return;
+        case MemoryFill16:
+            call(RuntimeFunction::MemoryFill16, pattern, count);
+            return;
+        case MemoryFill32:
+            call(RuntimeFunction::MemoryFill32, pattern, count);
+            return;
+        case MemoryFill64:
+            if (memoryFill->isGCSafe())
+                call(RuntimeFunction::GCSafeMemoryFill64, pattern, count);
+            else
+                call(RuntimeFunction::MemoryFill64, pattern, count);
+            return;
+        case MemoryFill128: {
+            Value* lane0;
+            Value* lane1;
+            if (pattern->hasV128()) {
+                lane0 = block->appendIntConstant(m_proc, m_origin, Int64, pattern->asV128().u64x2[0]);
+                lane1 = block->appendIntConstant(m_proc, m_origin, Int64, pattern->asV128().u64x2[1]);
+            } else {
+                lane0 = block->appendNew<SIMDValue>(m_proc, m_origin, VectorExtractLane, Int64, SIMDLane::i64x2, SIMDSignMode::None, uint8_t { 0 }, pattern);
+                lane1 = block->appendNew<SIMDValue>(m_proc, m_origin, VectorExtractLane, Int64, SIMDLane::i64x2, SIMDSignMode::None, uint8_t { 1 }, pattern);
+            }
+            call(RuntimeFunction::MemoryFill128, lane0, lane1, count);
+            return;
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    static std::optional<uint8_t> repeatedFillByte(BulkMemoryValue* memoryFill)
+    {
+        Value* pattern = memoryFill->child(1);
+        Width width = memoryFill->fillWidth();
+        uint64_t bits;
+        if (pattern->hasV128()) {
+            v128_t vector = pattern->asV128();
+            if (vector.u64x2[0] != vector.u64x2[1])
+                return std::nullopt;
+            bits = vector.u64x2[0];
+            width = Width64;
+        } else if (pattern->hasInt())
+            bits = pattern->asInt();
+        else
+            return std::nullopt;
+
+        uint8_t byte = bits;
+        if ((bits & mask(width)) != ((byte * 0x0101010101010101ULL) & mask(width)))
+            return std::nullopt;
+        return byte;
+    }
+
     Procedure& m_proc;
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;

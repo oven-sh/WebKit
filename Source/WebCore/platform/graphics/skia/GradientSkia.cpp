@@ -40,10 +40,6 @@ WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 
 namespace WebCore {
 
-void Gradient::stopsChanged()
-{
-}
-
 inline SkScalar webCoreDoubleToSkScalar(double d)
 {
     return SkDoubleToScalar(std::isfinite(d) ? d : 0);
@@ -88,6 +84,7 @@ static SkGradient::Interpolation toSkiaInterpolation(const ColorInterpolationMet
             interpolation.fColorSpace = SkGradient::Interpolation::ColorSpace::kProphotoRGB;
         },
         [&] (const ColorInterpolationMethod::Rec2020&) {
+            // FIXME: Skia's kRec2020 uses the BT.2020 inverse OETF transfer function, not the 2.4 gamma transfer function CSS requires.
             interpolation.fColorSpace = SkGradient::Interpolation::ColorSpace::kRec2020;
         },
         [&] (const ColorInterpolationMethod::XYZD50&) {
@@ -133,7 +130,7 @@ static SkGradient::Interpolation toSkiaInterpolation(const ColorInterpolationMet
     return interpolation;
 }
 
-sk_sp<SkShader> Gradient::shader(float globalAlpha, const AffineTransform& gradientSpaceTransform)
+sk_sp<SkShader> Gradient::shader(float globalAlpha, const AffineTransform& gradientSpaceTransform) const
 {
     auto interpolation = toSkiaInterpolation(colorInterpolationMethod());
 
@@ -158,7 +155,7 @@ sk_sp<SkShader> Gradient::shader(float globalAlpha, const AffineTransform& gradi
             colors.append(colors.last());
         }
     };
-    fillStops(stops().sorted().stops());
+    fillStops(stops().stops());
 
     SkTileMode tileMode = SkTileMode::kClamp;
     switch (m_spreadMethod) {
@@ -203,7 +200,7 @@ sk_sp<SkShader> Gradient::shader(float globalAlpha, const AffineTransform& gradi
     return shader;
 }
 
-void Gradient::fill(GraphicsContext& context, const FloatRect& rect)
+void Gradient::fill(GraphicsContext& context, const FloatRect& rect) const
 {
     auto paint = static_cast<GraphicsContextSkia*>(&context)->createFillPaint();
     paint.setShader(shader(context.alpha(), context.fillGradientSpaceTransform()));

@@ -69,8 +69,7 @@
 #include <wtf/SortedArrayMap.h>
 #include <wtf/text/MakeString.h>
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 template<typename T> static CSS::Color makeCSSColor(T&& unresolvedColorKind)
 {
@@ -892,20 +891,9 @@ RefPtr<CSSValue> consumeColor(CSSParserTokenRange& range, CSS::PropertyParserSta
     return nullptr;
 }
 
-// MARK: - Raw consuming entry points
-
-Color consumeColorRaw(CSSParserTokenRange& range, CSS::PropertyParserState& propertyParserState, const CSSColorParsingOptions& options, CSS::PlatformColorResolutionState& eagerResolutionState)
-{
-    ColorParserState state { propertyParserState, options };
-
-    if (auto color = consumeColor(range, state))
-        return createColor(*color, eagerResolutionState);
-    return { };
-}
-
 // MARK: - Raw parsing entry points
 
-Color parseColorRawGeneral(StringView string, const CSSParserContext& context, ScriptExecutionContext& scriptExecutionContext, const CSSColorParsingOptions& options, CSS::PlatformColorResolutionState& eagerResolutionState)
+std::optional<CSS::Color> parseUnresolvedColor(StringView string, CSS::PropertyParserState& propertyParserState, const CSSColorParsingOptions& options)
 {
     CSSTokenizer tokenizer(string);
     CSSParserTokenRange range(tokenizer.tokenRange());
@@ -913,16 +901,25 @@ Color parseColorRawGeneral(StringView string, const CSSParserContext& context, S
     // Handle leading whitespace.
     range.consumeWhitespace();
 
-    auto state = CSS::PropertyParserState { .context = context, .pool = scriptExecutionContext.cssValuePool() };
-    auto result = consumeUnresolvedColor(range, state, options);
+    auto result = consumeUnresolvedColor(range, propertyParserState, options);
 
     // Handle trailing whitespace.
     range.consumeWhitespace();
 
-    if (!range.atEnd() || !result)
+    if (!range.atEnd())
         return { };
 
-    return createColor(*result, eagerResolutionState);
+    return result;
+}
+
+Color parseColorRawGeneral(StringView string, const CSSParserContext& context, ScriptExecutionContext& scriptExecutionContext, const CSSColorParsingOptions& options, CSS::PlatformColorResolutionState& eagerResolutionState)
+{
+    auto state = CSS::PropertyParserState { .context = context, .pool = scriptExecutionContext.cssValuePool() };
+    auto unresolvedColor = parseUnresolvedColor(string, state, options);
+    if (!unresolvedColor)
+        return { };
+
+    return createColor(*unresolvedColor, eagerResolutionState);
 }
 
 Color deprecatedParseColorRawWithoutContext(StringView string, const CSSColorParsingOptions& options)
@@ -1052,5 +1049,4 @@ RefPtr<CSSValue> consumeDynamicRangeLimit(CSSParserTokenRange& range, CSS::Prope
     return CSSDynamicRangeLimitValue::create(WTF::move(*dynamicRangeLimit));
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

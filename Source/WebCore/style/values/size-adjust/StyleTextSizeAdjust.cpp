@@ -28,11 +28,24 @@
 #include "StyleTextSizeAdjust.h"
 
 #include "CSSKeywordValue.h"
+#include "Document.h"
+#include "Settings.h"
 #include "StyleBuilderChecking.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
+
+std::optional<float> TextSizeAdjust::usedFontSizeMultiplier(const Document& document) const
+{
+    if (!isPercentage() || !document.textAutosizingEnabled())
+        return { };
+
+    Ref settings = document.settings();
+    if (settings->textAutosizingUsesIdempotentMode() && !settings->idempotentModeAutosizingOnlyHonorsPercentages())
+        return { };
+
+    return multiplier();
+}
 
 auto CSSValueConversion<TextSizeAdjust>::operator()(BuilderState& state, const CSSValue& value) -> TextSizeAdjust
 {
@@ -53,5 +66,4 @@ auto CSSValueConversion<TextSizeAdjust>::operator()(BuilderState& state, const C
     return toStyleFromCSSValue<Percentage<CSS::Nonnegative, float>>(state, value);
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

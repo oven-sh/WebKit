@@ -278,6 +278,7 @@
 #import <wtf/Assertions.h>
 #import <wtf/Atomics.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/FileSystem.h>
 #import <wtf/HashTraits.h>
 #import <wtf/Language.h>
@@ -1742,7 +1743,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     NSArray *MIMETypes = [self _supportedMIMETypes];
     NSEnumerator *enumerator = [MIMETypes objectEnumerator];
     RetainPtr<NSString> MIMEType;
-    while ((MIMEType = [enumerator nextObject])) {
+    while ((MIMEType = checked_objc_cast<NSString>([enumerator nextObject]))) {
         NSArray *extensionsForType = [[NSURLFileTypeMappings sharedMappings] extensionsForMIMEType:MIMEType];
         if (extensionsForType) {
             [extensions addObjectsFromArray:extensionsForType];
@@ -1980,7 +1981,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
         _private->textIndicatorData = adoptNS([[WebUITextIndicatorData alloc] initWithImage:image scale:_private->page->deviceScaleFactor()]);
     _private->draggedLinkURL = dragItem.url.isEmpty() ? RetainPtr<NSURL>() : dragItem.url.createNSURL();
     _private->draggedLinkTitle = dragItem.title.isEmpty() ? nil : dragItem.title.createNSString().get();
-    _private->dragPreviewFrameInRootViewCoordinates = dragItem.dragPreviewFrameInRootViewCoordinates;
+    _private->dragPreviewFrameInMainFrameViewCoordinates = dragItem.dragPreviewFrameInMainFrameViewCoordinates;
     _private->dragSourceAction = kit(dragItem.sourceAction);
 }
 
@@ -2015,7 +2016,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
 
 - (CGRect)_draggedElementBounds
 {
-    return _private->dragPreviewFrameInRootViewCoordinates;
+    return _private->dragPreviewFrameInMainFrameViewCoordinates;
 }
 
 - (WebUITextIndicatorData *)_getDataInteractionData
@@ -2094,7 +2095,7 @@ static void WebKitInitializeGamepadProviderIfNecessary()
     WebThreadLock();
     _private->page->dragController().dragEnded();
     _private->dataOperationTextIndicator = nullptr;
-    _private->dragPreviewFrameInRootViewCoordinates = CGRectNull;
+    _private->dragPreviewFrameInMainFrameViewCoordinates = CGRectNull;
     _private->dragSourceAction = WebDragSourceActionNone;
     _private->draggedLinkTitle = nil;
     _private->draggedLinkURL = nil;
@@ -2303,8 +2304,7 @@ static NSMutableSet *knownPluginMIMETypes()
     WebCore::LocalDOMWindow::dispatchAllPendingUnloadEvents();
 
     // This will close the WebViews in a random order. Change this if close order is important.
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL WebView *webView in [(__bridge NSSet *)allWebViewsSet().get() allObjects])
+    for (WebView *webView in [(__bridge NSSet *)allWebViewsSet().get() allObjects])
         [webView close];
 }
 
@@ -2781,7 +2781,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     // to distinguish between using defaultMenuItems or the delegate really returning nil to say "no context menu".
     SEL selector = @selector(webView:contextMenuItemsForElement:defaultMenuItems:);
     if (_private->UIDelegate && [protect(_private->UIDelegate) respondsToSelector:selector]) {
-        menuItems = CallUIDelegate(self, selector, element, defaultMenuItems);
+        menuItems = dynamic_objc_cast<NSArray>(CallUIDelegate(self, selector, element, defaultMenuItems));
         if (!menuItems)
             return nil;
     }
@@ -5417,18 +5417,18 @@ static bool needsWebViewInitThreadWorkaround()
         [[result subviews] makeObjectsPerformSelector:@selector(removeFromSuperview)];
 
         if ([decoder allowsKeyedCoding]) {
-            frameName = [decoder decodeObjectForKey:@"FrameName"];
-            groupName = [decoder decodeObjectForKey:@"GroupName"];
-            preferences = [decoder decodeObjectForKey:@"Preferences"];
+            frameName = dynamic_objc_cast<NSString>([decoder decodeObjectForKey:@"FrameName"]);
+            groupName = dynamic_objc_cast<NSString>([decoder decodeObjectForKey:@"GroupName"]);
+            preferences = dynamic_objc_cast<WebPreferences>([decoder decodeObjectForKey:@"Preferences"]);
             useBackForwardList = [decoder decodeBoolForKey:@"UseBackForwardList"];
             if ([decoder containsValueForKey:@"AllowsUndo"])
                 allowsUndo = [decoder decodeBoolForKey:@"AllowsUndo"];
         } else {
             int version;
             [decoder decodeValueOfObjCType:@encode(int) at:&version size:sizeof(int)];
-            frameName = [decoder decodeObject];
-            groupName = [decoder decodeObject];
-            preferences = [decoder decodeObject];
+            frameName = dynamic_objc_cast<NSString>([decoder decodeObject]);
+            groupName = dynamic_objc_cast<NSString>([decoder decodeObject]);
+            preferences = dynamic_objc_cast<WebPreferences>([decoder decodeObject]);
             if (version > 1)
                 [decoder decodeValuesOfObjCTypes:"c", &useBackForwardList];
             // The allowsUndo field is no longer written out in encodeWithCoder, but since there are
@@ -5436,13 +5436,6 @@ static bool needsWebViewInitThreadWorkaround()
             if (version == 3)
                 [decoder decodeValuesOfObjCTypes:"c", &allowsUndo];
         }
-
-        if (![frameName isKindOfClass:[NSString class]])
-            frameName = nil;
-        if (![groupName isKindOfClass:[NSString class]])
-            groupName = nil;
-        if (![preferences isKindOfClass:[WebPreferences class]])
-            preferences = nil;
 
         LOG(Encoding, "FrameName = %@, GroupName = %@, useBackForwardList = %d\n", frameName.get(), groupName.get(), (int)useBackForwardList);
         [result _commonInitializationWithFrameName:frameName groupName:groupName];
@@ -7643,8 +7636,7 @@ static NSAppleEventDescriptor* aeDescFromJSValue(JSC::JSGlobalObject* lexicalGlo
         if ([view conformsToProtocol:@protocol(WebMultipleTextMatches)]) {
             RetainPtr<NSView<WebMultipleTextMatches>> documentView = (NSView <WebMultipleTextMatches> *)view;
             NSRect documentViewVisibleRect = [documentView.get() visibleRect];
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSValue *rect in [documentView.get() rectsForTextMatches]) {
+            for (NSValue *rect in [documentView.get() rectsForTextMatches]) {
                 NSRect r = [rect rectValue];
                 // Clip rect to document view's visible rect so rect is confined to subframe
                 r = NSIntersectionRect(r, documentViewVisibleRect);
@@ -7771,8 +7763,7 @@ static NSAppleEventDescriptor* aeDescFromJSValue(JSC::JSGlobalObject* lexicalGlo
 - (void)addVisitedLinks:(NSArray *)visitedLinks
 {
     WebVisitedLinkStore& visitedLinkStore = _private->group->visitedLinkStore();
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *urlString in visitedLinks)
+    for (NSString *urlString in visitedLinks)
         visitedLinkStore.addVisitedLink(urlString);
 }
 
@@ -9069,7 +9060,7 @@ FORWARD(toggleUnderline)
 
 - (void)_getWebCoreDictationAlternatives:(Vector<WebCore::DictationAlternative>&)alternatives fromTextAlternatives:(const Vector<WebCore::TextAlternativeWithRange>&)alternativesWithRange
 {
-    for (auto& alternativeWithRange : alternativesWithRange) {
+    for (auto& alternativeWithRange : borrow(alternativesWithRange)) {
         if (auto dictationContext = _private->m_alternativeTextUIController->addAlternatives(alternativeWithRange.alternatives.get()))
             alternatives.append({ alternativeWithRange.range, *dictationContext });
     }
@@ -9297,16 +9288,14 @@ FORWARD(toggleUnderline)
 - (void)_dismissTextTouchBarPopoverItemWithIdentifier:(NSString *)identifier
 {
     NSTouchBarItem *foundItem = nil;
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSTouchBarItem *item in self.textTouchBar.items) {
+    for (NSTouchBarItem *item in self.textTouchBar.items) {
         if ([item.identifier isEqualToString:identifier]) {
             foundItem = item;
             break;
         }
 
         if ([item.identifier isEqualToString:NSTouchBarItemIdentifierTextFormat]) {
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSTouchBarItem *childItem in [protect(checked_objc_cast<NSGroupTouchBarItem>(item)) groupTouchBar].items) {
+            for (NSTouchBarItem *childItem in [protect(checked_objc_cast<NSGroupTouchBarItem>(item)) groupTouchBar].items) {
                 if ([childItem.identifier isEqualToString:identifier]) {
                     foundItem = childItem;
                     break;

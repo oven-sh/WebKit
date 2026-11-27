@@ -28,6 +28,7 @@
 #import "Helpers/cocoa/HTTPServer.h"
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/TestNSBundleExtras.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestProtocol.h"
 #import "Helpers/cocoa/TestUIDelegate.h"
@@ -38,11 +39,13 @@
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKProcessPoolPrivate.h>
 #import <WebKit/WKScriptMessageHandler.h>
+#import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebViewPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/_WKDataTask.h>
 #import <WebKit/_WKDataTaskDelegate.h>
 #import <WebKit/_WKFeature.h>
+#import <WebKit/_WKProcessPoolConfiguration.h>
 #import <WebKit/_WKWebsiteDataStoreConfiguration.h>
 #import <mach/mach_init.h>
 #import <mach/mach_port.h>
@@ -55,6 +58,7 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/UUID.h>
 #import <wtf/Vector.h>
+#import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/text/MakeString.h>
@@ -78,11 +82,11 @@ TEST(WebKit, HTTPReferer)
     auto checkReferer = [] (NSURL *baseURL, const char* expectedReferer) {
         using namespace TestWebKitAPI;
         bool done = false;
-        HTTPServer server([&] (Connection connection) {
+        HTTPServer server([&](Connection connection) {
             connection.receiveHTTPRequest([connection, expectedReferer, &done] (Vector<char>&& request) {
                 if (expectedReferer) {
                     auto expectedHeaderField = makeString("Referer: "_s, unsafeSpan(expectedReferer), "\r\n"_s);
-                    EXPECT_TRUE(contains(request.span(), byteCast<uint8_t>(expectedHeaderField.utf8().span())));
+                    EXPECT_TRUE(contains(request.span(), byteCast<uint8_t>(makeUTF8CString(expectedHeaderField).span())));
                 } else
                     EXPECT_FALSE(contains(request.span(), "Referer:"_span));
                 done = true;
@@ -192,6 +196,80 @@ TEST(NetworkProcess, TerminateWhenNoDefaultWebsiteDataStore)
         TestWebKitAPI::Util::spinRunLoop();
     EXPECT_TRUE(errno == ESRCH);
     EXPECT_FALSE([WKWebsiteDataStore _defaultNetworkProcessExists]);
+}
+
+TEST(NetworkProcess, FetchLaterSurvivesLastEphemeralWebViewClosing)
+{
+    using namespace TestWebKitAPI;
+
+    bool receivedFetchLaterRequest { false };
+    bool receivedRedirectedRequest { false };
+    std::optional<Connection> fetchLaterConnection;
+    Function<void(Connection)> receiveRequest;
+    receiveRequest = [&](Connection connection) {
+        connection.receiveHTTPRequest([&, connection](Vector<char>&& request) {
+            auto path = HTTPServer::parsePath(request);
+            if (path == "/"_s) {
+                connection.send(HTTPResponse("main resource"_s).serialize(), [&, connection] {
+                    receiveRequest(connection);
+                });
+                return;
+            }
+            if (path == "/fetch-later"_s) {
+                EXPECT_TRUE(contains(request.span(), "POST /fetch-later HTTP/1.1\r\n"_span));
+                EXPECT_TRUE(contains(request.span(), "body"_span));
+                fetchLaterConnection = connection;
+                receivedFetchLaterRequest = true;
+                return;
+            }
+            if (path == "/redirected"_s) {
+                receivedRedirectedRequest = true;
+                connection.send(HTTPResponse("done"_s).serialize());
+                return;
+            }
+            ASSERT_NOT_REACHED();
+            return;
+        });
+    };
+    HTTPServer server([&](Connection connection) {
+        receiveRequest(connection);
+    });
+
+    @autoreleasepool {
+        RetainPtr processPoolConfiguration = adoptNS([[_WKProcessPoolConfiguration alloc] init]);
+        processPoolConfiguration.get().usesWebProcessCache = NO;
+        processPoolConfiguration.get().prewarmsProcessesAutomatically = NO;
+        RetainPtr processPool = adoptNS([[WKProcessPool alloc] _initWithConfiguration:processPoolConfiguration.get()]);
+        RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+        configuration.get().processPool = processPool.get();
+        configuration.get().websiteDataStore = [WKWebsiteDataStore nonPersistentDataStore];
+        bool foundFetchLaterFeature { false };
+        for (_WKFeature *feature in [WKPreferences _features]) {
+            if ([feature.key isEqualToString:@"FetchLaterAPIEnabled"]) {
+                [[configuration preferences] _setEnabled:YES forFeature:feature];
+                foundFetchLaterFeature = true;
+                break;
+            }
+        }
+        ASSERT_TRUE(foundFetchLaterFeature);
+        RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+        [webView synchronouslyLoadRequest:server.request()];
+        EXPECT_WK_STREQ(@"false", [webView objectByEvaluatingJavaScript:@"fetchLater('/fetch-later', { method: 'POST', body: 'body' }).activated.toString()"]);
+        [webView _close];
+    }
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return receivedFetchLaterRequest;
+    }));
+    ASSERT_TRUE(fetchLaterConnection);
+
+    auto connection = *fetchLaterConnection;
+    connection.send("HTTP/1.1 302 Found\r\nLocation: /redirected\r\nContent-Length: 0\r\n\r\n"_s, [&, connection] {
+        receiveRequest(connection);
+    });
+    EXPECT_TRUE(Util::waitFor([&] {
+        return receivedRedirectedRequest;
+    }));
 }
 
 #if PLATFORM(MAC) && USE(RUNNINGBOARD)
@@ -654,6 +732,159 @@ TEST(_WKDataTask, Basic)
         };
     }];
     Util::run(&done);
+}
+
+TEST(_WKDataTask, Cookies)
+{
+    using namespace TestWebKitAPI;
+    Vector<char> receivedRequest;
+    HTTPServer server([&](Connection connection) {
+        connection.receiveHTTPRequest([&, connection](Vector<char>&& request) {
+            auto cookies = HTTPServer::parseCookies(request);
+            receivedRequest = WTF::move(request);
+            connection.send(HTTPResponse(cookies).serialize());
+        });
+    });
+
+    RetainPtr dataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    RetainPtr cookie = [NSHTTPCookie cookieWithProperties:@{
+        NSHTTPCookiePath: @"/",
+        NSHTTPCookieName: @"testkey",
+        NSHTTPCookieValue: @"testvalue",
+        NSHTTPCookieDomain: @"127.0.0.1",
+    }];
+    __block bool setCookieDone = false;
+    [dataStore.get().httpCookieStore setCookie:cookie.get() completionHandler:^{
+        setCookieDone = true;
+    }];
+    Util::run(&setCookieDone);
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration setWebsiteDataStore:dataStore.get()];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+
+    __block bool done = false;
+    __block RetainPtr<NSMutableData> receivedData = adoptNS([NSMutableData new]);
+    [webView _dataTaskWithRequest:server.request() completionHandler:^(_WKDataTask *task) {
+        RetainPtr delegate = adoptNS([TestDataTaskDelegate new]);
+        task.delegate = delegate.get();
+        delegate.get().didReceiveData = ^(_WKDataTask *, NSData *data) {
+            [receivedData appendData:data];
+        };
+        delegate.get().didCompleteWithError = ^(_WKDataTask *, NSError *error) {
+            EXPECT_NULL(error);
+            done = true;
+        };
+    }];
+    Util::run(&done);
+
+    RetainPtr echoedCookies = adoptNS([[NSString alloc] initWithData:receivedData.get() encoding:NSUTF8StringEncoding]);
+    EXPECT_WK_STREQ(echoedCookies.get(), "testkey=testvalue");
+    EXPECT_TRUE(contains(receivedRequest.span(), "Cookie: testkey=testvalue\r\n"_span));
+}
+
+TEST(NetworkProcess, CookiesSentFromFileURLWithUniversalAccess)
+{
+    auto runTest = [](bool testApplicationWithNewSDK) {
+        using namespace TestWebKitAPI;
+        Vector<char> receivedRequest;
+        HTTPServer server([&](Connection connection) {
+            connection.receiveHTTPRequest([&, connection](Vector<char>&& request) {
+                auto cookies = HTTPServer::parseCookies(request);
+                receivedRequest = WTF::move(request);
+                connection.send(HTTPResponse(cookies).serialize());
+            });
+        });
+
+        RetainPtr dataStore = [WKWebsiteDataStore nonPersistentDataStore];
+        RetainPtr cookie = [NSHTTPCookie cookieWithProperties:@{
+            NSHTTPCookiePath: @"/",
+            NSHTTPCookieName: @"testkey",
+            NSHTTPCookieValue: @"testvalue",
+            NSHTTPCookieDomain: @"127.0.0.1",
+        }];
+        __block bool setCookieDone = false;
+        [dataStore.get().httpCookieStore setCookie:cookie.get() completionHandler:^{
+            setCookieDone = true;
+        }];
+        Util::run(&setCookieDone);
+
+        RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+        [configuration setWebsiteDataStore:dataStore.get()];
+        [configuration _setAllowUniversalAccessFromFileURLs:YES];
+        RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+
+        NSURL *fileURL = [NSBundle.test_resourcesBundle URLForResource:@"simple" withExtension:@"html"];
+        [webView loadFileURL:fileURL allowingReadAccessToURL:fileURL.URLByDeletingLastPathComponent];
+        [webView _test_waitForDidFinishNavigation];
+        EXPECT_TRUE([[webView URL] isFileURL]);
+
+        NSError *error = nil;
+        RetainPtr echoedCookies = dynamic_objc_cast<NSString>([webView objectByCallingAsyncFunction:@"const response = await fetch(url); return await response.text();" withArguments:@{ @"url": server.request().URL.absoluteString } error:&error]);
+        EXPECT_NULL(error);
+
+        if (testApplicationWithNewSDK) {
+            EXPECT_WK_STREQ(echoedCookies.get(), "");
+            EXPECT_FALSE(contains(receivedRequest.span(), "Cookie: testkey=testvalue\r\n"_span));
+        } else {
+            EXPECT_WK_STREQ(echoedCookies.get(), "testkey=testvalue");
+            EXPECT_TRUE(contains(receivedRequest.span(), "Cookie: testkey=testvalue\r\n"_span));
+        }
+
+        // SDK-aligned behaviors are sent to the network process at launch, so it must be relaunched to pick up the change.
+        [dataStore _terminateNetworkProcess];
+    };
+
+    WTF::enableAllSDKAlignedBehaviors();
+    runTest(true);
+    WTF::disableAllSDKAlignedBehaviors();
+    runTest(false);
+}
+
+TEST(NetworkProcess, CookiesSentFromURLSchemeHandlerPage)
+{
+    using namespace TestWebKitAPI;
+    Vector<char> receivedRequest;
+    HTTPServer server([&](Connection connection) {
+        connection.receiveHTTPRequest([&, connection](Vector<char>&& request) {
+            auto cookies = HTTPServer::parseCookies(request);
+            receivedRequest = WTF::move(request);
+            connection.send(HTTPResponse({ { "Access-Control-Allow-Origin"_s, "app://localhost"_s }, { "Access-Control-Allow-Credentials"_s, "true"_s } }, cookies).serialize());
+        });
+    });
+
+    RetainPtr dataStore = [WKWebsiteDataStore nonPersistentDataStore];
+    RetainPtr cookie = [NSHTTPCookie cookieWithProperties:@{
+        NSHTTPCookiePath: @"/",
+        NSHTTPCookieName: @"testkey",
+        NSHTTPCookieValue: @"testvalue",
+        NSHTTPCookieDomain: @"127.0.0.1",
+    }];
+    __block bool setCookieDone = false;
+    [dataStore.get().httpCookieStore setCookie:cookie.get() completionHandler:^{
+        setCookieDone = true;
+    }];
+    Util::run(&setCookieDone);
+
+    RetainPtr handler = adoptNS([TestURLSchemeHandler new]);
+    [handler setStartURLSchemeTaskHandler:^(WKWebView *, id<WKURLSchemeTask> task) {
+        respond(task, "<html></html>");
+    }];
+
+    RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+    [configuration setWebsiteDataStore:dataStore.get()];
+    [configuration setURLSchemeHandler:handler.get() forURLScheme:@"app"];
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:[NSURL URLWithString:@"app://localhost/index.html"]]];
+    EXPECT_WK_STREQ([[webView URL] absoluteString], "app://localhost/index.html");
+
+    NSError *error = nil;
+    RetainPtr echoedCookies = dynamic_objc_cast<NSString>([webView objectByCallingAsyncFunction:@"const response = await fetch(url, { credentials: 'include' }); return await response.text();" withArguments:@{ @"url": server.request().URL.absoluteString } error:&error]);
+    EXPECT_NULL(error);
+
+    EXPECT_WK_STREQ(echoedCookies.get(), "testkey=testvalue");
+    EXPECT_TRUE(contains(receivedRequest.span(), "Cookie: testkey=testvalue\r\n"_span));
 }
 
 TEST(_WKDataTask, Challenge)

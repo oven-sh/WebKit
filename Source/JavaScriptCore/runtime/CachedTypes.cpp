@@ -188,7 +188,7 @@ private:
 };
 
 // Like OrderHashSet. OrderHasher::finish() never yields the two reserved values.
-using OrderHashRankMap = UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using OrderHashRankMap = HashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
 } // namespace
 
@@ -1128,7 +1128,7 @@ public:
             ptrdiff_t callRecord { 0 };
             ptrdiff_t constructRecord { 0 };
         };
-        UncheckedKeyHashMap<const UnlinkedFunctionExecutable*, Placement> placements;
+        HashMap<const UnlinkedFunctionExecutable*, Placement> placements;
         // What is being encoded right now.
         unsigned module { 0 };
         LinkClass linkClass { LinkClass::EarlyHead };
@@ -1440,7 +1440,7 @@ private:
     ptrdiff_t m_baseOffset;
     Page* m_currentPage;
     Vector<Page> m_pages;
-    UncheckedKeyHashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
+    HashMap<const void*, ptrdiff_t> m_ptrToOffsetMap;
     HashMap<String, ptrdiff_t> m_stringsByContents; // keyed by contents (StringHash), not identity
     LeafExecutableMap m_leafExecutables;
     Deque<DeferredBody> m_bodies;
@@ -1451,7 +1451,7 @@ private:
     bool m_updatable;
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
-    UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
+    HashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
 #if USE(BUN_JSC_ADDITIONS)
     std::unique_ptr<LinkState> m_link;
 #endif
@@ -2145,12 +2145,11 @@ private:
 
 template<typename Key, typename Value, typename HashArg = DefaultHash<SourceType<Key>>, typename KeyTraitsArg = HashTraits<SourceType<Key>>, typename MappedTraitsArg = HashTraits<SourceType<Value>>, typename TableTraits = WTF::HashTableTraits>
 class CachedHashMap : public CachedObject<HashMap<SourceType<Key>, SourceType<Value>, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>> {
-    template<typename K, typename V, WTF::ShouldValidateKey shouldValidateKey>
-    using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits, shouldValidateKey>;
+    template<typename K, typename V>
+    using Map = HashMap<K, V, HashArg, KeyTraitsArg, MappedTraitsArg, TableTraits>;
 
 public:
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
+    void encode(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>>& map)
     {
         Vector<const typename std::remove_reference_t<decltype(map)>::KeyValuePairType*> entries;
         entries.reserveInitialCapacity(map.size());
@@ -2162,8 +2161,7 @@ public:
 
     // A private-name environment: its entries are shared with an identical environment written earlier (decode rebuilds
     // the map from the entries, so their order does not matter).
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void encodeShared(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map)
+    void encodeShared(Encoder& encoder, const Map<SourceType<Key>, SourceType<Value>>& map)
     {
         Vector<std::pair<const UniquedStringImpl*, uint16_t>> entries;
         entries.reserveInitialCapacity(map.size());
@@ -2180,8 +2178,7 @@ public:
             encoder.addSharedPrivateNameEnvironment(hash, WTF::move(entries), m_entries.elementsOffset(encoder));
     }
 
-    template<WTF::ShouldValidateKey shouldValidateKey>
-    void decode(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map) const
+    void decode(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>>& map) const
     {
         SourceType<decltype(m_entries)> decodedEntries;
         m_entries.decode(decoder, decodedEntries);
@@ -2193,8 +2190,8 @@ public:
     }
 
     // Straight into `map`, leaving out the entries whose encoded value `keep` rejects without decoding their key.
-    template<WTF::ShouldValidateKey shouldValidateKey, typename Keep>
-    void decodeIf(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>, shouldValidateKey>& map, const Keep& keep) const
+    template<typename Keep>
+    void decodeIf(Decoder& decoder, Map<SourceType<Key>, SourceType<Value>>& map, const Keep& keep) const
     {
         auto entries = m_entries.elements();
         auto decodeEntry = [&](const auto& entry) {
@@ -2597,9 +2594,9 @@ private:
 };
 
 template<typename T, typename HashArg = DefaultHash<T>>
-class CachedHashSet : public CachedObject<UncheckedKeyHashSet<SourceType<T>, HashArg>> {
+class CachedHashSet : public CachedObject<HashSet<SourceType<T>, HashArg>> {
 public:
-    void encode(Encoder& encoder, const UncheckedKeyHashSet<SourceType<T>, HashArg>& set)
+    void encode(Encoder& encoder, const HashSet<SourceType<T>, HashArg>& set)
     {
         SourceType<decltype(m_entries)> entriesVector(set.size());
         unsigned i = 0;
@@ -2609,7 +2606,7 @@ public:
         m_entries.encode(encoder, entriesVector);
     }
 
-    void decode(Decoder& decoder, UncheckedKeyHashSet<SourceType<T>, HashArg>& set) const
+    void decode(Decoder& decoder, HashSet<SourceType<T>, HashArg>& set) const
     {
         SourceType<decltype(m_entries)> entriesVector;
         m_entries.decode(decoder, entriesVector);
@@ -3086,9 +3083,11 @@ public:
     RegExp* decode(Decoder& decoder) const
     {
         String pattern { m_patternString.decode(decoder) };
-        if (!m_parsed)
-            return RegExp::create(decoder.vm(), pattern, m_flags);
-        return RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern);
+        RegExp* regExp = m_parsed
+            ? RegExp::createFromCache(decoder.vm(), pattern, m_flags, m_numSubpatterns, String { m_atom.decode(decoder) }, m_specificPattern)
+            : RegExp::create(decoder.vm(), pattern, m_flags);
+        regExp->setIsComingFromLiteral();
+        return regExp;
     }
 
 private:
@@ -5802,7 +5801,7 @@ static void digestCodeOf(VM& vm, OrderHasher& hasher, CachedCodeDigest& result, 
 BytecodeOrderRecording bytecodeOrderRecording()
 {
     BytecodeOrderRecording result;
-    UncheckedKeyHashMap<std::pair<const uint8_t*, uint32_t>, unsigned> sources;
+    HashMap<std::pair<const uint8_t*, uint32_t>, unsigned> sources;
     // The first VM's first (a program's main thread), then each Worker's.
     for (auto& recorder : BytecodeOrderRecorder::endRecordingInProcess()) {
         auto recorded = recorder->take();

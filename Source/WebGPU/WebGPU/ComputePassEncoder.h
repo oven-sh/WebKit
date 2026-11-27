@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "CommandEncoder.h"
 #import "CommandsMixin.h"
 #import <WebGPU/WebGPU.h>
@@ -117,9 +121,9 @@ private:
     Vector<uint32_t> m_priorComputeDynamicOffsets;
     RefPtr<const ComputePipeline> m_pipeline;
     const Ref<CommandEncoder> m_parentEncoder;
-    HashMap<uint32_t, Vector<uint32_t>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroupDynamicOffsets;
-    HashMap<uint32_t, Vector<const BindableResources*>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroupResources;
-    HashMap<uint32_t, Ref<const BindGroup>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bindGroups;
+    HashMap<uint32_t, Vector<uint32_t>> m_bindGroupDynamicOffsets;
+    HashMap<uint32_t, Vector<const BindableResources*>> m_bindGroupResources;
+    HashMap<uint32_t, Ref<const BindGroup>> m_bindGroups;
     std::array<uint32_t, 32> m_maxDynamicOffsetAtIndex;
     NSString *m_lastErrorString { nil };
     bool m_passEnded { false };

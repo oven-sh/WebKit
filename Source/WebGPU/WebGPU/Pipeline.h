@@ -23,6 +23,10 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "ConstantValue.h"
 #import "ShaderModule.h"
 #import <wtf/Function.h>
@@ -35,8 +39,8 @@ class Device;
 class Instance;
 class ShaderModule;
 
-using BufferBindingSizesForBindGroup = HashMap<uint32_t, uint64_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-using BufferBindingSizesForPipeline = HashMap<uint32_t, BufferBindingSizesForBindGroup, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+using BufferBindingSizesForBindGroup = HashMap<uint32_t, uint64_t>;
+using BufferBindingSizesForPipeline = HashMap<uint32_t, BufferBindingSizesForBindGroup>;
 
 struct PreparedLibrary {
     id<MTLLibrary> library { nil };

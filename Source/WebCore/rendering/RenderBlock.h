@@ -39,9 +39,15 @@ class ScrollbarUpdateScope;
 struct PaintInfo;
 struct RenderBlockRareData;
 
+namespace Paint {
+class BlockHitTester;
+class BlockPainter;
+}
+
 
 enum CaretType { CursorCaret, DragCaret };
 enum class RelayoutChildren : bool { No, Yes };
+enum class FixedPositionObjectsOnly : bool { No, Yes };
 
 enum TextRunFlag {
     DefaultTextRunFlags = 0,
@@ -55,6 +61,8 @@ class RenderBlock : public RenderBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderBlock);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderBlock);
     friend class RelayoutScopeForScrollbarChange;
+    friend class Paint::BlockHitTester;
+    friend class Paint::BlockPainter;
 public:
     // FIXME: This is temporary to allow us to move code from RenderBlock into RenderBlockFlow that accesses member variables that we haven't moved out of
     // RenderBlock yet.
@@ -63,8 +71,8 @@ public:
     virtual ~RenderBlock();
 
 protected:
-    RenderBlock(Type, Element&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags = { });
-    RenderBlock(Type, Document&, Style::ComputedStyle&&, OptionSet<TypeFlag>, TypeSpecificFlags = { });
+    RenderBlock(Type, Element&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag>, TypeSpecificFlags = { });
+    RenderBlock(Type, Document&, UniqueRef<Style::ComputedStyle>&&, OptionSet<TypeFlag>, TypeSpecificFlags = { });
 
 public:
     String debugDescription() const override;
@@ -76,8 +84,8 @@ public:
     NODELETE TrackedRendererListHashSet* percentHeightDescendants() const LIFETIME_BOUND;
     bool hasPercentHeightDescendants() const
     {
-        auto* renderers = percentHeightDescendants();
-        return renderers && !renderers->isEmptyIgnoringNullReferences();
+        const auto* renderers = percentHeightDescendants();
+        return renderers && !renderers->computeIsEmpty();
     }
     NODELETE static bool hasPercentHeightContainerMap();
     static void clearPercentHeightDescendantsFrom(RenderBox&);
@@ -116,7 +124,7 @@ public:
     NODELETE void getSelectionGapInfo(HighlightState, bool& leftGap, bool& rightGap);
     bool isSelectionRoot() const;
 
-    NODELETE LayoutRect logicalRectToPhysicalRect(const LayoutPoint& physicalPosition, const LayoutRect& logicalRect);
+    NODELETE LayoutRect logicalRectToPhysicalRect(const LayoutPoint& physicalPosition, const LayoutRect& logicalRect) const;
 
     bool establishesIndependentFormattingContext() const;
     bool createsNewFormattingContext() const;
@@ -165,10 +173,11 @@ public:
 
     LayoutUnit marginBefore(WritingMode) const override;
 
+    using RenderBox::adjustBorderBoxLogicalHeightForBoxSizing;
+    using RenderBox::adjustContentBoxLogicalHeightForBoxSizing;
     LayoutUnit adjustBorderBoxLogicalHeightForBoxSizing(LayoutUnit height) const override;
     LayoutUnit adjustContentBoxLogicalHeightForBoxSizing(std::optional<LayoutUnit> height) const override;
     LayoutUnit adjustIntrinsicLogicalHeightForBoxSizing(LayoutUnit height) const override;
-    void paintExcludedChildrenInBorder(PaintInfo&, const LayoutPoint&);
     
     // Accessors for logical width/height and margins in the containing block's block-flow direction.
     enum ApplyLayoutDeltaMode { ApplyLayoutDelta, DoNotApplyLayoutDelta };
@@ -214,7 +223,6 @@ public:
     void resetEnclosingFragmentedFlowAndChildInfoIncludingDescendants(RenderFragmentedFlow* = nullptr) final;
 
     std::optional<LayoutUnit> availableLogicalHeightForPercentageComputation() const final;
-    bool hasDefiniteLogicalHeight() const;
     bool hasDefiniteLogicalHeightForPercentageResolutionFromStyle() const final;
 
     static String updateSecurityDiscCharacters(const Style::ComputedStyle&, String&&);
@@ -222,7 +230,6 @@ public:
     virtual bool hasLineIfEmpty() const;
 
     void updateInFlowDescendantTransformsAfterLayout();
-    void updateOutOfFlowDescendantTransformsAfterLayout();
 
     virtual bool canPerformSimplifiedLayout() const;
 
@@ -244,14 +251,16 @@ public:
 
     Node* nodeForHitTest() const override;
 
-    PaintInfo paintInfoForBlockChildren(const PaintInfo&) const;
+    void layoutOutOfFlowBoxes(RelayoutChildren, FixedPositionObjectsOnly = FixedPositionObjectsOnly::No);
 
-    void layoutOutOfFlowBoxes(RelayoutChildren, bool fixedPositionObjectsOnly = false);
+    void estimateFragmentRangeForBoxChild(const RenderBox&) const;
+    bool updateFragmentRangeForBoxChild(const RenderBox&) const;
 
     static void relayoutRenderBlockForScrollbarChange(RenderBlock&);
 
-    enum PaintBlockType { PaintAsBlock, PaintAsInlineBlock };
-    bool paintChild(RenderBox&, PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect, PaintBlockType paintType = PaintAsBlock);
+    // Gives the query containers that a style-interleaved layout sized without laying out their content back their
+    // layout bits, so the layout after style resolution lays them out.
+    static void restoreLayoutBitsAfterInterleavedLayout();
 
 protected:
     RenderFragmentedFlow* locateEnclosingFragmentedFlow() const override;
@@ -259,16 +268,12 @@ protected:
 
     void layout() override;
 
-    virtual void layoutOutOfFlowBox(RenderBox&, RelayoutChildren, bool fixedPositionObjectsOnly);
-    
-    void markFixedPositionBoxForLayoutIfNeeded(RenderBox& child);
 
     std::pair<LayoutUnit, LayoutUnit> intrinsicLogicalMarginStartAndEnd(const RenderBox&) const;
     inline LayoutUnit marginIntrinsicLogicalWidthForChild(const RenderBox&) const;
 
     void paint(PaintInfo&, const LayoutPoint&) override;
     void paintObject(PaintInfo&, const LayoutPoint&) override;
-    virtual void paintChildren(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect);
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
@@ -308,9 +313,6 @@ protected:
 
     void computeFragmentRangeForBoxChild(const RenderBox&) const;
 
-    void estimateFragmentRangeForBoxChild(const RenderBox&) const;
-    bool updateFragmentRangeForBoxChild(const RenderBox&) const;
-
     void updateBlockChildDirtyBitsBeforeLayout(RelayoutChildren, RenderBox&);
 
     void preparePaginationBeforeBlockLayout(RelayoutChildren&);
@@ -325,7 +327,6 @@ protected:
 
     // Hit-tests a fieldset's legend, which is excluded from normal layout and placed in the border,
     // so it is positioned against the unscrolled offset rather than the scrolled content.
-    bool hitTestExcludedChildrenInBorder(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
 private:
     // FIXME-BLOCKFLOW: Remove virtualizaion when all callers have moved to RenderBlockFlow
@@ -340,20 +341,8 @@ private:
     bool isSelfCollapsingBlock() const override;
     virtual bool childrenPreventSelfCollapsing() const;
 
-    // FIXME-BLOCKFLOW: Remove virtualizaion when all callers have moved to RenderBlockFlow
-    virtual void paintFloats(PaintInfo&, const LayoutPoint&, bool) { }
-    virtual void paintInlineChildren(PaintInfo&, const LayoutPoint&) { }
-    void paintContents(PaintInfo&, const LayoutPoint&);
-    virtual void paintColumnRules(PaintInfo&, const LayoutPoint&) { };
     void paintSelection(PaintInfo&, const LayoutPoint&);
-    void paintCaret(PaintInfo&, const LayoutPoint&, CaretType);
-    void paintCarets(PaintInfo&, const LayoutPoint&);
 
-    virtual bool hitTestContents(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
-    // FIXME-BLOCKFLOW: Remove virtualization when all callers have moved to RenderBlockFlow
-    virtual bool hitTestFloats(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&) { return false; }
-    virtual bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction);
-    virtual bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) { return false; }
 
     std::pair<LayoutUnit, LayoutUnit> computeBlockIntrinsicLogicalWidths() const;
     
@@ -380,7 +369,6 @@ private:
 
     RenderFragmentedFlow* updateCachedEnclosingFragmentedFlow(RenderFragmentedFlow*) const;
 
-    void paintDebugBoxShadowIfApplicable(GraphicsContext&, const LayoutRect&) const;
 
     bool contentBoxLogicalWidthChanged(const Style::ComputedStyle&, const Style::ComputedStyle&);
     bool paddingBoxLogicalHeightChanged(const Style::ComputedStyle& oldStyle, const Style::ComputedStyle& newStyle);

@@ -39,7 +39,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGBlock);
 
-RenderSVGBlock::RenderSVGBlock(Type type, SVGGraphicsElement& element, Style::ComputedStyle&& style)
+RenderSVGBlock::RenderSVGBlock(Type type, SVGGraphicsElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(type, element, WTF::move(style), BlockFlowFlag::IsSVGBlock)
 {
 }
@@ -116,7 +116,7 @@ void RenderSVGBlock::styleDidChange(Style::Difference diff, const Style::Compute
     if (diff == Style::DifferenceResult::Layout)
         invalidateCachedBoundaries();
     RenderBlockFlow::styleDidChange(diff, oldStyle);
-    SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
+    SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, protect(style()));
 }
 
 FloatRect RenderSVGBlock::referenceBoxRect(CSSBoxType boxType) const

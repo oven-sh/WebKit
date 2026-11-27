@@ -221,6 +221,23 @@ void MediaSessionManagerInterface::updateNowPlayingInfoIfNecessary()
     scheduleSessionStatusUpdate();
 }
 
+void MediaSessionManagerInterface::scheduleSessionStatusUpdate()
+{
+    if (m_sessionStatusUpdateIsPending)
+        return;
+
+    m_sessionStatusUpdateIsPending = true;
+    enqueueTaskOnMainThread([this, protectedThis = Ref { *this }] {
+        m_sessionStatusUpdateIsPending = false;
+        ++m_sessionStatusUpdateCountForTesting;
+        performSessionStatusUpdate();
+    });
+}
+
+void MediaSessionManagerInterface::performSessionStatusUpdate()
+{
+}
+
 void MediaSessionManagerInterface::updateNowPlayingInfo()
 {
     updateNowPlayingInfoIfNecessary();
@@ -637,6 +654,11 @@ void MediaSessionManagerInterface::enforceConcurrentPlaybackRestriction(Platform
 #endif
 }
 
+void MediaSessionManagerInterface::sessionCanProduceAudioChangedWhilePlaying(PlatformMediaSessionInterface& session)
+{
+    enforceConcurrentPlaybackRestriction(session);
+}
+
 void MediaSessionManagerInterface::sessionWillEndPlayback(PlatformMediaSessionInterface& pausingSession, DelayCallingUpdateNowPlaying)
 {
 #if ENABLE(VIDEO) || ENABLE(WEB_AUDIO)
@@ -866,7 +888,7 @@ void MediaSessionManagerInterface::removeSession(PlatformMediaSessionInterface& 
 
 bool MediaSessionManagerInterface::hasNoSession() const
 {
-    return sessions().isEmptyIgnoringNullReferences();
+    return sessions().computeIsEmpty();
 }
 
 bool MediaSessionManagerInterface::computeSupportsSeeking() const

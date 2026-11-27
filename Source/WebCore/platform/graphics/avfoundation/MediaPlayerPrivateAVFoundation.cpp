@@ -350,10 +350,13 @@ void MediaPlayerPrivateAVFoundation::setNaturalSize(FloatSize size)
 
 void MediaPlayerPrivateAVFoundation::setHasVideo(bool b)
 {
-    if (m_cachedHasVideo != b) {
-        m_cachedHasVideo = b;
-        characteristicsChanged();
-    }
+    if (m_cachedHasVideo == b)
+        return;
+
+    ALWAYS_LOG(LOGIDENTIFIER, b);
+    m_cachedHasVideo = b;
+    characteristicsChanged();
+    updateIsAudible();
 }
 
 void MediaPlayerPrivateAVFoundation::setHasAudio(bool b)
@@ -395,6 +398,8 @@ void MediaPlayerPrivateAVFoundation::setReadyState(MediaPlayer::ReadyState state
     RefPtr player = m_player.get();
     if (player)
         player->readyStateChanged();
+
+    updateIsAudible();
 
     if (oldState >= MediaPlayer::ReadyState::HaveMetadata)
         return;
@@ -935,7 +940,7 @@ bool MediaPlayerPrivateAVFoundation::shouldEnableInheritURIQueryComponent() cons
 
 void MediaPlayerPrivateAVFoundation::queueTaskOnEventLoop(Function<void()>&& task)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     if (RefPtr player = m_player.get())
         player->queueTaskOnEventLoop(WTF::move(task));
 }

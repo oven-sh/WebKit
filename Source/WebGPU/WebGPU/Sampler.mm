@@ -199,9 +199,9 @@ struct SamplerState {
     size_t useCount { 0 };
 };
 
-NODELETE static HashMap<GenericHashKey<Sampler::UniqueSamplerIdentifier>, SamplerState>& samplerStates() WTF_REQUIRES_LOCK(samplerStatesLock)
+NODELETE static HashMap<Sampler::UniqueSamplerIdentifier, SamplerState>& samplerStates() WTF_REQUIRES_LOCK(samplerStatesLock)
 {
-    static NeverDestroyed<HashMap<GenericHashKey<Sampler::UniqueSamplerIdentifier>, SamplerState>> samplerStates WTF_GUARDED_BY_LOCK(samplerStatesLock);
+    static NeverDestroyed<HashMap<Sampler::UniqueSamplerIdentifier, SamplerState>> samplerStates WTF_GUARDED_BY_LOCK(samplerStatesLock);
     return samplerStates.get();
 }
 
@@ -358,24 +358,3 @@ id<MTLSamplerState> Sampler::tryCacheSamplerState() const
 }
 
 } // namespace WebGPU::Metal
-
-#pragma mark WGPU Stubs
-
-NODELETE void wgpuSamplerAddRef(WGPUSampler sampler)
-{
-    WebGPU::Metal::fromAPI(sampler).ref();
-}
-
-void wgpuSamplerRelease(WGPUSampler sampler)
-{
-    @autoreleasepool {
-        WebGPU::Metal::fromAPI(sampler).deref();
-    }
-}
-
-void wgpuSamplerSetLabel(WGPUSampler sampler, WGPUStringView label)
-{
-    @autoreleasepool {
-        protect(WebGPU::Metal::fromAPI(sampler))->setLabel(WebGPU::Metal::fromAPI(label));
-    }
-}

@@ -7,9 +7,7 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebKit/platform-enabled-swift-args.x86_64.r
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/AdditionalFeatureDefines.h
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/AdditionalPlatform.h
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/AdditionalPlatformHave.h
-$(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/AppKitGesturesExtras.swift.in
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/OpaqueIPCTypesAdditions.tracking.in
-$(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/TestWebKitAPILibraryAdditions.swift.in
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/WKWebView+SystemTextExtraction.swift.in
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/WKWebView+WKBannerViewOverlay.swift.in
 $(BUILT_PRODUCTS_DIR)/usr/local/include/WebKitAdditions/WebPageProxyAdditions.messages.in
@@ -323,7 +321,7 @@ $(PROJECT_DIR)/Shared/EditingRange.serialization.in
 $(PROJECT_DIR)/Shared/EditorState.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionActionClickBehavior.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionAlarmParameters.serialization.in
-$(PROJECT_DIR)/Shared/Extensions/WebExtensionBookmarksParameters.serialization.in
+$(PROJECT_DIR)/Shared/Extensions/WebExtensionBookmarkParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionCommandParameters.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionContentWorldType.serialization.in
 $(PROJECT_DIR)/Shared/Extensions/WebExtensionContext.serialization.in
@@ -363,6 +361,7 @@ $(PROJECT_DIR)/Shared/IPCTester.messages.in
 $(PROJECT_DIR)/Shared/IPCTester.serialization.in
 $(PROJECT_DIR)/Shared/IPCTesterReceiver.messages.in
 $(PROJECT_DIR)/Shared/ImageOptions.serialization.in
+$(PROJECT_DIR)/Shared/ImmersiveElementDetails.serialization.in
 $(PROJECT_DIR)/Shared/InspectorExtensionTypes.serialization.in
 $(PROJECT_DIR)/Shared/InspectorNetworkTypes.serialization.in
 $(PROJECT_DIR)/Shared/InspectorPageTypes.serialization.in
@@ -571,6 +570,7 @@ $(PROJECT_DIR)/UIProcess/Automation/WebAutomationSession.messages.in
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowser.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiBrowsingContext.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiDigitalCredentials.json
+$(PROJECT_DIR)/UIProcess/Automation/protocol/BidiEmulation.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiInput.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiLog.json
 $(PROJECT_DIR)/UIProcess/Automation/protocol/BidiPermissions.json
@@ -648,6 +648,7 @@ $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsNetwork.i
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIDevToolsPanels.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIEvent.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIExtension.idl
+$(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIExtensionTypes.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPILocalization.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPIMenus.idl
 $(PROJECT_DIR)/WebProcess/Extensions/Interfaces/WebExtensionAPINamespace.idl

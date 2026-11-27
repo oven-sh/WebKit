@@ -33,6 +33,7 @@
 #include "TestController.h"
 #include "UIScriptController.h"
 #include "WebCoreTestSupport.h"
+#include <WebCore/CSSUnits.h>
 #include <WebKit/WKCast.h>
 #include <WebKit/WKContextPrivate.h>
 #include <WebKit/WKData.h>
@@ -173,7 +174,7 @@ void TestInvocation::loadTestInCrossOriginIframe()
         "<script>"
         "    testRunner.dumpChildFramesAsText()"
         "</script>"
-        "<iframe src=\""_s, url.utf8().span(), "\" style=\"position:absolute; top:0; left:0; width:100%; height:100%; border:0\">"_s));
+        "<iframe src=\""_s, makeUTF8CString(url).span(), "\" style=\"position:absolute; top:0; left:0; width:100%; height:100%; border:0\">"_s));
     WKPageLoadHTMLString(TestController::singleton().mainWebView()->page(), htmlString.get(), baseURL.get());
 }
 
@@ -326,6 +327,28 @@ void TestInvocation::dumpResourceLoadStatisticsIfNecessary()
         m_savedResourceLoadStatistics = TestController::singleton().dumpResourceLoadStatistics();
 }
 
+// WPT print reftests default to a 5in by 3in page. wptrunner prints them with 0.5in margins.
+static constexpr double printReftestPageWidth = 5 * WebCore::CSS::pixelsPerInch;
+static constexpr double printReftestPageHeight = 3 * WebCore::CSS::pixelsPerInch;
+static constexpr double printReftestPageMargin = 0.5 * WebCore::CSS::pixelsPerInch;
+
+// FIXME: Apply fuzzy matching to each page separately, as WPT does (rdar://191464055). It applies to the whole image.
+// FIXME: Support <meta name=reftest-pages>, which limits the comparison to some of the pages (rdar://191464016).
+static WKRetainPtr<WKImageRef> takePrintReftestSnapshot()
+{
+    struct SnapshotResult {
+        bool done { false };
+        WKRetainPtr<WKImageRef> image;
+    } result;
+    WKPageTakeCSSPageBoxesSnapshotForTesting(TestController::singleton().mainWebView()->page(), WKSizeMake(printReftestPageWidth, printReftestPageHeight), printReftestPageMargin, &result, [](WKImageRef image, void* context) {
+        auto& result = *static_cast<SnapshotResult*>(context);
+        result.image = image;
+        result.done = true;
+    });
+    TestController::singleton().runUntil(result.done, TestController::noTimeout);
+    return result.image;
+}
+
 void TestInvocation::dumpResults()
 {
     auto& testController = TestController::singleton();
@@ -334,6 +357,12 @@ void TestInvocation::dumpResults()
         *(bool*)context = true;
     });
     testController.runUntil(flushedNetworkProcessMessages, TestController::noTimeout);
+
+    if (m_options.enhancedSecurityEnabled() && !testController.isEnhancedSecurity())
+        m_textOutput.append("FAIL: Enhanced Security was requested for this test but is not enabled in the web process\n"_s);
+
+    if (m_shouldDumpBackForwardListsForAllWindows)
+        m_textOutput.append(testController.dumpBackForwardListsForAllPages());
 
     if (!m_savedResourceLoadCallbacks.isEmpty()) {
         m_textOutput.append(m_savedResourceLoadCallbacks.toString());
@@ -349,13 +378,15 @@ void TestInvocation::dumpResults()
     if (m_textOutput.hasOverflowed())
         dump("text output overflowed"_s);
     else if (m_textOutput.length() || !m_audioResult)
-        dump(m_textOutput.toString().utf8());
+        dump(makeUTF8CString(m_textOutput.toString()));
     else
         dumpAudio(m_audioResult.get());
 
     if (m_dumpPixels) {
         if (m_pixelResult)
             dumpPixelsAndCompareWithExpected(SnapshotResultType::WebContents, m_repaintRects.get(), m_pixelResult.get());
+        else if (m_pixelResultIsPending && options().dumpCSSPageBoxes())
+            dumpPixelsAndCompareWithExpected(SnapshotResultType::WebContents, nullptr, takePrintReftestSnapshot().get());
         else if (m_pixelResultIsPending) {
             if (m_forceRepaint) {
                 m_gotRepaint = false;
@@ -1033,6 +1064,9 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
     if (WKStringIsEqualToUTF8CString(messageName, "DidLoadNonAppInitiatedRequest"))
         return adoptWK(WKBooleanCreate(TestController::singleton().didLoadNonAppInitiatedRequest()));
 
+    if (WKStringIsEqualToUTF8CString(messageName, "IsDisplayCaptureCapabilityActive"))
+        return adoptWK(WKBooleanCreate(WKPageIsDisplayCaptureCapabilityActiveForTesting(TestController::singleton().mainWebView()->page())));
+
     if (WKStringIsEqualToUTF8CString(messageName, "SetStatisticsGrandfathered")) {
         auto messageBodyDictionary = dictionaryValue(messageBody);
         auto hostName = stringValue(messageBodyDictionary, "HostName");
@@ -1396,9 +1430,6 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
         m_shouldDumpBackForwardListsForAllWindows = true;
         return nullptr;
     }
-
-    if (WKStringIsEqualToUTF8CString(messageName, "ShouldDumpBackForwardListsForAllWindows"))
-        return adoptWK(WKBooleanCreate(m_shouldDumpBackForwardListsForAllWindows));
 
     if (WKStringIsEqualToUTF8CString(messageName, "DumpChildFrameScrollPositions")) {
         m_shouldDumpAllFrameScrollPositions = true;

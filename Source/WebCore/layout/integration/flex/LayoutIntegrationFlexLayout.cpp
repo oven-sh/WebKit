@@ -38,8 +38,7 @@
 #include "RenderObjectInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 FlexLayout::FlexLayout(RenderFlexibleBox& flexBox)
     : m_flexBox(flexBox)
@@ -49,7 +48,7 @@ FlexLayout::FlexLayout(RenderFlexibleBox& flexBox)
 void FlexLayout::prepareOutOfFlowBoxForPositionedLayout(RenderBox& outOfFlowBox)
 {
     ASSERT(outOfFlowBox.isOutOfFlowPositioned());
-    outOfFlowBox.containingBlock()->addOutOfFlowBox(outOfFlowBox);
+    protect(outOfFlowBox.containingBlock())->addOutOfFlowBox(outOfFlowBox);
     CheckedPtr layer = outOfFlowBox.layer();
     // The static position setStaticPositionForPositionedLayout computes after layout is this content-box corner plus
     // alignment offsets that need the box's size. Starting from the same corner means a box with no offset is already
@@ -191,16 +190,7 @@ LayoutOptionalOutsets FlexLayout::adjustAllowedLayoutOverflow(LayoutOptionalOuts
     return allowance;
 }
 
-void FlexLayout::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForFlexItem, bool usePrintRect)
-{
-    for (auto& renderer : m_flexItems) {
-        CheckedPtr flexItem = renderer.get();
-        if (flexItem && !flexBox().paintChild(*flexItem, paintInfo, paintOffset, paintInfoForFlexItem, usePrintRect, RenderBlock::PaintBlockType::PaintAsInlineBlock))
-            return;
-    }
-}
-
-bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction hitTestAction)
+bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction hitTestAction) const
 {
     if (hitTestAction != HitTestAction::Foreground)
         return false;
@@ -210,10 +200,10 @@ bool FlexLayout::hitTest(const HitTestRequest& request, HitTestResult& result, c
     auto hitTestChild = [&](RenderBox& child) {
         if (child.hasSelfPaintingLayer())
             return false;
-        auto location = flexBox().flipForWritingModeForChild(child, scrolledOffset);
+        auto location = flexBox().blockStartRelativeToPhysicalForChild(child, scrolledOffset);
         if (!child.hitTest(request, result, locationInContainer, location))
             return false;
-        flexBox().updateHitTestResult(result, flexBox().flipForWritingMode(toLayoutPoint(locationInContainer.point() - adjustedLocation)));
+        flexBox().updateHitTestResult(result, flexBox().physicalToBlockStartRelative(toLayoutPoint(locationInContainer.point() - adjustedLocation)));
         return true;
     };
 
@@ -356,7 +346,7 @@ FlexLayout::FlexItemsAtMaxContentWidthScope::~FlexItemsAtMaxContentWidthScope()
     // Computing a box's intrinsic widths may not mark it for layout, but the items were just laid out at their max-content widths.
     // Its layout usually follows anyway; grid and flex parents can ask a laid-out container again.
     RenderObject::SetLayoutNeededForbiddenScope allowSetNeedsLayout(m_flexLayout.flexBox(), false);
-    m_flexLayout.flexBox().setChildNeedsLayout();
+    protect(m_flexLayout.flexBox())->setChildNeedsLayout();
 }
 
 std::optional<LayoutUnit> FlexLayout::maximumContentSizeForMultilineColumn()
@@ -498,7 +488,7 @@ LayoutUnit FlexLayout::staticMainAxisPositionForPositionedFlexItem(const RenderB
     auto mainAxisContentSize = FlexFormattingUtils::isColumnFlow(flexBox()) ? flexBox().contentBoxLogicalHeight() : flexBox().contentBoxLogicalWidth();
     auto availableSpace = mainAxisContentSize - flexItemMainExtent;
     auto isReverse = utils.isColumnOrRowReverse();
-    LayoutUnit offset = FlexFormattingUtils::initialJustifyContentOffset(flexBox().style(), availableSpace, { }, isReverse);
+    LayoutUnit offset = FlexFormattingUtils::initialJustifyContentOffset(protect(flexBox().style()), availableSpace, { }, isReverse);
     if (isReverse)
         offset = availableSpace - offset;
     return offset;
@@ -640,5 +630,4 @@ bool FlexLayout::hasDefiniteSizeForPercentResolution(const RenderBox& flexItem)
     return usedFlexBasisIsContent && FlexIntegrationUtils::flexItemHasComputableAspectRatioAndCrossSizeIsConsideredDefinite(flexItem, flexLayoutState);
 }
 
-}
 }

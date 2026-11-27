@@ -513,7 +513,7 @@ void ScriptElement::executeClassicScript(const ScriptSourceCode& sourceCode)
     IgnoreDestructiveWriteCountIncrementer ignoreDestructiveWriteCountIncrementer(m_isExternalScript ? document.ptr() : nullptr);
     CurrentScriptIncrementer currentScriptIncrementer(document, *this);
 
-    WTFBeginSignpost(this, ExecuteScriptElement, "executing classic script from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8() : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
+    WTFBeginSignpost(this, ExecuteScriptElement, "executing classic script from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? makeUTF8CString(sourceCode.url().string()) : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
     protect(frame->script())->evaluateIgnoringException(sourceCode);
     WTFEndSignpost(this, ExecuteScriptElement);
 }
@@ -547,7 +547,7 @@ void ScriptElement::registerImportMap(const ScriptSourceCode& sourceCode)
     if (!frame)
         return;
 
-    WTFBeginSignpost(this, RegisterImportMap, "registering import-map from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? sourceCode.url().string().utf8() : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
+    WTFBeginSignpost(this, RegisterImportMap, "registering import-map from URL: %" PRIVATE_LOG_STRING " async: %d defer: %d", m_isExternalScript ? makeUTF8CString(sourceCode.url().string()) : "inline"_s, hasAsyncAttribute(), hasDeferAttribute());
     protect(frame->script())->registerImportMap(sourceCode, document->baseURL());
     WTFEndSignpost(this, RegisterImportMap);
 }
@@ -571,15 +571,15 @@ void ScriptElement::executeModuleScript(LoadableModuleScript& loadableModuleScri
     WTFEndSignpost(this, ExecuteScriptElement, "executing module script");
 }
 
-void ScriptElement::dispatchLoadEventRespectingUserGestureIndicator()
+void ScriptElement::runRespectingUserGestureIndicator(NOESCAPE const Function<void()>& function)
 {
     if (MonotonicTime::now() - m_creationTime > maxUserGesturePropagationTime) {
-        dispatchLoadEvent();
+        function();
         return;
     }
 
     UserGestureIndicator indicator(m_userGestureToken);
-    dispatchLoadEvent();
+    function();
 }
 
 void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript)
@@ -610,8 +610,11 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
         case LoadableScript::ErrorType::Resolve: {
             if (RefPtr frame = element().document().frame())
                 protect(frame->script())->reportExceptionFromScriptError(error.value(), loadableScript.isModuleScript());
-            if (!loadableScript.isInlineModule())
-                dispatchLoadEventRespectingUserGestureIndicator();
+            if (!loadableScript.isInlineModule()) {
+                runRespectingUserGestureIndicator([&] {
+                    dispatchLoadEvent();
+                });
+            }
             break;
         }
 
@@ -627,9 +630,14 @@ void ScriptElement::executeScriptAndDispatchEvent(LoadableScript& loadableScript
         }
         }
     } else if (!loadableScript.wasCanceled()) {
-        loadableScript.execute(*this);
-        if (!loadableScript.isInlineModule())
-            dispatchLoadEventRespectingUserGestureIndicator();
+        runRespectingUserGestureIndicator([&] {
+            loadableScript.execute(*this);
+        });
+        if (!loadableScript.isInlineModule()) {
+            runRespectingUserGestureIndicator([&] {
+                dispatchLoadEvent();
+            });
+        }
     }
 }
 
@@ -652,7 +660,9 @@ void ScriptElement::executePendingScript(PendingScript& pendingScript)
                 registerImportMap(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::ImportMap));
             else
                 registerSpeculationRules(ScriptSourceCode(scriptContent(), m_taintedOrigin, URL(document->url()), pendingScript.startingPosition(), JSC::SourceProviderSourceType::Program));
-            dispatchLoadEventRespectingUserGestureIndicator();
+            runRespectingUserGestureIndicator([&] {
+                dispatchLoadEvent();
+            });
         }
     }
 }

@@ -52,13 +52,13 @@ using namespace MathMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLOperator);
 
-RenderMathMLOperator::RenderMathMLOperator(Type type, MathMLOperatorElement& element, Style::ComputedStyle&& style)
+RenderMathMLOperator::RenderMathMLOperator(Type type, MathMLOperatorElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLToken(type, element, WTF::move(style))
 {
     updateTokenContent();
 }
 
-RenderMathMLOperator::RenderMathMLOperator(Type type, Document& document, Style::ComputedStyle&& style)
+RenderMathMLOperator::RenderMathMLOperator(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLToken(type, document, WTF::move(style))
 {
 }
@@ -365,14 +365,6 @@ void RenderMathMLOperator::paint(PaintInfo& info, const LayoutPoint& paintOffset
     operatorTopLeft.move((writingMode().isBidiLTR() ? leadingSpace() : trailingSpace()) + borderLeft() + paddingLeft(), borderAndPaddingBefore());
 
     m_mathOperator.paint(usedStyle(), info, operatorTopLeft, document().deviceScaleFactor());
-}
-
-void RenderMathMLOperator::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)
-{
-    // We skip painting for invisible operators too to avoid some "missing character" glyph to appear if appropriate math fonts are not available.
-    if (useMathOperator() || isInvisibleOperator())
-        return;
-    RenderMathMLToken::paintChildren(paintInfo, paintOffset, paintInfoForChild, usePrintRect);
 }
 
 }

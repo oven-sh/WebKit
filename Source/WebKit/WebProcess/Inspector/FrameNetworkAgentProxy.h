@@ -32,6 +32,7 @@
 #pragma once
 
 #include "BackendResourceDataStore.h"
+#include <WebCore/FrameIdentifier.h>
 #include <WebCore/NetworkAgentInstrumentation.h>
 #include <wtf/CheckedRef.h>
 #include <wtf/Forward.h>
@@ -68,7 +69,7 @@ class FrameNetworkAgentProxy : public Inspector::NetworkAgentInstrumentation, pu
     WTF_MAKE_NONCOPYABLE(FrameNetworkAgentProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(FrameNetworkAgentProxy);
 public:
-    FrameNetworkAgentProxy(WebCore::WebAgentContext&, WebPage&, BackendResourceDataStore&, const WebCore::HTTPHeaderMap& extraRequestHeaders);
+    FrameNetworkAgentProxy(WebCore::WebAgentContext&, WebPage&, WebCore::FrameIdentifier, BackendResourceDataStore&, const WebCore::HTTPHeaderMap& extraRequestHeaders);
     ~FrameNetworkAgentProxy() override;
 
     // AbstractCanMakeCheckedPtr overrides
@@ -100,7 +101,16 @@ public:
     void mainFrameNavigated(WebCore::DocumentLoader&) final;
     void setInitialScriptContent(WebCore::ResourceLoaderIdentifier, const String& sourceString) final;
 
-    // FIXME: Forward interception to ProxyingNetworkAgent. https://bugs.webkit.org/show_bug.cgi?id=324383
+    void didCreateWebSocket(WebCore::WebSocketChannelIdentifier, const URL& requestURL) final;
+    void willSendWebSocketHandshakeRequest(WebCore::WebSocketChannelIdentifier, WebCore::ResourceRequest&) final;
+    void didSendWebSocketHandshakeRequest(WebCore::WebSocketChannelIdentifier, const WebCore::ResourceRequest&) final;
+    void didReceiveWebSocketHandshakeResponse(WebCore::WebSocketChannelIdentifier, const WebCore::ResourceResponse&) final;
+    void didCloseWebSocket(WebCore::WebSocketChannelIdentifier) final;
+    void didReceiveWebSocketFrame(WebCore::WebSocketChannelIdentifier, const WebCore::WebSocketFrame&) final;
+    void didSendWebSocketFrame(WebCore::WebSocketChannelIdentifier, const WebCore::WebSocketFrame&) final;
+    void didReceiveWebSocketFrameError(WebCore::WebSocketChannelIdentifier, const String& errorMessage) final;
+
+    // Web Inspector interception under Site Isolation; see NetworkInterceptionSink.
     bool willIntercept(const WebCore::ResourceRequest&) final;
     bool shouldInterceptRequest(const WebCore::ResourceLoader&) final;
     bool shouldInterceptResponse(const WebCore::ResourceResponse&) final;
@@ -109,6 +119,9 @@ public:
 
 private:
     WeakRef<WebPage> m_page;
+    // The frame whose InstrumentingAgents this proxy is registered on. WebSocket hooks carry no loader, so
+    // this is what attributes a socket to its frame.
+    const WebCore::FrameIdentifier m_frameID;
     CheckedRef<BackendResourceDataStore> const m_resourcesData;
 
     // Owned by the WebInspectorBackend that owns this proxy; applied in willSendRequest.

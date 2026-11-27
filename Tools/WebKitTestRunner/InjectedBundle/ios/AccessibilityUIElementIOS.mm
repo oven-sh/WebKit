@@ -122,6 +122,7 @@ typedef void (*AXPostedNotificationCallback)(id element, NSString* notification,
 - (NSArray<NSString *> *)accessibilitySpeechHint;
 - (BOOL)_accessibilityIsStrongPasswordField;
 - (CGRect)accessibilityVisibleContentRect;
+- (BOOL)_accessibilityScrollToVisible;
 - (NSString *)accessibilityTextualContext;
 - (NSString *)accessibilityRoleDescription;
 - (BOOL)accessibilityHasPopup;
@@ -515,6 +516,8 @@ double AccessibilityUIElementIOS::numberAttributeValue(JSStringRef attribute)
         return [m_element accessibilityARIARowIndex];
     if (JSStringIsEqualToUTF8CString(attribute, "AXBlockquoteLevel"))
         return [m_element accessibilityBlockquoteLevel];
+    if (JSStringIsEqualToUTF8CString(attribute, "AXElementCount"))
+        return [m_element accessibilityElementCount];
 
     return 0;
 }
@@ -1136,6 +1139,7 @@ RefPtr<AccessibilityUIElement> AccessibilityUIElementIOS::verticalScrollbar() co
 
 void AccessibilityUIElementIOS::scrollToMakeVisible()
 {
+    [m_element _accessibilityScrollToVisible];
 }
 
 void AccessibilityUIElementIOS::scrollToGlobalPoint(int x, int y)

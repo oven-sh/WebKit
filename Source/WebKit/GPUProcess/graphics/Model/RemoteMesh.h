@@ -27,12 +27,15 @@
 
 #if ENABLE(GPU_PROCESS_MODEL)
 
+#include "ModelTypes.h"
 #include "RemoteGPU.h"
 #include "StreamMessageReceiver.h"
 #include "WebModelIdentifier.h"
 #include <WebCore/NodeIdentifier.h>
+#include <wtf/HashMap.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
 #include <wtf/WeakRef.h>
 #include <wtf/text/WTFString.h>
 
@@ -99,6 +102,7 @@ private:
     void updateTransform(const WebModel::Float4x4& transform);
 #if ENABLE(SPATIAL_PORTAL)
     void updatePortalChildTransform(WebCore::NodeIdentifier, const WebModel::Float4x4&);
+    void setPortalContentSources(Vector<WebModel::PortalContentSource>&&, CompletionHandler<void(bool)>&&);
 #endif
     void setFOV(float fovY);
     void play(bool);
@@ -112,6 +116,9 @@ private:
     void paintCurrentFrameToImageBuffer(WebCore::RenderingResourceIdentifier imageBufferIdentifier, uint32_t bufferIndex, CompletionHandler<void()>&&);
 
     void render(uint32_t textureIndex, CompletionHandler<void(bool)>&&);
+#if ENABLE(SPATIAL_PORTAL) && HAVE(IOSURFACE)
+    bool updatePortalContentTextures();
+#endif
     void processRemovals(Vector<WebModel::TypedResourceId>&& meshRemovals, Vector<WebModel::TypedResourceId>&& materialRemovals, Vector<WebModel::TypedResourceId>&& textureRemovals, CompletionHandler<void(bool)>&&);
 
     const Ref<WebKit::Mesh> m_backing;
@@ -120,7 +127,16 @@ private:
     const WebModelIdentifier m_identifier;
     ThreadSafeWeakPtr<GPUConnectionToWebProcess> m_gpuConnectionToWebProcess;
     WeakRef<RemoteGPU> m_gpu;
+#if ENABLE(SPATIAL_PORTAL)
+    struct PortalContentTextureState {
+        Vector<uint64_t> mappedBuffers;
+        uint64_t boundBuffer { 0 };
+    };
+    Vector<WebModel::PortalContentSource> m_portalContentSources;
+    Vector<PortalContentTextureState> m_portalContentTextureStates;
+#endif
     const bool m_standardDynamicRange { false };
+    HashMap<int64_t, WebModel::MeshDescriptor> m_meshDescriptors;
 };
 
 } // namespace WebKit

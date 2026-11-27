@@ -363,7 +363,6 @@ workers:
       - {template: mac-sequoia-aircloud, prefix: ews, first: 2011, count: 5}
       - {template: mac-tahoe-aws, prefix: ews, first: 3000, count: 5}
       - {template: mac-golden-gate-aws, prefix: ews, first: 3005, count: 37}
-      - {template: mac-golden-gate-aws, prefix: bot, first: 10016, count: 2, tag: webdriver}
     each(w):
       $if: "'template' in w"
       then:
@@ -440,19 +439,21 @@ builders:
     architectures: [arm64]
     workernames: {$map: {$eval: "range(0, 5)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-tahoe-aws'\").name"}}
   - name: iOS-27-Simulator-Build-EWS
-    shortname: ios-sim
+    shortname: ios-sim-cmake
     icon: buildOnly
     factory: iOSBuildFactory
     platform: ios-simulator-27
     configuration: release
     architectures: [arm64]
+    additionalArguments: [--cmake]
+    rebuild_without_change_on_builder: true
     triggers: [api-tests-ios-sim-ews, ios-27-sim-wk2-tests-ews, ios-27-sim-wpt-wk2-tests-ews]
     workernames:
       $flatten:
         - {$map: {$eval: "range(0, 4)"}, each(i): {$eval: "pop(workers, \"tag == 'golden-gate-m1'\").name"}}
         - {$map: {$eval: "range(0, 3)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
   - name: iOS-27-Simulator-WK2-Tests-EWS
-    shortname: ios-wk2
+    shortname: ios-cmake-wk2
     icon: testOnly
     factory: iOSTestsFactory
     platform: ios-simulator-27
@@ -461,7 +462,7 @@ builders:
     additionalArguments: [--child-processes=5, --exclude-tests, imported/w3c/web-platform-tests]
     workernames: {$map: {$eval: "range(0, 8)"}, each(i): {$eval: "pop(workers, \"tag == 'golden-gate-m2pro'\").name"}}
   - name: iOS-27-Simulator-WPT-WK2-Tests-EWS
-    shortname: ios-wk2-wpt
+    shortname: ios-cmake-wk2-wpt
     icon: testOnly
     factory: iOSTestsFactory
     platform: ios-simulator-27
@@ -478,7 +479,7 @@ builders:
     architectures: [arm64]
     additionalArguments: [--cmake]
     rebuild_without_change_on_builder: true
-    triggers: [macos-golden-gate-debug-api-tests-ews, macos-golden-gate-debug-wk2-tests-ews]
+    triggers: [macos-golden-gate-debug-api-tests-ews, macos-golden-gate-debug-wk2-tests-ews, macos-golden-gate-debug-webdriver-tests-ews]
     workernames:
       $flatten:
         - {$map: {$eval: "range(0, 3)"}, each(i): {$eval: "pop(workers, \"tag == 'golden-gate-m2pro'\").name"}}
@@ -509,8 +510,9 @@ builders:
     factory: WebDriverTestsFactory
     platform: mac-golden-gate
     configuration: debug
+    triggered_by: [macos-golden-gate-debug-build-ews]
     additionalArguments: [--site-isolation]
-    workernames: {$map: {$eval: workers}, each(w): {$if: "w.tag == 'webdriver'", then: {$eval: w.name}}}
+    workernames: {$map: {$eval: "range(0, 2)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
   - name: macOS-Sequoia-Release-Build-EWS
     shortname: mac
     icon: buildOnly
@@ -605,7 +607,7 @@ builders:
     platform: tvos-27
     configuration: release
     architectures: [arm64]
-    workernames: {$map: {$eval: "range(0, 5)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
+    workernames: {$map: {$eval: "range(0, 4)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
   - name: tvOS-27-Simulator-Build-EWS
     shortname: tv-sim
     icon: buildOnly
@@ -613,7 +615,7 @@ builders:
     platform: tvos-simulator-27
     configuration: release
     architectures: [arm64]
-    workernames: {$map: {$eval: "range(0, 5)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
+    workernames: {$map: {$eval: "range(0, 4)"}, each(i): {$eval: "pop(workers, \"tag == 'mac-golden-gate-aws'\").name"}}
   - name: visionOS-27-Build-EWS
     shortname: vision
     icon: buildOnly
@@ -719,7 +721,7 @@ builders:
     runTests: 'true'
     workernames: {$map: {$eval: "range(0, 4)"}, each(i): {$eval: "pop(workers, \"tag == 'golden-gate-m2pro'\").name"}}
   - name: API-Tests-iOS-Simulator-EWS
-    shortname: api-ios
+    shortname: api-ios-cmake
     icon: testOnly
     factory: APITestsFactory
     platform: '*'
@@ -821,6 +823,9 @@ schedulers:
   - type: Triggerable
     name: macos-golden-gate-debug-wk2-tests-ews
     builderNames: [macOS-Golden-Gate-Debug-WK2-Tests-EWS]
+  - type: Triggerable
+    name: macos-golden-gate-debug-webdriver-tests-ews
+    builderNames: [macOS-Golden-Gate-Debug-WebDriver-Tests-EWS]
   - type: Triggerable
     name: ios-27-sim-build-ews
     builderNames: [iOS-27-Simulator-Build-EWS]

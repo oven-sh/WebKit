@@ -51,8 +51,8 @@ public:
     // painting/hit-testing/baseline queries read the list after layout, when a child may have been removed.
     using FlexItemList = Vector<SingleThreadWeakPtr<RenderBox>>;
 
-    void paint(PaintInfo& forSelf, const LayoutPoint&, PaintInfo& forChild, bool usePrintRect);
-    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction);
+    const FlexItemList& flexItems() const LIFETIME_BOUND { return m_flexItems; }
+    bool hitTest(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint& adjustedLocation, HitTestAction) const;
 
     // Widens the container's allowed layout overflow by how far content-alignment pushed the items past the
     // content-box start edges. Takes RenderBox's writing-mode-only allowance, which only the renderer can compute.

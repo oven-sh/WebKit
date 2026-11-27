@@ -67,6 +67,7 @@ RemoteFrame::RemoteFrame(Page& page, ClientCreator&& clientCreator, FrameIdentif
     , m_colorSchemePreference(ColorSchemePreference::NoPreference)
 {
     setView(RemoteFrameView::create(*this));
+    updateViewScrollPositionFromFrameTreeSyncData();
 }
 
 RemoteFrame::~RemoteFrame()
@@ -160,6 +161,12 @@ FrameLoaderClient& RemoteFrame::loaderClient()
 void RemoteFrame::setView(RefPtr<RemoteFrameView>&& view)
 {
     m_view = WTF::move(view);
+}
+
+void RemoteFrame::updateViewScrollPositionFromFrameTreeSyncData()
+{
+    if (RefPtr view = m_view)
+        view->scrollTo(frameTreeSyncData().frameViewportInfo.scrollPosition);
 }
 
 void RemoteFrame::frameDetached()
@@ -260,7 +267,8 @@ std::optional<AgentClusterIdentifier> RemoteFrame::frameAgentClusterIdentifier()
 
 bool RemoteFrame::frameDocumentIsSandboxedOrigin() const
 {
-    return frameTreeSyncData().frameDocumentIsSandboxedOrigin;
+    auto& securityPolicy = frameTreeSyncData().frameDocumentSecurityPolicy;
+    return securityPolicy && securityPolicy->isSandboxedOrigin;
 }
 
 String RemoteFrame::frameURLProtocol() const
@@ -285,10 +293,10 @@ ColorSchemePreference RemoteFrame::colorSchemePreference() const
     return m_colorSchemePreference;
 }
 
-float RemoteFrame::frameScaleFactorForChild(const Frame& child) const
+float RemoteFrame::frameOwnerZoomFactorForChild(const Frame& child) const
 {
     if (RefPtr info = frameTreeSyncData().frameGeometry.childrenFrameLayoutInfo.get(child.frameID()))
-        return info->frameScaleFactor();
+        return info->frameOwnerZoomFactor();
 
     return 1.0;
 }

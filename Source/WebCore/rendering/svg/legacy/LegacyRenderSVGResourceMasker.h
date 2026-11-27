@@ -22,6 +22,7 @@
 
 #include "ImageBuffer.h"
 #include "LegacyRenderSVGResourceContainer.h"
+#include "NativeImage.h"
 #include "SVGUnitTypes.h"
 
 #include <wtf/EnumeratedArray.h>
@@ -36,14 +37,14 @@ struct ImageDrawDescriptor;
 
 struct MaskerData {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MaskerData);
-    RefPtr<ImageBuffer> maskImage;
+    RefPtr<NativeImage> maskImage;
 };
 
 class LegacyRenderSVGResourceMasker final : public LegacyRenderSVGResourceContainer {
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceMasker);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceMasker);
 public:
-    LegacyRenderSVGResourceMasker(SVGMaskElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGResourceMasker(SVGMaskElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGResourceMasker();
 
     inline SVGMaskElement& maskElement() const;
@@ -65,7 +66,7 @@ private:
 
     ASCIILiteral renderName() const override { return "RenderSVGResourceMasker"_s; }
 
-    bool drawContentIntoMaskImage(MaskerData*, const ColorSpace&, RenderObject*);
+    bool drawContentIntoMaskImage(ImageBuffer&, const ColorSpace&, RenderObject*);
     void calculateMaskContentRepaintRect(RepaintRectCalculation);
 
     EnumeratedArray<RepaintRectCalculation, FloatRect, RepaintRectCalculation::Accurate> m_maskContentBoundaries;

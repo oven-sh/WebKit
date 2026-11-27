@@ -34,44 +34,38 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteBindGroupLayoutProxy final : public ::WebGPU::BindGroupLayout {
     WTF_MAKE_TZONE_ALLOCATED(RemoteBindGroupLayoutProxy);
 public:
-    static Ref<RemoteBindGroupLayoutProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteBindGroupLayoutProxy> create(RemoteGPUProxy& parent, WebGPUBindGroupLayoutIdentifier identifier)
     {
-        return adoptRef(*new RemoteBindGroupLayoutProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteBindGroupLayoutProxy(parent, identifier));
     }
 
     virtual ~RemoteBindGroupLayoutProxy();
 
     RemoteGPUProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() const { return m_parent; }
+    WebGPUBindGroupLayoutIdentifier backing() const { return m_backing; }
 
     void setLabel(String&&) final;
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteBindGroupLayoutProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteBindGroupLayoutProxy(RemoteGPUProxy&, WebGPUBindGroupLayoutIdentifier);
 
     RemoteBindGroupLayoutProxy(const RemoteBindGroupLayoutProxy&) = delete;
     RemoteBindGroupLayoutProxy(RemoteBindGroupLayoutProxy&&) = delete;
     RemoteBindGroupLayoutProxy& operator=(const RemoteBindGroupLayoutProxy&) = delete;
     RemoteBindGroupLayoutProxy& operator=(RemoteBindGroupLayoutProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
         return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUBindGroupLayoutIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_parent;
 };
 

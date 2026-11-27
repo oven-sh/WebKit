@@ -33,8 +33,7 @@
 #include "StyleValueHandleMap.h"
 #include <cmath>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 PrimitiveData::PrimitiveData(uint8_t opaqueType, UnevaluatedCalculationBase&& value)
     : m_opaqueType { opaqueType }
@@ -66,13 +65,13 @@ PrimitiveData::PrimitiveData(uint8_t opaqueType, const UnevaluatedCalcSize& valu
 
 Calculation::Value& PrimitiveData::calculationValue() const
 {
-    ASSERT(m_kind == PrimitiveDataKind::Calculation);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_kind == PrimitiveDataKind::Calculation);
     return ValueHandleMap<Calculation::Value>::singleton().get(m_calculationValueHandle);
 }
 
 CalcSizeValue& PrimitiveData::calcSizeValue() const
 {
-    ASSERT(m_kind == PrimitiveDataKind::CalcSize);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_kind == PrimitiveDataKind::CalcSize);
     return ValueHandleMap<CalcSizeValue>::singleton().get(m_calculationValueHandle);
 }
 
@@ -121,5 +120,4 @@ bool PrimitiveData::isCalcSizeEqual(const PrimitiveData& other) const
     return calcSizeValue() == other.calcSizeValue();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

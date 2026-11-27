@@ -35,8 +35,7 @@
 #include <wtf/Hasher.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 namespace {
 
@@ -398,9 +397,7 @@ struct ActionKey {
         , actionsLength(actionsLength)
         , state(Valid)
     {
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        hash = SuperFastHash::computeHash(std::span { reinterpret_cast<const char16_t*>(&dfa->actions[actionsStart]), actionsLength * sizeof(uint64_t) / sizeof(char16_t) });
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        hash = SuperFastHash::computeHash(spanReinterpretCast<const char16_t>(dfa->actions.subspan(actionsStart, actionsLength)));
     }
 
     NODELETE bool isEmptyValue() const { return state == Empty; }
@@ -492,7 +489,6 @@ void DFAMinimizer::minimize(DFA& dfa)
     }
 }
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

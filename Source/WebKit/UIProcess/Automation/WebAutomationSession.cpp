@@ -36,8 +36,12 @@
 #include "CoordinateSystem.h"
 #include "ImageOptions.h"
 #include "InspectorPassthroughChannel.h"
+#include "Logging.h"
+#include "NetworkProcessMessages.h"
+#include "NetworkProcessProxy.h"
 #include "PageLoadState.h"
 #include "SameDocumentNavigationType.h"
+#include "SandboxExtension.h"
 #include "WebAutomationSessionMacros.h"
 #include "WebAutomationSessionMessages.h"
 #include "WebAutomationSessionProxyMessages.h"
@@ -49,13 +53,19 @@
 #include "WebNavigationState.h"
 #include "WebOpenPanelResultListenerProxy.h"
 #include "WebPageInspectorController.h"
+#include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebPreferences.h"
 #include "WebProcessPool.h"
+#include "WebProcessProxy.h"
+#include "WebsiteDataStore.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/InspectorFrontendRouter.h>
+#include <JavaScriptCore/MathCommon.h>
+#include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/MIMETypeRegistry.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/PointerEventTypeNames.h>
 #include <algorithm>
 #include <cmath>
@@ -72,18 +82,23 @@
 #include <wtf/text/TextBreakIterator.h>
 #endif
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 #include "VirtualAuthenticatorManager.h"
 #include <WebCore/AuthenticatorTransport.h>
 #endif
 
 #if ENABLE(WEBDRIVER_BIDI)
 #include "BidiBrowserAgent.h"
+#include "BidiEmulationAgent.h"
 #include "BidiEventNames.h"
 #include "BidiInputAgent.h"
 #include "BidiScriptAgent.h"
 #include "IdentifierTypes.h"
 #include "WebDriverBidiProcessor.h"
+#endif
+
+#if ENABLE(WK_WEB_EXTENSIONS_IN_WEBDRIVER)
+#include "WebExtensionContext.h"
 #endif
 
 // FIXME: https://bugs.webkit.org/show_bug.cgi?id=306415
@@ -105,6 +120,19 @@ String AutomationCommandError::toProtocolString()
 // §8. Sessions
 // https://www.w3.org/TR/webdriver/#dfn-session-page-load-timeout
 static const Seconds defaultPageLoadTimeout = 300_s;
+
+// JSON can't represent an infinite timeout, so WebDriver sends the maximum safe integer for a null page load timeout.
+static Seconds pageLoadTimeoutFromProtocol(std::optional<double> optionalPageLoadTimeout)
+{
+    if (!optionalPageLoadTimeout)
+        return defaultPageLoadTimeout;
+    if (*optionalPageLoadTimeout >= JSC::maxSafeInteger())
+        return Seconds::infinity();
+    return Seconds::fromMilliseconds(*optionalPageLoadTimeout);
+}
+
+// How long Close Window waits for the client to close the page before completing anyway.
+static constexpr Seconds closeBrowsingContextTimeout = 5_s;
 // https://www.w3.org/TR/webdriver/#dfn-page-loading-strategy
 static const Inspector::Protocol::Automation::PageLoadStrategy defaultPageLoadStrategy = Inspector::Protocol::Automation::PageLoadStrategy::Normal;
 
@@ -290,26 +318,33 @@ void WebAutomationSession::sendInspectorMessageToClient(const String& browsingCo
 
 void WebAutomationSession::terminate()
 {
+    for (auto& identifier : copyToVector(m_pendingCloseBrowsingContextCallbacksPerPage.keys())) {
+        for (auto& callback : m_pendingCloseBrowsingContextCallbacksPerPage.take(identifier))
+            callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(InternalError)));
+    }
+
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
     for (auto& identifier : copyToVector(m_pendingKeyboardEventsFlushedCallbacksPerPage.keys())) {
         auto callback = m_pendingKeyboardEventsFlushedCallbacksPerPage.take(identifier);
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(InternalError)));
     }
 #endif // ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
     for (auto& identifier : copyToVector(m_pendingMouseEventsFlushedCallbacksPerPage.keys())) {
         auto callback = m_pendingMouseEventsFlushedCallbacksPerPage.take(identifier);
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(InternalError)));
     }
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
     for (auto& identifier : copyToVector(m_pendingWheelEventsFlushedCallbacksPerPage.keys())) {
         auto callback = m_pendingWheelEventsFlushedCallbacksPerPage.take(identifier);
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(InternalError)));
     }
 #endif // ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
+
+    clearNetworkInterceptionForAllPages();
 
 #if ENABLE(REMOTE_INSPECTOR)
     if (Inspector::FrontendChannel* channel = m_remoteChannel) {
@@ -387,6 +422,18 @@ void WebAutomationSession::didDestroyFrame(FrameIdentifier frameID)
     // moved the set onto the replacement frame's identifier, so it drops nothing that
     // is still reachable.
     m_knownNodeReferences.remove(frameID);
+#if ENABLE(WEBDRIVER_BIDI)
+    // A main frame's command outlives the frame when a cross-site navigation replaces it.
+    auto isForDestroyedFrame = [&](const BidiPendingNavigation& pending) {
+        return !pending.pageID && pending.frameID == frameID;
+    };
+    completeBidiCommitWaits([&](auto& pending) {
+        return isForDestroyedFrame(pending);
+    }, makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(FrameNotFound)));
+    m_bidiPendingNavigations.removeAllMatching([&](auto& pending) {
+        return isForDestroyedFrame(pending.get());
+    });
+#endif
 }
 
 std::optional<FrameIdentifier> WebAutomationSession::webFrameIDForHandle(const String& handle, bool& frameNotFound)
@@ -400,7 +447,28 @@ std::optional<FrameIdentifier> WebAutomationSession::webFrameIDForHandle(const S
         return std::nullopt;
     }
 
+    // The child frames of a document in the back/forward cache keep their handles, so that they still have them when
+    // the document is restored, but commands cannot reach them once they are out of the frame tree. A handle can also
+    // outlive its frame until the next sweep, for example when a back/forward cache entry is discarded.
+    RefPtr frame = WebFrameProxy::webFrame(iter->value);
+    if (!frame || !isInFrameTreeOfItsPage(*frame)) {
+        frameNotFound = true;
+        return std::nullopt;
+    }
+
     return iter->value;
+}
+
+bool WebAutomationSession::isInFrameTreeOfItsPage(const WebFrameProxy& frame)
+{
+    RefPtr page = frame.page();
+    if (!page)
+        return false;
+
+    RefPtr ancestor = &frame;
+    while (RefPtr parent = ancestor->parentFrame())
+        ancestor = WTF::move(parent);
+    return ancestor == page->mainFrame();
 }
 
 String WebAutomationSession::handleForWebFrameID(std::optional<FrameIdentifier> frameID)
@@ -503,6 +571,20 @@ bool WebAutomationSession::isValidUserContext(const String& userContextID) const
 {
     return m_bidiProcessor->browserAgent().isValidUserContext(userContextID);
 }
+
+std::expected<String, AutomationCommandError> WebAutomationSession::nodeHandleForSharedReference(const JSON::Object& sharedReference) const
+{
+    // https://w3c.github.io/webdriver-bidi/#type-script-SharedReference
+    RefPtr sharedId = sharedReference.getValue("sharedId"_s);
+    if (!sharedId || sharedId->type() != JSON::Value::Type::String)
+        return makeUnexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(InvalidParameter, "The 'sharedId' parameter must be a string"_s));
+
+    RefPtr handle = sharedReference.getValue("handle"_s);
+    if (handle && handle->type() != JSON::Value::Type::String)
+        return makeUnexpected(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(InvalidParameter, "The 'handle' parameter must be a string"_s));
+
+    return sharedId->asString();
+}
 #endif
 
 // Platform-independent Commands.
@@ -594,10 +676,36 @@ void WebAutomationSession::closeBrowsingContext(const Inspector::Protocol::Autom
     auto page = webPageProxyForHandle(handle);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
-    page->closePage();
+    // The client closes the page, and some clients do that later than the next run loop iteration
+    // (GTK MiniBrowser destroys the view's window, which GTK disposes of later). The reply to the
+    // WebDriver Close Window command lists the remaining windows, so the command completes from
+    // willClosePage(), once the page has really gone.
+    // A close that is already pending for the page (BiDi can send two, and a Classic and a BiDi close can overlap)
+    // gets the same reply; the client is not asked again, since it may be partway through closing the page.
+    auto pageID = page->identifier();
+    auto addResult = m_pendingCloseBrowsingContextCallbacksPerPage.add(pageID, Vector<Inspector::CommandCallback<void>> { });
+    addResult.iterator->value.append(WTF::move(callback));
+    if (!addResult.isNewEntry)
+        return;
 
-    RunLoop::mainSingleton().dispatch([callback = WTF::move(callback)] {
-        callback({ });
+    page->askClientToClose();
+
+    // A client that closes the page synchronously (e.g. MiniBrowser on Mac) has already completed the command.
+    if (!m_pendingCloseBrowsingContextCallbacksPerPage.contains(pageID))
+        return;
+
+    // Closing is a request to the client, which may hide the view instead or do nothing at all. A command that is
+    // still pending after a bounded wait completes as it did before, rather than hanging the session.
+    RunLoop::mainSingleton().dispatchAfter(closeBrowsingContextTimeout, [weakThis = WeakPtr { *this }, pageID] {
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+        auto callbacks = protectedThis->m_pendingCloseBrowsingContextCallbacksPerPage.take(pageID);
+        if (callbacks.isEmpty())
+            return;
+        RELEASE_LOG(Automation, "[s:%s] closeBrowsingContext completed after %.0f s although the client did not close page %" PRIu64, makeUTF8CString(protectedThis->sessionIdentifier()), closeBrowsingContextTimeout.seconds(), pageID.toUInt64());
+        for (auto& callback : borrow(callbacks))
+            callback({ });
     });
 }
 
@@ -711,7 +819,7 @@ void WebAutomationSession::waitForNavigationToComplete(const Inspector::Protocol
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
     auto pageLoadStrategy = optionalPageLoadStrategy.value_or(defaultPageLoadStrategy);
-    auto pageLoadTimeout = optionalPageLoadTimeout ? Seconds::fromMilliseconds(*optionalPageLoadTimeout) : defaultPageLoadTimeout;
+    auto pageLoadTimeout = pageLoadTimeoutFromProtocol(optionalPageLoadTimeout);
 
     // If page is loading and there's an active JavaScript dialog is probably because the
     // dialog was started in an onload handler, so in case of normal page load strategy the
@@ -766,7 +874,7 @@ void WebAutomationSession::waitForNavigationToCompleteOnPage(WebPageProxy& page,
         return;
     }
 
-    m_loadTimer.startOneShot(timeout);
+    startLoadTimer(timeout);
     switch (loadStrategy) {
     case Inspector::Protocol::Automation::PageLoadStrategy::Normal:
         addPendingNavigationCallback(m_pendingNormalNavigationInBrowsingContextCallbacksPerPage, page.identifier(), PendingPageNavigationCallback { WTF::move(navigation), sameDocumentNavigation == SameDocumentNavigation::Yes, false, WTF::move(callback) });
@@ -779,14 +887,15 @@ void WebAutomationSession::waitForNavigationToCompleteOnPage(WebPageProxy& page,
     }
 }
 
-void WebAutomationSession::waitForNavigationToCompleteOnFrame(WebFrameProxy& frame, Inspector::Protocol::Automation::PageLoadStrategy loadStrategy, Seconds timeout, Inspector::CommandCallback<void>&& callback)
+void WebAutomationSession::waitForNavigationToCompleteOnFrame(WebFrameProxy& frame, Inspector::Protocol::Automation::PageLoadStrategy loadStrategy, Seconds timeout, Inspector::CommandCallback<void>&& callback, LoadStarted loadStarted)
 {
-    if (loadStrategy == Inspector::Protocol::Automation::PageLoadStrategy::None || frame.frameLoadState().state() == FrameLoadState::State::Finished) {
+    bool isLoading = loadStarted == LoadStarted::Yes || frame.frameLoadState().state() != FrameLoadState::State::Finished;
+    if (loadStrategy == Inspector::Protocol::Automation::PageLoadStrategy::None || !isLoading) {
         callback({ });
         return;
     }
 
-    m_loadTimer.startOneShot(timeout);
+    startLoadTimer(timeout);
     switch (loadStrategy) {
     case Inspector::Protocol::Automation::PageLoadStrategy::Normal:
         addPendingNavigationCallback(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame, frame.frameID(), WTF::move(callback));
@@ -836,12 +945,29 @@ void WebAutomationSession::respondToPendingFrameNavigationCallbacksWithTimeout(H
     }
 }
 
+void WebAutomationSession::startLoadTimer(Seconds timeout)
+{
+    // The timer is shared by every pending wait, classic and BiDi, so the latest wait's timeout applies to all of them.
+    // An infinite timeout (a null page load timeout) stops the timer, so no pending wait times out.
+    // FIXME https://webkit.org/b/323980 Support separate timers, one for each callback
+    if (timeout.isInfinity()) {
+        m_loadTimer.stop();
+        return;
+    }
+    m_loadTimer.startOneShot(timeout);
+}
+
 void WebAutomationSession::loadTimerFired()
 {
     respondToPendingFrameNavigationCallbacksWithTimeout(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame);
     respondToPendingFrameNavigationCallbacksWithTimeout(m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame);
     respondToPendingPageNavigationCallbacksWithTimeout(m_pendingNormalNavigationInBrowsingContextCallbacksPerPage);
     respondToPendingPageNavigationCallbacksWithTimeout(m_pendingEagerNavigationInBrowsingContextCallbacksPerPage);
+#if ENABLE(WEBDRIVER_BIDI)
+    completeBidiCommitWaits([](auto&) {
+        return true;
+    }, makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(Timeout)));
+#endif
 }
 
 void WebAutomationSession::maximizeWindowOfBrowsingContext(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, CommandCallback<void>&& callback)
@@ -946,7 +1072,7 @@ void WebAutomationSession::willShowJavaScriptDialog(WebPageProxy& page, const St
         std::optional<API::AutomationSessionClient::JavaScriptDialogType> apiDialogType = m_client->typeOfCurrentJavaScriptDialogOnPage(*this, page);
         auto userPromptType = toProtocolUserPromptType(apiDialogType.value_or(API::AutomationSessionClient::JavaScriptDialogType::Prompt));
 
-        // FIXME: propagate the 'userPromptHandler' from session capabilities.
+        // FIXME: propagate the 'userPromptHandler' from session capabilities. <https://webkit.org/b/291666>
         auto userPromptHandlerType = Inspector::Protocol::BidiSession::UserPromptHandlerType::Accept;
         m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::UserPromptOpened, { handleForWebPageProxy(page) }, [&] {
             m_bidiProcessor->browsingContextDomainNotifier().userPromptOpened(handleForWebPageProxy(page), userPromptType, userPromptHandlerType, message, m_client->defaultTextOfCurrentJavaScriptDialogOnPage(*this, page).value_or(defaultText.value_or(emptyString())));
@@ -1013,7 +1139,7 @@ void WebAutomationSession::navigateBrowsingContext(const Inspector::Protocol::Au
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
     auto pageLoadStrategy = optionalPageLoadStrategy.value_or(defaultPageLoadStrategy);
-    auto pageLoadTimeout = optionalPageLoadTimeout ? Seconds::fromMilliseconds(*optionalPageLoadTimeout) : defaultPageLoadTimeout;
+    auto pageLoadTimeout = pageLoadTimeoutFromProtocol(optionalPageLoadTimeout);
 
     // A fragment navigation stays in the current document, and WebCore reports it with that document's
     // navigation rather than the new one, so only navigations to another document are awaited. WebCore tells
@@ -1046,7 +1172,7 @@ void WebAutomationSession::goBackInBrowsingContext(const Inspector::Protocol::Au
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
     auto pageLoadStrategy = optionalPageLoadStrategy.value_or(defaultPageLoadStrategy);
-    auto pageLoadTimeout = optionalPageLoadTimeout ? Seconds::fromMilliseconds(*optionalPageLoadTimeout) : defaultPageLoadTimeout;
+    auto pageLoadTimeout = pageLoadTimeoutFromProtocol(optionalPageLoadTimeout);
 
     waitForHistoryTraversalToComplete(*page, pageLoadStrategy, pageLoadTimeout, WTF::move(callback), page->goBack());
 }
@@ -1057,16 +1183,23 @@ void WebAutomationSession::goForwardInBrowsingContext(const Inspector::Protocol:
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
     auto pageLoadStrategy = optionalPageLoadStrategy.value_or(defaultPageLoadStrategy);
-    auto pageLoadTimeout = optionalPageLoadTimeout ? Seconds::fromMilliseconds(*optionalPageLoadTimeout) : defaultPageLoadTimeout;
+    auto pageLoadTimeout = pageLoadTimeoutFromProtocol(optionalPageLoadTimeout);
 
     waitForHistoryTraversalToComplete(*page, pageLoadStrategy, pageLoadTimeout, WTF::move(callback), page->goForward());
+}
+
+// The classic waits fail with WindowNotFound or FrameNotFound when the page or frame goes away before they end.
+static bool isNavigableClosedError(const String& error)
+{
+    return error.startsWith(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)) || error.startsWith(STRING_FOR_PREDEFINED_ERROR_NAME(FrameNotFound));
 }
 
 void WebAutomationSession::traverseHistoryInBrowsingContext(const Inspector::Protocol::Automation::BrowsingContextHandle& handle, int delta, CommandCallback<void>&& callback)
 {
     // https://w3c.github.io/webdriver-bidi/#command-browsingContext-traverseHistory
     auto page = webPageProxyForHandle(handle);
-    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
+    // https://w3c.github.io/webdriver-bidi/#get-a-navigable: a context that names no navigable is "no such frame".
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, FrameNotFound);
 
     if (!delta) {
         callback({ });
@@ -1078,7 +1211,16 @@ void WebAutomationSession::traverseHistoryInBrowsingContext(const Inspector::Pro
     RefPtr targetItem = page->backForwardListWrapper().itemAtDeltaFromCurrentIndex(delta, AllowSkippingBackForwardItems::No);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!targetItem, NoSuchHistoryEntry);
 
-    waitForHistoryTraversalToComplete(*page, defaultPageLoadStrategy, defaultPageLoadTimeout, WTF::move(callback), page->goToBackForwardItem(*targetItem));
+    // The specification returns success as soon as the traversal has started; WebKit also waits for it to finish.
+    // If the page or frame goes away during that wait, the traversal has still started, so the command succeeds.
+    auto completion = [callback = WTF::move(callback)](Inspector::CommandResult<void>&& result) mutable {
+        if (!result && isNavigableClosedError(result.error())) {
+            callback({ });
+            return;
+        }
+        callback(WTF::move(result));
+    };
+    waitForHistoryTraversalToComplete(*page, defaultPageLoadStrategy, defaultPageLoadTimeout, WTF::move(completion), page->goToBackForwardItem(*targetItem));
 }
 
 void WebAutomationSession::reloadBrowsingContext(const Inspector::Protocol::Automation::BrowsingContextHandle& handle, std::optional<Inspector::Protocol::Automation::PageLoadStrategy>&& optionalPageLoadStrategy, std::optional<double>&& optionalPageLoadTimeout, CommandCallback<void>&& callback)
@@ -1087,10 +1229,208 @@ void WebAutomationSession::reloadBrowsingContext(const Inspector::Protocol::Auto
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
     auto pageLoadStrategy = optionalPageLoadStrategy.value_or(defaultPageLoadStrategy);
-    auto pageLoadTimeout = optionalPageLoadTimeout ? Seconds::fromMilliseconds(*optionalPageLoadTimeout) : defaultPageLoadTimeout;
+    auto pageLoadTimeout = pageLoadTimeoutFromProtocol(optionalPageLoadTimeout);
 
     waitForNavigationToCompleteOnPage(*page, pageLoadStrategy, pageLoadTimeout, WTF::move(callback), page->reload({ }));
 }
+
+#if ENABLE(WEBDRIVER_BIDI)
+static String navigationIDToProtocolString(std::optional<WebCore::NavigationIdentifier>);
+
+bool WebAutomationSession::BidiPendingNavigation::matches(const WebFrameProxy& frame) const
+{
+    if (pageID) {
+        RefPtr page = frame.page();
+        return frame.isMainFrame() && page && page->identifier() == *pageID;
+    }
+    return frame.frameID() == frameID;
+}
+
+// A child frame has no API::Navigation, so a command learns its navigation's id from the first navigationStarted or
+// fragmentNavigated WebCore reports for the frame. Navigations start in the order they were requested, so the id goes
+// to the oldest command on the frame that does not have one yet.
+void WebAutomationSession::recordNavigationIDForPendingBidiNavigation(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
+{
+    for (auto& pending : borrow(m_bidiPendingNavigations)) {
+        if (!pending->navigationID && pending->matches(frame)) {
+            pending->navigationID = navigationID;
+            return;
+        }
+    }
+}
+
+RefPtr<WebFrameProxy> WebAutomationSession::frameForBidiHandles(const Inspector::Protocol::Automation::BrowsingContextHandle& pageHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle)
+{
+    RefPtr page = webPageProxyForHandle(pageHandle);
+    if (!page)
+        return nullptr;
+
+    if (frameHandle.isEmpty())
+        return page->mainFrame();
+
+    bool frameNotFound = false;
+    if (auto frameID = webFrameIDForHandle(frameHandle, frameNotFound); frameID && !frameNotFound)
+        return WebFrameProxy::webFrame(*frameID);
+    return nullptr;
+}
+
+void WebAutomationSession::awaitNavigationForBidi(WebPageProxy& page, WebFrameProxy& frame, Ref<BidiPendingNavigation>&& pending, RefPtr<API::Navigation>&& awaitedNavigation, SameDocumentNavigation sameDocumentNavigation, const String& requestedURL, Inspector::Protocol::Automation::PageLoadStrategy pageLoadStrategy, Seconds pageLoadTimeout, Inspector::CommandCallbackOf<String, String>&& callback)
+{
+    // Each command keeps its own record, so that an earlier command still waiting on this frame reports its own
+    // navigation's id and failure rather than those of the navigation that replaced it.
+    m_bidiPendingNavigations.append(pending.copyRef());
+
+    auto completion = [this, protectedThis = Ref { *this }, pending = pending.copyRef(), requestedURL, callback = WTF::move(callback)](Inspector::CommandResult<void>&& result) mutable {
+        m_bidiPendingNavigations.removeFirstMatching([&](auto& entry) {
+            return entry.ptr() == pending.ptr();
+        });
+        if (!result) {
+            // https://w3c.github.io/webdriver-bidi/#await-a-navigation: a navigation that ends because its
+            // navigable closed is an unknown error, not a missing context.
+            auto& error = result.error();
+            if (isNavigableClosedError(error))
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR(InternalError);
+            callback(makeUnexpected(WTF::move(error)));
+            return;
+        }
+
+        // The classic command treats a failed load as a completed navigation; the spec makes it an unknown error.
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(pending->failed, InternalError);
+
+        callback({ { requestedURL, navigationIDToProtocolString(pending->navigationID) } });
+    };
+
+    // The classic strategy "none" returns at once, but for BiDi it is the wait condition "committed".
+    if (pageLoadStrategy == Inspector::Protocol::Automation::PageLoadStrategy::None)
+        waitForBidiNavigationToCommit(pending, pageLoadTimeout, WTF::move(completion));
+    else if (frame.isMainFrame())
+        waitForNavigationToCompleteOnPage(page, pageLoadStrategy, pageLoadTimeout, WTF::move(completion), WTF::move(awaitedNavigation), sameDocumentNavigation);
+    else
+        waitForNavigationToCompleteOnFrame(frame, pageLoadStrategy, pageLoadTimeout, WTF::move(completion), LoadStarted::Yes);
+}
+
+void WebAutomationSession::navigateBrowsingContextForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& pageHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& url, Inspector::Protocol::Automation::PageLoadStrategy pageLoadStrategy, Seconds pageLoadTimeout, Inspector::CommandCallbackOf<String, String>&& callback)
+{
+    RefPtr frame = frameForBidiHandles(pageHandle, frameHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!frame, FrameNotFound);
+    RefPtr page = frame->page();
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, FrameNotFound);
+
+    URL targetURL { url };
+
+    // A main frame's command is tracked by page, because a cross-site navigation can swap the main frame for one
+    // with another identifier in a new process, and its failure is reported for that frame.
+    Ref pending = BidiPendingNavigation::create(frame->isMainFrame() ? std::optional { page->identifier() } : std::nullopt, frame->frameID());
+    RefPtr<API::Navigation> awaitedNavigation;
+    // A fragment navigation stays in the current document, and WebCore reports it with that document's navigation
+    // rather than the new one, so only navigations to another document are awaited. WebCore tells the two apart by
+    // the committed document's URL, not by the URL of a load that is still in flight. A navigation to the fragment
+    // the document is already at is reported only as a pop, which completes the command (see
+    // sameDocumentNavigationOccurredForFrame()). WebFrameProxy::loadURL() currently reloads a child frame for such a
+    // URL instead (https://webkit.org/b/330783), but its command is marked the same way, so that it does not wait out
+    // the page load timeout if only the pop is reported.
+    URL committedURL = frame->url();
+    if (frame->isMainFrame()) {
+        Ref pageLoadState = page->pageLoadState();
+        committedURL = URL { pageLoadState->url() };
+    }
+    bool isFragmentNavigation = targetURL.hasFragmentIdentifier() && equalIgnoringFragmentIdentifier(targetURL, committedURL);
+    pending->isFragmentNavigation = isFragmentNavigation;
+    if (frame->isMainFrame()) {
+        if (RefPtr navigation = page->loadRequest(WTF::move(targetURL))) {
+            pending->navigationID = navigation->navigationID();
+            if (!isFragmentNavigation)
+                awaitedNavigation = WTF::move(navigation);
+        }
+    } else {
+        // A child frame has no API::Navigation; its id arrives with WebCore's navigationStarted or fragmentNavigated
+        // report.
+        frame->loadURL(targetURL);
+    }
+
+    awaitNavigationForBidi(*page, *frame, WTF::move(pending), WTF::move(awaitedNavigation), isFragmentNavigation ? SameDocumentNavigation::Yes : SameDocumentNavigation::No, url, pageLoadStrategy, pageLoadTimeout, WTF::move(callback));
+}
+
+void WebAutomationSession::reloadBrowsingContextForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& pageHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, IgnoreCache ignoreCache, Inspector::Protocol::Automation::PageLoadStrategy pageLoadStrategy, Seconds pageLoadTimeout, Inspector::CommandCallbackOf<String, String>&& callback)
+{
+    RefPtr frame = frameForBidiHandles(pageHandle, frameHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!frame, FrameNotFound);
+    RefPtr page = frame->page();
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, FrameNotFound);
+
+    // https://w3c.github.io/webdriver-bidi/#command-browsingContext-reload reloads the navigable's active document and
+    // reports that document's URL, not the URL of a load that is still in flight. A reload always loads a new document,
+    // so its navigation is awaited. FrameLoader::reload() does nothing for a document with an empty URL, which is what
+    // the initial empty document has (see activeOrInitialURL()), so that document is replaced by loading about:blank.
+    URL committedURL = frame->url();
+    bool isInitialEmptyDocument = committedURL.isEmpty();
+    String requestedURL = isInitialEmptyDocument ? aboutBlankURL().string() : committedURL.string();
+
+    OptionSet<WebCore::ReloadOption> options;
+    if (ignoreCache == IgnoreCache::Yes)
+        options.add(WebCore::ReloadOption::FromOrigin);
+
+    // A main frame's command is tracked by page, because a cross-site navigation can swap the main frame for one
+    // with another identifier in a new process, and its failure is reported for that frame.
+    Ref pending = BidiPendingNavigation::create(frame->isMainFrame() ? std::optional { page->identifier() } : std::nullopt, frame->frameID());
+    RefPtr<API::Navigation> awaitedNavigation;
+    if (frame->isMainFrame()) {
+        RefPtr navigation = isInitialEmptyDocument ? page->loadRequest(URL { aboutBlankURL() }) : page->reload(options);
+        if (navigation) {
+            pending->navigationID = navigation->navigationID();
+            awaitedNavigation = WTF::move(navigation);
+        }
+    } else if (isInitialEmptyDocument)
+        frame->loadURL(aboutBlankURL());
+    else {
+        // The UI process has no per-frame reload, so the process that contains the frame reloads it with
+        // FrameLoader::reload(), like WebPage::reload() does for a main frame. Its id arrives with WebCore's
+        // navigationStarted report.
+        Ref process = page->processContainingFrame(frame->frameID());
+        process->send(Messages::WebAutomationSessionProxy::ReloadFrame(frame->frameID(), options), 0);
+    }
+
+    awaitNavigationForBidi(*page, *frame, WTF::move(pending), WTF::move(awaitedNavigation), SameDocumentNavigation::No, requestedURL, pageLoadStrategy, pageLoadTimeout, WTF::move(callback));
+}
+
+void WebAutomationSession::waitForBidiNavigationToCommit(BidiPendingNavigation& pending, Seconds timeout, Inspector::CommandCallback<void>&& callback)
+{
+    // A main frame load that did not start a navigation (e.g. the page is closing) has nothing to wait for.
+    if (pending.pageID && !pending.navigationID) {
+        callback({ });
+        return;
+    }
+
+    pending.commitCallback = WTF::move(callback);
+    startLoadTimer(timeout);
+}
+
+void WebAutomationSession::completeBidiCommitWaits(NOESCAPE const Function<bool(const BidiPendingNavigation&)>& shouldComplete, const Inspector::CommandResult<void>& result)
+{
+    // A callback removes its command's record, so the callbacks are taken before any of them runs. Every record is
+    // offered to the predicate in order, so that it can tell which records come before a given one.
+    Vector<Inspector::CommandCallback<void>> callbacks;
+    for (auto& pending : borrow(m_bidiPendingNavigations)) {
+        if (shouldComplete(pending.get()) && pending->commitCallback)
+            callbacks.append(std::exchange(pending->commitCallback, nullptr));
+    }
+    if (callbacks.isEmpty())
+        return;
+
+    // FIXME https://webkit.org/b/323980 Support separate timers, one for each callback
+    if (!hasPendingNavigationCallbacks())
+        m_loadTimer.stop();
+    for (auto& callback : borrow(callbacks))
+        callback(Inspector::CommandResult<void> { result });
+}
+
+bool WebAutomationSession::hasBidiCommitWaits() const
+{
+    return std::ranges::any_of(m_bidiPendingNavigations, [](auto& pending) {
+        return !!pending->commitCallback;
+    });
+}
+#endif
 
 void WebAutomationSession::respondToPendingNavigationCallbacksWithSuccess(Vector<Inspector::CommandCallback<void>>&& callbacks)
 {
@@ -1106,6 +1446,10 @@ void WebAutomationSession::respondToPendingNavigationCallbacksWithSuccess(Vector
 
 bool WebAutomationSession::hasPendingNavigationCallbacks() const
 {
+#if ENABLE(WEBDRIVER_BIDI)
+    if (hasBidiCommitWaits())
+        return true;
+#endif
     return !m_pendingNormalNavigationInBrowsingContextCallbacksPerPage.isEmpty() || !m_pendingEagerNavigationInBrowsingContextCallbacksPerPage.isEmpty()
         || !m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame.isEmpty() || !m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame.isEmpty();
 }
@@ -1141,30 +1485,50 @@ Vector<Inspector::CommandCallback<void>> WebAutomationSession::takePendingPageNa
     return completedCallbacks;
 }
 
+void WebAutomationSession::forgetFrameHandles(NOESCAPE const Function<bool(const WebFrameProxy*)>& shouldForget)
+{
+    Vector<FrameIdentifier> framesToForget;
+    for (auto frameID : m_webFrameHandleMap.keys()) {
+        RefPtr frame = WebFrameProxy::webFrame(frameID);
+        if (shouldForget(frame.get()))
+            framesToForget.append(frameID);
+    }
+    for (auto frameID : framesToForget)
+        didDestroyFrame(frameID);
+}
+
+void WebAutomationSession::forgetDestroyedFrames()
+{
+    // Some frames go away without being reported destroyed, such as the child frames detached from the previous main
+    // frame when a provisional page commits, or those of a back/forward cache entry that is discarded. Frames that
+    // still exist keep their handles even when they are out of the frame tree: the child frames of a document in the
+    // back/forward cache are the same frames when it is restored. webFrameIDForHandle() keeps commands from reaching
+    // them in the meantime.
+    forgetFrameHandles([](const WebFrameProxy* frame) {
+        return !frame;
+    });
+}
+
 void WebAutomationSession::navigationOccurredForFrame(const WebFrameProxy& frame, API::Navigation* finishedNavigation, NavigationNotification notification)
 {
     if (frame.isMainFrame()) {
-        // New page loaded, clear frame handles previously cached for frame's page.
-        HashSet<String> handlesToRemove;
-        for (const auto& iter : m_handleWebFrameMap) {
-            RefPtr webFrame = WebFrameProxy::webFrame(iter.value);
-            if (webFrame && webFrame->page() == frame.page()) {
-                handlesToRemove.add(iter.key);
-                m_webFrameHandleMap.remove(iter.value);
-            }
-        }
-        m_handleWebFrameMap.removeIf([&](auto& iter) {
-            return handlesToRemove.contains(iter.key);
-        });
+        Ref page = *protect(frame.page());
+
+        // Child frames keep their handles across a load or a same-document navigation of the main frame: the frames
+        // that the new document created while it loaded, the frames of a document that only navigated within itself,
+        // those of a document that stayed after a failed provisional load, and those of a document that went into the
+        // back/forward cache all still exist.
+        if (notification == NavigationNotification::LoadEnded)
+            forgetDestroyedFrames();
 
         // A wait for the eager strategy normally ends when the document has loaded. The navigation it is bound
         // to may have failed and never get there, and a same-document target has no document load, so those
         // eager waits are completed here as well; the others are left to documentLoadedForFrame().
-        Ref page = *protect(frame.page());
         respondToPendingNavigationCallbacksWithSuccess(takePendingPageNavigationCallbacks(m_pendingNormalNavigationInBrowsingContextCallbacksPerPage, page, finishedNavigation, UnboundWaits::Complete, notification));
         respondToPendingNavigationCallbacksWithSuccess(takePendingPageNavigationCallbacks(m_pendingEagerNavigationInBrowsingContextCallbacksPerPage, page, finishedNavigation, UnboundWaits::Keep, notification));
         m_domainNotifier->browsingContextCleared(handleForWebPageProxy(page));
     } else {
+        respondToPendingNavigationCallbacksWithSuccess(m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame.take(frame.frameID()));
         respondToPendingNavigationCallbacksWithSuccess(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame.take(frame.frameID()));
     }
 }
@@ -1185,6 +1549,15 @@ void WebAutomationSession::navigationDestroyed(const WebPageProxy& page, const A
     };
     markWaitsForDestroyedNavigation(m_pendingNormalNavigationInBrowsingContextCallbacksPerPage);
     markWaitsForDestroyedNavigation(m_pendingEagerNavigationInBrowsingContextCallbacksPerPage);
+
+#if ENABLE(WEBDRIVER_BIDI)
+    // https://w3c.github.io/webdriver-bidi/#await-a-navigation: a navigation that ends before committing without
+    // failing, e.g. because another load replaced it or it became a download, completes a wait for its commit.
+    // A fragment navigation's own navigation is not the one WebCore reports, so it does not end the command's wait.
+    completeBidiCommitWaits([&](auto& pending) {
+        return !pending.isFragmentNavigation && pending.pageID == page.identifier() && pending.navigationID == navigation.navigationID();
+    }, { });
+#endif
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
@@ -1207,20 +1580,16 @@ static double bidiTimestampNow()
 #endif
 
 #if ENABLE(WEBDRIVER_BIDI)
-// The browsing contexts a frame's events belong to, for matching subscriptions made with `contexts`: the top-level
-// context, whose subscriptions cover its descendants, and the frame's own context when it is a child frame.
-// Handles are only looked up, never created: a context the client has not been given a handle for cannot have been
-// subscribed to, and creating one here would leak it once the frame is gone.
+// The browsing context a frame's events belong to, for matching subscriptions made with `contexts`: the frame's
+// top-level context, because session.subscribe records the top-level context of each context it is given.
+// The handle is only looked up, never created: a context the client has not been given a handle for cannot have been
+// subscribed to.
 HashSet<String> WebAutomationSession::bidiSubscriptionScopeForFrame(const WebFrameProxy& frame) const
 {
     HashSet<String> scope;
     if (RefPtr page = frame.page()) {
         if (auto pageHandle = m_webPageHandleMap.get(page->identifier()); !pageHandle.isEmpty())
             scope.add(pageHandle);
-    }
-    if (!frame.isMainFrame()) {
-        if (auto frameHandle = m_webFrameHandleMap.get(frame.frameID()); !frameHandle.isEmpty())
-            scope.add(frameHandle);
     }
     return scope;
 }
@@ -1296,11 +1665,14 @@ void WebAutomationSession::wheelEventsFlushedForPage(const WebPageProxy& page)
 void WebAutomationSession::didCreatePage(WebPageProxy& page)
 {
     m_bidiProcessor->browserAgent().didCreatePage(page);
+    m_bidiProcessor->emulationAgent().didCreatePage(page);
     emitContextCreatedEvent(page);
 }
 
 void WebAutomationSession::navigationStartedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    recordNavigationIDForPendingBidiNavigation(frame, navigationID);
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::NavigationStarted, bidiSubscriptionScopeForFrame(frame), [&] {
         m_bidiProcessor->browsingContextDomainNotifier().navigationStarted(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
@@ -1317,13 +1689,49 @@ void WebAutomationSession::navigationCommittedForFrame(const WebFrameProxy& fram
         auto pageHandle = handleForWebPageProxy(*page);
         m_bidiProcessor->scriptAgent().executePreloadScriptsForContext(pageHandle, frame.isMainFrame() ? emptyString() : frameHandle);
     }
+
+    // A command waiting on the frame completes when its navigation commits, and so does every command on the frame
+    // requested before it, whose navigation it aborted.
+    RefPtr<BidiPendingNavigation> committed;
+    for (auto& pending : borrow(m_bidiPendingNavigations)) {
+        if (navigationID && pending->navigationID == navigationID && pending->matches(frame))
+            committed = pending.ptr();
+    }
+    if (committed) {
+        bool isAtOrBeforeCommitted = true;
+        completeBidiCommitWaits([&](auto& pending) {
+            bool shouldComplete = isAtOrBeforeCommitted && pending.matches(frame);
+            if (&pending == committed.get())
+                isAtOrBeforeCommitted = false;
+            return shouldComplete;
+        }, { });
+    }
 }
 
 void WebAutomationSession::navigationFailedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    // A failure belongs to the command whose navigation has its id. A child frame command learns its id from
+    // navigationStarted, so a failure with an id it does not have yet is another load's, e.g. an earlier one that
+    // is still failing. A failure without an id is taken to be the oldest command's on the frame.
+    for (auto& pending : borrow(m_bidiPendingNavigations)) {
+        if (!pending->matches(frame))
+            continue;
+        if (!navigationID) {
+            pending->failed = true;
+            break;
+        }
+        if (pending->navigationID == navigationID)
+            pending->failed = true;
+    }
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::NavigationFailed, bidiSubscriptionScopeForFrame(frame), [&] {
         m_bidiProcessor->browsingContextDomainNotifier().navigationFailed(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
+
+    // The completion turns the failure into an error.
+    completeBidiCommitWaits([&](auto& pending) {
+        return pending.failed && pending.matches(frame);
+    }, { });
 }
 
 void WebAutomationSession::navigationAbortedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
@@ -1331,29 +1739,69 @@ void WebAutomationSession::navigationAbortedForFrame(const WebFrameProxy& frame,
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::NavigationAborted, bidiSubscriptionScopeForFrame(frame), [&] {
         m_bidiProcessor->browsingContextDomainNotifier().navigationAborted(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
+
+    if (navigationID) {
+        completeBidiCommitWaits([&](auto& pending) {
+            return pending.navigationID == navigationID && pending.matches(frame);
+        }, { });
+    }
 }
 
 void WebAutomationSession::fragmentNavigatedForFrame(const WebFrameProxy& frame, std::optional<WebCore::NavigationIdentifier> navigationID)
 {
+    recordNavigationIDForPendingBidiNavigation(frame, navigationID);
+
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::FragmentNavigated, bidiSubscriptionScopeForFrame(frame), [&] {
         m_bidiProcessor->browsingContextDomainNotifier().fragmentNavigated(effectiveHandleForWebFrameProxy(frame), navigationIDToProtocolString(navigationID), bidiTimestampNow(), frame.url().string());
     });
+
+    if (navigationID) {
+        completeBidiCommitWaits([&](auto& pending) {
+            return pending.navigationID == navigationID && pending.matches(frame);
+        }, { });
+    }
     // NOTE: fragment navigations don't create a new document, and therefore do not trigger preload scripts.
 }
 
 void WebAutomationSession::historyUpdatedForFrame(const WebFrameProxy& frame)
 {
-    m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::HistoryUpdated, { }, [&] {
+    m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::HistoryUpdated, bidiSubscriptionScopeForFrame(frame), [&] {
         m_bidiProcessor->browsingContextDomainNotifier().historyUpdated(effectiveHandleForWebFrameProxy(frame), bidiTimestampNow(), frame.url().string());
     });
 }
 
 bool WebAutomationSession::sameDocumentNavigationOccurredForFrame(const WebFrameProxy& frame, SameDocumentNavigationType navigationType, std::optional<WebCore::NavigationIdentifier> navigationID, const URL& previousURL)
 {
+    bool reported = reportSameDocumentNavigationForFrame(frame, navigationType, navigationID, previousURL);
+
+    // A main frame navigate to a fragment is reported with the current document's navigation id rather than the
+    // command's, and a navigation to the fragment the document is already at, in any frame, only as a pop (see
+    // below), so the command completes with the first same-document navigation of the frame that is reported, after
+    // its event.
+    if (reported) {
+        completeBidiCommitWaits([&](auto& pending) {
+            return pending.isFragmentNavigation && pending.matches(frame);
+        }, { });
+    }
+    return reported;
+}
+
+bool WebAutomationSession::reportSameDocumentNavigationForFrame(const WebFrameProxy& frame, SameDocumentNavigationType navigationType, std::optional<WebCore::NavigationIdentifier> navigationID, const URL& previousURL)
+{
     switch (navigationType) {
-    case SameDocumentNavigationType::AnchorNavigation:
-        fragmentNavigatedForFrame(frame, navigationID);
+    case SameDocumentNavigationType::AnchorNavigation: {
+        // https://w3c.github.io/webdriver-bidi/#await-a-navigation: the event carries the navigation id of the navigate
+        // command that caused it, which WebCore does not know for a main frame command (see above).
+        auto reportedNavigationID = navigationID;
+        for (auto& pending : borrow(m_bidiPendingNavigations)) {
+            if (pending->isFragmentNavigation && pending->navigationID && pending->matches(frame)) {
+                reportedNavigationID = pending->navigationID;
+                break;
+            }
+        }
+        fragmentNavigatedForFrame(frame, reportedNavigationID);
         return true;
+    }
     case SameDocumentNavigationType::SessionStatePush:
     case SameDocumentNavigationType::SessionStateReplace:
         // https://html.spec.whatwg.org/multipage/browsing-the-web.html#url-and-history-update-steps
@@ -1427,6 +1875,11 @@ void WebAutomationSession::willDestroyFrame(const WebFrameProxy& frame)
 #if ENABLE(WEBDRIVER_BIDI)
     contextDestroyedForFrame(frame);
 #endif
+}
+
+void WebAutomationSession::webProcessDidTerminate(WebCore::ProcessIdentifier processIdentifier)
+{
+    m_bidiProcessor->scriptAgent().notifyRealmsDestroyedForProcess(processIdentifier);
 }
 
 void WebAutomationSession::contextCreatedForFrame(const WebFrameProxy& frame)
@@ -1504,8 +1957,9 @@ void WebAutomationSession::contextDestroyedForPage(const WebPageProxy& page)
     auto [clientWindow, userContext] = getClientWindowAndUserContext(page);
 
     // Ensure the active realm is destroyed even if the WebProcess terminates first.
+    m_bidiProcessor->scriptAgent().removeDedicatedWorkerRealmsForBrowsingContext(contextHandle);
     if (auto realmID = m_bidiProcessor->scriptAgent().realmIdentifierForBrowsingContext(contextHandle))
-        m_bidiProcessor->scriptAgent().notifyRealmDestroyed(*realmID, contextHandle);
+        m_bidiProcessor->scriptAgent().notifyRealmDestroyedFromBrowsingContext(*realmID, contextHandle);
 
     m_bidiProcessor->emitEventIfEnabled(BidiEventNames::BrowsingContext::ContextDestroyed, { handleForWebPageProxy(page) }, [&] {
         m_bidiProcessor->browsingContextDomainNotifier().contextDestroyed(contextHandle, url, originalOpenerHandle, parentContext, JSON::ArrayOf<Inspector::Protocol::BidiBrowsingContext::Info>::create(), clientWindow, userContext);
@@ -1564,6 +2018,21 @@ void WebAutomationSession::setViewportForPage(WebPageProxy& page, std::optional<
 
 #endif
 
+void WebAutomationSession::clearNetworkInterceptionForAllPages()
+{
+    // The intercepts of a session end with it. Other consumers, such as Web Inspector, keep theirs.
+    RefPtr processPool = m_processPool;
+    if (!processPool)
+        return;
+
+    for (Ref process : borrow(processPool->processes()).get()) {
+        for (Ref page : process->pages()) {
+            if (page->isControlledByAutomation())
+                page->setNetworkInterceptPatterns(Inspector::NetworkInterceptOwner::Automation, { }, [] { });
+        }
+    }
+}
+
 void WebAutomationSession::willClosePage(const WebPageProxy& page)
 {
 #if ENABLE(REMOTE_INSPECTOR)
@@ -1578,30 +2047,58 @@ void WebAutomationSession::willClosePage(const WebPageProxy& page)
     for (auto& pending : m_pendingEagerNavigationInBrowsingContextCallbacksPerPage.take(page.identifier()))
         pending.callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
 
+    // The web process does not report the frames of a closing page destroyed, so the waits on them end here.
+    auto failPendingFrameNavigationCallbacks = [&](auto& map) {
+        for (auto frameID : copyToVector(map.keys())) {
+            RefPtr frame = WebFrameProxy::webFrame(frameID);
+            if (frame && frame->page() != &page)
+                continue;
+            for (auto& callback : map.take(frameID))
+                callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
+        }
+    };
+    failPendingFrameNavigationCallbacks(m_pendingNormalNavigationInBrowsingContextCallbacksPerFrame);
+    failPendingFrameNavigationCallbacks(m_pendingEagerNavigationInBrowsingContextCallbacksPerFrame);
+
 #if ENABLE(WEBDRIVER_BIDI)
+    completeBidiCommitWaits([&](auto& pending) {
+        if (pending.pageID)
+            return *pending.pageID == page.identifier();
+        RefPtr frame = WebFrameProxy::webFrame(pending.frameID);
+        return frame && frame->page() == &page;
+    }, makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
     contextDestroyedForPage(page);
     m_bidiProcessor->inputAgent().willClosePage(handle);
 #endif
+
+    // The web process does not report the frames of a closing page destroyed either, so their handles go here.
+    forgetFrameHandles([&](const WebFrameProxy* frame) {
+        return !frame || frame->page() == &page;
+    });
+
+    // After the context is reported destroyed, so that browsingContext.close replies after its contextDestroyed event.
+    for (auto& callback : m_pendingCloseBrowsingContextCallbacksPerPage.take(page.identifier()))
+        callback({ });
 
     // Cancel pending interactions on this page. By providing an error, this will cause subsequent
     // actions to be aborted and the SimulatedInputDispatcher::run() call will unwind and fail.
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
     if (auto callback = m_pendingMouseEventsFlushedCallbacksPerPage.take(page.identifier()))
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(WindowNotFound);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
 #endif
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
     if (auto callback = m_pendingKeyboardEventsFlushedCallbacksPerPage.take(page.identifier()))
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(WindowNotFound);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
 #endif
 #if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
     if (auto callback = m_pendingWheelEventsFlushedCallbacksPerPage.take(page.identifier()))
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR(WindowNotFound);
+        callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(WindowNotFound)));
 #endif
 
 #if ENABLE(WEBDRIVER_ACTIONS_API)
     // Then tell the input dispatcher to cancel so timers are stopped, and let it go out of scope.
     if (auto inputDispatcher = m_inputDispatchersByPage.take(page.identifier()))
-        inputDispatcher->cancel();
+        inputDispatcher->cancel(AUTOMATION_COMMAND_ERROR_WITH_NAME(WindowNotFound));
 #endif
 
 #if ENABLE(WEBDRIVER_BIDI)
@@ -1699,6 +2196,21 @@ void WebAutomationSession::handleRunOpenPanel(const WebPageProxy& page, const We
 
 void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, Inspector::CommandCallback<String>&& callback)
 {
+    evaluateJavaScriptFunction(browsingContextHandle, frameHandle, function, WTF::move(arguments), WTF::move(expectsImplicitCallbackArgument), WTF::move(forceUserGesture), WTF::move(callbackTimeout), UserPromptEndsEvaluation::Yes, WTF::move(callback));
+}
+
+void WebAutomationSession::evaluateJavaScriptFunctionForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& forceUserGesture, Inspector::CommandCallback<String>&& callback)
+{
+    evaluateJavaScriptFunction(browsingContextHandle, frameHandle, function, WTF::move(arguments), false, WTF::move(forceUserGesture), std::nullopt, UserPromptEndsEvaluation::No, WTF::move(callback));
+}
+
+HashMap<uint64_t, Inspector::CommandCallback<String>>& WebAutomationSession::evaluateJavaScriptFunctionCallbacks(UserPromptEndsEvaluation userPromptEndsEvaluation)
+{
+    return userPromptEndsEvaluation == UserPromptEndsEvaluation::Yes ? m_evaluateJavaScriptFunctionCallbacks : m_evaluateBidiScriptCallbacks;
+}
+
+void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& function, Ref<JSON::Array>&& arguments, std::optional<bool>&& expectsImplicitCallbackArgument, std::optional<bool>&& forceUserGesture, std::optional<double>&& callbackTimeout, UserPromptEndsEvaluation userPromptEndsEvaluation, Inspector::CommandCallback<String>&& callback)
+{
     auto page = webPageProxyForHandle(browsingContextHandle);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
@@ -1711,10 +2223,10 @@ void WebAutomationSession::evaluateJavaScriptFunction(const Inspector::Protocol:
     });
 
     uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
-    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+    evaluateJavaScriptFunctionCallbacks(userPromptEndsEvaluation).set(callbackID, WTF::move(callback));
 
-    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInProcessForFrame(frameID), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateJavaScriptFunction(page->webPageIDInProcessForFrame(frameID), frameID, function, argumentsVector, expectsImplicitCallbackArgument.value_or(false), forceUserGesture.value_or(false), WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID, userPromptEndsEvaluation](String&& result, String&& errorType) {
+        auto callback = protectedThis->evaluateJavaScriptFunctionCallbacks(userPromptEndsEvaluation).take(callbackID);
         if (!callback)
             return;
 
@@ -1803,10 +2315,10 @@ NODELETE static std::optional<CoordinateSystem> protocolStringToCoordinateSystem
 // frame's process hit tests when the click is dispatched. Force a presentation update in every
 // process first. Each one broadcasts its geometry before acknowledging the update, so the frame's
 // process receives it ahead of ComputeElementLayout.
-static void sendComputeElementLayout(WebPageProxy& page, std::optional<WebCore::FrameIdentifier> frameID, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, bool scrollIntoViewIfNeeded, CoordinateSystem coordinateSystem, WTF::CompletionHandler<void(std::optional<String>&&, WebCore::FloatRect&&, std::optional<WebCore::IntPoint>&&, bool)>&& completionHandler)
+static void sendComputeElementLayout(WebPageProxy& page, std::optional<WebCore::FrameIdentifier> frameID, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, bool scrollIntoViewIfNeeded, CoordinateSystem coordinateSystem, NodeHandleKind nodeHandleKind, WTF::CompletionHandler<void(std::optional<String>&&, WebCore::FloatRect&&, std::optional<WebCore::IntPoint>&&, bool)>&& completionHandler)
 {
-    auto send = [page = protect(page), frameID, nodeHandle, scrollIntoViewIfNeeded, coordinateSystem, completionHandler = WTF::move(completionHandler)] mutable {
-        page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::ComputeElementLayout(page->webPageIDInProcessForFrame(frameID), frameID, nodeHandle, scrollIntoViewIfNeeded, coordinateSystem), WTF::move(completionHandler));
+    auto send = [page = protect(page), frameID, nodeHandle, scrollIntoViewIfNeeded, coordinateSystem, nodeHandleKind, completionHandler = WTF::move(completionHandler)] mutable {
+        page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::ComputeElementLayout(page->webPageIDInProcessForFrame(frameID), frameID, nodeHandle, scrollIntoViewIfNeeded, coordinateSystem, nodeHandleKind == NodeHandleKind::SharedReference), WTF::move(completionHandler));
     };
 
     RefPtr frame = WebFrameProxy::webFrame(frameID);
@@ -1860,7 +2372,7 @@ void WebAutomationSession::computeElementLayout(const Inspector::Protocol::Autom
     };
 
     bool scrollIntoViewIfNeeded = optionalScrollIntoViewIfNeeded && *optionalScrollIntoViewIfNeeded;
-    sendComputeElementLayout(*page, frameID, nodeHandle, scrollIntoViewIfNeeded, *coordinateSystem, WTF::move(completionHandler));
+    sendComputeElementLayout(*page, frameID, nodeHandle, scrollIntoViewIfNeeded, *coordinateSystem, NodeHandleKind::WebElementReference, WTF::move(completionHandler));
 }
 
 void WebAutomationSession::getComputedRole(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, CommandCallback<String>&& callback)
@@ -2102,6 +2614,19 @@ CommandResult<void> WebAutomationSession::setFilesToSelectForFileUpload(const In
     return { };
 }
 
+static void grantFilesToProcess(WebPageProxy& page, WebProcessProxy& process, const Vector<String>& paths, ASCIILiteral logLabel, CompletionHandler<void()>&& completionHandler)
+{
+    for (auto& path : borrow(paths))
+        process.addPreviouslyApprovedFileURL(URL::fileURLWithFileSystemPath(path));
+#if ENABLE(SANDBOX_EXTENSIONS)
+    auto sandboxExtensionHandles = SandboxExtension::createReadOnlyHandlesForFiles(logLabel, paths);
+    process.send(Messages::WebPage::ExtendSandboxForFilesFromOpenPanel(WTF::move(sandboxExtensionHandles)), page.webPageIDInProcess(process));
+#else
+    UNUSED_PARAM(logLabel);
+#endif
+    protect(protect(page.websiteDataStore())->networkProcess())->sendWithAsyncReply(Messages::NetworkProcess::AllowFilesAccessFromWebProcess(process.coreProcessIdentifier(), paths), WTF::move(completionHandler));
+}
+
 void WebAutomationSession::setFilesForInputFileUpload(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, Ref<JSON::Array>&& filenames, CommandCallback<void>&& callback)
 {
     auto page = webPageProxyForHandle(browsingContextHandle);
@@ -2114,18 +2639,82 @@ void WebAutomationSession::setFilesForInputFileUpload(const Inspector::Protocol:
     for (size_t i = 0; i < filenames->length(); ++i) {
         auto filename = filenames->get(i)->asString();
         ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!filename, InternalError, "The parameter 'filenames' contains a non-string value."_s);
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!FileSystem::fileExists(filename), InvalidParameter, "The parameter 'filenames' contains a file that doesn't exist."_s);
 
-        newFileList.append(filename);
+        newFileList.append(FileSystem::realPath(filename));
     }
 
-    CompletionHandler<void(std::optional<String>&&)> completionHandler = [callback = WTF::move(callback)](std::optional<String>&& optionalError) mutable {
-        ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF_SET(optionalError);
+    Ref process = page->processContainingFrame(frameID);
+    auto pageID = page->webPageIDInProcess(process);
+    auto setFiles = [process, pageID, frameID, nodeHandle, fileList = newFileList, callback = WTF::move(callback)] mutable {
+        CompletionHandler<void(std::optional<String>&&)> completionHandler = [callback = WTF::move(callback)](std::optional<String>&& optionalError) mutable {
+            ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF_SET(optionalError);
 
-        callback({ });
+            callback({ });
+        };
+
+        process->sendWithAsyncReply(Messages::WebAutomationSessionProxy::SetFilesForInputFileUpload(pageID, frameID, nodeHandle, WTF::move(fileList)), WTF::move(completionHandler));
     };
-
-    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::SetFilesForInputFileUpload(page->webPageIDInProcessForFrame(frameID), frameID, nodeHandle, WTF::move(newFileList)), WTF::move(completionHandler));
+    grantFilesToProcess(*page, process, newFileList, "WebAutomationSession::setFilesForInputFileUpload"_s, WTF::move(setFiles));
 }
+
+#if ENABLE(WEBDRIVER_BIDI)
+void WebAutomationSession::setFilesForBidi(const String& pageHandle, const String& frameHandle, const String& nodeHandle, Vector<String>&& paths, AutomationCompletionHandler&& callback)
+{
+    RefPtr page = webPageProxyForHandle(pageHandle);
+    if (!page) {
+        callback(AUTOMATION_COMMAND_ERROR_WITH_NAME(FrameNotFound));
+        return;
+    }
+
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    if (frameNotFound) {
+        callback(AUTOMATION_COMMAND_ERROR_WITH_NAME(FrameNotFound));
+        return;
+    }
+
+    Ref process = page->processContainingFrame(frameID);
+    auto pageID = page->webPageIDInProcess(process);
+    uint64_t fileCount = paths.size();
+    process->sendWithAsyncReply(Messages::WebAutomationSessionProxy::ValidateFileInputForBidi(pageID, frameID, nodeHandle, fileCount), [weakPage = WeakPtr { *page }, process, pageID, frameID, nodeHandle, paths = WTF::move(paths), callback = WTF::move(callback)](std::expected<void, String>&& result) mutable {
+        if (!result) {
+            callback(AUTOMATION_COMMAND_ERROR_WITH_MESSAGE(result.error()));
+            return;
+        }
+
+        // https://w3c.github.io/webdriver-bidi/#command-input-setFiles
+        Vector<String> resolvedPaths(ReserveCapacityTag { }, paths.size());
+        for (auto& path : borrow(paths)) {
+            if (!FileSystem::fileExists(path)) {
+                callback(AUTOMATION_COMMAND_ERROR_WITH_NAME_AND_MESSAGE(NotImplemented, "'files' contains a file that doesn't exist"_s));
+                return;
+            }
+            resolvedPaths.append(FileSystem::realPath(path));
+        }
+
+        RefPtr page = weakPage;
+        if (!page || page->isClosed()) {
+            callback(AUTOMATION_COMMAND_ERROR_WITH_NAME(FrameNotFound));
+            return;
+        }
+
+        auto setFiles = [process, pageID, frameID, nodeHandle, paths = resolvedPaths, callback = WTF::move(callback)] mutable {
+            CompletionHandler<void(std::expected<void, String>&&)> completionHandler = [callback = WTF::move(callback)](std::expected<void, String>&& result) mutable {
+                if (!result) {
+                    callback(AUTOMATION_COMMAND_ERROR_WITH_MESSAGE(result.error()));
+                    return;
+                }
+
+                callback(std::nullopt);
+            };
+
+            process->sendWithAsyncReply(Messages::WebAutomationSessionProxy::SetFilesForBidi(pageID, frameID, nodeHandle, WTF::move(paths)), WTF::move(completionHandler));
+        };
+        grantFilesToProcess(*page, process, resolvedPaths, "WebAutomationSession::setFilesForBidi"_s, WTF::move(setFiles));
+    });
+}
+#endif
 
 NODELETE static inline Inspector::Protocol::Automation::CookieSameSitePolicy toProtocolSameSitePolicy(WebCore::Cookie::SameSitePolicy policy)
 {
@@ -2331,7 +2920,7 @@ CommandResult<void> WebAutomationSession::setSessionPermissions(Ref<JSON::Array>
     return { };
 }
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 NODELETE static WebCore::AuthenticatorTransport toAuthenticatorTransport(Inspector::Protocol::Automation::AuthenticatorTransport transport)
 {
     switch (transport) {
@@ -2348,11 +2937,11 @@ NODELETE static WebCore::AuthenticatorTransport toAuthenticatorTransport(Inspect
         return WebCore::AuthenticatorTransport::Internal;
     }
 }
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 
 CommandResult<String /* authenticatorId */> WebAutomationSession::addVirtualAuthenticator(const String& browsingContextHandle, Ref<JSON::Object>&& authenticator)
 {
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
     auto protocol = authenticator->getString("protocol"_s);
     SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!protocol, InvalidParameter, "The parameter 'protocol' is missing or invalid."_s);
 
@@ -2386,12 +2975,12 @@ CommandResult<String /* authenticatorId */> WebAutomationSession::addVirtualAuth
     });
 #else
     SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "This method is not yet implemented."_s);
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 }
 
 CommandResult<void> WebAutomationSession::removeVirtualAuthenticator(const String& browsingContextHandle, const String& authenticatorId)
 {
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
     auto page = webPageProxyForHandle(browsingContextHandle);
     SYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
 
@@ -2401,7 +2990,7 @@ CommandResult<void> WebAutomationSession::removeVirtualAuthenticator(const Strin
     return { };
 #else
     SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "This method is not yet implemented."_s);
-#endif // ENABLE(WEB_AUTHN)
+#endif // ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 }
 
 CommandResult<void> WebAutomationSession::addVirtualAuthenticatorCredential(const String& browsingContextHandle, const String& authenticatorId, Ref<JSON::Object>&& credential)
@@ -2461,6 +3050,68 @@ void WebAutomationSession::unloadWebExtension(const String& identifier, CommandC
 
         callback({ });
     });
+}
+
+NODELETE static std::optional<Inspector::Protocol::Automation::WebExtensionPageType> webExtensionPageType(WebExtensionContext::WebViewPurpose purpose)
+{
+    switch (purpose) {
+    case WebExtensionContext::WebViewPurpose::Background:
+        return Inspector::Protocol::Automation::WebExtensionPageType::Background;
+    case WebExtensionContext::WebViewPurpose::Popup:
+        return Inspector::Protocol::Automation::WebExtensionPageType::Popup;
+    case WebExtensionContext::WebViewPurpose::Sidebar:
+        return Inspector::Protocol::Automation::WebExtensionPageType::Sidebar;
+    case WebExtensionContext::WebViewPurpose::Tab:
+        return Inspector::Protocol::Automation::WebExtensionPageType::Tab;
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    case WebExtensionContext::WebViewPurpose::Offscreen:
+        return Inspector::Protocol::Automation::WebExtensionPageType::Offscreen;
+#endif
+    case WebExtensionContext::WebViewPurpose::Any:
+    case WebExtensionContext::WebViewPurpose::Inspector:
+        return std::nullopt;
+    }
+
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void WebAutomationSession::getWebExtensionPages(const String& identifier, CommandCallbackOf<String, Ref<JSON::ArrayOf<Inspector::Protocol::Automation::WebExtensionPage>>>&& callback)
+{
+    ASSERT(m_client);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!m_client, InternalError, "The remote session could not look up the web extension."_s);
+
+    RefPtr extensionContext = m_client->webExtensionContextForIdentifier(*this, identifier);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!extensionContext || !extensionContext->isLoaded(), NoSuchExtension, "No loaded web extension has this identifier."_s);
+
+    bool backgroundIsServiceWorker = protect(extensionContext->extension())->backgroundContentIsServiceWorker();
+    auto replyWithPages = [protectedThis = Ref { *this }, extensionContext, backgroundIsServiceWorker, callback = WTF::move(callback)] mutable {
+        auto pages = JSON::ArrayOf<Inspector::Protocol::Automation::WebExtensionPage>::create();
+
+        extensionContext->enumerateExtensionPages([&](WebPageProxy& page, bool&) {
+            auto purpose = extensionContext->purposeOfExtensionPage(page.identifier());
+            if (!purpose || (*purpose == WebExtensionContext::WebViewPurpose::Background && backgroundIsServiceWorker))
+                return;
+
+            auto type = webExtensionPageType(*purpose);
+            if (!type)
+                return;
+
+            pages->addItem(Inspector::Protocol::Automation::WebExtensionPage::create()
+                .setHandle(protectedThis->handleForWebPageProxy(page))
+                .setType(*type)
+                .setUrl(activeOrInitialURL(page).string())
+                .release());
+        });
+
+        callback({ { extensionContext->baseURL().string(), WTF::move(pages) } });
+    };
+
+    if (backgroundIsServiceWorker) {
+        replyWithPages();
+        return;
+    }
+
+    extensionContext->wakeUpBackgroundContentIfNecessary(WTF::move(replyWithPages));
 }
 #endif
 
@@ -2609,7 +3260,7 @@ void WebAutomationSession::runBidiInteractionSequence(WebPageProxy& page, std::o
         }
 
         // FIXME: Refresh the viewport when an earlier action in the sequence scrolls or re-lays out the page. <https://webkit.org/b/329451>
-        protectedThis->runInteractionSequence(*page, frameID, WTF::move(keyFrames), inputSources, SimulatedInputRunOptions { SimulatedInputViewport { viewport->location(), viewport->size() }, true }, WTF::move(completionHandler));
+        protectedThis->runInteractionSequence(*page, frameID, WTF::move(keyFrames), inputSources, SimulatedInputRunOptions { .viewport = SimulatedInputViewport { viewport->location(), viewport->size() }, .interpolatePointerMoves = true, .elementOriginHandleKind = NodeHandleKind::SharedReference, .scrollDeltasArePerAction = true, .interpolateScrolls = true }, WTF::move(completionHandler));
     };
 
     auto send = [page = protect(page), frameID, didGetFrameViewportHandler = WTF::move(didGetFrameViewportHandler)] mutable {
@@ -2626,7 +3277,7 @@ void WebAutomationSession::runBidiInteractionSequence(WebPageProxy& page, std::o
 #endif // ENABLE(WEBDRIVER_BIDI)
 
 // MARK: SimulatedInputDispatcher::Client API
-void WebAutomationSession::viewportInViewCenterPointOfElement(WebPageProxy& page, std::optional<FrameIdentifier> frameID, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, Function<void(std::optional<WebCore::IntPoint>, std::optional<AutomationCommandError>)>&& completionHandler)
+void WebAutomationSession::viewportInViewCenterPointOfElement(WebPageProxy& page, std::optional<FrameIdentifier> frameID, const Inspector::Protocol::Automation::NodeHandle& nodeHandle, NodeHandleKind nodeHandleKind, Function<void(std::optional<WebCore::IntPoint>, std::optional<AutomationCommandError>)>&& completionHandler)
 {
     WTF::CompletionHandler<void(std::optional<String>&&, WebCore::FloatRect&&, std::optional<WebCore::IntPoint>&&, bool)> didComputeElementLayoutHandler = [completionHandler = WTF::move(completionHandler)](std::optional<String>&& optionalError, WebCore::FloatRect&&, std::optional<WebCore::IntPoint>&& inViewCenterPoint, bool) mutable {
         if (optionalError) {
@@ -2645,7 +3296,7 @@ void WebAutomationSession::viewportInViewCenterPointOfElement(WebPageProxy& page
         completionHandler(inViewCenterPoint, std::nullopt);
     };
 
-    sendComputeElementLayout(page, frameID, nodeHandle, false, CoordinateSystem::LayoutViewport, WTF::move(didComputeElementLayoutHandler));
+    sendComputeElementLayout(page, frameID, nodeHandle, false, CoordinateSystem::LayoutViewport, nodeHandleKind, WTF::move(didComputeElementLayoutHandler));
 }
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
@@ -2689,6 +3340,11 @@ void WebAutomationSession::clearDoubleClicks()
 {
     m_clickCount = 1;
     m_lastClickPosition.reset();
+}
+
+void WebAutomationSession::forgetPressedMouseButton(MouseButton button)
+{
+    m_mouseButtonsCurrentlyDown.set(button, false);
 }
 
 void WebAutomationSession::simulateMouseInteraction(WebPageProxy& page, MouseInteraction interaction, MouseButton mouseButton, const WebCore::IntPoint& locationInViewport, const String& pointerType, CompletionHandler<void(std::optional<AutomationCommandError>)>&& completionHandler)
@@ -2782,6 +3438,29 @@ void WebAutomationSession::simulateKeyboardInteraction(WebPageProxy& page, Keybo
 #if ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
 void WebAutomationSession::simulateWheelInteraction(WebPageProxy& page, const WebCore::IntPoint& locationInViewport, const WebCore::IntSize& delta, AutomationCompletionHandler&& completionHandler)
 {
+#if PLATFORM(MAC)
+    // The UI process scrolling tree only sends a wheel event to the web process if the event region
+    // at its location has a wheel event listener. Event regions arrive with layer tree commits, so a
+    // listener added since the last rendering update would miss the event. Wait for a presentation
+    // update first, but only when the view is visible, as the update can be postponed otherwise.
+    if (page.isViewVisible()) {
+        page.callAfterNextPresentationUpdate([this, protectedThis = Ref { *this }, weakPage = WeakPtr { page }, locationInViewport, delta, completionHandler = WTF::move(completionHandler)] mutable {
+            RefPtr page = weakPage;
+            if (!page || page->isClosed()) {
+                completionHandler(AUTOMATION_COMMAND_ERROR_WITH_NAME(WindowNotFound));
+                return;
+            }
+            dispatchWheelInteraction(*page, locationInViewport, delta, WTF::move(completionHandler));
+        });
+        return;
+    }
+#endif
+
+    dispatchWheelInteraction(page, locationInViewport, delta, WTF::move(completionHandler));
+}
+
+void WebAutomationSession::dispatchWheelInteraction(WebPageProxy& page, const WebCore::IntPoint& locationInViewport, const WebCore::IntSize& delta, AutomationCompletionHandler&& completionHandler)
+{
     page.getWindowFrameWithCallback([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), page = protect(page), locationInViewport, delta](WebCore::FloatRect windowFrame) mutable {
         auto clippedX = std::min(std::max(0.0f, static_cast<float>(locationInViewport.x())), windowFrame.size().width());
         auto clippedY = std::min(std::max(0.0f, static_cast<float>(locationInViewport.y())), windowFrame.size().height());
@@ -2805,7 +3484,7 @@ void WebAutomationSession::simulateWheelInteraction(WebPageProxy& page, const We
             callbackInMap(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(Timeout)));
         callbackInMap = WTF::move(wheelEventsFlushedCallback);
 
-        platformSimulateWheelInteraction(page, locationInViewport, delta);
+        platformSimulateWheelInteraction(page, locationInViewport, { std::max(delta.width(), -std::numeric_limits<int>::max()), std::max(delta.height(), -std::numeric_limits<int>::max()) });
 
         // If the event does not hit test anything in the window, then it may not have been delivered.
         if (callbackInMap && !page->isProcessingWheelEvents()) {
@@ -2839,7 +3518,83 @@ NODELETE static WebEventModifier protocolModifierToWebEventModifier(Inspector::P
 }
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
-void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& expression, bool awaitPromise, int maxObjectDepth, std::optional<double>&& callbackTimeout, CommandCallback<String>&& callback)
+static String normalizedBidiScriptEvaluationError(const String& errorType, const String& errorDetails)
+{
+    using ErrorMessage = Inspector::Protocol::Automation::ErrorMessage;
+
+    auto parsedError = Inspector::Protocol::AutomationHelpers::parseEnumValueFromString<ErrorMessage>(errorType);
+    bool isMissingBrowsingContext = parsedError && (*parsedError == ErrorMessage::WindowNotFound || *parsedError == ErrorMessage::FrameNotFound);
+
+    String details = errorDetails;
+    if (details.isEmpty())
+        details = isMissingBrowsingContext ? "The browsing context is no longer available."_s : "Script evaluation failed."_s;
+
+    if (isMissingBrowsingContext)
+        return STRING_FOR_PREDEFINED_ERROR_NAME_AND_DETAILS(FrameNotFound, details);
+    return STRING_FOR_PREDEFINED_ERROR_NAME_AND_DETAILS(InternalError, details);
+}
+
+void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& expression, bool awaitPromise, std::optional<double> maxObjectDepth, std::optional<double> maxDomDepth, const String& includeShadowTree, std::optional<double>&& callbackTimeout, CommandCallback<String>&& callback)
+{
+    auto page = webPageProxyForHandle(browsingContextHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!page, FrameNotFound, "The browsing context is no longer available."_s);
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(frameNotFound, FrameNotFound, "The browsing context is no longer available."_s);
+
+    uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
+    m_evaluateBidiScriptCallbacks.set(callbackID, WTF::move(callback));
+
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, maxObjectDepth, maxDomDepth, includeShadowTree, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID](String&& result, String&& errorType) {
+        auto callback = protectedThis->m_evaluateBidiScriptCallbacks.take(callbackID);
+        if (!callback)
+            return;
+
+        if (!errorType.isEmpty()) {
+            callback(makeUnexpected(normalizedBidiScriptEvaluationError(errorType, result)));
+            return;
+        }
+
+        callback(WTF::move(result));
+    } });
+}
+
+void WebAutomationSession::locateNodesForBidi(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, const String& locator, std::optional<Vector<String>>&& startNodeIdentifiers, std::optional<uint64_t> maxNodeCount, std::optional<double> maxObjectDepth, std::optional<double> maxDomDepth, const String& includeShadowTree, std::optional<WebCore::FrameIdentifier> containerFrameID, CommandCallback<String>&& callback)
+{
+    RefPtr page = webPageProxyForHandle(browsingContextHandle);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(!page, FrameNotFound, "The browsing context is no longer available."_s);
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(frameNotFound, FrameNotFound, "The browsing context is no longer available."_s);
+
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::LocateNodesForBidi(page->webPageIDInProcessForFrame(frameID), frameID, locator, WTF::move(startNodeIdentifiers), maxNodeCount, maxObjectDepth, maxDomDepth, includeShadowTree, containerFrameID), CompletionHandler<void(String&&, String&&)> { [callback = WTF::move(callback)](String&& result, String&& errorType) mutable {
+        if (!errorType.isEmpty()) {
+            callback(makeUnexpected(normalizedBidiScriptEvaluationError(errorType, result)));
+            return;
+        }
+
+        callback(WTF::move(result));
+    } });
+}
+
+#if ENABLE(WEBDRIVER_BIDI)
+void WebAutomationSession::getBidiRealmInfo(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, CompletionHandler<void(std::optional<RealmIdentifier>&&)>&& completionHandler)
+{
+    RefPtr page = webPageProxyForHandle(browsingContextHandle);
+    if (!page)
+        return completionHandler(std::nullopt);
+
+    bool frameNotFound = false;
+    auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
+    if (frameNotFound)
+        return completionHandler(std::nullopt);
+
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::GetBidiRealmInfo(page->webPageIDInProcessForFrame(frameID), frameID), WTF::move(completionHandler));
+}
+#endif
+
+#if ENABLE(WEBDRIVER_BIDI)
+void WebAutomationSession::evaluateBidiCallFunction(const Inspector::Protocol::Automation::BrowsingContextHandle& browsingContextHandle, const Inspector::Protocol::Automation::FrameHandle& frameHandle, std::optional<RealmIdentifier> expectedRealmIdentifier, const String& functionDeclaration, Ref<JSON::Array>&& arguments, RefPtr<JSON::Object>&& thisValue, bool awaitPromise, std::optional<double> maxObjectDepth, std::optional<double> maxDomDepth, const String& includeShadowTree, bool userActivation, std::optional<double>&& callbackTimeout, CommandCallbackOf<String, RealmIdentifier>&& callback)
 {
     auto page = webPageProxyForHandle(browsingContextHandle);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!page, WindowNotFound);
@@ -2847,11 +3602,16 @@ void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automat
     auto frameID = webFrameIDForHandle(frameHandle, frameNotFound);
     ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(frameNotFound, FrameNotFound);
 
-    uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
-    m_evaluateJavaScriptFunctionCallbacks.set(callbackID, WTF::move(callback));
+    auto argumentsVector = WTF::map(arguments.get(), [](auto& argument) {
+        return argument->toJSONString();
+    });
+    auto thisString = thisValue ? std::optional { thisValue->toJSONString() } : std::nullopt;
 
-    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiScript(page->webPageIDInProcessForFrame(frameID), frameID, expression, awaitPromise, maxObjectDepth, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, String&&)> { [protectedThis = Ref { *this }, callbackID] (String&& result, String&& errorType) {
-        auto callback = protectedThis->m_evaluateJavaScriptFunctionCallbacks.take(callbackID);
+    uint64_t callbackID = m_nextEvaluateJavaScriptCallbackID++;
+    m_evaluateBidiCallFunctionCallbacks.set(callbackID, WTF::move(callback));
+
+    page->sendWithAsyncReplyToProcessContainingFrameWithoutDestinationIdentifier(frameID, Messages::WebAutomationSessionProxy::EvaluateBidiCallFunction(page->webPageIDInProcessForFrame(frameID), frameID, expectedRealmIdentifier, functionDeclaration, argumentsVector, thisString, awaitPromise, maxObjectDepth, maxDomDepth, includeShadowTree, userActivation, WTF::move(callbackTimeout)), CompletionHandler<void(String&&, std::optional<RealmIdentifier>&&, String&&)> { [protectedThis = Ref { *this }, callbackID](String&& result, std::optional<RealmIdentifier>&& realmIdentifier, String&& errorType) {
+        auto callback = protectedThis->m_evaluateBidiCallFunctionCallbacks.take(callbackID);
         if (!callback)
             return;
 
@@ -2860,9 +3620,15 @@ void WebAutomationSession::evaluateBidiScript(const Inspector::Protocol::Automat
             return;
         }
 
-        callback(WTF::move(result));
+        if (!realmIdentifier) {
+            callback(makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME(InternalError)));
+            return;
+        }
+
+        callback({ { WTF::move(result), WTF::move(*realmIdentifier) } });
     } });
 }
+#endif
 
 void WebAutomationSession::performMouseInteraction(const Inspector::Protocol::Automation::BrowsingContextHandle& handle, Ref<JSON::Object>&& requestedPosition, Inspector::Protocol::Automation::MouseButton mouseButton, Inspector::Protocol::Automation::MouseInteraction mouseInteraction, Ref<JSON::Array>&& keyModifierStrings, CommandCallback<Ref<Inspector::Protocol::Automation::Point>>&& callback)
 {
@@ -3236,7 +4002,7 @@ void WebAutomationSession::cancelInteractionSequence(const Inspector::Protocol::
 
     Vector<SimulatedInputKeyFrame> keyFrames({ SimulatedInputKeyFrame::keyFrameToResetInputSources(m_inputSources) });
     Ref inputDispatcher = inputDispatcherForPage(*page);
-    inputDispatcher->cancel();
+    inputDispatcher->cancel(AUTOMATION_COMMAND_ERROR_WITH_NAME(InternalError));
     
     inputDispatcher->run(frameID, WTF::move(keyFrames), m_inputSources, SimulatedInputRunOptions { }, [this, protectedThis = Ref { *this }, callback = WTF::move(callback)](std::optional<AutomationCommandError> error) {
         if (error)
@@ -3304,13 +4070,21 @@ void WebAutomationSession::takeScreenshot(const Inspector::Protocol::Automation:
 #if PLATFORM(GTK) || PLATFORM(COCOA) || PLATFORM(WPE)
     Function<void(WebPageProxy&, std::optional<WebCore::IntRect>&&, CommandCallback<String>&&)> takeViewSnapshot = [](WebPageProxy& page, std::optional<WebCore::IntRect>&& rect, CommandCallback<String>&& callback) {
         page.callAfterNextPresentationUpdate([page = protect(page), rect = WTF::move(rect), callback = WTF::move(callback)] () mutable {
-            RefPtr snapshot = page->takeViewSnapshot(WTF::move(rect), ForceSoftwareCapturingViewportSnapshot::Yes);
-            ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!snapshot, InternalError);
+            auto snapshotView = [page, rect = WTF::move(rect), callback = WTF::move(callback)] mutable {
+                RefPtr snapshot = page->takeViewSnapshot(WTF::move(rect), ForceSoftwareCapturingViewportSnapshot::Yes);
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!snapshot, InternalError);
 
-            std::optional<String> base64EncodedData = platformGetBase64EncodedPNGData(*snapshot);
-            ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!base64EncodedData, InternalError);
+                std::optional<String> base64EncodedData = platformGetBase64EncodedPNGData(*snapshot);
+                ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!base64EncodedData, InternalError);
 
-            callback(base64EncodedData.value());
+                callback(base64EncodedData.value());
+            };
+#if PLATFORM(MAC)
+            // The view snapshot is a window server capture, and the layer changes this presentation update waited for haven't reached the window server yet.
+            platformCallAfterWindowServerDrawsView(page, WTF::move(snapshotView));
+#else
+            snapshotView();
+#endif
         });
     };
 
@@ -3400,11 +4174,38 @@ void WebAutomationSession::isKnownNodeReference(WebCore::FrameIdentifier frameID
     completionHandler(findResult != m_knownNodeReferences.end() && findResult->value.contains(nodeHandle));
 }
 
-void WebAutomationSession::logEntryAdded(const JSC::MessageSource& messageSource, const JSC::MessageLevel& messageLevel, const String& messageText, const JSC::MessageType& messageType, const WallTime& timestamp)
+#if ENABLE(WEBDRIVER_BIDI)
+// Every web process in the process pool reports realms and console messages, including the ones of pages that the
+// automation client doesn't control, such as pages that the browser's user opened. Only report frames of pages that
+// the session controls, and only from the process that hosts the frame or is loading a new document into it. A
+// message from another process is dropped rather than treated as a violation, because a frame can move to another
+// process while the old one's messages are on their way.
+static RefPtr<WebFrameProxy> frameControlledBySession(const WebAutomationSession& session, IPC::Connection& connection, WebCore::FrameIdentifier frameID)
+{
+    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    if (!frame)
+        return nullptr;
+
+    Ref process = WebProcessProxy::fromConnection(connection);
+    if (&frame->process() != process.ptr() && &frame->provisionalLoadProcess() != process.ptr())
+        return nullptr;
+
+    RefPtr page = frame->page();
+    if (!page || page->activeAutomationSession().get() != &session)
+        return nullptr;
+
+    return frame;
+}
+#endif
+
+void WebAutomationSession::logEntryAdded(IPC::Connection& connection, WebCore::FrameIdentifier frameID, const JSC::MessageSource& messageSource, const JSC::MessageLevel& messageLevel, const String& messageText, const JSC::MessageType& messageType, const WallTime& timestamp)
 {
 #if ENABLE(WEBDRIVER_BIDI)
-    // FIXME: log entries carry no browsing context yet, so only global subscriptions receive them. https://bugs.webkit.org/show_bug.cgi?id=282978
-    m_bidiProcessor->emitEventIfEnabled(BidiEventNames::Log::EntryAdded, { }, [&]() {
+    RefPtr frame = frameControlledBySession(*this, connection, frameID);
+    if (!frame)
+        return;
+
+    m_bidiProcessor->emitEventIfEnabled(BidiEventNames::Log::EntryAdded, bidiSubscriptionScopeForFrame(*frame), [&] {
         // FIXME Support getting source information
         // https://bugs.webkit.org/show_bug.cgi?id=282978
         String sourceString;
@@ -3419,6 +4220,8 @@ void WebAutomationSession::logEntryAdded(const JSC::MessageSource& messageSource
         m_bidiProcessor->logDomainNotifier().entryAdded(level, sourceString, messageText, milliseconds, type, method);
     });
 #else
+    UNUSED_PARAM(connection);
+    UNUSED_PARAM(frameID);
     UNUSED_PARAM(messageSource);
     UNUSED_PARAM(messageLevel);
     UNUSED_PARAM(messageText);
@@ -3428,11 +4231,12 @@ void WebAutomationSession::logEntryAdded(const JSC::MessageSource& messageSource
 }
 
 #if ENABLE(WEBDRIVER_BIDI)
-void WebAutomationSession::scriptRealmCreated(WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin)
+void WebAutomationSession::scriptRealmCreated(IPC::Connection& connection, WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin)
 {
-    // Not security sensitive because it labels a realm for the automation client which already has full control of the browser.
-    auto origin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NotSecuritySensitive);
-    RefPtr frame = WebFrameProxy::webFrame(frameID);
+    Ref process = WebProcessProxy::fromConnection(connection);
+    MESSAGE_CHECK_BASE(realmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+
+    RefPtr frame = frameControlledBySession(*this, connection, frameID);
     if (!frame)
         return;
 
@@ -3440,11 +4244,23 @@ void WebAutomationSession::scriptRealmCreated(WebCore::FrameIdentifier frameID, 
     if (browsingContext.isEmpty())
         return;
 
-    m_bidiProcessor->scriptAgent().notifyRealmCreated(realmIdentifier, browsingContext, origin);
+    RefPtr page = frame->page();
+    if (!page)
+        return;
+
+    auto& scriptAgent = m_bidiProcessor->scriptAgent();
+    MESSAGE_CHECK_BASE(!scriptAgent.activeRealms().contains(realmIdentifier), connection);
+
+    // Not security sensitive because it labels a realm for the automation client which already has full control of the browser.
+    auto origin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NotSecuritySensitive);
+    scriptAgent.notifyRealmCreatedFromBrowsingContext(realmIdentifier, frameID, browsingContext, handleForWebPageProxy(*page), origin);
 }
 
-void WebAutomationSession::scriptRealmDestroyed(WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier)
+void WebAutomationSession::scriptRealmDestroyed(IPC::Connection& connection, WebCore::FrameIdentifier frameID, RealmIdentifier realmIdentifier)
 {
+    Ref process = WebProcessProxy::fromConnection(connection);
+    MESSAGE_CHECK_BASE(realmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+
     // Look up the realm in m_activeRealms to get its browsing context.
     // This avoids a race where the IPC message arrives after WebFrameProxy is destroyed
     // (common for iframe removal and cross-process navigations).
@@ -3453,8 +4269,68 @@ void WebAutomationSession::scriptRealmDestroyed(WebCore::FrameIdentifier frameID
     if (it == scriptAgent.activeRealms().end())
         return; // Realm not found or already destroyed.
 
-    auto browsingContext = it->value.context;
-    scriptAgent.notifyRealmDestroyed(realmIdentifier, browsingContext);
+    MESSAGE_CHECK_BASE(it->value.type == Inspector::Protocol::BidiScript::RealmType::Window, connection);
+    MESSAGE_CHECK_BASE(it->value.context.has_value(), connection);
+    MESSAGE_CHECK_BASE(it->value.frameIdentifier == frameID, connection);
+    scriptAgent.notifyRealmDestroyedFromBrowsingContext(realmIdentifier, *it->value.context);
+}
+
+void WebAutomationSession::scriptDedicatedWorkerRealmCreated(IPC::Connection& connection, const String& workerIdentifier, WebCore::FrameIdentifier ownerFrameIdentifier, RealmIdentifier realmIdentifier, RealmIdentifier ownerRealmIdentifier, IPC::Untrusted<WebCore::SecurityOriginData>&& untrustedOrigin)
+{
+    Ref process = WebProcessProxy::fromConnection(connection);
+    MESSAGE_CHECK_BASE(realmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+    MESSAGE_CHECK_BASE(ownerRealmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+    MESSAGE_CHECK_BASE(realmIdentifier != ownerRealmIdentifier, connection);
+
+    RefPtr ownerFrame = frameControlledBySession(*this, connection, ownerFrameIdentifier);
+    if (!ownerFrame)
+        return;
+
+    if (!ownerFrame->isMainFrame())
+        return;
+
+    RefPtr page = ownerFrame->page();
+    if (!page)
+        return;
+
+    auto ownerBrowsingContextIterator = m_webPageHandleMap.find(page->identifier());
+    if (ownerBrowsingContextIterator == m_webPageHandleMap.end())
+        return;
+
+    auto& scriptAgent = m_bidiProcessor->scriptAgent();
+    auto ownerRealmIterator = scriptAgent.activeRealms().find(ownerRealmIdentifier);
+    if (ownerRealmIterator == scriptAgent.activeRealms().end())
+        return;
+
+    MESSAGE_CHECK_BASE(ownerRealmIterator->value.type == Inspector::Protocol::BidiScript::RealmType::Window, connection);
+    MESSAGE_CHECK_BASE(ownerRealmIterator->value.frameIdentifier == ownerFrameIdentifier, connection);
+    MESSAGE_CHECK_BASE(ownerRealmIterator->value.context.has_value(), connection);
+    MESSAGE_CHECK_BASE(*ownerRealmIterator->value.context == ownerBrowsingContextIterator->value, connection);
+
+    if (auto existingWorkerMatches = scriptAgent.dedicatedWorkerRealmMatches(realmIdentifier, workerIdentifier, ownerFrameIdentifier, ownerRealmIdentifier))
+        MESSAGE_CHECK_BASE(*existingWorkerMatches, connection);
+    else
+        MESSAGE_CHECK_BASE(!scriptAgent.activeRealms().contains(realmIdentifier), connection);
+
+    // Not security sensitive because it labels a realm for the automation client which already has full control of the browser.
+    auto origin = WTF::move(untrustedOrigin).unsafeExtractWithoutValidation(IPC::UnvalidatedReason::NotSecuritySensitive);
+    scriptAgent.notifyRealmCreatedFromWorker(workerIdentifier, ownerFrameIdentifier, realmIdentifier, ownerRealmIdentifier, ownerBrowsingContextIterator->value, origin);
+}
+
+void WebAutomationSession::scriptDedicatedWorkerRealmDestroyed(IPC::Connection& connection, const String& workerIdentifier, WebCore::FrameIdentifier ownerFrameIdentifier, RealmIdentifier realmIdentifier, RealmIdentifier ownerRealmIdentifier)
+{
+    Ref process = WebProcessProxy::fromConnection(connection);
+    MESSAGE_CHECK_BASE(realmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+    MESSAGE_CHECK_BASE(ownerRealmIdentifier.processIdentifier() == process->coreProcessIdentifier(), connection);
+    MESSAGE_CHECK_BASE(realmIdentifier != ownerRealmIdentifier, connection);
+
+    auto& scriptAgent = m_bidiProcessor->scriptAgent();
+    auto existingWorkerMatches = scriptAgent.dedicatedWorkerRealmMatches(realmIdentifier, workerIdentifier, ownerFrameIdentifier, ownerRealmIdentifier);
+    if (!existingWorkerMatches)
+        return;
+
+    MESSAGE_CHECK_BASE(*existingWorkerMatches, connection);
+    scriptAgent.notifyRealmDestroyedFromWorker(workerIdentifier, ownerFrameIdentifier, realmIdentifier, ownerRealmIdentifier);
 }
 #endif
 

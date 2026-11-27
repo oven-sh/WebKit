@@ -42,8 +42,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/unicode/CharacterNames.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 struct SameSizeAsBorderValue {
     Color m_color;
@@ -81,15 +80,14 @@ IGNORE_CLANG_WARNINGS_END
 static_assert(sizeof(ComputedStyle) == sizeof(SameSizeAsComputedStyle), "ComputedStyle should stay small");
 
 ComputedStyle::ComputedStyle(ComputedStyle&&) = default;
-ComputedStyle& ComputedStyle::operator=(ComputedStyle&&) = default;
 
 SUPPRESS_NODELETE ComputedStyle& ComputedStyle::defaultStyleSingleton()
 {
-    static NeverDestroyed<ComputedStyle> style { CreateDefaultStyle };
-    return style;
+    static NeverDestroyed<UniqueRef<ComputedStyle>> style { UniqueRef { *new ComputedStyle(CreateDefaultStyle) } };
+    return style.get();
 }
 
-ComputedStyle ComputedStyle::create()
+UniqueRef<ComputedStyle> ComputedStyle::create()
 {
     return clone(defaultStyleSingleton());
 }
@@ -101,36 +99,36 @@ std::unique_ptr<ComputedStyle> ComputedStyle::createPtr()
 
 std::unique_ptr<ComputedStyle> ComputedStyle::createPtrWithRegisteredInitialValues(const Style::CustomPropertyRegistry& registry)
 {
-    return clonePtr(registry.initialValuePrototypeStyle());
+    return clonePtr(protect(registry.initialValuePrototypeStyle()));
 }
 
-SUPPRESS_NODELETE ComputedStyle ComputedStyle::clone(const ComputedStyle& style)
+SUPPRESS_NODELETE UniqueRef<ComputedStyle> ComputedStyle::clone(const ComputedStyle& style)
 {
-    return ComputedStyle(style, Clone);
+    return UniqueRef { *new ComputedStyle(style, Clone) };
 }
 
-ComputedStyle ComputedStyle::cloneIncludingPseudoElements(const ComputedStyle& style)
+UniqueRef<ComputedStyle> ComputedStyle::cloneIncludingPseudoElements(const ComputedStyle& style)
 {
-    auto newStyle = ComputedStyle(style, Clone);
-    newStyle.copyPseudoElementsFrom(style);
+    auto newStyle = clone(style);
+    newStyle->copyPseudoElementsFrom(style);
     return newStyle;
 }
 
 std::unique_ptr<ComputedStyle> ComputedStyle::clonePtr(const ComputedStyle& style)
 {
-    return makeUnique<ComputedStyle>(style, Clone);
+    return std::unique_ptr<ComputedStyle>(new ComputedStyle(style, Clone));
 }
 
-ComputedStyle ComputedStyle::createAnonymousStyleWithDisplay(const ComputedStyle& parentStyle, Style::Display display)
+UniqueRef<ComputedStyle> ComputedStyle::createAnonymousStyleWithDisplay(const ComputedStyle& parentStyle, Style::Display display)
 {
     auto newStyle = create();
-    newStyle.inheritFrom(parentStyle);
-    newStyle.inheritUnicodeBidiFrom(parentStyle);
-    newStyle.setDisplay(display);
+    newStyle->inheritFrom(parentStyle);
+    newStyle->inheritUnicodeBidiFrom(parentStyle);
+    newStyle->setDisplay(display);
     return newStyle;
 }
 
-ComputedStyle ComputedStyle::createStyleInheritingFromPseudoStyle(const ComputedStyle& pseudoStyle)
+UniqueRef<ComputedStyle> ComputedStyle::createStyleInheritingFromPseudoStyle(const ComputedStyle& pseudoStyle)
 {
     ASSERT(pseudoStyle.pseudoElementType() == PseudoElementType::Before
         || pseudoStyle.pseudoElementType() == PseudoElementType::After
@@ -139,13 +137,19 @@ ComputedStyle ComputedStyle::createStyleInheritingFromPseudoStyle(const Computed
         || pseudoStyle.pseudoElementType() == PseudoElementType::PickerIcon);
 
     auto style = create();
-    style.inheritFrom(pseudoStyle);
+    style->inheritFrom(pseudoStyle);
     return style;
 }
 
-SUPPRESS_NODELETE ComputedStyle ComputedStyle::replace(ComputedStyle&& newStyle)
+SUPPRESS_NODELETE UniqueRef<ComputedStyle> ComputedStyle::replace(UniqueRef<ComputedStyle>&& newStyle)
 {
-    return ComputedStyle { *this, WTF::move(newStyle) };
+    swapData(newStyle);
+    return WTF::move(newStyle);
+}
+
+void ComputedStyle::cloneFrom(const ComputedStyle& other)
+{
+    cloneDataFrom(other);
 }
 
 void ComputedStyle::copyPseudoElementsFrom(const ComputedStyle& other)
@@ -155,7 +159,7 @@ void ComputedStyle::copyPseudoElementsFrom(const ComputedStyle& other)
             ASSERT_NOT_REACHED();
             continue;
         }
-        addPseudoElementStyle(makeUnique<ComputedStyle>(cloneIncludingPseudoElements(*pseudoElementStyle)));
+        addPseudoElementStyle(cloneIncludingPseudoElements(protect(*pseudoElementStyle)).moveToUniquePtr());
     }
 }
 
@@ -413,7 +417,7 @@ const WTF::String& ComputedStyle::hyphenString() const
             static MainThreadNeverDestroyed<const WTF::String> hyphenMinusString(span(hyphenMinus));
             static MainThreadNeverDestroyed<const WTF::String> hyphenString(span(hyphen));
 
-            return protect(fontCascade().primaryFont())->glyphForCharacter(hyphen) ? hyphenString : hyphenMinusString;
+            return protect(protect(fontCascade())->primaryFont())->glyphForCharacter(hyphen) ? hyphenString : hyphenMinusString;
         },
         [](const String& string) -> const WTF::String& {
             return string.value;
@@ -570,10 +574,7 @@ BlendMode ComputedStyle::usedBlendMode() const
 
 Color ComputedStyle::usedBackgroundColor() const
 {
-    if (auto overrideColor = m_nonInheritedData->rareData->overrideBackgroundColor) [[unlikely]]
-        return *overrideColor;
-
-    return backgroundColor();
+    return m_nonInheritedData->backgroundData->usedBackgroundColor();
 }
 
 WebCore::Color ComputedStyle::usedBackgroundColorResolvingCurrentColor(StyleColorOptionsPurpose purpose) const
@@ -711,5 +712,4 @@ const BorderValue& ComputedStyle::borderEnd(const WritingMode writingMode) const
     return writingMode.isInlineTopToBottom() ? borderBottom() : borderTop();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

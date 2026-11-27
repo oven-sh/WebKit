@@ -33,11 +33,13 @@
 #include "RemoteGPU.h"
 #include "RemoteQueueMessages.h"
 #include "StreamServerConnection.h"
+#include "WebGPUDescriptorDeserializers.h"
 #include "WebGPUObjectHeap.h"
 #include <WebCore/SharedMemory.h>
 #include <WebCore/WebGPUCppAPI.h>
 #include <WebCore/WebGPUImageCopyExternalImage.h>
 #include <WebCore/WebGPUImageCopyTextureTagged.h>
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
@@ -58,12 +60,12 @@ static void keepAliveUntilSubmittedWorkDone(::WebGPU::Queue& backing, RefPtr<Web
 {
     if (!data || data->size() < ::WebGPU::largeBufferSize)
         return;
-    backing.onSubmittedWorkDone([data = WTF::move(data)]() mutable {
+    backing.onSubmittedWorkDone([data = WTF::move(data)](bool) mutable {
         data = nullptr;
     });
 }
 
-RemoteQueue::RemoteQueue([[maybe_unused]] GPUConnectionToWebProcess& gpuConnectionToWebProcess, ::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+RemoteQueue::RemoteQueue([[maybe_unused]] GPUConnectionToWebProcess& gpuConnectionToWebProcess, ::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUQueueIdentifier identifier)
     : m_backing(queue)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
@@ -92,11 +94,11 @@ void RemoteQueue::stopListeningForIPC()
     protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteQueue::messageReceiverName(), m_identifier.toUInt64());
 }
 
-void RemoteQueue::submit(Vector<WebGPUIdentifier>&& commandBuffers)
+void RemoteQueue::submit(Vector<WebGPUCommandBufferIdentifier>&& commandBuffers)
 {
     Vector<Ref<::WebGPU::CommandBuffer>> convertedCommandBuffers(ReserveCapacityTag { }, commandBuffers.size());
-    for (WebGPUIdentifier identifier : commandBuffers) {
-        auto convertedCommandBuffer = protect(m_objectHeap)->convertCommandBufferFromBacking(identifier);
+    for (WebGPUCommandBufferIdentifier identifier : commandBuffers) {
+        auto convertedCommandBuffer = protect(m_objectHeap)->get(identifier);
         ASSERT(convertedCommandBuffer);
         if (!convertedCommandBuffer)
             return;
@@ -105,21 +107,19 @@ void RemoteQueue::submit(Vector<WebGPUIdentifier>&& commandBuffers)
     protect(m_backing)->submit(WTF::move(convertedCommandBuffers));
 }
 
-void RemoteQueue::onSubmittedWorkDone(CompletionHandler<void()>&& callback)
+void RemoteQueue::onSubmittedWorkDone(CompletionHandler<void(bool)>&& callback)
 {
-    protect(m_backing)->onSubmittedWorkDone([callback = WTF::move(callback)] () mutable {
-        callback();
-    });
+    protect(m_backing)->onSubmittedWorkDone(WTF::move(callback));
 }
 
 void RemoteQueue::writeBuffer(
-    WebGPUIdentifier buffer,
+    WebGPUBufferIdentifier buffer,
     uint64_t bufferOffset,
     std::optional<WebCore::SharedMemoryHandle>&& dataHandle,
     CompletionHandler<void(bool)>&& completionHandler)
 {
     auto data = dataHandle ? WebCore::SharedMemory::map(WTF::move(*dataHandle), WebCore::SharedMemory::Protection::ReadOnly) : nullptr;
-    auto convertedBuffer = protect(m_objectHeap)->convertBufferFromBacking(buffer);
+    auto convertedBuffer = protect(m_objectHeap)->get(buffer);
     ASSERT(convertedBuffer);
     if (!convertedBuffer || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
         completionHandler(false);
@@ -133,18 +133,18 @@ void RemoteQueue::writeBuffer(
 }
 
 void RemoteQueue::writeBufferWithCopy(
-    WebGPUIdentifier buffer,
+    WebGPUBufferIdentifier buffer,
     uint64_t bufferOffset,
     Vector<uint8_t>&& data)
 {
     Ref objectHeap = m_objectHeap.get();
-    auto convertedBuffer = objectHeap->convertBufferFromBacking(buffer);
+    auto convertedBuffer = objectHeap->get(buffer);
     ASSERT(convertedBuffer);
     if (!convertedBuffer)
         return;
 
     MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
-    protect(m_backing)->writeBuffer(protect(*convertedBuffer), bufferOffset, data.span());
+    protect(m_backing)->writeBuffer(protect(*convertedBuffer), bufferOffset, borrow(data)->span());
 }
 
 void RemoteQueue::writeTexture(
@@ -156,7 +156,7 @@ void RemoteQueue::writeTexture(
 {
     auto data = dataHandle ? WebCore::SharedMemory::map(WTF::move(*dataHandle), WebCore::SharedMemory::Protection::ReadOnly) : nullptr;
     Ref objectHeap = m_objectHeap.get();
-    auto convertedDestination = objectHeap->convertFromBacking(destination);
+    auto convertedDestination = deserialize(objectHeap, destination);
     ASSERT(convertedDestination);
     if (!convertedDestination || !data || data->size() <= WebGPU::maxCrossProcessResourceCopySize) {
         completionHandler(false);
@@ -176,13 +176,13 @@ void RemoteQueue::writeTextureWithCopy(
     const WebGPU::Extent3D& size)
 {
     Ref objectHeap = m_objectHeap.get();
-    auto convertedDestination = objectHeap->convertFromBacking(destination);
+    auto convertedDestination = deserialize(objectHeap, destination);
     ASSERT(convertedDestination);
     if (!convertedDestination)
         return;
 
     MESSAGE_CHECK(data.size() <= WebGPU::maxCrossProcessResourceCopySize);
-    protect(m_backing)->writeTexture(*convertedDestination, data.span(), dataLayout, size);
+    protect(m_backing)->writeTexture(*convertedDestination, borrow(data)->span(), dataLayout, size);
 }
 
 void RemoteQueue::copyExternalImageToTexture(
@@ -199,14 +199,14 @@ void RemoteQueue::copyExternalImageToTexture(
     CompletionHandlerCallingScope callCompletionHandler(WTF::move(completionHandler));
 
     Ref objectHeap = m_objectHeap.get();
-    auto convertedSource = objectHeap->convertFromBacking(source);
+    auto convertedSource = deserialize(objectHeap, source);
     ASSERT(convertedSource);
-    auto convertedDestination = objectHeap->convertFromBacking(destination);
+    auto convertedDestination = deserialize(objectHeap, destination);
     ASSERT(convertedDestination);
     if (!convertedSource || !convertedDestination)
         return;
 
-    // ConvertFromBackingContext cannot resolve the source, because only RemoteGPU can reach the
+    // deserialize() cannot resolve the source, because only RemoteGPU can reach the
     // RemoteRenderingBackend which owns the ImageBuffer.
     if (source.imageBufferIdentifier) {
         RefPtr sourceImageBuffer = protect(m_gpu)->imageBuffer(*source.imageBufferIdentifier);
@@ -235,6 +235,8 @@ void RemoteQueue::copyExternalImageFromVideoFrameToTexture(
     const WebGPU::ImageCopyTextureTagged& destination,
     const WebGPU::Extent3D& copySize)
 {
+    MESSAGE_CHECK(source.sourceSize.width() >= 0 && source.sourceSize.height() >= 0);
+
     // Resolved the same way RemoteDevice resolves an external texture's frame: a shared frame is read
     // out of the shared video frame memory, and a media player identifier is asked for the frame it is
     // showing right now.
@@ -257,6 +259,8 @@ void RemoteQueue::copyExternalImageFromVideoFrameToTexture(
             connection->performWithMediaPlayerOnMainThread(*source.mediaIdentifier, [&](auto& player) mutable {
                 if (auto videoFrame = player.videoFrameForCurrentTime())
                     takeFrame(*videoFrame);
+                auto naturalSize = player.naturalSize();
+                source.sourceSize = { clampTo<int>(clampToUnsigned(naturalSize.width())), clampTo<int>(clampToUnsigned(naturalSize.height())) };
             });
         }
     }
@@ -267,9 +271,9 @@ void RemoteQueue::copyExternalImageFromVideoFrameToTexture(
         return;
 
     Ref objectHeap = m_objectHeap.get();
-    auto convertedSource = objectHeap->convertFromBacking(source, WTF::move(pixelBuffer), rotation, isMirrored);
+    auto convertedSource = deserialize(objectHeap, source, WTF::move(pixelBuffer), rotation, isMirrored);
     ASSERT(convertedSource);
-    auto convertedDestination = objectHeap->convertFromBacking(destination);
+    auto convertedDestination = deserialize(objectHeap, destination);
     ASSERT(convertedDestination);
     if (!convertedSource || !convertedDestination)
         return;

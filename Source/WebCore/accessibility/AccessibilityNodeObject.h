@@ -129,7 +129,7 @@ public:
     String axRowIndexText() const final;
 
     AccessibilityChildrenVector disclosedRows() final;
-    AccessibilityObject* disclosedByRow() const final;
+    RefPtr<AXCoreObject> disclosedByRow() const final;
 
     AXCoreObject* parentTableIfExposedTableRow() const final;
     bool isExposedTableRow() const final { return parentTableIfExposedTableRow(); }
@@ -219,7 +219,6 @@ public:
     virtual void changeValueByPercent(float percentChange);
 
     AccessibilityObject* firstChild() const override;
-    AccessibilityObject* lastChild() const override;
     AccessibilityObject* previousSibling() const override;
     AccessibilityObject* nextSibling() const override;
     AccessibilityObject* parentObject() const override;

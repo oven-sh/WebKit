@@ -38,6 +38,7 @@ sys.path.insert(0, os.path.join(tools_directory, 'glib'))
 sys.path.insert(0, os.path.join(tools_directory, 'jhbuild'))
 
 from api_test_runner import TestRunner  # noqa: E402
+from webkitpy.common.test_expectations import TestExpectations  # noqa: E402
 
 
 class StubTestRunner(TestRunner):
@@ -56,16 +57,21 @@ class StubTestRunner(TestRunner):
 
 
 class ChangedTestsStubTestRunner(StubTestRunner):
-    def __init__(self, base_directory, source_directory, google_test_cases=()):
+    def __init__(self, base_directory, source_directory, google_test_cases=(), glib_test_cases=()):
         super().__init__(base_directory)
         self._source_directory_path = source_directory
         self._available_google_test_cases = set(google_test_cases)
+        self._available_glib_test_cases = set(glib_test_cases)
+        self._expectations = TestExpectations('gtk', os.path.join(source_directory, 'Tools/TestWebKitAPI/glib/TestExpectations.json'))
 
     def _source_directory(self):
         return self._source_directory_path
 
     def _get_tests_from_google_test_suite(self, test_program, skipped_test_cases):
         return self._available_google_test_cases
+
+    def _get_tests_from_glib_test_program(self, test_program):
+        return self._available_glib_test_cases
 
 
 class StubExpectations(object):
@@ -123,11 +129,11 @@ class GLibAPITestRunnerTest(unittest.TestCase):
             with open(path, "w") as fd:
                 fd.write(content)
 
-    def _changed_tests(self, google_test_cases=()):
-        return self._changed_tests_and_output(google_test_cases)[0]
+    def _changed_tests(self, google_test_cases=(), glib_test_cases=()):
+        return self._changed_tests_and_output(google_test_cases, glib_test_cases)[0]
 
-    def _changed_tests_and_output(self, google_test_cases=()):
-        runner = ChangedTestsStubTestRunner(self._base_directory, self._source_directory, google_test_cases)
+    def _changed_tests_and_output(self, google_test_cases=(), glib_test_cases=()):
+        runner = ChangedTestsStubTestRunner(self._base_directory, self._source_directory, google_test_cases, glib_test_cases)
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             changed_tests = runner._changed_tests("base")
@@ -285,7 +291,18 @@ class GLibAPITestRunnerTest(unittest.TestCase):
             "TestDownloads:/webkit/Downloads/fixed",
             "TestDownloads:/webkit/Downloads/new",
             "TestWebKitWebView",
-        ], self._changed_tests())
+        ], self._changed_tests(glib_test_cases=["/webkit/Downloads/fixed", "/webkit/Downloads/new", "/webkit/Downloads/unchanged"]))
+
+    def test_changed_expectations_select_only_tests_the_build_has(self):
+        path = "Tools/TestWebKitAPI/glib/TestExpectations.json"
+        failure = {"expected": {"gtk": {"status": ["FAIL"]}}}
+        self._create_source_repository({path: json.dumps({
+            "TestDownloads": {"subtests": {"/webkit/Downloads/built": failure, "/webkit/Downloads/not-built": failure}},
+            "TestPrinting": failure,
+        })})
+        self._write_sources({path: json.dumps({})})
+
+        self.assertEqual(["TestDownloads:/webkit/Downloads/built"], self._changed_tests(glib_test_cases=["/webkit/Downloads/built"]))
 
     def test_an_expectation_change_is_reported_over_a_source_change(self):
         expectations = "Tools/TestWebKitAPI/glib/TestExpectations.json"
@@ -296,6 +313,18 @@ class GLibAPITestRunnerTest(unittest.TestCase):
         changed_tests, output = self._changed_tests_and_output()
         self.assertEqual(["TestDownloads"], changed_tests)
         self.assertIn(f"    TestDownloads ({expectations})\n", output)
+
+    def test_changed_expectations_of_another_port_select_nothing(self):
+        path = "Tools/TestWebKitAPI/glib/TestExpectations.json"
+        self._create_source_repository({path: json.dumps({
+            "TestDownloads": {"subtests": {"/webkit/Downloads/fixed": {"expected": {"wpe": {"status": ["FAIL"]}}}}},
+            "TestWebKitWebView": {"expected": {"all": {"slow": True}, "wpe": {"status": ["FAIL"]}}},
+        })})
+        self._write_sources({path: json.dumps({
+            "TestWebKitWebView": {"expected": {"all": {"slow": True}}},
+        })})
+
+        self.assertEqual([], self._changed_tests(glib_test_cases=["/webkit/Downloads/fixed"]))
 
     def test_deleted_test_source_selects_nothing(self):
         path = "Tools/TestWebKitAPI/Tests/WebKit/WKWebView/glib/TestDownloads.cpp"

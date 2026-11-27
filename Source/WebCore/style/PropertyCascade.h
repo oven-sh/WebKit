@@ -33,11 +33,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/ValueOrReference.h>
 
-namespace WebCore {
-
-class StyleResolver;
-
-namespace Style {
+namespace WebCore::Style {
 
 class PropertyCascade {
     WTF_MAKE_TZONE_ALLOCATED(PropertyCascade);
@@ -62,7 +58,9 @@ public:
         UserAgent,
         User,
         Author,
-        PositionFallback
+        PositionFallback,
+        // Site-specific quirk style sheets. Applied after everything else in the cascade, including !important author declarations.
+        Quirk
     };
 
     static constexpr OptionSet<PropertyType> normalPropertyTypes() { return { PropertyType::NonInherited,  PropertyType::Inherited }; }
@@ -239,9 +237,8 @@ inline bool PropertyCascade::hasCustomProperty(const AtomString& name) const
 
 inline const PropertyCascade::Property& PropertyCascade::customProperty(const AtomString& name) const
 {
-    ASSERT(hasCustomProperty(name));
+    ASSERT_WITH_SECURITY_IMPLICATION(hasCustomProperty(name));
     return m_customProperties.find(name)->value;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

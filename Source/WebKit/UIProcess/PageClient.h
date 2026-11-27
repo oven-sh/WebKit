@@ -75,6 +75,10 @@
 #include <WebCore/TextRecognitionResult.h>
 #endif
 
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+#include "ImmersiveElementDetails.h"
+#endif
+
 #if USE(DICTATION_ALTERNATIVES)
 #include <WebCore/PlatformTextAlternatives.h>
 #endif
@@ -109,6 +113,7 @@ class HitTestResult;
 class Navigation;
 class Object;
 class OpenPanelParameters;
+class PageConfiguration;
 class SecurityOrigin;
 }
 
@@ -137,7 +142,7 @@ enum class DOMPasteAccessCategory : uint8_t;
 enum class DOMPasteAccessResponse : uint8_t;
 enum class DOMPasteRequiresInteraction : bool;
 enum class ScrollIsAnimated : bool;
-enum class InterruptScrollAnimation : bool;
+enum class InterruptScrollAnimation : uint8_t;
 
 struct AppHighlight;
 struct AriaNotifyData;
@@ -315,6 +320,16 @@ public:
     virtual void didStopUsingProcessForSiteIsolation(WebProcessProxy&) { }
     virtual void processDidUpdateThrottleState() { }
     virtual void pageClosed() = 0;
+
+#if ENABLE(DOCUMENT_PIP)
+    // Document Picture-in-Picture. createDocumentPictureInPicturePage() is called on the opener's
+    // PageClient; the remaining functions are called on the picture-in-picture page's PageClient.
+    virtual void createDocumentPictureInPicturePage(Ref<API::PageConfiguration>&&, CompletionHandler<void(RefPtr<WebPageProxy>&&)>&&);
+    virtual void showDocumentPictureInPictureWindow() { }
+    virtual void closeDocumentPictureInPictureWindow() { }
+    virtual void focusDocumentPictureInPictureWindow() { }
+    virtual void setDocumentPictureInPictureWindowFrame(const WebCore::FloatRect&) { }
+#endif
 
     virtual void preferencesDidChange() = 0;
 
@@ -915,7 +930,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     virtual void allowImmersiveElement(Ref<API::FrameInfo>&&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
-    virtual void presentImmersiveElement(const WebCore::LayerHostingContextIdentifier, Ref<API::FrameInfo>&&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
+    virtual void presentImmersiveElement(ImmersiveElementDetails&&, Ref<API::FrameInfo>&&, CompletionHandler<void(bool)>&& completion) const { completion(false); }
     virtual void dismissImmersiveElement(CompletionHandler<void()>&& completion) const { completion(); }
 #endif
 };

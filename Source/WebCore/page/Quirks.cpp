@@ -172,8 +172,9 @@ NODELETE static HashMap<RegistrableDomain, String>& updatableStorageAccessUserAg
 #else
 NODELETE static inline bool shouldNotAutoUpgradeToHTTPSNavigationInternal(const URL&) { return false; }
 NODELETE static inline bool shouldDisableBlobFileAccessEnforcementInternal() { return false; }
-NODELETE static inline bool needsConsistentQueryParameterFilteringInternal(const URL&) { return false; }
 NODELETE static inline bool shouldExemptCookieFromITPDataRemovalInternal(const String&) { return false; }
+NODELETE static inline bool isConsistentQueryParameterFilteringTrackingScriptInternal(const URL&) { return false; }
+NODELETE static inline ConsistentQueryParameterFilteringLevel needsConsistentQueryParameterFilteringInternal(const URL&, const URL&) { return ConsistentQueryParameterFilteringLevel::Disabled; }
 #if PLATFORM(COCOA)
 NODELETE static inline String standardUserAgentWithApplicationNameIncludingCompatOverridesInternal(const String&, const String&, UserAgentType) { return { }; }
 #endif
@@ -312,6 +313,20 @@ bool Quirks::shouldDispatchSimulatedMouseEvents(const EventTarget* target) const
         return false;
 
     return behaviorAppliesToNode(QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk, dynamicDowncast<Node>(target));
+}
+
+bool Quirks::mayDispatchSimulatedMouseEvents() const
+{
+    if (m_document->settings().mouseEventsSimulationEnabled())
+        return true;
+
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
+
+    RefPtr loader = m_document->loader();
+    if (!loader || loader->simulatedMouseEventsDispatchPolicy() != SimulatedMouseEventsDispatchPolicy::Allow)
+        return false;
+
+    return m_quirksData.isBehaviorEnabled(QuirkBehaviorID::ShouldDispatchSimulatedMouseEventsQuirk);
 }
 
 bool Quirks::shouldPreventDispatchOfTouchEvent(const AtomString& touchEventType, EventTarget* target) const
@@ -580,11 +595,25 @@ bool Quirks::hasStorageAccessForAllLoginDomains(const HashSet<RegistrableDomain>
     return true;
 }
 
+static HashSet<RegistrableDomain> singleOwnerLoginDomains(const QuirksData& quirksData)
+{
+    HashSet<RegistrableDomain> domains;
+    for (const auto& behavior : quirksData.behaviorsMatching(QuirkBehaviorID::NeedsSingleOwnerLoginStorageAccessQuirk)) {
+        for (const auto& pattern : behavior.secondaryURL) {
+            if (!pattern.host().isEmpty())
+                domains.add(RegistrableDomain { URL { makeString("https://"_s, pattern.host(), '/') } });
+        }
+    }
+    return domains;
+}
+
 Quirks::StorageAccessResult Quirks::requestStorageAccessAndHandleClick(CompletionHandler<void(ShouldDispatchClick)>&& completionHandler) const
 {
     RefPtr document = m_document.get();
     auto firstPartyDomain = RegistrableDomain(topDocumentURL());
     auto domainsInNeedOfStorageAccess = subResourceDomainsInNeedOfStorageAccessForFirstParty(firstPartyDomain);
+    if (!domainsInNeedOfStorageAccess || domainsInNeedOfStorageAccess->isEmpty())
+        domainsInNeedOfStorageAccess = singleOwnerLoginDomains(m_quirksData);
     if (!domainsInNeedOfStorageAccess || domainsInNeedOfStorageAccess.value().isEmpty()) {
         completionHandler(ShouldDispatchClick::No);
         return Quirks::StorageAccessResult::ShouldNotCancelEvent;
@@ -602,7 +631,7 @@ Quirks::StorageAccessResult Quirks::requestStorageAccessAndHandleClick(Completio
         return Quirks::StorageAccessResult::ShouldNotCancelEvent;
     }
 
-    document->addConsoleMessage(MessageSource::Other, MessageLevel::Info, makeString("requestStorageAccess is invoked on behalf of domain \""_s, domainInNeedOfStorageAccess.string(), "\""_s));
+    document->addConsoleMessage(MessageSource::Storage, MessageLevel::Info, makeString("requestStorageAccess is invoked on behalf of domain \""_s, domainInNeedOfStorageAccess.string(), "\""_s));
     DocumentStorageAccess::requestStorageAccessForNonDocumentQuirk(*document, WTF::move(domainInNeedOfStorageAccess), [firstPartyDomain, domainInNeedOfStorageAccess, completionHandler = WTF::move(completionHandler)](StorageAccessWasGranted storageAccessGranted) mutable {
         if (storageAccessGranted == StorageAccessWasGranted::No) {
             completionHandler(ShouldDispatchClick::Yes);
@@ -616,11 +645,6 @@ Quirks::StorageAccessResult Quirks::requestStorageAccessAndHandleClick(Completio
     return Quirks::StorageAccessResult::ShouldCancelEvent;
 }
 
-static bool isProbablyRegistrableDomainForBrand(const RegistrableDomain& domain, const String& brandName)
-{
-    return PublicSuffixStore::singleton().topPrivatelyControlledDomain(domain.string()).startsWithIgnoringASCIICase(makeString(brandName, "."_s));
-}
-
 void Quirks::triggerOptionalStorageAccessIframeQuirk(const URL& frameURL, CompletionHandler<void()>&& completionHandler) const
 {
     if (RefPtr document = m_document.get()) {
@@ -632,11 +656,10 @@ void Quirks::triggerOptionalStorageAccessIframeQuirk(const URL& frameURL, Comple
             }
         }
 
-        bool isMSOLoginButNotMSTeams = document->url().hasQuery() && document->url().host() == "login.microsoftonline.com"_s && !document->url().query().contains("redirect_uri=https%3A%2F%2Fteams.microsoft.com"_s);
-        bool isProbablyGoogleCCTLD = isProbablyRegistrableDomainForBrand(RegistrableDomain { document->url() }, "google"_s);
-        bool isGoogleMyAccountForProfilePicture = isProbablyGoogleCCTLD && frameURL.hasQuery() && frameURL.host() == "myaccount.google.com"_s && frameURL.query().contains("startPath=profile-picture"_s);
+        bool isGoogleMyAccountForProfilePicture = m_quirksData.behaviorAppliesToURL(QuirkBehaviorID::NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk, frameURL);
+        bool shouldSkipDomainList = m_quirksData.isBehaviorEnabled(QuirkBehaviorID::ShouldSkipStorageAccessIframeDomainListQuirk);
         RegistrableDomain frameDomain { frameURL };
-        if (isGoogleMyAccountForProfilePicture || (!isMSOLoginButNotMSTeams && subFrameDomainsForStorageAccessQuirk().contains(frameDomain))) {
+        if (isGoogleMyAccountForProfilePicture || (!shouldSkipDomainList && subFrameDomainsForStorageAccessQuirk().contains(frameDomain))) {
             return DocumentStorageAccess::requestStorageAccessForNonDocumentQuirk(*document, WTF::move(frameDomain), [completionHandler = WTF::move(completionHandler)](StorageAccessWasGranted) mutable {
                 completionHandler();
             });
@@ -894,6 +917,13 @@ bool Quirks::anyPatternMatchesCNAMETarget(const Vector<String>& patterns, const 
     });
 }
 
+bool Quirks::isSingleOwnerLoginDomainPair(const RegistrableDomain& topFrameDomain, const RegistrableDomain& subResourceDomain)
+{
+    URL topFrameURL { makeString("https://"_s, topFrameDomain.string(), '/') };
+    URL subResourceURL { makeString("https://"_s, subResourceDomain.string(), '/') };
+    return resolveTopURLQuirks(topFrameURL).behaviorAppliesToURL(QuirkBehaviorID::NeedsSingleOwnerLoginStorageAccessQuirk, subResourceURL);
+}
+
 bool Quirks::shouldExemptCookieFromITPDataRemoval(const String& cookieName)
 {
     return shouldExemptCookieFromITPDataRemovalInternal(cookieName);
@@ -912,38 +942,94 @@ bool Quirks::needsPopupFromMicrosoftOfficeToOneDrive(const String& targetURLStri
     return m_quirksData.behaviorAppliesToURL(id, protect(m_document)->encodingParseURL(targetURLString));
 }
 
-bool Quirks::needsConsistentQueryParameterFilteringQuirk(const URL& url) const
+static ConsistentQueryParameterFilteringLevel consistentQueryParameterFilteringLevelForTesting(const URL& sourceURL, const URL& destinationURL)
+{
+    auto levelForDomain = [](const RegistrableDomain& domain) {
+        if (equalLettersIgnoringASCIICase(domain.string(), "consistentqueryparameterfiltering.internal"_s))
+            return ConsistentQueryParameterFilteringLevel::High;
+        if (equalLettersIgnoringASCIICase(domain.string(), "consistentqueryparameterfiltering-medium.internal"_s))
+            return ConsistentQueryParameterFilteringLevel::Medium;
+        if (equalLettersIgnoringASCIICase(domain.string(), "consistentqueryparameterfiltering-low.internal"_s))
+            return ConsistentQueryParameterFilteringLevel::Low;
+        return ConsistentQueryParameterFilteringLevel::Disabled;
+    };
+
+    RegistrableDomain sourceDomain { sourceURL };
+    RegistrableDomain destinationDomain { destinationURL };
+    auto level = std::max(levelForDomain(sourceDomain), levelForDomain(destinationDomain));
+
+    if (equalLettersIgnoringASCIICase(sourceURL.host(), "bundle-file"_s) || equalLettersIgnoringASCIICase(destinationURL.host(), "bundle-file"_s)) {
+        auto defaultBundleFileLevel =
+            queryParameters(destinationURL).contains(makeKeyValuePair("level"_str, "high"_str))
+            ? ConsistentQueryParameterFilteringLevel::High
+            : ConsistentQueryParameterFilteringLevel::Low;
+        level = std::max(level, defaultBundleFileLevel);
+    }
+
+    if (equalLettersIgnoringASCIICase(sourceDomain.string(), "consistentqueryparameterfiltering-pair-source.internal"_s)
+        && equalLettersIgnoringASCIICase(destinationDomain.string(), "consistentqueryparameterfiltering-pair-destination.internal"_s))
+        level = std::max(level, ConsistentQueryParameterFilteringLevel::Medium);
+
+    return level;
+}
+
+ConsistentQueryParameterFilteringLevel Quirks::consistentQueryParameterFilteringLevel(const URL& sourceURL, const URL& destinationURL) const
+{
+    QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(ConsistentQueryParameterFilteringLevel::Disabled);
+
+    static bool wasLoggedOnce { false };
+    if (!m_document->settings().consistentQueryParameterFilteringQuirkEnabled())
+        return ConsistentQueryParameterFilteringLevel::Disabled;
+
+    if (auto level = consistentQueryParameterFilteringLevelForTesting(sourceURL, destinationURL); level != ConsistentQueryParameterFilteringLevel::Disabled)
+        return level;
+
+    auto level = ConsistentQueryParameterFilteringLevel::Disabled;
+    if (m_document->settings().consistentQueryParameterFilteringInternalQuirkEnabled())
+        level = needsConsistentQueryParameterFilteringInternal(URL { sourceURL.string().foldCase() }, URL { destinationURL.string().foldCase() });
+
+    if (RefPtr page = m_document->page()) {
+        if (page->requiresConsistentPrivacyQuirkForDomain(sourceURL) || (!destinationURL.isEmpty() && page->requiresConsistentPrivacyQuirkForDomain(destinationURL)))
+            level = std::max(level, ConsistentQueryParameterFilteringLevel::Medium);
+    }
+
+    if (level != ConsistentQueryParameterFilteringLevel::Disabled && !wasLoggedOnce) {
+        RELEASE_LOG(Loading, "Quirks::consistentQueryParameterFilteringLevel: Enabling consistent privacy protections");
+        protect(m_document)->addConsoleMessage(MessageSource::Security, MessageLevel::Info, "Enabling consistent privacy protections"_s);
+        wasLoggedOnce = true;
+    }
+
+    return level;
+}
+
+static bool isConsistentQueryParameterFilteringTrackingScriptForTesting(const URL& scriptURL)
+{
+    return equalLettersIgnoringASCIICase(scriptURL.host(), "bundle-file"_s)
+        || equalLettersIgnoringASCIICase(RegistrableDomain { scriptURL }.string(), "consistentqueryparameterfiltering-tracker.internal"_s);
+}
+
+bool Quirks::needsConsistentQueryParameterFilteringQuirkForScript(const URL& scriptURL) const
 {
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
     if (!m_document->settings().consistentQueryParameterFilteringQuirkEnabled())
         return false;
 
-    static bool wasLoggedOnce { false };
-
-    if (equalLettersIgnoringASCIICase(url.host(), "bundle-file"_s)
-        || equalLettersIgnoringASCIICase(RegistrableDomain { url }.string(), "consistentqueryparameterfiltering.internal"_s))
+    if (isConsistentQueryParameterFilteringTrackingScriptForTesting(scriptURL))
         return true;
 
-    bool enableQuirk = m_document->settings().consistentQueryParameterFilteringInternalQuirkEnabled()
-        && needsConsistentQueryParameterFilteringInternal(URL { url.string().foldCase() });
+    if (m_document->settings().consistentQueryParameterFilteringInternalQuirkEnabled()
+        && isConsistentQueryParameterFilteringTrackingScriptInternal(URL { scriptURL.string().foldCase() }))
+        return true;
 
-    if (RefPtr page = m_document->page())
-        enableQuirk |= page->requiresConsistentPrivacyQuirkForDomain(url);
-
-    if (enableQuirk && !wasLoggedOnce) {
-        RELEASE_LOG(Loading, "Quirks::needsConsistentQueryParameterFilteringQuirk: Enabling consistent privacy protections");
-        protect(m_document)->addConsoleMessage(MessageSource::Other, MessageLevel::Info, makeString("Enabling consistent privacy protections on \""_s, url.string(), "\""_s));
-        wasLoggedOnce = true;
-    }
-
-    return enableQuirk;
+    RefPtr page = m_document->page();
+    return page && page->requiresConsistentPrivacyQuirkForDomain(scriptURL);
 }
 
 bool Quirks::mayBenefitFromFingerprintingProtectionQuirk(const URL& url) const
 {
     // FIXME: Placeholder for now.
-    return needsConsistentQueryParameterFilteringQuirk(url);
+    return needsConsistentQueryParameterFilteringQuirkForScript(url);
 }
 
 #if PLATFORM(COCOA)
@@ -1092,10 +1178,10 @@ bool Quirks::needsPointerTouchCompatibility(const Element& target) const
     QUIRKS_EARLY_RETURN_IF_DISABLED_WITH_VALUE(false);
 
     if (WTF::IOSApplication::isFeedly()) {
-        RefPtr pageContainer = [&target] -> const HTMLElement* {
+        RefPtr pageContainer = [&target] -> RefPtr<const HTMLElement> {
             for (Ref ancestor : lineageOfType<HTMLElement>(target)) {
                 if (ancestor->hasClassName("PageContainer"_s))
-                    return ancestor.unsafePtr();
+                    return WTF::move(ancestor);
             }
             return nullptr;
         }();
@@ -1394,6 +1480,8 @@ void Quirks::setTopDocumentURLForTesting(URL&& url)
 {
     m_topDocumentURLForTesting = WTF::move(url);
     determineRelevantQuirks();
+    protect(*m_document)->invalidateCachedCSSParserContext();
+    updateInjectedStyleSheets();
 }
 
 void Quirks::determineRelevantQuirks()
@@ -1439,8 +1527,10 @@ void Quirks::determineRelevantQuirks()
     // whatever its embedder did. Note a subframe's viewport-fit has no effect on the insets the
     // platform actually reports, so for a subframe this is a declaration of intent rather than a
     // description of the platform state.
-    if (PAL::currentUserInterfaceIdiomIsSmallScreen())
-        m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisableElementFullscreenQuirk, document->safeAreaInsetOptIn() == Document::SafeAreaInsetOptIn::NotOptedIn);
+    if (document->settings().fullscreenSafeAreaQuirkEnabled()
+        && !m_quirksData.isBehaviorEnabled(QuirkBehaviorID::ShouldDisableElementFullscreenQuirk)
+        && document->safeAreaInsetOptIn() == Document::SafeAreaInsetOptIn::NotOptedIn)
+        m_quirksData.setEnabled(QuirkBehaviorID::ShouldDisableElementFullscreenQuirk, true);
 #endif
 }
 

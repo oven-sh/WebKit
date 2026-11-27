@@ -49,10 +49,12 @@ private:
     bool isActuallyDisabled() const final;
     NODELETE bool isEnumeratable() const final { return true; }
     bool supportsFocus() const final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     const AtomString& formControlType() const final;
     bool computeWillValidate() const final { return false; }
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) final;
+    NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
+    void removingSteps(RemovalType, ContainerNode&) final;
     void disabledStateChanged() final;
     void childrenChanged(const ChildChange&) final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;

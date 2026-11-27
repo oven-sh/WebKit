@@ -166,7 +166,7 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyCompileFunc, (JSGlobalObject* globalObject, 
         }
     }
     auto compileOptions = WebAssemblyCompileOptions::tryCreate(globalObject, compileOptionsObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
     scope.release();
     JSWebAssembly::webAssemblyModuleValidateAsync(globalObject, promise, WTF::move(source), WTF::move(compileOptions));
@@ -304,7 +304,7 @@ static void compileAndInstantiate(VM& vm, JSGlobalObject* globalObject, JSPromis
     Wasm::Name sourceURL;
     if (creationMode == Wasm::CreationMode::FromModuleLoader && sourceProvider) {
         auto sourceURLString = sourceProvider->sourceOrigin().url().string();
-        sourceURL = Wasm::Name(sourceURLString.utf8().span());
+        sourceURL = Wasm::Name(makeUTF8CString(sourceURLString).span());
     }
     Wasm::Module::validateAsync(vm, WTF::move(source), WTF::move(sourceURL), createSharedTask<Wasm::Module::CallbackType>([weakTicket = WTF::move(weakTicket), importObject, sourceProvider = WTF::move(sourceProvider), compileOptions = WTF::move(compileOptions), resolveKind, creationMode, &vm] (Wasm::Module::ValidationResult&& result) mutable {
         vm.deferredWorkTimer->scheduleWorkSoonIfActive(weakTicket, [importObject, sourceProvider = WTF::move(sourceProvider), compileOptions = WTF::move(compileOptions), result = WTF::move(result), resolveKind, creationMode, &vm](DeferredWorkTimer::Ticket& ticket) mutable {
@@ -397,7 +397,7 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateFunc, (JSGlobalObject* globalObje
         instantiate(vm, globalObject, promise, globalObject->moduleLoader(), uncheckedDowncast<JSWebAssemblyModule>(firstArgument), importObject, WTF::move(provider), JSWebAssemblyInstance::createPrivateModuleKey(), Resolve::WithInstance, Wasm::CreationMode::FromJS, /* alwaysAsync */ true);
     else {
         auto compileOptions = WebAssemblyCompileOptions::tryCreate(globalObject, compileOptionsObject);
-        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
         compileAndInstantiate(vm, globalObject, promise, globalObject->moduleLoader(), JSWebAssemblyInstance::createPrivateModuleKey(), firstArgument, importObject, WTF::move(provider), WTF::move(compileOptions), Resolve::WithModuleAndInstance, Wasm::CreationMode::FromJS);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(promise));

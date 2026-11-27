@@ -115,11 +115,27 @@ static void terminateProcess(pid_t processID)
     }
 }
 
+// Downloads go to the default downloads directory unless the client picks a folder with
+// browser.setDownloadBehavior. The directory is deleted along with the session.
+// MiniBrowser's sandbox lets it write to /private/tmp, but not to $TMPDIR.
+static constexpr auto defaultDownloadsDirectoryTemplate = "/private/tmp/minidriver-downloads-XXXXXX"_s;
+
+static std::expected<String, String> createDefaultDownloadsDirectory()
+{
+    Vector<char> path(defaultDownloadsDirectoryTemplate.spanIncludingNullTerminator());
+    if (!mkdtemp(path.mutableSpan().data()))
+        return makeUnexpected(makeString("Failed to create a downloads folder at "_s, defaultDownloadsDirectoryTemplate, ": "_s, String::fromUTF8(safeStrerror(errno).span())));
+    return String::fromUTF8(unsafeSpan(path.span().data()));
+}
+
 SessionHost::~SessionHost()
 {
     if (m_channel)
         dispatch_io_close(m_channel.get(), DISPATCH_IO_STOP);
     terminateBrowser();
+
+    if (!m_defaultDownloadsDirectory.isNull())
+        FileSystem::deleteNonEmptyDirectory(m_defaultDownloadsDirectory);
 }
 
 bool SessionHost::isConnected() const
@@ -156,9 +172,14 @@ std::optional<String> SessionHost::launchBrowser()
 
     std::array<StringView, 4> browserPathComponents { "MiniBrowser.app"_s, "Contents"_s, "MacOS"_s, "MiniBrowser"_s };
     auto browserPathString = FileSystem::pathByAppendingComponents(*buildDirectory, browserPathComponents);
-    auto browserPath = browserPathString.utf8();
+    auto browserPath = makeUTF8CString(browserPathString);
     if (posixAccess(browserPath, X_OK))
         return makeString("There is no MiniBrowser next to minidriver, at "_s, browserPathString);
+
+    auto defaultDownloadsDirectory = createDefaultDownloadsDirectory();
+    if (!defaultDownloadsDirectory)
+        return defaultDownloadsDirectory.error();
+    m_defaultDownloadsDirectory = WTF::move(*defaultDownloadsDirectory);
 
     int sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets))
@@ -182,15 +203,17 @@ std::optional<String> SessionHost::launchBrowser()
     arguments.append(browserPath);
     // AppKit opens arguments that aren't options as documents. Each option has to be followed
     // by its value as a separate argument, or AppKit pairs the next option with it.
-    arguments.append(String("--automation-fd"_s).utf8());
-    arguments.append(String::number(browserConnectionFileDescriptor).utf8());
+    arguments.append(makeUTF8CString(String("--automation-fd"_s)));
+    arguments.append(makeUTF8CString(String::number(browserConnectionFileDescriptor)));
     // AppKit window-state restoration can show a modal "reopen windows?" alert after an
     // abnormal exit, which automation can't dismiss. Turn it off for this launch only.
     for (auto argument : { "-NSQuitAlwaysKeepsWindows"_s, "NO"_s, "-ApplePersistenceIgnoreState"_s, "YES"_s })
-        arguments.append(String(argument).utf8());
+        arguments.append(makeUTF8CString(String(argument)));
+    arguments.append(makeUTF8CString(String("--downloads-directory"_s)));
+    arguments.append(makeUTF8CString(m_defaultDownloadsDirectory));
     if (m_capabilities.browserArguments) {
         for (auto& argument : *m_capabilities.browserArguments)
-            arguments.append(argument.utf8());
+            arguments.append(makeUTF8CString(argument));
     }
 
     auto argv = arguments.map([](auto& argument) {
@@ -210,7 +233,7 @@ std::optional<String> SessionHost::launchBrowser()
             envp.append(*variable);
     }
     auto dyldPaths = WTF::map(dyldPathAssignments, [&](auto assignment) {
-        return makeString(assignment, *buildDirectory).utf8();
+        return makeUTF8CString(makeString(assignment, *buildDirectory));
     });
     for (auto& variable : dyldPaths)
         envp.append(const_cast<char*>(variable.legacyCStringPointer()));
@@ -351,7 +374,7 @@ void SessionHost::sendEvent(const JSON::Object& event)
     if (!m_channel)
         return;
 
-    auto payload = event.toJSONString().utf8();
+    auto payload = makeUTF8CString(event.toJSONString());
     auto size = static_cast<uint32_t>(payload.length());
     Vector<uint8_t> message(ReserveCapacityTag { }, messageHeaderSize + size);
     message.appendList({ static_cast<uint8_t>(size >> 24), static_cast<uint8_t>(size >> 16), static_cast<uint8_t>(size >> 8), static_cast<uint8_t>(size) });
@@ -391,7 +414,7 @@ void SessionHost::didReceiveEvent(const JSON::Object& event)
         return;
     }
 
-    RELEASE_LOG_ERROR(SessionHost, "Received an unknown event from the browser: %s", name.utf8());
+    RELEASE_LOG_ERROR(SessionHost, "Received an unknown event from the browser: %s", makeUTF8CString(name));
 }
 
 void SessionHost::didReceiveStartAutomationSessionReturn(const String& message)
@@ -432,7 +455,7 @@ void SessionHost::didReceiveSetTargetList(uint64_t connectionID, const String& m
         auto targetID = targetObject->getInteger("targetID"_s);
         if (!targetID)
             continue;
-        targetList.append({ static_cast<uint64_t>(*targetID), targetObject->getString("name"_s).utf8(), targetObject->getBoolean("isPaired"_s).value_or(false) });
+        targetList.append({ static_cast<uint64_t>(*targetID), makeUTF8CString(targetObject->getString("name"_s)), targetObject->getBoolean("isPaired"_s).value_or(false) });
     }
     setTargetList(connectionID, WTF::move(targetList));
 }

@@ -122,9 +122,9 @@ std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createLayerProjectio
 }
 
 #if ENABLE(WEBXR_LAYERS)
-std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout)
+std::optional<PlatformXR::LayerInfo> PlatformXRSystemProxy::createCompositionLayer(PlatformXR::CompositionLayerType type, WebCore::IntSize size, PlatformXR::LayerLayout layout, PlatformXR::LayerUpdateMode updateMode)
 {
-    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateCompositionLayer(type, size, layout));
+    auto result = protect(m_page)->sendSync(Messages::PlatformXRSystem::CreateCompositionLayer(type, size, layout, updateMode));
     if (!result.succeeded())
         return std::nullopt;
     auto [layerInfo] = result.takeReply();
@@ -229,6 +229,23 @@ void PlatformXRSystemProxy::requestTransientInputHitTestSource(const PlatformXR:
 void PlatformXRSystemProxy::deleteTransientInputHitTestSource(PlatformXR::TransientInputHitTestSource source)
 {
     protect(m_page)->send(Messages::PlatformXRSystem::DeleteTransientInputHitTestSource(source));
+}
+#endif
+
+#if ENABLE(WEBXR_ANCHORS)
+void PlatformXRSystemProxy::createAnchor(const PlatformXR::Pose& pose, CompletionHandler<void(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>)>&& completionHandler)
+{
+    protect(m_page)->sendWithAsyncReply(Messages::PlatformXRSystem::CreateAnchor(pose), [protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler)](std::expected<PlatformXR::AnchorIdentifier, WebCore::ExceptionData> exceptionOrIdentifier) mutable {
+        if (exceptionOrIdentifier)
+            completionHandler(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>(WTF::move(exceptionOrIdentifier.value())));
+        else
+            completionHandler(WebCore::ExceptionOr<PlatformXR::AnchorIdentifier>(exceptionOrIdentifier.error().toException()));
+    });
+}
+
+void PlatformXRSystemProxy::deleteAnchor(PlatformXR::AnchorIdentifier identifier)
+{
+    protect(m_page)->send(Messages::PlatformXRSystem::DeleteAnchor(identifier));
 }
 #endif
 

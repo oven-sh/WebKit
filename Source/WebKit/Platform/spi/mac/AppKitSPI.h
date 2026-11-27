@@ -62,7 +62,10 @@ DECLARE_SYSTEM_HEADER
 #endif
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
+#import <AppKit/NSHitTestContext_Private.h>
+#import <AppKit/NSMouseEmulationGestureConfig_Private.h>
 #import <AppKit/NSTextSelectionManager.h>
+#import <AppKit/NSViewMenuContext_Private.h>
 #endif
 
 #if HAVE(LIQUID_GLASS)
@@ -86,6 +89,9 @@ DECLARE_SYSTEM_HEADER
 
 @interface NSKeyboardShortcut
 + (id)shortcutWithKeyEquivalent:(NSString *)keyEquivalent modifierMask:(NSUInteger)modifierMask;
+#if HAVE(NSKEYBOARDSHORTCUT_MODIFIER_FLAGS)
++ (instancetype)shortcutWithKeyEquivalent:(NSString *)keyEquivalent modifierFlags:(NSEventModifierFlags)modifierFlags;
+#endif
 @property (readonly) NSString *localizedDisplayName;
 @end
 
@@ -287,6 +293,18 @@ NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 @end
 
 NS_HEADER_AUDIT_END(nullability, sendability)
+
+@interface NSGestureRecognizer (GestureDeferral)
+- (NSEventMask)_acceptedEventMask;
+@end
+
+@interface NSView (WindowResizing)
+- (NSView *)_hitTestToBlockWindowResizingForResizeDirection:(NSWindowFrameResizePosition)direction context:(NSHitTestContext *)context;
+@end
+
+@interface NSScrollView (TouchInterrupt)
+- (BOOL)_touchCaughtDeceleration;
+@end
 
 #endif // HAVE(APPKIT_GESTURES_SUPPORT)
 

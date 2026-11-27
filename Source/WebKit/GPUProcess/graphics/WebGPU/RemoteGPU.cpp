@@ -36,10 +36,12 @@
 #include "RemoteCompositorIntegration.h"
 #include "RemoteGPUMessages.h"
 #include "RemoteGPUProxyMessages.h"
+#include "RemoteImageBufferSet.h"
 #include "RemoteMesh.h"
 #include "RemotePresentationContext.h"
 #include "RemoteRenderingBackend.h"
 #include "StreamServerConnection.h"
+#include "WebGPUDescriptorDeserializers.h"
 #include "WebGPUObjectHeap.h"
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ImageBuffer.h>
@@ -48,6 +50,7 @@
 #include <WebCore/WebGPU.h>
 #include <WebCore/WebGPUCppAPI.h>
 #include <WebCore/WebGPUPresentationContextDescriptor.h>
+#include <wtf/Scope.h>
 #include <wtf/threads/BinarySemaphore.h>
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
@@ -66,7 +69,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteGPU);
 
-RemoteGPU::RemoteGPU(WebGPUIdentifier identifier, GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& streamConnection)
+RemoteGPU::RemoteGPU(RemoteGPUIdentifier identifier, GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteRenderingBackend& renderingBackend, Ref<IPC::StreamServerConnection>&& streamConnection)
     : m_gpuConnectionToWebProcess(gpuConnectionToWebProcess)
     , m_sharedPreferencesForWebProcess(gpuConnectionToWebProcess.sharedPreferencesForWebProcessValue())
     , m_workQueue(IPC::StreamConnectionWorkQueue::create("WebGPU work queue"_s))
@@ -95,7 +98,18 @@ void RemoteGPU::stopListeningForIPC()
     m_workQueue->dispatch([protectedThis = protect(*this)]() {
         protectedThis->workQueueUninitialize();
     });
-    m_workQueue->stopAndWaitForCompletion();
+    m_workQueue->stopAndWaitForCompletion([this] {
+        assertIsCurrent(workQueue());
+        // The work that ran while the work queue was stopping can create objects, such as asynchronously created pipelines.
+        clearObjectHeaps();
+    });
+}
+
+void RemoteGPU::clearObjectHeaps()
+{
+    assertIsCurrent(workQueue());
+    m_objectHeap->clear();
+    m_modelObjectHeap->clear();
 }
 
 void RemoteGPU::workQueueInitialize()
@@ -133,15 +147,22 @@ void RemoteGPU::workQueueUninitialize()
     streamConnection->stopReceivingMessages(Messages::RemoteGPU::messageReceiverName(), m_identifier.toUInt64());
     streamConnection->invalidate();
     m_streamConnection = nullptr;
-    m_objectHeap->clear();
-    m_modelObjectHeap->clear();
-    m_backing = nullptr;
+    // Once the instance is released, the devices' queues drop the work that would call their pending
+    // callbacks, so destroying the devices calls them now.
+    for (Ref device : m_objectHeap->devices())
+        device->destroy();
+    clearObjectHeaps();
+    // Destroying the instance waits for the compiles and the command buffers in flight, so that the
+    // instance and the objects it keeps alive are released here, on the work queue.
+    if (RefPtr backing = std::exchange(m_backing, nullptr))
+        backing->destroy();
 }
 
 void RemoteGPU::didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::MessageName messageName, const Vector<uint32_t>&)
 {
     RefPtr gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get();
     uint64_t webProcessID = gpuConnectionToWebProcess ? gpuConnectionToWebProcess->webProcessIdentifier().toUInt64() : 0;
+    UNUSED_VARIABLE(webProcessID);
     RELEASE_LOG_FAULT_WITH_PAYLOAD(IPC, "Received an invalid message %s from WebContent process %" PRIu64 ", requesting for it to be terminated.", description(messageName), webProcessID);
     callOnMainRunLoop([weakGPUConnectionToWebProcess = m_gpuConnectionToWebProcess, messageName] {
         if (RefPtr gpuConnectionToWebProcess = weakGPUConnectionToWebProcess.get())
@@ -150,7 +171,7 @@ void RemoteGPU::didReceiveInvalidMessage(IPC::StreamServerConnection&, IPC::Mess
 }
 
 
-void RemoteGPU::requestAdapter(const WebGPU::RequestAdapterOptions& options, WebGPUIdentifier identifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&& callback)
+void RemoteGPU::requestAdapter(const WebGPU::RequestAdapterOptions& options, WebGPUAdapterIdentifier identifier, CompletionHandler<void(std::optional<RemoteGPURequestAdapterResponse>&&)>&& callback)
 {
     assertIsCurrent(workQueue());
     RefPtr backing = m_backing;
@@ -167,18 +188,18 @@ void RemoteGPU::requestAdapter(const WebGPU::RequestAdapterOptions& options, Web
         objectHeap->addObject(identifier, remoteAdapter);
 
         auto info = adapter->info();
-        callback({ { WTF::move(info.name), adapter->features(), adapter->limits(), info.isFallbackAdapter, info.subgroupMinSize, info.subgroupMaxSize } });
+        callback({ { WTF::move(info.name), adapter->features(), adapter->limits(), info.isFallbackAdapter, info.subgroupMinSize, info.subgroupMaxSize, info.hasUnifiedMemory } });
     });
 }
 
-void RemoteGPU::createPresentationContext(const WebGPU::PresentationContextDescriptor& descriptor, WebGPUIdentifier identifier)
+void RemoteGPU::createPresentationContext(const WebGPU::PresentationContextDescriptor& descriptor, WebGPUPresentationContextIdentifier identifier)
 {
     assertIsCurrent(workQueue());
     RefPtr backing = m_backing;
     ASSERT(backing);
 
     Ref objectHeap = m_objectHeap;
-    auto convertedDescriptor = objectHeap->convertFromBacking(descriptor);
+    auto convertedDescriptor = deserialize(objectHeap, descriptor);
     MESSAGE_CHECK(convertedDescriptor);
 
     auto presentationContext = backing->createPresentationContext(*convertedDescriptor);
@@ -192,7 +213,7 @@ RefPtr<GPUConnectionToWebProcess> RemoteGPU::gpuConnectionToWebProcess() const
     return m_gpuConnectionToWebProcess.get();
 }
 
-void RemoteGPU::createCompositorIntegration(WebGPUIdentifier identifier)
+void RemoteGPU::createCompositorIntegration(WebGPUCompositorIntegrationIdentifier identifier)
 {
     assertIsCurrent(workQueue());
     RefPtr backing = m_backing;
@@ -206,17 +227,23 @@ void RemoteGPU::createCompositorIntegration(WebGPUIdentifier identifier)
     objectHeap->addObject(identifier, remoteCompositorIntegration);
 }
 
+static void drawNativeImageToCanvas(WebCore::NativeImage& image, const WebCore::IntSize& canvasSize, WebCore::GraphicsContext& context)
+{
+    WebCore::GraphicsContextStateSaver stateSaver(context);
+    context.setImageInterpolationQuality(WebCore::InterpolationQuality::DoNotInterpolate);
+    context.drawNativeImage(image, WebCore::FloatRect { { }, canvasSize }, WebCore::FloatRect { { }, image.size() }, { WebCore::CompositeOperator::Copy });
+}
+
 void RemoteGPU::paintNativeImageToImageBuffer(WebCore::NativeImage& nativeImage, WebCore::RenderingResourceIdentifier imageBufferIdentifier)
 {
     assertIsCurrent(workQueue());
     BinarySemaphore semaphore;
 
-    RefPtr gpu = m_backing.get();
     Ref renderingBackend = m_renderingBackend;
     Ref protectedNativeImage = nativeImage;
     renderingBackend->dispatch([&]() mutable {
         if (auto imageBuffer = renderingBackend->imageBuffer(imageBufferIdentifier)) {
-            gpu->paintToCanvas(protectedNativeImage, imageBuffer->backendSize(), imageBuffer->context());
+            drawNativeImageToCanvas(protectedNativeImage, imageBuffer->backendSize(), imageBuffer->context());
             imageBuffer->flushDrawingContext();
         }
         semaphore.signal();
@@ -249,6 +276,30 @@ RefPtr<WebCore::ImageBuffer> RemoteGPU::imageBuffer(WebCore::RenderingResourceId
     return result;
 }
 
+#if ENABLE(GPU_PROCESS_MODEL) && ENABLE(SPATIAL_PORTAL) && HAVE(IOSURFACE)
+Vector<RemoteImageBufferSet::ExternalReadResult> RemoteGPU::fetchPortalContentSurfaces(const Vector<PortalContentRequest>& requests)
+{
+    assertIsCurrent(workQueue());
+    BinarySemaphore semaphore;
+
+    Vector<RemoteImageBufferSet::ExternalReadResult> surfaces;
+    Ref renderingBackend = m_renderingBackend;
+    renderingBackend->dispatch([&, signalOnExit = makeScopeExit([&] { semaphore.signal(); })] mutable {
+        surfaces = requests.map([&](auto& request) -> RemoteImageBufferSet::ExternalReadResult {
+            RefPtr bufferSet = renderingBackend->imageBufferSet(request.bufferSet);
+            if (!bufferSet)
+                return { };
+
+            return bufferSet->frontBufferSurfaceForExternalRead(request.mappedBuffers);
+        });
+        signalOnExit.release();
+        semaphore.signal();
+    });
+    semaphore.wait();
+
+    return surfaces;
+}
+#endif
 
 #if ENABLE(GPU_PROCESS_MODEL)
 Vector<UniqueRef<WebCore::IOSurface>> RemoteGPU::createRenderBuffers(unsigned width, unsigned height, const WebCore::ProcessIdentity& processIdentity, bool standardDynamicRange)
@@ -346,14 +397,14 @@ void RemoteGPU::createModelBacking(unsigned width, unsigned height, WebModel::Im
 
 void RemoteGPU::isValid(WebGPUIdentifier identifier, CompletionHandler<void(bool, bool)>&& completionHandler)
 {
+    // FIXME: should not be used. Figure out if still needed.
     assertIsCurrent(workQueue());
-    RefPtr gpu = m_backing;
-    if (!gpu) {
+    if (!m_backing) {
         completionHandler(false, false);
         return;
     }
 
-    auto result = m_objectHeap->objectExistsAndValid(*gpu, identifier);
+    auto result = m_objectHeap->objectExistsAndValid(identifier);
     completionHandler(result.valid, result.exists);
 }
 

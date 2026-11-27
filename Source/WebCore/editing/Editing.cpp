@@ -28,6 +28,7 @@
 #include "Editing.h"
 
 #include "AXObjectCache.h"
+#include "AccessibilityObject.h"
 #include "CachedImage.h"
 #include "ContainerNodeInlines.h"
 #include "EditingInlines.h"
@@ -883,6 +884,35 @@ bool isMailBlockquote(const Node& node)
     return htmlElement->attributeWithoutSynchronization(typeAttr) == "cite"_s;
 }
 
+static bool isCodeElement(const HTMLElement& element)
+{
+    if (element.hasAttributeWithoutSynchronization(roleAttr)) {
+        if (auto role = AccessibilityObject::ariaRoleToWebCoreRole(element.attributeWithoutSynchronization(roleAttr)); role != AccessibilityRole::Unknown)
+            return role == AccessibilityRole::Code;
+    }
+    return element.hasTagName(codeTag);
+}
+
+// The code of the CommonMark form <pre><code>, the only element in the block apart from line breaks and whitespace.
+RefPtr<HTMLElement> codeElementOfCodeBlock(const Element& block)
+{
+    RefPtr<HTMLElement> codeElement;
+    for (RefPtr child = block.firstChild(); child; child = child->nextSibling()) {
+        if (RefPtr text = dynamicDowncast<Text>(*child)) {
+            if (!text->containsOnlyASCIIWhitespace())
+                return nullptr;
+        } else if (is<Element>(*child)) {
+            if (child->hasTagName(brTag))
+                continue;
+            RefPtr htmlElement = dynamicDowncast<HTMLElement>(*child);
+            if (codeElement || !htmlElement || !isCodeElement(*htmlElement))
+                return nullptr;
+            codeElement = WTF::move(htmlElement);
+        }
+    }
+    return codeElement;
+}
+
 int caretMinOffset(const Node& node)
 {
     CheckedPtr renderer = node.renderer();
@@ -1188,7 +1218,12 @@ RenderBlock* rendererForCaretPainting(const Node* node)
         if (caretRendersInsideNode(*node))
             return blockFlow;
     }
-    return renderer->containingBlock();
+    // Otherwise by the nearest block in its containing block chain.
+    for (SUPPRESS_UNCHECKED_LOCAL RenderBoxModelObject* containingBlock = renderer->containingBlock(); containingBlock; containingBlock = containingBlock->containingBlock()) {
+        if (SUPPRESS_UNCHECKED_LOCAL auto* block = dynamicDowncast<RenderBlock>(*containingBlock))
+            return block;
+    }
+    return nullptr;
 }
 
 LayoutRect localCaretRectInRendererForCaretPainting(const VisiblePosition& caretPosition, RenderBlock*& caretPainter)
@@ -1228,9 +1263,8 @@ IntRect absoluteBoundsForLocalCaretRect(RenderBlock* rendererForCaretPainting, c
         return IntRect();
 
     LayoutRect localRect(rect);
-    rendererForCaretPainting->flipForWritingMode(localRect);
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
+    rendererForCaretPainting->blockStartRelativeToPhysical(localRect);
+    return rendererForCaretPainting->localToAbsoluteQuad(FloatRect(localRect), MapCoordinatesMode::UseTransforms, insideFixed).enclosingBoundingBox();
 }
 
 HashSet<Ref<HTMLImageElement>> visibleImageElementsInRangeWithNonLoadedImages(const SimpleRange& range)

@@ -574,7 +574,7 @@ public:
     void dumpMemoryUseInKB() const { dataLog(memoryUse() / 1024); }
 
 private:
-    UncheckedKeyHashSet<InterferenceEdge> m_set;
+    HashSet<InterferenceEdge> m_set;
 };
 
 template <typename T, typename U>
@@ -699,8 +699,8 @@ using DenseInterferenceGraph = InstrumentedInterferenceGraph<ReferenceInterferen
 using LargeInterferenceGraph = InstrumentedInterferenceGraph<ReferenceInterferenceGraph, DefaultLargeInterferenceGraph>;
 using HugeInterferenceGraph = InstrumentedInterferenceGraph<HugeReferenceInterferenceGraph, DefaultHugeInterferenceGraph>;
 
-using ReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<UncheckedKeyHashSet<uint16_t, IntHash<uint16_t>, UnsignedWithZeroKeyHashTraits<uint16_t>>, uint16_t>>;
-using HugeReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, UnsignedWithZeroKeyHashTraits<uint32_t>>, uint32_t>>;
+using ReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<HashSet<uint16_t>, uint16_t>>;
+using HugeReferenceIterableInterferenceGraph = UndirectedEdgesDuplicatingAdapter<InterferenceVector<HashSet<uint32_t>, uint32_t>>;
 
 using DenseIterableInterferenceGraph = InstrumentedIterableInterferenceGraph<ReferenceIterableInterferenceGraph, DefaultDenseIterableInterferenceGraph>;
 using LargeIterableInterferenceGraph = InstrumentedIterableInterferenceGraph<ReferenceIterableInterferenceGraph, DefaultLargeIterableInterferenceGraph>;

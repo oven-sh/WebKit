@@ -38,6 +38,7 @@
 #include "SymbolTable.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "VariableEnvironment.h"
+#include <wtf/FixedVector.h>
 #include <wtf/MathExtras.h>
 #include <wtf/SmallSet.h>
 
@@ -355,23 +356,23 @@ namespace JSC {
 
     class StringNode final : public ConstantNode {
     public:
-        StringNode(const JSTokenLocation&, const Identifier&);
-        const Identifier& value() { return m_value; }
+        StringNode(const JSTokenLocation&, UniquedStringImpl*);
+        UniquedStringImpl* value() { return m_value; }
 
     private:
         bool isString() const final { return true; }
         JSValue jsValue(BytecodeGenerator&) const final;
 
-        const Identifier& m_value;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_value;
     };
 
     class BigIntNode final : public ConstantNode {
     public:
-        BigIntNode(const JSTokenLocation&, const Identifier&, uint8_t radix);
-        BigIntNode(const JSTokenLocation&, const Identifier&, uint8_t radix, bool sign);
-        const Identifier& value() { return m_value; }
+        BigIntNode(const JSTokenLocation&, UniquedStringImpl*, uint8_t radix);
+        BigIntNode(const JSTokenLocation&, UniquedStringImpl*, uint8_t radix, bool sign);
+        UniquedStringImpl* value() { return m_value; }
 
-        const Identifier& identifier() const { return m_value; }
+        UniquedStringImpl* identifier() const { return m_value; }
         uint8_t radix() const { return m_radix; }
         bool sign() const { return m_sign; }
 
@@ -379,7 +380,7 @@ namespace JSC {
         bool isBigInt() const final { return true; }
         JSValue jsValue(BytecodeGenerator&) const final;
 
-        const Identifier& m_value;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_value;
         const uint8_t m_radix;
         const bool m_sign;
     };
@@ -509,16 +510,16 @@ namespace JSC {
 
     class TemplateStringNode final : public ExpressionNode {
     public:
-        TemplateStringNode(const JSTokenLocation&, const Identifier* cooked, const Identifier* raw);
+        TemplateStringNode(const JSTokenLocation&, UniquedStringImpl* cooked, UniquedStringImpl* raw);
 
-        const Identifier* cooked() { return m_cooked; }
-        const Identifier* raw() { return m_raw; }
+        UniquedStringImpl* cooked() { return m_cooked; }
+        UniquedStringImpl* raw() { return m_raw; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier* m_cooked;
-        const Identifier* m_raw;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_cooked;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_raw;
     };
 
     class TemplateStringListNode final : public ParserArenaFreeable {
@@ -564,7 +565,7 @@ namespace JSC {
 
     class RegExpNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        RegExpNode(const JSTokenLocation&, const Identifier& pattern, const Identifier& flags);
+        RegExpNode(const JSTokenLocation&, UniquedStringImpl* pattern, UniquedStringImpl* flags);
 
         // For a literal that is the receiver of a call to the method with that name, as in /x/.test(string).
         RegisterID* emitBytecodeAsReceiverOfCallTo(BytecodeGenerator&, RegisterID* dst, const Identifier& method);
@@ -574,8 +575,8 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
         RegisterID* emit(BytecodeGenerator&, RegisterID* dst, const Identifier* receiverOfCallTo);
 
-        const Identifier& m_pattern;
-        const Identifier& m_flags;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_pattern;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_flags;
     };
 
     class ThisNode final : public ExpressionNode {
@@ -639,10 +640,10 @@ namespace JSC {
 
     class ResolveNode final : public ExpressionNode {
     public:
-        ResolveNode(const JSTokenLocation&, const Identifier&, const JSTextPosition& start);
+        ResolveNode(const JSTokenLocation&, UniquedStringImpl*, const JSTextPosition& start);
 
-        const Identifier& identifier() const { return m_ident; }
-        bool isArguments(VM& vm) const final { return m_ident == vm.propertyNames->arguments; }
+        UniquedStringImpl* ident() const { return m_ident; }
+        bool isArguments(VM& vm) const final { return m_ident == vm.propertyNames->arguments.impl(); }
         bool getFromScopeCanThrow(BytecodeGenerator&) const;
 
     private:
@@ -652,23 +653,23 @@ namespace JSC {
         bool isLocation() const final { return true; }
         bool isResolveNode() const final { return true; }
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         JSTextPosition m_start;
     };
 
     // Dummy expression to hold the LHS of `#x in obj`.
     class PrivateIdentifierNode final : public ExpressionNode {
     public:
-        PrivateIdentifierNode(const JSTokenLocation&, const Identifier&);
+        PrivateIdentifierNode(const JSTokenLocation&, UniquedStringImpl*);
 
-        const Identifier& value() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final { RELEASE_ASSERT_NOT_REACHED(); }
 
         bool isPrivateIdentifier() const final { return true; }
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class ElementNode final : public ParserArenaFreeable {
@@ -686,17 +687,65 @@ namespace JSC {
         int m_elision;
     };
 
+    class ConstantArrayElements final : public ParserArenaDeletable {
+        JSC_MAKE_PARSER_ARENA_DELETABLE_ALLOCATED(ConstantArrayElements);
+    public:
+        ConstantArrayElements(std::span<const JSValue> values, std::span<const unsigned> int32DoubleLiteralIndices, IndexingType indexingType)
+            : m_values(values)
+            , m_int32DoubleLiteralIndices(int32DoubleLiteralIndices)
+            , m_indexingType(indexingType)
+        {
+        }
+
+        std::span<const JSValue> values() const LIFETIME_BOUND { return m_values.span(); }
+        IndexingType indexingType() const { return m_indexingType; }
+
+        void forEach(const ConstInvocable<void(JSValue, SourceCodeRepresentation)> auto& functor) const { forEach(values(), m_int32DoubleLiteralIndices.span(), functor); }
+
+        static void forEach(std::span<const JSValue> values, std::span<const unsigned> int32DoubleLiteralIndices, const ConstInvocable<void(JSValue, SourceCodeRepresentation)> auto& functor)
+        {
+            size_t nextInt32DoubleLiteral = 0;
+            for (size_t index = 0; index < values.size(); ++index) {
+                JSValue value = values[index];
+                if (value.isNull()) {
+                    functor(value, SourceCodeRepresentation::Other);
+                    continue;
+                }
+                bool isInt32DoubleLiteral = nextInt32DoubleLiteral < int32DoubleLiteralIndices.size() && int32DoubleLiteralIndices[nextInt32DoubleLiteral] == index;
+                if (isInt32DoubleLiteral)
+                    ++nextInt32DoubleLiteral;
+                functor(value, value.isInt32() && !isInt32DoubleLiteral ? SourceCodeRepresentation::Integer : SourceCodeRepresentation::Double);
+            }
+        }
+
+        static ExpressionNode* createNode(ParserArena&, const JSTokenLocation&, JSValue, SourceCodeRepresentation);
+
+    private:
+        FixedVector<JSValue> m_values;
+        // Ascending indices of elements like `1.0`: an int32 value written as a double literal, which must stay a double constant.
+        FixedVector<unsigned> m_int32DoubleLiteralIndices;
+        IndexingType m_indexingType;
+    };
+
     class ArrayNode final : public ExpressionNode {
     public:
         ArrayNode(const JSTokenLocation&, int elision);
         ArrayNode(const JSTokenLocation&, ElementNode*);
         ArrayNode(const JSTokenLocation&, int elision, ElementNode*);
+        ArrayNode(const JSTokenLocation&, ConstantArrayElements*);
 
         bool isArrayLiteral() const final { return true; }
 
-        NODELETE ArgumentListNode* toArgumentList(ParserArena&, int) const;
+        ArgumentListNode* toArgumentList(ParserArena&, int) const;
 
-        ElementNode* elements() const { return m_element; }
+        // A literal with constantElements() has no ElementNode list, so check that first: a null elements()
+        // alone does not mean the literal is empty.
+        ElementNode* elements() const
+        {
+            ASSERT(!m_constantElements);
+            return m_element;
+        }
+        const ConstantArrayElements* constantElements() const { return m_constantElements; }
 
         // True if any array slot is a hole, either between elements or trailing. Spread-based
         // emission (op_new_array_with_spread, op_call_varargs_with_spread) cannot express holes.
@@ -707,6 +756,7 @@ namespace JSC {
         bool isSimpleArray() const final;
 
         ElementNode* m_element;
+        ConstantArrayElements* m_constantElements { nullptr };
         int m_elision;
     };
 
@@ -717,14 +767,14 @@ namespace JSC {
 
         enum Type : uint16_t { Constant = 1, Getter = 2, Setter = 4, Computed = 8, Shorthand = 16, Spread = 32, PrivateField = 64, PrivateMethod = 128, PrivateSetter = 256, PrivateGetter = 512, Block = 1024 };
 
-        PropertyNode(const Identifier&, Type, SuperBinding, ClassElementTag);
-        PropertyNode(const Identifier&, ExpressionNode*, Type, SuperBinding, ClassElementTag);
+        PropertyNode(UniquedStringImpl*, Type, SuperBinding, ClassElementTag);
+        PropertyNode(UniquedStringImpl*, ExpressionNode*, Type, SuperBinding, ClassElementTag);
         PropertyNode(ExpressionNode*, Type, SuperBinding, ClassElementTag);
         PropertyNode(ExpressionNode* propertyName, ExpressionNode*, Type, SuperBinding, ClassElementTag);
-        PropertyNode(const Identifier&, ExpressionNode* propertyName, ExpressionNode*, Type, SuperBinding, ClassElementTag);
+        PropertyNode(UniquedStringImpl*, ExpressionNode* propertyName, ExpressionNode*, Type, SuperBinding, ClassElementTag);
 
         ExpressionNode* expressionName() const { return m_expression; }
-        const Identifier* name() const { return m_name; }
+        UniquedStringImpl* name() const { return m_name; }
 
         Type type() const { return static_cast<Type>(m_type); }
         bool needsSuperBinding() const { return m_needsSuperBinding; }
@@ -747,14 +797,14 @@ namespace JSC {
             return isUnderscoreProtoSetter(vm, node.name(), node.type(), node.needsSuperBinding(), node.isClassProperty());
         }
 
-        ALWAYS_INLINE static bool isUnderscoreProtoSetter(VM& vm, const Identifier* name, Type type, bool needsSuperBinding, bool isClassProperty)
+        ALWAYS_INLINE static bool isUnderscoreProtoSetter(VM& vm, UniquedStringImpl* name, Type type, bool needsSuperBinding, bool isClassProperty)
         {
-            return name && *name == vm.propertyNames->underscoreProto && type == Type::Constant && !needsSuperBinding && !isClassProperty;
+            return name && name == vm.propertyNames->underscoreProto.impl() && type == Type::Constant && !needsSuperBinding && !isClassProperty;
         }
 
     private:
         friend class PropertyListNode;
-        const Identifier* m_name { nullptr };
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* m_name { nullptr };
         ExpressionNode* m_expression { nullptr };
         ExpressionNode* m_assign { nullptr };
         unsigned m_type : 11;
@@ -771,7 +821,7 @@ namespace JSC {
         PropertyListNode(const JSTokenLocation&, PropertyNode*);
         PropertyListNode(const JSTokenLocation&, PropertyNode*, PropertyListNode*);
 
-        NODELETE bool hasStaticallyNamedProperty(const Identifier& propName);
+        NODELETE bool hasStaticallyNamedProperty(UniquedStringImpl* propName);
         bool isComputedClassField() const
         {
             return m_node->isComputedClassField();
@@ -861,13 +911,13 @@ namespace JSC {
     enum class DotType { Name, PrivateMember };
     class BaseDotNode : public ExpressionNode {
     public:
-        BaseDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType);
+        BaseDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType);
 
         ExpressionNode* base() const { return m_base; }
-        const Identifier& identifier() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
         DotType type() const { return m_type; }
         bool isPrivateMember() const { return m_type == DotType::PrivateMember; }
-        bool isArgumentsLengthAccess(VM& vm) const final { return m_base->isArguments(vm) && identifier() == vm.propertyNames->length; }
+        bool isArgumentsLengthAccess(VM& vm) const final { return m_base->isArguments(vm) && ident() == vm.propertyNames->length.impl(); }
 
         RegisterID* emitGetPropertyValue(BytecodeGenerator&, RegisterID* dst, RegisterID* base, RefPtr<RegisterID>& thisValue);
         RegisterID* emitGetPropertyValue(BytecodeGenerator&, RegisterID* dst, RegisterID* base);
@@ -876,16 +926,16 @@ namespace JSC {
 
     protected:
         ExpressionNode* m_base;
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         DotType m_type;
     };
 
     class DotAccessorNode final : public BaseDotNode, public ThrowableExpressionData {
     public:
-        DotAccessorNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType);
+        DotAccessorNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType);
 
         ExpressionNode* base() const { return m_base; }
-        const Identifier& identifier() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -997,7 +1047,7 @@ namespace JSC {
 
     class FunctionCallResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        FunctionCallResolveNode(const JSTokenLocation&, const Identifier&, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+        FunctionCallResolveNode(const JSTokenLocation&, UniquedStringImpl*, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1005,7 +1055,7 @@ namespace JSC {
         bool isFunctionCall() const final { return true; }
         bool isOptionalCall() const final { return m_isOptionalCall; }
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ArgumentsNode* m_args;
         bool m_isOptionalCall;
     };
@@ -1029,7 +1079,7 @@ namespace JSC {
 
     class FunctionCallDotNode : public BaseDotNode, public ThrowableSubExpressionData {
     public:
-        FunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+        FunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) override;
@@ -1049,13 +1099,13 @@ namespace JSC {
             Function
         };
 
-        BytecodeIntrinsicNode(Type, const JSTokenLocation&, BytecodeIntrinsicRegistry::Entry, const Identifier&, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        BytecodeIntrinsicNode(Type, const JSTokenLocation&, BytecodeIntrinsicRegistry::Entry, UniquedStringImpl*, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
         bool isBytecodeIntrinsicNode() const final { return true; }
 
         Type type() const { return m_type; }
         BytecodeIntrinsicRegistry::Entry entry() const { return m_entry; }
-        const Identifier& identifier() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
 
 #define JSC_DECLARE_BYTECODE_INTRINSIC_FUNCTIONS(name) RegisterID* emit_intrinsic_##name(BytecodeGenerator&, RegisterID*);
         JSC_COMMON_BYTECODE_INTRINSIC_FUNCTIONS_EACH_NAME(JSC_DECLARE_BYTECODE_INTRINSIC_FUNCTIONS)
@@ -1068,23 +1118,23 @@ namespace JSC {
         bool isFunctionCall() const final { return m_type == Type::Function; }
 
         BytecodeIntrinsicRegistry::Entry m_entry;
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ArgumentsNode* m_args;
         Type m_type;
     };
 
     class CallFunctionCallDotNode final : public FunctionCallDotNode {
     public:
-        CallFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall, size_t distanceToInnermostCallOrApply);
+        CallFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall, size_t distanceToInnermostCallOrApply);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
         size_t m_distanceToInnermostCallOrApply;
     };
-    
+
     class ApplyFunctionCallDotNode final : public FunctionCallDotNode {
     public:
-        ApplyFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall, size_t distanceToInnermostCallOrApply);
+        ApplyFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall, size_t distanceToInnermostCallOrApply);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1093,7 +1143,7 @@ namespace JSC {
 
     class HasOwnPropertyFunctionCallDotNode final : public FunctionCallDotNode {
     public:
-        HasOwnPropertyFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+        HasOwnPropertyFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1101,7 +1151,7 @@ namespace JSC {
 
     class ReflectConstructFunctionCallDotNode final : public FunctionCallDotNode {
     public:
-        ReflectConstructFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
+        ReflectConstructFunctionCallDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ArgumentsNode*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1109,14 +1159,14 @@ namespace JSC {
 
     class DeleteResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        DeleteResolveNode(const JSTokenLocation&, const Identifier&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        DeleteResolveNode(const JSTokenLocation&, UniquedStringImpl*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
         bool isDeleteNode() const final { return true; }
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class DeleteBracketNode final : public ExpressionNode, public ThrowableExpressionData {
@@ -1134,7 +1184,7 @@ namespace JSC {
 
     class DeleteDotNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        DeleteDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        DeleteDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1142,7 +1192,7 @@ namespace JSC {
         bool isDeleteNode() const final { return true; }
 
         ExpressionNode* m_base;
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class DeleteValueNode final : public ExpressionNode {
@@ -1169,14 +1219,14 @@ namespace JSC {
 
     class TypeOfResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        TypeOfResolveNode(const JSTokenLocation&, const Identifier&, const JSTextPosition&, const JSTextPosition&, const JSTextPosition&);
+        TypeOfResolveNode(const JSTokenLocation&, UniquedStringImpl*, const JSTextPosition&, const JSTextPosition&, const JSTextPosition&);
 
-        const Identifier& identifier() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class TypeOfValueNode final : public ExpressionNode {
@@ -1463,6 +1513,7 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
         void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;
 
+        bool isPrivateLocation() const final { return m_expr->isPrivateLocation(); }
         bool isOptionalChain() const final { return true; }
 
         ExpressionNode* m_expr;
@@ -1485,12 +1536,12 @@ namespace JSC {
 
     class ReadModifyResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        ReadModifyResolveNode(const JSTokenLocation&, const Identifier&, Operator, ExpressionNode*  right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        ReadModifyResolveNode(const JSTokenLocation&, UniquedStringImpl*, Operator, ExpressionNode*  right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ExpressionNode* m_right;
         Operator m_operator;
         bool m_rightHasAssignments;
@@ -1498,12 +1549,12 @@ namespace JSC {
 
     class ShortCircuitReadModifyResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        ShortCircuitReadModifyResolveNode(const JSTokenLocation&, const Identifier&, Operator, ExpressionNode*  right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        ShortCircuitReadModifyResolveNode(const JSTokenLocation&, UniquedStringImpl*, Operator, ExpressionNode*  right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ExpressionNode* m_right;
         Operator m_operator;
         bool m_rightHasAssignments;
@@ -1511,14 +1562,14 @@ namespace JSC {
 
     class AssignResolveNode final : public ExpressionNode, public ThrowableExpressionData {
     public:
-        AssignResolveNode(const JSTokenLocation&, const Identifier&, ExpressionNode* right, AssignmentContext);
+        AssignResolveNode(const JSTokenLocation&, UniquedStringImpl*, ExpressionNode* right, AssignmentContext);
         bool isAssignResolveNode() const final { return true; }
-        const Identifier& identifier() const { return m_ident; }
+        UniquedStringImpl* ident() const { return m_ident; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ExpressionNode* m_right;
         AssignmentContext m_assignmentContext;
     };
@@ -1569,7 +1620,7 @@ namespace JSC {
 
     class AssignDotNode final : public BaseDotNode, public ThrowableExpressionData {
     public:
-        AssignDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        AssignDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1580,7 +1631,7 @@ namespace JSC {
 
     class ReadModifyDotNode final : public BaseDotNode, public ThrowableSubExpressionData {
     public:
-        ReadModifyDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, Operator, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        ReadModifyDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, Operator, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1592,7 +1643,7 @@ namespace JSC {
 
     class ShortCircuitReadModifyDotNode final : public BaseDotNode, public ThrowableSubExpressionData {
     public:
-        ShortCircuitReadModifyDotNode(const JSTokenLocation&, ExpressionNode* base, const Identifier&, DotType, Operator, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
+        ShortCircuitReadModifyDotNode(const JSTokenLocation&, ExpressionNode* base, UniquedStringImpl*, DotType, Operator, ExpressionNode* right, bool rightHasAssignments, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -1719,22 +1770,22 @@ namespace JSC {
 
     class EmptyVarExpression final : public ExpressionNode {
     public:
-        EmptyVarExpression(const JSTokenLocation&, const Identifier&);
+        EmptyVarExpression(const JSTokenLocation&, UniquedStringImpl*);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class EmptyLetExpression final : public ExpressionNode {
     public:
-        EmptyLetExpression(const JSTokenLocation&, const Identifier&);
+        EmptyLetExpression(const JSTokenLocation&, UniquedStringImpl*);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class IfElseNode final : public StatementNode {
@@ -1831,7 +1882,7 @@ namespace JSC {
 
     class ContinueNode final : public StatementNode, public ThrowableExpressionData {
     public:
-        ContinueNode(const JSTokenLocation&, const Identifier&);
+        ContinueNode(const JSTokenLocation&, UniquedStringImpl*);
         NODELETE Label* trivialTarget(BytecodeGenerator&);
 
     private:
@@ -1840,12 +1891,12 @@ namespace JSC {
         bool isContinue() const final { return true; }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class BreakNode final : public StatementNode, public ThrowableExpressionData {
     public:
-        BreakNode(const JSTokenLocation&, const Identifier&);
+        BreakNode(const JSTokenLocation&, UniquedStringImpl*);
         NODELETE Label* trivialTarget(BytecodeGenerator&);
 
     private:
@@ -1854,7 +1905,7 @@ namespace JSC {
         bool isBreak() const final { return true; }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
     };
 
     class ReturnNode final : public StatementNode, public ThrowableExpressionData {
@@ -1886,7 +1937,7 @@ namespace JSC {
 
     class LabelNode final : public StatementNode, public ThrowableExpressionData {
     public:
-        LabelNode(const JSTokenLocation&, const Identifier& name, StatementNode*);
+        LabelNode(const JSTokenLocation&, UniquedStringImpl* name, StatementNode*);
 
         bool isLabel() const final { return true; }
 
@@ -1895,7 +1946,7 @@ namespace JSC {
         bool hasEarlyBreakOrContinue() const final { return m_statement->hasEarlyBreakOrContinue(); }
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
-        const Identifier& m_name;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_name;
         StatementNode* m_statement;
     };
 
@@ -1963,7 +2014,6 @@ namespace JSC {
         bool needsActivation() const { return (hasCapturedVariables()) || (m_features & (EvalFeature | WithFeature)); }
         bool hasCapturedVariables() const { return m_varDeclarations.hasCapturedVariables(); }
         bool captures(UniquedStringImpl* uid) { return m_varDeclarations.captures(uid); }
-        bool captures(const Identifier& ident) { return captures(ident.impl()); }
         bool usesNonSimpleParameterList() const { return m_features & NonSimpleParameterListFeature; }
 
         bool needsNewTargetRegisterForThisScope() const
@@ -2042,24 +2092,24 @@ namespace JSC {
 
     class ModuleNameNode final : public Node {
     public:
-        ModuleNameNode(const JSTokenLocation&, const Identifier& moduleName);
+        ModuleNameNode(const JSTokenLocation&, UniquedStringImpl* moduleName);
 
-        const Identifier& moduleName() { return m_moduleName; }
+        UniquedStringImpl* moduleName() { return m_moduleName; }
 
     private:
-        const Identifier& m_moduleName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_moduleName;
     };
 
     class ImportSpecifierNode final : public Node {
     public:
-        ImportSpecifierNode(const JSTokenLocation&, const Identifier& importedName, const Identifier& localName);
+        ImportSpecifierNode(const JSTokenLocation&, UniquedStringImpl* importedName, UniquedStringImpl* localName);
 
-        const Identifier& importedName() { return m_importedName; }
-        const Identifier& localName() { return m_localName; }
+        UniquedStringImpl* importedName() { return m_importedName; }
+        UniquedStringImpl* localName() { return m_localName; }
 
     private:
-        const Identifier& m_importedName;
-        const Identifier& m_localName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_importedName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_localName;
     };
 
     class ImportSpecifierListNode final : public ParserArenaDeletable {
@@ -2080,12 +2130,12 @@ namespace JSC {
     class ImportAttributesListNode final : public ParserArenaDeletable {
         JSC_MAKE_PARSER_ARENA_DELETABLE_ALLOCATED(ImportAttributesListNode);
     public:
-        using Attributes = Vector<std::tuple<const Identifier*, const Identifier*>, 3>;
+        using Attributes = Vector<std::tuple<UniquedStringImpl*, UniquedStringImpl*>, 3>;
 
         const Attributes& attributes() const LIFETIME_BOUND { return m_attributes; }
-        void append(const Identifier& key, const Identifier& value)
+        void append(UniquedStringImpl* key, UniquedStringImpl* value)
         {
-            m_attributes.append(std::tuple { &key, &value });
+            m_attributes.append(std::tuple { key, value });
         }
 
     private:
@@ -2148,16 +2198,16 @@ namespace JSC {
 
     class ExportDefaultDeclarationNode final : public ModuleDeclarationNode {
     public:
-        ExportDefaultDeclarationNode(const JSTokenLocation&, StatementNode*, const Identifier& localName);
+        ExportDefaultDeclarationNode(const JSTokenLocation&, StatementNode*, UniquedStringImpl* localName);
 
         const StatementNode& declaration() const { return *m_declaration; }
-        const Identifier& localName() const { return m_localName; }
+        UniquedStringImpl* localName() const { return m_localName; }
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
         bool analyzeModule(ModuleAnalyzer&) final;
         StatementNode* m_declaration;
-        const Identifier& m_localName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_localName;
     };
 
     class ExportLocalDeclarationNode final : public ModuleDeclarationNode {
@@ -2174,14 +2224,14 @@ namespace JSC {
 
     class ExportSpecifierNode final : public Node {
     public:
-        ExportSpecifierNode(const JSTokenLocation&, const Identifier& localName, const Identifier& exportedName);
+        ExportSpecifierNode(const JSTokenLocation&, UniquedStringImpl* localName, UniquedStringImpl* exportedName);
 
-        const Identifier& exportedName() { return m_exportedName; }
-        const Identifier& localName() { return m_localName; }
+        UniquedStringImpl* exportedName() { return m_exportedName; }
+        UniquedStringImpl* localName() { return m_localName; }
 
     private:
-        const Identifier& m_localName;
-        const Identifier& m_exportedName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_localName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_exportedName;
     };
 
     class ExportSpecifierListNode final : public ParserArenaDeletable {
@@ -2235,12 +2285,12 @@ namespace JSC {
 
         void dump(PrintStream&) const;
 
-        void finishParsing(const SourceCode&, const Identifier&, FunctionMode);
-        
-        void overrideName(const Identifier& ident) { m_ident = ident; }
-        const Identifier& ident() { return m_ident; }
-        void setEcmaName(const Identifier& ecmaName) { m_ecmaName = ecmaName; }
-        const Identifier& ecmaName() { return m_ident.isEmpty() ? m_ecmaName : m_ident; }
+        void finishParsing(const SourceCode&, UniquedStringImpl*, FunctionMode);
+
+        void overrideName(UniquedStringImpl* uid) { m_ident = uid; }
+        UniquedStringImpl* ident() { return m_ident.get(); }
+        void setEcmaName(UniquedStringImpl* uid) { m_ecmaName = uid; }
+        UniquedStringImpl* ecmaName() { return m_ident ? m_ident.get() : m_ecmaName.get(); }
 
         void setPrivateBrandRequirement(PrivateBrandRequirement privateBrandRequirement) { m_privateBrandRequirement = static_cast<unsigned>(privateBrandRequirement); }
         PrivateBrandRequirement privateBrandRequirement() { return static_cast<PrivateBrandRequirement>(m_privateBrandRequirement); }
@@ -2287,8 +2337,8 @@ namespace JSC {
         unsigned m_privateBrandRequirement : 1;
         SourceParseMode m_parseMode;
         FunctionMode m_functionMode;
-        Identifier m_ident;
-        Identifier m_ecmaName;
+        RefPtr<UniquedStringImpl> m_ident;
+        RefPtr<UniquedStringImpl> m_ecmaName;
         unsigned m_functionStart;
         int m_functionNameStart;
         int m_parametersStart;
@@ -2308,16 +2358,16 @@ namespace JSC {
 
         bool isFunctionNode() const final { return true; }
 
-        void finishParsing(const Identifier&, FunctionMode);
-        
-        const Identifier& ident() { return m_ident; }
+        void finishParsing(UniquedStringImpl*, FunctionMode);
+
+        UniquedStringImpl* ident() { return m_ident.get(); }
 
         FunctionMode functionMode() const { return m_functionMode; }
 
         static constexpr bool scopeIsFunction = true;
 
     private:
-        Identifier m_ident;
+        RefPtr<UniquedStringImpl> m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;
     };
@@ -2329,7 +2379,7 @@ namespace JSC {
         bool isBaseFuncExprNode() const override { return true; }
 
     protected:
-        BaseFuncExprNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&, FunctionMode);
+        BaseFuncExprNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&, FunctionMode);
 
         FunctionMetadataNode* m_metadata;
     };
@@ -2337,10 +2387,10 @@ namespace JSC {
 
     class FuncExprNode : public BaseFuncExprNode {
     public:
-        FuncExprNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&);
+        FuncExprNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&);
 
     protected:
-        FuncExprNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&, FunctionMode);
+        FuncExprNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&, FunctionMode);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) override;
@@ -2350,7 +2400,7 @@ namespace JSC {
 
     class ArrowFuncExprNode final : public BaseFuncExprNode {
     public:
-        ArrowFuncExprNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&);
+        ArrowFuncExprNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&);
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -2360,7 +2410,7 @@ namespace JSC {
 
     class MethodDefinitionNode final : public FuncExprNode {
     public:
-        MethodDefinitionNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&);
+        MethodDefinitionNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&);
         
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
@@ -2395,14 +2445,14 @@ namespace JSC {
     class DefineFieldNode final : public StatementNode {
     public:
         enum class Type { Name, PrivateName, ComputedName };
-        DefineFieldNode(const JSTokenLocation&, const Identifier&, ExpressionNode*, Type);
+        DefineFieldNode(const JSTokenLocation&, UniquedStringImpl*, ExpressionNode*, Type);
 
     private:
         void emitBytecode(BytecodeGenerator&, RegisterID* destination = nullptr) final;
 
         bool isDefineFieldNode() const final { return true; }
 
-        Identifier m_ident;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_ident;
         ExpressionNode* m_assign;
         Type m_type;
     };
@@ -2410,15 +2460,19 @@ namespace JSC {
     class ClassExprNode final : public ExpressionNode, public ThrowableExpressionData, public VariableEnvironmentNode {
         JSC_MAKE_PARSER_ARENA_DELETABLE_ALLOCATED(ClassExprNode);
     public:
-        ClassExprNode(const JSTokenLocation&, const Identifier&, const SourceCode& classSource,
+        ClassExprNode(const JSTokenLocation&, UniquedStringImpl* name, const SourceCode& classSource,
             VariableEnvironment&& classHeadEnvironment, VariableEnvironment&& classEnvironment, ExpressionNode* constructorExpresssion,
             ExpressionNode* parentClass, PropertyListNode* classElements);
 
-        const Identifier& name() { return m_name; }
-        const Identifier& ecmaName() { return m_ecmaName ? *m_ecmaName : m_name; }
-        void setEcmaName(const Identifier& name) { m_ecmaName = m_name.isNull() ? &name : &m_name; }
+        UniquedStringImpl* name() { return m_name; }
+        UniquedStringImpl* ecmaName() { return m_ecmaName ? m_ecmaName : m_name; }
+        void setEcmaName(UniquedStringImpl* uid)
+        {
+            if (!m_name)
+                m_ecmaName = uid;
+        }
 
-        bool hasStaticProperty(const Identifier& propName) { return m_classElements && m_classElements->hasStaticallyNamedProperty(propName); }
+        bool hasStaticProperty(UniquedStringImpl* propName) { return m_classElements && m_classElements->hasStaticallyNamedProperty(propName); }
         bool hasInstanceFields() const { return m_classElements && m_classElements->hasInstanceFields(); }
 
     private:
@@ -2428,8 +2482,8 @@ namespace JSC {
 
         VariableEnvironment m_classHeadEnvironment;
         SourceCode m_classSource;
-        const Identifier& m_name;
-        const Identifier* m_ecmaName;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* m_name;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* m_ecmaName { nullptr };
         ExpressionNode* m_constructorExpression;
         ExpressionNode* m_classHeritage;
         PropertyListNode* m_classElements;
@@ -2441,7 +2495,7 @@ namespace JSC {
         using BaseAndPropertyName = std::pair<RefPtr<RegisterID>, RefPtr<RegisterID>>;
 
         virtual ~DestructuringPatternNode() { }
-        virtual void collectBoundIdentifiers(Vector<Identifier>&) const = 0;
+        virtual void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const = 0;
         virtual void bindValue(BytecodeGenerator&, RegisterID* source) const = 0;
         virtual void toString(StringBuilder&) const = 0;
 
@@ -2478,7 +2532,8 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
         };
-        void collectBoundIdentifiers(Vector<Identifier>&) const final;
+
+        void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
         void toString(StringBuilder&) const final;
 
@@ -2493,14 +2548,14 @@ namespace JSC {
             Element,
             RestElement
         };
-        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
+        void appendEntry(const JSTokenLocation&, UniquedStringImpl* identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType });  
+            m_targetPatterns.append(Entry { identifier, nullptr, wasString, pattern, defaultValue, bindingType });
         }
 
-        void appendEntry(VM& vm, const JSTokenLocation&, ExpressionNode* propertyExpression, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
+        void appendEntry(const JSTokenLocation&, ExpressionNode* propertyExpression, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType });
+            m_targetPatterns.append(Entry { nullptr, propertyExpression, false, pattern, defaultValue, bindingType });
         }
         
         void setContainsRestElement(bool containsRestElement)
@@ -2514,11 +2569,11 @@ namespace JSC {
         }
 
     private:
-        void collectBoundIdentifiers(Vector<Identifier>&) const final;
+        void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
         void toString(StringBuilder&) const final;
         struct Entry {
-            const Identifier& propertyName;
+            SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const propertyName;
             ExpressionNode* propertyExpression;
             bool wasString;
             DestructuringPatternNode* pattern;
@@ -2532,8 +2587,8 @@ namespace JSC {
 
     class BindingNode final: public DestructuringPatternNode {
     public:
-        BindingNode(const Identifier& boundProperty, const JSTextPosition& start, const JSTextPosition& end, AssignmentContext);
-        const Identifier& boundProperty() const { return m_boundProperty; }
+        BindingNode(UniquedStringImpl* boundProperty, const JSTextPosition& start, const JSTextPosition& end, AssignmentContext);
+        UniquedStringImpl* boundProperty() const { return m_boundProperty; }
 
         const JSTextPosition& divotStart() const LIFETIME_BOUND { return m_divotStart; }
         const JSTextPosition& divotEnd() const LIFETIME_BOUND { return m_divotEnd; }
@@ -2541,17 +2596,17 @@ namespace JSC {
         bool bindValueCanThrow(BytecodeGenerator&) const final;
         RegisterID* writableDirectBindingIfPossible(BytecodeGenerator&) const final;
         void finishDirectBindingAssignment(BytecodeGenerator&) const;
-        
+
     private:
-        void collectBoundIdentifiers(Vector<Identifier>&) const final;
+        void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
         void toString(StringBuilder&) const final;
-        
+
         bool isBindingNode() const final { return true; }
 
         JSTextPosition m_divotStart;
         JSTextPosition m_divotEnd;
-        const Identifier& m_boundProperty;
+        SUPPRESS_UNCOUNTED_MEMBER UniquedStringImpl* const m_boundProperty;
         AssignmentContext m_bindingContext;
     };
 
@@ -2564,7 +2619,7 @@ namespace JSC {
         void emit(BytecodeGenerator&);
 
     private:
-        void collectBoundIdentifiers(Vector<Identifier>&) const final;
+        void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
         void toString(StringBuilder&) const final;
 
@@ -2588,7 +2643,7 @@ namespace JSC {
         void bindValueWithEmittedNodes(BytecodeGenerator&, BaseAndPropertyName, RegisterID*) const;
 
     private:
-        void collectBoundIdentifiers(Vector<Identifier>&) const final;
+        void collectBoundIdentifiers(Vector<UniquedStringImpl*, 8>&) const final;
         void bindValue(BytecodeGenerator&, RegisterID*) const final;
         void toString(StringBuilder&) const final;
 
@@ -2646,7 +2701,7 @@ namespace JSC {
 
     class FuncDeclNode final : public StatementNode {
     public:
-        FuncDeclNode(const JSTokenLocation&, const Identifier&, FunctionMetadataNode*, const SourceCode&);
+        FuncDeclNode(const JSTokenLocation&, UniquedStringImpl*, FunctionMetadataNode*, const SourceCode&);
 
         bool hasCompletionValue() const final { return false; }
         bool isFuncDeclNode() const final { return true; }

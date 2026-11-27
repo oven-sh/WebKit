@@ -32,8 +32,8 @@
 #include <WebCore/AgentClusterAssignment.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
-#include <WebCore/ProcessSwapDisposition.h>
 #include <WebCore/PublicSuffix.h>
+#include <WebCore/ResourceRequest.h>
 #include <WebCore/ShouldTreatAsContinuingLoad.h>
 #include <wtf/text/WTFString.h>
 
@@ -52,8 +52,8 @@ struct GoToBackForwardItemParameters {
     std::optional<NetworkResourceLoadIdentifier> existingNetworkResourceLoadIdentifierToResume;
     WebCore::PublicSuffix publicSuffix;
     SandboxExtension::Handle sandboxExtensionHandle;
-    WebCore::ProcessSwapDisposition processSwapDisposition;
     std::optional<WebCore::AgentClusterAssignment> agentClusterAssignment;
+    std::optional<WebCore::ResourceRequest> redirectedRequest;
 };
 
 } // namespace WebKit

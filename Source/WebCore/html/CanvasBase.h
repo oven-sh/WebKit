@@ -100,7 +100,7 @@ public:
     void addDisplayBufferObserver(CanvasDisplayBufferObserver&);
     void removeDisplayBufferObserver(CanvasDisplayBufferObserver&);
     void notifyObserversCanvasDisplayBufferPrepared();
-    bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.isEmptyIgnoringNullReferences(); }
+    bool hasDisplayBufferObservers() const { return !m_displayBufferObservers.computeIsEmpty(); }
 
     HashSet<Ref<Element>> cssCanvasClients() const;
 
@@ -109,6 +109,11 @@ public:
     // !rect means caller knows the full canvas is invalidated previously.
     void willUpdateContents(const std::optional<FloatRect>& rect) { return willUpdateContents(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
     virtual void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
+
+    // Whether a whole-canvas update with this option was notified and repeating it is a no-op until the canvas is next prepared for display.
+    bool hasPendingEntireContentsUpdate(ShouldApplyPostProcessingToDirtyRect option) const { return m_pendingEntireContentsUpdate == option; }
+    // Const because HTMLCanvasElement::copiedImage() const invalidates it when it creates the copied image.
+    void clearPendingEntireContentsUpdate() const { m_pendingEntireContentsUpdate = std::nullopt; }
 
     bool hasActiveInspectorCanvasCallTracer() const;
 
@@ -139,6 +144,7 @@ protected:
     String lastFillText() const { return m_lastFillText; }
     void addCanvasNeedingPreparationForDisplayOrFlush();
     void removeCanvasNeedingPreparationForDisplayOrFlush();
+    void setPendingEntireContentsUpdate(ShouldApplyPostProcessingToDirtyRect);
 
 private:
     NODELETE bool shouldInjectNoiseBeforeReadback() const;
@@ -156,6 +162,7 @@ private:
 
     bool m_originClean { true };
     mutable bool m_hasWarnedExceedsArea { false };
+    mutable std::optional<ShouldApplyPostProcessingToDirtyRect> m_pendingEntireContentsUpdate;
 #if ASSERT_ENABLED
     bool m_didNotifyObserversCanvasDestroyed { false };
 #endif

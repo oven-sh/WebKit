@@ -25,7 +25,6 @@
 namespace WebCore {
 
 class HTMLInputElement;
-class MouseEvent;
 
 class RenderSlider final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderSlider);
@@ -33,14 +32,12 @@ class RenderSlider final : public RenderFlexibleBox {
 public:
     static const int defaultTrackLength;
 
-    RenderSlider(HTMLInputElement&, Style::ComputedStyle&&);
+    RenderSlider(HTMLInputElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSlider();
 
     NODELETE HTMLInputElement& element() const;
 
     bool canHaveGeneratedChildren() const override { return false; }
-
-    bool inDragMode() const;
 
     double valueRatio() const;
 

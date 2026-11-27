@@ -809,32 +809,86 @@ bool TranslatorSPIRV::translateImpl(TIntermBlock *root,
         bool useCullDistance = false;
         for (const ShaderVariable &outputVarying : mOutputVaryings)
         {
-            if (outputVarying.name == "gl_ClipDistance")
+            if (outputVarying.getStructName() == "gl_PerVertex")
             {
-                useClipDistance = true;
+                for (const ShaderVariable &field : outputVarying.fields)
+                {
+                    if (field.name == "gl_ClipDistance")
+                    {
+                        useClipDistance = true;
+                    }
+                    else if (field.name == "gl_CullDistance")
+                    {
+                        useCullDistance = true;
+                    }
+                }
             }
-            else if (outputVarying.name == "gl_CullDistance")
+            else
             {
-                useCullDistance = true;
+                if (outputVarying.name == "gl_ClipDistance")
+                {
+                    useClipDistance = true;
+                }
+                else if (outputVarying.name == "gl_CullDistance")
+                {
+                    useCullDistance = true;
+                }
             }
         }
         for (const ShaderVariable &inputVarying : mInputVaryings)
         {
-            if (inputVarying.name == "gl_ClipDistance")
+            if (inputVarying.getStructName() == "gl_PerVertex")
             {
-                useClipDistance = true;
+                for (const ShaderVariable &field : inputVarying.fields)
+                {
+                    if (field.name == "gl_ClipDistance")
+                    {
+                        useClipDistance = true;
+                    }
+                    else if (field.name == "gl_CullDistance")
+                    {
+                        useCullDistance = true;
+                    }
+                }
             }
-            else if (inputVarying.name == "gl_CullDistance")
+            else
             {
-                useCullDistance = true;
+                if (inputVarying.name == "gl_ClipDistance")
+                {
+                    useClipDistance = true;
+                }
+                else if (inputVarying.name == "gl_CullDistance")
+                {
+                    useCullDistance = true;
+                }
             }
         }
 
-        if (useClipDistance &&
-            !ReplaceClipDistanceAssignments(this, root, &getSymbolTable(), getShaderType(),
-                                            driverUniforms->getClipDistancesEnabled()))
+        if (useClipDistance)
         {
-            return false;
+            // Only the gl_ClipDistance output of the last pre-rasterization stage is clipped
+            // against; the values written by the earlier stages are only observable by the
+            // following stages (through gl_in). Therefore, vertex and tessellation evaluation
+            // shaders zero out the disabled clip distances only if they are the last stage, as
+            // indicated by the driver uniforms. Geometry shaders are always the last stage.
+            TIntermTyped *isLastPreRasterizationStage = nullptr;
+            if (getShaderType() == GL_VERTEX_SHADER || getShaderType() == GL_TESS_EVALUATION_SHADER)
+            {
+                const vk::LastPreRasterizationStage thisStage =
+                    getShaderType() == GL_VERTEX_SHADER
+                        ? vk::LastPreRasterizationStage::Vertex
+                        : vk::LastPreRasterizationStage::TessellationEvaluation;
+                isLastPreRasterizationStage =
+                    new TIntermBinary(EOpEqual, driverUniforms->getLastPreRasterizationStage(),
+                                      CreateUIntNode(static_cast<uint32_t>(thisStage)));
+            }
+
+            if (!ReplaceClipDistanceAssignments(this, root, &getSymbolTable(), getShaderType(),
+                                                driverUniforms->getClipDistancesEnabled(),
+                                                isLastPreRasterizationStage))
+            {
+                return false;
+            }
         }
         if (useCullDistance &&
             !ReplaceCullDistanceAssignments(this, root, &getSymbolTable(), getShaderType()))

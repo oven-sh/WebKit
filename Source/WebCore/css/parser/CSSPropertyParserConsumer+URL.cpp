@@ -39,8 +39,7 @@
 #include "CSSValueKeywords.h"
 #include <wtf/text/StringView.h>
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 // MARK: <url>
 // https://drafts.csswg.org/css-values/#urls
@@ -81,84 +80,80 @@ std::optional<CSS::URL> consumeURLRaw(CSSParserTokenRange& range, CSS::PropertyP
         if (!result)
             return { };
 
-        if (!state.context.cssURLModifiersEnabled) {
-            if (!args.atEnd())
-                return { };
-        } else {
-            CSS::URLLinkParameterList::Container linkParameters;
+        CSS::URLLinkParameterList::Container linkParameters;
 
-            while (!args.atEnd()) {
-                switch (args.peek().functionId()) {
-                case CSSValueID::CrossOrigin: {
-                    if (!allowedURLModifiers.contains(AllowedURLModifiers::CrossOrigin))
-                        return { };
-                    if (result->modifiers.crossOrigin)
-                        return { };
-                    auto crossOriginArgs = consumeFunction(args);
-                    auto crossOriginValue = MetaConsumer<
-                        CSS::Keyword::Anonymous,
-                        CSS::Keyword::UseCredentials
-                    >::consume(crossOriginArgs, state);
-                    if (!crossOriginValue || !crossOriginArgs.atEnd())
-                        return { };
-                    result->modifiers.crossOrigin = CSS::URLCrossOriginFunction { .parameters = { *crossOriginValue } };
-                    break;
-                }
-                case CSSValueID::Integrity: {
-                    if (!state.context.cssURLIntegrityModifierEnabled)
-                        return { };
-                    if (!allowedURLModifiers.contains(AllowedURLModifiers::Integrity))
-                        return { };
-                    if (result->modifiers.integrity)
-                        return { };
-                    auto integrityArgs = consumeFunction(args);
-                    auto integrityValue = consumeStringRaw(integrityArgs);
-                    if (integrityValue.isNull() || !integrityArgs.atEnd())
-                        return { };
-                    result->modifiers.integrity = CSS::URLIntegrityFunction { .parameters = { integrityValue.toString() } };
-                    break;
-                }
-                case CSSValueID::ReferrerPolicy: {
-                    if (!allowedURLModifiers.contains(AllowedURLModifiers::ReferrerPolicy))
-                        return { };
-                    if (result->modifiers.referrerPolicy)
-                        return { };
-                    auto referrerPolicyArgs = consumeFunction(args);
-                    auto referrerPolicyValue = MetaConsumer<
-                        CSS::Keyword::NoReferrer,
-                        CSS::Keyword::NoReferrerWhenDowngrade,
-                        CSS::Keyword::SameOrigin,
-                        CSS::Keyword::Origin,
-                        CSS::Keyword::StrictOrigin,
-                        CSS::Keyword::OriginWhenCrossOrigin,
-                        CSS::Keyword::StrictOriginWhenCrossOrigin,
-                        CSS::Keyword::UnsafeUrl
-                    >::consume(referrerPolicyArgs, state);
-                    if (!referrerPolicyValue || !referrerPolicyArgs.atEnd())
-                        return { };
-                    result->modifiers.referrerPolicy = CSS::URLReferrerPolicyFunction { .parameters = { *referrerPolicyValue } };
-                    break;
-                }
-                case CSSValueID::Param: {
-                    if (!state.context.cssLinkParametersEnabled)
-                        return { };
-                    if (!allowedURLModifiers.contains(AllowedURLModifiers::Param))
-                        return { };
-                    // Unlike the request modifiers, param() may be repeated. Duplicate names are
-                    // resolved last-wins when the parameters are applied, not here.
-                    auto parameter = consumeParamFunctionRaw(args, state);
-                    if (!parameter)
-                        return { };
-                    linkParameters.append(WTF::move(*parameter));
-                    break;
-                }
-                default:
+        while (!args.atEnd()) {
+            switch (args.peek().functionId()) {
+            case CSSValueID::CrossOrigin: {
+                if (!allowedURLModifiers.contains(AllowedURLModifiers::CrossOrigin))
                     return { };
-                }
+                if (result->modifiers.crossOrigin)
+                    return { };
+                auto crossOriginArgs = consumeFunction(args);
+                auto crossOriginValue = MetaConsumer<
+                    CSS::Keyword::Anonymous,
+                    CSS::Keyword::UseCredentials
+                >::consume(crossOriginArgs, state);
+                if (!crossOriginValue || !crossOriginArgs.atEnd())
+                    return { };
+                result->modifiers.crossOrigin = CSS::URLCrossOriginFunction { .parameters = { *crossOriginValue } };
+                break;
             }
-
-            result->modifiers.linkParameters = WTF::move(linkParameters);
+            case CSSValueID::Integrity: {
+                if (!state.context.cssURLIntegrityModifierEnabled)
+                    return { };
+                if (!allowedURLModifiers.contains(AllowedURLModifiers::Integrity))
+                    return { };
+                if (result->modifiers.integrity)
+                    return { };
+                auto integrityArgs = consumeFunction(args);
+                auto integrityValue = consumeStringRaw(integrityArgs);
+                if (integrityValue.isNull() || !integrityArgs.atEnd())
+                    return { };
+                result->modifiers.integrity = CSS::URLIntegrityFunction { .parameters = { integrityValue.toString() } };
+                break;
+            }
+            case CSSValueID::ReferrerPolicy: {
+                if (!allowedURLModifiers.contains(AllowedURLModifiers::ReferrerPolicy))
+                    return { };
+                if (result->modifiers.referrerPolicy)
+                    return { };
+                auto referrerPolicyArgs = consumeFunction(args);
+                auto referrerPolicyValue = MetaConsumer<
+                    CSS::Keyword::NoReferrer,
+                    CSS::Keyword::NoReferrerWhenDowngrade,
+                    CSS::Keyword::SameOrigin,
+                    CSS::Keyword::Origin,
+                    CSS::Keyword::StrictOrigin,
+                    CSS::Keyword::OriginWhenCrossOrigin,
+                    CSS::Keyword::StrictOriginWhenCrossOrigin,
+                    CSS::Keyword::UnsafeUrl
+                >::consume(referrerPolicyArgs, state);
+                if (!referrerPolicyValue || !referrerPolicyArgs.atEnd())
+                    return { };
+                result->modifiers.referrerPolicy = CSS::URLReferrerPolicyFunction { .parameters = { *referrerPolicyValue } };
+                break;
+            }
+            case CSSValueID::Param: {
+                if (!state.context.cssLinkParametersEnabled)
+                    return { };
+                if (!allowedURLModifiers.contains(AllowedURLModifiers::Param))
+                    return { };
+                // Unlike the request modifiers, param() may be repeated. Duplicate names are
+                // resolved last-wins when the parameters are applied, not here.
+                auto parameter = consumeParamFunctionRaw(args, state);
+                if (!parameter)
+                    return { };
+                linkParameters.append(WTF::move(*parameter));
+                break;
+            }
+            default:
+                // Unknown <url-modifier>s are invalid. See https://github.com/w3c/csswg-drafts/issues/14056#issuecomment-5605312744.
+                return { };
+            }
         }
+
+        result->modifiers.linkParameters = WTF::move(linkParameters);
 
         guard.commit();
 
@@ -179,5 +174,4 @@ RefPtr<CSSValue> consumeURL(CSSParserTokenRange& range, CSS::PropertyParserState
     return nullptr;
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

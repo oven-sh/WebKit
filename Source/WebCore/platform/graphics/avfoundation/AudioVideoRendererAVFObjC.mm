@@ -119,8 +119,11 @@ AudioVideoRendererAVFObjC::AudioVideoRendererAVFObjC(const Logger& originalLogge
     , m_sharedTimebase(WTF::move(sharedTimebase))
 #if ENABLE(ENCRYPTED_MEDIA) && HAVE(AVCONTENTKEYSESSION)
     , m_keyStatusesChangedObserver(Observer<void()>::create([weakThis = ThreadSafeWeakPtr { *this }] {
-        if (RefPtr protectedThis = weakThis.get())
-            protectedThis->tryToEnqueueBlockedSamples();
+        RefPtr protectedThis = weakThis;
+        if (!protectedThis)
+            return;
+        protectedThis->m_currentTrackIds.clear();
+        protectedThis->tryToEnqueueBlockedSamples();
     }))
 #endif
 {
@@ -1673,9 +1676,12 @@ Ref<GenericPromise> AudioVideoRendererAVFObjC::setVideoRenderer(WebSampleBufferV
                     cdmInstance->setHDCPStatus(obscured ? CDMInstance::HDCPStatus::OutputRestricted : CDMInstance::HDCPStatus::Valid);
                 return;
             }
-#else
-            UNUSED_PARAM(error);
 #endif
+            bool hardwareDecoderUnavailable = error.code == kVTCouldNotFindVideoDecoderErr || error.code == kVTVideoDecoderNotAvailableNowErr;
+            if (hardwareDecoderUnavailable && protectedThis->m_preferences.contains(VideoRendererPreference::RequiresHardwareDecoder)) {
+                protectedThis->notifyError(PlatformMediaError::HardwareDecoderUnavailable);
+                return;
+            }
             protectedThis->notifyError(PlatformMediaError::VideoDecodingError);
         }
     });

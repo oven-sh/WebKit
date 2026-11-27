@@ -112,11 +112,11 @@ RefPtr<BaselineJITCode> LOLJIT::compileAndLinkWithoutFinalizing(JITCompilationEf
 
     if (m_vm->m_perBytecodeProfiler) [[unlikely]] {
         // FIXME: build profiler disassembler off UnlinkedCodeBlock.
-        m_compilation = adoptRef(
-            new Profiler::Compilation(
+        lazyInitialize(m_compilation, adoptRef(
+            *new Profiler::Compilation(
                 m_vm->m_perBytecodeProfiler->ensureBytecodesFor(m_profiledCodeBlock),
-                Profiler::Baseline));
-        Ref(*m_compilation)->addProfiledBytecodes(*m_vm->m_perBytecodeProfiler, m_profiledCodeBlock);
+                Profiler::Baseline)));
+        m_compilation->addProfiledBytecodes(*m_vm->m_perBytecodeProfiler, m_profiledCodeBlock);
     }
 
     m_pcToCodeOriginMapBuilder.appendItem(label(), CodeOrigin(BytecodeIndex(0)));
@@ -293,7 +293,7 @@ void LOLJIT::privateCompileMainPass()
             JIT_COMMENT(*this, "Execution trace start");
             add64(
                 TrustedImm32(1),
-                AbsoluteAddress(Ref(*m_compilation)->executionCounterFor(Profiler::OriginStack(Profiler::Origin(
+                AbsoluteAddress(m_compilation->executionCounterFor(Profiler::OriginStack(Profiler::Origin(
                     m_compilation->bytecodes(), m_bytecodeIndex)))->address()));
             JIT_COMMENT(*this, "First non-trace instruction");
         }
@@ -2303,10 +2303,8 @@ void LOLJIT::emit_op_switch_imm(const JSInstruction* currentInstruction)
 
     auto dispatch = label();
     if (unlinkedTable.isList()) {
-        Vector<int64_t, 16> cases;
-        Vector<int64_t, 16> jumps;
-        cases.reserveInitialCapacity(unlinkedTable.m_branchOffsets.size() / 2);
-        jumps.reserveInitialCapacity(unlinkedTable.m_branchOffsets.size() / 2);
+        Vector<int64_t, 16> cases(ReserveCapacityTag { }, unlinkedTable.m_branchOffsets.size() / 2);
+        Vector<int64_t, 16> jumps(ReserveCapacityTag { }, unlinkedTable.m_branchOffsets.size() / 2);
 
         for (unsigned i = 0; i < unlinkedTable.m_branchOffsets.size(); i += 2) {
             int32_t value = unlinkedTable.m_branchOffsets[i];
@@ -2368,10 +2366,8 @@ void LOLJIT::emit_op_switch_char(const JSInstruction* currentInstruction)
     loaded.link(this);
 
     if (unlinkedTable.isList()) {
-        Vector<int64_t, 16> cases;
-        Vector<int64_t, 16> jumps;
-        cases.reserveInitialCapacity(unlinkedTable.m_branchOffsets.size() / 2);
-        jumps.reserveInitialCapacity(unlinkedTable.m_branchOffsets.size() / 2);
+        Vector<int64_t, 16> cases(ReserveCapacityTag { }, unlinkedTable.m_branchOffsets.size() / 2);
+        Vector<int64_t, 16> jumps(ReserveCapacityTag { }, unlinkedTable.m_branchOffsets.size() / 2);
         for (unsigned i = 0; i < unlinkedTable.m_branchOffsets.size(); i += 2) {
             int32_t value = unlinkedTable.m_branchOffsets[i];
             int32_t target = unlinkedTable.m_branchOffsets[i + 1];
@@ -2589,7 +2585,7 @@ void LOLJIT::emitMathICFast(JITBinaryMathIC<Generator>* mathIC, const JSInstruct
 
     MathICGenerationState& mathICGenerationState = m_instructionToMathICGenerationState.add(currentInstruction, makeUniqueRef<MathICGenerationState>()).iterator->value.get();
 
-    bool generatedInlineCode = mathIC->generateInline(*this, mathICGenerationState);
+    bool generatedInlineCode = mathIC->generateInline(*this, mathICGenerationState, JITType::BaselineJIT);
     if (!generatedInlineCode) {
         // FIXME: We should consider doing a handler IC for math bytecodes.
         BinaryArithProfile* arithProfile = mathIC->arithProfile();
@@ -2695,7 +2691,7 @@ void LOLJIT::emitMathICFast(JITUnaryMathIC<Generator>* mathIC, const JSInstructi
 
     MathICGenerationState& mathICGenerationState = m_instructionToMathICGenerationState.add(currentInstruction, makeUniqueRef<MathICGenerationState>()).iterator->value.get();
 
-    bool generatedInlineCode = mathIC->generateInline(*this, mathICGenerationState);
+    bool generatedInlineCode = mathIC->generateInline(*this, mathICGenerationState, JITType::BaselineJIT);
     if (!generatedInlineCode) {
         UnaryArithProfile* arithProfile = mathIC->arithProfile();
         // FIXME: We should consider doing a handler IC for math bytecodes.

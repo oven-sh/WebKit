@@ -38,8 +38,7 @@
 #include <pal/Logging.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 enum class ReasonCollectionMode : bool {
     FirstOnly,
@@ -53,7 +52,6 @@ enum class GridAvoidanceReason : uint8_t {
     GridHasOutOfFlowChild,
     GridHasNonVisibleOverflow,
     GridItemIsReplacedElement,
-    GridItemDoesNotHaveElement,
     GridItemIsSubgrid,
     GridIsEmpty,
     GridHasGridTemplateAreas,
@@ -73,7 +71,6 @@ enum class GridAvoidanceReason : uint8_t {
     GridItemHasUnsupportedMaxWidth,
     GridItemHasUnsupportedMaxHeight,
     GridItemHasUnsupportedMargin,
-    GridItemHasBorderBoxSizing,
     GridItemHasUnsupportedWritingMode,
     GridItemHasRTLDirection,
     GridItemHasAspectRatio,
@@ -91,9 +88,7 @@ enum class GridAvoidanceReason : uint8_t {
     GridItemHasUnsupportedRowEnd,
 
     GridItemHasUnsupportedWidthValue,
-    GridItemHasUnsupportedAutomaticInlineSizing,
     GridItemHasUnsupportedHeightValue,
-    GridItemHasUnsupportedAutomaticBlockSizing,
     GridItemHasUnsupportedMinWidth,
     GridItemHasUnsupportedMinHeight,
     NotAGrid,
@@ -200,8 +195,11 @@ static bool hasValidEndForSpanStart(const Style::GridPosition& end)
     );
 }
 
+// A stretch() answers to its fixed argument, which GFC would size as the box selected by box-sizing rather than the margin box.
 static bool gridItemHasValidWidth(const Style::PreferredSize& width)
 {
+    if (width.isStretchFunction())
+        return false;
     return WTF::switchOn(width,
         [&](const CSS::Keyword::Auto&) {
             return true;
@@ -215,19 +213,10 @@ static bool gridItemHasValidWidth(const Style::PreferredSize& width)
     );
 }
 
-// A grid item with an automatic size which is not stretched is sized to its fit-content size in
-// the axis. GFC does not implement the remaining cases from grid item sizing, where a replaced
-// item uses its natural size and an item with a preferred aspect ratio transfers its size through
-// that ratio.
-// https://drafts.csswg.org/css-grid-1/#grid-item-sizing
-static bool canComputeAutomaticSize(const RenderBox& gridItem)
-{
-    return !protect(gridItem.element())->isReplaced()
-        && !gridItem.style().aspectRatio().hasRatio();
-}
-
 static bool gridItemHasValidHeight(const Style::PreferredSize& height)
 {
+    if (height.isStretchFunction())
+        return false;
     return WTF::switchOn(height,
         [](const CSS::Keyword::Auto&) {
             return true;
@@ -355,17 +344,18 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     if (!renderGridStyle->alignContent().isNormal())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedAlignContent, reasons, reasonCollectionMode);
 
-    // GFC cannot yet resolve intrinsic (min-content/max-content/fit-content) sizing on the grid container itself.
-    if (renderGridStyle->minWidth().isIntrinsic())
+    // GFC cannot yet resolve intrinsic (min-content/max-content/fit-content) sizing on the grid container itself,
+    // and would size a stretch() as the box selected by box-sizing rather than the margin box.
+    if (renderGridStyle->minWidth().isIntrinsic() || renderGridStyle->minWidth().isStretchFunction())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMinWidth, reasons, reasonCollectionMode);
 
-    if (renderGridStyle->maxWidth().isIntrinsic())
+    if (renderGridStyle->maxWidth().isIntrinsic() || renderGridStyle->maxWidth().isStretchFunction())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMaxWidth, reasons, reasonCollectionMode);
 
-    if (renderGridStyle->minHeight().isIntrinsic())
+    if (renderGridStyle->minHeight().isIntrinsic() || renderGridStyle->minHeight().isStretchFunction())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMinHeight, reasons, reasonCollectionMode);
 
-    if (renderGridStyle->maxHeight().isIntrinsic())
+    if (renderGridStyle->maxHeight().isIntrinsic() || renderGridStyle->maxHeight().isStretchFunction())
         ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridHasUnsupportedMaxHeight, reasons, reasonCollectionMode);
 
     // If the contianer has an indefinite (e.g. auto) height and a row with a percentage,
@@ -388,11 +378,7 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
     for (CheckedRef gridItem : childrenOfType<RenderBox>(renderGrid)) {
         // We do not yet support grid item sizing spec for replaced elements.
         // See: https://drafts.csswg.org/css-grid/#grid-item-sizing
-        RefPtr gridItemElement = gridItem->element();
-        if (!gridItemElement)
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemDoesNotHaveElement, reasons, reasonCollectionMode);
-
-        if (gridItemElement->isReplaced())
+        if (gridItem->isRenderReplaced())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemIsReplacedElement, reasons, reasonCollectionMode);
 
         // GFC has no subgrid support, so a subgrid item would fall through to the legacy
@@ -416,9 +402,6 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         if (!gridItemHasValidWidth(gridItemWidth))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedWidthValue, reasons, reasonCollectionMode);
 
-        if (gridItemWidth.isAuto() && !canComputeAutomaticSize(gridItem))
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedAutomaticInlineSizing, reasons, reasonCollectionMode);
-
         auto usedAlignSelf = gridItemStyle->alignSelf().resolve(renderGridStyle.ptr());
 
         if (isBaselinePosition(usedAlignSelf.position()))
@@ -428,36 +411,31 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         if (!gridItemHasValidHeight(gridItemHeight))
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedHeightValue, reasons, reasonCollectionMode);
 
-        if (gridItemHeight.isAuto() && !canComputeAutomaticSize(gridItem))
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedAutomaticBlockSizing, reasons, reasonCollectionMode);
-
         auto& minWidth = gridItemStyle->minWidth();
-        if (!minWidth.isFixed() && !minWidth.isAuto())
+        if ((!minWidth.isFixed() || minWidth.isStretchFunction()) && !minWidth.isAuto())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMinWidth, reasons, reasonCollectionMode);
 
         auto& maxWidth = gridItemStyle->maxWidth();
-        if (!maxWidth.isFixed() && !maxWidth.isNone())
+        if ((!maxWidth.isFixed() || maxWidth.isStretchFunction()) && !maxWidth.isNone())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMaxWidth, reasons, reasonCollectionMode);
 
         auto& minHeight = gridItemStyle->minHeight();
-        if (!minHeight.isFixed() && !minHeight.isAuto())
+        if ((!minHeight.isFixed() || minHeight.isStretchFunction()) && !minHeight.isAuto())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMinHeight, reasons, reasonCollectionMode);
 
         auto& maxHeight = gridItemStyle->maxHeight();
-        if (!maxHeight.isFixed() && !maxHeight.isNone())
+        if ((!maxHeight.isFixed() || maxHeight.isStretchFunction()) && !maxHeight.isNone())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMaxHeight, reasons, reasonCollectionMode);
 
-        // These are the margin edges GridLayoutUtils::usedMarginsForAxis() can resolve.
+        // These are the margin edges GridLayoutUtils resolves: fixed and zero edges in usedMargin(), and auto
+        // edges in the usedMarginsFor*() function of each step that uses them.
         auto gridItemHasUnsupportedMargins = [&] {
             return gridItemStyle->marginBox().anyOf([](const Style::MarginEdge& marginEdge) {
-                return !marginEdge.isFixed() && !marginEdge.isKnownZero();
+                return !marginEdge.isFixed() && !marginEdge.isKnownZero() && !marginEdge.isAuto();
             });
         };
         if (gridItemHasUnsupportedMargins())
             ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasUnsupportedMargin, reasons, reasonCollectionMode);
-
-        if (gridItemStyle->boxSizing() == BoxSizing::BorderBox)
-            ADD_REASON_AND_RETURN_IF_NEEDED(GridAvoidanceReason::GridItemHasBorderBoxSizing, reasons, reasonCollectionMode);
 
         auto& columnStart = gridItemStyle->gridItemColumnStart();
         auto columnPositioningAvoidanceReason = WTF::switchOn(columnStart,
@@ -558,8 +536,7 @@ static EnumSet<GridAvoidanceReason> gridLayoutAvoidanceReason(const RenderGrid& 
         auto gridItemHasChildWithInlineSizeComputedFromAspectRatio = [&] {
             for (CheckedRef gridItemChild : childrenOfType<RenderBox>(gridItem.get())) {
                 CheckedRef gridItemChildStyle = gridItemChild->style();
-                RefPtr gridItemChildElement = gridItemChild->element();
-                bool hasAspectRatio = (gridItemChildElement && gridItemChildElement->isReplaced()) || gridItemChildStyle->aspectRatio().hasRatio();
+                bool hasAspectRatio = gridItemChild->isRenderReplaced() || gridItemChildStyle->aspectRatio().hasRatio();
                 if (hasAspectRatio && gridItemChildStyle->width().isAuto() && gridItemChildStyle->height().isPercent())
                     return true;
             }
@@ -628,9 +605,6 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridHasNonVisibleOverflow:
         stream << "grid has non-visible overflow";
         break;
-    case GridAvoidanceReason::GridItemDoesNotHaveElement:
-        stream << "grid item does not have a corresponding element";
-        break;
     case GridAvoidanceReason::GridItemIsReplacedElement:
         stream << "grid item is a replaced element";
         break;
@@ -670,14 +644,8 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
     case GridAvoidanceReason::GridItemHasUnsupportedWidthValue:
         stream << "grid item has unsupported width value";
         break;
-    case GridAvoidanceReason::GridItemHasUnsupportedAutomaticInlineSizing:
-        stream << "grid item has unsupported automatic inline sizing";
-        break;
     case GridAvoidanceReason::GridItemHasUnsupportedHeightValue:
         stream << "grid item has unsupported height value";
-        break;
-    case GridAvoidanceReason::GridItemHasUnsupportedAutomaticBlockSizing:
-        stream << "grid item has unsupported automatic block sizing";
         break;
     case GridAvoidanceReason::GridItemHasUnsupportedMaxWidth:
         stream << "grid item has unsupported max-width";
@@ -687,9 +655,6 @@ static void printReason(GridAvoidanceReason reason, TextStream& stream)
         break;
     case GridAvoidanceReason::GridItemHasUnsupportedMargin:
         stream << "grid item has unsupported margin";
-        break;
-    case GridAvoidanceReason::GridItemHasBorderBoxSizing:
-        stream << "grid item has border-box box-sizing";
         break;
     case GridAvoidanceReason::GridItemHasUnsupportedWritingMode:
         stream << "grid item has unsupported writing mode";
@@ -789,7 +754,7 @@ static void printLegacyGridReasons()
         stream << "\n";
     }
     stream << "---------------------------------------------------\n";
-    SAFE_WTFLOGALWAYS("%s", stream.release().utf8());
+    SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release()));
 }
 #endif
 
@@ -805,5 +770,4 @@ bool canUseForGridLayout(const RenderGrid& renderGrid)
     return reasons.isEmpty();
 }
 
-} // namespace LayoutIntegration
-} // namespace WebCore
+} // namespace WebCore::LayoutIntegration

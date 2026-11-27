@@ -26,12 +26,14 @@ fast/forms/select/mac-wk2 [ Pass ]
 fast/quirks/model-element-fallback-content-quirk.html [ Pass ]
 fast/sandbox/mac [ Pass ]
 fast/scrolling/mac [ Pass ]
+http/tests/scrolling/mac [ Pass ]
 fast/speechsynthesis/mac [ Pass ]
-[ Sonoma Sequoia Tahoe ] fast/text-extraction [ Pass ]
-[ GoldenGate ] fast/text-extraction [ Skip ]
+fast/text-extraction [ Pass ]
 fast/visual-viewport/tiled-drawing [ Pass ]
 fast/web-share [ Pass ]
 imported/w3c/web-platform-tests/web-share [ Pass ]
+media/media-source/media-source-audio-decoding-error-fatal.html [ Pass ]
+media/media-source/media-source-audio-decoding-error-ignored.html [ Pass ]
 media/modern-media-controls/overflow-support [ Pass ]
 http/tests/media/modern-media-controls/overflow-support [ Pass ]
 http/tests/media/media-controls-context-menu-anchor-in-iframe.html [ Pass ]
@@ -47,6 +49,7 @@ view-gestures [ Pass ]
 http/tests/swipe [ Pass ]
 http/tests/ipc/cocoa [ Pass ]
 http/tests/pdf [ Pass ]
+[ GoldenGate+ ] http/wpt/phone-number-possession [ Pass ]
 pdf [ Pass ]
 tiled-drawing [ Pass ]
 ipc/cocoa [ Pass ]
@@ -212,104 +215,104 @@ http/tests/eventloop/idle-callback-not-affected-by-timers-in-cross-origin.html [
 
 # WebKitTestRunner needs a more complete implementation of eventSender
 # <https://bugs.webkit.org/show_bug.cgi?id=42194>
-editing/mac/pasteboard/dataTransfer-set-data-file-url.html
-editing/mac/pasteboard/drag-selections-to-contenteditable.html
-editing/pasteboard/4947130.html
-editing/pasteboard/cleanup-on-move.html
-editing/pasteboard/copy-standalone-image-crash.html
+editing/mac/pasteboard/dataTransfer-set-data-file-url.html [ Skip ]
+editing/mac/pasteboard/drag-selections-to-contenteditable.html [ Skip ]
+editing/pasteboard/4947130.html [ Skip ]
+editing/pasteboard/cleanup-on-move.html [ Skip ]
+editing/pasteboard/copy-standalone-image-crash.html [ Skip ]
 # webkit.org/b/309400 Times out due to web archive UTI issue on modern macOS
 editing/pasteboard/copy-standalone-image.html [ Skip ]
-editing/pasteboard/drag-drop-paragraph-crasher.html
-editing/pasteboard/emacs-cntl-y-001.html
-editing/pasteboard/emacs-ctrl-k-y-001.html
-editing/pasteboard/files-during-page-drags.html
-editing/pasteboard/get-data-text-plain-drop.html
-editing/pasteboard/smart-drag-drop.html
-editing/pasteboard/smart-paste-004.html
-editing/pasteboard/subframe-dragndrop-1.html
-editing/selection/4895428-1.html
-editing/selection/4895428-4.html
-editing/selection/5354455-2.html
-editing/selection/caret-after-keypress.html
-editing/selection/contains-boundaries.html
-editing/selection/doubleclick-beside-cr-span.html
-editing/selection/doubleclick-whitespace.html
-editing/selection/drag-to-contenteditable-iframe.html
-editing/selection/mixed-editability-10.html
-editing/selection/select-out-of-editable.html
-editing/spelling/spellcheck-paste-continuous-disabled.html
-editing/spelling/spellcheck-paste-disabled.html
-editing/spelling/spellcheck-paste.html
-fast/dom/vertical-scrollbar-in-rtl.html
-fast/events/5056619.html
-fast/events/autoscroll-in-textfield.html
-fast/events/bogus-dropEffect-effectAllowed.html
-fast/events/content-changed-during-drop.html
-fast/events/context-onmousedown-event.html
-fast/events/crash-on-mutate-during-drop.html
-fast/events/drag-and-drop-dataTransfer-types-nocrash.html
-fast/events/drag-and-drop-fire-drag-dragover.html
-fast/events/drag-and-drop-link-containing-block.html
-fast/events/drag-and-drop-link-fast-multiple-times-does-not-crash.html
-fast/events/drag-and-drop-link.html
-fast/events/drag-and-drop.html
-fast/events/drag-image-with-border-image.html
-fast/events/drag-in-frames.html
-fast/events/drag-parent-node.html
-fast/events/draggable-div-nodata.html
-fast/events/dropzone-001.html
-fast/events/dropzone-002.html
-fast/events/dropzone-003.html
-fast/events/dropzone-005.html
-fast/events/keydown-numpad-keys.html
-fast/events/mouseup-from-button2.html
-fast/events/node-event-anchor-lock.html
-fast/events/ondragenter.html
-fast/events/right-click-focus.html
-fast/events/standalone-image-drag-to-editable.html
-fast/events/wheel/continuous-platform-wheelevent-in-scrolling-div.html
-fast/events/wheel/wheelevent-direction-inverted-from-device.html
-fast/events/wheel/wheelevent-in-horizontal-scrollbar-in-rtl.html
-fast/events/wheel/wheelevent-in-vertical-scrollbar-in-rtl.html
-fast/forms/drag-into-textarea.html
-fast/forms/drag-out-of-textarea.html
-fast/forms/listbox-typeahead-cyrillic.html
-fast/forms/listbox-typeahead-greek.html
-fast/forms/select-type-ahead-non-latin.html
-fast/history/window-open.html
-fast/lists/drag-into-marker.html
-fast/repaint/japanese-rl-selection-repaint.html
-fast/repaint/repaint-across-writing-mode-boundary.html
-http/tests/local/drag-over-remote-content.html
-http/tests/misc/bubble-drag-events.html
-http/tests/security/drag-drop-same-unique-origin.html
-http/tests/security/drag-over-remote-content-iframe.html
+editing/pasteboard/drag-drop-paragraph-crasher.html [ Skip ]
+editing/pasteboard/emacs-cntl-y-001.html [ Skip ]
+editing/pasteboard/emacs-ctrl-k-y-001.html [ Skip ]
+editing/pasteboard/files-during-page-drags.html [ Skip ]
+editing/pasteboard/get-data-text-plain-drop.html [ Skip ]
+editing/pasteboard/smart-drag-drop.html [ Skip ]
+editing/pasteboard/smart-paste-004.html [ Skip ]
+editing/pasteboard/subframe-dragndrop-1.html [ Skip ]
+editing/selection/4895428-1.html [ Skip ]
+editing/selection/4895428-4.html [ Skip ]
+editing/selection/5354455-2.html [ Skip ]
+editing/selection/caret-after-keypress.html [ Skip ]
+editing/selection/contains-boundaries.html [ Skip ]
+editing/selection/doubleclick-beside-cr-span.html [ Skip ]
+editing/selection/doubleclick-whitespace.html [ Skip ]
+editing/selection/drag-to-contenteditable-iframe.html [ Skip ]
+editing/selection/mixed-editability-10.html [ Skip ]
+editing/selection/select-out-of-editable.html [ Skip ]
+editing/spelling/spellcheck-paste-continuous-disabled.html [ Skip ]
+editing/spelling/spellcheck-paste-disabled.html [ Skip ]
+editing/spelling/spellcheck-paste.html [ Skip ]
+fast/dom/vertical-scrollbar-in-rtl.html [ Skip ]
+fast/events/5056619.html [ Skip ]
+fast/events/autoscroll-in-textfield.html [ Skip ]
+fast/events/bogus-dropEffect-effectAllowed.html [ Skip ]
+fast/events/content-changed-during-drop.html [ Skip ]
+fast/events/context-onmousedown-event.html [ Skip ]
+fast/events/crash-on-mutate-during-drop.html [ Skip ]
+fast/events/drag-and-drop-dataTransfer-types-nocrash.html [ Skip ]
+fast/events/drag-and-drop-fire-drag-dragover.html [ Skip ]
+fast/events/drag-and-drop-link-containing-block.html [ Skip ]
+fast/events/drag-and-drop-link-fast-multiple-times-does-not-crash.html [ Skip ]
+fast/events/drag-and-drop-link.html [ Skip ]
+fast/events/drag-and-drop.html [ Skip ]
+fast/events/drag-image-with-border-image.html [ Skip ]
+fast/events/drag-in-frames.html [ Skip ]
+fast/events/drag-parent-node.html [ Skip ]
+fast/events/draggable-div-nodata.html [ Skip ]
+fast/events/dropzone-001.html [ Skip ]
+fast/events/dropzone-002.html [ Skip ]
+fast/events/dropzone-003.html [ Skip ]
+fast/events/dropzone-005.html [ Skip ]
+fast/events/keydown-numpad-keys.html [ Skip ]
+fast/events/mouseup-from-button2.html [ Skip ]
+fast/events/node-event-anchor-lock.html [ Skip ]
+fast/events/ondragenter.html [ Skip ]
+fast/events/right-click-focus.html [ Skip ]
+fast/events/standalone-image-drag-to-editable.html [ Skip ]
+fast/events/wheel/continuous-platform-wheelevent-in-scrolling-div.html [ Skip ]
+fast/events/wheel/wheelevent-direction-inverted-from-device.html [ Skip ]
+fast/events/wheel/wheelevent-in-horizontal-scrollbar-in-rtl.html [ Skip ]
+fast/events/wheel/wheelevent-in-vertical-scrollbar-in-rtl.html [ Skip ]
+fast/forms/drag-into-textarea.html [ Skip ]
+fast/forms/drag-out-of-textarea.html [ Skip ]
+fast/forms/listbox-typeahead-cyrillic.html [ Skip ]
+fast/forms/listbox-typeahead-greek.html [ Skip ]
+fast/forms/select-type-ahead-non-latin.html [ Skip ]
+fast/history/window-open.html [ Skip ]
+fast/lists/drag-into-marker.html [ Skip ]
+fast/repaint/japanese-rl-selection-repaint.html [ Skip ]
+fast/repaint/repaint-across-writing-mode-boundary.html [ Skip ]
+http/tests/local/drag-over-remote-content.html [ Skip ]
+http/tests/misc/bubble-drag-events.html [ Skip ]
+http/tests/security/drag-drop-same-unique-origin.html [ Skip ]
+http/tests/security/drag-over-remote-content-iframe.html [ Skip ]
 
 # [WK2] [Mac] Spellcheck tests don't seem to work
-webkit.org/b/105616 editing/spelling/context-menu-suggestions-multiword-selection.html
-webkit.org/b/105616 editing/spelling/context-menu-suggestions-subword-selection.html
-webkit.org/b/105616 editing/spelling/copy-paste-crash.html
-webkit.org/b/105616 editing/spelling/delete-into-misspelled-word.html
-webkit.org/b/105616 editing/spelling/editing-multiple-words-with-markers.html
-webkit.org/b/105616 editing/spelling/editing-word-with-marker-2.html
-webkit.org/b/105616 editing/spelling/move-cursor-around-misspelled-word.html
-webkit.org/b/105616 editing/spelling/spelling-changed-text.html
-webkit.org/b/105616 editing/spelling/spelling-backspace-between-lines.html
-webkit.org/b/105616 editing/spelling/design-mode-spellcheck-off.html
-webkit.org/b/105616 editing/spelling/spellcheck-attribute.html
-webkit.org/b/105616 editing/spelling/spelling-attribute-at-child.html
-webkit.org/b/105616 editing/spelling/spelling-attribute-change.html
-webkit.org/b/105616 editing/spelling/spelling-backward.html
-webkit.org/b/105616 editing/spelling/spelling-double-clicked-word.html
-webkit.org/b/105616 editing/spelling/spelling-exactly-selected-word.html
-webkit.org/b/105616 editing/spelling/spelling-hasspellingmarker.html
-webkit.org/b/105616 editing/spelling/spelling-linebreak.html
-webkit.org/b/105616 editing/spelling/spelling-with-punctuation-selection.html
-webkit.org/b/105616 editing/spelling/spelling-with-whitespace-selection.html
-webkit.org/b/105616 editing/spelling/grammar.html
-webkit.org/b/105616 editing/spelling/markers.html
-webkit.org/b/105616 editing/spelling/retro-correction-spelling-markers.html
-webkit.org/b/105616 editing/spelling/spelling-markers-after-pasting-sentence.html
+webkit.org/b/105616 editing/spelling/context-menu-suggestions-multiword-selection.html [ Skip ]
+webkit.org/b/105616 editing/spelling/context-menu-suggestions-subword-selection.html [ Skip ]
+webkit.org/b/105616 editing/spelling/copy-paste-crash.html [ Skip ]
+webkit.org/b/105616 editing/spelling/delete-into-misspelled-word.html [ Skip ]
+webkit.org/b/105616 editing/spelling/editing-multiple-words-with-markers.html [ Skip ]
+webkit.org/b/105616 editing/spelling/editing-word-with-marker-2.html [ Skip ]
+webkit.org/b/105616 editing/spelling/move-cursor-around-misspelled-word.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-changed-text.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-backspace-between-lines.html [ Skip ]
+webkit.org/b/105616 editing/spelling/design-mode-spellcheck-off.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spellcheck-attribute.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-attribute-at-child.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-attribute-change.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-backward.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-double-clicked-word.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-exactly-selected-word.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-hasspellingmarker.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-linebreak.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-with-punctuation-selection.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-with-whitespace-selection.html [ Skip ]
+webkit.org/b/105616 editing/spelling/grammar.html [ Skip ]
+webkit.org/b/105616 editing/spelling/markers.html [ Skip ]
+webkit.org/b/105616 editing/spelling/retro-correction-spelling-markers.html [ Skip ]
+webkit.org/b/105616 editing/spelling/spelling-markers-after-pasting-sentence.html [ Skip ]
 webkit.org/b/105616 editing/mac/spelling/autocorrection-delete.html [ Failure ]
 webkit.org/b/105616 editing/mac/spelling/autocorrection-removing-underline-after-paste.html [ Failure ]
 webkit.org/b/105616 editing/mac/spelling/autocorrection-removing-underline.html [ Failure ]
@@ -332,10 +335,10 @@ webkit.org/b/105616 editing/spelling/spelling-markers-in-overlapping-lines-large
 # <https://bugs.webkit.org/show_bug.cgi?id=68552>
 editing/pasteboard/drag-and-drop-color-input-events.html [ Skip ]
 editing/pasteboard/drag-and-drop-color-input.html [ Skip ]
-fast/events/clear-drag-state.html
-fast/events/drag-and-drop-subframe-dataTransfer.html
-fast/events/drag-selects-image.html
-fast/events/remove-target-with-shadow-in-drag.html
+fast/events/clear-drag-state.html [ Skip ]
+fast/events/drag-and-drop-subframe-dataTransfer.html [ Skip ]
+fast/events/drag-selects-image.html [ Skip ]
+fast/events/remove-target-with-shadow-in-drag.html [ Skip ]
 
 fast/events/before-input-events-prevent-drag-and-drop.html [ Failure ]
 fast/events/input-events-drag-and-drop.html [ Failure ]
@@ -348,10 +351,10 @@ fast/forms/file/file-input-empty-validation.html [ Failure ]
 
 # Missing functionality of textInputController
 # https://bugs.webkit.org/show_bug.cgi?id=89401
-editing/mac/input/insert-dictated-text.html
-editing/mac/input/crash-for-empty-text-alternative.html
-editing/mac/input/edit-dictated-text-with-alternative.html
-editing/mac/attributed-string/
+editing/mac/input/insert-dictated-text.html [ Skip ]
+editing/mac/input/crash-for-empty-text-alternative.html [ Skip ]
+editing/mac/input/edit-dictated-text-with-alternative.html [ Skip ]
+editing/mac/attributed-string/ [ Skip ]
 
 # This test times out on Mac WK2 every time.
 webkit.org/b/89199 editing/spelling/grammar-edit-word.html [ Skip ]
@@ -361,18 +364,18 @@ webkit.org/b/90156 editing/mac/spelling/autocorrection-blockquote-crash.html [ F
 webkit.org/b/95043 http/tests/security/local-user-CSS-from-remote.html [ Failure ]
 
 # These tests test the Shadow DOM based HTML form validation UI but Mac WK2 is using native dialogs instead.
-fast/forms/validation-message-on-listbox.html
-fast/forms/validation-message-on-menulist.html
-fast/forms/validation-message-on-radio.html
-fast/forms/validation-message-on-checkbox.html
-fast/forms/validation-message-on-range.html
-fast/forms/validation-message-clone.html
-fast/forms/validation-message-in-relative-body.html
-fast/forms/validation-message-appearance.html
-fast/forms/validation-message-on-textarea.html
+fast/forms/validation-message-on-listbox.html [ Skip ]
+fast/forms/validation-message-on-menulist.html [ Skip ]
+fast/forms/validation-message-on-radio.html [ Skip ]
+fast/forms/validation-message-on-checkbox.html [ Skip ]
+fast/forms/validation-message-on-range.html [ Skip ]
+fast/forms/validation-message-clone.html [ Skip ]
+fast/forms/validation-message-in-relative-body.html [ Skip ]
+fast/forms/validation-message-appearance.html [ Skip ]
+fast/forms/validation-message-on-textarea.html [ Skip ]
 
 # All spatial navigation tests fail on Mac WK2
-webkit.org/b/96438 fast/spatial-navigation
+webkit.org/b/96438 fast/spatial-navigation [ Skip ]
 
 fast/images/text-recognition [ Pass ]
 fast/images/text-recognition/ios [ Skip ]
@@ -467,6 +470,11 @@ webkit.org/b/125690 editing/spelling/spellcheck-async.html [ Failure ]
 editing/spelling/spellcheck-queue.html [ Skip ]
 editing/spelling/spelling-insert-html.html [ Skip ]
 
+# Flaky timeouts under stress.
+[ Debug ] imported/w3c/web-platform-tests/webtransport/datagrams-writable.https.any.html [ Skip ]
+[ Debug ] imported/w3c/web-platform-tests/webtransport/headers.https.any.sharedworker.html [ Skip ]
+[ Debug ] imported/w3c/web-platform-tests/webtransport/sendgroup.https.any.html [ Skip ]
+
 ### END OF (2) Classified failures without bug reports (yet)
 ########################################
 
@@ -489,7 +497,6 @@ webkit.org/b/132766 fast/hidpi/filters-blur.html [ ImageOnlyFailure ]
 webkit.org/b/132766 fast/hidpi/filters-hue-rotate.html [ ImageOnlyFailure ]
 webkit.org/b/132766 fast/hidpi/filters-invert.html [ ImageOnlyFailure ]
 webkit.org/b/132766 fast/hidpi/filters-multiple.html [ ImageOnlyFailure ]
-webkit.org/b/132766 fast/hidpi/filters-reference.html [ ImageOnlyFailure ]
 
 fast/dom/frame-loading-via-document-write.html [ Timeout ]
 
@@ -514,33 +521,33 @@ webkit.org/b/309824 [ x86_64 ] media/media-source/media-source-h264-bframes-lowf
 
 # WebKitTestRunner needs textInputController
 # <https://bugs.webkit.org/show_bug.cgi?id=42337>
-editing/mac/input/5576619.html
-editing/mac/input/bold-node.html
-editing/mac/input/caret-primary-bidi.html
-editing/mac/input/firstrectforcharacterrange-caret-in-br.html
-editing/mac/input/firstrectforcharacterrange-plain.html
-editing/mac/input/firstrectforcharacterrange-styled.html
-editing/mac/input/firstrectforcharacterrange-vertical.html
-editing/mac/input/hangul-enter-confirms-and-sends-keypress.html
-editing/mac/input/insert-delete-smp-symbol.html
-editing/mac/input/kotoeri-enter-to-confirm-and-newline.html
-editing/mac/input/range-for-empty-document.html
-editing/mac/input/replace-invalid-range.html
-editing/mac/input/secure-input.html
-editing/mac/input/text-input-controller.html
-editing/mac/input/text-input-controller-no-editable-no-crash.html
-editing/mac/input/wrapped-line-char-rect.html
-editing/mac/input/NSBackgroundColor-transparent.html
-editing/mac/selection/25228.html
+editing/mac/input/5576619.html [ Skip ]
+editing/mac/input/bold-node.html [ Skip ]
+editing/mac/input/caret-primary-bidi.html [ Skip ]
+editing/mac/input/firstrectforcharacterrange-caret-in-br.html [ Skip ]
+editing/mac/input/firstrectforcharacterrange-plain.html [ Skip ]
+editing/mac/input/firstrectforcharacterrange-styled.html [ Skip ]
+editing/mac/input/firstrectforcharacterrange-vertical.html [ Skip ]
+editing/mac/input/hangul-enter-confirms-and-sends-keypress.html [ Skip ]
+editing/mac/input/insert-delete-smp-symbol.html [ Skip ]
+editing/mac/input/kotoeri-enter-to-confirm-and-newline.html [ Skip ]
+editing/mac/input/range-for-empty-document.html [ Skip ]
+editing/mac/input/replace-invalid-range.html [ Skip ]
+editing/mac/input/secure-input.html [ Skip ]
+editing/mac/input/text-input-controller.html [ Skip ]
+editing/mac/input/text-input-controller-no-editable-no-crash.html [ Skip ]
+editing/mac/input/wrapped-line-char-rect.html [ Skip ]
+editing/mac/input/NSBackgroundColor-transparent.html [ Skip ]
+editing/mac/selection/25228.html [ Skip ]
 
 # WebKitTestRunner needs testRunner.setCallCloseOnWebViews
 # http://webkit.org/b/46714
-accessibility/search-predicate-visited-links.html
+accessibility/search-predicate-visited-links.html [ Skip ]
 
 # AX tests that require hit testing do not work in WK2.
-webkit.org/b/71298 accessibility/mac/html-slider-indicator.html
-webkit.org/b/71298 accessibility/mac/listbox-hit-test.html
-webkit.org/b/71298 accessibility/mac/iframe-with-title-correct-hierarchy.html
+webkit.org/b/71298 accessibility/mac/html-slider-indicator.html [ Skip ]
+webkit.org/b/71298 accessibility/mac/listbox-hit-test.html [ Skip ]
+webkit.org/b/71298 accessibility/mac/iframe-with-title-correct-hierarchy.html [ Skip ]
 
 ### END OF (4) Features that are not supported in WebKit2 and likely never will be
 ########################################
@@ -686,6 +693,8 @@ webkit.org/b/173188 fast/mediastream/getUserMedia-grant-persistency3.html [ Pass
 
 webkit.org/b/167757 workers/bomb.html [ Pass Timeout ]
 
+webkit.org/b/332775 [ Debug ] workers/worker-set-delete-terminate-crash.html [ Pass Timeout ]
+
 webkit.org/b/187649 editing/selection/update-selection-by-style-change.html [ Pass ImageOnlyFailure ]
 
 # Touch events are not available on open source bots, thus only tested on Mac.
@@ -783,7 +792,7 @@ http/wpt/cache-storage/cache-quota-after-restart.any.html [ Slow ]
 
 webkit.org/b/181750 imported/w3c/web-platform-tests/service-workers/service-worker/fetch-request-redirect.https.html [ Pass Failure Crash ]
 
-webkit.org/b/181839 [ Debug ] inspector/debugger/breakpoint-action-log.html [ Pass Timeout ]
+webkit.org/b/326556 webkit.org/b/181839 [ Debug ] inspector/debugger/breakpoint-action-log.html [ Failure Timeout ]
 
 webkit.org/b/179352 imported/w3c/web-platform-tests/service-workers/service-worker/windowclient-navigate.https.html [ Pass Failure Slow ]
 
@@ -1218,15 +1227,28 @@ webkit.org/b/325612 [ x86_64 ] http/wpt/webcodecs/webgl-texImage2D-videoFrame-I4
 [ x86_64 ] http/wpt/webcodecs/2d-drawImage-videoFrame-I420-SMPTE240M.html [ Failure ]
 [ x86_64 ] imported/w3c/web-platform-tests/webcodecs/videoFrame-orientation-webgl-i420.window.html [ Failure ]
 
+# Corner-shape box-shadow exceeds its fuzzy pixel count on Intel Mac Pro.
+webkit.org/b/332403 [ x86_64 ] compositing/corner-shape-box-shadow-composited.html [ ImageOnlyFailure ]
+
+# The expected results record the format null of the hardware decoder's compressed frames; the software decoder's are I420P10.
+webkit.org/b/332757 [ x86_64 ] webgl/video-formats/upload-path-vp9-p2-420-10bit-pq-videorange.html [ Failure ]
+
+# WebGPU render bundle replay with dynamic offsets and frag_depth produces wrong results on Intel GPUs.
+webkit.org/b/332407 [ x86_64 ] fast/webgpu/render-bundle-dynamic-offsets-persist-across-draws.html [ Failure ]
+webkit.org/b/332407 [ x86_64 ] fast/webgpu/render-bundle-fragment-depth-after-dynamic-offsets.html [ Failure ]
+
+# Takes about 30 seconds on Intel Macs.
+webkit.org/b/332404 [ x86_64 ] http/wpt/webcodecs/configure-encoder-big-frame-size.html [ Slow ]
+
+# The HEVC Main 10 cases get an encoder error on Intel Macs.
+webkit.org/b/332774 [ x86_64 ] http/wpt/webcodecs/videoEncoder-high-bit-depth.html [ Failure ]
+
 webkit.org/b/259464 fast/events/wheel/redispatched-wheel-event.html [ Pass Failure ]
 
 webkit.org/b/260113 [ arm64 ] http/wpt/webauthn/ctap-hid-failure.https.html [ Pass Failure ]
 
 # These tests require compile-time flags in WebKit that are only enabled in iOS 17 and Sonoma. They were marked as Skip in
 # https://bugs.webkit.org/show_bug.cgi?id=248545 — re-enable them here.
-[ Sonoma+ ] fast/images/animations-resume-from-last-displayed-frame.html [ Pass ]
-[ Sonoma+ ] fast/images/pagewide-play-pause-animateTransform-svg-animation.html [ Pass ]
-[ Sonoma+ ] fast/images/pagewide-play-pause-svg-image-sources.html [ Pass ]
 [ Sonoma+ ] fast/images/pagewide-play-pause-offscreen-animations.html [ Pass ]
 [ Sonoma+ ] fast/images/mac/animation-context-menu-items-presence.html [ Pass ]
 # This test was added in https://bugs.webkit.org/show_bug.cgi?id=250475 — re-enable it here for Sonoma.
@@ -1242,6 +1264,10 @@ webkit.org/b/320158 [ x86_64 ] fast/canvas/hdr/float16-canvas-imagedata-small-ac
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-accelerated-no-gpu-process.html [ Skip ]
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-unaccelerated.html [ Skip ]
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-unaccelerated-no-gpu-process.html [ Skip ]
+[ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-tone-mapping-extended-accelerated.html [ Skip ]
+[ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-tone-mapping-extended-unaccelerated.html [ Skip ]
+[ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-tone-mapping-standard-accelerated.html [ Skip ]
+[ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-image-tone-mapping-standard-unaccelerated.html [ Skip ]
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-imagebitmap-image-accelerated.html [ Skip ]
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-imagebitmap-image-accelerated-display-p3.html [ Skip ]
 [ Sequoia ] fast/canvas/hdr/float16-canvas-drawimage-imagebitmap-image-accelerated-no-gpu-process.html [ Skip ]
@@ -1285,7 +1311,7 @@ webkit.org/b/320158 [ x86_64 ] fast/canvas/hdr/float16-canvas-imagedata-small-ac
 fast/text/web-font-load-invisible-during-loading.html [ Failure ]
 
 # rdar://107460135 ([UI-side compositing] svg/compositing/outermost-svg-with-border-padding.html fails)
-svg/compositing/outermost-svg-with-border-padding.html
+svg/compositing/outermost-svg-with-border-padding.html [ Skip ]
 
 # rdar://103256284 (REGRESSION : [ GuardMalloc ] com.apple.WebCore: WebCore::RunLoopObserver::invalidate :: dyld config: DYLD_INSERT_LIBRARIES=libgmalloc.dylib DYLD_LIBRARY_PATH=buildToTest DYLD_FRAMEWORK_PATH=buildToTest)
 imported/mozilla/svg/as-image/img-simple-6.html [ Crash ]
@@ -1349,6 +1375,7 @@ fast/webgpu/nocrash/fuzz-286820.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-283196.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-283943.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-284326.html [ Skip ]
+[ x86_64 ] fast/webgpu/nocrash/fuzz-287519.html [ Skip ]
 [ x86_64 ] fast/webgpu/nocrash/fuzz-293750.html [ Skip ]
 
 [ x86_64 ] fast/webgpu/nocrash/fuzz-145583179.html [ Pass Failure ]
@@ -1462,7 +1489,8 @@ http/tests/webgpu/webgpu/api/validation/capability_checks/limits/maxSamplersPerS
 [ x86_64 ] http/tests/webgpu/webgpu/api/validation/createBindGroup.html [ Skip ]
 
 # shader tests that timeout
-http/tests/webgpu/webgpu/shader/execution/expression/binary/bitwise.html [ Pass Slow ]
+[ Release ] http/tests/webgpu/webgpu/shader/execution/expression/binary/bitwise.html [ Pass Slow ]
+webkit.org/b/332766 [ Debug ] http/tests/webgpu/webgpu/shader/execution/expression/binary/bitwise.html [ Skip ]
 [ arm64 ] http/tests/webgpu/webgpu/shader/execution/expression/binary/f32_matrix_matrix_multiplication.html [ Pass Timeout ]
 
 # One CTS file per test, so the longest in the suite; they clear 150s only outside a parallel run.
@@ -1608,6 +1636,7 @@ webkit.org/b/264001 [ Debug ] imported/w3c/web-platform-tests/requestidlecallbac
 #webkit.org/b/269301  (2X imported/w3c/web-platform-tests/webcodecs/videoFrame (layout-tests) are constant failures)
 [ x86_64 ] imported/w3c/web-platform-tests/webcodecs/videoFrame-createImageBitmap.https.any.html [ Failure ]
 [ x86_64 ] imported/w3c/web-platform-tests/webcodecs/videoFrame-createImageBitmap.https.any.worker.html [ Failure ]
+[ x86_64 ] imported/w3c/web-platform-tests/html/canvas/element/manual/imagebitmap/createImageBitmap-colorSpaceConversion.html [ Failure ]
 
 webkit.org/b/268398 [ Sonoma+ ] pdf/pdf-in-iframe-scrolling-tree-after-back.html [ Pass Failure ]
 
@@ -1806,8 +1835,6 @@ webkit.org/b/289094 [ Sequoia Debug ] imported/w3c/web-platform-tests/webcodecs/
 webkit.org/b/289121 imported/w3c/web-platform-tests/webrtc/RTCPeerConnection-mandatory-getStats.https.html [ Pass Failure ]
 
 webkit.org/b/289176 [ Debug ] http/tests/site-isolation/history/add-iframes-and-go-back.html [ Timeout ]
-
-webkit.org/b/307830 [ Debug arm64 ] http/tests/site-isolation/history/add-iframes-and-navigate-mainframe.html [ Pass Timeout ]
 
 webkit.org/b/289183 imported/w3c/web-platform-tests/mediacapture-record/MediaRecorder-disabled-tracks.https.html [ Pass Failure ]
 
@@ -2105,8 +2132,6 @@ http/tests/webgpu/webgpu/web_platform/copyToTexture/image.html [ Pass Timeout ]
 [ x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/video.html [ Skip ]
 [ Release x86_64 ] http/tests/webgpu/webgpu/web_platform/copyToTexture/ImageData.html [ Skip ]
 
-webkit.org/b/298416 [ Debug ] http/tests/websocket/construct-in-detached-frame.html [ Skip ]
-
 webkit.org/b/299830 imported/w3c/web-platform-tests/storage-access-api/hasStorageAccess-insecure.sub.window.html [ Pass Failure ]
 
 webkit.org/b/299826 [ Release x86_64 ] media/modern-media-controls/media-controller/media-controller-click-on-video-background-should-pause.html [ Crash ]
@@ -2114,8 +2139,6 @@ webkit.org/b/299826 [ Release x86_64 ] media/modern-media-controls/media-control
 webkit.org/b/301153 [ Debug ] fast/parser/entity-comment-in-textarea.html [ Pass Timeout ]
 
 webkit.org/b/310384 [ Debug ] inspector/timeline/timeline-event-EventDispatch.html [ Pass Timeout Crash ]
-
-webkit.org/b/301566 [ Debug ] imported/w3c/web-platform-tests/custom-elements/registries/Element-innerHTML.html [ Skip ]
 
 # webkit.org/b/301384 REGRESSION(301931@main): [macOS x86_64] two tests in imported/w3c/web-platform-tests/css/css-backgrounds are constant image only failure 
 [ Release x86_64 ] imported/w3c/web-platform-tests/css/css-backgrounds/background-repeat-space-6.html [ ImageOnlyFailure ]
@@ -2157,8 +2180,9 @@ webkit.org/b/304851 imported/w3c/web-platform-tests/workers/worker-performance.w
 
 webkit.org/b/304995 [ Release ] imported/w3c/web-platform-tests/largest-contentful-paint/video-poster.html [ Pass Failure ]
 
-webkit.org/b/305086 [ arm64 ] imported/w3c/web-platform-tests/media-source/mediasource-changetype-play-without-codecs-parameter.html [ Pass Failure ]
+webkit.org/b/305086 imported/w3c/web-platform-tests/media-source/mediasource-changetype-play-without-codecs-parameter.html [ Pass Failure ]
 
+webkit.org/b/305403 [ Sequoia Release arm64 ] http/tests/performance/performance-resource-timing-cross-origin-media.html [ Pass Timeout ]
 webkit.org/b/305403 [ Sequoia ] http/tests/performance/performance-resource-timing-redirection-cross-origin-media.html [ Failure ]
 
 # webkit.org/b/296008 [macOS Debug] http/tests/media/hls and platform/mac/media/encrypted-media tests are timing out on some EWS bots
@@ -2271,6 +2295,12 @@ webkit.org/b/314356 imported/w3c/web-platform-tests/websockets/constructor/013.h
 webkit.org/b/314746 [ Release ] fast/images/decode-render-animated-image.html [ Pass ImageOnlyFailure ]
 
 webkit.org/b/315225 http/tests/site-isolation/inspector/network/cross-origin-iframe-request-id-uniqueness.html [ Skip ]
+
+webkit.org/b/332772 http/tests/site-isolation/inspector/layers/layers-frame-target-node-scope.html [ Failure ]
+
+webkit.org/b/332767 http/tests/site-isolation/inspector/cpu-profiler/same-process-frame-targets.html [ Failure ]
+
+webkit.org/b/332773 [ Release ] http/tests/site-isolation/inspector/page/resources-finish-loading-after-reload.html [ Failure ]
 
 # Skipped on mac-wk2-stress in site-isolation mode: stress parallelism races with
 # BackendResourceDataStore lifecycle / event ordering. Tests pass cleanly on the
@@ -2494,8 +2524,6 @@ webkit.org/b/321524 [ Debug ] imported/w3c/web-platform-tests/payment-request/pa
 
 webkit.org/b/321726 imported/w3c/web-platform-tests/largest-contentful-paint/observe-svg-data-uri-image.html [ Pass Failure ]
 
-webkit.org/b/322051 [ Release ] media/picture-in-picture/picture-in-picture-interruption.html [ Pass Failure ]
-
 # rdar://183487942 ([macOS 27] fast/inline/blocks-in-inline-ax-invalid.html is a flaky test failure)
 [ GoldenGate ] fast/inline/blocks-in-inline-ax-invalid.html [ Pass ImageOnlyFailure ]
 
@@ -2598,7 +2626,6 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate Debug ] storage/websql/test-authorizer.html [ Failure ]
 [ GoldenGate ] http/tests/permissions/permission-status-onchange-event-service-worker.html [ Pass Crash ]
 [ GoldenGate ] http/tests/site-isolation/inspector/target/target.html [ Pass Crash ]
-[ GoldenGate ] http/tests/workers/service/page-caching.html [ Pass Crash ]
 [ GoldenGate ] accessibility/element-reflection-ariaowns.html [ Failure ]
 [ GoldenGate ] accessibility/isolated-tree/element-reflection-ariaowns.html [ Pass Failure ]
 [ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-291168.html [ Pass Failure ]
@@ -2623,10 +2650,6 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate ] imported/w3c/web-platform-tests/webvtt/rendering/cues-with-video/processing-model/bidi/u0628_first.html [ ImageOnlyFailure ]
 [ GoldenGate ] editing/inserting/typing-space-to-trigger-smart-link.html [ Failure ]
 [ GoldenGate ] fast/events/input-event-insert-link.html [ Failure ]
-[ GoldenGate ] fast/quirks/active-quirks-by-domain.html [ Failure ]
-[ GoldenGate ] fast/scrolling/mac/vertical-then-horizontal-scroll.html [ Failure ]
-[ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-283943.html [ Failure ]
-[ GoldenGate arm64 ] fast/webgpu/nocrash/fuzz-284326.html [ Failure ]
 [ GoldenGate ] http/tests/resourceLoadStatistics/website-data-removal-for-site-navigated-to-with-filtered-link-decoration-after-long-deletion.html [ Failure ]
 [ GoldenGate ] http/tests/site-isolation/accessibility/client/iframe-bounds.html [ Failure ]
 [ GoldenGate ] http/tests/site-isolation/inspector/network/resource-timing-cross-origin-page-navigation.html [ Failure ]
@@ -2636,23 +2659,7 @@ webkit.org/b/323902 [ x86_64 ] http/tests/webgpu/webgpu/shader/execution/express
 [ GoldenGate ] imported/w3c/web-platform-tests/pointerevents/pointerevent_touch-action-mouse.html [ Failure ]
 [ GoldenGate ] inspector/timeline/timeline-event-RenderingFrame.html [ Failure Timeout ]
 [ GoldenGate arm64 ] inspector/timeline/timeline-event-TimerRemove.html [ Failure Timeout ]
-[ GoldenGate ] tiled-drawing/scrolling/scroll-snap/scroll-snap-mandatory-2d-overflow.html [ Failure ]
-[ GoldenGate ] webaudio/audioworklet-stops-on-document-stop.html [ Failure ]
 [ GoldenGate ] webgl/video-formats/upload-path-av1-420-bt709-videorange.html [ Failure ]
-[ GoldenGate ] fast/scrolling/mac/rubberband-overflow-in-wheel-region.html [ Timeout ]
-
-# webkit.org/b/318157 11x imported/w3c/web-platform-tests/IndexedDB/* (layout-tests) are constant text failures.
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.sharedworker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/interleaved-cursors-small.any.worker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.html [ Failure Timeout ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.serviceworker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.sharedworker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large-multiple.any.worker.html [ Failure ]
-[ Debug x86_64 ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.serviceworker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.sharedworker.html [ Failure ]
-[ Debug ] imported/w3c/web-platform-tests/IndexedDB/nested-cloning-large.any.worker.html [ Failure ]
 
 # webkit.org/b/304362 REGRESSION(Tahoe): editing/selection/select-across-readonly-input* broken by Liquid Glass
 editing/selection/select-across-readonly-input-2.html [ Failure ]
@@ -2667,14 +2674,19 @@ webkit.org/b/322505 fast/visual-viewport/zoomed-scroll-into-view-fixed.html [ Sk
 
 webkit.org/b/326746 [ Sequoia x86_64 Debug ] media/modern-media-controls/icon-service/icon-service-bundle-load.html [ Pass Timeout ]
 
-webkit.org/b/326748 [ Debug ] media/modern-media-controls/macos-fullscreen-media-controls/macos-fullscreen-rtl-volume-button-no-overlap.html [ Pass Timeout ]
-
 webkit.org/b/326895 [ Debug ] http/tests/security/registerBlobURL.html [ Skip ] 
 
 webkit.org/b/326899 [ Sequoia+ ] http/tests/cache/cancel-multiple-post-xhrs.html [ Pass Failure ]
 
 webkit.org/b/293973 [ Debug ] http/tests/ipc/cocoa/gpu-load-error-empty-user-info-crssh.html [ Skip ]
 [ Debug ] ipc/cocoa/media-containment-bypass-create-player.html [ Crash ]
+
+# These IPC tests only send their messages in Debug builds, where the IPC testing API exists.
+webkit.org/b/332770 [ Debug ] http/tests/ipc/createnewpage-file-body-sandbox-extension.html [ Failure ]
+webkit.org/b/332770 [ Debug ] ipc/digital-credentials-chooser-frame-check.html [ Failure ]
+webkit.org/b/332770 [ Debug ] ipc/mac/start-drag-promised-attachment-file-url.html [ Failure ]
+webkit.org/b/332769 [ Debug ] http/tests/ipc/provisional-page-forged-provisional-url-message-check.html [ Failure ]
+webkit.org/b/332768 [ Debug ] ipc/back-forward-list-item-for-id-cross-page.html [ Failure Timeout ]
 
 webkit.org/b/327426 [ Debug arm64 ] http/wpt/webauthn/public-key-credential-get-success-hid.https.html [ Pass Failure ]
 webkit.org/b/327429 [ Debug arm64 ] imported/w3c/web-platform-tests/content-security-policy/frame-ancestors/frame-ancestors-nested-same-in-same-url-block.html [ Pass Failure ]
@@ -2704,3 +2716,9 @@ webkit.org/b/329010 [ Tahoe+ ] compositing/filters/filter-fractional-translation
 webkit.org/b/329900 [ Sequoia+ Debug arm64 ] http/tests/site-isolation/inspector/debugger/pause-holds-cross-process-frames-until-paused-frame-goes-away.html [ Pass Timeout ]
 
 webkit.org/b/329901 [ Sequoia+ Debug arm64 ] http/tests/security/xss-DENIED-xsl-document-securityOrigin.xml [ Pass Failure Timeout ]
+
+webkit.org/b/331276 [ Debug arm64 ] http/tests/security/contentSecurityPolicy/blob-url-inherits-multiple-csp-policies.html [ Pass Failure ]
+
+webkit.org/b/331277 [ Sequoia+ arm64 ] fast/forms/datetimelocal/datetimelocal-editable-components/datetimelocal-editable-components-focus-and-blur-events.html [ Pass Failure ]
+
+webkit.org/b/298476 [ GoldenGate Debug arm64 ] http/tests/canvas/color-fonts/ctm-sbix-2.html [ Pass Crash ]

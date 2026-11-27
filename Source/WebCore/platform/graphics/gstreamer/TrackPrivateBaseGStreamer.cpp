@@ -32,6 +32,7 @@
 #include "GStreamerCommon.h"
 #include "TrackPrivateBase.h"
 #include <gst/tag/tag.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringCommon.h>
@@ -88,7 +89,7 @@ static std::optional<String> getLanguageCode(GstTagList* tags)
     if (!language)
         return std::nullopt;
 
-    auto convertedLanguage = UTF8CStringView::unsafeFromUTF8(gst_tag_get_language_code_iso_639_1(language->utf8().legacyCStringPointer()));
+    auto convertedLanguage = UTF8CStringView::unsafeFromUTF8(gst_tag_get_language_code_iso_639_1(makeUTF8CString(*language).legacyCStringPointer()));
     GST_DEBUG("Converted track's language code to %s.", convertedLanguage.utf8());
     return String(convertedLanguage.span());
 }
@@ -176,7 +177,7 @@ void TrackDataHolder::setPad(GRefPtr<GstPad>&& pad)
     g_clear_signal_handler(&m_padCapsNotifyHandlerId, m_pad.get());
     m_pad = WTF::move(pad);
     m_bestUpstreamPad = findBestUpstreamPad(m_pad);
-    m_gstStreamId = byteCast<Latin1Character>(unsafeSpan(gst_pad_get_stream_id(m_pad.get())));
+    m_gstStreamId = String(GMallocString::unsafeAdoptFromUTF8(gst_pad_get_stream_id(m_pad.get())).span());
 
     if (m_shouldUsePadStreamId)
         m_id = parseStreamId(m_gstStreamId).value_or(m_index);
@@ -403,7 +404,7 @@ void TrackDataHolder::streamIdChanged()
     if (!m_pad)
         return;
 
-    String gstStreamId = byteCast<Latin1Character>(unsafeSpan(gst_pad_get_stream_id(m_pad.get())));
+    String gstStreamId(GMallocString::unsafeAdoptFromUTF8(gst_pad_get_stream_id(m_pad.get())).span());
     auto streamId = parseStreamId(gstStreamId);
     if (!streamId)
         return;
@@ -411,7 +412,7 @@ void TrackDataHolder::streamIdChanged()
     ASSERT(isMainThread());
     m_gstStreamId = gstStreamId;
     m_id = streamId.value();
-    GST_INFO("Track %" PRIu64 " got stream start. GStreamer stream-id: %s", m_id, m_gstStreamId.utf8());
+    GST_INFO("Track %" PRIu64 " got stream start. GStreamer stream-id: %s", m_id, makeUTF8CString(m_gstStreamId));
 }
 
 void TrackDataHolder::streamChanged()

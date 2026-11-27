@@ -263,12 +263,19 @@ public:
 
     inline bool shouldDoCacheableDictionaryTransitionForAdd(PutPropertySlot::Context context)
     {
+        // A structure that grew past s_maxTransitionLength through dot syntax has a fixed shape, so keyed adds
+        // keep sharing its transitions until they make up a quarter of its properties, when it acts as a hash map.
         int maxTransitionLength;
-        if (context == PutPropertySlot::PutById)
+        if (context == PutPropertySlot::PutById || (grewPastTransitionLimitThroughPutById() && canAddKeyedPropertyPastTransitionLimit()))
             maxTransitionLength = s_maxTransitionLengthForNonEvalPutById;
         else
             maxTransitionLength = s_maxTransitionLength;
         return transitionCountEstimate() > maxTransitionLength;
+    }
+
+    bool canAddKeyedPropertyPastTransitionLimit() const
+    {
+        return m_keyedAddsPastTransitionLimit < std::numeric_limits<uint8_t>::max() && 4 * static_cast<int>(m_keyedAddsPastTransitionLimit) < transitionCountEstimate();
     }
 
     inline bool shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()
@@ -336,6 +343,15 @@ public:
 
     JS_EXPORT_PRIVATE Structure* flattenDictionaryStructure(VM&, JSObject*);
 
+    // Re-flattening a growing dictionary churns, but a large prototype that gains one late property would
+    // otherwise block every cache through it for good.
+    bool canFlattenForCaching() const
+    {
+        if (!hasBeenFlattenedBefore())
+            return true;
+        return mayBePrototype() && !isUncacheableDictionary() && prototypeReflattenCount() < s_prototypeReflattenCountMask;
+    }
+
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
@@ -376,6 +392,16 @@ public:
         // FIXME: dictionaries cannot be cached for absence, so check for dictionaries here instead
         // of at all call sites.
         return !typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
+    }
+
+    // A cached private field or brand addition skips [[IsExtensible]], so the structure alone has to answer it.
+    bool privateElementAdditionsAreCacheable() const
+    {
+        // The structure of a compiled object cannot: it stays extensible (CompiledStructure's constructor) while the object keeps "not extensible" in its order word.
+        if (isCompiledStructure())
+            return false;
+        ASSERT(!typeInfo().overridesIsExtensible() || !isStructureExtensible());
+        return isStructureExtensible();
     }
 
     bool needImpurePropertyWatchpoint()
@@ -939,6 +965,14 @@ public:
     DEFINE_BITFIELD(bool, hasImmutableProperties, HasImmutableProperties, 1, 10); // Set by TransitionKind::MakePropertiesImmutable and inherited by every later transition. See JSObject::makePropertiesImmutable().
     DEFINE_BITFIELD(bool, hasListedImmutableProperties, HasListedImmutableProperties, 1, 11);
     DEFINE_BITFIELD(bool, hasPristineElements, HasPristineElements, 1, 12);
+    // Upstream has prototypeReflattenCount at bits 10 and 11 and grewPastTransitionLimitThroughPutById at bit 12. Here those are the three above,
+    // and m_bitField has no bit left. Nothing tests these two through bitFieldOffset(), so they are bit-fields beside m_keyedAddsPastTransitionLimit.
+    static constexpr uint32_t s_bitWidthOfPrototypeReflattenCount = 2;
+    static constexpr uint32_t s_prototypeReflattenCountMask = (1 << s_bitWidthOfPrototypeReflattenCount) - 1;
+    unsigned prototypeReflattenCount() const { return m_prototypeReflattenCount; }
+    void setPrototypeReflattenCount(unsigned newValue) { m_prototypeReflattenCount = newValue & s_prototypeReflattenCountMask; }
+    bool grewPastTransitionLimitThroughPutById() const { return m_grewPastTransitionLimitThroughPutById; }
+    void setGrewPastTransitionLimitThroughPutById(bool newValue) { m_grewPastTransitionLimitThroughPutById = newValue; }
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -1155,6 +1189,9 @@ private:
     uint8_t m_inlineCapacity;
 
     ConcurrentJSLock m_lock;
+    uint8_t m_keyedAddsPastTransitionLimit { 0 };
+    uint8_t m_prototypeReflattenCount : s_bitWidthOfPrototypeReflattenCount { 0 };
+    uint8_t m_grewPastTransitionLimitThroughPutById : 1 { 0 };
 
     uint32_t m_bitField;
     TransitionPropertyAttributes m_transitionPropertyAttributes { 0 };
@@ -1197,7 +1234,8 @@ private:
 };
 
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(Structure) == 112);
+// 112 before upstream's m_keyedAddsPastTransitionLimit, when no byte was left. Of the eight it cost, six are padding: two before m_bitField and four before m_seenProperties.
+static_assert(sizeof(Structure) == 120);
 #endif
 
 JS_EXPORT_PRIVATE void dumpTransitionKind(PrintStream&, TransitionKind);

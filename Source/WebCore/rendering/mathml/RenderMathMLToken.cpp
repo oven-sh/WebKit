@@ -54,12 +54,12 @@ using namespace MathMLNames;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderMathMLToken);
 
-RenderMathMLToken::RenderMathMLToken(Type type, MathMLTokenElement& element, Style::ComputedStyle&& style)
+RenderMathMLToken::RenderMathMLToken(Type type, MathMLTokenElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLBlock(type, element, WTF::move(style))
 {
 }
 
-RenderMathMLToken::RenderMathMLToken(Type type, Document& document, Style::ComputedStyle&& style)
+RenderMathMLToken::RenderMathMLToken(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style)
     : RenderMathMLBlock(type, document, WTF::move(style))
 {
 }
@@ -190,6 +190,13 @@ void RenderMathMLToken::layoutBlock(RelayoutChildren relayoutChildren, LayoutUni
     layoutOutOfFlowBoxes(relayoutChildren);
 }
 
+bool RenderMathMLToken::hasMathVariantGlyph() const
+{
+    if (!m_mathVariantCodePoint)
+        return false;
+    return protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored).font;
+}
+
 void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
 {
     RenderMathMLBlock::paint(info, paintOffset);
@@ -215,17 +222,6 @@ void RenderMathMLToken::paint(PaintInfo& info, const LayoutPoint& paintOffset)
         location.setX(roundToDevicePixel(LayoutUnit { location.x() }, document().deviceScaleFactor()));
 
     info.context().drawGlyphs(protect(*mathVariantGlyph.font), singleElementSpan(mathVariantGlyph.glyph), singleElementSpan(advance), location, style().fontCascade().fontDescription().usedFontSmoothing());
-}
-
-void RenderMathMLToken::paintChildren(PaintInfo& paintInfo, const LayoutPoint& paintOffset, PaintInfo& paintInfoForChild, bool usePrintRect)
-{
-    if (m_mathVariantCodePoint) {
-        auto mathVariantGlyph = protect(style().fontCascade())->glyphDataForCharacter(m_mathVariantCodePoint.value(), m_mathVariantIsMirrored);
-        if (mathVariantGlyph.font)
-            return;
-    }
-
-    RenderMathMLBlock::paintChildren(paintInfo, paintOffset, paintInfoForChild, usePrintRect);
 }
 
 }

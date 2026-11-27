@@ -46,6 +46,7 @@
 #include <numbers>
 #include <wtf/CompletionHandler.h>
 #include <wtf/HashMap.h>
+#include <wtf/HashSet.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -67,6 +68,9 @@ class XRCompositionLayer;
 struct XRCanvasConfiguration;
 struct XRRenderStateInit;
 
+#if ENABLE(WEBXR_ANCHORS)
+class WebXRAnchor;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
 struct XRHitTestOptionsInit;
 struct XRTransientInputHitTestOptionsInit;
@@ -136,6 +140,11 @@ public:
     bool isHandTrackingEnabled() const;
 #endif
 
+#if ENABLE(WEBXR_ANCHORS)
+    void addAnchor(Ref<WebXRAnchor>&&);
+    RefPtr<WebXRAnchor> anchor(PlatformXR::AnchorIdentifier) const;
+    void deleteAnchor(PlatformXR::AnchorIdentifier);
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     using RequestHitTestSourcePromise = DOMPromiseDeferred<IDLInterface<WebXRHitTestSource>>;
     void requestHitTestSource(const XRHitTestOptionsInit&, RequestHitTestSourcePromise&&);
@@ -153,6 +162,7 @@ public:
 #if ENABLE(WEBXR_LAYERS)
     unsigned maxRenderLayers() const;
     void layerDestroyed(const XRCompositionLayer&);
+    bool areLayersEnabled() const;
 #endif
 
     void initializeTrackingAndRendering(std::optional<XRCanvasConfiguration>&&);
@@ -242,13 +252,16 @@ private:
     // https://immersive-web.github.io/webxr/#xrsession-promise-resolved
     bool m_inputInitialized { false };
 
+#if ENABLE(WEBXR_ANCHORS)
+    HashMap<PlatformXR::AnchorIdentifier, RefPtr<WebXRAnchor>> m_activeAnchors;
+#endif
 #if ENABLE(WEBXR_HIT_TEST)
     HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRHitTestSource>> m_activeHitTestSources;
     HashMap<PlatformXR::HitTestSource, WeakPtr<WebXRTransientInputHitTestSource>> m_activeTransientInputHitTestSources;
 #endif
 
 #if ENABLE(WEBXR_PLANE_DETECTION)
-    HashMap<uint64_t, Ref<WebXRPlane>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_detectedPlanes;
+    HashMap<uint64_t, Ref<WebXRPlane>> m_detectedPlanes;
     bool m_roomCaptureCompleted { false };
 #endif
 };

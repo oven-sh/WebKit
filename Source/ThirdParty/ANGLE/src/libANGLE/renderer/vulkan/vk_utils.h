@@ -738,7 +738,10 @@ template <typename T>
 class [[nodiscard]] RendererScoped final : angle::NonCopyable
 {
   public:
-    RendererScoped(Renderer *renderer) : mRenderer(renderer) {}
+    template <typename... Args>
+    RendererScoped(Renderer *renderer, Args... args)
+        : mRenderer(renderer), mVar(std::forward<Args>(args)...)
+    {}
     ~RendererScoped() { mVar.release(mRenderer); }
 
     const T &get() const { return mVar; }
@@ -1472,15 +1475,13 @@ void InitExtendedDynamicState2EXTFunctions(VkDevice device);
 void InitExtendedDynamicState3EXTFunctions(VkDevice device);
 void InitExtendedDynamicState3EXTWithDepthClipControlEXTFunctions(VkDevice device);
 void InitExtendedDynamicState3EXTWithBlendOperationAdvancedEXTFunctions(VkDevice device);
+void InitExtendedDynamicState3EXTWithLineRasterizationEXTFunctions(VkDevice device);
 
 // VK_EXT_vertex_input_dynamic_state
 void InitVertexInputDynamicStateEXTFunctions(VkDevice device);
 
 // VK_KHR_dynamic_rendering
 void InitDynamicRenderingFunctions(VkDevice device);
-
-// VK_KHR_dynamic_rendering_local_read
-void InitDynamicRenderingLocalReadFunctions(VkDevice device);
 
 // VK_KHR_fragment_shading_rate
 void InitFragmentShadingRateKHRInstanceFunction(VkInstance instance);

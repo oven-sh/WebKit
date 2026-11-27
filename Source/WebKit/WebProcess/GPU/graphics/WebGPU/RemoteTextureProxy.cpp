@@ -30,7 +30,6 @@
 
 #include "RemoteTextureMessages.h"
 #include "RemoteTextureViewProxy.h"
-#include "WebGPUConvertToBackingContext.h"
 #include "WebGPUTextureViewDescriptor.h"
 #include <wtf/TZoneMallocInlines.h>
 
@@ -38,10 +37,11 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteTextureProxy);
 
-RemoteTextureProxy::RemoteTextureProxy(Ref<RemoteGPUProxy>&& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, bool isCanvasBacking)
+RemoteTextureProxy::RemoteTextureProxy(RemoteDeviceProxy& device, WebGPUTextureIdentifier identifier, const Properties& properties, bool isCanvasBacking)
     : m_backing(identifier)
-    , m_convertToBackingContext(convertToBackingContext)
-    , m_root(WTF::move(root))
+    , m_root(device.root())
+    , m_device(device)
+    , m_properties(properties)
     , m_isCanvasBacking(isCanvasBacking)
 {
 }
@@ -75,14 +75,13 @@ RefPtr<::WebGPU::TextureView> RemoteTextureProxy::createView(const std::optional
     if (m_isCanvasBacking && m_lastCreatedView && equalDescriptors(descriptor, m_lastCreatedViewDescriptor))
         return m_lastCreatedView;
 
-    Ref convertToBackingContext = m_convertToBackingContext;
 
-    auto identifier = WebGPUIdentifier::generate();
+    auto identifier = WebGPUTextureViewIdentifier::generate();
     auto sendResult = send(Messages::RemoteTexture::CreateView(descriptor, identifier));
     if (sendResult != IPC::Error::NoError)
         return nullptr;
 
-    auto result = RemoteTextureViewProxy::create(*this, convertToBackingContext, identifier);
+    auto result = RemoteTextureViewProxy::create(*this, identifier);
     result->setLabel(descriptor ? String { descriptor->label } : String { });
     if (!m_isCanvasBacking)
         return result;
@@ -90,6 +89,16 @@ RefPtr<::WebGPU::TextureView> RemoteTextureProxy::createView(const std::optional
     m_lastCreatedView = WTF::move(result);
     m_lastCreatedViewDescriptor = descriptor;
     return m_lastCreatedView;
+}
+
+RefPtr<::WebGPU::TextureView> RemoteTextureProxy::createInvalidView()
+{
+    auto identifier = WebGPUTextureViewIdentifier::generate();
+    auto sendResult = send(Messages::RemoteTexture::CreateInvalidView(identifier));
+    if (sendResult != IPC::Error::NoError)
+        return nullptr;
+
+    return RemoteTextureViewProxy::create(*this, identifier);
 }
 
 void RemoteTextureProxy::destroy()

@@ -52,7 +52,6 @@
 #include "Navigation.h"
 #include "NavigationScheduler.h"
 #include "Page.h"
-#include "ProcessSwapDisposition.h"
 #include "ScrollingCoordinator.h"
 #include "SerializedScriptValue.h"
 #include "Settings.h"
@@ -60,6 +59,7 @@
 #include "ShouldTreatAsContinuingLoad.h"
 #include "VisitedLinkStore.h"
 #include <WebCore/HTTPStatusCodes.h>
+#include <wtf/Borrow.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/TextStream.h>
 
@@ -435,7 +435,7 @@ void HistoryController::goToItemForNavigationAPI(HistoryItem& targetItem, FrameL
         // all frames have provisional items set before the commit.
         protectedThis->recursiveSetProvisionalItem(targetItem, currentItem.get(), ForNavigationAPI::Yes);
 
-        for (auto& frameToNavigate : framesToNavigate) {
+        for (auto& frameToNavigate : borrow(framesToNavigate)) {
             Ref abortHandler = protect(protect(frameToNavigate.frame->window())->navigation())->registerAbortHandler();
             frameToNavigate.frame->loader().loadItem(frameToNavigate.toItem, frameToNavigate.fromItem.get(), frameLoadType, ShouldTreatAsContinuingLoad::No);
             // If the navigation was aborted (by the JS called preventDefault() on the navigate event), then
@@ -561,7 +561,7 @@ void HistoryController::updateForReloadOrReplace()
 
 void HistoryController::updateForStandardLoad(HistoryUpdateType updateType)
 {
-    LOG(History, "HistoryController %p updateForStandardLoad: Updating History for standard load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), m_frame->loader().documentLoader()->url().string().utf8());
+    LOG(History, "HistoryController %p updateForStandardLoad: Updating History for standard load in frame %p (main frame %d) %s", this, m_frame.ptr(), m_frame->isMainFrame(), makeUTF8CString(m_frame->loader().documentLoader()->url().string()));
 
     Ref frameLoader = m_frame->loader();
 
@@ -1112,7 +1112,7 @@ void HistoryController::pushState(RefPtr<SerializedScriptValue>&& stateObject, c
     currentItem->setURLString(urlString);
     currentItem->setShouldRestoreScrollPosition(shouldRestoreScrollPosition);
 
-    LOG(History, "HistoryController %p pushState: Adding top item %p, setting url of current item %p to %s, scrollRestoration is %s", this, topItem.ptr(), m_currentItem.get(), urlString.utf8(), topItem->shouldRestoreScrollPosition() ? "auto" : "manual");
+    LOG(History, "HistoryController %p pushState: Adding top item %p, setting url of current item %p to %s, scrollRestoration is %s", this, topItem.ptr(), m_currentItem.get(), makeUTF8CString(urlString), topItem->shouldRestoreScrollPosition() ? "auto" : "manual");
 
     protect(protect(m_frame)->navigationScheduler())->adjustPendingHistoryNavigationForNewBackForwardEntry();
     protect(page->backForward())->addItem(WTF::move(topItem));
@@ -1133,7 +1133,7 @@ void HistoryController::updateBackForwardListForReplaceState(RefPtr<SerializedSc
     if (!currentItem)
         return;
 
-    LOG(History, "HistoryController %p updateBackForwardListForReplaceState: Setting url of current item %p to %s scrollRestoration %s", this, currentItem.get(), urlString.utf8(), currentItem->shouldRestoreScrollPosition() ? "auto" : "manual");
+    LOG(History, "HistoryController %p updateBackForwardListForReplaceState: Setting url of current item %p to %s scrollRestoration %s", this, currentItem.get(), makeUTF8CString(urlString), currentItem->shouldRestoreScrollPosition() ? "auto" : "manual");
 
     if (!urlString.isEmpty())
         currentItem->setURLString(urlString);

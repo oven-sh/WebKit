@@ -105,7 +105,7 @@ void MetaAllocatorHandle::shrink(size_t newSizeInBytes)
 
     newSizeInBytes = allocator.roundUp(newSizeInBytes);
     
-    ASSERT(newSizeInBytes <= sizeInBytes);
+    RELEASE_ASSERT(newSizeInBytes <= sizeInBytes);
 
     if (newSizeInBytes == sizeInBytes)
         return;
@@ -179,7 +179,7 @@ RefPtr<MetaAllocatorHandle> MetaAllocator::allocate(const Locker<Lock>&, size_t 
         
         size_t roundedUpSize = numberOfPages << m_logPageSize;
         
-        ASSERT(roundedUpSize >= sizeInBytes);
+        RELEASE_ASSERT(roundedUpSize >= sizeInBytes);
         
         m_bytesReserved += roundedUpSize;
         
@@ -446,7 +446,7 @@ void MetaAllocator::decrementPageOccupancy(void* address, size_t sizeInBytes)
     };
     
     for (uintptr_t page = firstPage; page <= lastPage; ++page) {
-        UncheckedKeyHashMap<uintptr_t, size_t>::iterator iter = m_pageOccupancyMap.find(page);
+        HashMap<uintptr_t, size_t>::iterator iter = m_pageOccupancyMap.find(page);
         ASSERT(iter != m_pageOccupancyMap.end());
         if (!--(iter->value)) {
             m_pageOccupancyMap.remove(iter);
@@ -462,7 +462,7 @@ void MetaAllocator::decrementPageOccupancy(void* address, size_t sizeInBytes)
 
 bool MetaAllocator::isInAllocatedMemory(const AbstractLocker&, void* address)
 {
-    ASSERT(m_lock.isLocked());
+    ASSERT_WITH_SECURITY_IMPLICATION(m_lock.isLocked());
     uintptr_t page = reinterpret_cast<uintptr_t>(address) >> m_logPageSize;
     return m_pageOccupancyMap.contains(page);
 }

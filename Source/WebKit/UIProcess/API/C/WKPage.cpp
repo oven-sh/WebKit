@@ -103,6 +103,7 @@
 #include <WebCore/ContentRuleListResults.h>
 #include <WebCore/Cursor.h>
 #include <WebCore/FrameLoaderClient.h>
+#include <WebCore/GraphicsContext.h>
 #include <WebCore/MockRealtimeMediaSourceCenter.h>
 #include <WebCore/OrganizationStorageAccessPromptQuirk.h>
 #include <WebCore/Page.h>
@@ -598,7 +599,7 @@ static void restoreFromSessionState(WKPageRef pageRef, WKTypeRef sessionStateRef
         if (!decodeLegacySessionState(toImpl(static_cast<WKDataRef>(sessionStateRef))->span(), sessionState))
             return;
     } else {
-        ASSERT(toImpl(sessionStateRef)->type() == API::Object::Type::SessionState);
+        RELEASE_ASSERT(protect(toImpl(sessionStateRef))->type() == API::Object::Type::SessionState);
 
         sessionState = toImpl(static_cast<WKSessionStateRef>(sessionStateRef))->sessionState();
     }
@@ -1033,9 +1034,8 @@ void WKPageSetPageContextMenuClient(WKPageRef pageRef, const WKPageContextMenuCl
 
             RefPtr<API::Array> array = adoptRef(toImpl(newMenu));
 
-            Vector<Ref<WebContextMenuItem>> customMenu;
             size_t newSize = array ? array->size() : 0;
-            customMenu.reserveInitialCapacity(newSize);
+            Vector<Ref<WebContextMenuItem>> customMenu(ReserveCapacityTag { }, newSize);
             for (size_t i = 0; i < newSize; ++i) {
                 RefPtr item = array->at<WebContextMenuItem>(i);
                 if (!item) {
@@ -1501,6 +1501,11 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 namespace WebKit {
 using namespace WebCore;
+
+static SecurityOriginData documentSecurityOriginData(const WebFrameProxy* frame)
+{
+    return frame ? frame->documentSecurityOriginData() : SecurityOriginData::createOpaque();
+}
     
 class RunBeforeUnloadConfirmPanelResultListener : public API::ObjectImpl<API::Object::Type::RunBeforeUnloadConfirmPanelResultListener> {
 public:
@@ -1830,13 +1835,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptAlert) {
                 RefPtr<RunJavaScriptAlertResultListener> listener = RunJavaScriptAlertResultListener::create(WTF::move(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 m_client.runJavaScriptAlert(toAPI(&page), toAPI(message), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptAlert_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 m_client.runJavaScriptAlert_deprecatedForUseWithV5(toAPI(&page), toAPI(message), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo);
                 completionHandler();
                 return;
@@ -1856,13 +1861,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptConfirm) {
                 RefPtr<RunJavaScriptConfirmResultListener> listener = RunJavaScriptConfirmResultListener::create(WTF::move(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 m_client.runJavaScriptConfirm(toAPI(&page), toAPI(message), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptConfirm_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 bool result = m_client.runJavaScriptConfirm_deprecatedForUseWithV5(toAPI(&page), toAPI(message), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo);
                 
                 completionHandler(result);
@@ -1883,13 +1888,13 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
         {
             if (m_client.runJavaScriptPrompt) {
                 RefPtr<RunJavaScriptPromptResultListener> listener = RunJavaScriptPromptResultListener::create(WTF::move(completionHandler));
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 m_client.runJavaScriptPrompt(toAPI(&page), toAPI(message), toAPI(defaultValue), toAPI(frame), toAPI(securityOrigin.get()), toAPI(listener.get()), m_client.base.clientInfo);
                 return;
             }
 
             if (m_client.runJavaScriptPrompt_deprecatedForUseWithV5) {
-                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+                RefPtr<API::SecurityOrigin> securityOrigin = API::SecurityOrigin::create(documentSecurityOriginData(frame));
                 RefPtr<API::String> string = adoptRef(toImpl(m_client.runJavaScriptPrompt_deprecatedForUseWithV5(toAPI(&page), toAPI(message), toAPI(defaultValue), toAPI(frame), toAPI(securityOrigin.get()), m_client.base.clientInfo)));
                 
                 if (string)
@@ -2043,7 +2048,7 @@ void WKPageSetPageUIClient(WKPageRef pageRef, const WKPageUIClientBase* wkClient
             if (!m_client.decidePolicyForGeolocationPermissionRequest)
                 return;
 
-            auto origin = API::SecurityOrigin::create(frameInfo.securityOrigin);
+            auto origin = API::SecurityOrigin::create(frame.documentSecurityOriginData());
             m_client.decidePolicyForGeolocationPermissionRequest(toAPI(&page), toAPI(&frame), toAPI(origin.ptr()), toAPI(GeolocationPermissionRequest::create(std::exchange(completionHandler, nullptr)).ptr()), m_client.base.clientInfo);
         }
 
@@ -3552,6 +3557,37 @@ bool WKPageIsEditingCommandEnabledForTesting(WKPageRef pageRef, WKStringRef comm
     return pageForTesting->isEditingCommandEnabled(protect(toImpl(command))->string());
 }
 
+void WKPageTakeCSSPageBoxesSnapshotForTesting(WKPageRef pageRef, WKSize defaultPageBoxSize, double defaultPageMargin, void* context, WKPageTakeCSSPageBoxesSnapshotForTestingFunction callback)
+{
+    protect(toImpl(pageRef))->cssPageBoxesSnapshotForTesting(toIntSize(defaultPageBoxSize), static_cast<int>(defaultPageMargin), [context, callback](std::optional<ShareableBitmap::Handle>&& handle) {
+        RefPtr bitmap = handle ? ShareableBitmap::create(WTF::move(*handle), SharedMemory::Protection::ReadOnly) : nullptr;
+        if (!bitmap)
+            return callback(nullptr, context);
+
+        Ref image = WebImage::create(bitmap->size(), ImageOption::Shareable, ColorSpace::SRGB());
+        auto* graphicsContext = image->context();
+        if (!graphicsContext)
+            return callback(nullptr, context);
+
+        bitmap->paint(*graphicsContext, { }, { { }, bitmap->size() });
+        callback(toAPI(image.ptr()), context);
+    });
+}
+
+bool WKPageIsDisplayCaptureCapabilityActiveForTesting(WKPageRef pageRef)
+{
+#if ENABLE(EXTENSION_CAPABILITIES)
+    RefPtr pageForTesting = toImpl(pageRef)->pageForTesting();
+    if (!pageForTesting)
+        return false;
+
+    return pageForTesting->isDisplayCaptureCapabilityActive();
+#else
+    UNUSED_PARAM(pageRef);
+    return false;
+#endif
+}
+
 void WKPageGetStorageAreaMapCountForTesting(WKPageRef pageRef, void* context, WKPageGetStorageAreaMapCountForTestingFunction callback)
 {
     RefPtr pageForTesting = toImpl(pageRef)->pageForTesting();
@@ -3596,6 +3632,14 @@ void WKPageClearBackForwardListForTesting(WKPageRef pageRef, void* context, WKPa
     pageForTesting->clearBackForwardList([context, completionHandler] {
         completionHandler(context);
     });
+}
+
+WKStringRef WKPageCopyBackForwardListDumpForTesting(WKPageRef pageRef, WKStringRef directory)
+{
+    RefPtr pageForTesting = toImpl(pageRef)->pageForTesting();
+    if (!pageForTesting)
+        return toCopiedAPI(String { });
+    return toCopiedAPI(pageForTesting->dumpBackForwardList(toWTFString(directory)));
 }
 
 void WKPageSetTracksRepaintsForTesting(WKPageRef pageRef, void* context, bool trackRepaints, WKPageSetTracksRepaintsForTestingFunction completionHandler)

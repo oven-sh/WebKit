@@ -100,7 +100,7 @@ public:
     static Ref<MediaStreamTrackPrivate> create(Ref<const Logger>&&, Ref<RealtimeMediaSource>&&, std::function<void(Function<void()>&&)>&& postTask = { });
     static Ref<MediaStreamTrackPrivate> create(Ref<const Logger>&&, Ref<RealtimeMediaSource>&&, String&& id, std::function<void(Function<void()>&&)>&& postTask = { });
 
-    WEBCORE_EXPORT virtual ~MediaStreamTrackPrivate();
+    WEBCORE_EXPORT ~MediaStreamTrackPrivate();
 
     const String& id() const LIFETIME_BOUND { return m_data.trackId; }
     const String& label() const LIFETIME_BOUND { return m_data.label; }
@@ -208,7 +208,7 @@ private:
     WTFLogChannel& logChannel() const final;
 #endif
 
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     bool isOnCreationThread();
 #endif
 
@@ -224,7 +224,7 @@ private:
 #if !RELEASE_LOG_DISABLED
     const uint64_t m_logIdentifier;
 #endif
-#if ASSERT_ENABLED
+#if ASSERT_ENABLED || ENABLE(SECURITY_ASSERTIONS)
     uint32_t m_creationThreadId { 0 };
 #endif
 };

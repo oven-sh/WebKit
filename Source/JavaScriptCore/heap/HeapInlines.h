@@ -175,18 +175,24 @@ inline void Heap::releaseSoon(std::unique_ptr<JSCGLibWrapperObject>&& object)
 
 inline void Heap::incrementDeferralDepth()
 {
+    // FIXME: This should be assertIsExclusiveAccessHolderOrConductorWithWorldStopped(), but VMTraps' signal handler
+    // jettisons code blocks, which defers GC, on WTF's Mach exception handler thread while the mutator is suspended in
+    // JIT code. That is safe, since JIT code never touches the deferral depth. Also, jettison()'s DeferGC is
+    // unnecessary when VMTraps calls it, since the VMTraps handler has no safepoints.
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth++;
 }
 
 inline void Heap::decrementDeferralDepth()
 {
+    // FIXME: See incrementDeferralDepth().
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth--;
 }
 
 inline void Heap::decrementDeferralDepthAndGCIfNeeded()
 {
+    // FIXME: See incrementDeferralDepth().
     ASSERT(!Thread::mayBeGCThread() || m_worldIsStopped);
     m_deferralDepth--;
     
@@ -237,8 +243,16 @@ inline void Heap::releaseAccess()
     releaseAccessSlow();
 }
 
+#if ASSERT_ENABLED
+inline bool Heap::currentThreadIsConductor() const
+{
+    return m_collector->currentThreadIsConductor();
+}
+#endif
+
 inline void Heap::noteAccessAcquired()
 {
+    m_mutatorHadAccessSinceLastStop = true;
 #if ASSERT_ENABLED
     m_accessHolderThreadUID.storeRelaxed(Thread::currentSingleton().uid());
     m_accessHolderCount.exchangeAdd(1);
@@ -247,6 +261,7 @@ inline void Heap::noteAccessAcquired()
 
 inline void Heap::noteAccessReleased()
 {
+    ASSERT(m_mutatorHadAccessSinceLastStop);
 #if ASSERT_ENABLED
     m_accessHolderThreadUID.storeRelaxed(0);
     m_accessHolderCount.exchangeSub(1);
@@ -258,6 +273,7 @@ inline void Heap::stopIfNecessary()
     if constexpr (validateDFGDoesGC)
         vm().verifyCanGC();
 
+    ASSERT(m_mutatorHadAccessSinceLastStop);
     if (mayNeedToStop())
         stopIfNecessarySlow();
 }

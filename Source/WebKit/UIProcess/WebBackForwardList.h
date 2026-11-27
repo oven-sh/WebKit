@@ -100,7 +100,7 @@ public:
     void didReceiveProvisionalMessage(IPC::Connection&, IPC::Decoder&);
     void didReceiveSyncMessage(IPC::Connection&, IPC::Decoder&, UniqueRef<IPC::Encoder>&);
 
-    void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, LoadedWebArchive, BrowsingContextGroup&);
+    void backForwardAddItemShared(IPC::Connection&, Ref<FrameState>&&, BrowsingContextGroup&);
     void backForwardGoToItemShared(IPC::Connection&, WebCore::BackForwardItemIdentifier);
 
     RefPtr<FrameState> findFrameStateInItem(WebCore::BackForwardItemIdentifier, WebCore::FrameIdentifier parentFrameID, WebCore::FrameIdentifier childFrameID, uint64_t childFrameIndex, const String& childFrameName);
@@ -126,7 +126,7 @@ private:
     NODELETE unsigned rawForwardListEntryCount() const;
 
     void addItem(Ref<WebBackForwardListItem>&&);
-    void addChildItem(WebCore::FrameIdentifier, Ref<FrameState>&&);
+    std::optional<WebCore::BackForwardItemIdentifier> addChildItem(WebCore::FrameIdentifier, Ref<FrameState>&&);
     void didRemoveItem(WebBackForwardListItem&);
     const BackForwardListItemVector& entries() const LIFETIME_BOUND { return m_entries; }
     NODELETE WebBackForwardListCounts rawCounts() const;

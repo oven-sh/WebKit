@@ -29,8 +29,7 @@
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // Side table for values that PrimitiveData refers to by handle rather than holding inline, which is
 // what lets it stay packed. Each value type gets its own map.
@@ -76,7 +75,7 @@ template<typename ValueType> unsigned ValueHandleMap<ValueType>::insert(Ref<Valu
 
     // FIXME: This monotonically increasing handle generation scheme is potentially wasteful
     // of the handle space. Consider reusing empty handles. https://bugs.webkit.org/show_bug.cgi?id=80489
-    while (!m_map.isValidKey(m_nextAvailableHandle) || !m_map.add(m_nextAvailableHandle, entry).isNewEntry)
+    while (!m_nextAvailableHandle || !m_map.add(m_nextAvailableHandle, entry).isNewEntry)
         ++m_nextAvailableHandle;
 
     return m_nextAvailableHandle++;
@@ -87,14 +86,14 @@ template<typename ValueType> NODELETE SUPPRESS_NODELETE ValueType& ValueHandleMa
 {
     Locker locker { m_lock };
     auto entry = m_map.find(handle);
-    ASSERT(entry != m_map.end());
+    ASSERT_WITH_SECURITY_IMPLICATION(entry != m_map.end());
     return *entry->value.value;
 }
 
 template<typename ValueType> void ValueHandleMap<ValueType>::ref(unsigned handle)
 {
     Locker locker { m_lock };
-    ASSERT(m_map.contains(handle));
+    ASSERT_WITH_SECURITY_IMPLICATION(m_map.contains(handle));
 
     ++m_map.find(handle)->value.referenceCountMinusOne;
 }
@@ -102,7 +101,7 @@ template<typename ValueType> void ValueHandleMap<ValueType>::ref(unsigned handle
 template<typename ValueType> void ValueHandleMap<ValueType>::deref(unsigned handle)
 {
     Locker locker { m_lock };
-    ASSERT(m_map.contains(handle));
+    ASSERT_WITH_SECURITY_IMPLICATION(m_map.contains(handle));
 
     auto it = m_map.find(handle);
     if (it->value.referenceCountMinusOne) {
@@ -117,5 +116,4 @@ template<typename ValueType> void ValueHandleMap<ValueType>::deref(unsigned hand
     // so drop the last reference (valueHold) after unlocking.
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

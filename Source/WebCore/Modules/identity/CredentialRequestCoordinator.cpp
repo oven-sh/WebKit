@@ -29,6 +29,7 @@
 
 #include "AbortSignal.h"
 #include "Chrome.h"
+#include "CommonVM.h"
 #include "CredentialRequestCoordinatorClient.h"
 #include "DigitalCredential.h"
 #include "DigitalCredentialsRequestData.h"
@@ -167,26 +168,29 @@ void CredentialRequestCoordinator::prepareCredentialRequests(const Document& doc
         return rejectTheCredentialRequestWith(Exception { ExceptionCode::TypeError, "No valid credential requests remain after validation"_s });
 
     if (signal) {
-        ASSERT(!signal->aborted());
+        if (signal->aborted())
+            return rejectTheCredentialRequestWith(signal->reason().getValue());
+
         auto identifier = signal->addAlgorithm([weakThis = WeakPtr { *this }](JSC::JSValue reason) {
             RefPtr protectedThis = weakThis;
             if (!protectedThis)
                 return;
             LOG(DigitalCredentials, "Credential request was aborted by AbortSignal");
-            protectedThis->abortTheCredentialRequest(ExceptionOr<JSC::JSValue> { WTF::move(reason) });
+            protectedThis->abortTheCredentialRequest(reason);
         });
         session->setAbortAlgorithm(RefPtr { signal }, identifier);
     }
-
-    if (signal && signal->aborted())
-        return rejectTheCredentialRequestWith(Exception { ExceptionCode::AbortError, "Signal was already aborted."_s });
 
     initiateTheCredentialRequest(document, WTF::move(validatedCredentialRequests), WTF::move(unvalidatedRequests), signal);
 }
 
 void CredentialRequestCoordinator::initiateTheCredentialRequest(const Document& document, Vector<std::optional<ValidatedDigitalCredentialRequest>>&& validatedRequests, Vector<UnvalidatedDigitalCredentialRequest>&& unvalidatedRequests, RefPtr<AbortSignal> signal)
 {
-    auto requestDataAndRawRequests = DigitalCredentialsRequestDataBuilder::build(WTF::move(validatedRequests), document, WTF::move(unvalidatedRequests));
+    DigitalCredentialsSecurityOriginData origins {
+        .topOrigin = document.topOrigin().data(),
+        .documentOrigin = document.securityOrigin().data(),
+    };
+    auto requestDataAndRawRequests = DigitalCredentialsRequestDataBuilder::build(WTF::move(validatedRequests), origins, WTF::move(unvalidatedRequests));
     if (requestDataAndRawRequests.hasException())
         return rejectTheCredentialRequestWith(requestDataAndRawRequests.releaseException());
 
@@ -200,29 +204,27 @@ void CredentialRequestCoordinator::initiateTheCredentialRequest(const Document& 
         requestingFrameID,
         WTF::move(rawRequests),
         requestData,
-        [weakThis = WeakPtr { *this }, signal](std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException) {
+        [weakThis = WeakPtr { *this }, session = m_activeSession, signal](std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException) {
             if (RefPtr protectedThis = weakThis.get())
-                protectedThis->processCredentialChooserResponse(WTF::move(responseOrException), signal);
+                protectedThis->processCredentialChooserResponse(WTF::move(responseOrException), *session, signal);
         });
 }
 
-void CredentialRequestCoordinator::processCredentialChooserResponse(std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, RefPtr<AbortSignal> signal)
+void CredentialRequestCoordinator::processCredentialChooserResponse(std::expected<DigitalCredentialsResponseData, ExceptionData>&& responseOrException, DigitalCredentialsSession& session, RefPtr<AbortSignal> signal)
 {
+    if (m_activeSession.get() != &session) {
+        LOG(DigitalCredentials, "Ignoring credential chooser response for a request that has already settled.");
+        return;
+    }
+
     if (signal && signal->aborted()) {
         LOG(DigitalCredentials, "Credential chooser response received after AbortSignal aborted");
-        abortTheCredentialRequest(ExceptionOr<JSC::JSValue> { signal->reason().getValue() });
+        abortTheCredentialRequest(signal->reason().getValue());
         return;
     }
 
     if (m_interactionState != InteractionState::Requesting) {
         LOG(DigitalCredentials, "Ignoring credential chooser response received while not in the Requesting state.");
-        return;
-    }
-
-    RefPtr session = m_activeSession;
-    if (!session) {
-        LOG(DigitalCredentials, "No active credential request session in coordinator.");
-        ASSERT_NOT_REACHED();
         return;
     }
 
@@ -234,7 +236,7 @@ void CredentialRequestCoordinator::processCredentialChooserResponse(std::expecte
     if (responseData.responseDataJSON.isEmpty())
         return rejectTheCredentialRequestWith(Exception { ExceptionCode::NotAllowedError, "The user cancelled the credential request."_s });
 
-    session->queueSettlement([weakThis = WeakPtr { *this }, responseDataJSON = responseData.responseDataJSON, protocol = responseData.protocol](auto& promise) mutable {
+    protect(session)->queueSettlement([weakThis = WeakPtr { *this }, responseDataJSON = responseData.responseDataJSON, protocol = responseData.protocol](auto& promise) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis) {
             promise.reject(Exception { ExceptionCode::AbortError, "Page was destroyed."_s });
@@ -304,7 +306,7 @@ void CredentialRequestCoordinator::rejectTheCredentialRequestWith(Exception&& ex
     });
 }
 
-void CredentialRequestCoordinator::abortTheCredentialRequest(ExceptionOr<JSC::JSValue>&& reason)
+void CredentialRequestCoordinator::abortTheCredentialRequest(JSC::JSValue reason)
 {
     RefPtr session = m_activeSession;
     if (!session || !session->hasPromise())
@@ -315,32 +317,21 @@ void CredentialRequestCoordinator::abortTheCredentialRequest(ExceptionOr<JSC::JS
 
     setInteractionState(InteractionState::Aborting);
     dismissChooser();
+    rejectTheCredentialRequestWith(reason);
+}
 
-    std::optional<Exception> abortException;
-    std::optional<JSC::Strong<JSC::Unknown>> protectedReason;
+void CredentialRequestCoordinator::rejectTheCredentialRequestWith(JSC::JSValue reason)
+{
+    ASSERT(m_interactionState != InteractionState::Idle);
 
-    if (reason.hasException())
-        abortException = reason.releaseException();
-    else {
-        auto jsReason = reason.releaseReturnValue();
-        if (RefPtr page = m_page.get()) {
-            if (RefPtr document = page->localTopDocument()) {
-                if (auto* globalObject = document->globalObject()) {
-                    JSC::VM& vm = globalObject->vm();
-                    JSC::JSLockHolder lock(globalObject);
-                    protectedReason.emplace(vm, WTF::move(jsReason));
-                }
-            }
-        }
-    }
+    RefPtr session = m_activeSession;
+    if (!session)
+        return;
 
-    session->queueSettlement([abortException = WTF::move(abortException), protectedReason = WTF::move(protectedReason)](auto& promise) mutable {
-        if (abortException)
-            promise.reject(WTF::move(*abortException));
-        else if (protectedReason)
-            promise.template rejectType<IDLAny>(protectedReason->get());
-        else
-            promise.reject(Exception { ExceptionCode::AbortError, "The credential request was aborted."_s });
+    Ref vm = commonVM();
+    JSC::JSLockHolder lock(vm);
+    session->queueSettlement([reason = JSC::Strong<JSC::Unknown> { vm, reason }](auto& promise) {
+        promise.template rejectType<IDLAny>(reason.get());
     });
 }
 

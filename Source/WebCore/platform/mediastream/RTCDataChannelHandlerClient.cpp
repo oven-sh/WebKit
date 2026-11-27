@@ -43,7 +43,7 @@ NODELETE static HashMap<RTCDataChannelLocalIdentifier, std::pair<std::optional<S
 
 void RTCDataChannelHandlerClient::peerConnectionIsClosing(RTCDataChannelIdentifier identifier)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     RefPtr<RTCDataChannelHandlerClient> mainThreadClient;
     {
         Locker locker { s_rtcDataChannelHandlerClientsLock };

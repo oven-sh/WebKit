@@ -61,6 +61,8 @@ my %auxImplIncludes = ();
 my $auxImplActive = 0;
 # Names of the IDL files, without .idl, whose definitions the generated code depends on.
 my %dependencies = ();
+# Names of the child interfaces the generated code depends on, or undef if it doesn't depend on its child interfaces.
+my $childInterfaceNames;
 my $hasNonTrivialFinishCreation = 0;
 my $hasNonDefaultFinishCreation = 0;
 
@@ -4310,7 +4312,7 @@ sub GetGnuVTableRefForInterface
     }
     my $typename = $interface->type->name;
     my $offset = GetGnuVTableOffsetForType($typename);
-    return "&" . $vtableName . "[" . $offset . "]";
+    return "itaniumVTableAddressPoint<" . $offset . ">(" . $vtableName . ")";
 }
 
 sub GetGnuVTableNameForInterface
@@ -5814,7 +5816,11 @@ sub GenerateImplementation
 
         my $hasChildInterfaces = 0;
         unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
-            $codeGenerator->ForEachChildInterface($interface, sub { $hasChildInterfaces = 1; });
+            $childInterfaceNames = [];
+            $codeGenerator->ForEachChildInterface($interface, sub {
+                $hasChildInterfaces = 1;
+                push(@$childInterfaceNames, shift->type->name);
+            });
         }
 
         # We use a templated verifyVTable function here to force the type
@@ -5822,7 +5828,6 @@ sub GenerateImplementation
         # not causing errors when evaluated. It is only called when there are
         # no child interfaces, so only emit it in that case.
         push(@implContent, <<END) if $vtableNameGnu and not $hasChildInterfaces;
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable: 4483)
@@ -5838,7 +5843,7 @@ static inline void verifyVTable(${implType}* ptr)
 #if PLATFORM(WIN)
         void* expectedVTablePointer = ${vtableRefWin};
 #else
-        void* expectedVTablePointer = ${vtableRefGnu};
+        const void* expectedVTablePointer = ${vtableRefGnu};
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
@@ -5849,7 +5854,6 @@ static inline void verifyVTable(${implType}* ptr)
     }
 }
 #endif
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 END
 
@@ -8875,9 +8879,12 @@ sub WriteData
     if ($writeDependencies) {
         delete $dependencies{$name};
         my @dependencies = map { "$_.idl" } sort keys %dependencies;
-        $codeGenerator->UpdateFile($depsFileName, "JS$name.h : @dependencies\n" . join("", map { "$_ :\n" } @dependencies));
+        my $contents = "JS$name.h : @dependencies\n" . join("", map { "$_ :\n" } @dependencies);
+        $contents .= join(" ", "# Child interfaces:", @$childInterfaceNames) . "\n" if $childInterfaceNames;
+        $codeGenerator->UpdateFile($depsFileName, $contents);
     }
     %dependencies = ();
+    $childInterfaceNames = undef;
 }
 
 sub GeneratePrototypeDeclaration

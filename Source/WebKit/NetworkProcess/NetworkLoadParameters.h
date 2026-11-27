@@ -54,6 +54,7 @@ struct CompressionDictionaryParameters {
 
     WebCore::FetchOptions::Destination destination { WebCore::FetchOptions::Destination::EmptyString };
     std::optional<Match> match { };
+    bool isNoCors { false };
 };
 
 struct NetworkLoadParameters {
@@ -87,6 +88,8 @@ struct NetworkLoadParameters {
     // the WebProcess). We should block storage access cookies on this load's network requests without
     // revoking the frame's storage from JS until the navigation load commits.
     bool navigationLosesFrameSpecificStorageAccess { false };
+
+    bool siteIsolationEnabled { false };
 
     std::optional<CompressionDictionaryParameters> compressionDictionary { };
 };

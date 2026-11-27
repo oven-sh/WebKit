@@ -180,7 +180,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     PagePseudoClass pagePseudoClass() const;
 
     bool matchesPseudoElement() const;
-    bool isSiblingSelector() const;
     bool isAttributeSelector() const;
 
     // True for [class~="foo"] selectors that match exactly like .foo, so matching can test
@@ -306,7 +305,7 @@ inline bool operator==(const PossiblyQuotedIdentifier& a, const AtomString& b) {
 inline const QualifiedName& CSSSelector::attribute() const
 {
     ASSERT(isAttributeSelector());
-    ASSERT(m_hasRareData);
+    ASSERT_WITH_SECURITY_IMPLICATION(m_hasRareData);
     return m_data.rareData->attribute;
 }
 
@@ -351,13 +350,6 @@ inline bool isLogicalCombinationPseudoClass(CSSSelector::PseudoClass pseudoClass
 
 NODELETE bool isElementBackedPseudoElement(CSSSelector::PseudoElement);
 
-inline bool CSSSelector::isSiblingSelector() const
-{
-    return relation() == Relation::DirectAdjacent
-        || relation() == Relation::IndirectAdjacent
-        || (match() == CSSSelector::Match::PseudoClass && pseudoClassIsRelativeToSiblings(pseudoClass()));
-}
-
 inline bool CSSSelector::isAttributeSelector() const
 {
     return match() == CSSSelector::Match::Exact
@@ -371,7 +363,7 @@ inline bool CSSSelector::isAttributeSelector() const
 
 inline void CSSSelector::setValue(const AtomString& value, bool matchLowerCase)
 {
-    ASSERT(match() != Match::Tag);
+    ASSERT_WITH_SECURITY_IMPLICATION(match() != Match::Tag);
     auto matchingValue = matchLowerCase ? value.convertToASCIILowercase() : value;
     if (!m_hasRareData && matchingValue != value)
         createRareData();
@@ -443,7 +435,7 @@ inline const AtomString& CSSSelector::tagLowercaseLocalName() const
 
 inline const AtomString& CSSSelector::value() const
 {
-    ASSERT(match() != Match::Tag);
+    ASSERT_WITH_SECURITY_IMPLICATION(match() != Match::Tag);
     if (m_hasRareData)
         return m_data.rareData->matchingValue;
 
@@ -453,7 +445,7 @@ inline const AtomString& CSSSelector::value() const
 
 inline const AtomString& CSSSelector::serializingValue() const
 {
-    ASSERT(match() != Match::Tag);
+    ASSERT_WITH_SECURITY_IMPLICATION(match() != Match::Tag);
     if (m_hasRareData)
         return m_data.rareData->serializingValue;
 

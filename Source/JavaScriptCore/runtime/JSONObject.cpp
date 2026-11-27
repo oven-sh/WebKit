@@ -30,6 +30,7 @@
 #include "ArrayConstructor.h"
 #include "BigIntObject.h"
 #include "BooleanObject.h"
+#include "DeferGCInlines.h"
 #include "GetterSetter.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
@@ -39,7 +40,6 @@
 #include "ObjectConstructorInlines.h"
 #include "PropertyNameArray.h"
 #include "VMInlines.h"
-#include <charconv>
 #include <wtf/MathExtras.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/dtoa.h>
@@ -50,6 +50,7 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringBuilderJSON.h>
 #include <wtf/text/StringCommon.h>
+#include <wtf/text/StringImplMallocWithBackgroundPrefault.h>
 
 #if ENABLE(AOT)
 #include "AOTJSONHooks.h"
@@ -746,12 +747,11 @@ bool Stringifier::Holder::appendNextProperty(Stringifier& stringifier, StringBui
 // ------------------------------ FastStringifier --------------------------------
 
 // FastStringifier does a no-side-effects stringify of the most common types of
-// objects and arrays. It bails out if the serialization is any longer than a
-// fixed buffer and handles only the simplest cases, including only 8-bit character
-// strings. Instead of explicit checks to prevent excessive recursion and cycles,
-// it counts on hitting the buffer size limit to catch those things. If it fails,
-// since there is no side effect, the full general purpose Stringifier can be used
-// and the only cost of the fast stringifying attempt is the time wasted.
+// objects and arrays. It handles only the simplest cases and bails out on anything
+// else. Recursion, including from cycles, is bounded by checking the VM's soft stack
+// limit, and the general purpose Stringifier then reports the error. If it fails,
+// since there is no side effect, the general purpose Stringifier can be used and
+// the only cost of the fast stringifying attempt is the time wasted.
 
 enum class BufferMode : uint8_t {
     StaticBuffer,
@@ -791,9 +791,23 @@ static uint64_t& dynamicBufferLengths(VM& vm)
         return vm.recentUTF16JSONStringifyLengths();
 }
 
-// Bounds how much address space a stale hint can reserve up front.
+// Bounds how much memory a stale hint can reserve, and have faulted in, up front.
 static constexpr unsigned maxDynamicBufferLengthHint = 32 * MB;
 static constexpr unsigned dynamicBufferLengthHintSlack = 256;
+
+// A zero length means no result was recorded, since a successful result is never empty.
+static unsigned smallerRecentDynamicBufferLength(uint64_t recentLengths)
+{
+    unsigned newer = static_cast<unsigned>(recentLengths);
+    unsigned older = static_cast<unsigned>(recentLengths >> 32);
+    if (!older)
+        return newer;
+    return std::min(newer, older);
+}
+
+// Recorded when a dynamic-buffer attempt fails. Too short to size a buffer from, and not zero, so the
+// next success is not mistaken for the first result ever recorded and trusted on its own.
+static constexpr uint64_t dynamicBufferLengthsAfterFailure = 1;
 
 template<typename CharType, BufferMode bufferMode>
 class FastStringifier {
@@ -830,10 +844,21 @@ public:
     };
     static_assert(sizeof(PreparedProperty) == 8);
 
+    // A string value already written without escapes, as the offset and length of its quoted text in the output.
+    struct PreparedString {
+        JSCell* string;
+        uint32_t offset;
+        uint32_t length;
+    };
+    static constexpr bool usePreparedStrings = bufferMode == BufferMode::DynamicBuffer && std::same_as<CharType, Latin1Character>;
+    static constexpr unsigned preparedStringTableSizeLog2 = 8;
+    static constexpr unsigned preparedStringTableSize = usePreparedStrings ? 1u << preparedStringTableSizeLog2 : 1;
+
 private:
     explicit FastStringifier(JSGlobalObject&);
     template<HasGap hasGap> void append(JSValue);
     void appendInt32(int32_t);
+    template<HasGap hasGap> void appendArray(JSArray&);
     template<HasGap hasGap> void appendInt32Array(JSArray&);
 #if ENABLE(AOT)
     void appendDate(DateInstance&);
@@ -856,13 +881,15 @@ private:
     template<HasGap hasGap> void appendListedFields(JSObject&, std::span<const AOT::FieldAsProperty>);
     bool isMemberWrittenByItsFields(JSObject&);
     bool writeListedFieldsOfMember(Cursor&, JSObject&, std::span<const AOT::FieldAsProperty>, unsigned reservation);
-    void appendElementsInCompiledProgram(JSArray&);
+    void appendElementsInCompiledProgram(std::span<const WriteBarrier<Unknown>> elements);
     enum class ArrayResult : uint8_t { No, Yes, Failed };
     ArrayResult writePrimitiveArray(Cursor&, JSArray&);
     bool isCompiledStructureKnown(const JSObject& object) const { return (m_compiledStructuresKnown & knowsCompiledStructure) && object.structureID().bits() == m_compiledStructureWithoutToJSON; }
 #endif
     template<HasGap hasGap> bool appendPreparedObjectKey(const PreparedProperty&, bool& wroteProperty, unsigned newLineAndIndent, unsigned valueCapacity, CharType*& out, unsigned& length, unsigned& capacity);
+    template<HasGap hasGap, bool inlineNestedObjects> bool appendPreparedObjectImpl(JSObject&, unsigned structureSlot, CharType*& out, unsigned& length, unsigned& capacity);
     template<HasGap hasGap> void appendPreparedObject(JSObject&, unsigned structureSlot);
+    template<HasGap hasGap> void appendContiguousArray(std::span<const WriteBarrier<Unknown>> elements);
     template<HasGap hasGap> void appendUnpreparedObject(JSObject&, StructureID);
     String result();
 
@@ -870,7 +897,62 @@ private:
     {
         return (structureID.bits() * 0x9e3779b9u) >> (32 - preparedStructureTableSizeLog2);
     }
-    Structure* preparedStructure(unsigned slot) const { return m_preparedStructureCount ? m_preparedStructures[slot] : nullptr; }
+
+    // Returns the slot holding structureID, or the empty slot that ends its probe sequence.
+    ALWAYS_INLINE unsigned probePreparedStructureSlot(StructureID structureID) const
+    {
+        unsigned slot = preparedStructureSlot(structureID);
+#if USE(BUN_JSC_ADDITIONS)
+        while (m_preparedStructureIDs[slot] && m_preparedStructureIDs[slot] != structureID.bits())
+#else
+        while (m_preparedStructureIDs[slot] && m_preparedStructureIDs[slot] != structureID)
+#endif
+            slot = (slot + 1) & (preparedStructureTableSize - 1);
+        return slot;
+    }
+
+    static constexpr unsigned notPreparedSlot = std::numeric_limits<unsigned>::max();
+    ALWAYS_INLINE unsigned findPreparedStructureSlot(StructureID structureID) const
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        // m_preparedStructureIDs is cleared late: before a Structure is prepared, nothing may read it.
+        if (!m_preparedStructureCount)
+            return notPreparedSlot;
+#endif
+        unsigned slot = probePreparedStructureSlot(structureID);
+        return m_preparedStructureIDs[slot] ? slot : notPreparedSlot;
+    }
+
+    // False until appendArray has checked the array prototype chain for toJSON. An original array structure
+    // has no own named properties, so a true result also rules out an own toJSON.
+    ALWAYS_INLINE bool isOriginalArrayWithCheckedPrototype(JSArray& array) const
+    {
+        return m_checkedArrayPrototype && m_globalObject.isOriginalArrayStructure(array.structure());
+    }
+
+    ALWAYS_INLINE bool isStackExhausted() const
+    {
+        return std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit;
+    }
+
+    ALWAYS_INLINE bool ensureCapacity(unsigned size, CharType*& out, unsigned length, unsigned& capacity)
+    {
+        if (capacity - length >= size) [[likely]]
+            return true;
+        m_length = length;
+        if (!hasRemainingCapacitySlow(size)) [[unlikely]] {
+            recordBufferFull();
+            return false;
+        }
+        out = buffer();
+        capacity = m_capacity;
+        return true;
+    }
+
+    static ALWAYS_INLINE unsigned preparedStringSlot(JSCell* cell)
+    {
+        return (std::bit_cast<uintptr_t>(cell) >> 4) & (preparedStringTableSize - 1);
+    }
 
     static constexpr unsigned maxInt32StringLength = ("-2147483648"_s).length();
 
@@ -904,8 +986,6 @@ private:
     static void logOutcome(ASCIILiteral);
     static void logOutcome(String&&);
 
-    static unsigned usableBufferSize(unsigned availableBufferSize);
-
     CharType* buffer();
     const CharType* buffer() const;
     std::span<CharType> bufferSpan();
@@ -933,7 +1013,8 @@ private:
     std::optional<FailureReason> m_failureReason;
 #if USE(BUN_JSC_ADDITIONS)
     // This table and the next are cleared where the first object is written without a record, so a value without one pays for neither.
-    std::array<Structure*, preparedStructureTableSize> m_preparedStructures;
+    // It holds the bits of each StructureID: StructureID has a constructor, which would clear the table where the stringifier is made.
+    std::array<uint32_t, preparedStructureTableSize> m_preparedStructureIDs;
     // Upstream prepares the Structure of every object it writes. The record costs more than it saves until another object of
     // that Structure comes, and most values have one object of each. So a Structure is prepared where another one is likely:
     // for an element of a list of two or more, and for an object whose Structure appendUnpreparedObject() meets again.
@@ -943,9 +1024,9 @@ private:
     // Set around the append() of such an element. appendUnpreparedObject() takes it, so what lies in the element does not see it.
     bool m_isElementOfList { false };
 #else
-    std::array<Structure*, preparedStructureTableSize> m_preparedStructures { };
+    std::array<StructureID, preparedStructureTableSize> m_preparedStructureIDs { };
 #endif
-    Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, WTF::StringImplMalloc> m_dynamicBuffer;
+    Vector<CharType, dynamicBufferInlineCapacity, CrashOnOverflow, 16, StringImplMallocWithBackgroundPrefault> m_dynamicBuffer;
     uint8_t* m_stackLimit { nullptr };
 #if ENABLE(AOT)
     uint32_t m_compiledStructureWithoutToJSON; // The bits of a StructureID. Written before its bit in m_compiledStructuresKnown is set.
@@ -956,6 +1037,12 @@ private:
     std::array<PreparedStructureRange, preparedStructureTableSize> m_preparedStructureRanges;
     std::array<PreparedProperty, maxPreparedProperties> m_preparedProperties;
     std::array<PreparedProperty, maxPreparedPropertyScratch> m_preparedPropertyScratch;
+#if USE(BUN_JSC_ADDITIONS)
+    // Cleared where m_preparedStructureIDs is. Only an object of a prepared Structure reads it.
+    std::array<PreparedString, preparedStringTableSize> m_preparedStrings;
+#else
+    std::array<PreparedString, preparedStringTableSize> m_preparedStrings { };
+#endif
 
     CharType m_buffer[staticBufferSize];
 };
@@ -1031,82 +1118,15 @@ ALWAYS_INLINE std::span<CharType> FastStringifier<CharType, bufferMode>::bufferS
 }
 
 template<typename CharType, BufferMode bufferMode>
-inline unsigned FastStringifier<CharType, bufferMode>::usableBufferSize(unsigned availableBufferSize)
-{
-    // FastStringifier relies on m_capacity (i.e. the remaining usable capacity) in m_buffer
-    // to limit recursion. Hence, we need to compute an appropriate m_capacity value.
-    //
-    // To do this, we empirically measured the worst case stack usage incurred by 1 recursion
-    // of any of the append methods. Assuming each call to append() only consumes 1 Latin1Character in
-    // m_buffer, the amount of buffer size that FastStringifier is allowed to run with can be
-    // estimated as:
-    //
-    //      stackCapacityForRecursion = remainingStackCapacity - maxLeafFunctionStackUsage
-    //      maxAllowedBufferSize = stackCapacityForRecursion / maxRecursionFrameSize
-    //      usableBufferSize = min(maxAllowedBufferSize, sizeof(m_buffer))
-    //
-    // 1. A leaf function is any function that append() calls which does not recurse.
-    //    At peak recursion, there needs to be enough room left on the stack to execute any
-    //    of these leaf functions i.e. maxLeafFunctionStackUsage.
-    //
-    //    We estimate maxLeafFunctionStackUsage to be StackBounds::DefaultReservedZone.
-    //    stack.recursionLimit() already adds DefaultReservedZone to the bottom of the stack.
-    //    Hence, using stack.recursionLimit() to compute stackCapacityForRecursion will leave
-    //    us with the needed stack space for leaf functions to execute.
-    //
-    // 2. We can compute m_capacity as:
-    //
-    //      m_capacity = m_length + usableBufferSize
-    //
-    //    where m_length is the position of the next usable character for emission in m_buffer.
-    //
-    // 3. This calculation of m_capacity is a best effort estimate. If we're not
-    //    conservative enough and get it wrong, the worst that can happen is that we'll
-    //    crash when recursion causes us to step on the stack guard page at the bottom of
-    //    the stack. The goal of trying to estimate a good m_capacity value is to avoid
-    //    this stack overflow crash.
-    //
-    //    Note that for a Release build, maxRecursionFrameSize is measured to be less than
-    //    384 bytes. This is well below stack guard page sizes which are between 4 and 16K
-    //    depending on the OS. Hence, recursing too deeply with FastStringifier::append()
-    //    is guaranteed to crash in the stack guard page.
-    //
-    // 4. If we're too conservative, we might fail out of FastStringifier too eagerly.
-    //    In this case, we'll just fall back to the slow path Stringifier. The only down
-    //    side here is potential loss of some performance opportunity when we encounter
-    //    a workload that recurses deeply. We expect such workloads to be rare.
-
-    auto& stack = Thread::currentSingleton().stack();
-    uint8_t* stackPointer = std::bit_cast<uint8_t*>(currentStackPointer());
-    uint8_t* stackLimit = std::bit_cast<uint8_t*>(stack.recursionLimit());
-    size_t stackCapacityForRecursion = stackPointer - stackLimit;
-
-#if ASAN_ENABLED
-    // Measured to be ~4608 for a Debug ASAN build on arm64E, rounding up to 5K for margin.
-    constexpr size_t maxRecursionFrameSize = 5 * KB;
-#elif !defined(NDEBUG)
-    // Measured to be ~912 for a Debug build on arm64E, rounding up to 1280 for margin.
-    constexpr size_t maxRecursionFrameSize = 1280;
-#else
-    // Measured to be ~224 for a Release build on arm64E, rounding up to 384 for margin.
-    constexpr size_t maxRecursionFrameSize = 384;
-#endif
-    ASSERT(static_cast<unsigned>(stackCapacityForRecursion) == stackCapacityForRecursion);
-    unsigned allowedBufferSize = stackCapacityForRecursion / maxRecursionFrameSize;
-    unsigned usableBufferSize = std::min(allowedBufferSize, availableBufferSize);
-    return usableBufferSize;
-}
-
-template<typename CharType, BufferMode bufferMode>
 inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& globalObject)
     : m_globalObject(globalObject)
     , m_vm(globalObject.vm())
+    , m_stackLimit(std::bit_cast<uint8_t*>(m_vm.softStackLimit()))
 {
     if constexpr (bufferMode == BufferMode::StaticBuffer)
-        m_capacity = m_length + usableBufferSize(staticBufferSize);
+        m_capacity = staticBufferSize;
     else {
-        uint64_t recentLengths = dynamicBufferLengths<CharType>(m_vm);
-        unsigned lengthHint = std::min({ static_cast<unsigned>(recentLengths), static_cast<unsigned>(recentLengths >> 32), maxDynamicBufferLengthHint });
+        unsigned lengthHint = std::min(smallerRecentDynamicBufferLength(dynamicBufferLengths<CharType>(m_vm)), maxDynamicBufferLengthHint);
 #if USE(BUN_JSC_ADDITIONS)
         // appendContentOfLongString() asks for six times a piece before it writes one, which upstream's slack does not hold: a result with
         // a long string near its end grew to twice its length, was copied there, and was copied again when result() gave the room back.
@@ -1119,7 +1139,6 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
         if (initialSize == dynamicBufferInlineCapacity || !m_dynamicBuffer.tryGrow(initialSize))
             m_dynamicBuffer.grow(dynamicBufferInlineCapacity);
         m_capacity = m_dynamicBuffer.size();
-        m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
     }
 }
 
@@ -1181,7 +1200,7 @@ inline String FastStringifier<CharType, bufferMode>::result()
                 return String::make8Bit(std::span { static_cast<const FastStringifier*>(this)->buffer(), m_length });
         }
         m_dynamicBuffer.shrink(m_length);
-        if (m_dynamicBuffer.capacity() / 2 > m_length)
+        if (m_dynamicBuffer.capacity() > dynamicBufferInlineCapacity && m_dynamicBuffer.capacity() > 2 * static_cast<size_t>(m_length))
             m_dynamicBuffer.shrinkToFit();
         return StringImpl::adopt(WTF::move(m_dynamicBuffer));
     }
@@ -1232,14 +1251,8 @@ bool FastStringifier<CharType, bufferMode>::hasRemainingCapacitySlow(unsigned si
 {
     ASSERT(!haveFailure());
     if constexpr (bufferMode == BufferMode::StaticBuffer) {
-        unsigned unusedBufferSize = staticBufferSize - m_length;
-        unsigned usableSize = usableBufferSize(unusedBufferSize);
-        if (usableSize < size)
-            return false;
-
-        m_capacity = m_length + usableSize;
-        ASSERT(m_capacity - m_length >= size);
-        return true;
+        UNUSED_PARAM(size);
+        return false;
     } else {
         size_t newSize = std::max<size_t>(m_dynamicBuffer.size() * 2, m_dynamicBuffer.size() + size);
 #if ENABLE(AOT)
@@ -1288,9 +1301,11 @@ NEVER_INLINE bool FastStringifier<CharType, bufferMode>::hasStackSpaceAtWatchedL
             recordFailure("object inside itself"_s);
         return shouldContinue;
     } else {
+        // A static buffer watches no levels, so its m_stackLimit is always the limit of the stack.
         UNUSED_PARAM(value);
         UNUSED_PARAM(stackPointer);
-        return true;
+        recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+        return false;
     }
 }
 #endif
@@ -1467,23 +1482,13 @@ ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::appendNewLineAndIndent
 template<typename CharType, BufferMode bufferMode>
 ALWAYS_INLINE void FastStringifier<CharType, bufferMode>::appendInt32(int32_t number)
 {
-    if constexpr (sizeof(CharType) == 1) {
 #if ENABLE(AOT)
+    if constexpr (sizeof(CharType) == 1) {
         m_length = AOT::appendJSONInteger(buffer() + m_length, number) - buffer();
-#else
-        char* cursor = std::bit_cast<char*>(buffer()) + m_length;
-        auto result = std::to_chars(cursor, cursor + maxInt32StringLength, number);
-        ASSERT(result.ec != std::errc::value_too_large);
-        m_length += result.ptr - cursor;
-#endif
-    } else {
-        std::array<char, maxInt32StringLength> temporary;
-        auto result = std::to_chars(temporary.data(), temporary.data() + maxInt32StringLength, number);
-        ASSERT(result.ec != std::errc::value_too_large);
-        unsigned lengthToCopy = result.ptr - temporary.data();
-        WTF::copyElements(spanReinterpretCast<uint16_t>(bufferSpan().subspan(m_length)), spanReinterpretCast<const uint8_t>(std::span { temporary }).first(lengthToCopy));
-        m_length += lengthToCopy;
+        return;
     }
+#endif
+    m_length += writeIntegerToBuffer(number, std::span<CharType> { buffer() + m_length, maxInt32StringLength });
 }
 
 static ALWAYS_INLINE bool eightByteRangeNeedsJSONEscape(uint64_t word)
@@ -1684,28 +1689,92 @@ static ALWAYS_INLINE bool stringCopyUpconvert(std::span<const Latin1Character> s
     return false;
 }
 
+#if JSON_STRING_COPY_HAS_SIMD
+template<typename CharType> static constexpr unsigned earlierTextCopyGranularity = SIMD::stride<CharType>;
+#else
+template<typename CharType> static constexpr unsigned earlierTextCopyGranularity = 1;
+#endif
+
+// Copies text written earlier in buffer, ending at or before destination. Both the read from source and the write to
+// destination may extend to max(length, earlierTextCopyGranularity) characters.
+template<typename CharType>
+static ALWAYS_INLINE void copyEarlierText(CharType* buffer, unsigned destination, unsigned source, unsigned length)
+{
+    ASSERT(source + length <= destination);
+#if JSON_STRING_COPY_HAS_SIMD
+    using UnsignedType = SameSizeUnsignedInteger<CharType>;
+    constexpr unsigned stride = SIMD::stride<CharType>;
+    const CharType* sourcePtr = buffer + source;
+    if (length <= stride) [[likely]] {
+        SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(sourcePtr)), std::bit_cast<UnsignedType*>(buffer + destination));
+        return;
+    }
+    unsigned offset = 0;
+    for (; offset + stride < length; offset += stride)
+        SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(sourcePtr + offset)), std::bit_cast<UnsignedType*>(buffer + destination + offset));
+    SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(sourcePtr + length - stride)), std::bit_cast<UnsignedType*>(buffer + destination + length - stride));
+#else
+    memcpySpan(std::span { buffer + destination, length }, std::span { buffer + source, length });
+#endif
+}
+
+static ALWAYS_INLINE void appendEscapedLatin1JSONStringContent(std::span<Latin1Character>& output, std::span<const Latin1Character> input)
+{
+#if JSON_STRING_COPY_HAS_SIMD
+    constexpr size_t stride = SIMD::stride<Latin1Character>;
+    constexpr unsigned bitsPerLane = SIMD::bitsPerLaneInMask<uint8_t>;
+    constexpr auto quoteMask = SIMD::splat<uint8_t>('"');
+    constexpr auto escapeMask = SIMD::splat<uint8_t>('\\');
+    constexpr auto controlMask = SIMD::splat<uint8_t>(' ');
+    const Latin1Character* cursor = input.data();
+    const Latin1Character* end = cursor + input.size();
+    Latin1Character* out = output.data();
+    // Each escape re-stores the rest of its block from the input, so a block needs one more block of input behind it.
+    while (static_cast<size_t>(end - cursor) >= 2 * stride) {
+        auto chunk = SIMD::load(std::bit_cast<const uint8_t*>(cursor));
+        SIMD::store(chunk, std::bit_cast<uint8_t*>(out));
+        uint64_t mask = SIMD::laneMask(SIMD::bitOr(SIMD::equal(chunk, quoteMask), SIMD::equal(chunk, escapeMask), SIMD::lessThan(chunk, controlMask)));
+        while (mask) {
+            unsigned index = std::countr_zero(mask) / bitsPerLane;
+            Latin1Character character = cursor[index];
+            char escaped = WTF::escapedFormsForJSON[character];
+            Latin1Character* escapeOut = out + index;
+            escapeOut[0] = '\\';
+            escapeOut[1] = escaped;
+            unsigned escapeLength = 2;
+            if (escaped == 'u') [[unlikely]] {
+                escapeOut[2] = '0';
+                escapeOut[3] = '0';
+                escapeOut[4] = upperNibbleToLowercaseASCIIHexDigit(character);
+                escapeOut[5] = lowerNibbleToLowercaseASCIIHexDigit(character);
+                escapeLength = 6;
+            }
+            SIMD::store(SIMD::load(std::bit_cast<const uint8_t*>(cursor + index + 1)), std::bit_cast<uint8_t*>(escapeOut + escapeLength));
+            out += escapeLength - 1;
+            unsigned consumedBits = (index + 1) * bitsPerLane;
+            mask = consumedBits < 64 ? mask & (~0ULL << consumedBits) : 0;
+        }
+        cursor += stride;
+        out += stride;
+    }
+    skip(output, out - output.data());
+    skip(input, cursor - input.data());
+#endif
+    WTF::appendEscapedJSONStringContent(output, input);
+}
+
+#undef JSON_STRING_COPY_HAS_SIMD
+
 template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::appendPreparedObjectKey(const PreparedProperty& property, bool& wroteProperty, unsigned newLineAndIndent, unsigned valueCapacity, CharType*& out, unsigned& length, unsigned& capacity)
 {
     unsigned keyLength = property.keyLength;
-#if JSON_STRING_COPY_HAS_SIMD
-    static constexpr unsigned copyGranularity = SIMD::stride<CharType>;
-#else
-    static constexpr unsigned copyGranularity = 1;
-#endif
-    unsigned requiredCapacity = std::max<unsigned>(keyLength + valueCapacity, copyGranularity);
+    unsigned requiredCapacity = std::max<unsigned>(keyLength + valueCapacity, earlierTextCopyGranularity<CharType>);
     if constexpr (hasGap == HasGap::Yes)
         requiredCapacity += wroteProperty + newLineAndIndent;
-    if (capacity - length < requiredCapacity) [[unlikely]] {
-        m_length = length;
-        if (!hasRemainingCapacitySlow(requiredCapacity)) [[unlikely]] {
-            recordBufferFull();
-            return false;
-        }
-        out = buffer();
-        capacity = m_capacity;
-    }
+    if (!ensureCapacity(requiredCapacity, out, length, capacity)) [[unlikely]]
+        return false;
 
     if constexpr (hasGap == HasGap::Yes) {
         if (wroteProperty)
@@ -1717,111 +1786,91 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::appendPreparedObjectKe
         length = m_length;
     }
 
-    const CharType* keyPtr = out + property.keyOffset;
-#if JSON_STRING_COPY_HAS_SIMD
-    using UnsignedType = SameSizeUnsignedInteger<CharType>;
-    if (keyLength <= copyGranularity) [[likely]]
-        SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(keyPtr)), std::bit_cast<UnsignedType*>(out + length));
-    else {
-        unsigned offset = 0;
-        for (; offset + copyGranularity < keyLength; offset += copyGranularity)
-            SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(keyPtr + offset)), std::bit_cast<UnsignedType*>(out + length + offset));
-        SIMD::store(SIMD::load(std::bit_cast<const UnsignedType*>(keyPtr + keyLength - copyGranularity)), std::bit_cast<UnsignedType*>(out + length + keyLength - copyGranularity));
-    }
-#else
-    memcpySpan(std::span { out + length, keyLength }, std::span { keyPtr, keyLength });
-#endif
-
+    copyEarlierText(out, length, property.keyOffset, keyLength);
     length += keyLength;
     return true;
 }
 
-#undef JSON_STRING_COPY_HAS_SIMD
-
 template<typename CharType, BufferMode bufferMode>
-template<HasGap hasGap>
-NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JSObject& object, unsigned structureSlot)
+template<HasGap hasGap, bool inlineNestedObjects>
+ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::appendPreparedObjectImpl(JSObject& object, unsigned structureSlot, CharType*& out, unsigned& length, unsigned& capacity)
 {
     auto range = m_preparedStructureRanges[structureSlot];
     if (!range.propertyCount) [[unlikely]] {
         if (!enterHolder<hasGap>()) [[unlikely]]
-            return;
+            return false;
         leaveHolder<hasGap>();
-        if (!hasRemainingCapacity(2)) [[unlikely]] {
-            recordBufferFull();
-            return;
-        }
-        CharType* out = buffer() + m_length;
-        out[0] = '{';
-        out[1] = '}';
-        m_length += 2;
-        return;
+        if (!ensureCapacity(2, out, length, capacity)) [[unlikely]]
+            return false;
+        out[length] = '{';
+        out[length + 1] = '}';
+        length += 2;
+        return true;
     }
 
     if constexpr (hasGap == HasGap::Yes) {
-        if (!hasRemainingCapacity()) [[unlikely]] {
-            recordBufferFull();
-            return;
-        }
-        buffer()[m_length++] = '{';
+        if (!ensureCapacity(1, out, length, capacity)) [[unlikely]]
+            return false;
+        out[length++] = '{';
     }
     if (!enterHolder<hasGap>()) [[unlikely]]
-        return;
+        return false;
 
     const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
     const auto* objectStorage = std::bit_cast<const WriteBarrierBase<Unknown>*>(&object);
     const auto* butterflyStorage = *std::bit_cast<const WriteBarrierBase<Unknown>* const*>(std::bit_cast<const char*>(&object) + JSObject::butterflyOffset());
     std::span<PreparedProperty> properties = std::span(m_preparedProperties).subspan(range.firstPropertyIndex, range.propertyCount);
 
-    CharType* out = buffer();
-    unsigned length = m_length;
-    unsigned capacity = m_capacity;
     unsigned objectStart = length;
     bool wroteProperty = false;
 
     for (const PreparedProperty& property : properties) {
         const auto* storageBase = property.storageIndex >= 0 ? objectStorage : butterflyStorage;
         JSValue value = storageBase[property.storageIndex].get();
-        if (value.isUndefined()) [[unlikely]]
-            continue;
-
         if (value.isInt32()) {
             if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, maxInt32StringLength, out, length, capacity)) [[unlikely]]
-                return;
-            if constexpr (sizeof(CharType) == 1) {
-                char* cursor = std::bit_cast<char*>(out) + length;
-                auto result = std::to_chars(cursor, cursor + maxInt32StringLength, value.asInt32());
-                ASSERT(result.ec != std::errc::value_too_large);
-                length += result.ptr - cursor;
-            } else {
-                m_length = length;
-                appendInt32(value.asInt32());
-                length = m_length;
-            }
+                return false;
+            length += writeIntegerToBuffer(value.asInt32(), std::span<CharType> { out + length, maxInt32StringLength });
             continue;
         }
 
         if constexpr (std::same_as<CharType, Latin1Character>) {
-            if (value.isCell() && value.asCell()->type() == StringType) [[likely]] {
-                auto valueString = asString(value.asCell())->tryGetView();
-                if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
-                    unsigned valueLength = valueString.data.length();
-                    if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 1 + valueLength + 1, out, length, capacity)) [[unlikely]]
-                        return;
-                    out[length] = '"';
-                    if (!stringCopySameType<CharType, useShortCopyTier>(valueString.data.span8(), out + length + 1)) [[likely]] {
-                        out[length + 1 + valueLength] = '"';
-                        length += 1 + valueLength + 1;
+            if (value.isCell()) [[likely]] {
+                JSCell* cell = value.asCell();
+                PreparedString& preparedString = m_preparedStrings[preparedStringSlot(cell)];
+                if constexpr (usePreparedStrings) {
+                    if (preparedString.string == cell) {
+                        unsigned quotedLength = preparedString.length;
+                        if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, quotedLength + earlierTextCopyGranularity<CharType>, out, length, capacity)) [[unlikely]]
+                            return false;
+                        copyEarlierText(out, length, preparedString.offset, quotedLength);
+                        length += quotedLength;
                         continue;
                     }
-                    m_length = length;
-                    append<hasGap>(value);
-                    if (haveFailure()) [[unlikely]]
-                        return;
-                    out = buffer();
-                    length = m_length;
-                    capacity = m_capacity;
-                    continue;
+                }
+                if (cell->type() == StringType) [[likely]] {
+                    auto valueString = asString(cell)->tryGetView();
+                    if (!valueString.data.isNull() && valueString.data.is8Bit()) [[likely]] {
+                        unsigned valueLength = valueString.data.length();
+                        if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 1 + valueLength + 1, out, length, capacity)) [[unlikely]]
+                            return false;
+                        out[length] = '"';
+                        if (!stringCopySameType<CharType, useShortCopyTier>(valueString.data.span8(), out + length + 1)) [[likely]] {
+                            out[length + 1 + valueLength] = '"';
+                            if constexpr (usePreparedStrings)
+                                preparedString = { cell, length, 1 + valueLength + 1 };
+                            length += 1 + valueLength + 1;
+                            continue;
+                        }
+                        m_length = length;
+                        append<hasGap>(value);
+                        if (haveFailure()) [[unlikely]]
+                            return false;
+                        out = buffer();
+                        length = m_length;
+                        capacity = m_capacity;
+                        continue;
+                    }
                 }
             }
         }
@@ -1830,7 +1879,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JS
             double number = value.asDouble();
             if (std::isfinite(number)) [[likely]] {
                 if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, numberToShortestStringBufferSize, out, length, capacity)) [[unlikely]]
-                    return;
+                    return false;
                 if constexpr (sizeof(CharType) == 1)
                     length += WTF::numberToShortestString(number, std::span<char, numberToShortestStringBufferSize> { std::bit_cast<char*>(out) + length, numberToShortestStringBufferSize });
                 else {
@@ -1843,12 +1892,65 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JS
             }
         }
 
-        if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 0, out, length, capacity)) [[unlikely]]
-            return;
-        m_length = length;
-        append<hasGap>(value);
+        if (value.isUndefined()) [[unlikely]]
+            continue;
+
+        if (!value.isCell()) {
+            if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 0, out, length, capacity)) [[unlikely]]
+                return false;
+            m_length = length;
+            append<hasGap>(value);
+        } else if (JSCell* cell = value.asCell(); cell->type() == ArrayType) {
+            auto& array = *asArray(cell);
+            bool isOriginalArray = isOriginalArrayWithCheckedPrototype(array);
+            if (isOriginalArray && !array.length()) {
+                if (!enterHolder<hasGap>()) [[unlikely]]
+                    return false;
+                leaveHolder<hasGap>();
+                if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 2, out, length, capacity)) [[unlikely]]
+                    return false;
+                out[length] = '[';
+                out[length + 1] = ']';
+                length += 2;
+                continue;
+            }
+            if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 0, out, length, capacity)) [[unlikely]]
+                return false;
+            m_length = length;
+#if ENABLE(AOT)
+            // append() reports what it writes to m_watchedLevels. The list does not go through it.
+            if (isStackExhausted() && !hasStackSpaceAtWatchedLevel(value, currentStackPointer())) [[unlikely]]
+                return false;
+#endif
+            auto* butterfly = array.butterfly();
+            if (isOriginalArray && hasContiguous(array.indexingType()) && butterfly->publicLength() <= butterfly->vectorLength())
+                appendContiguousArray<hasGap>(std::span { butterfly->contiguous().data(), butterfly->publicLength() });
+            else
+                appendArray<hasGap>(array);
+        } else {
+            if (!appendPreparedObjectKey<hasGap>(property, wroteProperty, newLineAndIndent, 0, out, length, capacity)) [[unlikely]]
+                return false;
+            unsigned slot = cell->isObject() ? findPreparedStructureSlot(cell->structureID()) : notPreparedSlot;
+#if ENABLE(AOT)
+            // append() reports what it writes to m_watchedLevels. An object of a prepared Structure does not go through it.
+            if (slot != notPreparedSlot && isStackExhausted() && !hasStackSpaceAtWatchedLevel(value, currentStackPointer())) [[unlikely]]
+                return false;
+#endif
+            if constexpr (inlineNestedObjects) {
+                if (slot != notPreparedSlot) {
+                    if (!appendPreparedObjectImpl<hasGap, /* inlineNestedObjects */ false>(*asObject(cell), slot, out, length, capacity)) [[unlikely]]
+                        return false;
+                    continue;
+                }
+            }
+            m_length = length;
+            if (slot != notPreparedSlot)
+                appendPreparedObject<hasGap>(*asObject(cell), slot);
+            else
+                append<hasGap>(value);
+        }
         if (haveFailure()) [[unlikely]]
-            return;
+            return false;
         out = buffer();
         length = m_length;
         capacity = m_capacity;
@@ -1857,42 +1959,169 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JS
     leaveHolder<hasGap>();
     if constexpr (hasGap == HasGap::No) {
         if (length == objectStart) [[unlikely]] {
-            if (capacity - length < 2) [[unlikely]] {
-                m_length = length;
-                if (!hasRemainingCapacitySlow(2)) [[unlikely]] {
-                    recordBufferFull();
-                    return;
-                }
-                out = buffer();
-            }
+            if (!ensureCapacity(2, out, length, capacity)) [[unlikely]]
+                return false;
             out[length] = '{';
             out[length + 1] = '}';
-            m_length = length + 2;
-            return;
+            length += 2;
+            return true;
         }
-        if (capacity == length) [[unlikely]] {
-            m_length = length;
-            if (!hasRemainingCapacitySlow(1)) [[unlikely]] {
-                recordBufferFull();
-                return;
-            }
-            out = buffer();
-        }
+        if (!ensureCapacity(1, out, length, capacity)) [[unlikely]]
+            return false;
         // If property 0 was undefined, the first written property started with ','; overwrite it with '{'.
         out[objectStart] = '{';
-        out[length] = '}';
-        m_length = length + 1;
+        out[length++] = '}';
     } else {
         m_length = length;
         bool needNewLine = wroteProperty;
         if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
             recordBufferFull();
-            return;
+            return false;
         }
         if (needNewLine)
             appendNewLineAndIndentUnchecked();
         buffer()[m_length++] = '}';
+        out = buffer();
+        length = m_length;
+        capacity = m_capacity;
     }
+    return true;
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JSObject& object, unsigned structureSlot)
+{
+    if (isStackExhausted()) [[unlikely]] {
+#if ENABLE(AOT)
+        // Whoever calls has already reported the object.
+        if (!hasStackSpaceAtWatchedLevel(jsUndefined(), currentStackPointer()))
+            return;
+#else
+        recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+        return;
+#endif
+    }
+
+    CharType* out = buffer();
+    unsigned length = m_length;
+    unsigned capacity = m_capacity;
+    if (appendPreparedObjectImpl<hasGap, /* inlineNestedObjects */ true>(object, structureSlot, out, length, capacity)) [[likely]]
+        m_length = length;
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendContiguousArray(std::span<const WriteBarrier<Unknown>> elements)
+{
+    if (isStackExhausted()) [[unlikely]] {
+#if ENABLE(AOT)
+        // Whoever calls has already reported the list.
+        if (!hasStackSpaceAtWatchedLevel(jsUndefined(), currentStackPointer()))
+            return;
+#else
+        recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+        return;
+#endif
+    }
+
+    CharType* out = buffer();
+    unsigned length = m_length;
+    unsigned capacity = m_capacity;
+    if (!ensureCapacity(1, out, length, capacity)) [[unlikely]]
+        return;
+    out[length++] = '[';
+    if (!enterHolder<hasGap>()) [[unlikely]]
+        return;
+
+#if ENABLE(AOT)
+    if constexpr (hasGap == HasGap::No) {
+        JSValue first = !elements.empty() ? elements[0].get() : JSValue();
+        if (first && first.isCell() && first.asCell()->type() == CompiledObjectType) [[unlikely]] {
+            m_length = length;
+            appendElementsInCompiledProgram(elements);
+            if (haveFailure()) [[unlikely]]
+                return;
+            leaveHolder<hasGap>();
+            if (!hasRemainingCapacity()) [[unlikely]] {
+                recordBufferFull();
+                return;
+            }
+            buffer()[m_length++] = ']';
+            return;
+        }
+    }
+#endif
+
+    const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
+    StructureID lastStructureID;
+    unsigned lastStructureSlot = notPreparedSlot;
+    for (unsigned index = 0; index < elements.size(); ++index) {
+        if (index || hasGap == HasGap::Yes) {
+            if (!ensureCapacity(!!index + newLineAndIndent, out, length, capacity)) [[unlikely]]
+                return;
+            if (index)
+                out[length++] = ',';
+            if constexpr (hasGap == HasGap::Yes) {
+                m_length = length;
+                appendNewLineAndIndentUnchecked();
+                out = buffer();
+                length = m_length;
+            }
+        }
+        JSValue element = elements[index].get();
+        if (!element) [[unlikely]] {
+            recordFailure("!canGetIndexQuickly"_s);
+            return;
+        }
+        if (m_preparedStructureCount && element.isCell()) {
+            JSCell* cell = element.asCell();
+            StructureID structureID = cell->structureID();
+            if (structureID != lastStructureID) [[unlikely]] {
+                lastStructureID = structureID;
+                lastStructureSlot = findPreparedStructureSlot(structureID);
+            }
+            if (lastStructureSlot != notPreparedSlot) [[likely]] {
+                if (!appendPreparedObjectImpl<hasGap, /* inlineNestedObjects */ true>(*asObject(cell), lastStructureSlot, out, length, capacity)) [[unlikely]]
+                    return;
+                continue;
+            }
+            // Appending it may prepare its Structure, so look it up again for the next element.
+            lastStructureID = { };
+        }
+        m_length = length;
+#if USE(BUN_JSC_ADDITIONS)
+        m_isElementOfList = elements.size() > 1;
+        append<hasGap>(element.isUndefined() ? jsNull() : element);
+        m_isElementOfList = false;
+#else
+        append<hasGap>(element.isUndefined() ? jsNull() : element);
+#endif
+        if (haveFailure()) [[unlikely]]
+            return;
+        out = buffer();
+        length = m_length;
+        capacity = m_capacity;
+    }
+
+    leaveHolder<hasGap>();
+    if constexpr (hasGap == HasGap::Yes) {
+        if (!elements.empty()) {
+            m_length = length;
+            if (!hasRemainingCapacity(1 + newLineAndIndentSize())) [[unlikely]] {
+                recordBufferFull();
+                return;
+            }
+            appendNewLineAndIndentUnchecked();
+            out = buffer();
+            length = m_length;
+            capacity = m_capacity;
+        }
+    }
+    if (!ensureCapacity(1, out, length, capacity)) [[unlikely]]
+        return;
+    out[length++] = ']';
+    m_length = length;
 }
 
 template<typename CharType, BufferMode bufferMode>
@@ -1947,8 +2176,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendUnpreparedObject(
     const unsigned preparedPropertyScratchBase = m_preparedPropertyScratchCount;
 #if USE(BUN_JSC_ADDITIONS)
     if (!m_hasClearedStructureTables) {
-        m_preparedStructures.fill(nullptr);
+        m_preparedStructureIDs.fill(0);
         m_structuresMetOnce.fill(0);
+        m_preparedStrings.fill({ });
         m_hasClearedStructureTables = true;
     }
     uint32_t& metOnce = m_structuresMetOnce[preparedStructureSlot(structureID)];
@@ -2123,19 +2353,20 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendUnpreparedObject(
     buffer()[m_length++] = '}';
 
     if (canCacheStructure && m_preparedStructureCount < preparedStructureTableSize / 2 && m_preparedPropertyCount + preparedPropertyCount <= maxPreparedProperties) {
-        unsigned slot = preparedStructureSlot(structureID);
-        while (Structure* cachedStructure = m_preparedStructures[slot]) {
-            if (cachedStructure->id() == structureID)
-                return;
-            slot = (slot + 1) & (preparedStructureTableSize - 1);
-        }
+        unsigned slot = probePreparedStructureSlot(structureID);
+        if (m_preparedStructureIDs[slot])
+            return;
         uint16_t firstPropertyIndex = m_preparedPropertyCount;
         for (unsigned i = 0; i < preparedPropertyCount; ++i)
             m_preparedProperties[firstPropertyIndex + i] = m_preparedPropertyScratch[preparedPropertyScratchBase + i];
         m_preparedPropertyCount += preparedPropertyCount;
         ++m_preparedStructureCount;
         m_preparedStructureRanges[slot] = { firstPropertyIndex, static_cast<uint16_t>(preparedPropertyCount) };
-        m_preparedStructures[slot] = structureID.decode();
+#if USE(BUN_JSC_ADDITIONS)
+        m_preparedStructureIDs[slot] = structureID.bits();
+#else
+        m_preparedStructureIDs[slot] = structureID;
+#endif
     }
 }
 
@@ -2143,16 +2374,14 @@ template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 void FastStringifier<CharType, bufferMode>::append(JSValue value)
 {
-    if constexpr (growsBuffer) {
-        if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
+    if (isStackExhausted()) [[unlikely]] {
 #if ENABLE(AOT)
-            if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
-                return;
-#else
-            recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+        if (!hasStackSpaceAtWatchedLevel(value, currentStackPointer()))
             return;
+#else
+        recordFailure(FailureReason::StackOverflow, "stack overflow"_s);
+        return;
 #endif
-        }
     }
 
     if (value.isNull()) {
@@ -2281,7 +2510,7 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
                 WTF::appendEscapedJSONStringContent(output, string.data.span16());
         } else {
             if (string.data.is8Bit())
-                WTF::appendEscapedJSONStringContent(output, string.data.span8());
+                appendEscapedLatin1JSONStringContent(output, string.data.span8());
             else {
                 // It's possible the UTF-16 string is actually Latin-1. We try to avoid that but bailing out here is _way_ more expensive if it does sometimes happen.
                 bool success = WTF::appendEscapedJSONStringContent(output, string.data.span16());
@@ -2301,20 +2530,43 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
     case FinalObjectType: {
         auto& object = *asObject(&cell);
         StructureID structureID = object.structureID();
-        unsigned slot = preparedStructureSlot(structureID);
-        while (Structure* cachedStructure = preparedStructure(slot)) {
-            if (cachedStructure->id() == structureID) [[likely]] {
-                appendPreparedObject<hasGap>(object, slot);
-                return;
-            }
-            slot = (slot + 1) & (preparedStructureTableSize - 1);
-        }
-        appendUnpreparedObject<hasGap>(object, structureID);
+        unsigned slot = findPreparedStructureSlot(structureID);
+        if (slot != notPreparedSlot) [[likely]]
+            appendPreparedObject<hasGap>(object, slot);
+        else
+            appendUnpreparedObject<hasGap>(object, structureID);
         return;
     }
 
-    case ArrayType: {
-        auto& array = *asArray(&cell);
+    case ArrayType:
+        appendArray<hasGap>(*asArray(&cell));
+        return;
+
+    case JSFunctionType:
+        recordFailure("function"_s);
+        return;
+
+    default:
+#if ENABLE(AOT)
+        // These are not separate cases, so the switch compiles as it does without them, and a process without compiled code checks only after the switch has failed.
+        if (cell.type() == CompiledObjectType) [[unlikely]] {
+            appendCompiledObject<hasGap>(*asObject(&cell));
+            return;
+        }
+        if (cell.type() == JSDateType && m_vm.hasCompiledCode()) [[unlikely]] {
+            appendDate(*uncheckedDowncast<DateInstance>(&cell));
+            return;
+        }
+#endif
+        recordFailure("object type"_s);
+    }
+}
+
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendArray(JSArray& array)
+{
+    if (!isOriginalArrayWithCheckedPrototype(array)) [[unlikely]] {
         if (!m_checkedArrayPrototype) {
             if (mayHaveToJSON(*m_globalObject.arrayPrototype())) [[unlikely]] {
                 recordFailure("array prototype may have toJSON"_s);
@@ -2342,153 +2594,70 @@ void FastStringifier<CharType, bufferMode>::append(JSValue value)
             if (haveFailure())
                 return;
         }
-        if (!hasRemainingCapacity()) [[unlikely]] {
+    }
+
+    IndexingType indexingType = array.indexingType();
+    if (hasContiguous(indexingType)) {
+        auto* butterfly = array.butterfly();
+        unsigned length = butterfly->publicLength();
+        if (length > butterfly->vectorLength()) [[unlikely]] {
+            recordFailure("!lengthBeyondVector"_s);
+            return;
+        }
+        appendContiguousArray<hasGap>(std::span { butterfly->contiguous().data(), length });
+        return;
+    }
+
+    if (!hasRemainingCapacity()) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    buffer()[m_length++] = '[';
+    if (!enterHolder<hasGap>()) [[unlikely]]
+        return;
+
+    auto closeArray = [&] {
+        leaveHolder<hasGap>();
+        bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '[';
+        if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
             recordBufferFull();
             return;
         }
-        buffer()[m_length++] = '[';
-        if (!enterHolder<hasGap>()) [[unlikely]]
-            return;
+        if (needNewLine)
+            appendNewLineAndIndentUnchecked();
+        buffer()[m_length++] = ']';
+    };
 
-        auto closeArray = [&] {
-            leaveHolder<hasGap>();
-            bool needNewLine = hasGap == HasGap::Yes && buffer()[m_length - 1] != '[';
-            if (!hasRemainingCapacity(needNewLine ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
-                recordBufferFull();
-                return;
-            }
-            if (needNewLine)
-                appendNewLineAndIndentUnchecked();
-            buffer()[m_length++] = ']';
-        };
-
-        IndexingType indexingType = array.indexingType();
-        if (hasInt32(indexingType)) {
-            appendInt32Array<hasGap>(array);
-            if (haveFailure()) [[unlikely]]
-                return;
-            closeArray();
+    if (hasInt32(indexingType)) {
+        appendInt32Array<hasGap>(array);
+        if (haveFailure()) [[unlikely]]
             return;
-        }
-
-        if (hasContiguous(indexingType)) {
-            auto* butterfly = array.butterfly();
-            unsigned length = butterfly->publicLength();
-            if (length > butterfly->vectorLength()) [[unlikely]] {
-                recordFailure("!lengthBeyondVector"_s);
-                return;
-            }
-#if ENABLE(AOT)
-            if constexpr (hasGap == HasGap::No) {
-                JSValue first = length ? butterfly->contiguous().at(&array, 0).get() : JSValue();
-                if (first && first.isCell() && first.asCell()->type() == CompiledObjectType) [[unlikely]] {
-                    appendElementsInCompiledProgram(array);
-                    if (haveFailure()) [[unlikely]]
-                        return;
-                    closeArray();
-                    return;
-                }
-            }
-#endif
-            auto data = butterfly->contiguous();
-            const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
-            Structure* lastStructure { };
-            unsigned lastStructureSlot = 0;
-            for (unsigned i = 0; i < length; ++i) {
-                if (i || hasGap == HasGap::Yes) {
-                    if (!hasRemainingCapacity(!!i + newLineAndIndent)) [[unlikely]] {
-                        recordBufferFull();
-                        return;
-                    }
-                    if (i)
-                        buffer()[m_length++] = ',';
-                    if constexpr (hasGap == HasGap::Yes)
-                        appendNewLineAndIndentUnchecked();
-                }
-                JSValue element = data.at(&array, i).get();
-                if (!element) [[unlikely]] {
-                    recordFailure("!canGetIndexQuickly"_s);
-                    return;
-                }
-                if (m_preparedStructureCount && element.isCell()) {
-                    JSCell* elementCell = element.asCell();
-                    StructureID structureID = elementCell->structureID();
-                    if (structureID.decode() == lastStructure) [[likely]] {
-                        appendPreparedObject<hasGap>(*asObject(elementCell), lastStructureSlot);
-                        if (haveFailure()) [[unlikely]]
-                            return;
-                        continue;
-                    }
-                    unsigned slot = preparedStructureSlot(structureID);
-                    while (Structure* cachedStructure = m_preparedStructures[slot]) {
-                        if (cachedStructure->id() == structureID) [[likely]] {
-                            lastStructure = structureID.decode();
-                            lastStructureSlot = slot;
-                            appendPreparedObject<hasGap>(*asObject(elementCell), slot);
-                            if (haveFailure()) [[unlikely]]
-                                return;
-                            goto nextContiguousElement;
-                        }
-                        slot = (slot + 1) & (preparedStructureTableSize - 1);
-                    }
-                }
-#if USE(BUN_JSC_ADDITIONS)
-                m_isElementOfList = length > 1;
-                append<hasGap>(element.isUndefined() ? jsNull() : element);
-                m_isElementOfList = false;
-#else
-                append<hasGap>(element.isUndefined() ? jsNull() : element);
-#endif
-                if (haveFailure()) [[unlikely]]
-                    return;
-            nextContiguousElement:
-            }
-            closeArray();
-            return;
-        }
-        const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
-        for (unsigned i = 0, length = array.length(); i < length; ++i) {
-            if (i || hasGap == HasGap::Yes) {
-                if (!hasRemainingCapacity(!!i + newLineAndIndent)) [[unlikely]] {
-                    recordBufferFull();
-                    return;
-                }
-                if (i)
-                    buffer()[m_length++] = ',';
-                if constexpr (hasGap == HasGap::Yes)
-                    appendNewLineAndIndentUnchecked();
-            }
-            if (!array.canGetIndexQuickly(i)) [[unlikely]] {
-                recordFailure("!canGetIndexQuickly"_s);
-                return;
-            }
-            JSValue element = array.getIndexQuickly(i);
-            append<hasGap>(element.isUndefined() ? jsNull() : element);
-            if (haveFailure()) [[unlikely]]
-                return;
-        }
         closeArray();
         return;
     }
-
-    case JSFunctionType:
-        recordFailure("function"_s);
-        return;
-
-    default:
-#if ENABLE(AOT)
-        // These are not separate cases, so the switch compiles as it does without them, and a process without compiled code checks only after the switch has failed.
-        if (cell.type() == CompiledObjectType) [[unlikely]] {
-            appendCompiledObject<hasGap>(*asObject(&cell));
+    const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
+    for (unsigned i = 0, length = array.length(); i < length; ++i) {
+        if (i || hasGap == HasGap::Yes) {
+            if (!hasRemainingCapacity(!!i + newLineAndIndent)) [[unlikely]] {
+                recordBufferFull();
+                return;
+            }
+            if (i)
+                buffer()[m_length++] = ',';
+            if constexpr (hasGap == HasGap::Yes)
+                appendNewLineAndIndentUnchecked();
+        }
+        if (!array.canGetIndexQuickly(i)) [[unlikely]] {
+            recordFailure("!canGetIndexQuickly"_s);
             return;
         }
-        if (cell.type() == JSDateType && m_vm.hasCompiledCode()) [[unlikely]] {
-            appendDate(*uncheckedDowncast<DateInstance>(&cell));
+        JSValue element = array.getIndexQuickly(i);
+        append<hasGap>(element.isUndefined() ? jsNull() : element);
+        if (haveFailure()) [[unlikely]]
             return;
-        }
-#endif
-        recordFailure("object type"_s);
     }
+    closeArray();
+    return;
 }
 
 #if ENABLE(AOT)
@@ -3439,11 +3608,10 @@ ALWAYS_INLINE bool FastStringifier<CharType, bufferMode>::isMemberWrittenByItsFi
 template<typename CharType, BufferMode bufferMode>
 NEVER_INLINE bool FastStringifier<CharType, bufferMode>::writeListedFieldsOfMember(Cursor& cursor, JSObject& object, std::span<const AOT::FieldAsProperty> fields, unsigned reservation)
 {
-    if constexpr (growsBuffer) {
-        if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
-            if (!hasStackSpaceAtWatchedLevel(&object, currentStackPointer()))
-                return false;
-        }
+    // Also with a static buffer: it no longer holds fewer characters where less of the stack is left.
+    if (isStackExhausted()) [[unlikely]] {
+        if (!hasStackSpaceAtWatchedLevel(&object, currentStackPointer()))
+            return false;
     }
     return writeListedFields<HasGap::No>(cursor, object, fields, reservation);
 }
@@ -3464,11 +3632,9 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendListedFields(JSOb
 
 // An array's elements are mostly objects with the same Structure and key order, so what is known about one element holds for the next.
 template<typename CharType, BufferMode bufferMode>
-NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompiledProgram(JSArray& array)
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompiledProgram(std::span<const WriteBarrier<Unknown>> elements)
 {
-    auto* butterfly = array.butterfly();
-    unsigned length = butterfly->publicLength();
-    auto data = butterfly->contiguous();
+    unsigned length = elements.size();
     if constexpr (growsBuffer) {
         if (std::bit_cast<uint8_t*>(currentStackPointer()) < m_stackLimit) [[unlikely]] {
             // append() has already reported the array.
@@ -3486,8 +3652,8 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
     for (unsigned i = 0; i < length; ++i) {
         if constexpr (std::same_as<CharType, Latin1Character>) {
             if (known && writesElementsBySlot) {
-                ElementsWrittenBySlot written = fieldsArePlain ? writeElementsBySlot<true>(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation)
-                    : writeElementsBySlot<false>(cursor.next, cursor.limit, data.data(), i, length, *known, fields, reservation);
+                ElementsWrittenBySlot written = fieldsArePlain ? writeElementsBySlot<true>(cursor.next, cursor.limit, elements.data(), i, length, *known, fields, reservation)
+                    : writeElementsBySlot<false>(cursor.next, cursor.limit, elements.data(), i, length, *known, fields, reservation);
                 cursor.next = written.next;
                 i = written.firstElementNotWritten;
                 writesElementsBySlot = !written.stoppedAtField;
@@ -3495,7 +3661,7 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendElementsInCompile
                     break;
             }
         }
-        JSValue element = data.at(&array, i).get();
+        JSValue element = elements[i].get();
         if (!element) [[unlikely]] {
             recordFailure("!canGetIndexQuickly"_s);
             return;
@@ -3604,10 +3770,15 @@ NEVER_INLINE String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObj
         failureReason = stringifier.m_failureReason;
         return { };
     }
-    if (stringifier.m_gapLength)
-        stringifier.append<HasGap::Yes>(value);
-    else
-        stringifier.append<HasGap::No>(value);
+    {
+        // m_preparedStructureIDs is keyed by StructureID. The fast path can still allocate (caching toJSON
+        // allocates rare data), so deferring GC is what keeps a listed ID from being freed and reused.
+        DeferGC deferGC(stringifier.m_vm);
+        if (stringifier.m_gapLength)
+            stringifier.append<HasGap::Yes>(value);
+        else
+            stringifier.append<HasGap::No>(value);
+    }
     failureReason = stringifier.m_failureReason;
     return stringifier.result();
 }
@@ -3616,6 +3787,7 @@ NEVER_INLINE String FastStringifier<CharType, bufferMode>::stringify(JSGlobalObj
 // `triedLatin1DynamicBuffer`: that case has failed for this value already.
 static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space, std::optional<FailureReason> failureReason, unsigned levelsAround = 0, bool triedLatin1DynamicBuffer = false)
 {
+    VM& vm = globalObject.vm();
     if (failureReason == FailureReason::Found16BitEarly) {
         failureReason = std::nullopt;
         if (String result = FastStringifier<char16_t, BufferMode::StaticBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
@@ -3625,6 +3797,7 @@ static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JS
             failureReason = std::nullopt;
             if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
                 return result;
+            dynamicBufferLengths<char16_t>(vm) = dynamicBufferLengthsAfterFailure;
         }
     } else if (failureReason == FailureReason::BufferFull) {
         failureReason = std::nullopt;
@@ -3632,14 +3805,18 @@ static String stringifyAfterFirstFastCaseFailed(JSGlobalObject& globalObject, JS
         if (stringifyHints.isWide) {
             if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
                 return result;
+            dynamicBufferLengths<char16_t>(vm) = dynamicBufferLengthsAfterFailure;
         } else if (!triedLatin1DynamicBuffer) {
             if (String result = FastStringifier<Latin1Character, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
                 return result;
         }
     }
     // However much work is thrown away, retrying with 16-bit characters is still much faster than the generic path.
-    if (failureReason == FailureReason::Found16BitLate)
-        return FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround);
+    if (failureReason == FailureReason::Found16BitLate) {
+        if (String result = FastStringifier<char16_t, BufferMode::DynamicBuffer>::stringify(globalObject, value, replacer, space, failureReason, levelsAround); !result.isNull())
+            return result;
+        dynamicBufferLengths<char16_t>(vm) = dynamicBufferLengthsAfterFailure;
+    }
     return { };
 }
 
@@ -3661,12 +3838,10 @@ static NEVER_INLINE void checkAgainstGeneralStringifier(JSGlobalObject& globalOb
 }
 #endif
 
-// Whether the last two Latin-1 results needed a dynamic buffer, i.e. were longer than the static one can hold.
+// Whether the recent Latin-1 results needed a dynamic buffer, i.e. were longer than the static one can hold.
 static bool recentResultsOverflowedStaticBuffer(VM& vm)
 {
-    uint64_t lengths = dynamicBufferLengths<Latin1Character>(vm);
-    unsigned smallerLength = std::min(static_cast<unsigned>(lengths), static_cast<unsigned>(lengths >> 32));
-    return smallerLength > FastStringifier<Latin1Character, BufferMode::StaticBuffer>::staticBufferSize;
+    return smallerRecentDynamicBufferLength(dynamicBufferLengths<Latin1Character>(vm)) > FastStringifier<Latin1Character, BufferMode::StaticBuffer>::staticBufferSize;
 }
 
 static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value, JSValue replacer, JSValue space)
@@ -3688,7 +3863,7 @@ static NEVER_INLINE String stringify(JSGlobalObject& globalObject, JSValue value
 #endif
                 return result;
             }
-            dynamicBufferLengths<Latin1Character>(vm) = 0;
+            dynamicBufferLengths<Latin1Character>(vm) = dynamicBufferLengthsAfterFailure;
         }
         // A 16-bit string that the dynamic buffer met late is past what the static buffer holds: the cases behind the first go on with 16-bit characters.
         if (failureReason != FailureReason::Found16BitLate) {

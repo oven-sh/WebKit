@@ -482,7 +482,7 @@ private:
     FunctionExpressionVector m_functionExprs;
 
 public:
-    using OutOfLineJumpTargets = UncheckedKeyHashMap<JSInstructionStream::Offset, int>;
+    using OutOfLineJumpTargets = HashMap<JSInstructionStream::Offset, int>;
 
     struct RareData {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(RareData, UnlinkedCodeBlock_RareData);
@@ -500,7 +500,7 @@ public:
             unsigned m_startDivot;
             unsigned m_endDivot;
         };
-        UncheckedKeyHashMap<unsigned, TypeProfilerExpressionRange> m_typeProfilerInfoMap;
+        HashMap<unsigned, TypeProfilerExpressionRange> m_typeProfilerInfoMap;
         FixedVector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
         FixedVector<BitVector> m_bitVectors;
         FixedVector<IdentifierSet> m_constantIdentifierSets;
@@ -540,7 +540,7 @@ private:
 
 #if ASSERT_ENABLED
     Lock m_cachedIdentifierUidsLock;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_cachedIdentifierUids;
+    HashSet<UniquedStringImpl*> m_cachedIdentifierUids;
 #endif
 
 protected:

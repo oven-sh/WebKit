@@ -53,8 +53,7 @@
             group.access().parentVariable.access().variable = value; \
     } while (0)
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 static_assert(ComputedStyleBase::PublicPseudoIDBits == allPublicPseudoElementTypes.size());
 static_assert(!(static_cast<unsigned>(maxTextTransformValue) >> ComputedStyleBase::TextTransformBits));
@@ -110,9 +109,7 @@ Style::ComputedStyle* ComputedStyleBase::addPseudoElementStyle(std::unique_ptr<S
 
     ASSERT(pseudo->pseudoElementType());
 
-    auto* result = pseudo.get();
-    m_pseudoElementStyles.add(*result->pseudoElementIdentifier(), WTF::move(pseudo));
-    return result;
+    return m_pseudoElementStyles.add(*pseudo->pseudoElementIdentifier(), WTF::move(pseudo)).iterator->value.get();
 }
 
 // MARK: - Custom properties
@@ -197,7 +194,8 @@ void ComputedStyleBase::setFontCascade(FontCascade&& fontCascade)
     if (fontCascade == this->fontCascade())
         return;
 
-    m_inheritedData.access().fontData.access().fontCascade = fontCascade;
+    CheckedRef cascade = m_inheritedData.access().fontData.access().fontCascade;
+    cascade.get() = fontCascade;
 }
 
 // MARK: - FontCascadeDescription support.
@@ -209,8 +207,7 @@ const FontCascadeDescription& ComputedStyleBase::fontDescription() const
 
 FontCascadeDescription& ComputedStyleBase::mutableFontDescriptionWithoutUpdate()
 {
-    auto& cascade = m_inheritedData.access().fontData.access().fontCascade;
-    return cascade.mutableFontDescription();
+    return m_inheritedData.access().fontData.access().fontCascade.mutableFontDescription();
 }
 
 void ComputedStyleBase::setFontDescription(FontCascadeDescription&& description)
@@ -218,8 +215,8 @@ void ComputedStyleBase::setFontDescription(FontCascadeDescription&& description)
     if (fontDescription() == description)
         return;
 
-    auto existingFontCascade = this->fontCascade();
-    RefPtr fontSelector = existingFontCascade.fontSelector();
+    CheckedRef existingFontCascade = this->fontCascade();
+    RefPtr fontSelector = existingFontCascade->fontSelector();
 
     auto newCascade = FontCascade { WTF::move(description), existingFontCascade };
     newCascade.update(WTF::move(fontSelector));
@@ -231,8 +228,8 @@ bool ComputedStyleBase::setFontDescriptionWithoutUpdate(FontCascadeDescription&&
     if (fontDescription() == description)
         return false;
 
-    auto& cascade = m_inheritedData.access().fontData.access().fontCascade;
-    cascade = { WTF::move(description), cascade };
+    CheckedRef cascade = m_inheritedData.access().fontData.access().fontCascade;
+    cascade.get() = FontCascade { WTF::move(description), cascade };
     return true;
 }
 
@@ -246,7 +243,7 @@ const FontMetrics& ComputedStyleBase::metricsOfPrimaryFont() const
     return m_inheritedData->fontData->fontCascade.metricsOfPrimaryFont();
 }
 
-std::pair<FontOrientation, NonCJKGlyphOrientation> ComputedStyleBase::fontAndGlyphOrientation()
+std::pair<FontOrientation, NonCJKGlyphOrientation> ComputedStyleBase::fontAndGlyphOrientation() const
 {
     if (!writingMode().isVerticalTypographic())
         return { FontOrientation::Horizontal, NonCJKGlyphOrientation::Mixed };
@@ -283,13 +280,10 @@ void ComputedStyleBase::setLineHeightFromAnimation(LineHeight&& lineHeight)
 {
     bool lineHeightChanged = m_inheritedData->lineHeight != lineHeight;
     bool textAutosizingAdjustedLineHeightChanged = m_inheritedData->textAutosizingAdjustedLineHeight != lineHeight;
-    if (lineHeightChanged || textAutosizingAdjustedLineHeightChanged) {
-        auto& access = m_inheritedData.access();
-        if (lineHeightChanged)
-            access.lineHeight = lineHeight;
-        if (textAutosizingAdjustedLineHeightChanged)
-            access.textAutosizingAdjustedLineHeight = WTF::move(lineHeight);
-    }
+    if (lineHeightChanged)
+        m_inheritedData.access().lineHeight = lineHeight;
+    if (textAutosizingAdjustedLineHeightChanged)
+        m_inheritedData.access().textAutosizingAdjustedLineHeight = WTF::move(lineHeight);
 }
 
 void ComputedStyleBase::setLetterSpacingFromAnimation(LetterSpacing&& value)
@@ -327,13 +321,10 @@ void ComputedStyleBase::setZoomFromAnimation(Zoom value)
 
 void ComputedStyleBase::synchronizeLetterSpacingWithFontCascade()
 {
-    auto& fontCascade = mutableFontCascadeWithoutUpdate();
-    auto fontSize = fontCascade.size();
+    auto newLetterSpacing = evaluate<float>(m_inheritedData->fontData->letterSpacing, fontCascade().size(), usedZoomForLength());
 
-    auto newLetterSpacing = evaluate<float>(m_inheritedData->fontData->letterSpacing, fontSize, usedZoomForLength());
-
-    if (newLetterSpacing != fontCascade.letterSpacing()) {
-        fontCascade.setLetterSpacing(newLetterSpacing);
+    if (newLetterSpacing != fontCascade().letterSpacing()) {
+        mutableFontCascadeWithoutUpdate().setLetterSpacing(newLetterSpacing);
 
         auto oldFontDescription = fontDescription();
 
@@ -351,13 +342,10 @@ void ComputedStyleBase::synchronizeLetterSpacingWithFontCascade()
 
 void ComputedStyleBase::synchronizeLetterSpacingWithFontCascadeWithoutUpdate()
 {
-    auto& fontCascade = mutableFontCascadeWithoutUpdate();
-    auto fontSize = fontCascade.size();
+    auto newLetterSpacing = evaluate<float>(m_inheritedData->fontData->letterSpacing, fontCascade().size(), usedZoomForLength());
 
-    auto newLetterSpacing = evaluate<float>(m_inheritedData->fontData->letterSpacing, fontSize, usedZoomForLength());
-
-    if (newLetterSpacing != fontCascade.letterSpacing()) {
-        fontCascade.setLetterSpacing(newLetterSpacing);
+    if (newLetterSpacing != fontCascade().letterSpacing()) {
+        mutableFontCascadeWithoutUpdate().setLetterSpacing(newLetterSpacing);
 
         auto oldFontDescription = fontDescription();
 
@@ -375,13 +363,10 @@ void ComputedStyleBase::synchronizeLetterSpacingWithFontCascadeWithoutUpdate()
 
 void ComputedStyleBase::synchronizeWordSpacingWithFontCascade()
 {
-    auto& fontCascade = mutableFontCascadeWithoutUpdate();
-    auto fontSize = fontCascade.size();
+    auto newWordSpacing = evaluate<float>(m_inheritedData->fontData->wordSpacing, fontCascade().size(), usedZoomForLength());
 
-    auto newWordSpacing = evaluate<float>(m_inheritedData->fontData->wordSpacing, fontSize, usedZoomForLength());
-
-    if (newWordSpacing != fontCascade.wordSpacing())
-        fontCascade.setWordSpacing(newWordSpacing);
+    if (newWordSpacing != fontCascade().wordSpacing())
+        mutableFontCascadeWithoutUpdate().setWordSpacing(newWordSpacing);
 }
 
 void ComputedStyleBase::synchronizeWordSpacingWithFontCascadeWithoutUpdate()
@@ -489,6 +474,7 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
     LOG_IF_DIFFERENT(disallowsFastPathInheritance);
     LOG_IF_DIFFERENT(hasZeroEffectiveBorderWidths);
     LOG_IF_DIFFERENT(hasZeroPadding);
+    LOG_IF_DIFFERENT_WITH_CAST(BorderRadiusPercentageBasis, borderRadiusPercentageBasis);
 
     LOG_IF_DIFFERENT(firstChildState);
     LOG_IF_DIFFERENT(lastChildState);
@@ -540,8 +526,7 @@ void ComputedStyleBase::InheritedFlags::dumpDifferences(TextStream& ts, const In
 }
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 #undef SET_VAR
 #undef SET_NESTED_VAR

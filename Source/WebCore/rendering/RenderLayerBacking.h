@@ -48,6 +48,7 @@ class GraphicsLayerAnimation;
 class PaintedContentsInfo;
 class RegionContext;
 class RenderLayerCompositor;
+class SpatialPortalController;
 class TiledBacking;
 class TransformationMatrix;
 
@@ -89,7 +90,7 @@ public:
     const InlineWeakKeyListHashSet<RenderLayer>& backingSharingLayers() const LIFETIME_BOUND { return m_backingSharingLayers; }
     void setBackingSharingLayers(InlineWeakKeyListHashSet<RenderLayer>&&);
 
-    bool hasBackingSharingLayers() const { return !m_backingSharingLayers.isEmptyIgnoringNullReferences(); }
+    bool hasBackingSharingLayers() const { return !m_backingSharingLayers.computeIsEmpty(); }
 
     void removeBackingSharingLayer(RenderLayer&, OptionSet<UpdateBackingSharingFlags>);
     void clearBackingSharingLayers(OptionSet<UpdateBackingSharingFlags>);
@@ -298,6 +299,11 @@ public:
 
     LayoutSize subpixelOffsetFromRenderer() const { return m_subpixelOffsetFromRenderer; }
 
+#if ENABLE(SPATIAL_PORTAL)
+    SpatialPortalController* hostingSpatialPortalController() const;
+    void updateHostedPromotedChildren();
+#endif
+
     TransformationMatrix transformMatrixForProperty(AnimatedProperty) const final;
 
     void dumpProperties(const GraphicsLayer*, TextStream&, OptionSet<LayerTreeAsTextOptions>) const final;
@@ -397,8 +403,7 @@ private:
 #if ENABLE(MODEL_PROCESS)
     bool updateContentsContainmentLayer();
 #endif
-    bool updateMaskingLayer(bool hasMask, bool hasClipPath, bool hasCornerShapeMask);
-    bool needsCornerShapeMask() const;
+    bool updateMaskingLayer(bool hasMask, bool hasClipPath);
     void updateReflectionLayer();
     bool updateTransformFlatteningLayer(const RenderLayer* compositingAncestor);
 #if USE(SYSTEM_PREVIEW) && ENABLE(MODEL_PROCESS)
@@ -434,12 +439,19 @@ private:
     void connectClippingStackLayers(LayerAncestorClippingStack&);
 
     void updateOpacity(const Style::ComputedStyle&);
+#if ENABLE(SPATIAL_PORTAL)
+    void configureSpatialPortalLayer(SpatialPortalController&);
+    void updatePortalPromotedChildren(SpatialPortalController&);
+    void updateIsHostedInSpatialPortalScene();
+    SpatialPortalController* promotedChildPortalController() const;
+#endif
     void updateTransform(const Style::ComputedStyle&);
     void updateChildrenTransformAndAnchorPoint(const LayoutRect& primaryGraphicsLayerRect, LayoutSize offsetFromParentGraphicsLayer);
     void updateFilters(const Style::ComputedStyle&);
     void updateBackdropFilters(const Style::ComputedStyle&);
     void updateBackdropFiltersGeometry();
     bool updateBackdropRoot();
+    void updateScreenCaptureProtection();
     void updateBlendMode(const Style::ComputedStyle&);
 #if ENABLE(VIDEO)
     void updateVideoGravity(const Style::ComputedStyle&);

@@ -957,7 +957,7 @@ static void setupGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, Cod
 #endif
 
     if (structure->isDictionary()) {
-        if (structure->hasBeenFlattenedBefore())
+        if (!structure->canFlattenForCaching())
             return;
         structure->flattenDictionaryStructure(vm, uncheckedDowncast<JSObject>(baseCell));
     }
@@ -1574,16 +1574,15 @@ static ALWAYS_INLINE JSValue getByVal(VM& vm, JSGlobalObject* globalObject, Code
             if (JSValue result = object->tryGetIndexQuickly(i, arrayProfile))
                 return result;
 
-            bool skipMarkingOutOfBounds = false;
-
             if (object->indexingType() == ArrayWithContiguous && i < object->butterfly()->publicLength()) {
                 // FIXME: expand this to ArrayStorage, Int32, and maybe Double:
                 // https://bugs.webkit.org/show_bug.cgi?id=182940
                 auto* globalObject = object->realm();
-                skipMarkingOutOfBounds = globalObject->isOriginalArrayStructure(object->structure()) && globalObject->arrayPrototypeChainIsSane();
+                if (globalObject->isOriginalArrayStructure(object->structure()) && globalObject->arrayPrototypeChainIsSane())
+                    return jsUndefined();
             }
 
-            if (!skipMarkingOutOfBounds && !CommonSlowPaths::canAccessArgumentIndexQuickly(*object, i))
+            if (!CommonSlowPaths::canAccessArgumentIndexQuickly(*object, i))
                 arrayProfile->setOutOfBounds();
         }
 
@@ -1804,7 +1803,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
         if (newStructure->propertyAccessesAreCacheable() && baseCell == slot.base()) {
             if (slot.type() == PutPropertySlot::NewProperty) {
                 DeferGC deferGC(vm);
-                if (!newStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(oldStructure)) && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID()) {
+                if (!newStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || newStructure->isCacheableTransitionFrom(oldStructure)) && newStructure->previousID()->outOfLineCapacity() == newStructure->outOfLineCapacity() && oldStructure == newStructure->previousID() && oldStructure->privateElementAdditionsAreCacheable()) {
                     ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
                     bool sawPolyProto = false;
@@ -1862,20 +1861,21 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
 
     if (Options::useLLIntICs() && !oldStructure->isDictionary() && (!vm.mayHaveUncacheableTransitions() || baseObject->structure()->isCacheableTransitionFrom(oldStructure))) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
-        Structure* newStructure = baseObject->structure();
-
-        ASSERT(oldStructure == newStructure->previousID());
-        ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
 
         // Start out by clearing out the old cache.
         metadata.m_oldStructureID = StructureID();
         metadata.m_newStructureID = StructureID();
         metadata.m_brand.clear();
 
-        if (!newStructure->isDictionary()) {
-            metadata.m_oldStructureID = oldStructure->id();
-            metadata.m_newStructureID = newStructure->id();
-            metadata.m_brand.set(vm, codeBlock, brand.asCell());
+        if (oldStructure->propertyAccessesAreCacheable() && oldStructure->privateElementAdditionsAreCacheable()) {
+            SUPPRESS_UNCOUNTED_ARG Structure* newStructure = Structure::setBrandTransitionFromExistingStructureConcurrently(oldStructure, &asSymbol(brand)->uid());
+            if (newStructure && newStructure == baseObject->structure() && !newStructure->isDictionary()) {
+                ASSERT(newStructure->previousID() == oldStructure);
+                ASSERT(oldStructure->transitionWatchpointSetHasBeenInvalidated());
+                metadata.m_oldStructureID = oldStructure->id();
+                metadata.m_newStructureID = newStructure->id();
+                metadata.m_brand.set(vm, codeBlock, brand.asCell());
+            }
         }
         vm.writeBarrier(codeBlock);
     }

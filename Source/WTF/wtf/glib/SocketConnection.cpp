@@ -62,6 +62,7 @@ SocketConnection::~SocketConnection() = default;
 
 bool SocketConnection::didReceiveInvalidMessage(ASCIILiteral message)
 {
+    UNUSED_PARAM(message);
     RELEASE_LOG_FAULT_WITH_PAYLOAD(Process, "Received invalid message (%s), closing SocketConnection", message);
     close();
     m_readBuffer.shrink(0);
@@ -84,7 +85,8 @@ bool SocketConnection::read()
                 break;
             }
 
-            g_warning("Error reading from socket connection: %s\n", error->message);
+            if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED))
+                g_warning("Error reading from socket connection: %s\n", error->message);
             didClose();
             return G_SOURCE_REMOVE;
         }
@@ -236,7 +238,8 @@ void SocketConnection::write()
             return;
         }
 
-        g_warning("Error sending message on socket connection: %s\n", error->message);
+        if (!g_error_matches(error.get(), G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED))
+            g_warning("Error sending message on socket connection: %s\n", error->message);
         didClose();
         return;
     }
