@@ -63,6 +63,27 @@ void ParallelHelperClient::setTask(RefPtr<SharedTask<void ()>>&& task)
     m_pool->didMakeWorkAvailable(locker);
 }
 
+void ParallelHelperClient::setTaskOnRequest(RefPtr<SharedTask<void ()>>&& task)
+{
+    Locker locker { *m_pool->m_lock };
+    RELEASE_ASSERT(!m_task);
+    m_task = WTF::move(task);
+    m_taskIsOnRequest = true;
+    m_numRequested = m_pool->m_numThreads;
+    m_pool->didMakeWorkAvailable(locker);
+}
+
+void ParallelHelperClient::requestThreads(unsigned count)
+{
+    Locker locker { *m_pool->m_lock };
+    if (!m_task || !m_taskIsOnRequest)
+        return;
+    // Not more requests than the pool has threads.
+    count = std::min(count, m_pool->m_numThreads - std::min(m_numRequested, m_pool->m_numThreads));
+    m_numRequested += count;
+    m_pool->didMakeWorkAvailableForThreads(locker, count);
+}
+
 void ParallelHelperClient::finish()
 {
     Locker locker { *m_pool->m_lock };
@@ -92,15 +113,19 @@ void ParallelHelperClient::runTaskInParallel(RefPtr<SharedTask<void ()>>&& task)
 void ParallelHelperClient::finishWithLock()
 {
     m_task = nullptr;
+    m_taskIsOnRequest = false;
+    m_numRequested = 0;
     while (m_numActive)
         m_pool->m_workCompleteCondition.wait(*m_pool->m_lock);
 }
 
 RefPtr<SharedTask<void ()>> ParallelHelperClient::claimTask()
 {
-    if (!m_task)
+    if (!hasTaskForThread())
         return nullptr;
-    
+
+    if (m_taskIsOnRequest)
+        m_numRequested--;
     m_numActive++;
     return m_task;
 }
@@ -117,7 +142,9 @@ void ParallelHelperClient::runTask(const RefPtr<SharedTask<void ()>>& task)
         RELEASE_ASSERT(m_numActive);
         // No new task could have been installed, since we were still active.
         RELEASE_ASSERT(!m_task || m_task == task);
-        m_task = nullptr;
+        // A task that was set on request is there to be run again. Only finish() clears it.
+        if (!m_taskIsOnRequest)
+            m_task = nullptr;
         m_numActive--;
         if (!m_numActive)
             m_pool->m_workCompleteCondition.notifyAll();
@@ -231,6 +258,18 @@ void ParallelHelperPool::didMakeWorkAvailable(const AbstractLocker& locker)
     m_workAvailableCondition->notifyAll(locker);
 }
 
+void ParallelHelperPool::didMakeWorkAvailableForThreads(const AbstractLocker& locker, unsigned count)
+{
+    if (count >= m_numThreads) {
+        didMakeWorkAvailable(locker);
+        return;
+    }
+    while (m_numThreads > m_threads.size())
+        m_threads.append(adoptRef(new Thread(locker, *this)));
+    while (count--)
+        m_workAvailableCondition->notifyOne(locker);
+}
+
 bool ParallelHelperPool::hasClientWithTask()
 {
     return !!getClientWithTask();
@@ -242,12 +281,12 @@ ParallelHelperClient* ParallelHelperPool::getClientWithTask()
     unsigned startIndex = m_random.getUint32(m_clients.size());
     for (unsigned index = startIndex; index < m_clients.size(); ++index) {
         ParallelHelperClient* client = m_clients[index];
-        if (client->m_task)
+        if (client->hasTaskForThread())
             return client;
     }
     for (unsigned index = 0; index < startIndex; ++index) {
         ParallelHelperClient* client = m_clients[index];
-        if (client->m_task)
+        if (client->hasTaskForThread())
             return client;
     }
 

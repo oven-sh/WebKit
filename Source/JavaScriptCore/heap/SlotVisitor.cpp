@@ -544,6 +544,7 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
+    collector().recallHelpers(locker);
     if (Collector::startsHelpersLazily()) {
         collector().startHelpers();
         collector().m_markingConditionVariable.notifyOne();
@@ -785,8 +786,23 @@ bool SlotVisitor::didReachTermination()
     return didReachTermination(locker);
 }
 
+bool SlotVisitor::didReachTerminationOrConductorIsAway()
+{
+    Locker locker { collector().m_markingMutex };
+    bool result = didReachTermination(locker);
+    if (!result)
+        collector().m_conductorPresence.fetch_or(Collector::conductorIsAwayBit, std::memory_order_relaxed);
+    return result;
+}
+
 bool SlotVisitor::didReachTermination(const AbstractLocker& locker)
 {
+#if ASSERT_ENABLED
+    // Every site that shares cells or sets a bonus task asks for the helpers that left (Collector::recallHelpers).
+    assertIsHeld(collector().m_markingMutex);
+    ASSERT(!collector().m_numberOfHelpersThatLeft
+        || (collector().m_sharedCollectorMarkStack->isEmpty() && collector().m_sharedMutatorMarkStack->isEmpty() && !collector().m_bonusVisitorTask));
+#endif
     return !collector().m_numberOfActiveParallelMarkers
         && !hasWork(locker);
 }
@@ -872,17 +888,35 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                     m_collector.heap().m_stopIfNecessaryTimer->scheduleSoon();
                 }
 
+                // A helper with nothing to do waits for the conductor, which gives it work or ends the collection. It does
+                // not wait when no conductor is here (Collector::m_conductorPresence): a mutator that conducts can sleep
+                // for any time. The helper returns to the pool, which all heaps of the process share, and
+                // Collector::recallHelpers asks for it when there is work again.
+                auto canLeave = [&] () -> bool {
+                    locker.assertIsHolding(collector().m_markingMutex);
+                    return Options::gcHelpersLeaveWhenConductorIsAway()
+                        && collector().conductorIsAway(locker)
+                        && !collector().m_numberOfActiveParallelMarkers;
+                };
+
                 auto isReady = [&] () -> bool {
                     locker.assertIsHolding(collector().m_markingMutex);
                     return hasWork(locker)
                         || collector().m_bonusVisitorTask
-                        || collector().m_parallelMarkersShouldExit;
+                        || collector().m_parallelMarkersShouldExit
+                        || canLeave();
                 };
 
                 collector().m_markingConditionVariable.waitUntil(collector().m_markingMutex, timeout, isReady);
 
                 if (collector().m_parallelMarkersShouldExit)
                     return SharedDrainResult::Done;
+
+                // The wait ended for canLeave(). Do not ask again: a conductor can come at any time, with no lock held.
+                if (!hasWork(locker) && !collector().m_bonusVisitorTask) {
+                    collector().m_numberOfHelpersThatLeft++;
+                    return SharedDrainResult::Done;
+                }
 
                 if (!hasWork(locker) && collector().m_bonusVisitorTask)
                     bonusTask = collector().m_bonusVisitorTask;
@@ -967,7 +1001,7 @@ void SlotVisitor::donateAll()
     donateAll(Locker { collector().m_markingMutex });
 }
 
-void SlotVisitor::donateAll(const AbstractLocker&)
+void SlotVisitor::donateAll(const AbstractLocker& locker)
 {
     forEachMarkStack(
         [&] (MarkStackArray& stack) -> IterationStatus {
@@ -975,8 +1009,11 @@ void SlotVisitor::donateAll(const AbstractLocker&)
             return IterationStatus::Continue;
         });
 
-    if (!collector().hasStartedHelpers() && (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty()))
-        collector().startHelpers();
+    if (!collector().m_sharedCollectorMarkStack->isEmpty() || !collector().m_sharedMutatorMarkStack->isEmpty()) {
+        if (!collector().hasStartedHelpers())
+            collector().startHelpers();
+        collector().recallHelpers(locker);
+    }
     collector().m_markingConditionVariable.notifyAll();
 }
 
