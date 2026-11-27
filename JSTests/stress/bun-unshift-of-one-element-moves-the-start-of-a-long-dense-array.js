@@ -22,7 +22,8 @@ const makers = {
 
 const length = 2000;
 const count = 40;
-for (const [mode, make] of Object.entries(makers)) {
+// Under --alwaysHaveABadTime=true (lockdown mode) every array has slow-put array storage, which fastUnshift() does not take.
+for (const [mode, make] of $vm.isHavingABadTime() ? [] : Object.entries(makers)) {
     const array = [];
     for (let index = 0; index < length; ++index)
         array.push(make(index));
