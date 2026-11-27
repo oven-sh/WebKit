@@ -2768,7 +2768,6 @@ private:
     std::optional<ModuleID> m_mainEntryPoint;
     bool m_isRunningPreloads { false };
     BitVector m_dataFilesImportedByUncompiledCode;
-    BitVector m_filesImportedUnderTypesOfCode;
     bool m_didTakeMainModuleLoadStep { false };
     bool m_didSplitMainLoadPromise { false };
     ModuleID m_importOfMainModule;

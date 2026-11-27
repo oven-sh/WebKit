@@ -3173,7 +3173,6 @@ void Modules::releaseLoadedModule(ModuleID module)
     if (storedStatus(module) == StoredModuleStatus::Linked)
         setStoredStatus(module, StoredModuleStatus::Unlinked);
     m_modulesReleasedSincePass.set(module.index());
-    m_filesImportedUnderTypesOfCode.clear(module.index());
     if (m_unseenMocks.clear(module.index())) [[unlikely]] {
         m_modulesWithPendingMock.set(module.index());
         m_modulesWithDeferredMock.set(module.index());
