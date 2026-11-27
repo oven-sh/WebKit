@@ -50,7 +50,12 @@ struct ModuleInformation;
     macro(operationWasmDataDrop) \
     macro(operationMemoryMove) \
     macro(operationGCSafeMemoryMove) \
-    macro(operationMemoryFill) \
+    macro(operationMemoryFill8) \
+    macro(operationMemoryFill16) \
+    macro(operationMemoryFill32) \
+    macro(operationMemoryFill64) \
+    macro(operationGCSafeMemoryFill64) \
+    macro(operationMemoryFill128) \
     macro(operationMemoryAtomicWait32) \
     macro(operationMemoryAtomicWait64) \
     macro(operationMemoryAtomicNotify) \
@@ -70,11 +75,6 @@ struct ModuleInformation;
     macro(operationWasmArrayNewElem) \
     macro(operationWasmArrayInitData) \
     macro(operationWasmArrayInitElem) \
-    macro(operationWasmArrayFill2B) \
-    macro(operationWasmArrayFill4B) \
-    macro(operationWasmArrayFill8B) \
-    macro(operationWasmArrayFill16B) \
-    macro(operationWasmArrayFillRefs) \
     macro(operationWasmWriteBarrierSlowPath) \
     macro(operationPopcount32) \
     macro(operationPopcount64) \
@@ -277,7 +277,7 @@ struct StructLayoutInImage {
 
 struct CodeForImage {
     const ImagePointerTable& pointers;
-    const UncheckedKeyHashMap<const RTT*, uint32_t>& typeIndices;
+    const HashMap<const RTT*, uint32_t>& typeIndices;
     const Vector<StructLayoutInImage>& structLayouts;
     CCallHelpers& jit;
     AOT::RelocationRecorder& recorder;
