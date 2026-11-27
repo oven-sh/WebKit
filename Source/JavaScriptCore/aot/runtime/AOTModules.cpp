@@ -4514,7 +4514,7 @@ void runCompiledModuleImportStep(JSValue importPromise, JSValue module, JSValue 
             modules->didRunFirstImportStep(promise);
             if (modules->hasEvictedFiles()) [[unlikely]] {
                 withModuleOfJob(promise->realm(), module, [](Modules& modules, ModuleID imported) {
-                    modules.restoreFormEvictedDuringImport(imported);
+                    modules.noteFormThatLeftUnderImport(imported);
                 });
             }
             if (modules->tryRestartReleasedImport(promise))
@@ -4596,8 +4596,8 @@ bool Modules::isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchPa
     return form && isEvicted(*form);
 }
 
-// The loader keeps the text that an import() under way has fetched, also where a reset takes the file out in between.
-void Modules::restoreFormEvictedDuringImport(ModuleID module)
+// The loader keeps the text that an import() under way has fetched, also where a reset takes the file out. The program does not hold it any more.
+void Modules::noteFormThatLeftUnderImport(ModuleID module)
 {
     ModuleID form = fileOf(module);
     String path = m_table.fullPath(form);
@@ -4605,17 +4605,15 @@ void Modules::restoreFormEvictedDuringImport(ModuleID module)
     if (!isTestRun() || data(form).kind != ModuleKind::Data || !isEvicted(form) || mark == notFound)
         return;
     std::optional<ModuleID> file = m_table.findByPath(StringView(path).left(mark));
-    if (!file || !isFileOfProgram(*file))
-        return;
-    Identifier key = keyWithoutForm(form);
-    auto type = m_table.isFormOfType(form, "?json"_s) ? ScriptFetchParameters::Type::JSON : ScriptFetchParameters::Type::HostDefined;
-    ModuleMapKey keyOfLoader { key.impl(), type };
-    if (loader()->moduleMap().contains(keyOfLoader))
-        return;
-    takeBackFromHost(std::span(&form, 1));
-    if (mayBeEvicted(*file))
-        delegateToHostUnlessEvaluated(*file);
-    m_formsAnsweredFirst.set(keyOfLoader, FormAnsweredFirst { key, form });
+    if (file && isFileOfProgram(*file))
+        m_formsThatLeftUnderImport.set(form.index());
+}
+
+bool Modules::hasFormLeftUnderImport(const String& path, const ScriptFetchParameters& attributes) const
+{
+    ASCIILiteral type = m_formsThatLeftUnderImport.isEmpty() ? ASCIILiteral { } : typeThatReadsTextAsData(attributes);
+    std::optional<ModuleID> form = type.isNull() ? std::nullopt : m_table.findByPath(makeString(path, '?', type));
+    return form && m_formsThatLeftUnderImport.get(form->index());
 }
 
 static JSPromise* importPromiseRejectedByLoader(JSGlobalObject* realm, ThrowScope& scope)
@@ -4887,7 +4885,7 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             RETURN_IF_EXCEPTION(scope, importPromiseRejectedByLoader(realm, scope));
             if (form)
                 module = m_table.facadeOf(*form).value_or(*form);
-            else if ((!isTypeOfCode(*attributes) && isFormOfAnotherTypeEvicted(key.string(), *attributes)) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index()))))) [[unlikely]] {
+            else if (!hasFormLeftUnderImport(key.string(), *attributes) && ((!isTypeOfCode(*attributes) && isFormOfAnotherTypeEvicted(key.string(), *attributes)) || (wasWrittenSinceBuild(file) && !(isTypeOfCode(*attributes) && (data(file).kind == ModuleKind::CommonJs || m_filesImportedUnderTypesOfCode.get(file.index())))))) [[unlikely]] {
                 // The loader that has the form has the file from then on.
                 if (isFileOfProgram(file) && mayBeEvicted(file) && !isTypeOfCode(*attributes))
                     delegateToHostUnlessEvaluated(file);

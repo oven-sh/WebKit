@@ -1300,7 +1300,7 @@ public:
     bool hasMockRegisteredAfter(ModuleID, uint32_t moment) const;
     JSObject* takeReleasedImportNamespace(JSPromise*, ModuleID);
     bool tryRestartReleasedImport(JSPromise*);
-    void restoreFormEvictedDuringImport(ModuleID);
+    void noteFormThatLeftUnderImport(ModuleID);
     bool hasEvictedFiles() const { return !m_evictedFiles.isEmpty(); }
     void restorePreloadInstances();
     void noteRestoredModule(ModuleID module) { m_restoredModules.set(module.index()); }
@@ -2459,6 +2459,7 @@ private:
     std::optional<ModuleID> findByName(const Identifier& key);
     enum class FormWithoutAttributes : bool { MayAnswer, IsAnotherModule };
     bool isFormOfAnotherTypeEvicted(const String& path, const ScriptFetchParameters&) const;
+    bool hasFormLeftUnderImport(const String& path, const ScriptFetchParameters&) const;
     std::optional<ModuleID> findWithAttributes(const Identifier& key, const ScriptFetchParameters*, FormWithoutAttributes = FormWithoutAttributes::MayAnswer, std::optional<ModuleID> foundUnderWrittenName = std::nullopt);
     std::optional<ModuleID> findFormUnderWrittenName(JSString* name, ModuleID referrer, const ScriptFetchParameters&);
     Identifier keyWithoutForm(ModuleID file);
@@ -2772,6 +2773,7 @@ private:
     bool m_isRunningPreloads { false };
     BitVector m_dataFilesImportedByUncompiledCode;
     BitVector m_filesImportedUnderTypesOfCode;
+    BitVector m_formsThatLeftUnderImport;
     bool m_didTakeMainModuleLoadStep { false };
     bool m_didSplitMainLoadPromise { false };
     ModuleID m_importOfMainModule;
