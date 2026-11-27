@@ -79,7 +79,7 @@ private:
             for (BasicBlock* block : m_proc.cachedBlocksInPreOrder())
                 stretch[block] = 1 + preOrderIndex++ / Limits::blocksPerConstantStretch;
         }
-        UncheckedKeyHashMap<std::pair<ValueKey, unsigned>, unsigned> groupIndices;
+        HashMap<std::pair<ValueKey, unsigned>, unsigned> groupIndices;
         for (const ConstantUse& use : orderedUses) {
             Value* child = *use.child;
             if (!isPlacedByFrequency(child))

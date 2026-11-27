@@ -1413,7 +1413,7 @@ private:
     Vector<uint8_t> m_marks;
     Vector<uint8_t> m_useCounts;
     Vector<ValueID> m_onlyUsers;
-    mutable UncheckedKeyHashMap<uint32_t, uint32_t> m_valuesBehindRowsOfNarrowed;
+    mutable HashMap<uint32_t, uint32_t> m_valuesBehindRowsOfNarrowed;
     Vector<ValueID> m_parametersFed;
     Vector<ValueID> m_order;
     uint32_t m_numberOfOperationsInOrder { 0 };

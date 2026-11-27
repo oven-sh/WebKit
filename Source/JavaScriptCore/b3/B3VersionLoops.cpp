@@ -126,7 +126,7 @@ private:
         StridedIndexVariables stridedIndexVariables { };
         unsigned numberOfReducedIndicesCopied { 0 };
         // Only where decided comparisons are logged: what stands for a phi in the fast loop, by the variable that the phi has become.
-        UncheckedKeyHashMap<Variable*, Value*> valuesStandingForVariables;
+        HashMap<Variable*, Value*> valuesStandingForVariables;
     };
 
     void findSingleDefinitions()
@@ -1021,8 +1021,8 @@ private:
     Vector<BasicBlock*>& m_topTestedVersionHeaders;
     RegionCloner m_cloner;
     Vector<std::unique_ptr<Version>> m_versions;
-    UncheckedKeyHashMap<Variable*, Value*> m_singleDefinitions;
-    UncheckedKeyHashMap<Value*, Variable*> m_definitionVariables;
+    HashMap<Variable*, Value*> m_singleDefinitions;
+    HashMap<Value*, Variable*> m_definitionVariables;
     IndexSet<Value*> m_valuesThatOnlyPreHeadersName;
     IndexSet<BasicBlock*> m_blocksOfValuesThatOnlyPreHeadersName;
     bool m_didStoreValuesThatOnlyPreHeadersName { false };

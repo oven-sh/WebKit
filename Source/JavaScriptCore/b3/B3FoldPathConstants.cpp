@@ -439,7 +439,7 @@ private:
             case Switch: {
                 SwitchValue* switchValue = branch->as<SwitchValue>();
 
-                UncheckedKeyHashMap<BasicBlock*, unsigned> targetUses;
+                HashMap<BasicBlock*, unsigned> targetUses;
                 for (SwitchCase switchCase : switchValue->cases(block))
                     targetUses.add(switchCase.targetBlock(), 0).iterator->value++;
                 targetUses.add(switchValue->fallThrough(block), 0).iterator->value++;
@@ -931,8 +931,8 @@ private:
     const uint64_t m_maxEntriesToScan { m_proc.limit(Limit::MaxPathConstantsScanned) };
     Dominators* m_dominators { nullptr };
     Vector<std::pair<Value*, Override>, 32> m_overrides;
-    UncheckedKeyHashMap<Value*, DecidedComparisons> m_decidedComparisons;
-    UncheckedKeyHashMap<Value*, OverrideVersions> m_overrideVersions;
+    HashMap<Value*, DecidedComparisons> m_decidedComparisons;
+    HashMap<Value*, OverrideVersions> m_overrideVersions;
     static constexpr unsigned unreachedTime = std::numeric_limits<unsigned>::max();
     IndexMap<BasicBlock*, unsigned> m_timeOfEntry;
     IndexMap<BasicBlock*, unsigned> m_timeOfExit;

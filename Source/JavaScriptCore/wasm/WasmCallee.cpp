@@ -316,7 +316,7 @@ IPIntCallee::IPIntCallee(FunctionIPIntMetadataGenerator& generator, FunctionSpac
     : Callee(Wasm::CompilationMode::IPIntMode, index, WTF::move(name))
     , m_functionIndex(generator.m_functionIndex)
     , m_signatureRTT(&signatureRTT)
-    , m_tierUpCounter(UncheckedKeyHashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> { })
+    , m_tierUpCounter(HashMap<IPIntPC, IPIntTierUpCounter::OSREntryData> { })
 {
     takeMetadata(generator);
 }

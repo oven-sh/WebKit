@@ -55,8 +55,8 @@ private:
     bool m_hasWritten { false };
     std::array<uint64_t, numberOfEnumerators<RuntimeCounterID>> m_values { };
     using FieldThatLeftSlot = std::pair<uint64_t, uint64_t>;
-    UncheckedKeyHashMap<FieldThatLeftSlot, uint64_t, DefaultHash<FieldThatLeftSlot>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_fieldsThatLeftSlots;
-    UncheckedKeyHashMap<String, uint64_t> m_mockTransitions;
+    HashMap<FieldThatLeftSlot, uint64_t, DefaultHash<FieldThatLeftSlot>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> m_fieldsThatLeftSlots;
+    HashMap<String, uint64_t> m_mockTransitions;
     Vector<uint64_t> m_calls;
 };
 

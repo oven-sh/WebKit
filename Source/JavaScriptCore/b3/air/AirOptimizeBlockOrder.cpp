@@ -1144,7 +1144,7 @@ private:
 
     void routeThroughNewJumps()
     {
-        UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 4>> branchesTo;
+        HashMap<BasicBlock*, Vector<unsigned, 4>> branchesTo;
         for (unsigned index = 0; index < m_branches.size(); ++index) {
             if (!m_branches[index].isRouted)
                 branchesTo.add(m_branches[index].target, Vector<unsigned, 4>()).iterator->value.append(index);
@@ -1215,9 +1215,9 @@ private:
     unsigned m_firstRarePosition { 0 };
     Vector<Branch> m_branches;
     Vector<unsigned> m_gaps;
-    UncheckedKeyHashMap<BasicBlock*, Vector<unsigned, 2>> m_jumpsTo;
-    UncheckedKeyHashMap<unsigned, BasicBlock*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_splitJumps;
-    UncheckedKeyHashMap<unsigned, Vector<BasicBlock*, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_blocksBehind;
+    HashMap<BasicBlock*, Vector<unsigned, 2>> m_jumpsTo;
+    HashMap<unsigned, BasicBlock*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_splitJumps;
+    HashMap<unsigned, Vector<BasicBlock*, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_blocksBehind;
 };
 
 } // anonymous namespace

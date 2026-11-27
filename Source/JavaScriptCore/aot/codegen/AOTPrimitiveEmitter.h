@@ -272,8 +272,8 @@ protected:
     LValue& m_numberTag;
     LValue& m_notCellMask;
     LValue& m_cellCageBase;
-    UncheckedKeyHashMap<LValue, LValue>& m_wordsOfInt32Elements;
-    UncheckedKeyHashMap<LValue, LValue>& m_narrowWordsOfIntegers;
+    HashMap<LValue, LValue>& m_wordsOfInt32Elements;
+    HashMap<LValue, LValue>& m_narrowWordsOfIntegers;
     bool& m_owesFenceBehindStores;
 
 private:

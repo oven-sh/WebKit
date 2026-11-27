@@ -367,7 +367,7 @@ private:
     friend void endClassGuardsOfName(State&, const LayoutData&, ClassSide, std::optional<uint32_t> key, GuardsOfNameToEnd);
     friend void endGuardsOfInheritedMembers(State&, const LayoutData&, ClassSide);
 
-    using ByIndex = UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using ByIndex = HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     static constexpr unsigned declaredMembersPerHolder = 62;
 
     std::optional<DeclaredMemberLocation> declaredMemberLocation(VM&, FunctionID key, const DeclaredMember* accessorOrNull, MemberCreation);
@@ -392,7 +392,7 @@ private:
     bool hasNoGuardLeft(const LayoutData& classLayout) const { return hasNoGuardLeft(classLayout, ClassSide::Prototype) && hasNoGuardLeft(classLayout, ClassSide::Static); }
     bool everyGuardHasEnded(const LayoutData& classLayout) const { return guardHasEnded(classLayout, ClassSide::Prototype) && guardHasEnded(classLayout, ClassSide::Static); }
     const LayoutData* classOfHolderLeftOut(JSObject* holder, ClassSide&) const;
-    using GuardBits = UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using GuardBits = HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     void listGuardsOfPassingStores(const LayoutData&, const LayoutData& relinkedClass, GuardBits&);
     bool inheritsFromAbove(const LayoutData&, const LayoutData& relinkedClass, ClassSide, uint32_t name) const;
     bool endGuardsOfShadowedMember(const LayoutData& instanceLayout, UniquedStringImpl*);
@@ -456,7 +456,7 @@ private:
     std::array<ThisBesideCallee, numberOfCalleesWithThisBeside> m_thisBesideCallees { };
     std::array<JSCell*, numberOfCalleesWithThisBeside> m_calleesConstructedOnce { };
     bool mayGainLayoutAbove(VM&, JSObject* prototype) const;
-    UncheckedKeyHashMap<uint32_t, UniqueArray<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_wordsOfObjectsWithoutFields;
+    HashMap<uint32_t, UniqueArray<uint64_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_wordsOfObjectsWithoutFields;
     std::array<PrivateFieldPlace, numberOfPrivateFieldPlaces> m_privateFieldPlaces { };
     Vector<InstanceBelowPrototype> m_instancesBelowPrototypes;
     size_t m_numberOfInstancesBelowPrototypes { 0 };
@@ -465,10 +465,10 @@ private:
     mutable std::array<std::atomic<uint64_t>, numberOfClassesOfFunctionsAsked> m_classesOfFunctionsAsked { };
     State& m_state;
     const ProgramTables& m_tables;
-    UncheckedKeyHashMap<JSObject*, Structure*> m_classPrototypeStructures;
-    UncheckedKeyHashMap<JSObject*, Structure*> m_lazyClassObjectStructures;
-    UncheckedKeyHashMap<JSObject*, Structure*> m_classObjectStructures;
-    UncheckedKeyHashMap<JSObject*, uint32_t> m_classSidesByHolder;
+    HashMap<JSObject*, Structure*> m_classPrototypeStructures;
+    HashMap<JSObject*, Structure*> m_lazyClassObjectStructures;
+    HashMap<JSObject*, Structure*> m_classObjectStructures;
+    HashMap<JSObject*, uint32_t> m_classSidesByHolder;
     bool m_hasHoldersLeftOut { false };
     struct LastEvaluation {
         JSObject* prototype;
@@ -507,26 +507,26 @@ private:
     BitVector m_classesWhosePrototypeAwaitsFirstTouch;
     BitVector m_sidesWhereNamesEnded;
     BitVector m_sidesWithOtherParent;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedOnce;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedAgain;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedOnce;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_membersReplacedAgain;
     bool memberMayBeOverwritten(const LayoutData&, ClassSide, uint32_t key) const;
     JSValue findAssignedMember(const AssignedMemberData&) const;
     void updateAssignedMember(const AssignedMemberData&);
     void clearDeadAssignedMembers(VM&, CollectionScope);
     void clearAssignedMemberIfDead(VM&, uint32_t guardBit);
     Vector<uint32_t> m_newAssignedMembers;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_definedHeirCounts;
-    UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_assignedMemberNames;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesBelowPrototypes;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_definedHeirCounts;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_assignedMemberNames;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesBelowPrototypes;
     static constexpr uint64_t storesStillPassUnderEndedName = 1ull << 63;
     static constexpr uint64_t readsStillFindUnderEndedName = 1ull << 62;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_endedNames;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_endedNames;
     PagedNumberSet m_endedGuardsOfNames;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_lateMembers;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lateMembersOfGuards;
-    UncheckedKeyHashMap<uint32_t, CheckedHolder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_checkedHolders;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesWithInstanceBelowOtherPrototype;
-    mutable UncheckedKeyHashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsByName;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_lateMembers;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_lateMembersOfGuards;
+    HashMap<uint32_t, CheckedHolder, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_checkedHolders;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_classesWithInstanceBelowOtherPrototype;
+    mutable HashMap<uint32_t, Vector<uint32_t>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsByName;
     struct OwnerOfGuardsThatHangOnChains;
     std::unique_ptr<ChainDependentOwner> m_ownerOfGuardsThatHangOnChains;
     ChainDependentOwnerID m_numberOfOwnerOfGuardsThatHangOnChains { };
@@ -555,13 +555,13 @@ private:
         static bool equal(uint64_t first, uint64_t second) { return !((first ^ second) & ~static_cast<uint64_t>(VerdictOnStructureOfHeir::passesBit)); }
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
-    UncheckedKeyHashSet<uint64_t, HashOfVerdictOnStructureOfHeir> m_verdictsOnStructuresOfHeirs;
+    HashSet<uint64_t, HashOfVerdictOnStructureOfHeir> m_verdictsOnStructuresOfHeirs;
     struct MembersAboveHeirs {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(MembersAboveHeirs);
         bool canBeToldByStructure { true };
         Vector<RefPtr<UniquedStringImpl>> names;
     };
-    mutable UncheckedKeyHashMap<uint32_t, std::unique_ptr<MembersAboveHeirs>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_membersAboveHeirs;
+    mutable HashMap<uint32_t, std::unique_ptr<MembersAboveHeirs>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_membersAboveHeirs;
     uint64_t m_numberOfWalksOverPrototypeHolders { 0 };
     unsigned m_numberOfOpenMethodTableUpdates { 0 };
     BitVector m_writablePagesOfMethodTable;
@@ -578,14 +578,14 @@ private:
     std::optional<BitVector> m_classesAtOrAboveGuardOfWordOnWhatSeesAccesses;
     std::optional<uint32_t> m_numberOfWordOnWhatSeesAccesses;
     const LayoutData* m_classDefinedFromRecord { nullptr };
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsWithoutClass;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constructorFunctionsWithoutClass;
     void rememberClassConstructedBy(FunctionID, const LayoutData&) const;
     void endEvaluationsThatDied(VM&, CollectionScope);
     struct EvaluationHeldWhileReached {
         JSCell* classObject { nullptr };
         uint32_t rank { 0 };
     };
-    UncheckedKeyHashMap<uint32_t, EvaluationHeldWhileReached, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_evaluationsHeldWhileReached;
+    HashMap<uint32_t, EvaluationHeldWhileReached, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_evaluationsHeldWhileReached;
     Vector<uint32_t> m_constructorsOfEvaluationsChangedSinceCollection;
     JSObject* m_markOfEvaluationThatDied { nullptr };
 };

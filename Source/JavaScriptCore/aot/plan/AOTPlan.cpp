@@ -426,7 +426,7 @@ static void findViewsOfOneBuffer(const Program& program, const Facts& facts, Vec
         VariableID variable;
         uint32_t buffer;
     };
-    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> buffersOfViews;
+    HashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> buffersOfViews;
     BitVector givenOtherwise(variables.size());
     uint32_t numberOfBuffers = 0;
     for (uint32_t number = 0; number < program.functions.size(); ++number) {

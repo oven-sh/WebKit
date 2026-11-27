@@ -178,7 +178,7 @@ private:
     static uint64_t keyOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) { return (static_cast<uint64_t>(layout.index) + 1) << 32 | orderWord; }
     static size_t placeOfFinishedBirth(uint64_t key) { return ((key >> 32) ^ (key >> 15)) % numberOfFinishedBirths; }
     std::array<uint64_t, numberOfFinishedBirths> m_ordersOfFinishedBirths { };
-    UncheckedKeyHashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
+    HashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };
 

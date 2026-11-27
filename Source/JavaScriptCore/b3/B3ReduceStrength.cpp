@@ -4905,7 +4905,7 @@ private:
         NaturalLoops& loops = m_proc.naturalLoops();
         // A shift comes before the sums that it is part of.
         for (Opcode opcode : { Shl, Add }) {
-            UncheckedKeyHashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
+            HashMap<ValueKey, Vector<Value*, 8>> valuesByKey;
             for (Value* value : newParts) {
                 if (value->opcode() != opcode || !value->owner)
                     continue;
@@ -6010,7 +6010,7 @@ private:
     Dominators* m_dominators { nullptr };
     bool m_valueOwnersAreCurrent { false };
     BasicBlock* m_blockOfPhisByInputs { nullptr };
-    UncheckedKeyHashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
+    HashMap<unsigned, Value*, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_phisByInputs;
     Vector<Value*> m_inputInBlock;
     std::optional<BitVector> m_hasUserThatKeepsSum;
     Vector<Value*, 8> m_newPartsOfAddresses;
@@ -6026,8 +6026,8 @@ private:
     const bool m_narrowsIntegers { m_proc.policy().optimization.narrowsIntegers };
     const bool m_mergesBlocksAfterForwardingJumps { m_proc.policy().optimization.mergesBlocksAfterForwardingJumps };
     BitVector m_isUsedForLowWord;
-    UncheckedKeyHashMap<Value*, Value*> m_lowWords;
-    UncheckedKeyHashSet<Value*> m_integersConvertedFromDoubles;
+    HashMap<Value*, Value*> m_lowWords;
+    HashSet<Value*> m_integersConvertedFromDoubles;
     std::optional<MemoryNumbering> m_numbering;
     DominatingConditionStack m_conditions;
     const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase(m_proc) };

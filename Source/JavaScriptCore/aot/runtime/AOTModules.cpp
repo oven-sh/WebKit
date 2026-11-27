@@ -1392,7 +1392,7 @@ std::optional<std::pair<ModuleID, unsigned>> Modules::exportThatStaysInBehindInd
 
 void Modules::fillExportsOfBodyThatNeverRuns(ModuleID module)
 {
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> variablesOfOtherModules;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> variablesOfOtherModules;
     BitVector seen(m_table.size());
     seen.quickSet(module.index());
     Vector<ModuleID, 32> work { module };
@@ -1912,7 +1912,7 @@ void Modules::leaveStructuresOfReloadedImporters(ModuleID module)
 {
     VM& vm = *m_instance.vm;
     listImportersAndRequirers();
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> seen;
     Vector<uint32_t, 16> work { module.index() };
     while (!work.isEmpty()) {
         for (uint32_t index : m_importersByStatement[work.takeLast()]) {
@@ -2332,7 +2332,7 @@ auto Modules::starTargetsByName(ModuleID module) const -> const StarTargetsByNam
 std::span<const uint32_t> Modules::requiredNamesOfStatementsThatExport(ModuleID module, const String& exportName) const
 {
     auto& byExportName = m_requiredNamesOfStatementsByExportName.ensure(module, [&] {
-        UncheckedKeyHashMap<String, Vector<uint32_t, 1>> listed;
+        HashMap<String, Vector<uint32_t, 1>> listed;
         std::span<const RequiredNameData> requiredNames = m_table.requiredNames(module);
         for (uint32_t place = 0; place < requiredNames.size(); ++place) {
             if (const ExportStatementData* statement = m_table.findExportStatement(requiredNames[place]))
@@ -2381,7 +2381,7 @@ auto Modules::reexportPathModules(ModuleID reexportingModule, unsigned indexOfRe
             }
             return asked;
         }
-        UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
+        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> seen;
         struct RequestedName {
             ModuleID module;
             uint32_t name;
@@ -2514,7 +2514,7 @@ auto Modules::findMockForReexportSlow(ModuleID reexportingModule, const ModuleEx
         bool isAskedByStar;
         ModuleID holder;
     };
-    UncheckedKeyHashSet<std::pair<uint64_t, uint32_t>, DefaultHash<std::pair<uint64_t, uint32_t>>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> seen;
+    HashSet<std::pair<uint64_t, uint32_t>, DefaultHash<std::pair<uint64_t, uint32_t>>, PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> seen;
     Vector<Asked, 8> toAsk { Asked { reexportingModule, reexportEntry.name, false, reexportingModule } };
     std::optional<MockedReexport> mockLackingName;
     while (!toAsk.isEmpty()) {
@@ -6690,7 +6690,7 @@ void Modules::appendRequestsForLoader(ModuleID module, ModuleRecord* record, Mod
     }
 
     countEvent(*m_instance.vm, RuntimeCounterID::CompiledModulesWalkedByLoader);
-    UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash> keys;
+    HashSet<ModuleMapKey, ModuleMapHash> keys;
     WTF::Vector<Identifier, 8> keptAlive;
     bool comesInOrderOfRequests = false;
     for (const ModuleRequestData& request : m_table.imports(module)) {
@@ -6828,7 +6828,7 @@ struct Modules::RequestsOfUncompiledCode {
         RefPtr<ScriptFetchParameters> fetchParameters;
     };
 
-    UncheckedKeyHashSet<ModuleMapKey, ModuleMapHash> seen;
+    HashSet<ModuleMapKey, ModuleMapHash> seen;
     WTF::Vector<Request, 8> list;
 };
 
@@ -7372,7 +7372,7 @@ static const ExternalSpecifiers& externalSpecifiers(const Image& image, const Mo
 {
     struct NamesOfImages {
         Lock lock;
-        UncheckedKeyHashMap<unsigned, std::unique_ptr<ExternalSpecifiers>> byImage WTF_GUARDED_BY_LOCK(lock);
+        HashMap<unsigned, std::unique_ptr<ExternalSpecifiers>> byImage WTF_GUARDED_BY_LOCK(lock);
     };
     static NeverDestroyed<NamesOfImages> namesOfImages;
     NamesOfImages& ofImages = namesOfImages.get();
@@ -7455,7 +7455,7 @@ static PathOfModule pathOfModule(ModuleID module)
 {
     struct PathsOfModules {
         Lock lock;
-        UncheckedKeyHashMap<uint64_t, PathOfModule> byImageAndModule WTF_GUARDED_BY_LOCK(lock);
+        HashMap<uint64_t, PathOfModule> byImageAndModule WTF_GUARDED_BY_LOCK(lock);
     };
     static NeverDestroyed<PathsOfModules> pathsOfModules;
     PathsOfModules& paths = pathsOfModules.get();
@@ -8156,7 +8156,7 @@ void forEachRequireCacheKey(JSGlobalObject* realm, const WTF::Function<void(cons
         return true;
     };
     BitVector isRequested(table.size());
-    UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>> modulesFirstRequiredBy;
+    HashMap<ModuleID, Vector<ModuleID, 2>> modulesFirstRequiredBy;
     for (auto [requirer, required] : modules->firstRequires()) {
         modulesFirstRequiredBy.add(requirer, Vector<ModuleID, 2>()).iterator->value.append(required);
         isRequested.quickSet(required.index());

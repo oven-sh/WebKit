@@ -202,7 +202,7 @@ private:
     }
 
     CodeBody& m_body;
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_indexes;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_indexes;
 };
 
 struct DescribedCodeOfOperation {

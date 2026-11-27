@@ -53,7 +53,7 @@ public:
     // in it and their slots. A barrier frame stands for a `with` object or a sloppy eval's var scope: anything at or
     // past it is dynamic.
     struct Frame : public RefCounted<Frame> {
-        using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
+        using Slots = HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
         static constexpr unsigned lazyFunctionSlotFlag = 1u << 31; // a module's function declaration: read it with ResolvedLazyClosureVar
         static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next) }); }
         bool isBarrier;

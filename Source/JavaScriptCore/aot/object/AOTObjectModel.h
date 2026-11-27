@@ -110,7 +110,7 @@ private:
     CachedField* m_cachedFields { nullptr };
     uint32_t m_maskOfCachedFields { initialCachedFields - 1 };
     uint32_t m_fieldsCachedSinceGrowth { 0 };
-    UncheckedKeyHashMap<uint32_t, Vector<uint32_t>> m_recordsByName;
+    HashMap<uint32_t, Vector<uint32_t>> m_recordsByName;
 };
 
 class StructureTable {
@@ -242,7 +242,7 @@ private:
     Vector<uint32_t> m_listOfWeakShapes;
     BitVector m_allocationsThatMadeObjects;
     BitVector m_shapesWithGrownCells;
-    UncheckedKeyHashMap<AllocationSiteRecord*, std::unique_ptr<GrownCells>> m_grownCells;
+    HashMap<AllocationSiteRecord*, std::unique_ptr<GrownCells>> m_grownCells;
     void* grownCellAllocator(AllocationSiteRecord&);
     void disarmDeadGrownCells(VM&);
     struct GrownStructure {

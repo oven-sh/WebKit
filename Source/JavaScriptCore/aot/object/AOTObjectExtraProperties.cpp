@@ -113,7 +113,7 @@ static JSObject* createExtraPropertiesWithAttributes(JSGlobalObject* realm, std:
     return extra;
 }
 
-using NamesOfStarTarget = UncheckedKeyHashSet<UniquedStringImpl*>;
+using NamesOfStarTarget = HashSet<UniquedStringImpl*>;
 
 static constexpr uint32_t starRuleSourceIsMarkedAsESModule = 1 << 2;
 static_assert(!(starRuleSourceIsMarkedAsESModule & (starRuleKeyCaptureSlot | starRuleReusesDescriptors)));
@@ -617,7 +617,7 @@ bool hasPendingStars(const Object& object)
 static constexpr unsigned lastStarInSnapshot = 0;
 static constexpr unsigned firstSourceInSnapshot = 1;
 
-using CellsSeen = UncheckedKeyHashSet<JSCell*>;
+using CellsSeen = HashSet<JSCell*>;
 
 static void forEachStarUpToAndBehind(Star last, CellsSeen& seen, const Invocable<void(Star)> auto& functor)
 {

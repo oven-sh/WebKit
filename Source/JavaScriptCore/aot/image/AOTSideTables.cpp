@@ -173,7 +173,7 @@ static FrameMapPlaces findPlacesOfFrameMaps(const LinkedFunctions& functions, co
     FrameMapPlaces places;
     places.firstWordOf.fill(0, functions.size());
     places.storesOwnWords.ensureSize(functions.size());
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWithHash;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> firstWithHash;
     for (auto [hash, position] : hashed) {
         std::span<const uint32_t> words = functions[position].sites.rareLists->frameMapWords.span();
         uint32_t first = firstWithHash.add(hash, position).iterator->value;

@@ -59,7 +59,7 @@ private:
     };
 
     const RegisterSet m_clobberedRegisters;
-    UncheckedKeyHashMap<uint64_t, Vector<CheckedThrowSite, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_checkedThrowSites;
+    HashMap<uint64_t, Vector<CheckedThrowSite, 1>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_checkedThrowSites;
 };
 
 void emitStraightThrowSite(CCallHelpers&, CodeRecords&, const ThrowSite&, std::optional<GPRReg> operand, unsigned registerNumberWithoutOperand, uint32_t callSite);

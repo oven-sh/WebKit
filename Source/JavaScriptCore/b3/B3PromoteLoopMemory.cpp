@@ -74,7 +74,7 @@ private:
 
     enum class AddressKind : uint8_t { LoopInvariant, LoadedInLoop, LoopVariant };
 
-    static Counter reasonAddressIsNotHoisted(const NaturalLoops& loops, const NaturalLoop& loop, Value* address, UncheckedKeyHashMap<Value*, AddressKind>& addressKinds)
+    static Counter reasonAddressIsNotHoisted(const NaturalLoops& loops, const NaturalLoop& loop, Value* address, HashMap<Value*, AddressKind>& addressKinds)
     {
         Vector<Value*, 16> path { address };
         while (!path.isEmpty()) {
@@ -180,7 +180,7 @@ private:
             return !hasSidewaysExit && m_proc.backwardsDominators().dominates(access->owner, preheader);
         };
         bool ignoresClobbers = m_proc.policy().validation.ignoresWritesToPromotedLocations;
-        UncheckedKeyHashMap<Value*, AddressKind> addressKinds;
+        HashMap<Value*, AddressKind> addressKinds;
 
         for (size_t first = 0, next = 0; first < accesses.size(); first = next) {
             while (next < accesses.size() && accessSameLocation(accesses[next], accesses[first]))
@@ -294,7 +294,7 @@ private:
     Procedure& m_proc;
     InsertionSet m_insertionSet;
     Vector<PromotedLocation> m_promotedLocations;
-    UncheckedKeyHashMap<Value*, unsigned> m_locationIndexOfAccess;
+    HashMap<Value*, unsigned> m_locationIndexOfAccess;
 };
 
 } // anonymous namespace

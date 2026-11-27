@@ -309,7 +309,7 @@ public:
 
     void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, HashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
-    bool readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
+    bool readyForSyncExecution(HashSet<AbstractModuleRecord*>& seen);
     void evaluateSync(JSGlobalObject*);
 
     JSPromise* asyncCapability() const;
@@ -328,7 +328,7 @@ public:
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+    void generateDeferredSyntheticModules(JSGlobalObject*, HashSet<AbstractModuleRecord*>& visited);
     static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency);
 #endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);

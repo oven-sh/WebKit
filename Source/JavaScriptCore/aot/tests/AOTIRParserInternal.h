@@ -45,7 +45,7 @@ public:
     Vector<uint8_t> finish();
 
 private:
-    using PositionsByHash = UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using PositionsByHash = HashMap<uint64_t, Vector<uint32_t, 1>, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
     template<typename WireRecord> uint32_t internRecord(Vector<WireRecord>&, PositionsByHash&, const WireRecord&);
 

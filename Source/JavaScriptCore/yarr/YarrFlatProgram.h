@@ -442,7 +442,7 @@ std::expected<std::unique_ptr<FlatProgram>, FlatProgramDecline> compileFlatProgr
 bool hasFlatProgramsThatRememberFailedSearches(const YarrPattern& analyzed, StringView);
 // Whether the JIT takes one off matchLimit for each turn that this repeated group begins: it does where it keeps a context for each turn (YarrGenerator::opCompileParenthesesSubpattern()).
 // It depends on whether the group has anything to go back into. What has been found out about a disjunction is kept, so that each is walked once however deep groups are nested.
-using KnownBacktrackableContent = UncheckedKeyHashMap<const PatternDisjunction*, bool>;
+using KnownBacktrackableContent = HashMap<const PatternDisjunction*, bool>;
 bool jitCountsTurnsOf(const PatternTerm&, KnownBacktrackableContent&);
 void removeUnneededLogging(FlatProgram&);
 // For ops that run with nothing to undo: each becomes the form that pushes no undo frame.

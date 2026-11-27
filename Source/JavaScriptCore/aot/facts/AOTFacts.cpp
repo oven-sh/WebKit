@@ -566,7 +566,7 @@ static void fillFunctionsGivenToVariablesForFacts(const Program& program, const 
         return;
     }
     FunctionID callerWhoseCallsAreListed;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsBySite;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callsBySite;
     for (const LinkedCall& listed : linked.calls) {
         if (!functionsThatStoreParameter.get(listed.callee.index()))
             continue;

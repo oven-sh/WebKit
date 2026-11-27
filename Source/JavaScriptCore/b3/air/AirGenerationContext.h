@@ -69,7 +69,7 @@ public:
 
     Vector<std::tuple<Origin, Ref<LatePath>>> latePaths;
     BitVector latePathsWithoutFrame;
-    UncheckedKeyHashMap<const void*, Vector<SharedLatePath, 1>> sharedLatePathsByGenerator;
+    HashMap<const void*, Vector<SharedLatePath, 1>> sharedLatePathsByGenerator;
     IndexMap<BasicBlock*, Box<MacroAssembler::Label>> blockLabels;
     BasicBlock* currentBlock { nullptr };
     unsigned indexInBlock { UINT_MAX };
