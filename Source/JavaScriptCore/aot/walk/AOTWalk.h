@@ -1890,7 +1890,7 @@ public:
     ValueID valueBeingWalked() const { return m_valueBeingWalked; }
     bool appendNamesUsedOffViewsOf(ValueID, Vector<PropertyKeyID, 16>&);
     std::span<const uint64_t> castsOf(ValueID);
-    enum class RoundKeptByWalker : uint8_t { OnlyLayoutWithAllNames, ShapesOfLayouts, DescribesBagOfOptions, OnlyLayoutWithName, RecordsThatFileWrites, LiteralsWithoutNames, AreAllOfCreatedObjects, PrivateNameHolders, MemberLacksNames };
+    enum class RoundKeptByWalker : uint8_t { OnlyLayoutWithAllNames, ShapesOfLayouts, DescribesBagOfOptions, OnlyLayoutWithName, RecordsThatFileWrites, LiteralsWithoutNames, AreAllOfCreatedObjects, MemberLacksNames };
     static bool keepsRoundsOver(const TypeArena&, LayoutSetID);
     std::optional<uint32_t> roundKept(RoundKeptByWalker, LayoutSetID, uint32_t second) const;
     void keepRound(RoundKeptByWalker, LayoutSetID, uint32_t second, uint32_t answer);

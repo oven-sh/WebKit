@@ -190,6 +190,8 @@ struct KeptByTypedAccesses final : Walker::KeptForBuild {
     HashMap<uint32_t, LayoutsThatSourcesFit, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> layoutsThatSourcesOfCopiesFit;
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherWordsOfCellAreItsProperties;
     HashMap<uint32_t, bool, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> whetherSomeFieldMayBeLeftOut;
+    // The layouts. A set of them may lie in the arena of one unit.
+    HashMap<uint32_t, Vector<LayoutID>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> holdersOfPrivateNames;
 };
 
 struct OperandsOfTypedAccess {
@@ -5550,12 +5552,12 @@ static bool brandLiesInOneSlotForTypedAccess(Walker& walker, const BodyValue& ac
     return false;
 }
 
-static LayoutSetID findPrivateNameHolders(Walker& walker, PropertyKeyID key)
+static Vector<LayoutID> findPrivateNameHolders(Walker& walker, PropertyKeyID key)
 {
     static constexpr size_t maxHolders = 8;
     const Program& program = walker.program();
     const Plan& plan = walker.plan();
-    Vector<LayoutID, maxHolders> holders;
+    Vector<LayoutID> holders;
     for (uint32_t index = 0; index < program.layouts.size(); ++index) {
         LayoutID layout(index);
         if (!plan.slots().holdsCompiledObjects(layout) || !findField(program, layout, key))
@@ -5564,19 +5566,17 @@ static LayoutSetID findPrivateNameHolders(Walker& walker, PropertyKeyID key)
             return { };
         holders.append(layout);
     }
-    return holders.isEmpty() ? LayoutSetID() : walker.types().layoutSets().ofSorted(holders.span());
+    return holders;
 }
 
 static std::optional<ReceiversOfTypedAccess> privateNameHolders(Walker& walker, PropertyKeyID key)
 {
-    LayoutSetID holders;
-    if (std::optional<uint32_t> kept = walker.roundKept(Walker::RoundKeptByWalker::PrivateNameHolders, { }, key.index()))
-        holders = LayoutSetID::fromBits(*kept);
-    else {
-        holders = findPrivateNameHolders(walker, key);
-        walker.keepRound(Walker::RoundKeptByWalker::PrivateNameHolders, { }, key.index(), holders.bits());
-    }
-    return holders ? findReceiversAmongLayoutsForTypedAccess(walker, holders) : std::nullopt;
+    const Vector<LayoutID>& holders = keptByTypedAccesses(walker).holdersOfPrivateNames.ensure(key.index(), [&] {
+        return findPrivateNameHolders(walker, key);
+    }).iterator->value;
+    if (holders.isEmpty())
+        return std::nullopt;
+    return findReceiversAmongLayoutsForTypedAccess(walker, walker.types().layoutSets().ofSorted(holders.span()));
 }
 
 static TypedForm buildPrivateNameTest(Walker& walker, const BodyValue& test, const InputsOfTypedOperation& inputs, PropertyKeyID key)
