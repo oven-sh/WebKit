@@ -484,6 +484,9 @@ jobs:
           esac
           # --quick on the small runners: see lanes.mjs.
           if [ "$QUICK" = true ]; then platform+=(--quick); fi
+          # bun turns the shared helper pool off (JSCInitialize in its ZigGlobalObject.cpp), so the lane that bun ships runs the
+          # stress tests with dedicated threads for marking, JIT and Wasm. The other lanes keep the engine's default.
+          case "$LABEL" in *-lto-aot) platform+=(--env-vars JSC_useSharedHelperThreadPool=false) ;; esac
           for program in testair testb3 testmasm; do [ -x "$root/bin/$program" ] || platform+=("--no-$program"); done
           # A lane built with ENABLE_AOT=0 ships no testaot (`programs` in lanes.mjs).
           [ -x "$root/bin/testaot" ] || platform+=(--without-aot)
