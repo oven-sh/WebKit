@@ -24,7 +24,9 @@ struct alignas(32) HashedSlot {
     static constexpr uintptr_t accessMask = 3;
     static constexpr unsigned ways = 4;
     static constexpr unsigned sizeShift = 5;
-    static constexpr uint32_t structureMultiplier = 0x9e3779b1;
+    // Found by measurement for the sizes of the cells of Structure (128) and CompiledStructure (176): structures made one after another that share a name
+    // fill a table of every size more than half before they evict one another. 0x9e3779b1 did that for cells of 112 bytes and not for ones of 128.
+    static constexpr uint32_t structureMultiplier = 0x97a77eb1;
     static constexpr unsigned structureHashShift = 16 - sizeShift;
     static constexpr unsigned uidAlignmentShift = 4;
     static constexpr unsigned uidHashShift = sizeShift - uidAlignmentShift;

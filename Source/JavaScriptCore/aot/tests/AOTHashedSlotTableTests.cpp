@@ -53,12 +53,31 @@ void growthKeepsTheAddressAndEveryEntry()
     AOT_TEST_CHECK(table.numberOfEntries() == 2 * initialNumberOfEntries && table.entries() == entries);
 }
 
+// What HashedSlot::structureMultiplier is chosen for. A size of the cells of Structure that it spreads badly fails here.
+void structuresMadeInRowFillHalfOfTableOfEverySize()
+{
+    constexpr uint32_t lastNumberOfEntries = 64 * initialNumberOfEntries;
+    constexpr unsigned maxNumberOfFills = 2 * lastNumberOfEntries;
+    TableFixture fixture;
+    auto& table = fixture.hashedTable();
+    UniquedStringImpl* uid = fixture.uid(1);
+
+    for (unsigned numberOfFills = 0; table.numberOfEntries() < lastNumberOfEntries; ++numberOfFills) {
+        AOT_TEST_CHECK(numberOfFills < maxNumberOfFills);
+        uint32_t numberOfEntries = table.numberOfEntries();
+        if (table.set(uid, SlotAccess::Read, absentSlot(fixture.createStructure(), 0)) == HashedSlotTable::SetResult::StoredAndGrew)
+            AOT_TEST_CHECK(table.numberOfEntries() == 2 * numberOfEntries && table.numberOfFilledEntries() >= numberOfEntries / 2);
+    }
+    table.clear();
+}
+
 } // namespace
 
 std::span<const NativeTest> hashedSlotTableTests()
 {
     static constexpr NativeTest tests[] = {
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
+        { "hashed-slot-table/structures-made-in-a-row-fill-half-of-a-table-of-every-size"_s, structuresMadeInRowFillHalfOfTableOfEverySize },
     };
     return tests;
 }
