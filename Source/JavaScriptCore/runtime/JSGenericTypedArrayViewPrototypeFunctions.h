@@ -415,6 +415,15 @@ static ALWAYS_INLINE size_t typedArrayIndexOfImpl(ViewClass* thisObject, typenam
             UNUSED_PARAM(thisObject);
 #endif
             auto* result = std::bit_cast<typename ViewClass::ElementType*>(WTF::find8(std::bit_cast<const uint8_t*>(array + index), target, length - index));
+#if USE(BUN_JSC_ADDITIONS) && (defined(__GLIBC__) || OS(FREEBSD))
+            // In Bun another thread may write a typed array that is not shared while JavaScript runs: a pending fs.read() fills its buffer from the thread pool.
+            // memchr may then return a position that never held the target (see sharedTypedArrayIndexOf()), so what it found is read again.
+            if (result) {
+                size_t found = result - array;
+                if (found < index || found >= length || WTF::atomicLoad<MemoryOrder::Relaxed>(result) != target) [[unlikely]]
+                    return sharedTypedArrayIndexOf(array, length, target, index);
+            }
+#endif
             if (result)
                 return result - array;
             return WTF::notFound;
@@ -484,6 +493,14 @@ static ALWAYS_INLINE size_t typedArrayLastIndexOfImpl(ViewClass* thisObject, typ
             UNUSED_PARAM(thisObject);
 #endif
             auto* result = std::bit_cast<typename ViewClass::ElementType*>(WTF::reverseFind8(std::bit_cast<const uint8_t*>(array), target, searchLength));
+#if USE(BUN_JSC_ADDITIONS) && OS(LINUX) && defined(__GLIBC__)
+            // As in typedArrayIndexOfImpl(): in Bun what memrchr found is read again (see sharedTypedArrayLastIndexOf()).
+            if (result) {
+                size_t found = result - array;
+                if (found >= searchLength || WTF::atomicLoad<MemoryOrder::Relaxed>(result) != target) [[unlikely]]
+                    return sharedTypedArrayLastIndexOf(array, searchLength, target);
+            }
+#endif
             if (result)
                 return result - array;
             return WTF::notFound;
