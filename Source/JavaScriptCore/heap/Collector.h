@@ -243,6 +243,7 @@ private:
     void beginCollectionInEachHeap(GCConductor, CollectionScope, MonotonicTime startTime) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     void setUpVisitors(CollectionScope) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     static bool startsHelpersLazily() { return Options::runsCompiledImage(); }
+    // Nothing else may give m_helperClient its task, or its demand on the shared pool: the guards and hasStartedHelpers() are here for both.
     void startHelpers();
     void endCollectionInEachHeap(GCConductor) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 
