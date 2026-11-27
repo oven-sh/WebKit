@@ -4147,6 +4147,13 @@ NEVER_INLINE void JSGlobalObject::queueMicrotaskSlow(VM& vm, InternalMicrotask j
     queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2 });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+NEVER_INLINE void JSGlobalObject::queueMicrotaskSlow(VM& vm, InternalMicrotask job, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3)
+{
+    queueMicrotaskSlow(vm, QueuedTask { nullptr, job, payload, this, argument0, argument1, argument2, argument3 });
+}
+#endif
+
 #if ENABLE(FFI)
 FFI::FFIContext& JSGlobalObject::ffiContext()
 {
