@@ -1538,7 +1538,8 @@ ALWAYS_INLINE static void definePrivateField(VM& vm, JSGlobalObject* globalObjec
     JSObject* baseObject = baseValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
     CodeBlock* codeBlock = callFrame->codeBlock();
-    Structure* oldStructure = baseObject->structure();
+    // Bun: as in slow_path_put_private_name.
+    Structure* oldStructure = WTF::opaque(baseObject->structure());
 
     PutPropertySlot putSlot(baseObject, true, codeBlock->putByIdContext());
     baseObject->definePrivateField(globalObject, identifier, value, putSlot);
@@ -2174,7 +2175,8 @@ JSC_DEFINE_JIT_OPERATION(operationSetPrivateBrandOptimize, void, (EncodedJSValue
     ASSERT(brand.isSymbol());
 
     JSObject* baseObject = asObject(baseValue);
-    Structure* oldStructure = baseObject->structure();
+    // Bun: as in slow_path_put_private_name.
+    Structure* oldStructure = WTF::opaque(baseObject->structure());
     baseObject->setPrivateBrand(globalObject, brand);
     OPERATION_RETURN_IF_EXCEPTION(scope);
 

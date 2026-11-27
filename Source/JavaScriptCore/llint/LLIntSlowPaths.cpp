@@ -1756,7 +1756,8 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
     LLINT_CHECK_EXCEPTION();
     ASSERT(property.isPrivateName());
 
-    Structure* oldStructure = baseValue.isCell() ? baseValue.asCell()->structure() : nullptr;
+    // Bun: definePrivateField() can run the isExtensible trap of a Proxy, which can collect while only this function holds the Structure.
+    Structure* oldStructure = baseValue.isCell() ? WTF::opaque(baseValue.asCell()->structure()) : nullptr;
 
     // Private fields can only be accessed within class lexical scope
     // and class methods are always in strict mode
@@ -1854,7 +1855,8 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     ASSERT(brand.isSymbol());
 
     JSObject* baseObject = asObject(baseValue);
-    Structure* oldStructure = baseObject->structure();
+    // Bun: as in slow_path_put_private_name.
+    Structure* oldStructure = WTF::opaque(baseObject->structure());
 
     baseObject->setPrivateBrand(globalObject, brand);
     LLINT_CHECK_EXCEPTION();
