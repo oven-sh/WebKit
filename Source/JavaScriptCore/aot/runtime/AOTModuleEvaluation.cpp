@@ -6509,6 +6509,11 @@ JSObject* Modules::parentModuleObject(ModuleID module)
     return hidesModuleObject(*firstRequirer) ? moduleObjectOrPlaceholder(*firstRequirer) : moduleObject(*firstRequirer);
 }
 
+bool Modules::wouldRequireLoad(ModuleID esModule)
+{
+    return isEvicted(esModule) || hasRemovedMock(esModule) || m_modulesReleasedByLoader.get(esModule.index()) || wasActiveMockEntryRemoved(esModule) || isMockPending(fileOf(esModule));
+}
+
 bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*)>& functor)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -6518,7 +6523,8 @@ bool Modules::forEachNewChild(ModuleID module, const ScopedLambda<void(JSObject*
     while (ways->numberOfChildrenShown < ways->requiredModules.size()) {
         unsigned place = ways->numberOfChildrenShown;
         ModuleID child = ways->requiredModules[place];
-        if (data(child).isESModuleOfProgram() && status(child) <= ModuleStatus::Linked && !activeMock(child)) {
+        bool isLoaded = status(child) > ModuleStatus::Linked || activeMock(child);
+        if (data(child).isESModuleOfProgram() && (!isLoaded || (!moduleObjectIfCreated(child) && !hidesModuleObject(child) && wouldRequireLoad(child)))) {
             ways->numberOfChildrenShown = place + 1;
             continue;
         }

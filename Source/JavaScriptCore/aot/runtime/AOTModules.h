@@ -1907,6 +1907,7 @@ public:
     bool answersRequireOfFile(ModuleID form);
     bool canExposeModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     bool hidesModuleObject(ModuleID module) const { return !canExposeModuleObject(module) || data(module).hasUnescapedExports(); }
+    bool wouldRequireLoad(ModuleID esModule);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
     JSObject* prototypeOfModuleObjects() const { return m_prototypeOfModuleObjects; }
     void clearNewChildren(ModuleID);
