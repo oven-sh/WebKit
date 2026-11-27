@@ -4041,9 +4041,6 @@ static ALWAYS_INLINE std::optional<UCPUStrictInt32> tryStringIndexOfOneCharWitho
 
 JSC_DEFINE_JIT_OPERATION(operationStringIndexOf, UCPUStrictInt32, (JSGlobalObject* globalObject, JSString* base, JSString* argument))
 {
-    if (auto result = tryStringIndexOfOneCharWithoutGC(base, argument, /* position */ 0))
-        return { *result, nullptr };
-
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -4109,9 +4106,6 @@ JSC_DEFINE_JIT_OPERATION(operationStringIndexOfWithOneChar, UCPUStrictInt32, (JS
 
 JSC_DEFINE_JIT_OPERATION(operationStringIndexOfWithIndex, UCPUStrictInt32, (JSGlobalObject* globalObject, JSString* base, JSString* argument, int32_t position))
 {
-    if (auto result = tryStringIndexOfOneCharWithoutGC(base, argument, position))
-        return { *result, nullptr };
-
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
