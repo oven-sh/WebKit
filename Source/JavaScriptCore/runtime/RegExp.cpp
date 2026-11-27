@@ -524,7 +524,7 @@ bool RegExp::takeCodeFromImage(VM& vm)
     const AOT::ImageRegExp* record = imageRecord();
     if (!record || record->form() != AOT::RegExpRecordForm::Code)
         return false;
-    if (!hasCode())
+    if (!hasCode() && !m_isComingFromLiteral)
         vm.regExpCache()->addToStrongCache(this);
     AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsGivenCode : AOT::RuntimeCounterID::PredictedRegExpsGivenCode);
     auto entrypoints = AOT::regExpEntrypointsOf(vm, *record);
