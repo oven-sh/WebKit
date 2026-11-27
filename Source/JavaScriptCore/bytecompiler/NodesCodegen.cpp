@@ -465,7 +465,8 @@ RegisterID* TaggedTemplateNode::emitBytecode(BytecodeGenerator& generator, Regis
 // ------------------------------ ArrayNode ------------------------------------
 
 // Returns null, with nothing emitted, where the caller has to build the array when the code runs.
-static RegisterID* emitNewArrayBufferWithConstants(BytecodeGenerator& generator, RegisterID* dst, std::span<const JSValue> constants, IndexingType recommendedIndexingType, bool allDenseStrings)
+// resolveStrings() fills in the string elements of constants once the butterfly exists: a caller that gets null makes the strings itself.
+static RegisterID* emitNewArrayBufferWithConstants(BytecodeGenerator& generator, RegisterID* dst, std::span<const JSValue> constants, IndexingType recommendedIndexingType, bool allDenseStrings, NOESCAPE const Invocable<void()> auto& resolveStrings)
 {
     VM& vm = generator.vm();
     ASSERT(vm.heap.isDeferred());
@@ -481,6 +482,7 @@ static RegisterID* emitNewArrayBufferWithConstants(BytecodeGenerator& generator,
     if (!array && MarkedBlockCage::isRequired() && isLarge)
         return nullptr;
     RELEASE_ASSERT(array);
+    resolveStrings();
 
     if (hasInt32(array->indexingType()) || hasContiguous(array->indexingType())) {
         auto elements = unsafeMakeSpan(std::bit_cast<EncodedJSValue*>(array->toButterfly()->contiguous().data()), constants.size());
@@ -504,7 +506,7 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
 
     if (m_constantElements) {
         RegisterID* finalDest = generator.finalDestination(dst);
-        if (RegisterID* arrayBuffer = emitNewArrayBufferWithConstants(generator, finalDest, m_constantElements->values(), m_constantElements->indexingType(), /* allDenseStrings */ false))
+        if (RegisterID* arrayBuffer = emitNewArrayBufferWithConstants(generator, finalDest, m_constantElements->values(), m_constantElements->indexingType(), /* allDenseStrings */ false, [] { }))
             return arrayBuffer;
 
         // emitNewArray() takes the nodes that a literal with constantElements() does not have.
@@ -565,13 +567,15 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
         if (length && !hadVariableExpression) {
             ASSERT(elements == m_element);
             ASSERT(constants.size() == length);
-            ElementNode* element = elements;
-            for (auto& slot : constants) {
-                if (ExpressionNode* value = element->value(); value->isString())
-                    slot = generator.stringForArrayBufferElement(static_cast<StringNode*>(value)->value());
-                element = element->next();
-            }
-            if (RegisterID* arrayBuffer = emitNewArrayBufferWithConstants(generator, dst, constants.span(), recommendedIndexingType, allDenseStrings))
+            auto resolveStrings = [&] {
+                ElementNode* element = elements;
+                for (auto& slot : constants) {
+                    if (ExpressionNode* value = element->value(); value->isString())
+                        slot = generator.stringForArrayBufferElement(static_cast<StringNode*>(value)->value());
+                    element = element->next();
+                }
+            };
+            if (RegisterID* arrayBuffer = emitNewArrayBufferWithConstants(generator, dst, constants.span(), recommendedIndexingType, allDenseStrings, resolveStrings))
                 return arrayBuffer;
         }
         return generator.emitNewArray(dst, elements, length, recommendedIndexingType);
