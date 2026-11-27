@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSInjectedScriptHost.h"
 
+#include "AOTCompiledCallee.h"
 #include "ArrayPrototype.h"
 #include "BuiltinNames.h"
 #include "Completion.h"
@@ -175,8 +176,21 @@ JSValue JSInjectedScriptHost::isNativeFunction(CallFrame* callFrame)
     if (value.inherits<InternalFunction>())
         return jsBoolean(true);
 
+#if ENABLE(AOT)
+    // A compiled function is the program's own code unless it belongs to the built-in module. This has to come
+    // before the tests below: a full closure is a host function, and a slim closure is not a JSFunction.
+    if (value.isCell() && AOT::CompiledCallee::isCompiledCallee(value.asCell()))
+        return jsBoolean(AOT::belongsToBuiltinModule(value.asCell()));
+#endif
+
     // A bound function is a host function, but it calls the function it is bound to.
     auto* function = dynamicDowncast<JSFunction>(value);
+#if USE(BUN_JSC_ADDITIONS)
+    // A builtin whose source has a URL is a function of one of Bun's JavaScript modules. Such a getter may have
+    // side effects, so a preview must not call it: of the builtins, only the private ones are native.
+    if (function && function->isBuiltinFunction() && !function->jsExecutable()->isPrivateBuiltinFunction())
+        return jsBoolean(false);
+#endif
     return jsBoolean(function && (function->isNonBoundHostFunction() || function->isBuiltinFunction()));
 }
 
