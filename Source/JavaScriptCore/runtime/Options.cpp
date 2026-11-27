@@ -827,6 +827,8 @@ static void applyCompiledCodeDefaults()
     if (!Options::runsCompiledImage())
         return;
     Options::useJIT() = false;
+    // Compiled code defines a private name as the engine did before WebKit/WebKit@b0be2f45a9, and an image does not record which rule it was built for.
+    Options::useNonExtensibleAppliesToPrivate() = false;
     Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
     // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
     if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))

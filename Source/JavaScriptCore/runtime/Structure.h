@@ -33,6 +33,7 @@
 #include "JSCJSValueCell.h"
 #include "JSCast.h"
 #include "JSTypeInfo.h"
+#include "Options.h"
 #include "PropertyName.h"
 #include "PropertyNameArray.h"
 #include "PropertyOffset.h"
@@ -397,6 +398,9 @@ public:
     // A cached private field or brand addition skips [[IsExtensible]], so the structure alone has to answer it.
     bool privateElementAdditionsAreCacheable() const
     {
+        // Bun: without the rule an addition asks nothing of the object, as before WebKit/WebKit@b0be2f45a9.
+        if (!Options::useNonExtensibleAppliesToPrivate())
+            return true;
         // The structure of a compiled object cannot: it stays extensible (CompiledStructure's constructor) while the object keeps "not extensible" in its order word.
         if (isCompiledStructure())
             return false;

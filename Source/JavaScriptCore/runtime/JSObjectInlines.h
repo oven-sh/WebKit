@@ -1109,12 +1109,26 @@ inline void JSObject::definePrivateField(JSGlobalObject* globalObject, PropertyN
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool isExtensible = this->isExtensible(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
+    if (Options::useNonExtensibleAppliesToPrivate()) {
+        bool isExtensible = this->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
 
-    if (!isExtensible) [[unlikely]] {
-        throwTypeError(globalObject, scope, NonExtensibleObjectPrivateFieldDefineError);
-        return;
+        if (!isExtensible) [[unlikely]] {
+            throwTypeError(globalObject, scope, NonExtensibleObjectPrivateFieldDefineError);
+            return;
+        }
+    } else {
+        // Bun: the rule from before WebKit/WebKit@b0be2f45a9. An object that is not extensible takes the field. These two kinds of object never did.
+        if (type() == WebAssemblyGCObjectType) {
+            throwTypeError(globalObject, scope, "Cannot define private field on a WebAssembly GC object"_s);
+            return;
+        }
+        if (structure()->hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        if (structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot define private field on object with immutable properties"_s);
+            return;
+        }
     }
 
     PropertySlot slot(this, PropertySlot::InternalMethodType::HasProperty);
@@ -1197,12 +1211,15 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     VM& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    bool isExtensible = this->isExtensible(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
+    bool appliesToNonExtensible = Options::useNonExtensibleAppliesToPrivate();
+    if (appliesToNonExtensible) {
+        bool isExtensible = this->isExtensible(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
 
-    if (!isExtensible) [[unlikely]] {
-        throwTypeError(globalObject, scope, NonExtensibleObjectPrivateMethodDefineError);
-        return;
+        if (!isExtensible) [[unlikely]] {
+            throwTypeError(globalObject, scope, NonExtensibleObjectPrivateMethodDefineError);
+            return;
+        }
     }
 
     // isExtensible can run a Proxy trap, and that trap can install this very brand or otherwise
@@ -1212,6 +1229,12 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         return;
     }
     EXCEPTION_ASSERT(!scope.exception());
+
+    // Bun: the rule from before WebKit/WebKit@b0be2f45a9, as in definePrivateField().
+    if (!appliesToNonExtensible && type() == WebAssemblyGCObjectType) {
+        throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
+        return;
+    }
 
 #if ENABLE(AOT)
     if (AOT::PropertyWalk::isCompiledObject(this)) [[unlikely]] {
@@ -1226,6 +1249,15 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
     if (type() == SlimClosureType) [[unlikely]]
         AOT::PropertyWalk::materializeLazyProperties(vm, this);
 #endif
+
+    if (!appliesToNonExtensible) {
+        if (this->structure()->hasFrozenElementsInPlace()) [[unlikely]]
+            moveFrozenElementsToSparseMap(vm);
+        if (this->structure()->hasImmutableProperties()) [[unlikely]] {
+            throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
+            return;
+        }
+    }
 
     scope.release();
 

@@ -783,6 +783,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, alwaysUseSharedArrayBuffer, false, Normal, nullptr) \
     /* Not sourced from UnifiedWebPreferences.yaml: allows an embedder to conditionally expose SharedArrayBuffer per global, see callers of JSGlobalObject::exposeSharedArrayBuffer(). */ \
     v(Bool, allowSharedArrayBuffer, true, Normal, nullptr) \
+    /* Bun: WebKit/WebKit@b0be2f45a9 has this rule without an option. V8 has it behind --js-nonextensible-applies-to-private, which is off. A process that runs a compiled image has it off (applyCompiledCodeDefaults()). */ \
+    v(Bool, useNonExtensibleAppliesToPrivate, true, Normal, "a private field, method or accessor is defined on an extensible object alone"_s) \
     /* Not sourced from UnifiedWebPreferences.yaml: shares its semantics with the WebCore-bound TrustedTypes feature. */ \
     v(Bool, useTrustedTypes, true, Normal, "Enable trusted types eval protection feature."_s) \
 
