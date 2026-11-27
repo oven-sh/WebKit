@@ -337,15 +337,16 @@ private:
     String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
-    Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
+    // Bun: upstream's two flags share the byte of m_specificPattern. Behind m_imageRecordNumber they began a ninth byte, and the cell took 96 bytes in place of 80.
+    Yarr::SpecificPattern m_specificPattern : 6 { Yarr::SpecificPattern::None };
+    bool m_isComingFromLiteral : 1 { false };
+    mutable bool m_sourceIsKnownToBePattern : 1 { false };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
 #if ENABLE(AOT)
     uint16_t m_imageRecordNumber { 0 };
 #endif
-    bool m_isComingFromLiteral : 1 { false };
-    mutable bool m_sourceIsKnownToBePattern : 1 { false };
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
@@ -364,5 +365,9 @@ private:
     unsigned m_rtMatchFoundCount { 0 };
 #endif
 };
+
+#if CPU(ADDRESS64) && ENABLE(YARR_JIT) && !ENABLE(REGEXP_TRACING)
+static_assert(sizeof(RegExp) <= 80);
+#endif
 
 } // namespace JSC
