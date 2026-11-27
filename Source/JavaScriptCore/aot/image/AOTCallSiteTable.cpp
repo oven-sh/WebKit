@@ -385,12 +385,9 @@ Vector<Vector<PrefixSymbol>> encodeCallSites(const LinkedFunctions& functions, c
     return streams;
 }
 
-SideTableParts SideTableParts::read(ImageFunction function, std::span<const uint8_t> section, uint32_t offset)
+ALWAYS_INLINE static SideTableParts readPartsBehindFrame(ImageFunction function, SideTableReader& reader)
 {
     SideTableParts parts;
-    SideTableReader reader(section, section.data() + function.sideTables);
-    reader.next(SideTableByte::Flags);
-    parts.frame = SideTableFrame::read(reader, offset);
     if (function.has(ImageFunctionFlag::HasFrameMaps)) {
         parts.firstFrameMapWord = static_cast<uint32_t>(reader.nextVarint(SideTableByte::FrameMapStart, SideTableByte::FrameMapStartContinuation));
         parts.numberOfFrameMapWords = static_cast<uint32_t>(reader.nextVarint(SideTableByte::FrameMapSize));
@@ -403,6 +400,14 @@ SideTableParts SideTableParts::read(ImageFunction function, std::span<const uint
     if (function.has(ImageFunctionFlag::HasCallSites))
         parts.callSites = reader;
     return parts;
+}
+
+SideTableParts SideTableParts::read(ImageFunction function, std::span<const uint8_t> section)
+{
+    SideTableReader reader(section, section.data() + function.sideTables);
+    reader.next(SideTableByte::Flags);
+    SideTableFrame::read(reader, 0);
+    return readPartsBehindFrame(function, reader);
 }
 
 std::optional<uint32_t> SideTableParts::constructedCalleeAt(uint32_t site) const
@@ -756,7 +761,11 @@ std::optional<HandlerRecord> Image::handlerAt(uint32_t function, CallSiteIndex s
 ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const
 {
     ImageFunction record = this->function(function);
-    SideTableParts parts = SideTableParts::read(record, section<uint8_t>(ImageSection::SideTables), returnOffset ? returnOffset - 1 : 0);
+    std::span<const uint8_t> sideTables = section<uint8_t>(ImageSection::SideTables);
+    SideTableReader reader(sideTables, sideTables.data() + record.sideTables);
+    reader.next(SideTableByte::Flags);
+    SideTableFrameAtReturnOffset frame = SideTableFrameAtReturnOffset::read(reader, returnOffset);
+    SideTableParts parts = readPartsBehindFrame(record, reader);
     ReturnSiteInfo result;
     result.hasConstructedCallees = record.has(ImageFunctionFlag::HasConstructedCallees);
     if (parts.callSites) {
@@ -764,8 +773,8 @@ ReturnSiteInfo Image::returnSiteInfoAt(uint32_t function, uint32_t returnOffset)
         result.site = findCallSite(&head, returnOffset);
         result.mayHaveHandler = result.site && head.handlers;
     }
-    if (hasFrameAtReturnOffset(function, parts.frame, returnOffset))
-        result.frame = section<ImageFrame>(ImageSection::Frames)[parts.frame.number];
+    if (hasFrameAtReturnOffset(function, frame, returnOffset))
+        result.frame = section<ImageFrame>(ImageSection::Frames)[frame.number];
     if (record.has(ImageFunctionFlag::SpillsArgumentRegisters))
         result.frame.calleeSavesStart |= ImageFrame::liesBelowSpilledArgumentsBit;
     return result;

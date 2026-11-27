@@ -38,6 +38,9 @@
 #include <optional>
 #include <span>
 #include <wtf/MathExtras.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/OSAllocator.h>
+#include <wtf/PageBlock.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Threading.h>
 #include <wtf/WeakRandom.h>
@@ -389,7 +392,151 @@ static void testFrameAtFaultingAccesses()
         checkFrameOfLoneFaultingAccess(sizeOfAccess);
     }
 }
+
+// The side table has the end of the frame in front of the return offset of the access, because of the call behind it.
+static CompiledCode bodyWithAccessWhereFrameEnds(uint32_t function, unsigned sizeOfAccess, uint32_t& access)
+{
+    CodeSketch sketch(function);
+    uint32_t begin = sketch.pinnedBytes(8);
+    access = sketch.pinnedBytes(sizeOfAccess);
+    OptionalIndex siteOfAccess = sketch.addSite();
+    uint32_t end = sketch.pinnedBytes(8);
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    sketch.end();
+    sketch.code().frame.frameSizeInBytes = 16;
+    sketch.code().frame.frameRanges.append(CodeRange { begin, end });
+    sketch.code().sites.faultingAccesses.append(FaultingAccess { access, siteOfAccess, { 1 } });
+    return sketch.take();
+}
+
+// A call that throws has a fault site of its own. The frame changes right behind it.
+static CompiledCode bodyWithCallThatThrowsWhereFrameChanges(uint32_t function, bool callHasFrame, uint32_t& returnOffset)
+{
+    CodeSketch sketch(function);
+    uint32_t begin = sketch.pinnedBytes(8);
+    uint32_t call = sketch.callStub(writeBarrier(), sketch.addSite());
+    returnOffset = sketch.size();
+    sketch.pinnedBytes(8);
+    sketch.callStub(writeBarrier(), sketch.addSite());
+    uint32_t end = sketch.end();
+    sketch.code().frame.frameSizeInBytes = 16;
+    sketch.code().frame.frameRanges.append(callHasFrame ? CodeRange { begin, returnOffset } : CodeRange { returnOffset, end });
+    sketch.code().sites.faultingAccesses.append(FaultingAccess { call, OptionalIndex { }, { 1 } });
+    return sketch.take();
+}
+
+// What Image::hasFrameAtReturnOffset() answered when it told a near call from a faulting access by the first byte of the instruction.
+static bool hasFrameAtReturnOffsetByCode(const Image& image, uint32_t function, uint32_t returnOffset)
+{
+    constexpr uint8_t opcodeOfNearCall = 0xe8;
+    if (!returnOffset)
+        return false;
+    const uint8_t* code = image.codeOf(function);
+    if (returnOffset >= sizeOfNearCall && code[returnOffset - sizeOfNearCall] != opcodeOfNearCall) {
+        std::optional<FaultSite> fault = image.faultSiteAt(code + (returnOffset - sizeOfNearCall));
+        if (fault && fault->kind == FaultSiteKind::NullCheck)
+            return fault->hasFrame;
+    }
+    return image.hasFrameAt(function, returnOffset - 1);
+}
+
+static void testFrameAtEveryReturnOffset()
+{
+    ReturnOffsetsAroundFrame offsetsAroundFrame;
+    Vector<uint32_t> offsetsInFrontOfEpilogues;
+    std::array<uint32_t, 3> accessesWhereFrameEnds { };
+    uint32_t behindFramelessCall = 0;
+    uint32_t behindFramedCall = 0;
+    Vector<CompiledCode> code = bodies(bodyWithFramesInTheMiddle(1, offsetsAroundFrame), bodyWithEpilogues(2, offsetsInFrontOfEpilogues), plainBody(3), jumpToStubBody(4));
+    for (unsigned i = 0; i < accessesWhereFrameEnds.size(); ++i)
+        code.append(bodyWithAccessWhereFrameEnds(5 + i, 2 + i, accessesWhereFrameEnds[i]));
+    code.append(bodyWithCallThatThrowsWhereFrameChanges(8, false, behindFramelessCall));
+    code.append(bodyWithCallThatThrowsWhereFrameChanges(9, true, behindFramedCall));
+    uint32_t numberOfFunctions = static_cast<uint32_t>(code.size());
+
+    TestBuild build(numberOfFunctions + 1);
+    TestImage image = build.build(WTF::move(code));
+    const Image& loaded = *image.image;
+
+    for (unsigned i = 0; i < accessesWhereFrameEnds.size(); ++i) {
+        uint32_t index = image.indexOf(5 + i);
+        uint32_t returnOffset = accessesWhereFrameEnds[i] + sizeOfNearCall;
+        AOT_TEST_CHECK(loaded.hasFrameAt(index, accessesWhereFrameEnds[i]));
+        AOT_TEST_CHECK(!loaded.hasFrameAt(index, returnOffset - 1));
+        AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffset));
+    }
+    AOT_TEST_CHECK(!loaded.hasFrameAtReturnOffset(image.indexOf(8), behindFramelessCall));
+    AOT_TEST_CHECK(loaded.hasFrameAt(image.indexOf(8), behindFramelessCall));
+    AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(image.indexOf(9), behindFramedCall));
+    AOT_TEST_CHECK(!loaded.hasFrameAt(image.indexOf(9), behindFramedCall));
+
+    for (uint32_t function = 1; function <= numberOfFunctions; ++function) {
+        uint32_t index = image.indexOf(function);
+        uint64_t frame = loaded.frameOf(index).bits();
+        for (uint32_t returnOffset = 0; returnOffset <= loaded.sizeOfCodeOf(index); ++returnOffset) {
+            bool hasFrame = hasFrameAtReturnOffsetByCode(loaded, index, returnOffset);
+            AOT_TEST_CHECK(loaded.hasFrameAtReturnOffset(index, returnOffset) == hasFrame);
+            AOT_TEST_CHECK(loaded.frameAtReturnOffset(index, returnOffset).bits() == (hasFrame ? frame : 0));
+            AOT_TEST_CHECK(loaded.returnSiteInfoAt(index, returnOffset).frame.bits() == (hasFrame ? frame : 0));
+        }
+    }
+}
 #endif
+
+namespace {
+
+class UnreadablePages {
+    WTF_MAKE_NONCOPYABLE(UnreadablePages);
+public:
+    explicit UnreadablePages(size_t size)
+        : m_size(roundUpToMultipleOf(pageSize(), size))
+        , m_start(static_cast<uint8_t*>(OSAllocator::reserveAndCommit(m_size)))
+    {
+        OSAllocator::protect(m_start, m_size, false, false);
+    }
+    ~UnreadablePages() { OSAllocator::decommitAndRelease(m_start, m_size); }
+
+    const uint8_t* start() const { return m_start; }
+
+private:
+    size_t m_size;
+    uint8_t* m_start;
+};
+
+} // anonymous namespace
+
+// A process that is crashing asks for the frames of code that it may be unable to read.
+static void testFrameAtReturnOffsetsOfUnreadableCode()
+{
+    ReturnOffsetsAroundFrame offsetsAroundFrame;
+    Vector<uint32_t> offsetsInFrontOfEpilogues;
+    CodeSketch withAccess(3);
+    uint32_t access = withAccess.pinnedBytes(3);
+    OptionalIndex siteOfAccess = withAccess.addSite();
+    uint32_t begin = withAccess.pinnedBytes(8);
+    withAccess.callStub(writeBarrier(), withAccess.addSite());
+    uint32_t end = withAccess.end();
+    withAccess.code().frame.frameSizeInBytes = 16;
+    withAccess.code().frame.frameRanges.append(CodeRange { begin, end });
+    withAccess.code().sites.faultingAccesses.append(FaultingAccess { access, siteOfAccess, { 1 } });
+
+    TestBuild build(5);
+    TestImage image = build.build(bodies(bodyWithFramesInTheMiddle(1, offsetsAroundFrame), bodyWithEpilogues(2, offsetsInFrontOfEpilogues), withAccess.take(), jumpToStubBody(4)));
+    const Image& loaded = *image.image;
+    UnreadablePages pages(loaded.code().size());
+    std::unique_ptr<Image> unreadable = Image::create(image.bytes.span(), pages.start());
+
+    for (uint32_t function = 1; function <= 4; ++function) {
+        uint32_t index = image.indexOf(function);
+        for (uint32_t returnOffset = 0; returnOffset <= loaded.sizeOfCodeOf(index); ++returnOffset) {
+            AOT_TEST_CHECK(unreadable->hasFrameAtReturnOffset(index, returnOffset) == loaded.hasFrameAtReturnOffset(index, returnOffset));
+            AOT_TEST_CHECK(unreadable->frameAtReturnOffset(index, returnOffset).bits() == loaded.frameAtReturnOffset(index, returnOffset).bits());
+            AOT_TEST_CHECK(unreadable->returnSiteInfoAt(index, returnOffset).frame.bits() == loaded.returnSiteInfoAt(index, returnOffset).frame.bits());
+        }
+    }
+    AOT_TEST_CHECK(unreadable->hasFrameAtReturnOffset(image.indexOf(1), offsetsAroundFrame.firstInFrame));
+    AOT_TEST_CHECK(!unreadable->hasFrameAtReturnOffset(image.indexOf(3), access + sizeOfNearCall));
+}
 
 static String textOfProgramReadingNames(unsigned numberOfNames)
 {
@@ -892,7 +1039,9 @@ std::span<const NativeTest> imageFunctionTableTests()
         { "image/functions/has-frame-at-return-offsets"_s, testHasFrameAtReturnOffsets },
 #if CPU(X86_64)
         { "image/functions/frame-at-faulting-accesses"_s, testFrameAtFaultingAccesses },
+        { "image/functions/frame-at-every-return-offset"_s, testFrameAtEveryReturnOffset },
 #endif
+        { "image/functions/frame-at-return-offsets-of-unreadable-code"_s, testFrameAtReturnOffsetsOfUnreadableCode },
         { "image/functions/name-number-past-fifteen-bits"_s, testNameNumberPastFifteenBits },
         { "image/functions/tables-over-several-ranges"_s, testFunctionTablesOverSeveralRanges },
         { "image/functions/named-variables-as-bytes"_s, testNamedVariablesAsBytes },

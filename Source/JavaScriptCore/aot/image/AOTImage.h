@@ -185,7 +185,7 @@ public:
     std::span<const uint32_t> frameMapWordsAt(const void* returnAddress) const;
     bool hasFrameAt(uint32_t function, uint32_t offset) const;
     bool hasFrameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
-    bool hasFrameAtReturnOffset(uint32_t function, const SideTableFrame&, uint32_t returnOffset) const;
+    bool hasFrameAtReturnOffset(uint32_t function, const SideTableFrameAtReturnOffset&, uint32_t returnOffset) const;
     ImageFrame frameAtReturnOffset(uint32_t function, uint32_t returnOffset) const;
     ReturnSiteInfo returnSiteInfoAt(uint32_t function, uint32_t returnOffset) const;
 

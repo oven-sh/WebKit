@@ -51,6 +51,7 @@ static_assert(!(imagePageSize % imageSectionAlignment));
 static constexpr size_t sizeOfNearCall = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t sizeOfJump = isX86_64() ? 5 : sizeof(uint32_t);
 static constexpr size_t codeOffsetUnit = isX86_64() ? 1 : sizeof(uint32_t);
+static constexpr bool hasFixedInstructionSize = sizeOfNearCall == codeOffsetUnit;
 
 class FunctionStarts {
 public:
