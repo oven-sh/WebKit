@@ -181,14 +181,15 @@ void WeakBlock::reapAllLiveHandles(Locker<Lock>& locker)
 #if ASAN_ENABLED
 void WeakBlock::unpoisonCellsAwaitingFinalizers()
 {
-    for (size_t i = 0, found = 0; found < m_deadCountUpperBound && i < weakImplCount(); ++i) {
-        WeakImpl* weakImpl = &weakImpls()[i];
+    // Under the lock every Dead handle has its reaped bit: reap() sets the state first and the bit after.
+    assertIsHeld(weakBlockLock());
+    forEachAtom(reapedAtoms(), [&](size_t weakAtom) {
+        WeakImpl* weakImpl = &weakAtoms()[weakAtom];
         if (weakImpl->state() != WeakImpl::Dead)
-            continue;
-        ++found;
+            return;
         if (JSCell* cell = weakImpl->jsValue().asCell(); !cell->isPreciseAllocation())
             __asan_unpoison_memory_region(cell, cell->cellSize());
-    }
+    });
 }
 #endif
 
