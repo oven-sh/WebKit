@@ -143,7 +143,8 @@ void getEnumerablePropertyNames(JSGlobalObject* globalObject, JSObject* base, Pr
         // |propertyNames| contains all indexed properties, so disable enumeration based on getEnumerableLength().
         indexedLength = 0;
 
-        if (structure->canCacheOwnPropertyNames() && !structure->typeInfo().overridesGetOwnPropertySlot())
+        // Bun: a static table makes a property when it is asked for, so a walk over such an object still asks (as propertyNameEnumerator() says).
+        if (structure->canCacheOwnPropertyNames() && !structure->typeInfo().overridesGetOwnPropertySlot() && !structure->hasNonReifiedStaticProperties())
             structurePropertyCount = propertyNames.size();
     }
     if (ownPropertyCount)
