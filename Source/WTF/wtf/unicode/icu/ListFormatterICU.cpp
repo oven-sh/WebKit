@@ -121,26 +121,26 @@ private:
 
 } // namespace
 
-static std::optional<String> formatInput(const UListFormatter* formatter, const FormatterInput& input)
+static std::expected<String, UErrorCode> formatInput(const UListFormatter* formatter, const FormatterInput& input)
 {
     Vector<char16_t, 128> result;
     auto status = callBufferProducingFunction(ulistfmt_format, formatter, input.stringPointers(), input.stringLengths(), input.size(), result);
     if (U_FAILURE(status)) [[unlikely]]
-        return std::nullopt;
+        return std::unexpected(status);
     return String { StringImpl::create8BitIfPossible(borrow(result)->span()) };
 }
 
-std::optional<String> ListFormatter::format(std::span<const String> strings) const
+std::expected<String, UErrorCode> ListFormatter::format(std::span<const String> strings) const
 {
     if (!m_formatter) [[unlikely]]
-        return std::nullopt;
+        return std::unexpected(U_INVALID_STATE_ERROR);
     return formatInput(m_formatter.get(), FormatterInput { strings });
 }
 
-std::optional<String> ListFormatter::format(std::span<const std::span<const char16_t>> strings) const
+std::expected<String, UErrorCode> ListFormatter::format(std::span<const std::span<const char16_t>> strings) const
 {
     if (!m_formatter) [[unlikely]]
-        return std::nullopt;
+        return std::unexpected(U_INVALID_STATE_ERROR);
     return formatInput(m_formatter.get(), FormatterInput { strings });
 }
 

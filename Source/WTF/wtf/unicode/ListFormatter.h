@@ -25,9 +25,11 @@
 
 #pragma once
 
+#include <expected>
 #include <memory>
 #include <optional>
 #include <span>
+#include <unicode/utypes.h>
 #include <wtf/ExportMacros.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/Range.h>
@@ -52,8 +54,9 @@ public:
 
     explicit operator bool() const { return !!m_formatter; }
 
-    WTF_EXPORT_PRIVATE std::optional<String> format(std::span<const String>) const;
-    WTF_EXPORT_PRIVATE std::optional<String> format(std::span<const std::span<const char16_t>>) const;
+    // Bun: the error says why no string was made, so that a caller can tell a failed allocation (U_MEMORY_ALLOCATION_ERROR) from the rest.
+    WTF_EXPORT_PRIVATE std::expected<String, UErrorCode> format(std::span<const String>) const;
+    WTF_EXPORT_PRIVATE std::expected<String, UErrorCode> format(std::span<const std::span<const char16_t>>) const;
 
     struct FormattedList {
         String string;
