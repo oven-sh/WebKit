@@ -6488,7 +6488,7 @@ class YarrGenerator final : public YarrJITInfo {
 #if !defined(YARR_FOR_IMAGE)
             m_jit.move(MacroAssembler::TrustedImmPtr(tableData), scratch);
 #else
-            m_addressing.moveAddressOfData(std::span { table.data }, scratch);
+            m_addressing.moveAddressOfData(std::span { table.data }.first(highest - lowest + 1), scratch);
 #endif
             m_jit.load8(MacroAssembler::BaseIndex(scratch, character, MacroAssembler::TimesOne), character);
             for (size_t i = 0; i < dispatchedInfos.size(); ++i)
