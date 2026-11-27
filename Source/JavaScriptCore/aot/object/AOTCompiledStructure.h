@@ -315,7 +315,7 @@ private:
     const uint64_t* m_wordsOfObjectWithoutFields { nullptr };
 };
 #if CPU(ADDRESS64) && !HAVE(36BIT_ADDRESS)
-static_assert(sizeof(CompiledStructure) == 160);
+static_assert(sizeof(CompiledStructure) == 168);
 #endif
 
 ALWAYS_INLINE const CompiledStructure* compiledObjectStructureOrNull(const Structure* structure)
