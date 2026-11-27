@@ -632,14 +632,9 @@ void Modules::delegateToHostUnlessEvaluated(ModuleID module, DelegatedBy delegat
     ModuleID file = fileOf(module);
     if (delegatedBy == DelegatedBy::Host)
         m_filesDelegatedByHost.set(file.index());
-    bool hasFailedToLoad = status(file) == ModuleStatus::Failed && loadFailure(file);
-    if (isEvicted(file) || (!hasFailedToLoad && (status(file) >= ModuleStatus::Evaluating || hasRun(file))))
+    if (status(file) >= ModuleStatus::Evaluating || isEvicted(file) || hasRun(file))
         return;
     delegateToHost(file);
-    if (hasFailedToLoad) {
-        for (ModuleID known : { file, moduleWithExportsOf(file) })
-            loader()->removeEntry(moduleKey(known));
-    }
     m_admitsCodeOutsideImage = true;
     if (data(file).kind != ModuleKind::CommonJs)
         return;
