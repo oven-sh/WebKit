@@ -1195,7 +1195,7 @@ static void returnUndefinedUnlessLengthIsOfName(StubAssembler& jit, const KeyedP
     jit.sub32(length, TrustedImm32(NameShapesOfStructure::maxIndexLength + 1), lengths);
     mayBePresent.append(jit.branch32(CCallHelpers::AboveOrEqual, lengths, TrustedImm32(NameShapes::lastLengthBit - (NameShapesOfStructure::maxIndexLength + 1))));
     jit.load32(Address(base, JSCell::structureIDOffset()), structureID);
-    jit.urshift32(structureID, TrustedImm32(StructureRowWords::granuleShift), shapes);
+    jit.urshift32(structureID, TrustedImm32(structureIDPlaceShift), shapes);
     jit.and32(TrustedImm32(NameShapesOfStructure::numberOfEntries - 1), shapes);
     jit.lshift32(TrustedImm32(NameShapesOfStructure::sizeShift), shapes);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.nameShapes)), shapes);

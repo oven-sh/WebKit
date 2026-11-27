@@ -250,7 +250,7 @@ private:
         StructureID after;
     };
     static constexpr size_t grownStructureCount = 64;
-    static size_t grownStructureSlot(StructureID before) { return (before.bits() >> 4) % grownStructureCount; }
+    static size_t grownStructureSlot(StructureID before) { return (before.bits() >> structureIDPlaceShift) % grownStructureCount; }
     std::array<GrownStructure, grownStructureCount> m_recentGrownStructures { };
     BitVector m_recordsThatLiveWhilePrototypesLive;
     Vector<AllocationSiteRecord*> m_listOfRecordsThatLiveWhilePrototypesLive;

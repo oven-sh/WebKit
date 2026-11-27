@@ -1903,7 +1903,7 @@ void PropertyCaches::remember(const FieldExit& exit)
     FieldExit& place = placeOf(exit.structureBefore, exit.name);
     putAtPlace(place, m_fieldExitsBesideTable, exit);
     if (exit.widthOfSlot)
-        m_state.instance.propertyCaches.placesOfFieldExitsBySlot[((exit.structureBefore.bits() >> StructureRowWords::granuleShift) + (exit.offsetOfSlot >> 2)) % FieldExit::numberOfPlacesBySlot] = static_cast<uint8_t>(&place - m_fieldExits.data());
+        m_state.instance.propertyCaches.placesOfFieldExitsBySlot[((exit.structureBefore.bits() >> structureIDPlaceShift) + (exit.offsetOfSlot >> 2)) % FieldExit::numberOfPlacesBySlot] = static_cast<uint8_t>(&place - m_fieldExits.data());
 }
 
 void PropertyCaches::didFileNothing()
@@ -3447,7 +3447,7 @@ void PropertyCaches::fileOwnPlainValueUnlessFiled(JSObject* base, uint32_t ident
 bool PropertyCaches::mayReadDictionary(Structure* structure)
 {
     static constexpr uint32_t maxReads = 16;
-    DictionaryReads& reads = m_readsOfDictionaries[(structure->id().bits() >> 4) % m_readsOfDictionaries.size()];
+    DictionaryReads& reads = m_readsOfDictionaries[(structure->id().bits() >> structureIDPlaceShift) % m_readsOfDictionaries.size()];
     if (reads.structure != structure->id().bits())
         reads = { structure->id().bits(), 0 };
     return reads.count < maxReads && ++reads.count;

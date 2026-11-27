@@ -8,6 +8,8 @@
 #if ENABLE(AOT)
 
 #include "AOTPropertyLookupTableTestSupport.h"
+#include <wtf/BitVector.h>
+#include <wtf/Vector.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -71,6 +73,26 @@ void structuresMadeInRowFillHalfOfTableOfEverySize()
     table.clear();
 }
 
+// What structureIDPlaceShift is chosen for. A size of the cells of Structure that leaves a kept bit the same in every StructureID fails here.
+void structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesThatShiftTheID()
+{
+    constexpr unsigned numberOfStructures = 4 * AbsenceFilter::numberOfFilters;
+    TableFixture fixture;
+    Vector<StructureID> structureIDs;
+    for (unsigned index = 0; index < numberOfStructures; ++index)
+        structureIDs.append(fixture.createStructure()->id());
+
+    auto numberOfPlacesTaken = [&](unsigned numberOfPlaces, const auto& placeOf) {
+        BitVector taken(numberOfPlaces);
+        for (StructureID structureID : structureIDs)
+            taken.set(placeOf(structureID));
+        return taken.bitCount();
+    };
+    AOT_TEST_CHECK(numberOfPlacesTaken(AbsenceFilter::numberOfFilters, [](StructureID structureID) { return AbsenceFilter::indexFor(structureID.bits()); }) > AbsenceFilter::numberOfFilters / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(NameShapesOfStructure::numberOfEntries, [](StructureID structureID) { return NameShapesOfStructure::indexFor(structureID); }) > NameShapesOfStructure::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(FirstElementTransition::numberOfEntries, [](StructureID structureID) { return FirstElementTransition::indexFor(structureID, 0); }) > FirstElementTransition::numberOfEntries / 2);
+}
+
 } // namespace
 
 std::span<const NativeTest> hashedSlotTableTests()
@@ -78,6 +100,7 @@ std::span<const NativeTest> hashedSlotTableTests()
     static constexpr NativeTest tests[] = {
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
         { "hashed-slot-table/structures-made-in-a-row-fill-half-of-a-table-of-every-size"_s, structuresMadeInRowFillHalfOfTableOfEverySize },
+        { "hashed-slot-table/structures-made-in-a-row-take-more-than-half-of-the-places-of-tables-that-shift-the-id"_s, structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesThatShiftTheID },
     };
     return tests;
 }

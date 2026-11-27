@@ -1874,7 +1874,7 @@ static void testFieldsCreatedByTheirRecords()
         chains.filter().generationForStores = Chains::generation - 1;
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.filter().generationForStores = Chains::generation;
-        chains.filter().structureID = PropertyStores::structureID + (AbsenceFilter::numberOfFilters << StructureRowWords::granuleShift);
+        chains.filter().structureID = PropertyStores::structureID + (AbsenceFilter::numberOfFilters << structureIDPlaceShift);
         AOT_TEST_CHECK(isCreatedInEveryShape() == !asksChain);
         chains.filter().structureID = PropertyStores::structureID;
         chains.namesChangedOnChains = uint64_t { 1 } << name;

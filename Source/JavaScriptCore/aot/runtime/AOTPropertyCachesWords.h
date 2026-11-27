@@ -128,7 +128,7 @@ struct AbsenceFilter {
     static constexpr unsigned sizeShift = 5;
     static constexpr unsigned bitsOfWordShift = 6;
 
-    static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> StructureRowWords::granuleShift) & (numberOfFilters - 1); }
+    static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> structureIDPlaceShift) & (numberOfFilters - 1); }
     static constexpr unsigned numberOfWordsForStores = 2;
     void addNameThatStopsStores(uint32_t identifierNumber) { namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
     bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
@@ -162,7 +162,7 @@ struct NameShapesOfStructure {
     static constexpr unsigned numberOfEntries = 64;
     static constexpr unsigned sizeShift = 5;
     static constexpr unsigned maxIndexLength = 10;
-    static constexpr unsigned indexFor(StructureID id) { return (id.bits() >> StructureRowWords::granuleShift) & (numberOfEntries - 1); }
+    static constexpr unsigned indexFor(StructureID id) { return (id.bits() >> structureIDPlaceShift) & (numberOfEntries - 1); }
 
     uint32_t structureID;
     uint32_t questionsBeforeListing;
@@ -196,7 +196,7 @@ struct NameOfText {
 struct FirstElementTransition {
     static constexpr unsigned numberOfEntries = 64;
     static constexpr uint32_t maxIndex = 15;
-    static unsigned indexFor(StructureID before, IndexingType shape) { return ((before.bits() >> StructureRowWords::granuleShift) + shape) & (numberOfEntries - 1); }
+    static unsigned indexFor(StructureID before, IndexingType shape) { return ((before.bits() >> structureIDPlaceShift) + shape) & (numberOfEntries - 1); }
 
     uint32_t structureIDBefore;
     uint32_t shape;

@@ -554,7 +554,7 @@ public:
         return m_shortArrayNames[(elements * 0x9e3779b97f4a7c15) >> 58];
     }
     void remember(const FieldReturn& back) { placeOfReturn(back.structureBefore, back.name) = back; }
-    ProxyHandlerTraps& proxyHandlerTraps(StructureID handler) { return m_proxyHandlerTraps[(handler.bits() >> StructureRowWords::granuleShift) % ProxyHandlerTraps::numberOfPlaces]; }
+    ProxyHandlerTraps& proxyHandlerTraps(StructureID handler) { return m_proxyHandlerTraps[(handler.bits() >> structureIDPlaceShift) % ProxyHandlerTraps::numberOfPlaces]; }
     const FieldReturn* findFieldReturn(StructureID structureID, uint32_t name)
     {
         const FieldReturn& back = placeOfReturn(structureID, name);
@@ -676,10 +676,10 @@ private:
         return &place;
     }
     NEVER_INLINE FieldExit* takeFieldExitFromBesideTable(StructureID structureID, uint32_t name) { return takeFromBesideTable(placeOf(structureID, name), m_fieldExitsBesideTable, keyOfFieldExit(structureID, name)); }
-    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldExit::numberOfPlaces]; }
+    FieldExit& placeOf(StructureID structureID, uint32_t name) { return m_fieldExits[((structureID.bits() >> structureIDPlaceShift) + name) % FieldExit::numberOfPlaces]; }
     std::array<FieldExit, FieldExit::numberOfPlaces> m_fieldExits { };
     EntriesBesideTable<FieldExit, uint64_t> m_fieldExitsBesideTable;
-    FieldReturn& placeOfReturn(StructureID structureID, uint32_t name) { return m_fieldReturns[((structureID.bits() >> StructureRowWords::granuleShift) + name) % FieldReturn::numberOfPlaces]; }
+    FieldReturn& placeOfReturn(StructureID structureID, uint32_t name) { return m_fieldReturns[((structureID.bits() >> structureIDPlaceShift) + name) % FieldReturn::numberOfPlaces]; }
     std::array<FieldReturn, FieldReturn::numberOfPlaces> m_fieldReturns { };
     std::array<ProxyHandlerTraps, ProxyHandlerTraps::numberOfPlaces> m_proxyHandlerTraps { };
     std::span<PrototypeChainFilter, PrototypeChainFilter::numberOfFilters> m_prototypeChainFilters;
@@ -689,7 +689,7 @@ private:
     uint8_t m_switchTargetsMayBeFilled { false };
     uint8_t m_functionAllocationsMayBeFilled { false };
     uint8_t m_closureAdditionsMayBeFilled { false };
-    AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> StructureRowWords::granuleShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
+    AddedExtraProperty& placeOf(StructureID structureID, UniquedStringImpl* name) { return m_addedExtraProperties[((structureID.bits() >> structureIDPlaceShift) + (std::bit_cast<uintptr_t>(name) >> 4)) % AddedExtraProperty::numberOfPlaces]; }
     std::array<AddedExtraProperty, AddedExtraProperty::numberOfPlaces> m_addedExtraProperties { };
     AddedExtraPropertiesBesideTable m_addedExtraPropertiesBesideTable;
     std::array<ShortArrayName, ShortArrayName::numberOfPlaces> m_shortArrayNames { };
