@@ -73,8 +73,9 @@ void structuresMadeInRowFillHalfOfTableOfEverySize()
     table.clear();
 }
 
-// What structureIDPlaceShift is chosen for. A size of the cells of Structure that leaves a kept bit the same in every StructureID fails here.
-void structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesThatShiftTheID()
+// What structureIDPlaceShift is chosen for, and the product of AbsenceFilter. A size of the cells of Structure that leaves a kept bit the same in every StructureID fails here.
+// The structure heap of a release build has its blocks 32768 bytes apart and that of a build with ASAN 16384: the three tables hold for both.
+void structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID()
 {
     constexpr unsigned numberOfStructures = 4 * AbsenceFilter::numberOfFilters;
     TableFixture fixture;
@@ -100,7 +101,7 @@ std::span<const NativeTest> hashedSlotTableTests()
     static constexpr NativeTest tests[] = {
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
         { "hashed-slot-table/structures-made-in-a-row-fill-half-of-a-table-of-every-size"_s, structuresMadeInRowFillHalfOfTableOfEverySize },
-        { "hashed-slot-table/structures-made-in-a-row-take-more-than-half-of-the-places-of-tables-that-shift-the-id"_s, structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesThatShiftTheID },
+        { "hashed-slot-table/structures-made-in-a-row-take-more-than-half-of-the-places-of-tables-keyed-by-the-id"_s, structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID },
     };
     return tests;
 }

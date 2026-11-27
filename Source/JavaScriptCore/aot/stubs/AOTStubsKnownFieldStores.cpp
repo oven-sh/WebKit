@@ -58,8 +58,8 @@ static void branchIfChainMayStopStore(StubAssembler& jit, GPRReg object, GPRReg 
     isNotBelowObjectPrototype.link(&jit);
     const GPRReg structureID = structure;
     jit.load32(Address(object, JSCell::structureIDOffset()), structureID);
-    jit.urshift32(structureID, TrustedImm32(structureIDPlaceShift), scratch);
-    jit.and32(TrustedImm32(AbsenceFilter::numberOfFilters - 1), scratch);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), structureID, scratch);
+    jit.urshift32(TrustedImm32(32 - AbsenceFilter::numberOfFiltersLog2), scratch);
     jit.lshift32(TrustedImm32(AbsenceFilter::sizeShift), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilters)), filter);
     jit.add64(scratch, filter);

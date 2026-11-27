@@ -124,11 +124,13 @@ struct StructureRowWords {
 };
 
 struct AbsenceFilter {
-    static constexpr unsigned numberOfFilters = 256;
+    static constexpr unsigned numberOfFiltersLog2 = 8;
+    static constexpr unsigned numberOfFilters = 1u << numberOfFiltersLog2;
     static constexpr unsigned sizeShift = 5;
     static constexpr unsigned bitsOfWordShift = 6;
 
-    static constexpr unsigned indexFor(uint32_t structureIDBits) { return (structureIDBits >> structureIDPlaceShift) & (numberOfFilters - 1); }
+    // A product, as the place of a hashed slot: the table has more places than a block of the structure heap has cells, and a shifted ID reaches no more of them than that.
+    static constexpr unsigned indexFor(uint32_t structureIDBits) { return structureIDBits * HashedSlot::structureMultiplier >> (32 - numberOfFiltersLog2); }
     static constexpr unsigned numberOfWordsForStores = 2;
     void addNameThatStopsStores(uint32_t identifierNumber) { namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] |= uint64_t { 1 } << (identifierNumber & 63); }
     bool letsStoresPass(uint32_t identifierNumber) const { return !(namesThatStopStores[(identifierNumber >> bitsOfWordShift) & (numberOfWordsForStores - 1)] >> (identifierNumber & 63) & 1); }
