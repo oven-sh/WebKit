@@ -9253,11 +9253,6 @@ void willSetExtensionLoader(JSGlobalObject* realm, StringView extension)
             throwLoaderChangeError(realm, LoaderChange::ReplaceLoaderFunction, "a loader in Module._extensions"_s);
             return;
         }
-        // Nothing of a file that could not be loaded has run: the loader answers its next request.
-        if (modules->isFailedESModule(module) && (modules->loadFailure(module) || modules->data(module).bodyThrowsAtLoad()) && !modules->isEvicted(module)) {
-            modules->evict(module);
-            modules->takeOutOfLoader(module);
-        }
         modules->delegateToHostUnlessEvaluated(module);
     }
 }
