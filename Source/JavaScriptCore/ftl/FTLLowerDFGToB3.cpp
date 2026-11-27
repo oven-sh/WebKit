@@ -19447,7 +19447,7 @@ IGNORE_CLANG_WARNINGS_END
             m_out.branch(isCell(base, provenType(baseEdge)), usually(checkStructureBlock), rarely(operationBlock));
 
             m_out.appendTo(checkStructureBlock);
-            m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)), unsure(checkGenericModeBlock), unsure(operationBlock));
+            m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNames)), unsure(checkGenericModeBlock), unsure(operationBlock));
 
             m_out.appendTo(checkGenericModeBlock);
             LValue newIndex = m_out.select(m_out.isZero32(mode), index, m_out.add(index, m_out.int32One));

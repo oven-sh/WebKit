@@ -81,7 +81,8 @@ public:
     StructureID cachedStructureIDForNamesAndOffsets() const { return m_cachedStructureIDForNamesAndOffsets.value(); }
     uint32_t indexedLength() const { return m_indexedLength; }
     uint32_t endStructurePropertyIndex() const { return m_endStructurePropertyIndex; }
-    // The names below it are the base's own for as long as isCurrentFor(base). Only below endStructurePropertyIndex() is the index of a name also the offset of its property.
+    // The names below it are the base's own for as long as isCurrentFor(base).
+    // The index of a name below endStructurePropertyIndex() is also the offset of its property only in a base that has cachedStructureIDForNamesAndOffsets(), which no compiled object has.
     uint32_t endOwnPropertyIndex() const { return m_endOwnPropertyIndex; }
     uint32_t endGenericPropertyIndex() const { return m_endGenericPropertyIndex; }
     uint32_t cachedInlineCapacity() const { return m_cachedInlineCapacity; }
@@ -106,7 +107,7 @@ public:
     bool describesOrdinaryObject() const { return !m_cachedOrderWordMask; }
     bool isCurrentFor(JSObject* base) const
     {
-        if (base->structureID() != cachedStructureID())
+        if (base->structureID() != cachedStructureIDForNames())
             return false;
         return describesOrdinaryObject() || (*std::bit_cast<const uint32_t*>(std::bit_cast<const char*>(base) + sizeof(JSCell)) & m_cachedOrderWordMask) == m_cachedOrderWord;
     }

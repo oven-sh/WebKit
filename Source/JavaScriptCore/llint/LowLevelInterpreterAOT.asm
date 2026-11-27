@@ -1346,7 +1346,7 @@ aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata
         loadConstantOrVariableCell(size, t1, t0, .slow)
         bbneq JSCell::m_type[t0], CompiledObjectType, .slow
         loadVariable(get, m_enumerator, t1)
-        loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+        loadi JSPropertyNameEnumerator::m_cachedStructureIDForNames[t1], t2
         bineq t2, JSCell::m_structureID[t0], .slow
         loadi (constexpr AOT::offsetOfOrderWord)[t0], t2
         andi JSPropertyNameEnumerator::m_cachedOrderWordMask[t1], t2
@@ -1370,7 +1370,7 @@ aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata
         btinz JSPropertyNameEnumerator::m_indexedLength[t1], .slow
         get(m_base, t2)
         loadConstantOrVariableCell(size, t2, t0, .slow)
-        loadi JSPropertyNameEnumerator::m_cachedStructureID[t1], t2
+        loadi JSPropertyNameEnumerator::m_cachedStructureIDForNames[t1], t2
         bineq t2, JSCell::m_structureID[t0], .slow
         bbeq JSCell::m_type[t0], CompiledObjectType, .firstOfCompiledObject
         btiz JSPropertyNameEnumerator::m_endStructurePropertyIndex[t1], .slow
@@ -1384,7 +1384,7 @@ aotOp(op_enumerator_next, OpEnumeratorNext, macro (size, get, dispatch, metadata
         storeVariable(get, m_index, numberTag, t2)
         dispatch()
 
-        # The same over a compiled object that still has the order word of the enumerator. Its names go by GenericMode: an index is no offset there.
+        # The same over a compiled object that still has the order word of the enumerator. Its names go by GenericMode: OwnStructureMode takes a name as present on the StructureID alone, without the order word.
     .firstOfCompiledObject:
         loadi (constexpr AOT::offsetOfOrderWord)[t0], t2
         andi JSPropertyNameEnumerator::m_cachedOrderWordMask[t1], t2
@@ -1443,12 +1443,13 @@ aotOp(op_enumerator_get_by_val, OpEnumeratorGetByVal, macro (size, get, dispatch
 end)
 
 # Whoever gives a property of a prototype another value tells those who have looked it up from below: the slow path does, and the store by offset of the ordinary handler tells nobody.
+# That store is made under the enumerator's Structure for names and offsets, which is the one for names or null.
 aotOp(op_enumerator_put_by_val, OpEnumeratorPutByVal, macro (size, get, dispatch, metadata, return)
     get(m_base, t1)
     loadConstantOrVariableCell(size, t1, t0, .ordinary)
     loadi JSCell::m_structureID[t0], t2
     loadVariable(get, m_enumerator, t1)
-    bineq t2, JSPropertyNameEnumerator::m_cachedStructureID[t1], .otherStructure
+    bineq t2, JSPropertyNameEnumerator::m_cachedStructureIDForNames[t1], .otherStructure
     structureIDToStructureWithScratch(t2, t3)
     btinz Structure::m_bitField[t2], (constexpr Structure::s_mayBePrototypeBits), .slow
 .ordinary:

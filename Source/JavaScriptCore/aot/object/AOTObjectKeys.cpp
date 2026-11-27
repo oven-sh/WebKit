@@ -1081,7 +1081,7 @@ static JSPropertyNameEnumerator* cachedEnumeratorOfObjectWithExtraProperties(VM&
     CachedPropertyList* list = listOfKeysFixedByStructure(vm, object);
     if (!list || !list->enumerator || list->prototypeChain != prototypeChain)
         return nullptr;
-    if (list->enumerator != vm.emptyPropertyNameEnumerator() && list->enumerator->cachedStructureID() != object.structureID())
+    if (list->enumerator != vm.emptyPropertyNameEnumerator() && list->enumerator->cachedStructureIDForNames() != object.structureID())
         return nullptr;
     return list->enumerator;
 }

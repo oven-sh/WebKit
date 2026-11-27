@@ -15101,7 +15101,7 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
             operationCases.append(branchIfNotCell(baseGPR));
 
         load32(Address(baseGPR, JSCell::structureIDOffset()), newIndexGPR);
-        operationCases.append(branch32(NotEqual, newIndexGPR, Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDOffset())));
+        operationCases.append(branch32(NotEqual, newIndexGPR, Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDForNamesOffset())));
 
         move(indexGPR, newIndexGPR);
         Jump initMode = branchTest32(Zero, modeGPR);
