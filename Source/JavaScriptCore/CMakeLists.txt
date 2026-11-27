@@ -2147,6 +2147,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     ffi/tests/FFITestFixtures.h
 
     runtime/BufferAccessorRegistry.h
+    runtime/HelperThreadPool.h
     dfg/DFGDataViewData.h
 
     bytecode/GlobalCodeBlock.h
