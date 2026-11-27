@@ -501,8 +501,6 @@ JS_EXPORT_PRIVATE void didCallHostImport(JSGlobalObject*, ModuleID imported, JSP
 JS_EXPORT_PRIVATE JSValue mockedModuleEvaluationError(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool runMocksInGraph(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE void didChangePlugins(JSGlobalObject*);
-JS_EXPORT_PRIVATE void didClearPlugins(JSGlobalObject*);
-JS_EXPORT_PRIVATE bool isImportedByHost(JSGlobalObject*, ModuleID);
 JS_EXPORT_PRIVATE bool setMock(JSGlobalObject*, ModuleID, JSObject* mock, JSValue requireReturnValue, bool keepsEarlierMockForImporters = false);
 JS_EXPORT_PRIVATE bool tryKeepOriginalIntact(JSGlobalObject*, ModuleID, bool onlyIfLoadedInPreload, std::optional<ModuleID> asking, bool evenIfEvaluationFailed = false);
 JS_EXPORT_PRIVATE bool hasIntactOriginal(JSGlobalObject*, ModuleID);
