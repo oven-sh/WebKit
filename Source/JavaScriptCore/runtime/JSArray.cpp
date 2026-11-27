@@ -1675,7 +1675,9 @@ JSValue JSArray::fastShift(VM& vm)
 
 JSValue JSArray::fastUnshift(VM& vm, JSValue value)
 {
-    ensureWritable(vm);
+    // (Empty: the caller's generic path, whose puts are refused.)
+    if (!tryMakeWritable(vm)) [[unlikely]]
+        return { };
 
     Butterfly* butterfly = this->butterfly();
     auto indexingType = this->indexingType();
@@ -1686,6 +1688,10 @@ JSValue JSArray::fastUnshift(VM& vm, JSValue value)
         unsigned length = butterfly->publicLength();
 
         if (length >= MIN_SPARSE_ARRAY_INDEX || length >= butterfly->vectorLength())
+            return { };
+
+        // Above the threshold unshiftCountWithAnyIndexingType() moves the start of the elements and copies nothing.
+        if (length > shiftThreshold && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense) [[unlikely]]
             return { };
 
         if (indexingType == ArrayWithInt32 && !value.isInt32()) [[unlikely]]
@@ -1713,6 +1719,10 @@ JSValue JSArray::fastUnshift(VM& vm, JSValue value)
         unsigned length = butterfly->publicLength();
 
         if (length >= MIN_SPARSE_ARRAY_INDEX || length >= butterfly->vectorLength())
+            return { };
+
+        // Above the threshold unshiftCountWithAnyIndexingType() moves the start of the elements and copies nothing.
+        if (length > shiftThreshold && vm.arrayStoragePolicy() == ArrayStoragePolicy::KeepsDenseArraysDense) [[unlikely]]
             return { };
 
         if (!value.isNumber()) [[unlikely]]
