@@ -6893,7 +6893,7 @@ public:
 
     static void replaceWithHlt(void* instructionStart)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t op = OP_HLT;
         performJITMemcpy<jitMemcpyRepatch>(instructionStart, &op, 1);
 #else
@@ -6906,7 +6906,7 @@ public:
         uint8_t* ptr = std::bit_cast<uint8_t*>(instructionStart);
         uint8_t* dstPtr = std::bit_cast<uint8_t*>(to);
         intptr_t distance = (intptr_t)(dstPtr - (ptr + 5));
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         uint8_t buffer[5];
         buffer[0] = static_cast<uint8_t>(OP_JMP_rel32);
         WTF::unalignedStore<int32_t>(buffer + 1, static_cast<int32_t>(distance));
@@ -7102,7 +7102,7 @@ public:
                 *bufferWriter++ = nops[nopRest-1][i];
 
             ASSERT(nopSize == bufferWriter - buffer);
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
             machineCodeCopy<jitMemcpyRepatch>(where, buffer, nopSize);
 #else
             machineCodeCopy<memcpyRepatch>(where, buffer, nopSize);
@@ -7129,7 +7129,7 @@ private:
 
     static void setPointer(void* where, void* value)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         performJITMemcpy<jitMemcpyRepatch>(std::bit_cast<void**>(where) - 1, &value, sizeof(void*));
 #else
         WTF::unalignedStore<void*>(std::bit_cast<void**>(where) - 1, value);
@@ -7138,7 +7138,7 @@ private:
 
     static void setInt32(void* where, int32_t value)
     {
-#if ENABLE(MPROTECT_RX_TO_RWX)
+#if ENABLE(MPROTECT_RX_TO_RWX) || ENABLE(JIT_PROTECTION_KEY)
         performJITMemcpy<jitMemcpyRepatch>(std::bit_cast<int32_t*>(where) - 1, &value, sizeof(int32_t));
 #else
         WTF::unalignedStore<int32_t>(std::bit_cast<int32_t*>(where) - 1, value);

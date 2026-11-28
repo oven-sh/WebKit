@@ -1872,8 +1872,13 @@ static Outcome runProgram(const Program& program, unsigned inputs, int check, bo
         alarm(20);
         if (!sigsetjmp(currentRun.exitPoint, 1))
             reinterpret_cast<void (*)()>(untagCFunctionPtr<JSEntryPtrTag>(entryTrampoline->code().taggedPtr()))();
-        else
+        else {
             left = true;
+#if ENABLE(JIT_PROTECTION_KEY)
+            // After siglongjmp() out of handleSignal() the thread cannot read the JIT region, where the constants of the program are.
+            setJITRegionWritableForCurrentThread(false);
+#endif
+        }
         alarm(0);
         currentRun.isRunning = false;
         ++outcome.runs;
