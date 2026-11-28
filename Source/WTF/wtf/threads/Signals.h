@@ -81,6 +81,8 @@ struct SigInfo {
 #if USE(BUN_JSC_ADDITIONS)
     // No instruction raised the signal, so there is no faulting address.
     bool isSentByProcess { false };
+    // The processor did not say which address the instruction wanted: the faulting address is 0 whatever it was. On x86-64, an address that is not canonical.
+    bool isAddressUnknown { false };
 #endif
 };
 

@@ -220,7 +220,8 @@ static void* mapCode(intptr_t descriptor, int64_t fileOffset, size_t size, size_
     if (!view)
         return nullptr;
     DWORD previousProtection;
-    if (!VirtualProtect(view, executableSize + skipped, PAGE_EXECUTE_READ, &previousProtection)
+    if ((skipped && !VirtualProtect(view, skipped, PAGE_READONLY, &previousProtection))
+        || !VirtualProtect(static_cast<uint8_t*>(view) + skipped, executableSize, PAGE_EXECUTE_READ, &previousProtection)
         || (size > executableSize && !VirtualProtect(static_cast<uint8_t*>(view) + skipped + executableSize, size - executableSize, PAGE_READONLY, &previousProtection))) {
         UnmapViewOfFile(view);
         return nullptr;
@@ -378,7 +379,8 @@ static int openExecutable(const Invocable<bool(int)> auto& isWanted)
     int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
     closeUnlessWanted(descriptor);
 #if OS(LINUX)
-    if (descriptor < 0) {
+    // Who starts a program with more rights than their own chooses this path.
+    if (descriptor < 0 && !getauxval(AT_SECURE)) {
         if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
             descriptor = open(path, O_RDONLY | O_CLOEXEC);
         closeUnlessWanted(descriptor);

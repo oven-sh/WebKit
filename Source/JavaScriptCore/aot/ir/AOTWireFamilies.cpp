@@ -244,12 +244,12 @@ static std::span<const Wire::Field> wireFieldsOf(const Wire::Sections& sections,
     std::span<const Wire::Field> fields = sections.fields;
     if (layout.fields.start > fields.size() || layout.fields.count > fields.size() - layout.fields.start)
         return { };
-    return fields.subspan(layout.fields.start, layout.fields.count);
+    return sliceOfRecords(fields, layout.fields);
 }
 
 static std::span<const uint32_t> wireSupertypesOf(const Wire::Sections& checkedSections, const Wire::Layout& layout)
 {
-    return checkedSections.words.subspan(layout.supertypes.start, layout.supertypes.count);
+    return sliceOfRecords(checkedSections.words, layout.supertypes);
 }
 
 static std::optional<InternalErrorKind> findErrorInSupertypesOfWireLayout(const Wire::Sections& sections, const Wire::Layout& layout)
@@ -286,7 +286,7 @@ static std::optional<InternalError> findWireTypeWithInvalidLists(const ParallelL
     auto findErrorInList = [&](Wire::Span list, size_t numberOfRecords) -> std::optional<InternalErrorKind> {
         if (list.start > words.size() || list.count > words.size() - list.start)
             return InternalErrorKind::ListOutOfBounds;
-        for (uint32_t id : words.subspan(list.start, list.count)) {
+        for (uint32_t id : sliceOfRecords(words, list)) {
             if (id >= numberOfRecords)
                 return InternalErrorKind::IdOutOfRange;
         }

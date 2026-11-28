@@ -14,6 +14,7 @@
 #include "LLIntEntrypoint.h"
 #include "NativeCalleeRegistry.h"
 #include "Options.h"
+#include "WasmMemory.h"
 #include "WasmModuleInformation.h"
 #include "WasmOperations.h"
 #include "WasmSections.h"
@@ -228,7 +229,7 @@ ImageCodeFlavor CodeInImage::flavorFor(const ModuleInformation& info, MemoryMode
 {
     // A signaling memory exists only where the fault handler does.
     if (mode == MemoryMode::Signaling)
-        return ImageCodeFlavor::Trapping;
+        return Memory::fastMappedRedzoneBytes() >= CodeForImage::redzoneBytes ? ImageCodeFlavor::Trapping : ImageCodeFlavor::Checking;
     // An instance without a memory has the mode of an empty one, and its code leaves nothing but null references to the fault handler.
     if (!info.memoryCount() && Options::useWasmFaultSignalHandler())
         return ImageCodeFlavor::Trapping;

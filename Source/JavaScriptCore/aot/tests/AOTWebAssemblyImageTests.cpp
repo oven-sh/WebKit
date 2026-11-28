@@ -26,6 +26,7 @@
 #include "VM.h"
 #include "WasmCodeInImage.h"
 #include "WasmHandlerInfo.h"
+#include "WasmModuleInformation.h"
 #include "WasmOperations.h"
 #include <algorithm>
 #include <array>
@@ -468,6 +469,29 @@ static void testDiagnosticKinds()
     AOT_TEST_CHECK(severityOf(diagnosticKindOf(Wasm::ImageDeclineReason::InvalidModule)) == DiagnosticSeverity::Warning);
 }
 
+static void testTrappingCodeNeedsItsRedzone()
+{
+    Ref<Wasm::ModuleInformation> info = Wasm::ModuleInformation::create();
+    static constexpr uint8_t memoryModuleWithOffset[] = {
+        0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00,
+        0x01, 0x06, 0x01, 0x60, 0x01, 0x7f, 0x01, 0x7f,
+        0x03, 0x02, 0x01, 0x00,
+        0x05, 0x03, 0x01, 0x00, 0x01,
+        0x0a, 0x0c, 0x01, 0x0a, 0x00, 0x20, 0x00, 0x28, 0x02, 0x80, 0x80, 0xc0, 0x04, 0x0b,
+    };
+    Wasm::ModuleForImage expected = compileModuleWithCode(memoryModuleWithOffset);
+    struct Case {
+        unsigned pages;
+        Wasm::ImageCodeFlavor flavor;
+    };
+    for (Case option : { Case { 0, Wasm::ImageCodeFlavor::Checking }, Case { 127, Wasm::ImageCodeFlavor::Checking }, Case { 128, Wasm::ImageCodeFlavor::Trapping }, Case { 512, Wasm::ImageCodeFlavor::Trapping } }) {
+        SetForScope pages(Options::wasmFastMemoryRedzonePages(), option.pages);
+        AOT_TEST_CHECK(Wasm::CodeInImage::flavorFor(info.get(), MemoryMode::Signaling) == option.flavor);
+        Wasm::ModuleForImage module = compileModuleWithCode(memoryModuleWithOffset);
+        AOT_TEST_CHECK(module.code == expected.code);
+    }
+}
+
 static void testModulesWithNothingToRunAreDeclined()
 {
     BuildContext context(makeDefaultCompileOptions());
@@ -514,6 +538,7 @@ std::span<const NativeTest> webAssemblyImageTests()
         { "webassembly-image/pointer-table-slots"_s, testPointerTableSlots },
         { "webassembly-image/operation-slots"_s, testOperationSlots },
         { "webassembly-image/diagnostic-kinds"_s, testDiagnosticKinds },
+        { "webassembly-image/trapping-code-needs-its-redzone"_s, testTrappingCodeNeedsItsRedzone },
         { "webassembly-image/modules-with-nothing-to-run-are-declined"_s, testModulesWithNothingToRunAreDeclined },
     };
     return tests;

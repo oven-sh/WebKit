@@ -39,7 +39,7 @@ static bool hasWireTypeFlag(const Wire::Type& type, TypeFlags flag)
 
 static std::span<const uint32_t> wordsListedByWireType(const Wire::Sections& checkedSections, Wire::Span list)
 {
-    return checkedSections.words.subspan(list.start, list.count);
+    return sliceOfRecords(checkedSections.words, list);
 }
 
 template<typename MemberID, typename SetID>
@@ -87,7 +87,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
         return { };
 
     Vector<ClassPart, 8> parts;
-    for (const Wire::ClassPart& wire : checkedSections.classParts.subspan(list.start, list.count)) {
+    for (const Wire::ClassPart& wire : sliceOfRecords(checkedSections.classParts, list)) {
         ClassPart part;
         part.builtinClass = BuiltinClassID(wire.builtinClass);
         std::span<const uint32_t> contents = wordsListedByWireType(checkedSections, wire.contents);
@@ -104,7 +104,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
 static ALWAYS_INLINE uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
 {
     Wire::Span list = checkedSections.types[index].classes;
-    std::span<const Wire::ClassPart> parts = checkedSections.classParts.subspan(list.start, list.count);
+    std::span<const Wire::ClassPart> parts = sliceOfRecords(checkedSections.classParts, list);
     uint32_t end = 0;
     for (size_t position = 0; position < parts.size(); ++position) {
         if (position && BuiltinClassID(parts[position - 1].builtinClass) >= BuiltinClassID(parts[position].builtinClass))
@@ -304,11 +304,11 @@ void WireTypeReader::findTypesOfRecordsMadeForFields(ArenasOfWorkers& arenas)
         const Wire::Layout& layout = m_sections.layouts[index];
         if (layout.kind != static_cast<uint32_t>(LayoutKind::Instance))
             return;
-        for (const Wire::Field& field : m_sections.fields.subspan(layout.fields.start, layout.fields.count)) {
-            if ((field.declared.flags & flagsOfInference) != flagsOfInference)
+        for (const Wire::Field& field : sliceOfRecords(m_sections.fields, layout.fields)) {
+            if ((field.declared.flags & flagsOfInference) != flagsOfInference || field.declared.type >= m_sections.types.size())
                 continue;
             std::span<const uint32_t> named = wordsListedByWireType(m_sections, m_sections.types[field.declared.type].layouts);
-            if (named.size() == 1 && m_sections.layouts[named[0]].kind == static_cast<uint32_t>(LayoutKind::Record) && m_declaredMembers[named[0]] != LayoutSets::of(LayoutID(named[0])))
+            if (named.size() == 1 && named[0] < m_sections.layouts.size() && m_sections.layouts[named[0]].kind == static_cast<uint32_t>(LayoutKind::Record) && m_declaredMembers[named[0]] != LayoutSets::of(LayoutID(named[0])))
                 found.append(field.declared.type);
         }
     });
@@ -433,6 +433,87 @@ void WireTypeReader::finishLayouts()
     steps.didFinish("inherited fields"_s);
 }
 
+// Nothing has verified these words. The walk ends where they do not make sense, and the verifier of bodies then refuses the body.
+class UnverifiedBodyWords {
+public:
+    explicit UnverifiedBodyWords(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    ALWAYS_INLINE std::span<const uint32_t> rest() const { return m_words; }
+    ALWAYS_INLINE bool skip(uint64_t count)
+    {
+        if (count > m_words.size()) [[unlikely]]
+            return false;
+        m_words = m_words.subspan(static_cast<size_t>(count));
+        return true;
+    }
+    bool skipTarget()
+    {
+        constexpr uint32_t headWords = BodyTarget::numberOfHeadWords;
+        return m_words.size() >= headWords && skip(uint64_t { headWords } + m_words[1] + m_words[2]);
+    }
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+template<typename Functor>
+static void forEachModuleBuiltinInUnverifiedBody(const Body& body, const Functor& functor)
+{
+    static_assert(fixedNumberOfFieldWordsOfBodyValue(Opcode::ModuleBuiltin) == 2, "its built-in and its module");
+    const IDRemapTable& modules = body.unit().tables[static_cast<size_t>(RemappedIDKind::Module)];
+    UnverifiedBodyWords words(body.words());
+    for (uint32_t remainingBlocks = body.numberOfBlocks(); remainingBlocks--;) {
+        std::span<const uint32_t> block = words.rest();
+        if (block.size() < BodyBlock::numberOfHeadWords || !words.skip(uint64_t { BodyBlock::numberOfHeadWords } + uint64_t { block[0] } * (sizeof(Wire::ParameterHead) / sizeof(uint32_t))))
+            return;
+        if (block[4] && !words.skipTarget())
+            return;
+        const uint32_t* value = words.rest().data();
+        const uint32_t* end = value + words.rest().size();
+        for (uint32_t remainingValues = block[1]; remainingValues--;) {
+            size_t available = end - value;
+            if (available < BodyValue::numberOfHeadWords) [[unlikely]]
+                return;
+            uint32_t opcodeWord = value[0] & BodyValue::opcodeMask;
+            if (opcodeWord >= numberOfEnumerators<Opcode>) [[unlikely]]
+                return;
+            auto opcode = static_cast<Opcode>(opcodeWord);
+            uint64_t size = BodyValue::numberOfHeadWords + !!(value[0] & Wire::WrittenPositionFollows);
+            uint8_t fixed = CaseTable<Opcode, fixedNumberOfWordsBehindHeadOfBodyValue>::at(opcode);
+            if (fixed != variableNumberOfFieldWords) [[likely]]
+                size += fixed;
+            else {
+                uint32_t firstField = BodyValue::numberOfHeadWords + CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode);
+                size += CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode) + numberOfFieldWordsThatMayBeWrong(opcode, unsafeMakeSpan(value + firstField, available - std::min<size_t>(available, firstField)));
+            }
+            if (size > available) [[unlikely]]
+                return;
+            if (opcode == Opcode::ModuleBuiltin) [[unlikely]] {
+                uint32_t module = value[BodyValue::numberOfHeadWords + hasFlagsWordOnWire(Opcode::ModuleBuiltin) + 1];
+                if (module < modules.size)
+                    functor(ModuleID::fromBits(modules.entries[module] - 1));
+            }
+            value += size;
+        }
+        words = UnverifiedBodyWords({ value, end });
+        std::span<const uint32_t> terminator = words.rest();
+        if (terminator.size() < BodyTerminator::numberOfHeadWords || terminator[0] >= numberOfEnumerators<TerminatorKind>)
+            return;
+        if (!words.skip(BodyTerminator::numberOfHeadWords + numberOfFieldWordsThatMayBeWrong(static_cast<TerminatorKind>(terminator[0]), terminator.subspan(BodyTerminator::numberOfHeadWords))))
+            return;
+        for (uint32_t remainingTargets = terminator[2]; remainingTargets--;) {
+            if (!words.skipTarget())
+                return;
+        }
+    }
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t numberOfModules, const ParallelLoops& loops)
 {
     constexpr uint32_t functionsPerTask = 64;
@@ -444,21 +525,10 @@ static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t n
             const Body& body = program.functions[index].body;
             if (!body)
                 continue;
-            const UnitIDRemap* unit = &body.unit();
-            BodyBlock block = body.entry();
-            for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
-                BodyValues::Iterator cursor = block.values().begin();
-                for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor) {
-                    BodyValue value = *cursor;
-                    if (value.opcode() != Opcode::ModuleBuiltin)
-                        continue;
-                    ModuleID module = value.as<Opcode::ModuleBuiltin>().module();
-                    if (module && module.index() < numberOfModules)
-                        isNamed[module.index()].store(true, std::memory_order_relaxed);
-                }
-                BodyTerminator terminator(cursor.words(), unit, BlockID(blockIndex));
-                block = BodyBlock(terminator.end(), nullptr, unit, BlockID(blockIndex + 1), block.endOfValues());
-            }
+            forEachModuleBuiltinInUnverifiedBody(body, [&](ModuleID module) {
+                if (module && module.index() < numberOfModules)
+                    isNamed[module.index()].store(true, std::memory_order_relaxed);
+            });
         }
     });
 

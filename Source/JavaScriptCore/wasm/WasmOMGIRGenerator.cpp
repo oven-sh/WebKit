@@ -3365,7 +3365,7 @@ inline Value* OMGIRGenerator::emitCheckAndPreparePointer(Value* pointer, uint64_
             // than the declared 'maximum' will trap, so we can compare against that number. If there was no declared 'maximum' then we still know that
             // any access equal to or greater than 4GiB will trap, no need to add the redzone.
             uint64_t lastLoadedOffset = static_cast<uint64_t>(offset) + static_cast<uint64_t>(sizeOfOperation - 1);
-            if (lastLoadedOffset >= Memory::fastMappedRedzoneBytes()) {
+            if (lastLoadedOffset >= (m_context.codeForImage ? CodeForImage::redzoneBytes : Memory::fastMappedRedzoneBytes())) {
                 size_t maximum = m_info.memory(memoryIndex).maximum() ? m_info.memory(memoryIndex).maximum().bytes() : std::numeric_limits<uint32_t>::max();
                 m_currentBlock->appendNew<WasmBoundsCheckValue>(m_proc, origin(), pointer, lastLoadedOffset, maximum);
             }

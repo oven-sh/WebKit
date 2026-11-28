@@ -97,16 +97,14 @@ public:
     std::optional<uint32_t> optionalNumber(uint32_t word);
 
     template<typename WireRecord> std::span<const WireRecord> slice(Wire::Span);
-    std::span<const uint32_t> words(Wire::Span span) { return sliceOf(m_reader.sections().words, span); }
-    std::span<const uint32_t> code(Wire::Span span) { return sliceOf(m_reader.sections().code, span); }
-    std::span<const uint8_t> bytes(Wire::Span span) { return sliceOf(m_reader.sections().bytes, span); }
+    std::span<const uint32_t> words(Wire::Span span) { return sliceOfRecords(m_reader.sections().words, span); }
+    std::span<const uint32_t> code(Wire::Span span) { return sliceOfRecords(m_reader.sections().code, span); }
+    std::span<const uint8_t> bytes(Wire::Span span) { return sliceOfRecords(m_reader.sections().bytes, span); }
 
     template<typename Record> void didRead(Record&) { }
     void didRead(LayoutRecord&);
 
 private:
-    template<typename T> std::span<const T> sliceOf(std::span<const T> all, Wire::Span span) { return all.subspan(span.start, span.count); }
-
     const Reader& m_reader;
     const UnitIDRemap* m_unit { nullptr };
 };
@@ -150,8 +148,10 @@ void Reader::growFromEmpty(const ParallelLoops& loops, Vector<Record, inlineCapa
 template<typename IDType>
 IDType RecordChecker::id(uint32_t word)
 {
-    if (m_unit)
+    if (m_unit) {
+        RELEASE_ASSERT(word < m_unit->tables[static_cast<size_t>(remappedIDKindOf<IDType>)].size);
         return programIDOf<IDType>(*m_unit, word);
+    }
     if constexpr (std::is_same_v<IDType, TypeID>)
         return m_reader.program().types.typeOfWireIndex(word);
     else
@@ -220,7 +220,7 @@ inline std::optional<uint32_t> RecordChecker::optionalNumber(uint32_t word)
 template<typename WireRecord>
 std::span<const WireRecord> RecordChecker::slice(Wire::Span span)
 {
-    return sliceOf(m_reader.sections().template listOf<WireRecord>(), span);
+    return sliceOfRecords(m_reader.sections().template listOf<WireRecord>(), span);
 }
 
 } } } // namespace JSC::AOT::Typed

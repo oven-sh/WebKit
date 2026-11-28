@@ -669,6 +669,13 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     if (!Image::isRegistered())
         return false;
+#if CPU(X86_64) && OS(LINUX)
+    // These two come with the address 0, whatever the address was. A sandbox that makes its own signal frames may give no number at all.
+    constexpr greg_t stackFault = 12;
+    constexpr greg_t generalProtectionFault = 13;
+    if (greg_t exception = registers.machineContext.gregs[REG_TRAPNO]; exception == stackFault || exception == generalProtectionFault)
+        return false;
+#endif
     void* pc = instructionPointer->untaggedPtr();
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
@@ -699,7 +706,7 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 void installFaultHandler()
 {
     addSignalHandler(Signal::AccessFault, [](Signal, SigInfo& info, PlatformRegisters& registers) {
-        return !info.isSentByProcess && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
+        return !info.isSentByProcess && !info.isAddressUnknown && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
     });
 }
 

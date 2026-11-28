@@ -217,6 +217,20 @@ function numberOfFieldWordsFunction(cursor: Cursor): string[] {
       "}",
     ],
     [
+      `inline uint64_t numberOfFieldWordsThatMayBeWrong(${enumName} ${tag}, std::span<const uint32_t> words)`,
+      "{",
+      ...indent([
+        `uint8_t fixed = CaseTable<${enumName}, ${sizeOf}>::at(${tag});`,
+        "if (fixed != variableNumberOfFieldWords) [[likely]]",
+        ...indent(["return fixed;"]),
+        "[[maybe_unused]] auto word = [words](uint64_t offset) -> uint64_t { return offset < words.size() ? words[offset] : UINT32_MAX; };",
+        `switch (${tag}) {`,
+      ]),
+      ...groupedCases(enumName, counted),
+      ...indent(["default:", ...indent(["return UINT32_MAX;"]), "}"]),
+      "}",
+    ],
+    [
       `ALWAYS_INLINE uint32_t numberOfFieldWords(${enumName} ${tag}, const uint32_t* fields)`,
       "{",
       ...indent([
