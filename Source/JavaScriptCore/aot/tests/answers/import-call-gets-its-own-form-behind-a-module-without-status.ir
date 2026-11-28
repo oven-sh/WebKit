@@ -1,9 +1,9 @@
-# A module with a single importer keeps no status. An import() after it has run still gets the form of the file that its static import asked for.
+# An import() gets the form of the file that it asks for, though a module that has run and keeps no status has imported another one.
 # inner.mjs: import conf from "./conf.toml" with { type: "toml" }; export const port = conf.port;
 # mid.mjs: import { port } from "./inner.mjs"; export const doubled = port * 2;
 # main.mjs: import { doubled } from "./mid.mjs"; const loaded = await import("./conf.toml", { with: { type: "text" } }); print(doubled, typeof loaded.default);
 # RUN: run-in-shell
-# CHECK: 42 object
+# CHECK: 42 string
 # CHECK-NEXT: exited with 0
 
 module m0 path="/conf.toml?toml" displayPath="conf.toml" kind=Data requireResult=DefaultExport body=f0 data=d0 exports=[{name="default" variable=g0}]

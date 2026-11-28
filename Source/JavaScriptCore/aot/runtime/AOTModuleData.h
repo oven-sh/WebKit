@@ -54,15 +54,15 @@ struct ModuleData {
         IsEntryPoint = 1 << 6,
         CachesEvaluationError = 1 << 7,
         BodyMayRunAgain = 1 << 7,
-        IsDataFoundByName = 1 << 7,
         HasDeferredRequest = 1 << 8,
-        IsImportedAsESModule = 1 << 8,
+        IsOtherFormOfFile = 1 << 8,
         HasValue = 1 << 9,
         NeedsEvaluation = 1 << 10,
         IsLinkedWithEntryPoint = 1 << 11,
         EvaluatesItself = 1 << 12,
         IsLibraryCodeWithFilePath = 1 << 13,
         MayRunAsOriginal = 1 << 13,
+        HasCheckOfNames = 1 << 13,
         IsOfLibrary = 1 << 14,
         CapturesOnDemand = 1 << 15,
         OnlyPassesLinkOn = 1 << 15,
@@ -93,7 +93,7 @@ struct ModuleData {
     uint8_t wrapsCommonJSModule : 1;
     uint8_t importedByModule : 1;
     uint8_t importedWhileItRunsOrAsNamespace : 1;
-    uint8_t wrappedByFacade : 1;
+    uint8_t wrappedByFacadeOrLeadsToFileOrIsHeld : 1;
     uint8_t evictableOrRejectsOverride : 1;
     uint8_t throwsAtLoadOrIsReloadable : 1 { 0 };
 
@@ -113,16 +113,18 @@ struct ModuleData {
     bool isEntryPoint() const { return has(Flag::IsEntryPoint); }
     bool cachesEvaluationError() const { return kind != ModuleKind::CommonJs || has(Flag::CachesEvaluationError); }
     bool bodyOfESModuleMayRunAgain() const { return kind == ModuleKind::SourceText && has(Flag::BodyMayRunAgain); }
-    bool isDataFoundByName() const { return kind == ModuleKind::Data && has(Flag::IsDataFoundByName); }
-    bool hasDeferredRequest() const { return kind != ModuleKind::CommonJs && has(Flag::HasDeferredRequest); }
-    bool isImportedAsESModule() const { return kind == ModuleKind::CommonJs && has(Flag::IsImportedAsESModule); }
+    bool hasDeferredRequest() const { return kind == ModuleKind::SourceText && has(Flag::HasDeferredRequest); }
     bool hasValue() const { return has(Flag::HasValue); }
     bool needsEvaluation() const { return has(Flag::NeedsEvaluation); }
     bool isLinkedWithEntryPoint() const { return has(Flag::IsLinkedWithEntryPoint); }
     bool evaluatesItself() const { return has(Flag::EvaluatesItself); }
     bool isLoadedByLoader() const { return loadedByLoader; }
     bool isFacade() const { return wrapsCommonJSModule; }
-    bool hasFacade() const { return wrappedByFacade; }
+    bool hasFacade() const { return kind == ModuleKind::CommonJs && wrappedByFacadeOrLeadsToFileOrIsHeld; }
+    bool leadsToImportedFile() const { return kind == ModuleKind::SourceText && wrappedByFacadeOrLeadsToFileOrIsHeld; }
+    bool requireAsksWhatLoaderHolds() const { return kind == ModuleKind::Data && wrappedByFacadeOrLeadsToFileOrIsHeld; }
+    bool isOtherFormOfFile() const { return kind == ModuleKind::Data && has(Flag::IsOtherFormOfFile); }
+    bool isValue() const { return kind == ModuleKind::Data && requireResult == RequireResult::DefaultExport && !importedWhileItRunsOrAsNamespace; }
     bool mayBeEvicted() const { return !isOfLibrary() && evictableOrRejectsOverride; }
     bool rejectsRequireCacheOverride() const { return isOfLibrary() && evictableOrRejectsOverride; }
     bool isImportedByModule() const { return importedByModule; }
@@ -131,9 +133,11 @@ struct ModuleData {
     bool loaderReturnsNamespace() const { return kind == ModuleKind::Data && importedWhileItRunsOrAsNamespace; }
     bool hasRequireCacheValue() const { return (kind == ModuleKind::RuntimeSource || kind == ModuleKind::Runtime) && importedWhileItRunsOrAsNamespace; }
     SlotData requireCacheValue() const { return SlotData::create(value.offset + sizeof(EncodedJSValue), SlotRepresentation::JSValue); }
-    bool isLibraryCodeWithFilePath() const { return kind != ModuleKind::CommonJs && has(Flag::IsLibraryCodeWithFilePath); }
+    bool isLibraryCodeWithFilePath() const { return kind != ModuleKind::CommonJs && isOfLibrary() && has(Flag::IsLibraryCodeWithFilePath); }
     bool mayRunAsOriginal() const { return kind == ModuleKind::CommonJs && has(Flag::MayRunAsOriginal); }
     bool isOfLibrary() const { return has(Flag::IsOfLibrary); }
+    // Its first request names a module whose body throws if a file lacks a name that this one imports.
+    bool hasCheckOfNames() const { return isESModuleOfProgram() && has(Flag::HasCheckOfNames); }
     bool hasLinkPlan() const { return isEntryPoint() && isLinkedWithEntryPoint(); }
 
     bool hasExportTable() const;
@@ -473,6 +477,16 @@ struct StarAsWrittenData {
     uint32_t isFollowed : 1;
 };
 
+// An ES module below the root that is evaluated ahead of the hoisted request of the root at that place.
+struct ModuleAheadOfFileData {
+    Number24 root;
+    Number24 place;
+    Number24 module;
+
+    uint32_t rootIndex() const { return root; }
+    ModuleID moduleAhead() const { return ModuleID(module); }
+};
+
 struct WriterOfExportData {
     uint32_t module;
     uint32_t place;
@@ -549,12 +563,9 @@ struct ModuleStartStepData {
         Begin,
         BeginOrReturn,
         Finish,
-        ReturnIfLoadingStops,
         AbandonOnThrow,
         Return,
         FinishAndReturn,
-        CallStartUnlessStopped,
-        ResumeLoadOnThrow,
     };
 
     static constexpr unsigned numberOfOperationBits = 4;
@@ -571,13 +582,12 @@ struct ModuleStartStepData {
     constexpr Operation operation() const { return static_cast<Operation>(bits & operationMask); }
     constexpr bool hasFlag() const { return bits & flagBit; }
     constexpr uint32_t operand() const { return bits >> operandShift; }
-    constexpr bool callsStart() const { return operation() == Operation::CallStart || operation() == Operation::CallStartUnlessStopped; }
     constexpr bool endsRow() const { return operation() == Operation::Trap || operation() == Operation::Return || operation() == Operation::FinishAndReturn; }
 
     uint32_t bits;
 };
 static_assert(sizeof(ModuleStartStepData) == 4 && isImageRecord<ModuleStartStepData>);
-static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::ResumeLoadOnThrow) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
+static_assert(static_cast<uint32_t>(ModuleStartStepData::Operation::FinishAndReturn) <= ModuleStartStepData::operationMask && Number24::max <= ModuleStartStepData::maxOperand);
 static_assert(!ModuleStartStepData::create(ModuleStartStepData::Operation::Trap).bits);
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).operand() == 0xabcdef && ModuleStartStepData::create(ModuleStartStepData::Operation::Finish, 0xabcdef, true).hasFlag());
 static_assert(ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).operation() == ModuleStartStepData::Operation::CallBody && !ModuleStartStepData::create(ModuleStartStepData::Operation::CallBody, ModuleStartStepData::maxOperand).hasFlag());
@@ -602,6 +612,7 @@ static_assert(sizeof(SourceStampData) == 12 && isImageRecord<SourceStampData>);
 static_assert(sizeof(NameOfStatementData) == 8 && isImageRecord<NameOfStatementData>);
 static_assert(sizeof(RequestedOriginalData) == 8 && isImageRecord<RequestedOriginalData>);
 static_assert(sizeof(StarAsWrittenData) == 12 && isImageRecord<StarAsWrittenData>);
+static_assert(sizeof(ModuleAheadOfFileData) == 9 && isImageRecord<ModuleAheadOfFileData>);
 static_assert(sizeof(WriterOfExportData) == 12 && isImageRecord<WriterOfExportData>);
 static_assert(sizeof(ModuleFailureData) == 12 && isImageRecord<ModuleFailureData>);
 static_assert(sizeof(ImportOfHeldFileData) == 8 && isImageRecord<ImportOfHeldFileData>);
@@ -662,6 +673,7 @@ private:
     v(moduleFailures, ModuleFailureData) \
     v(namesOfStatements, NameOfStatementData) \
     v(starsAsWritten, StarAsWrittenData) \
+    v(modulesAheadOfFiles, ModuleAheadOfFileData) \
     v(writersOfExports, WriterOfExportData) \
     v(modulesByPath, uint16_t) \
     v(modulesByHashOfPath, uint32_t) \

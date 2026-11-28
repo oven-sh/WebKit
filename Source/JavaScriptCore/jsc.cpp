@@ -1197,6 +1197,8 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
 #if USE(BUN_JSC_ADDITIONS)
     nullptr, // requireBuiltinModule
     nullptr, // nativeBinding
+    nullptr, // moduleTypeInRegistry
+    nullptr, // asyncContextOfImport
 #if ENABLE(AOT)
     &AOT::Shell::moduleHost,
 #endif

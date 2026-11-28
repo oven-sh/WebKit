@@ -23,6 +23,7 @@ enum class ModuleProperty : uint8_t {
     HasLinkWork = 1 << 1,
     IsUncompiledCode = 1 << 2,
     HasEvaluationWork = 1 << 3,
+    HasTurnAheadOfLink = 1 << 4,
 };
 
 enum class FollowedRequests : uint8_t { All, Imports };
@@ -33,7 +34,7 @@ struct FollowedTargets {
     FollowedRequests followed;
 
     size_t size() const { return requests.size(); }
-    uint32_t operator[](size_t index) const { return followed == FollowedRequests::Imports && requests[index].isRequire ? importer : requests[index].target(); }
+    uint32_t operator[](size_t index) const { return requests[index].isHoisted || (followed == FollowedRequests::Imports && requests[index].isRequire) ? importer : requests[index].target(); }
 };
 
 struct ModuleGraph {
@@ -55,7 +56,7 @@ struct ModuleGraph {
         const ModuleData& nextRecord = modulesAndEndRecord[module + 1];
         if (record.capturesExports())
             return false;
-        return record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.firstRequiredName != nextRecord.firstRequiredName;
+        return record.firstSyntheticExport != nextRecord.firstSyntheticExport || record.firstRequiredName != nextRecord.firstRequiredName || record.hasCheckOfNames();
     }
 
     Typed::StronglyConnectedComponents computeComponents(FollowedRequests followed) const
@@ -78,6 +79,8 @@ static OptionSet<ModuleProperty> ownPropertiesOf(const ModuleGraph& graph, unsig
         properties.add(ModuleProperty::HasLinkWork);
     if (module.isUncompiledCode())
         properties.add(ModuleProperty::IsUncompiledCode);
+    if (module.kind == ModuleKind::CommonJs || module.isFacade() || module.bodyThrowsAtLoad())
+        properties.add(ModuleProperty::HasTurnAheadOfLink);
     bool isFileOfProgram = module.hasExportTable() || module.kind == ModuleKind::CommonJs;
     if (module.isUncompiledCode() || (isFileOfProgram && (module.bodyFunction() || module.hasTopLevelAwait())))
         properties.add(ModuleProperty::HasEvaluationWork);
@@ -86,7 +89,7 @@ static OptionSet<ModuleProperty> ownPropertiesOf(const ModuleGraph& graph, unsig
 
 static bool isFollowed(const ModuleRequestData& request, FollowedRequests followed)
 {
-    return followed == FollowedRequests::All || !request.isRequire;
+    return !request.isHoisted && (followed == FollowedRequests::All || !request.isRequire);
 }
 
 static Vector<OptionSet<ModuleProperty>> propertiesReachedFromComponents(const ModuleGraph& graph, const Typed::StronglyConnectedComponents& components, FollowedRequests followed)
@@ -115,7 +118,7 @@ Typed::StronglyConnectedComponents computeModuleFlags(std::span<ModuleData> modu
         for (const ModuleRequestData& request : graph.requestsOf(module)) {
             if (request.isDynamicStarExport && graph[module].kind != ModuleKind::CommonJs)
                 graph[module].add(ModuleData::Flag::HasDynamicStarExport);
-            if (request.isDeferred && graph[module].kind != ModuleKind::CommonJs)
+            if (request.isDeferred && graph[module].kind == ModuleKind::SourceText)
                 graph[module].add(ModuleData::Flag::HasDeferredRequest);
             if (!request.isRequire && !request.isHoisted)
                 graph[request.target()].importedByModule = true;
@@ -135,6 +138,8 @@ Typed::StronglyConnectedComponents computeModuleFlags(std::span<ModuleData> modu
             module.add(ModuleData::Flag::ReachesUncompiledCode);
         if (reachedByImports[componentOfImports].contains(ModuleProperty::HasEvaluationWork))
             module.add(ModuleData::Flag::NeedsEvaluation);
+        if (module.kind == ModuleKind::SourceText && reachedByImports[componentOfImports].contains(ModuleProperty::HasTurnAheadOfLink))
+            module.wrappedByFacadeOrLeadsToFileOrIsHeld = true;
         if (module.hasExportTable() && !module.hasTopLevelAwait() && componentsOfImports.membersOf(componentOfImports).size() == 1)
             module.add(ModuleData::Flag::IsSimple);
         if (reachedByRequests[components.componentOf[index]].contains(ModuleProperty::HasLinkWork))
@@ -170,7 +175,7 @@ LinkRequestsOfModules contractLinkRequests(std::span<ModuleData> modulesAndEndRe
                 continue;
             for (const ModuleRequestData& request : graph.requestsOf(module)) {
                 uint32_t& above = leaderOfImporters[request.target()];
-                above = above == none || above == leaderOf[module] ? leaderOf[module] : several;
+                above = !request.isHoisted && (above == none || above == leaderOf[module]) ? leaderOf[module] : several;
             }
         }
     }
@@ -202,8 +207,9 @@ LinkRequestsOfModules contractLinkRequests(std::span<ModuleData> modulesAndEndRe
                 path.removeLast();
                 continue;
             }
-            uint32_t target = requests[frame.nextRequest++].target();
-            if (!graph[target].needsLink() || std::exchange(lastLeaderThatCameTo[target], module) == module)
+            const ModuleRequestData& request = requests[frame.nextRequest++];
+            uint32_t target = request.target();
+            if (request.isHoisted || !graph[target].needsLink() || std::exchange(lastLeaderThatCameTo[target], module) == module)
                 continue;
             if (leaderOf[target] == target) {
                 result.requests.append(target);
@@ -262,9 +268,9 @@ static Vector<LinkPlanStepData> planLink(const ModuleGraph& graph, ModuleID entr
     while (!path.isEmpty()) {
         Frame& frame = path.last();
         if (frame.nextRequest != frame.endOfRequests) {
-            uint32_t target = graph.requests[frame.nextRequest++].target();
-            if (!seen.quickSet(target))
-                visit(target);
+            const ModuleRequestData& request = graph.requests[frame.nextRequest++];
+            if (!request.isHoisted && !seen.quickSet(request.target()))
+                visit(request.target());
             continue;
         }
         if (graph.resolvesNames(frame.module))

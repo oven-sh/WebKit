@@ -360,9 +360,9 @@ bool CompiledFrame::isActivationOf(JSCell* cell) const
 
 std::optional<ModuleID> CompiledFrame::evaluatingModule() const
 {
-    if (FunctionDescription(function).codeType() != ModuleCode && !functionKindData(function).isCommonJSModule)
-        return std::nullopt;
-    return sourceModule();
+    // The body of a CommonJS file that keeps its wrapper is hidden behind the wrapper.
+    bool isBody = functionKindData(function).isCommonJSModule || (FunctionDescription(function).codeType() == ModuleCode && visibility == TraceVisibility::Visible);
+    return isBody && !isTailDeleted ? sourceModule() : std::nullopt;
 }
 
 std::optional<ModuleID> CompiledFrame::sourceModule() const
@@ -373,16 +373,15 @@ std::optional<ModuleID> CompiledFrame::sourceModule() const
 
 void forEachEvaluatingModuleOnStack(VM& vm, CallFrame* callFrame, const ScopedLambda<void(ModuleID)>& functor)
 {
-    StackVisitor::visit(callFrame, vm, [&](auto& visitor) {
-        if constexpr (std::remove_cvref_t<decltype(visitor)>::visitsCompiledFrames) {
-            if (visitor->isCompiledFrame()) {
-                const CompiledFrame& frame = visitor->compiledFrame();
-                if (std::optional<ModuleID> module = frame.evaluatingModule())
-                    functor(*module);
-            }
+    StackVisitor::visitWithCompiledFrames(callFrame, vm, [&](auto& visitor) {
+        if (!visitor->isCompiledFrame())
+            return IterationStatus::Continue;
+        for (CompiledFrameIterator& frames = visitor.compiledFrames(); !frames.isAtEnd(); frames.advance()) {
+            if (std::optional<ModuleID> module = frames.isAmongFramesThatWait() ? std::nullopt : frames.frame().evaluatingModule())
+                functor(*module);
         }
         return IterationStatus::Continue;
-    });
+    }, false, StackVisitor::CompiledFrameVisit::EachRunOnce);
 }
 
 std::optional<ModuleID> Modules::callingModule() const

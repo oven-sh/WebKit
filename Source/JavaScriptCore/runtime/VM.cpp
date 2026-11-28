@@ -720,6 +720,7 @@ static void didOpenOrCloseSynchronousModuleQueue(VM& vm)
 VM::SynchronousModuleQueueScope::SynchronousModuleQueueScope(VM& vm)
     : m_vm(vm)
 {
+    m_queue.number = ++vm.m_synchronousModuleQueueCount;
     m_queue.prev = std::exchange(vm.m_synchronousModuleQueue, &m_queue);
     if (!m_queue.prev)
         didOpenOrCloseSynchronousModuleQueue(vm);
@@ -1982,8 +1983,6 @@ void VM::drainMicrotasks()
 #if ENABLE(AOT)
     if (m_aotState.hasObjectsBeingFilled) [[unlikely]]
         AOT::RuntimeHooks::finishFillingObjects(*this);
-    if (m_aotState.modulesWithEagerLoads) [[unlikely]]
-        AOT::RuntimeHooks::transferEagerLoadsToLoader(*this);
 #endif
 
     if (executionForbidden()) [[unlikely]]
@@ -2471,6 +2470,10 @@ void VM::visitAggregateImpl(Visitor& visitor)
             visitor.appendUnbarriered(t.arg1);
             visitor.appendUnbarriered(t.arg2);
             visitor.appendUnbarriered(t.arg3);
+        }
+        for (auto& request : q->postponedRequests) {
+            visitor.appendUnbarriered(request.loadingState);
+            visitor.appendUnbarriered(request.importer);
         }
     }
 #endif

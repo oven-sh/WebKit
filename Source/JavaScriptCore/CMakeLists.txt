@@ -1347,6 +1347,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/EvacuatedStack.h
     runtime/EvalExecutable.h
     runtime/EvalExecutableInlines.h
+    runtime/EvaluationAheadOfLink.h
     runtime/Exception.h
     runtime/ExceptionEventLocation.h
     runtime/ExceptionExpectation.h
@@ -1402,6 +1403,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/IdentifierInlines.h
     runtime/ImplementationVisibility.h
     runtime/ImportMap.h
+    runtime/ImportOrderWalk.h
     runtime/IndexingHeader.h
     runtime/IndexingType.h
     runtime/IndexingTypeInlines.h

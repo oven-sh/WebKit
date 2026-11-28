@@ -75,13 +75,29 @@ public:
     enum class LazyExports : bool { ReadOnce, Live };
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 
-    // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. runDeferredGenerator()
-    // gives the record its exports; AbstractModuleRecord::link() calls it before it links anything.
+    // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. An ImportOrderWalk gives
+    // the record its exports before anything links against it.
     static SyntheticModuleRecord* createWithDeferredGenerator(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, Ref<SyntheticSourceProvider>&&);
+    // See SyntheticSourceProvider::copiesMutableExports().
+    void setGeneratorOfMutableExports(Ref<SyntheticSourceProvider>&&);
 
-    // No-op unless the record still has a deferred generator. Runs arbitrary JS and throws what the generator throws,
-    // again on every later call.
-    void runDeferredGenerator(JSGlobalObject*);
+    // Until the module has run to its end or thrown.
+    SyntheticSourceProvider::DeferredModule* deferredModule() const { return m_generator ? m_generator->deferredModule() : nullptr; }
+    RefPtr<SyntheticSourceProvider> ownerOfDeferredModule() const { return m_generator; }
+    bool isOfDeferredModule() const { return m_isOfDeferredModule; }
+    bool isRunningDeferredModule() const { return m_isRunningDeferredModule; }
+    void didStopRunningDeferredModule() { m_isRunningDeferredModule = false; }
+    JSValue errorOfGenerator() const { return m_errorOfGenerator.get(); }
+    bool isReadyToBeLinked() const { return wasReached() && !m_generator && !m_errorOfGenerator; }
+
+    // These two run arbitrary JS and throw what the generator throws.
+    // A load that the running module started, and that comes back to it, links against what it has exported so far.
+    void runDeferredModule(JSGlobalObject*);
+    void copyMutableExportsIfOutdated(JSGlobalObject*);
+
+    // An environment cannot grow, so the bindings of the names that were exported after it was made are another record's.
+    SyntheticModuleRecord* recordOfLaterExports() const { return m_recordOfLaterExports.get(); }
+    void didListExportsSoFar(VM&, JSModuleNamespaceObject*);
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
@@ -104,11 +120,19 @@ private:
     void finishCreation(JSGlobalObject*, VM&);
 
     void initializeExports(JSGlobalObject*, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+#if USE(BUN_JSC_ADDITIONS)
+    bool updateExports(JSGlobalObject*, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+    void didGenerate(VM&, ThrowScope&);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     WriteBarrier<JSObject> m_lazyExportsSource;
-    RefPtr<SyntheticSourceProvider> m_deferredGenerator;
-    WriteBarrier<Unknown> m_deferredGeneratorError;
+    RefPtr<SyntheticSourceProvider> m_generator;
+    WriteBarrier<SyntheticModuleRecord> m_recordOfLaterExports;
+    Vector<WriteBarrier<JSModuleNamespaceObject>> m_namespacesOfExportsSoFar;
+    WriteBarrier<Unknown> m_errorOfGenerator;
+    bool m_isOfDeferredModule { false };
+    bool m_isRunningDeferredModule { false };
 #endif
 };
 

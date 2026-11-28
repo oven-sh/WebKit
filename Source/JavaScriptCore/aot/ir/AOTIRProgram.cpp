@@ -1138,6 +1138,11 @@ bool isLibraryCode(const Program& program, const Function& function)
     return module.kind == ModuleKind::RuntimeSource || module.flags.contains(ModuleFlags::IsLibrary);
 }
 
+bool requireAsksWhatLoaderHolds(const Module& module)
+{
+    return module.requireResult == RequireResult::NamespaceIfImported || module.requireResult == RequireResult::HeldDefaultExport || module.requireResult == RequireResult::HeldNamespace;
+}
+
 bool isBundlerHelperModule(const Program&, const Module& module)
 {
     return module.flags.contains(ModuleFlags::IsBundlerHelper);

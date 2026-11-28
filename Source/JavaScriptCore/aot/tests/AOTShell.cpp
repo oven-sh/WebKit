@@ -88,7 +88,6 @@ static JSC_DECLARE_HOST_FUNCTION(functionAOTSpoilResumeAddresses);
 static JSC_DECLARE_HOST_FUNCTION(functionLockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionUnlockCell);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell);
-static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationOnResolve);
 static JSC_DECLARE_HOST_FUNCTION(functionCallAndCancelTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndCall);
 static JSC_DECLARE_HOST_FUNCTION(functionRequestTerminationAndConstruct);
@@ -97,7 +96,7 @@ static JSC_DECLARE_CUSTOM_SETTER(setExportsOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getParentOfModuleObject);
 static JSC_DECLARE_CUSTOM_GETTER(getChildrenOfModuleObject);
 
-static constexpr std::array<ASCIILiteral, 22> functionNames {
+static constexpr std::array<ASCIILiteral, 21> functionNames {
     "runCompiledEntryPoint"_s,
     "setRequireCacheEntry"_s,
     "overrideRequire"_s,
@@ -116,14 +115,10 @@ static constexpr std::array<ASCIILiteral, 22> functionNames {
     "lockCell"_s,
     "unlockCell"_s,
     "callWhileAnotherThreadLocksCell"_s,
-    "requestTerminationOnResolve"_s,
     "callAndCancelTermination"_s,
     "requestTerminationAndCall"_s,
     "requestTerminationAndConstruct"_s,
 };
-
-static std::optional<ModuleID> s_terminateOnResolveModule;
-static VM* s_terminateOnResolveVM;
 
 struct MappedImage {
     std::span<const uint8_t> bytes;
@@ -491,19 +486,6 @@ JSC_DEFINE_HOST_FUNCTION(functionCallWhileAnotherThreadLocksCell, (JSGlobalObjec
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionRequestTerminationOnResolve, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String key = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    s_terminateOnResolveModule = findModule(key);
-    if (!s_terminateOnResolveModule)
-        return throwVMError(globalObject, scope, makeString("there is no module "_s, key));
-    s_terminateOnResolveVM = &vm;
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionCallAndCancelTermination, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -617,7 +599,6 @@ void addShellFunctions(VM& vm, JSGlobalObject* globalObject)
         { functionLockCell, 1 },
         { functionUnlockCell, 1 },
         { functionCallWhileAnotherThreadLocksCell, 2 },
-        { functionRequestTerminationOnResolve, 1 },
         { functionCallAndCancelTermination, 1 },
         { functionRequestTerminationAndCall, 1 },
         { functionRequestTerminationAndConstruct, 1 },
@@ -638,12 +619,7 @@ std::span<const ASCIILiteral> shellFunctionNames()
 
 bool isCompiledModuleKey(const String& key)
 {
-    std::optional<ModuleID> module = findModule(key);
-    if (module && s_terminateOnResolveModule == module) [[unlikely]] {
-        s_terminateOnResolveModule = std::nullopt;
-        s_terminateOnResolveVM->notifyNeedTermination();
-    }
-    return !!module;
+    return !!findModule(key);
 }
 
 JSPromise* fetchCompiledModule(JSGlobalObject* globalObject, const String& key)

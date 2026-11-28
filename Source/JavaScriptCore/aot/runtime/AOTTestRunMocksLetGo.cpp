@@ -22,11 +22,11 @@ namespace JSC { namespace AOT {
 
 bool Modules::isSomeLoadUnderWay() const
 {
-    if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootAwaitingLoader || m_moduleWithDeferredJobs || !m_queuedFetches.isEmpty())
+    if (m_instance.vm->synchronousModuleQueue() || m_innermostWalkOfImports || !m_queuedFetches.isEmpty())
         return true;
     if (std::ranges::any_of(m_levelsOfLoads.values(), [&](auto& level) { return !hasGraphRun(*level); }))
         return true;
-    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
+    if (!hasFirstModuleRequestedByHostBegun())
         return true;
     for (const LoadInFlight& load : m_loadsInFlight) {
         if (load.promise->status() == JSPromise::Status::Pending)
@@ -113,6 +113,8 @@ bool Modules::wasLoadedByTestFile(ModuleID module) const
     uint32_t momentOfTestFile = m_instance.vm->aotState().momentOfTestFile;
     if (auto fetched = m_failedLoadTestFiles.find(module); fetched != m_failedLoadTestFiles.end()) [[unlikely]]
         return fetched->value == momentOfTestFile;
+    if (hasNotBegun(module) && staysUntilLoadEnds(module)) [[unlikely]]
+        return m_hasBegunTestFile;
     if (m_hasBegunTestFile && isLinkedAndUnevaluated(module)) [[unlikely]]
         return m_linkTestFiles[module.index()] == momentOfTestFile;
     if (!m_momentsOfLoads.isEmpty() && m_momentsOfLoads[module.index()] > momentOfTestFile)
@@ -242,6 +244,13 @@ bool Modules::releaseImportersOf(ModuleID mocked, ReleasedImporters which, std::
                 m_evictedOriginals.set(importer.index());
             }
             importsReleasedImporter |= importer == mocked && released.quickGet(imported);
+            if (hasNotBegun(importer) && staysUntilLoadEnds(importer)) [[unlikely]] {
+                if (isLinked && m_hasBegunTestFile && importer != patched && !seen.quickSet(index)) {
+                    evictAtNextLoad(importer);
+                    work.append(index);
+                }
+                continue;
+            }
             if (seen.quickSet(index))
                 continue;
             bool isLoaded = isLinked || status(importer) > ModuleStatus::Linked || (data(importer).isESModuleOfProgram() && wasLoadedWithGraph(importer));
@@ -654,24 +663,29 @@ void Modules::evictFailedRecords()
         if (record->status() > CyclicModuleRecord::Status::Unlinked || !data(module).isESModuleOfProgram() || data(module).isFacade())
             continue;
         ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
-        if (entry && entry->record() == record && entry->status() >= ModuleRegistryEntry::Status::FetchFailed)
+        if (entry && entry->record() == record && entry->status() >= ModuleRegistryEntry::Status::FetchFailed && !JSModuleLoader::mayRecoverLoad(entry))
             failed.append(module);
     }
     for (ModuleID module : failed) {
         loader()->removeEntriesForRecord(m_records.get(module));
-        takeOutRecord(module);
-        if (storedStatus(module) == StoredModuleStatus::InRecord)
-            setStoredStatus(module, StoredModuleStatus::Unlinked);
-        m_linkFailures.remove(module);
-        if (!hasInstances(module))
-            continue;
-        startLoadingModulesIndividually();
-        m_linkedInstances.clear(module.index());
-        m_failedLoadTestFiles.remove(module);
-        if (!m_momentsOfLoads.isEmpty())
-            didGiveUpMomentLinked(std::exchange(m_momentsOfLoads[module.index()], 0));
-        didChangeLinkState();
+        takeOutRecordThatHasNotBegun(module);
     }
+}
+
+void Modules::takeOutRecordThatHasNotBegun(ModuleID module)
+{
+    takeOutRecord(module);
+    if (storedStatus(module) == StoredModuleStatus::InRecord)
+        setStoredStatus(module, StoredModuleStatus::Unlinked);
+    m_linkFailures.remove(module);
+    if (!hasInstances(module))
+        return;
+    startLoadingModulesIndividually();
+    m_linkedInstances.clear(module.index());
+    m_failedLoadTestFiles.remove(module);
+    if (!m_momentsOfLoads.isEmpty())
+        didGiveUpMomentLinked(std::exchange(m_momentsOfLoads[module.index()], 0));
+    didChangeLinkState();
 }
 
 void Modules::willFetchESModules(ModuleID root)
@@ -714,11 +728,14 @@ void Modules::willFetchESModules(ModuleID root)
 
 void Modules::clearFailedCommonJSFiles()
 {
-    m_fetchedESModules.clearAll();
+    BitVector beingLoaded;
+    for (WalkOfImports* walk = m_innermostWalkOfImports; walk; walk = walk->outer)
+        beingLoaded.merge(modulesBelowRoot(*walk));
+    m_fetchedESModules.filter(beingLoaded);
     Vector<ModuleID, 4> failed;
     for (auto& [module, record] : m_records) {
         ModuleID file = fileOf(module);
-        if (record->evaluationError() && data(file).runsAgainAfterThrow() && !isMocked(file) && !activeMock(file) && !m_loadedInPreload.get(module.index()))
+        if ((record->evaluationError() || m_filesWithFailureLeftToImports.get(file.index())) && data(file).runsAgainAfterThrow() && !isMocked(file) && !activeMock(file) && !m_loadedInPreload.get(module.index()))
             failed.append(file);
     }
     for (ModuleID file : failed)
@@ -778,7 +795,8 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         return true;
     };
     bool isNotedRoot = m_loadRoots.get(root.index());
-    BitVector isSeen(m_table.size());
+    BitVector isSeen = modulesLinkedAheadOfImportersThatKeepThem();
+    isSeen.ensureSize(m_table.size());
     Vector<ModuleID, 16> toVisit { root };
     while (!toVisit.isEmpty()) {
         ModuleID module = toVisit.takeLast();
@@ -803,7 +821,7 @@ void Modules::bringBackWhatLoaderLetGoBelow(ModuleID root)
         if (sawMockThatEnded && !isReleased)
             noteLoadedAnew(module, root);
         for (const ModuleRequestData& request : m_table.imports(module)) {
-            if (!request.isHoisted && !request.isDeferred)
+            if (!request.isHoisted && !request.isDeferred && !(keepsImport(module, request.targetModule()) && staysUntilLoadEnds(module)))
                 toVisit.append(moduleLoadedBy(request));
         }
     }
@@ -869,6 +887,45 @@ bool Modules::evaluateModuleOwed(ModuleID module)
     return false;
 }
 
+bool Modules::leadsToWhatIsDue(ModuleID module) const
+{
+    if (!goesThroughImportsOfKind(module) || isMocked(module) || activeMock(module) || isEvicted(module))
+        return false;
+    BitVector due = m_modulesNeedingMockReinstall;
+    due.merge(m_modulesOwedToImportersThatRan);
+    if (due != m_modulesLastSeenToBeDue) {
+        BitVector above(m_table.size());
+        Vector<ModuleID, 16> work;
+        auto add = [&](ModuleID each) {
+            if (!above.quickSet(each.index()))
+                work.append(each);
+        };
+        for (size_t index : due)
+            add(ModuleID(index));
+        while (!work.isEmpty()) {
+            ModuleID imported = work.takeLast();
+            add(moduleWithExportsOf(imported));
+            for (uint32_t importer : importersOfEveryImport().of(imported))
+                add(ModuleID(importer));
+            if (!work.isEmpty())
+                continue;
+            for (const UncompiledModuleData& uncompiled : m_table.modulesOfUncompiledCode()) {
+                if (ModuleID external(uncompiled.module); above.quickGet(moduleLoadedUnder(external).index()))
+                    add(external);
+            }
+        }
+        m_modulesAboveWhatIsDue = WTF::move(above);
+        m_modulesLastSeenToBeDue = WTF::move(due);
+    }
+    return m_modulesAboveWhatIsDue.get(module.index());
+}
+
+bool Modules::keepsWhatItLinked(ModuleID importerThatRan, ModuleID imported)
+{
+    ModuleID file = fileOf(imported);
+    return (!data(importerThatRan).isFacade() && isLinkedToRetainedMock(file, importerThatRan)) || keepsOriginalAfterRemoval(file, importerThatRan) || keepsMock(importerThatRan, imported);
+}
+
 void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
 {
     if (!isSomethingDueWhereModulesArePassed()) [[likely]]
@@ -904,9 +961,7 @@ void Modules::passModuleThatHasRun(ModuleID root, BitVector& isPassed)
         if ((request.isRequire && !data(module).isFacade()) || request.isDeferred)
             continue;
         ModuleID imported = moduleLoadedBy(request);
-        if (!data(module).isFacade() && isLinkedToRetainedMock(fileOf(imported), module))
-            continue;
-        if (keepsOriginalAfterRemoval(fileOf(imported), module))
+        if (keepsWhatItLinked(module, imported))
             continue;
         releaseRemovedMock(imported);
         RETURN_IF_EXCEPTION(scope, void());

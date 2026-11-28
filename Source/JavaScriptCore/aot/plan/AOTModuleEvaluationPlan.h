@@ -38,11 +38,8 @@ struct ModuleStart {
     ModuleID module;
     FunctionID body;
     std::span<const ModuleStep> steps;
-    uint32_t numberOfStepsBeforeItBegins { 0 };
-    std::span<const ModuleID> filesRunWhileLoaded;
     bool beginsInBody { false };
     bool mayBeLeftByCaughtError { false };
-    bool resumesLoadOnThrow { false };
     bool bodyOnlyReturns { false };
 };
 
@@ -53,9 +50,7 @@ struct ModuleStartOperation {
         Begin,
         BeginOrReturn,
         Finish,
-        ReturnIfLoadingStops,
         AbandonOnThrow,
-        ResumeLoadOnThrow,
         NeverComesBack,
     };
 
@@ -81,7 +76,6 @@ struct ModuleEvaluationParts {
     Vector<uint32_t> startsByBody;
     BitVector bodiesWithStart;
     Vector<ModuleStep> steps;
-    Vector<ModuleID> filesRunWhileLoaded;
     Vector<BareModuleSite> bareSites;
     Vector<StepsOfLateModuleSites> stepsOfLateSites;
     BitVector modulesCalledWhereRequired;

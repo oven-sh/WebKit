@@ -615,7 +615,8 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
     entry.kind = module.kind;
     entry.externalKind = module.kind != ModuleKind::External && module.flags.contains(ModuleFlags::MayBeMocked) ? ModuleData::mayBeMockedBit : module.externalKind;
     entry.exportRule = module.exportRule;
-    entry.requireResult = module.requireResult;
+    entry.requireResult = module.requireResult == RequireResult::HeldDefaultExport ? RequireResult::DefaultExport : module.requireResult == RequireResult::HeldNamespace ? RequireResult::Namespace : module.requireResult;
+    entry.wrappedByFacadeOrLeadsToFileOrIsHeld = Typed::requireAsksWhatLoaderHolds(module);
     entry.body = optionalNumber24(isEntered ? numbers.entryOfBody(module.body, id) : UINT32_MAX);
     RELEASE_ASSERT(!module.referrer || !module.runtimeModule);
     uint32_t referrerOrRuntimeModule = module.referrer ? module.referrer.index() : module.runtimeModule ? module.runtimeModule.index() : UINT32_MAX;
@@ -628,12 +629,11 @@ static ModuleData createRecordForModuleLists(const TableInputs& inputs, const An
         { module.kind == ModuleKind::CommonJs && module.syntheticExports.isEmpty(), Flag::CapturesOnDemand },
         { module.kind != ModuleKind::CommonJs && module.flags.contains(ModuleFlags::HasTopLevelAwait), Flag::HasTopLevelAwait },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::RunsAgainAfterThrow },
-        { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::IsImportedAsESModule), Flag::IsImportedAsESModule },
         { mayRunAsOriginal(inputs.program, module), Flag::MayRunAsOriginal },
         { module.kind == ModuleKind::CommonJs && module.exportsVariable && inputs.facts.linked().exportsThatStayIn.get(module.exportsVariable.index()), Flag::HasUnescapedExports },
         { module.kind == ModuleKind::CommonJs && module.flags.contains(ModuleFlags::CachesEvaluationError), Flag::CachesEvaluationError },
         { module.kind == ModuleKind::SourceText && module.flags.contains(ModuleFlags::MayBeReevaluated), Flag::BodyMayRunAgain },
-        { module.kind == ModuleKind::Data && module.flags.contains(ModuleFlags::IsFoundByName), Flag::IsDataFoundByName },
+        { module.kind == ModuleKind::Data && module.typeAttribute, Flag::IsOtherFormOfFile },
         { isEntered && entry.bodyFunction() && entryOfModuleBodyLeadsToStart(inputs, module.body), Flag::EvaluatesItself },
         { hasValue, Flag::HasValue },
         { isBundlerHelper, Flag::IsLibraryCodeWithFilePath },
@@ -769,6 +769,11 @@ static void appendModuleToModuleLists(const TableInputs& inputs, const AnswersAb
     for (const Typed::ModuleRequest& request : module.requests) {
         if (answers.ofModules[request.target.index()].containsAll({ AnswerAboutModule::IsNotWorthVisiting, AnswerAboutModule::IsNeverEvaluated }))
             continue;
+        if (const Typed::Module& target = program.at(request.target); target.flags.contains(Typed::ModuleFlags::IsCheckOfNames)) {
+            if (!answers.has(request.target, AnswerAboutModule::IsBodyEnteredByRunTime) || inputs.bodyFacts.functionsThatOnlyReturn.get(target.body.index()))
+                continue;
+            lists.modules.last().add(ModuleData::Flag::HasCheckOfNames);
+        }
         bool isRequire = request.kind == Typed::ModuleRequestKind::Require;
         if (isRequire && &request != facadeRequest && !isAnsweredByCode(inputs, numbers, id, request))
             continue;
@@ -998,6 +1003,26 @@ static void markExportsBoundByRequiredNames(ModuleLists& lists)
     }
 }
 
+// What follows the requests of a module at run time must come to an ES module through the modules that import it: one of them may be mocked.
+static void setModulesAheadOfFilesApart(ModuleLists& lists)
+{
+    uint32_t numberKept = 0;
+    for (uint32_t root = 0; root + 1 < lists.modules.size(); ++root) {
+        uint32_t first = std::exchange(lists.modules[root].firstRequest, Number24(numberKept));
+        uint32_t firstAfterCheck = first + lists.modules[root].hasCheckOfNames();
+        for (uint32_t index = first; index < lists.modules[root + 1].firstRequest; ++index) {
+            ModuleRequestData request = lists.requests[index];
+            const ModuleData& target = lists.modules[request.target()];
+            if (request.isHoisted && index >= firstAfterCheck && target.isESModuleOfProgram() && !target.isFacade())
+                lists.modulesAheadOfFiles.append({ Number24(root), Number24(numberKept - lists.modules[root].firstRequest), Number24(request.target()) });
+            else
+                lists.requests[numberKept++] = request;
+        }
+    }
+    lists.modules.last().firstRequest = Number24(numberKept);
+    lists.requests.shrink(numberKept);
+}
+
 ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules& answers)
 {
     const TableInputs& inputs = encoder.inputs;
@@ -1022,11 +1047,12 @@ ModuleLists collectModuleLists(TableEncoder& encoder, const AnswersAboutModules&
     ModuleData endRecord { };
     lists.setListStarts(endRecord);
     lists.modules.last() = endRecord;
+    setModulesAheadOfFilesApart(lists);
     appendModuleInstances(inputs, numbers, lists);
     appendWhatNoModuleOwnsToModuleLists(inputs, answers, numbers, lists);
     for (const ModuleListsOfChunk& listsOfChunk : listsOfChunks) {
         for (uint32_t file : listsOfChunk.modulesWithFacades)
-            lists.modules[file].wrappedByFacade = true;
+            lists.modules[file].wrappedByFacadeOrLeadsToFileOrIsHeld = true;
     }
     for (size_t index : Typed::modulesThatHostAsksFor(program))
         lists.modules[index].add(ModuleData::Flag::IsEntryPoint);

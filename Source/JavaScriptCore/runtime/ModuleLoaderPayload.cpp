@@ -60,6 +60,9 @@ void ModuleLoaderPayload::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_promise);
     visitor.append(thisObject->m_fulfillment);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoaderPayload);

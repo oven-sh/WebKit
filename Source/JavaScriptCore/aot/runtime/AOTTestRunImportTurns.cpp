@@ -13,6 +13,7 @@
 #include "AOTModuleRecord.h"
 #include "AOTState.h"
 #include "AOTVMState.h"
+#include "AsyncContextSwapScope.h"
 #include "InternalFieldTuple.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
@@ -29,7 +30,7 @@ namespace JSC { namespace AOT {
 static void queueStepOfImportInImportTurns(JSPromise* importPromise, ModuleID module, uint8_t stepsLeft)
 {
     JSGlobalObject* realm = importPromise->realm();
-    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, jsNumber(module.index()), JSValue());
+    realm->queueMicrotask(realm->vm(), InternalMicrotask::CompiledModuleImportStep, stepsLeft, importPromise, jsNumber(module.index()), JSValue(), realm->moduleLoader()->asyncContextOfImport(realm));
 }
 
 static void settleAsLoaderDoesInImportTurns(JSGlobalObject* realm, JSPromise* promiseOfProgram, JSPromise* loaded)
@@ -68,7 +69,7 @@ bool Modules::hostHasProgramSources() const
 
 bool Modules::hasTextAtHand() const
 {
-    return !m_innermostEagerLoad && m_queuedFetches.isEmpty() && hostHasProgramSources() && !isTestRun();
+    return !m_innermostWalkOfImports && m_queuedFetches.isEmpty() && hostHasProgramSources() && !isTestRun();
 }
 
 bool Modules::isFetchedBesideFactory(ModuleID module)
@@ -103,9 +104,11 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
         return false;
     if (isCommonJSModuleOrFacade(module)) {
         for (ModuleID moduleOrFacade : { module, file }) {
-            if (status(moduleOrFacade) != ModuleStatus::Unlinked && status(moduleOrFacade) != ModuleStatus::Linked)
+            if (!hasNotBegun(moduleOrFacade))
                 return false;
         }
+        if (wasLoadedForWalk(moduleWithExportsOf(file)))
+            return false;
     } else if (!isNotLoaded(module) || (hasInstances(file) && m_linkedInstances.get(file.index())))
         return false;
     if (askedBy == AskedBy::Import) {
@@ -120,9 +123,8 @@ bool Modules::textOfImportComesInLaterTurn(ModuleID module, AskedBy askedBy)
 void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* requested, std::optional<int64_t> referrerAsyncOrder, ImportCaller caller)
 {
     VM& vm = *m_instance.vm;
-    if (m_innermostEagerLoad || !m_queuedFetches.isEmpty()) {
-        std::optional<ModuleID> evaluatingCaller = m_innermostEagerLoad ? evaluatingModuleOrFacade(*m_innermostEagerLoad) : std::nullopt;
-        enqueueFetch(promise, module, requested, referrerAsyncOrder, evaluatingCaller ? turnInWhichTextCame(*evaluatingCaller) : m_sourceArrivalCount);
+    if (m_innermostWalkOfImports || !m_queuedFetches.isEmpty()) {
+        enqueueFetch(promise, module, requested, referrerAsyncOrder, m_sourceArrivalCount);
         return;
     }
     auto fetch = makeUnique<BatchedFetch>();
@@ -136,6 +138,7 @@ void Modules::holdTextOfCall(JSPromise* promise, ModuleID module, ModuleRecord* 
     fetch->referrerAsyncOrder = referrerAsyncOrder;
     fetch->caller = caller;
     fetch->callSequenceNumber = vm.aotState().momentOfLoads;
+    fetch->asyncContext.set(vm, loader()->asyncContextOfImport(m_instance.globalObject));
     fetch->precedingDiskReads = host().scheduleFetchFulfillment(m_instance.globalObject);
     m_batchedFetches.addCall(WTF::move(fetch));
 }
@@ -261,7 +264,7 @@ void Modules::putCallsThatWaitApartInLine()
     for (auto& fetch : calls) {
         if (!fetch->requestedRecord)
             m_modulesOfQueuedImports.set(fetch->module.index());
-        m_queuedFetches.appendAndBubble(QueuedFetch { fetch->place, WTF::move(fetch->promise), fetch->module, WTF::move(fetch->requestedRecord), fetch->referrerAsyncOrder, std::nullopt, fetch->callSequenceNumber, { }, { }, 0, fetch->precedingDiskReads }, [&](const QueuedFetch& inLine) {
+        m_queuedFetches.appendAndBubble(QueuedFetch { fetch->place, WTF::move(fetch->promise), fetch->module, WTF::move(fetch->requestedRecord), fetch->referrerAsyncOrder, std::nullopt, fetch->callSequenceNumber, WTF::move(fetch->asyncContext), { }, 0, fetch->precedingDiskReads }, [&](const QueuedFetch& inLine) {
             return inLine.place > fetch->place;
         });
     }
@@ -394,8 +397,8 @@ void Modules::makeCallAgain(BatchedFetch& text)
         promise->fulfill(vm, text.requestedRecord.get());
         return;
     }
+    AsyncContextOfImportScope asyncContextScope(vm, m_instance.globalObject, text.asyncContext.get());
     SetForScope callSequenceNumber(m_resumingCallSequenceNumber, text.callSequenceNumber);
-    didRefetchFile(text.file);
     bool wasHeldBeforeWalk = holdsLinksOfLoadThatMayFail(text.module);
     JSPromise* loaded = startImport(text.module, text.referrerAsyncOrder, text.caller, ImportSourceState::Arrived, promise);
     bool walkFiledLinks = !wasHeldBeforeWalk && holdsLinksOfLoadThatMayFail(text.module);
@@ -774,16 +777,126 @@ JSC_DEFINE_HOST_FUNCTION(resumeLoadAfterFactory, (JSGlobalObject* realm, CallFra
     return JSValue::encode(jsUndefined());
 }
 
+static JSC_DECLARE_HOST_FUNCTION(waitForNextFactory);
+static JSC_DECLARE_HOST_FUNCTION(callNextFactoriesOfLoadThatFailed);
+
+JSC_DEFINE_HOST_FUNCTION(waitForNextFactory, (JSGlobalObject*, CallFrame* callFrame))
+{
+    return JSValue::encode(callFrame->argument(1));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callNextFactoriesOfLoadThatFailed, (JSGlobalObject* realm, CallFrame* callFrame))
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->callFactoriesOfLoadThatFailed(ModuleID(callFrame->argument(1).asUInt32()), Modules::IsInJobOfItsOwn::Yes);
+    return JSValue::encode(jsUndefined());
+}
+
+JSPromise* Modules::callFactoriesInGraph(ModuleID root)
+{
+    if (status(root) > ModuleStatus::Linked)
+        return nullptr;
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    SetForScope factoriesCalledFor(m_factoriesCalledFor, std::max(m_factoriesCalledFor, FactoriesCalledFor::Loader));
+    JSValue state;
+    if (!vm.synchronousModuleQueue()) {
+        bool factoryHasNotSettled = runMocksInGraph(root);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, factoryHasNotSettled ? pendingFactoryInGraph(root, PendingFactoryRequester::ImportCall, state) : nullptr);
+    }
+    SetForScope evaluatesSynchronously(m_evaluatesSynchronously, true);
+    SetForScope requireRunsMocks(vm.aotState().requireRunsMocks, true);
+    SetForScope currentRequireTarget(m_currentRequireTarget, vm.synchronousModuleQueue()->keepsPostponedRequests ? root : m_currentRequireTarget);
+    SetForScope requiringModule(m_requiringModule, ModuleID());
+    SetForScope shouldContinuePastPendingFactories(m_shouldContinuePastPendingFactories, true);
+    bool factoryHasNotSettled = runMocksInGraph(root);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSPromise* factories = nullptr;
+    while (factoryHasNotSettled) {
+        JSPromise* next = pendingFactoryInGraph(root, PendingFactoryRequester::Loader, state);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!next)
+            break;
+        next->markAsHandled();
+        if (JSPromise* earlier = std::exchange(factories, next)) {
+            factories = JSPromise::create(vm, realm->promiseStructure());
+            factories->markAsHandled();
+            earlier->performPromiseThenWithContext(vm, realm, JSFunction::create(vm, realm, 2, String(), waitForNextFactory, ImplementationVisibility::Private), jsUndefined(), factories, next);
+        }
+    }
+    return factories;
+}
+
+void Modules::callFactoriesOfLoadThatFailed(ModuleID root, IsInJobOfItsOwn isInJobOfItsOwn)
+{
+    VM& vm = *m_instance.vm;
+    JSGlobalObject* realm = m_instance.globalObject;
+    if (vm.hasPendingTerminationException())
+        return;
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Exception* failure = scope.exception();
+    TRY_CLEAR_EXCEPTION(scope, void());
+    auto isBelowRoot = [&](const ModuleHeldAheadOfLink& held) { return held.root == root; };
+    JSPromise* factory = nullptr;
+    {
+        SetForScope factoriesCalledFor(m_factoriesCalledFor, FactoriesCalledFor::LoadThatFailed);
+        factory = callFactoriesInGraph(root);
+        if (JSValue state; !factory && !scope.exception() && m_modulesHeldAheadOfLink.containsIf(isBelowRoot)) [[unlikely]]
+            factory = pendingFactoryInGraph(root, PendingFactoryRequester::ImportCall, state);
+    }
+    TRY_CLEAR_EXCEPTION(scope, void());
+    if (!factory && isInJobOfItsOwn == IsInJobOfItsOwn::No && m_modulesHeldAheadOfLink.containsIf(isBelowRoot)) [[unlikely]] {
+        factory = JSPromise::create(vm, realm->promiseStructure());
+        factory->fulfill(vm, jsUndefined());
+    }
+    for (size_t index; !factory && (index = m_modulesHeldAheadOfLink.findIf(isBelowRoot)) != notFound;) {
+        ModuleID module = m_modulesHeldAheadOfLink[index].module;
+        m_modulesHeldAheadOfLink.removeAt(index);
+        if (!hasNotBegun(module))
+            continue;
+        JSPromise* evaluation = evaluate(module, std::nullopt, nullptr);
+        RETURN_IF_EXCEPTION(scope, void());
+        evaluation->markAsHandled();
+    }
+    if (factory && !vm.synchronousModuleQueue()) {
+        JSFunction* callNext = JSFunction::create(vm, realm, 2, String(), callNextFactoriesOfLoadThatFailed, ImplementationVisibility::Private);
+        factory->performPromiseThenWithContext(vm, realm, callNext, callNext, jsUndefined(), jsNumber(root.index()));
+    }
+    if (failure)
+        throwException(realm, scope, failure);
+}
+
+bool Modules::callFactoriesAheadOfFailure(WalkOfImports& walk, JSValue& error)
+{
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    WalkOfImports* outermost = &walk;
+    while (outermost->outer && outermost->outer->visited == walk.visited)
+        outermost = outermost->outer;
+    catchUpWithList(walk);
+    m_mockThatEndedLoad = std::nullopt;
+    JSPromise* factories = nullptr;
+    {
+        SetForScope factoriesCalledFor(m_factoriesCalledFor, FactoriesCalledFor::LoadThatFailed);
+        factories = callFactoriesInGraph(outermost->root);
+    }
+    Exception* exception = scope.exception();
+    TRY_CLEAR_EXCEPTION(scope, false);
+    if (exception && m_mockThatEndedLoad && walk.reached.get(moduleWithExportsOf(*m_mockThatEndedLoad).index())) {
+        error = exception->value();
+        return false;
+    }
+    walk.outcome = walk.walkOfLoader->didCallFactoriesAheadOfFailure(factories);
+    return true;
+}
+
 bool Modules::tryDeferForFactories(ModuleRecord& root, JSCell* payload)
 {
-    if (status(root.module()) > ModuleStatus::Linked)
-        return false;
     VM& vm = *m_instance.vm;
     JSGlobalObject* realm = m_instance.globalObject;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue state;
-    bool factoryHasNotSettled = runMocksInGraph(root.module());
-    JSPromise* factory = factoryHasNotSettled && !scope.exception() ? pendingFactoryInGraph(root.module(), PendingFactoryRequester::ImportCall, state) : nullptr;
+    JSPromise* factory = callFactoriesInGraph(root.module());
     if (Exception* exception = scope.exception()) [[unlikely]] {
         JSValue error = exception->value();
         if (scope.tryClearException())

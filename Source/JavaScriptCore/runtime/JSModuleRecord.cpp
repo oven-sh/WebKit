@@ -80,6 +80,9 @@ JSModuleRecord::JSModuleRecord(VM& vm, Structure* structure, JSModuleLoader* mod
     , m_sourceCode(sourceCode)
     , m_features(features)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    setIsOtherFormOfFile(sourceCode.provider() && sourceCode.provider()->moduleIsOtherFormOfFile());
+#endif
 }
 
 void JSModuleRecord::destroy(JSCell* cell)

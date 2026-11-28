@@ -253,7 +253,7 @@ namespace JSC { namespace AOT { namespace Typed {
     v(RegExpTextUnlisted) v(BuiltinLockedDespiteReplacement) v(BuiltinReplacementByTestUnlisted) \
     v(SlotProvenType) v(SlotType) v(SlotRawType) v(LayoutWithoutMark) v(FieldRawFromAllocation) v(FieldKeptFilled) v(PlannedVariableUndescribed) v(PlannedVariableFunction) \
     v(MemberCreatedByRecord) v(DeferredVariableUnmarked) v(PromotedStoreUnlisted) v(ModuleStepUnlisted) v(ModuleStartErrorNeverCaught) \
-    v(ModuleStartOnlyReturns) v(ModuleStartBeginsEarly) v(ModuleLoadTimeFileUnlisted) v(NoRequireEvaluatesModule) v(KeyOrderSwapped) v(KeyOrderNoAllocationStops) \
+    v(ModuleStartOnlyReturns) v(ModuleStartBeginsEarly) v(NoRequireEvaluatesModule) v(KeyOrderSwapped) v(KeyOrderNoAllocationStops) \
     v(CoroutineNeverSuspends) v(CallEntryWithoutNewTarget) v(CallEntryBorrowsArguments) v(ParameterGuardType) v(MethodTableRowUnlisted) v(MethodTableRowUnguarded) v(MethodTableMethod) \
     v(MethodSelectorResult) v(TailCallsEnd)
 
@@ -1450,12 +1450,6 @@ void FactMisstater::misstatePlan(TypeArena& types, const Facts& facts, Plan& pla
     starts(Fact::ModuleStartErrorNeverCaught, &ModuleStart::mayBeLeftByCaughtError, false);
     starts(Fact::ModuleStartOnlyReturns, &ModuleStart::bodyOnlyReturns, true);
     starts(Fact::ModuleStartBeginsEarly, &ModuleStart::beginsInBody, false);
-    drawn(Fact::ModuleLoadTimeFileUnlisted, [&](const IsDrawn& isDrawn) {
-        for (ModuleStart& start : modules.starts) {
-            if (!start.filesRunWhileLoaded.empty() && isDrawn(PlaceKind::Modules, start.module.index()))
-                start.filesRunWhileLoaded = start.filesRunWhileLoaded.first(start.filesRunWhileLoaded.size() - 1);
-        }
-    });
     misstateFlag(Fact::NoRequireEvaluatesModule, modules.noRequireEvaluatesESModule, true);
 
     KeyOrderParts& orders = parts.keyOrders.m_parts;

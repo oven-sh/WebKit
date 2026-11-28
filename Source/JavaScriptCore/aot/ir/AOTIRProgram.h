@@ -374,6 +374,7 @@ FunctionID findNakedConstructorOf(const Program&, BuiltinID);
 FunctionID functionThatSorts(const Program&);
 bool isLibraryCode(const Program&, const Function&);
 bool isBundlerHelperModule(const Program&, const Module&);
+bool requireAsksWhatLoaderHolds(const Module&);
 bool isCommonJSFacade(const Program&, const Module&);
 bool parsersCouldMakeRecordsOf(const Program&, LayoutID);
 bool isBundlerHelperNamedByProgram(const Program&, ModuleID);

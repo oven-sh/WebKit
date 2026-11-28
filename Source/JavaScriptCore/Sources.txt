@@ -893,6 +893,7 @@ runtime/ErrorPrototype.cpp
 runtime/ErrorType.cpp
 runtime/EvacuatedStack.cpp
 runtime/EvalExecutable.cpp
+runtime/EvaluationAheadOfLink.cpp
 runtime/Exception.cpp
 runtime/ExceptionEventLocation.cpp
 runtime/ExceptionFuzz.cpp
@@ -922,6 +923,7 @@ runtime/HasOwnPropertyCache.cpp
 runtime/HelperThreadPool.cpp
 runtime/Identifier.cpp
 runtime/ImportMap.cpp
+runtime/ImportOrderWalk.cpp
 runtime/IndexingType.cpp
 runtime/IndirectEvalExecutable.cpp
 runtime/InitializeThreading.cpp

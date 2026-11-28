@@ -424,7 +424,6 @@ void generateStartModule(StubAssembler& jit)
     const GPRReg target = operation;
     const Address nextStepInFrame(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfNextStep));
     const Address moduleToAbandon(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfModuleToAbandon));
-    const Address resumesLoad(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfModuleToAbandon + sizeof(uint32_t)));
     const Address exceptionInFrame(fp, static_cast<int32_t>(ModuleStartFrame::offsetOfException));
     const TrustedImm32 inRecord(static_cast<int32_t>(StoredModuleStatus::InRecord));
     const TrustedImm32 flagOfStep(static_cast<int32_t>(ModuleStartStepData::flagBit));
@@ -471,17 +470,13 @@ void generateStartModule(StubAssembler& jit)
     Jump callsBody = branchIfStepIs(Operation::CallBody);
     begins.append(branchIfStepIs(Operation::BeginOrReturn));
     Jump finishesAndReturns = branchIfStepIs(Operation::FinishAndReturn);
-    Jump callsStartUnlessStopped = branchIfStepIs(Operation::CallStartUnlessStopped);
     returns.append(branchIfStepIs(Operation::Return));
     Jump abandonsOnThrow = branchIfStepIs(Operation::AbandonOnThrow);
     begins.append(branchIfStepIs(Operation::Begin));
-    Jump mayStopLoading = branchIfStepIs(Operation::ReturnIfLoadingStops);
     Jump finishes = branchIfStepIs(Operation::Finish);
-    Jump resumesLoadOnThrow = branchIfStepIs(Operation::ResumeLoadOnThrow);
     jit.breakpoint();
 
     callsStart.link(&jit);
-    Label startsModule = jit.label();
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
     jit.load8(BaseIndex(table, operand, CCallHelpers::TimesOne), status);
     jit.branch32(CCallHelpers::Above, status, inRecord).linkTo(takesNextStep, &jit);
@@ -521,7 +516,6 @@ void generateStartModule(StubAssembler& jit)
     jit.move(GPRInfo::returnValueGPR, operationArgumentGPR(2));
     jit.load32(moduleToAbandon, operationArgumentGPR(1));
     jit.sub32(TrustedImm32(1), operationArgumentGPR(1));
-    Jump resumes = jit.branchTest32(CCallHelpers::NonZero, resumesLoad);
     jit.move(instanceGPR, operationArgumentGPR(0));
     jit.callOperation(Entry::operationAOTAbandonModuleEvaluation, jit.reuseScratch(StubRegister::Operation));
     jit.load64(exceptionInFrame, operationArgumentGPR(1));
@@ -529,15 +523,6 @@ void generateStartModule(StubAssembler& jit)
     jit.callOperation(Entry::operationAOTThrow, jit.reuseScratch(StubRegister::Operation));
     jit.emitFunctionEpilogue();
     jit.jumpToExceptionHandler();
-
-    resumes.link(&jit);
-    jit.loadPtr(nextStepInFrame, operationArgumentGPR(3));
-    jit.load32(Address(operationArgumentGPR(3), -static_cast<int32_t>(sizeof(ModuleStartStepData) + ModuleStartFrame::hasThrownBit)), operationArgumentGPR(3));
-    jit.store64(TrustedImm32(0), moduleToAbandon);
-    jit.move(instanceGPR, operationArgumentGPR(0));
-    jit.callOperation(Entry::operationAOTResumeLoadAfterThrow, jit.reuseScratch(StubRegister::Operation));
-    hasThrown.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
-    returns.append(jit.jump());
 
     begins.link(&jit);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.status)), table);
@@ -579,36 +564,6 @@ void generateStartModule(StubAssembler& jit)
     abandonsOnThrow.link(&jit);
     jit.add32(TrustedImm32(1), operand);
     jit.store64(operand, moduleToAbandon);
-    jit.jump().linkTo(takesNextStep, &jit);
-
-    resumesLoadOnThrow.link(&jit);
-    jit.add32(TrustedImm32(1), operand);
-    jit.store32(operand, moduleToAbandon);
-    jit.store32(TrustedImm32(static_cast<int32_t>(ModuleStartFrame::resumesLoad)), resumesLoad);
-    jit.jump().linkTo(takesNextStep, &jit);
-
-    auto branchUnlessLoadingStops = [&](Label continuation) {
-        jit.branchTest32(CCallHelpers::Zero, Address(instanceGPR, AOT_INSTANCE_OFFSET(modules.runsImportedFilesAlone))).linkTo(continuation, &jit);
-        jit.loadPtr(Address(instanceGPR, offsetOfMicrotaskQueue), table);
-        jit.load64(Address(table, MicrotaskQueue::offsetOfStart()), status);
-        jit.branch64(CCallHelpers::Equal, status, Address(table, MicrotaskQueue::offsetOfEnd())).linkTo(continuation, &jit);
-    };
-    auto loadOperandOfStep = [&](int32_t stepsBack) {
-        jit.load32(Address(nextStep, -stepsBack * static_cast<int32_t>(sizeof(ModuleStartStepData))), operand);
-        jit.and32(TrustedImm32(static_cast<int32_t>(ModuleStartStepData::operationMask)), operand, operation);
-        jit.urshift32(TrustedImm32(ModuleStartStepData::operandShift), operand);
-    };
-    mayStopLoading.link(&jit);
-    branchUnlessLoadingStops(takesNextStep);
-    Jump asksAboutOperand = jit.jump();
-    callsStartUnlessStopped.link(&jit);
-    branchUnlessLoadingStops(startsModule);
-    loadOperandOfStep(2);
-    asksAboutOperand.link(&jit);
-    callStatusOperation(Entry::operationAOTStopLoadingBehindFile, hasThrown);
-    returns.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR));
-    loadOperandOfStep(1);
-    branchIfStepIs(Operation::CallStartUnlessStopped).linkTo(startsModule, &jit);
     jit.jump().linkTo(takesNextStep, &jit);
 
     returns.link(&jit);

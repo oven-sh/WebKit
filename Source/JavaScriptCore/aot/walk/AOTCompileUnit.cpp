@@ -1294,7 +1294,7 @@ static bool isWrittenStraight(const WalkInputs& inputs, CodeUnit unit, const Bod
 {
     static constexpr OpcodeSet operationsThatTypesMakeNoCheaper = inputPassThroughOpcodes | OpcodeSet {
         Opcode::Undefined, Opcode::Null, Opcode::Boolean, Opcode::Integer, Opcode::Double, Opcode::String, Opcode::BigInt, Opcode::Builtin, Opcode::NativeBinding,
-        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::IsLinkedBelow, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
+        Opcode::GetModuleVariable, Opcode::PutModuleVariable, Opcode::TypeTest, Opcode::ThrowModuleFailure, Opcode::EvaluateModule, Opcode::RecordRequire, Opcode::RequireModule,
         Opcode::NewClosure, Opcode::NewRegExp, Opcode::NewClass, Opcode::NewClassToken, Opcode::ResolveHeritage, Opcode::DefineMethod, Opcode::FinishClass,
     };
     if ((unit.role != CodeRole::SlowBody && unit.role != CodeRole::Body) || (inputs.facts.isTakenToRunOnce(unit.function) && !isBodyWrittenInAnotherFile(inputs.program, unit.function)))

@@ -1,14 +1,14 @@
-# import() of a graph with a CommonJS file on its first level and one on its second, while jobs of the program wait. A file runs in the step in which the loader makes it, and what it queues runs among the steps
-# that follow. So the loader is asked for the files of a level with the one ES module of that level that lies on its way down, and for no other ES module.
+# import() of a graph with a CommonJS file right below the root and one further down, while jobs of the program wait. The files run in the job that links and evaluates the graph,
+# so what they queue runs behind the ES modules. The loader walks through none of those.
 # RUN: run-in-shell --aotCountsPath=/dev/null let job = 0; let isImported = false; globalThis.report = (label, value) => print(label + ": " + value + " behind job " + job); globalThis.later = name => { Promise.resolve().then(() => report("job of", name)); }; globalThis.register = closure => { globalThis.registered = closure; }; const start = globalThis.runCompiledEntryPoint; globalThis.runCompiledEntryPoint = entry => { const result = start(entry); Promise.resolve(result).then(() => { const next = () => { if (isImported) return; ++job; Promise.resolve().then(next); }; Promise.resolve().then(next); registered().then(() => { isImported = true; print("imported behind job " + job); print("walked " + aotRuntimeCounters().match(/^(\d+)\tcounter:CompiledModulesWalkedByLoader$/m)[1]); }); }); return result; };
-# CHECK: runs: first.cjs behind job 6
-# CHECK-NEXT: job of: first.cjs behind job 7
-# CHECK-NEXT: runs: deep.cjs behind job 10
-# CHECK-NEXT: job of: deep.cjs behind job 11
+# CHECK: runs: first.cjs behind job 21
 # CHECK-NEXT: runs: z.js behind job 21
 # CHECK-NEXT: runs: y.js behind job 21
+# CHECK-NEXT: runs: deep.cjs behind job 21
 # CHECK-NEXT: runs: x.js behind job 21
 # CHECK-NEXT: runs: root.js behind job 21
+# CHECK-NEXT: job of: first.cjs behind job 22
+# CHECK-NEXT: job of: deep.cjs behind job 22
 # CHECK-NEXT: imported behind job 28
 # CHECK-NEXT: walked 0
 # CHECK: exited with 0

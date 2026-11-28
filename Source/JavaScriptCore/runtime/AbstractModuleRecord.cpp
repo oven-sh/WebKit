@@ -44,6 +44,7 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #if USE(BUN_JSC_ADDITIONS)
+#include "ImportOrderWalk.h"
 #include "InternalFieldTuple.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncFunctionGenerator.h"
@@ -87,6 +88,9 @@ AbstractModuleRecord::AbstractModuleRecord(VM& vm, Structure* structure, JSModul
     , m_moduleKey(WTF::move(moduleKey))
     , m_moduleLoader(moduleLoader, WriteBarrierEarlyInit)
     , m_sourceType(sourceType)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_loadedAt(vm.importOrderState().clock)
+#endif
 {
 }
 
@@ -281,6 +285,8 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
                 return prelinkedRequestedModule(i);
         }
     }
+    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
+        return synthetic->recordOfLaterExports();
 #endif
     return nullptr;
 }
@@ -573,6 +579,36 @@ bool AbstractModuleRecord::collectPrelinkedNamespaceResolutions(JSGlobalObject* 
 }
 #endif // USE(BUN_JSC_ADDITIONS)
 
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractModuleRecord::setStateOfResolvedRequest(const ModuleRequest& request, ResolvedRequest::State state)
+{
+    if (auto iter = m_resolvedRequests.find(ModuleMapKey { request.m_specifier.impl(), request.type() }); iter != m_resolvedRequests.end())
+        iter->value.state = state;
+}
+
+void AbstractModuleRecord::didFailForRequest(const ModuleRequest& request)
+{
+    ModuleMapKey key { request.m_specifier.impl(), request.type() };
+    // A load that the host started before it threw.
+    if (auto loaded = m_loadedModules.find(key); loaded != m_loadedModules.end())
+        m_resolvedRequests.add(key, ResolvedRequest { loaded->value.m_module->moduleKey().impl(), ResolvedRequest::State::Failed });
+    if (auto resolved = m_resolvedRequests.find(key); resolved != m_resolvedRequests.end())
+        resolved->value.failedAt = vm().importOrderState().clock;
+}
+
+bool AbstractModuleRecord::hasRequestBeingLoaded() const
+{
+    return std::ranges::any_of(m_resolvedRequests.values(), [](auto& resolved) { return resolved.state != ResolvedRequest::State::Failed; });
+}
+
+void AbstractModuleRecord::clearExports()
+{
+    ASSERT(!m_moduleNamespaceObject && !m_deferredNamespaceObject && m_resolutionCache.isEmpty());
+    m_exportEntries.clear();
+    m_moduleEnvironment.clear();
+}
+#endif
+
 void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const ModuleRequest& request, AbstractModuleRecord* record)
 {
     VM& vm = globalObject->vm();
@@ -584,7 +620,7 @@ void AbstractModuleRecord::setImportedModule(JSGlobalObject* globalObject, const
     // getImportedModule(), so records that are linked outside the loader (Bun's
     // node:vm SourceTextModule) need this map populated too. Reuse the original
     // ModuleRequest (specifier + attributes) so a `with { type: "json" }` /
-    // HostDefined import lands in the same (specifier, type) bucket that
+    // host-defined import lands in the same (specifier, type) bucket that
     // getImportedModule()'s typed lookup will use.
     Locker locker { cellLock() };
     ModuleMapKey key { request.m_specifier.impl(), request.type() };
@@ -1482,8 +1518,41 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     } else if (m_moduleNamespaceObject)
         return m_moduleNamespaceObject.get();
 
+    Vector<SyntheticModuleRecord*> modulesYetToFinish;
+    auto* moduleNamespaceObject = createModuleNamespace(globalObject, phase, shouldPreventExtensions, modulesYetToFinish);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    for (SyntheticModuleRecord* module : modulesYetToFinish)
+        module->didListExportsSoFar(vm, moduleNamespaceObject);
+#endif
+
+    if (phase == ModulePhase::Defer) {
+        m_deferredNamespaceObject.set(vm, this, moduleNamespaceObject);
+        return moduleNamespaceObject;
+    }
+
+    // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
+    if (m_moduleEnvironment) {
+        bool putResult = false;
+        constexpr bool shouldThrowReadOnlyError = false;
+        constexpr bool ignoreReadOnlyErrors = true;
+        symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
+
+    return moduleNamespaceObject;
+}
+
+JSModuleNamespaceObject* AbstractModuleRecord::createModuleNamespace(JSGlobalObject* globalObject, ModulePhase phase, bool shouldPreventExtensions, [[maybe_unused]] Vector<SyntheticModuleRecord*>& modulesYetToFinish)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     Vector<std::pair<Identifier, Resolution>> resolutions;
 #if USE(BUN_JSC_ADDITIONS)
+    ASSERT(!inherits<SyntheticModuleRecord>() || m_moduleEnvironment);
+    m_wasReached = true;
     // The namespace object of a live record forwards to liveExportsSource(), so it needs no resolutions.
     bool collected = m_hasLiveExports;
     if (!collected && m_prelinked && !Options::validatePrelinkedModuleInfo()) {
@@ -1523,6 +1592,8 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             if (!moduleRecord->starExportEntries().isEmpty())
                 liveRecordsWithStarExports.append(moduleRecord);
         }
+        if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(moduleRecord); synthetic && synthetic->deferredModule()) [[unlikely]]
+            modulesYetToFinish.append(synthetic);
 #endif
 
 #if ENABLE(AOT)
@@ -1688,25 +1759,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     } // !collected
 #endif
 
-    auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    if (phase == ModulePhase::Defer) {
-        m_deferredNamespaceObject.set(vm, this, moduleNamespaceObject);
-        return moduleNamespaceObject;
-    }
-
-    // Materialize *namespace* slot with module namespace object unless the module environment is not yet materialized, in which case we'll do it in setModuleEnvironment
-    if (m_moduleEnvironment) {
-        bool putResult = false;
-        constexpr bool shouldThrowReadOnlyError = false;
-        constexpr bool ignoreReadOnlyErrors = true;
-        symbolTablePutTouchWatchpointSet(m_moduleEnvironment.get(), globalObject, vm.propertyNames->starNamespacePrivateName, moduleNamespaceObject, shouldThrowReadOnlyError, ignoreReadOnlyErrors, putResult);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-    }
-    m_moduleNamespaceObject.set(vm, this, moduleNamespaceObject);
-
-    return moduleNamespaceObject;
+    RELEASE_AND_RETURN(scope, JSModuleNamespaceObject::create(globalObject, globalObject->moduleNamespaceObjectStructure(), this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer));
 }
 
 // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
@@ -1884,6 +1937,13 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
         generateDeferredSyntheticModules(globalObject, visited);
         RETURN_IF_EXCEPTION(scope, void());
     }
+    RELEASE_AND_RETURN(scope, linkAfterDeferredModules(globalObject, WTF::move(scriptFetcher)));
+}
+
+void AbstractModuleRecord::linkAfterDeferredModules(JSGlobalObject* globalObject, RefPtr<ScriptFetcher> scriptFetcher)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 #endif
 #if ENABLE(AOT)
     if (auto* compiled = AOT::compiledModule(vm, this)) {
@@ -1901,6 +1961,9 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
         cyclicModuleRecord->link(globalObject, WTF::move(scriptFetcher));
         RETURN_IF_EXCEPTION(scope, void());
     } else if (auto* moduleRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
+#if USE(BUN_JSC_ADDITIONS)
+        setHasStartedLinking();
+#endif
         moduleRecord->link(globalObject, WTF::move(scriptFetcher));
         RETURN_IF_EXCEPTION(scope, void());
     } else
@@ -2351,38 +2414,9 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-// Runs the deferred generators (SyntheticSourceProvider::createDeferred()) of the graph below this record, depth first
-// in the order of the import declarations, which is the order InnerModuleEvaluation would reach those modules in.
-//
-// This is its own pass ahead of InnerModuleLinking because a generator runs user code, and user code can require() an
-// ES module that imports back into this graph. Such a load links and evaluates; started from inside InnerModuleLinking
-// it would find the records on the outer linking stack in the LINKING state and treat them as linked.
-void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, HashSet<AbstractModuleRecord*>& visited)
+void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, HashSet<AbstractModuleRecord*>& visited, IsBehindWalk isBehindWalk)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    if (auto* synthetic = dynamicDowncast<SyntheticModuleRecord>(this))
-        RELEASE_AND_RETURN(scope, synthetic->runDeferredGenerator(globalObject));
-#if ENABLE(AOT)
-    if (auto* compiled = AOT::compiledModule(vm, this))
-        RELEASE_AND_RETURN(scope, compiled->generateDeferredSyntheticModules(globalObject, visited));
-#endif
-
-    // Everything below a record that has been linked went through this pass when that link started.
-    auto* module = dynamicDowncast<CyclicModuleRecord>(this);
-    if (!module || module->status() != CyclicModuleRecord::Status::Unlinked)
-        return;
-    if (!visited.add(this).isNewEntry)
-        return;
-
-    for (const ModuleRequest& request : module->requestedModules()) {
-        AbstractModuleRecord* requiredModule = JSModuleLoader::getImportedModule(module, request);
-        checkSafeToRecurse(globalObject, scope);
-        RETURN_IF_EXCEPTION(scope, void());
-        requiredModule->generateDeferredSyntheticModules(globalObject, visited);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    ImportOrderWalk::runWithoutWaiting(globalObject, this, visited, isBehindWalk);
 }
 #endif
 
@@ -2405,7 +2439,14 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
     // 1. If module is not a Cyclic Module Record, then
     if (!module) {
         // 1.a. Perform ? module.Link().
+#if USE(BUN_JSC_ADDITIONS)
+        HashSet<AbstractModuleRecord*> visited;
+        generateDeferredSyntheticModules(globalObject, visited, IsBehindWalk::Yes);
+        RETURN_IF_EXCEPTION(scope, invalid);
+        linkAfterDeferredModules(globalObject, scriptFetcher);
+#else
         link(globalObject, scriptFetcher);
+#endif
         RETURN_IF_EXCEPTION(scope, invalid);
         // 1.b. Return index.
         return index;
@@ -2431,6 +2472,9 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
 #endif
     // 4. Set module.[[Status]] to LINKING.
     module->setStatus(Status::Linking);
+#if USE(BUN_JSC_ADDITIONS)
+    module->setHasStartedLinking();
+#endif
     // 5. Let moduleIndex be index.
     unsigned moduleIndex = index;
     // 6. Set module.[[DFSAncestorIndex]] to index.
@@ -2485,6 +2529,11 @@ unsigned AbstractModuleRecord::innerModuleLinking(JSGlobalObject* globalObject, 
             auto* cyclic = uncheckedDowncast<CyclicModuleRecord>(requiredModule);
             // 13.b.iv. Set requiredModule.[[Status]] to LINKED.
             cyclic->setStatus(Status::Linked);
+#if USE(BUN_JSC_ADDITIONS)
+            // One of its imports is being evaluated and has loaded it. The walk that evaluates the import takes this back.
+            if (EvaluationAheadOfLink::waitsForEvaluationOfImport(globalObject, cyclic)) [[unlikely]]
+                cyclic->setStatus(Status::Evaluating);
+#endif
             // 13.b.v. If requiredModule and module are the same Module Record, set done to true.
             done = requiredModule == module;
         } while (!done);

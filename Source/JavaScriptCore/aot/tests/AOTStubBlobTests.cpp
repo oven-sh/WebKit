@@ -444,7 +444,7 @@ static void testReachability()
 static void testStartOfModule()
 {
     StubCatalog catalog(StubOptions { });
-    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTResumeLoadAfterThrow, Entry::operationAOTThrow }));
+    AOT_TEST_CHECK(operationsCalledBy(catalog, startModule()) == entrySetOf({ Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTCatchException, Entry::operationAOTAbandonModuleEvaluation, Entry::operationAOTThrow }));
     AOT_TEST_CHECK(std::ranges::count(catalog.recordingOf(startModule()).returnLabels, StubFrameKind::ModuleStart) == 1);
     AOT_TEST_CHECK(refersToBody(catalog, startModule(), bodyOf(handleException(false))));
     AOT_TEST_CHECK(mayThrowAndCollect(catalog, startModule()));
@@ -456,7 +456,7 @@ static void testStartOfModule()
     StubBlob blob = buildBlob(catalog, std::array { startModule() }, EntrySet { });
     AOT_TEST_CHECK(blob.offsetOf(startModule()));
     AOT_TEST_CHECK(numberOfSites(blob, StubFrameKind::ModuleStart) == 1 && bodiesContainingSites(blob, StubFrameKind::ModuleStart)[0] == startModule());
-    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
+    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTAbandonModuleEvaluation })
         AOT_TEST_CHECK(blob.entriesUsed.get(indexOf(entry)));
 
     AOT_TEST_CHECK(refersOnceBy(catalog, startModuleThatRunTimeNames(), startModule(), StubReference::Kind::Jump));
@@ -465,7 +465,7 @@ static void testStartOfModule()
 
     StubBlob blobWithoutStarts = buildBlob(catalog, std::array { newPromise() }, EntrySet { });
     AOT_TEST_CHECK(!blobWithoutStarts.offsetOf(startModuleThatRunTimeNames()) && !blobWithoutStarts.offsetOf(startModule()) && !numberOfSites(blobWithoutStarts, StubFrameKind::ModuleStart));
-    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTStopLoadingBehindFile, Entry::operationAOTAbandonModuleEvaluation })
+    for (Entry entry : { Entry::operationAOTBeginModuleEvaluation, Entry::operationAOTAbandonModuleEvaluation })
         AOT_TEST_CHECK(!blobWithoutStarts.entriesUsed.get(indexOf(entry)));
 }
 

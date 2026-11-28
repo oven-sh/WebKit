@@ -58,6 +58,12 @@ public:
         Main, // modulePromise settled -> loadRequestedModules
         Requested, // loadRequestedModules settled -> finishLoading + setEntryRecord
         Cached, // cached loadPromise settled -> finishLoading or evaluationError
+#if USE(BUN_JSC_ADDITIONS)
+        // Of a top-level load.
+        WaitsForImport, // See ImportOrderWalk.
+        FailedToLoad,
+        LoadsAgain,
+#endif
     };
 
     static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
@@ -80,7 +86,21 @@ public:
     bool useImportMap() const { return m_flags.contains(ModuleLoadFlag::UseImportMap); }
     bool deferred() const { return m_flags.contains(ModuleLoadFlag::Deferred); }
 #if USE(BUN_JSC_ADDITIONS)
+    // Of a top-level load: the one that it is a load of. The key may have been given to another since.
+    void setEntry(VM& vm, ModuleRegistryEntry* entry) { m_entry.setMayBeNull(vm, this, entry); }
+    OptionSet<ModuleLoadFlag> flags() const { return m_flags; }
+    // Of a top-level load: the VM::numberOfSynchronousModuleQueue() that it began in.
+    uint32_t queueOfLoad() const { return m_queueOfLoad; }
+    void setQueueOfLoad(uint32_t queue) { m_queueOfLoad = queue; }
+    // JSModuleLoader::loadModuleSync() has returned without it, so it runs nothing any more.
+    bool isAbandoned(VM&) const;
+    // Of an import(). See JSModuleLoader::asyncContextOfImport().
+    JSValue asyncContext() const { return m_asyncContext.get(); }
+    void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
     int64_t referrerAsyncOrder() const { return m_referrerAsyncOrder; }
+    // False if the referrer is a module that asks for its request again. See ImportOrderWalk.
+    bool answersRequest() const;
+    void setNumberOfRequest(uint32_t number) { m_numberOfRequest = number; }
 #endif
 
 private:
@@ -88,6 +108,9 @@ private:
     ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_queueOfLoad { 0 };
+#endif
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
     const RefPtr<ScriptFetcher> m_scriptFetcher;
     WriteBarrier<JSCell> m_payload;
@@ -96,9 +119,13 @@ private:
     WriteBarrier<AbstractModuleRecord> m_module;
     WriteBarrier<JSModuleLoader> m_loader;
 #if USE(BUN_JSC_ADDITIONS)
+    WriteBarrier<Unknown> m_asyncContext;
     int64_t m_referrerAsyncOrder { -1 };
 #endif
     OptionSet<ModuleLoadFlag> m_flags;
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t m_numberOfRequest { 0 };
+#endif
 };
 
 } // namespace JSC

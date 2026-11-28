@@ -1,11 +1,9 @@
-# If the throw of a CommonJS file ended the load of the graph that imports it, the files that follow would never run. The loader runs them
+# The throw of a CommonJS file ends the load of the graph that imports it, so the files need no state: the row of the graph calls them in the order of the imports, and then the body
 # main.js: require("./graph.mjs")    graph.mjs: import "./first.cjs"; import "./second.cjs"; print("graph")    one.mjs: import "./third.cjs"
-# The row of the graph runs its files before the graph begins, and they have states: the loader finishes a load that a throw interrupts.
 # RUN: plan module-starts
-# CHECK: module-start m1 body=f1: ResumeLoadOnThrow m1, CallStart f2, CallStart f3, BeginOrReturn m1, AbandonOnThrow m1, CallBody f1, Finish m1
-# CHECK: module-start m2 body=f2: AbandonOnThrow m2, CallBody f2
-# CHECK: module-start m3 body=f3: AbandonOnThrow m3, CallBody f3
-# CHECK-NOT: ResumeLoadOnThrow m4
+# CHECK: module-start m1 body=f1: BeginOrReturn m1, CallStart f2, CallStart f3, CallBody f1, Finish m1
+# CHECK: module-start m2 body=f2: CallBody f2
+# CHECK: module-start m3 body=f3: CallBody f3
 # RUN(NONE): run-in-shell mechanisms=none
 # NONE: first
 # NONE-NEXT: second

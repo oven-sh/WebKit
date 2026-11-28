@@ -96,6 +96,32 @@ JSModuleLoader::ModuleReferrer ModuleLoadingContext::referrer() const
     return uncheckedDowncast<JSGlobalObject>(ref);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool ModuleLoadingContext::isAbandoned(VM& vm) const
+{
+    if (!m_flags.contains(ModuleLoadFlag::IsSynchronous))
+        return false;
+    for (auto* queue = vm.m_synchronousModuleQueue; queue; queue = queue->prev) {
+        if (queue->number == m_queueOfLoad)
+            return false;
+    }
+    return true;
+}
+
+bool ModuleLoadingContext::answersRequest() const
+{
+    auto* module = dynamicDowncast<CyclicModuleRecord>(m_referrer.get());
+    if (!module)
+        return true;
+    if (m_entry->isSuperseded())
+        return false;
+    auto resolved = module->resolvedRequests().find({ m_moduleRequest.m_specifier.impl(), m_moduleRequest.type() });
+    if (resolved == module->resolvedRequests().end())
+        return true;
+    return resolved->value.state != AbstractModuleRecord::ResolvedRequest::State::Obsolete && resolved->value.number == m_numberOfRequest;
+}
+#endif
+
 template<typename Visitor>
 void ModuleLoadingContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
@@ -107,6 +133,9 @@ void ModuleLoadingContext::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_entry);
     visitor.append(thisObject->m_referrer);
     visitor.append(thisObject->m_module);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
 }
 
 DEFINE_VISIT_CHILDREN(ModuleLoadingContext);

@@ -160,6 +160,21 @@ private:
     JSValue m_restoreAsyncContext;
 };
 
+// For what JSModuleLoader::asyncContextOfImport() answered. The empty value leaves the context alone.
+class AsyncContextOfImportScope {
+    WTF_MAKE_NONCOPYABLE(AsyncContextOfImportScope);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    ALWAYS_INLINE AsyncContextOfImportScope(VM& vm, JSGlobalObject* globalObject, JSValue asyncContext)
+    {
+        if (asyncContext)
+            m_scope.emplace(vm, globalObject, asyncContext);
+    }
+
+private:
+    std::optional<AsyncContextSwapScope> m_scope;
+};
+
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)

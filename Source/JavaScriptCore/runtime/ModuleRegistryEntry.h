@@ -27,6 +27,7 @@
 
 #include "AbstractModuleRecord.h"
 #include "ErrorInstance.h"
+#include "JSModuleLoader.h"
 #include "JSObject.h"
 #include "JSSourceCode.h"
 #include "ScriptFetchParameters.h"
@@ -102,9 +103,51 @@ public:
     bool isLoaded() const;
     // loadPromise(), materializing it first for an entry that was markLoaded().
     JSPromise* loadedPromise(JSGlobalObject*);
-    void replaceRecord(JSGlobalObject*, AbstractModuleRecord*);
     // loadPromise() is of a load that JSModuleLoader::loadModuleSync() ran.
     bool wasLoadStartedSynchronously() const { return m_wasLoadStartedSynchronously; }
+    // The VM::SynchronousModuleQueue that has the steps that make the record of what the host has supplied.
+    uint32_t queueThatMakesRecord() const { return m_queueThatMakesRecord; }
+    void setQueueThatMakesRecord(uint32_t queue) { m_queueThatMakesRecord = queue; }
+    // loadModuleSync() has returned without linking it, and no load has asked for it since.
+    bool isAbandoned() const { return m_isAbandoned; }
+    void setIsAbandoned(bool isAbandoned) { m_isAbandoned = isAbandoned; }
+
+    using FetchWaitsFor = JSModuleLoader::FetchWaitsFor;
+
+    // See ImportOrderWalk. A failure to load is final once a walk has come to it.
+    bool isFailureFinal() const { return m_isFailureFinal; }
+    void setIsFailureFinal() { m_isFailureFinal = true; }
+    bool isFailureOfDeferredModule() const { return m_isFailureOfDeferredModule; }
+    bool isFailureObsolete(VM& vm) const { return !m_isFailureFinal && !m_wasFetchPostponed && m_fetchWaitsFor != FetchWaitsFor::DeferredModules && m_requestedAt != vm.importOrderState().clock; }
+    void setWasFetchPostponed() { m_wasFetchPostponed = true; }
+    FetchWaitsFor fetchWaitsFor() const { return m_fetchWaitsFor; }
+    void setFetchWaitsFor(FetchWaitsFor what) { m_fetchWaitsFor = what; }
+    // The module that the host starts the program with. No import precedes it, so if it is deferred it runs when it is fetched.
+    bool isEntryPoint() const { return m_isEntryPoint; }
+    void setIsEntryPoint() { m_isEntryPoint = true; }
+    bool isRootOfLoad() const { return m_isRootOfLoad; }
+    void setIsRootOfLoad() { m_isRootOfLoad = true; }
+    bool isRootOfLoadThatLinks() const { return m_isRootOfLoadThatLinks; }
+    void setIsRootOfLoadThatLinks() { m_isRootOfLoadThatLinks = true; }
+    // The error stands for the loads that start at the module, whatever becomes of those that come through it.
+    bool didFailToRecoverLoad() const { return m_didFailToRecoverLoad; }
+    void setDidFailToRecoverLoad() { m_didFailToRecoverLoad = true; }
+    bool isRecoveringLoad() const { return m_isRecoveringLoad; }
+    void setIsRecoveringLoad(bool isRecoveringLoad) { m_isRecoveringLoad = isRecoveringLoad; }
+    enum class IsFinal : bool { No, Yes };
+    void failToLoad(JSGlobalObject*, JSValue error, IsFinal, bool wasThrownByModule);
+    // If so, a walk evaluates what precedes the module before it fails with the error.
+    bool wasErrorThrownByModule() const { return m_wasErrorThrownByModule; }
+    void forgetFailureToLink();
+    // A deferred module can throw after a load that it started has run its importer. That fails the load, not the importer.
+    bool hasRunWithoutError() const;
+    // From then on the record stands in for it, as after provideModule().
+    void releaseSource() { m_fetchPromise.clear(); }
+    void forgetFailureToLoad(JSGlobalObject*);
+    // For a step of a load that failed. Another load may have settled what becomes of the module in the meantime.
+    bool ignoresFailureToLoad(JSGlobalObject*);
+    bool isSuperseded() const { return m_isSuperseded; }
+    void supersede(VM&, AbstractModuleRecord::SupersededFor);
 #endif
 
 private:
@@ -125,8 +168,22 @@ private:
     WriteBarrier<Unknown> m_error;
     Status m_status { Status::New };
 #if USE(BUN_JSC_ADDITIONS)
-    bool m_isLoaded { false };
-    bool m_wasLoadStartedSynchronously { false };
+    bool m_isLoaded : 1 { false };
+    bool m_wasLoadStartedSynchronously : 1 { false };
+    bool m_isFailureFinal : 1 { false };
+    bool m_isFailureOfDeferredModule : 1 { false };
+    bool m_wasErrorThrownByModule : 1 { false };
+    bool m_didFailToRecoverLoad : 1 { false };
+    bool m_isRecoveringLoad : 1 { false };
+    bool m_isSuperseded : 1 { false };
+    bool m_isRootOfLoad : 1 { false };
+    bool m_isRootOfLoadThatLinks : 1 { false };
+    bool m_wasFetchPostponed : 1 { false };
+    bool m_isEntryPoint : 1 { false };
+    bool m_isAbandoned : 1 { false };
+    FetchWaitsFor m_fetchWaitsFor { FetchWaitsFor::Host };
+    uint32_t m_queueThatMakesRecord { 0 };
+    uint64_t m_requestedAt;
 #endif
 };
 

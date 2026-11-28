@@ -108,7 +108,6 @@ public:
         uint32_t hostDefinedTypeSid;
         FetchKind fetchKind() const { return static_cast<FetchKind>(attributes & 7); }
         bool isDeferred() const { return attributes & phaseDeferBit; }
-        ScriptFetchParameters::Type type() const;
     };
 
     enum class ImportKind : uint8_t { Single, SingleTypeScript, Namespace, NamespaceDefer };

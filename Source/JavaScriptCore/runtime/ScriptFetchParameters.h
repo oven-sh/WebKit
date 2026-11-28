@@ -38,33 +38,30 @@ namespace JSC {
 // ThreadSafeRefCounted: the shared per-type instances (create(Type)) are process-wide and every VM's module records ref them.
 class ScriptFetchParameters : public ThreadSafeRefCounted<ScriptFetchParameters> {
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    enum Type : uint32_t {
+#else
     enum Type : uint8_t {
+#endif
         None,
         JavaScript,
         WebAssembly,
         JSON,
         Text,
-#if USE(BUN_JSC_ADDITIONS)
-        HostDefined, // Stays 5: Bun's transpiler writes the number into the module info it serializes.
-#endif
         CSS,
+#if USE(BUN_JSC_ADDITIONS)
+        // Every other name is numbered from here, as the process meets it.
+        FirstHostDefined,
+#endif
     };
 
     ScriptFetchParameters(Type type)
         : m_type(type)
-    {
 #if USE(BUN_JSC_ADDITIONS)
-        ASSERT_WITH_MESSAGE(type != Type::HostDefined, "HostDefined type requires a hostDefinedImportType");
+        , m_hostDefinedImportType(isHostDefined(type) ? nameOfHostDefinedType(type) : String())
 #endif
-    }
-
-#if USE(BUN_JSC_ADDITIONS)
-    ScriptFetchParameters(const String& hostDefinedImportType)
-        : m_type(Type::HostDefined), m_hostDefinedImportType(hostDefinedImportType)
     {
-
     }
-#endif
 
     virtual ~ScriptFetchParameters() = default;
 
@@ -76,18 +73,16 @@ public:
 
     // The plain per-type parameters carry nothing but the type, so every module request of a given type shares one
     // immortal instance instead of allocating its own (a large module graph makes thousands of requests). A request that
-    // needs its own state (WebCore's ModuleFetchParameters, a HostDefined type string, an attributes map) still allocates.
+    // needs its own state (WebCore's ModuleFetchParameters, the name of a host-defined type, an attributes map) still allocates.
     JS_EXPORT_PRIVATE static Ref<ScriptFetchParameters> create(Type);
     static Ref<ScriptFetchParameters> createUnique(Type type) { return adoptRef(*new ScriptFetchParameters(type)); }
 
 
 #if USE(BUN_JSC_ADDITIONS)
+    static bool isHostDefined(Type type) { return type >= Type::FirstHostDefined; }
+    JS_EXPORT_PRIVATE static Type hostDefinedType(StringView name);
+    JS_EXPORT_PRIVATE static String nameOfHostDefinedType(Type);
     const String& hostDefinedImportType() const { return m_hostDefinedImportType; }
-
-    static Ref<ScriptFetchParameters> create(const String& hostDefinedImportType)
-    {
-        return adoptRef(*new ScriptFetchParameters(hostDefinedImportType));
-    }
 
     using AttributesMap = HashMap<RefPtr<UniquedStringImpl>, String>;
     const AttributesMap& attributes() const { return m_attributes; }
@@ -99,7 +94,7 @@ public:
         if (string == "json"_s)
             return Type::JSON;
 #if !USE(BUN_JSC_ADDITIONS)
-        // Bun loads `with { type: "text" }` and `with { type: "css" }` itself, so there they stay a HostDefined type below.
+        // Bun loads `with { type: "text" }` and `with { type: "css" }` itself, so there they are host-defined types.
         if (string == "text"_s)
             return Type::Text;
         if (string == "css"_s)
@@ -108,9 +103,8 @@ public:
         if (string == "webassembly"_s)
             return Type::WebAssembly;
 #if USE(BUN_JSC_ADDITIONS)
-        if (!string.isEmpty()) {
-            return Type::HostDefined;
-        }
+        if (!string.isEmpty())
+            return hostDefinedType(string);
 #endif
         return std::nullopt;
     }
@@ -118,7 +112,7 @@ public:
 private:
     Type m_type { Type::None };
 #if USE(BUN_JSC_ADDITIONS)
-    String m_hostDefinedImportType = String();
+    String m_hostDefinedImportType;
     AttributesMap m_attributes;
 #endif
     

@@ -301,8 +301,6 @@ void didChangeMicrotaskQueueing(VM& vm)
         if (instance->awaitMustSuspend)
             takeAwayRightToContinue(*instance);
     }
-    if (vm.hostObservesMicrotaskBoundaries() && vm.aotState().modulesWithEagerLoads) [[unlikely]]
-        transferEagerLoadsToLoader(vm);
 }
 
 CONCURRENT_SAFE void setLoopPollsEnabled(VM& vm, bool enabled)
