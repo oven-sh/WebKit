@@ -107,7 +107,10 @@ RefPtr<SharedTask<void ()>> ParallelHelperClient::claimTask()
 
 void ParallelHelperClient::runTask(const RefPtr<SharedTask<void ()>>& task)
 {
-    RELEASE_ASSERT(m_numActive);
+    {
+        Locker locker { *m_pool->m_lock };
+        RELEASE_ASSERT(m_numActive);
+    }
     RELEASE_ASSERT(task);
 
     task->run();
