@@ -125,13 +125,16 @@ static FunctionKindData functionKindDataOfWrittenKind(FunctionKind functionKind)
     return kind;
 }
 
+static bool isOfRuntimeSource(const Program& program, const Function& function)
+{
+    return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
+}
+
 bool functionObjectsLieInRuntimeModule(const Program& program, const Function& function)
 {
     if (function.module && isBundlerHelperModule(program, program.at(function.module)))
         return false;
-    if (function.role == FunctionRole::Library || function.enclosingRuntimeFunction)
-        return true;
-    return function.module && program.at(function.module).kind == ModuleKind::RuntimeSource;
+    return function.role == FunctionRole::Library || function.enclosingRuntimeFunction || isOfRuntimeSource(program, function);
 }
 
 static bool closuresOfKindMayBeSlim(FunctionKind kind)
@@ -247,6 +250,7 @@ FunctionKindData functionKindOf(const Program& program, const SlotPlan& slots, c
     kind.takesNewTarget = closureEntryTakesNewTarget(function, conventions, entry);
     kind.hasInferredName = !function.has(FunctionFlags::HasExplicitName);
     kind.isInRuntimeModule = functionObjectsLieInRuntimeModule(program, function);
+    kind.isOfRuntimeFunction = kind.isInRuntimeModule && !isOfRuntimeSource(program, function);
     kind.isSlim = slots.closureFormOf(entry.function) == ClosureForm::Slim;
     kind.closuresGetOnlyListedNames = slots.closuresGetOnlyListedNames(entry.function);
     kind.prototypePropertyStaysAsMade = slots.prototypePropertyStaysAsMade(entry.function);

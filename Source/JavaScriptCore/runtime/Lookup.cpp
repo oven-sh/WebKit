@@ -89,7 +89,7 @@ bool setUpStaticFunctionSlot(VM& vm, const ClassInfo* classInfo, const HashTable
         // lookup, and callers of getOwnPropertySlot don't check for one.
         if (vm.exceptionForInspection()) [[unlikely]] {
 #if ENABLE(AOT)
-            JSValue placeholder = vm.hasCompiledCode() && !isAccessor ? AOT::takeOmittedMemberPlaceholder(thisObject->realm(), String(propertyName.uid())) : JSValue();
+            JSValue placeholder = vm.hasCompiledCode() && !isAccessor ? AOT::takeOmittedMemberPlaceholder(thisObject->realm(), String(propertyName.uid()), thisObject) : JSValue();
             if (!placeholder)
                 return false;
             // Nothing is stored. The property stays unreified, and the next read calls its builder again.

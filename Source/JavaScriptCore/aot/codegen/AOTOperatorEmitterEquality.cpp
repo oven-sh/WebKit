@@ -815,6 +815,11 @@ void OperatorEmitter::generateEquality(const ValueContext& value, bool isStrict)
             ValueID other = written == left ? right : left;
             const Type& type = typeOf(other);
             bool everyCellIsString = !type.hasObjects() && !(type.primitives & cellPrimitives & ~Primitive::AnyString);
+            if (type.isJavaScriptValue() && !(type.primitives & Primitive::AnyString)) {
+                m_out.noteForm(Form::Open, StateOfKnowledge::Bits);
+                result = equal(in<Boxed>(left), in<Boxed>(right));
+                break;
+            }
             equality.noteFormAgainstWrittenText(value, operationAt(written).string());
             defineTestByBranching(value, [&](BranchTargets targets) {
                 emitter<StringEmitter>().branchOnEqualsLiteral(value, ComparedOperand::Value, in<Boxed>(other).value(), operationAt(written).string(), targets, std::nullopt, everyCellIsString);

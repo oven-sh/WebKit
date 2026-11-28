@@ -16,6 +16,7 @@
 #include "AOTHeapCacheRegistry.h"
 #include "AOTImage.h"
 #include "AOTInstance.h"
+#include "AOTMembersLeftOut.h"
 #include "AOTModuleLinkWalk.h"
 #include "AOTModuleMicrotasks.h"
 #include "AOTModuleNamespace.h"
@@ -43,6 +44,7 @@
 #include "ExceptionHelpers.h"
 #include "FrameTracers.h"
 #include "GlobalObjectMethodTable.h"
+#include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "JSMicrotask.h"
 #include "JSModuleLoader.h"
@@ -473,6 +475,8 @@ void Modules::resetEntryPointEvaluation(ModuleID module)
     if (moduleData.kind == ModuleKind::CommonJs && current == ModuleStatus::Evaluated && !wasEvictedFromRequireCache(module))
         return;
     if (moduleData.runsAgainAfterThrow()) {
+        if (ModuleID facade = moduleWithExportsOf(module); facade != module)
+            releaseExportsOfLoad(facade);
         for (ModuleID each : { moduleWithExportsOf(module), module }) {
             if (ModuleRecord* record = m_records.get(each)) {
                 loader()->removeEntriesForRecord(record);
@@ -486,6 +490,20 @@ void Modules::resetEntryPointEvaluation(ModuleID module)
     if (!m_instance.program->runsEntryPointsAgain() || !moduleData.isESModuleOfProgram())
         return;
     makeESModuleReadyToRunAgain(module);
+}
+
+// Whoever loads a test file that `bun test` has evicted runs it again.
+void Modules::resetEvictedTestFiles()
+{
+    if (m_evictedTestFiles.isEmpty() || m_innermostEvaluation) [[likely]]
+        return;
+    for (size_t index : BitVector(m_evictedTestFiles)) {
+        ModuleID file(index);
+        if (!runsAgainOnceEvicted(file) || status(file) != ModuleStatus::Evaluated)
+            continue;
+        resetEntryPointEvaluation(file);
+        m_evictedTestFiles.clear(index);
+    }
 }
 
 bool Modules::hasResettablePackageFailure(ModuleID module) const
@@ -1697,7 +1715,7 @@ std::optional<ModuleID> Modules::findVariantToMock(StringView path, std::optiona
     for (ModuleID form : forms) {
         if (!hasStartedLoading(form))
             continue;
-        if (!m_table.fullPath(form).endsWith("?json"_s))
+        if (!m_table.isFormOfType(form, "?json"_s))
             return form;
         json = form;
     }
@@ -3296,6 +3314,40 @@ BitVector Modules::filesThatHaveRun()
     return files;
 }
 
+bool Modules::hasRunSinceStartOfPreloadHook(ModuleID file) const
+{
+    constexpr uint8_t linked = static_cast<uint8_t>(StoredModuleStatus::Linked);
+    return m_statusesAtStartOfPreloadHook[file.index()] <= linked && m_storedStatuses[file.index()] > linked;
+}
+
+void Modules::setIsRunningPreloads(bool runsPreloads)
+{
+    m_isRunningPreloads = runsPreloads;
+    if (!m_hasBegunTestFile || !m_hasReloadableModules) [[likely]]
+        return;
+    std::span<const uint8_t> statuses = m_storedStatuses;
+    if (runsPreloads) {
+        m_statusesAtStartOfPreloadHook.shrink(0);
+        m_statusesAtStartOfPreloadHook.append(statuses);
+        return;
+    }
+    if (m_statusesAtStartOfPreloadHook.isEmpty() || equalSpans(m_statusesAtStartOfPreloadHook.span(), statuses))
+        return;
+    for (ModuleID file : modulesOfKind(ModuleKind::CommonJs, m_commonJSModules)) {
+        if (!hasRunSinceStartOfPreloadHook(file) || status(file) != ModuleStatus::Evaluated)
+            continue;
+        m_filesRunByPreloadHooks.set(file.index());
+        m_releasedFilesRunByPreloadHooks.clear(file.index());
+    }
+}
+
+bool Modules::wasRunByPreloadHook(ModuleID file) const
+{
+    if (m_filesRunByPreloadHooks.get(file.index()) || (m_isRunningPreloads && !m_statusesAtStartOfPreloadHook.isEmpty() && hasRunSinceStartOfPreloadHook(file)))
+        return true;
+    return m_releasedFilesRunByPreloadHooks.get(file.index()) && (isEvicted(file) || m_storedStatuses[file.index()] <= static_cast<uint8_t>(StoredModuleStatus::InRecord));
+}
+
 BitVector Modules::dataFilesThatHaveRun()
 {
     BitVector files;
@@ -3907,6 +3959,27 @@ bool Modules::hasCapturedExport(ModuleID module, const Identifier& name)
     return !!storedValue(m_instance.globalObject, loaded.capturedExports, name);
 }
 
+// Listing the names reads each export, and its first read fixes its value. An export that was not compiled in stays unread.
+void Modules::fillDeferredExportUnlessOmitted(ModuleID module, const Identifier& name, MockMode mode)
+{
+    JSGlobalObject* realm = m_instance.globalObject;
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    if (!isDeferredExportOfBuiltinModule(module, name))
+        return;
+    JSObject* source = loadedIfExists(module)->deferredExportsSource.get();
+    PropertySlot slot(source, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool isOwnMember = source->methodTable()->getOwnPropertySlot(source, realm, name, slot);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isOwnMember && (slot.isAccessor() || slot.isValue())) {
+        JSValue member = slot.isAccessor() ? JSValue(slot.getterSetter()->getter()) : slot.getValue(realm, name);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (member.isCell() && isPlaceholderForOmittedBuiltin(member.asCell()))
+            return;
+    }
+    scope.release();
+    capturedValue(module, name, mode);
+}
+
 bool Modules::isExportAmbiguous(ModuleID module, unsigned index) const
 {
     LoadedModule* loaded = loadedIfExists(module);
@@ -4220,13 +4293,22 @@ bool Modules::standsForFileOutsideImage(ModuleID module) const
     return data(module).isHostValue() && isAbsoluteFileSystemPath(m_table.fullPath(module));
 }
 
-JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form)
+static String withoutQuery(const ModuleTable&, ModuleID, const String& path);
+
+JSString* Modules::resolve(ModuleID module, ResolvedSpecifierForm form, StringView specifierInImage)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool isURL = form == ResolvedSpecifierForm::URL;
-    if (m_table.hasFilePath(module) && isURL)
-        return jsString(vm, URL::fileURLWithFileSystemPath(m_table.fullPath(module)).string());
+    if (m_table.hasFilePath(module) && isURL) {
+        String path = m_table.fullPath(module);
+        String pathOfFile = withoutQuery(m_table, module, path);
+        // A file above the build folder or of an obfuscated build has no display path that ends its path.
+        size_t query = specifierInImage.find('?');
+        if (pathOfFile.length() == path.length() && query != notFound && path.endsWith(specifierInImage.substring(query)) && !m_table.displayPathText(module).contains('?'))
+            pathOfFile = path.left(path.length() - specifierInImage.length() + query);
+        return jsString(vm, makeString(URL::fileURLWithFileSystemPath(pathOfFile).string(), StringView(path).substring(pathOfFile.length())));
+    }
     JSString* specifier = pathString(module);
     if (data(module).kind != ModuleKind::External)
         return specifier;
@@ -4563,6 +4645,13 @@ std::optional<JSPromise*> Modules::importOriginalUnderPatch(ModuleID module, Mod
     RELEASE_AND_RETURN(scope, importUncompiled(key, referrer, RefPtr { fetchParameters }));
 }
 
+// The loader finds a CommonJS module that has run under any of these, and what an import() has loaded under one of them.
+static bool isTypeOfCode(const ScriptFetchParameters& attributes)
+{
+    const String& type = attributes.hostDefinedImportType();
+    return type == "js"_s || type == "jsx"_s || type == "ts"_s || type == "tsx"_s;
+}
+
 JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
 {
     JSGlobalObject* realm = m_instance.globalObject;
@@ -4745,8 +4834,13 @@ JSPromise* Modules::import(ModuleID module, ModuleID referrer, JSValue options)
             else if (ASCIILiteral type = typeThatReadsTextAsData(*attributes); !type.isNull() && (data(file).kind == ModuleKind::SourceText || data(file).kind == ModuleKind::CommonJs) && !data(file).bodyThrowsAtLoad() && !m_table.fullPath(file).contains('?')) [[unlikely]] {
                 throwException(realm, scope, createFormNotHeldError(realm, m_table.fullPath(file), type));
                 return importPromiseRejectedByLoader(realm, scope);
-            } else
+            } else {
                 noteFormAnsweredFirst(key, *attributes, file);
+                if (isTypeOfCode(*attributes) && !m_codeFilesWhoseMockEnded.isEmpty()) [[unlikely]] {
+                    if (std::optional<ModuleID> code = m_table.findByPath(key.string()))
+                        m_codeFilesWhoseMockEnded.clear(code->index());
+                }
+            }
         } else if (m_table.mayHaveAttributeVariants() && !isTestRun()) [[unlikely]]
             module = textRequiredInPlaceOf(module);
         return start(module);
@@ -4791,9 +4885,10 @@ ModuleID Modules::textRequiredInPlaceOf(ModuleID module)
     // It leaves a path in the require cache, where only the import of a CommonJS module looks.
     bool looksInRequireCache = data(file).kind == ModuleKind::CommonJs && !data(file).isImportedAsESModule();
     for (ASCIILiteral mark : { "?text"_s, "?file"_s }) {
-        std::optional<ModuleID> form = m_table.findByPath(makeString(path, mark));
+        std::optional<ModuleID> form = m_table.findForm(path, mark);
         bool sharesEntry = form && data(*form).kind == ModuleKind::Data && data(*form).requireResult == RequireResult::NamespaceIfImported;
-        if (sharesEntry && wasRequired(*form))
+        // What an import has loaded under a type has an entry of its own in the loader, also where a require() is answered with it.
+        if (sharesEntry && wasRequired(*form) && loadedIfExists(*form)->isKeptByRequire)
             return looksInRequireCache || mark == "?text"_s ? *form : module;
     }
     return module;
@@ -5112,7 +5207,7 @@ std::optional<ModuleID> Modules::findFormThatStatementLoaded(const Identifier& k
         return std::nullopt;
     Vector<ModuleID, 2> forms = m_table.importAttributeVariants(key.string());
     forms.removeAllMatching([&](ModuleID form) {
-        return data(form).kind != ModuleKind::Data || m_table.fullPath(form).endsWith("?json"_s);
+        return data(form).kind != ModuleKind::Data || m_table.isFormOfType(form, "?json"_s);
     });
     if (forms.isEmpty() || (forms.size() == 1 && asked == forms[0]))
         return std::nullopt;
@@ -5149,7 +5244,7 @@ void Modules::giveStatementsFormsThatLoaderHas(ModuleID importer)
                 continue;
             if (data(target).kind == ModuleKind::SourceText)
                 importers.append(target);
-            else if (data(target).kind == ModuleKind::Data && !m_table.fullPath(target).endsWith("?json"_s))
+            else if (data(target).kind == ModuleKind::Data && !m_table.isFormOfType(target, "?json"_s))
                 forms.append(target);
         }
     }
@@ -5165,7 +5260,7 @@ bool Modules::takeWhatFormAnsweredFirstHolds(ModuleID form)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
     String path = m_table.fullPath(form);
-    if (!path.contains('?') || path.endsWith("?json"_s))
+    if (!path.contains('?') || m_table.isFormOfType(form, "?json"_s))
         return false;
     Identifier key = keyWithoutForm(form);
     auto first = m_formsAnsweredFirst.find(ModuleMapKey { key.impl(), ScriptFetchParameters::Type::HostDefined });
@@ -5413,7 +5508,7 @@ void Modules::fulfillFirstQueuedFetch()
 bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* requested, ModuleID requester)
 {
     ModuleID file = fileOf(requested->module());
-    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && m_loadsInFlight.numberBeingLoaded() > 1;
+    bool runsWhenItsTextComes = isCommonJSModuleOrFacade(requested->module()) && hasNotBegun(file) && (m_loadsInFlight.numberBeingLoaded() > 1 || hasLoadedGraphThatIsNotRunning());
     bool canProgramTellWhenTextsCome = !m_queuedFetches.isEmpty() || m_canJobsOfFileTellWhenTextsCome || data(requester).isLoadedByLoader() || runsWhenItsTextComes;
     if (!canProgramTellWhenTextsCome || !isFileOfProgram(file) || m_instance.vm->synchronousModuleQueue() || isFetchedInsideCall(file)) {
         noteThatTextHasCome(file);
@@ -5421,6 +5516,29 @@ bool Modules::tryDeferFetchFulfillment(JSPromise* fetched, ModuleRecord* request
     }
     enqueueFetch(fetched, requested->module(), requested, std::nullopt, turnInWhichTextCame(requester));
     return true;
+}
+
+// The host parses data where it is asked for, so that the fetch has failed when import() returns. Code that does not parse fails on another thread.
+bool Modules::isUnparsableData(ModuleID module)
+{
+    if (data(module).kind != ModuleKind::SourceText || status(module) == ModuleStatus::Evaluated || data(module).isOfLibrary() || !isTestRun() || isMocked(module) || activeMock(module)) [[likely]]
+        return false;
+    return host().isParsedAsData && host().isParsedAsData(m_table.fullPath(fileOf(module)));
+}
+
+JSPromise* Modules::rejectImportOfUnparsableData(JSPromise* promise, ModuleID module)
+{
+    static constexpr InternalMicrotask jobsOfFailedFetch[] = {
+        InternalMicrotask::ModuleLoadTopSettled,
+        InternalMicrotask::ModuleLoadTopRejected,
+        InternalMicrotask::ImportModuleNamespace,
+    };
+    auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
+    evaluateSynchronously(module, SynchronousEvaluationReason::Require);
+    JSValue error = scope.exception() ? scope.exception()->value() : jsUndefined();
+    TRY_CLEAR_EXCEPTION(scope, promise);
+    queueStepOfImport(promise, moduleForJob(module), std::size(jobsOfFailedFetch), error);
+    return promise;
 }
 
 JSPromise* Modules::startImportInLaterTurn(ModuleID module, std::optional<int64_t> referrerAsyncOrder)
@@ -5656,6 +5774,8 @@ JSPromise* Modules::startImport(ModuleID module, std::optional<int64_t> referrer
     currentImportWaitState.reset();
     currentImportTarget.reset();
     didLoadDataFile(module, LoadKind::Import);
+    if (text == ImportSourceState::MayArriveLater && isUnparsableData(module)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, rejectImportOfUnparsableData(promiseForCaller(), module));
     if (text == ImportSourceState::MayArriveLater && (!m_queuedFetches.isEmpty() || hasFileOfGraphBeingLoadedBegun() || data(module).isLoadedByLoader() || m_importDeferringMocks == module) && hasUnreadSource(module)) [[unlikely]] {
         if (isNewCallAfterTests)
             return promiseForCaller();
@@ -6479,6 +6599,16 @@ ModuleRecord* Modules::exposeRecord(ModuleID module, RecordHolder holder)
     RELEASE_AND_RETURN(scope, appendRequestsOfUncompiledCode(module, record));
 }
 
+// The call of import() settles in a later job.
+bool Modules::hasLoadedGraphThatIsNotRunning() const
+{
+    for (const LoadInFlight& load : m_loadsInFlight) {
+        if (load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync)
+            return true;
+    }
+    return false;
+}
+
 bool Modules::canTellHowGraphIsLoaded(ModuleID root)
 {
     VM& vm = *m_instance.vm;
@@ -6488,10 +6618,8 @@ bool Modules::canTellHowGraphIsLoaded(ModuleID root)
         return false;
     if (vm.synchronousModuleQueue() || numberOfGraphsBeingLoaded() > 1)
         return true;
-    for (const LoadInFlight& load : m_loadsInFlight) {
-        if (load.isLoaded && status(load.root) != ModuleStatus::Evaluating && status(load.root) != ModuleStatus::EvaluatingAsync)
-            return true;
-    }
+    if (hasLoadedGraphThatIsNotRunning())
+        return true;
     return !vm.defaultMicrotaskQueue().allOf([&](const QueuedTask& task) {
         if (task.job() >= InternalMicrotask::ModuleRegistryFetchSettled && task.job() <= InternalMicrotask::ImportModuleNamespace)
             return true;
@@ -7085,7 +7213,7 @@ std::optional<ModuleID> Modules::moduleFormOf(ModuleID file) const
         return std::nullopt;
     String path = m_table.fullPath(file);
     ASCIILiteral type = path.endsWith(".cts"_s) ? "?ts"_s : "?js"_s;
-    std::optional<ModuleID> form = m_table.findByPath(makeString(path, type));
+    std::optional<ModuleID> form = m_table.findForm(path, type);
     return form && data(*form).kind == ModuleKind::SourceText ? form : std::nullopt;
 }
 
@@ -7111,11 +7239,17 @@ std::optional<ModuleID> loadedModuleForm(JSGlobalObject* realm, ModuleID file)
     return modules ? modules->loadedModuleForm(file) : std::nullopt;
 }
 
-static bool answersRequireOfFile(Modules& modules, ModuleID form)
+bool Modules::answersRequireOfFile(ModuleID form)
 {
-    String path = modules.table().fullPath(form);
-    std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?')));
-    return file && modules.loadedModuleForm(*file) == form;
+    String path = m_table.fullPath(form);
+    std::optional<ModuleID> file = m_table.findByPath(StringView(path).left(path.reverseFind('?')));
+    if (!file || data(*file).kind != ModuleKind::SourceText)
+        return file && loadedModuleForm(*file) == form;
+    if (isEvicted(*file) || isEvicted(form) || isMocked(*file) || activeMock(*file) || wasRequired(*file))
+        return false;
+    // The loader lost the entry of the form to the mock.
+    bool hasEntry = !m_codeFilesWhoseMockEnded.get(file->index());
+    return wasRequired(form) || (hasEntry && hasNotBegun(*file) && status(form) == ModuleStatus::Evaluated);
 }
 
 static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
@@ -7127,7 +7261,13 @@ static bool wasRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
 // The path stays in the require cache where an import runs the file as an ES module.
 static bool wasPathRequiredInPlaceOfCode(const Modules& modules, ModuleID form)
 {
-    return wasRequiredInPlaceOfCode(modules, form) && modules.table().fullPath(form).endsWith("?file"_s);
+    return wasRequiredInPlaceOfCode(modules, form) && modules.table().isFormOfType(form, "?file"_s);
+}
+
+static bool isImportedEmptyFile(const Modules& modules, ModuleID form)
+{
+    std::optional<ModuleID> file = fileOfForm(modules, form);
+    return file && modules.data(*file).kind == ModuleKind::SourceText && !modules.data(*file).needsEvaluation() && modules.wasImportedByStatement(*file);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t referrer))
@@ -7135,15 +7275,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTRequireIfImported, EncodedJSValue, (Instanc
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTRequireIfImported);
     Modules& modules = modulesOf(*instance);
     if (modules.data(ModuleID(module)).kind == ModuleKind::SourceText) {
-        if (!answersRequireOfFile(modules, ModuleID(module)))
+        if (!modules.answersRequireOfFile(ModuleID(module)))
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         OPERATION_RETURN(scope, JSValue::encode(modules.require(ModuleID(module), ModuleID(referrer))));
     }
-    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))))
+    if ((!modules.hasBeenImported(ModuleID(module)) && !wasRequiredInPlaceOfCode(modules, ModuleID(module))) || (isLoadedWithoutType(modules, ModuleID(module)) && !wasPathRequiredInPlaceOfCode(modules, ModuleID(module))) || (wasPathRequiredInPlaceOfCode(modules, ModuleID(module)) && isImportedEmptyFile(modules, ModuleID(module))))
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (modules.isUnevaluatedTextForm(ModuleID(module))) [[unlikely]] {
-        String path = modules.table().fullPath(ModuleID(module));
-        if (std::optional<ModuleID> file = modules.table().findByPath(StringView(path).left(path.reverseFind('?'))); file && modules.data(*file).kind == ModuleKind::Data && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
+        std::optional<ModuleID> file = fileOfForm(modules, ModuleID(module));
+        if (file && modules.data(*file).kind != ModuleKind::Data)
+            OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+        if (file && modules.data(*file).requireResult == RequireResult::NamespaceIfImported) {
             modules.moduleNamespace(*file, Modules::ModulePhase::Evaluation);
             OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
         }
@@ -7212,10 +7354,11 @@ void forEachCountedFile(VM& vm, const ScopedLambda<void(const String& descriptio
         each(description, counts->span());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t, uint32_t isURL))
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveModule, EncodedJSValue, (Instance* instance, uint32_t module, uint32_t, uint32_t specifier, uint32_t isURL))
 {
     AOT_OPERATION_BEGIN(instance, Entry::operationAOTResolveModule);
-    OPERATION_RETURN(scope, JSValue::encode(modulesOf(*instance).resolve(ModuleID(module), isURL ? ResolvedSpecifierForm::URL : ResolvedSpecifierForm::Path)));
+    Modules& modules = modulesOf(*instance);
+    OPERATION_RETURN(scope, JSValue::encode(modules.resolve(ModuleID(module), isURL ? ResolvedSpecifierForm::URL : ResolvedSpecifierForm::Path, ProgramStrings::viewInImage(modules.table().programTables(), StringID(specifier)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowModuleFailure, void, (Instance* instance, uint32_t failure, uint32_t isForRequire))
@@ -8003,6 +8146,12 @@ static bool hasRequireCacheEntry(Modules* modules, ModuleID module, bool& import
     return !isNamedByNumber(modules->table().fullPath(module), module);
 }
 
+bool wasRequired(JSGlobalObject* realm, ModuleID module)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasRequired(module);
+}
+
 bool hasRequireCacheEntry(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
@@ -8450,16 +8599,16 @@ void throwCompiledModuleAccessError(JSGlobalObject* realm, ModuleID module, Load
     throwException(realm, scope, createCompiledModuleAccessError(realm, path, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s));
 }
 
-static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadKind form)
+static void throwLoadByNameRefused(JSGlobalObject* realm, StringView name, LoadKind form, IsCompiledFile isCompiledFile)
 {
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
     notifyRejectedChangeListener(realm, makeString("Cannot reach '"_s, name, '\''));
-    throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s));
+    throwException(realm, scope, createLoadByNameRefusedError(realm, name, form == LoadKind::Import ? "ERR_MODULE_NOT_FOUND"_s : "MODULE_NOT_FOUND"_s, isCompiledFile));
 }
 
 void Modules::refuseToShowExportsOf(ModuleID module)
 {
-    throwLoadByNameRefused(m_instance.globalObject, m_table.fullPath(m_table.moduleBehindFacade(module).value_or(module)), LoadKind::Import);
+    throwLoadByNameRefused(m_instance.globalObject, m_table.fullPath(m_table.moduleBehindFacade(module).value_or(module)), LoadKind::Import, IsCompiledFile::Yes);
 }
 
 void Modules::refuseToHandOutExportOf(ModuleID module, StringView name)
@@ -8634,7 +8783,8 @@ void willLoadByName(JSGlobalObject* realm, JSValue specifier, LoadKind form)
     if (modules ? modules->rejectsLoadsByName() && modules->rejectsUncompiledCode() : !Image::current()->loadsModulesByName()) {
         String name = specifier.isString() ? asString(specifier)->value(realm) : String();
         RETURN_IF_EXCEPTION(scope, void());
-        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name, form));
+        bool isCompiledFile = modules && modules->table().findByPath(name);
+        RELEASE_AND_RETURN(scope, throwLoadByNameRefused(realm, name, form, isCompiledFile ? IsCompiledFile::Yes : IsCompiledFile::No));
     }
     if (modules)
         RELEASE_AND_RETURN(scope, modules->admitCodeNamedBy(specifier));
@@ -8649,7 +8799,7 @@ static Modules* modulesOrThrow(JSGlobalObject* realm, ModuleID module, LoadKind 
         if (modules->hasUncompiledRequester() && Image::current()->loadsCodeOutsideImage())
             throwCompiledModuleAccessError(realm, module, form);
         else
-            throwLoadByNameRefused(realm, modulePath(module), form);
+            throwLoadByNameRefused(realm, modulePath(module), form, IsCompiledFile::Yes);
         return nullptr;
     }
     auto scope = DECLARE_THROW_SCOPE(realm->vm());
@@ -9166,6 +9316,18 @@ bool isDisplacedByMock(JSGlobalObject* realm, ModuleID module)
     return modules && modules->isDisplacedByMock(module);
 }
 
+void didEvictTestFile(JSGlobalObject* realm, ModuleID file)
+{
+    if (Modules* modules = modulesOf(realm))
+        modules->didEvictTestFile(file);
+}
+
+bool didEndMocksOfTestFile(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->didEndMocksOfTestFile(file);
+}
+
 void releaseEndedTestFiles(JSGlobalObject* realm)
 {
     if (Modules* modules = modulesOf(realm))
@@ -9302,6 +9464,12 @@ bool hasOnlyBeenLinked(JSGlobalObject* realm, ModuleID module)
     return modules && modules->hasOnlyBeenLinked(module);
 }
 
+bool isAwaitedByPendingImport(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->isAwaitedByPendingImport(file);
+}
+
 std::optional<ModuleID> findVariantToMock(JSGlobalObject* realm, StringView path, std::optional<ModuleID> file)
 {
     Modules* modules = modulesOf(realm);
@@ -9309,6 +9477,12 @@ std::optional<ModuleID> findVariantToMock(JSGlobalObject* realm, StringView path
         return file;
     modules->startLoadingModulesIndividually();
     return modules->findVariantToMock(path, file);
+}
+
+bool isFormOfType(JSGlobalObject* realm, ModuleID module, ASCIILiteral queryOfType)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->table().isFormOfType(module, queryOfType);
 }
 
 Vector<ModuleID, 2> importAttributeVariants(JSGlobalObject* realm, StringView path)
@@ -9906,6 +10080,8 @@ void willMockModule(JSGlobalObject* realm, ModuleID module, JSValue requireRetur
     MockDoor door(found, module, "willMockModule"_s);
     Modules& modules = *found;
     modules.tryLinkFailedLoads();
+    if (modules.data(module).kind == ModuleKind::CommonJs && !modules.isMocked(module))
+        modules.notePatchedBeforeImport(module);
     modules.leaveImportersAbove(module);
     JSObject* exports = requireReturnValue.isObject() ? asObject(requireReturnValue) : constructEmptyObject(realm);
     modules.setMockHasCommonJSExports(module, hasCommonJSExports);
@@ -10537,6 +10713,11 @@ void ModuleRecord::executeAsync(JSGlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, void());
     }
     promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::AsyncModuleExecutionDone, nullptr, this);
+}
+
+bool ModuleRecord::wasPatchedBeforeImport() const
+{
+    return modules().wasPatchedBeforeImport(modules().table().moduleBehindFacade(m_module).value_or(m_module));
 }
 
 bool ModuleRecord::isReplacedByMock() const
@@ -11764,6 +11945,10 @@ void ModuleNamespace::getOwnPropertyNames(JSObject* object, JSGlobalObject* glob
             RETURN_IF_EXCEPTION(scope, void());
             if (!hasProperty)
                 continue;
+            if (isTakenFromValue) {
+                modules.fillDeferredExportUnlessOmitted(thisObject->m_module, name, thisObject->keepsToModule() ? Modules::MockMode::Bypass : Modules::MockMode::Use);
+                RETURN_IF_EXCEPTION(scope, void());
+            }
         }
         names.add(name);
     }

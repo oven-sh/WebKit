@@ -30,7 +30,7 @@ static constexpr unsigned numberOfSlimClosureKinds = 2;
 struct FunctionKindData {
     uint16_t closuresGetOnlyListedNames : 1;
     uint16_t prototypePropertyStaysAsMade : 1;
-    uint16_t unusedKindBits : 1 { 0 };
+    uint16_t isOfRuntimeFunction : 1;
     uint16_t isSlim : 1;
     uint16_t isAsync : 1;
     uint16_t isGenerator : 1;

@@ -324,7 +324,7 @@ static JSObject* createErrorWithCode(JSGlobalObject* globalObject, const String&
     return withCode(globalObject, createError(globalObject, message), code);
 }
 
-JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code)
+JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView name, ASCIILiteral code, IsCompiledFile isCompiledFile)
 {
     name = clampedForErrorMessage(name);
     bool isModuleOfBun = name.startsWith("node:"_s) || name.startsWith("bun:"_s);
@@ -333,7 +333,9 @@ JSObject* createLoadByNameRefusedError(JSGlobalObject* globalObject, StringView 
         return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': no import() or require() that the build saw can reach it by a dynamic path. Import the file by a constant path, or add --aot-allow-code-from-disk."_s)), code);
     if (!isModuleOfBun && image && image->loadsCodeOutsideImage())
         return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': it was compiled into this executable, and a dynamic path finds a compiled file only if the path is a string somewhere in your code. Pass the file to bun compile as another entry point."_s)), code);
-    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
+    ASCIILiteral advice = isModuleOfBun ? "The compiler couldn't tell at build time that this call reaches a module loader. Call require(), import() or process.getBuiltinModule() directly."_s
+        : isCompiledFile == IsCompiledFile::Yes ? "Pass the file to bun compile as another entry point."_s
+        : "Pass the file to bun compile as another entry point, or build with --aot-allow-code-from-disk."_s;
     return createErrorWithCode(globalObject, withAOTErrorNote(makeString("Cannot load '"_s, name, "': this executable can't load a module from a dynamic path. "_s, advice)), code);
 }
 

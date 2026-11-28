@@ -487,9 +487,14 @@ void CodeGenerator::generateNextRow(const Interleaving& nest, LBasicBlock isNoRo
 {
     generateEndOfRow(nest);
     Vector<LValue, 4> stepped;
-    for (ValueID parameter : nest.steppedParameters)
-        stepped.append(get(parameter).value);
     std::span<const ValueID> parameters = code().at(nest.outerHead).parameters();
+    {
+        BlockID last = nest.blocksAfterVersion.last();
+        TerminatorContext contextOfEnd(last, code().at(last).terminator, nullptr);
+        SetForScope<const OperationContext*> whileStepping(m_operation, &contextOfEnd);
+        for (size_t index = 0; index < parameters.size(); ++index)
+            stepped.append(getIn(nest.steppedParameters[index], representationOf(parameters[index])).value);
+    }
     for (size_t index = 0; index < parameters.size(); ++index)
         m_values[parameters[index].index()] = stepped[index];
     auto require = [&](LValue condition) {
@@ -557,14 +562,15 @@ TypedPointer CodeGenerator::keptElement(const Interleaving& nest, unsigned row, 
 bool CodeGenerator::beginInterleavedOperation(ValueID id, const Operation& operation)
 {
     Interleaving& nest = *m_interleaving;
-    if (id == nest.store && nest.row) {
+    if (id == nest.store) {
         ValueContext context(operation.block(), id, operation, nullptr);
         SetForScope<const OperationContext*> whileKeeping(m_operation, &context);
-        declareAccessesOf(context);
-        keepOverwrittenElement(nest);
-    }
-    if (id == nest.store)
+        if (nest.row) {
+            declareAccessesOf(context);
+            keepOverwrittenElement(nest);
+        }
         nest.numberStored = getIn(operation.valueOperand(), Representation::Double).value;
+    }
     for (const ElementStream& stream : nest.streams) {
         if (stream.access != id)
             continue;

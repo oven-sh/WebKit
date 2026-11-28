@@ -499,7 +499,8 @@ bool CalleeSummarizerForLinkEffects::isSuperConstructorRead(FunctionID id, const
 bool CalleeSummarizerForLinkEffects::ownsPrototype(FunctionID id) const
 {
     const Function& function = m_program.at(id);
-    return isClassConstructorOf(function.kind) || (function.kind == FunctionKind::Plain && !function.isCoroutine());
+    // A function of the library is made without one.
+    return isClassConstructorOf(function.kind) || (function.kind == FunctionKind::Plain && !function.isCoroutine() && !isLibraryCode(m_program, function));
 }
 
 template<typename Functor>
@@ -1391,6 +1392,21 @@ void CalleeSummarizerForLinkEffects::findCodeEnteredByCall(FunctionID id, const 
     }
     case SummaryCall::Callee::Builtin:
         break;
+    }
+    if (call.isConstruction) {
+        PropertyKeyID prototype = m_program.keyOf(BuiltinNames::prototype);
+        auto lookForPrototype = [&](FunctionID callee) {
+            if (prototype && !found.mayBeUnseen && m_program.at(callee).kind == FunctionKind::Plain)
+                lookOffFunction(callee, prototype, MethodKind::Getter, false, found);
+        };
+        if (call.callee == SummaryCall::Callee::Binding && call.function)
+            lookForPrototype(call.function);
+        for (FunctionID callee : callees.listed())
+            lookForPrototype(callee);
+        for (uint32_t shared : callees.shared()) {
+            for (FunctionID callee : m_flow.calleesOfSharedCalls[shared].listed())
+                lookForPrototype(callee);
+        }
     }
 
     Effects ofRows = Effects::none();

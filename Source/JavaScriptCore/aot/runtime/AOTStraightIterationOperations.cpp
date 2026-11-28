@@ -313,9 +313,15 @@ static BuiltinID nextMethodOfBuiltinIterator(JSCell* iterator)
 
 static JSObject* iteratorAtPosition(VM& vm, JSGlobalObject* globalObject, JSValue collection, JSValue position, JSValue table, IterationKind kind)
 {
+    constexpr int64_t doneIterationPosition = int64_t { 1 } << 35;
     JSCell* cell = collection.asCell();
+    const bool isDone = position.asNumber() >= doneIterationPosition;
     if (auto* map = dynamicDowncast<JSMap>(cell)) {
         auto* iterator = JSMapIterator::create(vm, globalObject->mapIteratorStructure(), map, kind);
+        if (isDone) {
+            iterator->close(vm);
+            return iterator;
+        }
         if (table.isCell())
             iterator->setStorage(vm, table.asCell());
         iterator->setEntry(vm, static_cast<JSMap::Helper::Entry>(position.asNumber()));
@@ -323,6 +329,10 @@ static JSObject* iteratorAtPosition(VM& vm, JSGlobalObject* globalObject, JSValu
     }
     if (auto* set = dynamicDowncast<JSSet>(cell)) {
         auto* iterator = JSSetIterator::create(vm, globalObject->setIteratorStructure(), set, kind);
+        if (isDone) {
+            iterator->close(vm);
+            return iterator;
+        }
         if (table.isCell())
             iterator->setStorage(vm, table.asCell());
         iterator->setEntry(vm, static_cast<JSSet::Helper::Entry>(position.asNumber()));
@@ -330,11 +340,11 @@ static JSObject* iteratorAtPosition(VM& vm, JSGlobalObject* globalObject, JSValu
     }
     if (collection.isString()) {
         auto* iterator = JSStringIterator::create(vm, globalObject->stringIteratorStructure(), asString(collection));
-        iterator->setIndex(static_cast<int32_t>(position.asNumber()));
+        iterator->setIndex(isDone ? static_cast<int32_t>(asString(collection)->length()) : static_cast<int32_t>(position.asNumber()));
         return iterator;
     }
     auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asObject(collection), kind);
-    iterator->setIndex(static_cast<int64_t>(position.asNumber()));
+    iterator->setIndex(isDone ? JSArrayIterator::doneIndex : static_cast<int64_t>(position.asNumber()));
     return iterator;
 }
 
@@ -346,6 +356,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (I
     JSValue next = JSValue::decode(encodedPosition);
     if (positionIsBeforeStep)
         next = jsNumber(next.asNumber() + 1);
+    bool isDone = false;
     auto kind = static_cast<Typed::SuspendedIterationKind>(encodedKind);
     switch (kind) {
     case Typed::SuspendedIterationKind::Keys:
@@ -363,6 +374,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (I
     case Typed::SuspendedIterationKind::State:
         next = jsBoolean(false);
         if (auto* words = dynamicDowncast<JSArray>(iterator.asCell())) {
+            isDone = words->length() > 2 && words->getIndexQuickly(2).isTrue();
             next = words->getIndexQuickly(1);
             iterator = words->getIndexQuickly(0);
         }
@@ -378,6 +390,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (I
         break;
     }
     case Typed::SuspendedIterationKind::Protocol:
+        isDone = JSValue::decode(encodedTable).isTrue();
         break;
     }
     if (next.isNumber() || next.isBoolean())
@@ -386,7 +399,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewSuspendedIteration, JSCell*, (I
     storeWordOfStraightState(state, WordOfStraightIteration::Iterator, iterator);
     storeWordOfStraightState(state, WordOfStraightIteration::Next, next);
     storeWordOfStraightState(state, WordOfStraightIteration::Stepper, jsNumber(static_cast<int32_t>(stepperOfStraightIteration(*instance, asObject(iterator), next))));
-    storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(false));
+    storeWordOfStraightState(state, WordOfStraightIteration::IsDone, jsBoolean(isDone));
     vm.mutatorFence();
     return state;
 }

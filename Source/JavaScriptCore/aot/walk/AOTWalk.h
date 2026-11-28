@@ -1890,7 +1890,7 @@ public:
     ValueID valueBeingWalked() const { return m_valueBeingWalked; }
     bool appendNamesUsedOffViewsOf(ValueID, Vector<PropertyKeyID, 16>&);
     std::span<const uint64_t> castsOf(ValueID);
-    enum class RoundKeptByWalker : uint8_t { OnlyLayoutWithAllNames, ShapesOfLayouts, DescribesBagOfOptions, OnlyLayoutWithName, RecordsThatFileWrites, LiteralsWithoutNames, AreAllOfCreatedObjects, PrivateNameHolders, MemberLacksNames };
+    enum class RoundKeptByWalker : uint8_t { OnlyLayoutWithAllNames, ShapesOfLayouts, DescribesBagOfOptions, OnlyLayoutWithName, RecordsThatFileWrites, LiteralsWithoutNames, AreAllOfCreatedObjects, MemberLacksNames };
     static bool keepsRoundsOver(const TypeArena&, LayoutSetID);
     std::optional<uint32_t> roundKept(RoundKeptByWalker, LayoutSetID, uint32_t second) const;
     void keepRound(RoundKeptByWalker, LayoutSetID, uint32_t second, uint32_t answer);
@@ -3814,6 +3814,7 @@ private:
 public:
     void noteTestSeenInTries(Reference value, ValueID operation = { }, TypeID tested = { });
     void noteGuardOfStoresAskedInTries(const MemberConditionRecord&);
+    void noteReadGuardInTrialIterations(const MemberConditionRecord&);
     bool isAllocatedInTrialIteration(Reference object) const { return !m_trialVisits.isEmpty() && object && object.isValue() && object.id().index() >= m_trialVisits.last().firstRecord; }
     void noteBirthInTries(LayoutID classLayout);
     void noteGuardsBegunInTries(LayoutID classLayout);
@@ -4702,7 +4703,7 @@ private:
     Reference buildGeneratorPrototype(Reference function, Origin);
     bool isResumableGenerator(FunctionID generatorFunction);
     Reference buildSuspendedGeneratorFrame(size_t place, Origin);
-    Reference buildSuspendedIteration(const Frame& suspended, ValueID open, Reference state, Origin);
+    Reference buildSuspendedIteration(const Frame& suspended, ValueID open, ValueID yield, Reference state, Origin);
     void closeByChangedReturn(size_t place, IteratorCompletion, BlockID inPlace, BlockID after, Origin);
     bool runsNothingSinceCall(Reference generator) const;
     bool isOnlyPassedToCopy(Reference generator);

@@ -539,6 +539,8 @@ public:
             size += m_bytecodeBehindFlatProgram->estimatedSizeInBytes();
         if (m_flatProgramThatCountsTurns)
             size += m_flatProgramThatCountsTurns->estimatedSizeInBytes();
+        if (m_frameDroppingProgram)
+            size += m_frameDroppingProgram->estimatedSizeInBytes();
         return size;
     }
 
@@ -599,6 +601,9 @@ public:
     // Made out of the text on the day the flat program gives up at matchLimit.
     std::unique_ptr<FlatProgram> m_flatProgramThatCountsTurns;
     bool m_hasAskedForFlatProgramThatCountsTurns { false };
+    // Made out of the text on the day the flat program gives up for want of frames.
+    std::unique_ptr<FlatProgram> m_frameDroppingProgram;
+    bool m_triedFrameDroppingProgram { false };
     // Where no JIT stands in front of the bytecode: a match is given up where the JIT gives it up, not earlier. See Interpreter::countsTowardMatchLimit().
     bool m_countsWhatJITCounts { false };
 

@@ -576,12 +576,13 @@ bool walkStretchBehindTestsOfNumbers(Walker& walker, std::span<const TestOfNumbe
                 walker.restartIteration();
             walker.continueIn(goesOn);
             Reference proven = walker.isUnreachable() || walker.hasFailed() ? Reference() : buildProofOfNumber(walker, number.value, isNumber, origin);
-            if (!proven)
+            if (!proven && (armsOfNumber.isEmpty() || !walker.isUnreachable() || walker.hasFailed()))
                 break;
             if (!takesNullish)
                 holdAgainstSites(number, proven);
             else {
-                armsOfNumber.append({ walker.currentBlock(), { proven } });
+                if (proven)
+                    armsOfNumber.append({ walker.currentBlock(), { proven } });
                 std::array<Reference, 1> met;
                 if (!walker.joinArms(armsOfNumber.span(), walker.addBlock(ofOtherArm), met))
                     break;

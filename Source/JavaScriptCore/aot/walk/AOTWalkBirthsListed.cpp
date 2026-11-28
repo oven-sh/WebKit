@@ -1014,7 +1014,7 @@ bool listStoresOfCopiedConstructorOfItsOpcodes(Walker& walker, const BodyValue& 
         walker.chooseConservativeFields(read);
         Effects ofRead = declaredBoundOf(Opcode::NewObject);
         ofRead.reads.add(AbstractHeap::NamedProperties);
-        prototype = walker.build(WTF::move(read), &ofRead);
+        prototype = walker.build(WTF::move(read), isLibraryCode(program, program.at(callee)) ? nullptr : &ofRead);
         if (!prototype)
             return true;
     }

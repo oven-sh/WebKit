@@ -347,7 +347,7 @@ Operand ConversionEmitter::unbox(Boxed value, const Type& type, Representation t
 
 Operand ConversionEmitter::unboxOptional(Boxed value, const Type& type, Representation to)
 {
-    if ((type.primitives & markerPrimitives) == Primitive::Undefined && !emittersCheckProofs()) {
+    if ((type.primitives & markerPrimitives) == Primitive::Undefined && !emittersCheckProofs() && !sourcesOfProofsCheckedUnder(build().options().testing)) {
         if (LValue word = emitter<SlotEmitter>().findSlotWord(value.value()))
             value = Boxed(word);
     }

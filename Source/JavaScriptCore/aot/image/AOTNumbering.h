@@ -495,6 +495,7 @@ public:
         RELEASE_ASSERT(number);
         return *number;
     }
+    Vector<StringID> stringsByNumber() const;
 
 private:
     static constexpr uint32_t noNumber = UINT32_MAX;

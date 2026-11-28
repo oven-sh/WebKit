@@ -4602,6 +4602,8 @@ bool Walker::runTrialVisits(BlockID inputHead, std::span<const Reference> enteri
             return true;
         }
         if (isUndoneForNet) {
+            for (const TrialVisit& visitAround : m_trialVisits)
+                std::swap(answersBefore[visitAround.summaryIndex], m_loopSummaries[visitAround.summaryIndex]);
             m_loopSummaries = WTF::move(answersBefore);
             m_loopSummaryIndices = WTF::move(placesOfAnswersBefore);
         }

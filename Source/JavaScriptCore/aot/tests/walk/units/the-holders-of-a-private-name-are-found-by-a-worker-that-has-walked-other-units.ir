@@ -1,0 +1,364 @@
+# The holders of a private name are layouts. A set of them may lie in the arena of one unit, so a worker keeps the layouts and not the set.
+# f3 asks for #grain, which L0, L1 and L2 hold. f5 asks for #edge first, which L1 and L2 hold, and then for #grain. No object has the layout L3, so the holders are no family of the program.
+# OPTIONS: threads=1
+# RUN: walk f3 f5 mechanisms=all
+# CHECK-LABEL: code f3:Body
+# CHECK: = ShapeTest {{*}}layouts=[L0, L1, L2]
+# CHECK-LABEL: code f5:Body
+# CHECK: = ShapeTest {{*}}layouts=[L1, L2]
+# CHECK: = ShapeTest {{*}}layouts=[L0, L1, L2]
+# RUN(ALONE): same-bytes-alone f3:Body f5:Body mechanisms=all
+# ALONE: f3:Body same:
+# ALONE: f5:Body same:
+# declare function sink(...values: unknown[]): void;
+# declare const count: number;
+# class Plank {
+#   #grain = 1;
+#   static isPlank(thing: object): boolean { return #grain in thing; }
+#   static count(things: object[], from: number): number {
+#     let found = 0;
+#     for (let i = from; i < things.length; i++) found += #grain in things[i]! ? 1 : 0;
+#     return found > 1000 ? Plank.count(things, from + 1) : found;
+#   }
+# }
+# class Board extends Plank {
+#   #edge = 2;
+#   static both(things: object[], from: number): number {
+#     let found = 0;
+#     for (let i = from; i < things.length; i++) found += #edge in things[i]! ? 1 : 0;
+#     for (let i = from; i < things.length; i++) found += Plank.isPlank(things[i]!) ? 100 : 0;
+#     return found > 100000 ? Board.both(things, from + 1) : found;
+#   }
+# }
+# class Shelf extends Board {}
+# class Ghost extends Shelf { static kind = 3; }
+# const things: object[] = [];
+# for (let i = 0; i < count; i++) things.push(i % 4 === 0 ? new Plank() : i % 4 === 1 ? new Board() : i % 4 === 2 ? new Shelf() : { i });
+# sink(Board.both(things, 1), Plank.count(things, 3), Board.both(things, 1), Plank.count(things, 3), Ghost.kind);
+# export {};
+
+module m0 path="main.ts" displayPath="main.ts" body=f0
+entry module=m0
+layout L0 kind=Instance name="Plank" module=m0 position=86 constructor=f1 fields=[{key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#grain"@L0 declared={type=number} flags=[IsRequired, IsPrivate]}] ownFieldCount=2
+layout L1 kind=Instance name="Board" module=m0 position=416 base=L0 constructor=f4 fields=[{key=#"class brand"@L1 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden]}, {key=#"#edge"@L1 declared={type=number} flags=[IsRequired, IsPrivate]}, {key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L0 originField=0}, {key=#"#grain"@L0 declared={type=number} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L0 originField=1}] supertypes=[L0] flags=[HasHeritage] ownFieldCount=2
+layout L2 kind=Instance name="Shelf" module=m0 position=782 base=L1 constructor=f6 fields=[{key=#"class brand"@L1 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L1 originField=0}, {key=#"#edge"@L1 declared={type=number} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L1 originField=1}, {key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L0 originField=0}, {key=#"#grain"@L0 declared={type=number} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L0 originField=1}] supertypes=[L1] flags=[HasHeritage]
+layout L3 kind=Instance name="Ghost" module=m0 position=811 base=L2 constructor=f7 fields=[{key=#"class brand"@L1 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L1 originField=0}, {key=#"#edge"@L1 declared={type=number} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L1 originField=1}, {key=#"class brand"@L0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsRequired, IsPrivate, IsImmutable, IsBrand, IsHidden, IsInherited] originLayout=L0 originField=0}, {key=#"#grain"@L0 declared={type=number} flags=[IsRequired, IsPrivate, IsInherited] originLayout=L0 originField=1}] staticFields=[{key="kind" variable=g9}] supertypes=[L2] flags=[HasHeritage]
+layout L4 module=m0 position=1009 fields=[{key="i" declared={type=number flags=[IsFromCompiler, IsExpected]} flags=[IsRequired]}] ownFieldCount=1
+variable g0 name="Plank" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g1 name="Plank" module=m0 declared={type=absent|f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g2 module=m0 declared={type=f1 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g3 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g4 name="Board" module=m0 declared={type=absent|f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g5 module=m0 declared={type=f4 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g6 module=m0 declared={type=classtoken flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g7 module=m0 declared={type=f6 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g8 module=m0 declared={type=f7 flags=[IsFromCompiler]} flags=[IsImmutable]
+variable g9 module=m0 declared={type=anything} owner=L3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClassToken layout=L0 @80
+    PutModuleVariable v0 variable=g3 @80
+    v2 = NewClosure function=f1 @80
+    v3 = NewClass v2 layout=L0 @80
+    PutModuleVariable v3 variable=g2 @80
+    v5 = NewClosure function=f2 @117
+    DefineMethod v3, v5 layout=L0 side=Static key="isPlank" @117
+    v7 = NewClosure function=f3 @186
+    DefineMethod v3, v7 layout=L0 side=Static index=1 key="count" @186
+    v9 = FinishClass v3 layout=L0 @80
+    v10 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @80
+    PutModuleVariable v10 variable=g1 @80
+    v12 = Convert v9 declared={type=f1 flags=[IsFromCompiler]} @80
+    PutModuleVariable v12 variable=g0 @80
+    v14 = ResolveHeritage v12 @430
+    v15 = NewClassToken layout=L1 @410
+    PutModuleVariable v15 variable=g6 @410
+    v17 = NewClosure function=f4 @410
+    v18 = NewClass v17, v12, v14 layout=L1 @410
+    PutModuleVariable v18 variable=g5 @410
+    v20 = NewClosure function=f5 @460
+    DefineMethod v18, v20 layout=L1 side=Static key="both" @460
+    v22 = FinishClass v18 layout=L1 @410
+    v23 = Convert v22 declared={type=f4 flags=[IsFromCompiler]} @410
+    PutModuleVariable v23 variable=g4 @410
+    v25 = Convert v22 declared={type=f4 flags=[IsFromCompiler]} @410
+    v26 = ResolveHeritage v25 @796
+    v27 = NewClosure function=f6 @776
+    v28 = NewClass v27, v25, v26 layout=L2 @776
+    PutModuleVariable v28 variable=g7 @776
+    v30 = FinishClass v28 layout=L2 @776
+    v31 = Convert v30 declared={type=f6 flags=[IsFromCompiler]} @776
+    v32 = Convert v30 declared={type=f6 flags=[IsFromCompiler]} @776
+    v33 = ResolveHeritage v32 @825
+    v34 = NewClosure function=f7 @805
+    v35 = NewClass v34, v32, v33 layout=L3 @805
+    PutModuleVariable v35 variable=g8 @805
+    v37 = FinishClass v35 layout=L3 @805
+    v38 = Convert v37 declared={type=f7 flags=[IsFromCompiler]} @805
+    v39 = Convert v37 declared={type=function flags=[IsFromCompiler]} @805
+    v40 = CallDirect v39 function=f8 @805
+    v41 = Convert v37 declared={type=f7 flags=[IsFromCompiler]} @805
+    v42 = NewArray @877
+    v43 = Convert v42 declared={type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]} @877
+    v44 = Integer @894
+    v45 = Convert v44 declared={type=number} @894
+    Jump -> next b1(v45) @890
+  b1(v46: number):
+    LoopHint @890
+    v48 = Builtin builtin=GlobalThis @901
+    v49 = PropGet v48 key="count" [isFreeName] @901
+    v50 = Less v46, v49 @897
+    Branch v50 -> taken b2(), notTaken b10() @897
+  b2():
+    v51 = PropGet v43 key="push" @913
+    v52 = Integer integer=4 @929
+    v53 = Mod v46, v52 @925
+    v54 = Integer @935
+    v55 = StrictEq v53, v54 @925
+    Branch v55 -> taken b3(), notTaken b4() @925
+  b3():
+    v56 = Construct v12 calleeName="Plank" @939
+    v57 = Convert v56 declared={type=undefined|null|L0 flags=[OmitsNull, OmitsUndefined]} @939
+    Jump -> next b9(v57) @939
+  b4():
+    v58 = Integer integer=4 @957
+    v59 = Mod v46, v58 @953
+    v60 = Integer integer=1 @963
+    v61 = StrictEq v59, v60 @953
+    Branch v61 -> taken b5(), notTaken b6() @953
+  b5():
+    v62 = Construct v25 calleeName="Board" @967
+    v63 = Convert v62 declared={type=undefined|null|L1 flags=[OmitsNull, OmitsUndefined]} @967
+    Jump -> next b9(v63) @967
+  b6():
+    v64 = Integer integer=4 @985
+    v65 = Mod v46, v64 @981
+    v66 = Integer integer=2 @991
+    v67 = StrictEq v65, v66 @981
+    Branch v67 -> taken b7(), notTaken b8() @981
+  b7():
+    v68 = Construct v32 calleeName="Shelf" @995
+    v69 = Convert v68 declared={type=undefined|null|L2 flags=[OmitsNull, OmitsUndefined]} @995
+    Jump -> next b9(v69) @995
+  b8():
+    v70 = NewObject -, v46 layout=L4 fields=[0] @1009
+    v71 = FinishObject v70 @1009
+    Jump -> next b9(v71) @1009
+  b9(v72):
+    v73 = Call v51, v43, v72 calleeKey="push" calleeName="things.push" @920
+    v74 = Convert v73 declared={type=number} @913
+    v75 = Increment v46 @908
+    v76 = Convert v75 declared={type=number} @908
+    Jump -> next b1(v76) @908
+  b10():
+    v77 = Builtin builtin=GlobalThis @1017
+    v78 = PropGet v77 key="sink" [isFreeName] @1017
+    v79 = PropGet v25 key="both" @1022
+    v80 = Integer integer=1 @1041
+    v81 = Call v79, v25, v43, v80 calleeKey="both" calleeName="Board.both" @1028
+    v82 = PropGet v12 key="count" @1045
+    v83 = Integer integer=3 @1065
+    v84 = Call v82, v12, v43, v83 calleeKey="count" calleeName="Plank.count" @1051
+    v85 = PropGet v25 key="both" @1069
+    v86 = Integer integer=1 @1088
+    v87 = Call v85, v25, v43, v86 calleeKey="both" calleeName="Board.both" @1075
+    v88 = PropGet v12 key="count" @1092
+    v89 = Integer integer=3 @1112
+    v90 = Call v88, v12, v43, v89 calleeKey="count" calleeName="Plank.count" @1098
+    v91 = PropGet v41 key="kind" @1116
+    v92 = Call v78, -, v81, v84, v87, v90, v91 calleeName="sink" @1017
+    v93 = Undefined @1129
+    Return v93 @1129
+}
+function f1 name="Plank" module=m0 position=86 kind=BaseConstructor flags=[HasNewTarget, IsChecked, HasExplicitName] thisType={type=anything} results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L0 {
+  b0(v0: anything):
+    v1 = GetConstructPrototype v0 layout=L0 @86
+    v2 = NewObject v1 layout=L0 @86
+    v3 = Convert v2 declared={type=L0} @86
+    v4 = CallDirect v3 function=f9 @86
+    Return v3 @86
+}
+function f2 name="isPlank" module=m0 position=110 kind=Method flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|object flags=[OmitsNull, OmitsUndefined]}] results=[{type=boolean}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|object):
+    v1 = GetModuleVariable variable=g3 @168
+    v2 = PrivateHas v0, v1 layout=L0 field=1 @168
+    v3 = Convert v2 declared={type=boolean} @168
+    Return v3 @168
+}
+function f3 name="count" module=m0 position=179 kind=Method flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|object>, v1: number):
+    v2 = Integer @250
+    v3 = Convert v2 declared={type=number} @250
+    v4 = Convert v1 declared={type=number} @270
+    Jump -> next b1(v3, v4) @266
+  b1(v5: number, v6: number):
+    LoopHint @266
+    v8 = PropGet v0 key="length" @280
+    v9 = Less v6, v8 @276
+    Branch v9 -> taken b2(), notTaken b6() @276
+  b2():
+    v10 = ElemGet v0, v6 @319
+    v11 = GetModuleVariable variable=g3 @319
+    v12 = PrivateHas v10, v11 layout=L0 field=1 @319
+    v13 = ToBoolean v12 @309
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0) @309
+  b3(v14):
+    v15 = Integer integer=1 @332
+    Jump -> next b5(v15) @332
+  b4(v16):
+    v17 = Integer @336
+    Jump -> next b5(v17) @336
+  b5(v18):
+    v19 = Add v5, v18 @336
+    v20 = Convert v19 declared={type=number} @300
+    v21 = Increment v6 @295
+    v22 = Convert v21 declared={type=number} @295
+    Jump -> next b1(v20, v22) @295
+  b6():
+    v23 = Integer integer=1000 @358
+    v24 = Greater v5, v23 @350
+    Branch v24 -> taken b7(), notTaken b8() @350
+  b7():
+    v25 = GetModuleVariable variable=g1 @365
+    v26 = CheckInitialized v25 name="Plank" @365
+    v27 = PropGet v26 key="count" @365
+    v28 = Integer integer=1 @392
+    v29 = Add v1, v28 @385
+    v30 = Call v27, v26, v0, v29 calleeKey="count" calleeName="Plank.count" @371
+    ReturnCall v30 casts=[{declared={type=number}}] @371
+  b8():
+    v31 = Convert v5 declared={type=number} @397
+    Return v31 @397
+}
+function f4 name="Board" module=m0 position=416 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L1 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @416
+    v4 = SuperConstructList v3, v1, v2 layout=L1 @416
+    v5 = Convert v4 declared={type=L1} @416
+    v6 = CallDirect v5 function=f10 @416
+    Return v5 @416
+}
+function f5 name="both" module=m0 position=453 kind=Method flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|object> flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=number}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|object>, v1: number):
+    v2 = Integer @523
+    v3 = Convert v2 declared={type=number} @523
+    v4 = Convert v1 declared={type=number} @543
+    Jump -> next b1(v3, v4) @539
+  b1(v5: number, v6: number):
+    LoopHint @539
+    v8 = PropGet v0 key="length" @553
+    v9 = Less v6, v8 @549
+    Branch v9 -> taken b2(), notTaken b6() @549
+  b2():
+    v10 = ElemGet v0, v6 @591
+    v11 = GetModuleVariable variable=g6 @591
+    v12 = PrivateHas v10, v11 layout=L1 field=1 @591
+    v13 = ToBoolean v12 @582
+    Branch v13 -> taken b3(| 0), notTaken b4(| 0) @582
+  b3(v14):
+    v15 = Integer integer=1 @604
+    Jump -> next b5(v15) @604
+  b4(v16):
+    v17 = Integer @608
+    Jump -> next b5(v17) @608
+  b5(v18):
+    v19 = Add v5, v18 @608
+    v20 = Convert v19 declared={type=number} @573
+    v21 = Increment v6 @568
+    v22 = Convert v21 declared={type=number} @568
+    Jump -> next b1(v20, v22) @568
+  b6():
+    v23 = Convert v1 declared={type=number} @628
+    Jump -> next b7(v5, v23) @624
+  b7(v24: number, v25: number):
+    LoopHint @624
+    v27 = PropGet v0 key="length" @638
+    v28 = Less v25, v27 @634
+    Branch v28 -> taken b8(), notTaken b12() @634
+  b8():
+    v29 = GetModuleVariable variable=g0 @667
+    v30 = CheckInitialized v29 name="Plank" @667
+    v31 = PropGet v30 key="isPlank" @667
+    v32 = ElemGet v0, v25 @681
+    v33 = Call v31, v30, v32 calleeKey="isPlank" calleeName="Plank.isPlank" @673
+    v34 = ToBoolean v33 @667
+    Branch v34 -> taken b9(| 0), notTaken b10(| 0) @667
+  b9(v35):
+    v36 = Integer integer=100 @695
+    Jump -> next b11(v36) @695
+  b10(v37):
+    v38 = Integer @701
+    Jump -> next b11(v38) @701
+  b11(v39):
+    v40 = Add v24, v39 @701
+    v41 = Convert v40 declared={type=number} @658
+    v42 = Increment v25 @653
+    v43 = Convert v42 declared={type=number} @653
+    Jump -> next b7(v41, v43) @653
+  b12():
+    v44 = Integer integer=100000 @723
+    v45 = Greater v24, v44 @715
+    Branch v45 -> taken b13(), notTaken b14() @715
+  b13():
+    v46 = GetModuleVariable variable=g4 @732
+    v47 = CheckInitialized v46 name="Board" @732
+    v48 = PropGet v47 key="both" @732
+    v49 = Integer integer=1 @758
+    v50 = Add v1, v49 @751
+    v51 = Call v48, v47, v0, v50 calleeKey="both" calleeName="Board.both" @738
+    ReturnCall v51 casts=[{declared={type=number}}] @738
+  b14():
+    v52 = Convert v24 declared={type=number} @763
+    Return v52 @763
+}
+function f6 name="Shelf" module=m0 position=782 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L2 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @782
+    v4 = SuperConstructList v3, v1, v2 layout=L2 @782
+    v5 = Convert v4 declared={type=L2} @782
+    Return v5 @782
+}
+function f7 name="Ghost" module=m0 position=811 kind=DerivedConstructor flags=[HasRestParameter, HasNewTarget, TakesCallee, IsChecked, HasExplicitName] thisType={type=anything} parameters=[{type=Array flags=[IsFromCompiler]}] results=[{type=object flags=[IsFromCompiler]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] constructedClass=L3 {
+  b0(v0: function, v1: anything, v2: Array):
+    v3 = GetSuperBase v0 @811
+    v4 = SuperConstructList v3, v1, v2 layout=L3 @811
+    v5 = Convert v4 declared={type=L3} @811
+    Return v5 @811
+}
+function f8 module=m0 position=811 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=function flags=[IsFromCompiler]} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: function):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @811
+    v2 = Integer integer=3 @847
+    PropDefine v1, v2 key="kind" @840
+    v4 = Undefined @811
+    Return v4 @811
+}
+function f9 module=m0 position=86 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L0} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L0):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @86
+    v2 = GetModuleVariable variable=g3 @86
+    PrivateDefine v1, v2, v2 layout=L0 @86
+    v4 = Integer integer=1 @105
+    v5 = Convert v4 declared={type=number} @105
+    v6 = GetModuleVariable variable=g3 @96
+    PrivateDefine v1, v6, v5 layout=L0 field=1 @96
+    v8 = Undefined @86
+    Return v8 @86
+}
+function f10 module=m0 position=416 kind=Initializer flags=[HasThis, IsChecked, IsHiddenInStackTraces] thisType={type=L1} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: L1):
+    v1 = Convert v0 declared={type=object flags=[IsFromCompiler, IsClaim]} @416
+    v2 = GetModuleVariable variable=g6 @416
+    v3 = PrivateHas v1, v2 layout=L1 @416
+    Branch v3 -> taken b2(), notTaken b1() @416
+  b1():
+    PrivateDefine v1, v2, v2 layout=L1 @416
+    Jump -> next b2() @416
+  b2():
+    v5 = Integer integer=2 @448
+    v6 = Convert v5 declared={type=number} @448
+    v7 = GetModuleVariable variable=g6 @440
+    PrivateDefine v1, v7, v6 layout=L1 field=1 @440
+    v9 = Undefined @416
+    Return v9 @416
+}

@@ -589,6 +589,8 @@ SpeculatedType speculationFromStructure(Structure* structure)
 // bucket is written with no ordering against the stores that initialize a JSString, so a compiler
 // thread reading the bucket can observe the cell before the StringImpl pointer inside it. Stale
 // flags or pointer bits only cost a wrong prediction; a stale pointer, dereferenced, is a crash.
+// A cell whose StructureID is not visible yet is not a sample: the type next to it is not visible
+// either, and reads as CellType.
 template<bool avoidStringDereference>
 static ALWAYS_INLINE SpeculatedType speculationFromCellImpl(JSCell* cell)
 {
@@ -596,6 +598,13 @@ static ALWAYS_INLINE SpeculatedType speculationFromCellImpl(JSCell* cell)
     if (!Integrity::isSanePointer(cell)) [[unlikely]] {
         ASSERT_NOT_REACHED();
         return SpecNone;
+    }
+
+    if constexpr (avoidStringDereference) {
+        StructureID structureID = cell->structureID();
+        if (!structureID) [[unlikely]]
+            return SpecNone;
+        cell = Dependency::fence(structureID.bits()).consume(cell);
     }
 
     if (cell->isString()) {

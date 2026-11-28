@@ -22,11 +22,14 @@ namespace JSC { namespace AOT {
 
 bool Modules::isSomeLoadUnderWay() const
 {
+    return isLoaderBusy() || !m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating;
+}
+
+bool Modules::isLoaderBusy() const
+{
     if (m_instance.vm->synchronousModuleQueue() || m_rootWhoseFilesRun || m_rootAwaitingLoader || m_moduleWithDeferredJobs || !m_queuedFetches.isEmpty())
         return true;
     if (std::ranges::any_of(m_levelsOfLoads.values(), [&](auto& level) { return !hasGraphRun(*level); }))
-        return true;
-    if (!m_firstModuleRequestedByHost || status(*m_firstModuleRequestedByHost) < ModuleStatus::Evaluating)
         return true;
     for (const LoadInFlight& load : m_loadsInFlight) {
         if (load.promise->status() == JSPromise::Status::Pending)
@@ -419,6 +422,9 @@ bool Modules::noteEntryParent(ModuleID target, ModuleID referrer)
     if (referrer && requiresOriginalUnderMock(fileOf(target), referrer)) [[unlikely]]
         return false;
     m_modulesWithKnownParent.set(target.index());
+    bool wasMadeByImport = m_hasBegunTestFile && data(target).kind == ModuleKind::CommonJs && status(target) == ModuleStatus::Evaluated && !activeMock(target) && wasLoadedByImport(target);
+    if (wasMadeByImport)
+        return false;
     if (!hasInstances(target) && !m_hasBegunTestFile && data(target).kind != ModuleKind::CommonJs)
         return false;
     ModuleID parent = referrer ? referrer : callingModule().value_or(ModuleID());
@@ -654,10 +660,13 @@ void Modules::evictFailedRecords()
         if (record->status() > CyclicModuleRecord::Status::Unlinked || !data(module).isESModuleOfProgram() || data(module).isFacade())
             continue;
         ModuleRegistryEntry* entry = loader()->registryEntry(moduleKey(module));
-        if (entry && entry->record() == record && entry->status() >= ModuleRegistryEntry::Status::FetchFailed)
+        if (entry && entry->record() == record && (entry->status() >= ModuleRegistryEntry::Status::FetchFailed || record->hasUnresolvableRequest()))
             failed.append(module);
     }
     for (ModuleID module : failed) {
+        loader()->removeEntry(moduleKey(module));
+        clearMockLoadError(module);
+        ensureLoaded(module).cachedLoadError.set(*this, JSValue());
         loader()->removeEntriesForRecord(m_records.get(module));
         takeOutRecord(module);
         if (storedStatus(module) == StoredModuleStatus::InRecord)

@@ -716,6 +716,26 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowInterpretedFrames(VM& vm
     return start;
 }
 
+static RunStart runStartAt(CompiledFrameIterator& frames)
+{
+    return RunStart { frames.stackPointer(), frames.framePointer(), const_cast<void*>(frames.callSite().address), frames.entryFrame(), frames.isAtFirstReadSite(), frames.calleeWasEntered(), frames.plainFunctionConstructFrameLeft(), frames.constructFrameLeftMakesThis() };
+}
+
+static NEVER_INLINE std::optional<RunStart> findRunBelowWebAssembly(VM& vm)
+{
+    if (!vm.topCallFrame->isNativeCalleeFrame())
+        return std::nullopt;
+    std::optional<RunStart> start;
+    StackVisitor::visitWithCompiledFrames(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+        if (!visitor->isCompiledFrame())
+            return visitor->codeBlock() ? IterationStatus::Done : IterationStatus::Continue;
+        if (CompiledFrameIterator& frames = visitor.compiledFrames(); !frames.isAtEnd() && !frames.hasNoMachineFrame())
+            start = runStartAt(frames);
+        return IterationStatus::Done;
+    });
+    return start;
+}
+
 static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCell* owner, WTF::Vector<StackFrame>& framesOnTop, size_t maxStackSize, TopFramePolicy topFramePolicy)
 {
     countEvent(vm, RuntimeCounterID::StackWalksToCompiledFrames);
@@ -726,7 +746,7 @@ static NEVER_INLINE std::optional<RunStart> findRunBelowOtherFrames(VM& vm, JSCe
         return std::nullopt;
     if (!frames || frames->isAtEnd() || frames->hasNoMachineFrame() || framesOnTop.size() > ReturnAddressTrace::maxFramesOnTop)
         return std::nullopt;
-    return RunStart { frames->stackPointer(), frames->framePointer(), const_cast<void*>(frames->callSite().address), frames->entryFrame(), frames->isAtFirstReadSite(), frames->calleeWasEntered(), frames->plainFunctionConstructFrameLeft(), frames->constructFrameLeftMakesThis() };
+    return runStartAt(*frames);
 }
 
 static NEVER_INLINE Instance* findInstanceAmongSeveral(VM& vm, const RunStart& start)
@@ -1196,6 +1216,8 @@ std::optional<TraceFrame> findShownFrameOnTop(VM& vm, HiddenFrameOnTop hiddenFra
     bool isBelowHostFunction = !start;
     if (isBelowHostFunction)
         start = findRunBelowHostFunction(vm, TopFramePolicy::Skip);
+    if (!start)
+        start = findRunBelowWebAssembly(vm);
     if (!start)
         return std::nullopt;
     RunWalk walk(vm.aotState(), *start, findFrameWithAwaitingCallers(vm, *start));

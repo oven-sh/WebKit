@@ -1472,9 +1472,12 @@ function checkStartup(model: TableModel, problems: Problems): void {
   reportRepeated("functions called with the start-up loads", startupFunctions.map(describeFunction), problems);
   reportRepeated("module loader functions", moduleLoaderFunctions.map(describeFunction), problems);
   const lists: readonly ReadonlySet<ModelFunction>[] = [
-    new Set(model.builtins.flatMap(builtin => builtin.attachments.calledFunctions.map(called => called.function))),
+    // What mocks modules lists the functions of the module loader too.
+    new Set([
+      ...model.builtins.flatMap(builtin => builtin.attachments.calledFunctions.map(called => called.function)),
+      ...moduleLoaderFunctions,
+    ]),
     new Set(startupFunctions),
-    new Set(moduleLoaderFunctions),
   ];
   const linkedFunctions = collectLinkedFunctions(model);
   for (const candidate of model.functions) {
@@ -1482,7 +1485,7 @@ function checkStartup(model: TableModel, problems: Problems): void {
     if (listCount > 1) {
       problems.add(
         null,
-        `${describeFunction(candidate)} is in ${listCount} of callsFunctions, the functions called with the start-up loads and the module loader functions`,
+        `${describeFunction(candidate)} is called with the start-up loads, and in callsFunctions or the module loader functions too`,
       );
     }
     if (listCount > 0) continue;

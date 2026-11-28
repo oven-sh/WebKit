@@ -208,6 +208,41 @@ static void testFaultSitesCallSitesShareWords()
     checkFaults(built.image, 1, body.faults);
 }
 
+static void testFaultSitesWideNamesKeepRegister()
+{
+    constexpr unsigned numberOfRegisters = 15;
+    constexpr uint32_t firstWideName = ThrowSiteWord::narrowNone + 1;
+    auto nameAt = [](unsigned i) { return firstWideName + (numberOfRegisters + 1) * firstWideName / 2 * (i % 3) + i; };
+    auto wordAt = [](unsigned i) {
+        ThrowSiteWord word { };
+        word.kind = static_cast<uint32_t>(ThrowKind::UninitializedBinding);
+        word.representation = static_cast<uint32_t>(i % 2 ? Typed::Representation::JSValue : Typed::Representation::Cell32);
+        word.registerNumber = i % numberOfRegisters;
+        word.hasWideA = true;
+        return word;
+    };
+    constexpr unsigned count = 300;
+    FaultBody body = bodyWithFaults(1, true, count, [&](unsigned i) -> FaultWords {
+        uint32_t first = std::bit_cast<uint32_t>(wordAt(i));
+        if (std::optional<uint32_t> narrow = ThrowSiteWord::withNarrowA(first, nameAt(i)))
+            return { *narrow };
+        return { first, nameAt(i) };
+    });
+    BodiesImage built(2, bodies(WTF::move(body.code)));
+    checkFaults(built.image, 1, body.faults);
+
+    const uint8_t* code = built.image.address(1, 0);
+    for (unsigned i = 0; i < count; ++i) {
+        std::optional<FaultSite> site = built.table().faultSiteAt(code + body.faults[i].offset);
+        AOT_TEST_CHECK(site);
+        ThrowSiteWord word = std::bit_cast<ThrowSiteWord>(site->throwSite[0]);
+        AOT_TEST_CHECK((word.hasWideA ? site->throwSite[1] : word.narrowA()) == nameAt(i));
+        AOT_TEST_CHECK(word.holdsNameInRegisterNumber() == !word.faultSiteChecksRegister());
+        if (word.faultSiteChecksRegister())
+            AOT_TEST_CHECK(word.hasWideA && word.registerNumber == wordAt(i).registerNumber);
+    }
+}
+
 static void testFaultSitesSecondWords()
 {
     checkFramedBodyFaults(13, [](unsigned i) -> FaultWords {
@@ -402,6 +437,7 @@ std::span<const NativeTest> faultTableTests()
         { "image/fault-sites/several-bodies"_s, [] { checkFramedBodiesFaults(20, 7, [](uint32_t function, unsigned i) -> FaultWords { return { 7 * function + i }; }); } },
         { "image/fault-sites/wide-word-numbers"_s, [] { checkFramedBodiesFaults(70, 1000, [](uint32_t function, unsigned i) -> FaultWords { return { ThrowSiteWord::numberOfRegistersPerBank * (1000 * (function - 1) + i) }; }); } },
         { "image/fault-sites/call-sites-share-words"_s, testFaultSitesCallSitesShareWords },
+        { "image/fault-sites/wide-names-keep-register"_s, testFaultSitesWideNamesKeepRegister },
         { "image/fault-sites/second-words"_s, testFaultSitesSecondWords },
         { "image/fault-sites/third-words"_s, testFaultSitesThirdWords },
         { "image/fault-sites/outside"_s, testFaultSitesOutside },

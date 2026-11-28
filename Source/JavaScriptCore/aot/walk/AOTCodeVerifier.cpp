@@ -1171,22 +1171,35 @@ ValueID CodeVerifier::findArrayWriteBetween(ValueID ground, ValueID access) cons
         return findIn(block, m_places[ground.index()], m_places[access.index()]);
     if (ValueID found = findIn(block, 0, m_places[access.index()]))
         return found;
+    auto placeAfterLastThrow = [&](BlockID in, EdgeID edge) -> uint32_t {
+        const auto& contents = m_code.at(in);
+        if (contents.handler != edge || !contents.hasEnded() || declaredBoundOf(contents.terminator.kind).mayThrow)
+            return UINT32_MAX;
+        uint32_t end = UINT32_MAX;
+        for (ValueID each : operationsOf(in)) {
+            if (m_code.at(each).traits().mayThrow())
+                end = m_places[each.index()] + 1;
+        }
+        return end;
+    };
     BitVector seen(m_code.numberOfBlocks());
+    BitVector seenAtThrows(m_code.numberOfBlocks());
     Vector<BlockID, 16> waiting;
-    bool searchedBehindAccess = false;
     seen.set(block.index());
+    seenAtThrows.set(block.index());
     waiting.append(block);
     while (!waiting.isEmpty()) {
         BlockID to = waiting.takeLast();
         for (EdgeID edge = m_code.at(to).firstEdgeIn(); edge; edge = m_code.at(edge).nextInto()) {
             BlockID from = m_code.at(edge).from;
-            if (from == block && from != home && !std::exchange(searchedBehindAccess, true)) {
-                if (ValueID found = findIn(block, m_places[access.index()], UINT32_MAX))
+            uint32_t end = placeAfterLastThrow(from, edge);
+            if (from == block && from != home) {
+                if (ValueID found = findIn(block, m_places[access.index()], end))
                     return found;
             }
-            if (seen.set(from.index()))
+            if ((end == UINT32_MAX ? seen : seenAtThrows).set(from.index()))
                 continue;
-            if (ValueID found = findIn(from, from == home ? m_places[ground.index()] : 0, UINT32_MAX))
+            if (ValueID found = findIn(from, from == home ? m_places[ground.index()] : 0, end))
                 return found;
             if (from != home)
                 waiting.append(from);
@@ -1340,7 +1353,7 @@ void CodeVerifier::verifyBlock(BlockID block)
         const Operation& operation = m_code.at(id);
         if (operation.opcode != Opcode::Narrowed)
             standsAtHead &= operationsThatStandAmongNarrowedValues.contains(operation.opcode);
-        else if (!standsAtHead && !m_code.isSwept())
+        else if (!standsAtHead && (operation.narrowsHolderOfOperand() || !numberRepresentations.contains(operation.representation)) && !m_code.isSwept())
             return fail(block, id, "a Narrowed stands behind another operation of its block"_s);
         if (familyOf(operation.opcode) != OperationFamily::Exception)
             followsOnlyCatches = false;
@@ -1466,13 +1479,8 @@ void CodeVerifier::verifyNarrowedValues()
 {
     for (BlockID block : m_reachedBlocks) {
         for (ValueID id : operationsOf(block)) {
-            if (operationsThatStandAmongNarrowedValues.contains(m_code.at(id).opcode))
+            if (m_code.at(id).opcode != Opcode::Narrowed)
                 continue;
-            if (m_code.at(id).opcode != Opcode::Narrowed) {
-                if (m_code.isSwept())
-                    continue;
-                break;
-            }
             verifyNarrowed(block, id, m_code.at(id));
             if (hasFailed())
                 return;
@@ -1547,7 +1555,7 @@ bool CodeVerifier::isOperatorSpecializationCheck(ValueID test) const
                     continue;
                 bool isOnPass = isOnPassingEdge(user.operand(operandIndex));
                 if (user.position != asked.position || user.inlineFrame != asked.inlineFrame) {
-                    bool isArithmetic = user.opcode != Opcode::TypeTest && treatsUndefinedAsNaN(id, user, operandIndex);
+                    bool isArithmetic = user.opcode != Opcode::TypeTest && user.opcode != Opcode::ShapeTest && treatsUndefinedAsNaN(id, user, operandIndex);
                     if (!isArithmetic || !isOnPass || !isAtInlinedCall)
                         return false;
                     isUsedByOtherOperator = true;
@@ -1601,6 +1609,8 @@ bool CodeVerifier::treatsUndefinedAsNaN(ValueID id, const Operation& user, uint3
     if (arithmeticOnTwoNumbersInCodeVerifier.contains(user.opcode) || allRelations.contains(user.opcode))
         return operandIndex < 2;
     if (user.opcode == Opcode::ToInt32 || user.opcode == Opcode::ToUint32 || user.opcode == Opcode::ToNumber || user.opcode == Opcode::IntegerBound || allBitwiseOperators.contains(user.opcode))
+        return true;
+    if (user.opcode == Opcode::ShapeTest)
         return true;
     if (user.opcode == Opcode::TypeTest) {
         const Type& tested = m_types.at(user.testedType());
@@ -2881,6 +2891,9 @@ void CodeVerifier::verifyWordsInPlaceOfCaptures()
             bool makesClosure = operation.opcode == Opcode::NewClosure;
             if ((!makesClosure && operation.opcode != Opcode::CallDirect) || operation.origin().inlineFrame)
                 continue;
+            bool readsClosureTable = makesClosure && operation.isHeldByClosureTable() && operation.variadicOperands().empty();
+            if (readsClosureTable)
+                continue;
             auto mustBeFilled = [&](VariableID word) {
                 if (!isFilledByThisFunction(word))
                     return;
@@ -2892,7 +2905,8 @@ void CodeVerifier::verifyWordsInPlaceOfCaptures()
             for (const RemovedCapture& removed : promoted.removedCapturesOf(operation.function())) {
                 if (removed.variable) {
                     ValueID handed = removed.capture < passedOperands.size() ? passedOperands[removed.capture] : ValueID();
-                    if (makesClosure || (handed && m_code.at(handed).opcode != Opcode::Unspecified))
+                    bool passesWordItself = handed && m_code.at(handed).opcode == Opcode::GetModuleVariable && m_code.at(handed).variable() == removed.variable;
+                    if (makesClosure || (handed && !passesWordItself && m_code.at(handed).opcode != Opcode::Unspecified))
                         mustBeFilled(removed.variable);
                     continue;
                 }

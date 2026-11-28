@@ -366,7 +366,11 @@ private:
     Vector<EventOnThis> listEventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID) const;
     const Vector<EventOnThis>& eventsOnThis(const LinkTables&, const ThinSummaries&, FunctionID);
     bool collectThisKeys(const LinkTables&, const ThinSummaries&, LayoutID, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered);
+    bool collectThisKeysBelow(const LinkTables&, const ThinSummaries&, LayoutID, FunctionID, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered);
+    FunctionID firstConstructorWithEvents(const LinkTables&, const ThinSummaries&, FunctionID);
     HashMap<uint32_t, std::unique_ptr<Vector<EventOnThis>>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_eventsOnThis;
+    HashMap<uint32_t, FunctionID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstConstructorsWithEvents;
+    BitVector m_isEntered;
     void addOrderOfClassConstructor(const LinkTables&, const ThinSummaries&, LayoutID);
     void addDeclaredOrderOf(LayoutID);
     void addOrderOfDataObject(const DataNode::Object&);
@@ -749,9 +753,41 @@ auto CollectorOfKeyOrders::eventsOnThis(const LinkTables& link, const ThinSummar
 
 bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered)
 {
-    const Function& record = m_program.at(function);
-    bool hasThis = record.kind == FunctionKind::Initializer || record.thisParameterIndex() || (isClassConstructorOf(record.kind) && record.constructedClass);
-    if (!hasThis || entered.contains(function))
+    bool callsMethods = collectThisKeysBelow(link, summaries, layoutOfThis, function, keys, entered);
+    for (FunctionID enteredFunction : entered)
+        m_isEntered.clear(enteredFunction.index());
+    return callsMethods;
+}
+
+static bool hasThisValue(const Function& record)
+{
+    return record.kind == FunctionKind::Initializer || record.thisParameterIndex() || (isClassConstructorOf(record.kind) && record.constructedClass);
+}
+
+FunctionID CollectorOfKeyOrders::firstConstructorWithEvents(const LinkTables& link, const ThinSummaries& summaries, FunctionID constructor)
+{
+    Vector<FunctionID, 16> passed;
+    FunctionID found = constructor;
+    while (found && passed.size() < m_program.layouts.size() && hasThisValue(m_program.at(found))) {
+        if (auto known = m_firstConstructorsWithEvents.getOptional(found.index())) {
+            found = *known;
+            break;
+        }
+        const Vector<EventOnThis>& events = eventsOnThis(link, summaries, found);
+        bool onlyCallsParent = events.size() == 1 && !events[0].nameCalled && events[0].method && isClassConstructorOf(m_program.at(events[0].method).kind);
+        if (!events.isEmpty() && !onlyCallsParent)
+            break;
+        passed.append(found);
+        found = events.isEmpty() ? FunctionID() : events[0].method;
+    }
+    for (FunctionID function : passed)
+        m_firstConstructorsWithEvents.set(function.index(), found);
+    return found;
+}
+
+bool CollectorOfKeyOrders::collectThisKeysBelow(const LinkTables& link, const ThinSummaries& summaries, LayoutID layoutOfThis, FunctionID function, Vector<PropertyKeyID, 32>& keys, Vector<FunctionID, 8>& entered)
+{
+    if (!hasThisValue(m_program.at(function)) || m_isEntered.set(function.index()))
         return false;
     entered.append(function);
     Vector<EventOnThis, 32> events;
@@ -765,7 +801,9 @@ bool CollectorOfKeyOrders::collectThisKeys(const LinkTables& link, const ThinSum
     for (const EventOnThis& event : events) {
         if (event.method) {
             callsMethods = true;
-            collectThisKeys(link, summaries, layoutOfThis, event.method, keys, entered);
+            FunctionID method = isClassConstructorOf(m_program.at(event.method).kind) ? firstConstructorWithEvents(link, summaries, event.method) : event.method;
+            if (method)
+                collectThisKeysBelow(link, summaries, layoutOfThis, method, keys, entered);
         } else
             keys.append(event.key);
     }

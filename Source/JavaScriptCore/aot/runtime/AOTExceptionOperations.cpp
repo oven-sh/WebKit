@@ -1098,6 +1098,7 @@ static JSValue throwSiteValue(const Instance* instance, const uint64_t* register
 {
     if (static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::Void)
         return jsUndefined();
+    RELEASE_ASSERT(!decoded.word.holdsNameInRegisterNumber());
     unsigned number = decoded.word.registerNumber;
     RELEASE_ASSERT(number < ThrowSiteWord::numberOfStoredFPRs);
     uint64_t bits = registers[number];
@@ -1223,7 +1224,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowAtSite, void, (Instance* instance, con
     auto value = [&] {
         return throwSiteValue(instance, registers, decoded);
     };
-    if (decoded.isFaultSite && static_cast<Typed::Representation>(decoded.word.representation) == Typed::Representation::JSValue) {
+    if (decoded.isFaultSite && decoded.word.faultSiteChecksRegister()) {
         if (JSValue found = value(); found.isNumber() || found.isBoolean())
             stopAtFalseProofBehind(*instance, site, JSValue::encode(found), static_cast<uint32_t>(Typed::ProofSource::Contents), 0);
     }

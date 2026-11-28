@@ -4248,12 +4248,32 @@ static bool opensIteration(const BodyIndex& body, ValueID value)
     return !body.isParameter(value) && (body.opcodeOf(value) == Opcode::IteratorOpen || body.opcodeOf(value) == Opcode::ForInOpen);
 }
 
-Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, Reference state, Origin origin)
+static std::optional<uint32_t> stepsTakenOfPattern(const BodyIndex& body, ValueID open, ValueID yield)
+{
+    const BlockID blockOfYield = body.blockOf(yield);
+    uint32_t taken = 0;
+    for (uint32_t number = 0; number < body.numberOfValues(); ++number) {
+        const ValueID value(number);
+        if (body.isParameter(value) || body.opcodeOf(value) != Opcode::IteratorResume || body.value(value).operand(0) != open)
+            continue;
+        const BlockID block = body.blockOf(value);
+        if (block == blockOfYield ? value.index() > yield.index() : !body.dominates(block, blockOfYield))
+            continue;
+        std::optional<uint32_t> step = body.value(value).as<Opcode::IteratorResume>().stepIndex();
+        if (!step)
+            return std::nullopt;
+        taken = std::max(taken, *step + 1);
+    }
+    return taken;
+}
+
+Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, ValueID yield, Reference state, Origin origin)
 {
     const BodyValue opened = suspended.index->value(open);
     const bool isEnumeration = opened.opcode() == Opcode::ForInOpen;
-    if (!isEnumeration && (opened.as<Opcode::IteratorOpen>().isDestructuring() || opened.as<Opcode::IteratorOpen>().iteratorKind() != IteratorKind::Sync))
+    if (!isEnumeration && opened.as<Opcode::IteratorOpen>().iteratorKind() != IteratorKind::Sync)
         return { };
+    const bool isPattern = !isEnumeration && opened.as<Opcode::IteratorOpen>().isDestructuring();
     BuilderForGenerators builder(*this, origin);
     auto suspend = [&](SuspendedIterationKind kind, Reference subject, Reference position, Reference table = { }, bool positionIsBeforeStep = false) -> Reference {
         if (!subject || !subject.isRecord() || !position || !position.isRecord() || (table && !table.isRecord()))
@@ -4267,7 +4287,7 @@ Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, 
         return builder.build(WTF::move(operation));
     };
     if (!state.isVirtual()) {
-        if (isEnumeration || !state.isValue())
+        if (isEnumeration || !state.isValue() || (isPattern && m_code.at(state.id()).opcode != Opcode::NewHeapWords))
             return { };
         if (loopsOverGenerators().statesOpened.contains(state.bits()))
             return suspend(SuspendedIterationKind::State, state, builder.undefined());
@@ -4283,11 +4303,14 @@ Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, 
             return builder.build(WTF::move(read));
         };
         Reference iterator = word(0);
-        return suspend(SuspendedIterationKind::Protocol, iterator, word(1));
+        Reference next = word(1);
+        return suspend(SuspendedIterationKind::Protocol, iterator, next, isPattern ? word(2) : Reference());
     }
     for (size_t place = m_generatorsWalkedInConsumers.size(); place--;) {
         if (m_generatorsWalkedInConsumers[place].state != state)
             continue;
+        if (isPattern)
+            return { };
         Reference words = m_generatorsWalkedInConsumers[place].yieldStoodAt ? buildSuspendedGeneratorFrame(place, origin) : Reference();
         if (!words)
             return { };
@@ -4300,6 +4323,19 @@ Reference Walker::buildSuspendedIteration(const Frame& suspended, ValueID open, 
         return suspend(SuspendedIterationKind::State, builder.build(WTF::move(take)), builder.undefined());
     }
     const IndexedIteration iteration = indexedIteration(state);
+    if (isPattern && (iteration.hasPrecomputedSteps || iteration.literal)) {
+        std::optional<uint32_t> taken = stepsTakenOfPattern(*suspended.index, open, yield);
+        std::optional<Vector<Reference, 4>> left = taken ? stepsLeftOfPattern(*this, *suspended.index, iteration, *taken, builder.undefined()) : std::nullopt;
+        if (!left || std::ranges::any_of(*left, [](Reference step) { return !step || !step.isRecord(); }))
+            return { };
+        Draft list = builder.draft(Opcode::NewArray);
+        list.setContents(TypeTable::anything);
+        list.setElementsOperands(left->span());
+        Reference steps = builder.build(WTF::move(list));
+        return suspend(SuspendedIterationKind::Values, steps, builder.integer(0));
+    }
+    if (isPattern && ((iteration.hasProtocolFallback || iteration.isProtocolOnly) ? !iteration.state : iteration.otherForm != IndexedIteration::OtherForm::None))
+        return { };
     if (isEnumeration != (iteration.otherForm == IndexedIteration::OtherForm::Enumeration) || iteration.hasPrecomputedSteps || !iteration.precomputedSteps.isEmpty())
         return { };
     if (isEnumeration) {
@@ -4363,7 +4399,7 @@ Reference Walker::buildSuspendedGeneratorFrame(size_t place, Origin origin)
     for (ValueID value : suspension->values) {
         Reference reference = referenceBoundIn(suspended, value);
         if (reference && opensIteration(*suspended.index, value)) {
-            reference = buildSuspendedIteration(suspended, value, reference, origin);
+            reference = buildSuspendedIteration(suspended, value, walked.yieldStoodAt, reference, origin);
             if (isUnreachable())
                 return { };
         }

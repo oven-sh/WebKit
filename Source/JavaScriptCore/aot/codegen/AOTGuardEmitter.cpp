@@ -160,7 +160,7 @@ void GuardEmitter::generateShapeTest(const ValueContext& value)
 
 bool GuardEmitter::isImpliedByNumberTest(const ValueContext& isSlotFilled, const FieldAccess& access)
 {
-    if (emittersCheckProofs() || !isSlotFilled.isBranchCondition() || isSlotFilled->holdsDeclaredType() || access.slot.representation != SlotRepresentation::JSValue || access.slot.storage != SlotStorage::Inline || access.findsOffsetByShape)
+    if (emittersCheckProofs() || emitter<AccessEmitter>().verifiesFastPathAnswers(isSlotFilled->key()) || !isSlotFilled.isBranchCondition() || isSlotFilled->holdsDeclaredType() || access.slot.representation != SlotRepresentation::JSValue || access.slot.storage != SlotStorage::Inline || access.findsOffsetByShape)
         return false;
     const Terminator& end = m_code.at(isSlotFilled.block()).terminator;
     if (end.kind != TerminatorKind::Branch || end.conditionOperand() != isSlotFilled.id())

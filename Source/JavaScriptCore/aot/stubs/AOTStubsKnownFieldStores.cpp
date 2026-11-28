@@ -255,7 +255,8 @@ void generatePutKnownField(StubAssembler& jit)
     loadStructure(jit, object, structure);
     jit.loadPtr(Address(structure, CompiledStructure::offsetOfLayout()), record);
     jit.addPtr(name, record);
-    goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsLeftToRunTime)));
+    Jump hasUnusualFlags = jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(flagsLeftToRunTime));
+    Label mayReplaceValue = jit.label();
     goesByName.append(jit.branchTest32(CCallHelpers::NonZero, orderWord, TrustedImm32(integrityBitsBlockingStore(operationFor(mode)))));
     jit.load32(Address(record, OBJECT_OFFSETOF(FieldData, slot)), registers.field.slotData);
     loadTypeOfFieldRecord(jit, record, 0, registers.type);
@@ -272,7 +273,7 @@ void generatePutKnownField(StubAssembler& jit)
         const GPRReg nameOfField = registers.field.representation;
         const GPRReg index = structure;
         isNotRemembered.append(jit.branchTest32(CCallHelpers::Zero, registers.type));
-        isNotRemembered.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine)));
+        isNotRemembered.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine | fieldAttributeFlags)));
         loadNameOfField(jit, record, nameOfField);
         loadIndexInFieldTable(jit, object, nameOfField, index, record, isNotRemembered);
         jit.or32(TrustedImm32(static_cast<int32_t>(bits)), index);
@@ -348,7 +349,8 @@ void generatePutKnownField(StubAssembler& jit)
         const KeyOrderRegisters creation { .object = object, .slotKey = T10, .entry = registers.secondScratch, .words = registers.type, .scratch = orderAfter };
         RELEASE_ASSERT(noOverlap(creation.slotKey, creation.entry, creation.words, creation.scratch, record, value, registers.field.address, registers.field.representation));
         loadSlotKeyInCell(creation.slotKey);
-        Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine));
+        Jump isInCell = jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldIsOutOfLine | fieldAttributeFlags));
+        goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldAttributeFlags)));
         jit.or32(TrustedImm32(outOfLineSlotKey), creation.slotKey);
         isInCell.link(&jit);
         loadOrderAfterRememberedCreation(jit, creation, asksChain);
@@ -450,7 +452,13 @@ void generatePutKnownField(StubAssembler& jit)
     computeFieldAddress(jit, registers.field, false, hasNoStorage);
     jit.jump().linkTo(createsField, &jit);
 
+    hasUnusualFlags.link(&jit);
+    if (mode != PutMode::Define)
+        jit.branchTest32(CCallHelpers::Zero, Address(record, offsetOfFlagsWord), TrustedImm32((flagsLeftToRunTime & ~(fieldIsNotEnumerable | fieldIsNotConfigurable)) | fieldIsOutOfLine)).linkTo(mayReplaceValue, &jit);
+    goesByName.append(jit.jump());
+
     exits.wasAbsentAndIsNotAccepted.link(&jit);
+    goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldAttributeFlags)));
     isRefusedBySlot.append(jit.branchTest32(CCallHelpers::Zero, orderWord, TrustedImm32(static_cast<int32_t>(orderWordHasFieldOutsideSlot))));
     isRefusedBySlot.append(jit.branchIfNotCell(value));
     loadNameOfField(jit, record, name);
@@ -460,6 +468,7 @@ void generatePutKnownField(StubAssembler& jit)
     jit.jumpToStub(putValueThatSlotRefuses(mode));
 
     isRefusedBySlot.link(&jit);
+    goesByName.append(jit.branchTest32(CCallHelpers::NonZero, Address(record, offsetOfFlagsWord), TrustedImm32(fieldAttributeFlags)));
     loadNameOfField(jit, record, name);
     jit.linkToStub(jit.branch32(CCallHelpers::Above, name, TrustedImm32(RowDisplacementTable::maxColumn)), putByIdHashed(mode));
     jit.jumpToStub(putValueThatSlotRefuses(mode));

@@ -459,6 +459,7 @@ public:
     }
     JS_EXPORT_PRIVATE FieldAccess fieldAccessOfOneLayout(const Program&, PropertyKeyID, LayoutID receiver) const;
     JS_EXPORT_PRIVATE FieldAccess fieldAccessOfLayouts(const Program&, PropertyKeyID, std::span<const LayoutID> receivers, bool isStore, std::optional<uint32_t> numberInUseAmongAllReceivers = std::nullopt) const;
+    static constexpr size_t mostMembersAskedOneByOne = 16;
     enum class WhatIsWrittenAbove : bool { IsNotAsked, IsAsked };
     JS_EXPORT_PRIVATE bool listMembersAskedAbout(const Program&, PropertyKeyID, LayoutSetID, WhatIsWrittenAbove, Vector<LayoutID, 16>& asked, uint32_t& numberInUse) const;
     JS_EXPORT_PRIVATE FieldAccess fieldAccess(const Program&, PropertyKeyID, LayoutSetID, std::span<const LayoutID> members, bool isStore) const;

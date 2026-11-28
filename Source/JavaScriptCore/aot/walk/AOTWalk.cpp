@@ -1939,8 +1939,12 @@ void Walker::checkProofsOfWhatIsStoredBy(const Draft& draft)
     case Opcode::PutSlotOrAdd:
     case Opcode::GetSlotOrUndefined:
     case Opcode::GetDeferredClosureSlotOrUndefined:
-        if (draft.level() == KnowledgeLevel::Proven && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size())
-            checkFactsRememberedOfCell(draft.objectOperand(), origin, factsThatSlotOperationLeansOn(*this, draft));
+        if (draft.level() == KnowledgeLevel::Proven && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size()) {
+            OptionSet<CellFact> leanedOn = factsThatSlotOperationLeansOn(*this, draft);
+            if (draft.undefinedTakesSlowPath)
+                leanedOn.remove(CellFact::HasLayoutPrototype);
+            checkFactsRememberedOfCell(draft.objectOperand(), origin, leanedOn);
+        }
         if (isUnreachable() || (draft.level() == KnowledgeLevel::Proven && (draft.opcode != Opcode::PutSlotOrAdd || draft.isDefinition())))
             return;
         if ((draft.opcode == Opcode::GetSlotOrUndefined || draft.opcode == Opcode::PutSlotOrAdd) && !m_isBuildingInPlace && m_numberOfLoopsThatMayBeLeft >= m_openLoops.size())
@@ -8398,6 +8402,13 @@ void Walker::noteGuardOfStoresAskedInTries(const MemberConditionRecord& conditio
     m_trialVisits.last().guardsOfStoresAsked.append(condition);
 }
 
+void Walker::noteReadGuardInTrialIterations(const MemberConditionRecord& condition)
+{
+    std::optional<uint32_t> loop = innermostOpenLoop();
+    if (!loop || executesOnEveryIteration(*loop, currentHoistPoint()))
+        noteGuardOfStoresAskedInTries(condition);
+}
+
 void Walker::noteBirthInTries(LayoutID classLayout)
 {
     if (!m_trialVisits.isEmpty() && !m_trialVisits.last().classesOfBirths.contains(classLayout))
@@ -9031,9 +9042,14 @@ bool Walker::takesWhatRowOfInputOperandCannotGive(const Draft& draft) const
             if (known.isInteger() && known.integers.minimum == known.integers.maximum && static_cast<int32_t>(known.integers.minimum) == m_code.at(judged).integer())
                 continue;
         }
-        bool isNumberSpelledByKey = givenByRow == TypeTable::string && m_types.isSubset(recorded, TypeTable::number) && written.opcode() == Opcode::ElemGet && operandWritten == written.propertyOperand();
-        if (isNumberSpelledByKey)
-            continue;
+        static constexpr OpcodeSet accessesByKey { Opcode::ElemGet, Opcode::ElemSet, Opcode::ElemHas };
+        static_assert(OperandIndex::ElemGet::property == OperandIndex::ElemSet::property && OperandIndex::ElemGet::property == OperandIndex::ElemHas::property);
+        if ((givenByRow == TypeTable::string || maker == Opcode::ToPropertyKey) && accessesByKey.contains(written.opcode()) && operandIndex == OperandIndex::ElemGet::property && m_code.isConstant(judged) && m_code.at(judged).opcode == Opcode::Integer) {
+            Reference name = nameBehindStandIn(m_frames.size() - 1, operandWritten, referenceBoundTo(operandWritten));
+            Vector<char16_t> buffer;
+            if (name && name.isConstant() && m_code.at(name.id()).opcode == Opcode::String && m_types.viewOf(m_code.at(name.id()).string(), buffer) == String::number(static_cast<double>(m_code.at(judged).integer())))
+                continue;
+        }
         dataLogLn("AOT: f", currentFunction().index(), " v", draft.inputValueGiven.index(), ": ", nameOf(draft.opcode), " takes ", TypeInText { m_types, recorded }, " as operand ", operandIndex, ", which the input makes by ", nameOf(maker), ": its row gives ", TypeInText { m_types, givenByRow });
         return true;
     }

@@ -463,6 +463,40 @@ bool Modules::isFetchedByRunningTestFile(ModuleID module) const
     return false;
 }
 
+// The CommonJS files of a graph run in front of it. By then the loader of `bun test` has linked what the test file imports, and those files' imports.
+Vector<String, 2> Modules::importersFetchedByRunningTestFile(ModuleID module) const
+{
+    Vector<String, 2> importers;
+    auto isUnevaluated = [&](ModuleID each) { return data(each).isESModuleOfProgram() && status(each) <= ModuleStatus::Linked; };
+    if (!isUnevaluated(module) || data(module).isFacade() || isMocked(module))
+        return importers;
+    auto importsModule = [&](ModuleID importer) {
+        return std::ranges::any_of(m_table.imports(importer), [&](const ModuleRequestData& request) {
+            return !request.isHoisted && !request.isRequire && !request.isDeferred && moduleLoadedBy(request) == module;
+        });
+    };
+    auto append = [&](ModuleID importer) {
+        if (importsModule(importer) && isUnevaluated(importer) && m_table.hasFilePath(importer))
+            importers.appendIfNotContains(m_table.fullPath(importer));
+    };
+    auto appendImportersIn = [&](ModuleID root) {
+        if (!isStartedByHost(root) || !isUnevaluated(root) || !importsModule(root))
+            return;
+        append(root);
+        for (const ModuleRequestData& request : m_table.imports(root)) {
+            if (!request.isHoisted && !request.isRequire && !request.isDeferred)
+                append(moduleLoadedBy(request));
+        }
+    };
+    if (m_rootWhoseFilesRun)
+        appendImportersIn(*m_rootWhoseFilesRun);
+    for (const EagerLoad* files = m_innermostEagerLoad; files; files = files->outer) {
+        if (!files->loadQueue)
+            appendImportersIn(files->root);
+    }
+    return importers;
+}
+
 bool Modules::evaluateLinkedModuleBeforeMock(ModuleID module, bool keepsOriginalIntact)
 {
     auto scope = DECLARE_THROW_SCOPE(*m_instance.vm);
@@ -2934,6 +2968,12 @@ bool importsStatically(JSGlobalObject* realm, ModuleID importer, ModuleID import
 {
     Modules* modules = modulesOf(realm);
     return modules && modules->importsStatically(importer, imported);
+}
+
+bool wasRunByPreloadHook(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasRunByPreloadHook(file);
 }
 
 bool wasLoadedByPreloadHook(JSGlobalObject* realm, ModuleID module)

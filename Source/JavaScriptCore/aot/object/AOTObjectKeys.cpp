@@ -685,6 +685,19 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
     StructureID structureBefore = object.structureID();
     uint32_t orderAndCountBefore = object.orderWord() & orderAndCountMask;
     auto removeFromOrderOfItsOwn = [&] {
+        const CompiledStructure& structure = object.compiledStructure();
+        uint32_t numberOfFields = object.layout().numberOfFields;
+        std::span<const uint16_t> entries = structure.outOfLineKeyOrder();
+        const uint16_t* entry = WTF::find16(entries.data(), index, entries.size());
+        if (!entry)
+            return;
+        size_t place = entry - entries.data();
+        bool isBehindNamedKey = place && entries[place - 1] >= numberOfFields;
+        bool precedesField = place + 1 < entries.size() && entries[place + 1] < numberOfFields;
+        if (!isBehindNamedKey || precedesField) {
+            structure.removeFromKeyOrderOfOneObject(place);
+            return;
+        }
         rebuildKeyOrderOfOneObject(object, [&](uint16_t other) {
             return other != index;
         }, [](size_t, UniquedStringImpl* key) {
@@ -702,16 +715,23 @@ void removeFieldFromKeyOrder(VM& vm, State& state, Object& object, const FieldDa
         return key >= numberOfFields;
     };
     Vector<uint16_t, 16> remaining;
-    object.forEachKeyInOrder(state, [&](uint16_t key) {
-        if (key == index)
-            return;
-        if (countsExtraKeys(key) && !remaining.isEmpty() && countsExtraKeys(remaining.last()) && remaining.last() != maxKeyOrderEntry)
-            remaining.last() = std::max(remaining.last(), key);
-        else
-            remaining.append(key);
-    });
-    while (!remaining.isEmpty() && countsExtraKeys(remaining.last()))
-        remaining.removeLast();
+    std::span<const uint16_t> keys = object.keyOrder(state);
+    if (const uint16_t* removed = WTF::find16(keys.data(), index, keys.size()); removed && std::ranges::none_of(keys, countsExtraKeys)) {
+        size_t place = removed - keys.data();
+        remaining.append(keys.first(place));
+        remaining.append(keys.subspan(place + 1));
+    } else {
+        for (uint16_t key : keys) {
+            if (key == index)
+                continue;
+            if (countsExtraKeys(key) && !remaining.isEmpty() && countsExtraKeys(remaining.last()) && remaining.last() != maxKeyOrderEntry)
+                remaining.last() = std::max(remaining.last(), key);
+            else
+                remaining.append(key);
+        }
+        while (!remaining.isEmpty() && countsExtraKeys(remaining.last()))
+            remaining.removeLast();
+    }
     if (object.trySetNumberedKeyOrder(vm, state, remaining.span()) || trySearchForHeldKeyOrder(vm, state, object, remaining.span())) {
         if (sharesStep)
             rememberStepOfKeyOrder(state, object, structureBefore, orderAndCountBefore, index, StructureTable::KindOfStep::Removes);

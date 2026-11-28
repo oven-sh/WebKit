@@ -1488,6 +1488,8 @@ public:
         RELEASE_ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
     }
 
+    uint16_t& bitsOfRecord(uint32_t shape, uint16_t name) { return m_fields[rowOf(shape) + name]; }
+
 private:
     static constexpr uint32_t entriesBetweenRows = 2;
     static constexpr uint32_t numberOfEntries = entriesBetweenRows * highestShape + PropertyStores::numberOfNames;
@@ -1734,12 +1736,55 @@ static void testStoresLeftToTheCaches()
         AOT_TEST_CHECK(isLeft(FieldTable::shapeThatTakesAnyValue, 0, CreatedFieldOrders::orderBefore));
         stores.structure.at<uint32_t>(Structure::bitFieldOffset()) = 0;
 
-        for (uint16_t flags : { fieldIsReadOnly, fieldIsNotEnumerable, fieldIsNotConfigurable, fieldIsAccessor, fieldIsPrivate }) {
+        for (uint16_t flags : { fieldIsReadOnly, fieldIsNotEnumerable, fieldIsNotConfigurable, fieldIsAccessor, fieldIsPrivate, static_cast<uint16_t>(fieldIsNotEnumerable | fieldIsNotConfigurable), static_cast<uint16_t>(fieldIsNotEnumerable | fieldIsReadOnly), static_cast<uint16_t>(fieldIsNotConfigurable | fieldIsAccessor) }) {
             FieldData& record = stores.fieldRecord(FieldTable::recordOf(FieldTable::shapeWithTypedField, PropertyStores::storedName));
             record.flags = flags;
-            AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0));
+            // A store of a value keeps the attributes of a field that has one. Creating the field or defining it doesn't.
+            bool keepsAttributes = storeCase.mode != PutMode::Define && !(flags & ~(fieldIsNotEnumerable | fieldIsNotConfigurable));
+            if (keepsAttributes) {
+                FakeObjectWithShape object(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0);
+                StubRun run = stores.store(storeCase, object.address(), bitsOf(jsNumber(42)));
+                AOT_TEST_CHECK(!run.calledOperation && object.field() == bitsOf(jsNumber(42)) && object.wordAfterFieldIsUntouched() && !object.at<uint32_t>(offsetOfOrderWord));
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0, jsBoolean(true)));
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), frozen));
+            } else
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0));
             AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, 0, 0));
             record.flags = 0;
+        }
+
+        {
+            FieldData& record = stores.fieldRecord(FieldTable::recordOf(FieldTable::shapeWithTypedField, PropertyStores::storedName));
+            uint16_t& bits = table.bitsOfRecord(FieldTable::shapeWithTypedField, PropertyStores::storedName);
+            const uint16_t bitsBefore = bits;
+            auto storeInt32 = [&] {
+                FakeObjectWithShape object(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0);
+                StubRun run = stores.store(storeCase, object.address(), bitsOf(jsNumber(42)));
+                AOT_TEST_CHECK(!run.calledOperation && object.field() == bitsOf(jsNumber(42)) && object.wordAfterFieldIsUntouched() && !object.at<uint32_t>(offsetOfOrderWord));
+                return run;
+            };
+            stores.runner.setCountsInstructions(true);
+            StubRun byRecord = storeInt32();
+            // A hidden field takes every int32 of a store and none of a definition.
+            bits |= FieldRecordIndex::takesEveryInt32;
+            record.flags = fieldIsNotEnumerable;
+            if (storeCase.mode == PutMode::Define)
+                AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0));
+            else
+                storeInt32();
+            record.flags = 0;
+            bits |= FieldRecordIndex::isDefinedByEveryInt32;
+            StubRun byBit = storeInt32();
+            AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), frozen));
+            AOT_TEST_CHECK(isLeft(FieldTable::shapeWithTypedField, bitsOf(jsNumber(1)), 0, jsBoolean(true)));
+#if AOT_STUB_RUNNER_COUNTS_INSTRUCTIONS && CPU(X86_64) && !ASSERT_ENABLED
+            AOT_TEST_CHECK(byBit.instructionsInStubs && byRecord.instructionsInStubs && *byBit.instructionsInStubs < *byRecord.instructionsInStubs);
+#else
+            UNUSED_VARIABLE(byBit);
+            UNUSED_VARIABLE(byRecord);
+#endif
+            stores.runner.setCountsInstructions(false);
+            bits = bitsBefore;
         }
 
         auto isLeftWithExtension = [&](uint64_t granuleBit, uint64_t bitsOfGranule, uint32_t orderWord) {

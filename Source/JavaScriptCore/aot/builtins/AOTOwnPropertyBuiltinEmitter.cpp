@@ -116,12 +116,12 @@ Boxed OwnPropertyBuiltinEmitter::firstArgumentOrUndefined(const InlineCall& call
 
 void OwnPropertyBuiltinEmitter::generateObjectValues(const InlineCall& call)
 {
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectValues, { firstArgumentOrUndefined(call) }));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectValues, { firstArgumentOrUndefined(call) }, { .calledBuiltin = functionOf(call.overload()) }));
 }
 
 void OwnPropertyBuiltinEmitter::generateObjectEntries(const InlineCall& call)
 {
-    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectEntries, { firstArgumentOrUndefined(call) }));
+    finish(call, callOperation<CellPointer>(call.context(), RuntimeOperation::ObjectEntries, { firstArgumentOrUndefined(call) }, { .calledBuiltin = functionOf(call.overload()) }));
 }
 
 void OwnPropertyBuiltinEmitter::generateOwnPropertyKeys(const InlineCall& call)

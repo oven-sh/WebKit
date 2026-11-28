@@ -782,6 +782,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPrivateDefine, void, (Instance* instance, E
         if (!base->tryPutDirectByExistingTransition(vm, uid, defined, attributesOfNameWithoutField)) [[unlikely]] {
             PutPropertySlot slot(base, true);
             base->definePrivateField(globalObject, uid, defined, slot, attributesOfNameWithoutField);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
         }
         ensureRecordsOfKnownStructures(vm, state, classToken);
         bool needsBrand = !isBrand && location.hasBrand;
@@ -877,26 +878,37 @@ UniquedStringImpl* ClassToken::nameBesideFields(VM& vm, const Object& allocated,
     return declaredName;
 }
 
-enum class AboveProxies : bool { IsNotLookedAt, IsLookedAt };
+static void collectObjectsBelowProxies(JSObject* lowest, MarkedArgumentBuffer& objects)
+{
+    for (JSObject* object = lowest; object && object->type() != ProxyObjectType; object = object->getPrototypeDirect().getObject())
+        objects.append(object);
+}
 
-static size_t collectObjectsThatLookupComesTo(JSGlobalObject* globalObject, JSObject* lowest, AboveProxies aboveProxies, MarkedArgumentBuffer& objects)
+// As JSObject::getPropertyNames(). The objects that it lists are those in which a lookup finds a private field.
+void PropertyWalk::getPropertyNames(JSGlobalObject* globalObject, JSObject* lowest, PropertyNameArrayBuilder& names, DontEnumPropertiesMode mode, ObjectsOnChain& chain)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     std::optional<size_t> numberBelowProxies;
-    for (JSObject* object = lowest; object;) {
-        bool isProxy = object->type() == ProxyObjectType;
-        if (isProxy && !numberBelowProxies)
-            numberBelowProxies = objects.size();
-        if (isProxy && aboveProxies == AboveProxies::IsNotLookedAt)
+    unsigned prototypeCount = 0;
+    for (JSObject* object = lowest;;) {
+        if (object->type() != ProxyObjectType)
+            chain.objects.append(object);
+        else if (!numberBelowProxies)
+            numberBelowProxies = chain.objects.size();
+        object->methodTable()->getOwnPropertyNames(object, globalObject, names, mode);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSValue prototype = object->getPrototype(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (prototype.isNull())
             break;
-        if (!isProxy)
-            objects.append(object);
-        JSValue above = isProxy ? object->getPrototype(globalObject) : object->getPrototypeDirect();
-        RETURN_IF_EXCEPTION(scope, 0);
-        object = above.isObject() ? asObject(above) : nullptr;
+        if (++prototypeCount > JSObject::maximumPrototypeChainDepth) [[unlikely]] {
+            throwStackOverflowError(globalObject, scope);
+            return;
+        }
+        object = asObject(prototype);
     }
-    return numberBelowProxies.value_or(objects.size());
+    chain.numberBelowProxies = numberBelowProxies.value_or(chain.objects.size());
 }
 
 static void collectClassTokens(VM& vm, State& state, const MarkedArgumentBuffer& objects, MarkedArgumentBuffer& tokens)
@@ -938,10 +950,8 @@ static JSValue findPrivateFieldAmong(VM& vm, State& state, const MarkedArgumentB
     return { };
 }
 
-enum class ObjectsWithPrivateFields : bool { LowestAlone, WholeChain };
-
 template<typename Functor>
-static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, const Functor& functor, ObjectsWithPrivateFields objectsAsked = ObjectsWithPrivateFields::WholeChain)
+static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject* lowest, PropertyWalk::ObjectsOnChain& chain, const Functor& functor)
 {
     VM& vm = globalObject->vm();
     if (!vm.aotState().someClassHasPrivateNames)
@@ -953,14 +963,7 @@ static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject*
     if (!instance || !instance->state)
         return;
     State& state = *instance->state;
-    MarkedArgumentBuffer objects;
-    size_t numberBelowProxies = 1;
-    if (objectsAsked == ObjectsWithPrivateFields::LowestAlone)
-        objects.append(lowest);
-    else {
-        numberBelowProxies = collectObjectsThatLookupComesTo(globalObject, lowest, AboveProxies::IsLookedAt, objects);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
+    MarkedArgumentBuffer& objects = chain.objects;
     MarkedArgumentBuffer tokens;
     collectClassTokens(vm, state, objects, tokens);
     if (objects.hasOverflowed() || tokens.hasOverflowed()) [[unlikely]] {
@@ -972,17 +975,17 @@ static void forEachWrittenPrivateFieldOn(JSGlobalObject* globalObject, JSObject*
         const LayoutData& declaringLayout = declaringLayoutOf(state, token);
         for (uint32_t field = 0; field < declaringLayout.numberOfFields; ++field) {
             const FieldData& declared = declaringLayout.fields()[field];
-            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, numberBelowProxies, token, field) : JSValue();
+            JSValue held = declared.isWrittenPrivateName ? findPrivateFieldAmong(vm, state, objects, chain.numberBelowProxies, token, field) : JSValue();
             if (held && functor(state, token, field, declared, held) == IterationStatus::Done)
                 return;
         }
     }
 }
 
-unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* lowest)
+unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* lowest, ObjectsOnChain& chain)
 {
     unsigned count = 0;
-    forEachWrittenPrivateFieldOn(globalObject, lowest, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
+    forEachWrittenPrivateFieldOn(globalObject, lowest, chain, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
         ++count;
         return IterationStatus::Continue;
     });
@@ -992,10 +995,13 @@ unsigned PropertyWalk::countPrivateFieldsOfCompiledClasses(JSGlobalObject* globa
 bool PropertyWalk::hasOwnPrivateField(JSGlobalObject* globalObject, JSObject* object)
 {
     bool hasField = false;
-    forEachWrittenPrivateFieldOn(globalObject, object, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
+    ObjectsOnChain chain;
+    chain.objects.append(object);
+    chain.numberBelowProxies = 1;
+    forEachWrittenPrivateFieldOn(globalObject, object, chain, [&](State&, JSCellButterfly*, uint32_t, const FieldData&, JSValue) {
         hasField = true;
         return IterationStatus::Done;
-    }, ObjectsWithPrivateFields::LowestAlone);
+    });
     return hasField;
 }
 
@@ -1010,16 +1016,15 @@ bool PropertyWalk::isRuntimeProperty(VM& vm, UniquedStringImpl* name, JSValue va
     return false;
 }
 
-bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* object, JSObject* pattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches)
+bool PropertyWalk::matchPrivateFieldsOfCompiledClasses(JSGlobalObject* globalObject, JSObject* object, JSObject* pattern, ObjectsOnChain& chainOfPattern, const ScopedLambda<bool(JSValue ofObject, JSValue ofPattern)>& matches)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     bool everyFieldMatches = true;
     MarkedArgumentBuffer objects;
-    forEachWrittenPrivateFieldOn(globalObject, pattern, [&](State& state, JSCellButterfly* token, uint32_t field, const FieldData& declared, JSValue ofPattern) {
+    forEachWrittenPrivateFieldOn(globalObject, pattern, chainOfPattern, [&](State& state, JSCellButterfly* token, uint32_t field, const FieldData& declared, JSValue ofPattern) {
         if (objects.isEmpty()) {
-            collectObjectsThatLookupComesTo(globalObject, object, AboveProxies::IsNotLookedAt, objects);
-            scope.assertNoException();
+            collectObjectsBelowProxies(object, objects);
         }
         if (objects.hasOverflowed()) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);

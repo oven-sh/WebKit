@@ -266,10 +266,10 @@ static void addSymbolsOfSharedCode(ImageSymbolTable& table, const BuiltImage& bu
     }
 }
 
-static void appendRegExpToSymbolName(ImageSymbolTable& table, const Typed::Program& program, const ImageRegExp& record)
+static void appendRegExpToSymbolName(ImageSymbolTable& table, const Typed::Program& program, std::span<const StringID> stringsByNumber, const ImageRegExp& record)
 {
     table.append("/"_s);
-    table.appendText(program.strings, StringID(record.pattern));
+    table.appendText(program.strings, stringsByNumber[record.pattern]);
     table.append("/"_s);
     table.append(byteCast<uint8_t>(Yarr::flagsString(record.flags()).span()));
 }
@@ -309,6 +309,7 @@ static void addSymbolsOfRegExps(ImageSymbolTable& table, const Typed::Program& p
         return;
 
     std::span<const ImageRegExp> records = regExpRecordsOf(built);
+    Vector<StringID> stringsByNumber = built.numbers->stringNumbers().stringsByNumber();
     for (const RegExpEntryInSymbols& entry : collectRegExpEntries(records)) {
         if (entry.regExp == RegExpEntryInSymbols::noRegExp)
             table.append("(regular expressions)"_s);
@@ -317,7 +318,7 @@ static void addSymbolsOfRegExps(ImageSymbolTable& table, const Typed::Program& p
             table.appendNumber(entry.regExp);
             table.append(")"_s);
         } else
-            appendRegExpToSymbolName(table, program, records[entry.regExp]);
+            appendRegExpToSymbolName(table, program, stringsByNumber.span(), records[entry.regExp]);
         if (entry.regExp != RegExpEntryInSymbols::noRegExp && entry.isFor16BitSubjects)
             table.append(" (16-bit)"_s);
         table.add(start + entry.offset, end, table.endName());
@@ -447,6 +448,7 @@ static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program&
         return;
 
     std::span<const ImageRegExp> records = regExpRecordsOf(built);
+    Vector<StringID> stringsByNumber = built.numbers->stringNumbers().stringsByNumber();
     Vector<RegExpEntryInSymbols> entries = collectRegExpEntries(records);
     for (size_t index = 0; index < entries.size(); ++index) {
         const RegExpEntryInSymbols& entry = entries[index];
@@ -460,7 +462,7 @@ static void appendRegExpCodeToMap(ImageSymbolTable& table, const Typed::Program&
             appendNumberToMapRow(table, entry.isFor16BitSubjects ? 16 : 8);
             appendNumberToMapRow(table, record.rawFlags);
             table.append("\t"_s);
-            appendRegExpToSymbolName(table, program, record);
+            appendRegExpToSymbolName(table, program, stringsByNumber.span(), record);
         }
         table.append("\n"_s);
     }

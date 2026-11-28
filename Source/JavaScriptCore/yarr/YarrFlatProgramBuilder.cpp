@@ -49,6 +49,7 @@ public:
         : m_pattern(pattern)
         , m_countsTurns(form == FlatProgramForm::CountsTurns)
         , m_findsEndsOfRuns(form == FlatProgramForm::FindsEndsOfRuns)
+        , m_dropsEmptyTurnFrames(form == FlatProgramForm::DropsEmptyTurnFrames)
     {
     }
 
@@ -96,6 +97,8 @@ public:
         program->recordFailureOp = emit(Kind::RecordFailure);
         if (m_countsTurns && !std::ranges::contains(program->ops, Kind::CountTurn, &FlatOp::kind))
             return makeUnexpected(FlatProgramDecline::NoTurnsToCount);
+        if (m_dropsEmptyTurnFrames && !m_hasDroppedFrames)
+            return makeUnexpected(FlatProgramDecline::NoFramesToDrop);
         if (hasExceededIndexLimit())
             return makeUnexpected(FlatProgramDecline::TooManySetsOrRegisters);
         program->numRegisters = m_nextRegister;
@@ -1970,6 +1973,9 @@ private:
         if (!emitBody())
             return false;
         if (dropsFramesOfTurns) {
+            // A turn that took nothing is made otherwise, with the frames that it has.
+            if (canBeEmpty)
+                emitWithRegister(Kind::FailIfEmpty, start);
             emitWithRegister(Kind::SavePosition, positionRegister);
             emitWithRegister(Kind::LookaheadEnd, positionRegister, frameDepthRegister);
         }
@@ -2072,7 +2078,10 @@ private:
         // In a lookbehind X{1,2} is X? in front of X. It takes another turn of the same group, which begins without what the first has captured.
         if (max == 1 && !term.parentheses.isCopy)
             return min ? emitGroupBody(term, context) : emitOptionalGroup(term, context);
-        bool dropsFramesOfTurns = !m_countsTurns && (term.parentheses.isTerminal || term.parentheses.isTailLoop) && disjunction.m_minimumSize;
+        bool isLastLoop = !m_countsTurns && (term.parentheses.isTerminal || term.parentheses.isTailLoop);
+        bool dropsEmptyTurnFrames = isLastLoop && m_dropsEmptyTurnFrames && !disjunction.m_minimumSize && !min;
+        m_hasDroppedFrames |= dropsEmptyTurnFrames;
+        bool dropsFramesOfTurns = dropsEmptyTurnFrames || (isLastLoop && disjunction.m_minimumSize);
         Loop loop { min, max, term.quantityType == QuantifierType::NonGreedy, !disjunction.m_minimumSize, neededToEnter(disjunction, context.neededAfter), captureRange(term), m_countsTurns && jitCountsTurns, makesNoChoice, dropsFramesOfTurns };
         return emitLoop(loop, [&] {
             return emitGroupBody(term, context);
@@ -2694,6 +2703,8 @@ private:
     StackCheck m_stackCheck;
     const bool m_countsTurns;
     const bool m_findsEndsOfRuns;
+    const bool m_dropsEmptyTurnFrames;
+    bool m_hasDroppedFrames { false };
 };
 
 size_t FlatProgram::estimatedSizeInBytes() const
@@ -2791,6 +2802,8 @@ ASCIILiteral description(FlatProgramDecline reason)
         return "too many sets or registers"_s;
     case FlatProgramDecline::NoTurnsToCount:
         return "no turns to count"_s;
+    case FlatProgramDecline::NoFramesToDrop:
+        return "no frames to drop"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }

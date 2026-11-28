@@ -158,6 +158,8 @@ public:
 
     std::optional<ModuleID> findByPath(StringView publicPath) const { return findByPath(publicPath, publicPath.hash()); }
     std::optional<ModuleID> findByPath(StringView publicPath, unsigned hashOfPath) const;
+    std::optional<ModuleID> findForm(StringView publicPath, StringView queryOfType) const;
+    bool isFormOfType(ModuleID, ASCIILiteral queryOfType) const;
     bool mayHaveAttributeVariants() const { return mayContainPrefixWithHash(hashOfAnyQuery); }
     bool hasAttributeVariant(StringView publicPath) const;
     Vector<ModuleID, 2> importAttributeVariants(StringView publicPath) const;

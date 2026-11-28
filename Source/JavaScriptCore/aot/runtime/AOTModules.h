@@ -196,6 +196,7 @@ public:
     const ModuleTable& table() const { return m_table; }
     const Instance& instance() const { return m_instance; }
     unsigned linkEpoch() const { return m_linkEpoch; }
+    bool isEntryPointLinked() const { return m_entryPointIsLinked; }
     bool loadsModulesIndividually() const { return m_loadsModulesIndividually; }
     bool linkGoesByAllRequestsOf(ModuleID module) const { return m_loadsModulesIndividually || m_leadersWhoseLinkGoesByAllRequests.get(module.index()); }
     void didGetStateOfItsOwn(ModuleID) const;
@@ -252,8 +253,27 @@ public:
     void didFinishTests();
     void markFactoryAbandoned(ModuleID module) { m_modulesWithAbandonedFactory.set(module.index()); }
     void markMockPassthrough(ModuleID module) { m_modulesWithPassthroughMock.set(fileOf(module).index()); }
+    void didEvictTestFile(ModuleID file)
+    {
+        if (isStartedByHost(file))
+            m_evictedTestFiles.set(file.index());
+    }
+    bool runsAgainOnceEvicted(ModuleID testFile) const
+    {
+        return data(testFile).kind == ModuleKind::CommonJs && data(testFile).runsAgainAfterThrow() && !m_loadedInPreload.get(testFile.index());
+    }
+    // Returns whether the file runs again for the next module that loads it.
+    bool didEndMocksOfTestFile(ModuleID file)
+    {
+        if (!data(file).isEntryPoint() || !runsAgainOnceEvicted(file))
+            return false;
+        m_evictedTestFiles.set(file.index());
+        return true;
+    }
+    void resetEvictedTestFiles();
     void releaseEndedTestFiles()
     {
+        resetEvictedTestFiles();
         releaseLoadsOfEndedTestFiles();
         releaseInstancesOfEndedTestFiles();
     }
@@ -851,6 +871,7 @@ public:
     bool isMockLoadedInPreload(ModuleID module) const { return m_preloadedMocks.get(fileOf(module).index()); }
     bool wasLoadedInPreload(ModuleID module) const { return m_loadedInPreload.get(module.index()); }
     bool wasLoadedByPreloadHook(ModuleID module) const { return m_loadedByPreloadHooks.get(module.index()); }
+    bool wasRunByPreloadHook(ModuleID file) const;
     void forgetLoadByPreloadHook(ModuleID module)
     {
         m_loadedByPreloadHooks.clear(module.index());
@@ -912,6 +933,7 @@ public:
     bool importsModuleWithPendingMock(ModuleID root);
     bool evaluateLinkedModuleBeforeMock(ModuleID, bool keepsOriginalIntact);
     bool isFetchedByRunningTestFile(ModuleID) const;
+    Vector<String, 2> importersFetchedByRunningTestFile(ModuleID) const;
     JSPromise* pendingEvaluation(ModuleID, bool hasAlreadyWaited);
     JSPromise* pendingEvaluationInGraph(ModuleID file);
     bool isImportedByGraphUnderEvaluation(ModuleID, bool forIntactOriginal = false);
@@ -1089,6 +1111,7 @@ public:
     static uint64_t bitOfHash(const Identifier& name) { return 1ULL << (name.impl()->symbolAwareHash() & 63); }
     bool mayNameDeferredExport(const Identifier& name) const { return m_hashesOfDeferredExports & bitOfHash(name); }
     bool hasCapturedExport(ModuleID, const Identifier&);
+    void fillDeferredExportUnlessOmitted(ModuleID, const Identifier&, MockMode);
     bool isNativeModule(ModuleID) const;
     void forEachCapturedExport(ModuleID, const ScopedLambda<void(const Identifier&, JSValue)>&);
     static JSValue storedValue(JSGlobalObject*, JSObject* table, const Identifier& name);
@@ -1101,7 +1124,7 @@ public:
     JSObject* instanceImportMeta(ModuleID, Environment* instance);
     JSCell* builtinCell(BuiltinID, ModuleID);
     JSString* pathString(ModuleID);
-    JSString* resolve(ModuleID, ResolvedSpecifierForm);
+    JSString* resolve(ModuleID, ResolvedSpecifierForm, StringView specifier);
     const SourceOrigin& sourceOrigin(ModuleID);
     bool hasMadeOrigin(const SourceOrigin&) const;
     void throwFailure(ModuleFailureID, bool isForRequire);
@@ -1121,7 +1144,7 @@ public:
         if (!m_mainEntryPoint && !m_isRunningPreloads) [[unlikely]]
             m_mainEntryPoint = module;
     }
-    void setIsRunningPreloads(bool runsPreloads) { m_isRunningPreloads = runsPreloads; }
+    void setIsRunningPreloads(bool runsPreloads);
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     enum class ImportsYetToBeFetched : bool { DoNotCount, Count };
     bool hasBeenImported(ModuleID, ImportsYetToBeFetched = ImportsYetToBeFetched::Count) const;
@@ -1369,7 +1392,8 @@ public:
     void releaseLoadsOfEndedTestFiles();
     void releaseInstancesOfEndedTestFiles();
     void releaseLoads(ModuleID testFile);
-    bool canReleaseLoads(ModuleID testFile);
+    bool holdsLoads(ModuleID testFile) const;
+    bool isReadThroughRequests(ModuleID testFile) const;
     bool hasFixedNamespace(ModuleID module) const { return m_linkedInstances.get(module.index()) && hasInstances(module); }
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target) const;
     std::optional<bool> isLinkedToCurrentEntry(ModuleID importer, ModuleID target, Environment* instance) const;
@@ -1450,6 +1474,9 @@ public:
     bool wouldBeEvicted(ModuleID);
     bool isLoadInFlight(ModuleID module) const { return status(fileOf(module)) == ModuleStatus::EvaluatingAsync; }
     bool wasLoadedByImport(ModuleID);
+    // An import of a file that a test only required, and then mocked, gives the mock's own module. The mock of a preload's file outlives the test file, which ours does not do.
+    void notePatchedBeforeImport(ModuleID file) { m_filesPatchedBeforeImport.set(file.index(), status(file) == ModuleStatus::Evaluated && !isEvicted(file) && evaluatedBy(file) != LoadedBy::Preload && !wasLoadedByImport(file)); }
+    bool wasPatchedBeforeImport(ModuleID file) const { return m_filesPatchedBeforeImport.get(file.index()) && isPatchedByMock(file); }
     bool mayBeEvicted(ModuleID module) const
     {
         const ModuleData& file = data(fileOf(module));
@@ -1749,6 +1776,7 @@ public:
     enum class LoaderForRequire : uint8_t { IsNotNeeded, ComesBehindImportedFiles, IsNeeded };
     LoaderForRequire loaderForRequire(ModuleID);
     bool canTellHowGraphIsLoaded(ModuleID root);
+    bool hasLoadedGraphThatIsNotRunning() const;
     void appendRequestsForLoader(ModuleID, ModuleRecord*, ModuleGraphLoadingState&);
     std::optional<ModuleFailureID> statementThatEndsLoad(ModuleID) const;
     bool wasAbandonedByFailedLoad(ModuleID) const;
@@ -1877,8 +1905,10 @@ public:
     JSObject* childModuleObject(ModuleID);
     std::optional<ModuleID> moduleFormOf(ModuleID file) const;
     std::optional<ModuleID> loadedModuleForm(ModuleID file);
+    bool answersRequireOfFile(ModuleID form);
     bool canExposeModuleObject(ModuleID module) const { return data(module).kind != ModuleKind::CommonJs || data(module).hasValue(); }
     bool hidesModuleObject(ModuleID module) const { return !canExposeModuleObject(module) || data(module).hasUnescapedExports(); }
+    bool wouldRequireLoad(ModuleID esModule);
     bool forEachNewChild(ModuleID, const ScopedLambda<void(JSObject*)>&);
     JSObject* prototypeOfModuleObjects() const { return m_prototypeOfModuleObjects; }
     void clearNewChildren(ModuleID);
@@ -2166,6 +2196,7 @@ private:
     bool hasFileCapturedAfterEvaluation(const ModuleLinkWalk&) const;
     bool resolvesNamesOutsideLibrary(const ModuleLinkWalk&, ThrowScope&) const;
     void captureSyntheticExports(const ModuleLinkWalk&, VisitedModuleRecords&);
+    BitVector modulesBelowPackageOriginals(const ModuleLinkWalk&, const MocksInGraph&);
     void finishLink(const ModuleLinkWalk&, LinkContext&);
     void didLinkEntryPoint(ModuleID, const MocksInGraph&);
     bool didCaptureExports(ModuleID) const;
@@ -2341,6 +2372,8 @@ private:
     JSValue callBody(ModuleID);
     JSValue enterBody(ModuleID, FunctionID body);
     JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus, bool runsImportedFilesAlone = false);
+    void noteStartOfFile(ModuleID);
+    bool hasRunSinceStartOfPreloadHook(ModuleID file) const;
     struct ModuleThatMayBegin {
         ModuleID module;
         uint32_t markBefore;
@@ -2446,6 +2479,7 @@ private:
     };
     ModuleMap<FormAnsweredFirst> m_formsAnsweredFirst;
     BitVector m_mockEvictedDataModules;
+    BitVector m_codeFilesWhoseMockEnded;
     BitVector m_evictedDataFiles;
     bool m_hasEvictedDataFiles { false };
     BitVector m_mockedEvictedDataFiles;
@@ -2627,6 +2661,7 @@ private:
     }
     BitVector m_evictedFiles;
     BitVector m_filesDelegatedByHost;
+    BitVector m_filesPatchedBeforeImport;
     BitVector m_filesModifiedSinceBuild;
     bool m_hasNotedTextsThatHostKeeps { false };
     BitVector m_dataFilesThatHostPrintsAsJavaScript;
@@ -3215,6 +3250,9 @@ private:
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
     BitVector m_loadedByPreloadHooks;
+    BitVector m_filesRunByPreloadHooks;
+    BitVector m_releasedFilesRunByPreloadHooks;
+    Vector<uint8_t> m_statusesAtStartOfPreloadHook;
     BitVector m_releasedLoadsOfPreloadHooks;
     BitVector m_modulesLoadedAsMocksAlone;
     BitVector m_libraryModulesAskedForInPreload;
@@ -3364,6 +3402,7 @@ private:
     void bringBackNamespaceKeptFor(ModuleID fileOrModule, JSObject* mock);
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
     bool isSomeLoadUnderWay() const;
+    bool isLoaderBusy() const;
     BitVector m_namespacesReplacedByMock;
     std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;
@@ -3611,6 +3650,8 @@ private:
     bool hasFileOfGraphBeingLoadedBegun() const;
     bool hasUnreadSource(ModuleID);
     JSPromise* startImportInLaterTurn(ModuleID, std::optional<int64_t> referrerAsyncOrder);
+    bool isUnparsableData(ModuleID);
+    JSPromise* rejectImportOfUnparsableData(JSPromise*, ModuleID);
     struct QueuedFetch {
         uint64_t place;
         Strong<JSPromise> promise;
