@@ -276,6 +276,9 @@ struct StructLayoutInImage {
 };
 
 struct CodeForImage {
+    // What lies behind the 4 GiB of a memory that this code leaves to the fault handler, whatever the options of the build are. A run with less takes the code that checks.
+    static constexpr size_t redzoneBytes = 128 * 64 * KB;
+
     const ImagePointerTable& pointers;
     const HashMap<const RTT*, uint32_t>& typeIndices;
     const Vector<StructLayoutInImage>& structLayouts;
