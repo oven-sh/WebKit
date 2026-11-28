@@ -1,0 +1,156 @@
+# Behind `case 3` x is an int32 by type, and its word is still a boxed double. A loop that stores it over and over is laid out four stores to a turn, for a list of any values and for one of int32s:
+# a list of int32s gets the int32. Behind `case 0` it may be -0, which stays what it is.
+# -- source: main.ts
+# declare function report(...parts: unknown[]): void;
+# declare function listOfNines(): any;
+# declare function listOfTexts(): any;
+# function fill(to: (string | number)[], x: unknown, n: number) { if (Array.isArray(to)) switch (x) { case 3: for (let i = 0; i < n; i++) { to[i] = x; } } return to; }
+# function fillWithZero(to: (string | number)[], x: unknown, n: number) { if (Array.isArray(to)) switch (x) { case 0: for (let i = 0; i < n; i++) { to[i] = x; } } return to; }
+# function outOfFractions(at: number): unknown { const list: unknown[] = JSON.parse("[0.5,1,2,3,4]"); list.push("x"); return list[at]; }
+# report(fill(listOfNines(), outOfFractions(3), 12));
+# report(fill(listOfTexts(), outOfFractions(3), 12));
+# report(fillWithZero(listOfNines(), -0, 12));
+# report(fillWithZero(listOfTexts(), -0, 12));
+# -- end of source
+# RUN: run-in-shell const odd = list => Object.setPrototypeOf(list, Object.create(Array.prototype)); globalThis.listOfNines = () => odd(Array.from({ length: 12 }, () => 9)); globalThis.listOfTexts = () => odd(Array.from({ length: 12 }, () => "t")); globalThis.report = list => { Object.setPrototypeOf(list, Array.prototype); print(list.indexOf(3), list.includes(3), Array.from(list, item => Object.is(item, -0) ? "-0" : item + 1).join()); };
+# CHECK: 0 true 4,4,4,4,4,4,4,4,4,4,4,4
+# CHECK-NEXT: 0 true 4,4,4,4,4,4,4,4,4,4,4,4
+# CHECK-NEXT: -1 false -0,-0,-0,-0,-0,-0,-0,-0,-0,-0,-0,-0
+# CHECK-NEXT: -1 false -0,-0,-0,-0,-0,-0,-0,-0,-0,-0,-0,-0
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+expectedresult x0 type=Array flags=[IsMadeByParser]
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @601
+    v7 = PropGet v6 key="report" [isFreeName] @601
+    v8 = Builtin builtin=GlobalThis @613
+    v9 = PropGet v8 key="listOfNines" [isFreeName] @613
+    v10 = Call v9 calleeName="listOfNines" @613
+    v11 = Integer integer=3 @643
+    v12 = Call v5, -, v11 calleeName="outOfFractions" @628
+    v13 = Integer integer=12 @647
+    v14 = Call v1, -, v10, v12, v13 calleeName="fill" @608
+    v15 = Call v7, -, v14 calleeName="report" @601
+    v16 = Builtin builtin=GlobalThis @653
+    v17 = PropGet v16 key="report" [isFreeName] @653
+    v18 = Builtin builtin=GlobalThis @665
+    v19 = PropGet v18 key="listOfTexts" [isFreeName] @665
+    v20 = Call v19 calleeName="listOfTexts" @665
+    v21 = Integer integer=3 @695
+    v22 = Call v5, -, v21 calleeName="outOfFractions" @680
+    v23 = Integer integer=12 @699
+    v24 = Call v1, -, v20, v22, v23 calleeName="fill" @660
+    v25 = Call v17, -, v24 calleeName="report" @653
+    v26 = Builtin builtin=GlobalThis @705
+    v27 = PropGet v26 key="report" [isFreeName] @705
+    v28 = Builtin builtin=GlobalThis @725
+    v29 = PropGet v28 key="listOfNines" [isFreeName] @725
+    v30 = Call v29 calleeName="listOfNines" @725
+    v31 = Double number=-0 @740
+    v32 = Integer integer=12 @744
+    v33 = Call v3, -, v30, v31, v32 calleeName="fillWithZero" @712
+    v34 = Call v27, -, v33 calleeName="report" @705
+    v35 = Builtin builtin=GlobalThis @750
+    v36 = PropGet v35 key="report" [isFreeName] @750
+    v37 = Builtin builtin=GlobalThis @770
+    v38 = PropGet v37 key="listOfTexts" [isFreeName] @770
+    v39 = Call v38 calleeName="listOfTexts" @770
+    v40 = Double number=-0 @785
+    v41 = Integer integer=12 @789
+    v42 = Call v3, -, v39, v40, v41 calleeName="fillWithZero" @757
+    v43 = Call v36, -, v42 calleeName="report" @750
+    v44 = Undefined @750
+    Return v44 @750
+}
+function f1 name="fill" module=m0 position=126 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string>, v1: anything, v2: number):
+    v3 = Builtin builtin=ArrayIsArray @194
+    v4 = TypeTest v0 testedType=Array @194
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @194
+  b1(v5):
+    Jump -> next b3(v5) @194
+  b2(v6):
+    v7 = NarrowByTest v0, v6 @194
+    v8 = Builtin builtin=Array @194
+    v9 = Builtin builtin=ArrayIsArray @194
+    v10 = Call v9, v8, v7 calleeName="Array.isArray" @200
+    v11 = Convert v10 declared={type=boolean} illTypedCause=DeclarationWithoutBody @194
+    v12 = ToBoolean v11 @194
+    Branch v12 -> taken b3(v6), notTaken b7() @194
+  b3(v13):
+    v14 = NarrowByTest v0, v13 @194
+    Switch v1 cases=[3] -> case b4(| 0), otherwise b7() @231
+  b4(v15):
+    v16 = Integer @247
+    v17 = Convert v16 declared={type=number} @247
+    Jump -> next b5(v17) @243
+  b5(v18: number):
+    LoopHint @243
+    v20 = Less v18, v2 @250
+    Branch v20 -> taken b6(), notTaken b7() @250
+  b6():
+    ElemSet v14, v18, v15 @264
+    v22 = Increment v18 @257
+    v23 = Convert v22 declared={type=number} @257
+    Jump -> next b5(v23) @257
+  b7():
+    Return v0 @286
+}
+function f2 name="fillWithZero" module=m0 position=292 flags=[IsChecked, HasExplicitName] length=3 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|number|string> flags=[OmitsNull, OmitsUndefined]}, {type=anything}, {type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array<undefined|null|number|string>, v1: anything, v2: number):
+    v3 = Builtin builtin=ArrayIsArray @368
+    v4 = TypeTest v0 testedType=Array @368
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0) @368
+  b1(v5):
+    Jump -> next b3(v5) @368
+  b2(v6):
+    v7 = NarrowByTest v0, v6 @368
+    v8 = Builtin builtin=Array @368
+    v9 = Builtin builtin=ArrayIsArray @368
+    v10 = Call v9, v8, v7 calleeName="Array.isArray" @374
+    v11 = Convert v10 declared={type=boolean} illTypedCause=DeclarationWithoutBody @368
+    v12 = ToBoolean v11 @368
+    Branch v12 -> taken b3(v6), notTaken b7() @368
+  b3(v13):
+    v14 = NarrowByTest v0, v13 @368
+    Switch v1 cases=[0] -> case b4(| 0), otherwise b7() @405
+  b4(v15):
+    v16 = Integer @421
+    v17 = Convert v16 declared={type=number} @421
+    Jump -> next b5(v17) @417
+  b5(v18: number):
+    LoopHint @417
+    v20 = Less v18, v2 @424
+    Branch v20 -> taken b6(), notTaken b7() @424
+  b6():
+    ElemSet v14, v18, v15 @438
+    v22 = Increment v18 @431
+    v23 = Convert v22 declared={type=number} @431
+    Jump -> next b5(v23) @431
+  b7():
+    Return v0 @460
+}
+function f3 name="outOfFractions" module=m0 position=466 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=number}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: number):
+    v1 = Builtin builtin=JSON @537
+    v2 = PropGet v1 key="parse" @537
+    v3 = Convert v2 declared={type=builtin(JSONParse) flags=[IsExpected]} @537
+    v4 = String string="[0.5,1,2,3,4]" @548
+    v5 = Call v3, v1, v4 calleeKey="parse" calleeName="JSON.parse" expectedResult=x0 @542
+    v6 = Convert v5 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @537
+    v7 = PropGet v6 key="push" @566
+    v8 = String string="x" @576
+    v9 = Call v7, v6, v8 calleeKey="push" calleeName="list.push" @571
+    v10 = Convert v9 declared={type=number} illTypedCause=DeclarationWithoutBody @566
+    v11 = ElemGet v6, v0 @589
+    Return v11 @589
+}

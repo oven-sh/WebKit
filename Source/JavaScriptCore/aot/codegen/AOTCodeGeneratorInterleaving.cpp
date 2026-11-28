@@ -1223,6 +1223,8 @@ void CodeGenerator::layOutSteppedStore(const SteppedStore& loop)
             require(m_out.lessThanOrEqual(firstBehind, elements.publicLength(*elementsOfList).value()));
             box = elements.rawElementToStore(form, store.valueOperand(), nullptr);
             RELEASE_ASSERT(box);
+            if (!elements.boxIsMadeInFormOfType(store.valueOperand()) && !AOT::hasFlag(build().options().testing, Wire::TestingSwitch::SkipInt32Reboxing))
+                box = emitter<ConversionEmitter>().inFormOfType(*box, typeOf(store.valueOperand()));
             if (m_rows)
                 zeroRowCounts();
         }
@@ -1253,7 +1255,10 @@ void CodeGenerator::layOutSteppedStore(const SteppedStore& loop)
                 m_out.setOrigin(machineOriginOf(value));
                 declareAccessesOf(contextOfStore);
                 LValue index = next->type() == Machine::Int32 ? m_out.extendWordThatIsNotNegative(next) : next;
-                elements.storeRawElement(form, *elementsOfList, Integer(index), *box);
+                if (box->is<Boxed>())
+                    elements.storeWordOfOperand(contextOfStore, store.valueOperand(), box->as<Boxed>(), *elementsOfList, Integer(index));
+                else
+                    elements.storeRawElement(form, *elementsOfList, Integer(index), *box);
                 m_out.clearDeclaredAccesses();
             }
             next = get(loop.counterPassedOn).value;
