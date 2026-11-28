@@ -1301,9 +1301,14 @@ CachedPropertyList& PropertyListCache::add(CachedPropertyList&& list)
     return place;
 }
 
+unsigned PropertyListCache::placeOfWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
+{
+    return WTF::intHash(static_cast<uint64_t>(extraPropertiesStructureID.bits() >> structureIDPlaceShift) << 32 | (shapeWord ^ std::rotl(orderAndCount, 16))) % numberOfWalksRemembered;
+}
+
 bool PropertyListCache::isSecondWalk(StructureID extraPropertiesStructureID, uint32_t shapeWord, uint32_t orderAndCount)
 {
-    if (m_walksWithoutList.testAndSet(WTF::intHash(static_cast<uint64_t>(extraPropertiesStructureID.bits()) << 32 | (shapeWord ^ std::rotl(orderAndCount, 16))) % numberOfWalksRemembered))
+    if (m_walksWithoutList.testAndSet(placeOfWalk(extraPropertiesStructureID, shapeWord, orderAndCount)))
         return true;
     if (++m_numberOfWalksWithoutList > numberOfEntries) {
         m_walksWithoutList.clearAll();

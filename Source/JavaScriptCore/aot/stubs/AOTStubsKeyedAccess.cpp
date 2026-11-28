@@ -328,7 +328,13 @@ static Address inKeyedValuePlace(GPRReg place, SlotAccess, ptrdiff_t offset)
 
 static void locateKeyedValuePlace(StubAssembler& jit, SlotAccess access, GPRReg key, GPRReg structureID, GPRReg place)
 {
-    jit.add32(key, structureID, place);
+    RELEASE_ASSERT(place != key);
+#if CPU(ARM64)
+    jit.addUnsignedRightShift32(key, structureID, TrustedImm32(KeyedValuePlace::shiftOfStructureID), place);
+#else
+    jit.urshift32(structureID, TrustedImm32(KeyedValuePlace::shiftOfStructureID), place);
+    jit.add32(key, place);
+#endif
     jit.and32(TrustedImm32(static_cast<int32_t>(KeyedValuePlace::offsetMask)), place);
 #if !CPU(X86_64)
     jit.addPtr(instanceGPR, place);
@@ -2364,7 +2370,8 @@ void generateReflectSet(StubAssembler& jit)
         return BaseIndex(instanceGPR, registers.entry, CCallHelpers::TimesOne, offsetOfEntries + static_cast<int32_t>(offset));
     };
     jit.load32(Address(handler, JSCell::structureIDOffset()), registers.structureID);
-    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.structureID, registers.entry);
+    jit.urshift32(registers.structureID, TrustedImm32(ForwardingProxyHandlers::shiftOfStructureID), registers.entry);
+    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.entry);
     jit.load32(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, structureID)), word);
     asksOperation.append(jit.branch32(CCallHelpers::NotEqual, word, registers.structureID));
     jit.load64(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, wordAfterHeader)), word);

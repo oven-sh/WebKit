@@ -215,6 +215,8 @@ struct KeyedValuePlace {
     static constexpr unsigned numberOfPlaces = 2 * numberOfPlacesPerAccess;
     static constexpr unsigned sizeShift = 4;
     static constexpr uint32_t offsetMask = (numberOfPlacesPerAccess - 1) << sizeShift;
+    // The sum with the address of the key takes the number of the StructureID where the offset begins. The ID itself would give one key 64 places: its bits below 7 are the same in every ID.
+    static constexpr unsigned shiftOfStructureID = structureIDPlaceShift - sizeShift;
 
     static constexpr int32_t offsetOfFirst(SlotAccess access)
     {
@@ -222,7 +224,7 @@ struct KeyedValuePlace {
         return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
     }
 
-    static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + structureID.bits()) & offsetMask; }
+    static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + (structureID.bits() >> shiftOfStructureID)) & offsetMask; }
 
     static constexpr uint32_t absenceBit = 1;
     static constexpr uint32_t fieldBit = 2;
@@ -421,13 +423,15 @@ struct ForwardingProxyHandlers {
     static constexpr unsigned size = 4;
     static constexpr unsigned sizeShift = 4;
     static constexpr uint32_t offsetMask = (size - 1) << sizeShift;
+    // What is left of structureIDPlaceShift when the place is an offset: the number of the StructureID, times the size of an entry.
+    static constexpr unsigned shiftOfStructureID = structureIDPlaceShift - sizeShift;
 
     struct Entry {
         uint64_t wordAfterHeader;
         uint32_t structureID;
     };
 
-    static uint32_t offsetFor(uint32_t structureID) { return structureID & offsetMask; }
+    static constexpr uint32_t offsetFor(uint32_t structureID) { return structureID >> shiftOfStructureID & offsetMask; }
 
     Entry entries[size];
 };
@@ -555,11 +559,11 @@ struct PropertyCacheWords {
     SlotHandlers handlers;
 #endif
     uint64_t headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::numberOfPlaces + 1];
-    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = 4;
+    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = structureIDPlaceShift;
     static constexpr unsigned numberOfStructuresBelowBuiltinClasses = 64;
     uint32_t structuresBelowBuiltinClasses[numberOfStructuresBelowBuiltinClasses];
 
-    static constexpr unsigned shiftOfErrorWithMessage = 4;
+    static constexpr unsigned shiftOfErrorWithMessage = structureIDPlaceShift;
     static constexpr unsigned numberOfErrorsWithMessage = 64;
     uint32_t errorsWithMessage[numberOfErrorsWithMessage];
 

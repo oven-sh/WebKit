@@ -2393,7 +2393,7 @@ Boxed AccessEmitter::readAtKeyedPlaceOrElse(const ValueContext& value, StubKey s
         Machine::DeclaredAccessesSuspension suspension(m_out);
         CellPointer cell = unboxCell(object);
         Word32 structureID = loadStructureID(cell);
-        LValue place = m_out.zeroExtPtr(m_out.bitAnd(m_out.add(m_out.castToInt32(key.value()), structureID.value()), m_out.constInt32(static_cast<int32_t>(KeyedValuePlace::offsetMask))));
+        LValue place = m_out.zeroExtPtr(m_out.bitAnd(m_out.add(m_out.castToInt32(key.value()), m_out.lShr(structureID.value(), KeyedValuePlace::shiftOfStructureID)), m_out.constInt32(static_cast<int32_t>(KeyedValuePlace::offsetMask))));
         auto inPlace = [&](ptrdiff_t offset) { return m_out.baseIndex(m_heaps.AOTInstance_siteCaches, m_instance, place, ScaleOne, offsetOfPlaces + offset); };
         branchUnless(Condition(m_out.equal(m_out.load64(inPlace(OBJECT_OFFSETOF(KeyedValuePlace, key))), key.value())), outOfLine);
         LValue word = m_out.load64(inPlace(OBJECT_OFFSETOF(KeyedValuePlace, structureID)));
@@ -2580,7 +2580,7 @@ void AccessEmitter::storeAtKeyedPlaceOrElse(const ValueContext& value, StubKey s
         Machine::DeclaredAccessesSuspension suspension(m_out);
         CellPointer cell = unboxCell(object);
         Word32 structureID = loadStructureID(cell);
-        LValue place = m_out.zeroExtPtr(m_out.bitAnd(m_out.add(m_out.castToInt32(key.value()), structureID.value()), m_out.constInt32(static_cast<int32_t>(KeyedValuePlace::offsetMask))));
+        LValue place = m_out.zeroExtPtr(m_out.bitAnd(m_out.add(m_out.castToInt32(key.value()), m_out.lShr(structureID.value(), KeyedValuePlace::shiftOfStructureID)), m_out.constInt32(static_cast<int32_t>(KeyedValuePlace::offsetMask))));
         auto inPlace = [&](ptrdiff_t offset) { return m_out.baseIndex(m_heaps.AOTInstance_siteCaches, m_instance, place, ScaleOne, offsetOfPlaces + offset); };
         branchUnless(Condition(m_out.equal(m_out.load64(inPlace(OBJECT_OFFSETOF(KeyedValuePlace, key))), key.value())), outOfLine);
         LValue word = m_out.load64(inPlace(OBJECT_OFFSETOF(KeyedValuePlace, structureID)));

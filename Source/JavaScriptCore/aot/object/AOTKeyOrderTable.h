@@ -129,7 +129,7 @@ public:
         uint64_t key = keyOfFinishedBirth(layout, orderWord);
         m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] = key;
     }
-    EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> enumeratorHashShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
+    EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> structureIDPlaceShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
     PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
 
 private:

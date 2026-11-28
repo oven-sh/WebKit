@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTPropertyListCache.h"
 #include "AOTPropertyLookupTableTestSupport.h"
 #include <wtf/BitVector.h>
 #include <wtf/Vector.h>
@@ -92,6 +93,40 @@ void structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID()
     AOT_TEST_CHECK(numberOfPlacesTaken(AbsenceFilter::numberOfFilters, [](StructureID structureID) { return AbsenceFilter::indexFor(structureID.bits()); }) > AbsenceFilter::numberOfFilters / 2);
     AOT_TEST_CHECK(numberOfPlacesTaken(NameShapesOfStructure::numberOfEntries, [](StructureID structureID) { return NameShapesOfStructure::indexFor(structureID); }) > NameShapesOfStructure::numberOfEntries / 2);
     AOT_TEST_CHECK(numberOfPlacesTaken(FirstElementTransition::numberOfEntries, [](StructureID structureID) { return FirstElementTransition::indexFor(structureID, 0); }) > FirstElementTransition::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyListCache::numberOfEntries, [](StructureID structureID) { return PropertyListCache::placeOf(structureID, 0, 0); }) > PropertyListCache::numberOfEntries / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyCacheWords::numberOfErrorsWithMessage, [](StructureID structureID) { return structureID.bits() >> PropertyCacheWords::shiftOfErrorWithMessage & (PropertyCacheWords::numberOfErrorsWithMessage - 1); }) > PropertyCacheWords::numberOfErrorsWithMessage / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(PropertyCacheWords::numberOfStructuresBelowBuiltinClasses, [](StructureID structureID) { return structureID.bits() >> PropertyCacheWords::shiftOfPlaceOfStructureBelowBuiltinClass & (PropertyCacheWords::numberOfStructuresBelowBuiltinClasses - 1); }) > PropertyCacheWords::numberOfStructuresBelowBuiltinClasses / 2);
+    AOT_TEST_CHECK(numberOfPlacesTaken(ForwardingProxyHandlers::size, [](StructureID structureID) { return ForwardingProxyHandlers::offsetFor(structureID.bits()) >> ForwardingProxyHandlers::sizeShift; }) > ForwardingProxyHandlers::size / 2);
+    // The values under one key. This table has four times the places that a block of the structure heap has cells, and the blocks of a release build lie twice as far apart
+    // as it has cells: a quarter is all that a sum with the ID can be asked for there.
+    AOT_TEST_CHECK(numberOfPlacesTaken(KeyedValuePlace::numberOfPlacesPerAccess, [](StructureID structureID) { return KeyedValuePlace::offsetFor(nullptr, structureID) >> KeyedValuePlace::sizeShift; }) > KeyedValuePlace::numberOfPlacesPerAccess / 4);
+}
+
+// PropertyListCache::isSecondWalk() forgets the walks it has seen after as many as the cache has entries. Of that many structures made in a row, and of every second
+// of twice as many, few fall on a place that another has taken: sixteen where the places are as good as random, and eighty where WTF::intHash() took the StructureIDs
+// themselves. The two words are those of a compiled object with one name of its own beside its fields.
+void structuresMadeInRowSeldomShareAPlaceOfTheWalksRemembered()
+{
+    constexpr unsigned numberOfWalks = PropertyListCache::numberOfEntries;
+    constexpr uint32_t shapeWord = 0xffffffeb;
+    constexpr uint32_t orderAndCount = 0x10000;
+    TableFixture fixture;
+    Vector<StructureID> structureIDs;
+    for (unsigned index = 0; index < 4 * numberOfWalks; ++index)
+        structureIDs.append(fixture.createStructure()->id());
+
+    for (unsigned step : { 1u, 2u }) {
+        for (unsigned start = 0; start + step * numberOfWalks <= structureIDs.size(); start += step * numberOfWalks) {
+            BitVector taken(PropertyListCache::numberOfWalksRemembered);
+            unsigned numberThatShare = 0;
+            for (unsigned index = 0; index < numberOfWalks; ++index) {
+                unsigned place = PropertyListCache::placeOfWalk(structureIDs[start + index * step], shapeWord, orderAndCount);
+                numberThatShare += taken.get(place);
+                taken.set(place);
+            }
+            AOT_TEST_CHECK(numberThatShare <= 40);
+        }
+    }
 }
 
 } // namespace
@@ -102,6 +137,7 @@ std::span<const NativeTest> hashedSlotTableTests()
         { "hashed-slot-table/growth-keeps-the-address-and-every-entry"_s, growthKeepsTheAddressAndEveryEntry },
         { "hashed-slot-table/structures-made-in-a-row-fill-half-of-a-table-of-every-size"_s, structuresMadeInRowFillHalfOfTableOfEverySize },
         { "hashed-slot-table/structures-made-in-a-row-take-more-than-half-of-the-places-of-tables-keyed-by-the-id"_s, structuresMadeInRowTakeMoreThanHalfOfThePlacesOfTablesKeyedByTheID },
+        { "hashed-slot-table/structures-made-in-a-row-seldom-share-a-place-of-the-walks-remembered"_s, structuresMadeInRowSeldomShareAPlaceOfTheWalksRemembered },
     };
     return tests;
 }
