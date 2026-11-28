@@ -3314,6 +3314,40 @@ BitVector Modules::filesThatHaveRun()
     return files;
 }
 
+bool Modules::hasRunSinceStartOfPreloadHook(ModuleID file) const
+{
+    constexpr uint8_t linked = static_cast<uint8_t>(StoredModuleStatus::Linked);
+    return m_statusesAtStartOfPreloadHook[file.index()] <= linked && m_storedStatuses[file.index()] > linked;
+}
+
+void Modules::setIsRunningPreloads(bool runsPreloads)
+{
+    m_isRunningPreloads = runsPreloads;
+    if (!m_hasBegunTestFile || !m_hasReloadableModules) [[likely]]
+        return;
+    std::span<const uint8_t> statuses = m_storedStatuses;
+    if (runsPreloads) {
+        m_statusesAtStartOfPreloadHook.shrink(0);
+        m_statusesAtStartOfPreloadHook.append(statuses);
+        return;
+    }
+    if (m_statusesAtStartOfPreloadHook.isEmpty() || equalSpans(m_statusesAtStartOfPreloadHook.span(), statuses))
+        return;
+    for (ModuleID file : modulesOfKind(ModuleKind::CommonJs, m_commonJSModules)) {
+        if (!hasRunSinceStartOfPreloadHook(file) || status(file) != ModuleStatus::Evaluated)
+            continue;
+        m_filesRunByPreloadHooks.set(file.index());
+        m_releasedFilesRunByPreloadHooks.clear(file.index());
+    }
+}
+
+bool Modules::wasRunByPreloadHook(ModuleID file) const
+{
+    if (m_filesRunByPreloadHooks.get(file.index()) || (m_isRunningPreloads && !m_statusesAtStartOfPreloadHook.isEmpty() && hasRunSinceStartOfPreloadHook(file)))
+        return true;
+    return m_releasedFilesRunByPreloadHooks.get(file.index()) && (isEvicted(file) || m_storedStatuses[file.index()] <= static_cast<uint8_t>(StoredModuleStatus::InRecord));
+}
+
 BitVector Modules::dataFilesThatHaveRun()
 {
     BitVector files;

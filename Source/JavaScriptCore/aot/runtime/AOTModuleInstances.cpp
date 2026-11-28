@@ -3153,6 +3153,8 @@ void Modules::releaseLoadedModule(ModuleID module)
     }
     if (m_loadedByPreloadHooks.clear(module.index())) [[unlikely]]
         m_releasedLoadsOfPreloadHooks.set(module.index());
+    if (m_filesRunByPreloadHooks.clear(module.index())) [[unlikely]]
+        m_releasedFilesRunByPreloadHooks.set(module.index());
     LoadedModule& loaded = ensureLoaded(module);
     if (loaded.instanceBesideMock.get())
         m_modulesThatRanBesideMockAlone.set(module.index());

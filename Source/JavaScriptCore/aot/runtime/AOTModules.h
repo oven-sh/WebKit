@@ -871,6 +871,7 @@ public:
     bool isMockLoadedInPreload(ModuleID module) const { return m_preloadedMocks.get(fileOf(module).index()); }
     bool wasLoadedInPreload(ModuleID module) const { return m_loadedInPreload.get(module.index()); }
     bool wasLoadedByPreloadHook(ModuleID module) const { return m_loadedByPreloadHooks.get(module.index()); }
+    bool wasRunByPreloadHook(ModuleID file) const;
     void forgetLoadByPreloadHook(ModuleID module)
     {
         m_loadedByPreloadHooks.clear(module.index());
@@ -1143,7 +1144,7 @@ public:
         if (!m_mainEntryPoint && !m_isRunningPreloads) [[unlikely]]
             m_mainEntryPoint = module;
     }
-    void setIsRunningPreloads(bool runsPreloads) { m_isRunningPreloads = runsPreloads; }
+    void setIsRunningPreloads(bool runsPreloads);
     std::optional<ModuleID> firstModuleRequestedByHost() const { return m_firstModuleRequestedByHost; }
     enum class ImportsYetToBeFetched : bool { DoNotCount, Count };
     bool hasBeenImported(ModuleID, ImportsYetToBeFetched = ImportsYetToBeFetched::Count) const;
@@ -2371,6 +2372,8 @@ private:
     JSValue callBody(ModuleID);
     JSValue enterBody(ModuleID, FunctionID body);
     JSValue callBodyUnderOwnMark(ModuleID, bool bodyStoresStatus, bool runsImportedFilesAlone = false);
+    void noteStartOfFile(ModuleID);
+    bool hasRunSinceStartOfPreloadHook(ModuleID file) const;
     struct ModuleThatMayBegin {
         ModuleID module;
         uint32_t markBefore;
@@ -3247,6 +3250,9 @@ private:
     Vector<uint32_t> m_momentsOfLoads;
     BitVector m_loadedInPreload;
     BitVector m_loadedByPreloadHooks;
+    BitVector m_filesRunByPreloadHooks;
+    BitVector m_releasedFilesRunByPreloadHooks;
+    Vector<uint8_t> m_statusesAtStartOfPreloadHook;
     BitVector m_releasedLoadsOfPreloadHooks;
     BitVector m_modulesLoadedAsMocksAlone;
     BitVector m_libraryModulesAskedForInPreload;

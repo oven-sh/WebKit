@@ -553,11 +553,22 @@ void Modules::innerModuleEvaluation(ModuleID root, EvaluationContext& context)
         noteFailedEvaluation(root, frames.isEmpty() ? root : frames.last().module);
 }
 
+void Modules::noteStartOfFile(ModuleID module)
+{
+    ModuleID file = m_table.moduleBehindFacade(module).value_or(module);
+    if (data(file).kind != ModuleKind::CommonJs || (file != module && status(file) > ModuleStatus::Linked))
+        return;
+    m_filesRunByPreloadHooks.set(file.index(), host().isInPreload && host().isInPreload(m_instance.globalObject).value_or(false));
+    m_releasedFilesRunByPreloadHooks.clear(file.index());
+}
+
 JSValue Modules::callBody(ModuleID module)
 {
     const ModuleData& moduleData = data(module);
     if (m_modulesToReleaseAfterEvaluation.clear(module.index())) [[unlikely]]
         m_modulesToReleaseAtNextTestFile.set(module.index());
+    if (m_hasBegunTestFile) [[unlikely]]
+        noteStartOfFile(module);
     std::optional<FunctionID> body = moduleData.bodyFunction();
     if (!body || (isMocked(module) && !m_originalsBeingEvaluated.get(module.index()) && !m_originalsEvaluatedUnderMock.get(module.index()) && !isPatchedByMock(module)))
         return jsUndefined();

@@ -2970,6 +2970,12 @@ bool importsStatically(JSGlobalObject* realm, ModuleID importer, ModuleID import
     return modules && modules->importsStatically(importer, imported);
 }
 
+bool wasRunByPreloadHook(JSGlobalObject* realm, ModuleID file)
+{
+    Modules* modules = modulesOf(realm);
+    return modules && modules->wasRunByPreloadHook(file);
+}
+
 bool wasLoadedByPreloadHook(JSGlobalObject* realm, ModuleID module)
 {
     Modules* modules = modulesOf(realm);
