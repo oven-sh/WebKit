@@ -520,6 +520,10 @@ static const void* findFaultingInstruction(const Compilation& compilation, intpt
     s_faultingInstruction = nullptr;
     if (!sigsetjmp(s_stateBeforeFault, 1))
         invoke<int64_t>(compilation, base, static_cast<int64_t>(0));
+#if ENABLE(JIT_PROTECTION_KEY)
+    else
+        setJITRegionWritableForCurrentThread(false);
+#endif
 
     CHECK(!sigaction(SIGSEGV, &previousSegmentationAction, nullptr));
     CHECK(!sigaction(SIGBUS, &previousBusAction, nullptr));

@@ -141,7 +141,8 @@ static ALWAYS_INLINE void threadSelfRestrict()
 namespace JSC {
 // Out of line, so that it alone has RDPKRU and WRPKRU: Bun lists every function that has an instruction newer than its baseline CPU.
 // The kernel starts a signal handler with no rights to the region, so one that reads it as data, as backtrace() does, calls this
-// with false first. Does nothing where the region has no key.
+// with false first. siglongjmp() out of a handler keeps the handler's rights, so whoever lands there calls it too. Does nothing
+// where the region has no key.
 JS_EXPORT_PRIVATE void setJITRegionWritableForCurrentThread(bool);
 }
 

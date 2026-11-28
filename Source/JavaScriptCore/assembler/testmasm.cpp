@@ -14551,7 +14551,7 @@ void testJITProtectionKeyUnderSeccompFilter()
     if (!g_jscConfig.useFastJITPermissions)
         return;
     status = statusOfStartingUnderFilterThatKillsForProtectionKey("JSC_useJITProtectionKeyUnderSeccompFilter=1");
-    CHECK_EQ(WIFSIGNALED(*status) && WTERMSIG(*status) == SIGSYS, true);
+    CHECK_EQ(status && WIFSIGNALED(*status) && WTERMSIG(*status) == SIGSYS, true);
 }
 
 void testJITProtectionKey()

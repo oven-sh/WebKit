@@ -606,7 +606,7 @@ static bool mayBeUnderSeccompFilter()
 static void giveJITRegionAProtectionKey(void* base, size_t size)
 {
     constexpr unsigned operatingSystemHasEnabledProtectionKeys = 1 << 4;
-    if (!Options::useJITProtectionKey() || !(MacroAssembler::getCPUID(0x7)[2] & operatingSystemHasEnabledProtectionKeys) || !kernelKeepsPKRUAcrossContextSwitches())
+    if (!Options::useJITProtectionKey() || MacroAssembler::getCPUID(0x0)[0] < 0x7 || !(MacroAssembler::getCPUID(0x7)[2] & operatingSystemHasEnabledProtectionKeys) || !kernelKeepsPKRUAcrossContextSwitches())
         return;
 
     // A seccomp filter may kill the process for a system call that it does not list, and nothing tells what it would do.
