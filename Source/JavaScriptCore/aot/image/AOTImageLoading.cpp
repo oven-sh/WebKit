@@ -378,7 +378,8 @@ static int openExecutable(const Invocable<bool(int)> auto& isWanted)
     int descriptor = open("/proc/self/exe", O_RDONLY | O_CLOEXEC);
     closeUnlessWanted(descriptor);
 #if OS(LINUX)
-    if (descriptor < 0) {
+    // Who starts a program with more rights than their own chooses this path.
+    if (descriptor < 0 && !getauxval(AT_SECURE)) {
         if (auto* path = std::bit_cast<const char*>(getauxval(AT_EXECFN)))
             descriptor = open(path, O_RDONLY | O_CLOEXEC);
         closeUnlessWanted(descriptor);
