@@ -1466,8 +1466,6 @@ public:
         BlockID last;
         Vector<Reference, 8> values;
     };
-    static constexpr uint32_t mergesNoObjects = UINT32_MAX;
-    bool joinArms(std::span<const JoinArm>, BlockID meeting, std::span<Reference> met, uint32_t firstRecordOfArms = mergesNoObjects);
     struct StretchInArms {
         BlockID inputBlock;
         uint32_t begin { 0 };
@@ -1476,6 +1474,8 @@ public:
         Vector<ValueID, 8> mentionedBehind;
         uint32_t firstRecord { 0 };
     };
+    // With the stretch that the arms walk, objects and lists that the arms made meet as one.
+    bool joinArms(std::span<const JoinArm>, BlockID meeting, std::span<Reference> met, const StretchInArms* = nullptr);
     using ArmsThatMeet = Vector<JoinArm, 4>;
     StretchInArms stretchInArms(BlockID inputBlock, uint32_t begin, uint32_t end) const;
     void repeatOperation(BlockID inputBlock, uint32_t place);
@@ -4900,7 +4900,8 @@ private:
     bool isReleasableArray(Reference) const;
     Vector<Reference, 2> listReleasableArrays(uint32_t numberOfValuesBuiltBefore) const;
     void releaseDeadArrays(std::span<const Reference> liveValues, Origin, uint32_t numberOfValuesBuiltBefore);
-    bool armsBringFreshList(std::span<const JoinArm>, size_t position);
+    bool armsBringFreshList(std::span<const JoinArm>, size_t position, const StretchInArms&);
+    bool isListNamedBehindArms(const WalkState&, ValueID list, const StretchInArms&);
     bool standsForFrameOfGenerator(Reference state) const;
     void endUnreferencedCellLifetimes(Vector<Reference, 16>& named, uint32_t numberOfValuesBuiltBefore);
     void endLifetimesAtJump(const BodyTarget&);
