@@ -245,14 +245,38 @@ static Vector<uint32_t> wordsOfReaderTestProgram()
     return Vector<uint32_t>(spanReinterpretCast<const uint32_t>(program->buffer()));
 }
 
-static bool isAcceptedByReaderAndVerifiers(const Vector<uint32_t>& words)
+static bool isAcceptedByReaderAndVerifiers(const Vector<uint32_t>& words, size_t* firstWordOfCode = nullptr, size_t* numberOfWordsOfCode = nullptr)
 {
     std::span<const uint8_t> bytes = asBytes(words.span());
     BuildContext build(makeDefaultCompileOptions());
     std::unique_ptr<Program> program = Program::read(bytes, build, SchemaHashCheck::Required);
     if (!program)
         return false;
+    if (firstWordOfCode) {
+        std::span<const uint32_t> code = program->functions[0].body.words();
+        *firstWordOfCode = code.data() - words.span().data();
+        *numberOfWordsOfCode = code.size();
+    }
     return verifyRecords(*program, build) && verifyBodies(*program, build);
+}
+
+static void bodyWithAnyWordChangedIsReadInsideItsBounds()
+{
+    Vector<uint32_t> words = wordsOfReaderTestProgram();
+    size_t firstWord = 0;
+    size_t numberOfWords = 0;
+    AOT_TEST_CHECK(isAcceptedByReaderAndVerifiers(words, &firstWord, &numberOfWords));
+    AOT_TEST_CHECK(numberOfWords && firstWord < words.size() && numberOfWords <= words.size() - firstWord);
+    size_t numberRefused = 0;
+    for (size_t index = firstWord; index < firstWord + numberOfWords; ++index) {
+        uint32_t original = words[index];
+        for (uint32_t changed : { 0u, original + 1, original + 100, 0x00ffffffu, 0x7fffffffu, UINT32_MAX - 1, UINT32_MAX }) {
+            words[index] = changed;
+            numberRefused += !isAcceptedByReaderAndVerifiers(words);
+        }
+        words[index] = original;
+    }
+    AOT_TEST_CHECK(numberRefused > numberOfWords);
 }
 
 static void numberWithBitsOfCellIsRefused()
@@ -279,6 +303,7 @@ std::span<const NativeTest> readerTests()
     static constexpr NativeTest tests[] = {
         { "reader/verifier-finds-unreached-names-among-many-on-any-number-of-threads"_s, verifierFindsUnreachedNamesAmongManyOnAnyNumberOfThreads },
         { "reader/long-rows-of-function-types-are-followed"_s, readerFollowsLongRowsOfFunctionTypes },
+        { "reader/body-with-any-word-changed-is-read-inside-its-bounds"_s, bodyWithAnyWordChangedIsReadInsideItsBounds },
         { "reader/number-with-bits-of-cell-is-refused"_s, numberWithBitsOfCellIsRefused },
         { "reader/types-interned-together-are-numbered-as-by-one-thread"_s, typesInternedTogetherAreNumberedAsByOneThread },
     };

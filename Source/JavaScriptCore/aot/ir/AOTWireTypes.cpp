@@ -433,6 +433,74 @@ void WireTypeReader::finishLayouts()
     steps.didFinish("inherited fields"_s);
 }
 
+// Nothing has verified these words. The walk ends where they do not make sense, and the verifier of bodies then refuses the body.
+class UnverifiedBodyWords {
+public:
+    explicit UnverifiedBodyWords(std::span<const uint32_t> words)
+        : m_words(words)
+    {
+    }
+
+    ALWAYS_INLINE std::span<const uint32_t> rest() const { return m_words; }
+    ALWAYS_INLINE bool skip(uint64_t count)
+    {
+        if (count > m_words.size()) [[unlikely]]
+            return false;
+        m_words = m_words.subspan(static_cast<size_t>(count));
+        return true;
+    }
+    bool skipTarget()
+    {
+        constexpr uint32_t headWords = BodyTarget::numberOfHeadWords;
+        return m_words.size() >= headWords && skip(uint64_t { headWords } + m_words[1] + m_words[2]);
+    }
+
+private:
+    std::span<const uint32_t> m_words;
+};
+
+template<typename Functor>
+static void forEachModuleBuiltinInUnverifiedBody(const Body& body, const Functor& functor)
+{
+    static_assert(fixedNumberOfFieldWordsOfBodyValue(Opcode::ModuleBuiltin) == 2, "its built-in and its module");
+    const IDRemapTable& modules = body.unit().tables[static_cast<size_t>(RemappedIDKind::Module)];
+    UnverifiedBodyWords words(body.words());
+    for (uint32_t remainingBlocks = body.numberOfBlocks(); remainingBlocks--;) {
+        std::span<const uint32_t> block = words.rest();
+        if (block.size() < BodyBlock::numberOfHeadWords || !words.skip(uint64_t { BodyBlock::numberOfHeadWords } + uint64_t { block[0] } * (sizeof(Wire::ParameterHead) / sizeof(uint32_t))))
+            return;
+        if (block[4] && !words.skipTarget())
+            return;
+        for (uint32_t remainingValues = block[1]; remainingValues--;) {
+            std::span<const uint32_t> value = words.rest();
+            if (value.size() < BodyValue::numberOfHeadWords) [[unlikely]]
+                return;
+            uint32_t opcodeWord = value[0] & BodyValue::opcodeMask;
+            if (opcodeWord >= numberOfEnumerators<Opcode>) [[unlikely]]
+                return;
+            auto opcode = static_cast<Opcode>(opcodeWord);
+            uint32_t firstField = BodyValue::numberOfHeadWords + CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode);
+            uint64_t numberOfFields = numberOfFieldWordsThatMayBeWrong(opcode, firstField <= value.size() ? value.subspan(firstField) : std::span<const uint32_t>());
+            if (!words.skip(firstField + numberOfFields + !!(value[0] & Wire::WrittenPositionFollows))) [[unlikely]]
+                return;
+            if (opcode != Opcode::ModuleBuiltin)
+                continue;
+            uint32_t module = value[firstField + 1];
+            if (module < modules.size)
+                functor(ModuleID::fromBits(modules.entries[module] - 1));
+        }
+        std::span<const uint32_t> terminator = words.rest();
+        if (terminator.size() < BodyTerminator::numberOfHeadWords || terminator[0] >= numberOfEnumerators<TerminatorKind>)
+            return;
+        if (!words.skip(BodyTerminator::numberOfHeadWords + numberOfFieldWordsThatMayBeWrong(static_cast<TerminatorKind>(terminator[0]), terminator.subspan(BodyTerminator::numberOfHeadWords))))
+            return;
+        for (uint32_t remainingTargets = terminator[2]; remainingTargets--;) {
+            if (!words.skipTarget())
+                return;
+        }
+    }
+}
+
 static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t numberOfModules, const ParallelLoops& loops)
 {
     constexpr uint32_t functionsPerTask = 64;
@@ -444,21 +512,10 @@ static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t n
             const Body& body = program.functions[index].body;
             if (!body)
                 continue;
-            const UnitIDRemap* unit = &body.unit();
-            BodyBlock block = body.entry();
-            for (uint32_t blockIndex = 0; blockIndex < body.numberOfBlocks(); ++blockIndex) {
-                BodyValues::Iterator cursor = block.values().begin();
-                for (uint32_t remaining = block.numberOfValues(); remaining--; ++cursor) {
-                    BodyValue value = *cursor;
-                    if (value.opcode() != Opcode::ModuleBuiltin)
-                        continue;
-                    ModuleID module = value.as<Opcode::ModuleBuiltin>().module();
-                    if (module && module.index() < numberOfModules)
-                        isNamed[module.index()].store(true, std::memory_order_relaxed);
-                }
-                BodyTerminator terminator(cursor.words(), unit, BlockID(blockIndex));
-                block = BodyBlock(terminator.end(), nullptr, unit, BlockID(blockIndex + 1), block.endOfValues());
-            }
+            forEachModuleBuiltinInUnverifiedBody(body, [&](ModuleID module) {
+                if (module && module.index() < numberOfModules)
+                    isNamed[module.index()].store(true, std::memory_order_relaxed);
+            });
         }
     });
 
