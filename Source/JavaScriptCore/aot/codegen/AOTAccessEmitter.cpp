@@ -667,6 +667,13 @@ TypedPointer AccessEmitter::globalBindingLocationOrElse(Pointer record, bool see
     return TypedPointer(m_heaps.properties.atAnyNumber(), propertyAddressOrElse(record, seesScriptBindings, miss).value());
 }
 
+Boxed AccessEmitter::constantOfGlobalBindingOrEmpty(const ValueContext& read)
+{
+    RELEASE_ASSERT(!read->isForTypeOf() && !m_plan.globalName(read->key()).isStoredThroughBinding);
+    Pointer record = globalBindingAddress(read->key(), read->seesScriptBindings() ? OptionSet { GlobalBindingFlags::SeesScriptBindings } : OptionSet<GlobalBindingFlags> { });
+    return Boxed(m_out.load64(m_out.address(m_heaps.AOTInstance_globalBindings, record.value(), OBJECT_OFFSETOF(GlobalBinding, constant))));
+}
+
 void AccessEmitter::generateGetGlobalBinding(const ValueContext& value)
 {
     PropertyKeyID key = value->key();

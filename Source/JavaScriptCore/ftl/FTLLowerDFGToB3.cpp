@@ -54,6 +54,9 @@
 #include "DFGMayExit.h"
 #include "DFGOSRAvailabilityAnalysisPhase.h"
 #include "DFGOSRExitFuzz.h"
+#include "DecimalFastPaths.h"
+#include "DecimalObject.h"
+#include "DecimalOperations.h"
 #include "DirectArguments.h"
 #include "FTLExceptionTarget.h"
 #include "FTLForOSREntryJITCode.h"
@@ -134,6 +137,7 @@
 #include <atomic>
 #include <span>
 #include <wtf/Box.h>
+#include <wtf/GraphNodeWorklist.h>
 #include <wtf/RecursableLambda.h>
 #include <wtf/text/MakeString.h>
 
@@ -1271,6 +1275,36 @@ private:
         case NewInternalFieldObject:
             compileNewInternalFieldObject();
             break;
+        case DecimalWordConstant:
+            compileDecimalWordConstant();
+            break;
+        case GetDecimalWord:
+            compileGetDecimalWord();
+            break;
+        case ToDecimal:
+            compileToDecimal();
+            break;
+        case DecimalArith:
+            compileDecimalArith();
+            break;
+        case DecimalScale:
+            compileDecimalScale();
+            break;
+        case DecimalTest:
+            compileDecimalTest();
+            break;
+        case DecimalToNumber:
+            compileDecimalToNumber();
+            break;
+        case DecimalToString:
+            compileDecimalToString();
+            break;
+        case DecimalToFixed:
+            compileDecimalToFixed();
+            break;
+        case NewDecimal:
+            compileNewDecimal();
+            break;
         case NewPromise:
             compileNewPromise();
             break;
@@ -2107,6 +2141,7 @@ private:
         case PhantomNewAsyncGeneratorFunction:
         case PhantomNewAsyncFunction:
         case PhantomNewInternalFieldObject:
+        case PhantomNewDecimal:
         case PhantomNewPromise:
         case PhantomCreateActivation:
         case PhantomDirectArguments:
@@ -10195,6 +10230,423 @@ IGNORE_CLANG_WARNINGS_END
         default:
             DFG_CRASH(m_graph, m_node, "Bad structure"_s);
         }
+    }
+
+    struct DecimalGenerator {
+        using Value = LValue;
+        using Block = LBasicBlock;
+
+        Output& out() { return lowering.m_out; }
+        LType int64Type() { return Int64; }
+        Block newBlock() { return out().newBlock(); }
+        void appendTo(Block block) { out().appendTo(block); }
+        void continueIf(Value condition, Block otherwise)
+        {
+            Block next = newBlock();
+            out().branch(condition, usually(next), rarely(otherwise));
+            appendTo(next);
+        }
+        void branch(Value condition, Block taken, Block notTaken) { out().branch(condition, unsure(taken), unsure(notTaken)); }
+        // Opaque, or each field gets a constant of its own.
+        Value addressInTables(ptrdiff_t offset, Value index) { return out().opaque(out().add(out().constIntPtr(std::bit_cast<intptr_t>(&Decimal128::tables()) + offset), index)); }
+        Value loadFromTables(Value address, ptrdiff_t offset) { return out().load64(out().address(lowering.m_heaps.root, address, offset)); }
+        Value countLeadingZeros64(Value value) { return out().ctlz64(value); }
+
+        LowerDFGToB3& lowering;
+    };
+    using DecimalWords = DecimalFastPaths<DecimalGenerator>::Words;
+    using TrailingZeros = DecimalFastPaths<DecimalGenerator>::TrailingZeros;
+
+    static bool takesTrailingZeros(Node* node) { return node->hasDecimalOperation() && JSC::takesTrailingZeros(node->decimalOperation()); }
+
+    DecimalWords lowDecimal(Node* node, unsigned index)
+    {
+        Edge low = m_graph.child(node, 2 * index);
+        DecimalWords words { lowStorage(low), lowStorage(m_graph.child(node, 2 * index + 1)) };
+        if (takesTrailingZeros(node) || trailingZerosOfWord(low.node()) == TrailingZeros::None)
+            return words;
+        return m_decimals.withoutTrailingZeros(words);
+    }
+    DecimalWords lowDecimal(unsigned index) { return lowDecimal(m_node, index); }
+
+    // The tuple or the Phi.
+    static Node* sourceOfDecimalWord(Node* word)
+    {
+        if (!word->hasStorageResult())
+            return nullptr;
+        if (word->op() == ExtractFromTuple)
+            return word->child1().node();
+        return word->op() == DFG::Phi ? word : nullptr;
+    }
+
+    struct ReadsOfDecimal {
+        unsigned wordsRead { 0 };
+        TrailingZeros trailingZeros { TrailingZeros::Some };
+        Vector<Node*, 1> phis { };
+    };
+    const ReadsOfDecimal& readsOfDecimal(Node* source)
+    {
+        if (!m_readsOfDecimals)
+            findReadsOfDecimals();
+        return m_readsOfDecimals->add(source, ReadsOfDecimal { }).iterator->value;
+    }
+
+    void findReadsOfDecimals()
+    {
+        auto& sources = m_readsOfDecimals.emplace();
+        Vector<Node*> upsilons;
+        m_graph.initializeNodeOwners();
+        for (DFG::BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+            for (Node* node : *block) {
+                // For what an exit reads see operationMaterializeObjectInOSR.
+                if (node->op() == PutHint || node->op() == DFG::Check || node->op() == CheckVarargs || node->op() == Phantom)
+                    continue;
+                m_graph.doToChildren(node, [&](Edge edge) {
+                    Node* source = sourceOfDecimalWord(edge.node());
+                    if (!source)
+                        return;
+                    auto& reads = sources.add(source, ReadsOfDecimal { }).iterator->value;
+                    ++reads.wordsRead;
+                    if (node->op() == DFG::Upsilon) {
+                        reads.phis.append(node->phi());
+                        upsilons.append(node);
+                        return;
+                    }
+                    // Otherwise the node does it, on its path only.
+                    if (!takesTrailingZeros(node) && (source->owner == block || !(block->executionCount <= source->owner->executionCount)))
+                        reads.trailingZeros = TrailingZeros::None;
+                });
+            }
+        }
+
+        for (bool changed = true; std::exchange(changed, false);) {
+            for (Node* upsilon : upsilons) {
+                if (readsOfDecimal(upsilon->phi()).trailingZeros == TrailingZeros::None)
+                    changed |= std::exchange(sources.find(sourceOfDecimalWord(upsilon->child1().node()))->value.trailingZeros, TrailingZeros::None) != TrailingZeros::None;
+            }
+        }
+    }
+
+    bool comesBackAs(Node* tuple, Node* phi)
+    {
+        GraphNodeWorklist<Node*> worklist;
+        worklist.push(tuple);
+        while (Node* source = worklist.pop()) {
+            if (source == phi)
+                return true;
+            worklist.pushAll(readsOfDecimal(source).phis);
+        }
+        return false;
+    }
+
+    TrailingZeros trailingZerosOfTuple(Node* tuple) { return readsOfDecimal(tuple).trailingZeros; }
+
+    TrailingZeros trailingZerosOfWord(Node* low)
+    {
+        Node* source = sourceOfDecimalWord(low);
+        return source ? readsOfDecimal(source).trailingZeros : TrailingZeros::None;
+    }
+
+    void setDecimal(DecimalWords words)
+    {
+        setTuple(0, words.low);
+        setTuple(1, words.upper);
+    }
+
+    void setDecimal(LValue words) { setDecimal({ m_out.extract(words, 0), m_out.extract(words, 1) }); }
+
+    void setDecimalOrExit(LValue words)
+    {
+        speculate(BadDecimalArgument, noValue(), nullptr, m_out.equal(m_out.extract(words, 1), m_out.constInt64(Decimal128::upperOfNoValue)));
+        setDecimal(words);
+    }
+
+    template<typename FastFunctor, typename SlowFunctor>
+    void setDecimal(NOESCAPE const FastFunctor& fast, NOESCAPE const SlowFunctor& slow)
+    {
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
+
+        auto [low, upper] = fast(slowCase);
+        ValueFromBlock fastLow = m_out.anchor(low);
+        ValueFromBlock fastUpper = m_out.anchor(upper);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        LValue words = slow();
+        ValueFromBlock slowLow = m_out.anchor(m_out.extract(words, 0));
+        ValueFromBlock slowUpper = m_out.anchor(m_out.extract(words, 1));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setDecimal({ m_out.phi(Int64, fastLow, slowLow), m_out.phi(Int64, fastUpper, slowUpper) });
+    }
+
+    void compileDecimalWordConstant()
+    {
+        setStorage(m_out.constInt64(m_node->decimalWord()));
+    }
+
+    void compileGetDecimalWord()
+    {
+        if (auto* object = m_node->child1()->dynamicCastConstant<DecimalObject*>()) {
+            setStorage(m_out.constInt64(object->value().words()[m_node->decimalWordIndex()]));
+            return;
+        }
+        setStorage(m_out.load64(lowCell(m_node->child1()), m_node->decimalWordIndex() ? m_heaps.DecimalObject_upper : m_heaps.DecimalObject_low));
+    }
+
+    void compileToDecimal()
+    {
+        LType words = toOperationType(Int64);
+        switch (m_node->child1().useKind()) {
+        case Int32Use: {
+            LValue value = lowInt32(m_node->child1());
+            setDecimal([&](LBasicBlock slowCase) {
+                return m_decimals.fromInteger(m_out.signExt32To64(value), true, trailingZerosOfTuple(m_node), slowCase);
+            }, [&] {
+                return m_out.callWithoutSideEffects(words, operationInt32ToDecimal, value);
+            });
+            return;
+        }
+        case DoubleRepUse:
+            setDecimal(m_out.callWithoutSideEffects(words, operationDoubleToDecimal, lowDouble(m_node->child1())));
+            return;
+        case UntypedUse: {
+            LValue value = lowJSValue(m_node->child1());
+            setDecimal([&](LBasicBlock slowCase) {
+                LValue result = m_out.callWithoutSideEffects(words, operationPrimitiveToDecimal, value);
+                // In front of a check the value can be empty.
+                result->as<CCallValue>()->effects.controlDependent = true;
+                m_decimalGenerator.continueIf(m_out.notEqual(m_out.extract(result, 1), m_out.constInt64(Decimal128::upperOfNoValue)), slowCase);
+                return DecimalWords { m_out.extract(result, 0), m_out.extract(result, 1) };
+            }, [&] {
+                LValue result = vmCall(words, operationToDecimal, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), value);
+                speculate(BadDecimalArgument, noValue(), nullptr, m_out.equal(m_out.extract(result, 1), m_out.constInt64(Decimal128::upperOfNoValue)));
+                return result;
+            });
+            return;
+        }
+        default:
+            DFG_CRASH(m_graph, m_node, "Bad use kind"_s);
+        }
+    }
+
+    void compileDecimalArith()
+    {
+        LType words = toOperationType(Int64);
+        auto operation = m_node->decimalOperation();
+        DecimalWords x = lowDecimal(0);
+        switch (operation) {
+        case DecimalOperation::Abs:
+            setDecimal(m_decimals.abs(x));
+            return;
+        case DecimalOperation::Negate:
+            setDecimal(m_decimals.negate(x));
+            return;
+        case DecimalOperation::Mantissa:
+            setDecimal(m_out.callWithoutSideEffects(words, operationDecimalMantissa, x.low, x.upper));
+            return;
+        default:
+            break;
+        }
+
+        DecimalWords y = lowDecimal(1);
+        if (auto reciprocal = operation == DecimalOperation::Divide ? m_decimals.reciprocalOf(y) : std::nullopt) {
+            operation = DecimalOperation::Multiply;
+            y = *reciprocal;
+        }
+        auto call = [&] {
+            return m_out.callWithoutSideEffects(words, binaryDecimalOperation(operation), x.low, x.upper, y.low, y.upper);
+        };
+        if (operation > DecimalOperation::Multiply) {
+            setDecimal(call());
+            return;
+        }
+        setDecimal([&](LBasicBlock slowCase) {
+            TrailingZeros result = trailingZerosOfTuple(m_node);
+            if (result == TrailingZeros::Some) {
+                if (operation <= DecimalOperation::Subtract && comesBackAs(m_node, m_graph.child(m_node, 0).node()))
+                    return m_decimals.addToTotal(x, y, operation == DecimalOperation::Subtract, slowCase);
+                if (operation == DecimalOperation::Add && comesBackAs(m_node, m_graph.child(m_node, 2).node()))
+                    return m_decimals.addToTotal(y, x, false, slowCase);
+            }
+            if (operation == DecimalOperation::Add)
+                return m_decimals.add(x, y, result, slowCase);
+            if (operation == DecimalOperation::Subtract)
+                return m_decimals.subtract(x, y, result, slowCase);
+            return m_decimals.multiply(x, y, result, slowCase);
+        }, call);
+    }
+
+    // If this node alone reads the quotient.
+    Node* divisionThatGives(Node* word)
+    {
+        if (word->op() != ExtractFromTuple)
+            return nullptr;
+        Node* tuple = word->child1().node();
+        if (tuple->op() != DecimalArith || tuple->decimalOperation() != DecimalOperation::Divide || readsOfDecimal(tuple).wordsRead != 2)
+            return nullptr;
+        return m_decimals.reciprocalOf(lowDecimal(tuple, 1)) ? nullptr : tuple;
+    }
+
+    void compileDecimalScale()
+    {
+        LType words = toOperationType(Int64);
+        DecimalWords x = lowDecimal(0);
+        LValue mode = m_out.constInt32(m_node->decimalRoundingMode());
+        bool isRound = m_node->decimalOperation() == DecimalOperation::Round;
+        if (m_node->child3().useKind() == UntypedUse) {
+            setDecimalOrExit(m_out.callWithoutSideEffects(words, isRound ? operationDecimalRoundByValue : operationDecimalScale10ByValue, x.low, x.upper, lowJSValue(m_node->child3()), mode));
+            return;
+        }
+
+        LValue count = lowInt32(m_node->child3());
+        if (Node* division = isRound ? divisionThatGives(m_node->child1().node()) : nullptr) {
+            // B3 removes the other call unless an exit reads the quotient.
+            DecimalWords dividend = lowDecimal(division, 0);
+            DecimalWords divisor = lowDecimal(division, 1);
+            setDecimal(m_out.callWithoutSideEffects(words, operationDecimalDivideAndRound, dividend.low, dividend.upper, divisor.low, divisor.upper, count, mode));
+            return;
+        }
+        setDecimal([&](LBasicBlock slowCase) {
+            if (isRound)
+                return m_decimals.round(x, trailingZerosOfWord(m_node->child1().node()), count, static_cast<Decimal128::RoundingMode>(m_node->decimalRoundingMode()), trailingZerosOfTuple(m_node), slowCase);
+            return m_decimals.scale10(x, count, slowCase);
+        }, [&] {
+            return m_out.callWithoutSideEffects(words, isRound ? operationDecimalRound : operationDecimalScale10, x.low, x.upper, count, mode);
+        });
+    }
+
+    // One functor takes two integers that are in the order of the operands, the other what operationDecimalCompare answers.
+    template<typename FastFunctor, typename SlowFunctor>
+    LValue compareDecimals(LType type, NOESCAPE const FastFunctor& ofIntegers, NOESCAPE const SlowFunctor& ofOrder)
+    {
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
+
+        DecimalWords x = lowDecimal(0);
+        DecimalWords y = lowDecimal(1);
+        Vector<ValueFromBlock, 3> results;
+        m_decimals.compare(x, y, slowCase, [&](LValue left, LValue right) {
+            results.append(m_out.anchor(ofIntegers(left, right)));
+            m_out.jump(continuation);
+        });
+
+        m_out.appendTo(slowCase, continuation);
+        results.append(m_out.anchor(ofOrder(m_out.castToInt32(m_out.callWithoutSideEffects(Int64, operationDecimalCompare, x.low, x.upper, y.low, y.upper)))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        return m_out.phi(type, results);
+    }
+
+    void compileDecimalTest()
+    {
+        static_assert(unorderedDecimals == 2);
+        switch (m_node->decimalOperation()) {
+        case DecimalOperation::IsNaN:
+            setBoolean(m_decimals.isNaN(lowDecimal(0)));
+            return;
+        case DecimalOperation::IsFinite:
+            setBoolean(m_decimals.isFinite(lowDecimal(0)));
+            return;
+        case DecimalOperation::Equals:
+            setBoolean(m_decimals.equals(lowDecimal(0), lowDecimal(1)));
+            return;
+        case DecimalOperation::NotEquals:
+            setBoolean(m_decimals.notEquals(lowDecimal(0), lowDecimal(1)));
+            return;
+        case DecimalOperation::LessThan:
+            setBoolean(compareDecimals(Int32, [&](LValue x, LValue y) { return m_out.lessThan(x, y); }, [&](LValue order) { return m_out.lessThan(order, m_out.int32Zero); }));
+            return;
+        case DecimalOperation::LessThanOrEqual:
+            setBoolean(compareDecimals(Int32, [&](LValue x, LValue y) { return m_out.lessThanOrEqual(x, y); }, [&](LValue order) { return m_out.lessThanOrEqual(order, m_out.int32Zero); }));
+            return;
+        case DecimalOperation::GreaterThan:
+            setBoolean(compareDecimals(Int32, [&](LValue x, LValue y) { return m_out.greaterThan(x, y); }, [&](LValue order) { return m_out.equal(order, m_out.int32One); }));
+            return;
+        case DecimalOperation::GreaterThanOrEqual:
+            setBoolean(compareDecimals(Int32, [&](LValue x, LValue y) { return m_out.greaterThanOrEqual(x, y); }, [&](LValue order) { return m_out.belowOrEqual(order, m_out.int32One); }));
+            return;
+        default:
+            DFG_CRASH(m_graph, m_node, "Bad operation"_s);
+        }
+    }
+
+    void compileDecimalToNumber()
+    {
+        if (m_node->decimalOperation() == DecimalOperation::Compare) {
+            setJSValue(compareDecimals(Int64, [&](LValue x, LValue y) {
+                return boxInt32(m_out.sub(m_out.greaterThan(x, y), m_out.lessThan(x, y)));
+            }, [&](LValue order) {
+                return m_out.select(m_out.equal(order, m_out.constInt32(unorderedDecimals)), m_out.constInt64(JSValue::encode(jsNaN())), boxInt32(order));
+            }));
+            return;
+        }
+
+        ASSERT(m_node->decimalOperation() == DecimalOperation::Exponent);
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LBasicBlock lastNext = m_out.insertNewBlocksBefore(slowCase);
+
+        DecimalWords x = lowDecimal(0);
+        ValueFromBlock fastResult = m_out.anchor(boxInt32(m_decimals.exponent(x, slowCase)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock slowResult = m_out.anchor(m_out.callWithoutSideEffects(Int64, operationDecimalExponent, x.low, x.upper));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, fastResult, slowResult));
+    }
+
+    void compileDecimalToString()
+    {
+        auto [low, upper] = lowDecimal(0);
+        setJSValue(vmCall(pointerType(), m_node->decimalOperation() == DecimalOperation::ToString ? operationDecimalToString : operationDecimalToExponential, m_vmValue, low, upper));
+    }
+
+    void compileDecimalToFixed()
+    {
+        auto [low, upper] = lowDecimal(0);
+        LValue result = vmCall(pointerType(), operationDecimalToFixed, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), low, upper, lowJSValue(m_graph.child(m_node, 2)), lowJSValue(m_graph.child(m_node, 3)));
+        speculate(BadDecimalArgument, noValue(), nullptr, m_out.isNull(result));
+        setJSValue(result);
+    }
+
+    void compileNewDecimal()
+    {
+        LBasicBlock isNew = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        Vector<ValueFromBlock, 3> results;
+        if (m_node->child3()) {
+            LValue object = lowJSValue(m_node->child3());
+            results.append(m_out.anchor(object));
+            m_out.branch(m_out.isNull(object), unsure(isNew), unsure(continuation));
+        } else
+            m_out.jump(isNew);
+
+        LBasicBlock lastNext = m_out.appendTo(isNew, slowCase);
+        auto [low, upper] = lowDecimal(0);
+        LValue object = allocateObject<DecimalObject>(m_node->structure(), m_out.intPtrZero, slowCase);
+        m_out.store64(low, object, m_heaps.DecimalObject_low);
+        m_out.store64(upper, object, m_heaps.DecimalObject_upper);
+        mutatorFence();
+        results.append(m_out.anchor(object));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slowCase, continuation);
+        results.append(m_out.anchor(vmCall(pointerType(), operationNewDecimal, m_vmValue, frozenPointer(m_graph.freezeStrong(m_node->structure().get())), low, upper)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(pointerType(), results));
     }
 
     void compileNewPromise()
@@ -22776,6 +23228,14 @@ IGNORE_CLANG_WARNINGS_END
             LBasicBlock parentClass = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
 
+            if (classInfo == DecimalObject::info() && m_node->op() == CheckJSCast) {
+                if (Structure* usualStructure = m_graph.globalObjectFor(m_origin.semantic)->decimalStructureConcurrently()) {
+                    LBasicBlock otherStructure = m_out.newBlock();
+                    m_out.branch(m_out.equal(m_out.load32(cell, m_heaps.JSCell_structureID), weakStructureID(m_graph.registerStructure(usualStructure))), usually(continuation), rarely(otherStructure));
+                    m_out.appendTo(otherStructure);
+                }
+            }
+
             LValue structure = loadStructure(cell);
             LValue cellClassInfo = m_out.loadPtr(structure, m_heaps.Structure_classInfo);
             ValueFromBlock otherAtStart = m_out.anchor(cellClassInfo);
@@ -29489,6 +29949,9 @@ IGNORE_CLANG_WARNINGS_END
 
     LValue m_callFrame;
     LValue m_vmValue;
+    DecimalGenerator m_decimalGenerator { *this };
+    DecimalFastPaths<DecimalGenerator> m_decimals { m_decimalGenerator };
+    std::optional<HashMap<Node*, ReadsOfDecimal>> m_readsOfDecimals;
     LValue m_captured;
     LValue m_numberTag;
     LValue m_notCellMask;

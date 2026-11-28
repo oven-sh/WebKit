@@ -17,6 +17,7 @@
 #include "AOTEnforcedFields.h"
 #include "AOTFactFaults.h"
 #include "AOTIRProgram.h"
+#include "AOTLayoutData.h"
 #include "AOTLinkCoroutines.h"
 #include "AOTLinkFlow.h"
 #include "AOTLinkStrings.h"

@@ -43,6 +43,7 @@
 #include "ClonedArguments.h"
 #include "ConcatKeyAtomStringCache.h"
 #include "DateInstance.h"
+#include "DecimalObject.h"
 #include "DirectArguments.h"
 #include "GetterSetter.h"
 #include "HasOwnPropertyCache.h"

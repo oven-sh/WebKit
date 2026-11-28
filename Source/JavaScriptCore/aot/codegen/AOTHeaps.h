@@ -59,6 +59,7 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(AOTInstance_globalBindings, 0, Mutable, RuntimeState) \
     v(AOTInstance_siteCaches, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_arrayProfiles, 0, OutsideDeclaredEffects, RuntimeState) \
+    v(reusedDecimals, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTInstance_keyOrderRuns, 0, OutsideDeclaredEffects, RuntimeState) \
     v(AOTCompiledStructure_numberOfExtraKeys, CompiledStructure::offsetOfNumberOfExtraKeys(), OutsideDeclaredEffects, RuntimeState) \
     v(AOTPropertyCaches_front, 0, Mutable, RuntimeState) \
@@ -109,6 +110,8 @@ using HeapList = Vector<const Machine::AbstractHeap*, 16>;
     v(JSArrayBufferView_length, JSArrayBufferView::offsetOfLength(), Mutable, TypedArrayStorage) \
     v(JSArrayBufferView_mode, JSArrayBufferView::offsetOfMode(), Mutable, TypedArrayStorage) \
     v(JSArrayBufferView_vector, JSArrayBufferView::offsetOfVector(), InnerPointer, TypedArrayStorage) \
+    v(DecimalObject_low, DecimalObject::offsetOfLow(), Immutable, RuntimeState) \
+    v(DecimalObject_upper, DecimalObject::offsetOfUpper(), Immutable, RuntimeState) \
     v(JSBigInt_length, JSBigInt::offsetOfLength(), Immutable, RuntimeState) \
     v(JSBigInt_data, JSBigInt::offsetOfData(), Immutable, RuntimeState) \
     v(JSBigInt_sign, JSCell::typeInfoFlagsOffset(), Immutable, RuntimeState) \

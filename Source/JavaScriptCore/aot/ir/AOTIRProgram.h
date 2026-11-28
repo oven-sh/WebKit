@@ -20,6 +20,7 @@
 #include "AOTTaggedLayouts.h"
 #include "AOTTypeTable.h"
 #include "AOTVector.h"
+#include "DecimalOperation.h"
 #include "LineColumn.h"
 #include <algorithm>
 #include <memory>
@@ -108,6 +109,7 @@ public:
     Vector<OpenedName> openedNames;
     Vector<BuiltinUsedAtStart> builtinsUsedAtStart;
     Wire::ExcludedCode excludedCode { };
+    bool expectsDecimals { false };
     bool admitsReplacedBuiltins { false };
     bool shouldAssumeNullishHostResults { false };
     uint16_t builtinInjectedAsMinimumInteger { 0 };
@@ -141,6 +143,17 @@ public:
     StringID stringOf(BuiltinName textName) const { return strings.stringOf(textName); }
 
     PropertyKeyID keyOf(BuiltinName name) const { return m_derivedTables.builtinNameKeys[name.index()]; }
+    struct NamesOfDecimals {
+        StringID constructor;
+        StringID digits;
+        StringID roundingMode;
+        std::array<StringID, numberOfDecimalOperations> methods;
+    };
+    const NamesOfDecimals& namesOfDecimals() const LIFETIME_BOUND { return m_derivedTables.namesOfDecimals; }
+    bool namesDecimalConstructor(PropertyKeyID id) const
+    {
+        return expectsDecimals && at(id).kind == PropertyKeyKind::Text && at(id).text == namesOfDecimals().constructor;
+    }
     PropertyKeyID keyOfWordOnWhatSeesAccesses() const { return m_derivedTables.keyOfWordOnWhatSeesAccesses; }
     ALWAYS_INLINE BuiltinName builtinNameOf(PropertyKeyID id) const
     {
@@ -258,6 +271,7 @@ private:
         Vector<FieldOfView> fieldsOfViewsByKey;
         Vector<PropertyKeyID> builtinNameKeys;
         PropertyKeyID keyOfWordOnWhatSeesAccesses;
+        NamesOfDecimals namesOfDecimals;
         Vector<BuiltinName> registeredSymbolNames;
         Vector<std::pair<BuiltinID, ModuleID>> compiledModulesOfNamespaceObjects;
         Vector<uint8_t> locationBitsOfVariables;

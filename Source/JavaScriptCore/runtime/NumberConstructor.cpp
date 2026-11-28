@@ -22,6 +22,7 @@
 #include "config.h"
 #include "NumberConstructor.h"
 
+#include "DecimalObject.h"
 #include "JSBigIntInlines.h"
 #include "JSCInlines.h"
 #include "NumberObject.h"
@@ -99,7 +100,10 @@ JSC_DEFINE_HOST_FUNCTION(constructNumberConstructor, (JSGlobalObject* globalObje
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     double n = 0;
-    if (callFrame->argumentCount()) {
+    // https://tc39.es/proposal-decimal/#sec-number-constructor-number-value
+    if (auto* decimal = DecimalObject::tryCast(callFrame->argument(0))) [[unlikely]]
+        n = decimal->toNumberValue();
+    else if (callFrame->argumentCount()) {
         JSValue numeric = callFrame->uncheckedArgument(0).toNumeric(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         if (numeric.isNumber())
@@ -128,6 +132,9 @@ JSC_DEFINE_HOST_FUNCTION(callNumberConstructor, (JSGlobalObject* globalObject, C
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!callFrame->argumentCount())
         return JSValue::encode(jsNumber(0));
+    // https://tc39.es/proposal-decimal/#sec-number-constructor-number-value
+    if (auto* decimal = DecimalObject::tryCast(callFrame->uncheckedArgument(0))) [[unlikely]]
+        return JSValue::encode(jsNumber(decimal->toNumberValue()));
     JSValue numeric = callFrame->uncheckedArgument(0).toNumeric(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     if (numeric.isNumber())

@@ -534,8 +534,10 @@ Instance* Instance::create(JSGlobalObject* realm)
     initializeCollectorWords(vm, *instance);
     initializeStubWords(*instance);
     initializeIterationWords(*instance);
-    constexpr unsigned entryOfEffectsNet = static_cast<unsigned>(Entry::operationAOTStopAtFalseEffects);
-    if (vm.aotState().image->header().entriesUsed[entryOfEffectsNet / 32] >> entryOfEffectsNet % 32 & 1) [[unlikely]]
+    auto imageUses = [&](Entry entry) {
+        return vm.aotState().image->header().entriesUsed[static_cast<unsigned>(entry) / 32] >> static_cast<unsigned>(entry) % 32 & 1;
+    };
+    if (imageUses(Entry::operationAOTStopAtFalseEffects)) [[unlikely]]
         instance->effectsNet.exercised = makeEffectsNetExercised().data();
 
     State::create(*instance);
@@ -562,6 +564,8 @@ Instance* Instance::create(JSGlobalObject* realm)
     instance->state->caches->addClearedEachCollection("replaced members"_s, asMutableByteSpan(instance->propertyCaches.replacedMembers));
     fillInstanceClassInfos(*instance);
     initializeRuntimeWords(*instance);
+    if (imageUses(Entry::operationAOTNewDecimal)) [[unlikely]]
+        prepareDecimalWords(*instance);
 
     registerStackMirror(instance, vm);
     VMState& vmState = vm.aotState();

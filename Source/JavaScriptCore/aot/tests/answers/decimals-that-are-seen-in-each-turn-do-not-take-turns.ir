@@ -1,0 +1,51 @@
+# An object that is given up in each turn is made as any other.
+# sink((list, seen) => { let total = new Decimal(0); for (const x of list) { total = total.add(x); seen.push(total); } });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalsReused = 0
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); const seen = []; f(amounts.slice(0, 3), seen); show(() => names(seen)); };
+# CHECK: 0:0.25 1:1 2:2.5;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=undefined|null|string|Array flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|string|Array, v1: anything):
+    v2 = Builtin builtin=GlobalThis
+    v3 = PropGet v2 key="Decimal" [isFreeName]
+    v4 = Integer
+    v5 = Construct v3, -, v4 calleeName="Decimal"
+    v6 = Convert v5 declared={type=anything flags=[IsExpected]}
+    v7 = IteratorOpen v0
+    Jump -> next b1(v6)
+  b1(v8):
+    LoopHint
+    v10 = IteratorResume v7
+    v11 = ResultAt v10
+    v12 = ResultAt v10 index=1
+    Branch v11 -> taken b2(), notTaken b3()
+  b2():
+    v13 = Undefined
+    Return v13
+  b3():
+    Jump -> next b4()
+  b4() handler=b5():
+    v14 = PropGet v8 key="add"
+    v15 = Call v14, v8, v12 calleeKey="add" calleeName="total.add"
+    v16 = Convert v15 declared={type=anything flags=[IsExpected]}
+    v17 = PropGet v1 key="push"
+    v18 = Call v17, v1, v16 calleeKey="push" calleeName="seen.push"
+    Jump -> next b1(v16)
+  b5() role=IterationCleanup subject=v7:
+    v19 = CatchException
+    IteratorClose v7 completion=Throw
+    Rethrow v19
+}

@@ -452,6 +452,18 @@ namespace JSC { namespace DFG {
     macro(NewTypedArray, NodeResultJS | NodeMustGenerate) \
     macro(NewTypedArrayBuffer, NodeResultJS | NodeMustGenerate) \
     macro(NewRegExp, NodeResultJS) \
+    /* A Decimal128 is two nodes, its words. They are storage: bits that are no JSValue. ToDecimal, DecimalArith and DecimalScale answer a tuple of them. */\
+    macro(DecimalWordConstant, NodeResultStorage) \
+    macro(GetDecimalWord, NodeResultStorage) \
+    macro(ToDecimal, NodeMustGenerate) \
+    macro(DecimalArith, NodeHasVarArgs) \
+    macro(DecimalScale, NodeMustGenerate) \
+    macro(DecimalTest, NodeResultBoolean | NodeHasVarArgs) \
+    macro(DecimalToNumber, NodeResultJS | NodeHasVarArgs) \
+    macro(DecimalToString, NodeResultJS) \
+    macro(DecimalToFixed, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    /* The third child, if any, is the object if it has been made, or else empty. */\
+    macro(NewDecimal, NodeResultJS) \
     macro(NewRegExpUntyped, NodeResultJS | NodeMustGenerate) \
     macro(NewSymbol, NodeResultJS | NodeMustGenerate) \
     macro(NewStringObject, NodeResultJS) \
@@ -483,6 +495,7 @@ namespace JSC { namespace DFG {
     macro(PhantomCreateActivation, NodeResultJS | NodeMustGenerate) \
     macro(MaterializeCreateActivation, NodeResultJS | NodeHasVarArgs) \
     macro(PhantomNewRegExp, NodeResultJS | NodeMustGenerate) \
+    macro(PhantomNewDecimal, NodeResultJS | NodeMustGenerate) \
     \
     /* Nodes for misc operations. */\
     macro(OverridesHasInstance, NodeMustGenerate | NodeResultBoolean) \

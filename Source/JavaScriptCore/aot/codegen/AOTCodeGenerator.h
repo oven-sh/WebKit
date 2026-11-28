@@ -35,6 +35,7 @@ class StubCatalog;
 
 namespace Typed {
 
+class ReusedDecimals;
 struct CodeRecords;
 struct FormAtPlace;
 
@@ -309,6 +310,7 @@ public:
     }
 
     Operand get(ValueID id) { return get(id, code().at(id)); }
+    Boxed getReusedDecimal(ValueID);
     LValue wordOf(ValueID id) const { return m_values[id.index()]; }
     void nameAgain(ValueID id, LValue lowered) { m_values[id.index()] = lowered; }
     bool keepsValuesInHeapFrame() const { return m_keepsValuesInHeapFrame; }
@@ -843,7 +845,7 @@ private:
         BlockID user = blockBeingGenerated();
         bool isNumber = representation == Representation::Double || representation == Representation::OptionalDouble;
         bool hasValue = representation != Representation::Unchosen && representation != Representation::Void && home;
-        if (hasValue && !isNumber && !m_keepsValuesInHeapFrame && (user == home || home == m_onlyEntryBlock || isProvenToDominate(home, user))) [[likely]] {
+        if (hasValue && !isNumber && !m_watchesReads && (user == home || home == m_onlyEntryBlock || isProvenToDominate(home, user))) [[likely]] {
             if (LValue lowered = m_values[id.index()]) [[likely]]
                 return { representation, lowered };
         }
@@ -1157,6 +1159,22 @@ private:
     friend class MoveLoopFinder;
     friend class MoveLoopEmitter;
     void tryEmitMoveLoop(BlockID head);
+    bool mayComputeWithDecimals(BlockID) const;
+    // The place among the values where it ends, or notFound.
+    size_t beginDecimalRun(BlockID, std::span<const ValueID> values, size_t first);
+    bool isMadeAheadOfDecimalRun(ValueID);
+    void endDecimalRun();
+    void findReusedDecimals();
+    bool isReusedDecimal(ValueID) const;
+    bool handsOnReusedDecimal(ValueID argument, ValueID parameter) const;
+    void letGoOfDecimal(ValueID);
+    void letGoOfDecimalForRestOfBlock(ValueID operand);
+    // The reader may be made later than it stands, when the object has the next value.
+    void letGoOfDecimalsReadBy(ValueID reader);
+    void letGoOfDecimalsReadAtEndOf(const Block&, size_t numberOfValuesLeftToTerminator);
+    void forgetDecimalsLetGo();
+    const ReusedDecimals* m_reusedDecimals { nullptr };
+
     struct ElementMoves {
         struct Read {
             ValueID value;
@@ -1184,6 +1202,7 @@ private:
     std::optional<ElementMoves> findElementMoves(std::span<const ValueID> values, size_t first);
     void beginElementMoves(BlockID, ElementMoves&);
     void endElementMoves(std::optional<ElementMoves>&);
+    void endElementMovesOrDecimalRun(std::optional<ElementMoves>&);
     friend class ArrayAllocationLoopFinder;
     friend class ArrayAllocationLoopEmitter;
     void tryEmitArrayAllocationLoop(BlockID head);
@@ -1445,10 +1464,12 @@ private:
     Output m_out;
     const bool m_checksAllocation;
     const bool m_checksEffects;
+    const bool m_expectsDecimals;
     const uint32_t m_understatedEffects;
     bool m_watchesOperations { false };
     bool m_notesForms { false };
     bool m_keepsValuesInHeapFrame { false };
+    bool m_watchesReads { false };
     ValueID m_conversionLeftToConcatenation;
     BitVector m_productsLeftToRemainders;
     HashMap<uint32_t, Vector<ValueID, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_productsMadeInRareBlocks;

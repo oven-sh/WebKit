@@ -1,0 +1,51 @@
+# An operation that reads the object ends the row, and so does one that takes it for a count.
+# sink((x, y) => { const sum = x.add(y); const { } = sum; return sum.add(x); }, x => { const one = new Decimal(1); return x.add(one).toFixed({ digits: one }); });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 3
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g) => { const D = text => new Decimal(text), show = f => { try { print(String(f())); } catch (error) { print(error.name); } }; show(() => f(D("1"), D("2"))); show(() => f({ add() { } }, 1)); show(() => g(D("1"))); };
+# CHECK: 4
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: TypeError
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 fields=[{key="digits" declared={type=anything} flags=[IsRequired]}] place=139 ownFieldCount=1
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="add"
+    v3 = Call v2, v0, v1 calleeKey="add" calleeName="x.add"
+    v4 = TypeTest v3 testedType=undefined|null
+    Branch v4 -> taken b1(| 0), notTaken b2(| 0)
+  b1(v5):
+    v6 = NewRuntimeError runtimeError=NotDestructurable
+    Throw v6
+  b2(v7):
+    v8 = PropGet v3 key="add"
+    v9 = Call v8, v3, v0 calleeKey="add" calleeName="sum.add"
+    ReturnCall v9
+}
+function f2 module=m0 kind=Arrow length=1 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = Builtin builtin=GlobalThis
+    v2 = PropGet v1 key="Decimal" [isFreeName]
+    v3 = Integer integer=1
+    v4 = Construct v2, -, v3 calleeName="Decimal"
+    v5 = PropGet v0 key="add"
+    v6 = Call v5, v0, v4 calleeKey="add" calleeName="x.add"
+    v7 = PropGet v6 key="toFixed"
+    v8 = NewObject -, v4 layout=L0 fields=[0]
+    v9 = FinishObject v8
+    v10 = Call v7, v6, v9 calleeKey="toFixed" calleeName="toFixed"
+    ReturnCall v10
+}

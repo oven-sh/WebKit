@@ -1094,6 +1094,7 @@ private:
         case MapIterationEntryKey:
         case MapIterationEntryValue:
         case ToObject:
+        case DecimalToNumber:
         case CallNumberConstructor:
         case CallObjectConstructor:
         case GetArgument:
@@ -1363,6 +1364,8 @@ private:
         }
         case MapGet:
         case DateGetStorage:
+        case DecimalWordConstant:
+        case GetDecimalWord:
         case GetButterfly:
         case GetIndexedPropertyStorage:
         case AllocatePropertyStorage:
@@ -1443,6 +1446,7 @@ private:
             break;
 
         case NewInternalFieldObject:
+        case NewDecimal:
         case NewPromise:
             setPrediction(speculationFromStructure(m_currentNode->structure().get()));
             break;
@@ -1617,6 +1621,24 @@ private:
             break;
         }
 
+        case ToDecimal:
+        case DecimalArith:
+        case DecimalScale: {
+            setTuplePredictions(SpecOther, SpecOther);
+            break;
+        }
+
+        case DecimalTest: {
+            setPrediction(SpecBoolean);
+            break;
+        }
+
+        case DecimalToString:
+        case DecimalToFixed: {
+            setPrediction(SpecString);
+            break;
+        }
+
         case StringIteratorNext: {
             setTuplePredictions(SpecString, SpecInt32Only);
             break;
@@ -1760,6 +1782,7 @@ private:
         case PhantomNewArrayWithSpread:
         case PhantomNewArrayBuffer:
         case PhantomNewInternalFieldObject:
+        case PhantomNewDecimal:
         case PhantomNewPromise:
         case PhantomClonedArguments:
         case PhantomNewRegExp:

@@ -63,6 +63,7 @@ enum ExitKind : uint8_t {
     GenericUnwind, // We exited because we arrived at this OSR exit from genericUnwind.
     UnexpectedResizableArrayBufferView, // We exited because we made an incorrect assumption about what type of ArrayBufferView we would see.
     SparseIndex, // We exited because we encountered a sparse index in a place we didn't want to see it.
+    BadDecimalArgument, // We exited because a function of Decimal has an error to throw.
 };
 
 NODELETE bool exitKindMayJettison(ExitKind);

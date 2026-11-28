@@ -185,6 +185,12 @@ bool doesGC(Graph& graph, Node* node)
     case AssertInBounds:
     case CheckInBounds:
     case CheckInBoundsInt52:
+    case DecimalWordConstant:
+    case GetDecimalWord:
+    case DecimalArith:
+    case DecimalScale:
+    case DecimalTest:
+    case DecimalToNumber:
     case ConstantStoragePointer:
     case Check:
     case CheckVarargs:
@@ -223,6 +229,7 @@ bool doesGC(Graph& graph, Node* node)
     case PhantomNewAsyncFunction:
     case PhantomNewAsyncGeneratorFunction:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomCreateActivation:
     case PhantomDirectArguments:
@@ -430,6 +437,9 @@ bool doesGC(Graph& graph, Node* node)
     case NewArray:
     case NewArrayWithSpread:
     case NewInternalFieldObject:
+    case DecimalToString:
+    case DecimalToFixed:
+    case NewDecimal:
     case NewPromise:
     case Spread:
     case NewButterflyWithSize:
@@ -557,6 +567,9 @@ bool doesGC(Graph& graph, Node* node)
 
     case CallNumberConstructor:
         return true;
+
+    case ToDecimal:
+        return node->child1().useKind() == UntypedUse;
 
     case CallStringConstructor:
     case ToString:

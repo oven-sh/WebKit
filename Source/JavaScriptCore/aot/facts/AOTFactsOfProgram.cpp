@@ -1090,6 +1090,8 @@ bool BodyLookOfProgramFacts::readGivesNothingThatNobodyDescribes(BuiltinID holde
     BuiltinID canonical = m_builtins.canonicalID(holder);
     if (compiledModuleWithObject(m_program, canonical))
         return true;
+    if (m_program.namesDecimalConstructor(key))
+        return canonical == m_builtins.canonicalID(Builtins::GlobalThis);
     if (m_program.at(key).kind != PropertyKeyKind::EnginePrivateName || canonical != m_builtins.canonicalID(Builtins::GlobalThis))
         return false;
     BuiltinMemberName name = builtinMemberNameOf(m_program, key);

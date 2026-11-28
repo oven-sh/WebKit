@@ -444,6 +444,8 @@ private:
 
         if (node->flags() & NodeHasVarArgs)
             nodeRef = m_graph.addNode(CheckVarargs, originalOrigin, m_graph.copyVarargChildren(node));
+        else if (node->op() == ExtractFromTuple)
+            nodeRef = m_graph.addNode(Check, originalOrigin); // Nothing else may use a tuple.
         else
             nodeRef = m_graph.addNode(Check, originalOrigin, node->children);
         

@@ -41,6 +41,7 @@ class Modules;
 class ProgramStatics;
 class ProgramStrings;
 class PropertyCaches;
+class PropertyValueWatchpoint;
 class FirstAdditions;
 class StringKeyCache;
 struct BuiltinFamilyState;
@@ -242,6 +243,7 @@ struct State {
     std::unique_ptr<CoroutineTable> coroutines;
     std::unique_ptr<BuiltinFamilyState> builtinFamilies;
     std::unique_ptr<GlobalBindings> globalBindings;
+    Vector<std::unique_ptr<PropertyValueWatchpoint>> watchesOfDecimalMethods;
     uint64_t registerBeforeFault { 0 };
     const void* returnAddressOfThrowAfterCleanup() const { return removeReturnAddressSignature(rawReturnAddressOfThrowAfterCleanup); }
     const void* rawReturnAddressOfThrowAfterCleanup { nullptr };

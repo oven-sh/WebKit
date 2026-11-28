@@ -1,0 +1,74 @@
+# A test of what compare() gives asks for the order itself. NaN has none.
+# sink((x, y) => [x.compare(y) < 0, x.compare(y) <= 0, x.compare(y) > 0, x.compare(y) >= 0, x.compare(y) === 0, x.compare(y) !== 0, x.compare(y) === 1, x.compare(y) > -1, x.compare(y) < 2, x.compare(y) > 1, x.add(x).compare(y)]);
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns >= 1
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = f => { for (const [x, y] of [["1", "2"], ["2.0", "2"], ["3", "2"], ["0", "-0"], ["NaN", "1"], ["1e40", "Infinity"]]) { const all = f(new Decimal(x), new Decimal(y)); let line = ""; for (let i = 0; i < all.length; i++) line += " " + (typeof all[i] === "boolean" ? "-+"[+all[i]] : all[i]); print("of" + line); } };
+# CHECK: of + + - - - + - - + - 0
+# CHECK-NEXT: of - + - + + - - + + - 1
+# CHECK-NEXT: of - - + + - + + + + - 1
+# CHECK-NEXT: of - + - + + - - + + - 0
+# CHECK-NEXT: of - - - - - + - - - - NaN
+# CHECK-NEXT: of + + - - - + - - + - -1
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = Call v1, -, v2 calleeName="sink"
+    v4 = Undefined
+    Return v4
+}
+function f1 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="compare"
+    v3 = Call v2, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v4 = Integer
+    v5 = Less v3, v4
+    v6 = PropGet v0 key="compare"
+    v7 = Call v6, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v8 = Integer
+    v9 = LessEq v7, v8
+    v10 = PropGet v0 key="compare"
+    v11 = Call v10, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v12 = Integer
+    v13 = Greater v11, v12
+    v14 = PropGet v0 key="compare"
+    v15 = Call v14, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v16 = Integer
+    v17 = GreaterEq v15, v16
+    v18 = PropGet v0 key="compare"
+    v19 = Call v18, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v20 = Integer
+    v21 = StrictEq v19, v20
+    v22 = PropGet v0 key="compare"
+    v23 = Call v22, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v24 = Integer
+    v25 = StrictEq v23, v24
+    v26 = LogicalNot v25
+    v27 = PropGet v0 key="compare"
+    v28 = Call v27, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v29 = Integer integer=1
+    v30 = StrictEq v28, v29
+    v31 = PropGet v0 key="compare"
+    v32 = Call v31, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v33 = Integer integer=-1
+    v34 = Greater v32, v33
+    v35 = PropGet v0 key="compare"
+    v36 = Call v35, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v37 = Integer integer=2
+    v38 = Less v36, v37
+    v39 = PropGet v0 key="compare"
+    v40 = Call v39, v0, v1 calleeKey="compare" calleeName="x.compare"
+    v41 = Integer integer=1
+    v42 = Greater v40, v41
+    v43 = PropGet v0 key="add"
+    v44 = Call v43, v0, v0 calleeKey="add" calleeName="x.add"
+    v45 = PropGet v44 key="compare"
+    v46 = Call v45, v44, v1 calleeKey="compare" calleeName="compare"
+    v47 = NewArray v5, v9, v13, v17, v21, v26, v30, v34, v38, v42, v46 contents=anything
+    Return v47
+}

@@ -54,6 +54,8 @@ bool RecordedOptions::isCompatibleWithProcess() const
         return false;
     if (!CPUFeatureSet::fromBits(static_cast<uint32_t>(targetFeatures)).isSubsetOf(CPUFeatureSet::host().unionWith(CPUFeatureSet::buildTarget())))
         return false;
+    if (takesDecimalForAbsent && Options::useDecimal())
+        return false;
     return useWideReferences() || MarkedBlockCage::isEnabled();
 }
 
@@ -112,6 +114,8 @@ public:
         options.removedFeatures = m_wire.removedFeatures;
         options.featuresRetainedByName = m_wire.target.featuresRetainedByName;
         options.logging = readLoggingOptions();
+        options.expectsDecimals = Options::useDecimal();
+        recorded.takesDecimalForAbsent = !options.expectsDecimals && hasFlag(options.excludedCode, ExcludedCode::UnlistedGlobals);
         return options;
     }
 

@@ -156,6 +156,7 @@ OBJECT_LUT_HEADERS = \
     BooleanPrototype.lut.h \
     DateConstructor.lut.h \
     DatePrototype.lut.h \
+    DecimalPrototype.lut.h \
     ErrorPrototype.lut.h \
     GeneratorPrototype.lut.h \
     IntlCollatorConstructor.lut.h \

@@ -18,6 +18,7 @@
 #include "AOTConstantEmitter.h"
 #include "AOTControlEmitter.h"
 #include "AOTConversionEmitter.h"
+#include "AOTDecimalEmitter.h"
 #include "AOTEffectsNet.h"
 #include "AOTEffectsOfOperations.h"
 #include "AOTElementAccessEmitter.h"
@@ -140,11 +141,14 @@ GenerationResult CodeGenerator::run()
     findCarriedListStorages();
     findCarriedSubstrings();
     findKeysCheckedTwice();
+    if (m_expectsDecimals) [[unlikely]]
+        findReusedDecimals();
     if (!m_parametersThatMaySum.isEmpty()) [[unlikely]]
         carrySums();
-    m_notesHeadsOfBlocks = m_hasKeysAskedTwice || m_rows || m_kindsTried;
+    m_notesHeadsOfBlocks = m_hasKeysAskedTwice || m_rows || m_kindsTried || m_reusedDecimals;
     m_watchesTerminators = m_checksAllocation || m_checksEffects || m_rows || m_kindsTried;
     m_watchesCalls = m_understatedEffects || m_rows;
+    m_watchesReads = m_keepsValuesInHeapFrame || m_reusedDecimals;
     m_leavesBoxesToHandlers = false;
     if (code().hasBoxesForHandlers() && !m_keepsValuesInHeapFrame) [[unlikely]]
         findBoxesLeftToHandlers();
@@ -3997,6 +4001,8 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     m_out.setOrigin(Machine::Origin());
     m_isAheadOfWhatMayThrow = true;
     if (m_notesHeadsOfBlocks) [[unlikely]] {
+        if (m_reusedDecimals && block.isEntry)
+            emitter<DecimalEmitter>().beginWithoutReusedObjects();
         if (m_rows)
             enterBlockWithRows(id);
         if (m_kindsTried)
@@ -4019,6 +4025,10 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         widenCarriedIntegers(block);
     if (m_carriesSums) [[unlikely]]
         takeIntegersOfCarriedSums(block);
+    auto forgetDecimals = makeScopeExit([&] {
+        if (m_reusedDecimals) [[unlikely]]
+            forgetDecimalsLetGo();
+    });
     const bool remakesValues = m_remakesValuesInRareBlocks && block.frequency == BlockFrequency::Rare;
     const size_t numberOfBigIntsInFrame = remakesValues ? remakeValuesInRareBlock(id) : 0;
     auto forgetValues = makeScopeExit([&] {
@@ -4061,19 +4071,28 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
     const OpcodeSet& opcodesOfCode = code().opcodesOfValues();
     const bool looksForElementMoves = opcodesOfCode.intersects(storesOfElements) && opcodesOfCode.intersects(readsOfElements) && mayMoveElements(id);
     std::optional<ElementMoves> moves;
+    // Of the moves or of a run of Decimals. One begins with the read of an element, and the other has none.
+    size_t endOfRun = notFound;
     for (size_t index = 0; index < values.size(); ++index) {
         ValueID value = values[index];
-        if (moves && index == moves->end) [[unlikely]]
-            endElementMoves(moves);
+        if (index == endOfRun) [[unlikely]] {
+            endElementMovesOrDecimalRun(moves);
+            endOfRun = notFound;
+        }
         if (value == m_readLeftToBranch)
             continue;
         const Operation& operation = code().at(value);
-        if (looksForElementMoves && !moves && !testWaitsForBranch && readsOfElements.contains(operation.opcode)) [[unlikely]] {
-            if ((moves = findElementMoves(values, index)))
-                beginElementMoves(id, *moves);
+        if (looksForElementMoves) [[unlikely]] {
+            if (!moves && !testWaitsForBranch && readsOfElements.contains(operation.opcode)) {
+                RELEASE_ASSERT(endOfRun == notFound);
+                if ((moves = findElementMoves(values, index))) {
+                    endOfRun = moves->end;
+                    beginElementMoves(id, *moves);
+                }
+            }
+            if (moves && moves->madeAhead.contains(value))
+                continue;
         }
-        if (moves && moves->madeAhead.contains(value)) [[unlikely]]
-            continue;
         if (value == test) {
             testWaitsForBranch = true;
             continue;
@@ -4093,6 +4112,19 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
             m_out.unreachable();
             return;
         }
+        if (m_expectsDecimals) [[unlikely]] {
+            if (endOfRun == notFound) {
+                endOfRun = beginDecimalRun(id, values, index);
+                if (endOfRun != notFound && std::ranges::contains(values.subspan(index, endOfRun - index), test))
+                    test = { };
+            }
+            if (m_hasFailed)
+                return;
+            if (endOfRun != notFound && !moves && isMadeAheadOfDecimalRun(value))
+                continue;
+            if (m_reusedDecimals)
+                letGoOfDecimalsReadBy(value);
+        }
         generateValue(id, value, operation, isAwaitedAtOnce(operation, values, index), testWaitsForBranch ? std::span<const ValueID>() : values.subspan(index + 1));
         if (m_hasFailed)
             return;
@@ -4109,8 +4141,10 @@ void CodeGenerator::generateBlock(BlockID id, const Block& block)
         emitter<ThrowEmitter>().crashOnFalseProof(context, std::nullopt, ProofSource::OtherOperation);
         return;
     }
-    if (moves) [[unlikely]]
-        endElementMoves(moves);
+    if (endOfRun != notFound) [[unlikely]]
+        endElementMovesOrDecimalRun(moves);
+    if (m_reusedDecimals) [[unlikely]]
+        letGoOfDecimalsReadAtEndOf(block, owned ? numberOwned : 0);
     if (m_interleaving && block.terminator.kind == TerminatorKind::Branch) [[unlikely]]
         beginInterleavedOperation(block.terminator.conditionOperand(), code().at(block.terminator.conditionOperand()));
     generateTerminator(id, block, testWaitsForBranch);
@@ -7650,6 +7684,8 @@ void CodeGenerator::passArguments(const Edge& edge, std::span<const ValueID> par
             passed.append(emitter<ConversionEmitter>().unbox(getIn(arguments[index], Representation::JSValue).as<Boxed>(), typeOf(arguments[index]), carriedRepresentationOf(parameter)));
         else if (index < arguments.size() && holdsAnyNaN(arguments[index]) && letsAnyNaNInto(parameter))
             passed.append(getWithAnyNaN(arguments[index]));
+        else if (m_reusedDecimals && index < arguments.size() && handsOnReusedDecimal(arguments[index], parameter)) [[unlikely]]
+            passed.append(getReusedDecimal(arguments[index]));
         else if (index < arguments.size())
             passed.append(getIn(arguments[index], carriedRepresentationOf(parameter)));
         else
@@ -7705,8 +7741,12 @@ NEVER_INLINE Operand CodeGenerator::getSlow(ValueID id, const Operation& operati
         return makeConstant(id, operation);
     if (BlockID user = blockBeingGenerated(); user && user != home && home != m_onlyEntryBlock && !isProvenToDominate(home, user))
         verifyThatDefinitionDominates(id, home, user);
-    if (m_keepsValuesInHeapFrame) [[unlikely]]
-        verifyThatKeptValueIsNamedInThisStretch(id);
+    if (m_watchesReads) [[unlikely]] {
+        if (m_keepsValuesInHeapFrame)
+            verifyThatKeptValueIsNamedInThisStretch(id);
+        else if (isReusedDecimal(id))
+            letGoOfDecimal(id);
+    }
     LValue lowered = m_values[id.index()];
     if (!lowered) [[unlikely]]
         return zeroInPlaceOfValueOfFailedCode(representation);

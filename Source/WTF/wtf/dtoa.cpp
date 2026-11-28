@@ -38,6 +38,13 @@ size_t numberToShortestString(double number, std::span<char, numberToShortestStr
     return zmij::write(buffer.data(), buffer.size(), number) - buffer.data();
 }
 
+ShortestDecimal numberToShortestDecimal(double number)
+{
+    ASSERT(std::isfinite(number));
+    auto decimal = zmij::to_decimal(number);
+    return { decimal.sig, decimal.exp };
+}
+
 NumberToStringSpan numberToShortestExponentialString(double number, NumberToStringBuffer& buffer LIFETIME_BOUND)
 {
     return std::span { buffer }.first(zmij::write_scientific(buffer.data(), buffer.size(), number) - buffer.data());

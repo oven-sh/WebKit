@@ -3932,6 +3932,38 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         setForNode(node, m_graph.globalObjectFor(node->origin.semantic)->regExpStructure());
         break;
 
+    case NewDecimal:
+        setForNode(node, node->structure());
+        if (node->child3() && m_state.structureClobberState() == StructuresAreClobbered)
+            forNode(node).clobberStructures(m_graph);
+        break;
+
+    case DecimalWordConstant:
+    case GetDecimalWord:
+        clearForNode(node);
+        break;
+
+    case ToDecimal:
+    case DecimalArith:
+    case DecimalScale:
+        m_state.clearForTupleNode(node, 0);
+        m_state.clearForTupleNode(node, 1);
+        clearForNode(node);
+        break;
+
+    case DecimalTest:
+        setNonCellTypeForNode(node, SpecBoolean);
+        break;
+
+    case DecimalToNumber:
+        setNonCellTypeForNode(node, SpecBytecodeNumber);
+        break;
+
+    case DecimalToString:
+    case DecimalToFixed:
+        setTypeForNode(node, SpecString);
+        break;
+
     case NewMap:
         setForNode(node, node->structure());
         break;
@@ -4198,6 +4230,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case PhantomNewArrayWithSpread:
     case PhantomNewArrayBuffer:
     case PhantomNewInternalFieldObject:
+    case PhantomNewDecimal:
     case PhantomNewPromise:
     case PhantomNewRegExp:
     case BottomValue: {

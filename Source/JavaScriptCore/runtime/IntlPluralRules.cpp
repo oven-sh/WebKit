@@ -365,4 +365,44 @@ JSValue IntlPluralRules::selectRange(JSGlobalObject* globalObject, IntlMathemati
     return jsString(vm, String(WTF::move(buffer)));
 }
 
+// https://tc39.es/proposal-decimal/#sec-resolvepluralrange
+//
+// The category of a range whose ends are written the same is that of the ends. uplrules_selectForRange does not have that step.
+// FIXME: selectRange() lacks it for values that are not Decimals.
+JSValue IntlPluralRules::selectRangeOfDecimals(JSGlobalObject* globalObject, IntlMathematicalValue&& start, IntlMathematicalValue&& end) const
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (start.numberType() == IntlMathematicalValue::NumberType::NaN || end.numberType() == IntlMathematicalValue::NumberType::NaN)
+        return throwRangeError(globalObject, scope, "Passed numbers are out of range"_s);
+
+    start.ensureNonDouble();
+    end.ensureNonDouble();
+
+    auto format = [&](const IntlMathematicalValue& value) -> String {
+        UErrorCode status = U_ZERO_ERROR;
+        auto formattedNumber = std::unique_ptr<UFormattedNumber, ICUDeleter<unumf_closeResult>>(unumf_openResult(&status));
+        if (U_FAILURE(status))
+            return { };
+        const auto& string = value.getString();
+        unumf_formatDecimal(m_numberFormatter.get(), string.data(), string.length(), formattedNumber.get(), &status);
+        if (U_FAILURE(status))
+            return { };
+        Vector<char16_t, 32> buffer;
+        status = callBufferProducingFunction(unumf_resultToString, formattedNumber.get(), buffer);
+        if (U_FAILURE(status))
+            return { };
+        return String(WTF::move(buffer));
+    };
+    String startString = format(start);
+    String endString = format(end);
+    if (startString.isNull() || endString.isNull()) [[unlikely]]
+        return throwTypeError(globalObject, scope, "failed to select range of plural value"_s);
+
+    if (startString == endString)
+        RELEASE_AND_RETURN(scope, select(globalObject, WTF::move(start)));
+    RELEASE_AND_RETURN(scope, selectRange(globalObject, WTF::move(start), WTF::move(end)));
+}
+
 } // namespace JSC

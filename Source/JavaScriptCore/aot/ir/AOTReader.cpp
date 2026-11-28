@@ -50,6 +50,7 @@ bool Reader::run()
         m_program.builtinInjectedAsFresh = understatedEffects.row;
     m_program.admitsInspector = m_build.options().admitsUnseenCode();
     m_program.excludedCode = m_build.options().excludedCode;
+    m_program.expectsDecimals = m_build.options().expectsDecimals;
 
     const ParallelLoops& loops = m_build.parallelLoops();
     StepTimes steps(m_build, stepsOfRead);

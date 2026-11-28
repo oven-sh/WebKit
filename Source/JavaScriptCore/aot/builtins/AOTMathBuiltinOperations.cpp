@@ -15,6 +15,7 @@
 #include "AOTSchemaRuntimeOperations.h"
 #include "AOTStringBuilderStorage.h"
 #include "AOTTextsOfFewDigits.h"
+#include "DecimalObject.h"
 #include "JSCInlines.h"
 #include "JSGlobalObjectFunctions.h"
 #include "MathCommon.h"
@@ -192,7 +193,10 @@ static NEVER_INLINE OperationReturnType<EncodedJSValue> JIT_OPERATION_ATTRIBUTES
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         OPERATION_RETURN(scope, JSValue::encode(jsNumber(jsToNumber(view))));
     }
-    JSValue numeric = timeIfDate(value).toNumeric(globalObject);
+    value = timeIfDate(value);
+    if (auto* decimal = DecimalObject::tryCast(value)) [[unlikely]]
+        OPERATION_RETURN(scope, JSValue::encode(jsNumber(decimal->toNumberValue())));
+    JSValue numeric = value.toNumeric(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (numeric.isNumber())
         OPERATION_RETURN(scope, JSValue::encode(numeric));

@@ -45,6 +45,13 @@ constexpr size_t numberToShortestStringBufferSize = 39;
 // Writes the shortest round-tripping digits in Number::toString form and returns the length.
 WTF_EXPORT_PRIVATE size_t numberToShortestString(double, std::span<char, numberToShortestStringBufferSize>);
 
+// The same digits of a finite number: its magnitude is significand * 10^exponent. The significand may end in zeros.
+struct ShortestDecimal {
+    uint64_t significand;
+    int exponent;
+};
+WTF_EXPORT_PRIVATE ShortestDecimal numberToShortestDecimal(double);
+
 // Like Number.prototype.toExponential with no argument: shortest digits, always in exponential form.
 WTF_EXPORT_PRIVATE NumberToStringSpan numberToShortestExponentialString(double, NumberToStringBuffer& buffer LIFETIME_BOUND);
 

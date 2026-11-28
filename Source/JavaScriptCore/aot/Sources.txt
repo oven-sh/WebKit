@@ -350,6 +350,7 @@ aot/runtime/AOTCompactTable.cpp
 aot/runtime/AOTCompiledFrameIterator.cpp
 aot/runtime/AOTCoroutineTable.cpp
 aot/runtime/AOTDataBuilder.cpp
+aot/runtime/AOTDecimalOperations.cpp
 aot/runtime/AOTDefinitionOperations.cpp
 aot/runtime/AOTDirectEvalOperations.cpp
 aot/runtime/AOTErrorMessages.cpp

@@ -72,6 +72,8 @@
 
 namespace JSC {
 
+enum class DecimalOperation : uint8_t;
+
 namespace DOMJIT {
 class GetterSetter;
 class CallDOMGetterSnippet;
@@ -925,6 +927,24 @@ public:
         children.reset();
         m_opInfo = structure;
         m_opInfo2 = OpInfoWrapper();
+    }
+
+    void convertPhiToNewDecimal(RegisteredStructure structure, Node* low, Node* upper, Node* object)
+    {
+        ASSERT(m_op == Phi);
+        setOpAndDefaultFlags(NewDecimal);
+        m_opInfo = structure;
+        m_opInfo2 = OpInfoWrapper();
+        children = AdjacencyList(AdjacencyList::Fixed, Edge(low, KnownStorageUse), Edge(upper, KnownStorageUse), Edge(object));
+    }
+
+    void convertToPhantomNewDecimal()
+    {
+        ASSERT(m_op == NewDecimal);
+        setOpAndDefaultFlags(PhantomNewDecimal);
+        m_opInfo = OpInfoWrapper();
+        m_opInfo2 = OpInfoWrapper();
+        children = AdjacencyList();
     }
 
     void convertToPhantomNewPromise()
@@ -1825,10 +1845,60 @@ public:
         return Edge(this, defaultUseKind());
     }
 
+    bool hasDecimalOperation() const
+    {
+        switch (op()) {
+        case DecimalArith:
+        case DecimalScale:
+        case DecimalTest:
+        case DecimalToNumber:
+        case DecimalToString:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    DecimalOperation decimalOperation() const
+    {
+        ASSERT(hasDecimalOperation());
+        return m_opInfo.as<DecimalOperation>();
+    }
+
+    // A Decimal128::RoundingMode.
+    unsigned decimalRoundingMode() const
+    {
+        ASSERT(op() == DecimalScale);
+        return m_opInfo2.as<unsigned>();
+    }
+
+    // The node exits for values that it does not take, unless the edge rules them out.
+    Edge& argumentOfDecimalNode()
+    {
+        ASSERT(op() == ToDecimal || op() == DecimalScale);
+        return op() == ToDecimal ? child1() : child3();
+    }
+
+    uint64_t decimalWord() const
+    {
+        ASSERT(op() == DecimalWordConstant);
+        return m_opInfo.as<uint64_t>();
+    }
+
+    // 0 is the low one.
+    unsigned decimalWordIndex() const
+    {
+        ASSERT(op() == GetDecimalWord);
+        return m_opInfo.as<unsigned>();
+    }
+
     bool isTuple() const
     {
         switch (op()) {
         case EnumeratorNextUpdateIndexAndMode:
+        case ToDecimal:
+        case DecimalArith:
+        case DecimalScale:
         case StringIteratorNext:
         case StringIteratorNextWithUndefined:
         case MapIteratorNext:
@@ -1872,6 +1942,9 @@ public:
         ASSERT(isTuple());
         switch (op()) {
         case EnumeratorNextUpdateIndexAndMode:
+        case ToDecimal:
+        case DecimalArith:
+        case DecimalScale:
         case StringIteratorNext:
         case StringIteratorNextWithUndefined:
         case MapIteratorNext:
@@ -2202,6 +2275,7 @@ public:
         case StringReplaceRegExp:
         case StringReplaceString:
         case ToObject:
+        case DecimalToNumber:
         case CallNumberConstructor:
         case CallObjectConstructor:
         case MapGet:
@@ -2526,6 +2600,7 @@ public:
         case MaterializeNewInternalFieldObject:
         case NewObject:
         case NewInternalFieldObject:
+        case NewDecimal:
         case NewPromise:
         case NewStringObject:
         case NewRegExpUntyped:
@@ -2739,6 +2814,7 @@ public:
         case PhantomNewAsyncFunction:
         case PhantomNewAsyncGeneratorFunction:
         case PhantomNewInternalFieldObject:
+        case PhantomNewDecimal:
         case PhantomNewPromise:
         case PhantomCreateActivation:
         case PhantomNewRegExp:

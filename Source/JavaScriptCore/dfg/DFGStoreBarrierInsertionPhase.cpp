@@ -473,6 +473,10 @@ private:
                 m_node->setEpoch(m_currentEpoch);
                 break;
                 
+            case NewDecimal:
+                m_node->setEpoch(m_node->child3() ? Epoch() : m_currentEpoch);
+                break;
+
             case Upsilon:
                 // Assume the worst for Phis so that we don't have to worry about Phi shadows.
                 m_node->phi()->setEpoch(Epoch());
