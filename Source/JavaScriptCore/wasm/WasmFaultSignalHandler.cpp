@@ -89,6 +89,10 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
             dataLogLnIf(WasmFaultSignalHandlerInternal::verbose, "checking faulting address: ", RawPointer(faultingAddress), " is in an active fast memory");
 
             // Trapping null access for WasmGC Array / Struct.
+#if USE(BUN_JSC_ADDITIONS)
+            if (sigInfo.isAddressUnknown)
+                return SignalAction::NotHandled;
+#endif
             if (std::bit_cast<uintptr_t>(faultingAddress) < lowestAccessibleAddress())
                 exception = ExceptionType::NullAccess;
             else if (Wasm::Memory::addressIsInGrowableOrFastMemory(faultingAddress))

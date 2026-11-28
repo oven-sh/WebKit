@@ -271,6 +271,9 @@ static kern_return_t runSignalHandlers(Signal signal, PlatformRegisters& registe
         if (std::bit_cast<uintptr_t>(info.faultingAddress) & invalidAddressMask)
             return KERN_FAILURE;
 #endif
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+        info.isAddressUnknown = exceptionData[0] == EXC_I386_GPFLT || exceptionData[0] == EXC_I386_STKFLT;
+#endif
     }
 
     bool didHandle = false;
@@ -510,6 +513,9 @@ static void jscSignalHandler(int sig, siginfo_t* info, void* ucontext)
     sigInfo.isSentByProcess = info->si_code <= 0 || info->si_code >= SI_USER;
 #else
     sigInfo.isSentByProcess = info->si_code <= 0;
+#endif
+#if CPU(X86_64) && OS(LINUX)
+    sigInfo.isAddressUnknown = info->si_code == SI_KERNEL;
 #endif
 #endif
 

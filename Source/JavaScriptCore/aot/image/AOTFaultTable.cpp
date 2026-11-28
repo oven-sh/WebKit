@@ -669,6 +669,12 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
         return false;
     if (!Image::isRegistered())
         return false;
+#if CPU(X86_64) && OS(LINUX)
+    // Only a page fault says which address it is about. The address of any other exception is 0.
+    constexpr greg_t pageFault = 14;
+    if (registers.machineContext.gregs[REG_TRAPNO] != pageFault)
+        return false;
+#endif
     void* pc = instructionPointer->untaggedPtr();
     const Image* image = Image::findByCodeAddress(pc);
     if (!image)
@@ -699,7 +705,7 @@ bool handleAccessFault(void* faultingAddress, PlatformRegisters& registers)
 void installFaultHandler()
 {
     addSignalHandler(Signal::AccessFault, [](Signal, SigInfo& info, PlatformRegisters& registers) {
-        return !info.isSentByProcess && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
+        return !info.isSentByProcess && !info.isAddressUnknown && handleAccessFault(info.faultingAddress, registers) ? SignalAction::Handled : SignalAction::NotHandled;
     });
 }
 
