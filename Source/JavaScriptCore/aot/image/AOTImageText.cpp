@@ -361,10 +361,10 @@ static bool allowWrites(std::span<uint8_t> pages)
     return VirtualProtect(pages.data(), pages.size(), PAGE_READWRITE, &previousProtection);
 }
 
-static void forbidWrites(std::span<uint8_t> pages)
+static bool forbidWrites(std::span<uint8_t> pages)
 {
     DWORD previousProtection;
-    VirtualProtect(pages.data(), pages.size(), PAGE_READONLY, &previousProtection);
+    return VirtualProtect(pages.data(), pages.size(), PAGE_READONLY, &previousProtection);
 }
 
 #else
@@ -380,9 +380,9 @@ static bool allowWrites(std::span<uint8_t> pages)
     return true;
 }
 
-static void forbidWrites(std::span<uint8_t> pages)
+static bool forbidWrites(std::span<uint8_t> pages)
 {
-    mprotect(pages.data(), pages.size(), PROT_READ);
+    return !mprotect(pages.data(), pages.size(), PROT_READ);
 }
 #endif
 
@@ -401,11 +401,10 @@ bool relocateLoadedImage(std::span<const uint8_t> image)
     relocateImage({ const_cast<uint8_t*>(image.data()), image.size() }, address);
     if (address % WTF::pageSize())
         return true;
-    for (std::span<uint8_t> pages : writtenPages) {
-        if (!pages.empty())
-            forbidWrites(pages);
-    }
-    return true;
+    bool areReadOnly = true;
+    for (std::span<uint8_t> pages : writtenPages)
+        areReadOnly &= pages.empty() || forbidWrites(pages);
+    return areReadOnly;
 }
 #endif
 
