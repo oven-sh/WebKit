@@ -265,6 +265,8 @@ private:
     void resolveUnderPrivateName();
     void resolveOnLayout(LayoutID, const LinkType& pooled);
     void resolvePrototypeLinkOfLayout(LayoutID, const Layout&);
+    bool findsPrototypeLink(LayoutID, ClassSide);
+    bool mayEnterOtherAccessorOfPrototypeLink();
     void resolveOnNamespace(LayoutID, const Layout&);
     void giveWhatNamespaceDoesNotList(LayoutID, ModuleID);
     void giveExport(ModuleID, uint32_t index);
@@ -3530,11 +3532,29 @@ void AccessInLinkAccesses::resolveOnLayout(LayoutID id, const LinkType& pooled)
     storeBesideFieldsOf(id);
 }
 
+bool AccessInLinkAccesses::findsPrototypeLink(LayoutID id, ClassSide side)
+{
+    if (!m_flow.findsPrototypeLinkOfSubject(id, side, m_access.key, m_receiver != m_subject))
+        return false;
+    return !mayEnterOtherAccessorOfPrototypeLink();
+}
+
+bool AccessInLinkAccesses::mayEnterOtherAccessorOfPrototypeLink()
+{
+    if (m_access.entersNoAccessor)
+        return false;
+    Vector<FlowNodeID, 2> watched;
+    bool mayEnter = m_flow.mayBeReplacedByTest(Builtins::ObjectPrototype__proto__, watched);
+    for (FlowNodeID node : watched)
+        tellAgainOnceClimbsWhoeverTells(node);
+    return mayEnter;
+}
+
 void AccessInLinkAccesses::resolvePrototypeLinkOfLayout(LayoutID id, const Layout& layout)
 {
     switch (m_access.kind) {
     case Kind::Read:
-        if (!m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
+        if (!findsPrototypeLink(id, ClassSide::Prototype)) {
             m_flow.escape(id);
             cannotTell();
             return;
@@ -3720,6 +3740,14 @@ LinkFlow::Lays AccessInLinkAccesses::howItLays(bool isPartOfConstruction) const
 void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
 {
     mayThrow();
+    if (isRead() && m_nameClass == NameClass::Proto && mayEnterOtherAccessorOfPrototypeLink()) {
+        LinkType objects;
+        objects.objects = LinkType::Objects::Family;
+        objects.family = family;
+        m_flow.escapeAllOf(objects);
+        cannotTell();
+        return;
+    }
     if (isNamed()) {
         if (isRead() && m_access.isPartOfConstruction) {
             bool mayComeInFrontOfDefinition = false;
@@ -3760,6 +3788,14 @@ void AccessInLinkAccesses::resolveOnFamily(FamilyID family)
 void AccessInLinkAccesses::resolveOnLostObjects(LayoutID member)
 {
     mayThrow();
+    if (isRead() && m_nameClass == NameClass::Proto && mayEnterOtherAccessorOfPrototypeLink()) {
+        LinkType objects;
+        objects.objects = LinkType::Objects::Lost;
+        objects.layout = member;
+        m_flow.escapeAllOf(objects);
+        cannotTell();
+        return;
+    }
     if (isNamed()) {
         if (isRead() && m_access.isPartOfConstruction)
             givePrimitives(Primitive::Undefined);
@@ -3798,7 +3834,7 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
     }
 
     if (m_nameClass == NameClass::Proto) {
-        if (isRead() && !m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
+        if (isRead() && !findsPrototypeLink(id, ClassSide::Prototype)) {
             letPrototypeEscape(id);
             cannotTell();
             return;
@@ -3814,13 +3850,9 @@ void AccessInLinkAccesses::resolveOnPrototype(LayoutID id)
                 giveAnything();
             return;
         }
-        if (m_access.kind == Kind::Store && m_value && m_flow.isOfConstructorFunction(id) && m_flow.findsPrototypeLinkOfSubject(id, ClassSide::Prototype, m_access.key, m_receiver != m_subject)) {
+        if (m_access.kind == Kind::Store && m_value && m_flow.isOfConstructorFunction(id) && findsPrototypeLink(id, ClassSide::Prototype)) {
             tellAgainOnceClimbs(m_value);
-            Vector<FlowNodeID, 2> watched;
-            bool mayRunOtherCode = m_flow.mayBeReplacedByTest(Builtins::ObjectPrototype__proto__, watched);
-            for (FlowNodeID node : watched)
-                tellAgainOnceClimbs(node);
-            if (!mayRunOtherCode && m_flow.namesParentOfPrototype(m_flow.typeAt(m_value), id))
+            if (m_flow.namesParentOfPrototype(m_flow.typeAt(m_value), id))
                 return;
         }
         noteChange(id, LayoutChange::ChangesPrototype);
@@ -3931,7 +3963,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
     std::pair<uint64_t, uint32_t> place {
         static_cast<uint64_t>(family.index()) << 32 | (isNamed() ? m_access.key.index() : 0),
         static_cast<uint32_t>(subjects) | static_cast<uint32_t>(m_access.kind) << 1 | isNamed() << 3 | !!m_value << 4 | valueIsUnseen << 5
-            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9 | m_keyCannotNameBuiltin << 10 | m_access.setsFlagsAlone << 11,
+            | m_access.storesObjectMadeForIt << 6 | m_keyIsOnlyNumbers << 7 | m_keyMayNamePrototypeLink << 8 | isLibraryCode(m_program, m_program.at(m_function)) << 9 | m_keyCannotNameBuiltin << 10 | m_access.setsFlagsAlone << 11 | m_access.entersNoAccessor << 12,
     };
     auto found = state.indexesOfSharedAccesses.add(place, static_cast<uint32_t>(state.sharedAccesses.size()));
     uint32_t index = found.iterator->value;
@@ -3943,6 +3975,7 @@ bool AccessInLinkAccesses::resolveThroughSharedAccess(SharedAccess::Subjects sub
         made->access.key = m_access.key;
         made->access.storesObjectMadeForIt = m_access.storesObjectMadeForIt;
         made->access.setsFlagsAlone = m_access.setsFlagsAlone;
+        made->access.entersNoAccessor = m_access.entersNoAccessor;
         made->keyIsOnlyNumbers = m_keyIsOnlyNumbers;
         made->keyCannotNameBuiltin = m_keyCannotNameBuiltin;
         made->keyMayNamePrototypeLink = m_keyMayNamePrototypeLink;
@@ -4037,7 +4070,7 @@ void AccessInLinkAccesses::resolveOnClosure(FunctionID function)
 
     if (m_nameClass == NameClass::Proto) {
         LayoutID classOfClassObject = isClassConstructorOf(record.kind) ? classLayout : LayoutID();
-        if (!isRead() || !m_flow.findsPrototypeLinkOfSubject(classOfClassObject, ClassSide::Static, m_access.key, m_receiver != m_subject)) {
+        if (!isRead() || !findsPrototypeLink(classOfClassObject, ClassSide::Static)) {
             letClassObjectEscape(function, classLayout);
             cannotTell();
             return;

@@ -265,6 +265,7 @@ struct SummaryAccess {
     bool readsPrototypeOfHeritage : 1 { false };
     bool isByMethodDecorator : 1 { false };
     bool setsFlagsAlone : 1 { false };
+    bool entersNoAccessor : 1 { false };
     std::optional<OptionSet<FieldForm>> formCreated;
     uint32_t subject { 0 };
     uint32_t receiver { noSummaryNode };

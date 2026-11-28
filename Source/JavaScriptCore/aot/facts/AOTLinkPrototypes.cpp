@@ -2569,7 +2569,10 @@ bool LinkFlow::mayBeReplacedByTest(BuiltinID member, const Invocable<void(FlowNo
             return true;
     }
     // What a test adds to an object below the one that holds the member answers in its place.
-    FlowNodeID added = testRuns().nodeOfNameAdded(program.keyOf(program.builtins().at(member).name));
+    BuiltinName name = program.builtins().at(member).name;
+    if (StringID text = program.stringOf(name); text && program.isOpenedSomewhere(text))
+        return true;
+    FlowNodeID added = testRuns().nodeOfNameAdded(program.keyOf(name));
     if (!added)
         return false;
     watch(added);
