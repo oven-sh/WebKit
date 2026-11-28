@@ -1935,7 +1935,7 @@ bool FirstAdditions::shouldMakeStructure(Structure* structure, UniquedStringImpl
 bool FirstAdditions::recordAddition(Structure* structure, UniquedStringImpl* uid)
 {
     constexpr uint32_t cameOnce = 1u << 31;
-    uint32_t hash = WTF::pairIntHash(structure->id().bits(), uid->existingSymbolAwareHash()) | cameOnce;
+    uint32_t hash = WTF::pairIntHash(structure->id().bits() >> structureIDPlaceShift, uid->existingSymbolAwareHash()) | cameOnce;
     constexpr uint32_t numberOfSets = numberOfPairs / pairsPerSet;
     static_assert(hasOneBitSet(numberOfSets) && !(pairsPerSet % SIMD::stride<uint32_t>));
     uint32_t* set = &m_pairs[hash % numberOfSets * pairsPerSet];

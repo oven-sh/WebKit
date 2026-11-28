@@ -222,6 +222,8 @@ struct KeyedValuePlace {
         return access == SlotAccess::Read ? 0 : numberOfPlacesPerAccess << sizeShift;
     }
 
+    // The ID as it is, and not its number as structureIDPlaceShift gives it: one key has 64 places with it where the number would give it 250, and the shift
+    // is two instructions more in every read under a key on x86-64, which test/aot/perf/everyday-twins.test.ts of Bun counts.
     static uint32_t offsetFor(const JSCell* key, StructureID structureID) { return (static_cast<uint32_t>(std::bit_cast<uintptr_t>(key)) + structureID.bits()) & offsetMask; }
 
     static constexpr uint32_t absenceBit = 1;
@@ -421,13 +423,15 @@ struct ForwardingProxyHandlers {
     static constexpr unsigned size = 4;
     static constexpr unsigned sizeShift = 4;
     static constexpr uint32_t offsetMask = (size - 1) << sizeShift;
+    // What is left of structureIDPlaceShift when the place is an offset: the number of the StructureID, times the size of an entry.
+    static constexpr unsigned shiftOfStructureID = structureIDPlaceShift - sizeShift;
 
     struct Entry {
         uint64_t wordAfterHeader;
         uint32_t structureID;
     };
 
-    static uint32_t offsetFor(uint32_t structureID) { return structureID & offsetMask; }
+    static constexpr uint32_t offsetFor(uint32_t structureID) { return structureID >> shiftOfStructureID & offsetMask; }
 
     Entry entries[size];
 };
@@ -555,11 +559,11 @@ struct PropertyCacheWords {
     SlotHandlers handlers;
 #endif
     uint64_t headersOfPrototypeSlotsOfOrdinaryConstructors[PlaceOfOrdinaryConstructor::numberOfPlaces + 1];
-    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = 4;
+    static constexpr unsigned shiftOfPlaceOfStructureBelowBuiltinClass = structureIDPlaceShift;
     static constexpr unsigned numberOfStructuresBelowBuiltinClasses = 64;
     uint32_t structuresBelowBuiltinClasses[numberOfStructuresBelowBuiltinClasses];
 
-    static constexpr unsigned shiftOfErrorWithMessage = 4;
+    static constexpr unsigned shiftOfErrorWithMessage = structureIDPlaceShift;
     static constexpr unsigned numberOfErrorsWithMessage = 64;
     uint32_t errorsWithMessage[numberOfErrorsWithMessage];
 

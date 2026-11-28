@@ -2364,7 +2364,8 @@ void generateReflectSet(StubAssembler& jit)
         return BaseIndex(instanceGPR, registers.entry, CCallHelpers::TimesOne, offsetOfEntries + static_cast<int32_t>(offset));
     };
     jit.load32(Address(handler, JSCell::structureIDOffset()), registers.structureID);
-    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.structureID, registers.entry);
+    jit.urshift32(registers.structureID, TrustedImm32(ForwardingProxyHandlers::shiftOfStructureID), registers.entry);
+    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.entry);
     jit.load32(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, structureID)), word);
     asksOperation.append(jit.branch32(CCallHelpers::NotEqual, word, registers.structureID));
     jit.load64(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, wordAfterHeader)), word);
