@@ -167,7 +167,7 @@ void ForInEmitter::generateForInStep(const ValueContext& value)
 ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
 {
     return {
-        .cachedStructureID = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID),
+        .cachedStructureIDForNames = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureIDForNames),
         .indexedLength = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength),
         .endOwnPropertyIndex = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endOwnPropertyIndex),
         .endGenericPropertyIndex = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex),
@@ -176,7 +176,7 @@ ForInEmitter::EnumeratorFields ForInEmitter::loadFields(CellPointer enumerator)
 
 Condition ForInEmitter::hasCachedKeys(CellPointer enumerator, const EnumeratorFields& fields, CellPointer object)
 {
-    Condition hasCachedStructure = equal(loadStructureID(object), fields.cachedStructureID);
+    Condition hasCachedStructure = equal(loadStructureID(object), fields.cachedStructureIDForNames);
     Word32 orderWord = emitter<ShapeTestEmitter>().orderWordOfAnyCell(object);
     Word32 mask = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWordMask);
     Word32 cachedOrderWord = loadField<Word32>(enumerator, m_heaps.JSPropertyNameEnumerator_cachedOrderWord);

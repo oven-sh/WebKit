@@ -102,7 +102,6 @@
 #import <pal/avfoundation/OutputContext.h>
 #import <pal/spi/cocoa/AVFoundationSPI.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
-#import <pal/text/TextCodecUTF8.h>
 #import <wtf/BlockObjCExceptions.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/CompletionHandler.h>
@@ -350,8 +349,7 @@ HashSet<SecurityOriginData> MediaPlayerPrivateAVFoundationObjC::originsInMediaCa
     if (!assetCache)
         return origins;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [assetCache.get() allKeys]) {
+    for (NSString *key in [assetCache.get() allKeys]) {
         URL keyAsURL { key };
         if (keyAsURL.isValid())
             origins.add(SecurityOriginData::fromURL(keyAsURL));
@@ -371,8 +369,7 @@ void MediaPlayerPrivateAVFoundationObjC::clearMediaCache(const String& path, Wal
     if (!assetCache)
         return;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [assetCache.get() allKeys]) {
+    for (NSString *key in [assetCache.get() allKeys]) {
         if (toSystemClockTime([assetCache.get() lastModifiedDateOfEntryForKey:key]) > modifiedSince)
             [assetCache.get() removeEntryForKey:key];
     }
@@ -391,8 +388,7 @@ void MediaPlayerPrivateAVFoundationObjC::clearMediaCache(const String& path, Wal
         errorHandler:nil];
 
     RetainPtr<NSMutableArray> urlsToDelete = adoptNS([[NSMutableArray alloc] init]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSURL *fileURL : enumerator) {
+    for (NSURL *fileURL : enumerator) {
         NSDictionary *fileAttributes = [fileURL resourceValuesForKeys:propertyKeys error:nil];
 
         if (![fileAttributes[NSURLNameKey] hasPrefix:@"CachedMedia-"])
@@ -407,8 +403,7 @@ void MediaPlayerPrivateAVFoundationObjC::clearMediaCache(const String& path, Wal
         [urlsToDelete addObject:fileURL];
     }
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSURL *fileURL in urlsToDelete.get())
+    for (NSURL *fileURL in urlsToDelete.get())
         [fileManager removeItemAtURL:fileURL error:nil];
 }
 
@@ -418,8 +413,7 @@ void MediaPlayerPrivateAVFoundationObjC::clearMediaCacheForOrigins(const String&
     if (!assetCache)
         return;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [assetCache.get() allKeys]) {
+    for (NSString *key in [assetCache.get() allKeys]) {
         URL keyAsURL { key };
         if (keyAsURL.isValid()) {
             if (origins.contains(SecurityOriginData::fromURL(keyAsURL)))
@@ -441,6 +435,7 @@ MediaPlayerPrivateAVFoundationObjC::MediaPlayerPrivateAVFoundationObjC(MediaPlay
     m_muted = player.muted();
     m_volume = player.volume();
     m_isVideoPlayer = player.isVideoPlayer();
+    m_suppressesAudioRendering = m_isVideoPlayer;
 
 #if HAVE(SPATIAL_TRACKING_LABEL)
     m_defaultSpatialTrackingLabel = player.defaultSpatialTrackingLabel();
@@ -479,14 +474,12 @@ void MediaPlayerPrivateAVFoundationObjC::cancelLoad()
 
     // Remove all KVO observers BEFORE disconnecting the observer object.
     if (m_avPlayerItem) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *keyName in itemKVOPropertiesSingleton())
+        for (NSString *keyName in itemKVOPropertiesSingleton())
             [m_avPlayerItem removeObserver:m_objcObserver.get() forKeyPath:keyName];
     }
 
     if (m_avPlayer) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSString *keyName in playerKVOPropertiesSingleton())
+        for (NSString *keyName in playerKVOPropertiesSingleton())
             [m_avPlayer removeObserver:m_objcObserver.get() forKeyPath:keyName];
         setShouldObserveTimeControlStatus(false);
     }
@@ -607,7 +600,7 @@ void MediaPlayerPrivateAVFoundationObjC::createImageGenerator()
     if (!m_avAsset || m_imageGenerator)
         return;
 
-    m_imageGenerator = [PAL::getAVAssetImageGeneratorClassSingleton() assetImageGeneratorWithAsset:m_avAsset];
+    m_imageGenerator = checked_objc_cast<AVAssetImageGenerator>([PAL::getAVAssetImageGeneratorClassSingleton() assetImageGeneratorWithAsset:m_avAsset]);
 
     [m_imageGenerator setApertureMode:AVAssetImageGeneratorApertureModeCleanAperture];
     [m_imageGenerator setAppliesPreferredTrackTransform:YES];
@@ -1093,8 +1086,7 @@ void MediaPlayerPrivateAVFoundationObjC::createAVPlayer()
     ALWAYS_LOG(LOGIDENTIFIER);
 
     m_avPlayer = adoptNS([PAL::allocAVPlayerInstance() init]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *keyName in playerKVOPropertiesSingleton())
+    for (NSString *keyName in playerKVOPropertiesSingleton())
         [m_avPlayer addObserver:m_objcObserver.get() forKeyPath:keyName options:NSKeyValueObservingOptionNew context:(void *)MediaPlayerAVFoundationObservationContextPlayer];
     m_automaticallyWaitsToMinimizeStalling = [m_avPlayer automaticallyWaitsToMinimizeStalling];
 
@@ -1134,7 +1126,7 @@ void MediaPlayerPrivateAVFoundationObjC::createAVPlayer()
         [m_avPlayer setMuted:m_muted];
 
     if (m_isVideoPlayer)
-        [m_avPlayer _setSuppressesAudioRendering:!m_isAudible];
+        [m_avPlayer _setSuppressesAudioRendering:m_suppressesAudioRendering];
 
 #if HAVE(AVPLAYER_DISCONNECTEDFROMSYSTEMAUDIO)
     [m_avPlayer setDisconnectedFromSystemAudio:!m_isAudible completionHandler:nil];
@@ -1210,8 +1202,7 @@ void MediaPlayerPrivateAVFoundationObjC::createAVPlayerItem()
 
     [[NSNotificationCenter defaultCenter] addObserver:m_objcObserver selector:@selector(didEnd:) name:AVPlayerItemDidPlayToEndTimeNotification object:m_avPlayerItem.get()];
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSString *keyName in itemKVOPropertiesSingleton()) {
+    for (NSString *keyName in itemKVOPropertiesSingleton()) {
         NSKeyValueObservingOptions options = NSKeyValueObservingOptionNew | NSKeyValueObservingOptionPrior;
         if ([keyName isEqualToString:@"duration"])
             options |= NSKeyValueObservingOptionInitial;
@@ -1293,8 +1284,7 @@ void MediaPlayerPrivateAVFoundationObjC::beginLoadingMetadata()
     [m_avAsset loadValuesAsynchronouslyForKeys:assetMetadataKeyNamesSingleton() completionHandler:^{
         callOnMainThread([weakThis, metadataLoadingGroup] {
             if (RefPtr protectedThis = weakThis.get(); protectedThis && [protectedThis->m_avAsset statusOfValueForKey:@"tracks" error:nil] == AVKeyValueStatusLoaded) {
-                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-                for (SUPPRESS_UNRETAINED_LOCAL AVAssetTrack *track in [protectedThis->m_avAsset tracks]) {
+                for (AVAssetTrack *track in [protectedThis->m_avAsset tracks]) {
                     dispatch_group_enter(metadataLoadingGroup.get());
                     [track loadValuesAsynchronouslyForKeys:assetTrackMetadataKeyNamesSingleton() completionHandler:^{
                         dispatch_group_leave(metadataLoadingGroup.get());
@@ -1405,32 +1395,6 @@ NSArray *MediaPlayerPrivateAVFoundationObjC::timedMetadata() const
     if (m_currentMetaData)
         return m_currentMetaData.get();
     return nil;
-}
-
-String MediaPlayerPrivateAVFoundationObjC::accessLog() const
-{
-    if (!m_avPlayerItem)
-        return emptyString();
-
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    AVPlayerItemAccessLog *log = [m_avPlayerItem accessLog];
-ALLOW_DEPRECATED_DECLARATIONS_END
-    RetainPtr<NSString> logString = adoptNS([[NSString alloc] initWithData:[log extendedLogData] encoding:[log extendedLogDataStringEncoding]]);
-
-    return logString.get();
-}
-
-String MediaPlayerPrivateAVFoundationObjC::errorLog() const
-{
-    if (!m_avPlayerItem)
-        return emptyString();
-
-ALLOW_DEPRECATED_DECLARATIONS_BEGIN
-    AVPlayerItemErrorLog *log = [m_avPlayerItem errorLog];
-ALLOW_DEPRECATED_DECLARATIONS_END
-    RetainPtr<NSString> logString = adoptNS([[NSString alloc] initWithData:[log extendedLogData] encoding:[log extendedLogDataStringEncoding]]);
-
-    return logString.get();
 }
 
 void MediaPlayerPrivateAVFoundationObjC::sceneIdentifierDidChange()
@@ -1883,8 +1847,7 @@ void MediaPlayerPrivateAVFoundationObjC::setAsset(RetainPtr<id>&& asset)
 std::optional<bool> MediaPlayerPrivateAVFoundationObjC::allTracksArePlayable() const
 {
     if (m_avPlayerItem) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVPlayerItemTrack *track in [m_avPlayerItem tracks]) {
+        for (AVPlayerItemTrack *track in [m_avPlayerItem tracks]) {
             if (!trackIsPlayable(track.assetTrack))
                 return false;
         }
@@ -1895,8 +1858,7 @@ std::optional<bool> MediaPlayerPrivateAVFoundationObjC::allTracksArePlayable() c
     if (!m_avAsset || [m_avAsset statusOfValueForKey:@"tracks" error:NULL] != AVKeyValueStatusLoaded)
         return std::nullopt;
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVAssetTrack *assetTrack : [m_avAsset tracks]) {
+    for (AVAssetTrack *assetTrack : [m_avAsset tracks]) {
         if ([assetTrack isEnabled] && !trackIsPlayable(assetTrack))
             return false;
     }
@@ -1906,8 +1868,7 @@ std::optional<bool> MediaPlayerPrivateAVFoundationObjC::allTracksArePlayable() c
 bool MediaPlayerPrivateAVFoundationObjC::containsDisabledTracks() const
 {
     if (m_avPlayerItem) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVPlayerItemTrack *track in [m_avPlayerItem tracks]) {
+        for (AVPlayerItemTrack *track in [m_avPlayerItem tracks]) {
             if (![track isEnabled])
                 return true;
         }
@@ -1915,8 +1876,7 @@ bool MediaPlayerPrivateAVFoundationObjC::containsDisabledTracks() const
     }
 
     ASSERT(m_avAsset);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVAssetTrack *assetTrack : [m_avAsset tracks]) {
+    for (AVAssetTrack *assetTrack : [m_avAsset tracks]) {
         if (![assetTrack isEnabled])
             return true;
     }
@@ -1984,8 +1944,7 @@ MediaPlayerPrivateAVFoundation::AssetStatus MediaPlayerPrivateAVFoundationObjC::
     if (!m_cachedAssetIsLoaded) {
         NSError *error = nil;
         auto status = [&] {
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSString *keyName in assetMetadataKeyNamesSingleton()) {
+            for (NSString *keyName in assetMetadataKeyNamesSingleton()) {
                 AVKeyValueStatus keyStatus = [m_avAsset statusOfValueForKey:keyName error:&error];
 
                 if (error)
@@ -2235,7 +2194,7 @@ bool MediaPlayerPrivateAVFoundationObjC::shouldWaitForLoadingOfResource(AVAssetR
 #if ENABLE(LEGACY_ENCRYPTED_MEDIA)
     if (scheme == "clearkey"_s) {
         String keyID = [[[avRequest request] URL] resourceSpecifier];
-        auto encodedKeyId = PAL::TextCodecUTF8::encodeUTF8(keyID);
+        auto encodedKeyId = utf8Bytes(keyID);
         auto initData = SharedBuffer::create(WTF::move(encodedKeyId));
 
         auto keyData = player->cachedKeyForKeyId(keyID);
@@ -2333,8 +2292,25 @@ void MediaPlayerPrivateAVFoundationObjC::updateVideoLayerGravity(ShouldAnimate s
 
 void MediaPlayerPrivateAVFoundationObjC::updateIsAudible()
 {
+    // HLS can recreate its tracks while loading, briefly reporting that it
+    // does not have audio. Suppressing audio rendering (or disconnecting from
+    // system audio) in response perturbs AVFoundation's timebase, causing it
+    // to seek into a still-unbuffered range. This leads to AVFoundation
+    // restarting the loading process, recreating its tracks again and causing
+    // a cycle. Break this cycle by waiting for HaveFutureData before
+    // suppressing or disconnecting audio. This ensures that any timebase
+    // perturbation in response to audio suppression occurs within a buffered
+    // range.
+    if (!hasAudio() && readyState() < MediaPlayer::ReadyState::HaveFutureData)
+        return;
+
     bool isAudible = hasAudio() && !m_muted && m_volume;
-    if (m_isAudible == isAudible)
+    bool isAudibleChanged = m_isAudible != isAudible;
+
+    bool suppressesAudioRendering = !isAudible && (!hasAudio() || hasVideo());
+    bool suppressesAudioRenderingChanged = m_suppressesAudioRendering != suppressesAudioRendering;
+
+    if (!isAudibleChanged && !suppressesAudioRenderingChanged)
         return;
 
     // Only change the state of suppressesAudioRendering and
@@ -2344,21 +2320,28 @@ void MediaPlayerPrivateAVFoundationObjC::updateIsAudible()
     // ignore this check if becoming audible to ensure audio
     // rendering starts immediately. This method will be called
     // again by timeControlStatusDidChange().
-    if (!isAudible && m_cachedTimeControlStatus == AVPlayerTimeControlStatusPlaying)
+    if (suppressesAudioRendering && m_cachedTimeControlStatus == AVPlayerTimeControlStatusPlaying)
         return;
 
-    ALWAYS_LOG(LOGIDENTIFIER, isAudible);
+    ALWAYS_LOG(LOGIDENTIFIER, isAudible, "suppressesAudioRendering = ", suppressesAudioRendering);
     m_isAudible = isAudible;
+    m_suppressesAudioRendering = suppressesAudioRendering;
 
     if (!m_avPlayer)
         return;
 
-    if (m_isVideoPlayer)
-        [m_avPlayer _setSuppressesAudioRendering:!m_isAudible];
+    if (m_isVideoPlayer && suppressesAudioRenderingChanged)
+        [m_avPlayer _setSuppressesAudioRendering:m_suppressesAudioRendering];
 
 #if HAVE(AVPLAYER_DISCONNECTEDFROMSYSTEMAUDIO)
-    [m_avPlayer setDisconnectedFromSystemAudio:!m_isAudible completionHandler:nil];
+    if (isAudibleChanged)
+        [m_avPlayer setDisconnectedFromSystemAudio:!m_isAudible completionHandler:nil];
 #endif
+}
+
+void MediaPlayerPrivateAVFoundationObjC::setHasAudioForTesting(bool hasAudio)
+{
+    setHasAudio(hasAudio);
 }
 
 void MediaPlayerPrivateAVFoundationObjC::metadataLoaded()
@@ -2372,8 +2355,7 @@ void MediaPlayerPrivateAVFoundationObjC::processChapterTracks()
     ASSERT(m_avAsset);
     auto player = this->player();
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSLocale *locale in [m_avAsset availableChapterLocales]) {
+    for (NSLocale *locale in [m_avAsset availableChapterLocales]) {
 
 ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         auto chapters = [m_avAsset chapterMetadataGroupsWithTitleLocale:locale containingItemsWithCommonKeys:@[AVMetadataCommonKeyArtwork]];
@@ -3114,8 +3096,7 @@ void MediaPlayerPrivateAVFoundationObjC::setWaitingForKey(bool waitingForKey)
 AVAssetTrack* MediaPlayerPrivateAVFoundationObjC::firstEnabledTrack(AVMediaCharacteristic characteristic) const
 {
     if (m_avPlayerItem) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVPlayerItemTrack* track in [m_avPlayerItem tracks]) {
+        for (AVPlayerItemTrack* track in [m_avPlayerItem tracks]) {
             if (!track.enabled)
                 continue;
             if (!track.assetTrack)
@@ -3212,8 +3193,7 @@ void MediaPlayerPrivateAVFoundationObjC::processMediaSelectionOptions()
 
     Vector<RefPtr<InbandTextTrackPrivateAVF>> removedTextTracks = m_textTracks;
     NSArray *legibleOptions = [PAL::getAVMediaSelectionGroupClassSingleton() playableMediaSelectionOptionsFromArray:[legibleGroup.get() options]];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVMediaSelectionOption *option in legibleOptions) {
+    for (AVMediaSelectionOption *option in legibleOptions) {
         bool newTrack = true;
         for (unsigned i = removedTextTracks.size(); i > 0; --i) {
             RefPtr removedTextTrack = removedTextTracks[i - 1];
@@ -3396,18 +3376,20 @@ bool MediaPlayerPrivateAVFoundationObjC::hasAudio() const
 
 bool MediaPlayerPrivateAVFoundationObjC::isCurrentPlaybackTargetWireless() const
 {
-    bool wirelessTarget = false;
+    RefPtr playbackTarget = m_playbackTarget;
 
-#if !PLATFORM(IOS_FAMILY) || ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
-    if (RefPtr playbackTarget = m_playbackTarget) {
-        if (playbackTarget->targetType() == MediaPlaybackTarget::Type::AVOutputContext)
-            wirelessTarget = m_avPlayer && m_avPlayer.get().externalPlaybackActive;
-        else
-            wirelessTarget = m_shouldPlayToPlaybackTarget && playbackTarget->hasActiveRoute();
+#if !PLATFORM(IOS_FAMILY)
+    if (!playbackTarget) {
+        INFO_LOG(LOGIDENTIFIER, false);
+        return false;
     }
-#else
-    wirelessTarget = m_avPlayer && m_avPlayer.get().externalPlaybackActive;
 #endif
+
+    bool wirelessTarget;
+    if (playbackTarget && playbackTarget->targetType() != MediaPlaybackTarget::Type::AVOutputContext)
+        wirelessTarget = m_shouldPlayToPlaybackTarget && playbackTarget->hasActiveRoute();
+    else
+        wirelessTarget = [m_avPlayer isExternalPlaybackActive];
 
     INFO_LOG(LOGIDENTIFIER, wirelessTarget);
 
@@ -3506,22 +3488,17 @@ String MediaPlayerPrivateAVFoundationObjC::wirelessPlaybackTargetName() const
     if (!m_avPlayer)
         return emptyString();
 
-    String wirelessTargetName;
+    RefPtr playbackTarget = m_playbackTarget;
 
-#if !PLATFORM(IOS_FAMILY) || ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
-    if (RefPtr playbackTarget = m_playbackTarget) {
-#if HAVE(MEDIAEXPERIENCE_AVSYSTEMCONTROLLER)
-        if (playbackTarget->targetType() == MediaPlaybackTarget::Type::AVOutputContext)
-            wirelessTargetName = externalDeviceDisplayNameForPlayer(m_avPlayer.get()).get();
-        else
-#endif
-            wirelessTargetName = playbackTarget->deviceName();
-    }
+#if PLATFORM(IOS_FAMILY)
+    if (!playbackTarget || playbackTarget->targetType() == MediaPlaybackTarget::Type::AVOutputContext)
+        return externalDeviceDisplayNameForPlayer(m_avPlayer.get()).get();
 #else
-    wirelessTargetName = externalDeviceDisplayNameForPlayer(m_avPlayer.get()).get();
+    if (!playbackTarget)
+        return { };
 #endif
 
-    return wirelessTargetName;
+    return playbackTarget->deviceName();
 }
 
 bool MediaPlayerPrivateAVFoundationObjC::wirelessVideoPlaybackDisabled() const
@@ -3694,8 +3671,7 @@ void MediaPlayerPrivateAVFoundationObjC::loadedTimeRangesDidChange(RetainPtr<NSA
     using namespace PAL; // For CMTIMERANGE_IS_EMPTY.
 
     m_buffered.clear();
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSValue *thisRangeValue in loadedRanges.get()) {
+    for (NSValue *thisRangeValue in loadedRanges.get()) {
         CMTimeRange timeRange = [thisRangeValue CMTimeRangeValue];
         if (CMTIMERANGE_IS_VALID(timeRange) && !CMTIMERANGE_IS_EMPTY(timeRange))
             m_buffered.add(PAL::toMediaTime(timeRange.start), PAL::toMediaTime(PAL::CMTimeRangeGetEnd(timeRange)));
@@ -3799,8 +3775,7 @@ static const AtomString& metadataType(NSString *avMetadataKeySpace)
 
 void MediaPlayerPrivateAVFoundationObjC::metadataGroupDidArrive(const RetainPtr<NSArray>& groups, const MediaTime& currentTime)
 {
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVDateRangeMetadataGroup *group in groups.get()) {
+    for (AVDateRangeMetadataGroup *group in groups.get()) {
         auto groupStartDate = group.startDate.timeIntervalSince1970;
         auto groupEndDate = group.endDate.timeIntervalSince1970;
         auto groupDuration = MediaTime::createWithDouble(groupEndDate - groupStartDate);
@@ -3812,8 +3787,7 @@ void MediaPlayerPrivateAVFoundationObjC::metadataGroupDidArrive(const RetainPtr<
             groupStartTime = groupStartDate - (currentDate - currentTime.toDouble());
 
         auto groupCopy = adoptNS([[NSMutableArray alloc] init]);
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVMetadataItem *item in group.items) {
+        for (AVMetadataItem *item in group.items) {
             RetainPtr<AVMutableMetadataItem> itemCopy = adoptNS([item mutableCopy]);
             if (!CMTIME_IS_VALID(itemCopy.get().time))
                 itemCopy.get().time = PAL::CMTimeMakeWithSeconds(groupStartTime, MediaTime::DefaultTimeScale);
@@ -4633,7 +4607,7 @@ NSArray* playerKVOPropertiesSingleton()
 
 - (void)metadataOutput:(AVPlayerItemMetadataOutput *)output didOutputTimedMetadataGroups:(NSArray<AVTimedMetadataGroup *> *)metadataGroups fromPlayerItemTrack:(AVPlayerItemTrack *)track
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     UNUSED_PARAM(output);
     UNUSED_PARAM(track);
 
@@ -4644,8 +4618,7 @@ NSArray* playerKVOPropertiesSingleton()
         player->queueTaskOnEventLoop([player, metadataGroups = retainPtr(metadataGroups), currentTime = player->currentTime()] {
             ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL AVTimedMetadataGroup *group in metadataGroups.get())
+            for (AVTimedMetadataGroup *group in metadataGroups.get())
                 player->metadataDidArrive(retainPtr(group.items), currentTime);
         });
     }
@@ -4653,7 +4626,7 @@ NSArray* playerKVOPropertiesSingleton()
 
 - (void)metadataCollector:(AVPlayerItemMetadataCollector *)metadataCollector didCollectDateRangeMetadataGroups:(NSArray<AVDateRangeMetadataGroup *> *)metadataGroups indexesOfNewGroups:(NSIndexSet *)indexesOfNewGroups indexesOfModifiedGroups:(NSIndexSet *)indexesOfModifiedGroups
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     UNUSED_PARAM(metadataCollector);
     UNUSED_PARAM(indexesOfNewGroups);
     UNUSED_PARAM(indexesOfModifiedGroups);

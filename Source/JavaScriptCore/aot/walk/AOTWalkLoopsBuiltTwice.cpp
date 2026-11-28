@@ -4341,14 +4341,14 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
         bool expectsTablesToBeViews { false };
         bool expectsThoseWithWordOfListToo { false };
         Vector<std::pair<size_t, Reference>, 1> elementsThatEnterAsNumbers { };
-        UncheckedKeyHashMap<uint32_t, Reference, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lengthsReadInFront { };
+        HashMap<uint32_t, Reference, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lengthsReadInFront { };
         bool asksBoundForText { false };
         Vector<std::pair<ValueID, Reference>, 1> charactersReadBeforeLoop { };
         Vector<std::pair<ValueID, Reference>, 1> characterFieldsReadInFront { };
         Reference comparator { };
     };
     Vector<std::pair<ValueID, ValueID>, 2> namesOfLengthsReadInFront;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesAskedAbout;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> namesAskedAbout;
     if (!members[0].slotReadInLoop && !members[0].readOfVariableInLoop && !members[0].readOfRowInLoop && !members[0].fieldReadInLoop) {
         uint32_t firstValueOfLoop = index.block(inputHead).firstParameter().index();
         auto isLengthOfHolder = [&](ValueID read) {
@@ -4592,7 +4592,7 @@ bool Walker::buildLoopForEachMember(BlockID inputHead, const LoopPreview& previe
                 count(StatisticID::EnteringElementsGuardedAsNumbers);
             }
         }
-        UncheckedKeyHashMap<uint32_t, Reference, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lengthsReadInFront;
+        HashMap<uint32_t, Reference, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> lengthsReadInFront;
         for (auto [name, read] : namesOfLengthsReadInFront) {
             if (!proof || !proof.isValue() || isUnreachable() || m_hasFailed || !part || part->builtinClass != BuiltinClasses::Array)
                 break;
@@ -6982,7 +6982,7 @@ bool Walker::tryVersionLoop(BlockID inputHead, const LoopPreview& preview, std::
             Range written;
         };
         Vector<AddendsAskedOfView, 4> addendsAskedOfViews;
-        UncheckedKeyHashMap<uint32_t, Range, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> writtenAddendsOfViews;
+        HashMap<uint32_t, Range, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> writtenAddendsOfViews;
         auto writtenAddend = [&](const AccessUnderCounterOfLoop& access) -> std::optional<int64_t> {
             int64_t sum = access.stepsBeforeAccess;
             for (const AddendOfKey& addend : access.addends) {

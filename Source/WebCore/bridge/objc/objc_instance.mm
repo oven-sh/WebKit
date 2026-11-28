@@ -56,8 +56,7 @@
 - (NSString *)_web_description;
 @end
 
-namespace JSC {
-namespace Bindings {
+namespace JSC::Bindings {
 
 NODELETE static RetainPtr<NSString>& globalException()
 {
@@ -332,7 +331,7 @@ JSC::JSValue ObjcInstance::invokeObjcMethod(JSGlobalObject* lexicalGlobalObject,
     // of return value will never exceed the size of largest scalar
     // or a pointer.
     char buffer[1024];
-    ASSERT([signature methodReturnLength] < 1024);
+    RELEASE_ASSERT([signature methodReturnLength] < 1024);
 
     if (*type != 'v') {
         [invocation getReturnValue:buffer];
@@ -505,7 +504,6 @@ JSC::JSValue ObjcInstance::valueOf(JSGlobalObject* lexicalGlobalObject) const
     return stringValue(lexicalGlobalObject);
 }
 
-}
 }
 
 @implementation NSObject (WebDescriptionCategory)

@@ -307,9 +307,9 @@ public:
 #endif
     JS_EXPORT_PRIVATE JSObject* moduleNamespaceObject(JSGlobalObject*, ModulePhase = ModulePhase::Evaluation);
 
-    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
+    void gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, HashSet<AbstractModuleRecord*>& seen);
     bool readyForSyncExecution();
-    bool readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen);
+    bool readyForSyncExecution(HashSet<AbstractModuleRecord*>& seen);
     void evaluateSync(JSGlobalObject*);
 
     JSPromise* asyncCapability() const;
@@ -328,7 +328,7 @@ public:
 
     void link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    void generateDeferredSyntheticModules(JSGlobalObject*, UncheckedKeyHashSet<AbstractModuleRecord*>& visited);
+    void generateDeferredSyntheticModules(JSGlobalObject*, HashSet<AbstractModuleRecord*>& visited);
     static bool importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency);
 #endif
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
@@ -470,7 +470,7 @@ private:
     // So here, we don't visit each object for GC. The resolution cache map caches the once
     // looked up correctly resolved resolution, since (1) we rarely looked up the non-resolved one,
     // and (2) if we cache all the attempts the size of the map becomes infinitely large.
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
+    typedef HashMap<RefPtr<UniquedStringImpl>, Resolution, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> Resolutions;
     Resolutions m_resolutionCache;
 #if ENABLE(AOT)
     Resolutions m_linkedImports;

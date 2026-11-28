@@ -133,7 +133,7 @@ public:
         MovedLoadLog& m_log;
     };
     // An entry that named one of these values names a Get of its variable at the place of the load from here on. fixSSA puts there what the users of the value are given at that place.
-    void didDemote(Procedure&, const UncheckedKeyHashMap<Value*, Variable*>&);
+    void didDemote(Procedure&, const HashMap<Value*, Variable*>&);
     // For a phase that is about to copy these blocks and to lead other edges into them and their copies, and has demoted what is used outside its block. What nothing but an entry in another block names has no variable, and the entry goes.
     void willCopy(Procedure&, const IndexSet<BasicBlock*>&);
     // A copy that is made by itself may be put anywhere.
@@ -193,13 +193,13 @@ private:
     void dropEntriesWrittenBy(const Value*);
 
     Vector<Entry> m_entries;
-    UncheckedKeyHashMap<Value*, Vector<unsigned, 2>> m_entriesNaming;
+    HashMap<Value*, Vector<unsigned, 2>> m_entriesNaming;
     unsigned m_depthOfRegionCopies { 0 };
     unsigned m_depthOfCopiesBesideOriginals { 0 };
     bool m_isDeletingUnreachableCode { false };
     unsigned m_numberOfEntriesBeforeRegionCopy { 0 };
-    UncheckedKeyHashMap<Value*, Value*> m_copiesInRegion;
-    UncheckedKeyHashMap<BasicBlock*, BasicBlock*> m_blockCopiesInRegion;
+    HashMap<Value*, Value*> m_copiesInRegion;
+    HashMap<BasicBlock*, BasicBlock*> m_blockCopiesInRegion;
 };
 
 } } // namespace JSC::B3

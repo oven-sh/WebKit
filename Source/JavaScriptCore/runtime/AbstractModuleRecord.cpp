@@ -193,7 +193,7 @@ void AbstractModuleRecord::addImportEntry(const ImportEntry& entry)
     bool isNewEntry = m_importEntries.add(entry.localName.impl(), entry).isNewEntry;
     UNUSED_PARAM(isNewEntry);
     // This is guaranteed by the parser.
-    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate import entry name '%s'", entry.localName.impl()->utf8().legacyCStringPointer());
+    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate import entry name '%s'", makeUTF8CString(entry.localName.string()).legacyCStringPointer());
 }
 
 void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
@@ -201,7 +201,7 @@ void AbstractModuleRecord::addExportEntry(const ExportEntry& entry)
     bool isNewEntry = m_exportEntries.add(entry.exportName.impl(), entry).isNewEntry;
     UNUSED_PARAM(isNewEntry);
     // This is guaranteed by the parser.
-    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate export entry name '%s'", entry.exportName.impl()->utf8().legacyCStringPointer());
+    ASSERT_WITH_MESSAGE(isNewEntry, "Duplicate export entry name '%s'", makeUTF8CString(entry.exportName.string()).legacyCStringPointer());
 }
 
 auto AbstractModuleRecord::tryGetImportEntry(UniquedStringImpl* localName) -> std::optional<ImportEntry>
@@ -1001,7 +1001,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     //  4. Once we follow star links, we should not retrieve the result from the cache and should not cache the result.
     //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
 
-    using ResolveSet = WTF::UncheckedKeyHashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
+    using ResolveSet = WTF::HashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
 #if ENABLE(AOT)
     enum class Type { Query, QueryViaStarExport, IndirectFallback, GatherStars, GatherStatement };
 #else
@@ -1039,7 +1039,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     Vector<Task, 8> pendingTasks;
     ResolveSet resolveSet;
 #if ENABLE(AOT)
-    UncheckedKeyHashSet<std::tuple<AbstractModuleRecord*, UniquedStringImpl*, AOT::ModuleRecord*>> reexporterDependentVisits;
+    HashSet<std::tuple<AbstractModuleRecord*, UniquedStringImpl*, AOT::ModuleRecord*>> reexporterDependentVisits;
 #endif
 
     Vector<Resolution, 8> frames;
@@ -1503,7 +1503,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     IdentifierSet rootShadowedNames;
     IdentifierSet slowPathNames;
 
-    UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
+    HashSet<AbstractModuleRecord*> exportStarSet;
     Vector<AbstractModuleRecord*, 8> pendingModules;
     pendingModules.append(this);
 #if USE(BUN_JSC_ADDITIONS)
@@ -1710,7 +1710,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 }
 
 // https://tc39.es/proposal-defer-import-eval/#sec-GatherAsynchronousTransitiveDependencies
-void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashSet<AbstractModuleRecord*>& result, HashSet<AbstractModuleRecord*>& seen)
 {
 #if ENABLE(AOT)
     VM& vm = this->vm();
@@ -1761,11 +1761,11 @@ void AbstractModuleRecord::gatherAsynchronousTransitiveDependencies(OrderedHashS
 // https://tc39.es/proposal-defer-import-eval/#sec-ReadyForSyncExecution
 bool AbstractModuleRecord::readyForSyncExecution()
 {
-    UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+    HashSet<AbstractModuleRecord*> seen;
     return readyForSyncExecution(seen);
 }
 
-bool AbstractModuleRecord::readyForSyncExecution(UncheckedKeyHashSet<AbstractModuleRecord*>& seen)
+bool AbstractModuleRecord::readyForSyncExecution(HashSet<AbstractModuleRecord*>& seen)
 {
 #if ENABLE(AOT)
     VM& vm = this->vm();
@@ -1880,7 +1880,7 @@ void AbstractModuleRecord::link(JSGlobalObject* globalObject, RefPtr<ScriptFetch
     auto scope = DECLARE_THROW_SCOPE(vm);
 #if USE(BUN_JSC_ADDITIONS)
     {
-        UncheckedKeyHashSet<AbstractModuleRecord*> visited;
+        HashSet<AbstractModuleRecord*> visited;
         generateDeferredSyntheticModules(globalObject, visited);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -2003,7 +2003,7 @@ static void checkSafeToRecurse(JSGlobalObject* globalObject, ThrowScope& scope)
 bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPromise, CyclicModuleRecord* dependency)
 {
     auto resumesDependency = [&](AbstractModuleRecord* module) -> bool {
-        UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+        HashSet<AbstractModuleRecord*> seen;
         Vector<AbstractModuleRecord*, 8> work;
         work.append(module);
         while (!work.isEmpty()) {
@@ -2031,7 +2031,7 @@ bool AbstractModuleRecord::importPromiseGatesAsyncDependency(JSPromise* importPr
         return cell;
     };
 
-    UncheckedKeyHashSet<JSPromise*> seen;
+    HashSet<JSPromise*> seen;
     Vector<JSPromise*, 16> work;
     work.append(importPromise);
     bool found = false;
@@ -2214,7 +2214,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
             // 11.b.i. Let additionalModules be GatherAsynchronousTransitiveDependencies(requiredModule).
             // 11.b.ii. For each Module Record additionalModule of additionalModules, do
             //   11.b.ii.1. If evaluationList does not contain additionalModule, then append additionalModule to evaluationList.
-            UncheckedKeyHashSet<AbstractModuleRecord*> seen;
+            HashSet<AbstractModuleRecord*> seen;
             requiredModule->gatherAsynchronousTransitiveDependencies(evaluationList, seen);
             RETURN_IF_EXCEPTION(scope, invalid);
         } else {
@@ -2357,7 +2357,7 @@ unsigned AbstractModuleRecord::innerModuleEvaluation(JSGlobalObject* globalObjec
 // This is its own pass ahead of InnerModuleLinking because a generator runs user code, and user code can require() an
 // ES module that imports back into this graph. Such a load links and evaluates; started from inside InnerModuleLinking
 // it would find the records on the outer linking stack in the LINKING state and treat them as linked.
-void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, UncheckedKeyHashSet<AbstractModuleRecord*>& visited)
+void AbstractModuleRecord::generateDeferredSyntheticModules(JSGlobalObject* globalObject, HashSet<AbstractModuleRecord*>& visited)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

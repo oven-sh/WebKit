@@ -743,7 +743,7 @@ void WebProcess::platformSetWebsiteDataStoreParameters(WebProcessDataStoreParame
 
     if (!parameters.javaScriptConfigurationDirectory.isEmpty()) {
         auto javaScriptConfigFile = makeString(parameters.javaScriptConfigurationDirectory, "/JSC.config"_s);
-        JSC::processConfigFile(javaScriptConfigFile.utf8().data(), "com.apple.WebKit.WebContent"_s, m_uiProcessBundleIdentifier.utf8());
+        JSC::processConfigFile(makeUTF8CString(javaScriptConfigFile).data(), "com.apple.WebKit.WebContent"_s, makeUTF8CString(m_uiProcessBundleIdentifier));
     }
 }
 
@@ -1371,10 +1371,6 @@ void WebProcess::setMediaAccessibilityPreferredCaptionDisplayMode(WebCore::Capti
 
 void WebProcess::updatePageAccessibilitySettings()
 {
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
-    Image::setSystemAllowsAnimationControls(!imageAnimationEnabled());
-#endif
-
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL) || ENABLE(ACCESSIBILITY_VIDEO_AUTOPLAY_CONTROL) || ENABLE(ACCESSIBILITY_NON_BLINKING_CURSOR)
     for (auto& page : m_pageMap.values()) {
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
@@ -1522,6 +1518,9 @@ void WebProcess::switchFromStaticFontRegistryToUserFontRegistry(Vector<WebKit::S
 void WebProcess::setScreenProperties(WebCore::ScreenProperties&& properties)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY)
+    // Contents formats for testing are only ever set in this process, so the UI process's properties never include them.
+    properties.screenContentsFormatsForTesting = WebCore::PlatformScreen::singleton()->screenContentsFormatsForTesting();
+
     auto propertiesWithStyleAffectingOnly = [](auto properties) {
         for (auto& value : properties.screenDataMap.values()) {
             value.suppressEDR = false;
@@ -1682,7 +1681,7 @@ void WebProcess::setNotifyState(const String& name, uint64_t state)
         m_notifyTokens.set(name, token);
 
     if (token == NOTIFY_TOKEN_INVALID) {
-        WEBPROCESS_RELEASE_LOG_ERROR(Process, "setNotifyState: Couldn't create token for %" PUBLIC_LOG_STRING ": %d", name.utf8(), status);
+        WEBPROCESS_RELEASE_LOG_ERROR(Process, "setNotifyState: Couldn't create token for %" PUBLIC_LOG_STRING ": %d", makeUTF8CString(name), status);
         return;
     }
 

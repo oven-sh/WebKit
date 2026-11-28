@@ -104,7 +104,7 @@ SVGElement::SVGElement(const QualifiedName& tagName, Document& document, const S
 SVGElement::~SVGElement()
 {
     if (m_svgRareData) {
-        RELEASE_ASSERT(m_svgRareData->referencingElements().isEmptyIgnoringNullReferences());
+        RELEASE_ASSERT(m_svgRareData->referencingElements().computeIsEmpty());
         for (Ref instance : copyToVectorOf<Ref<SVGElement>>(instances()))
             instance->m_svgRareData->setCorrespondingElement(nullptr);
         RELEASE_ASSERT(!m_svgRareData->correspondingElement());
@@ -215,7 +215,7 @@ void SVGElement::removingSteps(RemovalType removalType, ContainerNode& oldParent
                 extensions->addElementToRebuild(element);
                 element->clearTarget();
             }
-            RELEASE_ASSERT(m_svgRareData->referencingElements().isEmptyIgnoringNullReferences());
+            RELEASE_ASSERT(m_svgRareData->referencingElements().computeIsEmpty());
         }
         extensions->removeElementToRebuild(*this);
     }
@@ -622,8 +622,13 @@ void SVGElement::commitPropertyChange(SVGAnimatedPropertyBase& animatedProperty)
     // the attribute immediately. Otherwise it is okay to be lazy in this regard.
     if (!propertyRegistry().isAnimatedStylePropertyAttribute(attributeName))
         propertyRegistry().setAnimatedPropertyDirty(*this, attributeName, animatedProperty);
-    else
+    else {
         setSynchronizedLazyAttribute(attributeName, AtomString { animatedProperty.baseValAsString() });
+        // A value the attribute refuses in markup is reset as in markup. The attribute keeps what
+        // the script wrote, so this must come after the line above.
+        // https://w3c.github.io/svgwg/svg2-draft/types.html#InvalidValues
+        propertyRegistry().resetAnimatedPropertyBaseValIfOutOfRange(*this, attributeName);
+    }
 
     setAnimatedSVGAttributesAreDirty();
     svgAttributeChanged(attributeName);
@@ -1243,7 +1248,7 @@ void SVGElement::updateRelativeLengthsInformationForChild(bool hasRelativeLength
         notifyParent = !m_hasRegisteredWithParentForRelativeLengths;
     } else {
         m_childElementsWithRelativeLengths.remove(element);
-        notifyParent = m_childElementsWithRelativeLengths.isEmptyIgnoringNullReferences() && m_hasRegisteredWithParentForRelativeLengths;
+        notifyParent = m_childElementsWithRelativeLengths.computeIsEmpty() && m_hasRegisteredWithParentForRelativeLengths;
     }
 
     if (!notifyParent)

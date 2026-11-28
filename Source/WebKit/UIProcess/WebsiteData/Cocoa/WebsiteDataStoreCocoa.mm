@@ -254,7 +254,7 @@ void WebsiteDataStore::platformSetNetworkParameters(WebsiteDataStoreParameters& 
     createHandleFromResolvedPathIfPossible(FileSystem::parentPath(cookieFile), parameters.cookieStoragePathExtensionHandle);
 
     if (m_uiProcessCookieStorageIdentifier.isEmpty()) {
-        auto utf8File = cookieFile.utf8();
+        auto utf8File = makeUTF8CString(cookieFile);
         RetainPtr url = adoptCF(CFURLCreateFromFileSystemRepresentation(kCFAllocatorDefault, byteCast<UInt8>(utf8File.span()).data(), static_cast<CFIndex>(utf8File.length()), true));
         RetainPtr cfCookieStorage = adoptCF(CFHTTPCookieStorageCreateFromFile(kCFAllocatorDefault, url.get(), nullptr));
         m_uiProcessCookieStorageIdentifier = identifyingDataFromCookieStorage(cfCookieStorage.get());
@@ -313,10 +313,8 @@ void WebsiteDataStore::removeDataStoreWithIdentifierImpl(const WTF::UUID& identi
     websiteDataStoreIOQueueSingleton().dispatch([completionHandler = WTF::move(completionHandler), identifier, directory = defaultWebsiteDataStoreDirectory(identifier).isolatedCopy()]() mutable {
         RetainPtr nsCredentialStorage = adoptNS([[NSURLCredentialStorage alloc] _initWithIdentifier:identifier.toString().createNSString().get() private:NO]);
         RetainPtr credentials = [nsCredentialStorage allCredentials];
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSURLProtectionSpace *space in credentials.get()) {
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSURLCredential *credential in [credentials.get()[space] allValues])
+        for (NSURLProtectionSpace *space in credentials.get()) {
+            for (NSURLCredential *credential in [credentials.get()[space] allValues])
                 [nsCredentialStorage removeCredential:credential forProtectionSpace:space];
         }
 
@@ -335,10 +333,10 @@ void WebsiteDataStore::removeDataStoreWithIdentifier(const WTF::UUID& identifier
     ASSERT(isMainRunLoop());
 
     auto completionHandler = [identifier, callback = WTF::move(callback)](const String& error) mutable {
-        RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal completed for identifier %" PUBLIC_LOG_STRING " (error '%" PUBLIC_LOG_STRING "')", identifier.toString().utf8(), error.isEmpty() ? "null"_s : error.utf8());
+        RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal completed for identifier %" PUBLIC_LOG_STRING " (error '%" PUBLIC_LOG_STRING "')", makeUTF8CString(identifier.toString()), error.isEmpty() ? "null"_s : makeUTF8CString(error));
         callback(error);
     };
-    RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal started for identifier %" PUBLIC_LOG_STRING, identifier.toString().utf8());
+    RELEASE_LOG(Storage, "WebsiteDataStore::removeDataStoreWithIdentifier: Removal started for identifier %" PUBLIC_LOG_STRING, makeUTF8CString(identifier.toString()));
     if (!identifier.isValid())
         return completionHandler("Identifier is invalid"_s);
 
@@ -403,8 +401,7 @@ String WebsiteDataStore::defaultGeneralStorageDirectory(const String& baseDirect
         RetainPtr fileManager = [NSFileManager defaultManager];
         RetainPtr<NSArray> files = [fileManager contentsOfDirectoryAtPath:oldDirectory.get() error:0];
         if (files) {
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSString *fileName in files.get()) {
+            for (NSString *fileName in files.get()) {
                 if (![fileName length])
                     continue;
 
@@ -622,14 +619,14 @@ String WebsiteDataStore::websiteDataDirectoryFileSystemRepresentation(const Stri
 #if ENABLE(APP_BOUND_DOMAINS)
 static HashSet<WebCore::RegistrableDomain>& appBoundDomains()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashSet<WebCore::RegistrableDomain>> appBoundDomains;
     return appBoundDomains;
 }
 
 static HashSet<String>& appBoundSchemes()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashSet<String>> appBoundSchemes;
     return appBoundSchemes;
 }
@@ -784,7 +781,7 @@ void WebsiteDataStore::reinitializeAppBoundDomains()
 #if ENABLE(MANAGED_DOMAINS)
 NODELETE static HashSet<WebCore::RegistrableDomain>& managedDomains()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     static NeverDestroyed<HashSet<WebCore::RegistrableDomain>> managedDomains;
     return managedDomains;
 }
@@ -828,8 +825,8 @@ void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReini
         isSafari = WTF::MacApplication::isSafari();
         RetainPtr path = [adoptNS([[NSString alloc] initWithFormat:@"/Library/Managed Preferences/%@/%@.plist", RetainPtr { NSUserName() }.get(), managedSitesIdentifierSingleton()]) stringByStandardizingPath];
         RetainPtr managedSitesPrefs = adoptNS([[NSDictionary alloc] initWithContentsOfFile:path.get()]);
-        crossSiteTrackingPreventionRelaxedDomains = [managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedDomainsKeySingleton()];
-        crossSiteTrackingPreventionRelaxedApps = [managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedAppsKeySingleton()];
+        crossSiteTrackingPreventionRelaxedDomains = dynamic_objc_cast<NSArray>([managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedDomainsKeySingleton()]);
+        crossSiteTrackingPreventionRelaxedApps = dynamic_objc_cast<NSArray>([managedSitesPrefs objectForKey:crossSiteTrackingPreventionRelaxedAppsKeySingleton()]);
 #elif !PLATFORM(MACCATALYST)
         isSafari = WTF::IOSApplication::isMobileSafari();
         if ([PAL::getMCProfileConnectionClassSingleton() instancesRespondToSelector:@selector(crossSiteTrackingPreventionRelaxedDomains)])
@@ -839,7 +836,7 @@ void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReini
 
         auto relaxedAppsSelector = NSSelectorFromString(@"crossSiteTrackingPreventionRelaxedApps");
         if ([PAL::getMCProfileConnectionClassSingleton() instancesRespondToSelector:relaxedAppsSelector])
-            crossSiteTrackingPreventionRelaxedApps = [[PAL::getMCProfileConnectionClassSingleton() sharedConnection] performSelector:relaxedAppsSelector];
+            crossSiteTrackingPreventionRelaxedApps = dynamic_objc_cast<NSArray>([[PAL::getMCProfileConnectionClassSingleton() sharedConnection] performSelector:relaxedAppsSelector]);
         else
             crossSiteTrackingPreventionRelaxedApps = @[];
 #endif
@@ -857,8 +854,7 @@ void WebsiteDataStore::initializeManagedDomains(ForceReinitialization forceReini
             if (forceReinitialization == ForceReinitialization::Yes)
                 managedDomains().clear();
 
-            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-            for (SUPPRESS_UNRETAINED_LOCAL NSString *data in crossSiteTrackingPreventionRelaxedDomains.get()) {
+            for (NSString *data in crossSiteTrackingPreventionRelaxedDomains.get()) {
                 if (managedDomains().size() >= maxManagedDomainCount)
                     break;
 
@@ -1062,8 +1058,7 @@ HashSet<WebCore::RegistrableDomain> WebsiteDataStore::platformAdditionalDomainsW
     };
 
     if ([arrayOrCommaDelimitedString isKindOfClass:[NSArray class]]) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL id host in arrayOrCommaDelimitedString.get()) {
+        for (id host in arrayOrCommaDelimitedString.get()) {
             if ([host isKindOfClass:[NSString class]])
                 addHost((NSString *)host);
         }

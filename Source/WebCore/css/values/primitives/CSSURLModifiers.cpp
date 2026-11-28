@@ -26,6 +26,7 @@
 #include "CSSURLModifiers.h"
 
 #include "ResourceLoaderOptions.h"
+#include <wtf/Hasher.h>
 
 namespace WebCore {
 namespace CSS {
@@ -86,8 +87,27 @@ void applyModifiersToLoaderOptions(const URLModifiers& modifiers, ResourceLoader
             }
         );
     }
+}
 
-    loaderOptions.loadedFromOpaqueSource = modifiers.loadedFromOpaqueSource;
+// MARK: - Hashing
+
+void add(Hasher& hasher, const URLModifiers& modifiers)
+{
+    add(hasher, modifiers.crossOrigin.has_value());
+    if (modifiers.crossOrigin)
+        add(hasher, modifiers.crossOrigin->parameters.index());
+
+    add(hasher, modifiers.integrity.has_value());
+    if (modifiers.integrity)
+        add(hasher, modifiers.integrity->parameters);
+
+    add(hasher, modifiers.referrerPolicy.has_value());
+    if (modifiers.referrerPolicy)
+        add(hasher, modifiers.referrerPolicy->parameters.index());
+
+    add(hasher, modifiers.linkParameters.size());
+    for (auto& parameter : modifiers.linkParameters)
+        add(hasher, parameter.parameters);
 }
 
 } // namespace CSS

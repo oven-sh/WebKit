@@ -481,7 +481,7 @@ private:
     std::unique_ptr<BackwardsDominators> m_backwardsDominators;
     std::unique_ptr<BlockRarity> m_blockRarity;
     std::unique_ptr<FrequencyEstimate> m_frequencyEstimate;
-    UncheckedKeyHashSet<ValueKey> m_fastConstants;
+    HashSet<ValueKey> m_fastConstants;
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
     std::unique_ptr<Air::Code> m_code;

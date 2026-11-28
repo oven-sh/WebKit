@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "HardwareCapabilities.h"
 #import <Metal/Metal.h>
 #import <WebGPU/WebGPUCpp.h>
@@ -66,9 +70,7 @@ public:
     WebGPU::AdapterInfo info() final;
     // The C API adapter info, which has members that WebGPU::AdapterInfo does not have.
     bool hasFeature(WebGPU::FeatureName);
-    void requestDevice(const WebGPU::DeviceDescriptor&, CompletionHandler<void(RefPtr<WebGPU::Device>&&)>&&) final;
-    // requestDevice() with the reason a device could not be created, for the C API.
-    void requestDeviceOrError(const WebGPU::DeviceDescriptor&, CompletionHandler<void(std::expected<Ref<Device>, String>&&)>&&);
+    void requestDevice(const WebGPU::DeviceDescriptor&, CompletionHandler<void(std::expected<Ref<WebGPU::Device>, String>&&)>&&) final;
 
     void setLabel(String&&) final { }
     bool isValid() const final { return m_device; }
@@ -76,7 +78,8 @@ public:
     void makeInvalid() { m_device = nil; }
     NODELETE bool isXRCompatible() const final;
 
-    RefPtr<Instance> instance() const { return m_instance.get(); }
+    RefPtr<WebGPU::Instance> instance() const final;
+    // The Metal instance, for the callers that need what only it has.
     ThreadSafeWeakPtr<Instance> weakInstance() const { return m_instance; }
 
 private:

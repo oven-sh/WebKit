@@ -25,6 +25,10 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "BindableResource.h"
 #import "CommandBuffer.h"
 #import "CommandsMixin.h"
@@ -98,6 +102,8 @@ public:
     // std::nullopt is the rest of the buffer after the offset.
     void clearBuffer(Buffer&, uint64_t offset, std::optional<uint64_t> size);
     RefPtr<WebGPU::CommandBuffer> finish(const WebGPU::CommandBufferDescriptor&) final;
+    RefPtr<WebGPU::RenderPassEncoder> beginInvalidRenderPass(String&& error) final;
+    RefPtr<WebGPU::ComputePassEncoder> beginInvalidComputePass(String&& error) final;
     void insertDebugMarker(String&& markerLabel) final;
     void popDebugGroup() final;
     void pushDebugGroup(String&& groupLabel) final;
@@ -132,6 +138,7 @@ public:
     static void clearTextureIfNeeded(Texture&, NSUInteger, NSUInteger, const Device&, id<MTLBlitCommandEncoder>, const CommandEncoder* _Nullable owningCommandEncoder = nullptr);
     void clearTextureIfNeeded(const WebGPU::TexelCopyTextureInfo&, NSUInteger);
     void makeInvalid(NSString*);
+    void makeInvalid(String&& error) final;
     void makeSubmitInvalid(NSString* = nil);
     void incrementBufferMapCount();
     void decrementBufferMapCount();
@@ -173,7 +180,7 @@ public:
     void trackEncoderForTextureView(const TextureView&, TrackedResourceContainer&);
     void trackEncoderForExternalTexture(const ExternalTexture&, TrackedResourceContainer&);
     void trackEncoderForQuerySet(const QuerySet&, TrackedResourceContainer&);
-    static void trackEncoder(CommandEncoder&, HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>&);
+    static void trackEncoder(CommandEncoder&, HashSet<uint64_t>&);
     static size_t computeSize(TrackedResourceContainer&, const Device&);
     uint64_t uniqueId() const { return m_uniqueId; }
     NSMutableSet<id<MTLCounterSampleBuffer>> * _Nullable timestampBuffers() const { return m_retainedTimestampBuffers; };
@@ -223,8 +230,8 @@ private:
     HashSet<RefPtr<const Sampler>> m_retainedSamplers;
     NSMutableSet<id<MTLCounterSampleBuffer>> * _Nullable m_retainedTimestampBuffers { nil };
     Vector<Function<bool(CommandBuffer&, CommandEncoder&)>> m_onCommitHandlers;
-    HashMap<uint64_t, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_skippedDrawIndexedValidationKeys;
-    HashMap<uint64_t, Vector<ReusedIndirectIndexedDraw>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_reusedIndirectIndexedDraws;
+    HashMap<uint64_t, Vector<std::pair<DrawIndexCacheContainerValue, uint32_t>>> m_skippedDrawIndexedValidationKeys;
+    HashMap<uint64_t, Vector<ReusedIndirectIndexedDraw>> m_reusedIndirectIndexedDraws;
     Vector<Ref<const BindGroup>> m_bindGroups;
     Vector<Ref<const Buffer>> m_trackedBuffers;
     Vector<Ref<const Texture>> m_trackedTextures;

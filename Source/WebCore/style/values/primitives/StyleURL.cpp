@@ -32,8 +32,7 @@
 #include "StyleBuilderState.h"
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // Possible states/transitions:
 //
@@ -70,12 +69,14 @@ auto toStyleWithScriptExecutionContext(const CSS::URL& url, const ScriptExecutio
         return {
             .resolved = context.encodingParseURL(url.specified),
             .modifiers = url.modifiers,
+            .provenance = url.provenance,
         };
     }
 
     return {
         .resolved = url.resolved,
         .modifiers = url.modifiers,
+        .provenance = url.provenance,
     };
 }
 
@@ -85,6 +86,7 @@ auto ToCSS<URL>::operator()(const URL& url, const Style::ComputedStyle&) -> CSS:
         .specified = url.resolved.string(),
         .resolved = url.resolved,
         .modifiers = url.modifiers,
+        .provenance = url.provenance,
     };
 }
 
@@ -162,5 +164,4 @@ TextStream& operator<<(TextStream& ts, const URL& value)
     return ts;
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

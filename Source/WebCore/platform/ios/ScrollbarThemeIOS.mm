@@ -61,7 +61,7 @@ void ScrollbarThemeIOS::preferencesChanged()
 {
 }
 
-int ScrollbarThemeIOS::scrollbarThickness(ScrollbarWidth, OverlayScrollbarSizeRelevancy)
+int ScrollbarThemeIOS::scrollbarThickness(ScrollbarStyle, ScrollbarWidth, OverlayScrollbarSizeRelevancy)
 {
     return 0;
 }
@@ -111,7 +111,7 @@ int ScrollbarThemeIOS::minimumThumbLength(Scrollbar&)
     return 0;
 }
 
-bool ScrollbarThemeIOS::paint(Scrollbar&, GraphicsContext&, const IntRect& /*damageRect*/)
+bool ScrollbarThemeIOS::paint(Scrollbar&, GraphicsContext&, const IntRect& /*damageRect*/, OptionSet<ScrollbarPaintBehavior>)
 {
     return true;
 }

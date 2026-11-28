@@ -25,9 +25,12 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import <WebGPU/WebGPUCpp.h>
 #import <wtf/FastMalloc.h>
-#import <wtf/GenericHashKey.h>
 #import <wtf/Hasher.h>
 #import <wtf/ListHashSet.h>
 #import <wtf/Lock.h>

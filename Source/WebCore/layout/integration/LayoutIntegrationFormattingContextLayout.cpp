@@ -40,8 +40,7 @@
 #include "RenderObjectInlines.h"
 #include "TextBoxTrimmer.h"
 
-namespace WebCore {
-namespace LayoutIntegration {
+namespace WebCore::LayoutIntegration {
 
 static inline const Layout::ElementBox& rootLayoutBox(const Layout::ElementBox& child)
 {
@@ -88,7 +87,7 @@ static void layoutRendererAndUpdateBoxGeometry(const Layout::ElementBox& box, Re
 void layoutWithFormattingContextForBox(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, Layout::LayoutState& layoutState)
 {
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
-    auto containingBlockInlineSize = overridingBorderBoxLogicalWidth.value_or(renderer->containingBlock()->contentBoxLogicalWidth());
+    auto containingBlockInlineSize = overridingBorderBoxLogicalWidth.value_or(protect(renderer->containingBlock())->contentBoxLogicalWidth());
     layoutRendererAndUpdateBoxGeometry(box, renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight, containingBlockInlineSize, layoutState);
 }
 
@@ -96,18 +95,24 @@ static void updateGridItemBoxGeometry(const Layout::ElementBox& box, LayoutUnit 
 {
     ASSERT(box.isGridItem());
     auto updater = BoxGeometryUpdater { layoutState, rootLayoutBox(box) };
-    updater.updateBoxGeometryAfterIntegrationLayout(box, gridAreaInlineSize);
+    updater.updateGridItemBoxGeometryAfterIntegrationLayout(box, gridAreaInlineSize);
 }
 
-void layoutGridItemWithFormattingContext(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, Layout::LayoutState& layoutState)
+void layoutGridItemWithFormattingContext(const Layout::ElementBox& box, std::optional<LayoutUnit> overridingBorderBoxLogicalWidth, std::optional<LayoutUnit> overridingBorderBoxLogicalHeight, LayoutUnit gridAreaInlineSize, std::optional<LayoutUnit> gridAreaBlockSize, Layout::LayoutState& layoutState)
 {
     ASSERT(box.isGridItem());
     CheckedRef renderer = downcast<RenderBox>(*box.rendererForIntegration());
 
-    // A grid item's containing block is its grid area. Keep the grid area's inline size set on the renderer so
-    // descendants resolve percentage/calc sizes against it during layout, and resolve the item's own geometry
-    // against it below rather than against the grid container's content box.
+    // A grid item's containing block is its grid area. Keep the grid area's size set on the renderer so
+    // descendants resolve percentage/calc sizes and offsets against it during layout (including when the item
+    // computes its overflow), and resolve the item's own geometry against it below rather than against the grid
+    // container's content box.
     renderer->setGridAreaContentLogicalWidth(gridAreaInlineSize);
+    // A grid item measured while sizing the rows has no grid area block size yet. Leave it unset rather than
+    // set it to an indefinite size, which hasDefiniteLogicalHeightForPercentageResolutionFromStyle() would
+    // treat as definite.
+    if (gridAreaBlockSize)
+        renderer->setGridAreaContentLogicalHeight(*gridAreaBlockSize);
     layoutRendererWithOverridingBorderBoxSize(renderer.get(), overridingBorderBoxLogicalWidth, overridingBorderBoxLogicalHeight);
     updateGridItemBoxGeometry(box, gridAreaInlineSize, layoutState);
     renderer->clearGridAreaContentSize();
@@ -122,7 +127,7 @@ static inline void populateRootRendererWithFloatsFromIFC(auto& rootBlockContaine
             // Floats inherited by IFC do not have associated layout boxes.
             continue;
         }
-        auto& floatingObject = rootBlockContainer.insertFloatingBox(downcast<RenderBox>(*layoutBox->rendererForIntegration()));
+        auto& floatingObject = rootBlockContainer.insertFloatingBox(protect(downcast<RenderBox>(*layoutBox->rendererForIntegration())));
         if (floatingObject.isPlaced()) {
             // We have already inserted this float when laying out a previous middle-block.
             continue;
@@ -163,10 +168,11 @@ static inline void populateIFCWithNewlyPlacedFloats(auto& blockRenderer, auto& p
         boxGeometry.setHorizontalMargin({ marginOffset.width(), floatRect.width() - marginOffset.width() - borderBoxSize.width() });
         boxGeometry.setVerticalMargin({ marginOffset.height(), floatRect.height() - marginOffset.height() - borderBoxSize.height() });
 
-        auto shapeOutsideInfo = floatingObject->renderer()->shapeOutsideInfo();
+        CheckedPtr floatRenderer = floatingObject->renderer();
+        auto shapeOutsideInfo = floatRenderer->shapeOutsideInfo();
         RefPtr shape = shapeOutsideInfo ? &shapeOutsideInfo->computedShape() : nullptr;
 
-        auto usedPosition = floatingObject->renderer()->usedStyle().floating() == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
+        auto usedPosition = floatRenderer->usedStyle().floating() == UsedFloat::Left ? Layout::PlacedFloats::Item::Position::Start : Layout::PlacedFloats::Item::Position::End;
         placedFloats.add({ usedPosition, boxGeometry, borderBoxTopLeft, WTF::move(shape) });
     }
 }
@@ -198,7 +204,7 @@ static inline void updateRenderTreeLineClampBeforeLayout(auto& inlineLayoutState
     }
 
     if (auto renderTreeLineClamp = renderTreeLayoutState.lineClamp())
-        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent });
+        renderTreeLayoutState.setLineClamp(RenderLayoutState::LineClamp { remainingLinesForLineClamp(inlineLayoutState), renderTreeLineClamp->shouldDiscardOverflow, renderTreeLineClamp->clampAfterBox, renderTreeLineClamp->isStableTextWrap, renderTreeLineClamp->hasConstrainedTextWrapContent, renderTreeLineClamp->shouldTrimEndAtClampPoint });
 }
 
 NODELETE static inline void updateIFCLineClampAfterLayout(auto& inlineLayoutState, auto& renderTreeLayoutState)
@@ -307,7 +313,8 @@ LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& bo
         // Laying the box out for its block size lays out its content too, where the box is the root and gets its geometry set in its
         // own writing mode (one BoxGeometry per box, see BoxGeometryUpdater::updateBoxGeometryAfterIntegrationLayout).
         // Put back the geometry the formatting context asking for this width has for the box, e.g. its margins along the line.
-        auto& boxGeometry = renderer->view().layoutState().ensureGeometryForBox(box);
+        CheckedRef layoutState = renderer->view().layoutState();
+        auto& boxGeometry = layoutState->ensureGeometryForBox(box);
         auto boxGeometryInParentFormattingContext = Layout::BoxGeometry { boxGeometry };
         auto intrinsicBlockSize = renderer->computeIntrinsicLogicalHeight();
         boxGeometry = boxGeometryInParentFormattingContext;
@@ -325,7 +332,7 @@ LayoutUnit formattingContextRootLogicalWidthForType(const Layout::ElementBox& bo
         return renderer->minContentLogicalWidthContribution();
     case LogicalWidthType::MaxContent:
     case LogicalWidthType::MinContent: {
-        auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { renderer->view().frameView().layoutContext(), renderer.get() };
+        auto intrinsicWidthComputationScope = IntrinsicLogicalWidthComputationScope { protect(renderer->view().frameView().layoutContext()), renderer.get() };
         auto [minimunLogicalWidth, maximumLogicalWidth] = renderer->computeIntrinsicLogicalWidths();
         return logicalWidthType == LogicalWidthType::MaxContent ? maximumLogicalWidth : minimunLogicalWidth;
     }
@@ -351,5 +358,4 @@ LayoutUnit formattingContextRootLogicalHeightForType(const Layout::ElementBox& b
     }
 }
 
-}
 }

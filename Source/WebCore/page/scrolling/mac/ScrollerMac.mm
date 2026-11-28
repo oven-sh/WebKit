@@ -352,6 +352,7 @@ void ScrollerMac::attach()
 
     [m_scrollerImpDelegate invalidate];
     m_scrollerImpDelegate = adoptNS([[WebScrollerImpDelegateMac alloc] initWithScroller:this]);
+    removeScrollerImpFromHostLayer();
     setScrollerImp([NSScrollerImp scrollerImpWithStyle:nsScrollerStyle(pair->scrollbarStyle()) controlSize:nsControlSizeFromScrollbarWidth(pair->scrollbarWidthStyle()) horizontal:m_orientation == ScrollbarOrientation::Horizontal replacingScrollerImp:nil]);
     [m_scrollerImp setDelegate:m_scrollerImpDelegate.get()];
 
@@ -388,6 +389,7 @@ void ScrollerMac::setHiddenByStyle(NativeScrollbarVisibility visibility)
     m_isHiddenByStyle = visibility != NativeScrollbarVisibility::Visible;
     if (m_isHiddenByStyle) {
         detach();
+        removeScrollerImpFromHostLayer();
         setScrollerImp(nullptr);
     } else {
         attach();
@@ -407,16 +409,15 @@ void ScrollerMac::updateValues()
     auto values = pair->valuesForOrientation(m_orientation);
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
-    [m_scrollerImp setEnabled:m_isEnabled];
-    [m_scrollerImp setUserInterfaceLayoutDirection: m_scrollbarLayoutDirection == UserInterfaceLayoutDirection::RTL ? NSUserInterfaceLayoutDirectionRightToLeft : NSUserInterfaceLayoutDirectionLeftToRight];
-    [m_scrollerImp setBoundsSize:NSSizeFromCGSize([m_hostLayer bounds].size)];
-    [m_scrollerImp setDoubleValue:values.value];
-    [m_scrollerImp setPresentationValue:values.value];
-    [m_scrollerImp setKnobProportion:values.proportion];
-#if HAVE(APPKIT_SCROLLBAR_COLOR_SPI)
-    [m_scrollerImp setTrackColor:m_trackColor.get()];
-    [m_scrollerImp setKnobColor:m_thumbColor.get()];
-#endif
+    setScrollerImpValues(m_scrollerImp.get(), {
+        .isEnabled = m_isEnabled,
+        .layoutDirection = m_scrollbarLayoutDirection,
+        .size = FloatSize { [m_hostLayer bounds].size },
+        .value = values.value,
+        .proportion = values.proportion,
+        .trackColor = m_trackColor,
+        .thumbColor = m_thumbColor,
+    });
     END_BLOCK_OBJC_EXCEPTIONS
 }
 
@@ -425,6 +426,8 @@ void ScrollerMac::updateScrollbarStyle()
     Locker locker { m_scrollerImpLock };
 
     [CATransaction lock];
+
+    removeScrollerImpFromHostLayer();
 
     RefPtr pair = m_pair.get();
     setScrollerImp([NSScrollerImp scrollerImpWithStyle:nsScrollerStyle(pair->scrollbarStyle()) controlSize:nsControlSizeFromScrollbarWidth(pair->scrollbarWidthStyle()) horizontal:m_orientation == ScrollbarOrientation::Horizontal replacingScrollerImp:nil]);
@@ -516,6 +519,14 @@ void ScrollerMac::updateMinimumKnobLength(int minimumKnobLength)
         return;
     if (RefPtr node = pair->node())
         node->scrollbarMinimumThumbLengthDidChange(m_orientation, m_minimumKnobLength);
+}
+
+void ScrollerMac::removeScrollerImpFromHostLayer()
+{
+    // Call this before replacing the scroller. Otherwise its part layers stay in the host layer, where they pile up
+    // and can keep showing an old track.
+    [m_scrollerImp setLayer:nil];
+    [m_scrollerImp setDelegate:nil];
 }
 
 void ScrollerMac::setScrollerImp(NSScrollerImp *imp)

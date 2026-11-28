@@ -338,7 +338,7 @@ public:
     {
         Vector<TableInImage::Key> keys;
         Vector<uint64_t> values;
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOfString;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOfString;
         for (const Typed::DataNode& entry : entries.elements) {
             const auto* key = (hasValues ? entry.as<Typed::DataNode::Array>().elements[0] : entry).tryAs<Typed::DataNode::String>();
             const Typed::DataNode* value = hasValues ? &entry.as<Typed::DataNode::Array>().elements[1] : nullptr;

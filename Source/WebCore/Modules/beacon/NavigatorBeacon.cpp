@@ -34,6 +34,7 @@
 #include "LocalFrameInlines.h"
 #include "Navigator.h"
 #include "Page.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
@@ -49,7 +50,7 @@ NavigatorBeacon::NavigatorBeacon(Navigator& navigator)
 
 NavigatorBeacon::~NavigatorBeacon()
 {
-    for (auto& beacon : m_inflightBeacons)
+    for (auto& beacon : borrow(m_inflightBeacons))
         protect(beacon)->removeClient(*this);
 }
 
@@ -106,7 +107,8 @@ void NavigatorBeacon::logError(const ResourceError& error)
             messageMiddle = "."_s;
     }
 
-    document->addConsoleMessage(MessageSource::Network, MessageLevel::Error, makeString("Beacon API cannot load "_s, error.failingURL().string(), messageMiddle, description));
+    auto source = error.isAccessControl() ? MessageSource::Security : MessageSource::Network;
+    document->addConsoleMessage(source, MessageLevel::Error, makeString("Beacon API cannot load "_s, error.failingURL().string(), messageMiddle, description));
 }
 
 ExceptionOr<bool> NavigatorBeacon::sendBeacon(Document& document, const String& url, std::optional<FetchBody::Init>&& body)

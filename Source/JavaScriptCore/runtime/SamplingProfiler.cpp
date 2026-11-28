@@ -73,7 +73,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-static double sNumTotalStackTraces = 0;
 static double sNumTotalWalks = 0;
 static double sNumFailedWalks = 0;
 static const uint32_t sNumWalkReportingFrequency = 50;
@@ -615,7 +614,7 @@ private:
     unsigned m_numberOfProfilers WTF_GUARDED_BY_LOCK(m_lock) { 0 };
     VM& m_vm;
     WeakRandom m_weakRandom;
-    RefPtr<Thread> m_thread;
+    const RefPtr<Thread> m_thread;
     RefPtr<Thread> m_jscExecutionThread WTF_GUARDED_BY_LOCK(m_lock);
     Vector<SamplingProfiler*> m_runningProfilers WTF_GUARDED_BY_LOCK(m_lock);
     Vector<UnprocessedStackFrame> m_currentFrames WTF_GUARDED_BY_LOCK(m_lock);
@@ -658,9 +657,9 @@ void SamplingProfiler::Sampler::createThreadIfNecessary()
         m_highResolutionTimer = Win32Handle::adopt(timer);
 #endif
 
-    m_thread = Thread::create("jsc.sampling-profiler.thread"_s, [sampler = Ref { *this }] {
+    lazyInitialize(m_thread, Thread::create("jsc.sampling-profiler.thread"_s, [sampler = Ref { *this }] {
         sampler->timerLoop();
-    });
+    }));
     m_thread->detach();
 #if OS(WINDOWS)
     // An expired timer earns a thread no boost. On a busy machine it would get to run when a core is free, like when the sampled thread waits.
@@ -1030,8 +1029,6 @@ size_t SamplingProfiler::Sampler::takeStackTrace(std::span<SamplingProfiler*> pr
             // What is wrong with a frame is nothing to a profiler that would not have got as far.
             size_t depthServed = !walkSize ? 0 : wasValidWalk ? unlimitedStackDepth : walkSize - 1;
             if (depthServed) {
-                if (sReportStats)
-                    sNumTotalStackTraces++;
                 Vector<std::pair<size_t, Ref<SharedStackTrace>>, 2> stackTracesByDepth;
                 for (SamplingProfiler* profiler : profilers) {
                     assertIsHeld(profiler->m_lock);
@@ -1095,7 +1092,7 @@ NODELETE static ALWAYS_INLINE BytecodeIndex tryGetBytecodeIndex(unsigned llintPC
 }
 
 #if ENABLE(AOT)
-using CompiledSitePositions = UncheckedKeyHashMap<uint64_t, std::optional<AOT::SourcePosition>>;
+using CompiledSitePositions = HashMap<uint64_t, std::optional<AOT::SourcePosition>>;
 
 static void appendCompiledFrames(const AOT::Image& image, const UnprocessedStackFrame& machineFrame, AOT::ShownFrameFilter& shownFrames, CompiledSitePositions& sitePositions, Vector<SamplingProfiler::StackFrame>& frames)
 {
@@ -1904,7 +1901,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
     DeferGC deferGC(m_vm);
     Report report(*this);
 
-    UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
+    HashMap<SourceID, Ref<SourceProvider>> sources;
 
     auto stackFrameAsJSON = [&](StackFrame& stackFrame) {
         auto [provider, sourceID] = stackFrame.sourceProviderAndID();
@@ -2008,12 +2005,12 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
 void SamplingProfiler::registerForReportAtExit()
 {
     static Lock registrationLock;
-    static UncheckedKeyHashSet<RefPtr<SamplingProfiler>>* profilesToReport;
+    static HashSet<RefPtr<SamplingProfiler>>* profilesToReport;
 
     Locker locker { registrationLock };
 
     if (!profilesToReport) {
-        profilesToReport = new UncheckedKeyHashSet<RefPtr<SamplingProfiler>>();
+        profilesToReport = new HashSet<RefPtr<SamplingProfiler>>();
         atexit([]() {
             for (const auto& profile : *profilesToReport)
                 profile->reportDataToOptionFile();
@@ -2061,7 +2058,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
 void SamplingProfiler::reportTopFunctions(PrintStream& out, Report& report)
 {
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> functionCounts;
+    HashMap<String, size_t> functionCounts;
     for (StackTrace& stackTrace : report.stackTraces()) {
         if (!stackTrace.frames.size())
             continue;
@@ -2126,8 +2123,8 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
 void SamplingProfiler::reportTopBytecodes(PrintStream& out, Report& report)
 {
     size_t totalSamples = 0;
-    UncheckedKeyHashMap<String, size_t> bytecodeCounts;
-    UncheckedKeyHashMap<String, size_t> tierCounts;
+    HashMap<String, size_t> bytecodeCounts;
+    HashMap<String, size_t> tierCounts;
 
     auto forEachTier = [&] (auto func) {
         func(Tiers::llint);

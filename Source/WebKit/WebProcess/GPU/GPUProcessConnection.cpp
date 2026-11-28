@@ -112,6 +112,10 @@
 #include "AudioSessionRoutingArbitrator.h"
 #endif
 
+#if ENABLE(UNIFIED_PDF)
+#include <WebCore/PDFKitDocument.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 
@@ -175,13 +179,20 @@ void GPUProcessConnection::invalidate()
     m_hasInitialized = true;
 }
 
+void GPUProcessConnection::close()
+{
+    didClose(m_connection);
+}
+
 void GPUProcessConnection::didClose(IPC::Connection&)
 {
     RELEASE_LOG_ERROR(Process, "%p - GPUProcessConnection::didClose", this);
     auto protector = Ref { *this };
     Ref webProcess = WebProcess::singleton();
     assertIsMainRunLoop();
-    ASSERT(webProcess->existingGPUProcessConnection() == this);
+    if (webProcess->existingGPUProcessConnection() != this)
+        return;
+    invalidate();
     webProcess->gpuProcessConnectionClosed();
 
 #if ENABLE(ROUTING_ARBITRATION)
@@ -382,7 +393,13 @@ void GPUProcessConnection::drawDisplayListToPDF(DisplayListData&& displayListDat
         return;
     }
 
-    RefPtr displayList = WTF::move(displayListData).createDisplayList(webProcess->isLockdownModeEnabled());
+    RefPtr displayList = WTF::move(displayListData).createDisplayList(webProcess->isLockdownModeEnabled(), [](Ref<SharedBuffer>&& data) -> Ref<SharedPDFDocument> {
+#if ENABLE(UNIFIED_PDF)
+        return PDFKitDocument::create(WTF::move(data));
+#else
+        return SharedPDFDocument::create(WTF::move(data));
+#endif
+    });
     if (!displayList) {
         completionHandler(nullptr);
         return;
@@ -483,12 +500,12 @@ void GPUProcessConnection::releaseGraphicsContextGL(RemoteGraphicsContextGLIdent
 }
 #endif
 
-void GPUProcessConnection::createGPU(WebGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& serverHandle)
+void GPUProcessConnection::createGPU(RemoteGPUIdentifier identifier, RemoteRenderingBackendIdentifier renderingBackendIdentifier, IPC::StreamServerConnection::Handle&& serverHandle)
 {
     m_connection->send(Messages::GPUConnectionToWebProcess::CreateGPU(identifier, renderingBackendIdentifier, WTF::move(serverHandle)), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }
 
-void GPUProcessConnection::releaseGPU(WebGPUIdentifier identifier)
+void GPUProcessConnection::releaseGPU(RemoteGPUIdentifier identifier)
 {
     m_connection->send(Messages::GPUConnectionToWebProcess::ReleaseGPU(identifier), 0, IPC::SendOption::DispatchMessageEvenWhenWaitingForSyncReply);
 }

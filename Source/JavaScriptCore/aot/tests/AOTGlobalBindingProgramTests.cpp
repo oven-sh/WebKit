@@ -153,7 +153,7 @@ function f2 name="storeAll" parameters=[{type=anything}] results=[{type=anything
     for (unsigned index = 0; index < numberOfNamesOfLargeProgram; ++index)
         text.append("    PropSet v1, v0 key=\"name"_s, index, "\" mode=Sloppy [isFreeName]\n"_s);
     text.append("    Return\n}\n"_s);
-    return ASCIICString(byteCast<char>(text.toString().utf8().span()));
+    return ASCIICString(byteCast<char>(makeUTF8CString(text.toString()).span()));
 }
 
 #define HELPERS COUNTED_CALLS(R"("GetGlobalBinding", "GetGlobalObjectBinding", "SetGlobalBinding", "SetGlobalBindingSloppy", "SetGlobalObjectBinding", "SetGlobalObjectBindingSloppy", "GetFreeName", "GetFreeNameForTypeOf", "SetFreeName", "SetFreeNameSloppy")") R"JS(

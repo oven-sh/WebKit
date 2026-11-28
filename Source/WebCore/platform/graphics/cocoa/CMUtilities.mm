@@ -30,12 +30,14 @@
 
 #import "CAAudioStreamDescription.h"
 #import "CDMFairPlayStreaming.h"
+#import "CVUtilities.h"
 #import "FormatDescriptionUtilities.h"
 #import "ISOTrackEncryptionBox.h"
 #import "Logging.h"
 #import "MediaSampleAVFObjC.h"
 #import "MediaSamplesBlock.h"
 #import "MediaUtilities.h"
+#import "PlanarImageConverterCV.h"
 #import "SharedBuffer.h"
 #import "WebMAudioUtilitiesCocoa.h"
 #import <CoreMedia/CMFormatDescription.h>
@@ -44,7 +46,6 @@
 #import <pal/avfoundation/MediaTimeAVFoundation.h>
 #import <pal/cf/CoreAudioExtras.h>
 #import <pal/spi/cocoa/AudioToolboxSPI.h>
-#import <wtf/Scope.h>
 #import <wtf/TZoneMallocInlines.h>
 #import <wtf/FlipBytes.h>
 #import <wtf/StdLibExtras.h>
@@ -135,10 +136,8 @@ static Vector<std::pair<FourCC, Ref<SharedBuffer>>> parseExtensionAtomsDictionar
 
 static RetainPtr<CFDictionaryRef> createExtensionAtomsDictionary(const Vector<std::pair<FourCC, Ref<SharedBuffer>>>& configurations)
 {
-    Vector<FourCC> orderedKeys;
-    Vector<Vector<RetainPtr<CFDataRef>>> groupedDatas;
-    orderedKeys.reserveInitialCapacity(configurations.size());
-    groupedDatas.reserveInitialCapacity(configurations.size());
+    Vector<FourCC> orderedKeys(ReserveCapacityTag { }, configurations.size());
+    Vector<Vector<RetainPtr<CFDataRef>>> groupedDatas(ReserveCapacityTag { }, configurations.size());
     for (auto& [fourCC, buffer] : configurations) {
         size_t existingIndex = notFound;
         for (size_t i = 0; i < orderedKeys.size(); ++i) {
@@ -422,18 +421,21 @@ static CFStringRef convertToCMFieldDetail(PlatformVideoFieldDetail fieldDetail)
     return nullptr;
 }
 
-NODELETE static std::optional<OSType> pixelFormatTypeForDecodedVideo(const VideoInfo& info)
+static std::optional<OSType> pixelFormatTypeForDecodedVideo(const VideoInfo& info)
 {
     if (!info.pixelFormat())
         return { };
 
-    // The 8-bit planar formats are repacked into a biplanar buffer when the CVPixelBuffer is created.
-    switch (*info.pixelFormat()) {
-    case VideoPixelFormat::I420:
-        return info.colorSpace().fullRange.value_or(false) ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange;
-    default:
+    // The planar formats are repacked into a biplanar buffer when the CVPixelBuffer is created, or a triplanar one with alpha.
+    bool hasAlpha = pixelFormatHasAlpha(*info.pixelFormat());
+    auto layout = planarYUVFormatLayout(pixelFormatWithoutAlpha(*info.pixelFormat()));
+    auto sampleFormat = layout ? PlanarImageConverter::pixelBufferSampleFormat(layout->format) : std::nullopt;
+    if (!sampleFormat)
         return { };
-    }
+    auto colorFormat = PlanarImageConverter::pixelFormat(layout->subsampling, *sampleFormat, info.colorSpace().fullRange.value_or(false));
+    if (!colorFormat || !hasAlpha)
+        return colorFormat;
+    return pixelFormatWithAlpha(*colorFormat);
 }
 
 // Calls add() with every property that can be expressed both as a CMFormatDescription extension and
@@ -509,6 +511,16 @@ static std::optional<AudioStreamDescription::PCMFormat> encodedPCMFormat(const A
     }
 }
 
+static RetainPtr<CFStringRef> separateAlphaStreamExtensionKey()
+{
+    return CFSTR("org.webkit.SeparateAlphaStream");
+}
+
+bool hasSeparateAlphaStream(CMFormatDescriptionRef description)
+{
+    return description && PAL::CMFormatDescriptionGetExtension(description, separateAlphaStreamExtensionKey()) == kCFBooleanTrue;
+}
+
 RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const TrackInfo& info)
 {
     ASSERT(info.isVideo() || info.isAudio());
@@ -577,10 +589,20 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
         codecType = *pixelFormatType;
     }
 
-    if (videoInfo.colorSpace().fullRange.value_or(false))
+    // The pixel formats with an alpha plane are video range only.
+    auto alphaPlaneBitDepth = bitDepthOfPixelFormatWithAlphaPlane(codecType);
+    if (videoInfo.colorSpace().fullRange.value_or(false) && !alphaPlaneBitDepth)
         CFDictionaryAddValue(extensions.get(), PAL::kCMFormatDescriptionExtension_FullRangeVideo, kCFBooleanTrue);
 
-    int bitDepth = videoInfo.bitDepth();
+    if (alphaPlaneBitDepth) {
+        CFDictionaryAddValue(extensions, PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel, kCFBooleanTrue);
+        CFDictionaryAddValue(extensions, PAL::kCMFormatDescriptionExtension_AlphaChannelMode, PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha);
+    }
+
+    if (videoInfo.hasSeparateAlphaStream())
+        CFDictionaryAddValue(extensions, separateAlphaStreamExtensionKey(), kCFBooleanTrue);
+
+    int bitDepth = alphaPlaneBitDepth.value_or(videoInfo.bitDepth());
     RetainPtr bitsPerComponent = adoptCF(CFNumberCreate(nullptr, kCFNumberIntType, &bitDepth));
     CFDictionaryAddValue(extensions.get(), PAL::kCMFormatDescriptionExtension_BitsPerComponent, bitsPerComponent.get());
 
@@ -607,6 +629,13 @@ RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrackInfo(const Tra
     }
 
     return adoptCF(formatDescription);
+}
+
+const AudioStreamBasicDescription* richestDecodableStreamBasicDescription(CMFormatDescriptionRef description)
+{
+    if (auto* formatListItem = PAL::CMAudioFormatDescriptionGetRichestDecodableFormat(description))
+        return &formatListItem->mASBD;
+    return PAL::CMAudioFormatDescriptionGetStreamBasicDescription(description);
 }
 
 RefPtr<AudioInfo> createAudioInfoFromFormatDescription(CMFormatDescriptionRef description)
@@ -678,6 +707,7 @@ RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef de
             .fieldDetail = fieldDetailFromFormatDescription(description),
             .extensionAtoms = WTF::move(extensionAtoms),
             .reorderQueueMaxSize = reorderQueueMaxSize,
+            .hasSeparateAlphaStream = hasSeparateAlphaStream(description),
 #if PLATFORM(VISION)
             .immersiveVideoMetadata = immersiveVideoMetadataFromFormatDescription(description)
 #endif
@@ -759,52 +789,24 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedAudioToC
     return sampleBuffer;
 }
 
-static bool copyI420ToBiplanarPixelBuffer(std::span<const uint8_t> source, CVPixelBufferRef pixelBuffer, size_t width, size_t height)
+RetainPtr<CMFormatDescriptionRef> createFormatDescriptionWithAlpha(CVPixelBufferRef pixelBuffer)
 {
-    size_t chromaWidth = (width + 1) / 2;
-    size_t chromaHeight = (height + 1) / 2;
-    size_t lumaSize = width * height;
-    size_t chromaSize = chromaWidth * chromaHeight;
-    if (source.size() != lumaSize + 2 * chromaSize)
-        return false;
+    CMVideoFormatDescriptionRef rawDescription = nullptr;
+    if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, &rawDescription) != noErr)
+        return nullptr;
+    RetainPtr description = adoptCF(rawDescription);
 
-    if (CVPixelBufferGetPlaneCount(pixelBuffer) != 2
-        || CVPixelBufferGetWidthOfPlane(pixelBuffer, 0) != width
-        || CVPixelBufferGetHeightOfPlane(pixelBuffer, 0) != height
-        || CVPixelBufferGetWidthOfPlane(pixelBuffer, 1) != chromaWidth
-        || CVPixelBufferGetHeightOfPlane(pixelBuffer, 1) != chromaHeight)
-        return false;
+    RetainPtr sourceExtensions = PAL::CMFormatDescriptionGetExtensions(description);
+    RetainPtr extensions = adoptCF(CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, sourceExtensions));
+    if (!extensions)
+        return description;
+    CFDictionarySetValue(extensions, PAL::kCMFormatDescriptionExtension_ContainsAlphaChannel, kCFBooleanTrue);
+    CFDictionarySetValue(extensions, PAL::kCMFormatDescriptionExtension_AlphaChannelMode, PAL::kCMFormatDescriptionAlphaChannelMode_StraightAlpha);
 
-    if (CVPixelBufferLockBaseAddress(pixelBuffer, 0) != kCVReturnSuccess)
-        return false;
-    auto unlock = makeScopeExit([pixelBuffer] {
-        CVPixelBufferUnlockBaseAddress(pixelBuffer, 0);
-    });
-
-    auto lumaSource = source.first(lumaSize);
-    auto uSource = source.subspan(lumaSize, chromaSize);
-    auto vSource = source.subspan(lumaSize + chromaSize, chromaSize);
-
-    auto lumaDestination = CVPixelBufferGetSpanOfPlane(pixelBuffer, 0);
-    size_t lumaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0);
-    auto chromaDestination = CVPixelBufferGetSpanOfPlane(pixelBuffer, 1);
-    size_t chromaStride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 1);
-    if (lumaStride < width || chromaStride < 2 * chromaWidth || lumaDestination.size() < lumaStride * height || chromaDestination.size() < chromaStride * chromaHeight)
-        return false;
-
-    for (size_t y = 0; y < height; ++y)
-        memcpySpan(lumaDestination.subspan(y * lumaStride, width), lumaSource.subspan(y * width, width));
-
-    for (size_t y = 0; y < chromaHeight; ++y) {
-        auto destination = chromaDestination.subspan(y * chromaStride, 2 * chromaWidth);
-        auto u = uSource.subspan(y * chromaWidth, chromaWidth);
-        auto v = vSource.subspan(y * chromaWidth, chromaWidth);
-        for (size_t x = 0; x < chromaWidth; ++x) {
-            destination[2 * x] = u[x];
-            destination[2 * x + 1] = v[x];
-        }
-    }
-    return true;
+    rawDescription = nullptr;
+    if (PAL::CMVideoFormatDescriptionCreate(kCFAllocatorDefault, CVPixelBufferGetPixelFormatType(pixelBuffer), CVPixelBufferGetWidth(pixelBuffer), CVPixelBufferGetHeight(pixelBuffer), extensions, &rawDescription) != noErr)
+        return description;
+    return adoptCF(rawDescription);
 }
 
 // A CMSampleBuffer holds a single image buffer, so the block must hold exactly one frame.
@@ -817,6 +819,8 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     auto pixelFormatType = pixelFormatTypeForDecodedVideo(info);
     if (!pixelFormatType)
         return makeUnexpected("Unsupported decoded video pixel format"_s);
+    auto pixelFormat = *info.pixelFormat();
+    bool hasAlpha = pixelFormatHasAlpha(pixelFormat);
 
     auto& sample = samples.first();
     RefPtr sampleData = sample.data;
@@ -838,17 +842,23 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     RetainPtr pixelBuffer = adoptCF(rawPixelBuffer);
 
     Ref contiguousData = sampleData->makeContiguous();
-    if (!copyI420ToBiplanarPixelBuffer(contiguousData->span(), pixelBuffer.get(), width, height))
+    if (!copyPlanarYUVToPixelBuffer(contiguousData->span(), pixelFormat, info.colorSpace().fullRange.value_or(false), pixelBuffer))
         return makeUnexpected("Invalid decoded video data"_s);
 
     addImageBufferProperties(info, [&](CFStringRef key, CFTypeRef value) {
         CVBufferSetAttachment(pixelBuffer.get(), key, value, kCVAttachmentMode_ShouldPropagate);
     });
 
-    CMVideoFormatDescriptionRef rawFormatDescription = nullptr;
-    if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer.get(), &rawFormatDescription) != noErr || !rawFormatDescription)
+    RetainPtr<CMFormatDescriptionRef> formatDescription;
+    if (hasAlpha)
+        formatDescription = createFormatDescriptionWithAlpha(pixelBuffer);
+    else {
+        CMVideoFormatDescriptionRef rawFormatDescription = nullptr;
+        if (PAL::CMVideoFormatDescriptionCreateForImageBuffer(kCFAllocatorDefault, pixelBuffer, &rawFormatDescription) == noErr)
+            formatDescription = adoptCF(rawFormatDescription);
+    }
+    if (!formatDescription)
         return makeUnexpected("CMVideoFormatDescriptionCreateForImageBuffer failed"_s);
-    RetainPtr formatDescription = adoptCF(rawFormatDescription);
 
     CMSampleTimingInfo timing { PAL::toCMTime(sample.duration), PAL::toCMTime(sample.presentationTime), PAL::toCMTime(sample.decodeTime) };
     CMSampleBufferRef rawSampleBuffer = nullptr;
@@ -864,6 +874,16 @@ static std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> decodedVideoToC
     }
 
     return sampleBuffer;
+}
+
+static RetainPtr<CFStringRef> compressedAlphaDataAttachmentKey()
+{
+    return CFSTR("org.webkit.CompressedAlphaData");
+}
+
+RetainPtr<CFArrayRef> compressedAlphaData(CMSampleBufferRef sampleBuffer)
+{
+    return dynamic_cf_cast<CFArrayRef>(PAL::CMGetAttachment(sampleBuffer, compressedAlphaDataAttachmentKey(), nullptr));
 }
 
 std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const MediaSamplesBlock& samples, CMFormatDescriptionRef formatDescription)
@@ -937,6 +957,14 @@ std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSampleBuffer(const
             // Attach HDR10+ (aka SMPTE ST 2094-40) metadata, if present:
             if (samples[i].hdrMetadataType == PlatformMediaCapabilitiesHdrMetadataType::SmpteSt209440 && samples[i].hdrMetadata)
                 CFDictionarySetValue(attachments, PAL::kCMSampleAttachmentKey_HDR10PlusPerFrameData, Ref { *samples[i].hdrMetadata }->createCFData().get());
+        }
+        if (std::ranges::all_of(samples, [](auto& sample) { return !!sample.alphaData; })) {
+            RetainPtr alphaDatas = adoptCF(CFArrayCreateMutable(kCFAllocatorDefault, samples.size(), &kCFTypeArrayCallBacks));
+            for (auto& sample : samples) {
+                RetainPtr alphaData = RefPtr { sample.alphaData }->createCFData();
+                CFArrayAppendValue(alphaDatas, alphaData);
+            }
+            PAL::CMSetAttachment(rawSampleBuffer, compressedAlphaDataAttachmentKey(), alphaDatas, kCMAttachmentMode_ShouldPropagate);
         }
     } else if (samples.isAudio() && samples.discontinuity())
         PAL::CMSetAttachment(rawSampleBuffer, PAL::kCMSampleBufferAttachmentKey_FillDiscontinuitiesWithSilence, *samples.discontinuity() ? kCFBooleanTrue : kCFBooleanFalse, kCMAttachmentMode_ShouldPropagate);
@@ -1079,6 +1107,17 @@ UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef cm
             return mediaSampleItemForSample(subSamples[index], MediaTime::zeroTime(), MediaTime::zeroTime());
         return mediaSampleItemForSample(subSamples[index], trims[index].first, trims[index].second);
     });
+    if (RetainPtr alphaDatas = compressedAlphaData(cmSample)) {
+        // toCMSampleBuffer() stores one alpha plane per sample; on a mismatch, drop the alpha rather than pair it with the wrong frame.
+        size_t alphaCount = CFArrayGetCount(alphaDatas);
+        bool countsMatch = alphaCount == samples.size();
+        if (!countsMatch)
+            RELEASE_LOG_ERROR(Media, "samplesBlockFromCMSampleBuffer: %zu alpha planes for %zu samples, dropping alpha", alphaCount, samples.size());
+        for (size_t index = 0; countsMatch && index < samples.size(); ++index) {
+            if (RetainPtr alphaData = dynamic_cf_cast<CFDataRef>(CFArrayGetValueAtIndex(alphaDatas, index)))
+                samples[index].alphaData = SharedBuffer::create(alphaData);
+        }
+    }
     return makeUniqueRef<MediaSamplesBlock>(info.get(), WTF::move(samples));
 }
 
@@ -1169,8 +1208,18 @@ PlatformVideoColorSpace computeVideoFrameColorSpace(CVPixelBufferRef pixelBuffer
         matrix = PlatformVideoMatrixCoefficients::Bt470bg;
 
     auto pixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer);
-    // FIXME: We should do a more comprehensive check.
-    bool isFullRange = pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange && pixelFormat != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange;
+    bool isFullRange;
+    if (auto description = PlanarImageConverter::pixelFormatDescription(pixelFormat))
+        isFullRange = description->isFullRange;
+    else {
+        // FIXME: We should do a more comprehensive check.
+        isFullRange = pixelFormat != kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange
+            && pixelFormat != kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange;
+    }
 
     std::optional<PlatformVideoChromaLocation> chromaLocation;
     RetainPtr pixelChromaLocation = CVBufferGetAttachment(pixelBuffer, kCVImageBufferChromaLocationTopFieldKey, nil);

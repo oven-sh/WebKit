@@ -168,7 +168,7 @@ private:
     Vector<uint8_t> m_bytes;
     std::array<Vector<uint32_t>, numberOfTableParts> m_links;
     Vector<WrittenTable> m_tables;
-    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_appended;
+    HashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_appended;
     bool m_didOverflow { false };
 };
 

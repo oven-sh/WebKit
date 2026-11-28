@@ -79,7 +79,7 @@ public:
         if (strings.isAllASCII(string))
             m_names.append(strings[string]);
         else
-            m_names.append(byteCast<uint8_t>(strings.toWTFString(string).utf8(StrictConversionReplacingUnpairedSurrogatesWithFFFD).span()));
+            m_names.append(byteCast<uint8_t>(makeUTF8CString(strings.toWTFString(string)).span()));
         for (uint8_t& byte : m_names.mutableSpan().subspan(start)) {
             if (isASCII(byte) && !isASCIIPrintable(byte))
                 byte = ' ';

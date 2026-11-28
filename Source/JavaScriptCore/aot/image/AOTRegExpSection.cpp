@@ -79,7 +79,7 @@ private:
     }
 
     Vector<const T*> m_values;
-    UncheckedKeyHashMap<uint32_t, Candidates, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_candidates;
+    HashMap<uint32_t, Candidates, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_candidates;
 };
 
 struct RegExpUnit {

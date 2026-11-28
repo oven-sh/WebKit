@@ -347,7 +347,7 @@ void BigIntValues::findQuotients()
 {
     if (!m_code.opcodesOfValues().contains(Opcode::Div))
         return;
-    UncheckedKeyHashMap<uint64_t, ValueID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> quotients;
+    HashMap<uint64_t, ValueID, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> quotients;
     for (uint32_t number = 0; number < m_code.numberOfBlocks(); ++number) {
         BlockID block(number);
         if (!m_code.isReached(block))

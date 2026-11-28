@@ -55,6 +55,8 @@ WEBCORE_EXPORT RetainPtr<CMFormatDescriptionRef> createFormatDescriptionFromTrac
 WEBCORE_EXPORT RefPtr<AudioInfo> createAudioInfoFromFormatDescription(CMFormatDescriptionRef);
 // audioStreamDescriptFromAudioInfo only works with compressed audio format (non PCM)
 WEBCORE_EXPORT CAAudioStreamDescription audioStreamDescriptionFromAudioInfo(const AudioInfo&);
+// For layered codecs (e.g. HE-AAC), the stream basic description only describes the base layer.
+const AudioStreamBasicDescription* richestDecodableStreamBasicDescription(CMFormatDescriptionRef);
 WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromFormatDescription(CMFormatDescriptionRef, std::optional<uint8_t> reorderQueueMaxSize = { });
 WEBCORE_EXPORT Ref<SharedBuffer> sharedBufferFromCMBlockBuffer(CMBlockBufferRef);
 WEBCORE_EXPORT RetainPtr<CMBlockBufferRef> ensureContiguousBlockBuffer(CMBlockBufferRef);
@@ -69,6 +71,10 @@ WEBCORE_EXPORT std::expected<RetainPtr<CMSampleBufferRef>, ASCIILiteral> toCMSam
 // Convert CMSampleBufferRef to the equivalent MediaSamplesBlock. If TrackInfo
 // is set it will be used, otherwise it will be created from the CMSampleBufferRef's CMFormatDescriptionRef.
 WEBCORE_EXPORT UniqueRef<MediaSamplesBlock> samplesBlockFromCMSampleBuffer(CMSampleBufferRef, const TrackInfo* = nullptr);
+
+RetainPtr<CFArrayRef> compressedAlphaData(CMSampleBufferRef);
+bool hasSeparateAlphaStream(CMFormatDescriptionRef);
+RetainPtr<CMFormatDescriptionRef> createFormatDescriptionWithAlpha(CVPixelBufferRef);
 
 WEBCORE_EXPORT void attachColorSpaceToPixelBuffer(const PlatformVideoColorSpace&, CVPixelBufferRef);
 

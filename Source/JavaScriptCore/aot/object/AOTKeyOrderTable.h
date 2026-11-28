@@ -129,7 +129,7 @@ public:
         uint64_t key = keyOfFinishedBirth(layout, orderWord);
         m_ordersOfFinishedBirths[placeOfFinishedBirth(key)] = key;
     }
-    EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> enumeratorHashShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
+    EnumeratorBelowCompiledObjects& enumeratorBelowCompiledObjects(uint32_t structureID) LIFETIME_BOUND { return m_enumeratorsBelowCompiledObjects[(structureID >> structureIDPlaceShift) & (m_enumeratorsBelowCompiledObjects.size() - 1)]; }
     PlacesOfPositionedKeys& placesOfPositionedKeys(const Object& object) LIFETIME_BOUND { return m_placesOfPositionedKeys[std::bit_cast<uintptr_t>(&object) >> 4 & (m_placesOfPositionedKeys.size() - 1)]; }
 
 private:
@@ -178,7 +178,7 @@ private:
     static uint64_t keyOfFinishedBirth(const LayoutData& layout, uint32_t orderWord) { return (static_cast<uint64_t>(layout.index) + 1) << 32 | orderWord; }
     static size_t placeOfFinishedBirth(uint64_t key) { return ((key >> 32) ^ (key >> 15)) % numberOfFinishedBirths; }
     std::array<uint64_t, numberOfFinishedBirths> m_ordersOfFinishedBirths { };
-    UncheckedKeyHashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
+    HashMap<uint32_t, FieldsBySlotKey, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_fieldsBySlotKey;
     std::optional<ChainDependentOwnerID> m_ownerOfPublishedEnumerators;
 };
 

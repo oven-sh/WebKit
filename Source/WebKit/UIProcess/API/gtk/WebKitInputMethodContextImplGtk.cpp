@@ -27,6 +27,10 @@
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 
+#if USE(GTK4) && !GTK_CHECK_VERSION(4, 14, 0)
+#include <dlfcn.h>
+#endif
+
 struct _WebKitInputMethodContextImplGtkPrivate {
     GRefPtr<GtkIMContext> context;
     UTF8CString surroundingText;
@@ -63,6 +67,8 @@ static GtkInputHints toGtkInputHints(WebKitInputHints hints)
     unsigned gtkHints = 0;
     if (hints & WEBKIT_INPUT_HINT_SPELLCHECK)
         gtkHints |= GTK_INPUT_HINT_SPELLCHECK;
+    else
+        gtkHints |= GTK_INPUT_HINT_NO_SPELLCHECK;
     if (hints & WEBKIT_INPUT_HINT_LOWERCASE)
         gtkHints |= GTK_INPUT_HINT_LOWERCASE;
     if (hints & WEBKIT_INPUT_HINT_UPPERCASE_CHARS)
@@ -132,6 +138,9 @@ static void webkitInputMethodContextImplGtkConstructed(GObject* object)
     g_signal_connect_object(priv->context.get(), "preedit-end", G_CALLBACK(contextPreeditEndCallback), object, G_CONNECT_SWAPPED);
     g_signal_connect_object(priv->context.get(), "commit", G_CALLBACK(contextCommitCallback), object, G_CONNECT_SWAPPED);
     g_signal_connect_object(priv->context.get(), "retrieve-surrounding", G_CALLBACK(contextRetrieveSurrounding), object, G_CONNECT_SWAPPED);
+
+    // Push the current hints so that the platform context starts with spell checking off.
+    inputHintsChangedCallback(WEBKIT_INPUT_METHOD_CONTEXT_IMPL_GTK(object));
 }
 
 static void webkitInputMethodContextImplGtkSetEnablePreedit(WebKitInputMethodContext* context, gboolean enabled)
@@ -192,14 +201,25 @@ static void webkitInputMethodContextImplGtkNotifyFocusIn(WebKitInputMethodContex
     auto* priv = WEBKIT_INPUT_METHOD_CONTEXT_IMPL_GTK(context)->priv;
     gtk_im_context_focus_in(priv->context.get());
 
-#if USE(GTK4) && GTK_CHECK_VERSION(4, 14, 0)
+#if USE(GTK4)
     // Since GTK 4.14 the input method context no longer asks for the on-screen keyboard by itself.
     // Ask for it when an editable element gets the focus, like the input method contexts of the WPE
     // Platform do, unless a script focused it without user interaction. The compositor decides
     // whether to show it.
-    if (!(webkit_input_method_context_get_input_hints(context) & WEBKIT_INPUT_HINT_INHIBIT_OSK))
+    if (!(webkit_input_method_context_get_input_hints(context) & WEBKIT_INPUT_HINT_INHIBIT_OSK)) {
+#if GTK_CHECK_VERSION(4, 14, 0)
         gtk_im_context_activate_osk(priv->context.get(), nullptr);
-#endif
+#else
+        // GTK has a backwards-compatible ABI, so it is possible to build against versions older
+        // than 4.14 and then use a newer version at runtime. Use gtk_im_context_activate_osk()
+        // if available at runtime.
+        static gboolean (*gtkIMContextActivateOSK)(GtkIMContext*, GdkEvent*) =
+            reinterpret_cast<decltype(gtkIMContextActivateOSK)>(dlsym(RTLD_DEFAULT, "gtk_im_context_activate_osk"));
+        if (gtkIMContextActivateOSK)
+            gtkIMContextActivateOSK(priv->context.get(), nullptr);
+#endif // GTK_CHECK_VERSION(4, 14, 0)
+    }
+#endif // USE(GTK4)
 }
 
 static void webkitInputMethodContextImplGtkNotifyFocusOut(WebKitInputMethodContext* context)

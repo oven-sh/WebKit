@@ -27,6 +27,8 @@
 
 #if ENABLE(CONTENT_CHANGE_OBSERVER)
 
+#include "AnimationEffect.h"
+#include "CSSTransition.h"
 #include "Chrome.h"
 #include "ChromeClient.h"
 #include "ContainerNodeInlines.h"
@@ -56,6 +58,7 @@
 namespace WebCore {
 
 static const Seconds maximumDelayForTimers { 400_ms };
+static const Seconds maximumDelayForTransitions { 300_ms };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ContentChangeObserver);
 
@@ -133,7 +136,7 @@ auto ContentChangeObserver::viewportVisibilityForElement(const Element& element)
         ? ViewportVisibility::Onscreen : ViewportVisibility::Offscreen;
 }
 
-bool ContentChangeObserver::isVisuallyHidden(const Node& node)
+bool ContentChangeObserver::isVisuallyHidden(const Node& node, IgnoreVisibilityProperty ignoreVisibilityProperty)
 {
     CheckedPtr style = node.renderStyle();
     if (!style)
@@ -143,9 +146,9 @@ bool ContentChangeObserver::isVisuallyHidden(const Node& node)
         return true;
 
     if (CheckedPtr renderer = node.renderer()) {
-        if (renderer->usedStyle().visibility() == UsedVisibility::Hidden)
+        if (ignoreVisibilityProperty == IgnoreVisibilityProperty::No && renderer->usedStyle().visibility() == UsedVisibility::Hidden)
             return true;
-    } else if (style->visibility() == Visibility::Hidden || style->isForceHidden())
+    } else if (ignoreVisibilityProperty == IgnoreVisibilityProperty::No && (style->visibility() == Visibility::Hidden || style->isForceHidden()))
         return true;
 
     if (style->opacity().isTransparent())
@@ -244,9 +247,9 @@ ContentChangeObserver::ContentChangeObserver(Document& document)
 {
 }
 
-static void willNotProceedWithClick(LocalFrame& mainFrame)
+static void willNotProceedWithClick(LocalFrame& rootFrame)
 {
-    for (RefPtr<Frame> frame = mainFrame; frame; frame = frame->tree().traverseNext()) {
+    for (RefPtr<Frame> frame = rootFrame; frame; frame = frame->tree().traverseNext(&rootFrame)) {
         RefPtr localFrame = dynamicDowncast<LocalFrame>(frame);
         if (!localFrame)
             continue;
@@ -255,10 +258,10 @@ static void willNotProceedWithClick(LocalFrame& mainFrame)
     }
 }
 
-void ContentChangeObserver::didCancelPotentialTap(LocalFrame& mainFrame)
+void ContentChangeObserver::didCancelPotentialTap(LocalFrame& rootFrame)
 {
     LOG(ContentObservation, "didCancelPotentialTap: cancel ongoing content change observing.");
-    WebCore::willNotProceedWithClick(mainFrame);
+    WebCore::willNotProceedWithClick(rootFrame);
 }
 
 void ContentChangeObserver::didRecognizeLongPress(LocalFrame& mainFrame)
@@ -289,7 +292,7 @@ void ContentChangeObserver::completeDurationBasedContentObservation()
     adjustObservedState(Event::EndedFixedObservationTimeWindow);
 }
 
-static bool isObservedPropertyForTransition(AnimatableCSSProperty property)
+static bool isObservedPropertyForTransition(const AnimatableCSSProperty& property)
 {
     return WTF::switchOn(property,
         [] (CSSPropertyID propertyId) {
@@ -301,13 +304,49 @@ static bool isObservedPropertyForTransition(AnimatableCSSProperty property)
     );
 }
 
-void ContentChangeObserver::didFinishTransition(const Element& element, CSSPropertyID propertyID)
+void ContentChangeObserver::didAddTransition(const CSSTransition& transition)
 {
-    if (!isObservedPropertyForTransition(propertyID))
+    if (!isContentChangeObserverEnabled())
         return;
-    if (!m_elementsWithTransition.remove(element))
+    if (hasVisibleChangeState())
         return;
-    LOG_WITH_STREAM(ContentObservation, stream << "didFinishTransition: transition finished (" << &element << ").");
+    if (!isObservingContentChanges())
+        return;
+    if (!isObservingTransitions())
+        return;
+    if (!isObservedPropertyForTransition(transition.property()))
+        return;
+    RefPtr effect = transition.effect();
+    if (!effect)
+        return;
+    auto transitionEnd = std::max(0_s, effect->specifiedDelay()) + effect->specifiedIterationDuration().value_or(0_s);
+    if (transitionEnd > maximumDelayForTransitions)
+        return;
+    auto owningElement = transition.owningElement();
+    if (!owningElement)
+        return;
+    Ref element = owningElement->element;
+    if (!isVisuallyHidden(element))
+        return;
+    if (m_observedTransitions.contains(transition))
+        return;
+    LOG_WITH_STREAM(ContentObservation, stream << "didAddTransition: transition created on " << element.ptr() << " (" << transitionEnd.milliseconds() << "ms).");
+
+    m_observedTransitions.add(transition);
+    adjustObservedState(Event::AddedTransition);
+}
+
+void ContentChangeObserver::didFinishTransition(const CSSTransition& transition)
+{
+    if (!isObservedPropertyForTransition(transition.property()))
+        return;
+    auto owningElement = transition.owningElement();
+    if (!owningElement)
+        return;
+    Ref element = owningElement->element;
+    if (!m_observedTransitions.remove(transition))
+        return;
+    LOG_WITH_STREAM(ContentObservation, stream << "didFinishTransition: transition finished (" << element.ptr() << ").");
 
     // isConsideredActionableContent may trigger style update through Node::computeEditability. Let's adjust the state in the next runloop.
     callOnMainThread([weakThis = WeakPtr { *this }, weakTargetElement = WeakPtr { element }] {
@@ -325,15 +364,24 @@ void ContentChangeObserver::didFinishTransition(const Element& element, CSSPrope
     });
 }
 
-void ContentChangeObserver::didRemoveTransition(const Element& element, CSSPropertyID propertyID)
+void ContentChangeObserver::didRemoveTransition(const CSSTransition& transition)
 {
-    if (!isObservedPropertyForTransition(propertyID))
+    if (!isObservedPropertyForTransition(transition.property()))
         return;
-    if (!m_elementsWithTransition.remove(element))
+    auto owningElement = transition.owningElement();
+    if (!owningElement)
         return;
-    LOG_WITH_STREAM(ContentObservation, stream << "didRemoveTransition: transition got interrupted (" << &element << ").");
+    Ref element = owningElement->element;
+    if (!m_observedTransitions.remove(transition))
+        return;
+    LOG_WITH_STREAM(ContentObservation, stream << "didRemoveTransition: transition got interrupted (" << element.ptr() << ").");
 
     adjustObservedState(Event::CanceledTransition);
+}
+
+bool ContentChangeObserver::hasObservedTransition() const
+{
+    return !m_observedTransitions.isEmptyIgnoringNullReferences();
 }
 
 void ContentChangeObserver::didInstallDOMTimer(const DOMTimer& timer, Seconds timeout, bool singleShot)
@@ -415,7 +463,7 @@ bool ContentChangeObserver::containsObservedDOMTimer(const DOMTimer& timer) cons
 
 bool ContentChangeObserver::hasObservedDOMTimer() const
 {
-    return !m_DOMTimerList.isEmptyIgnoringNullReferences();
+    return !m_DOMTimerList.computeIsEmpty();
 }
 
 void ContentChangeObserver::styleRecalcDidStart()
@@ -535,7 +583,7 @@ void ContentChangeObserver::elementDidBecomeHidden(const Element& element)
     if (!m_visibilityCandidateList.remove(element))
         return;
 //    ASSERT(hasVisibleChangeState());
-    if (m_visibilityCandidateList.isEmptyIgnoringNullReferences())
+    if (m_visibilityCandidateList.computeIsEmpty())
         setHasIndeterminateState();
 }
 
@@ -600,7 +648,7 @@ void ContentChangeObserver::setShouldObserveNextStyleRecalc(bool shouldObserve)
 
 void ContentChangeObserver::confirmVisibilityCandidates()
 {
-    if (m_visibilityCandidateList.isEmptyIgnoringNullReferences())
+    if (m_visibilityCandidateList.computeIsEmpty())
         return;
 
     protect(m_document)->updateLayout();
@@ -619,7 +667,7 @@ void ContentChangeObserver::confirmVisibilityCandidates()
         m_visibilityCandidateList.remove(candidate);
     }
 
-    if (m_visibilityCandidateList.isEmptyIgnoringNullReferences()) {
+    if (m_visibilityCandidateList.computeIsEmpty()) {
         if (!offscreenCandidates.isEmpty() && m_observedContentState == ContentChange::Visibility) {
             LOG(ContentObservation, "confirmVisibilityCandidates: every visibility candidate was outside the viewport; demoting Visibility to None.");
             setHasNoChangeState();
@@ -719,7 +767,7 @@ void ContentChangeObserver::adjustObservedState(Event event)
             return;
 
         // The fixed observation window (which is the final step in content observation) is closed and now we check if are still waiting for timers or animations to finish.
-        if (hasPendingActivity() && m_visibilityCandidateList.isEmptyIgnoringNullReferences()) {
+        if (hasPendingActivity() && m_visibilityCandidateList.computeIsEmpty()) {
             LOG(ContentObservation, "notifyClientIfNeeded: We are still waiting on some events.");
             return;
         }
@@ -847,8 +895,29 @@ ContentChangeObserver::StyleChangeScope::StyleChangeScope(Document& document, co
     , m_hadRenderer(element.renderer())
 {
     // FIXME: Should this use `isConsideredVisible` like the destructor instead of `isVisuallyHidden`?
-    if (m_contentChangeObserver->shouldObserveVisibilityChangeForElement(element))
-        m_wasHidden = isVisuallyHidden(m_element);
+    if (!m_contentChangeObserver->shouldObserveVisibilityChangeForElement(element))
+        return;
+
+    m_wasHidden = isVisuallyHidden(m_element);
+    if (!*m_wasHidden)
+        return;
+
+    m_wasHiddenOnlyByVisibility = !isVisuallyHidden(m_element, IgnoreVisibilityProperty::Yes);
+    if (!m_wasHiddenOnlyByVisibility)
+        return;
+
+    CheckedPtr renderer = element.renderer();
+    CheckedPtr firstChild = renderer ? renderer->firstChild() : nullptr;
+    if (!firstChild)
+        return;
+
+    m_everyChildWasVisible = true;
+    for (CheckedPtr child = firstChild; child; child = child->nextSibling()) {
+        if (child->usedStyle().visibility() != UsedVisibility::Visible) {
+            m_everyChildWasVisible = false;
+            return;
+        }
+    }
 }
 
 ContentChangeObserver::StyleChangeScope::~StyleChangeScope()
@@ -862,8 +931,11 @@ ContentChangeObserver::StyleChangeScope::~StyleChangeScope()
 
     auto wasVisible = !m_wasHidden.value();
     auto isVisible = isConsideredVisible(m_element);
-    if (!wasVisible && isVisible)
+    if (!wasVisible && isVisible) {
+        if (m_wasHiddenOnlyByVisibility && m_everyChildWasVisible)
+            return;
         m_contentChangeObserver->elementDidBecomeVisible(m_element);
+    }
     else if (wasVisible && !isVisible)
         m_contentChangeObserver->elementDidBecomeHidden(m_element);
 }

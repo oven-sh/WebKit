@@ -63,7 +63,7 @@ class RemotePageDrawingAreaProxy;
 class WebPageProxy;
 class WebProcessProxy;
 
-#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
+#if !USE(ACCELERATED_SURFACE) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
 struct UpdateInfo;
 #endif
 
@@ -104,6 +104,7 @@ public:
     // (see RemoteLayerTreeDrawingAreaProxyMac::commitTransientZoom()).
     virtual void commitTransientZoom(double, WebCore::FloatPoint /* originInLayerForPageScale */, std::optional<WebCore::FloatPoint> /* targetScrollPosition */) { }
     virtual std::optional<double> committedTransientZoomScale() const { return std::nullopt; }
+    virtual void pageScaleWillChangeOutsideOfZoomGesture() { }
 
     virtual void viewIsBecomingVisible() { }
     virtual void viewIsBecomingInvisible() { }
@@ -173,7 +174,7 @@ private:
     virtual void updateAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, const LayerTreeContext&) { }
 #endif
 
-#if !PLATFORM(WPE) && !PLATFORM(GTK) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
+#if !USE(ACCELERATED_SURFACE) && (USE(COORDINATED_GRAPHICS) || USE(TEXTURE_MAPPER))
     virtual void update(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
     virtual void exitAcceleratedCompositingMode(uint64_t /* backingStoreStateID */, UpdateInfo&&) { }
 #endif

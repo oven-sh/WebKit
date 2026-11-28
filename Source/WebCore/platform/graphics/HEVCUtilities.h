@@ -64,6 +64,7 @@ struct HEVCParameters {
 WEBCORE_EXPORT std::optional<HEVCParameters> parseHEVCCodecParameters(StringView);
 WEBCORE_EXPORT std::optional<HEVCParameters> parseHEVCDecoderConfigurationRecord(FourCC, const SharedBuffer&);
 WEBCORE_EXPORT String createHEVCCodecParametersString(const HEVCParameters&);
+WEBCORE_EXPORT bool isHEVCMain42210Profile(const HEVCParameters&);
 
 struct DoViParameters {
     enum class Codec { AVC1, AVC3, HEV1, HVC1 } codec { Codec::HVC1 };
@@ -210,8 +211,8 @@ private:
     NODELETE const PpsState* pps(uint16_t ppsId) const;
     NODELETE const SpsState* sps(uint16_t spsId) const;
 
-    HashMap<uint32_t, SpsState, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_sps;
-    HashMap<uint32_t, PpsState, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pps;
+    HashMap<uint32_t, SpsState> m_sps;
+    HashMap<uint32_t, PpsState> m_pps;
     std::optional<int32_t> m_lastSliceQPDelta;
     std::optional<uint16_t> m_lastSlicePpsId;
 };

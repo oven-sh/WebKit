@@ -79,6 +79,7 @@ public:
     void convertTaskToDownload(PendingDownload&, const WebCore::ResourceRequest&, const WebCore::ResourceResponse&, ResponseCompletionHandler&&);
     NODELETE void setPendingDownloadID(DownloadID);
     void setSuggestedFilename(const String&);
+    void setPendingDownloadLocation(const String& path, SandboxExtension::Handle&&, bool allowOverwrite);
     NODELETE void setPendingDownload(PendingDownload&);
     std::optional<DownloadID> pendingDownloadID() { return m_task->pendingDownloadID(); }
 
@@ -90,7 +91,6 @@ public:
     void setTimingAllowFailedFlag();
     NODELETE std::optional<WebCore::FrameIdentifier> webFrameID() const;
     NODELETE std::optional<WebCore::PageIdentifier> webPageID() const;
-    NODELETE Ref<NetworkProcess> networkProcess();
 
     NODELETE size_t bytesTransferredOverNetwork() const;
 
@@ -120,7 +120,6 @@ private:
     void notifyDidReceiveResponse(WebCore::ResourceResponse&&, NegotiatedLegacyTLS, PrivateRelayed, ResponseCompletionHandler&&);
 
     WeakPtr<NetworkLoadClient> m_client;
-    const Ref<NetworkProcess> m_networkProcess;
     const NetworkLoadParameters m_parameters;
     RefPtr<NetworkDataTask> m_task;
     WeakPtr<NetworkLoadScheduler> m_scheduler;

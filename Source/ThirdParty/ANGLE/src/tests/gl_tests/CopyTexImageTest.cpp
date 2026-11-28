@@ -1210,6 +1210,12 @@ class CopyTexImageTestES3 : public CopyTexImageTest
 class CopyTexImageLumaWorkaroundTestES3 : public CopyTexImageTestES3
 {};
 
+class CopyTexImageTestD3D11 : public CopyTexImageTestES3
+{
+  protected:
+    CopyTexImageTestD3D11() { setHardenedContextEnabled(true); }
+};
+
 //  The test verifies that glCopyTexSubImage2D generates a GL_INVALID_OPERATION error
 //  when the read buffer is GL_NONE.
 //  Reference: GLES 3.0.4, Section 3.8.5 Alternate Texture Image Specification Commands
@@ -2694,6 +2700,159 @@ void main() {
     }
 }
 
+// CopyTexImage from GL_RGBA to GL_RGBA4 cubemap, while the cubemap has incompatibly defined faces
+TEST_P(CopyTexImageTest, RGBAToRGBA4CubemapWithIncompatibleFaces)
+{
+    ANGLE_SKIP_TEST_IF(!IsGLExtensionEnabled("GL_OES_required_internalformat"));
+
+    constexpr uint32_t kSize = 17;
+
+    // Set up the cubemap, which will be the copy destination.
+    GLTexture cube;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    const std::vector<GLColor> kFaceData(kSize * kSize, GLColor::blue);
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         face++)
+    {
+        glTexImage2D(face, 0, GL_RGBA4, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                     kFaceData.data());
+    }
+
+    // Sample once from the cubemap so it gets allocated.
+    constexpr char kCubeSampleFS[] = R"(precision mediump float;
+uniform mediump samplerCube texCube;
+void main() {
+    gl_FragColor = textureCube(texCube, vec3(-1.0, 0.0, 0.0));
+})";
+    ANGLE_GL_PROGRAM(cubeProgram, essl1_shaders::vs::Simple(), kCubeSampleFS);
+    drawQuad(cubeProgram, essl1_shaders::PositionAttrib(), 0.0f);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, kFaceData[0]);
+    ASSERT_GL_NO_ERROR();
+
+    // Set up the src texture.
+    const std::vector<GLColor> kSrcData(kSize * kSize, GLColor::green);
+    GLTexture src;
+    glBindTexture(GL_TEXTURE_2D, src);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 kSrcData.data());
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+
+    // Redefine the X- face with incompatible format/size
+    const std::vector<GLColor> kIncompatibleFaceData(kSize * kSize * 100, GLColor::red);
+    glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA, kSize * 10, kSize * 10, 0, GL_RGBA,
+                 GL_UNSIGNED_BYTE, kIncompatibleFaceData.data());
+
+    // Copy from the framebuffer to the Y+ face (not the one that is incompatible)
+    // With ES2, glCopyTexSubImage2D can be used, but that is not allowed in ES3.
+    if (isAtLeastClientVersion(3, 0))
+    {
+        glCopyTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, GL_RGBA, 0, 0, kSize, kSize, 0);
+
+        // Make the other faces compatible and verify the contents of the cube map.
+        for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+             face++)
+        {
+            if (face != GL_TEXTURE_CUBE_MAP_POSITIVE_Y)
+            {
+                glTexImage2D(face, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                             kFaceData.data());
+            }
+        }
+    }
+    else
+    {
+        glCopyTexSubImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_Y, 0, 0, 0, 0, 0, kSize, kSize);
+
+        // Make the incompatible face compatible and verify the contents of the cube map.
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_NEGATIVE_X, 0, GL_RGBA4, kSize, kSize, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, kFaceData.data());
+    }
+    ASSERT_GL_NO_ERROR();
+
+    for (GLenum face = GL_TEXTURE_CUBE_MAP_POSITIVE_X; face <= GL_TEXTURE_CUBE_MAP_NEGATIVE_Z;
+         face++)
+    {
+        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, face, cube, 0);
+        EXPECT_PIXEL_RECT_EQ(0, 0, kSize, kSize,
+                             face == GL_TEXTURE_CUBE_MAP_POSITIVE_Y ? kSrcData[0] : kFaceData[0]);
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that when redefining a texture level to a smaller size fails in the backend after the
+// backend image was already shrunk, the backend error loses the hardened context so subsequent
+// glCopyTexSubImage2D and glTexSubImage2D calls fail with GL_CONTEXT_LOST instead of reaching the
+// shrunk backend image.
+TEST_P(CopyTexImageTestD3D11, RedefineSmallerFailureDoesNotWriteOutOfBounds)
+{
+    if (sizeof(GLsizeiptr) < 8)
+    {
+        GTEST_SKIP() << "Test requires 64-bit GLsizeiptr to specify a >2 GiB PBO size.";
+    }
+
+    constexpr GLsizei kOldSize = 64;
+    constexpr GLsizei kNewSize = 4;
+
+    GLTexture srcTex;
+    glBindTexture(GL_TEXTURE_2D, srcTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, kOldSize, kOldSize, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 nullptr);
+
+    GLFramebuffer readFbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, readFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, srcTex, 0);
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+    glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ASSERT_GL_NO_ERROR();
+
+    GLTexture tex;
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    // With no PBO bound, pixels == nullptr defines level 0 (both frontend ImageDesc and backend
+    // Image11) as kOldSize x kOldSize without uploading pixel data.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, kOldSize, kOldSize, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    ASSERT_GL_NO_ERROR();
+
+    // A PBO larger than D3D11's 2048 MiB buffer limit
+    // (D3D11_REQ_RESOURCE_SIZE_IN_MEGABYTES_EXPRESSION_C_TERM) succeeds in glBufferData(...,
+    // nullptr, ...) without allocating any memory because Buffer11::setSubData only records mSize
+    // when data == nullptr.
+    const GLsizeiptr oversizedPboBytes =
+        static_cast<GLsizeiptr>((static_cast<uint64_t>(1) << 31) + 16);
+
+    GLBuffer pbo;
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, oversizedPboBytes, nullptr, GL_STATIC_DRAW);
+    ASSERT_GL_NO_ERROR();
+
+    // With pbo bound to GL_PIXEL_UNPACK_BUFFER, pixels == nullptr is byte offset 0 into pbo.
+    // TextureD3D_2D::setImage shrinks the backend Image11 to kNewSize x kNewSize in redefineImage,
+    // and then fails in fastUnpackPixels when Buffer11::getSRV lazily calls
+    // ID3D11Device::CreateBuffer for the >2048 MiB PBO. On a hardened context, this backend error
+    // immediately loses the context.
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, kNewSize, kNewSize, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+    EXPECT_GL_ERROR(GL_OUT_OF_MEMORY);
+
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+
+    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, 0, 0, kOldSize, kOldSize);
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+
+    std::vector<uint8_t> subData(kOldSize * kOldSize, 0xAB);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, kOldSize, kOldSize, GL_RED, GL_UNSIGNED_BYTE,
+                    subData.data());
+    EXPECT_GL_ERROR(GL_CONTEXT_LOST);
+}
+
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     CopyTexImageTest,
     ES2_D3D11_PRESENT_PATH_FAST(),
@@ -2704,7 +2863,9 @@ ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageTestES3);
 ANGLE_INSTANTIATE_TEST_ES3_AND(
@@ -2712,13 +2873,18 @@ ANGLE_INSTANTIATE_TEST_ES3_AND(
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES3_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES3_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageLumaWorkaroundTestES3);
 ANGLE_INSTANTIATE_TEST_ES3_AND(
     CopyTexImageLumaWorkaroundTestES3,
     ES3_OPENGL().enable(Feature::ForceLumaWorkaroundForSameTextureCopyTexImage2D),
-    ES3_OPENGLES().enable(Feature::ForceLumaWorkaroundForSameTextureCopyTexImage2D));
+    ES3_OPENGLES().enable(Feature::ForceLumaWorkaroundForSameTextureCopyTexImage2D),
+    ES3_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
+
+GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImageTestD3D11);
+ANGLE_INSTANTIATE_TEST(CopyTexImageTestD3D11, ES3_D3D11());
 
 ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     CopyTexImageTestRobustResourceInit,
@@ -2726,7 +2892,8 @@ ANGLE_INSTANTIATE_TEST_ES2_AND_ES3_AND(
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2D),
     ES2_OPENGL().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
-    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers));
+    ES2_OPENGLES().enable(Feature::EmulateCopyTexImage2DFromRenderbuffers),
+    ES2_VULKAN_SWIFTSHADER().enable(Feature::ForceRenderableFallbackFormat));
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(CopyTexImagePreRotationTest);
 ANGLE_INSTANTIATE_TEST_ES3_AND(CopyTexImagePreRotationTest,

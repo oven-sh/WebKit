@@ -31,9 +31,7 @@
 #include <wtf/ASCIICType.h>
 #include <wtf/DataLog.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 #if CONTENT_EXTENSIONS_STATE_MACHINE_DEBUGGING
 void NFA::debugPrintDot() const
@@ -71,7 +69,7 @@ void NFA::debugPrintDot() const
     for (unsigned i = 0; i < nodes.size(); ++i) {
         const auto& node = nodes[i];
 
-        HashMap<uint32_t, Vector<uint32_t>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> transitionsPerTarget;
+        HashMap<uint32_t, Vector<uint32_t>> transitionsPerTarget;
 
         for (uint32_t transitionIndex = node.rangesStart; transitionIndex < node.rangesEnd; ++transitionIndex) {
             const ImmutableCharRange& range = transitions[transitionIndex];
@@ -119,8 +117,6 @@ void NFA::debugPrintDot() const
 }
 #endif
 
-} // namespace ContentExtensions
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

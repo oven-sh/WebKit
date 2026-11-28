@@ -42,6 +42,7 @@
 #include "WebCodecsEncodedAudioChunk.h"
 #include "WebCodecsErrorCallback.h"
 #include "WebCodecsUtilities.h"
+#include <wtf/Borrow.h>
 #include <wtf/Scope.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -123,6 +124,18 @@ ExceptionOr<void> WebCodecsAudioDecoder::configure(ScriptExecutionContext&, WebC
 
     setState(WebCodecsCodecState::Configured);
     m_isKeyChunkRequired = true;
+
+    queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }] mutable {
+        RefPtr internalDecoder = m_internalDecoder;
+        if (!internalDecoder)
+            return WebCodecsControlMessageOutcome::Processed;
+        blockControlMessageQueue();
+        protect(scriptExecutionContext())->enqueueTaskWhenSettled(internalDecoder->flush(), TaskSource::MediaElement, [weakThis = ThreadSafeWeakPtr { *this }](auto&&) {
+            if (RefPtr protectedThis = weakThis)
+                protectedThis->unblockControlMessageQueue();
+        });
+        return WebCodecsControlMessageOutcome::Processed;
+    } });
 
     bool isSupportedCodec = AudioDecoder::isCodecSupported(config.codec);
     queueControlMessageAndProcess({ *this, [this, protectedThis = Ref { *this }, codec = config.codec, config = createAudioDecoderConfig(config), isSupportedCodec, identifier = scriptExecutionContext()->identifier()]() mutable {
@@ -239,6 +252,10 @@ void WebCodecsAudioDecoder::isConfigSupported(ScriptExecutionContext& context, W
         return;
     }
 
+    // https://w3c.github.io/webcodecs/#clone-configuration
+    if (config.description)
+        config.description = BufferSource { config.description->span() };
+
     if (!AudioDecoder::isCodecSupported(config.codec)) {
         promise->template resolve<IDLDictionary<WebCodecsAudioDecoderSupport>>(WebCodecsAudioDecoderSupport { false, WTF::move(config) });
         return;
@@ -269,12 +286,13 @@ ExceptionOr<void> WebCodecsAudioDecoder::resetDecoder(const Exception& exception
         return Exception { ExceptionCode::InvalidStateError, "AudioDecoder is closed"_s };
 
     setState(WebCodecsCodecState::Unconfigured);
+    ++m_decoderCount;
     if (RefPtr internalDecoder = std::exchange(m_internalDecoder, { }))
         internalDecoder->reset();
     clearControlMessageQueueAndMaybeScheduleDequeueEvent();
 
     auto promises = std::exchange(m_pendingFlushPromises, { });
-    for (auto& promise : promises)
+    for (auto& promise : borrow(promises))
         promise->reject(exception);
 
     return { };

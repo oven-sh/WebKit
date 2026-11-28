@@ -34,8 +34,7 @@
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/CharacterNames.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 NODELETE static InlineRect mapLineRectLogicalToVisual(const InlineRect& lineLogicalRect, const LayoutSize formattingRootBorderBoxSize, WritingMode writingMode)
 {
@@ -69,7 +68,9 @@ InlineDisplayLineBuilder::EnclosingLineGeometry InlineDisplayLineBuilder::collec
             lineBoxRect.top() + rootInlineBox.logicalBottom() + rootInlineBox.textEmphasisBelow().value_or(0.f)
         };
     };
-    auto [enclosingTop, enclosingBottom] = initialEnclosingTopAndBottom();
+    auto [enclosingBorderBoxTop, enclosingBorderBoxBottom] = initialEnclosingTopAndBottom();
+    auto enclosingContentAreaTop = enclosingBorderBoxTop;
+    auto enclosingContentAreaBottom = enclosingBorderBoxBottom;
     auto contentOverflowRect = [&]() -> InlineRect {
         auto rect = lineBoxRect;
         auto rootInlineBoxWidth = lineBox.logicalRectForRootInlineBox().width();
@@ -92,6 +93,7 @@ InlineDisplayLineBuilder::EnclosingLineGeometry InlineDisplayLineBuilder::collec
 
         CheckedRef layoutBox = inlineLevelBox.layoutBox();
         auto borderBox = InlineRect { };
+        auto contentAreaOrBorderBox = InlineRect { };
 
         if (inlineLevelBox.isAtomicInlineBox()) {
             borderBox = lineBox.logicalBorderBoxForAtomicInlineBox(layoutBox, formattingContext().geometryForBox(layoutBox));
@@ -104,6 +106,8 @@ InlineDisplayLineBuilder::EnclosingLineGeometry InlineDisplayLineBuilder::collec
                 continue;
             borderBox = lineBox.logicalBorderBoxForInlineBox(layoutBox, boxGeometry);
             borderBox.moveBy(lineBoxRect.topLeft());
+            contentAreaOrBorderBox = lineBox.logicalContentBoxForInlineBox(layoutBox);
+            contentAreaOrBorderBox.moveBy(lineBoxRect.topLeft());
             // Collect scrollable overflow from inline boxes. All other inline level boxes (e.g atomic inline level boxes) stretch the line.
             if (lineLayoutResult.hasContentfulInFlowContent()) {
                 // Empty lines (e.g. anonymous pre/post blocks) don't expect scrollbar overflow.
@@ -115,12 +119,26 @@ InlineDisplayLineBuilder::EnclosingLineGeometry InlineDisplayLineBuilder::collec
         } else
             ASSERT_NOT_REACHED();
 
-        auto adjustedBorderBoxTop = borderBox.top() - inlineLevelBox.textEmphasisAbove().value_or(0.f);
-        auto adjustedBorderBoxBottom = borderBox.bottom() + inlineLevelBox.textEmphasisBelow().value_or(0.f);
-        enclosingTop = std::min(enclosingTop.value_or(adjustedBorderBoxTop), adjustedBorderBoxTop);
-        enclosingBottom = std::max(enclosingBottom.value_or(adjustedBorderBoxBottom), adjustedBorderBoxBottom);
+        if (!inlineLevelBox.isInlineBox())
+            contentAreaOrBorderBox = borderBox;
+
+        auto textEmphasisAbove = inlineLevelBox.textEmphasisAbove().value_or(0.f);
+        auto textEmphasisBelow = inlineLevelBox.textEmphasisBelow().value_or(0.f);
+        auto adjustedBorderBoxTop = borderBox.top() - textEmphasisAbove;
+        auto adjustedBorderBoxBottom = borderBox.bottom() + textEmphasisBelow;
+        enclosingBorderBoxTop = std::min(enclosingBorderBoxTop.value_or(adjustedBorderBoxTop), adjustedBorderBoxTop);
+        enclosingBorderBoxBottom = std::max(enclosingBorderBoxBottom.value_or(adjustedBorderBoxBottom), adjustedBorderBoxBottom);
+
+        auto adjustedContentAreaTop = contentAreaOrBorderBox.top() - textEmphasisAbove;
+        auto adjustedContentAreaBottom = contentAreaOrBorderBox.bottom() + textEmphasisBelow;
+        enclosingContentAreaTop = std::min(enclosingContentAreaTop.value_or(adjustedContentAreaTop), adjustedContentAreaTop);
+        enclosingContentAreaBottom = std::max(enclosingContentAreaBottom.value_or(adjustedContentAreaBottom), adjustedContentAreaBottom);
     }
-    return { { enclosingTop.value_or(lineBoxRect.top()), enclosingBottom.value_or(lineBoxRect.bottom()) }, contentOverflowRect };
+    return {
+        { enclosingBorderBoxTop.value_or(lineBoxRect.top()), enclosingBorderBoxBottom.value_or(lineBoxRect.bottom()) },
+        { enclosingContentAreaTop.value_or(lineBoxRect.top()), enclosingContentAreaBottom.value_or(lineBoxRect.bottom()) },
+        contentOverflowRect
+    };
 }
 
 InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& lineLayoutResult, const LineBox& lineBox, bool lineIsFullyTruncatedInBlockDirection) const
@@ -144,7 +162,7 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
     auto hasContentfulContent = [&] {
         if (lineLayoutResult.hasContentfulInFlowContent())
             return true;
-        return lineLayoutResult.isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes && !formattingContext().layoutState().excludedMarkerLayoutBounds().isEmpty();
+        return lineLayoutResult.isFirstLast.isFirstFormattedLine == IsFirstFormattedLine::Yes && !formattingContext().layoutState().outsideMarkerLayoutBounds().isEmpty();
     };
     auto hasInflowContent = [&] {
         if (hasContentfulContent())
@@ -162,7 +180,8 @@ InlineDisplay::Line InlineDisplayLineBuilder::build(const LineLayoutResult& line
         , lineBoxLogicalRect
         , mapLineRectLogicalToVisual(lineBoxLogicalRect, constraints.formattingRootBorderBoxSize(), writingMode)
         , mapLineRectLogicalToVisual(enclosingLineGeometry.contentOverflowRect, constraints.formattingRootBorderBoxSize(), writingMode)
-        , enclosingLineGeometry.enclosingTopAndBottom
+        , enclosingLineGeometry.enclosingBorderBoxTopAndBottom
+        , enclosingLineGeometry.enclosingContentAreaTopAndBottom
         , lineBox.alignmentBaseline()
         , lineBox.baselineType()
         , rootInlineBoxRect.left()
@@ -350,7 +369,7 @@ static std::optional<FloatRect> trailingEllipsisVisualRectAfterTruncation(LineEn
     auto& rootInlineBox = displayBoxes.front();
     // The ellipsis is not part of ::first-line, and it is painted with the root style too (see EllipsisBoxPainter).
     CheckedRef rootStyle = rootInlineBox.layoutBox().style();
-    auto ellipsisWidth = std::max(0.f, rootStyle->fontCascade().width(ellipsisText));
+    auto ellipsisWidth = std::max(0.f, protect(rootStyle->fontCascade())->width(ellipsisText));
 
     auto contentNeedsTruncation = [&] {
         switch (lineEndingTruncationPolicy) {
@@ -491,7 +510,7 @@ void InlineDisplayLineBuilder::addLegacyLineClampTrailingLinkBoxIfApplicable(con
         return;
     }
     auto& clampedLine = displayLines[*clampedLineIndex];
-    auto linkContentWidth = displayBoxes[displayBoxes.size() - 2].visualRectIgnoringBlockDirection().width();
+    auto linkContentWidth = displayBoxes[displayBoxes.size() - 2].blockStartRelativePhysicalRect().width();
     if (linkContentWidth >= clampedLine.lineBoxWidth()) {
         // Not enough space for "more info" content.
         return;
@@ -543,7 +562,8 @@ static AtomString textOverflowEllipsisText(const Style::ComputedStyle& style)
             return TextUtil::ellipsisText();
         },
         [&](const Style::String& string) -> AtomString {
-            return AtomString { string.value };
+            // https://drafts.csswg.org/css-overflow-4/#overflow-string
+            return TextUtil::ellipsisStringWithCollapsedForcedLineBreaks(string.value);
         }
     );
 }
@@ -609,12 +629,12 @@ static void truncateBlockEllipsisForTextOverflow(InlineDisplay::Line::Ellipsis& 
     if (!isLeftToRight)
         subruns.reverse();
     StringBuilder textBuilder;
-    for (CheckedRef subrun : subruns) {
-        auto hasLineDirection = subrun->direction() == lineDirection;
+    for (auto& subrun : subruns) {
+        auto hasLineDirection = subrun.direction() == lineDirection;
         auto subrunWidth = fontCascade.width(subrun);
         // "The first character or atomic inline-level element on a line must be clipped rather than ellipsed."
         auto canFullyTruncate = !isFirstContentOnLine || !textBuilder.isEmpty();
-        auto visibleText = subrunWidth <= availableWidth ? subrun->text() : visiblePartOfTextRun(subrun->text(), subrunWidth, hasLineDirection, std::max(0.f, availableWidth), canFullyTruncate, fontCascade);
+        auto visibleText = subrunWidth <= availableWidth ? subrun.text() : visiblePartOfTextRun(subrun.text(), subrunWidth, hasLineDirection, std::max(0.f, availableWidth), canFullyTruncate, fontCascade);
         if (hasLineDirection)
             textBuilder.append(visibleText);
         else if (!visibleText.isEmpty())
@@ -652,7 +672,7 @@ std::optional<InlineDisplay::Line::Ellipsis> InlineDisplayLineBuilder::placeTrai
             return displayBox.isInlineBox();
         });
         // The block ellipsis is measured and painted with the root style, not the ::first-line style (see InlineFormattingUtils::blockEllipsisForLine).
-        truncateBlockEllipsisForTextOverflow(ellipsis, blockEllipsis->hangingWidth, isFirstContentOnLine, displayLine, styleForTruncation, displayBoxes[0].layoutBox().style().fontCascade());
+        truncateBlockEllipsisForTextOverflow(ellipsis, blockEllipsis->hangingWidth, isFirstContentOnLine, displayLine, styleForTruncation, protect(displayBoxes[0].layoutBox().style().fontCascade()));
         return ellipsis;
     }
     if (truncationPolicy == LineEndingTruncationPolicy::NoTruncation)
@@ -694,5 +714,3 @@ bool InlineDisplayLineBuilder::hasTrailingLineWithBlockContent(const InlineDispl
 }
 
 }
-}
-

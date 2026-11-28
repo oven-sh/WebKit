@@ -33,8 +33,7 @@
 #include "UnplacedGridItem.h"
 #include <wtf/Assertions.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 // The implicit grid is created from the explicit grid + items that are placed outside
 // of the explicit grid. Since we know the explicit tracks from style we start the
@@ -72,9 +71,9 @@ static GridDimensions calculateInitialImplicitGridDimensions(const UnplacedGridI
         }
     };
 
-    for (const auto& item : unplacedGridItems.nonAutoPositionedItems)
+    for (auto& item : unplacedGridItems | std::views::filter(isNonAutoPositioned))
         updateGridBounds(item);
-    for (const auto& item : unplacedGridItems.definiteRowPositionedItems)
+    for (auto& item : unplacedGridItems | std::views::filter(isDefiniteRowPositioned))
         updateGridBounds(item);
 
     // The implicit grid always starts with at least one row. Grid coverage guarantees at least one
@@ -95,7 +94,7 @@ ImplicitGrid ImplicitGrid::createInitialGrid(const UnplacedGridItems& unplacedGr
 
     ImplicitGrid implicitGrid(initialDimensions.totalColumnsCount, initialDimensions.totalRowsCount);
     // 3. Determine the columns in the implicit grid.
-    implicitGrid.determineImplicitGridColumns(unplacedGridItems.autoPositionedItems);
+    implicitGrid.determineImplicitGridColumns(unplacedGridItems);
 
     return implicitGrid;
 }
@@ -141,9 +140,10 @@ GridAreaLines ImplicitGrid::insertDefiniteRowItem(const UnplacedGridItem& unplac
 
 // https://drafts.csswg.org/css-grid-1/#auto-placement-algo
 // Step 3: Determine the columns in the implicit grid.
-void ImplicitGrid::determineImplicitGridColumns(const Vector<UnplacedGridItem>& autoPositionedItems)
+void ImplicitGrid::determineImplicitGridColumns(const UnplacedGridItems& unplacedGridItems)
 {
     size_t requiredColumns = columnsCount();
+    auto autoPositionedItems = unplacedGridItems | std::views::filter(isAutoPositioned);
 
     // Part 1: "Among all the items with a definite column position, add columns to the end
     // of the implicit grid as necessary to accommodate those items."
@@ -252,7 +252,7 @@ bool ImplicitGrid::isCellRangeEmpty(WTF::Range<size_t> columnRange, WTF::Range<s
 GridAreaLines ImplicitGrid::markAreaAsOccupied(WTF::Range<size_t> columnRange, WTF::Range<size_t> rowRange)
 {
     // Every caller is responsible for growing the implicit grid to cover the area first.
-    ASSERT(columnRange.end() <= columnsCount() && rowRange.end() <= rowsCount());
+    ASSERT_WITH_SECURITY_IMPLICATION(columnRange.end() <= columnsCount() && rowRange.end() <= rowsCount());
 
     for (auto row : std::views::iota(rowRange.begin(), rowRange.end())) {
         for (auto column : std::views::iota(columnRange.begin(), columnRange.end()))
@@ -292,7 +292,7 @@ GridAreaLines ImplicitGrid::placeAutoPositionedItemWithDefiniteColumn(const Unpl
 
     // Step 3 grew the implicit grid to cover the column-end line of every item in this step that
     // has a definite column position, so the cells this searches are always in bounds.
-    ASSERT(columnRange.end() <= columnsCount());
+    ASSERT_WITH_SECURITY_IMPLICATION(columnRange.end() <= columnsCount());
 
     if (autoFlowOptions.strategy == PackingStrategy::Dense) {
         // Set the row position of the cursor to the start-most row line in the implicit grid.
@@ -376,5 +376,4 @@ GridAreaLines ImplicitGrid::placeAutoPositionedItemWithAutoColumnAndRow(const Un
     }
 }
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

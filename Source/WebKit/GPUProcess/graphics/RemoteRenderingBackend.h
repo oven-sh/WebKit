@@ -37,6 +37,7 @@
 #include "MessageSender.h"
 #include "RemoteDisplayListIdentifier.h"
 #include "RemoteDisplayListRecorderIdentifier.h"
+#include "RemoteFreeformGradientIdentifier.h"
 #include "RemoteGradientIdentifier.h"
 #include "RemoteGraphicsContextIdentifier.h"
 #include "RemoteMeshGradientIdentifier.h"
@@ -135,6 +136,7 @@ public:
     IPC::StreamConnectionWorkQueue& workQueue() const { return m_workQueue; }
 
     RefPtr<WebCore::ImageBuffer> imageBuffer(WebCore::RenderingResourceIdentifier);
+    RefPtr<RemoteImageBufferSet> imageBufferSet(ImageBufferSetIdentifier);
 
     RefPtr<WebCore::ImageBuffer> allocateImageBuffer(const WebCore::FloatSize& logicalSize, WebCore::RenderingMode, WebCore::RenderingPurpose, float resolutionScale, const WebCore::ColorSpace&, WebCore::ImageBufferFormat, WebCore::ImageBufferCreationContext, std::optional<ImageBufferBackendHandle>&& providedBackingStore = std::nullopt);
 
@@ -174,8 +176,10 @@ private:
     void releaseNativeImage(WebCore::RenderingResourceIdentifier);
     void cachePathImpl(Ref<WebCore::PathImpl>&&, RemotePathImplIdentifier);
     void releasePathImpl(RemotePathImplIdentifier);
-    void cacheGradient(Ref<WebCore::Gradient>&&, RemoteGradientIdentifier);
+    void cacheGradient(Ref<const WebCore::Gradient>&&, RemoteGradientIdentifier);
     void releaseGradient(RemoteGradientIdentifier);
+    void cacheFreeformGradient(Ref<WebCore::FreeformGradient>&&, RemoteFreeformGradientIdentifier);
+    void releaseFreeformGradient(RemoteFreeformGradientIdentifier);
     void cacheMeshGradient(Ref<WebCore::MeshGradient>&&, RemoteMeshGradientIdentifier);
     void releaseMeshGradient(RemoteMeshGradientIdentifier);
     void cacheFilter(Ref<WebCore::Filter>&&);

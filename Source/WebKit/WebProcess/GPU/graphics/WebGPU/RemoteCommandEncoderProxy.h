@@ -34,22 +34,23 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
-
 class RemoteCommandEncoderProxy final : public ::WebGPU::CommandEncoder {
     WTF_MAKE_TZONE_ALLOCATED(RemoteCommandEncoderProxy);
 public:
-    static Ref<RemoteCommandEncoderProxy> create(RemoteGPUProxy& root, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemoteCommandEncoderProxy> create(RemoteGPUProxy& root, WebGPUCommandEncoderIdentifier identifier)
     {
-        return adoptRef(*new RemoteCommandEncoderProxy(root, convertToBackingContext, identifier));
+        return adoptRef(*new RemoteCommandEncoderProxy(root, identifier));
     }
 
     virtual ~RemoteCommandEncoderProxy();
 
     RemoteGPUProxy& root() const { return m_root; }
+    WebGPUCommandEncoderIdentifier backing() const { return m_backing; }
 
     RefPtr<::WebGPU::RenderPassEncoder> beginRenderPass(const ::WebGPU::RenderPassDescriptor&) final;
     RefPtr<::WebGPU::ComputePassEncoder> beginComputePass(const std::optional<::WebGPU::ComputePassDescriptor>&) final;
+    RefPtr<::WebGPU::RenderPassEncoder> beginInvalidRenderPass(String&& error) final;
+    RefPtr<::WebGPU::ComputePassEncoder> beginInvalidComputePass(String&& error) final;
     void copyBufferToBuffer(
         const ::WebGPU::Buffer& source,
         uint64_t sourceOffset,
@@ -84,21 +85,18 @@ public:
         uint64_t destinationOffset) final;
     RefPtr<::WebGPU::CommandBuffer> finish(const ::WebGPU::CommandBufferDescriptor&) final;
 
+    void makeInvalid(String&& error) final;
     void setLabel(String&&) final;
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemoteCommandEncoderProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemoteCommandEncoderProxy(RemoteGPUProxy&, WebGPUCommandEncoderIdentifier);
 
     RemoteCommandEncoderProxy(const RemoteCommandEncoderProxy&) = delete;
     RemoteCommandEncoderProxy(RemoteCommandEncoderProxy&&) = delete;
     RemoteCommandEncoderProxy& operator=(const RemoteCommandEncoderProxy&) = delete;
     RemoteCommandEncoderProxy& operator=(RemoteCommandEncoderProxy&&) = delete;
 
-    WebGPUIdentifier backing() const { return m_backing; }
-    
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
     {
@@ -110,8 +108,7 @@ private:
         return protect(root().streamClientConnection())->sendSync(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUCommandEncoderIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_root;
 };
 

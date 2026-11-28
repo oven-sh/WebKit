@@ -189,7 +189,7 @@ private:
     BitVector m_builtinsWorthFollowingToWrites;
     Vector<BuiltinID> m_membersWrittenAfterAll;
     Vector<NameOnHolder> m_namesTakenForUnlaid;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesEverTakenForUnlaid;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_namesEverTakenForUnlaid;
     Vector<NameOnHolder> m_namesLaidAfterAll;
     bool m_wasToldSomethingNew { true };
     bool m_writersMayRunUnseen { false };

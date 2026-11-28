@@ -58,8 +58,8 @@ static void branchIfChainMayStopStore(StubAssembler& jit, GPRReg object, GPRReg 
     isNotBelowObjectPrototype.link(&jit);
     const GPRReg structureID = structure;
     jit.load32(Address(object, JSCell::structureIDOffset()), structureID);
-    jit.urshift32(structureID, TrustedImm32(StructureRowWords::granuleShift), scratch);
-    jit.and32(TrustedImm32(AbsenceFilter::numberOfFilters - 1), scratch);
+    jit.mul32(TrustedImm32(static_cast<int32_t>(HashedSlot::structureMultiplier)), structureID, scratch);
+    jit.urshift32(TrustedImm32(32 - AbsenceFilter::numberOfFiltersLog2), scratch);
     jit.lshift32(TrustedImm32(AbsenceFilter::sizeShift), scratch);
     jit.loadPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.absenceFilters)), filter);
     jit.add64(scratch, filter);
@@ -397,7 +397,7 @@ void generatePutKnownField(StubAssembler& jit)
         RELEASE_ASSERT(noOverlap(object, value, record, back, nameOfField, scratch, extra, registers.field.address, registers.field.representation, instanceGPR));
         loadNameOfField(jit, record, nameOfField);
         jit.load32(Address(object, JSCell::structureIDOffset()), scratch);
-        jit.urshift32(scratch, TrustedImm32(StructureRowWords::granuleShift), back);
+        jit.urshift32(scratch, TrustedImm32(structureIDPlaceShift), back);
         jit.add32(nameOfField, back);
         jit.and32(TrustedImm32(FieldReturn::numberOfPlaces - 1), back);
         jit.lshift32(TrustedImm32(FieldReturn::sizeShift), back);

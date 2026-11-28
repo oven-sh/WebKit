@@ -302,7 +302,7 @@ static void killHung(pid_t process)
 static std::optional<StartedProcess> startProcess(const Vector<StringView>& commandLine)
 {
     Vector<UTF8CString> arguments = commandLine.map([](StringView argument) {
-        return argument.utf8();
+        return makeUTF8CString(argument);
     });
     Vector<char*> argumentPointers;
     for (UTF8CString& argument : arguments)
@@ -395,7 +395,7 @@ void enterTemporaryFolder()
 #if OS(WINDOWS)
     RELEASE_ASSERT(SetEnvironmentVariableW(L"TMP", folder->wideCharacters().span().data()));
 #else
-    RELEASE_ASSERT(!setenv("TMPDIR", byteCast<char>(folder->utf8().spanIncludingNullTerminator().data()), 1));
+    RELEASE_ASSERT(!setenv("TMPDIR", byteCast<char>(makeUTF8CString(folder.get()).spanIncludingNullTerminator().data()), 1));
 #endif
     atexit([] {
         FileSystem::deleteNonEmptyDirectory(folder);

@@ -311,6 +311,15 @@ static void testTwoPrefixesAreSearchedTogether()
 }
 #endif
 
+// The table that three or more alternatives are told apart by is data of the image, cut to the characters it is asked about.
+static void testAlternativesAreToldApartByDataOfImage()
+{
+    const RegExpSymbol window { PlainData { { 1, 0, 0, 0, 2, 0, 0, 0, 3 } } };
+    CompiledRegExp regExp = compileToCode({ "abcd|efgh|ijkl"_s, { } });
+    for (size_t width = 0; width < 2; ++width)
+        AOT_TEST_CHECK(regExp.code[width] && regExp.code[width]->symbols.contains(window));
+}
+
 static void testUnicodePropertyLookup()
 {
     OptionSet<Yarr::Flags> unicode { Yarr::Flags::Unicode };
@@ -378,6 +387,7 @@ std::span<const NativeTest> regExpCompilerTests()
 #if CPU(X86_64)
         { "regexp-compiler/two-prefixes-are-searched-for-at-once"_s, testTwoPrefixesAreSearchedTogether },
 #endif
+        { "regexp-compiler/alternatives-are-told-apart-by-data-of-the-image"_s, testAlternativesAreToldApartByDataOfImage },
         { "regexp-compiler/unicode-property-lookup"_s, testUnicodePropertyLookup },
         { "regexp-compiler/class-table-limits-are-counted"_s, testClassTableLimitsAreCounted },
     };

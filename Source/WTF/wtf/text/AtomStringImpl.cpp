@@ -406,7 +406,7 @@ static inline Ref<AtomStringImpl> addSymbol(StringImpl& base)
 static Ref<AtomStringImpl> addStatic(AtomStringTableLocker& locker, AtomStringTable& table, const StringImpl& base)
 {
     ASSERT(base.length());
-    ASSERT(base.isStatic());
+    RELEASE_ASSERT(base.isStatic());
     StringTableImpl& atomStringTable = table.table();
 
     // StaticStringImpl with StringAtom: store the static pointer directly in the

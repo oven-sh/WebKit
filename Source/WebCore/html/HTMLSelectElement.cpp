@@ -133,6 +133,8 @@ NODELETE static bool isFirstElementChildButton(const Node& child)
 class SelectSlotAssignment final : public NamedSlotAssignment {
 private:
     void hostChildElementDidChange(const Element&, ShadowRoot&) final;
+    // The assignment doesn't depend on the slot attribute.
+    void hostChildElementDidChangeSlotAttribute(Element&, const AtomString&, const AtomString&, ShadowRoot&) final { }
     void didChangeSlotNamesOfShadowHostChildren(ShadowRoot&) final;
     NODELETE const AtomString& slotNameForHostChild(const Node&) const final;
 };
@@ -145,12 +147,43 @@ NODELETE SUPPRESS_NODELETE static const AtomString& optionSlotName(const Node* h
 
 void SelectSlotAssignment::hostChildElementDidChange(const Element& childElement, ShadowRoot& shadowRoot)
 {
-    if (is<HTMLButtonElement>(childElement)) {
-        // Don't check whether this is the first button element
-        // since we don't know the answer when this function is called inside Element::removedFrom.
-        didChangeSlot(buttonSlotName(), shadowRoot);
-    } else
-        didChangeSlot(optionSlotName(shadowRoot.host()), shadowRoot);
+    Ref host = *shadowRoot.host();
+    bool isInserted = childElement.parentNode() == host.ptr();
+
+    auto previousButton = firstAssignedNodeBeforeChange(buttonSlotName());
+
+    // Don't check whether this is the first button element
+    // since we don't know the answer when this function is called inside Element::removedFrom.
+    didChangeSlot(is<HTMLButtonElement>(childElement) ? buttonSlotName() : optionSlotName(host.ptr()), shadowRoot, RenderTreeUpdate::ByCaller);
+
+    if (isInserted)
+        didInsertSlottable(slotNameForHostChild(childElement), shadowRoot);
+    else {
+        didRemoveSlottable(buttonSlotName(), shadowRoot);
+        didRemoveSlottable(optionSlotName(host.ptr()), shadowRoot);
+    }
+
+    // A first element child button is assigned to the button slot. Rebuild the buttons the change moved between the slots.
+    // The changed element itself is rebuilt by the insertion or removal.
+    auto reassign = [&](RefPtr<Element> button, const AtomString& oldSlotName) {
+        if (button && button != &childElement && button->parentNode() == host.ptr())
+            didReassignSlottable(*button, oldSlotName, shadowRoot);
+    };
+    RefPtr firstElementChild = host->firstElementChild();
+    RefPtr button = firstElementChild && is<HTMLButtonElement>(*firstElementChild) ? firstElementChild : nullptr;
+    if (previousButton) {
+        if (previousButton->get() != button.get()) {
+            reassign(dynamicDowncast<Element>(previousButton->get()), buttonSlotName());
+            reassign(button, optionSlotName(host.ptr()));
+        }
+    } else {
+        // The previous button is not known so rebuild both candidates.
+        reassign(button, optionSlotName(host.ptr()));
+        if (firstElementChild == &childElement) {
+            if (RefPtr next = firstElementChild->nextElementSibling(); next && is<HTMLButtonElement>(*next))
+                reassign(WTF::move(next), buttonSlotName());
+        }
+    }
 }
 
 void SelectSlotAssignment::didChangeSlotNamesOfShadowHostChildren(ShadowRoot& shadowRoot)
@@ -661,7 +694,7 @@ void HTMLSelectElement::queuePickerClose(PickerCloseReason reason)
         auto message = reason == PickerCloseReason::Appearance
             ? "The select element's appearance property changed while its picker was open. The picker has been closed."_s
             : "The select element stopped being a dropdown box while its picker was open. The picker has been closed."_s;
-        protect(select->document())->addConsoleMessage(MessageSource::Other, MessageLevel::Warning, message);
+        protect(select->document())->addConsoleMessage(MessageSource::Rendering, MessageLevel::Warning, message);
         select->hidePickerPopoverElement();
     });
 }
@@ -911,7 +944,7 @@ bool HTMLSelectElement::supportsBaseAppearance(StyleAppearance appearance) const
     return (appearance == StyleAppearance::Base || appearance == StyleAppearance::BaseSelect) && canHaveBaseAppearance();
 }
 
-RenderPtr<RenderElement> HTMLSelectElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
+RenderPtr<RenderElement> HTMLSelectElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition& position)
 {
     if (isBaseListBox(&style))
         return HTMLElement::createElementRenderer(WTF::move(style), position);
@@ -1800,9 +1833,8 @@ void HTMLSelectElement::deselectItemsWithoutValidation(HTMLElement* excludeEleme
 
 FormControlState HTMLSelectElement::saveFormControlState() const
 {
-    FormControlState state;
     auto& items = listItems();
-    state.reserveInitialCapacity(items.size());
+    FormControlState state(ReserveCapacityTag { }, items.size());
     for (auto& element : items) {
         RefPtr option = dynamicDowncast<HTMLOptionElement>(*element);
         if (!option || !option->selected())
@@ -2727,7 +2759,7 @@ ExceptionOr<void> HTMLSelectElement::showPicker()
 
 void HTMLSelectElement::updateSelectedContentIfEnabled(HTMLOptionElement* selectedOption)
 {
-    ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
+    RELEASE_ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
 
     auto& settings = document().settings();
     if (settings.htmlEnhancedSelectEnabled() && !settings.mutationEventsEnabled())
@@ -2736,7 +2768,7 @@ void HTMLSelectElement::updateSelectedContentIfEnabled(HTMLOptionElement* select
 
 void HTMLSelectElement::updateSelectedContent(HTMLOptionElement* selectedOption)
 {
-    ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
+    RELEASE_ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
     ASSERT(document().settings().htmlEnhancedSelectEnabled());
     ASSERT(!document().settings().mutationEventsEnabled());
 
@@ -2761,25 +2793,9 @@ void HTMLSelectElement::updateSelectedContent(HTMLOptionElement* selectedOption)
         selectedContent->updateFromOption(selectedOptionRef.get());
 }
 
-// https://html.spec.whatwg.org/#update-a-selectedcontent
-void HTMLSelectElement::updateSelectedContent(HTMLSelectedContentElement& selectedContent)
-{
-    ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
-    ASSERT(!selectedContent.isDisabled());
-
-    if (m_multiple && updatesSelectedContent()) {
-        cloneOptionsIntoSelectedContent(selectedContent);
-        return;
-    }
-
-    RefPtr selectedOption = firstSelectedOption();
-    m_selectedContentShowsOption = !!selectedOption;
-    selectedContent.updateFromOption(selectedOption.get());
-}
-
 bool HTMLSelectElement::updatesSelectedContent() const
 {
-    return !m_multiple || document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled();
+    return !m_multiple || document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled();
 }
 
 Vector<Ref<HTMLSelectedContentElement>> HTMLSelectElement::selectedContentElements() const
@@ -2794,7 +2810,7 @@ Vector<Ref<HTMLSelectedContentElement>> HTMLSelectElement::selectedContentElemen
 
 void HTMLSelectElement::cloneOptionsIntoSelectedContent()
 {
-    ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
+    RELEASE_ASSERT(ScriptDisallowedScope::InMainThread::isScriptAllowed());
 
     if (!m_multiple || !m_selectedContentDescendantCount || !updatesSelectedContent())
         return;
@@ -2805,7 +2821,7 @@ void HTMLSelectElement::cloneOptionsIntoSelectedContent()
 
 void HTMLSelectElement::cloneOptionsIntoSelectedContent(HTMLSelectedContentElement& selectedContent)
 {
-    ASSERT(document().settings().htmlEnhancedSelectMultipleSelectedContentEnabled());
+    ASSERT(document().settings().htmlEnhancedSelectMultipleAndListBoxEnabled());
 
     Vector<Ref<HTMLOptionElement>> options;
     for (auto& item : listItems()) {

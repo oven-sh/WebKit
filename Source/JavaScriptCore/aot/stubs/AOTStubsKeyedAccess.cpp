@@ -1195,7 +1195,7 @@ static void returnUndefinedUnlessLengthIsOfName(StubAssembler& jit, const KeyedP
     jit.sub32(length, TrustedImm32(NameShapesOfStructure::maxIndexLength + 1), lengths);
     mayBePresent.append(jit.branch32(CCallHelpers::AboveOrEqual, lengths, TrustedImm32(NameShapes::lastLengthBit - (NameShapesOfStructure::maxIndexLength + 1))));
     jit.load32(Address(base, JSCell::structureIDOffset()), structureID);
-    jit.urshift32(structureID, TrustedImm32(StructureRowWords::granuleShift), shapes);
+    jit.urshift32(structureID, TrustedImm32(structureIDPlaceShift), shapes);
     jit.and32(TrustedImm32(NameShapesOfStructure::numberOfEntries - 1), shapes);
     jit.lshift32(TrustedImm32(NameShapesOfStructure::sizeShift), shapes);
     jit.addPtr(Address(instanceGPR, AOT_INSTANCE_OFFSET(propertyCaches.nameShapes)), shapes);
@@ -2364,7 +2364,8 @@ void generateReflectSet(StubAssembler& jit)
         return BaseIndex(instanceGPR, registers.entry, CCallHelpers::TimesOne, offsetOfEntries + static_cast<int32_t>(offset));
     };
     jit.load32(Address(handler, JSCell::structureIDOffset()), registers.structureID);
-    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.structureID, registers.entry);
+    jit.urshift32(registers.structureID, TrustedImm32(ForwardingProxyHandlers::shiftOfStructureID), registers.entry);
+    jit.and32(TrustedImm32(static_cast<int32_t>(ForwardingProxyHandlers::offsetMask)), registers.entry);
     jit.load32(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, structureID)), word);
     asksOperation.append(jit.branch32(CCallHelpers::NotEqual, word, registers.structureID));
     jit.load64(inEntry(OBJECT_OFFSETOF(ForwardingProxyHandlers::Entry, wordAfterHeader)), word);

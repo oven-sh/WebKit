@@ -34,4 +34,5 @@ PASS Errors must be propagated backward: becomes errored before piping via abort
 PASS Errors must be propagated backward: becomes errored before piping via abort; preventCancel omitted; rejected cancel promise
 PASS Errors must be propagated backward: becomes errored before piping via abort; preventCancel = true
 PASS Errors must be propagated backward: erroring via the controller errors once pending write completes
+PASS Errors must be propagated backward: erroring writable stream before chunk enqueued does not write chunk
 

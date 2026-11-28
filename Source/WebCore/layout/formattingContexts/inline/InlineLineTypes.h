@@ -28,12 +28,11 @@
 #include <WebCore/LayoutUnits.h>
 #include <wtf/text/AtomString.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class InlineItem;
 
-using InlineBoxBoundaryTextSpacings = WTF::HashMap<size_t, float, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>>;
+using InlineBoxBoundaryTextSpacings = WTF::HashMap<size_t, float>;
 using TrimmableTextSpacings = InlineBoxBoundaryTextSpacings;
 
 struct TextSpacingContext {
@@ -112,5 +111,4 @@ inline InlineItemRange::InlineItemRange(size_t startIndex, size_t endIndex)
 {
 }
 
-}
 }

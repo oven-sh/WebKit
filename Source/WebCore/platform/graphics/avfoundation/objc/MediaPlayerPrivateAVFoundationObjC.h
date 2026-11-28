@@ -136,6 +136,7 @@ public:
     Ref<WebCoreAVFResourceLoader> ensureAVFResourceLoader(AVAssetResourceLoadingRequest *);
 
     bool isAudible() const { return m_isAudible; }
+    void setHasAudioForTesting(bool);
 
 private:
 #if ENABLE(ENCRYPTED_MEDIA)
@@ -191,8 +192,6 @@ private:
 
 #if PLATFORM(IOS_FAMILY)
     NSArray *timedMetadata() const final;
-    String accessLog() const final;
-    String errorLog() const final;
     void sceneIdentifierDidChange() final;
 #endif
 
@@ -533,6 +532,7 @@ private:
     RetainPtr<id> m_videoFrameMetadataGatheringObserver;
     bool m_isGatheringVideoFrameMetadata { false };
     bool m_isAudible { false };
+    bool m_suppressesAudioRendering { false };
     bool m_isVideoPlayer { false };
     std::optional<VideoFrameMetadata> m_videoFrameMetadata;
     mutable std::optional<NSTimeInterval> m_cachedSeekableTimeRangesLastModifiedTime;

@@ -345,7 +345,7 @@ public:
         Vector<uint8_t> formsAfterSpecial;
         bool areFixed { false };
     };
-    UncheckedKeyHashMap<Value*, FormsOfPatch>& formsOfPatches() LIFETIME_BOUND { return m_formsOfPatches; }
+    HashMap<Value*, FormsOfPatch>& formsOfPatches() LIFETIME_BOUND { return m_formsOfPatches; }
 
     // An access that takes over a trap gets the origin of the trap. By that origin: the one that the access had, or null if several accesses had different ones.
     void keepOriginOfAccessThatTakesTrap(Value* trap, Value* access)
@@ -470,8 +470,8 @@ private:
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
-    UncheckedKeyHashMap<Value*, FormsOfPatch> m_formsOfPatches;
-    UncheckedKeyHashMap<Value*, Value*> m_originsOfAccessesThatTookTraps;
+    HashMap<Value*, FormsOfPatch> m_formsOfPatches;
+    HashMap<Value*, Value*> m_originsOfAccessesThatTookTraps;
     std::unique_ptr<CFG> m_cfg;
     SmallSet<Tmp, DefaultHash<Tmp>, HashTraits<Tmp>, 2> m_fastTmps;
     CCallSpecial* m_cCallSpecial { nullptr };

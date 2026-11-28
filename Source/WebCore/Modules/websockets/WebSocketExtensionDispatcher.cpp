@@ -33,6 +33,7 @@
 #include "WebSocketExtensionDispatcher.h"
 #include "WebSocketExtensionParser.h"
 #include <wtf/ASCIICType.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashMap.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -94,7 +95,7 @@ bool WebSocketExtensionDispatcher::processHeaderValue(const String& headerValue)
         return false;
     }
 
-    const auto headerValueData = headerValue.utf8();
+    const auto headerValueData = makeUTF8CString(headerValue);
     // FIXME: Is UTF-8 the encoding that WebSocketExtensionParser expects? It doesn't specify.
     WebSocketExtensionParser parser(byteCast<uint8_t>(headerValueData.span()));
     while (!parser.finished()) {
@@ -106,7 +107,7 @@ bool WebSocketExtensionDispatcher::processHeaderValue(const String& headerValue)
         }
 
         size_t index = 0;
-        for (auto& processor : m_processors) {
+        for (auto& processor : borrow(m_processors)) {
             if (extensionToken == processor->extensionToken()) {
                 if (processor->processResponse(extensionParameters)) {
                     appendAcceptedExtension(extensionToken, extensionParameters);

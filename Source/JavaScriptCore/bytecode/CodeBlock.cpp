@@ -126,7 +126,7 @@ UTF8CString CodeBlock::inferredName() const
     if (m_ownerExecutable) {
         auto *provider = ownerExecutable()->source().provider();
         if (provider && !provider->sourceURL().isEmpty()) {
-            return provider->sourceURL().utf8();
+            return makeUTF8CString(provider->sourceURL());
         }
     }
 #endif
@@ -183,9 +183,9 @@ UTF8CString CodeBlock::sourceCodeForTools() const
         return ownerExecutable()->source().toUTF8();
 
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(ownerExecutable());
-    return executable->source().provider()->getRange(
+    return makeUTF8CString(executable->source().provider()->getRange(
         executable->functionStart(),
-        executable->parametersStartOffset() + executable->source().length()).utf8();
+        executable->parametersStartOffset() + executable->source().length()));
 }
 
 UTF8CString CodeBlock::sourceCodeOnOneLine() const
@@ -3402,7 +3402,7 @@ bool CodeBlock::hasIdentifier(UniquedStringImpl* uid)
         if (m_cachedIdentifierUids.size() != numberOfIdentifiers) {
             Locker locker(m_cachedIdentifierUidsLock);
             createRareDataIfNecessary();
-            UncheckedKeyHashSet<UniquedStringImpl*> cachedIdentifierUids;
+            HashSet<UniquedStringImpl*> cachedIdentifierUids;
             cachedIdentifierUids.reserveInitialCapacity(numberOfIdentifiers);
             for (unsigned index = 0; index < unlinkedIdentifiers; ++index) {
                 const Identifier& identifier = unlinkedCode->identifier(index);

@@ -423,7 +423,7 @@ bool Options::overrideAliasedOptionWithHeuristic(const char* name)
         return false;
 
     auto aliasedOption = makeString(unsafeSpan(&name[4]), '=', unsafeSpan(stringValue));
-    if (Options::setOption(aliasedOption.utf8().legacyCStringPointer()))
+    if (Options::setOption(makeUTF8CString(aliasedOption).legacyCStringPointer()))
         return true;
 
     fprintf(stderr, "WARNING: failed to parse %s=%s\n", name, stringValue);
@@ -457,6 +457,12 @@ int32_t Options::computePriorityDeltaOfWorkerThreads(int32_t twoCorePriorityDelt
 unsigned Options::computeNumberOfGCMarkers(unsigned maxNumberOfGCMarkers)
 {
     return computeNumberOfWorkerThreads(maxNumberOfGCMarkers);
+}
+
+unsigned Options::defaultThreadPoolCapacity()
+{
+    // Leave a core for the thread running JavaScript.
+    return std::max(kernTCSMAwareNumberOfProcessorCores(), 2) - 1;
 }
 
 bool Options::defaultTCSMValue()
@@ -821,6 +827,8 @@ static void applyCompiledCodeDefaults()
     if (!Options::runsCompiledImage())
         return;
     Options::useJIT() = false;
+    // Compiled code defines a private name as the engine did before WebKit/WebKit@b0be2f45a9, and an image does not record which rule it was built for.
+    Options::useNonExtensibleAppliesToPrivate() = false;
     Options::sizeClassProgression() = Options::sizeClassProgressionWithAOT();
     // A heap that stays small gains nothing from blocks that a helper thread keeps resident, and pays for them.
     if (!OptionsHelper::wasOverridden(Options::warmUpMarkedBlockStartAfterBlocksID))
@@ -1373,7 +1381,7 @@ bool Options::setAliasedOption(const char* arg, bool verify)
                 return false;                                           \
             unaliasedOption = makeString(unaliasedOption, '=', invertedValueStr); \
         }                                                               \
-        return setOptionWithoutAlias(unaliasedOption.utf8().legacyCStringPointer(), verify);    \
+        return setOptionWithoutAlias(makeUTF8CString(unaliasedOption).legacyCStringPointer(), verify);    \
     }
 
     FOR_EACH_JSC_ALIASED_OPTION(FOR_EACH_OPTION)

@@ -156,7 +156,7 @@ private:
     std::span<uint32_t> m_headsAroundTurns;
     BitVector m_turnsOfHeads;
     BitVector m_wordsNeeded;
-    UncheckedKeyHashMap<uint32_t, BitVector> m_wordsNeededAtHeads;
+    HashMap<uint32_t, BitVector> m_wordsNeededAtHeads;
     BitVector m_blocksAboveYields;
     Vector<uint32_t, 8> m_wordsToClearAtStart;
     uint32_t m_numberOfBlocksFollowed { 0 };
@@ -191,8 +191,8 @@ private:
     std::span<uint32_t> m_headsOfLoopsInsideStretchesBehind;
     std::span<const BlockID> m_orderOfBlocks;
 
-    UncheckedKeyHashMap<uint32_t, Machine::StackSlot*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_slotsOfHeapWords;
-    UncheckedKeyHashMap<uint32_t, UsesOfHeapWords, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_usesOfHeapWords;
+    HashMap<uint32_t, Machine::StackSlot*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_slotsOfHeapWords;
+    HashMap<uint32_t, UsesOfHeapWords, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_usesOfHeapWords;
     BitVector m_heapWordsAliveAtSuspensions;
     bool m_hasFoundUsesOfHeapWords { false };
     bool m_hasLookedForHeapWordsAliveAtSuspensions { false };

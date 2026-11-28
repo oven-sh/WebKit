@@ -294,7 +294,7 @@ private:
     MonotonicTime m_nextSampleTime WTF_GUARDED_BY_LOCK(m_lock);
     Seconds m_stopwatchTimestamp WTF_GUARDED_BY_LOCK(m_lock); // Of the sample that is being taken.
     size_t m_maximumStackDepth WTF_GUARDED_BY_LOCK(m_lock);
-    UncheckedKeyHashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
+    HashSet<JSCell*> m_liveCellPointers WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

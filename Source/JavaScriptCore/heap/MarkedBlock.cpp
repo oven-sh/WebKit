@@ -761,6 +761,7 @@ void MarkedBlock::Handle::poisonDeadCells()
     });
     if (begin)
         __asan_poison_memory_region(begin, end - begin);
+    Locker locker { m_weakSet.weakBlockLock() };
     m_weakSet.forEachBlock([&](WeakBlock& block) {
         block.unpoisonCellsAwaitingFinalizers();
     });

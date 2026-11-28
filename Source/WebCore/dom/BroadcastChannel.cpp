@@ -59,7 +59,7 @@ NODELETE static HashMap<BroadcastChannelIdentifier, ThreadSafeWeakPtr<BroadcastC
 
 NODELETE static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& channelToContextIdentifier()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     static NeverDestroyed<HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>> map;
     return map;
 }
@@ -109,7 +109,7 @@ void BroadcastChannel::MainThreadBridge::ensureOnMainThread(Function<void(Page*)
     RefPtr context = m_broadcastChannel->scriptExecutionContext();
     if (!context)
         return;
-    ASSERT(context->isContextThread());
+    RELEASE_ASSERT(context->isContextThread());
 
     if (RefPtr document = dynamicDowncast<Document>(*context)) {
         task(protect(document->page()).get());
@@ -217,7 +217,7 @@ void BroadcastChannel::close()
 
 void BroadcastChannel::dispatchMessageTo(BroadcastChannelIdentifier channelIdentifier, Ref<SerializedScriptValue>&& message, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(isMainThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isMainThread());
     CompletionHandlerCallingScope completionHandlerCallingScope { CompletionHandler<void()> { [completionHandler = WTF::move(completionHandler)]() mutable {
         callOnMainThread(WTF::move(completionHandler));
     }, CompletionHandlerCallThread::AnyThread } };
@@ -273,7 +273,7 @@ ScriptExecutionContext* BroadcastChannel::scriptExecutionContext() const
 
 void BroadcastChannel::eventListenersDidChange()
 {
-    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent);
+    m_hasRelevantEventListener = hasEventListeners(eventNames().messageEvent) || hasEventListeners(eventNames().messageerrorEvent);
 }
 
 bool BroadcastChannel::virtualHasPendingActivity() const

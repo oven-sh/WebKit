@@ -21,6 +21,7 @@
 
 #include "ImageBuffer.h"
 #include "LegacyRenderSVGResourceContainer.h"
+#include "NativeImage.h"
 #include "SVGUnitTypes.h"
 #include <wtf/EnumeratedArray.h>
 #include <wtf/HashMap.h>
@@ -47,13 +48,13 @@ struct ClipperData {
     bool invalidate(const Inputs& inputs)
     {
         if (this->inputs != inputs) {
-            imageBuffer = nullptr;
+            image = nullptr;
             this->inputs = inputs;
         }
-        return !imageBuffer;
+        return !image;
     }
 
-    RefPtr<ImageBuffer> imageBuffer;
+    RefPtr<NativeImage> image;
     Inputs inputs;
 };
 
@@ -61,7 +62,7 @@ class LegacyRenderSVGResourceClipper final : public LegacyRenderSVGResourceConta
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourceClipper);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourceClipper);
 public:
-    LegacyRenderSVGResourceClipper(SVGClipPathElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGResourceClipper(SVGClipPathElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGResourceClipper();
 
     inline SVGClipPathElement& clipPathElement() const;
@@ -86,7 +87,7 @@ public:
     inline SVGUnitTypes::SVGUnitType clipPathUnits() const;
 
 private:
-    bool selfNeedsClientInvalidation() const override { return (everHadLayout() || !m_clipperMap.isEmptyIgnoringNullReferences()) && selfNeedsLayout(); }
+    bool selfNeedsClientInvalidation() const override { return (everHadLayout() || !m_clipperMap.computeIsEmpty()) && selfNeedsLayout(); }
 
     void element() const = delete;
 

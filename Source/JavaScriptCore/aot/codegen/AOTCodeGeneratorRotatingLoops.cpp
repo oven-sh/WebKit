@@ -408,7 +408,7 @@ void CodeGenerator::findRingReads(RotatingLoop& loop) const
 
 void CodeGenerator::findWordSums(RotatingLoop& loop) const
 {
-    UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> depths;
+    HashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> depths;
     auto depthOf = [&](ValueID value) -> unsigned { return code().isConstant(value) ? 0 : depths.get(value.index()); };
     for (BlockID block : loop.blocks) {
         for (ValueID parameter : code().at(block).parameters())

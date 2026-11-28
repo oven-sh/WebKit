@@ -18,7 +18,7 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 struct TypeTestPlansKeptAcrossUnits {
-    using Plans = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using Plans = HashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     static constexpr unsigned mostPlansOfRepresentation = 512;
 
     const Plan* plan { nullptr };
@@ -62,7 +62,7 @@ public:
     Condition isInRange(Integer, Range);
 
 private:
-    using PlanMap = UncheckedKeyHashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+    using PlanMap = HashMap<uint64_t, std::unique_ptr<TypeTestPlan>, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
     Condition isCellAmongOccurring(Boxed, uint16_t primitives);
     void leaveUnless(Condition, BlockEdge failure);

@@ -112,9 +112,8 @@ void Connection::send(Frame&& frame, CompletionHandler<void()>&& completionHandl
     auto frameType = frame.type();
     auto sendFrame = [tlsConnection = m_tlsConnection, frame = WTF::move(frame), completionHandler = WTF::move(completionHandler)] () mutable {
         // https://http2.github.io/http2-spec/#rfc.section.4.1
-        Vector<uint8_t> bytes;
         constexpr size_t frameHeaderLength = 9;
-        bytes.reserveInitialCapacity(frameHeaderLength + frame.payload().size());
+        Vector<uint8_t> bytes(ReserveCapacityTag { }, frameHeaderLength + frame.payload().size());
         bytes.append(frame.payload().size() >> 16);
         bytes.append(frame.payload().size() >> 8);
         bytes.append(frame.payload().size() >> 0);
@@ -428,7 +427,7 @@ TEST(Preconnect, PrivacyProxyRequestFlags)
 
 static void appendHPACKString(Vector<uint8_t>& headerBlock, const String& string)
 {
-    auto utf8 = string.utf8();
+    auto utf8 = makeUTF8CString(string);
     headerBlock.append(utf8.length());
     headerBlock.append(byteCast<uint8_t>(utf8.span()));
 }

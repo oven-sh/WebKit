@@ -79,7 +79,7 @@ enum class ScrollAnimationStatus : uint8_t {
 };
 
 enum class ScrollIsAnimated : bool { No, Yes };
-enum class InterruptScrollAnimation : bool { No, Yes };
+enum class InterruptScrollAnimation : uint8_t { No, Yes, ProgrammaticAnimationsOnly };
 
 enum class OverflowAnchor : bool {
     Auto,
@@ -180,6 +180,11 @@ enum class ScrollbarWidth : uint8_t {
     Auto,
     Thin,
     None
+};
+
+enum class ScrollbarPaintBehavior : uint8_t {
+    IncludeComposited = 1 << 0,
+    Snapshot = 1 << 1,
 };
 
 enum class NativeScrollbarVisibility : uint8_t {
@@ -392,6 +397,26 @@ enum class ScrollSnapPointSelectionMethod : uint8_t {
     Closest,
     Paging,
 };
+
+// A delta scroll moves by an offset from the current position, like arrow keys or the wheel.
+// An absolute scroll moves to a given position, like scrollTo() or Home and End.
+// https://drafts.csswg.org/css-scroll-snap-1/#relative-scroll
+enum class ScrollRelativity : uint8_t {
+    Delta,
+    Absolute,
+};
+
+// Absolute scrolls snap to the closest snap point. Delta scrolls snap in their direction.
+inline ScrollRelativity scrollRelativityFor(ScrollSnapPointSelectionMethod method)
+{
+    return method == ScrollSnapPointSelectionMethod::Closest ? ScrollRelativity::Absolute : ScrollRelativity::Delta;
+}
+
+// Document granularity (Home and End) scrolls to an edge. The others move by an offset.
+inline ScrollRelativity scrollRelativityFor(ScrollGranularity granularity)
+{
+    return granularity == ScrollGranularity::Document ? ScrollRelativity::Absolute : ScrollRelativity::Delta;
+}
 
 using ScrollbarControlState = unsigned;
 using ScrollbarControlPartMask = unsigned;

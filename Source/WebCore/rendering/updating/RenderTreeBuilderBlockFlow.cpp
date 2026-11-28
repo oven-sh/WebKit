@@ -42,10 +42,16 @@ RenderTreeBuilder::BlockFlow::BlockFlow(RenderTreeBuilder& builder)
 
 void RenderTreeBuilder::BlockFlow::attach(RenderBlockFlow& parent, RenderPtr<RenderObject> child, RenderObject* beforeChild)
 {
-    if (auto* multicolumnFlow = parent.multiColumnFlow()) {
+    if (CheckedPtr multicolumnFlow = parent.multiColumnFlow()) {
         auto legendAvoidsMulticolumn = parent.isFieldset() && child->isLegend();
         if (legendAvoidsMulticolumn)
             return m_builder.blockBuilder().attach(parent, WTF::move(child), nullptr);
+
+        // The outside marker takes no part in multi-column layout. The list item positions it against its first
+        // formatted line after layout, which it can only do while the marker is its own child.
+        auto markerAvoidsMulticolumn = child->isOutsideListMarker();
+        if (markerAvoidsMulticolumn)
+            return m_builder.blockBuilder().attach(parent, WTF::move(child), beforeChild);
 
         auto legendBeforeChildIsIncorrect = parent.isFieldset() && beforeChild && beforeChild->isLegend();
         if (legendBeforeChildIsIncorrect)
@@ -53,7 +59,7 @@ void RenderTreeBuilder::BlockFlow::attach(RenderBlockFlow& parent, RenderPtr<Ren
 
         // When the before child is set to be the first child of the RenderBlockFlow, we need to readjust it to be the first
         // child of the multicol conainter.
-        return m_builder.attach(*multicolumnFlow, WTF::move(child), beforeChild == multicolumnFlow ? multicolumnFlow->firstChild() : beforeChild);
+        return m_builder.attach(*multicolumnFlow, WTF::move(child), protect(beforeChild == multicolumnFlow ? multicolumnFlow->firstChild() : beforeChild));
     }
 
     auto* beforeChildOrPlaceholder = beforeChild;

@@ -272,6 +272,12 @@ struct FeaturesGL : FeatureSetBase
         &members,
     };
 
+    FeatureInfo useScratchTextureForConvertingCopySubImage = {
+        "useScratchTextureForConvertingCopySubImage",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
     FeatureInfo recreateTextureOnTexImage3dDepthIncrease = {
         "recreateTextureOnTexImage3dDepthIncrease",
         FeatureCategory::OpenGLWorkarounds,
@@ -814,6 +820,12 @@ struct FeaturesGL : FeatureSetBase
 
     FeatureInfo disablePixelLocalStorage = {
         "disablePixelLocalStorage",
+        FeatureCategory::OpenGLWorkarounds,
+        &members,
+    };
+
+    FeatureInfo readPixelsViaSingleAttachmentFramebuffer = {
+        "readPixelsViaSingleAttachmentFramebuffer",
         FeatureCategory::OpenGLWorkarounds,
         &members,
     };

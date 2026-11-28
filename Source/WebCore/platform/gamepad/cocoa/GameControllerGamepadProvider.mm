@@ -240,8 +240,7 @@ void GameControllerGamepadProvider::startMonitoringGamepads(GamepadProviderClien
     if (!controllers || !controllers.count)
         LOG(Gamepad, "GameControllerGamepadProvider has no initial GCControllers attached");
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL GCController *controller in controllers) {
+    for (GCController *controller in controllers) {
         LOG(Gamepad, "GameControllerGamepadProvider has initial GCController %p", controller);
         controllerDidConnect(controller, ConnectionVisibility::Invisible);
     }
@@ -252,7 +251,7 @@ void GameControllerGamepadProvider::stopMonitoringGamepads(GamepadProviderClient
     ASSERT(m_clients.contains(client));
     m_clients.remove(client);
 
-    if (!m_connectObserver || !m_clients.isEmptyIgnoringNullReferences())
+    if (!m_connectObserver || !m_clients.computeIsEmpty())
         return;
 
     [[NSNotificationCenter defaultCenter] removeObserver:m_connectObserver.get()];

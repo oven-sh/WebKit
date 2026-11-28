@@ -39,6 +39,7 @@
 #include "PDFDisplayMode.h"
 #include "PageLoadState.h"
 #include "ProcessActivityGroup.h"
+#include "ProcessTerminationReason.h"
 #include "ProcessThrottler.h"
 #include "ScrollingAccelerationCurve.h"
 #include "TextExtractionCache.h"
@@ -60,6 +61,7 @@
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntPointHash.h>
+#include <WebCore/NetworkInterception.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/RemoteUserInputEventData.h>
@@ -68,6 +70,7 @@
 #include <WebCore/ViewportSegments.h>
 #include <pal/HysteresisActivity.h>
 #include <wtf/CallbackAggregator.h>
+#include <wtf/Markable.h>
 #include <wtf/UUID.h>
 
 #if ENABLE(APPLE_PAY)
@@ -195,6 +198,17 @@ struct TouchEventTracking {
 
 #endif
 
+struct SubframeTerminationEvent {
+    unsigned identifier { 1 };
+    ProcessTerminationReason reason { ProcessTerminationReason::Crash };
+    bool clientNotified { false };
+};
+
+struct SubframeTerminationEventMarkableTraits {
+    static bool isEmptyValue(const SubframeTerminationEvent& event) { return !event.identifier; }
+    static SubframeTerminationEvent emptyValue() { return { .identifier = 0 }; }
+};
+
 struct WebPageProxy::Internals final : WebPopupMenuProxy::Client
 #if ENABLE(APPLE_PAY)
     , WebPaymentCoordinatorProxy::Client
@@ -221,6 +235,12 @@ public:
     std::optional<VirtualWalletBehavior> testingVirtualWalletBehavior;
     CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
 #endif
+
+    // The authoritative network interception configuration for this page, the union of the
+    // patterns of every consumer; see WebPageProxy::networkInterception().
+    Inspector::NetworkInterception networkInterception;
+    Vector<Inspector::InterceptPattern> inspectorInterceptPatterns;
+    Vector<Inspector::InterceptPattern> automationInterceptPatterns;
 
     uint32_t checkedPtrCount() const { return WebPopupMenuProxy::Client::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const { return WebPopupMenuProxy::Client::checkedPtrCountWithoutThreadCheck(); }
@@ -251,11 +271,11 @@ public:
     std::optional<WebCore::Color> backgroundColor;
     WebCore::LayoutSize baseLayoutViewportSize;
     std::optional<WebCore::FontAttributes> cachedFontAttributesAtSelectionStart;
-    Vector<Function<void()>> callbackHandlersAfterProcessingPendingMouseEvents;
-    Vector<Function<void()>> callbackHandlersAfterProcessingPendingKeyEvents;
+    Vector<CompletionHandler<void()>> callbackHandlersAfterProcessingPendingMouseEvents;
+    Vector<CompletionHandler<void()>> callbackHandlersAfterProcessingPendingKeyEvents;
 #if ENABLE(TOUCH_EVENTS) && !ENABLE(IOS_TOUCH_EVENTS)
-    Vector<Function<void()>> callbackHandlersAfterProcessingPendingWheelEvents;
-    Vector<Function<void()>> callbackHandlersAfterProcessingPendingTouchEvents;
+    Vector<CompletionHandler<void()>> callbackHandlersAfterProcessingPendingWheelEvents;
+    Vector<CompletionHandler<void()>> callbackHandlersAfterProcessingPendingTouchEvents;
 #endif
     ContentInversion contentInversion { ContentInversion::System };
     WebCore::FloatSize defaultUnobscuredSize;
@@ -274,9 +294,15 @@ public:
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::FloatSize minimumUnobscuredSize;
     Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
+    // Events retired from the queue because their process paused at the debugger. They finish dispatching in the
+    // paused process's nested run loop, and their late replies are still honored so they can reach remote frames.
+    Vector<Ref<NativeWebMouseEvent>> mouseEventsForPausedProcess;
     std::optional<WebCore::FrameIdentifier> lastFrameHandlingMouseMove;
     Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
     RunLoop::Timer remoteFrameMouseEventTimeoutTimer;
+    // The process the queue head is waiting on. One is enough: only the head event blocks the queue, and its hops
+    // are a sequential chain (each forward starts from the previous hop's reply), so it never awaits two at once.
+    std::optional<WebCore::ProcessIdentifier> processAwaitingMouseEventReply;
     WebCore::MediaProducerMutedStateFlags mutedState;
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
@@ -295,6 +321,8 @@ public:
     std::optional<PrivateClickMeasurementAndMetadata> privateClickMeasurement;
     WebCore::MediaProducerMediaStateFlags reportedMediaCaptureState;
     RunLoop::Timer resetRecentCrashCountTimer;
+    Markable<SubframeTerminationEvent, SubframeTerminationEventMarkableTraits> subframeTerminationEvent;
+    unsigned lastSubframeTerminationEventIdentifier { 0 };
     WebCore::RectEdges<bool> rubberBandableEdges { true, true, true, true };
     bool alwaysBounceVertical { true };
     bool alwaysBounceHorizontal { true };
@@ -382,9 +410,27 @@ public:
     WebCore::DragHandlingMethod currentDragHandlingMethod { WebCore::DragHandlingMethod::None };
     // The frame that handled the most recent drag controller action, after it was forwarded to any remote frame.
     std::optional<WebCore::FrameIdentifier> currentDragTargetFrameID;
+
+    struct DragTarget {
+        std::optional<WebCore::FrameIdentifier> frameID;
+        WebCore::IntPoint clientPosition;
+    };
+    uint64_t lastDragEventNumber { 0 };
+    uint64_t lastResolvedDragEventNumber { 0 };
+    std::optional<DragTarget> lastDragTarget;
+    Vector<DragTarget> outdatedDragTargets;
 #endif
 
     RefPtr<WebColorPicker> colorPicker;
+
+#if ENABLE(TWO_PHASE_CLICKS)
+    struct PotentialTap {
+        TapIdentifier identifier;
+        Vector<WebCore::FrameIdentifier> forwardedFrameIDs;
+        bool isCommitted { false };
+    };
+    std::optional<PotentialTap> potentialTap;
+#endif
 
 #if ENABLE(MAC_GESTURE_EVENTS)
     Deque<Ref<NativeWebGestureEvent>> gestureEventQueue;
@@ -394,6 +440,10 @@ public:
 #if ENABLE(META_VIEWPORT)
     std::optional<WebCore::ViewportArguments> overrideViewportArguments;
     WebCore::FloatSize viewportConfigurationViewLayoutSize;
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+    WebCore::FloatBoxExtent unobscuredSafeAreaInsets;
 #endif
 
 #if ENABLE(MOMENTUM_EVENT_DISPATCHER)

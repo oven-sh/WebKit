@@ -71,7 +71,7 @@ struct AllocationRows {
     Vector<AllocationRow> rows;
     Vector<AllocationData> forms;
     Vector<ConstructedAllocationData> constructedAllocations;
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbersOfForms;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbersOfForms;
 };
 
 } // anonymous namespace

@@ -10,18 +10,21 @@ set(WPEPlatformMock_PRIVATE_INCLUDE_DIRECTORIES
     ${CMAKE_BINARY_DIR}
     ${WPEPlatform_DERIVED_SOURCES_DIR}
     ${WEBKIT_DIR}/WPEPlatform
+)
+
+set(WPEPlatformMock_PUBLIC_INCLUDE_DIRECTORIES
     ${WTF_FRAMEWORK_HEADERS_DIR}
+    ${bmalloc_FRAMEWORK_HEADERS_DIR}
 )
 
 set(WPEPlatformMock_LIBRARIES
     LibDRM::LibDRM
-    WTF
     WebKit
-    bmalloc
 )
 
 add_library(WPEPlatformMock STATIC ${WPEPlatformMock_SOURCES})
 target_include_directories(WPEPlatformMock PRIVATE ${WPEPlatformMock_PRIVATE_INCLUDE_DIRECTORIES})
+target_include_directories(WPEPlatformMock PUBLIC ${WPEPlatformMock_PUBLIC_INCLUDE_DIRECTORIES})
 target_include_directories(WPEPlatformMock SYSTEM PRIVATE ${WPEPlatformMock_SYSTEM_INCLUDE_DIRECTORIES})
 target_link_libraries(WPEPlatformMock ${WPEPlatformMock_LIBRARIES})
 
@@ -116,5 +119,12 @@ if (ENABLE_WPE_PLATFORM_HEADLESS)
 endif ()
 
 if (ENABLE_WPE_PLATFORM_WAYLAND)
-    ADD_WPE_PLATFORM_TEST(TestDisplayWayland ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/wpe/wpe-platform/TestDisplayWayland.cpp)
+    # The test compositor needs the text-input-v1 interface definitions. They are generated
+    # as private code for WPEPlatform and are not exported, so build them into the test too.
+    ADD_WPE_PLATFORM_TEST(TestDisplayWayland
+        ${TOOLS_DIR}/TestWebKitAPI/Tests/WebKit/WKWebView/wpe/wpe-platform/TestDisplayWayland.cpp
+        ${WPEPlatform_DERIVED_SOURCES_DIR}/wpe/wayland/text-input-unstable-v1-protocol.c
+    )
+    target_include_directories(TestDisplayWayland SYSTEM PRIVATE ${WAYLAND_INCLUDE_DIRS})
+    target_link_libraries(TestDisplayWayland ${WAYLAND_LIBRARIES})
 endif ()

@@ -32,6 +32,7 @@
 #include "WebPreferencesKeys.h"
 #include "WebProcessPool.h"
 #include "WebsiteDataStore.h"
+#include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/DeprecatedGlobalSettings.h>
 #include <WebCore/LibWebRTCProvider.h>
 #include <WebCore/StorageBlockingPolicy.h>
@@ -71,6 +72,10 @@ WebPreferences::WebPreferences(const String& identifier, const String& keyPrefix
     , m_keyPrefix(keyPrefix)
     , m_globalDebugKeyPrefix(globalDebugKeyPrefix)
 {
+    // Set this before platformInitializeStore() so debug defaults can override it. The copy constructor
+    // does not set it, so that a copy keeps the value the client set on the original.
+    m_store.setBoolValueForKey(WebPreferencesKey::siteIsolationEnabledKey(), defaultSiteIsolationEnabled());
+
     platformInitializeStore();
 
     if (WebKit::forceSiteIsolationAlwaysOnForTesting)
@@ -91,7 +96,7 @@ WebPreferences::WebPreferences(const WebPreferences& other)
 
 WebPreferences::~WebPreferences()
 {
-    ASSERT(m_pages.isEmptyIgnoringNullReferences());
+    ASSERT(m_pages.computeIsEmpty());
 }
 
 void WebPreferences::forceSiteIsolationAlwaysOnForTesting()
@@ -104,6 +109,11 @@ bool WebPreferences::shouldUseUIProcessForBackForwardItemLoading() const
     // Site Isolation spreads a page's frames across Web processes, so no single Web process can
     // coordinate a back/forward traversal by itself; the UI process must always drive it.
     return useUIProcessForBackForwardItemLoading() || siteIsolationEnabled();
+}
+
+WebCore::CredentiallessSupport WebPreferences::credentiallessSupport() const
+{
+    return WebCore::credentiallessSupport(crossOriginEmbedderPolicyCredentiallessEnabled());
 }
 
 const Vector<RefPtr<API::Object>>& WebPreferences::experimentalFeatures()

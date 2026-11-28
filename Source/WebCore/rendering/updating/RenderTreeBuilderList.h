@@ -31,8 +31,6 @@
 
 namespace WebCore {
 
-class RenderListOutsideMarker;
-
 class RenderTreeBuilder::List {
     WTF_MAKE_TZONE_ALLOCATED(List);
 public:
@@ -41,14 +39,12 @@ public:
     void updateItemMarker(RenderListItem&);
 
 private:
-    // Builds the anonymous inline-block subtree holding the ::marker's generated content
-    // (css-lists-3 §3.3). The caller tears down any prior content first.
-    void buildMarkerContentRenderers(RenderListOutsideMarker&);
-    void buildInlineMarker(RenderListItem&, Style::ComputedStyle&&);
+    // Builds the renderers holding the ::marker's generated content (css-lists-3 §3.3) in the outside marker box.
+    // The caller tears down any prior content first.
+    void buildMarkerContentRenderers(RenderBlockFlow& marker);
+    void buildInlineMarker(RenderListItem&, UniqueRef<Style::ComputedStyle>&&);
 
     RenderTreeBuilder& m_builder;
 };
-
-// <ul><li><ul><li>marker on the first li gets its own line in quirks mode, so it cannot be positioned after layout.
 
 }

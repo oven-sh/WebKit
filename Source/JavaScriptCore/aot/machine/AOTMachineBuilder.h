@@ -141,8 +141,8 @@ public:
             int conversions { 0 };
             unsigned operations { 0 };
         };
-        UncheckedKeyHashMap<Operation*, Cost> costs;
-        UncheckedKeyHashMap<Operation*, Operation*> made;
+        HashMap<Operation*, Cost> costs;
+        HashMap<Operation*, Operation*> made;
     };
     LowWords& lowWords() LIFETIME_BOUND { return m_lowWords; }
     JS_EXPORT_PRIVATE Operation* lowWord(Operation*);
@@ -315,7 +315,7 @@ private:
     bool m_isDuplicating { false };
     bool m_isVerifyingReusedLoad { false };
     Vector<HeapIndex, 2> m_heapsWrittenByOtherThreads;
-    UncheckedKeyHashMap<uint64_t, Vector<Operation*, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberedLoadsByPlace;
+    HashMap<uint64_t, Vector<Operation*, 2>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_numberedLoadsByPlace;
     Function<void(Operation*)> m_verifierOfReusedLoads;
     LowWords m_lowWords;
     Origin m_origin;

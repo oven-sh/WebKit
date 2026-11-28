@@ -19,7 +19,8 @@ https://actesting.org/
 https://www.affirm.com/
     (none)
 https://www.airindiaexpress.com/
-    NeedsAirIndiaExpressLayeringQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .new-trip-type-and-guest-selection-container { z-index: 2; }
 https://www.amazon.com/
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
         elementSelector: #magnifierLens, :has(+ #magnifierLens)
@@ -38,6 +39,8 @@ https://amazon.design/
     ShouldDispatchSimulatedMouseEventsQuirk
 https://www.apple.com/
     (none)
+https://www.arbor-technology.com/
+    ShouldDisableCSSSizeShorthandQuirk
 https://as.com/
     (none)
 https://www.att.com/
@@ -51,10 +54,10 @@ https://tieba.baidu.com/
 https://www.notbaidu.com/
     (none)
 https://www.bbc.co.uk/
-    NeedsDarkAppearanceWithoutColorSchemeQuirk
+    NeedsPerDocumentAutoplayBehaviorQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://www.bbc.com/
-    NeedsDarkAppearanceWithoutColorSchemeQuirk
+    NeedsPerDocumentAutoplayBehaviorQuirk
     ReturnNullPictureInPictureElementDuringFullscreenChangeQuirk
 https://codepen.io/
     ShouldEnableSpeakerSelectionPermissionsPolicyQuirk
@@ -124,7 +127,8 @@ https://www.ea.com/
 https://www.espn.com/
     (none)
 https://www.facebook.com/
-    NeedsFacebookRemoveNotSupportedQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.xnw9j1v { display: none; }
     ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
         elementSelector: [role=slider]
@@ -140,29 +144,41 @@ https://www.forbes.com/
 https://gizmodo.com/
     (none)
 https://play.geforcenow.com/
+    (none)
+https://www.goodreads.com/
     NeedsStyleSheetInjectedQuirk
-        styleSheet: div.cdk-overlay-container, div.unsupported-scenario-container { display: none !important; }
+        styleSheet: .TruncatedContent:focus-visible, .TruncatedContent__text:focus-visible { outline-offset: inset; }
 https://www.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/search
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/search/howsearchworks
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.co.jp/search
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.google.com/maps
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -170,6 +186,8 @@ https://www.google.com/maps
 https://www.google.com/maps/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -177,6 +195,8 @@ https://www.google.com/maps/
 https://www.google.com/maps/@37.33,-122.01,15z
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -184,11 +204,15 @@ https://www.google.com/maps/@37.33,-122.01,15z
 https://www.google.com/mapsearch
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://maps.google.com/maps/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
@@ -197,21 +221,29 @@ https://docs.google.com/
     InputMethodUsesCorrectKeyEventOrder
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://translate.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://mail.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://sites.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldPreventTouchEndDispatchQuirk
@@ -219,10 +251,14 @@ https://sites.google.com/
 https://meet.google.com/
     NeedsSingleOwnerMainFrameCNAMECloakingCookieCapQuirk
         secondaryURL: [*://*.youtube.com/*, *://*.google.com/*]
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
     ShouldEnableCameraBackgroundPlayback
 https://www.google.co.uk/
+    NeedsStorageAccessForGoogleMyAccountProfilePictureIframeQuirk
+        secondaryURL: [*://myaccount.google.com/*?*startPath=profile-picture*]
     ShouldBypassBackForwardCacheWhenElementMatchesQuirk
         documentSelector: body > div.docs-homescreen-freeze-el-full:first-child
 https://www.hbomax.com/
@@ -230,49 +266,49 @@ https://www.hbomax.com/
 https://play.hbomax.com/
     ShouldEnableFontLoadingAPIQuirk
 https://www.carrentals.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.cheaptickets.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.chess.com/
     (none)
 https://www.ebookers.de/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.expedia.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.expedia.fr/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hoteis.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hoteles.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hotels.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.mrjet.se/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.orbitz.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.travelocity.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.travelocity.ca/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.wotif.com/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.wotif.co.nz/
-    NeedsExpediaGroupAnimationQuirk
-        elementSelector: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: .uitk-menu-mounted .uitk-menu-container.uitk-menu-container-autoposition.uitk-menu-container-has-intersection-root-el.uitk-menu-open { animation: menu-grow-left 0.18s 0s, menu-fade-in 0.06s 0.06s both; }
 https://www.hulu.com/
     ImplicitMuteWhenVolumeSetToZero
     NeedsCanPlayAfterSeekedQuirk
@@ -284,6 +320,25 @@ https://www.iheart.com/
         script: document.cookie = 'app=listen:60; path=/; domain=.iheart.com';
 https://www.imdb.com/
     NeedsChromeMediaControlsPseudoElementQuirk
+    NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
+        script: (function() {
+        let advertisement = document.getElementById('inline50_responsive_wrapper');
+        let observed = Symbol.for('WebKitIMDbStaleAdQuirk');
+        if (!advertisement || advertisement[observed] || window.__webkitIMDbStaleAdQuirk !== undefined)
+            return;
+        advertisement[observed] = true;
+        new ResizeObserver(() => {
+            let api = window.ad_utils?.responsiveAdAPI;
+            if (window.__webkitIMDbStaleAdQuirk !== undefined || !api || api.previousWindowWidth === Infinity)
+                return;
+            if (api.getLastAdResponse()?.slots?.inline50?.creativeMetadata?.creativeWidth > document.documentElement.clientWidth) {
+                api.previousWindowWidth = Infinity;
+                dispatchEvent(new Event('resize'));
+            }
+        }).observe(advertisement);
+    })();
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: #inline50_wrapper, #inline50_wrapper * { max-width: 100%; }
     NeedsZeroMaxTouchPointsQuirk
 https://www.instagram.com/
     NeedsInstagramResizingReelsQuirk
@@ -374,10 +429,14 @@ https://my.playstation.com/
 https://www.premierleague.com/
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldDispatchPlayPauseEventsOnResume
+https://www.purpletie.com/
+    ShouldDisableCSSSizeShorthandQuirk
 https://www.ralphlauren.com/
     (none)
 https://www.reddit.com/
     (none)
+https://routine.co/
+    ShouldDisableCSSSizeShorthandQuirk
 https://www.scribd.com/
     NeedsReuseLiveRangeForSelectionUpdateQuirk
 https://www.sfusd.edu/
@@ -454,8 +513,8 @@ https://www.thesaurus.com/
 https://www.thetimes.com/
     (none)
 https://www.tiktok.com/
-    NeedsTikTokCaptchaSliderTouchActionQuirk
-        elementSelector: #secsdk-captcha-drag-wrapper
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: #secsdk-captcha-drag-wrapper { touch-action: none; }
     NeedsTikTokCommentsOverflowingContentQuirk
         elementSelector: [class*=DivBrowserModeContainer] > [class*=DivContentContainer]
     NeedsTikTokVideoOverflowingContentQuirk
@@ -506,8 +565,14 @@ https://x.com/
 https://twitter.com/
     (none)
 https://www.yahoo.com/
-    NeedsYahooVolumeSliderQuirk
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.vjs-volume-control { min-height: 100%; align-items: center; }
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
+https://news.yahoo.co.jp/
+    NeedsStyleSheetInjectedQuirk
+        styleSheet: div.vjs-volume-control { min-height: 100%; align-items: center; }
+    ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
+    ShouldDisableCSSSizeShorthandQuirk
 https://news.ycombinator.com/
     ShouldIgnoreTextAutoSizingQuirk
 https://ycombinator.com/

@@ -97,7 +97,7 @@ public:
         IteratorType m_endPosition;
     };
 
-    class WeakListHashSetIterator : public WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::iterator> {
+    class WTF_VIEW_TYPE WeakListHashSetIterator : public WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::iterator> {
     public:
         using Base = WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::iterator>;
 
@@ -127,7 +127,7 @@ public:
         template <typename, typename> friend class WeakListHashSet;
     };
 
-    class WeakListHashSetConstIterator : public WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::const_iterator> {
+    class WTF_VIEW_TYPE WeakListHashSetConstIterator : public WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::const_iterator> {
     public:
         using Base = WeakListHashSetIteratorBase<WeakListHashSet, typename SetType::const_iterator>;
 
@@ -160,29 +160,29 @@ public:
     using iterator = WeakListHashSetIterator;
     using const_iterator = WeakListHashSetConstIterator;
 
-    iterator begin() { return WeakListHashSetIterator(*this, m_set.begin()); }
-    iterator end() { return WeakListHashSetIterator(*this, m_set.end()); }
-    const_iterator begin() const { return WeakListHashSetConstIterator(*this, m_set.begin()); }
-    const_iterator end() const { return WeakListHashSetConstIterator(*this, m_set.end()); }
+    iterator begin() LIFETIME_BOUND { return WeakListHashSetIterator(*this, m_set.begin()); }
+    iterator end() LIFETIME_BOUND { return WeakListHashSetIterator(*this, m_set.end()); }
+    const_iterator begin() const LIFETIME_BOUND { return WeakListHashSetConstIterator(*this, m_set.begin()); }
+    const_iterator end() const LIFETIME_BOUND { return WeakListHashSetConstIterator(*this, m_set.end()); }
 
-    iterator find(const T* value)
+    iterator find(const T* value) LIFETIME_BOUND
     {
         increaseOperationCountSinceLastCleanup();
         return WeakListHashSetIterator(*this, m_set.find(value));
     }
 
-    iterator find(const T& value)
+    iterator find(const T& value) LIFETIME_BOUND
     {
         return find(&value);
     }
 
-    const_iterator find(const T* value) const
+    const_iterator find(const T* value) const LIFETIME_BOUND
     {
         increaseOperationCountSinceLastCleanup();
         return WeakListHashSetConstIterator(*this, m_set.find(value));
     }
 
-    const_iterator find(const T& value) const
+    const_iterator find(const T& value) const LIFETIME_BOUND
     {
         return find(&value);
     }
@@ -198,24 +198,24 @@ public:
         return contains(&value);
     }
 
-    AddResult add(const T* value)
+    AddResult add(const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.add(value);
     }
 
-    AddResult add(const T& value)
+    AddResult add(const T& value) LIFETIME_BOUND
     {
         return add(&value);
     }
 
-    AddResult appendOrMoveToLast(const T* value)
+    AddResult appendOrMoveToLast(const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.appendOrMoveToLast(value);
     }
 
-    AddResult appendOrMoveToLast(const T& value)
+    AddResult appendOrMoveToLast(const T& value) LIFETIME_BOUND
     {
         return appendOrMoveToLast(&value);
     }
@@ -231,35 +231,35 @@ public:
         return moveToLastIfPresent(&value);
     }
 
-    AddResult prependOrMoveToFirst(const T* value)
+    AddResult prependOrMoveToFirst(const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.prependOrMoveToFirst(value);
     }
 
-    AddResult prependOrMoveToFirst(const T& value)
+    AddResult prependOrMoveToFirst(const T& value) LIFETIME_BOUND
     {
         return prependOrMoveToFirst(&value);
     }
 
-    AddResult insertBefore(const T* beforeValue, const T* value)
+    AddResult insertBefore(const T* beforeValue, const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.insertBefore(beforeValue, value);
     }
 
-    AddResult insertBefore(const T& beforeValue, const T& value)
+    AddResult insertBefore(const T& beforeValue, const T& value) LIFETIME_BOUND
     {
         return insertBefore(&beforeValue, &value);
     }
 
-    AddResult insertBefore(iterator it, const T* value)
+    AddResult insertBefore(iterator it, const T* value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         return m_set.insertBefore(it.m_position, value);
     }
 
-    AddResult insertBefore(iterator it, const T& value)
+    AddResult insertBefore(iterator it, const T& value) LIFETIME_BOUND
     {
         return insertBefore(it, &value);
     }
@@ -308,26 +308,21 @@ public:
 
     unsigned capacity() const { return m_set.capacity(); }
 
-    // Reclaims null references as a side effect, so this must not be called concurrently. Callers
-    // that may race with each other (e.g. GC marker threads) must use
-    // isEmptyIgnoringNullReferencesWithoutCleanup() instead.
-    bool isEmptyIgnoringNullReferences() const
+    unsigned computeSize() const { return m_set.computeSize(); }
+    unsigned computeSize()
     {
-        if (m_set.isEmpty())
-            return true;
-
-        auto onlyContainsNullReferences = begin() == end();
-        if (onlyContainsNullReferences) [[unlikely]]
-            const_cast<WeakListHashSet&>(*this).clear();
-        return onlyContainsNullReferences;
+        unsigned result = m_set.computeSize();
+        cleanupHappened();
+        return result;
     }
 
-    bool isEmptyIgnoringNullReferencesWithoutCleanup() const
+    bool computeIsEmpty() const { return m_set.computeIsEmpty(); }
+    bool computeIsEmpty()
     {
-        if (m_set.isEmpty())
-            return true;
-
-        return begin() == end();
+        bool result = m_set.computeIsEmpty();
+        if (result)
+            cleanupHappened();
+        return result;
     }
 
     bool hasNullReferences() const
@@ -344,12 +339,6 @@ public:
         else
             cleanupHappened();
         return result;
-    }
-
-    unsigned computeSize() const
-    {
-        const_cast<WeakListHashSet&>(*this).removeNullReferences();
-        return m_set.size();
     }
 
     void checkConsistency() { } // To be implemented.

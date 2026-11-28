@@ -105,6 +105,7 @@ public:
 #if ENABLE(THREADED_ANIMATIONS)
     void clearAcceleratedEffectsAndBaseValues() override;
     void setAcceleratedEffectsAndBaseValues(const WebCore::AcceleratedEffects&, const WebCore::AcceleratedEffectValues&) override;
+    void setAnimationExtent(std::optional<WebCore::FloatRect>) override;
 #endif
 
     void setMaskLayer(RefPtr<WebCore::PlatformCALayer>&&) override;
@@ -203,6 +204,8 @@ public:
     WebCore::Path shadowPath() const override;
     void setShadowPath(const WebCore::Path&) override;
 
+    void setHidesFromScreenCapture(bool) override;
+
     void setAntialiasesEdges(bool) override;
 
     WebCore::MediaPlayerVideoGravity videoGravity() const override;
@@ -288,6 +291,9 @@ public:
     void setSendRightAnnotated(WTF::MachSendRightAnnotated sendRightAnnotated) { m_sendRightAnnotated = sendRightAnnotated; }
     std::optional<WTF::MachSendRightAnnotated> sendRightAnnotated() const { return m_sendRightAnnotated; }
 #endif
+
+    void updateChildrenPropertyIfNeeded();
+    bool sendsPropertiesToUIProcess() const;
 
 protected:
     PlatformCALayerRemote(WebCore::PlatformCALayer::LayerType, WebCore::PlatformCALayerClient* owner, RemoteLayerTreeContext&);

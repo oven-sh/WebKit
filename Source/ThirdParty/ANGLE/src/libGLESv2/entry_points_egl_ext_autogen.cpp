@@ -797,21 +797,22 @@ void EGLAPIENTRY EGL_ReleaseHighPowerGPUANGLE(EGLDisplay dpy, EGLContext ctx)
         EGL_EVENT(ReleaseHighPowerGPUANGLE, "dpy = 0x%016" PRIxPTR ", ctx = 0x%016" PRIxPTR "",
                   (uintptr_t)dpy, (uintptr_t)ctx);
 
-        gl::ContextID ctxPacked = PackParam<gl::ContextID>(ctx);
+        gl::ContextID ctxPacked            = PackParam<gl::ContextID>(ctx);
+        egl::ScopedContextRef ctxPackedRef = GetContextRefIfValid(dpyPackedLock.get(), ctxPacked);
+        gl::Context *ctxPackedObject       = ctxPackedRef.get();
 
         {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY(ReleaseHighPowerGPUANGLE, thread, validDisplay,
-                                              ctxPacked);
+            ANGLE_EGL_SCOPED_CONTEXT_LOCK(ReleaseHighPowerGPUANGLE, thread, ctxPackedObject);
             if (IsEGLValidationEnabled())
             {
                 ANGLE_EGL_VALIDATE_VOID(thread, ReleaseHighPowerGPUANGLE, validDisplay,
-                                        validDisplay, ctxPacked);
+                                        validDisplay, ctxPackedObject);
             }
             else
             {
             }
 
-            ReleaseHighPowerGPUANGLE(thread, dpyPacked, ctxPacked);
+            ReleaseHighPowerGPUANGLE(thread, dpyPacked, ctxPackedObject);
         }
 
         ANGLE_CAPTURE_EGL(ReleaseHighPowerGPUANGLE, true, thread, dpyPacked, ctxPacked);
@@ -832,21 +833,22 @@ void EGLAPIENTRY EGL_ReacquireHighPowerGPUANGLE(EGLDisplay dpy, EGLContext ctx)
         EGL_EVENT(ReacquireHighPowerGPUANGLE, "dpy = 0x%016" PRIxPTR ", ctx = 0x%016" PRIxPTR "",
                   (uintptr_t)dpy, (uintptr_t)ctx);
 
-        gl::ContextID ctxPacked = PackParam<gl::ContextID>(ctx);
+        gl::ContextID ctxPacked            = PackParam<gl::ContextID>(ctx);
+        egl::ScopedContextRef ctxPackedRef = GetContextRefIfValid(dpyPackedLock.get(), ctxPacked);
+        gl::Context *ctxPackedObject       = ctxPackedRef.get();
 
         {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY(ReacquireHighPowerGPUANGLE, thread, validDisplay,
-                                              ctxPacked);
+            ANGLE_EGL_SCOPED_CONTEXT_LOCK(ReacquireHighPowerGPUANGLE, thread, ctxPackedObject);
             if (IsEGLValidationEnabled())
             {
                 ANGLE_EGL_VALIDATE_VOID(thread, ReacquireHighPowerGPUANGLE, validDisplay,
-                                        validDisplay, ctxPacked);
+                                        validDisplay, ctxPackedObject);
             }
             else
             {
             }
 
-            ReacquireHighPowerGPUANGLE(thread, dpyPacked, ctxPacked);
+            ReacquireHighPowerGPUANGLE(thread, dpyPacked, ctxPackedObject);
         }
 
         ANGLE_CAPTURE_EGL(ReacquireHighPowerGPUANGLE, true, thread, dpyPacked, ctxPacked);
@@ -1857,6 +1859,10 @@ EGLint EGLAPIENTRY EGL_LabelObjectKHR(EGLDisplay display,
             (objectTypePacked == ObjectType::Surface)
                 ? GetSurfaceIfValid(validDisplay, PackParam<SurfaceID>(object))
                 : egl::ScopedSurfaceLockAndRef();
+        egl::ScopedContextRef contextObjectRef =
+            (objectTypePacked == ObjectType::Context)
+                ? GetContextRefIfValid(displayPackedLock.get(), PackParam<gl::ContextID>(object))
+                : egl::ScopedContextRef();
 
         {
             ANGLE_EGL_SCOPED_CONTEXT_LOCK(LabelObjectKHR, thread);
@@ -1924,32 +1930,36 @@ EGLint EGLAPIENTRY EGL_ClientWaitSyncKHR(EGLDisplay dpy,
         egl::ScopedThreadSafeDisplayRef dpyPackedRef = GetThreadSafeDisplayIfValid(dpyPacked);
         egl::ThreadSafeDisplay *validDisplay         = dpyPackedRef.get();
 
-        EGL_EVENT(ClientWaitSyncKHR,
-                  "dpy = 0x%016" PRIxPTR ", sync = 0x%016" PRIxPTR ", flags = %d, timeout = %llu",
-                  (uintptr_t)dpy, (uintptr_t)sync, flags, static_cast<unsigned long long>(timeout));
-
-        egl::SyncID syncPacked           = PackParam<egl::SyncID>(sync);
-        egl::ScopedSyncRef syncPackedRef = GetSyncIfValid(validDisplay, syncPacked);
-        egl::Sync *syncPackedObject      = syncPackedRef.get();
-
         {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK(ClientWaitSyncKHR, thread, flags);
-            if (IsEGLValidationEnabled())
+            EGL_EVENT(
+                ClientWaitSyncKHR,
+                "dpy = 0x%016" PRIxPTR ", sync = 0x%016" PRIxPTR ", flags = %d, timeout = %llu",
+                (uintptr_t)dpy, (uintptr_t)sync, flags, static_cast<unsigned long long>(timeout));
+
+            egl::SyncID syncPacked           = PackParam<egl::SyncID>(sync);
+            egl::ScopedSyncRef syncPackedRef = GetSyncIfValid(validDisplay, syncPacked);
+            egl::Sync *syncPackedObject      = syncPackedRef.get();
+
             {
-                ANGLE_EGL_VALIDATE(thread, ClientWaitSyncKHR, validDisplay, EGLint, validDisplay,
-                                   syncPackedObject, flags, timeout);
-            }
-            else
-            {
+                ANGLE_EGL_SCOPED_CONTEXT_LOCK(ClientWaitSyncKHR, thread, flags);
+                if (IsEGLValidationEnabled())
+                {
+                    ANGLE_EGL_VALIDATE(thread, ClientWaitSyncKHR, validDisplay, EGLint,
+                                       validDisplay, syncPackedObject, flags, timeout);
+                }
+                else
+                {
+                }
+
+                returnValue =
+                    ClientWaitSyncKHR(thread, validDisplay, syncPackedObject, flags, timeout);
             }
 
-            returnValue = ClientWaitSyncKHR(thread, validDisplay, syncPackedObject, flags, timeout);
+            ANGLE_CAPTURE_EGL(ClientWaitSyncKHR, true, thread, dpyPacked, syncPacked, flags,
+                              timeout, returnValue);
         }
-
-        ANGLE_CAPTURE_EGL(ClientWaitSyncKHR, true, thread, dpyPacked, syncPacked, flags, timeout,
-                          returnValue);
+        egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     }
-    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
     return returnValue;
 }
 
@@ -1988,7 +1998,7 @@ EGLSyncKHR EGLAPIENTRY EGL_CreateSyncKHR(EGLDisplay dpy, EGLenum type, const EGL
         ANGLE_CAPTURE_EGL(CreateSyncKHR, true, thread, dpyPacked, type, attrib_listPacked,
                           returnValue);
     }
-    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
     return returnValue;
 }
 
@@ -2097,23 +2107,25 @@ EGLImageKHR EGLAPIENTRY EGL_CreateImageKHR(EGLDisplay dpy,
                   (uintptr_t)dpy, (uintptr_t)ctx, target, (uintptr_t)buffer,
                   (uintptr_t)attrib_list);
 
-        gl::ContextID ctxPacked               = PackParam<gl::ContextID>(ctx);
+        gl::ContextID ctxPacked            = PackParam<gl::ContextID>(ctx);
+        egl::ScopedContextRef ctxPackedRef = GetContextRefIfValid(dpyPackedLock.get(), ctxPacked);
+        gl::Context *ctxPackedObject       = ctxPackedRef.get();
         const AttributeMap &attrib_listPacked = PackParam<const AttributeMap &>(attrib_list);
 
         {
-            ANGLE_EGL_SCOPED_CONTEXT_LOCK_DPY(CreateImageKHR, thread, validDisplay, ctxPacked);
+            ANGLE_EGL_SCOPED_CONTEXT_LOCK(CreateImageKHR, thread, ctxPackedObject);
             if (IsEGLValidationEnabled())
             {
                 ANGLE_EGL_VALIDATE(thread, CreateImageKHR, validDisplay, EGLImageKHR, validDisplay,
-                                   ctxPacked, target, buffer, attrib_listPacked);
+                                   ctxPackedObject, target, buffer, attrib_listPacked);
             }
             else
             {
                 attrib_listPacked.initializeWithoutValidation();
             }
 
-            returnValue =
-                CreateImageKHR(thread, dpyPacked, ctxPacked, target, buffer, attrib_listPacked);
+            returnValue = CreateImageKHR(thread, dpyPacked, ctxPackedObject, target, buffer,
+                                         attrib_listPacked);
         }
 
         ANGLE_CAPTURE_EGL(CreateImageKHR, true, thread, dpyPacked, ctxPacked, target, buffer,
@@ -2786,7 +2798,7 @@ EGLint EGLAPIENTRY EGL_WaitSyncKHR(EGLDisplay dpy, EGLSyncKHR sync, EGLint flags
 
         ANGLE_CAPTURE_EGL(WaitSyncKHR, true, thread, dpyPacked, syncPacked, flags, returnValue);
     }
-    egl::Display::GetCurrentThreadUnlockedTailCall()->run(&returnValue);
+    ASSERT(!egl::Display::GetCurrentThreadUnlockedTailCall()->any());
     return returnValue;
 }
 

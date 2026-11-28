@@ -33,8 +33,7 @@
 #include <wtf/MathExtras.h>
 #include <wtf/text/ASCIILiteral.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 // MARK: - Unit Literal Type
 
@@ -165,36 +164,6 @@ constexpr bool isUnit(U other)
         return true;
     else if constexpr (NestedUnitEnumOf<T, U>)
         return UnitTraits<U>::template is<T>(other);
-}
-
-// Allows identity casts, upcasts or downcasts of a unit type.
-template<UnitEnum T, UnitEnum U>
-constexpr T unitCast(U other)
-{
-    if constexpr (std::same_as<T, U>)
-        return other;
-    else if constexpr (NestedUnitEnumOf<U, T>)
-        return UnitTraits<T>::upcast(other);
-    else if constexpr (NestedUnitEnumOf<T, U>) {
-        RELEASE_ASSERT(isUnit<T>(other));
-        return UnitTraits<U>::template downcast<T>(other);
-    }
-}
-
-// Allows casting UP from a unit type to a composite unit type that includes it.
-//    `AnglePercentageUnit::Deg` == unitUpcast<AnglePercentageUnit>(AngleUnit::Deg)
-template<UnitEnum T, UnitEnum U>
-constexpr std::optional<T> dynamicUnitCast(U other)
-{
-    if constexpr (std::same_as<T, U>)
-        return other;
-    else if constexpr (NestedUnitEnumOf<U, T>)
-        return UnitTraits<T>::upcast(other);
-    else if constexpr (NestedUnitEnumOf<T, U>) {
-        if (!isUnit<T>(other))
-            return { };
-        return UnitTraits<U>::template downcast<T>(other);
-    }
 }
 
 // Allows casting UP from a unit type to a composite unit type that includes it.
@@ -357,7 +326,6 @@ template<> struct UnitTraits<PercentageUnit> {
     static consteval bool isValidRangeForCategory(Range) { return true; }
 
     static constexpr std::optional<PercentageUnit> validate(CSSUnitType cssUnit) { return toPercentageUnit(cssUnit); }
-    static consteval bool isValidRangeForUnitType(Range) { return true; }
 };
 static_assert(UnitTraits<PercentageUnit>::count == std::to_underlying(PercentageUnit::Percentage) + 1);
 
@@ -1621,5 +1589,4 @@ template<auto unit, typename T> constexpr decltype(auto) convertToValueInUnitsOf
     return UnitTraits<typename T::UnitType>::template convert<unit>(value.value, value.unit);
 }
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

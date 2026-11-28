@@ -28,13 +28,13 @@
 #include <WebCore/FormattingConstraints.h>
 #include <WebCore/LayoutSize.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 struct ConstraintsForInlineContent : public ConstraintsForInFlowContent {
     ConstraintsForInlineContent(const ConstraintsForInFlowContent&, LayoutUnit visualLeft, LayoutSize formattingRootBorderBoxSize);
 
     LayoutUnit visualLeft() const { return m_visualLeft; }
+    LayoutUnit visualRight() const { return m_visualLeft + horizontal().logicalWidth; }
     LayoutSize formattingRootBorderBoxSize() const { return m_formattingRootBorderBoxSize; }
 
 private:
@@ -49,7 +49,6 @@ inline ConstraintsForInlineContent::ConstraintsForInlineContent(const Constraint
 {
 }
 
-}
 }
 
 SPECIALIZE_TYPE_TRAITS_LAYOUT_FORMATTING_CONSTRAINTS(ConstraintsForInlineContent, isConstraintsForInlineContent())

@@ -200,6 +200,7 @@ void initializeIfNeeded()
     bool shouldInstallDebugMessenger = false;
 #endif // VK_EXT_debug_utils
 
+#if !LOG_DISABLED || !RELEASE_LOG_DISABLED
     if (LOG_CHANNEL(Vulkan).state != WTFLogChannelState::Off) [[unlikely]] {
         static constexpr auto validationLayerName = "VK_LAYER_KHRONOS_validation";
         if (Instance::hasLayer(validationLayerName)) {
@@ -220,7 +221,7 @@ void initializeIfNeeded()
             for (const auto* name : layerNames)
                 formattedLayerList.append(" "_s, UTF8CStringView::unsafeFromUTF8(name));
         }
-        RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu layers%s", layerNames.size(), formattedLayerList.toString().utf8());
+        RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu layers%s", layerNames.size(), makeUTF8CString(formattedLayerList.toString()));
 
         StringBuilder formattedExtensionList;
         if (extensionNames.size()) {
@@ -228,8 +229,9 @@ void initializeIfNeeded()
             for (const auto* name : extensionNames)
                 formattedExtensionList.append(" "_s, UTF8CStringView::unsafeFromUTF8(name));
         }
-        RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu extensions%s", extensionNames.size(), formattedExtensionList.toString().utf8());
+        RELEASE_LOG_DEBUG(Vulkan, "Requesting %zu extensions%s", extensionNames.size(), makeUTF8CString(formattedExtensionList.toString()));
     }
+#endif
 
 #if USE(GLIB)
     auto applicationName = toUTF8CString(getApplicationID(), '.', processTypeDescription(processType()));

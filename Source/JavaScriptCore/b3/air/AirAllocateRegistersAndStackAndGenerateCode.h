@@ -84,7 +84,7 @@ private:
     size_t m_globalInstIndex;
     IndexMap<Reg, Tmp>* m_currentAllocation { nullptr };
     TmpMap<size_t> m_liveRangeEnd;
-    UncheckedKeyHashMap<size_t, Vector<Tmp, 2>> m_tmpsToRelease;
+    HashMap<size_t, Vector<Tmp, 2>> m_tmpsToRelease;
     RegisterSet m_namedUsedRegs;
     RegisterSet m_namedDefdRegs;
     RegisterSet m_earlyClobber;
@@ -105,7 +105,7 @@ private:
         Vector<TerminalDef, 2> defs;
     };
 
-    UncheckedKeyHashMap<BasicBlock*, PatchSpillData> m_blocksAfterTerminalPatchForSpilling;
+    HashMap<BasicBlock*, PatchSpillData> m_blocksAfterTerminalPatchForSpilling;
 };
 
 } } } // namespace JSC::B3::Air

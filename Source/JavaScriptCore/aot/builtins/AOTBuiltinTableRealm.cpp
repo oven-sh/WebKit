@@ -1030,7 +1030,7 @@ private:
     {
         if (uid->is8Bit() && charactersAreAllASCII(uid->span8()))
             return ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(uid->span8()));
-        CString utf8 = String(uid).utf8();
+        CString utf8 = makeUTF8CString(String(uid));
         return ProgramTables::numberOfNameTakenForAbsent(byteCast<uint8_t>(utf8.span()));
     }
 

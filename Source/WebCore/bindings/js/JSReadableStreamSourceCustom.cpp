@@ -42,7 +42,7 @@ JSValue JSReadableStreamSource::start(JSGlobalObject& lexicalGlobalObject, CallF
     VM& vm = lexicalGlobalObject.vm();
     
     // FIXME: Why is it ok to ASSERT the argument count here?
-    ASSERT(callFrame.argumentCount());
+    RELEASE_ASSERT(callFrame.argumentCount());
     JSReadableStreamDefaultController* controller = dynamicDowncast<JSReadableStreamDefaultController>(callFrame.uncheckedArgument(0));
     ASSERT(controller);
 

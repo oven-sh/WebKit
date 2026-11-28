@@ -639,6 +639,11 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         }
     }
 
+    // Where an executable is made for the source, as upstream has it, and so not for a record that shares one above: a
+    // direct eval that finds its executable in the cache is not profiled again (evaluateDirectEvalAt in Interpreter.cpp).
+    if (SourceProfiler::g_profilerHook) [[unlikely]]
+        SourceProfiler::profile(SourceProfiler::Type::Module, sourceCode());
+
     String liveImports;
 #if USE(BUN_JSC_ADDITIONS)
     liveImports = this->liveImports(globalObject);

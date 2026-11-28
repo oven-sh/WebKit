@@ -31,8 +31,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleExtractor.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 NODELETE static Visibility visibilityIncludingForceHidden(const ComputedStyle& style)
 {
@@ -87,6 +86,12 @@ public:
                         return true;
                 }
             }
+
+            // A border-shape can paint outside the border box, so changing it requires recomputing visual overflow (which also repaints).
+            // FIXME: Make border-shape contribute to visual overflow (webkit.org/b/332330).
+            if (a.nonInheritedData().rareData.ptr() != b.nonInheritedData().rareData.ptr()
+                && a.nonInheritedData().rareData->borderShape != b.nonInheritedData().rareData->borderShape)
+                return true;
 
             if (a.nonInheritedData().backgroundData.ptr() != b.nonInheritedData().backgroundData.ptr()) {
                 auto aHasOutlineInVisualOverflow = a.hasOutlineInVisualOverflow();
@@ -276,7 +281,7 @@ public:
             // Don't return; keep looking for another change
         }
 
-        if (a.breakBefore != b.breakBefore || a.breakAfter != b.breakAfter || a.breakInside != b.breakInside)
+        if (a.breakBefore != b.breakBefore || a.breakAfter != b.breakAfter || a.breakInside != b.breakInside || a.pageName != b.pageName)
             return true;
 
         if (a.isolation != b.isolation) {
@@ -550,10 +555,10 @@ public:
             return true;
 
         if (aHasFirstLineStyle) {
-            auto* aFirstLineStyle = a.pseudoElementStyle({ PseudoElementType::FirstLine });
+            CheckedPtr aFirstLineStyle = a.pseudoElementStyle({ PseudoElementType::FirstLine });
             if (!aFirstLineStyle)
                 return true;
-            auto* bFirstLineStyle = b.pseudoElementStyle({ PseudoElementType::FirstLine });
+            CheckedPtr bFirstLineStyle = b.pseudoElementStyle({ PseudoElementType::FirstLine });
             if (!bFirstLineStyle)
                 return true;
             // FIXME: Not all first line style changes actually need layout.
@@ -676,29 +681,24 @@ public:
         return true;
     }
 
-    static bool backgroundIsEquivalentForPainting(const Style::ComputedStyle& a, const Style::ComputedStyle& b, bool currentColorDiffers)
+    static bool isEquivalentForPainting(const BackgroundData& a, const BackgroundData& b, bool currentColorDiffers)
     {
-        SUPPRESS_UNCOUNTED_LOCAL auto& backgroundA = *a.nonInheritedData().backgroundData;
-        SUPPRESS_UNCOUNTED_LOCAL const auto& backgroundB = *b.nonInheritedData().backgroundData;
-
-        Color usedBackgroundColorA = a.usedBackgroundColor();
-        Color usedBackgroundColorB = b.usedBackgroundColor();
-
         if (&a == &b) {
             ASSERT(currentColorDiffers);
-            return !usedBackgroundColorA.containsCurrentColor();
+            return !a.containsCurrentColor();
         }
 
-        if (backgroundA.background != backgroundB.background || usedBackgroundColorA != usedBackgroundColorB)
+        if (a.background != b.background || a.usedBackgroundColor() != b.usedBackgroundColor())
             return false;
-        if (currentColorDiffers && (backgroundA.backgroundContainsCurrentColor() || usedBackgroundColorA.containsCurrentColor()))
+        if (currentColorDiffers && (a.backgroundContainsCurrentColor() || a.usedBackgroundColor().containsCurrentColor()))
             return false;
 
-        if (!backgroundA.outline.isVisible() && !backgroundB.outline.isVisible())
+        if (!a.outline.isVisible() && !b.outline.isVisible())
             return true;
-        if (currentColorDiffers && backgroundA.outline.outlineColor.containsCurrentColor())
+        if (currentColorDiffers && a.outline.outlineColor.containsCurrentColor())
             return false;
-        return backgroundA.outline == backgroundB.outline;
+
+        return a.outline == b.outline;
     }
 
     static bool isEquivalentForPainting(const BorderData& a, const BorderData& b, bool currentColorDiffers)
@@ -879,13 +879,14 @@ public:
 
         if (visibilityIncludingForceHidden(a) != visibilityIncludingForceHidden(b)
             || a.inheritedFlags().printColorAdjust != b.inheritedFlags().printColorAdjust
-            || a.inheritedFlags().insideLink != b.inheritedFlags().insideLink)
+            || a.inheritedFlags().insideLink != b.inheritedFlags().insideLink
+            || a.nonInheritedFlags().borderRadiusPercentageBasis != b.nonInheritedFlags().borderRadiusPercentageBasis)
             return true;
 
 
         if (currentColorDiffers || &a.nonInheritedData() != &b.nonInheritedData()) {
             if (currentColorDiffers || a.nonInheritedData().backgroundData.ptr() != b.nonInheritedData().backgroundData.ptr()) {
-                SUPPRESS_UNCOUNTED_ARG if (!backgroundIsEquivalentForPainting(a, b, currentColorDiffers))
+                SUPPRESS_UNCOUNTED_ARG if (!isEquivalentForPainting(*a.nonInheritedData().backgroundData, *b.nonInheritedData().backgroundData, currentColorDiffers))
                     return true;
             }
 
@@ -927,8 +928,8 @@ public:
             return true;
 
         auto differs = [&](const PseudoElementIdentifier& identifier) {
-            auto* aStyle = a.pseudoElementStyle(identifier);
-            auto* bStyle = b.pseudoElementStyle(identifier);
+            CheckedPtr aStyle = a.pseudoElementStyle(identifier);
+            CheckedPtr bStyle = b.pseudoElementStyle(identifier);
             if (!aStyle || !bStyle)
                 return aStyle != bStyle;
             return *aStyle != *bStyle;
@@ -1153,5 +1154,4 @@ void dumpDifferences(TextStream& ts, const Style::ComputedStyle& a, const Style:
 
 #endif
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

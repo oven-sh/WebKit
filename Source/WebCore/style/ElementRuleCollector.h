@@ -50,13 +50,14 @@ struct MatchedRule {
 class ElementRuleCollector {
 public:
     ElementRuleCollector(const Element&, const ScopeRuleSets&, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
-    ElementRuleCollector(const Element&, const RuleSet& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
+    ElementRuleCollector(const Element&, Ref<const RuleSet>&& authorStyle, SelectorMatchingState*, SelectorChecker::Mode = SelectorChecker::Mode::ResolvingStyle);
 
     void setIncludeEmptyRules(bool value) { m_shouldIncludeEmptyRules = value; }
 
     void matchAllRules(bool matchAuthorAndUserStyles, bool includeSMILProperties);
     void matchUARules();
     void matchAuthorRules();
+    void matchQuirkRules();
     void matchUserRules();
 
     bool matchesAnyAuthorRules();
@@ -126,6 +127,7 @@ private:
     const Ref<const Element> m_element;
     const Ref<const RuleSet> m_authorStyle;
     const RefPtr<const RuleSet> m_userStyle;
+    const RefPtr<const RuleSet> m_quirkStyle;
     const RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
     const RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
     SelectorMatchingState* m_selectorMatchingState;
@@ -143,7 +145,7 @@ private:
     Ref<MatchResult> m_result;
     Relations m_styleRelations;
     EnumSet<PseudoElementType> m_matchedPseudoElements;
-    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
+    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NoGeneratedContent };
 };
 
 ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector* rules, const MatchRequest& matchRequest)

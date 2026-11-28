@@ -33,6 +33,7 @@
 #include <WebCore/WebGPUCppAPI.h>
 #include <WebCore/WebGPUDevice.h>
 #include <WebCore/WebGPURenderBundleEncoderDescriptor.h>
+#include <wtf/SharedTask.h>
 #include <wtf/TZoneMalloc.h>
 
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
@@ -41,15 +42,14 @@
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
 class RemoteQueueProxy;
 
 class RemoteDeviceProxy final : public ::WebGPU::Device {
     WTF_MAKE_TZONE_ALLOCATED(RemoteDeviceProxy);
 public:
-    static Ref<RemoteDeviceProxy> create(Vector<::WebGPU::FeatureName>&& features, const ::WebGPU::Limits& limits, RemoteAdapterProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier, WebGPUIdentifier queueIdentifier)
+    static Ref<RemoteDeviceProxy> create(Vector<::WebGPU::FeatureName>&& features, const ::WebGPU::Limits& limits, RemoteAdapterProxy& parent, WebGPUDeviceIdentifier identifier, WebGPUQueueIdentifier queueIdentifier)
     {
-        return adoptRef(*new RemoteDeviceProxy(WTF::move(features), limits, parent, convertToBackingContext, identifier, queueIdentifier));
+        return adoptRef(*new RemoteDeviceProxy(WTF::move(features), limits, parent, identifier, queueIdentifier));
     }
 
     virtual ~RemoteDeviceProxy();
@@ -62,8 +62,10 @@ public:
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     void updateExternalTexture(const ::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&);
 #endif
-    WebGPUIdentifier backing() const { return m_backing; }
+    WebGPUDeviceIdentifier backing() const { return m_backing; }
 
+    RemoteAdapterProxy& adapter() const final { return m_parent; }
+    RefPtr<::WebGPU::Instance> instance() const final { return m_parent->instance(); }
     Vector<::WebGPU::FeatureName> features() const final { return m_features; }
     const ::WebGPU::Limits& limits() const LIFETIME_BOUND final { return m_limits; }
     NODELETE Ref<::WebGPU::Queue> queue() final;
@@ -92,16 +94,34 @@ public:
 
     void pushErrorScope(::WebGPU::ErrorFilter) final;
     void popErrorScope(CompletionHandler<void(bool, std::optional<::WebGPU::Error>&&)>&&) final;
-    void resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::optional<::WebGPU::Error>&&)>&&) final;
+    void setUncapturedErrorCallback(Function<void(::WebGPU::Error&&)>&&) final;
     void resolveDeviceLostPromise(CompletionHandler<void(::WebGPU::DeviceLostReason, String&&)>&&) final;
+    bool isLost() const final;
     void pauseAllErrorReporting(bool pause) final;
+
+    RefPtr<::WebGPU::BindGroup> createInvalidBindGroup() final;
+    RefPtr<::WebGPU::BindGroupLayout> createInvalidBindGroupLayout() final;
+    RefPtr<::WebGPU::Buffer> createInvalidBuffer() final;
+    RefPtr<::WebGPU::CommandBuffer> createInvalidCommandBuffer() final;
+    RefPtr<::WebGPU::CommandEncoder> createInvalidCommandEncoder() final;
+    RefPtr<::WebGPU::ComputePipeline> createInvalidComputePipeline() final;
+    RefPtr<::WebGPU::PipelineLayout> createInvalidPipelineLayout() final;
+    RefPtr<::WebGPU::QuerySet> createInvalidQuerySet() final;
+    RefPtr<::WebGPU::RenderBundleEncoder> createInvalidRenderBundleEncoder(String&& error) final;
+    RefPtr<::WebGPU::RenderPipeline> createInvalidRenderPipeline() final;
+    RefPtr<::WebGPU::Sampler> createInvalidSampler() final;
+    RefPtr<::WebGPU::ShaderModule> createInvalidShaderModule() final;
+    RefPtr<::WebGPU::Texture> createInvalidTexture() final;
+    void generateAValidationError(String&& message) final;
+
     void setLabel(String&&) final;
     bool isValid() const final;
 
-private:
-    friend class DowncastConvertToBackingContext;
+    // Called by RemoteGPUProxy with each uncaptured error that the GPU process sends.
+    void didGenerateUncapturedError(::WebGPU::Error&&);
 
-    RemoteDeviceProxy(Vector<::WebGPU::FeatureName>&&, const ::WebGPU::Limits&, RemoteAdapterProxy&, ConvertToBackingContext&, WebGPUIdentifier, WebGPUIdentifier queueIdentifier);
+private:
+    RemoteDeviceProxy(Vector<::WebGPU::FeatureName>&&, const ::WebGPU::Limits&, RemoteAdapterProxy&, WebGPUDeviceIdentifier, WebGPUQueueIdentifier);
 
     RemoteDeviceProxy(const RemoteDeviceProxy&) = delete;
     RemoteDeviceProxy(RemoteDeviceProxy&&) = delete;
@@ -119,12 +139,14 @@ private:
         return protect(root().streamClientConnection())->sendWithAsyncReply(std::forward<T>(message), std::forward<C>(completionHandler), backing());
     }
 
-    WebGPUIdentifier m_backing;
+    WebGPUDeviceIdentifier m_backing;
     const Vector<::WebGPU::FeatureName> m_features;
     const ::WebGPU::Limits m_limits;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
     const Ref<RemoteAdapterProxy> m_parent;
     const Ref<RemoteQueueProxy> m_queue;
+    bool m_isLost { false };
+    // Shared, so that the callback stays alive while it runs even if it replaces itself.
+    RefPtr<SharedTask<void(::WebGPU::Error&&)>> m_uncapturedErrorCallback;
 #if PLATFORM(COCOA) && ENABLE(VIDEO)
     WebKit::SharedVideoFrameWriter m_sharedVideoFrameWriter;
 #endif

@@ -48,6 +48,7 @@
 #import <WebCore/ScrollingTreeFrameScrollingNode.h>
 #import <WebCore/ScrollingTreeScrollingNode.h>
 #import <wtf/BlockObjCExceptions.h>
+#import <wtf/Scope.h>
 #import <wtf/SetForScope.h>
 #import <wtf/SystemTracing.h>
 #import <wtf/TZoneMallocInlines.h>
@@ -108,7 +109,7 @@
             _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
         }
         if (_scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES;");
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestFingerDownInterval, "isAnimation=YES; currentURL=%" PRIVATE_LOG_STRING, makeUTF8CString(scrollingTreeNodeDelegate->currentURL()));
             _scrollPerfIntervalState = ScrollPerfIntervalState::FingerDown;
         }
     }
@@ -188,7 +189,7 @@
             _scrollPerfIntervalState = ScrollPerfIntervalState::Inactive;
         }
         if (willDecelerate && _scrollPerfIntervalState == ScrollPerfIntervalState::Inactive) {
-            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
+            WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES; currentURL=%" PRIVATE_LOG_STRING, makeUTF8CString(scrollingTreeNodeDelegate->currentURL()));
             _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
         }
     }
@@ -579,12 +580,29 @@ bool ScrollingTreeScrollingNodeDelegateIOS::isScrollingPerformanceTestingEnabled
     return scrollingTree()->scrollingPerformanceTestingEnabled();
 }
 
+String ScrollingTreeScrollingNodeDelegateIOS::currentURL() const
+{
+    RefPtr scrollingCoordinatorProxy = downcast<RemoteScrollingTree>(scrollingTree())->scrollingCoordinatorProxy();
+    if (!scrollingCoordinatorProxy)
+        return { };
+
+    return protect(scrollingCoordinatorProxy->webPageProxy())->currentURL();
+}
+
 void ScrollingTreeScrollingNodeDelegateIOS::scrollViewDidScroll(const FloatPoint& scrollOffset, bool inUserInteraction)
 {
     if (m_updatingFromStateNode)
         return;
 
     auto scrollPosition = ScrollableArea::scrollPositionFromOffset(scrollOffset, toFloatSize(scrollOrigin()));
+
+    // Scroll updates sent to the web process carry only a position, so mark user scrolls as
+    // delta scrolls here.
+    scrollingTree()->setIsApplyingDeltaScroll(inUserInteraction);
+    auto clearApplyingDeltaScroll = WTF::makeScopeExit([&] {
+        scrollingTree()->setIsApplyingDeltaScroll(false);
+    });
+
     scrollingNode()->wasScrolledByDelegatedScrolling(scrollPosition, { }, inUserInteraction ? ScrollingLayerPositionAction::Sync : ScrollingLayerPositionAction::Set);
 }
 

@@ -161,7 +161,7 @@ static inline bool isMediaStreamCorrectlyStarted(const MediaStream& stream)
 
 void UserMediaRequest::allow(CaptureDevice&& audioDevice, CaptureDevice&& videoDevice, MediaDeviceHashSalts&& deviceIdentifierHashSalt, CompletionHandler<void()>&& completionHandler)
 {
-    RELEASE_LOG(MediaStream, "UserMediaRequest::allow %s %s", audioDevice ? audioDevice.persistentId().utf8() : ""_s, videoDevice ? videoDevice.persistentId().utf8() : ""_s);
+    RELEASE_LOG(MediaStream, "UserMediaRequest::allow %s %s", audioDevice ? makeUTF8CString(audioDevice.persistentId()) : ""_s, videoDevice ? makeUTF8CString(videoDevice.persistentId()) : ""_s);
 
     Ref document = downcast<Document>(*scriptExecutionContext());
     RefPtr localWindow = document->window();
@@ -188,7 +188,7 @@ void UserMediaRequest::allow(CaptureDevice&& audioDevice, CaptureDevice&& videoD
             if (!privateStreamOrError) {
                 RELEASE_LOG(MediaStream, "UserMediaRequest::allow failed to create media stream!");
                 auto error = privateStreamOrError.error();
-                protect(protectedThis->scriptExecutionContext())->addConsoleMessage(MessageSource::JS, MessageLevel::Error, error.errorMessage);
+                protect(protectedThis->scriptExecutionContext())->addConsoleMessage(MessageSource::Media, MessageLevel::Error, error.errorMessage);
                 protectedThis->deny(error.denialReason, error.errorMessage, error.invalidConstraint);
                 return;
             }

@@ -35,7 +35,9 @@ namespace WebCore {
 struct PatternData {
     WTF_MAKE_TZONE_ALLOCATED_INLINE(PatternData);
 public:
-    RefPtr<Pattern> pattern;
+    RefPtr<const Pattern> pattern;
+    // The pattern for a non-scaling stroke. The fill keeps using the pattern above.
+    RefPtr<const Pattern> nonScalingStrokePattern;
     AffineTransform transform;
 };
 
@@ -43,7 +45,7 @@ class LegacyRenderSVGResourcePattern final : public LegacyRenderSVGResourceConta
     WTF_MAKE_TZONE_ALLOCATED(LegacyRenderSVGResourcePattern);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(LegacyRenderSVGResourcePattern);
 public:
-    LegacyRenderSVGResourcePattern(SVGPatternElement&, Style::ComputedStyle&&);
+    LegacyRenderSVGResourcePattern(SVGPatternElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~LegacyRenderSVGResourcePattern();
 
     NODELETE SVGPatternElement& patternElement() const;

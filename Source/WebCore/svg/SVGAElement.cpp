@@ -113,7 +113,7 @@ void SVGAElement::svgAttributeChanged(const QualifiedName& attrName)
     SVGGraphicsElement::svgAttributeChanged(attrName);
 }
 
-RenderPtr<RenderElement> SVGAElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> SVGAElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
     RefPtr svgParent = dynamicDowncast<SVGElement>(parentNode());
     if (svgParent && svgParent->isTextContent())
@@ -148,13 +148,15 @@ void SVGAElement::defaultEventHandler(Event& event)
             Ref document = this->document();
             URL completedURL = document->encodingParseURL(url);
 
+            auto downloadAttribute = parseDownloadAttribute(*this, completedURL, SVGNames::downloadAttr);
+
             auto target = this->target();
             if (target.isEmpty() && attributeWithoutSynchronization(XLinkNames::showAttr) == "new"_s)
                 target = blankTargetFrameName();
             event.setDefaultHandled();
 
             auto referrerPolicy = effectiveReferrerPolicy(m_linkRelations, this->referrerPolicy());
-            navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy);
+            navigateHyperlink(*this, event, completedURL, target, m_linkRelations, referrerPolicy, downloadAttribute);
             return;
         }
     }
@@ -241,11 +243,6 @@ SharedStringHash SVGAElement::visitedLinkHash() const
     if (!m_storedVisitedLinkHash)
         m_storedVisitedLinkHash = computeVisitedLinkHash(document().baseURL(), getAttribute(SVGNames::hrefAttr, XLinkNames::hrefAttr));
     return *m_storedVisitedLinkHash;
-}
-
-URL SVGAElement::hrefURL() const
-{
-    return protect(document())->encodingParseURL(href());
 }
 
 // https://w3c.github.io/svgwg/svg2-draft/linking.html#InterfaceSVGAElement

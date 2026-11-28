@@ -104,7 +104,7 @@ public:
         IteratorType m_endPosition;
     };
 
-    class WeakHashMapIterator : public WeakHashMapIteratorBase<WeakHashMap, typename MapType::iterator, PeekPtrType, PeekType> {
+    class WTF_VIEW_TYPE WeakHashMapIterator : public WeakHashMapIteratorBase<WeakHashMap, typename MapType::iterator, PeekPtrType, PeekType> {
     public:
         using Base = WeakHashMapIteratorBase<WeakHashMap, typename MapType::iterator, PeekPtrType, PeekType>;
 
@@ -128,7 +128,7 @@ public:
         template<typename, typename, typename> friend class WeakHashMap;
     };
 
-    class WeakHashMapConstIterator : public WeakHashMapIteratorBase<const WeakHashMap, typename MapType::const_iterator, const PeekPtrType, const PeekType> {
+    class WTF_VIEW_TYPE WeakHashMapConstIterator : public WeakHashMapIteratorBase<const WeakHashMap, typename MapType::const_iterator, const PeekPtrType, const PeekType> {
     public:
         using Base = WeakHashMapIteratorBase<const WeakHashMap, typename MapType::const_iterator, const PeekPtrType, const PeekType>;
 
@@ -152,7 +152,7 @@ public:
         template<typename, typename, typename> friend class WeakHashMap;
     };
 
-    struct AddResult {
+    struct WTF_VIEW_TYPE AddResult {
         AddResult() : isNewEntry(false) { }
         AddResult(WeakHashMapIterator&& it, bool isNewEntry)
             : iterator(WTF::move(it))
@@ -167,13 +167,13 @@ public:
     using iterator = WeakHashMapIterator;
     using const_iterator = WeakHashMapConstIterator;
 
-    iterator begin() { return WeakHashMapIterator(*this, m_map.begin()); }
-    iterator end() { return WeakHashMapIterator(*this, m_map.end()); }
-    const_iterator begin() const { return WeakHashMapConstIterator(*this, m_map.begin()); }
-    const_iterator end() const { return WeakHashMapConstIterator(*this, m_map.end()); }
+    iterator begin() LIFETIME_BOUND { return WeakHashMapIterator(*this, m_map.begin()); }
+    iterator end() LIFETIME_BOUND { return WeakHashMapIterator(*this, m_map.end()); }
+    const_iterator begin() const LIFETIME_BOUND { return WeakHashMapConstIterator(*this, m_map.begin()); }
+    const_iterator end() const LIFETIME_BOUND { return WeakHashMapConstIterator(*this, m_map.end()); }
 
     template<typename Functor>
-    AddResult ensure(const KeyType* key, NOESCAPE const Functor& functor)
+    AddResult ensure(const KeyType* key, NOESCAPE const Functor& functor) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         auto result = m_map.ensure(key, functor);
@@ -181,13 +181,13 @@ public:
     }
 
     template<typename Functor>
-    AddResult ensure(const KeyType& key, NOESCAPE const Functor& functor)
+    AddResult ensure(const KeyType& key, NOESCAPE const Functor& functor) LIFETIME_BOUND
     {
         return ensure(&key, functor);
     }
 
     template<typename T>
-    AddResult add(const KeyType* key, T&& value)
+    AddResult add(const KeyType* key, T&& value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         auto addResult = m_map.add(key, std::forward<T>(value));
@@ -195,13 +195,13 @@ public:
     }
 
     template<typename T>
-    AddResult add(const KeyType& key, T&& value)
+    AddResult add(const KeyType& key, T&& value) LIFETIME_BOUND
     {
         return add(&key, std::forward<T>(value));
     }
 
     template<typename V>
-    AddResult set(const KeyType* key, V&& value)
+    AddResult set(const KeyType* key, V&& value) LIFETIME_BOUND
     {
         amortizedCleanupIfNeeded();
         auto addResult = m_map.set(key, std::forward<V>(value));
@@ -209,29 +209,29 @@ public:
     }
 
     template<typename V>
-    AddResult set(const KeyType& key, V&& value)
+    AddResult set(const KeyType& key, V&& value) LIFETIME_BOUND
     {
         return set(&key, std::forward<V>(value));
     }
 
-    iterator find(const KeyType* key)
+    iterator find(const KeyType* key) LIFETIME_BOUND
     {
         increaseOperationCountSinceLastCleanup();
         return WeakHashMapIterator(*this, m_map.find(key));
     }
 
-    iterator find(const KeyType& key)
+    iterator find(const KeyType& key) LIFETIME_BOUND
     {
         return find(&key);
     }
 
-    const_iterator find(const KeyType* key) const
+    const_iterator find(const KeyType* key) const LIFETIME_BOUND
     {
         increaseOperationCountSinceLastCleanup();
         return WeakHashMapConstIterator(*this, m_map.find(key));
     }
 
-    const_iterator find(const KeyType& key) const
+    const_iterator find(const KeyType& key) const LIFETIME_BOUND
     {
         return find(&key);
     }
@@ -331,17 +331,6 @@ public:
 
     unsigned capacity() const { return m_map.capacity(); }
 
-    bool isEmptyIgnoringNullReferences() const
-    {
-        if (m_map.isEmpty())
-            return true;
-
-        auto onlyContainsNullReferences = begin() == end();
-        if (onlyContainsNullReferences) [[unlikely]]
-            const_cast<WeakHashMap&>(*this).clear();
-        return onlyContainsNullReferences;
-    }
-
     bool hasNullReferences() const
     {
         unsigned count = 0;
@@ -359,11 +348,26 @@ public:
         return result;
     }
 
-    unsigned computeSize() const
+    unsigned computeSize() const { return m_map.computeSize(); }
+    unsigned computeSize()
     {
-        const_cast<WeakHashMap&>(*this).removeNullReferences();
-        return m_map.size();
+        unsigned result = m_map.computeSize();
+        cleanupHappened();
+        return result;
     }
+
+    bool computeIsEmpty() const { return m_map.computeIsEmpty(); }
+    bool computeIsEmpty()
+    {
+        bool result = m_map.computeIsEmpty();
+        if (result)
+            cleanupHappened();
+        return result;
+    }
+
+    // FIXME: Update Apple-internal code to stop calling these, then remove them.
+    bool isEmptyIgnoringNullReferences() const { return computeIsEmpty(); }
+    bool isEmptyIgnoringNullReferences() { return computeIsEmpty(); }
 
     NEVER_INLINE void removeNullReferences()
     {

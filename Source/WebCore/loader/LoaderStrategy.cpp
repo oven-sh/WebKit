@@ -35,6 +35,27 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(LoaderStrategy);
 
 LoaderStrategy::~LoaderStrategy() = default;
 
+std::pair<std::optional<DeferredFetchIdentifier>, uint64_t> LoaderStrategy::reserveDeferredFetchQuota(LocalFrame&, FrameIdentifier, const SecurityOriginData&, uint64_t, bool, uint64_t)
+{
+    return { std::nullopt, 0 };
+}
+
+void LoaderStrategy::releaseDeferredFetchQuota(DeferredFetchIdentifier)
+{
+}
+
+bool LoaderStrategy::addDeferredFetch(LocalFrame&, DeferredFetchIdentifier, const ResourceRequest&, const ResourceLoaderOptions&)
+{
+    return false;
+}
+
+void LoaderStrategy::sendDeferredFetch(DeferredFetchIdentifier)
+{
+}
+
+void LoaderStrategy::removeDeferredFetch(DeferredFetchIdentifier)
+{
+}
 
 void LoaderStrategy::setResourceLoadSchedulingMode(Page&, LoadSchedulingMode)
 {
@@ -60,6 +81,11 @@ Vector<NetworkTransactionInformation> LoaderStrategy::intermediateLoadInformatio
 }
 
 bool LoaderStrategy::startKeepAliveLoadForWebKitLegacy(FrameLoader&, const ResourceRequest&, const ResourceLoaderOptions&, CompletionHandler<void(const ResourceError&, const ResourceResponse&)>&&)
+{
+    return false;
+}
+
+bool LoaderStrategy::hasExistingNetworkLoadToResume() const
 {
     return false;
 }

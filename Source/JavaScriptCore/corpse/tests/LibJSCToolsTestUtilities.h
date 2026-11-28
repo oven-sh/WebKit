@@ -27,17 +27,21 @@
 
 #if ENABLE(LIB_JSC_TOOLS)
 
-#include <mach/mach.h>
 #include <memory>
 #include <span>
 #include <stdint.h>
 #include <string_view>
+#include <sys/types.h>
 #include <wtf/DataLog.h>
 #include <wtf/HexNumber.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/RefPtr.h>
 #include <wtf/Seconds.h>
 #include <wtf/Vector.h>
+
+#if OS(DARWIN)
+#include <mach/mach.h>
+#endif
 
 namespace JSC {
 namespace Corpse {
@@ -119,6 +123,8 @@ Seconds totalSuiteTime();
         } \
     } while (0)
 
+#if OS(DARWIN)
+
 // The number of names in this task's Mach port name space. Used to show that a
 // sequence of operations leaves no port behind.
 unsigned machPortNameCount();
@@ -128,6 +134,12 @@ unsigned machPortNameCount();
 // under that same name rather than a new name, so a right that is taken and never
 // given back shows up here and not in machPortNameCount().
 unsigned machPortSendRightCount(mach_port_t);
+
+#endif // OS(DARWIN)
+
+// Kills a child this process spawned and reaps it, so that it neither outlives the
+// test nor lingers as a zombie.
+void killChild(pid_t);
 
 // Attaches to this process and takes a corpse of it. That is what lets a test
 // check what a corpse reports against what this process already knows about

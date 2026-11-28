@@ -39,8 +39,7 @@
 #include <wtf/RunLoop.h>
 #endif
 
-namespace WebCore {
-namespace StorageUtilities {
+namespace WebCore::StorageUtilities {
 
 std::optional<ClientOrigin> readOriginFromFile(const String& filePath)
 {
@@ -68,7 +67,7 @@ bool writeOriginToFile(const String& filePath, const ClientOrigin& origin)
     auto originFileHandle = FileSystem::openFile(filePath, FileSystem::FileOpenMode::ReadWrite);
 
     if (!originFileHandle) {
-        LOG_ERROR("writeOriginToFile: Failed to open origin file '%s'", filePath.utf8());
+        LOG_ERROR("writeOriginToFile: Failed to open origin file '%s'", makeUTF8CString(filePath));
         return false;
     }
 
@@ -81,11 +80,10 @@ bool writeOriginToFile(const String& filePath, const ClientOrigin& origin)
 String encodeSecurityOriginForFileName(FileSystem::Salt salt, const SecurityOriginData& origin)
 {
     auto crypto = PAL::Crypto::CryptoDigest::create(PAL::Crypto::CryptoDigest::Algorithm::SHA_256);
-    auto originString = origin.toString().utf8();
+    auto originString = makeUTF8CString(origin.toString());
     crypto->addBytes(std::as_bytes(originString.span()));
     crypto->addBytes(salt);
     return base64URLEncodeToString(crypto->computeHash());
 }
 
-} // namespace StorageUtilities
-} // namespace WebCore
+} // namespace WebCore::StorageUtilities

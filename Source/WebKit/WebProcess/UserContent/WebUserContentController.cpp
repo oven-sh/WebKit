@@ -86,14 +86,14 @@ static WebCore::UserScript userScriptFromData(WebCoreUserScriptData&& data)
 {
     auto maybeSource = WTF::move(data.source).release();
     RELEASE_ASSERT(maybeSource);
-    return { WTF::move(*maybeSource), WTF::move(data.url), WTF::move(data.allowlist), WTF::move(data.blocklist), data.injectionTime, data.injectedFrames, data.matchParentFrame };
+    return { WTF::move(*maybeSource), WTF::move(data.url), WTF::move(data.allowlist), WTF::move(data.blocklist), data.injectionTime, data.injectedFrames, data.matchParentFrame, data.pageID };
 }
 
 static WebCore::UserStyleSheet userStyleSheetFromData(WebCoreUserStyleSheetData&& data)
 {
     auto maybeSource = WTF::move(data.source).release();
     RELEASE_ASSERT(maybeSource);
-    return { WTF::move(*maybeSource), WTF::move(data.url), WTF::move(data.allowlist), WTF::move(data.blocklist), data.injectedFrames, data.matchParentFrame, data.level, data.pageID };
+    return { WTF::move(*maybeSource), WTF::move(data.url), WTF::move(data.allowlist), WTF::move(data.blocklist), data.injectedFrames, data.matchParentFrame, data.level, data.pageID, data.persistsAcrossDocuments };
 }
 
 Ref<WebUserContentController> WebUserContentController::getOrCreate(UserContentControllerParameters&& parameters)
@@ -261,6 +261,17 @@ void WebUserContentController::addUserStyleSheets(Vector<WebUserStyleSheetData>&
     }
 
     invalidateInjectedStyleSheetCacheInAllFramesInAllPages();
+}
+
+void WebUserContentController::injectUserStyleSheetsScopedToPage(Page& page, PageIdentifier pageID)
+{
+    for (auto& styleSheetVector : m_userStyleSheets.values()) {
+        for (auto& identifierUserStyleSheetPair : borrow(styleSheetVector)) {
+            auto& userStyleSheet = identifierUserStyleSheetPair.second;
+            if (userStyleSheet.pageID() == pageID)
+                page.injectUserStyleSheet(userStyleSheet);
+        }
+    }
 }
 
 void WebUserContentController::removeUserStyleSheet(ContentWorldIdentifier worldIdentifier, UserStyleSheetIdentifier userStyleSheetIdentifier)

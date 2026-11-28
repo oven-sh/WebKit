@@ -52,7 +52,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGModelObject);
 
-LegacyRenderSVGModelObject::LegacyRenderSVGModelObject(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> typeFlags)
+LegacyRenderSVGModelObject::LegacyRenderSVGModelObject(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> typeFlags)
     : RenderElement(type, element, WTF::move(style), { }, typeFlags | SVGModelObjectFlag::IsLegacy | SVGModelObjectFlag::UsesBoundaryCaching)
 {
     ASSERT(isLegacyRenderSVGModelObject());
@@ -120,8 +120,7 @@ LayoutRect LegacyRenderSVGModelObject::outlineBoundsForRepaint(const RenderLayer
     LayoutRect box = enclosingLayoutRect(repaintRectInLocalCoordinates());
     adjustRectForOutlineAndShadow(*this, box);
 
-    // FIXME: Remove suppression once rdar://189998444 is fixed.
-    SUPPRESS_MEMORY_UNSAFE_CAST FloatQuad containerRelativeQuad = localToContainerQuad(FloatRect(box), repaintContainer);
+    FloatQuad containerRelativeQuad = localToContainerQuad(FloatRect(box), repaintContainer);
     return LayoutRect(snapRectToDevicePixels(LayoutRect(containerRelativeQuad.boundingBox()), document().deviceScaleFactor()));
 }
 
@@ -158,7 +157,7 @@ void LegacyRenderSVGModelObject::styleDidChange(Style::Difference diff, const St
             setNeedsTransformUpdate();
     }
     RenderElement::styleDidChange(diff, oldStyle);
-    SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, style());
+    SVGResourcesCache::clientStyleChanged(*this, diff, oldStyle, protect(style()));
 }
 
 bool LegacyRenderSVGModelObject::nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction)

@@ -31,14 +31,13 @@
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 
-namespace WebCore {
-namespace IDBServer {
+namespace WebCore::IDBServer {
 
 MemoryCursor::MemoryCursor(const IDBCursorInfo& info, MemoryBackingStoreTransaction& transaction)
     : m_info(info)
     , m_transaction(transaction)
 {
-    ASSERT(!isMainThread());
+    RELEASE_ASSERT(!isMainThread());
 
     transaction.addCursor(*this);
 }
@@ -53,5 +52,4 @@ MemoryBackingStoreTransaction* MemoryCursor::transaction() const
     return m_transaction.get();
 }
 
-} // namespace IDBServer
-} // namespace WebCore
+} // namespace WebCore::IDBServer

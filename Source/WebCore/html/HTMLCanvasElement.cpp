@@ -180,7 +180,7 @@ void HTMLCanvasElement::attributeChanged(const QualifiedName& name, const AtomSt
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
-RenderPtr<RenderElement> HTMLCanvasElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& insertionPosition)
+RenderPtr<RenderElement> HTMLCanvasElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition& insertionPosition)
 {
     RefPtr frame = document().frame();
     if (frame && protect(frame->script())->canExecuteScripts(ReasonForCallingCanExecuteScripts::NotAboutToExecuteScript))
@@ -459,20 +459,21 @@ bool HTMLCanvasElement::is2dType(const String& type)
 CanvasRenderingContext2D* HTMLCanvasElement::createContext2d(const String& type, CanvasRenderingContext2DSettings&& settings)
 {
     ASSERT_UNUSED(HTMLCanvasElement::is2dType(type), type);
-    ASSERT_WITH_SECURITY_IMPLICATION(!m_context);
+    RELEASE_ASSERT(!m_context);
 
     m_context = CanvasRenderingContext2D::create(*this, WTF::move(settings), document().inQuirksMode());
     if (!m_context)
         return nullptr;
 
-#if ENABLE(PIXEL_FORMAT_RGBA16F) && HAVE(SUPPORT_HDR_DISPLAY)
-    if (protect(m_context.get())->pixelFormat() == PixelFormat::RGBA16F)
+#if ENABLE(PIXEL_FORMAT_RGBA16F)
+    Ref context = *m_context;
+    // Set the dynamic range limit first, isHDR() depends on it.
+    context->setDynamicRangeLimit(m_dynamicRangeLimit);
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    if (context->isHDR())
         protect(document())->setHasHDRContent();
 #endif
-
-#if ENABLE(PIXEL_FORMAT_RGBA16F)
-    protect(m_context.get())->setDynamicRangeLimit(m_dynamicRangeLimit);
-#endif
+#endif // ENABLE(PIXEL_FORMAT_RGBA16F)
 
 #if USE(CA) || USE(SKIA)
     // Need to make sure a RenderLayer and compositing layer get created for the Canvas.
@@ -511,7 +512,7 @@ WebGLVersion HTMLCanvasElement::toWebGLVersion(const String& type)
 
 WebGLRenderingContextBase* HTMLCanvasElement::createContextWebGL(WebGLVersion type, WebGLContextAttributes&& attrs)
 {
-    ASSERT_WITH_SECURITY_IMPLICATION(!m_context);
+    RELEASE_ASSERT(!m_context);
     if (!document().settings().webGLEnabled())
         return nullptr;
 
@@ -568,7 +569,7 @@ bool HTMLCanvasElement::isBitmapRendererType(const String& type)
 ImageBitmapRenderingContext* HTMLCanvasElement::createContextBitmapRenderer(const String& type, ImageBitmapRenderingContextSettings&& settings)
 {
     ASSERT_UNUSED(type, HTMLCanvasElement::isBitmapRendererType(type));
-    ASSERT_WITH_SECURITY_IMPLICATION(!m_context);
+    RELEASE_ASSERT(!m_context);
 
     auto context = ImageBitmapRenderingContext::create(*this, WTF::move(settings));
     WeakPtr weakContext = *context;
@@ -600,7 +601,7 @@ bool HTMLCanvasElement::isWebGPUType(const String& type)
 GPUCanvasContext* HTMLCanvasElement::createContextWebGPU(const String& type, GPU* gpu)
 {
     ASSERT_UNUSED(type, HTMLCanvasElement::isWebGPUType(type));
-    ASSERT_WITH_SECURITY_IMPLICATION(!m_context);
+    RELEASE_ASSERT(!m_context);
 
     if (!document().settings().webGPUEnabled() || !gpu)
         return nullptr;
@@ -661,6 +662,12 @@ void HTMLCanvasElement::willUpdateContents(const std::optional<FloatRect>& rect,
             renderer->repaintRectangle(enclosingIntRect(*dirtyRect));
     }
     CanvasBase::willUpdateContents(rect, shouldApplyPostProcessingToDirtyRect);
+
+    // Repeating a whole-canvas notification is a no-op until the pending update is cleared.
+    if (!rect)
+        setPendingEntireContentsUpdate(shouldApplyPostProcessingToDirtyRect);
+    else
+        clearPendingEntireContentsUpdate();
 }
 
 void HTMLCanvasElement::didUpdateSizeProperties()
@@ -676,6 +683,7 @@ void HTMLCanvasElement::didUpdateSizeProperties()
     bool sizeChanged = oldSize != newSize;
     CanvasBase::setSize(newSize);
     m_copiedImage = nullptr;
+    clearPendingEntireContentsUpdate();
     if (m_context)
         protect(m_context.get())->didUpdateCanvasSizeProperties(sizeChanged);
     if (CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(renderer())) {
@@ -707,6 +715,7 @@ void HTMLCanvasElement::paint(GraphicsContext& context, const LayoutRect& r)
     if (!renderingContext)
         return;
     renderingContext->clearAccumulatedDirtyRect();
+    clearPendingEntireContentsUpdate();
 
     if (!context.paintingDisabled()) {
         if (!usesContentsAsLayerContents() || protect(document())->printing() || m_isSnapshotting) {
@@ -889,7 +898,7 @@ RefPtr<VideoFrame> HTMLCanvasElement::toVideoFrame()
         return nullptr;
 
     // FIXME: Set color space.
-    return VideoFrame::createFromPixelBuffer(pixelBuffer.releaseNonNull());
+    return VideoFrame::createFromPixelBuffer(pixelBuffer.releaseNonNull(), { });
 #else
     return nullptr;
 #endif
@@ -924,8 +933,11 @@ SecurityOrigin* HTMLCanvasElement::securityOrigin() const
 
 NativeImage* HTMLCanvasElement::copiedImage() const
 {
-    if (!m_copiedImage)
+    if (!m_copiedImage) {
         m_copiedImage = copyNativeImage();
+        // The next contents update has to drop m_copiedImage again.
+        clearPendingEntireContentsUpdate();
+    }
     return m_copiedImage.get();
 }
 

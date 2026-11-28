@@ -224,7 +224,7 @@ RefPtr<PluginView> PluginView::create(HTMLPlugInElement& element, const URL& mai
     if (!page || !page->shouldUsePDFPlugin(contentType, mainResourceURL.path()))
         return nullptr;
 
-    return adoptRef(*new PluginView(element, mainResourceURL, contentType, shouldUseManualLoader, *page));
+    return adoptRef(*new PluginView(element, mainResourceURL, contentType, shouldUseManualLoader, *page, frame->frameID()));
 }
 
 static Ref<PDFPluginBase> createPlugin(HTMLPlugInElement& element)
@@ -242,10 +242,11 @@ static Ref<PDFPluginBase> createPlugin(HTMLPlugInElement& element)
     return nullPluginBase.releaseNonNull();
 }
 
-PluginView::PluginView(HTMLPlugInElement& element, const URL& mainResourceURL, const String&, bool shouldUseManualLoader, WebPage& page)
+PluginView::PluginView(HTMLPlugInElement& element, const URL& mainResourceURL, const String&, bool shouldUseManualLoader, WebPage& page, FrameIdentifier frameID)
     : m_pluginElement(element)
     , m_plugin(createPlugin(element))
     , m_webPage(page)
+    , m_frameID(frameID)
     , m_mainResourceURL(mainResourceURL)
     , m_shouldUseManualLoader(shouldUseManualLoader)
     , m_pendingResourceRequestTimer(RunLoop::mainSingleton(), "PluginView::PendingResourceRequestTimer"_s, this, &PluginView::pendingResourceRequestTimerFired)
@@ -726,12 +727,12 @@ std::pair<String, String> PluginView::stringsBeforeAndAfterSelection(int charact
     return m_plugin->stringsBeforeAndAfterSelection(characterCount);
 }
 
-// Automation mouse events funnel through as synthetic clicks, except
+// Mouse events from the macOS touch screen funnel through as synthetic clicks, except
 // for context menu events, which do not have a clear synthetic analogue.
 static bool shouldForwardToPlugin(const Event& event)
 {
     auto* mouseEvent = dynamicDowncast<WebCore::MouseEvent>(event);
-    return !mouseEvent || mouseEvent->inputSource() != WebCore::MouseEventInputSource::Automation || event.type() == eventNames().contextmenuEvent;
+    return !mouseEvent || mouseEvent->inputSource() != WebCore::MouseEventInputSource::Touch || event.type() == eventNames().contextmenuEvent;
 }
 
 void PluginView::handleEvent(Event& event)

@@ -37,6 +37,7 @@
 #include "ReceiverMatcher.h"
 #include "SyncRequestID.h"
 #include "Timeout.h"
+#include <WebCore/ScriptExecutionContextIdentifier.h>
 #include <atomic>
 #include <new>
 #include <tuple>
@@ -284,6 +285,8 @@ private:
 struct ConnectionAsyncReplyHandler {
     CompletionHandler<void(Connection*, Decoder*)> completionHandler;
     Markable<AsyncReplyID> replyID;
+    // Whether the message was declared with ReplyCanDispatchOutOfOrder.
+    bool replyCanDispatchOutOfOrder { false };
 };
 
 class Connection : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<Connection, WTF::DestructionThread::MainRunLoop> {
@@ -322,7 +325,7 @@ public:
 
         ~MessageDispatchScope()
         {
-            ASSERT(s_current == this);
+            RELEASE_ASSERT(s_current == this);
             s_current = m_previous;
         }
 
@@ -468,6 +471,10 @@ public:
     void addMessageReceiver(FunctionDispatcher&, MessageReceiver&, ReceiverName, uint64_t destinationID = 0);
     void removeMessageReceiver(ReceiverName, uint64_t destinationID = 0);
 
+    // Adds a message receive queue that dispatches through ScriptExecutionContext.
+    void addScriptExecutionContextMessageReceiver(ReceiverName, WebCore::ScriptExecutionContextIdentifier, ThreadSafeMessageReceiver&, uint64_t destinationID = 0);
+    void removeScriptExecutionContextMessageReceiver(ReceiverName, uint64_t destinationID = 0);
+
     bool open(Client&, SerialFunctionDispatcher& = RunLoop::currentSingleton());
     // Ensures that messages sent prior to the call are not affected by invalidate() or crash done after the call returns.
     Error flushSentMessages(Timeout);
@@ -511,6 +518,8 @@ public:
 
     template<typename> Error waitForAndDispatchImmediately(uint64_t destinationID, Timeout, OptionSet<WaitForOption> waitForOptions = { }); // Main thread only.
     template<typename> Error waitForAsyncReplyAndDispatchImmediately(AsyncReplyID, Timeout, OptionSet<WaitForOption> waitForOptions = { }); // Main thread only.
+
+    Error waitForAnyAsyncReplyAndDispatchImmediately(Timeout);
 
     // // Thread-safe, but the reply will be called on the Connection's dispatcher
     template<typename T, typename C>
@@ -674,7 +683,12 @@ private:
 
     bool isIncomingMessagesThrottlingEnabled() const { return m_incomingMessagesThrottlingLevel.has_value(); }
 
+    struct WaitForMessageState;
     DecoderOrError waitForMessage(MessageName, uint64_t destinationID, Timeout, OptionSet<WaitForOption>);
+    DecoderOrError waitForAnyAsyncReplyThatCanDispatchOutOfOrder(Timeout);
+    DecoderOrError waitForMessage(WaitForMessageState&, Timeout);
+    bool isWaitedForMessage(const WaitForMessageState&, const Decoder&) WTF_REQUIRES_LOCK(m_incomingMessagesLock);
+    bool isAsyncReplyThatCanDispatchOutOfOrder(const Decoder&) WTF_REQUIRES_LOCK(m_incomingMessagesLock);
 
     SyncRequestID makeSyncRequestID() { return SyncRequestID::generate(); }
     bool pushPendingSyncRequestID(SyncRequestID);
@@ -856,14 +870,18 @@ private:
     Lock m_waitForMessageLock;
 
     struct WaitForMessageState {
-        WaitForMessageState(MessageName messageName, uint64_t destinationID, OptionSet<WaitForOption> waitForOptions)
+        WaitForMessageState(std::optional<MessageName> messageName, uint64_t destinationID, OptionSet<WaitForOption> waitForOptions)
             : messageName(messageName)
             , destinationID(destinationID)
             , waitForOptions(waitForOptions)
         {
         }
 
-        MessageName messageName;
+        ASCIILiteral description() const;
+
+        // Without a message name, waits for any async reply that can dispatch out of order, see
+        // isAsyncReplyThatCanDispatchOutOfOrder().
+        std::optional<MessageName> messageName;
         uint64_t destinationID;
         OptionSet<WaitForOption> waitForOptions;
         bool messageWaitingInterrupted = false;
@@ -883,7 +901,11 @@ private:
     const RefPtr<WorkQueue> m_incomingSyncMessageCallbackQueue WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock);
     uint64_t m_nextIncomingSyncMessageCallbackID WTF_GUARDED_BY_LOCK(m_incomingSyncMessageCallbackLock) { 0 };
 
-    using AsyncReplyHandlerMap = HashMap<AsyncReplyID, CompletionHandler<void(Connection*, Decoder*)>>;
+    struct AsyncReplyHandlerEntry {
+        CompletionHandler<void(Connection*, Decoder*)> completionHandler;
+        bool replyCanDispatchOutOfOrder { false };
+    };
+    using AsyncReplyHandlerMap = HashMap<AsyncReplyID, AsyncReplyHandlerEntry>;
     AsyncReplyHandlerMap m_asyncReplyHandlers WTF_GUARDED_BY_LOCK(m_incomingMessagesLock);
     using AsyncReplyHandlerWithDispatcherMap = HashMap<AsyncReplyID, CompletionHandler<void(Connection*, std::unique_ptr<Decoder>&&)>>;
     AsyncReplyHandlerWithDispatcherMap m_asyncReplyHandlerWithDispatchers WTF_GUARDED_BY_LOCK(m_incomingMessagesLock);
@@ -1165,7 +1187,8 @@ Connection::AsyncReplyHandler Connection::makeAsyncReplyHandler(C&& completionHa
     // API contract on invalid sends does not make sense.
     return {
         makeAsyncReplyCompletionHandler<T, C>(std::forward<C>(completionHandler), callThread),
-        AsyncReplyID::generate()
+        AsyncReplyID::generate(),
+        T::replyCanDispatchOutOfOrder
     };
 }
 

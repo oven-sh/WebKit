@@ -72,8 +72,8 @@ bool ControlEmitter::testByteOfTableInPlaceOfSwitch(const TerminatorContext& ter
 
     const Code& code = generator().code();
     bool someEdgeBringsValues = false;
-    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesBehindEmptyBlocks;
-    UncheckedKeyHashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksBehindAnswers;
+    HashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> placesBehindEmptyBlocks;
+    HashMap<uint32_t, BlockID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> blocksBehindAnswers;
     Vector<BlockID, 8> skippedBlocks;
     auto blockBehindAnswerBroughtBy = [&](const Edge& bringing) {
         if (bringing.arguments().size() != 1 || !code.isConstant(bringing.arguments()[0]) || code.at(bringing.arguments()[0]).opcode != Opcode::Boolean)
@@ -245,7 +245,7 @@ bool ControlEmitter::tryLowerToValueTables(const TerminatorContext& terminator, 
     auto isInTables = [&](ValueID value) {
         return value && code.isConstant(value) && opcodesInTables.contains(code.at(value).opcode);
     };
-    UncheckedKeyHashMap<uint32_t, EdgeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> forwardedEdges;
+    HashMap<uint32_t, EdgeID, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> forwardedEdges;
     Vector<BlockID, 8> skippedBlocks;
     auto forwardedEdgeOf = [&](EdgeID id) {
         while (skippedBlocks.size() < code.numberOfBlocks()) {

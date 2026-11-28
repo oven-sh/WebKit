@@ -42,6 +42,7 @@
 #include "JSDOMFormData.h"
 #include "JSDOMPromiseDeferred.h"
 #include "TextResourceDecoder.h"
+#include <wtf/Borrow.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URLParser.h>
 #include <wtf/text/MakeString.h>
@@ -204,7 +205,7 @@ RefPtr<DOMFormData> FetchBodyConsumer::packageFormData(ScriptExecutionContext* c
     auto mimeType = parseMIMEType(contentType);
     if (auto multipartBoundary = parseMultipartBoundary(mimeType)) {
         auto boundaryWithDashes = makeString("--"_s, *multipartBoundary);
-        auto boundary = boundaryWithDashes.utf8();
+        auto boundary = makeUTF8CString(boundaryWithDashes);
         size_t boundaryLength = boundary.length();
 
         size_t currentBoundaryIndex = find(data, byteCast<uint8_t>(boundary.span()));
@@ -496,7 +497,7 @@ Ref<Blob> FetchBodyConsumer::takeAsBlob(ScriptExecutionContext* context, const S
     buffer = nullptr; // So that the segments above hold each a single refcount to allow extractData to move the content.
 
     SharedBufferBuilder bufferBuilder;
-    for (auto&& segment : segments) {
+    for (auto&& segment : borrow(segments)) {
         if (segment->size() >= MinimumBlobSize) {
             if (packedBuffer.size()) {
                 bufferBuilder.append(std::exchange(packedBuffer, { }));

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/ConsoleTypes.h>
 #include <WebCore/DocumentEnums.h>
 #include <WebCore/EventTarget.h>
 #include <WebCore/EventTargetInterfaces.h>
@@ -41,6 +42,9 @@ class BarProp;
 class CSSRuleList;
 class CSSStyleDeclaration;
 class CookieStore;
+#if ENABLE(DOCUMENT_PIP)
+class DocumentPictureInPicture;
+#endif
 class Crypto;
 class CustomElementRegistry;
 class DOMRect;
@@ -70,6 +74,7 @@ class PushManager;
 class RequestAnimationFrameCallback;
 class RequestIdleCallback;
 class ScheduledAction;
+class Scheduler;
 class Screen;
 class SecurityOrigin;
 class Storage;
@@ -142,7 +147,7 @@ public:
     ExceptionOr<void> setStatus(const String&);
     ExceptionOr<Document*> document() const;
     ExceptionOr<History&> history();
-    ExceptionOr<CustomElementRegistry&> ensureCustomElementRegistry();
+    ExceptionOr<CustomElementRegistry&> customElements();
     ExceptionOr<BarProp&> locationbar();
     ExceptionOr<BarProp&> menubar();
     ExceptionOr<BarProp&> personalbar();
@@ -164,6 +169,9 @@ public:
     ExceptionOr<Navigator&> navigator();
     ExceptionOr<bool> offscreenBuffering() const;
     ExceptionOr<CookieStore&> cookieStore();
+#if ENABLE(DOCUMENT_PIP)
+    ExceptionOr<DocumentPictureInPicture&> documentPictureInPicture();
+#endif
     ExceptionOr<Screen&> screen();
     ExceptionOr<double> devicePixelRatio() const;
     ExceptionOr<StyleMedia&> styleMedia();
@@ -183,6 +191,7 @@ public:
     ExceptionOr<Ref<CSSStyleDeclaration>> getComputedStyle(Element&, const String& pseudoElt) const;
     ExceptionOr<RefPtr<WebCore::MediaQueryList>> matchMedia(const String&);
     ExceptionOr<Crypto&> crypto() const;
+    ExceptionOr<Scheduler&> scheduler() const;
     ExceptionOr<RefPtr<WindowProxy>> open(LocalDOMWindow& activeWindow, LocalDOMWindow& firstWindow, const String& urlString, const AtomString& frameName, const String& windowFeaturesString);
     ExceptionOr<void> alert(const String& message = emptyString());
     ExceptionOr<bool> confirmForBindings(const String& message);
@@ -209,8 +218,8 @@ public:
     ExceptionOr<void> scrollTo(double x, double y, ScrollClamping = ScrollClamping::Clamped) const;
     ExceptionOr<void> moveBy(int x, int y) const;
     ExceptionOr<void> moveTo(int x, int y) const;
-    ExceptionOr<void> resizeBy(int x, int y) const;
-    ExceptionOr<void> resizeTo(int width, int height) const;
+    ExceptionOr<void> resizeBy(int x, int y);
+    ExceptionOr<void> resizeTo(int width, int height);
     ExceptionOr<DOMSelection*> getSelection();
     ExceptionOr<int> setTimeout(std::unique_ptr<ScheduledAction>, int timeout, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
     ExceptionOr<void> clearTimeout(int timeoutId);
@@ -234,7 +243,7 @@ public:
     // frame), we would like to zero out m_frame to avoid being confused
     // by the document that is currently active in m_frame.
     bool isCurrentlyDisplayedInFrame() const;
-    void printErrorMessage(const String&) const;
+    void printErrorMessage(const String&, MessageSource = MessageSource::JS) const;
     String crossDomainAccessErrorMessage(const LocalDOMWindow& activeWindow, IncludeTargetOrigin);
     bool isInsecureScriptAccess(const LocalDOMWindow& activeWindow, const URL&);
 

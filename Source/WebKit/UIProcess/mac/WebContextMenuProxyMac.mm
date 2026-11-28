@@ -63,10 +63,6 @@
 #import "WebExtensionController.h"
 #endif
 
-#if HAVE(APPKIT_GESTURES_SUPPORT)
-#import <WebKitAdditions/AppKitUtilities.h>
-#endif
-
 @interface WKUserDataWrapper : NSObject {
     RefPtr<API::Object> _webUserData;
 }
@@ -293,6 +289,8 @@ void WebContextMenuProxyMac::setupServicesMenu()
         isPDFAttachment = attachment->utiType() == String(UTTypePDF.identifier);
     NSArray *items = nil;
     RetainPtr<NSItemProvider> itemProvider;
+    // FIXME: Adopt -[NSItemProvider initWithObject:] or -registerDataRepresentationForTypeIdentifier:.
+ALLOW_DEPRECATED_DECLARATIONS_BEGIN
     if (hasControlledImage) {
         if (attachment)
             itemProvider = adoptNS([[NSItemProvider alloc] initWithItem:attachment->associatedElementNSData().get() typeIdentifier:attachment->utiType().createNSString().get()]);
@@ -316,6 +314,7 @@ void WebContextMenuProxyMac::setupServicesMenu()
         LOG_ERROR("No service controlled item represented in the context");
         return;
     }
+ALLOW_DEPRECATED_DECLARATIONS_END
 
     RetainPtr<NSSharingServicePicker> picker = adoptNS([[NSSharingServicePicker alloc] initWithItems:items]);
     [picker setStyle:hasControlledImage || isPDFAttachment ? NSSharingServicePickerStyleRollover : NSSharingServicePickerStyleTextSelection];
@@ -1039,10 +1038,10 @@ void WebContextMenuProxyMac::showContextMenuWithItems(Vector<Ref<WebContextMenuI
     auto webView = m_webView.get();
     NSPoint locationInWindowCoordinates = [webView convertPoint:m_context.menuLocation() toView:nil];
 
-    if (m_context.inputSource() == WebEventInputSource::Automation) {
+    if (m_context.inputSource() == WebEventInputSource::Touch) {
 #if HAVE(APPKIT_GESTURES_SUPPORT)
         NSPoint locationInScreenCoordinates = [[webView window] convertPointToScreen:locationInWindowCoordinates];
-        RetainPtr screenRelativeContext = [_NSViewMenuContext menuContextWithLocation:locationInScreenCoordinates source:ContextMenuRequestSourceForAutomation];
+        RetainPtr screenRelativeContext = [_NSViewMenuContext menuContextWithLocation:locationInScreenCoordinates source:_NSViewMenuRequestSourceTouch];
         [NSMenu _popUpContextMenu:m_menu.get() withContext:screenRelativeContext.get() forView:webView.get() completionBlock:nil];
 #else
         RELEASE_ASSERT_NOT_REACHED();
@@ -1126,8 +1125,7 @@ static RetainPtr<NSDictionary> contentsOfContextMenuItem(NSMenuItem *item)
 
     if (RetainPtr<NSArray<NSMenuItem *>> submenuItems = item.submenu.itemArray) {
         RetainPtr children = adoptNS([[NSMutableArray alloc] initWithCapacity:[submenuItems count]]);
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *submenuItem : submenuItems.get())
+        for (NSMenuItem *submenuItem : submenuItems.get())
             [children addObject:contentsOfContextMenuItem(submenuItem).get()];
         result.get()[@"children"] = children.get();
     }
@@ -1141,8 +1139,7 @@ RetainPtr<NSArray> WebContextMenuProxyMac::platformData() const
 
     if (RetainPtr<NSArray<NSMenuItem *>> submenuItems = [m_menu itemArray]) {
         RetainPtr children = adoptNS([[NSMutableArray alloc] initWithCapacity:[submenuItems count]]);
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL NSMenuItem *submenuItem : submenuItems.get())
+        for (NSMenuItem *submenuItem : submenuItems.get())
             [children addObject:contentsOfContextMenuItem(submenuItem).get()];
         [result addObject:@{ @"children": children.get() }];
     }

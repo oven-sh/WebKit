@@ -1017,14 +1017,18 @@ final class WebBackForwardList {
         return result
     }
 
-    private func addChildItem(parentFrameID: WebCore.FrameIdentifier, frameState: WebKit.RefFrameState) {
+    private func addChildItem(
+        parentFrameID: WebCore.FrameIdentifier,
+        frameState: WebKit.RefFrameState
+    ) -> WebCore.BackForwardItemIdentifier? {
         guard let currentItem = currentEntry() else {
-            return
+            return nil
         }
         guard let parentItem = currentItem.mainFrameItem().childItemForFrameID(parentFrameID) else {
-            return
+            return nil
         }
         parentItem.setChild(consuming: frameState)
+        return currentItem.identifier()
     }
 
     func setBackForwardItemIdentifier(frameState: WebKit.FrameState, itemID: WebCore.BackForwardItemIdentifier) {
@@ -1098,7 +1102,6 @@ final class WebBackForwardList {
     func backForwardAddItemShared(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive,
         browsingContextGroup: WebKit.BrowsingContextGroup
     ) {
         // Also reached from C++ (WebPageProxy::backForwardAddItemShared), so this rather than
@@ -1107,7 +1110,6 @@ final class WebBackForwardList {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: loadedWebArchive,
                 browsingContextGroup: browsingContextGroup
             )
         }
@@ -1116,7 +1118,6 @@ final class WebBackForwardList {
     private func addItemInternal(
         connection: IPC.Connection,
         navigatedFrameState: WebKit.RefFrameState,
-        loadedWebArchive: WebKit.LoadedWebArchive,
         browsingContextGroup: WebKit.BrowsingContextGroup
     ) throws(InvalidMessage) {
         let process = WebKit.WebProcessProxy.fromConnection(connection)
@@ -1165,7 +1166,11 @@ final class WebBackForwardList {
         if targetFrame.isPendingInitialHistoryItem() {
             targetFrame.setIsPendingInitialHistoryItem(false)
             if let parent = targetFrame.parentFrame() {
-                addChildItem(parentFrameID: parent.frameID(), frameState: navigatedFrameState)
+                // The child now has the identifier of the item it was added to. Updates from the frame's process have to
+                // carry it to find the child.
+                if let itemID = addChildItem(parentFrameID: parent.frameID(), frameState: navigatedFrameState) {
+                    sendDidAddHistoryItemToBackForwardItem(process.ptr(), targetFrame.frameID(), navigatedFrameState.ptr(), itemID)
+                }
             }
             return
         }
@@ -1183,10 +1188,13 @@ final class WebBackForwardList {
             )
             .ptr()
         item.setResourceDirectoryURL(consuming: webPageProxy.currentResourceDirectoryURL())
-        item.setEnhancedSecurity(process.ptr().enhancedSecurity())
-        if loadedWebArchive == WebKit.LoadedWebArchive.Yes {
-            item.setDataStoreForWebArchive(process.ptr().websiteDataStore())
+        var enhancedSecurity = process.ptr().enhancedSecurity()
+        if !targetFrame.isMainFrame() && webPageProxy.preferences().siteIsolationSharedProcessEnhancedSecurityEnabled(),
+            let mainFrame = webPageProxy.mainFrame()
+        {
+            enhancedSecurity = frameProcessEnhancedSecurity(mainFrame)
         }
+        item.setEnhancedSecurity(enhancedSecurity)
         addItem(newItem: item)
     }
 
@@ -1206,7 +1214,6 @@ final class WebBackForwardList {
             try addItemInternal(
                 connection: connection,
                 navigatedFrameState: navigatedFrameState,
-                loadedWebArchive: page.didLoadWebArchive() ? .Yes : .No,
                 browsingContextGroup: page.browsingContextGroup()
             )
         }

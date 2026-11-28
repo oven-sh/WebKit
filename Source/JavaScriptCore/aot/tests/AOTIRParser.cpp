@@ -24,7 +24,7 @@ std::unique_ptr<Program> parseProgram(StringView text, BuildContext& build)
 {
     if (text.is8Bit() && text.containsOnlyASCII())
         return TextParser(byteCast<uint8_t>(text.span8()), build).run();
-    CString utf8 = text.utf8();
+    CString utf8 = makeUTF8CString(text);
     return TextParser(byteCast<uint8_t>(utf8.span()), build).run();
 }
 

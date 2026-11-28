@@ -204,7 +204,7 @@ private:
     KeyedCaseGroups groupCases(const CaseGroup& cases, NOESCAPE const Invocable<uint64_t(const SwitchCase&)> auto& keyOf)
     {
         KeyedCaseGroups groups;
-        UncheckedKeyHashMap<uint64_t, size_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> indexByKey;
+        HashMap<uint64_t, size_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> indexByKey;
         for (const SwitchCase* switchCase : cases) {
             uint64_t key = keyOf(*switchCase);
             size_t index = indexByKey.ensure(key, [&] {

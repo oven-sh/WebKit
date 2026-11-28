@@ -58,6 +58,7 @@ class WEBCORE_EXPORT ScrollingTreeScrollingNode : public ScrollingTreeNode {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ScrollingTreeScrollingNode, WEBCORE_EXPORT);
     friend class ScrollingTreeScrollingNodeDelegate;
 #if PLATFORM(MAC)
+    friend class ScrollerPairMac;
     friend class ScrollingTreeScrollingNodeDelegateMac;
 #endif
 #if ENABLE(SCROLLING_THREAD)
@@ -131,6 +132,8 @@ public:
     bool canHaveHorizontalScrollbar() const { return m_scrollableAreaParameters.horizontalScrollbarMode != ScrollbarMode::AlwaysOff; }
     bool canHaveVerticalScrollbar() const { return m_scrollableAreaParameters.verticalScrollbarMode != ScrollbarMode::AlwaysOff; }
     bool canHaveScrollbars() const { return m_scrollableAreaParameters.horizontalScrollbarMode != ScrollbarMode::AlwaysOff || m_scrollableAreaParameters.verticalScrollbarMode != ScrollbarMode::AlwaysOff; }
+    bool allowsHorizontalScrolling() const;
+    bool allowsVerticalScrolling() const;
 
     NODELETE const FloatScrollSnapOffsetsInfo& snapOffsetsInfo() const LIFETIME_BOUND;
     NODELETE std::optional<unsigned> currentHorizontalSnapPointIndex() const;
@@ -201,9 +204,6 @@ protected:
 
     ScrollElasticity horizontalScrollElasticity() const { return m_scrollableAreaParameters.horizontalScrollElasticity; }
     ScrollElasticity verticalScrollElasticity() const { return m_scrollableAreaParameters.verticalScrollElasticity; }
-
-    bool allowsHorizontalScrolling() const { return m_scrollableAreaParameters.allowsHorizontalScrolling; }
-    bool allowsVerticalScrolling() const { return m_scrollableAreaParameters.allowsVerticalScrolling; }
 
     bool horizontalOverscrollBehaviorPreventsPropagation() const { return m_scrollableAreaParameters.horizontalOverscrollBehavior != OverscrollBehavior::Auto; }
     bool verticalOverscrollBehaviorPreventsPropagation() const { return m_scrollableAreaParameters.verticalOverscrollBehavior != OverscrollBehavior::Auto; }

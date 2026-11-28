@@ -74,8 +74,7 @@
 #include "CSSFontVariationValue.h"
 #endif
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 NODELETE static CSSParserMode parserMode(ScriptExecutionContext& context)
 {
@@ -666,7 +665,7 @@ static RefPtr<CSSFontFaceSrcResourceValue> consumeFontFaceSrcURI(CSSParserTokenR
 
     // https://drafts.csswg.org/css-fonts-4/#typedef-font-src
 
-    auto location = consumeURLRaw(range, state, { });
+    auto location = consumeURLRaw(range, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::Integrity, AllowedURLModifiers::ReferrerPolicy });
     if (!location)
         return nullptr;
 
@@ -1142,5 +1141,4 @@ Vector<AtomString> consumeFontFeatureValuesPreludeFamilyNameList(CSSParserTokenR
     return result;
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

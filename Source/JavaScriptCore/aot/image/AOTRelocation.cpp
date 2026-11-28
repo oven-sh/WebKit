@@ -20,7 +20,7 @@ static_assert(MacroAssembler::relocationSize(RelocationKind::Distance32) == size
 static constexpr size_t reachOfInstanceWord = isARM64() ? static_cast<size_t>(std::numeric_limits<int32_t>::max()) : static_cast<size_t>(MacroAssembler::relocationReach(RelocationKind::InstanceAccess));
 static_assert(InstanceLayout::reachAboveInstance <= reachOfInstanceWord && InstanceLayout::reachBelowInstance <= reachOfInstanceWord);
 
-// LinkBuffer's shouldPerformBranchCompaction must stay true: on ARM64 only its compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
+// On ARM64 only LinkBuffer's compaction loop picks the encoding of a jump that was linked inside the assembler, and a jump without an encoding is never linked.
 ImageLinkBuffer::ImageLinkBuffer(ImageAssembler& jit, LinkBuffer::Profile profile)
     : m_end(jit.label())
     , m_storage(roundUpToMultipleOf<sizeof(uint32_t)>(std::max<size_t>(jit.m_assembler.codeSize() + planBranchIslands(jit), sizeof(uint32_t))))
@@ -235,7 +235,7 @@ void RelocationRecorder::routeTransfersThroughEnd()
     auto labelOf = [&](CCallHelpers::Label site) {
         return AssemblerLabel(static_cast<uint32_t>(MacroAssembler::differenceBetween(start, site)));
     };
-    UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpOfSymbol;
+    HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> jumpOfSymbol;
     Vector<PendingRelocation, 32> others;
     Vector<PendingRelocation> jumps;
     for (const PendingRelocation& pending : m_pending) {

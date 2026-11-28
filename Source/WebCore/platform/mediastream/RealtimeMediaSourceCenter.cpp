@@ -176,19 +176,19 @@ String RealtimeMediaSourceCenter::hashStringWithSalt(const String& id, const Str
 
 void RealtimeMediaSourceCenter::addDevicesChangedObserver(RealtimeMediaSourceCenterObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.add(observer);
 }
 
 void RealtimeMediaSourceCenter::removeDevicesChangedObserver(RealtimeMediaSourceCenterObserver& observer)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
     m_observers.remove(observer);
 }
 
 void RealtimeMediaSourceCenter::captureDevicesChanged()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
 #if USE(GSTREAMER)
     triggerDevicesChangedObservers();

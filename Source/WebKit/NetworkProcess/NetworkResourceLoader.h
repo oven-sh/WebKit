@@ -152,7 +152,7 @@ public:
     // NetworkLoadClient.
     void didSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent) final;
     bool isSynchronous() const final;
-    bool isAllowedToAskUserForCredentials() const final { return m_isAllowedToAskUserForCredentials; }
+    bool isAllowedToAskUserForCredentials() const final;
     void willSendRedirectedRequest(WebCore::ResourceRequest&&, WebCore::ResourceRequest&& redirectRequest, WebCore::ResourceResponse&&, CompletionHandler<void(WebCore::ResourceRequest&&)>&&) final;
     void didReceiveInformationalResponse(WebCore::ResourceResponse&&) final;
     void didReceiveResponse(WebCore::ResourceResponse&&, PrivateRelayed, ResponseCompletionHandler&&) final;
@@ -356,6 +356,10 @@ private:
     bool isLocalFileLoadAllowed(const URL&);
 #endif
 
+#if USE(QUICK_LOOK)
+    void removeQuickLookTemporaryFilesIfNeeded(const String& folder);
+#endif
+
     NetworkResourceLoadParameters m_parameters;
     Vector<Ref<SandboxExtension>> m_extensionsToRevoke;
 
@@ -423,6 +427,7 @@ private:
     bool m_shouldCaptureExtraNetworkLoadMetrics { false };
     bool m_isKeptAlive { false };
     bool m_didSendResponse { false };
+    bool m_isDone { false };
     bool m_hasReceivedEarlyHints { false };
     bool m_canUseCompressionDictionary { false };
 
@@ -446,6 +451,11 @@ private:
     MemoryCompactRobinHoodHashMap<String, String> m_reportingEndpoints;
 
     std::unique_ptr<WebCore::ResourceResponse> m_redirectionForCurrentNavigation;
+
+#if USE(QUICK_LOOK)
+    String m_temporaryQuickLookFilename;
+    FileSystem::FileHandle m_temporaryQuickLookFileHandle;
+#endif
 };
 
 } // namespace WebKit

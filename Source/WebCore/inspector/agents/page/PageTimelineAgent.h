@@ -28,13 +28,22 @@
 #pragma once
 
 #include "InspectorTimelineAgent.h"
+#include <optional>
 #include <wtf/CheckedRef.h>
+#include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
+class Document;
+class Element;
+class FloatQuad;
+class LayoutRect;
+class LocalFrame;
+class Node;
 class Page;
 class RenderElement;
+class RenderObject;
 class RunLoopObserver;
 
 class PageTimelineAgent final : public InspectorTimelineAgent, public CanMakeWeakPtr<PageTimelineAgent>, public CanMakeCheckedPtr<PageTimelineAgent> {
@@ -51,6 +60,8 @@ public:
     Inspector::Protocol::ErrorStringOr<void> setAutoCaptureEnabled(bool) override;
 
     // InspectorInstrumentation
+    // FrameTimelineAgent copies the layout, style, paint and paint timing methods and nodeIdForRenderer; keep both
+    // in sync until the page target is removed.
     void willInvalidateLayout(const RenderObject&);
     void didScheduleLayout(const RenderElement&);
     void willLayout();
@@ -62,9 +73,13 @@ public:
     void willRecalculateStyle();
     void didRecalculateStyle(Document&);
     void didScheduleStyleRecalculation(Document&);
+    void didEnqueueFirstContentfulPaint();
+    void didEnqueueLargestContentfulPaint(Element*, unsigned area);
     void mainFrameStartedLoading();
     void mainFrameNavigated();
     void didCompleteRenderingFrame(const LocalFrame&);
+
+    bool isCapturingScreenshot() const;
 
 private:
     bool enabled() const override;
@@ -78,7 +93,9 @@ private:
     bool shouldStartHeapInstrument() const override;
 
     void captureScreenshot();
+    void takeScreenshotInClient(double snapshotStartTime);
 
+    Inspector::Protocol::DOM::NodeId nodeIdForNode(Node*) const;
     Inspector::Protocol::DOM::NodeId nodeIdForDocument(Document&) const;
     Inspector::Protocol::DOM::NodeId nodeIdForRenderer(const RenderObject&) const;
 
@@ -96,6 +113,8 @@ private:
 #endif
     bool m_startedComposite { false };
     bool m_isCapturingScreenshot { false };
+    bool m_isWaitingForClientScreenshot { false };
+    std::optional<double> m_pendingClientScreenshotTime;
 };
 
 } // namespace WebCore

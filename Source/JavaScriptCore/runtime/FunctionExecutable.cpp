@@ -61,11 +61,11 @@ UTF8CString FunctionExecutable::inferredNameForTools()
     // profiler and crash-reporter threads print what is there.
     if (isCompilationThread() || Thread::mayBeGCThread() || !vm().currentThreadIsHoldingAPILock()) {
         if (const Identifier* name = tryGetEcmaNameConcurrently())
-            return name->utf8();
+            return makeUTF8CString(name->string());
         return "<name not materialized>"_s;
     }
     // The mutator itself may be inside the collector's end phase (a CodeBlock dumped while it is jettisoned), where it must not atomize either.
-    return ecmaNameWithoutGC().utf8();
+    return makeUTF8CString(ecmaNameWithoutGC());
 }
 
 FunctionCodeBlock* FunctionExecutable::baselineCodeBlockFor(CodeSpecializationKind kind)

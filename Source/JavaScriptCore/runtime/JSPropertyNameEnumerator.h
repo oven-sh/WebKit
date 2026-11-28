@@ -77,21 +77,19 @@ public:
         return m_propertyNames.get()[index].get();
     }
 
-    Structure* cachedStructure(VM& vm) const
-    {
-        UNUSED_PARAM(vm);
-        return m_cachedStructureID.get();
-    }
-    StructureID cachedStructureID() const { return m_cachedStructureID.value(); }
+    StructureID cachedStructureIDForNames() const { return m_cachedStructureIDForNames.value(); }
+    StructureID cachedStructureIDForNamesAndOffsets() const { return m_cachedStructureIDForNamesAndOffsets.value(); }
     uint32_t indexedLength() const { return m_indexedLength; }
     uint32_t endStructurePropertyIndex() const { return m_endStructurePropertyIndex; }
-    // The names below it are the base's own for as long as isCurrentFor(base). Only below endStructurePropertyIndex() is the index of a name also the offset of its property.
+    // The names below it are the base's own for as long as isCurrentFor(base).
+    // The index of a name below endStructurePropertyIndex() is also the offset of its property only in a base that has cachedStructureIDForNamesAndOffsets(), which no compiled object has.
     uint32_t endOwnPropertyIndex() const { return m_endOwnPropertyIndex; }
     uint32_t endGenericPropertyIndex() const { return m_endGenericPropertyIndex; }
     uint32_t cachedInlineCapacity() const { return m_cachedInlineCapacity; }
     uint32_t sizeOfPropertyNames() const { return endGenericPropertyIndex(); }
     uint32_t flags() const { return m_flags; }
-    static constexpr ptrdiff_t cachedStructureIDOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedStructureID); }
+    static constexpr ptrdiff_t cachedStructureIDForNamesOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedStructureIDForNames); }
+    static constexpr ptrdiff_t cachedStructureIDForNamesAndOffsetsOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_cachedStructureIDForNamesAndOffsets); }
     static constexpr ptrdiff_t indexedLengthOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_indexedLength); }
     static constexpr ptrdiff_t endStructurePropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endStructurePropertyIndex); }
     static constexpr ptrdiff_t endOwnPropertyIndexOffset() { return OBJECT_OFFSETOF(JSPropertyNameEnumerator, m_endOwnPropertyIndex); }
@@ -109,7 +107,7 @@ public:
     bool describesOrdinaryObject() const { return !m_cachedOrderWordMask; }
     bool isCurrentFor(JSObject* base) const
     {
-        if (base->structureID() != cachedStructureID())
+        if (base->structureID() != cachedStructureIDForNames())
             return false;
         return describesOrdinaryObject() || (*std::bit_cast<const uint32_t*>(std::bit_cast<const char*>(base) + sizeof(JSCell)) & m_cachedOrderWordMask) == m_cachedOrderWord;
     }
@@ -127,7 +125,11 @@ private:
     // JSPropertyNameEnumerator is immutable data structure, which allows VM to cache the empty one.
     // After instantiating JSPropertyNameEnumerator, we must not change any fields.
     AuxiliaryBarrier<WriteBarrier<JSString>*> m_propertyNames;
-    WriteBarrierStructureID m_cachedStructureID;
+    // An object with this structure has m_propertyNames[0, m_endStructurePropertyIndex) as its own enumerable properties.
+    WriteBarrierStructureID m_cachedStructureIDForNames;
+    // In addition to the above, m_propertyNames[i] is a data property stored in the i-th property slot, so we can load and store it without using the name.
+    // This is the same as m_cachedStructureIDForNames, or null if the structure does not guarantee it (e.g. it has a symbol, non-enumerable, deleted, or accessor property).
+    WriteBarrierStructureID m_cachedStructureIDForNamesAndOffsets;
     uint32_t m_indexedLength;
     uint32_t m_endStructurePropertyIndex;
     uint32_t m_endGenericPropertyIndex;

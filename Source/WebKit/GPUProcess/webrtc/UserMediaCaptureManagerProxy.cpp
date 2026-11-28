@@ -176,11 +176,6 @@ public:
     void setShouldApplyRotation() { m_source->setShouldApplyRotation(); }
     void setIsInBackground(bool value) { m_source->setIsInBackground(value); }
 
-    bool isPowerEfficient()
-    {
-        return m_source->isPowerEfficient();
-    }
-
     bool updateVideoConstraints(const WebCore::MediaConstraints& constraints)
     {
         m_videoConstraints = constraints;
@@ -216,7 +211,7 @@ public:
 
     void queueAndProcessSerialAction(Function<Ref<GenericPromise>()>&& action)
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
 
         Ref pendingAction = WTF::move(m_pendingAction);
         m_pendingAction = pendingAction->isResolved() ? action() : pendingAction->whenSettled(RunLoop::mainSingleton(), WTF::move(action));
@@ -377,7 +372,7 @@ private:
         Ref source = m_source;
         auto deviceType = source->deviceType();
 
-        if (m_isObservingMedia && (deviceType == CaptureDevice::DeviceType::Screen || deviceType == CaptureDevice::DeviceType::Window) && m_videoConstraints && updateVideoConstraints(*m_videoConstraints)) {
+        if (m_isObservingMedia && CaptureDevice::isVideoScreenShare(deviceType) && m_videoConstraints && updateVideoConstraints(*m_videoConstraints)) {
             source->removeVideoFrameObserver(*this);
             source->addVideoFrameObserver(*this, { m_widthConstraint, m_heightConstraint }, m_frameRateConstraint);
         }
@@ -593,6 +588,7 @@ void UserMediaCaptureManagerProxy::createMediaSourceForCaptureDeviceWithConstrai
         break;
     case WebCore::CaptureDevice::DeviceType::Screen:
     case WebCore::CaptureDevice::DeviceType::Window:
+    case WebCore::CaptureDevice::DeviceType::BrowserTab:
         sourceOrError = RealtimeMediaSourceCenter::singleton().displayCaptureFactory().createDisplayCaptureSource(device, WTF::move(hashSalts), nullptr, pageIdentifier);
         break;
     case WebCore::CaptureDevice::DeviceType::SystemAudio:
@@ -863,12 +859,6 @@ void UserMediaCaptureManagerProxy::setIsInBackground(RealtimeMediaSourceIdentifi
 {
     if (RefPtr proxy = m_proxies.get(sourceID))
         proxy->setIsInBackground(isInBackground);
-}
-
-void UserMediaCaptureManagerProxy::isPowerEfficient(WebCore::RealtimeMediaSourceIdentifier sourceID, CompletionHandler<void(bool)>&& callback)
-{
-    RefPtr proxy = m_proxies.get(sourceID);
-    callback(proxy && proxy->isPowerEfficient());
 }
 
 void UserMediaCaptureManagerProxy::clear()

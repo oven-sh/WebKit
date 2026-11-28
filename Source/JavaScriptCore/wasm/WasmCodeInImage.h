@@ -78,7 +78,7 @@ private:
     FixedVector<CodePtr<WasmEntryPtrTag>> m_javaScriptImportStubs;
     Vector<std::pair<const RTT*, Ref<JSToWasmICCallee>>> m_jsEntrypoints;
     mutable Lock m_faultCalleesLock;
-    UncheckedKeyHashMap<size_t, Ref<OMGCallee>, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_faultCallees WTF_GUARDED_BY_LOCK(m_faultCalleesLock);
+    HashMap<size_t, Ref<OMGCallee>, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_faultCallees WTF_GUARDED_BY_LOCK(m_faultCalleesLock);
     ImageCodeFlavor m_flavor;
     bool m_servesEveryFlavor;
 

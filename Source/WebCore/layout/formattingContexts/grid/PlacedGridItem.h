@@ -34,8 +34,7 @@
 #include "StyleSelfAlignmentData.h"
 #include <wtf/HashTraits.h>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 class UnplacedGridItem;
 
@@ -66,6 +65,8 @@ public:
 
     const WritingMode& writingMode() const LIFETIME_BOUND { return m_writingMode; }
 
+    BoxSizing boxSizing() const { return m_boxSizing; }
+
     bool isReplacedElement() const { return m_layoutBox->isReplacedBox(); }
 
     const GridAreaLines& gridAreaLines() const LIFETIME_BOUND { return m_gridAreaLines; }
@@ -85,10 +86,11 @@ private:
 
     const WritingMode m_writingMode;
 
+    const BoxSizing m_boxSizing;
+
     const Style::ZoomFactor m_usedZoom { 1.0f };
 
     const GridAreaLines m_gridAreaLines;
 };
 
-} // namespace Layout
-} // namespace WebCore
+} // namespace WebCore::Layout

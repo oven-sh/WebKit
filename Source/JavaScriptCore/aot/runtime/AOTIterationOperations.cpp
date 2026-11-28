@@ -589,7 +589,7 @@ static void rememberListsWithoutNames(Instance& instance, JSArray* list, JSPrope
 {
     Structure* structure = list->structure();
     bool listsNothing = enumerator == instance.vm->emptyPropertyNameEnumerator();
-    if (structure->isDictionary() || (!listsNothing && (!enumerator->indexedLength() || enumerator->sizeOfPropertyNames() || enumerator->cachedStructureID() != structure->id())))
+    if (structure->isDictionary() || (!listsNothing && (!enumerator->indexedLength() || enumerator->sizeOfPropertyNames() || enumerator->cachedStructureIDForNames() != structure->id())))
         return;
     bool sawPolyProto = false;
     if (normalizePrototypeChain(instance.globalObject, list, sawPolyProto) == InvalidPrototypeChain || sawPolyProto)

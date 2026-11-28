@@ -216,7 +216,7 @@ public:
 private:
     static bool mayBeKey(Reference name) { return name.bits() < std::numeric_limits<uint32_t>::max() - 1; }
 
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstIndices;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_firstIndices;
     size_t m_indexedEntryCount { 0 };
 };
 

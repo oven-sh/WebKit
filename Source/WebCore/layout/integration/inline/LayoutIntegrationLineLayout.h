@@ -48,7 +48,7 @@ class HitTestResult;
 class RenderBlockFlow;
 class RenderBox;
 class RenderBoxModelObject;
-class RenderListOutsideMarker;
+class RenderListItem;
 struct PaintInfo;
 struct SVGTextFragment;
 
@@ -124,6 +124,7 @@ public:
     std::optional<LayoutUnit> firstLineBaseline() const;
     std::optional<LayoutUnit> lastLineBaseline() const;
     LayoutRect firstInlineBoxRect(const RenderBoxModelObject&) const;
+    LayoutRect blockStartRelativeFirstInlineBoxRect(const RenderBoxModelObject&) const;
     LayoutRect enclosingBorderBoxRectFor(const RenderBoxModelObject&) const;
 
     InlineIterator::TextBoxIterator textBoxesFor(const RenderText&) const;
@@ -161,6 +162,10 @@ public:
     FloatRect applySVGTextFragments();
 
     NODELETE bool hasBlocks() const;
+    // Whether this inline content places floats of its own (not ones intruding from outside).
+    NODELETE bool hasFloats() const;
+    // The floats and the block-level boxes of this inline content, in tree order, which the Float paint phase and hit test action visit.
+    Vector<CheckedRef<RenderBox>> floatsAndBlockLevelBoxesInTreeOrder() const;
 
     // The last layout() pass. A pagination restart runs a second pass from inside layout().
     struct LayoutInfoForTesting {
@@ -205,9 +210,10 @@ private:
 
     NODELETE bool isContentConsideredStale() const;
 
-    using ExcludedMarkerList = Vector<CheckedPtr<RenderListOutsideMarker>>;
-    ExcludedMarkerList excludedMarkersForFirstFormattedLine(Layout::InlineLayoutState&);
-    void setExcludedMarkerPositions(const ExcludedMarkerList&);
+    // The list items whose outside marker aligns with our first formatted line.
+    using OutsideMarkerList = Vector<CheckedPtr<RenderListItem>>;
+    OutsideMarkerList outsideMarkersForFirstFormattedLine(Layout::InlineLayoutState&);
+    void setOutsideMarkerPositions(const OutsideMarkerList&);
 
 private:
     CheckedPtr<Layout::ElementBox> m_rootLayoutBox;

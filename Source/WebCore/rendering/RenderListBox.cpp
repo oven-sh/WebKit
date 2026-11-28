@@ -92,10 +92,11 @@ const int optionsSpacingInlineStart = 2;
 // Default size when the multiple attribute is present but size attribute is absent.
 const int defaultSize = 4;
 
-RenderListBox::RenderListBox(HTMLSelectElement& element, Style::ComputedStyle&& style)
+RenderListBox::RenderListBox(HTMLSelectElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderBlockFlow(Type::ListBox, element, WTF::move(style))
 {
     protect(view().frameView())->addScrollableArea(this);
+    protect(document())->setMayHaveListBoxes();
 }
 
 // Do not add any code in below destructor. Add it to willBeDestroyed() instead.
@@ -252,7 +253,7 @@ std::pair<LayoutUnit, LayoutUnit> RenderListBox::computeIntrinsicLogicalWidthCon
     ASSERT(!m_optionsChanged || Style::postResolutionCallbacksAreSuspended());
 
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
         return { logicalWidth, logicalWidth };
     }
 
@@ -427,6 +428,11 @@ void RenderListBox::paintObject(PaintInfo& paintInfo, const LayoutPoint& paintOf
 bool RenderListBox::useDarkAppearance() const
 {
     return RenderBlockFlow::useDarkAppearance();
+}
+
+std::optional<ScrollbarStyle> RenderListBox::scrollbarStyleOverride() const
+{
+    return page().scrollbarStyleOverride();
 }
 
 void RenderListBox::paintScrollbar(PaintInfo& paintInfo, const LayoutPoint& paintOffset, Scrollbar& scrollbar)

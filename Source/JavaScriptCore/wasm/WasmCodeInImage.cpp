@@ -30,7 +30,12 @@ namespace JSC { namespace Wasm {
 
 using B3::operationMemoryMove;
 using B3::operationGCSafeMemoryMove;
-using B3::operationMemoryFill;
+using B3::operationMemoryFill8;
+using B3::operationMemoryFill16;
+using B3::operationMemoryFill32;
+using B3::operationMemoryFill64;
+using B3::operationGCSafeMemoryFill64;
+using B3::operationMemoryFill128;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CodeInImage);
 

@@ -325,7 +325,7 @@ public:
     static constexpr uintptr_t destructionStartedFlag = 1ull << (sizeof(uintptr_t) * CHAR_BIT - 1);
     static constexpr uintptr_t refIncrement = 2;
 
-    void ref() const
+    SWIFT_UNSAFE void ref() const
     {
         bool didRefStrongOnly = m_bits.transaction<MemoryOrder::Relaxed>([&](uintptr_t& bits) {
             if (!isStrongOnly(bits))
@@ -339,7 +339,7 @@ public:
         std::bit_cast<ThreadSafeWeakPtrControlBlock*>(bits())->strongRef();
     }
 
-    void deref() const
+    SWIFT_UNSAFE void deref() const
     {
         bool shouldDelete = false;
         bool didDerefStrongOnly = m_bits.transaction<MemoryOrder::Release>([&](uintptr_t& bits) {
@@ -422,7 +422,7 @@ protected:
             // It doesn't really make sense to create a ThreadSafeWeakPtr during destruction since the controlBlock has to
             // view the object as dead. Otherwise a ThreadSafeWeakPtrFactory on an unrelated thread could vend out a partially
             // destroyed object.
-            ASSERT(!(bits & destructionStartedFlag));
+            ASSERT_WITH_SECURITY_IMPLICATION(!(bits & destructionStartedFlag));
             controlBlock->setStrongReferenceCountDuringInitialization(refCountFromStrongOnlyBits(bits));
             bits = std::bit_cast<uintptr_t>(controlBlock);
             ASSERT(!isStrongOnly(bits));

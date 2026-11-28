@@ -137,13 +137,6 @@ WI.Canvas = class Canvas extends WI.Object
         });
     }
 
-    static _domNodeForId(target, nodeId)
-    {
-        if (target instanceof WI.FrameTarget)
-            return WI.domManager.nodeForIdInFrameTarget(nodeId, target);
-        return WI.domManager.nodeForId(nodeId);
-    }
-
     static displayNameForContextType(contextType)
     {
         switch (contextType) {
@@ -275,13 +268,14 @@ WI.Canvas = class Canvas extends WI.Object
             } else
                 requestPromise = Promise.resolve({nodeIds: []});
 
-            let promise = requestPromise.then(({nodeIds}) => {
+            let promise = requestPromise.then(async ({nodeIds}) => {
+                let nodes = await Promise.all(nodeIds.map((nodeId) => WI.domManager.resolveNodeForIdInTarget(nodeId, this._target)));
                 if (promise !== this._requestNodesPromise)
                     return this._domNodes;
 
-                this._domNodes = nodeIds.map((nodeId) => WI.Canvas._domNodeForId(this._target, nodeId));
+                this._domNodes = nodes;
                 return this._domNodes;
-            }, () => promise === this._requestNodesPromise ? [] : this._domNodes);
+            }).catch(() => promise === this._requestNodesPromise ? [] : this._domNodes);
             this._requestNodesPromise = promise;
         }
         return this._requestNodesPromise;
@@ -306,13 +300,14 @@ WI.Canvas = class Canvas extends WI.Object
             } else
                 requestPromise = Promise.resolve({clientNodeIds: []});
 
-            let promise = requestPromise.then(({clientNodeIds}) => {
+            let promise = requestPromise.then(async ({clientNodeIds}) => {
+                let clientNodes = await Promise.all(clientNodeIds.map((clientNodeId) => WI.domManager.resolveNodeForIdInTarget(clientNodeId, this._target)));
                 if (promise !== this._requestCSSCanvasClientNodesPromise)
                     return this._cssCanvasClientNodes;
 
-                this._cssCanvasClientNodes = clientNodeIds.map((clientNodeId) => WI.Canvas._domNodeForId(this._target, clientNodeId));
+                this._cssCanvasClientNodes = clientNodes;
                 return this._cssCanvasClientNodes;
-            }, () => promise === this._requestCSSCanvasClientNodesPromise ? [] : this._cssCanvasClientNodes);
+            }).catch(() => promise === this._requestCSSCanvasClientNodesPromise ? [] : this._cssCanvasClientNodes);
             this._requestCSSCanvasClientNodesPromise = promise;
         }
         return this._requestCSSCanvasClientNodesPromise;
@@ -545,7 +540,9 @@ WI.Canvas.ContextType = {
 
 WI.Canvas.ColorSpace = {
     SRGB: "srgb",
+    SRGBLinear: "srgb-linear",
     DisplayP3: "display-p3",
+    DisplayP3Linear: "display-p3-linear",
 };
 
 WI.Canvas.RecordingState = {

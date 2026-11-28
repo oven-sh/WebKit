@@ -65,28 +65,12 @@ NODELETE bool defaultCaptionDisplaySettingsEnabled()
 
 #if PLATFORM(MAC)
 
-NODELETE bool defaultUseAppKitGestures()
-{
-    return false;
-}
-
 NODELETE bool defaultTextInputClientSelectionUpdatesEnabled()
 {
     return false;
 }
 
 #endif // PLATFORM(MAC)
-
-#if ENABLE(CONTENT_CHANGE_OBSERVER)
-bool defaultContentChangeObserverEnabled()
-{
-#if PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)
-    return true;
-#else
-    return false;
-#endif
-}
-#endif
 
 #if HAVE(WEBCONTENTRESTRICTIONS_ASK_TO)
 NODELETE bool defaultWebContentRestrictionsAskToEnabled()
@@ -95,11 +79,17 @@ NODELETE bool defaultWebContentRestrictionsAskToEnabled()
 }
 #endif
 
-}
+} // namespace WebKit
 
-#endif // namespace WebKit
+#endif // USE(APPLE_INTERNAL_SDK) && __has_include(<WebKitAdditions/WebPreferencesDefaultValuesCocoaAdditions.mm>)
 
 namespace WebKit {
+
+bool defaultCompressionDictionaryEnabled()
+{
+    static SEL sel = NSSelectorFromString(@"_supportsCompressionDictionary");
+    return [NSURLSession.class respondsToSelector:sel];
+}
 
 #if HAVE(LIQUID_GLASS)
 NODELETE static std::optional<bool>& cachedIsLiqudGlassEnabled()
@@ -121,6 +111,17 @@ NODELETE void setLiquidGlassEnabled(bool isLiquidGlassEnabled)
     cachedIsLiqudGlassEnabled() = isLiquidGlassEnabled;
 }
 #endif // HAVE(LIQUID_GLASS)
+
+#if ENABLE(CONTENT_CHANGE_OBSERVER)
+bool defaultContentChangeObserverEnabled()
+{
+#if (PLATFORM(IOS_FAMILY) && !PLATFORM(MACCATALYST)) || HAVE(APPKIT_GESTURES_SUPPORT)
+    return true;
+#else
+    return false;
+#endif
+}
+#endif
 
 #if PLATFORM(MAC)
 bool defaultScrollAnimatorEnabled()

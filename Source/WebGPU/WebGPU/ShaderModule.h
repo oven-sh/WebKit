@@ -25,8 +25,13 @@
 
 #pragma once
 
+#if !__has_feature(objc_arc)
+#error This header requires ARC. Include it only from files compiled with -fobjc-arc.
+#endif
+
 #import "ASTInterpolateAttribute.h"
 #import "CallGraph.h"
+#import "Device.h"
 #import "WGSL.h"
 #import <WebGPU/WebGPUCpp.h>
 #import <variant>
@@ -111,18 +116,18 @@ public:
     const WGSL::Reflection::EntryPointInformation* entryPointInformation(const String&) const;
     id<MTLLibrary> library() const { return m_library; }
 
-    Device& device() const { return m_device; }
+    NODELETE Device& device() const final { return m_device; }
     NODELETE const String& defaultVertexEntryPoint() const;
     NODELETE const String& defaultFragmentEntryPoint() const;
     NODELETE const String& defaultComputeEntryPoint() const;
 
-    using VertexStageIn = HashMap<uint32_t, WebGPU::VertexFormat, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    using FragmentOutputs = HashMap<uint32_t, MTLDataType, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using VertexStageIn = HashMap<uint32_t, WebGPU::VertexFormat>;
+    using FragmentOutputs = HashMap<uint32_t, MTLDataType>;
     struct VertexOutputFragmentInput {
         MTLDataType dataType { MTLDataTypeNone };
         std::optional<WGSL::AST::Interpolation> interpolation { std::nullopt };
     };
-    using VertexOutputs = HashMap<uint32_t, VertexOutputFragmentInput, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using VertexOutputs = HashMap<uint32_t, VertexOutputFragmentInput>;
     using FragmentInputs = VertexOutputs;
     const FragmentOutputs* fragmentReturnTypeForEntryPoint(const String&) const;
     const FragmentInputs* fragmentInputsForEntryPoint(const String&) const;

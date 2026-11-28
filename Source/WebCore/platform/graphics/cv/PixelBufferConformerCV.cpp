@@ -28,6 +28,7 @@
 
 #include "CVUtilities.h"
 #include "GraphicsContextCG.h"
+#include "ImageTransferSessionVT.h"
 #include "ImageUtilities.h"
 #include "NativeImage.h"
 #include <pal/spi/cg/CoreGraphicsSPI.h>
@@ -57,14 +58,26 @@ RetainPtr<CVPixelBufferRef> PixelBufferConformerCV::convert(CVPixelBufferRef raw
 {
     RetainPtr<CVPixelBufferRef> buffer { rawBuffer };
 
-    if (!VTPixelBufferConformerIsConformantPixelBuffer(m_pixelConformer.get(), buffer.get())) {
-        CVPixelBufferRef outputBuffer = nullptr;
-        OSStatus status = VTPixelBufferConformerCopyConformedPixelBuffer(m_pixelConformer.get(), buffer.get(), false, &outputBuffer);
-        if (status != noErr || !outputBuffer)
-            return nullptr;
-        return adoptCF(outputBuffer);
-    }
-    return nullptr;
+    bool hasAlphaPlane = isPixelFormatWithAlphaPlane(CVPixelBufferGetPixelFormatType(buffer));
+    if (hasAlphaPlane) {
+        // VTPixelBufferConformer miscolours 10-bit Y'CbCr with an alpha plane, and rounds alpha down (rdar://192541461).
+        buffer = createPixelBufferWithoutAlphaPlane(rawBuffer);
+        if (!buffer || VTPixelBufferConformerIsConformantPixelBuffer(m_pixelConformer, buffer))
+            return buffer;
+    } else if (VTPixelBufferConformerIsConformantPixelBuffer(m_pixelConformer, buffer))
+        return nullptr;
+
+    CVPixelBufferRef outputBuffer = nullptr;
+    OSStatus status = VTPixelBufferConformerCopyConformedPixelBuffer(m_pixelConformer, buffer, false, &outputBuffer);
+    if (status != noErr || !outputBuffer)
+        return nullptr;
+    RetainPtr output = adoptCF(outputBuffer);
+
+    auto outputFormat = CVPixelBufferGetPixelFormatType(output);
+    bool hasAlphaChannel = outputFormat == kCVPixelFormatType_32BGRA || outputFormat == kCVPixelFormatType_32ARGB;
+    if (hasAlphaPlane && hasAlphaChannel && !copyAlphaPlaneToAlphaChannel(rawBuffer, output))
+        return nullptr;
+    return output;
 }
 
 RefPtr<NativeImage> PixelBufferConformerCV::createImageFromPixelBuffer(CVPixelBufferRef rawBuffer)
@@ -72,7 +85,11 @@ RefPtr<NativeImage> PixelBufferConformerCV::createImageFromPixelBuffer(CVPixelBu
     RetainPtr buffer { rawBuffer };
     RetainPtr colorSpace = createCGColorSpaceForCVPixelBuffer(buffer.get());
 
-    if (!VTPixelBufferConformerIsConformantPixelBuffer(m_pixelConformer.get(), buffer.get())) {
+    if (isPixelFormatWithAlphaPlane(CVPixelBufferGetPixelFormatType(buffer))) {
+        buffer = ImageTransferSessionVT::convertPixelBuffer(buffer, kCVPixelFormatType_32BGRA, ImageTransferSessionVT::DestinationColorSpace::Unspecified);
+        if (!buffer)
+            return nullptr;
+    } else if (!VTPixelBufferConformerIsConformantPixelBuffer(m_pixelConformer, buffer)) {
         CVPixelBufferRef outputBuffer = nullptr;
         OSStatus status = VTPixelBufferConformerCopyConformedPixelBuffer(m_pixelConformer.get(), buffer.get(), false, &outputBuffer);
         if (status != noErr || !outputBuffer)
@@ -80,7 +97,8 @@ RefPtr<NativeImage> PixelBufferConformerCV::createImageFromPixelBuffer(CVPixelBu
         buffer = adoptCF(outputBuffer);
     }
 
-    return NativeImage::create(WTF::move(buffer), kCGImageAlphaFirst, colorSpace.get());
+    auto alphaInfo = alphaInfoForCVPixelBuffer(buffer);
+    return NativeImage::create(WTF::move(buffer), alphaInfo, colorSpace);
 }
 
 }

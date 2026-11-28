@@ -199,18 +199,22 @@ CMVideoCodecType GPUVideoEncoderVTB::codecType() const
     return kCMVideoCodecType_HEVC;
 }
 
+RetainPtr<CFDictionaryRef> GPUVideoEncoderVTB::encoderSpecification()
+{
+    RetainPtr encoderSpecification = adoptCF(CFDictionaryCreateMutable(nullptr, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
+#if PLATFORM(MAC) && !PLATFORM(MACCATALYST)
+    CFDictionarySetValue(encoderSpecification, PAL::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder, kCFBooleanTrue);
+#endif
+    return encoderSpecification;
+}
+
 bool GPUVideoEncoderVTB::resetCompressionSession()
 {
     assertIsCurrent(queue());
 
     m_encoder = nullptr;
 
-    RetainPtr encoderSpecification = adoptCF(CFDictionaryCreateMutable(nullptr, 1, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks));
-#if PLATFORM(MAC) && !PLATFORM(MACCATALYST)
-    CFDictionarySetValue(encoderSpecification, PAL::kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder, kCFBooleanTrue);
-#endif
-
-    m_encoder = VideoEncoderVTBSession::create(m_width, m_height, codecType(), encoderSpecification, nullptr);
+    m_encoder = VideoEncoderVTBSession::create(m_width, m_height, codecType(), encoderSpecification(), nullptr);
     if (!m_encoder)
         return false;
 
@@ -377,9 +381,8 @@ std::optional<Vector<uint8_t>> GPUVideoEncoderVTB::toVector(CMSampleBufferRef sa
     if (!blockBuffer)
         return { };
 
-    Vector<uint8_t> buffer;
     size_t size = PAL::CMBlockBufferGetDataLength(blockBuffer);
-    buffer.reserveInitialCapacity(size);
+    Vector<uint8_t> buffer(ReserveCapacityTag { }, size);
     for (size_t currentStart = 0; currentStart < size;) {
         char* data = nullptr;
         size_t length = 0;

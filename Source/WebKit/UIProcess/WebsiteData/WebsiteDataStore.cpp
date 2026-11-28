@@ -105,9 +105,9 @@
 #include "WebPrivacyHelpers.h"
 #endif
 
-#if ENABLE(WEB_AUTHN)
+#if ENABLE(WEB_AUTHN) && PLATFORM(COCOA)
 #include "VirtualAuthenticatorManager.h"
-#endif // ENABLE(WEB_AUTHN)
+#endif
 
 namespace WebKit {
 
@@ -175,7 +175,7 @@ WebsiteDataStore::WebsiteDataStore(Ref<WebsiteDataStoreConfiguration>&& configur
     , m_client(makeUniqueRef<WebsiteDataStoreClient>())
     , m_webLockRegistry(WebCore::LocalWebLockRegistry::create())
 {
-    RELEASE_LOG(Storage, "%p - WebsiteDataStore::WebsiteDataStore sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, m_sessionID.toUInt64(), m_configuration->identifier() ? m_configuration->identifier()->toString().utf8() : "null"_s);
+    RELEASE_LOG(Storage, "%p - WebsiteDataStore::WebsiteDataStore sessionID=%" PRIu64 " identifier=%" PUBLIC_LOG_STRING, this, m_sessionID.toUInt64(), m_configuration->identifier() ? makeUTF8CString(m_configuration->identifier()->toString()) : "null"_s);
 
 #if PLATFORM(COCOA)
     determineTrackingPreventionState();
@@ -615,7 +615,7 @@ void WebsiteDataStore::fetchDataAndApply(OptionSet<WebsiteDataType> dataTypes, O
                 for (auto& record : records)
                     allTypes.add(record.types);
                 apply(WTF::move(records));
-                RELEASE_LOG(Storage, "WebsiteDataStore::fetchDataAndApply finished fetching data for session %" PRIu64 " ( fetched types: %" PUBLIC_LOG_STRING ")", sessionID.toUInt64(), loggingString(allTypes).utf8());
+                RELEASE_LOG(Storage, "WebsiteDataStore::fetchDataAndApply finished fetching data for session %" PRIu64 " ( fetched types: %" PUBLIC_LOG_STRING ")", sessionID.toUInt64(), makeUTF8CString(loggingString(allTypes)));
             });
         }
 
@@ -821,8 +821,8 @@ private:
 
 void WebsiteDataStore::fetchDataForRegistrableDomains(OptionSet<WebsiteDataType> dataTypes, OptionSet<WebsiteDataFetchOption> fetchOptions, Vector<WebCore::RegistrableDomain>&& domains, CompletionHandler<void(Vector<WebsiteDataRecord>&&, HashSet<WebCore::RegistrableDomain>&&)>&& completionHandler)
 {
-    fetchDataAndApply(dataTypes, fetchOptions, protect(m_queue), [domains = crossThreadCopy(domains), completionHandler = WTF::move(completionHandler)] (auto&& existingDataRecords) mutable {
-        ASSERT(!RunLoop::isMain());
+    fetchDataAndApply(dataTypes, fetchOptions, protect(m_queue), [queue = m_queue, domains = crossThreadCopy(domains), completionHandler = WTF::move(completionHandler)](auto&& existingDataRecords) mutable {
+        assertIsCurrent(queue);
         
         Vector<WebsiteDataRecord> matchingDataRecords;
         HashSet<WebCore::RegistrableDomain> domainsWithMatchingDataRecords;
@@ -1550,7 +1550,7 @@ void WebsiteDataStore::setTimeToLiveUserInteraction(Seconds seconds, CompletionH
 
 IsolatedSiteStore& WebsiteDataStore::isolatedSiteStore()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     if (!m_isolatedSiteStore) {
         IsolatedSiteStore::UserInteractionDomainFetcher fetcher = [weakThis = WeakPtr { *this }](CompletionHandler<void(std::optional<HashMap<WebCore::RegistrableDomain, WallTime>>&&)>&& completionHandler) mutable {
@@ -1570,7 +1570,8 @@ IsolatedSiteStore& WebsiteDataStore::isolatedSiteStore()
 bool WebsiteDataStore::computeSiteIsolationHighValueFraudTargetDomainsEnabled() const
 {
     for (Ref page : m_pages) {
-        if (protect(page->preferences())->siteIsolationHighValueFraudTargetDomainsEnabled())
+        Ref preferences = page->preferences();
+        if (preferences->siteIsolationEnabled() && preferences->siteIsolationSharedProcessEnabled() && preferences->siteIsolationHighValueFraudTargetDomainsEnabled())
             return true;
     }
 
@@ -2135,6 +2136,8 @@ void WebsiteDataStore::clearResourceLoadStatisticsInWebProcesses(CompletionHandl
     if (trackingPreventionEnabled()) {
         for (Ref processPool : processPools())
             processPool->sendToAllProcessesForSession(Messages::WebProcess::ClearResourceLoadStatistics(), m_sessionID);
+        for (Ref page : m_pages)
+            page->clearPageLevelStorageAccess();
     }
     callback();
 }
@@ -2280,7 +2283,7 @@ bool WebsiteDataStore::computeIsOptInCookiePartitioningEnabled() const
 {
 #if !PLATFORM(COCOA) || (defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION)
     // Keep the flag unchanged when all pages are gone.
-    if (m_pages.isEmptyIgnoringNullReferences() && m_cachedIsOptInCookiePartitioningEnabled)
+    if (m_pages.computeIsEmpty() && m_cachedIsOptInCookiePartitioningEnabled)
         return *m_cachedIsOptInCookiePartitioningEnabled;
 
     for (Ref page : m_pages) {
@@ -2536,12 +2539,14 @@ void WebsiteDataStore::setMockWebAuthenticationConfiguration(WebCore::MockWebAut
         m_authenticatorManager = MockAuthenticatorManager::create(WTF::move(configuration));
 }
 
+#if PLATFORM(COCOA)
 VirtualAuthenticatorManager& WebsiteDataStore::virtualAuthenticatorManager()
 {
     if (!is<VirtualAuthenticatorManager>(m_authenticatorManager.get()))
         m_authenticatorManager = VirtualAuthenticatorManager::create();
     return downcast<VirtualAuthenticatorManager>(m_authenticatorManager.get());
 }
+#endif
 #endif
 
 API::HTTPCookieStore& WebsiteDataStore::cookieStore()

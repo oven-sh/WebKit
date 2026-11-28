@@ -118,7 +118,7 @@ public:
 
 private:
     Lock m_lock;
-    UncheckedKeyHashSet<Ref<Signature>, SignatureHash> m_signatures WTF_GUARDED_BY_LOCK(m_lock);
+    HashSet<Ref<Signature>, SignatureHash> m_signatures WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } } // namespace JSC::FFI

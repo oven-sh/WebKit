@@ -68,7 +68,7 @@ public:
 
     ~ProcessThrottlerActivity()
     {
-        ASSERT(isMainRunLoop());
+        RELEASE_ASSERT(isMainRunLoop());
         if (isValid())
             invalidate(ForceEnableActivityLogging::No);
     }
@@ -137,7 +137,7 @@ public:
 
     void didConnectToProcess(AuxiliaryProcessProxy&);
     void didDisconnectFromProcess();
-    bool shouldBeRunnable() const { return !m_foregroundActivities.isEmptyIgnoringNullReferences() || !m_backgroundActivities.isEmptyIgnoringNullReferences(); }
+    bool shouldBeRunnable() const { return !m_foregroundActivities.computeIsEmpty() || !m_backgroundActivities.computeIsEmpty(); }
     void setAllowsActivities(bool);
     void setShouldDropNearSuspendedAssertionAfterDelay(bool);
     void setShouldTakeNearSuspendedAssertion(bool);

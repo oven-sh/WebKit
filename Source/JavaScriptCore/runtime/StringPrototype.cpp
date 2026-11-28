@@ -1121,13 +1121,23 @@ JSCell* stringSplitFast(JSGlobalObject* globalObject, JSString* thisString, JSSt
                 JSString* string = nullptr;
                 const bool isPotentiallyIdentifier = start < end && isASCIIIdentifierStart(view->codeUnitAt(start));
                 if (makeAtomStringsArray && isPotentiallyIdentifier) {
-                    auto subView = view->substring(start, end - start);
-                    auto identifier = subView.is8Bit() ? Identifier::fromString(vm, subView.span8()) : Identifier::fromString(vm, subView.span16());
+                    // A subject in an image can be a key of the cache without being an atom: that one is atomized like any other piece.
+                    if (!start && end == view->length() && input->impl()->isAtom()) {
+                        // The whole subject, which already holds an atom.
+                        if (!thisString->isDefinitelyAtom()) [[unlikely]]
+                            thisString->markAsAtom();
+                        string = vm.atomStringToJSStringMap.ensureValue(input->impl(), [&] {
+                            return thisString;
+                        });
+                    } else {
+                        auto subView = view->substring(start, end - start);
+                        auto identifier = subView.is8Bit() ? Identifier::fromString(vm, subView.span8()) : Identifier::fromString(vm, subView.span16());
 
-                    DeferGC defer(vm);
-                    string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {
-                        return jsString(vm, identifier.string());
-                    });
+                        DeferGC defer(vm);
+                        string = vm.atomStringToJSStringMap.ensureValue(identifier.impl(), [&] {
+                            return jsString(vm, identifier.string());
+                        });
+                    }
                 } else {
                     string = jsSubstring(globalObject, thisString, start, end - start);
                     RETURN_IF_EXCEPTION(scope, { });
@@ -1908,7 +1918,7 @@ static EncodedJSValue toLocaleCase(JSGlobalObject* globalObject, CallFrame* call
     if (!StringImpl::isValidLength<char16_t>(s->length()) || !buffer.tryReserveInitialCapacity(s->length())) [[unlikely]]
         return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     auto convertCase = mode == CaseConversionMode::Lower ? u_strToLower : u_strToUpper;
-    auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), locale.utf8().legacyCStringPointer());
+    auto status = callBufferProducingFunction(convertCase, buffer, StringView { s }.upconvertedCharacters().get(), s->length(), makeUTF8CString(locale).legacyCStringPointer());
     if (isICUMemoryAllocationError(status)) [[unlikely]]
         return JSValue::encode(throwOutOfMemoryError(globalObject, scope));
     if (U_FAILURE(status))

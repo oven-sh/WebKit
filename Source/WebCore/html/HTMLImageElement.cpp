@@ -129,10 +129,8 @@ HTMLImageElement::~HTMLImageElement()
     Ref document = this->document();
     document->removeDynamicMediaQueryDependentImage(*this);
     setForm(nullptr);
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (RefPtr page = document->page())
         page->removeIndividuallyPlayingAnimationElement(*this);
-#endif
 }
 
 void HTMLImageElement::resetFormOwner()
@@ -558,9 +556,9 @@ const AtomString& HTMLImageElement::altText() const
     return attributeWithoutSynchronization(titleAttr);
 }
 
-RenderPtr<RenderElement> HTMLImageElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition&)
+RenderPtr<RenderElement> HTMLImageElement::createElementRenderer(UniqueRef<Style::ComputedStyle>&& style, const RenderTreePosition&)
 {
-    if (style.content().isData())
+    if (style->content().isData())
         return RenderElement::createFor(*this, WTF::move(style));
 
     return createRenderer<RenderImage>(RenderObject::Type::Image, *this, WTF::move(style), nullptr, m_currentPixelDensity);
@@ -1006,15 +1004,12 @@ void HTMLImageElement::clearImageAnimationTimeline()
     if (!timeline)
         return;
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     if (timeline->state() == ImageAnimationTimeline::State::Running) {
         if (RefPtr page = document().page())
             page->removeIndividuallyPlayingAnimationElement(*this);
     }
-#endif
 }
 
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void HTMLImageElement::setAnimationOverride(ImageAnimationOverride animationOverride)
 {
     if (RefPtr image = this->image()) {
@@ -1042,7 +1037,6 @@ void HTMLImageElement::setAnimationOverride(ImageAnimationOverride animationOver
         }
     }
 }
-#endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 
@@ -1282,11 +1276,6 @@ void HTMLImageElement::prepareImmersivePresentation(CompletionHandler<void(Excep
     if (auto error = immersiveImageError())
         return completion(WTF::move(*error));
     completion({ });
-}
-
-void HTMLImageElement::presentImmersivePresentation(ChromeClient& client, CompletionHandler<void(bool)>&& completion)
-{
-    client.presentImmersiveImageElement(*this, WTF::move(completion));
 }
 
 std::optional<Exception> HTMLImageElement::immersiveImageError() const

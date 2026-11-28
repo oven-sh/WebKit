@@ -302,14 +302,14 @@ static size_t naiveUTF8Length(const Text<char16_t>& text)
 static void checkUTF8Length(const Text<Latin1Character>& text, size_t expected)
 {
     AOT_TEST_CHECK(operationAOTStringUTF8Length8(text.span().data(), text.size()) == expected);
-    AOT_TEST_CHECK(String(text.span()).utf8().length() == expected);
+    AOT_TEST_CHECK(makeUTF8CString(String(text.span())).length() == expected);
 }
 
 static void checkUTF8Length(const Text<char16_t>& text, size_t expected)
 {
     AOT_TEST_CHECK(naiveUTF8Length(text) == expected);
     AOT_TEST_CHECK(operationAOTStringUTF8Length16(text.span().data(), text.size()) == expected);
-    AOT_TEST_CHECK(String(text.span()).utf8().length() == expected);
+    AOT_TEST_CHECK(makeUTF8CString(String(text.span())).length() == expected);
 }
 
 static void testUTF8Length()

@@ -156,7 +156,7 @@ private:
     Vector<uint32_t> m_functionsNamed;
     Vector<LayoutID> m_scopesMade;
     Vector<ScopeMadeOnce> m_scopes;
-    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfCaptures;
+    HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_nodesOfCaptures;
     Vector<uint32_t> m_parents;
     Vector<uint32_t> m_sourcesOfClasses;
     Vector<uint32_t> m_sourcesOfValues;

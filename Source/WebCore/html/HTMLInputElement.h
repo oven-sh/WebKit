@@ -137,7 +137,7 @@ public:
 
     NODELETE bool isPresentingAttachedView() const;
 
-    NODELETE RefPtr<InputType> inputType() const;
+    NODELETE WEBCORE_EXPORT RefPtr<InputType> inputType() const;
 
     NODELETE bool isSteppable() const; // stepUp()/stepDown() for user-interaction.
     NODELETE WEBCORE_EXPORT bool isTextButton() const;
@@ -180,7 +180,7 @@ public:
 
     RefPtr<TextControlInnerTextElement> innerTextElement() const final;
     RefPtr<TextControlInnerTextElement> innerTextElementCreatingShadowSubtreeIfNeeded() final;
-    Style::ComputedStyle createInnerTextStyle(const Style::ComputedStyle&) final;
+    UniqueRef<Style::ComputedStyle> createInnerTextStyle(const Style::ComputedStyle&) final;
 
     HTMLElement* innerBlockElement() const;
     HTMLElement* innerSpinButtonElement() const;
@@ -222,7 +222,7 @@ public:
 
     bool rendererIsNeeded(const Style::ComputedStyle&) final;
     NODELETE bool supportsBaseAppearance(StyleAppearance) const final;
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void willAttachRenderers() final;
     void didAttachRenderers() final;
@@ -237,6 +237,9 @@ public:
     void didDispatchClickEvent(Event&, const InputElementClickState&);
 
     void didBlur();
+
+    bool requiresLayerForScreenCaptureProtection() const;
+    bool shouldHideFromScreenCapture() const;
 
     int maxResults() const { return m_maxResults; }
 
@@ -466,6 +469,13 @@ private:
     void minLengthAttributeChanged(const AtomString& newValue);
     void updateValueIfNeeded();
 
+    ValueOrReference<String> valueWithoutScriptTrackingPrivacyProtection() const;
+
+    bool isScreenCaptureProtectionEnabled() const;
+    void updateScreenCaptureProtectionIfNeeded();
+    void invalidateScreenCaptureProtectionOnFocusChangeIfNeeded();
+    void invalidateScreenCaptureProtection();
+
     void addToRadioButtonGroup();
     void removeFromRadioButtonGroup();
 
@@ -506,6 +516,7 @@ private:
     bool m_hasPendingUserAgentShadowTreeUpdate : 1 { false };
     bool m_hasSwitchAttribute : 1 { false };
     bool m_hasEverBeenPasswordField : 1 { false };
+    bool m_isHiddenFromScreenCapture : 1 { false };
     RefPtr<InputType> m_inputType;
     TaskCancellationGroup m_dataListMayHaveChangedTaskCancellationGroup;
     // The ImageLoader must be owned by this element because the loader code assumes

@@ -54,8 +54,7 @@
 #include "CSSValueKeywords.h"
 #include "CSSValueList.h"
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 static std::optional<CSS::ClipRect> consumeUnresolvedClipRectFunction(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
@@ -150,7 +149,7 @@ RefPtr<CSSValue> consumeClipPath(CSSParserTokenRange& range, CSS::PropertyParser
     auto consumeShape = [&]() -> bool {
         if (shape)
             return false;
-        shape = consumeBasicShape(range, state, { });
+        shape = consumeBasicShape(range, state);
         return !!shape;
     };
     auto consumeBox = [&]() -> bool {
@@ -409,5 +408,4 @@ std::optional<CSS::MaskBorder> consumeUnresolvedMaskBorder(CSSParserTokenRange& 
     };
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

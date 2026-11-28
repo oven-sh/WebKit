@@ -95,7 +95,7 @@ private:
         return true;
     }
 
-    UncheckedKeyHashMap<Value*, bool> m_answers;
+    HashMap<Value*, bool> m_answers;
     Vector<Value*, 16> m_pending;
 };
 
@@ -292,7 +292,7 @@ private:
     BasicBlock* m_block { nullptr };
     Vector<Part, 16> m_parts;
     Vector<unsigned> m_partOfValueAt;
-    UncheckedKeyHashMap<Value*, Uses> m_uses;
+    HashMap<Value*, Uses> m_uses;
     Vector<Value*, 16> m_usedByPartsAlone;
     unsigned m_firstIndexThatChanges { 0 };
     std::optional<unsigned> m_endOfWrites;

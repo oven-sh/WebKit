@@ -38,6 +38,7 @@
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ViewportArguments.h>
 #include <optional>
+#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
 
 #if !defined(NDEBUG) || !LOG_DISABLED
@@ -86,12 +87,12 @@ struct MainFrameData {
     OptionSet<WebCore::LayoutMilestone> newlyReachedPaintingMilestones;
     bool scaleWasSetByUIProcess { false };
     bool allowsUserScaling { false };
-    bool avoidsUnsafeArea { true };
     bool viewportMetaTagWidthWasExplicit { false };
     bool viewportMetaTagCameFromImageDocument { false };
     bool isInStableState { false };
     bool hasMainThreadScrollDrivenAnimations { false };
     WebCore::InteractiveWidgetValue viewportMetaTagInteractiveWidget { WebCore::InteractiveWidgetValue::ResizesVisual };
+    WebCore::ViewportFitEdges viewportFitEdges;
 
 #if PLATFORM(IOS_FAMILY)
     std::optional<DynamicViewportSizeUpdateID> dynamicViewportSizeUpdateID;
@@ -103,7 +104,7 @@ struct MainFrameData {
 };
 
 struct RemoteLayerTreeCommitBundle {
-    using RootFrameData = std::pair<RemoteLayerTreeTransaction, RemoteScrollingCoordinatorTransaction>;
+    using RootFrameData = std::pair<UniqueRef<RemoteLayerTreeTransaction>, RemoteScrollingCoordinatorTransaction>;
 
     Vector<RootFrameData> transactions;
     PageData pageData;
