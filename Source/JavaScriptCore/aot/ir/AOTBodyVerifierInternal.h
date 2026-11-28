@@ -315,7 +315,7 @@ inline constexpr OpcodeSet opcodesWithRuleOfTheirOwnInVerifiedBodies {
     Opcode::CreateUnmappedArguments, Opcode::CreateMappedArguments, Opcode::GetMappedArgument, Opcode::SetMappedArgument,
     Opcode::PrivateGet, Opcode::PrivateSet, Opcode::PrivateDefine, Opcode::PrivateHas, Opcode::Await, Opcode::Yield, Opcode::InitialYield,
     Opcode::Builtin, Opcode::ModuleBuiltin, Opcode::NativeBinding, Opcode::DirectEval, Opcode::EvaluateModule, Opcode::RecordRequire,
-    Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::CountExecution
+    Opcode::GetEnvironmentField, Opcode::PutEnvironmentField, Opcode::CountExecution, Opcode::Double
 };
 inline constexpr TerminatorKindSet terminatorsWithRuleOfTheirOwnInVerifiedBodies { TerminatorKind::Switch, TerminatorKind::SwitchString, TerminatorKind::Return, TerminatorKind::ReturnCall };
 

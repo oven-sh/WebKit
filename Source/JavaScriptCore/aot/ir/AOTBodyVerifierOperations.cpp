@@ -17,6 +17,7 @@
 #include "AOTSchemaResultRules.h"
 #include "AOTSort.h"
 #include "AOTTypeRelations.h"
+#include "PureNaN.h"
 #include <algorithm>
 #include <functional>
 #include <optional>
@@ -283,6 +284,12 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
         return;
     }
 
+    case Opcode::Double:
+        // Its bits would be those of a cell once it is boxed.
+        if (isImpureNaN(value.as<Opcode::Double>().number()))
+            fail(InternalErrorKind::PayloadOutOfRange, block.id(), value.id());
+        return;
+
     case Opcode::CountExecution: {
         auto counter = value.as<Opcode::CountExecution>();
         if (requireRecordOfVerifiedOperation(*this, block, value.id(), counter.module()))
@@ -291,7 +298,7 @@ void BodyVerifier::verifyRuleOfOpcode(const BodyBlock& block, uint32_t indexInBl
     }
 
     case Opcode::Upcast: case Opcode::NarrowByField: case Opcode::Check: case Opcode::CheckInitialized: case Opcode::RequireObjectCoercible: case Opcode::RequireObject: case Opcode::TypeTest: case Opcode::IsUnlockedInstance:
-    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::Double: case Opcode::String: case Opcode::BigInt: case Opcode::Data:
+    case Opcode::Undefined: case Opcode::Null: case Opcode::Absent: case Opcode::Boolean: case Opcode::Integer: case Opcode::String: case Opcode::BigInt: case Opcode::Data:
     case Opcode::GetModuleVariable: case Opcode::PutModuleVariable: case Opcode::ScopeHasBinding:
     case Opcode::NewDictionary: case Opcode::AppendElement: case Opcode::AppendSpread: case Opcode::AppendHole: case Opcode::NewRegExp: case Opcode::NewTemplateObject:
     case Opcode::NewRuntimeError: case Opcode::NewSuppressedError:

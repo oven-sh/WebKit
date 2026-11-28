@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTBodyVerifier.h"
 #include "AOTBuildContext.h"
 #include "AOTBuiltinTable.h"
 #include "AOTCompileOptionWords.h"
@@ -19,6 +20,9 @@
 #include "AOTTypeArena.h"
 #include "AOTVector.h"
 #include "AOTWireTypesInternal.h"
+#include <algorithm>
+#include <array>
+#include <bit>
 #include <memory>
 #include <span>
 #include <utility>
@@ -217,11 +221,65 @@ static void verifierFindsUnreachedNamesAmongManyOnAnyNumberOfThreads()
     }
 }
 
+static constexpr ASCIILiteral readerTestBodiesText = R"IR(module m0 path="/a.ts" displayPath="a.ts"
+function f0 name="f" module=m0 parameters=[{type=anything}] results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Double number=1.5 @1
+    v2 = ToBoolean v0 @2
+    v3 = NewArray v0, v1 contents=anything @3
+    Branch v2 -> taken b1(), notTaken b2(v3) @4
+  b1():
+    Return v1 @5
+  b2(v4):
+    Return v4 @6
+}
+entry module=m0
+data d0 root=Number{value=2.5} module=m0
+)IR"_s;
+
+static Vector<uint32_t> wordsOfReaderTestProgram()
+{
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = parseProgram(readerTestBodiesText, build);
+    AOT_TEST_CHECK(program && verifyRecords(*program, build) && verifyBodies(*program, build));
+    return Vector<uint32_t>(spanReinterpretCast<const uint32_t>(program->buffer()));
+}
+
+static bool isAcceptedByReaderAndVerifiers(const Vector<uint32_t>& words)
+{
+    std::span<const uint8_t> bytes = asBytes(words.span());
+    BuildContext build(makeDefaultCompileOptions());
+    std::unique_ptr<Program> program = Program::read(bytes, build, SchemaHashCheck::Required);
+    if (!program)
+        return false;
+    return verifyRecords(*program, build) && verifyBodies(*program, build);
+}
+
+static void numberWithBitsOfCellIsRefused()
+{
+    Vector<uint32_t> words = wordsOfReaderTestProgram();
+    for (double number : { 1.5, 2.5 }) {
+        std::array<uint32_t, 2> pattern { static_cast<uint32_t>(std::bit_cast<uint64_t>(number)), static_cast<uint32_t>(std::bit_cast<uint64_t>(number) >> 32) };
+        auto found = std::ranges::search(words, pattern);
+        AOT_TEST_CHECK(found.size() == 2);
+        auto setBits = [&](uint64_t bits) {
+            found[0] = static_cast<uint32_t>(bits);
+            found[1] = static_cast<uint32_t>(bits >> 32);
+        };
+        setBits(0xfffe000000001234ull);
+        AOT_TEST_CHECK(!isAcceptedByReaderAndVerifiers(words));
+        setBits(0xfff8000000000000ull);
+        AOT_TEST_CHECK(isAcceptedByReaderAndVerifiers(words));
+        setBits(std::bit_cast<uint64_t>(number));
+    }
+}
+
 std::span<const NativeTest> readerTests()
 {
     static constexpr NativeTest tests[] = {
         { "reader/verifier-finds-unreached-names-among-many-on-any-number-of-threads"_s, verifierFindsUnreachedNamesAmongManyOnAnyNumberOfThreads },
         { "reader/long-rows-of-function-types-are-followed"_s, readerFollowsLongRowsOfFunctionTypes },
+        { "reader/number-with-bits-of-cell-is-refused"_s, numberWithBitsOfCellIsRefused },
         { "reader/types-interned-together-are-numbered-as-by-one-thread"_s, typesInternedTogetherAreNumberedAsByOneThread },
     };
     return tests;

@@ -21,6 +21,7 @@
 #include "AOTStronglyConnectedComponents.h"
 #include "AOTThreads.h"
 #include "AOTVector.h"
+#include "PureNaN.h"
 #include <algorithm>
 #include <compare>
 #include <optional>
@@ -743,8 +744,9 @@ static bool isValidDataNode(const Program& program, const DataNode& node, Vector
     case DataNode::Kind::Null:
     case DataNode::Kind::Hole:
     case DataNode::Kind::Boolean:
-    case DataNode::Kind::Number:
         return true;
+    case DataNode::Kind::Number:
+        return !isImpureNaN(node.as<DataNode::Number>().value);
     case DataNode::Kind::String:
         return !!node.as<DataNode::String>().value;
     case DataNode::Kind::BigInt: {
