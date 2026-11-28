@@ -227,6 +227,7 @@ std::optional<CodeGenerator::RotatingLoop> CodeGenerator::findRotatingLoop(size_
 
     unsigned numberOfOperations = 0;
     unsigned numberOfBitOperations = 0;
+    bool runsOtherCode = false;
     int64_t iterationsInRow = mostIterationsInRow;
     Vector<int64_t, 4> boundaries { *start, end };
     BitVector storesBefore;
@@ -252,8 +253,13 @@ std::optional<CodeGenerator::RotatingLoop> CodeGenerator::findRotatingLoop(size_
                 hasStored = true;
                 continue;
             }
-            if (readsInRotatingIterations.contains(operation.opcode))
+            if (readsInRotatingIterations.contains(operation.opcode)) {
+                EffectTraits traits = operation.traits();
+                bool cannotBeDoneAgain = traits.mayRunOtherCode() || traits.mayWriteObservableState();
+                hasStored |= cannotBeDoneAgain;
+                runsOtherCode |= cannotBeDoneAgain;
                 continue;
+            }
             if (!operation.traits().isPure())
                 return std::nullopt;
         }
@@ -327,7 +333,8 @@ std::optional<CodeGenerator::RotatingLoop> CodeGenerator::findRotatingLoop(size_
     loop.position = code().at(test).origin().position;
     if (std::ranges::any_of(m_rotatingLoopsUnrolled, [&](const auto& unrolled) { return unrolled.first == loop.position && unrolled.second == loop.accesses; }))
         return std::nullopt;
-    findRingReads(loop);
+    if (!runsOtherCode)
+        findRingReads(loop);
     findWordSums(loop);
     findMajorities(loop);
     return loop;

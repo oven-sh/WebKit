@@ -1,0 +1,390 @@
+# The element at 20 is read by a getter. A loop of the shape of a hash is laid out several iterations to a turn, and an iteration that is left is done again from its beginning where the loop stands as it was written.
+# One that has called a getter is not left that way: the getter is called once.
+# -- source: main.ts
+# declare function report(...parts: unknown[]): void;
+# declare function addGetter(list: any[]): void;
+# function makeK(): any[] { const k: any[] = []; for (let i = 0; i < 64; i++) k.push(i * 2654435 | 0); return k; }
+# function hash(k: any[], n: number): string {
+#   let text = "";
+#   for (let j = 0; j < n; j++) {
+#     text += "<"; text += j;
+#     let a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8;
+#     let bad = false;
+#     for (let i = 0; i < 64; i++) {
+#       const value: any = k[i];
+#       if (typeof value !== "number") { bad = true; break; }
+#       const t1 = (h + ((e >>> 6) ^ (e >>> 11) ^ (e >>> 25)) + ((e & f) ^ (~e & g)) + (value | 0)) | 0;
+#       const t2 = (((a >>> 2) ^ (a >>> 13) ^ (a >>> 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+#       h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+#     }
+#     text += bad ? "bad" : a ^ b ^ c ^ d ^ e ^ f ^ g ^ h;
+#     text += ">";
+#   }
+#   return text;
+# }
+# function hashOfAll(k: any[], n: number): string {
+#   let text = "";
+#   for (let j = 0; j < n; j++) {
+#     text += "<"; text += j;
+#     let a = 1, b = 2, c = 3, d = 4, e = 5, f = 6, g = 7, h = 8;
+#     const bad = false;
+#     for (let i = 0; i < 64; i++) {
+#       const value: any = k[i];
+#       let word = 5;
+#       if (typeof value === "number") word = value | 0;
+#       const t1 = (h + ((e >>> 6) ^ (e >>> 11) ^ (e >>> 25)) + ((e & f) ^ (~e & g)) + word) | 0;
+#       const t2 = (((a >>> 2) ^ (a >>> 13) ^ (a >>> 22)) + ((a & b) ^ (a & c) ^ (b & c))) | 0;
+#       h = g; g = f; f = e; e = (d + t1) | 0; d = c; c = b; b = a; a = (t1 + t2) | 0;
+#     }
+#     text += bad ? "bad" : a ^ b ^ c ^ d ^ e ^ f ^ g ^ h;
+#     text += ">";
+#   }
+#   return text;
+# }
+# report(hash(makeK(), 2));
+# const list = makeK();
+# addGetter(list);
+# report(hash(list, 1));
+# report(hash(list, 3));
+# report(hashOfAll(makeK(), 2));
+# report(hashOfAll(list, 3));
+# -- end of source
+# RUN: compile
+# STATISTIC: RotatingLoopsUnrolled = 3
+# RUN(SHELL): run-in-shell let calls = 0; globalThis.addGetter = list => { delete list[20]; Object.setPrototypeOf(list, Object.create(Array.prototype, { 20: { get() { return ++calls < 3 ? "x" : 7; } } })); }; globalThis.report = text => print(text, calls);
+# SHELL: <01886313879><11886313879> 0
+# SHELL-NEXT: <0bad> 1
+# SHELL-NEXT: <0bad><1-103625303><2-103625303> 4
+# SHELL-NEXT: <01886313879><11886313879> 4
+# SHELL-NEXT: <0-103625303><1-103625303><2-103625303> 7
+# SHELL-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+data d0 root=Array{contents=anything} module=m0
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = NewClosure function=f2 @0
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]} @0
+    v4 = NewClosure function=f3 @0
+    v5 = Convert v4 declared={type=f3 flags=[IsFromCompiler]} @0
+    v6 = Builtin builtin=GlobalThis @1659
+    v7 = PropGet v6 key="report" [isFreeName] @1659
+    v8 = Call v1 calleeName="makeK" @1671
+    v9 = Integer integer=2 @1680
+    v10 = Call v3, -, v8, v9 calleeName="hash" @1666
+    v11 = Call v7, -, v10 calleeName="report" @1659
+    v12 = Call v1 calleeName="makeK" @1698
+    v13 = Builtin builtin=GlobalThis @1707
+    v14 = PropGet v13 key="addGetter" [isFreeName] @1707
+    v15 = Call v14, -, v12 calleeName="addGetter" @1707
+    v16 = Builtin builtin=GlobalThis @1724
+    v17 = PropGet v16 key="report" [isFreeName] @1724
+    v18 = Integer integer=1 @1742
+    v19 = Call v3, -, v12, v18 calleeName="hash" @1731
+    v20 = Call v17, -, v19 calleeName="report" @1724
+    v21 = Builtin builtin=GlobalThis @1747
+    v22 = PropGet v21 key="report" [isFreeName] @1747
+    v23 = Integer integer=3 @1765
+    v24 = Call v3, -, v12, v23 calleeName="hash" @1754
+    v25 = Call v22, -, v24 calleeName="report" @1747
+    v26 = Builtin builtin=GlobalThis @1770
+    v27 = PropGet v26 key="report" [isFreeName] @1770
+    v28 = Call v1 calleeName="makeK" @1787
+    v29 = Integer integer=2 @1796
+    v30 = Call v5, -, v28, v29 calleeName="hashOfAll" @1777
+    v31 = Call v27, -, v30 calleeName="report" @1770
+    v32 = Builtin builtin=GlobalThis @1801
+    v33 = PropGet v32 key="report" [isFreeName] @1801
+    v34 = Integer integer=3 @1824
+    v35 = Call v5, -, v12, v34 calleeName="hashOfAll" @1808
+    v36 = Call v33, -, v35 calleeName="report" @1801
+    v37 = Undefined @1801
+    Return v37 @1801
+}
+function f1 name="makeK" module=m0 position=99 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Data data=d0 @142
+    v1 = Convert v0 declared={type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]} @142
+    v2 = Integer @159
+    v3 = Convert v2 declared={type=number} @159
+    Jump -> next b1(v3) @155
+  b1(v4: number):
+    LoopHint @155
+    v6 = Integer integer=64 @166
+    v7 = Less v4, v6 @162
+    Branch v7 -> taken b2(), notTaken b3() @162
+  b2():
+    v8 = PropGet v1 key="push" @175
+    v9 = Integer integer=2654435 @186
+    v10 = Mul v4, v9 @182
+    v11 = Integer @196
+    v12 = BitOr v10, v11 @182
+    v13 = Call v8, v1, v12 calleeKey="push" calleeName="k.push" @177
+    v14 = Convert v13 declared={type=number} illTypedCause=DeclarationWithoutBody @175
+    v15 = Increment v4 @170
+    v16 = Convert v15 declared={type=number} @170
+    Jump -> next b1(v16) @170
+  b3():
+    Return v1 @207
+}
+function f2 name="hash" module=m0 position=212 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: number):
+    v2 = String string="" @270
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @270
+    v4 = Integer @289
+    v5 = Convert v4 declared={type=number} @289
+    Jump -> next b1(v3, v5) @285
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint @285
+    v9 = Less v7, v1 @292
+    Branch v9 -> taken b2(), notTaken b11() @292
+  b2():
+    v10 = String string="<" @318
+    v11 = Add v6, v10 @318
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @310
+    v13 = Add v12, v7 @331
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @323
+    v15 = Integer integer=1 @346
+    v16 = Convert v15 declared={type=number} @346
+    v17 = Integer integer=2 @353
+    v18 = Convert v17 declared={type=number} @353
+    v19 = Integer integer=3 @360
+    v20 = Convert v19 declared={type=number} @360
+    v21 = Integer integer=4 @367
+    v22 = Convert v21 declared={type=number} @367
+    v23 = Integer integer=5 @374
+    v24 = Convert v23 declared={type=number} @374
+    v25 = Integer integer=6 @381
+    v26 = Convert v25 declared={type=number} @381
+    v27 = Integer integer=7 @388
+    v28 = Convert v27 declared={type=number} @388
+    v29 = Integer integer=8 @395
+    v30 = Convert v29 declared={type=number} @395
+    v31 = Boolean @412
+    v32 = Convert v31 declared={type=boolean} @412
+    v33 = Integer @436
+    v34 = Convert v33 declared={type=number} @436
+    Jump -> next b3(v16, v18, v20, v22, v24, v26, v28, v30, v32, v34) @432
+  b3(v35: number, v36: number, v37: number, v38: number, v39: number, v40: number, v41: number, v42: number, v43: boolean, v44: number):
+    LoopHint @432
+    v46 = Integer integer=64 @443
+    v47 = Less v44, v46 @439
+    Branch v47 -> taken b4(), notTaken b7(v43) @439
+  b4():
+    v48 = ElemGet v0, v44 @479
+    v49 = TypeTest v48 testedType=number @495
+    Branch v49 -> taken b5(| 0), notTaken b6(| 0) @495
+  b5(v50):
+    v51 = NarrowByTest v48, v50 @495
+    v52 = Integer integer=6 @575
+    v53 = URShift v39, v52 @569
+    v54 = Integer integer=11 @587
+    v55 = URShift v39, v54 @581
+    v56 = BitXor v53, v55 @568
+    v57 = Integer integer=25 @600
+    v58 = URShift v39, v57 @594
+    v59 = BitXor v56, v58 @568
+    v60 = Add v42, v59 @563
+    v61 = BitAnd v39, v40 @609
+    v62 = BitNot v39 @619
+    v63 = BitAnd v62, v41 @619
+    v64 = BitXor v61, v63 @608
+    v65 = Add v60, v64 @563
+    v66 = Integer @639
+    v67 = BitOr v51, v66 @631
+    v68 = Add v65, v67 @563
+    v69 = Integer @645
+    v70 = BitOr v68, v69 @562
+    v71 = Integer integer=2 @674
+    v72 = URShift v35, v71 @668
+    v73 = Integer integer=13 @686
+    v74 = URShift v35, v73 @680
+    v75 = BitXor v72, v74 @667
+    v76 = Integer integer=22 @699
+    v77 = URShift v35, v76 @693
+    v78 = BitXor v75, v77 @667
+    v79 = BitAnd v35, v36 @708
+    v80 = BitAnd v35, v37 @718
+    v81 = BitXor v79, v80 @707
+    v82 = BitAnd v36, v37 @728
+    v83 = BitXor v81, v82 @707
+    v84 = Add v78, v83 @666
+    v85 = Integer @739
+    v86 = BitOr v84, v85 @665
+    v87 = Convert v41 declared={type=number} @748
+    v88 = Convert v40 declared={type=number} @755
+    v89 = Convert v39 declared={type=number} @762
+    v90 = Add v38, v70 @774
+    v91 = Integer @784
+    v92 = BitOr v90, v91 @773
+    v93 = Convert v92 declared={type=number} @769
+    v94 = Convert v37 declared={type=number} @787
+    v95 = Convert v36 declared={type=number} @794
+    v96 = Convert v35 declared={type=number} @801
+    v97 = Add v70, v86 @813
+    v98 = Integer @824
+    v99 = BitOr v97, v98 @812
+    v100 = Convert v99 declared={type=number} @808
+    v101 = Increment v44 @447
+    v102 = Convert v101 declared={type=number} @447
+    Jump -> next b3(v100, v96, v95, v94, v93, v89, v88, v87, v43, v102) @447
+  b6(v103):
+    v104 = Boolean boolean=true @530
+    v105 = Convert v104 declared={type=boolean} @524
+    Jump -> next b7(v105) @536
+  b7(v106: boolean):
+    v107 = ToBoolean v106 @845
+    Branch v107 -> taken b8(| 0), notTaken b9(| 0) @845
+  b8(v108):
+    v109 = String string="bad" @851
+    Jump -> next b10(v109) @851
+  b9(v110):
+    v111 = BitXor v35, v36 @859
+    v112 = BitXor v111, v37 @859
+    v113 = BitXor v112, v38 @859
+    v114 = BitXor v113, v39 @859
+    v115 = BitXor v114, v40 @859
+    v116 = BitXor v115, v41 @859
+    v117 = BitXor v116, v42 @859
+    Jump -> next b10(v117) @859
+  b10(v118):
+    v119 = Add v14, v118 @859
+    v120 = Convert v119 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @837
+    v121 = String string=">" @902
+    v122 = Add v120, v121 @902
+    v123 = Convert v122 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @894
+    v124 = Increment v7 @299
+    v125 = Convert v124 declared={type=number} @299
+    Jump -> next b1(v123, v125) @299
+  b11():
+    v126 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @920
+    Return v126 @920
+}
+function f3 name="hashOfAll" module=m0 position=928 flags=[IsChecked, HasExplicitName] length=2 thisType={type=anything} parameters=[{type=undefined|null|Array flags=[OmitsNull, OmitsUndefined]}, {type=number}] results=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: undefined|null|Array, v1: number):
+    v2 = String string="" @991
+    v3 = Convert v2 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @991
+    v4 = Integer @1010
+    v5 = Convert v4 declared={type=number} @1010
+    Jump -> next b1(v3, v5) @1006
+  b1(v6: undefined|null|string, v7: number):
+    LoopHint @1006
+    v9 = Less v7, v1 @1013
+    Branch v9 -> taken b2(), notTaken b8() @1013
+  b2():
+    v10 = String string="<" @1039
+    v11 = Add v6, v10 @1039
+    v12 = Convert v11 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1031
+    v13 = Add v12, v7 @1052
+    v14 = Convert v13 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1044
+    v15 = Integer integer=1 @1067
+    v16 = Convert v15 declared={type=number} @1067
+    v17 = Integer integer=2 @1074
+    v18 = Convert v17 declared={type=number} @1074
+    v19 = Integer integer=3 @1081
+    v20 = Convert v19 declared={type=number} @1081
+    v21 = Integer integer=4 @1088
+    v22 = Convert v21 declared={type=number} @1088
+    v23 = Integer integer=5 @1095
+    v24 = Convert v23 declared={type=number} @1095
+    v25 = Integer integer=6 @1102
+    v26 = Convert v25 declared={type=number} @1102
+    v27 = Integer integer=7 @1109
+    v28 = Convert v27 declared={type=number} @1109
+    v29 = Integer integer=8 @1116
+    v30 = Convert v29 declared={type=number} @1116
+    v31 = Boolean @1135
+    v32 = Integer @1159
+    v33 = Convert v32 declared={type=number} @1159
+    Jump -> next b3(v16, v18, v20, v22, v24, v26, v28, v30, v33) @1155
+  b3(v34: number, v35: number, v36: number, v37: number, v38: number, v39: number, v40: number, v41: number, v42: number):
+    LoopHint @1155
+    v44 = Integer integer=64 @1166
+    v45 = Less v42, v44 @1162
+    Branch v45 -> taken b4(), notTaken b7() @1162
+  b4():
+    v46 = ElemGet v0, v42 @1202
+    v47 = Integer integer=5 @1225
+    v48 = Convert v47 declared={type=number} @1225
+    v49 = TypeTest v46 testedType=number @1238
+    Branch v49 -> taken b5(| 0), notTaken b6(v48) @1238
+  b5(v50):
+    v51 = NarrowByTest v46, v50 @1238
+    v52 = Integer @1280
+    v53 = BitOr v51, v52 @1272
+    v54 = Convert v53 declared={type=number} @1265
+    Jump -> next b6(v54) @1265
+  b6(v55: number):
+    v56 = Integer integer=6 @1313
+    v57 = URShift v38, v56 @1307
+    v58 = Integer integer=11 @1325
+    v59 = URShift v38, v58 @1319
+    v60 = BitXor v57, v59 @1306
+    v61 = Integer integer=25 @1338
+    v62 = URShift v38, v61 @1332
+    v63 = BitXor v60, v62 @1306
+    v64 = Add v41, v63 @1301
+    v65 = BitAnd v38, v39 @1347
+    v66 = BitNot v38 @1357
+    v67 = BitAnd v66, v40 @1357
+    v68 = BitXor v65, v67 @1346
+    v69 = Add v64, v68 @1301
+    v70 = Add v69, v55 @1301
+    v71 = Integer @1376
+    v72 = BitOr v70, v71 @1300
+    v73 = Integer integer=2 @1405
+    v74 = URShift v34, v73 @1399
+    v75 = Integer integer=13 @1417
+    v76 = URShift v34, v75 @1411
+    v77 = BitXor v74, v76 @1398
+    v78 = Integer integer=22 @1430
+    v79 = URShift v34, v78 @1424
+    v80 = BitXor v77, v79 @1398
+    v81 = BitAnd v34, v35 @1439
+    v82 = BitAnd v34, v36 @1449
+    v83 = BitXor v81, v82 @1438
+    v84 = BitAnd v35, v36 @1459
+    v85 = BitXor v83, v84 @1438
+    v86 = Add v80, v85 @1397
+    v87 = Integer @1470
+    v88 = BitOr v86, v87 @1396
+    v89 = Convert v40 declared={type=number} @1479
+    v90 = Convert v39 declared={type=number} @1486
+    v91 = Convert v38 declared={type=number} @1493
+    v92 = Add v37, v72 @1505
+    v93 = Integer @1515
+    v94 = BitOr v92, v93 @1504
+    v95 = Convert v94 declared={type=number} @1500
+    v96 = Convert v36 declared={type=number} @1518
+    v97 = Convert v35 declared={type=number} @1525
+    v98 = Convert v34 declared={type=number} @1532
+    v99 = Add v72, v88 @1544
+    v100 = Integer @1555
+    v101 = BitOr v99, v100 @1543
+    v102 = Convert v101 declared={type=number} @1539
+    v103 = Increment v42 @1170
+    v104 = Convert v103 declared={type=number} @1170
+    Jump -> next b3(v102, v98, v97, v96, v95, v91, v90, v89, v104) @1170
+  b7():
+    v105 = BitXor v34, v35 @1590
+    v106 = BitXor v105, v36 @1590
+    v107 = BitXor v106, v37 @1590
+    v108 = BitXor v107, v38 @1590
+    v109 = BitXor v108, v39 @1590
+    v110 = BitXor v109, v40 @1590
+    v111 = BitXor v110, v41 @1590
+    v112 = Add v14, v111 @1590
+    v113 = Convert v112 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1568
+    v114 = String string=">" @1633
+    v115 = Add v113, v114 @1633
+    v116 = Convert v115 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1625
+    v117 = Increment v7 @1020
+    v118 = Convert v117 declared={type=number} @1020
+    Jump -> next b1(v116, v118) @1020
+  b8():
+    v119 = Convert v6 declared={type=undefined|null|string flags=[OmitsNull, OmitsUndefined]} @1651
+    Return v119 @1651
+}
