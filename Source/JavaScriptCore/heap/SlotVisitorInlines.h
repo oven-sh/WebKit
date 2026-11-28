@@ -200,6 +200,21 @@ inline void SlotVisitor::reportExternalMemoryVisited(size_t size)
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+inline void SlotVisitor::reportOversizeTypedArrayVectorVisited(size_t size)
+{
+    if (m_isFirstVisit) {
+        m_nonCellVisitCount += size;
+        JSC::Heap* heap = m_currentCell->heap();
+        if (heap != m_extraMemoryHeap) [[unlikely]] {
+            flushExtraMemoryVisited();
+            m_extraMemoryHeap = heap;
+        }
+        m_oversizeTypedArrayVectorBytesInHeap += size;
+    }
+}
+#endif
+
 template<typename Func>
 IterationStatus SlotVisitor::forEachMarkStack(NOESCAPE const Func& func)
 {

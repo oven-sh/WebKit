@@ -200,6 +200,11 @@ public:
 #if ENABLE(RESOURCE_USAGE)
     virtual void reportExternalMemoryVisited(size_t) = 0;
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    // An OversizeTypedArray's vector is extra memory the heap counts on its own (Heap::reportOversizeTypedArrayVectorAllocated).
+    // The marking report goes to that separate count so the vector is not in m_extraMemorySize as well.
+    virtual void reportOversizeTypedArrayVectorVisited(size_t) { }
+#endif
 
     // This can't be pure virtual as it breaks our Dumpable concept.
     // FIXME: Make this virtual after we stop suppporting the Montery Clang.
