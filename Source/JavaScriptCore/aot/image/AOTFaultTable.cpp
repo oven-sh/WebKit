@@ -31,6 +31,7 @@
 #include "AOTUnwinding.h"
 #include "AOTVarint.h"
 #include "AOTVector.h"
+#include "AOTWasmInterface.h"
 #include "JSCPtrTag.h"
 #include "MachineContext.h"
 #include "VM.h"
@@ -595,6 +596,10 @@ static void* findStub(const Image& image, StubKey key)
         return nullptr;
     return const_cast<void*>(image.stubAddress(key));
 }
+
+#if ENABLE(WEBASSEMBLY)
+static_assert(FaultSite::reach == Wasm::lowestAccessibleAddressOfEveryTarget);
+#endif
 
 static bool handleNullCheck(const Fault& fault, PlatformRegisters& registers)
 {
