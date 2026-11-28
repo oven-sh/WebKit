@@ -2492,6 +2492,7 @@ private:
     bool takePrototypeHelperStep(const PrototypeHelperStep&);
     bool everyFunctionAboveIsConstructorFunction(FunctionID) const;
     bool findsOwnNameBuiltin(const PrototypeHelperStep&) const;
+    bool mayEnterCodeOfProgram(const PrototypeHelperStep&, const Invocable<void(FlowNodeID)> auto& watch);
     bool someBodyStoresHasOwnProperty() const;
     mutable std::optional<bool> m_someBodyStoresHasOwnProperty;
     void storeOnClassHolder(FunctionID writer, LayoutID, ClassSide, PropertyKeyID, FlowNodeID value);

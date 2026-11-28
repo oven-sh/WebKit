@@ -2556,6 +2556,28 @@ bool LinkFlow::findsOwnNameBuiltin(const PrototypeHelperStep& step) const
     return held.isNever() || (isBuiltinAlone && (!held.builtin || program.builtins().canonicalID(held.builtin) == program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty)));
 }
 
+bool LinkFlow::mayEnterCodeOfProgram(const PrototypeHelperStep& step, const Invocable<void(FlowNodeID)> auto& watch)
+{
+    if (step.kind != PrototypeHelper::Step::Kind::AsksOwnName)
+        return false;
+    if (step.stored || escapedFunctions.get(step.object.index()))
+        return false;
+    PropertyKeyID key = program.keyOf(BuiltinNames::hasOwnProperty);
+    auto holdsSomething = [&](FlowNodeID node) {
+        watch(node);
+        LinkType held = typeAt(node);
+        held.primitives &= ~Primitive::Undefined;
+        return !held.isNever();
+    };
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = layoutOfConstructorFunction(step.object); current && stepsLeft--; current = program.at(current).base) {
+        FunctionID holder = program.at(current).constructor;
+        if (!holder || holdsSomething(foundOnClosuresOf(holder)) || holdsSomething(followsNamesOnClosuresOf(holder, key) ? laidOnClosuresOf(holder, key) : foundBesideFieldsUnder(key)))
+            return true;
+    }
+    return false;
+}
+
 bool LinkFlow::takePrototypeHelperStep(const PrototypeHelperStep& step)
 {
     auto prototypeOf = [&](LayoutID layout) {
@@ -2743,7 +2765,7 @@ void LinkFlow::prototypeHelperCallObserved(const FlowObserver& observer)
     readCalledHelpers(call.function);
     HelperEntered root = enteredBy(call);
     Vector<HelperEntered, 4> entered { root };
-    switch (visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) { return takePrototypeHelperStep(step); }, watch)) {
+    switch (visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) { return !mayEnterCodeOfProgram(step, watch) && takePrototypeHelperStep(step); }, watch)) {
     case HelperProgress::Waits:
         return;
     case HelperProgress::IsDone:
