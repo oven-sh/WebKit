@@ -534,11 +534,15 @@ jobs:
             esac
           done >> "$RUNNER_TEMP/jsc-failures.log" 2>&1
           # What failed, as annotations of the job, for whoever cannot open the artifact: a count, the stress test files that
-          # fail in the most runs, and the first tests of testaot. GitHub shows ten error annotations of a step.
+          # fail in the most runs, what the first two failing runs printed (a run says its mode in its name), and the first
+          # tests of testaot. GitHub shows ten error annotations of a step.
           if [ "$status" != 0 ]; then
             files=$(grep -a '^FAIL: ' "$RUNNER_TEMP/jsc-tests.log" | awk '{ print $2 }' | sed -E 's/\.js\..*$/.js/; s/:$//' | sort | uniq -c | sort -rn)
             echo "::error::$LABEL: $(grep -a -c '^FAIL: ' "$RUNNER_TEMP/jsc-tests.log") failing runs of stress tests in $(printf '%s\n' "$files" | grep -c .) files, $(grep -a -c '^FAIL ' "$RUNNER_TEMP/jsc-tests.log") failing tests of testaot"
-            printf '%s\n' "$files" | head -6 | while read -r count name; do [ -z "$name" ] || echo "::error::$LABEL: $name fails in $count runs"; done
+            printf '%s\n' "$files" | head -4 | while read -r count name; do [ -z "$name" ] || echo "::error::$LABEL: $name fails in $count runs"; done
+            grep -a '^FAIL: ' "$RUNNER_TEMP/jsc-tests.log" | awk '{ print $2 }' | head -2 | while read -r run; do
+              echo "::error::$LABEL: $(grep -a -F -m 2 "$run: " "$RUNNER_TEMP/jsc-tests.log" | cut -c1-400 | tr '\n' ' ')"
+            done
             grep -a '^FAIL ' "$RUNNER_TEMP/jsc-tests.log" | head -3 | cut -c1-500 | while read -r line; do echo "::error::$LABEL: testaot $line"; done
           fi
           if [ "$SIGNS_RETURN_ADDRESSES" = true ]; then ruby Tools/Scripts/aot/test-offlineasm-signing.rb || status=1; fi
