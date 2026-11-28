@@ -147,6 +147,9 @@ protected:
         if (unsafeCallee.isNativeCallee()) {
             assertIsHeld(NativeCalleeRegistry::singleton().getLock());
             auto* nativeCallee = unsafeCallee.asNativeCallee();
+#if ENABLE(WEBASSEMBLY)
+            stackTrace[m_depth].unverifiedWasmInstance = std::bit_cast<JSCell*>(m_callFrame->unsafeCodeBlock());
+#endif
             if (NativeCalleeRegistry::singleton().isValidCallee(nativeCallee)) {
                 stackTrace[m_depth].nativeCalleeCategory = nativeCallee->category();
                 switch (nativeCallee->category()) {
@@ -1193,6 +1196,15 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 }
                 case NativeCallee::Category::InlineCache: {
                     stackFrame.frameType = FrameType::Unknown;
+#if ENABLE(WEBASSEMBLY)
+                    // JSToWasmCallee is not in the registry: there is one for each export, and a trap looks at every entry.
+                    JSCell* instance = unprocessedStackFrame.unverifiedWasmInstance;
+                    if (HeapUtil::isValueGCObject(m_vm.heap, filter, instance) && instance->type() == WebAssemblyInstanceType) {
+                        stackFrame.frameType = FrameType::Wasm;
+                        stackFrame.wasmIndexOrName = Wasm::IndexOrName();
+                        stackFrame.wasmCompilationMode = Wasm::CompilationMode::JSToWasmMode;
+                    }
+#endif
                     return;
                 }
                 }

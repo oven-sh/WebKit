@@ -4514,6 +4514,18 @@ aotOp(op_iterator_next, OpIteratorNext, macro (size, get, dispatch, metadata, re
     jumpToOrdinaryHandler(size, op_iterator_next)
 end)
 
+# In a thunk that stands in for a host function. While the thread is in C code, the sampling profiler has nothing but VM::topCallFrame to go by.
+macro callInFrameOfHostFunction(makeCall)
+    preserveCallerPCAndCFR()
+    storep 0, CodeBlock[cfr]
+    loadp Callee[cfr], t5
+    loadp JSCallee::m_scope[t5], t5
+    loadp JSGlobalObject::m_vm[t5], t5
+    storep cfr, VM::topCallFrame[t5]
+    makeCall()
+    restoreCallerPCAndCFR()
+end
+
 macro loadInstanceOfCompiledCallee(callee, instance, scratch)
     loadStructureWithScratch(callee, instance, scratch)
     loadp Structure::m_realm[instance], instance
@@ -4766,9 +4778,7 @@ _llint_aot_string_index_of_thunk:
     lshiftq 32, t1
     orq t0, t1
     move t3, a0
-    preserveCallerPCAndCFR()
-    cCall3(_llint_aot_index_of_character)
-    restoreCallerPCAndCFR()
+    callInFrameOfHostFunction(macro () cCall3(_llint_aot_index_of_character) end)
     ret
 
 .indexOfMayHaveStart:
@@ -5236,9 +5246,7 @@ macro findInThunk(collectionType, helper, hostFunction)
     move constexpr JSValue::NumberTag, t5
     btqz a1, t5, hostFunction
 .asks:
-    preserveCallerPCAndCFR()
-    cCall2(helper)
-    restoreCallerPCAndCFR()
+    callInFrameOfHostFunction(macro () cCall2(helper) end)
     btqz r0, hostFunction
     ret
 end
@@ -5361,9 +5369,7 @@ macro addInThunk(collectionType, fewestArguments, loadValue, hostFunction)
     btqz a1, t5, hostFunction
 .isNumberOrCell:
     loadValue(a2)
-    preserveCallerPCAndCFR()
-    cCall3(_llint_aot_collection_add)
-    restoreCallerPCAndCFR()
+    callInFrameOfHostFunction(macro () cCall3(_llint_aot_collection_add) end)
     btqz r0, hostFunction
     ret
 end

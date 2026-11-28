@@ -46,7 +46,7 @@ if (platformSupportsSamplingProfiler()) {
                 caller(exports[name], object, 50, size);
             pauseSamplingProfiler();
             for (const { frames } of releaseSamplingProfilerSamples().stackTraces) {
-                inWasm += frames[0].includes("wasm-function");
+                inWasm += !!frames[0]?.includes("wasm-function");
                 total += frames.includes("caller");
             }
         }

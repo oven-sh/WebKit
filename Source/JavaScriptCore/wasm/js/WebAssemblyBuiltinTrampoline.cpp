@@ -62,9 +62,7 @@ std::expected<MacroAssemblerCodeRef<WasmEntryPtrTag>, BindingFailure> generateWa
     jit.loadPtr(JIT::Address(scratch, builtinEntryByteOffset), scratch);
     jit.storePairPtr(GPRInfo::wasmContextInstancePointer, scratch, GPRInfo::callFrameRegister, JIT::TrustedImm32(CallFrameSlot::codeBlock * sizeof(Register)));
 
-    // Set VM topCallFrame to null to not build an unnecessary stack trace if the function throws an exception.
-    jit.loadPtr(JIT::Address(GPRInfo::wasmContextInstancePointer, JSWebAssemblyInstance::offsetOfVM()), scratch);
-    jit.storePtr(JIT::TrustedImmPtr(nullptr), JIT::Address(scratch, VM::offsetOfTopCallFrame()));
+    jit.storeTopCallFrameFromWasm(scratch);
 
     // Add wasmInstance as the extra arg
     jit.move(GPRInfo::wasmContextInstancePointer, extraArgGPR);

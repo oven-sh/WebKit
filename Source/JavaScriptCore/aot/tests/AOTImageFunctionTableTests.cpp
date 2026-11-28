@@ -422,17 +422,33 @@ static SUPPRESS_ASAN void testSampleInNativeCodeThatFramePointerDoesNotLeadOutOf
     AOT_TEST_CHECK(isCaller(find(recordOfNativeCode)));
     AOT_TEST_CHECK(isTop(find(recordBelowLargerFrame), recordOfCaller, addressIn(3)));
 
-    // The engine runs the frame at the top.
-    reset();
-    setRecord(stackPointer + 8, recordOfNativeCode, nativeCode);
-    AOT_TEST_CHECK(!find(stackPointer + 8));
-    AOT_TEST_CHECK(isCaller(find()));
-
-    // How a run of compiled frames ends.
+    // The engine runs the frame at the top, or that is where native code is by now.
     void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
-    void* inEntry = untagCFunctionPtr<void*, CFunctionPtrTag>(vmEntryToJavaScript);
     void* inOtherCodeOfImage = const_cast<uint8_t*>(loaded.ffiCode().data());
     AOT_TEST_CHECK(loaded.ffiCode().empty() == !FFI_STUBS_SUPPORTED);
+    struct Record {
+        size_t callerFrame;
+        void* returnPC;
+        bool isOfEngine;
+    };
+    for (Record record : std::initializer_list<Record> {
+        { recordOfNativeCode, inInterpreter, true },
+        { recordOfNativeCode, nullptr, true },
+        { entryFrame, nullptr, true },
+        { recordOfNativeCode, nativeCode, false },
+        { recordOfNativeCode, FFI_STUBS_SUPPORTED ? inOtherCodeOfImage : nativeCode, false },
+        { entryFrame, nativeCode, false },
+        { entryFrame + 2, nullptr, false },
+        { stackPointer + 8, nullptr, false },
+    }) {
+        reset();
+        setRecord(stackPointer + 8, record.callerFrame, record.returnPC);
+        AOT_TEST_CHECK(record.isOfEngine ? !find(stackPointer + 8) : isCaller(find(stackPointer + 8)));
+        AOT_TEST_CHECK(isCaller(find()));
+    }
+
+    // How a run of compiled frames ends.
+    void* inEntry = untagCFunctionPtr<void*, CFunctionPtrTag>(vmEntryToJavaScript);
     for (auto [returnPC, endsRun] : { std::pair { nativeCode, false }, { inEntry, false }, { inInterpreter, true }, { inOtherCodeOfImage, !!FFI_STUBS_SUPPORTED }, { g_jscConfig.startExecutableMemory, !!g_jscConfig.startExecutableMemory } }) {
         reset();
         setRecord(recordOfOuter, recordOfOuter + 4, returnPC);
@@ -554,6 +570,10 @@ static SUPPRESS_ASAN void testSampleInHostFunction()
         check(recordOfStub, topCallFrame);
     }
 
+    // Native code has its frame where another one was.
+    reset();
+    check(recordOfStub, std::bit_cast<CallFrame*>(&stack[stackPointer + 2]));
+
     // It is in the place of a function that has returned.
     reset();
     setRecord(frameOfHostCall - 32 / sizeof(void*) - 2, frameOfHostCall, returnAddressIn(1));
@@ -581,6 +601,97 @@ static SUPPRESS_ASAN void testSampleInHostFunction()
     setRecord(frameOfHostCall, recordOfStub, findReturnSiteInStubs(loaded, StubFrameKind::Adapter));
     stack[recordOfHostFunction + 1] = findReturnSiteInStubs(loaded, StubFrameKind::Plain, stack[frameOfHostCall + 1]);
     check(recordOfStub, topCallFrame);
+}
+
+static SUPPRESS_ASAN void testSampleBelowFrameOfEngine()
+{
+    TestBuild build(2);
+    TestImage image = build.build(bodies(plainBody(1, 32)));
+    const Image& loaded = *image.image;
+    void* inFunction = const_cast<uint8_t*>(image.address(1, sizeof(uint32_t) + sizeOfNearCall));
+    void* inStub = findReturnSiteInStubs(loaded, StubFrameKind::EngineCallee);
+    void* nativeCode = reinterpret_cast<void*>(&testSampleBelowFrameOfEngine);
+    void* inInterpreter = LLInt::getCodePtr<JSEntryPtrTag>(llint_program_prologue).untaggedPtr();
+    void* inEntry = untagCFunctionPtr<void*, CFunctionPtrTag>(vmEntryToJavaScript);
+    void* inJITCode = g_jscConfig.startExecutableMemory ? g_jscConfig.startExecutableMemory : inInterpreter;
+
+    alignas(16) std::array<void*, 64> stack;
+    constexpr size_t stackPointer = 2;
+    constexpr size_t inNativeFrame = 6;
+    constexpr size_t recordOfNativeCode = 12;
+    constexpr size_t frameOfSlowPath = 14;
+    constexpr size_t frameOfEngine = 24;
+    constexpr size_t recordOfStub = 34;
+    constexpr size_t recordOfFunction = recordOfStub + 2 + 32 / sizeof(void*);
+    constexpr size_t entryFrame = recordOfFunction + 8;
+    auto setRecord = [&](size_t record, size_t callerFrame, void* returnPC) {
+        stack[record] = &stack[callerFrame];
+        stack[record + 1] = returnPC;
+    };
+    auto reset = [&] {
+        stack.fill(nullptr);
+        setRecord(recordOfFunction, entryFrame, inEntry);
+        setRecord(recordOfStub, recordOfFunction, inFunction);
+        setRecord(frameOfEngine, recordOfStub, inStub);
+        setRecord(recordOfNativeCode, frameOfEngine, inInterpreter);
+    };
+    auto frameAt = [&](size_t frame) {
+        return std::bit_cast<CallFrame*>(&stack[frame]);
+    };
+    auto isTop = [&](size_t expected, const void* expectedPC, CallFrame* topCallFrame, size_t framePointer, void* pc) {
+        std::optional<SampledTop> top = findSampledTop(loaded, { &stack[framePointer], pc, nullptr, &stack[pc ? stackPointer : framePointer] }, topCallFrame, std::bit_cast<EntryFrame*>(&stack[entryFrame]), Thread::currentSingleton().stack());
+        return top && top->callFrame == frameAt(expected) && top->pc == expectedPC && !top->framelessTopCallerPC && !top->framePointer;
+    };
+    // In native code, and on the other side of an entry frame.
+    auto check = [&](size_t expected, const void* expectedPC, CallFrame* topCallFrame) {
+        AOT_TEST_CHECK(isTop(expected, expectedPC, topCallFrame, recordOfNativeCode, nativeCode));
+        AOT_TEST_CHECK(isTop(expected, expectedPC, topCallFrame, recordOfNativeCode, nullptr));
+    };
+
+    // Not all of the engine's code runs in a frame of JavaScript. Only topCallFrame tells.
+    for (void* returnPC : { inInterpreter, inEntry, inJITCode }) {
+        reset();
+        stack[recordOfNativeCode + 1] = returnPC;
+        check(frameOfEngine, returnPC, frameAt(frameOfEngine));
+        check(recordOfStub, inStub, nullptr);
+    }
+
+    // A frame that no frame pointer leads to.
+    reset();
+    for (const void* returnPC : { static_cast<Opcode>(nullptr), LLInt::getOpcode(llint_generic_return_point), LLInt::getOpcodeWide16(llint_generic_return_point), LLInt::getOpcodeWide32(llint_generic_return_point) }) {
+        setRecord(frameOfSlowPath, frameOfEngine, const_cast<void*>(returnPC));
+        check(frameOfSlowPath, nullptr, frameAt(frameOfSlowPath));
+        check(frameOfEngine, inInterpreter, frameAt(frameOfEngine));
+    }
+    check(recordOfStub, inStub, std::bit_cast<CallFrame*>(std::bit_cast<uintptr_t>(frameAt(frameOfSlowPath)) + 1));
+    stack[recordOfNativeCode + 1] = nativeCode;
+    check(recordOfStub, inStub, frameAt(frameOfSlowPath));
+    reset();
+    setRecord(frameOfSlowPath, frameOfEngine, inInterpreter);
+    check(recordOfStub, inStub, frameAt(frameOfSlowPath));
+    setRecord(frameOfSlowPath, recordOfStub, nullptr);
+    check(recordOfStub, inStub, frameAt(frameOfSlowPath));
+    for (size_t frame : { inNativeFrame, frameOfEngine + 4 }) {
+        setRecord(frame, frameOfEngine, nullptr);
+        check(recordOfStub, inStub, frameAt(frame));
+    }
+
+    // Native code without a frame record.
+    for (void* returnPC : { inStub, inInterpreter, inEntry, inJITCode }) {
+        reset();
+        stack[frameOfEngine + 1] = returnPC;
+        AOT_TEST_CHECK(isTop(frameOfEngine, nativeCode, frameAt(frameOfEngine), frameOfEngine, nativeCode));
+    }
+
+    // A tail call may not have written the return address.
+    stack[frameOfEngine + 1] = nativeCode;
+    AOT_TEST_CHECK(isTop(frameOfEngine, inInterpreter, frameAt(frameOfEngine), frameOfEngine, inInterpreter));
+    AOT_TEST_CHECK(isTop(recordOfFunction, inFunction, frameAt(frameOfEngine), frameOfEngine, inEntry));
+
+    // What compiled code calls like an operation has no frame of JavaScript.
+    reset();
+    setRecord(recordOfNativeCode, recordOfStub, inInterpreter);
+    check(recordOfFunction, inFunction, frameAt(recordOfStub));
 }
 
 static SUPPRESS_ASAN void testSampleInStub()
@@ -1724,6 +1835,7 @@ std::span<const NativeTest> imageFunctionTableTests()
 #endif
         { "image/functions/sample-in-native-code-that-the-frame-pointer-does-not-lead-out-of"_s, testSampleInNativeCodeThatFramePointerDoesNotLeadOutOf },
         { "image/functions/sample-in-host-function"_s, testSampleInHostFunction },
+        { "image/functions/sample-below-frame-of-engine"_s, testSampleBelowFrameOfEngine },
         { "image/functions/sample-in-stub"_s, testSampleInStub },
 #if CPU(X86_64)
         { "image/functions/sample-at-edge-of-frame"_s, testSampleAtEdgeOfFrame },

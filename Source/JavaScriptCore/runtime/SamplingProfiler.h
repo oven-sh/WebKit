@@ -82,6 +82,7 @@ public:
         NativeCallee::Category nativeCalleeCategory { NativeCallee::Category::InlineCache };
 #if ENABLE(WEBASSEMBLY)
         std::optional<Wasm::IndexOrName> wasmIndexOrName;
+        JSCell* unverifiedWasmInstance { nullptr };
 #endif
         std::optional<Wasm::CompilationMode> wasmCompilationMode;
 #if ENABLE(CODE_GENERATION)

@@ -1565,9 +1565,7 @@ macro wasmBuiltinCallTrampoline(setName, builtinName, wasmInstanceArgGPR)
     storep t5, Callee[cfr]
     storep wasmInstance, CodeBlock[cfr]
 
-    # Set VM topCallFrame to null to not build an unnecessary stack trace if the function throws an exception.
-    loadp JSWebAssemblyInstance::m_vm[wasmInstance], t5
-    storep 0, VM::topCallFrame[t5]
+    storeTopCallFrame(t5)
 
     # Add the extra wasmInstance arg
     move wasmInstance, wasmInstanceArgGPR

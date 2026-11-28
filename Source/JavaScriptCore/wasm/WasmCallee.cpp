@@ -633,9 +633,11 @@ BBQCallee::~BBQCallee()
 #endif
 
 WasmBuiltinCallee::WasmBuiltinCallee(const WebAssemblyBuiltin* builtin, std::pair<const Name*, RefPtr<NameSection>>&& name)
-    : Callee(Wasm::CompilationMode::WasmBuiltinMode, Wasm::FunctionSpaceIndex(0xDEAD), WTF::move(name))
+    : Callee(Wasm::CompilationMode::WasmBuiltinMode) // It has no index that the stack trace of an error could show.
     , m_builtin(builtin, { })
 {
+    setIndexOrName(IndexOrName(0, WTF::move(name)));
+    NativeCalleeRegistry::singleton().registerCallee(this);
 #if ENABLE(JIT_CAGE)
     if (Options::useJITCage()) {
         auto jitCode = generateWasmBuiltinTrampoline(*builtin);

@@ -34,6 +34,7 @@
 #include "FunctionExecutable.h"
 #include "JSCJSValueInlines.h"
 #include "JSCellInlines.h"
+#include "LLIntData.h"
 #include "LLIntPCRanges.h"
 #include "SourceOrigin.h"
 #include "StackAlignment.h"
@@ -1175,6 +1176,12 @@ static bool isCodeWithFramesOfEngine(const void* pc)
     return isJITPC(const_cast<void*>(pc)) || LLInt::isLLIntPC(const_cast<void*>(pc));
 }
 
+// Not every call from compiled code stores topCallFrame, so it may point at what is a frame of native code by now.
+static bool mayBeReturnSiteOfFrameOfEngine(const CodeLocation& site, const void* returnAddress)
+{
+    return site.runsCompiledCode() ? !isOperationReturnSite(site) : isCodeWithFramesOfEngine(returnAddress);
+}
+
 struct OwnerOfFrameRecord {
     bool mayBe(const FrameAtSite& frame) const
     {
@@ -1373,10 +1380,13 @@ static SUPPRESS_ASAN std::optional<SampledTop> searchForRecordOfNativeCode(const
             return top;
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(recordAtTop);
         CodeLocation site = image.locate(record->returnPC);
-        if (!site.runsCompiledCode() || site.stubFrameKind == StubFrameKind::EngineCallee)
+        // vmEntryToNative() and LLInt::handleHostCall() clear the return address.
+        bool isFrameWithoutReturnAddress = !record->returnPC && record->callerFrame > topCallFrame && record->callerFrame <= entryFrame;
+        if (site.stubFrameKind == StubFrameKind::HostCall) {
+            if (leadsToEndOfRun(image, stack, { record->callerFrame, record->returnPC, nullptr }, entryFrame))
+                end = std::min(end, reinterpret_cast<void* const*>(record->callerFrame) + 1);
+        } else if (isFrameWithoutReturnAddress || mayBeReturnSiteOfFrameOfEngine(site, record->returnPC))
             end = std::min(end, recordAtTop);
-        else if (site.stubFrameKind == StubFrameKind::HostCall && leadsToEndOfRun(image, stack, { record->callerFrame, record->returnPC, nullptr }, entryFrame))
-            end = std::min(end, reinterpret_cast<void* const*>(record->callerFrame) + 1);
     }
     // What enters the VM has stored topCallFrame.
     if (!registers.pc)
@@ -1386,6 +1396,18 @@ static SUPPRESS_ASAN std::optional<SampledTop> searchForRecordOfNativeCode(const
             return top;
     }
     return std::nullopt;
+}
+
+// For a callee that is no function, and for eval(). Nothing has called it, so no frame pointer leads to it.
+static SUPPRESS_ASAN bool isFrameThatSlowPathHasLaidOut(const SuspendedThreadStack& stack, const CallFrame* frame, const CallFrame* caller)
+{
+    if (!stack.contains(frame))
+        return false;
+    auto* record = reinterpret_cast<const CallerFrameAndPC*>(frame);
+    if (record->callerFrame != caller)
+        return false;
+    const void* returnPC = record->returnPC;
+    return !returnPC || returnPC == LLInt::getOpcode(llint_generic_return_point) || returnPC == LLInt::getOpcodeWide16(llint_generic_return_point) || returnPC == LLInt::getOpcodeWide32(llint_generic_return_point);
 }
 
 static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Image& image, const SampledRegisters& registers, CallFrame* topCallFrame, const void* entryFrame, const SuspendedThreadStack& stack)
@@ -1404,14 +1426,20 @@ static SUPPRESS_ASAN std::optional<SampledTop> findTopBelowNativeCode(const Imag
         auto* record = reinterpret_cast<const CallerFrameAndPC*>(frame);
         const void* returnAddress = removeReturnAddressSignature(record->returnPC);
         CodeLocation returnSite = image.locate(returnAddress);
-        if (isX86_64() && !isCodeWithFramesOfEngine(pc)) {
+        bool runsCodeOfEngine = isCodeWithFramesOfEngine(pc);
+        if (isX86_64() && !runsCodeOfEngine) {
             OwnerOfFrameRecord owner = findOwnerOfFrameRecord(image, stack, frame);
             bool mayBeCompiledCode = owner.mayBeAdapter || owner.callee.mayBeFunction;
             if (auto caller = mayBeCompiledCode ? findCallerOfCodeWithoutFrameRecord(image, stack, static_cast<void* const*>(endOfFrameBelow) + isAlignedForCall(endOfFrameBelow), frame, owner, CodeKind::NotInImage) : std::nullopt)
                 return caller;
         }
-        if (frame == topCallFrame && !isOperationReturnSite(returnSite))
-            return SampledTop { topCallFrame, pc, nullptr };
+        if (frame == topCallFrame) {
+            // A tail call may not have written the return address yet.
+            bool runsInFrameOfEngine = runsCodeOfEngine && !LLInt::isVMEntryPC(const_cast<void*>(pc));
+            if (runsInFrameOfEngine ? !isOperationReturnSite(returnSite) : mayBeReturnSiteOfFrameOfEngine(returnSite, returnAddress))
+                return SampledTop { topCallFrame, pc, nullptr };
+        } else if (runsCodeOfEngine && topCallFrame >= endOfFrameBelow && topCallFrame < frame && isFrameThatSlowPathHasLaidOut(stack, topCallFrame, frame))
+            return SampledTop { topCallFrame, nullptr, nullptr };
         if (returnSite.runsCompiledCode())
             return sampledTopAtReturnSite(image, stack, returnSite, returnAddress, callerStackPointer(frame), record->callerFrame);
         if (record->callerFrame <= frame)
