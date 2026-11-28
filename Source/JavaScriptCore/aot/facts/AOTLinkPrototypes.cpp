@@ -2130,6 +2130,7 @@ bool LinkFlow::PrototypeHelperReader::readAccess(const SummaryAccess& access)
     step.key = access.key;
     if (nameClass == NameClass::Proto) {
         step.kind = Step::Kind::LinksParent;
+        step.isStoreOfPrototypeLink = true;
         add(step);
         return !value.isOther();
     }
@@ -2354,7 +2355,7 @@ LinkFlow::PrototypeHelper LinkFlow::PrototypeHelperReader::read()
     }
     m_helper.isOne = !m_helper.steps.isEmpty();
     if (m_helper.result == PrototypeHelper::Result::IsParameter && !m_helper.parameters.contains(m_helper.returnedParameter))
-        m_helper.result = PrototypeHelper::Result::IsOther;
+        m_helper.result = PrototypeHelper::Result::IsParameterThatNoStepTakes;
     return WTF::move(m_helper);
 }
 
@@ -2408,6 +2409,7 @@ LinkFlow::HelperProgress LinkFlow::visitPrototypeHelper(const HelperEntered& hel
             PrototypeHelperStep taken;
             taken.kind = step.kind;
             taken.writer = helperEntered.function;
+            taken.isStoreOfPrototypeLink = step.isStoreOfPrototypeLink;
             taken.object = functionOf(step.object);
             taken.objectIsPrototype = step.object.kind == Operand::Kind::PrototypeOfParameter;
             taken.value = functionOf(step.value);
@@ -2554,6 +2556,61 @@ bool LinkFlow::findsOwnNameBuiltin(const PrototypeHelperStep& step) const
     builtinAlone.primitives = held.primitives;
     bool isBuiltinAlone = held == builtinAlone && !(held.primitives & ~Primitive::UndefinedOrNull);
     return held.isNever() || (isBuiltinAlone && (!held.builtin || program.builtins().canonicalID(held.builtin) == program.builtins().canonicalID(Builtins::ObjectPrototypeHasOwnProperty)));
+}
+
+bool LinkFlow::mayBeReplacedByTest(BuiltinID member, const Invocable<void(FlowNodeID)> auto& watch)
+{
+    if (program.isUnlocked(member))
+        return true;
+    if (program.isLockLeftToProgram(member)) {
+        FlowNodeID written = writtenAtMember(member);
+        watch(written);
+        if (!takeForConstant(member) || !typeAt(written).isNever())
+            return true;
+    }
+    // What a test adds to an object below the one that holds the member answers in its place.
+    BuiltinName name = program.builtins().at(member).name;
+    if (StringID text = program.stringOf(name); text && program.isOpenedSomewhere(text))
+        return true;
+    FlowNodeID added = testRuns().nodeOfNameAdded(program.keyOf(name));
+    if (!added)
+        return false;
+    watch(added);
+    return testRuns().isNameAdded(added);
+}
+
+bool LinkFlow::mayBeReplacedByTest(BuiltinID member, Vector<FlowNodeID, 2>& watched)
+{
+    return mayBeReplacedByTest(member, [&](FlowNodeID node) { watched.append(node); });
+}
+
+bool LinkFlow::mayEnterCodeOfProgram(const PrototypeHelperStep& step, const Invocable<void(FlowNodeID)> auto& watch)
+{
+    using Kind = PrototypeHelper::Step::Kind;
+    bool asksOwnName = step.kind == Kind::AsksOwnName;
+    if (!asksOwnName && !step.isStoreOfPrototypeLink)
+        return false;
+    BuiltinID entered = !asksOwnName ? BuiltinID(Builtins::ObjectPrototype__proto__) : step.stored ? BuiltinID(Builtins::FunctionPrototypeCall) : BuiltinID(Builtins::ObjectPrototypeHasOwnProperty);
+    if (mayBeReplacedByTest(entered, watch))
+        return true;
+    if (!asksOwnName)
+        return false;
+    if (step.stored || escapedFunctions.get(step.object.index()))
+        return false;
+    PropertyKeyID key = program.keyOf(BuiltinNames::hasOwnProperty);
+    auto holdsSomething = [&](FlowNodeID node) {
+        watch(node);
+        LinkType held = typeAt(node);
+        held.primitives &= ~Primitive::Undefined;
+        return !held.isNever();
+    };
+    size_t stepsLeft = program.layouts.size();
+    for (LayoutID current = layoutOfConstructorFunction(step.object); current && stepsLeft--; current = program.at(current).base) {
+        FunctionID holder = program.at(current).constructor;
+        if (!holder || holdsSomething(foundOnClosuresOf(holder)) || holdsSomething(followsNamesOnClosuresOf(holder, key) ? laidOnClosuresOf(holder, key) : foundBesideFieldsUnder(key)))
+            return true;
+    }
+    return false;
 }
 
 bool LinkFlow::takePrototypeHelperStep(const PrototypeHelperStep& step)
@@ -2743,7 +2800,7 @@ void LinkFlow::prototypeHelperCallObserved(const FlowObserver& observer)
     readCalledHelpers(call.function);
     HelperEntered root = enteredBy(call);
     Vector<HelperEntered, 4> entered { root };
-    switch (visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) { return takePrototypeHelperStep(step); }, watch)) {
+    switch (visitPrototypeHelper(root, entered, [&](const PrototypeHelperStep& step) { return !mayEnterCodeOfProgram(step, watch) && takePrototypeHelperStep(step); }, watch)) {
     case HelperProgress::Waits:
         return;
     case HelperProgress::IsDone:

@@ -1,0 +1,58 @@
+# function f(a, b) { return a; }   print(f.late, count([1, 2], f), count([1, 2], f));
+# An accessor that a test lays on Function.prototype is handed f and lays Symbol.isConcatSpreadable on it. The program does not name the symbol.
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell mechanisms=all Object.defineProperty(Function.prototype, "late", { configurable: true, get() { if (this.name === "f") this[Symbol.isConcatSpreadable] = true; return "late"; } });
+# CHECK: late 2 2
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = PropGet v1 key="late"
+    v5 = Integer integer=1
+    v6 = Integer integer=2
+    v7 = Builtin builtin=GlobalThis
+    v8 = PropGet v7 key="print" [isFreeName]
+    v9 = NewArray v5, v6 contents=anything
+    v10 = Call v3, -, v9, v1 calleeName="count" [isNeverInlined]
+    v11 = NewArray v5, v6 contents=anything
+    v12 = Call v3, -, v11, v1 calleeName="count" [isNeverInlined]
+    v13 = Call v8, -, v4, v10, v12 calleeName="print"
+    v14 = Undefined
+    Return v14
+}
+function f1 name="f" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="count" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="concat"
+    v3 = Call v2, v0, v1 calleeKey="concat" calleeName="base.concat"
+    v4 = Integer
+    Jump -> next b1(v4, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v3 key="length"
+    v9 = Less v5, v8
+    Branch v9 -> taken b2(), notTaken b5()
+  b2():
+    v10 = ElemGet v3, v5
+    v11 = Undefined
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b3(), notTaken b4(v6)
+  b3():
+    v13 = Increment v6
+    Jump -> next b4(v13)
+  b4(v14):
+    v15 = Increment v5
+    Jump -> next b1(v15, v14)
+  b5():
+    Return v6
+}
+openedname holder=FunctionPrototype name="late"

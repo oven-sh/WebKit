@@ -4648,7 +4648,9 @@ uint32_t ScanOfBody::readSuperBase(const BodyValue& value)
         homeObject = listOfNode(addRead(value.id(), homeObject, m_program.keyOf(BuiltinNames::prototype)));
         break;
     }
-    return addRead(value.id(), homeObject, m_program.keyOf(BuiltinNames::__proto__));
+    uint32_t base = addRead(value.id(), homeObject, m_program.keyOf(BuiltinNames::__proto__));
+    m_summary.accesses.last().entersNoAccessor = true;
+    return base;
 }
 
 void ScanOfBody::readSuperAccess(const BodyValue& value)

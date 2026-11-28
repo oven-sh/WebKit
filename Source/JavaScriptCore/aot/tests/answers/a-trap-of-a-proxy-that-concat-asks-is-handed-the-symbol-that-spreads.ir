@@ -1,0 +1,78 @@
+# function f(a, b) { return a; }   [1].concat(new Proxy(f, { get(target, key) { target[key] = true; } }));   print(count([1, 2], f), count([1, 2], f));
+# Nobody names Symbol.isConcatSpreadable, but concat looks under it and hands it to the trap, which lays it on f. The list that f is spread into has two holes.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 2 2
+# CHECK-NEXT: 4
+# CHECK-NEXT: exited with 0
+
+layout L0 module=m0 fields=[{key="get" declared={type=anything} flags=[IsRequired]}] ownFieldCount=1
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]}
+    v2 = NewClosure function=f2
+    v3 = Convert v2 declared={type=f2 flags=[IsFromCompiler]}
+    v4 = NewClosure function=f3
+    v5 = NewObject layout=L0
+    PropDefine v5, v4 key="get"
+    v7 = FinishObject v5
+    v8 = Integer integer=1
+    v9 = Integer integer=2
+    v10 = Builtin builtin=Proxy
+    v11 = Construct v10, -, v1, v7
+    v12 = NewArray v8 contents=anything
+    v13 = PropGet v12 key="concat"
+    v14 = Call v13, v12, v11 calleeKey="concat" calleeName="concat"
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="print" [isFreeName]
+    v17 = NewArray v8, v9 contents=anything
+    v18 = Call v3, -, v17, v1 calleeName="count" [isNeverInlined]
+    v19 = NewArray v8, v9 contents=anything
+    v20 = Call v3, -, v19, v1 calleeName="count" [isNeverInlined]
+    v21 = Call v16, -, v18, v20 calleeName="print"
+    v22 = Undefined
+    v23 = NewArray v8, v9 contents=anything
+    v24 = PropGet v23 key="concat"
+    v25 = Call v24, v23, v1 calleeKey="concat"
+    v26 = PropGet v25 key="length"
+    v27 = Call v16, -, v26 calleeName="print"
+    Return v22
+}
+function f1 name="f" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    Return v0
+}
+function f2 name="count" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: anything):
+    v2 = PropGet v0 key="concat"
+    v3 = Call v2, v0, v1 calleeKey="concat" calleeName="base.concat"
+    v4 = Integer
+    Jump -> next b1(v4, v4)
+  b1(v5, v6):
+    LoopHint
+    v8 = PropGet v3 key="length"
+    v9 = Less v5, v8
+    Branch v9 -> taken b2(), notTaken b5()
+  b2():
+    v10 = ElemGet v3, v5
+    v11 = Undefined
+    v12 = StrictEq v10, v11
+    Branch v12 -> taken b3(), notTaken b4(v6)
+  b3():
+    v13 = Increment v6
+    Jump -> next b4(v13)
+  b4(v14):
+    v15 = Increment v5
+    Jump -> next b1(v15, v14)
+  b5():
+    Return v6
+}
+function f3 name="get" module=m0 flags=[HasExplicitName] length=2 thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Boolean boolean=true
+    ElemSet v0, v1, v2
+    v4 = Undefined
+    Return v4
+}

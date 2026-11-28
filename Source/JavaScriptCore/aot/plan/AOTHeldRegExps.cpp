@@ -219,7 +219,7 @@ class UsesOfHeldRegExps {
 public:
     using LiteralsOfFields = HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 
-    UsesOfHeldRegExps(const Program& program, const BodyIndex& index, BitVector& escaped, const LiteralsOfFields* literalsOfFields = nullptr)
+    UsesOfHeldRegExps(const Program& program, const Facts& facts, const BodyIndex& index, BitVector& escaped, const LiteralsOfFields* literalsOfFields = nullptr)
         : m_program(program)
         , m_index(index)
         , m_escaped(escaped)
@@ -228,8 +228,22 @@ public:
     {
         for (ASCIILiteral name : { "exec"_s, "test"_s })
             m_methods.append(keyOf(name));
-        for (ASCIILiteral name : { "lastIndex"_s, "source"_s, "flags"_s, "global"_s, "ignoreCase"_s, "multiline"_s, "sticky"_s, "unicode"_s, "unicodeSets"_s, "dotAll"_s, "hasIndices"_s })
-            m_properties.append(keyOf(name));
+        m_properties.append(keyOf("lastIndex"_s));
+        auto appendIfNobodyReplaces = [&](ASCIILiteral name) {
+            BuiltinName named = program.builtins().nameOf(byteCast<uint8_t>(name.span()));
+            BuiltinID getter = named ? program.builtins().findOwnMember(BuiltinID(Builtins::RegExpPrototype), named) : BuiltinID();
+            bool isLocked = getter && isLockedMember(program, facts, getter);
+            if (isLocked)
+                m_properties.append(keyOf(name));
+            return isLocked;
+        };
+        // An accessor that the program has laid there is handed the regular expression.
+        bool everyFlagIsLocked = true;
+        for (ASCIILiteral name : { "global"_s, "ignoreCase"_s, "multiline"_s, "sticky"_s, "unicode"_s, "unicodeSets"_s, "dotAll"_s, "hasIndices"_s })
+            everyFlagIsLocked &= appendIfNobodyReplaces(name);
+        appendIfNobodyReplaces("source"_s);
+        if (everyFlagIsLocked)
+            appendIfNobodyReplaces("flags"_s);
     }
 
     void track(ValueID value, uint32_t literal) { m_literals[value.index()] = literal + 1; }
@@ -373,7 +387,7 @@ void HeldRegExps::findPrivateLiterals(const Program& program, const Facts& facts
                 escaped.set(literal);
             return;
         }
-        UsesOfHeldRegExps uses(program, *index, escaped);
+        UsesOfHeldRegExps uses(program, facts, *index, escaped);
         if (auto first = m_firstCaptures.find(id.index()); first != m_firstCaptures.end()) {
             BodyBlock entry = index->block(entryBlock);
             for (uint32_t capture = 0; capture < program.at(id).captures.size(); ++capture) {
@@ -481,7 +495,7 @@ void HeldRegExps::findPrivateFields(const Program& program, const Facts& facts)
         });
         if (yielded.isEmpty())
             continue;
-        UsesOfHeldRegExps uses(program, index, escaped, &literalsOfFields);
+        UsesOfHeldRegExps uses(program, facts, index, escaped, &literalsOfFields);
         uses.visit([&](const BodyValue& value) -> std::optional<uint32_t> {
             auto literal = yielded.find(value.id().index());
             return literal == yielded.end() ? std::nullopt : std::optional<uint32_t>(literal->value);

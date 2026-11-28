@@ -1,0 +1,150 @@
+# In a test run an accessor that a test lays on RegExp.prototype is handed the RegExp that only captures hold, which is then recompiled.
+# Only exec and test were asked to be locked, so the read of `source` left the RegExp private: the match asked nothing, and cut the groups out with the bounds of the old pattern.
+#   function make() {
+#     const r = /(\w+)-(\w+)-(\w+)/;
+#     return {
+#       look: () => r.source,
+#       match(s: string) {
+#         let n = 0;
+#         for (let i = 0; i < 3; ++i) {
+#           const m = r.exec(s);
+#           if (m) { n += m[1]!.length; print(m.length, m[1], m[2], m[3]); } else print("none");
+#         }
+#         return n;
+#       },
+#       test: (s: string) => r.test(s),
+#     };
+#   }
+#   const o = make();
+#   print(o.match("aa-bb-cc"), o.test("xyz"));
+#   print(o.look());
+#   seen().compile("(z)");
+#   print(o.match("xyz"), o.test("xyz"), o.test("aa-bb-cc"));
+# OPTIONS: admit=ReplacedBuiltins
+# RUN: run-in-shell let held; Object.defineProperty(RegExp.prototype, "source", { configurable: true, get() { held = this; return "replaced"; } }); globalThis.seen = () => held;
+# CHECK: 4 aa bb cc
+# CHECK-NEXT: 4 aa bb cc
+# CHECK-NEXT: 4 aa bb cc
+# CHECK-NEXT: 6 false
+# CHECK-NEXT: replaced
+# CHECK-NEXT: 2 z undefined undefined
+# CHECK-NEXT: 2 z undefined undefined
+# CHECK-NEXT: 2 z undefined undefined
+# CHECK-NEXT: 3 true false
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.ts" displayPath="main.ts" body=f0 namespaceLayout=L(m0)
+entry module=m0
+layout L0 module=m0 position=133 fields=[{key="look" declared={type=anything} flags=[IsRequired]}, {key="match" declared={type=anything} flags=[IsRequired, IsMethod]}, {key="test" declared={type=anything} flags=[IsRequired]}] place=133 ownFieldCount=3
+function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewClosure function=f1 @0
+    v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} @0
+    v2 = Call v1 calleeName="make" @443
+    v3 = Convert v2 declared={type=undefined|null|L0 flags=[IsExpected]} @443
+    v4 = Builtin builtin=GlobalThis @451
+    v5 = PropGet v4 key="print" [isFreeName] @451
+    v6 = PropGet v3 key="match" @457
+    v7 = String string="aa-bb-cc" @465
+    v8 = Call v6, v3, v7 calleeKey="match" calleeName="o.match" @459
+    v9 = PropGet v3 key="test" @478
+    v10 = String string="xyz" @485
+    v11 = Call v9, v3, v10 calleeKey="test" calleeName="o.test" @480
+    v12 = Call v5, -, v8, v11 calleeName="print" @451
+    v13 = Builtin builtin=GlobalThis @494
+    v14 = PropGet v13 key="print" [isFreeName] @494
+    v15 = PropGet v3 key="look" @500
+    v16 = Call v15, v3 calleeKey="look" calleeName="o.look" @502
+    v17 = Call v14, -, v16 calleeName="print" @494
+    v18 = Builtin builtin=GlobalThis @511
+    v19 = PropGet v18 key="seen" [isFreeName] @511
+    v20 = Call v19 calleeName="seen" @511
+    v21 = PropGet v20 key="compile" @516
+    v22 = String string="(z)" @526
+    v23 = Call v21, v20, v22 calleeKey="compile" calleeName="compile" @518
+    v24 = Builtin builtin=GlobalThis @534
+    v25 = PropGet v24 key="print" [isFreeName] @534
+    v26 = PropGet v3 key="match" @540
+    v27 = String string="xyz" @548
+    v28 = Call v26, v3, v27 calleeKey="match" calleeName="o.match" @542
+    v29 = PropGet v3 key="test" @556
+    v30 = String string="xyz" @563
+    v31 = Call v29, v3, v30 calleeKey="test" calleeName="o.test" @558
+    v32 = PropGet v3 key="test" @571
+    v33 = String string="aa-bb-cc" @578
+    v34 = Call v32, v3, v33 calleeKey="test" calleeName="o.test" @573
+    v35 = Call v25, -, v28, v31, v34 calleeName="print" @534
+    v36 = Undefined @534
+    Return v36 @534
+}
+function f1 name="make" module=m0 position=73 flags=[IsChecked, HasExplicitName] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = NewRegExp pattern="(\\w+)-(\\w+)-(\\w+)" @103
+    v1 = NewClosure v0 function=f2 @145
+    v2 = NewClosure v0 function=f3 @165
+    v3 = NewClosure v0 function=f4 @400
+    v4 = NewObject -, v1, v2, v3 layout=L0 fields=[0, 1, 2] @133
+    v5 = FinishObject v4 @133
+    Return v5 @133
+}
+function f2 name="look" module=m0 position=145 kind=Arrow flags=[IsChecked] captures=[{type=anything variableName="r"}] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything):
+    v1 = PropGet v0 key="source" @151
+    Return v1 @151
+}
+function f3 name="match" module=m0 position=165 kind=Method flags=[IsChecked, HasExplicitName] length=1 captures=[{type=anything variableName="r"}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = Integer @198
+    v3 = Convert v2 declared={type=number} @198
+    v4 = Integer @220
+    v5 = Convert v4 declared={type=number} @220
+    Jump -> next b1(v3, v5) @216
+  b1(v6: number, v7: number):
+    LoopHint @216
+    v9 = Integer integer=3 @227
+    v10 = Less v7, v9 @223
+    Branch v10 -> taken b2(), notTaken b6() @223
+  b2():
+    v11 = PropGet v0 key="exec" @255
+    v12 = Call v11, v0, v1 calleeKey="exec" calleeName="r.exec" @257
+    v13 = Convert v12 declared={type=undefined|null|Array<undefined|null|string> flags=[IsExpected]} @255
+    v14 = ToBoolean v13 @278
+    Branch v14 -> taken b3(| 0), notTaken b4(| 0) @278
+  b3(v15):
+    v16 = NarrowByTest v13, v15 @278
+    v17 = Integer integer=1 @288
+    v18 = ElemGet v16, v17 @288
+    v19 = PropGet v18 key="length" @290
+    v20 = Add v6, v19 @288
+    v21 = Convert v20 declared={type=number} @283
+    v22 = Builtin builtin=GlobalThis @302
+    v23 = PropGet v22 key="print" [isFreeName] @302
+    v24 = PropGet v16 key="length" @308
+    v25 = Integer integer=1 @318
+    v26 = ElemGet v16, v25 @318
+    v27 = Integer integer=2 @324
+    v28 = ElemGet v16, v27 @324
+    v29 = Integer integer=3 @330
+    v30 = ElemGet v16, v29 @330
+    v31 = Call v23, -, v24, v26, v28, v30 calleeName="print" @302
+    Jump -> next b5(v21) @302
+  b4(v32):
+    v33 = Builtin builtin=GlobalThis @344
+    v34 = PropGet v33 key="print" [isFreeName] @344
+    v35 = String string="none" @350
+    v36 = Call v34, -, v35 calleeName="print" @344
+    Jump -> next b5(v6) @344
+  b5(v37: number):
+    v38 = Increment v7 @232
+    v39 = Convert v38 declared={type=number} @232
+    Jump -> next b1(v37, v39) @232
+  b6():
+    Return v6 @380
+}
+function f4 name="test" module=m0 position=400 kind=Arrow flags=[IsChecked] length=1 captures=[{type=anything variableName="r"}] thisType={type=anything} parameters=[{type=undefined|null|string flags=[OmitsNull, OmitsUndefined]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|string):
+    v2 = PropGet v0 key="test" @415
+    v3 = Call v2, v0, v1 calleeKey="test" calleeName="r.test" @417
+    ReturnCall v3 casts=[{declared={type=boolean}}] @417
+}
+replaceablebuiltin member=RegExpPrototypeSource

@@ -1,0 +1,73 @@
+# function Parent() { }  Parent.prototype.m = function () { return 1; };  function Child() { }
+# function pick(a, b, c) { a.x = 1; return c; }
+# function outer(child, parent) { child.prototype = Object.create(parent.prototype); const r = pick(child, parent, parent); r.prototype.m = function () { return 2; }; }
+# outer(Child, Parent);  print(new Parent().m());
+# pick does something with a alone, so c is in none of its steps. It is still what pick answers with: whoever uses that answer holds one of the functions handed to outer.
+# Where that is not seen, the store under m in outer is lost: the calls go by the first function alone.
+# RUN: run-in-shell mechanisms=all
+# CHECK: 2
+# CHECK-NEXT: exited with 0
+
+layout L0 kind=Instance name="Parent" module=m0 constructor=f1 flags=[IsConstructorFunction]
+layout L1 kind=Instance name="Child" module=m0 base=L0 constructor=f2 flags=[IsConstructorFunction]
+module m0 path="main.js" displayPath="main.js" body=f0
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] {
+  b0():
+    v0 = NewClosure function=f1
+    v1 = PropGet v0 key="prototype"
+    v2 = NewClosure function=f3
+    PropSet v1, v2 key="m"
+    v4 = NewClosure function=f2
+    v5 = NewClosure function=f5
+    v6 = Call v5, -, v4, v0 calleeName="outer"
+    v7 = Construct v0
+    v8 = PropGet v7 key="m"
+    v9 = Call v8, v7 calleeKey="m"
+    v10 = Builtin builtin=GlobalThis
+    v11 = PropGet v10 key="print" [isFreeName]
+    v12 = Call v11, -, v9
+    v13 = Undefined
+    Return v13
+}
+function f1 name="Parent" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L0 flags=[IsExpected]} results=[{type=anything}] constructedClass=L0 {
+  b0(v0: L0):
+    v1 = Undefined
+    Return v1
+}
+function f2 name="Child" module=m0 flags=[HasThis, HasExplicitName] thisType={type=L1 flags=[IsExpected]} results=[{type=anything}] constructedClass=L1 {
+  b0(v0: L1):
+    v1 = Undefined
+    Return v1
+}
+function f3 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=1
+    Return v1
+}
+function f4 name="pick" module=m0 flags=[HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything, v2: anything):
+    v3 = Integer integer=1
+    PropSet v0, v3 key="x"
+    Return v2
+}
+function f5 name="outer" module=m0 flags=[HasExplicitName] thisType={type=anything} parameters=[{type=anything}, {type=anything}] results=[{type=anything}] {
+  b0(v0: anything, v1: anything):
+    v2 = Builtin builtin=Object
+    v3 = Builtin builtin=ObjectCreate
+    v4 = PropGet v1 key="prototype"
+    v5 = Call v3, v2, v4 calleeName="Object.create"
+    PropSet v0, v5 key="prototype"
+    v7 = NewClosure function=f4
+    v8 = Call v7, -, v0, v1, v1 calleeName="pick"
+    v9 = PropGet v8 key="prototype"
+    v10 = NewClosure function=f6
+    PropSet v9, v10 key="m"
+    v12 = Undefined
+    Return v12
+}
+function f6 module=m0 flags=[HasThis] thisType={type=anything} results=[{type=anything}] {
+  b0(v0: anything):
+    v1 = Integer integer=2
+    Return v1
+}
