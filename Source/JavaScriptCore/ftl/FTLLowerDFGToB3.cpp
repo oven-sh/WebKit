@@ -14735,7 +14735,7 @@ IGNORE_CLANG_WARNINGS_END
             }
         }
         TaggedNativeFunction nativeFunction;
-        if (executable->isHostFunction() && !mayHaveThunk(executable->intrinsic())) {
+        if (executable->isHostFunction() && executable->intrinsic() == NoIntrinsic) {
             if (isConstruct)
                 nativeFunction = uncheckedDowncast<NativeExecutable>(executable)->constructor();
             else
@@ -29951,7 +29951,7 @@ IGNORE_CLANG_WARNINGS_END
     LValue m_vmValue;
     DecimalGenerator m_decimalGenerator { *this };
     DecimalFastPaths<DecimalGenerator> m_decimals { m_decimalGenerator };
-    std::optional<UncheckedKeyHashMap<Node*, ReadsOfDecimal>> m_readsOfDecimals;
+    std::optional<HashMap<Node*, ReadsOfDecimal>> m_readsOfDecimals;
     LValue m_captured;
     LValue m_numberTag;
     LValue m_notCellMask;

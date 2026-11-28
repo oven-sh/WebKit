@@ -1162,7 +1162,7 @@ double Decimal128::toDouble() const
 {
     double magnitude;
     if (!m_high && m_low && m_low < powersOf10In64Bits[19]) [[likely]]
-        magnitude = WTF::parseJSONDoubleFromDigits(m_low, m_exponent, m_low < powersOf10In64Bits[15] ? 15 : 19);
+        magnitude = WTF::parseDoubleFromDecimalDigits(m_low, m_exponent, m_low < powersOf10In64Bits[15] ? 15 : 19);
     else if (isNaN())
         return std::numeric_limits<double>::quiet_NaN();
     else if (isInfinity())

@@ -162,7 +162,6 @@ namespace JSC {
     macro(NumberPrototypeToStringIntrinsic) \
     macro(NumberIsFiniteIntrinsic) \
     macro(NumberIsNaNIntrinsic) \
-    macro(DecimalIntrinsic) \
     macro(NumberIsSafeIntegerIntrinsic) \
     macro(NumberIsIntegerIntrinsic) \
     macro(NumberConstructorIntrinsic) \
@@ -317,9 +316,6 @@ enum Intrinsic : uint8_t {
 NODELETE std::optional<IterationKind> iterationKindForIntrinsic(Intrinsic);
 
 ASCIILiteral intrinsicName(Intrinsic);
-
-// Where it has none, a call that is not inlined can go straight to the native function. See thunkGeneratorForIntrinsic().
-constexpr bool mayHaveThunk(Intrinsic intrinsic) { return intrinsic != NoIntrinsic && intrinsic != DecimalIntrinsic; }
 
 } // namespace JSC
 

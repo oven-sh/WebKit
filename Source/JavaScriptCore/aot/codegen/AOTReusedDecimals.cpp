@@ -257,7 +257,7 @@ private:
     const DecimalRuns& m_runs;
     std::span<const BlockID> m_order;
     Vector<Candidate, 16> m_candidates;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_places;
     Vector<Vector<BlockID, 2>> m_predecessors;
     Vector<BitVector, 4> m_loops;
     Vector<size_t> m_innermostLoops;
