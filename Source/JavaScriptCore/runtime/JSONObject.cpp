@@ -890,6 +890,9 @@ private:
     template<HasGap hasGap, bool inlineNestedObjects> bool appendPreparedObjectImpl(JSObject&, unsigned structureSlot, CharType*& out, unsigned& length, unsigned& capacity);
     template<HasGap hasGap> void appendPreparedObject(JSObject&, unsigned structureSlot);
     template<HasGap hasGap> void appendContiguousArray(std::span<const WriteBarrier<Unknown>> elements);
+#if USE(BUN_JSC_ADDITIONS)
+    template<HasGap hasGap> void appendContiguousArrayThatStartsWithPrimitive(std::span<const WriteBarrier<Unknown>> elements);
+#endif
     template<HasGap hasGap> void appendUnpreparedObject(JSObject&, StructureID);
     String result();
 
@@ -2010,6 +2013,70 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendPreparedObject(JS
         m_length = length;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// What appendContiguousArray() writes, for a list that starts with a string, a number or a literal. That function has the code for an object of a prepared
+// Structure inline, and around every call of append() its loop saves and loads again what that code keeps in registers: 41 instructions for an element
+// where this loop has about half, and 28 where the loop stood in append() itself. An object of a prepared Structure further back is written as that loop
+// wrote it: by appendPreparedObject(), which neither takes m_isElementOfList nor reports the object to m_watchedLevels.
+template<typename CharType, BufferMode bufferMode>
+template<HasGap hasGap>
+NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendContiguousArrayThatStartsWithPrimitive(std::span<const WriteBarrier<Unknown>> elements)
+{
+    ASSERT(!elements.empty());
+    if (!hasRemainingCapacity()) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    buffer()[m_length++] = '[';
+    if (!enterHolder<hasGap>()) [[unlikely]]
+        return;
+
+    const unsigned newLineAndIndent = hasGap == HasGap::Yes ? newLineAndIndentSize() : 0;
+    const bool isElementOfList = elements.size() > 1;
+    for (size_t index = 0; index < elements.size(); ++index) {
+        if (index || hasGap == HasGap::Yes) {
+            if (!hasRemainingCapacity(!!index + newLineAndIndent)) [[unlikely]] {
+                recordBufferFull();
+                return;
+            }
+            if (index)
+                buffer()[m_length++] = ',';
+            if constexpr (hasGap == HasGap::Yes)
+                appendNewLineAndIndentUnchecked();
+        }
+        JSValue element = elements[index].get();
+        if (!element) [[unlikely]] {
+            recordFailure("!canGetIndexQuickly"_s);
+            return;
+        }
+        if (m_preparedStructureCount && element.isCell() && !element.asCell()->isString()) {
+            JSCell* cell = element.asCell();
+            unsigned slot = findPreparedStructureSlot(cell->structureID());
+            if (slot != notPreparedSlot) {
+                appendPreparedObject<hasGap>(*asObject(cell), slot);
+                if (haveFailure()) [[unlikely]]
+                    return;
+                continue;
+            }
+        }
+        m_isElementOfList = isElementOfList;
+        append<hasGap>(element.isUndefined() ? jsNull() : element);
+        m_isElementOfList = false;
+        if (haveFailure()) [[unlikely]]
+            return;
+    }
+
+    leaveHolder<hasGap>();
+    if (!hasRemainingCapacity(hasGap == HasGap::Yes ? 1 + newLineAndIndentSize() : 1)) [[unlikely]] {
+        recordBufferFull();
+        return;
+    }
+    if constexpr (hasGap == HasGap::Yes)
+        appendNewLineAndIndentUnchecked();
+    buffer()[m_length++] = ']';
+}
+#endif
+
 template<typename CharType, BufferMode bufferMode>
 template<HasGap hasGap>
 NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendContiguousArray(std::span<const WriteBarrier<Unknown>> elements)
@@ -2024,6 +2091,13 @@ NEVER_INLINE void FastStringifier<CharType, bufferMode>::appendContiguousArray(s
         return;
 #endif
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSValue first = !elements.empty() ? elements[0].get() : JSValue(); first && (!first.isCell() || first.asCell()->isString())) {
+        appendContiguousArrayThatStartsWithPrimitive<hasGap>(elements);
+        return;
+    }
+#endif
 
     CharType* out = buffer();
     unsigned length = m_length;
