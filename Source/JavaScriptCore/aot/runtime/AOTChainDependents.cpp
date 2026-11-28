@@ -77,10 +77,10 @@ bool ChainDependents::StructuresThatPassStores::hasChainDependent(VM&, uint32_t 
     return m_dependents.m_structuresWithState.contains(id) && uncheckedDowncast<CompiledStructure>(id.decode())->has(CompiledStructure::FurtherFlag::PassesStoresAbove);
 }
 
-bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, const CreatedMembers& created)
+bool ChainDependents::StructuresThatPassStores::keepChainDependent(VM& vm, uint32_t, UniquedStringImpl* uid, unsigned hashOfUID, const CreatedMembers& created)
 {
     unsigned attributes = 0;
-    PropertyOffset offset = created.prototype->structure()->get(vm, uid, attributes);
+    PropertyOffset offset = created.prototype->structure()->getWithoutReadingName(vm, uid, hashOfUID, attributes);
     return !isValidOffset(offset) || !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue);
 }
 
@@ -191,7 +191,10 @@ void ChainDependents::add(std::span<JSObject* const> chainObjects, const ChainDe
         DependentSet& set = dependent.uidOrNull ? dependents.byName.ensure(dependent.uidOrNull, [] {
             return DependentSet();
         }).iterator->value : dependents.onAnyName;
-        if (!set.add(dependent).isNewEntry)
+        auto result = set.add(dependent);
+        if (dependent.uidOrNull)
+            result.iterator->setHashOfUID(IdentifierRepHash::hash(dependent.uidOrNull));
+        if (!result.isNewEntry)
             continue;
         ++m_numberOfDependentsAddedSinceOwnersWereAsked;
     }
@@ -247,7 +250,7 @@ void ChainDependents::didCreateMembers(const CreatedMembers& created)
     ObjectDependents& all = iterator->value;
     Vector<ChainDependent, 8> dropped;
     all.removeIf([&](const ChainDependent& dependent) {
-        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, created))
+        if (ownerOf(dependent).keepChainDependent(vm, dependent.subject, dependent.uidOrNull, dependent.hashOfUID(), created))
             return false;
         dropped.append(dependent);
         return true;

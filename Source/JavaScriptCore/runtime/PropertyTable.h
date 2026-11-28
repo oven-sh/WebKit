@@ -113,6 +113,8 @@ public:
 
     // Find a value in the table.
     std::tuple<PropertyOffset, unsigned> get(const KeyType&);
+    // Looks at the address of the key alone, which may have been freed.
+    std::tuple<PropertyOffset, unsigned> getWithoutReadingKey(const KeyType&, unsigned hash);
     // Add a value to the table
     [[nodiscard]] std::tuple<PropertyOffset, unsigned, bool> add(VM&, const ValueType& entry);
     // Remove a value from the table.
@@ -229,7 +231,7 @@ private:
     void remove(VM&, KeyType, unsigned entryIndex, unsigned index);
 
     template<typename Index, typename Entry>
-    ALWAYS_INLINE FindResult findImpl(const Index*, const Entry*, const KeyType&);
+    ALWAYS_INLINE FindResult findImpl(const Index*, const Entry*, const KeyType&, unsigned hash);
 
     bool isCompact() const { return m_indexVector & isCompactFlag; }
 
@@ -309,9 +311,8 @@ private:
 };
 
 template<typename Index, typename Entry>
-PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, const Entry* table, const KeyType& key)
+PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, const Entry* table, const KeyType& key, unsigned hash)
 {
-    unsigned hash = IdentifierRepHash::hash(key);
     unsigned indexMask = m_indexMask;
     unsigned probeCount = 0;
     unsigned index = hash & indexMask;
@@ -335,7 +336,7 @@ PropertyTable::FindResult PropertyTable::findImpl(const Index* indexVector, cons
 #endif
 
 #if DUMP_PROPERTYMAP_COLLISIONS
-        dataLog("PropertyTable collision for ", key, " (", hash, ")\n");
+        dataLog("PropertyTable collision for ", RawPointer(key), " (", hash, ")\n");
         dataLog("Collided with ", entry.key(), "(", IdentifierRepHash::hash(entry.key()), ")\n");
 #endif
 
@@ -349,7 +350,7 @@ inline PropertyTable::FindResult PropertyTable::find(const KeyType& key)
     ASSERT(key);
     ASSERT(key->isAtom() || key->isSymbol());
     return withIndexVector([&](auto* vector) {
-        return findImpl(vector, tableFromIndexVector(vector), key);
+        return findImpl(vector, tableFromIndexVector(vector), key, IdentifierRepHash::hash(key));
     });
 }
 
@@ -363,6 +364,20 @@ inline std::tuple<PropertyOffset, unsigned> PropertyTable::get(const KeyType& ke
         return std::tuple { invalidOffset, 0 };
 
     FindResult result = find(key);
+    return std::tuple { result.offset, result.attributes };
+}
+
+inline std::tuple<PropertyOffset, unsigned> PropertyTable::getWithoutReadingKey(const KeyType& key, unsigned hash)
+{
+    ASSERT(key);
+    ASSERT(key != PROPERTY_MAP_DELETED_ENTRY_KEY);
+
+    if (!m_keyCount)
+        return std::tuple { invalidOffset, 0 };
+
+    FindResult result = withIndexVector([&](auto* vector) {
+        return findImpl(vector, tableFromIndexVector(vector), key, hash);
+    });
     return std::tuple { result.offset, result.attributes };
 }
 
@@ -442,7 +457,7 @@ inline PropertyOffset PropertyTable::updateAttributeIfExists(const KeyType& key,
 {
     return withIndexVector([&](auto* vector) -> PropertyOffset {
         auto* table = tableFromIndexVector(vector);
-        FindResult result = findImpl(vector, table, key);
+        FindResult result = findImpl(vector, table, key, IdentifierRepHash::hash(key));
         if (result.offset == invalidOffset)
             return invalidOffset;
         table[result.entryIndex - 1].setAttributes(attributes);

@@ -88,18 +88,28 @@ public:
     virtual ~ChainDependentOwner() = default;
     virtual void dropChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) = 0;
     virtual bool hasChainDependent(VM&, uint32_t subject, UniquedStringImpl* uidOrNull) const = 0;
-    virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, const CreatedMembers&) { return false; }
+    // What is filed holds the name, and the dependent does not: behind an eviction the name may have been freed.
+    virtual bool keepChainDependent(VM&, uint32_t, UniquedStringImpl*, [[maybe_unused]] unsigned hashOfUID, const CreatedMembers&) { return false; }
     virtual bool readsValuesInPlace() const { return false; }
 };
 
 enum class ChainDependentOwnerID : uint8_t { NoOwner = UINT8_MAX };
 
 struct ChainDependent {
-    friend bool operator==(const ChainDependent&, const ChainDependent&) = default;
+    friend bool operator==(const ChainDependent& a, const ChainDependent& b) { return a.uidOrNull == b.uidOrNull && a.subject == b.subject && a.owner == b.owner; }
+
+    unsigned hashOfUID() const { return bytesOfHash[0] | bytesOfHash[1] << 8 | bytesOfHash[2] << 16; }
+    void setHashOfUID(unsigned hash) const
+    {
+        ASSERT(!(hash >> 24));
+        bytesOfHash = { static_cast<uint8_t>(hash), static_cast<uint8_t>(hash >> 8), static_cast<uint8_t>(hash >> 16) };
+    }
 
     UniquedStringImpl* uidOrNull { nullptr };
     uint32_t subject { 0 };
     ChainDependentOwnerID owner { };
+    // Of the name that had the address when this was last added. A PropertyTable is asked with it without reading the name.
+    mutable std::array<uint8_t, 3> bytesOfHash { };
 };
 static_assert(sizeof(ChainDependent) == 16);
 
@@ -164,7 +174,7 @@ private:
     private:
         void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) final;
         bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*) const final;
-        bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*, const CreatedMembers&) final;
+        bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl*, unsigned hashOfUID, const CreatedMembers&) final;
         bool readsValuesInPlace() const final { return true; }
 
         ChainDependents& m_dependents;

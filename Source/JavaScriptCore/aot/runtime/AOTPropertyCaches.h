@@ -141,7 +141,7 @@ public:
 
     void dropChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull) const final;
-    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
+    bool keepChainDependent(VM&, uint32_t siteIndex, UniquedStringImpl* uidOrNull, unsigned hashOfUID, const CreatedMembers&) final;
 
     template<typename Visitor> void visitRoots(Visitor&);
     size_t removeDeadEntries(VM&, CollectionScope);
@@ -437,7 +437,7 @@ public:
 
     void dropChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) final;
     bool hasChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull) const final;
-    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, const CreatedMembers&) final;
+    bool keepChainDependent(VM&, uint32_t structureIDBits, UniquedStringImpl* uidOrNull, unsigned hashOfUID, const CreatedMembers&) final;
 
     Structure* structureWithFirstElement(StructureID before, IndexingType shape) const
     {

@@ -700,6 +700,7 @@ public:
 
     PropertyOffset get(VM&, PropertyName);
     PropertyOffset get(VM&, PropertyName, unsigned& attributes);
+    PropertyOffset getWithoutReadingName(VM&, UniquedStringImpl*, unsigned hash, unsigned& attributes);
     JS_EXPORT_PRIVATE std::optional<PropertyOffset> getWithoutMaterializing(UniquedStringImpl*, unsigned& attributes) const;
 
     inline bool canPerformFastPropertyEnumerationCommon() const; // Defined below
