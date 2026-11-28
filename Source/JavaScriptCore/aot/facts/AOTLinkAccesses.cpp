@@ -2385,11 +2385,22 @@ Vector<PropertyKeyID, 8> LinkFlow::findAffixedNamesOfStore(FunctionID id, const 
 
 bool LinkFlow::appendNamesOfTexts(std::span<const StringID> texts, Vector<PropertyKeyID, 8>& names) const
 {
+    constexpr size_t mostNamesLookedThrough = 16;
+    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> known;
+    auto isNew = [&](PropertyKeyID name) {
+        if (names.size() <= mostNamesLookedThrough)
+            return !names.contains(name);
+        if (known.isEmpty()) {
+            for (PropertyKeyID earlier : names)
+                known.add(earlier.bits());
+        }
+        return known.add(name.bits()).isNewEntry;
+    };
     for (StringID text : texts) {
         std::optional<PropertyKeyID> name = program.types.find(PropertyKey { .kind = PropertyKeyKind::Text, .text = text });
         if (!name || program.isIndexLike(*name) || nameClassOf(*name) == NameClass::Proto || mayBeElementKey(nameClassOf(*name)))
             return false;
-        if (!names.contains(*name))
+        if (isNew(*name))
             names.append(*name);
     }
     return true;
