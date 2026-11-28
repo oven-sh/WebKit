@@ -910,7 +910,7 @@ public:
             uint32_t call { 0 };
             bool resultIsUsed { false };
         };
-        enum class Result : uint8_t { IsOther, IsParameter, IsUnknown };
+        enum class Result : uint8_t { IsOther, IsParameter, IsParameterThatNoStepTakes, IsUnknown };
 
         Vector<Step, 6> steps;
         Vector<uint32_t, 4> parameters;

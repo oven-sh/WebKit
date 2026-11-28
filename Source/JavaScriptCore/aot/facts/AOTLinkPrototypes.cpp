@@ -2354,7 +2354,7 @@ LinkFlow::PrototypeHelper LinkFlow::PrototypeHelperReader::read()
     }
     m_helper.isOne = !m_helper.steps.isEmpty();
     if (m_helper.result == PrototypeHelper::Result::IsParameter && !m_helper.parameters.contains(m_helper.returnedParameter))
-        m_helper.result = PrototypeHelper::Result::IsOther;
+        m_helper.result = PrototypeHelper::Result::IsParameterThatNoStepTakes;
     return WTF::move(m_helper);
 }
 
