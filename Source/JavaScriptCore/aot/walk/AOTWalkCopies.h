@@ -86,10 +86,11 @@ struct WaysOutOfOwnKeyTests {
     BlockID whereTestFails;
 };
 bool continueIfOwnKeys(Walker&, Reference& object, const OwnKeyOrder&, bool layoutIsProven, Origin, const WaysOutOfOwnKeyTests&);
-Reference valueOfOwnKey(Walker&, Reference object, LayoutID, FieldIndex, Origin);
+enum class OwnKeyIsRead : bool { BehindNoCall, BehindCallOfGetter };
+Reference valueOfOwnKey(Walker&, Reference object, LayoutID, FieldIndex, Origin, OwnKeyIsRead = OwnKeyIsRead::BehindNoCall);
 bool isAccessorAmongOwnKeys(const Walker&, LayoutID, FieldIndex);
 bool staysOwnKeyAfterCalls(const Walker&, LayoutID, FieldIndex);
-Reference valueOfCopiedKey(Walker&, const BodyValue& copy, Reference object, LayoutID, FieldIndex, Origin);
+Reference valueOfCopiedKey(Walker&, const BodyValue& copy, Reference object, LayoutID, FieldIndex, Origin, OwnKeyIsRead&);
 bool orderWordTellsOwnKeysOf(const Walker&, LayoutID);
 
 bool callAccessorInSlot(Walker&, const BodyValue& access);

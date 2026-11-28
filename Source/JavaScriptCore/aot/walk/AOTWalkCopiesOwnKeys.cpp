@@ -546,10 +546,11 @@ bool continueIfOwnKeys(Walker& walker, Reference& object, const OwnKeyOrder& ord
     return continueIfOwnKeys(walker, object, order, layoutIsProven, origin, WaysOutOfOwnKeyTests { whereTestFails, whereTestFails, whereTestFails });
 }
 
-Reference valueOfCopiedKey(Walker& walker, const BodyValue& copy, Reference object, LayoutID layout, FieldIndex field, Origin origin)
+Reference valueOfCopiedKey(Walker& walker, const BodyValue& copy, Reference object, LayoutID layout, FieldIndex field, Origin origin, OwnKeyIsRead& isRead)
 {
     if (!walker.plan().slot(layout, field).holdsAccessor)
-        return valueOfOwnKey(walker, object, layout, field, origin);
+        return valueOfOwnKey(walker, object, layout, field, origin, isRead);
+    isRead = OwnKeyIsRead::BehindCallOfGetter;
     TypeArena& types = walker.types();
     const LinkTables& linked = walker.facts().linked();
     const LinkedAccessorsOfField* laid = linked.findAccessorsExpectedIn({ layout, field });
@@ -581,7 +582,7 @@ Reference valueOfCopiedKey(Walker& walker, const BodyValue& copy, Reference obje
     return walker.build(WTF::move(call));
 }
 
-Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, FieldIndex field, Origin origin)
+Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, FieldIndex field, Origin origin, OwnKeyIsRead isRead)
 {
     const Program& program = walker.program();
     PropertyKeyID key = walker.plan().slots().keyOf(program, { layout, field });
@@ -600,15 +601,48 @@ Reference valueOfOwnKey(Walker& walker, Reference object, LayoutID layout, Field
     }
 
     origin.isTailCall = false;
-    Draft read(Opcode::GetSlot, origin);
-    read.setObjectOperand(object);
-    read.setKey(key);
-    read.setReceivers(walker.types().at(walker.types().forLayout(layout)).layouts);
-    read.setLevel(KnowledgeLevel::Proven);
-    Reference value = walker.build(WTF::move(read));
-    if (value)
-        walker.state().noteSlot(object, place, value);
-    return value;
+    auto operationOnSlot = [&](Opcode opcode) {
+        Draft draft(opcode, origin);
+        draft.setObjectOperand(object);
+        draft.setKey(key);
+        draft.setReceivers(walker.types().at(walker.types().forLayout(layout)).layouts);
+        draft.setLevel(KnowledgeLevel::Proven);
+        return draft;
+    };
+    auto readSlot = [&] {
+        Reference value = walker.build(operationOnSlot(Opcode::GetSlot));
+        if (value)
+            walker.state().noteSlot(object, place, value);
+        return value;
+    };
+    if (isRead == OwnKeyIsRead::BehindNoCall || fieldStaysInSlot(program, walker.plan().slot(layout, field)))
+        return readSlot();
+
+    // A getter in front may have stored what the slot does not take, which moves the field out of it.
+    Reference isFilled = walker.build(operationOnSlot(Opcode::IsSlotFilled));
+    if (!isFilled || walker.isUnreachable() || walker.hasFailed())
+        return { };
+    BlockID filled = walker.addBlock();
+    BlockID empty = walker.addBlock(BlockFrequency::Rare);
+    walker.letGuessFailUnasked(empty, origin);
+    walker.branch(isFilled, filled, empty);
+    Vector<Walker::JoinArm, 2> arms;
+    walker.continueIn(empty);
+    if (!walker.isUnreachable()) {
+        Draft read(Opcode::PropGet, origin);
+        walker.chooseConservativeFields(read);
+        read.setObjectOperand(object);
+        read.setKey(key);
+        if (Reference value = walker.build(WTF::move(read)))
+            arms.append({ walker.currentBlock(), { value } });
+    }
+    walker.continueIn(filled);
+    if (Reference value = walker.isUnreachable() ? Reference() : readSlot())
+        arms.append({ walker.currentBlock(), { value } });
+    std::array<Reference, 1> met;
+    if (walker.hasFailed() || !walker.joinArms(arms.span(), walker.addBlock(), met))
+        return { };
+    return met[0];
 }
 
 } } } // namespace JSC::AOT::Typed

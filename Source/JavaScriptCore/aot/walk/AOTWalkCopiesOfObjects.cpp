@@ -320,8 +320,9 @@ static void bindLiteralInWalkCopies(Walker& walker, const LiteralInSightInWalkCo
 
 static bool takeFieldsOfSourceInWalkCopies(Walker& walker, const BodyValue& copy, const CopiedOrderInWalkCopies& order, Reference source, Origin origin, PropertiesInWalkCopies& properties)
 {
+    OwnKeyIsRead isRead = OwnKeyIsRead::BehindNoCall;
     for (size_t index = 0; index < order.fields.size(); ++index) {
-        Reference value = valueOfCopiedKey(walker, copy, source, order.keys.layout, order.fields[index], origin);
+        Reference value = valueOfCopiedKey(walker, copy, source, order.keys.layout, order.fields[index], origin, isRead);
         if (!value)
             return false;
         properties.put(order.fieldsOfTaker[index], value);
@@ -369,11 +370,12 @@ static Reference buildObjectMadeByCopyInWalkCopies(Walker& walker, const Draft& 
     auto namesLeftOut = value.as<Opcode::CopyObject>().excludedKeys();
     if (!order.keys.layout || order.fields.isEmpty() || !namesLeftOut.isEmpty()) {
         Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
+        OwnKeyIsRead isRead = OwnKeyIsRead::BehindNoCall;
         for (FieldIndex field : order.fields) {
             PropertyKeyID key = keyOfFieldInWalkCopies(walker, order.keys.layout, field);
             if (std::ranges::contains(namesLeftOut, key))
                 continue;
-            Reference held = valueOfCopiedKey(walker, value, source, order.keys.layout, field, origin);
+            Reference held = valueOfCopiedKey(walker, value, source, order.keys.layout, field, origin, isRead);
             if (!held)
                 return { };
             definitions.append({ key, held });
@@ -964,11 +966,12 @@ bool defineOwnKeysOfSourceOnObjectThatStands(Walker& walker, const BodyValue& co
     bool isCounted = false;
     walkSourceArmsInWalkCopies(walker, source, origin, asWritten, [&](const CopiedOrderInWalkCopies* order, Reference tested) {
         Vector<std::pair<PropertyKeyID, Reference>, 8> definitions;
+        OwnKeyIsRead isRead = OwnKeyIsRead::BehindNoCall;
         for (FieldIndex field : order ? order->fields.span() : std::span<const FieldIndex>()) {
             PropertyKeyID key = keyOfFieldInWalkCopies(walker, order->keys.layout, field);
             if (std::ranges::contains(spread.excludedKeys(), key))
                 continue;
-            Reference value = valueOfCopiedKey(walker, copy, tested, order->keys.layout, field, origin);
+            Reference value = valueOfCopiedKey(walker, copy, tested, order->keys.layout, field, origin, isRead);
             if (!value && !walker.isUnreachable() && !walker.hasFailed())
                 walker.fail("an own key that a copy defines has no value, and the way goes on"_s);
             if (!value)
