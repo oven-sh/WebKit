@@ -459,6 +459,7 @@ private:
     std::span<const uint32_t> m_words;
 };
 
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 template<typename Functor>
 static void forEachModuleBuiltinInUnverifiedBody(const Body& body, const Functor& functor)
 {
@@ -471,24 +472,34 @@ static void forEachModuleBuiltinInUnverifiedBody(const Body& body, const Functor
             return;
         if (block[4] && !words.skipTarget())
             return;
+        const uint32_t* value = words.rest().data();
+        const uint32_t* end = value + words.rest().size();
         for (uint32_t remainingValues = block[1]; remainingValues--;) {
-            std::span<const uint32_t> value = words.rest();
-            if (value.size() < BodyValue::numberOfHeadWords) [[unlikely]]
+            size_t available = end - value;
+            if (available < BodyValue::numberOfHeadWords) [[unlikely]]
                 return;
             uint32_t opcodeWord = value[0] & BodyValue::opcodeMask;
             if (opcodeWord >= numberOfEnumerators<Opcode>) [[unlikely]]
                 return;
             auto opcode = static_cast<Opcode>(opcodeWord);
-            uint32_t firstField = BodyValue::numberOfHeadWords + CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode);
-            uint64_t numberOfFields = numberOfFieldWordsThatMayBeWrong(opcode, firstField <= value.size() ? value.subspan(firstField) : std::span<const uint32_t>());
-            if (!words.skip(firstField + numberOfFields + !!(value[0] & Wire::WrittenPositionFollows))) [[unlikely]]
+            uint64_t size = BodyValue::numberOfHeadWords + !!(value[0] & Wire::WrittenPositionFollows);
+            uint8_t fixed = CaseTable<Opcode, fixedNumberOfWordsBehindHeadOfBodyValue>::at(opcode);
+            if (fixed != variableNumberOfFieldWords) [[likely]]
+                size += fixed;
+            else {
+                uint32_t firstField = BodyValue::numberOfHeadWords + CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode);
+                size += CaseTable<Opcode, hasFlagsWordOnWire>::at(opcode) + numberOfFieldWordsThatMayBeWrong(opcode, unsafeMakeSpan(value + firstField, available - std::min<size_t>(available, firstField)));
+            }
+            if (size > available) [[unlikely]]
                 return;
-            if (opcode != Opcode::ModuleBuiltin)
-                continue;
-            uint32_t module = value[firstField + 1];
-            if (module < modules.size)
-                functor(ModuleID::fromBits(modules.entries[module] - 1));
+            if (opcode == Opcode::ModuleBuiltin) [[unlikely]] {
+                uint32_t module = value[BodyValue::numberOfHeadWords + hasFlagsWordOnWire(Opcode::ModuleBuiltin) + 1];
+                if (module < modules.size)
+                    functor(ModuleID::fromBits(modules.entries[module] - 1));
+            }
+            value += size;
         }
+        words = UnverifiedBodyWords({ value, end });
         std::span<const uint32_t> terminator = words.rest();
         if (terminator.size() < BodyTerminator::numberOfHeadWords || terminator[0] >= numberOfEnumerators<TerminatorKind>)
             return;
@@ -500,6 +511,8 @@ static void forEachModuleBuiltinInUnverifiedBody(const Body& body, const Functor
         }
     }
 }
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 static BitVector modulesNamedByModuleBuiltins(const Program& program, uint32_t numberOfModules, const ParallelLoops& loops)
 {
