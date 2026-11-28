@@ -198,6 +198,22 @@ RegisterID* RegExpNode::emit(BytecodeGenerator& generator, RegisterID* dst, Uniq
     return generator.emitNewRegExp(dst, regExp);
 }
 
+// ------------------------------ DecimalNode ---------------------------------
+
+RegisterID* DecimalNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    if (dst == generator.ignoredResult())
+        return nullptr;
+
+    RefPtr<RegisterID> result = generator.finalDestination(dst);
+    RefPtr<RegisterID> function = generator.moveLinkTimeConstant(generator.newTemporary(), LinkTimeConstant::decimalLiteral);
+    CallArguments arguments(generator, nullptr, 1);
+    generator.emitLoad(arguments.thisRegister(), jsUndefined());
+    Identifier text = m_isNegative ? Identifier::fromString(generator.vm(), makeString('-', StringView { *m_value })) : Identifier::fromUid(generator.vm(), m_value);
+    generator.emitLoad(arguments.argumentRegister(0), text.impl());
+    return generator.emitCall(result.get(), function.get(), NoExpectedFunction, arguments, divot(), divotStart(), divotEnd(), DebuggableCall::No);
+}
+
 // ------------------------------ ThisNode -------------------------------------
 
 RegisterID* ThisNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
@@ -2816,14 +2832,23 @@ RegisterID* ReflectConstructFunctionCallDotNode::emitBytecode(BytecodeGenerator&
 
 static RegisterID* emitIncOrDec(BytecodeGenerator& generator, RegisterID* srcDst, Operator oper)
 {
+    if (generator.usesDecimalOperators()) [[unlikely]]
+        return generator.emitIncOrDecOrDecimal(srcDst, oper == Operator::PlusPlus);
     return (oper == Operator::PlusPlus) ? generator.emitInc(srcDst) : generator.emitDec(srcDst);
+}
+
+static RegisterID* emitToNumericForPostfix(BytecodeGenerator& generator, RegisterID* dst, RegisterID* src)
+{
+    if (generator.usesDecimalOperators()) [[unlikely]]
+        return generator.emitToNumericOrDecimal(dst, src);
+    return generator.emitToNumeric(dst, src);
 }
 
 static RegisterID* emitPostIncOrDec(BytecodeGenerator& generator, RegisterID* dst, RegisterID* srcDst, Operator oper)
 {
     if (dst == srcDst)
-        return generator.emitToNumeric(generator.finalDestination(dst), srcDst);
-    RefPtr<RegisterID> tmp = generator.emitToNumeric(generator.newTemporary(), srcDst);
+        return emitToNumericForPostfix(generator, generator.finalDestination(dst), srcDst);
+    RefPtr<RegisterID> tmp = emitToNumericForPostfix(generator, generator.newTemporary(), srcDst);
     RefPtr<RegisterID> result = generator.tempDestination(srcDst);
     generator.move(result.get(), tmp.get());
     emitIncOrDec(generator, result.get(), oper);
@@ -3628,6 +3653,9 @@ RegisterID* BinaryOpNode::emitBytecode(BytecodeGenerator& generator, RegisterID*
     bool wasTypeof = generator.lastOpcodeID() == op_typeof;
     RefPtr<RegisterID> src2 = generator.emitNode(right);
     generator.emitExpressionInfo(position(), position(), position());
+    // The typeof may be that of another statement, and src1 a Decimal.
+    if (generator.usesDecimalOperators() && !src2->virtualRegister().isConstant()) [[unlikely]]
+        wasTypeof = false;
     if (wasTypeof && (opcodeID == op_neq || opcodeID == op_nstricteq)) {
         RefPtr<RegisterID> tmp = generator.tempDestination(dst);
         if (opcodeID == op_neq)
@@ -3660,6 +3688,8 @@ RegisterID* EqualNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
 
     RefPtr<RegisterID> src1 = generator.emitNodeForLeftHandSide(left, m_rightHasAssignments, m_expr2->isPure(generator));
     RefPtr<RegisterID> src2 = generator.emitNode(right);
+    if (generator.usesDecimalOperators()) [[unlikely]]
+        return generator.emitEqualOrDecimal(generator.finalDestination(dst, src1.get()), src1.get(), src2.get(), OperandTypes(left->resultDescriptor(), right->resultDescriptor()));
     return generator.emitEqualityOp<OpEq>(generator.finalDestination(dst, src1.get()), src1.get(), src2.get());
 }
 

@@ -30,6 +30,14 @@ for (const value of [values[5], [values[5]], { a: values[5] }, new (class extend
     }
     shouldBe(error instanceof TypeError, true);
 }
+{
+    // It throws where it meets the Decimal, not when it reads back what it wrote.
+    let isRead = false;
+    try {
+        structuredClone([values[5], { get behind() { isRead = true; } }]);
+    } catch { }
+    shouldBe(isRead, false);
+}
 
 // JSON.stringify() throws wherever the Decimal is, as for a BigInt, and does not write an empty object instead.
 {

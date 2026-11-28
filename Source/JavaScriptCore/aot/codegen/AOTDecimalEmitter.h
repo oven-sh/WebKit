@@ -71,6 +71,7 @@ private:
     };
 
     void leaveUnless(Condition);
+    void requireClassAsMade();
     void requireWordOfClass(Boxed, ptrdiff_t offsetInInstance);
     KnownDecimal decimalIn(ValueID);
     void stripTrailingZerosOf(ValueID);
@@ -106,6 +107,7 @@ private:
     const DecimalRun* m_run { nullptr };
     LBasicBlock m_asWritten { nullptr };
     bool m_computesInLine { false };
+    bool m_classIsKnownToBeAsMade { false };
     Vector<KnownDecimal, 8> m_decimals;
     Vector<std::pair<ValueID, Condition>, 2> m_truths;
     RunAsWritten m_runAsWritten;

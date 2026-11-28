@@ -1,0 +1,45 @@
+# A literal needs no test of what it is, but its methods may be replaced, also since the last row of calls.
+# sink(() => 1.5m.negate(), (x, call) => { const sum = x.add(x); call(sum); return 2.5m.abs(); });
+# JSC-OPTIONS: --useDecimal=1
+# STATISTIC: DecimalRuns = 3
+# RUN: run-in-shell --useDecimal=1 globalThis.sink = (f, g) => { const D = text => new Decimal(text), show = f => { try { print(String(f()) + ";"); } catch (error) { print(error.name + ";"); } }; const all = texts => { const list = []; for (const text of texts) list.push(D(text)); return list; }, amounts = all(["0.25", "0.75", "1.5", "2.5", "0.05", "0.95"]), names = list => { const ids = new Map, texts = []; for (const x of list) { if (!ids.has(x)) ids.set(x, ids.size); texts.push(ids.get(x) + ":" + String(x)); } return texts.join(" "); }, each = at => ({ [Symbol.iterator]() { let i = 0; return { next: () => i < amounts.length ? { value: at(amounts[i], i++) } : { done: true } }; } }); show(f); show(f); show(() => g(amounts[0], () => { })); show(() => g(amounts[0], () => { Decimal.prototype.abs = function () { return "own " + this.toString(); }; })); Decimal.prototype.negate = function () { return "own " + this.toString(); }; show(f); };
+# CHECK: -1.5;
+# CHECK-NEXT: -1.5;
+# CHECK-NEXT: 2.5;
+# CHECK-NEXT: own 2.5;
+# CHECK-NEXT: own 1.5;
+# CHECK-NEXT: exited with 0
+
+module m0 path="main.js" displayPath="main.js" body=f0 namespaceLayout=L(m0)
+entry module=m0
+function f0 module=m0 kind=Module thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = Builtin builtin=GlobalThis
+    v1 = PropGet v0 key="sink" [isFreeName]
+    v2 = NewClosure function=f1
+    v3 = NewClosure function=f2
+    v4 = Call v1, -, v2, v3 calleeName="sink"
+    v5 = Undefined
+    Return v5
+}
+function f1 module=m0 kind=Arrow thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0():
+    v0 = String string="1.5"
+    v1 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v2 = Call v1, -, v0
+    v3 = PropGet v2 key="negate"
+    v4 = Call v3, v2 calleeKey="negate" calleeName="negate"
+    ReturnCall v4
+}
+function f2 module=m0 kind=Arrow length=2 thisType={type=anything} parameters=[{type=anything flags=[IsExpected]}, {type=undefined|null|function flags=[IsExpected]}] results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
+  b0(v0: anything, v1: undefined|null|function):
+    v2 = PropGet v0 key="add"
+    v3 = Call v2, v0, v0 calleeKey="add" calleeName="x.add"
+    v4 = Call v1, -, v3 calleeName="call"
+    v5 = String string="2.5"
+    v6 = Builtin builtin=LinkTimeConstantDecimalLiteral [isNotReadFromHolder]
+    v7 = Call v6, -, v5
+    v8 = PropGet v7 key="abs"
+    v9 = Call v8, v7 calleeKey="abs" calleeName="abs"
+    ReturnCall v9
+}

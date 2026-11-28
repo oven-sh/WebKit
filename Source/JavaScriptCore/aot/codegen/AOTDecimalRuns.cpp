@@ -38,7 +38,7 @@ DecimalRuns::DecimalRuns(const Program& program, const Plan& plan, const Facts& 
                     alike.append({ call->receiver, call->otherDecimal });
                 if (call->givesDecimal())
                     alike.append({ call->receiver, value });
-            } else if (mayConstructDecimal(value) && readsConstructor(code.at(value).calleeOperand()))
+            } else if (isLiteral(value) || (mayConstructDecimal(value) && readsConstructor(code.at(value).calleeOperand())))
                 found.append({ value, Evidence::Strong });
         }
     }
@@ -266,6 +266,14 @@ bool DecimalRuns::readsConstructor(ValueID value) const
     return name && name == m_program.namesOfDecimals().constructor && !m_plan.globalName(read.key()).isStoredThroughBinding;
 }
 
+bool DecimalRuns::isLiteral(ValueID value) const
+{
+    const Operation& call = m_code.at(value);
+    if (call.opcode != Opcode::CallBuiltin || m_program.builtins().at(call.overload()).builtin != Builtins::LinkTimeConstantDecimalLiteral)
+        return false;
+    return call.representation == Representation::JSValue && call.argumentsOperands().size() == 1 && constantAt(value);
+}
+
 bool DecimalRuns::mayConstructDecimal(ValueID value) const
 {
     const Operation& construction = m_code.at(value);
@@ -305,7 +313,7 @@ bool DecimalRuns::makesDecimal(ValueID value) const
     if (!isLikelyDecimal(value))
         return false;
     std::optional<DecimalCall> call = callAt(value);
-    return call ? call->givesDecimal() : mayConstructDecimal(value);
+    return call ? call->givesDecimal() : isLiteral(value) || mayConstructDecimal(value);
 }
 
 bool DecimalRuns::onlyReadsWordsOf(ValueID reader, ValueID decimal) const
@@ -360,7 +368,7 @@ std::optional<DecimalRun> DecimalRuns::find(BlockID block, std::span<const Value
         return part && part->step != Step::IsMadeAhead;
     };
     auto isDecimalOfRun = [&](ValueID value) {
-        return run.has(value, Step::Constructs) || (run.has(value, Step::CallsMethod) && callAt(value)->givesDecimal());
+        return run.has(value, Step::Constructs) || run.has(value, Step::IsLiteral) || (run.has(value, Step::CallsMethod) && callAt(value)->givesDecimal());
     };
     auto isOptionsOfCall = [&](ValueID box) {
         ValueID user = m_code.onlyUserOf(box);
@@ -380,6 +388,8 @@ std::optional<DecimalRun> DecimalRuns::find(BlockID block, std::span<const Value
             return user && mayConstructDecimal(user) && m_code.at(user).calleeOperand() == value && belongsToRun(user) ? std::optional { Step::ReadsConstructor } : std::nullopt;
         if (mayConstructDecimal(value))
             return evidenceFor(value) == Evidence::Strong && !isDecimalOfRun(operation.argumentsOperands()[0]) && belongsToRun(value) ? std::optional { Step::Constructs } : std::nullopt;
+        if (isLiteral(value))
+            return belongsToRun(value) ? std::optional { Step::IsLiteral } : std::nullopt;
         if (run.parts.isEmpty())
             return std::nullopt;
 

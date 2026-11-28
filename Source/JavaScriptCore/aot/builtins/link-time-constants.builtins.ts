@@ -143,6 +143,13 @@ export default b.declarations(
       returns: b.instance("TypeError").unaliased,
       implementation: b.hostCall,
     },
+    decimalLiteral: {
+      args: { text: b.string },
+      returns: b.object.fresh,
+      capability: "heap",
+      uses: { text: b.inspected },
+      implementation: b.hostCall,
+    },
 
     isArray: {
       args: { value: b.any },

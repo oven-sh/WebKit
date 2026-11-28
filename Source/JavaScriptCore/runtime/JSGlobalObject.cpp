@@ -2166,6 +2166,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         JSGlobalObject* globalObject = init.owner;
         init.set(globalObject->m_suppressedErrorStructure.constructor(globalObject));
     });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalLiteral)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(JSFunction::create(init.vm, init.owner, 1, "decimalLiteral"_s, decimalLiteral, ImplementationVisibility::Private));
+    });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::decimalOperator)].initLater([] (const Initializer<JSCell>& init) {
+        init.set(JSFunction::create(init.vm, init.owner, 3, "decimalOperator"_s, decimalOperator, ImplementationVisibility::Private));
+    });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::DisposableStack)].initLater([] (const Initializer<JSCell>& init) {
         JSGlobalObject* globalObject = init.owner;
         init.set(globalObject->m_disposableStackStructure.constructor(globalObject));

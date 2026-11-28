@@ -1323,6 +1323,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/DecimalConstructor.h
     runtime/DecimalObject.h
     runtime/DecimalOperation.h
+    runtime/DecimalOperator.h
     runtime/DecimalPrototype.h
     runtime/DefinePropertyAttributes.h
     runtime/DeletePropertySlot.h
