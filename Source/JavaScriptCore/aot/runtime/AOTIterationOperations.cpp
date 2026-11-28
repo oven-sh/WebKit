@@ -859,7 +859,7 @@ static bool tryAppendNumbersOfView(JSGlobalObject* globalObject, JSArray* target
 }
 
 template<typename View>
-static bool copyFractionsOfView(JSArrayBufferView* view, double* __restrict numbers, size_t length)
+static ALWAYS_INLINE bool copyFractionsOfUnsharedView(JSArrayBufferView* view, double* __restrict numbers, size_t length)
 {
     const auto* __restrict elements = uncheckedDowncast<View>(view)->typedVector();
     bool holdsNaN = false;
@@ -869,6 +869,27 @@ static bool copyFractionsOfView(JSArrayBufferView* view, double* __restrict numb
         numbers[index] = number;
     }
     return !holdsNaN;
+}
+
+// Another thread may store into the elements, so what is tested is the copy. The loop above may be compiled to read each of them twice.
+template<typename View>
+static NEVER_INLINE bool copyFractionsOfSharedView(JSArrayBufferView* view, double* numbers, size_t length)
+{
+    const auto* elements = uncheckedDowncast<View>(view)->typedVector();
+    for (size_t index = 0; index < length; ++index)
+        numbers[index] = static_cast<double>(elements[index]);
+    WTF::compilerFence();
+    return std::ranges::none_of(std::span { numbers, length }, [](double number) {
+        return number != number;
+    });
+}
+
+template<typename View>
+static bool copyFractionsOfView(JSArrayBufferView* view, double* numbers, size_t length)
+{
+    if (view->isShared()) [[unlikely]]
+        return copyFractionsOfSharedView<View>(view, numbers, length);
+    return copyFractionsOfUnsharedView<View>(view, numbers, length);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNewArrayOfView, JSCell*, (Instance* instance, JSCell* cell, uint32_t roomAndKind))
