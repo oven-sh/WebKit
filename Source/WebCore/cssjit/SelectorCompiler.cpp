@@ -84,8 +84,7 @@
 namespace WebCore {
 namespace SelectorCompiler {
 
-// Using UncheckedKeyHashSet instead of HashSet improves performance on Speedometer 3.
-using PseudoClassesSet = UncheckedKeyHashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>, WTF::StrongEnumHashTraits<CSSSelector::PseudoClass>>;
+using PseudoClassesSet = HashSet<CSSSelector::PseudoClass, IntHash<CSSSelector::PseudoClass>>;
 
 #if ENABLE(SELECTOR_OPERATION_STATS)
 
@@ -780,7 +779,7 @@ static FunctionType addNthChildType(const CSSSelector& selector, SelectorContext
         if (nthChildOfSelectorInfo.selectorList.isEmpty())
             return FunctionType::CannotMatchAnything;
 
-        filteredCases.append(nthChildOfSelectorInfo);
+        filteredCases.append(WTF::move(nthChildOfSelectorInfo));
         return globalFunctionType;
     }
 
@@ -1497,7 +1496,7 @@ static inline FunctionType addPseudoClassType(const CSSSelector& selector, Selec
             if (matchesList.isEmpty())
                 return FunctionType::CannotMatchAnything;
 
-            fragment.matchesFilters.append(matchesList);
+            fragment.matchesFilters.append(WTF::move(matchesList));
 
             return functionType;
         }
@@ -1519,7 +1518,7 @@ inline SelectorCodeGenerator::SelectorCodeGenerator(const CSSSelector& rootSelec
     , m_originalSelector(rootSelector)
 {
     if (shouldDumpCSSJITDisassembly()) [[unlikely]] {
-        auto selectorTextUTF8 = m_originalSelector.selectorText().utf8();
+        auto selectorTextUTF8 = makeUTF8CString(m_originalSelector.selectorText());
         auto selectorTextSpan = byteCast<char>(selectorTextUTF8.span());
         dataLogF("Compiling \"%.*s\"\n", static_cast<int>(selectorTextSpan.size()), selectorTextSpan.data());
     }
@@ -1933,7 +1932,7 @@ inline SelectorCompilationStatus SelectorCodeGenerator::compile(JSC::MacroAssemb
     for (unsigned i = 0; i < m_functionCalls.size(); i++)
         linkBuffer.link(m_functionCalls[i].first, m_functionCalls[i].second);
 
-    codeRef = FINALIZE_CSSJIT_CODE(linkBuffer, JSC::CSSSelectorPtrTag, nullptr, "CSS Selector JIT for \"%s\"", m_originalSelector.selectorText().utf8());
+    codeRef = FINALIZE_CSSJIT_CODE(linkBuffer, JSC::CSSSelectorPtrTag, nullptr, "CSS Selector JIT for \"%s\"", makeUTF8CString(m_originalSelector.selectorText()));
 
     if (m_functionType == FunctionType::SimpleSelectorChecker || m_functionType == FunctionType::CannotMatchAnything)
         return SelectorCompilationStatus::SimpleSelectorChecker;
@@ -2474,7 +2473,7 @@ void SelectorCodeGenerator::generateSelectorChecker()
         m_assembler.storePtr(Assembler::TrustedImmPtr(nullptr), m_stackAllocator.addressOf(m_lastVisitedElement));
     }
 
-    m_backtrackingStack = temporaryStack;
+    m_backtrackingStack = WTF::move(temporaryStack);
 
     Assembler::JumpList failureCases;
     generateSelectorCheckerExcludingPseudoElements(failureCases, m_selectorFragments);
@@ -2657,7 +2656,7 @@ void SelectorCodeGenerator::generateElementMatchesSelectorList(Assembler::JumpLi
 
         unsigned selectorListSize = selectorList.size();
         unsigned selectorListLastIndex = selectorListSize - 1;
-        for (unsigned i = 0; i < selectorList.size(); ++i) {
+        for (unsigned i = 0; i < selectorListSize; ++i) {
             const SelectorFragmentList& nestedSelectorFragmentList = selectorList[i];
             Assembler::JumpList localSelectorFailureCases;
             generateSelectorCheckerExcludingPseudoElements(localSelectorFailureCases, nestedSelectorFragmentList);

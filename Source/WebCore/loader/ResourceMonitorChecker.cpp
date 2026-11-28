@@ -28,6 +28,7 @@
 
 #include "Logging.h"
 #include "ResourceMonitor.h"
+#include <wtf/Borrow.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/Seconds.h>
 #include <wtf/StdLibExtras.h>
@@ -90,7 +91,7 @@ ResourceMonitorChecker::Eligibility ResourceMonitorChecker::checkEligibility(con
     ASSERT(m_ruleList);
 
     auto matched = m_ruleList->processContentRuleListsForResourceMonitoring(info.resourceURL, info.mainDocumentURL, info.frameURL, info.type);
-    RESOURCEMONITOR_RELEASE_LOG("checkEligibility: The url is %" PUBLIC_LOG_STRING ": %" SENSITIVE_LOG_STRING " (%" PUBLIC_LOG_STRING ")", (matched ? "eligible" : "not eligible"), info.resourceURL.string().utf8(), ContentExtensions::resourceTypeToString(info.type).characters());
+    RESOURCEMONITOR_RELEASE_LOG("checkEligibility: The url is %" PUBLIC_LOG_STRING ": %" SENSITIVE_LOG_STRING " (%" PUBLIC_LOG_STRING ")", (matched ? "eligible" : "not eligible"), makeUTF8CString(info.resourceURL.string()), ContentExtensions::resourceTypeToString(info.type).characters());
 
     return matched ? Eligibility::Eligible : Eligibility::NotEligible;
 }
@@ -117,7 +118,7 @@ void ResourceMonitorChecker::finishPendingQueries(Function<Eligibility(const Con
 {
     RESOURCEMONITOR_RELEASE_LOG("finishPendingQueries: Finish pending queries: count=%zu", m_pendingQueries.size());
 
-    for (auto& pair : m_pendingQueries) {
+    for (auto& pair : borrow(m_pendingQueries)) {
         auto& [info, completionHandler] = pair;
 
         Eligibility eligibility = checker(info);

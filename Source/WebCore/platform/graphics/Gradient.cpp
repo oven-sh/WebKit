@@ -29,8 +29,6 @@
 
 #include "FloatRect.h"
 #include "NativeImage.h"
-#include <wtf/HashFunctions.h>
-#include <wtf/Hasher.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/TextStream.h>
@@ -39,7 +37,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Gradient);
 
-Ref<Gradient> Gradient::create(Data&& data, ColorInterpolationMethod colorInterpolationMethod, GradientSpreadMethod spreadMethod, GradientColorStops&& stops, bool isTransient)
+Ref<const Gradient> Gradient::create(Data&& data, ColorInterpolationMethod colorInterpolationMethod, GradientSpreadMethod spreadMethod, GradientColorStops&& stops, bool isTransient)
 {
     return adoptRef(*new Gradient(WTF::move(data), colorInterpolationMethod, spreadMethod, WTF::move(stops), isTransient));
 }
@@ -59,7 +57,7 @@ Gradient::~Gradient()
         observer->willDestroyGradient(*this);
 }
 
-void Gradient::adjustParametersForTiledDrawing(FloatSize& size, FloatRect& srcRect, const FloatSize& spacing)
+void Gradient::adjustParametersForTiledDrawing(FloatSize& size, FloatRect& srcRect, const FloatSize& spacing) const
 {
     if (srcRect.isEmpty())
         return;
@@ -102,35 +100,6 @@ bool Gradient::isZeroSize() const
             return false;
         }
     );
-}
-
-void Gradient::addColorStop(GradientColorStop&& stop)
-{
-    m_stops.addColorStop(WTF::move(stop));
-    m_cachedHash = 0;
-    stopsChanged();
-}
-
-NODELETE static void add(Hasher& hasher, const Gradient::LinearData& data)
-{
-    add(hasher, data.point0, data.point1);
-}
-
-NODELETE static void add(Hasher& hasher, const Gradient::RadialData& data)
-{
-    add(hasher, data.point0, data.point1, data.startRadius, data.endRadius, data.aspectRatio);
-}
-
-NODELETE static void add(Hasher& hasher, const Gradient::ConicData& data)
-{
-    add(hasher, data.point0, data.angleRadians);
-}
-
-unsigned Gradient::hash() const
-{
-    if (!m_cachedHash)
-        m_cachedHash = computeHash(m_data, m_colorInterpolationMethod, m_spreadMethod, m_stops.sorted());
-    return m_cachedHash;
 }
 
 TextStream& operator<<(TextStream& ts, const Gradient& gradient)

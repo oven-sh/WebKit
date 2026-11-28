@@ -34,7 +34,7 @@ class RenderMenuList final : public RenderFlexibleBox {
     WTF_MAKE_TZONE_ALLOCATED(RenderMenuList);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMenuList);
 public:
-    RenderMenuList(HTMLSelectElement&, Style::ComputedStyle&&);
+    RenderMenuList(HTMLSelectElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMenuList();
 
     NODELETE HTMLSelectElement& selectElement() const;
@@ -47,10 +47,6 @@ public:
     void setDidBeginCheckedPtrDeletion() { RenderFlexibleBox::setDidBeginCheckedPtrDeletion(); }
 
     void setOptionsChanged(bool changed) { m_needsOptionsWidthUpdate = changed; }
-
-#if PLATFORM(IOS_FAMILY)
-    void layout() override;
-#endif
 
     void getItemBackgroundColor(unsigned listIndex, Color&, bool& itemHasCustomBackgroundColor) const;
 

@@ -1198,8 +1198,8 @@ AccessesNearCounter findAccessesNearCounter(Walker& walker, BlockID inputHead, N
         if (counted->minimum == counted->maximum)
             found.counterStep = std::abs(counted->minimum);
         BackEdgeDominators backEdgeDominators(index, loop);
-        UncheckedKeyHashMap<uint64_t, size_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placesOfAccesses;
-        UncheckedKeyHashMap<uint32_t, std::optional<Range>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stepsOfPositions;
+        HashMap<uint64_t, size_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> placesOfAccesses;
+        HashMap<uint32_t, std::optional<Range>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stepsOfPositions;
         for (BlockID member : index.membersOf(loop)) {
             if (!backEdgeDominators.contains(member))
                 continue;

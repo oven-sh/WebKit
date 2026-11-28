@@ -1555,7 +1555,7 @@ public:
     }
     static IgnoreCasePropertyClasses& ignoreCasePropertyClassesFor(BuiltInCharacterClassID classID)
     {
-        static NeverDestroyed<UncheckedKeyHashMap<unsigned, std::unique_ptr<IgnoreCasePropertyClasses>>> map;
+        static NeverDestroyed<HashMap<unsigned, std::unique_ptr<IgnoreCasePropertyClasses>>> map;
         auto& slot = map.get().add(static_cast<unsigned>(classID), nullptr).iterator->value;
         if (!slot)
             slot = makeUnique<IgnoreCasePropertyClasses>();

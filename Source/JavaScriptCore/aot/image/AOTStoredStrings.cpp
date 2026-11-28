@@ -151,7 +151,7 @@ void ReaderOfImage::appendLine(ASCIILiteral type, const auto&... members)
     line.append("{\"type\":\""_s, type, "\",\"image\":"_s, m_number);
     (line.append(members), ...);
     line.append("}\n"_s);
-    m_result.strings.append(byteCast<uint8_t>(line.toString().utf8().span()));
+    m_result.strings.append(byteCast<uint8_t>(makeUTF8CString(line.toString()).span()));
 }
 
 void ReaderOfImage::beginSection(const StringSection& section)
@@ -164,7 +164,7 @@ void ReaderOfImage::appendString(StringSection& section, RangeOfBytes characters
     section.covered.append(characters);
     switch (m_form) {
     case StoredStringsForm::ZeroTerminated:
-        m_result.strings.append(byteCast<uint8_t>(string.utf8().span()));
+        m_result.strings.append(byteCast<uint8_t>(makeUTF8CString(string).span()));
         m_result.strings.append(0);
         return;
     case StoredStringsForm::JSONLines: {

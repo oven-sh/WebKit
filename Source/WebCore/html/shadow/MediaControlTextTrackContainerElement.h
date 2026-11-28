@@ -82,7 +82,7 @@ private:
     explicit MediaControlTextTrackContainerElement(Document&, HTMLMediaElement&);
 
     // Element
-    RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
+    RenderPtr<RenderElement> createElementRenderer(UniqueRef<Style::ComputedStyle>&&, const RenderTreePosition&) final;
 
     // TextTrackRepresentationClient
     RefPtr<NativeImage> createTextTrackRepresentationImage() final;
@@ -112,7 +112,7 @@ private:
     uint64_t logIdentifier() const final;
     WTFLogChannel& logChannel() const final;
     ASCIILiteral logClassName() const final { return "MediaControlTextTrackContainerElement"_s; }
-    mutable RefPtr<Logger> m_logger;
+    const RefPtr<Logger> m_logger;
     mutable uint64_t m_logIdentifier { 0 };
 #endif
 

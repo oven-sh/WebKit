@@ -332,7 +332,7 @@ JSString* functionSourceText(VM& vm, FunctionID function)
     std::span bytes = functionSourceBytes(function);
     if (!bytes.data())
         return nullptr;
-    JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, StringImpl::createWithoutCopying(bytes)) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
+    JSString* text = charactersAreAllASCII(bytes) ? jsOwnedString(vm, String { StringImpl::createWithoutCopying(bytes) }) : jsString(vm, String::fromUTF8ReplacingInvalidSequences(bytes));
     answered.set(function, Weak<JSString>(text));
     return text;
 }

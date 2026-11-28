@@ -41,7 +41,7 @@ struct BufferAccessorRegistry {
         bool isWrite { false };
         bool byteLengthFromArgument { false };
     };
-    UncheckedKeyHashMap<void*, Entry> entries WTF_GUARDED_BY_LOCK(lock);
+    HashMap<void*, Entry> entries WTF_GUARDED_BY_LOCK(lock);
 };
 
 static BufferAccessorRegistry& bufferAccessorRegistry()

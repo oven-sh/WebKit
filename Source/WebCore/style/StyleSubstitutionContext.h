@@ -26,12 +26,10 @@
 #pragma once
 
 #include "StyleScopeOrdinal.h"
-#include <wtf/GenericHashKey.h>
 #include <wtf/HashSet.h>
 #include <wtf/text/AtomString.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 // https://drafts.csswg.org/css-values-5/#substitution-context
 // A substitution context is the dependency type plus values specific to that type: a property name
@@ -101,16 +99,15 @@ public:
     void addFunctionContextsFrom(const GuardedSubstitutionContexts& other)
     {
         for (auto& context : other.m_guarded) {
-            if (context.key().type == SubstitutionContext::Type::Function)
+            if (context.type == SubstitutionContext::Type::Function)
                 m_guarded.add(context);
         }
         m_top = other.m_top;
     }
 
 private:
-    HashSet<GenericHashKey<SubstitutionContext>> m_guarded;
+    HashSet<SubstitutionContext> m_guarded;
     Guard* m_top { nullptr };
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

@@ -28,15 +28,16 @@
 #include "StyleFlexBasis.h"
 #include "StyleMinimumSize.h"
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 MinimumSize PreferredSize::asMinimumSize() const
 {
     if (isCalcSize())
         return MinimumSize { calcSize() };
+    if (isFitContentFunction())
+        return MinimumSize { get<FitContentFunction>() };
 
-    return WTF::switchOn(*this,
+    return switchOnUsingNumeric(
         [&](const auto& value) {
             return MinimumSize { value };
         }
@@ -47,13 +48,14 @@ FlexBasis PreferredSize::asFlexBasis() const
 {
     if (isCalcSize())
         return FlexBasis { calcSize() };
+    if (isFitContentFunction())
+        return FlexBasis { get<FitContentFunction>() };
 
-    return WTF::switchOn(*this,
+    return switchOnUsingNumeric(
         [&](const auto& value) {
             return FlexBasis { value };
         }
     );
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

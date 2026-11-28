@@ -133,6 +133,7 @@
 #import <WebCore/markup.h>
 #import <pal/spi/cg/CoreGraphicsSPI.h>
 #import <pal/text/TextEncoding.h>
+#import <wtf/Borrow.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/cocoa/VectorCocoa.h>
 
@@ -914,12 +915,12 @@ static RetainPtr<NSURL> createUniqueWebDataURL();
     NSEnumerator *nodeEnum = [nodes objectEnumerator];
     Vector<RefPtr<WebCore::Node>> nodesVector;
     RetainPtr<DOMNode> node;
-    while ((node = [nodeEnum nextObject]))
+    while ((node = checked_objc_cast<DOMNode>([nodeEnum nextObject])))
         nodesVector.append(core(node));
 
     auto fragment = document->createDocumentFragment();
 
-    for (auto& node : nodesVector) {
+    for (auto& node : borrow(nodesVector)) {
         auto element = createDefaultParagraphElement(*document);
         element->appendChild(*node);
         fragment->appendChild(element);
@@ -988,7 +989,7 @@ static RetainPtr<NSURL> createUniqueWebDataURL();
         return;
     // FIXME: These are fake modifier keys here, but they should be real ones instead.
     WebCore::PlatformMouseEvent event(WebCore::IntPoint(windowLoc), WebCore::IntPoint(WebCore::globalPoint(windowLoc, [protect(view->platformWidget()) window])),
-        WebCore::MouseButton::Left, WebCore::PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), WebCore::ForceAtClick, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::UserDriven);
+        WebCore::MouseButton::Left, WebCore::PlatformEvent::Type::MouseMoved, 0, { }, MonotonicTime::now(), WebCore::ForceAtClick, WebCore::SyntheticClickType::NoTap, WebCore::MouseEventInputSource::Default);
     protect(_private->coreFrame->eventHandler())->dragSourceEndedAt(event, coreDragOperationMask(dragOperationMask));
 }
 #endif // ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
@@ -1740,7 +1741,7 @@ NODELETE static WebFrameLoadType toWebFrameLoadType(WebCore::FrameLoadType frame
 
     for (RefPtr<WebCore::Node> node = root; node; node = WebCore::NodeTraversal::next(*node)) {
         auto markers = protect(document->markers())->markersFor(*node, WebCore::DocumentMarkerType::DictationResult);
-        for (auto& marker : markers) {
+        for (auto& marker : borrow(markers)) {
             RetainPtr<id> metadata = std::get<RetainPtr<id>>(marker->data());
 
             // All result markers should have metadata.
@@ -1786,7 +1787,7 @@ NODELETE static WebFrameLoadType toWebFrameLoadType(WebCore::FrameLoadType frame
     if (markers.size() == 0)
         return nil;
 
-    return std::get<RetainPtr<id>>(markers[0]->data()).get();
+    return std::get<RetainPtr<id>>(borrow(markers)[0]->data()).get();
 }
 
 - (void)recursiveSetUpdateAppearanceEnabled:(BOOL)enabled

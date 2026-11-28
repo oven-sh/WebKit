@@ -50,6 +50,8 @@ private:
 };
 
 static_assert(sizeof(Structure) >= 1u << StructureRowWords::granuleShift);
+// With cells of twice the size, the lowest bit that a table keeps is the same in every StructureID again.
+static_assert(roundUpToMultipleOf<16>(sizeof(Structure)) >> structureIDPlaceShift == 1);
 
 class RowDisplacementTable {
     WTF_MAKE_NONCOPYABLE(RowDisplacementTable);

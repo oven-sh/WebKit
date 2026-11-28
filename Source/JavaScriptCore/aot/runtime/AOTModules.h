@@ -173,7 +173,7 @@ struct MockedModules {
     Box<Vector<uint32_t>> positionsBelow;
     uint32_t numberBelow { 0 };
     std::optional<BitVector> comeToMock;
-    UncheckedKeyHashMap<ModuleID, Box<BitVector>> reachedFromRoots;
+    HashMap<ModuleID, Box<BitVector>> reachedFromRoots;
 
     struct Hub {
         BitVector reached;
@@ -371,8 +371,8 @@ public:
         uint32_t activeMocksVersion;
         bool isShut { false };
         bool isPassedBy { false };
-        UncheckedKeyHashMap<std::pair<AbstractModuleRecord*, RefPtr<UniquedStringImpl>>, AbstractModuleRecord::Resolution> resolutions { };
-        UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isLeftOut { };
+        HashMap<std::pair<AbstractModuleRecord*, RefPtr<UniquedStringImpl>>, AbstractModuleRecord::Resolution> resolutions { };
+        HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> isLeftOut { };
         BitVector namesBehindStarsAreInTables { };
     };
     StoredResolutions* answersKept() const
@@ -603,7 +603,7 @@ public:
     }
     Vector<std::pair<ModuleID, ModuleID>> m_factoryLoadedImporters;
     Vector<std::pair<ModuleID, ModuleID>> m_importsWithRefusedRequires;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_importerLoadingOriginals;
+    HashMap<ModuleID, ModuleID> m_importerLoadingOriginals;
     bool isOnCycleWithOtherMock(ModuleID mocked) const;
     BitVector m_retainedFactoryImporters;
     void tellThatFileDidNotRunAgain(ModuleID);
@@ -731,7 +731,7 @@ public:
 
         Vector<StarTarget> targets;
         Vector<unsigned> targetsWithUnlistedNames;
-        UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<unsigned, 1>> targetsListingName;
+        HashMap<RefPtr<UniquedStringImpl>, Vector<unsigned, 1>> targetsListingName;
 
         template<typename Functor>
         bool visitCandidates(UniquedStringImpl* name, const Functor& functor) const
@@ -1204,8 +1204,8 @@ public:
     bool reachesDisplacedRun(ModuleID module) const;
     bool isReloadable(ModuleID module) const { return hasInstances(module) || data(fileOf(module)).isReloadable(); }
     bool requiresOriginalUnderMock(ModuleID file, ModuleID requirer) const;
-    using ModuleIndexSet = UncheckedKeyHashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
-    template<typename Value> using ModuleIndexMap = UncheckedKeyHashMap<uint32_t, Value, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using ModuleIndexSet = HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    template<typename Value> using ModuleIndexMap = HashMap<uint32_t, Value, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     uint32_t requirerIndexOfOriginal(ModuleID file) const { return m_table.size() + file.index(); }
     uint32_t requirerIndex(ModuleID requirer) const;
     void noteRequireEdge(ModuleID target, ModuleID requirer);
@@ -1303,7 +1303,7 @@ public:
         Environment* instance { nullptr };
         ModuleID module;
     };
-    using EndsOfLinkPaths = UncheckedKeyHashMap<std::pair<Environment*, uint32_t>, EndOfLinkPath>;
+    using EndsOfLinkPaths = HashMap<std::pair<Environment*, uint32_t>, EndOfLinkPath>;
     EndOfLinkPath followLinkPath(ModuleID, Environment*, uint32_t firstStep, EndsOfLinkPaths&) const;
     void resolveLinks(std::span<const ModuleID>);
     void finishLinkForLoader(ModuleID root, LinkContext&);
@@ -2015,7 +2015,7 @@ private:
         bool holdsValueOfMockThatEnded { false };
         bool hadThrownWhenPatched { false };
         bool wasDisplacedAfterFailure { false };
-        UncheckedKeyHashMap<std::pair<Environment*, uint32_t>, JSValue> fieldsBeforeMock;
+        HashMap<std::pair<Environment*, uint32_t>, JSValue> fieldsBeforeMock;
         Vector<ModuleID> namespacesReplacedByMock;
         Vector<ModuleID> mocksThatReplaceNamespace;
         bool capturedFieldsAreOfESModule { false };
@@ -2078,7 +2078,7 @@ private:
         if (WaysToModule* ways = waysToIfRecorded(module))
             ways->firstRequirer = std::nullopt;
     }
-    UncheckedKeyHashMap<ModuleID, std::unique_ptr<WaysToModule>> m_waysToModules;
+    HashMap<ModuleID, std::unique_ptr<WaysToModule>> m_waysToModules;
 
     struct DynamicExport {
         Identifier name;
@@ -2186,7 +2186,7 @@ private:
         using Query = std::tuple<uint32_t, const Environment*, UniquedStringImpl*>;
         static constexpr size_t noQuery = std::numeric_limits<size_t>::max();
 
-        UncheckedKeyHashMap<Query, size_t> visited;
+        HashMap<Query, size_t> visited;
         Vector<Query, 8> open;
         size_t outermost { noQuery };
         size_t numberOfRevisits { 0 };
@@ -2233,16 +2233,16 @@ private:
     };
     struct AnswersByLinks {
         LinkState state { };
-        UncheckedKeyHashMap<Environment*, bool> hasOutdatedStarLink { };
-        UncheckedKeyHashMap<std::pair<Environment*, unsigned>, MockForExport> mocksBehindFields { };
-        UncheckedKeyHashMap<std::pair<Environment*, unsigned>, ResolvedVariable> variables { };
-        UncheckedKeyHashMap<std::pair<Environment*, unsigned>, NamespaceBehindExport> namespaces { };
-        UncheckedKeyHashMap<std::pair<Environment*, RefPtr<UniquedStringImpl>>, StarResolution> starResolutions { };
+        HashMap<Environment*, bool> hasOutdatedStarLink { };
+        HashMap<std::pair<Environment*, unsigned>, MockForExport> mocksBehindFields { };
+        HashMap<std::pair<Environment*, unsigned>, ResolvedVariable> variables { };
+        HashMap<std::pair<Environment*, unsigned>, NamespaceBehindExport> namespaces { };
+        HashMap<std::pair<Environment*, RefPtr<UniquedStringImpl>>, StarResolution> starResolutions { };
         struct KeptBinding {
             LinkedBinding binding;
             RefPtr<UniquedStringImpl> name;
         };
-        UncheckedKeyHashMap<std::pair<const Environment*, RefPtr<UniquedStringImpl>>, KeptBinding> bindings { };
+        HashMap<std::pair<const Environment*, RefPtr<UniquedStringImpl>>, KeptBinding> bindings { };
     };
     AnswersByLinks& answersByLinks() const;
 #if ASSERT_ENABLED
@@ -2254,7 +2254,7 @@ private:
             Environment* instance { nullptr };
             unsigned outermost { 0 };
         };
-        UncheckedKeyHashMap<ModuleID, Visit> visits { };
+        HashMap<ModuleID, Visit> visits { };
         bool hasOtherInstances { false };
     };
     bool findOutdatedStarLink(ModuleID, Environment* instance, OutdatedStarSearch&, unsigned depth, unsigned& outermost) const;
@@ -2282,7 +2282,7 @@ private:
     void resetPendingModules(std::span<const ModuleID> filesThatRanForImports = { });
     struct LevelOfLoad;
     struct PlanOfLoad;
-    bool tryFindAliasedCompiledModules(ModuleID root, UncheckedKeyHashMap<ModuleID, ModuleID>&);
+    bool tryFindAliasedCompiledModules(ModuleID root, HashMap<ModuleID, ModuleID>&);
     bool planLevelsOfLoad(ModuleID root);
     bool isLeftAsLoaded(ModuleID) const;
     bool isModuleWithoutRecord(const ModuleData&, StoredModuleStatus) const;
@@ -2332,7 +2332,7 @@ private:
     };
     uint32_t evaluationMarkOf(ModuleID) const;
     uint32_t m_evaluationMark { static_cast<uint32_t>(StoredModuleStatus::Evaluating) };
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_marksOfOuterModules;
+    HashMap<ModuleID, uint32_t> m_marksOfOuterModules;
     void evaluateByCallingBody(ModuleID module) { callBodyUnderOwnMark(module, true); }
     void didThrowInBody(ModuleID, JSValue error);
     void recordEvaluationIfNothingIsLeftToRun(ModuleID);
@@ -2385,10 +2385,10 @@ private:
     Instance& m_instance;
     ModuleTable m_table;
     std::span<uint8_t> m_storedStatuses;
-    UncheckedKeyHashMap<ModuleID, ModuleRecord*> m_records;
+    HashMap<ModuleID, ModuleRecord*> m_records;
     bool m_someRetainedRecordHasLeft { false };
     void takeOutRecord(ModuleID);
-    UncheckedKeyHashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
+    HashMap<ModuleID, std::unique_ptr<LoadedModule>> m_loaded;
     BitVector m_mockEvictedDataModules;
     BitVector m_evictedDataFiles;
     bool m_hasEvictedDataFiles { false };
@@ -2448,20 +2448,20 @@ private:
         bool isFromOwnFactory { false };
         bool joinsImportCall { false };
     };
-    UncheckedKeyHashMap<JSPromise*, ImportInFlight> m_importsInFlight;
-    UncheckedKeyHashMap<ModuleID, ModuleIndexSet> m_patchesRequestedByOwnFile;
+    HashMap<JSPromise*, ImportInFlight> m_importsInFlight;
+    HashMap<ModuleID, ModuleIndexSet> m_patchesRequestedByOwnFile;
     ModuleIndexSet m_modulesReloadedUnderPatch;
     HashCountedSet<ModuleID> m_importsBeforeFirstStep;
     HashCountedSet<ModuleID> m_hostImportsBeforeFirstStep;
     std::optional<ModuleID> m_patchedModuleOfCycle;
     Vector<ModuleFailureID> m_failuresByExportsThatBuildFoundAbsent;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_linkFailures;
+    HashMap<ModuleID, ModuleID> m_linkFailures;
     Structure* m_extensibleNamespaceStructure { nullptr };
     Identifier m_moduleExportsName;
     enum class RecordedRequire : uint8_t { Begun, BegunForEvictedModule, Returned, BegunAgain, BegunFirstESModuleRequire, ReturnedAndNotListed };
-    UncheckedKeyHashMap<uint64_t, RecordedRequire> m_recordedRequires;
+    HashMap<uint64_t, RecordedRequire> m_recordedRequires;
     struct RecordedRequireIndex {
-        using Keys = UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+        using Keys = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
         ModuleIndexMap<Keys> byReferrer;
         ModuleIndexMap<Keys> byTarget;
         ModuleIndexMap<Vector<ModuleID, 2>> firstRequired;
@@ -2558,7 +2558,7 @@ private:
     FactoriesCalledFor m_factoriesCalledFor { FactoriesCalledFor::Program };
     std::optional<ModuleID> m_mockThatEndedLoad;
     std::optional<ModuleID> m_requiredRootWhoseImportsThrew;
-    UncheckedKeyHashMap<String, ModuleID> m_modulesBehindFetches;
+    HashMap<String, ModuleID> m_modulesBehindFetches;
     AbstractModuleRecord* findUncompiledRecord(ModuleID external, ImportOrderWalk&, ImportOrderWalk::Turn, JSValue& failureToResolve);
     std::optional<ModuleFailureID> failureBehindImportsOf(ModuleID) const;
     JSValue errorOfImportThatFailedForGood(ModuleID);
@@ -2619,8 +2619,8 @@ private:
     std::optional<ModuleID> m_moduleBeingPatched;
     std::optional<ModuleID> m_moduleReadBeforeItsPatch;
     OptionSet<RequireOverride> m_storedLoaderFunctions;
-    std::optional<UncheckedKeyHashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
-    UncheckedKeyHashMap<ModuleID, BitVector> m_exportsLeftOut;
+    std::optional<HashMap<uint32_t, SyntheticExportPlace, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_syntheticExportsByVariable;
+    HashMap<ModuleID, BitVector> m_exportsLeftOut;
     BitVector exportsLeftOutOf(ModuleID module) const
     {
         auto found = m_exportsLeftOut.find(module);
@@ -2693,7 +2693,7 @@ private:
         Weak<Environment> instance;
         Identifier key;
     };
-    UncheckedKeyHashMap<uint32_t, Vector<OriginalInstance, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_originalsByFile;
+    HashMap<uint32_t, Vector<OriginalInstance, 1>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_originalsByFile;
     BitVector m_filesWithRejectedRequire;
     BitVector m_originalsUnderEndedBuiltinMocks;
     Vector<std::pair<ModuleID, ModuleID>> m_originalsReadingHostMocks;
@@ -2715,7 +2715,7 @@ private:
         ModuleID importer;
         bool walksInFrontOfMocks { false };
     };
-    UncheckedKeyHashMap<ModuleID, FetchForStatement> m_fetchesForStatements;
+    HashMap<ModuleID, FetchForStatement> m_fetchesForStatements;
     std::optional<ModuleID> m_importerOfWalkedStatement;
     struct FactoryCaller {
         ModuleID root;
@@ -2741,10 +2741,10 @@ private:
     BitVector m_libraryModulesWithMock;
     BitVector m_libraryModulesThatMockReplaces;
     BitVector m_displacedLibraryModules;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsMocksInPlaceOfLibraryModulesEnded;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_lastLinksOfReleasedImporters;
+    HashMap<ModuleID, uint32_t> m_momentsMocksInPlaceOfLibraryModulesEnded;
+    HashMap<ModuleID, uint32_t> m_lastLinksOfReleasedImporters;
     uint32_t m_momentOfModuleReset { 0 };
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsLibraryModulesWereExposed;
+    HashMap<ModuleID, uint32_t> m_momentsLibraryModulesWereExposed;
     BitVector m_libraryModulesLeftByThrow;
     std::optional<ModuleID> m_firstModuleRequestedByHost;
     std::optional<ModuleID> m_mainEntryPoint;
@@ -3034,8 +3034,8 @@ private:
             Vector<LoadInFlight*, 1> loads;
             size_t numberLoaded { 0 };
         };
-        UncheckedKeyHashMap<ModuleID, LoadsOfRoot> m_byRoot;
-        UncheckedKeyHashMap<JSPromise*, LoadInFlight*> m_byPromise;
+        HashMap<ModuleID, LoadsOfRoot> m_byRoot;
+        HashMap<JSPromise*, LoadInFlight*> m_byPromise;
         mutable Vector<LoadInFlight*, 2> m_promisesThatNobodyTellsOf;
         mutable Vector<LoadInFlight*, 2> m_settled;
         SentinelLinkedList<LoadInFlight, BasicRawSentinelNode<LoadInFlight>> m_walkedWithoutMarks;
@@ -3096,7 +3096,7 @@ private:
         uint32_t place { 0 };
         bool isAskedFor { false };
     };
-    UncheckedKeyHashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
+    HashMap<ModuleID, std::unique_ptr<LevelOfLoad>> m_levelsOfLoads;
     bool hasGraphRun(const LevelOfLoad& level) const { return status(level.plan->found[0].module) >= ModuleStatus::EvaluatingAsync; }
     PlacesSeenByPlans& m_placesSeenByPlans;
     Vector<ModuleID, 4> m_rootsLoadedWithoutLoader;
@@ -3129,7 +3129,7 @@ private:
         bool isGiven { false };
         bool staysLinked { false };
     };
-    mutable UncheckedKeyHashMap<uint64_t, AnswersOfHostOnOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
+    mutable HashMap<uint64_t, AnswersOfHostOnOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersAskedAboutOriginal;
     struct GotOriginal {
         uint32_t moment;
         bool isGivenItNoMore;
@@ -3137,9 +3137,9 @@ private:
         bool staysUnderActualKey { false };
         bool isGivenByHost { false };
     };
-    mutable UncheckedKeyHashMap<uint64_t, GotOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToOriginal;
-    mutable UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToMock;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_timesMocked;
+    mutable HashMap<uint64_t, GotOriginal, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToOriginal;
+    mutable HashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_importersLinkedToMock;
+    HashMap<ModuleID, uint32_t> m_timesMocked;
     struct ReexportersOfMocks {
         uint32_t activeMocksVersion { 0 };
         uint32_t numberOfModulesMocked { 0 };
@@ -3257,9 +3257,9 @@ private:
         Vector<std::pair<JSObject*, IdentifierSet>, 1> namesOfEndedMocks;
     };
     CollectionOfNamesBehindStars* m_collectionOfNamesBehindStars { nullptr };
-    UncheckedKeyHashMap<ModuleID, MockWithIntactOriginal> m_mocksWithIntactOriginal;
+    HashMap<ModuleID, MockWithIntactOriginal> m_mocksWithIntactOriginal;
     std::span<const uint32_t> requiredNamesOfStatementsThatExport(ModuleID, const String& exportName) const;
-    mutable UncheckedKeyHashMap<ModuleID, UncheckedKeyHashMap<String, Vector<uint32_t, 1>>> m_requiredNamesOfStatementsByExportName;
+    mutable HashMap<ModuleID, HashMap<String, Vector<uint32_t, 1>>> m_requiredNamesOfStatementsByExportName;
     BitVector m_facadesCapturedForMock;
     JSObject* m_copiesThatGettersGave { nullptr };
     std::optional<ModuleID> m_facadeReusingGetterValues;
@@ -3268,7 +3268,7 @@ private:
         uint32_t momentOfTestFile;
         bool hasEnded { false };
     };
-    UncheckedKeyHashMap<ModuleID, FirstMockInTestFile> m_firstMocksInTestFile;
+    HashMap<ModuleID, FirstMockInTestFile> m_firstMocksInTestFile;
     BitVector m_modulesWithMomentOfMock;
     uint32_t m_testFileOfMomentsOfMocks { 0 };
     BitVector m_modulesOnceMockedAfterFailure;
@@ -3280,8 +3280,8 @@ private:
         uint32_t momentOfTestFile;
         ModuleID rootOfLoad;
     };
-    UncheckedKeyHashMap<ModuleID, MomentLoadedAnew> m_momentsLoadedAnew;
-    UncheckedKeyHashMap<ModuleID, Vector<uint32_t, 2>> m_earlierMomentsLoadedAnew;
+    HashMap<ModuleID, MomentLoadedAnew> m_momentsLoadedAnew;
+    HashMap<ModuleID, Vector<uint32_t, 2>> m_earlierMomentsLoadedAnew;
     struct LinksBeforeLoad {
         Vector<std::pair<ModuleID, std::optional<MomentLoadedAnew>>, 8> moments;
         BitVector modulesReleasedByLoader;
@@ -3289,7 +3289,7 @@ private:
         LinksBeforeLoad* outer { nullptr };
     };
     LinksBeforeLoad* m_linksBeforeLoadInFlight { nullptr };
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_momentsLinkedInRefusedLoads;
+    HashMap<ModuleID, uint32_t> m_momentsLinkedInRefusedLoads;
     enum class LinksOfLoad : bool { AreForgotten, AreMetByLaterLoads };
     void bringBackLinks(const LinksBeforeLoad&, LinksOfLoad);
     struct LoadThatMayFail {
@@ -3318,11 +3318,11 @@ private:
         bool isRetainedForLinkedImporters { false };
         std::optional<unsigned> placeOfMockThatWasPatched { };
     };
-    UncheckedKeyHashMap<ModuleID, Vector<EndedMock, 2>> m_removedMocksInUse;
-    UncheckedKeyHashMap<ModuleID, Vector<unsigned, 2>> m_endedMocksToAskAbout;
+    HashMap<ModuleID, Vector<EndedMock, 2>> m_removedMocksInUse;
+    HashMap<ModuleID, Vector<unsigned, 2>> m_endedMocksToAskAbout;
     void didGiveUpMomentLinked(uint32_t moment);
     void didGiveUpLinksBeforeLoad(const LinksBeforeLoad&);
-    UncheckedKeyHashMap<uint32_t, Vector<std::pair<ModuleID, unsigned>, 1>> m_endedMocksSeenByMomentLinked;
+    HashMap<uint32_t, Vector<std::pair<ModuleID, unsigned>, 1>> m_endedMocksSeenByMomentLinked;
     struct MomentSomeModuleMayLookAt {
         uint32_t moment;
         uint32_t momentLinked;
@@ -3342,7 +3342,7 @@ private:
         bool liesOverPendingMock { false };
         ActiveMockUse activeMockUse { ActiveMockUse::None };
     };
-    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;
+    HashMap<ModuleID, MomentMockWasLaid> m_pendingMockCalls;
     BitVector m_unseenMocks;
     BitVector m_evictedOriginals;
     BitVector m_originalsRunForStatements;
@@ -3358,10 +3358,10 @@ private:
     BitVector m_requirersOfOwnOriginals;
     BitVector m_evictedActiveMocks;
     BitVector m_originalsRequiredByFactories;
-    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;
+    HashMap<ModuleID, MomentMockWasLaid> m_activeMockCalls;
+    HashMap<ModuleID, uint32_t> m_testFilesInWhichMocksEnded;
     BitVector m_modulesWhoseEndedMocksOverlap;
-    UncheckedKeyHashMap<ModuleID, MomentMockWasLaid> m_preloadMockCalls;
+    HashMap<ModuleID, MomentMockWasLaid> m_preloadMockCalls;
     MomentMockWasLaid momentOfNow();
     std::optional<unsigned> keepEndedMock(ModuleID fileOrModule, JSObject* mock, MomentMockWasLaid, uint32_t momentEnded = 0, BitVector&& exportsLeftOut = { });
     JSObject* withNamesOfPatchedMock(JSObject* patched, JSObject* patch);
@@ -3374,7 +3374,7 @@ private:
     void giveBackNamespacesHandedOn(LoadedModule& mocked);
     bool isSomeLoadUnderWay() const;
     BitVector m_namespacesReplacedByMock;
-    std::optional<UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
+    std::optional<HashMap<ModuleID, Vector<ModuleID, 2>>> m_modulesThatHandOnNamespaces;
     BitVector m_modulesOwedToImportersThatRan;
     bool m_isDueModuleBlocked { false };
     std::optional<ModuleID> m_moduleWhoseBodyMockCallRan;
@@ -3397,47 +3397,47 @@ private:
     BitVector m_modulesWithNoNamesOwedBelow;
     Vector<Vector<uint32_t, 2>> m_importersByStatement;
     Vector<Vector<uint32_t, 2>> m_requirers;
-    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_requirersThatRunTimeAnswered;
-    UncheckedKeyHashSet<uint64_t> m_requiresThatRunTimeAnswered;
+    HashMap<uint32_t, Vector<uint32_t, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_requirersThatRunTimeAnswered;
+    HashSet<uint64_t> m_requiresThatRunTimeAnswered;
     struct Requirers {
         ModuleIndexSet ofLoad;
         ModuleIndexSet ofMock;
     };
     ModuleIndexMap<Requirers> m_requirersByFile;
     ModuleIndexMap<ModuleIndexSet> m_filesByRequirer;
-    UncheckedKeyHashMap<ModuleID, bool> m_mockedFilesWithReleasedRequirers;
-    std::optional<UncheckedKeyHashSet<uint64_t>> m_variablesReexportedByUnlistedNames;
+    HashMap<ModuleID, bool> m_mockedFilesWithReleasedRequirers;
+    std::optional<HashSet<uint64_t>> m_variablesReexportedByUnlistedNames;
     BitVector m_filesRequiredBesidePatch;
     BitVector m_runsLoadedUnderActualKey;
     BitVector m_requirersThatRunAgain;
     BitVector m_originalsOfReplacedMocks;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_refusedOriginals;
+    HashMap<ModuleID, uint32_t> m_refusedOriginals;
     ModuleIndexMap<ModuleIndexSet> m_originalsByRequirer;
     BitVector m_requirersUnderPendingMocks;
     BitVector m_importedOriginals;
     std::optional<ModuleID> m_loadCallingFactory;
     BitVector m_mocksImportedByFactories;
     ModuleIndexMap<ModuleIndexSet> m_displacedRunImporters;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_entryParents;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_parentsOfPreloadMocks;
-    UncheckedKeyHashMap<ModuleID, Vector<ModuleID, 1>> m_testFilesRequiringESModules;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_startMoments;
+    HashMap<ModuleID, ModuleID> m_entryParents;
+    HashMap<ModuleID, ModuleID> m_parentsOfPreloadMocks;
+    HashMap<ModuleID, Vector<ModuleID, 1>> m_testFilesRequiringESModules;
+    HashMap<ModuleID, uint32_t> m_startMoments;
     BitVector m_testFilesHoldingLoads;
     BitVector m_releasedTestFiles;
     uint32_t m_resetWithReleasedLoads { 0 };
     BitVector m_evictedTestFiles;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_mockEndMoments;
-    UncheckedKeyHashMap<ModuleID, ModuleID> m_displacedEntryParents;
+    HashMap<ModuleID, uint32_t> m_mockEndMoments;
+    HashMap<ModuleID, ModuleID> m_displacedEntryParents;
     BitVector m_modulesWithKnownParent;
     std::optional<ModuleID> m_replacedTestFile;
-    UncheckedKeyHashMap<uint64_t, unsigned, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_requirersBypassingMock;
+    HashMap<uint64_t, unsigned, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_requirersBypassingMock;
     Vector<Vector<uint32_t, 2>> m_takersOfNames;
     BitVector m_importersRetainedAboveMock;
     BitVector m_originalsKeptUnderMock;
-    mutable UncheckedKeyHashMap<ModuleID, Vector<Vector<PlaceOfExport, 1>>> m_starExportProviders;
-    mutable UncheckedKeyHashMap<ModuleID, std::unique_ptr<StarTargetsByName>> m_starTargetsByName;
-    mutable UncheckedKeyHashMap<uint64_t, Vector<ModuleID, 4>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_reexportWays;
-    mutable std::optional<UncheckedKeyHashMap<uint32_t, Vector<ModuleID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_modulesWithSyntheticExport;
+    mutable HashMap<ModuleID, Vector<Vector<PlaceOfExport, 1>>> m_starExportProviders;
+    mutable HashMap<ModuleID, std::unique_ptr<StarTargetsByName>> m_starTargetsByName;
+    mutable HashMap<uint64_t, Vector<ModuleID, 4>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_reexportWays;
+    mutable std::optional<HashMap<uint32_t, Vector<ModuleID, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_modulesWithSyntheticExport;
     struct MockedImport {
         Strong<JSPromise> promise;
         ModuleID module;
@@ -3446,7 +3446,7 @@ private:
         bool isBoundToMock { false };
         bool hasProvisionalView { false };
     };
-    UncheckedKeyHashMap<JSPromise*, MockedImport> m_mockedImports;
+    HashMap<JSPromise*, MockedImport> m_mockedImports;
     unsigned m_retainedImportNamespaceCount { 0 };
     unsigned m_lastMockedImportSerial { 0 };
     Deque<std::pair<unsigned, JSPromise*>> m_importsAwaitingFirstStep;
@@ -3456,7 +3456,7 @@ private:
         Strong<JSObject> mock;
         Strong<JSObject> viewOfMock;
     };
-    UncheckedKeyHashMap<ModuleID, LastDeedOnMock> m_lastDeedsOnMocksUnderCallsOfImport;
+    HashMap<ModuleID, LastDeedOnMock> m_lastDeedsOnMocksUnderCallsOfImport;
     BitVector m_originalsEvaluatedWhenMocked;
     BitVector m_modulesWithRunningFactory;
     BitVector m_linkedInstances;
@@ -3472,7 +3472,7 @@ private:
     Vector<ModuleID, 4> m_modulesLinkedBeforeFailures;
     BitVector m_modulesBeforeLinkFailures;
     BitVector m_linkedByFailedLoads;
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_failedLoadTestFiles;
+    HashMap<ModuleID, uint32_t> m_failedLoadTestFiles;
     Vector<ModuleID, 16> m_instancesLinkedByLoader;
     BitVector m_modulesWithPreloadInstance;
     BitVector m_restoredModules;
@@ -3529,8 +3529,8 @@ private:
         friend bool operator==(const RejectedRequire&, const RejectedRequire&) = default;
     };
     Vector<RejectedRequire> m_rejectedRequires;
-    UncheckedKeyHashMap<uint64_t, uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_callsOfRejectedRequires;
-    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_requiresRejectedAgain;
+    HashMap<uint64_t, uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_callsOfRejectedRequires;
+    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_requiresRejectedAgain;
     struct DetachedLoad {
         ModuleID required;
         Strong<JSPromise> wait;
@@ -3575,7 +3575,7 @@ private:
     BitVector m_modulesWithOriginalRestored;
     BitVector m_modulesWithoutTestFile;
     uint32_t m_loaderStepCount { 0 };
-    UncheckedKeyHashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
+    HashMap<ModuleID, uint64_t> m_loadsThatHoldModules;
     uint64_t m_numberOfNextLoadToGoThrough { 0 };
     void goThroughLoadsOfEarlierJobs(uint64_t endNumber);
     LoadInFlight* loadBeingLoadedThatHolds(ModuleID) const;
@@ -3616,7 +3616,7 @@ private:
     void walkInPlaceOfCallsHeldForTextOf(ModuleID file);
     uint32_t m_sourceArrivalCount { 0 };
     uint32_t m_numberOfTextsAskedFor { 0 };
-    UncheckedKeyHashMap<ModuleID, uint32_t> m_turnsInWhichTextsCame;
+    HashMap<ModuleID, uint32_t> m_turnsInWhichTextsCame;
     void noteThatTextHasCome(ModuleID);
     uint32_t turnInWhichTextCame(ModuleID module) const
     {
@@ -3641,7 +3641,7 @@ private:
 
         bool isCall() const { return !!promise; }
         unsigned missingImports { 0 };
-        UncheckedKeyHashSet<ModuleID> importedFiles;
+        HashSet<ModuleID> importedFiles;
         bool joinsEarlierCall { false };
     };
     class BatchedFetches {
@@ -3684,8 +3684,8 @@ private:
     private:
         SentinelLinkedList<BatchedFetch, BasicRawSentinelNode<BatchedFetch>> m_inOrder;
         SentinelLinkedList<BatchedFetch, BasicRawSentinelNode<BatchedFetch>> m_waiting;
-        UncheckedKeyHashMap<ModuleID, Vector<BatchedFetch*, 1>> m_callsByFile;
-        UncheckedKeyHashMap<ModuleID, Vector<BatchedFetch*, 1>> m_importersByFile;
+        HashMap<ModuleID, Vector<BatchedFetch*, 1>> m_callsByFile;
+        HashMap<ModuleID, Vector<BatchedFetch*, 1>> m_importersByFile;
     };
     BitVector m_filesWithSource;
     bool hasImportsToFetch(ModuleID);
@@ -3743,7 +3743,7 @@ private:
     void clearBatchedFetches();
     ModuleID fileOf(ModuleID moduleOrFacade) const { return m_table.moduleBehindFacade(moduleOrFacade).value_or(moduleOrFacade); }
     struct WalkForEvictedFiles {
-        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> visitOrder;
+        HashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> visitOrder;
         Vector<uint32_t, 32> unsettledFiles;
         uint32_t numberOfFilesToAskHostAbout { 0 };
         std::optional<bool> pluginsAnswerForNames;

@@ -81,8 +81,8 @@ struct HoistPlan {
     Vector<HoistStep, 16> steps;
     IndexSet<Value*> hoistedValues;
     IndexSet<Value*> valuesValidInExcursion;
-    UncheckedKeyHashMap<Value*, Value*> repeatedValues;
-    UncheckedKeyHashMap<Value*, BasicBlock*> likelySuccessors;
+    HashMap<Value*, Value*> repeatedValues;
+    HashMap<Value*, BasicBlock*> likelySuccessors;
     InvalidationSet invalidation;
     unsigned numberOfHoistedValues { 0 };
     unsigned numberOfSpeculativeHoists { 0 };
@@ -132,8 +132,8 @@ private:
 
     bool isInLoop(Value* value) const { return m_loops.belongsTo(value->owner, *m_region.loop); }
     bool isInSiblingLoop(BasicBlock*) const;
-    UncheckedKeyHashMap<Value*, Value*>& repetitions() { return m_resolution == PhiResolution::Resolve ? m_plan.repeatedValues : m_repeatedLoads; }
-    const UncheckedKeyHashMap<Value*, Value*>& repetitions() const { return m_resolution == PhiResolution::Resolve ? m_plan.repeatedValues : m_repeatedLoads; }
+    HashMap<Value*, Value*>& repetitions() { return m_resolution == PhiResolution::Resolve ? m_plan.repeatedValues : m_repeatedLoads; }
+    const HashMap<Value*, Value*>& repetitions() const { return m_resolution == PhiResolution::Resolve ? m_plan.repeatedValues : m_repeatedLoads; }
 
     void collectExecutedValues();
     void addChildrenBeforeLoop(Value*, ExecutedValueSearch&) const;
@@ -162,7 +162,7 @@ private:
 
     bool tryPeelPendingGuards();
     FirstIterationValue stagePeeledCopy(Value*, HoistStep::Kind, PeelingAttempt&) const;
-    std::optional<int64_t> evaluateOnFirstIteration(Value*, UncheckedKeyHashMap<Value*, int64_t>& known) const;
+    std::optional<int64_t> evaluateOnFirstIteration(Value*, HashMap<Value*, int64_t>& known) const;
     bool passesOnFirstIteration(const PendingGuard&) const;
 
     Procedure& m_proc;
@@ -177,16 +177,16 @@ private:
     RegisterBudget m_registerBudget;
 
     Vector<Value*, 16> m_executedValues;
-    UncheckedKeyHashMap<Value*, Value*> m_repeatedLoads;
-    UncheckedKeyHashMap<ValueKey, Value*> m_canonicalConstants;
+    HashMap<Value*, Value*> m_repeatedLoads;
+    HashMap<ValueKey, Value*> m_canonicalConstants;
     IndexSet<Value*> m_speculativelyHoisted;
     IndexSet<Value*> m_likelyPathOnlyValues;
-    UncheckedKeyHashMap<Value*, bool> m_hoistedGuardConditions;
-    UncheckedKeyHashMap<Value*, bool> m_loopGuardConditions;
+    HashMap<Value*, bool> m_hoistedGuardConditions;
+    HashMap<Value*, bool> m_loopGuardConditions;
 
     Vector<PendingGuard, 4> m_pendingGuards;
     IndexSet<Value*> m_phisChosenByPendingGuards;
-    UncheckedKeyHashMap<Value*, FirstIterationValue> m_peeledValues;
+    HashMap<Value*, FirstIterationValue> m_peeledValues;
     bool m_peelingFailed { false };
 
     HoistPlan m_plan;

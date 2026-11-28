@@ -55,7 +55,7 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSlider);
 
 const int RenderSlider::defaultTrackLength = 129;
 
-RenderSlider::RenderSlider(HTMLInputElement& element, Style::ComputedStyle&& style)
+RenderSlider::RenderSlider(HTMLInputElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : RenderFlexibleBox(Type::Slider, element, WTF::move(style))
 {
     // We assume RenderSlider works only with <input type=range>.
@@ -91,15 +91,10 @@ std::pair<LayoutUnit, LayoutUnit> RenderSlider::computeIntrinsicLogicalWidths() 
 std::pair<LayoutUnit, LayoutUnit> RenderSlider::computeIntrinsicLogicalWidthContributions()
 {
     if (auto fixedLogicalWidth = style().logicalWidth().tryFixed()) {
-        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+        auto logicalWidth = adjustContentBoxLogicalWidthForBoxSizing(style().logicalWidth(), LayoutUnit { fixedLogicalWidth->resolveZoom(style().usedZoomForLength()) }, 0_lu);
         return { logicalWidth, logicalWidth };
     }
     return computeIntrinsicLogicalWidths();
-}
-
-bool RenderSlider::inDragMode() const
-{
-    return protect(element())->sliderThumbElement()->active();
 }
 
 double RenderSlider::valueRatio() const

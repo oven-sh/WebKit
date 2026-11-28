@@ -35,7 +35,7 @@ struct StackColoring {
     bool hasSuspensions { false };
     BitVector spillSlotsLiveAcrossSuspensions;
     // By the origin of the suspension. It is empty where the slots are too many for liveness.
-    UncheckedKeyHashMap<Value*, BitVector> spillSlotsLiveAcrossEachSuspension;
+    HashMap<Value*, BitVector> spillSlotsLiveAcrossEachSuspension;
     unsigned numberOfUnits { 0 };
 };
 

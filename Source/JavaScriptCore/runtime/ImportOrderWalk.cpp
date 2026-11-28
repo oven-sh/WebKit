@@ -1295,7 +1295,7 @@ auto ImportOrderWalk::fail(AbstractModuleRecord* failed, JSValue error) -> Outco
             walk->forgetPassedImports();
     }
     using ImportsOfModule = Vector<std::pair<ModuleRegistryEntry*, const ModuleRequest*>, 2>;
-    UncheckedKeyHashMap<AbstractModuleRecord*, ImportsOfModule> importers;
+    HashMap<AbstractModuleRecord*, ImportsOfModule> importers;
     VisitedRecords visited;
     while (!worklist.isEmpty()) {
         auto* importer = dynamicDowncast<CyclicModuleRecord>(worklist.takeLast());

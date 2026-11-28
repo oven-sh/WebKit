@@ -675,6 +675,7 @@ class StylePropertyCodeGenProperties:
         Schema.Entry("style-builder-custom", allowed_types=[str]),
         Schema.Entry("style-builder-requires-system-font-shorthand-check", allowed_types=[bool], default_value=False),
         Schema.Entry("style-extractor-custom", allowed_types=[bool], default_value=False),
+        Schema.Entry("style-extractor-initial-value-if", allowed_types=[str]),
         Schema.Entry("top-priority-reason", allowed_types=[str]),
         Schema.Entry("top-priority", allowed_types=[bool], default_value=False),
         Schema.Entry("url", allowed_types=[str]),
@@ -820,6 +821,11 @@ class StylePropertyCodeGenProperties:
                 raise Exception(f"{key_path} can't specify both 'shorthand-pattern' and 'shorthand-style-extractor-pattern'.")
             json_value["shorthand-parser-pattern"] = json_value["shorthand-pattern"]
             json_value["shorthand-style-extractor-pattern"] = json_value["shorthand-pattern"]
+
+        if "style-extractor-initial-value-if" in json_value:
+            for incompatible in ["style-extractor-custom", "visited-link-color-support", "coordinated-value-list-property", "longhands"]:
+                if json_value.get(incompatible):
+                    raise Exception(f"{key_path} can't specify both 'style-extractor-initial-value-if' and '{incompatible}'.")
 
         if "logical-property-group" in json_value:
             if json_value.get("longhands"):
@@ -3943,38 +3949,25 @@ class GenerateCSSPropertyNames:
         # Inspector to provide completions for properties that aren't keyword-fast-path
         # eligible but still have enumerated values.
 
-        # First, collect all properties with values and generate static arrays for them
-        properties_with_values = []
-        seen_array_names = set()
+        # Name arrays by the full property ID (not name_for_methods, which strips "Webkit")
+        # so that properties like -webkit-ruby-position and ruby-position don't collide.
+        all_properties_with_values = []
         for prop in self.properties_and_descriptors.style_properties.all:
             if hasattr(prop, 'values') and prop.values:
                 # Filter to only include values that have a valid keyword_term (actual keywords)
                 keyword_values = [value for value in prop.values if hasattr(value, 'value_keyword_name') and value.value_keyword_name]
                 if keyword_values:
-                    array_name = f"validKeywordsFor{prop.property_name.name_for_methods}"
-                    # Skip if we've already generated an array with this name (handles aliases)
-                    if array_name not in seen_array_names:
-                        seen_array_names.add(array_name)
-                        properties_with_values.append((prop, keyword_values, array_name))
+                    array_name = f"validKeywordsFor{prop.property_name.id_without_prefix}"
+                    all_properties_with_values.append((prop, keyword_values, array_name))
 
         # Generate static arrays for each property with values
-        for prop, keywordValues, array_name in properties_with_values:
-            value_ids = [value.value_keyword_name.id for value in keywordValues]
+        for prop, keyword_values, array_name in all_properties_with_values:
             to.write(f"static constexpr std::array {array_name} {{")
             with to.indent():
-                for value_id in value_ids:
-                    to.write(f"{value_id},")
+                for value in keyword_values:
+                    to.write(f"{value.value_keyword_name.id},")
             to.write("};")
             to.newline()
-
-        # Generate the switch function - include all properties, even those with duplicate array names
-        all_properties_with_values = []
-        for prop in self.properties_and_descriptors.style_properties.all:
-            if hasattr(prop, 'values') and prop.values:
-                keyword_values = [value for value in prop.values if hasattr(value, 'value_keyword_name') and value.value_keyword_name]
-                if keyword_values:
-                    array_name = f"validKeywordsFor{prop.property_name.name_for_methods}"
-                    all_properties_with_values.append((prop, keyword_values, array_name))
 
         to.write("std::span<const CSSValueID> CSSProperty::validKeywordsForProperty(CSSPropertyID id)")
         to.write("{")
@@ -4004,7 +3997,7 @@ class GenerateCSSPropertyNames:
 
         # Generate helper functions for properties with settings-flagged keywords
         for prop, keyword_values in properties_with_settings_flags:
-            func_name = f"isKeywordValidFor{prop.property_name.name_for_methods}Values"
+            func_name = f"isKeywordValidFor{prop.property_name.id_without_prefix}Values"
             to.write(f"static bool {func_name}(CSSValueID keyword, const CSSParserContext& context)")
             to.write("{")
             with to.indent():
@@ -4056,7 +4049,7 @@ class GenerateCSSPropertyNames:
                     # Check if this property has any keywords with settings flags
                     has_settings_flags = any(value.settings_flag for value in keyword_values)
                     if has_settings_flags:
-                        func_name = f"isKeywordValidFor{prop.property_name.name_for_methods}Values"
+                        func_name = f"isKeywordValidFor{prop.property_name.id_without_prefix}Values"
                         to.write(f"return {func_name}(keyword, context);")
                     else:
                         # No settings flags, just check if keyword is in the valid set
@@ -5185,9 +5178,19 @@ class GenerateStyleExtractorGenerated:
     # All other property value getters.
 
     def _generate_property_value_getter(self, to, property):
+        if property.codegen_properties.style_extractor_initial_value_if:
+            to.write(f"if (ExtractorCustom::{property.codegen_properties.style_extractor_initial_value_if}(extractorState))")
+            with to.indent():
+                to.write(f"return {GenerateStyleExtractorGenerated.wrap_in_converter(property, f'ComputedStyle::{property.codegen_properties.computed_style_initial}()')};")
         to.write(f"return {GenerateStyleExtractorGenerated.wrap_in_converter(property, f'extractorState.style->{property.codegen_properties.computed_style_getter}()')};")
 
     def _generate_property_value_serialization_getter(self, to, property):
+        if property.codegen_properties.style_extractor_initial_value_if:
+            to.write(f"if (ExtractorCustom::{property.codegen_properties.style_extractor_initial_value_if}(extractorState)) {{")
+            with to.indent():
+                to.write(f"{GenerateStyleExtractorGenerated.wrap_in_serializer(property, f'ComputedStyle::{property.codegen_properties.computed_style_initial}()')};")
+                to.write(f"return;")
+            to.write(f"}}")
         to.write(f"{GenerateStyleExtractorGenerated.wrap_in_serializer(property, f'extractorState.style->{property.codegen_properties.computed_style_getter}()')};")
 
     # Shorthand property value getter.
@@ -8033,7 +8036,6 @@ class GenerateStyleComputedStyleProperties(object):
 
                 with writer.indent():
                     writer.write(f"ComputedStyleProperties(ComputedStyleProperties&&) = default;")
-                    writer.write(f"ComputedStyleProperties& operator=(ComputedStyleProperties&&) = default;")
                     writer.newline()
 
                     # Constructor bodies live in StyleComputedStyleProperties+ConstructionInlines.h
@@ -8041,9 +8043,6 @@ class GenerateStyleComputedStyleProperties(object):
                     # emit them (which would reference unexported ComputedStyleBase constructors).
                     writer.write(f"inline ComputedStyleProperties(CreateDefaultStyleTag);")
                     writer.write(f"inline ComputedStyleProperties(const ComputedStyleProperties&, CloneTag);")
-                    writer.newline()
-
-                    writer.write(f"inline ComputedStyleProperties(ComputedStyleProperties&, ComputedStyleProperties&&);")
 
                 writer.write(f"}};")
                 writer.newline()
@@ -8110,12 +8109,6 @@ class GenerateStyleComputedStyleProperties(object):
 
                 writer.write(f"inline ComputedStyleProperties::ComputedStyleProperties(const ComputedStyleProperties& other, CloneTag tag)")
                 writer.write(f"    : ComputedStyleBase {{ other, tag }}")
-                writer.write(f"{{")
-                writer.write(f"}}")
-                writer.newline()
-
-                writer.write(f"inline ComputedStyleProperties::ComputedStyleProperties(ComputedStyleProperties& a, ComputedStyleProperties&& b)")
-                writer.write(f"    : ComputedStyleBase {{ a, WTF::move(b) }}")
                 writer.write(f"{{")
                 writer.write(f"}}")
 

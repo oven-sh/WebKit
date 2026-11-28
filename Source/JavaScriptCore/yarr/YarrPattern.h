@@ -776,7 +776,7 @@ struct YarrPattern {
     // is the subpatterenId for a non-duplicate named group.
     // For a duplicate named group, the size will be greater than 2. The first vector entry it is the
     // duplicateNamedGroupId. Subsequent vector entries are the subpatternId's for that duplicateNamedGroupId.
-    UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+    HashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
     String m_atom;
 

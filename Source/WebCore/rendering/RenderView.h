@@ -48,7 +48,7 @@ class RenderView final : public RenderBlockFlow {
     WTF_MAKE_TZONE_ALLOCATED(RenderView);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderView);
 public:
-    RenderView(Document&, Style::ComputedStyle&&);
+    RenderView(Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderView();
 
     ASCIILiteral renderName() const override { return "RenderView"_s; }
@@ -72,7 +72,6 @@ public:
     LayoutUnit clientLogicalWidthForFixedPosition() const;
     LayoutUnit clientLogicalHeightForFixedPosition() const;
 
-    NODELETE float pageZoomFactor() const;
 
     NODELETE inline LocalFrameView& frameView() const LIFETIME_BOUND; // Defined in LocalFrameViewInlines.h.
 
@@ -114,7 +113,6 @@ public:
 #endif
 
     void paint(PaintInfo&, const LayoutPoint&) override;
-    void paintBoxDecorations(PaintInfo&, const LayoutPoint&) override;
     // Return the renderer whose background style is used to paint the root background.
     RenderElement* rendererForRootBackground() const;
 
@@ -129,7 +127,9 @@ public:
 
     void updateHitTestResult(HitTestResult&, const LayoutPoint&) const override;
 
-    NODELETE void setPageLogicalSize(LayoutSize);
+    void setPageLogicalSize(LayoutSize);
+    // The page area while printing, which css-page-3 makes the initial containing block.
+    std::optional<LayoutSize> printedPageAreaLogicalSize() const;
     LayoutUnit pageOrViewLogicalHeight() const;
 
     // This method is used to assign a page number only when pagination modes have
@@ -139,21 +139,6 @@ public:
     NODELETE unsigned pageNumberForBlockProgressionOffset(int offset) const;
 
     NODELETE unsigned pageCount() const;
-
-    // FIXME: These functions are deprecated. No code should be added that uses these.
-    int bestTruncatedAt() const { return m_legacyPrinting.m_bestTruncatedAt; }
-    void setBestTruncatedAt(int y, RenderBoxModelObject* forRenderer, bool forcedBreak = false);
-    int truncatedAt() const { return m_legacyPrinting.m_truncatedAt; }
-    void setTruncatedAt(int y)
-    { 
-        m_legacyPrinting.m_truncatedAt = y;
-        m_legacyPrinting.m_bestTruncatedAt = 0;
-        m_legacyPrinting.m_truncatorWidth = 0;
-        m_legacyPrinting.m_forcedPageBreak = false;
-    }
-    const IntRect& printRect() const LIFETIME_BOUND { return m_legacyPrinting.m_printRect; }
-    void setPrintRect(const IntRect& r) { m_legacyPrinting.m_printRect = r; }
-    // End deprecated functions.
 
     // Notification that this view moved into or out of a native window.
     void setIsInWindow(bool);
@@ -184,6 +169,9 @@ public:
     void addCounterNeedingUpdate(RenderCounter&);
     SingleThreadWeakHashSet<RenderCounter> takeCountersNeedingUpdate();
 
+    void addRendererNeedingCounterNodes(RenderElement&);
+    SingleThreadWeakHashSet<RenderElement> takeRenderersNeedingCounterNodes();
+
     bool hasCounterTreeNeedingUpdate() const { return m_hasCounterTreeNeedingUpdate; }
     void setHasCounterTreeNeedingUpdate(bool hasCounterTreeNeedingUpdate) { m_hasCounterTreeNeedingUpdate = hasCounterTreeNeedingUpdate; }
 
@@ -193,6 +181,9 @@ public:
     void incrementRenderersWithPixelMovingFilter() { ++m_renderersWithPixelMovingFilterCount; }
     void decrementRenderersWithPixelMovingFilter() { ASSERT(m_renderersWithPixelMovingFilterCount > 0); --m_renderersWithPixelMovingFilterCount; }
     bool hasRenderersWithPixelMovingFilter() const { return m_renderersWithPixelMovingFilterCount; }
+    void incrementRenderersWithCounterNodes() { ++m_renderersWithCounterNodesCount; }
+    void decrementRenderersWithCounterNodes() { ASSERT(m_renderersWithCounterNodesCount > 0); --m_renderersWithCounterNodesCount; }
+    bool hasRenderersWithCounterNodes() const { return m_renderersWithCounterNodesCount; }
 
     ImageQualityController& imageQualityController() LIFETIME_BOUND;
 
@@ -205,9 +196,7 @@ public:
     void unregisterForVisibleInViewportCallback(RenderElement&);
 
     void resumePausedImageAnimationsIfNeeded(const IntRect& visibleRect);
-#if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
     void updatePlayStateForAllAnimations(const IntRect& visibleRect);
-#endif
     void addRendererWithPausedImageAnimations(RenderElement&);
     void removeRendererWithPausedImageAnimations(RenderElement&);
 
@@ -288,17 +277,6 @@ private:
     mutable std::unique_ptr<Region> m_accumulatedRepaintRegion;
     RenderSelection m_selection;
 
-    // FIXME: Only used by embedded WebViews inside AppKit NSViews.  Find a way to remove.
-    struct LegacyPrinting {
-        int m_bestTruncatedAt { 0 };
-        int m_truncatedAt { 0 };
-        int m_truncatorWidth { 0 };
-        IntRect m_printRect;
-        bool m_forcedPageBreak { false };
-    };
-    LegacyPrinting m_legacyPrinting;
-    // End deprecated members.
-
     NODELETE bool shouldUsePrintingLayout() const;
 
     const std::unique_ptr<ImageQualityController> m_imageQualityController;
@@ -309,9 +287,11 @@ private:
     bool m_hasQuotesNeedingUpdate { false };
 
     SingleThreadWeakHashSet<RenderCounter> m_countersNeedingUpdate;
+    SingleThreadWeakHashSet<RenderElement> m_renderersNeedingCounterNodes;
     bool m_hasCounterTreeNeedingUpdate { false };
     unsigned m_renderersWithOutlineCount { 0 };
     unsigned m_renderersWithPixelMovingFilterCount { 0 };
+    unsigned m_renderersWithCounterNodesCount { 0 };
     bool m_needsRepaintHackAfterCompositingLayerUpdateForDebugOverlaysOnly { false };
     bool m_needsEventRegionUpdateForNonCompositedFrame { false };
 

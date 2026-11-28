@@ -46,7 +46,7 @@ class ImportOrderWalk {
     WTF_MAKE_NONCOPYABLE(ImportOrderWalk);
     WTF_FORBID_HEAP_ALLOCATION;
 public:
-    using VisitedRecords = UncheckedKeyHashSet<AbstractModuleRecord*>;
+    using VisitedRecords = HashSet<AbstractModuleRecord*>;
 
     // See the functions of JSModuleLoader that call these two.
     static JSPromise* run(JSGlobalObject*, AbstractModuleRecord* root, RefPtr<ScriptFetcher>&&, bool mayHaveImportsInFlight, JSValue errorOfLoad = { }, std::optional<JSModuleLoader::EvaluationOfLoad> = { });

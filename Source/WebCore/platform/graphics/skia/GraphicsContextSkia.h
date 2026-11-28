@@ -64,8 +64,6 @@ public:
 
     void replayStateOnCanvas(SkCanvas&) const;
 
-    void didUpdateState(GraphicsContextState&) final;
-
     void setLineCap(LineCap) final;
     void setLineDash(const DashArray&, float) final;
     void setLineJoin(LineJoin) final;
@@ -74,7 +72,7 @@ public:
     using GraphicsContext::fillRect;
     void fillRect(const FloatRect&, RequiresClipToRect = RequiresClipToRect::Yes) final;
     void fillRect(const FloatRect&, const Color&) final;
-    void fillRect(const FloatRect&, Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) final;
+    void fillRect(const FloatRect&, const Gradient&, const AffineTransform&, RequiresClipToRect = RequiresClipToRect::Yes) final;
     void fillRoundedRectImpl(const FloatRoundedRect&, const Color&) final;
     void fillRectWithRoundedHole(const FloatRect&, const FloatRoundedRect&, const Color&) final;
     void fillPath(const Path&) final;
@@ -94,7 +92,7 @@ public:
     void drawFocusRing(const Vector<FloatRect>&, float outlineWidth, const Color&, float zoomFactor) final;
 
     void save(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
-    void restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
+    bool restore(GraphicsContextState::Purpose = GraphicsContextState::Purpose::SaveRestore) final;
 
     void translate(float, float) final;
     void rotate(float) final;
@@ -115,7 +113,7 @@ public:
     void clipPath(const Path&, WindRule) final;
     void clipTransformedPath(const AffineTransform&, const Path&, WindRule) final;
     IntRect clipBounds() const final;
-    void clipToImageBuffer(ImageBuffer&, const FloatRect&) final;
+    void clipToNativeImage(const NativeImage&, const FloatRect&) final;
 
     RenderingMode renderingMode() const final;
 

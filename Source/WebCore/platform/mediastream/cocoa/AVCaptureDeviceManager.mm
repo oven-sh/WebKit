@@ -116,24 +116,21 @@ RetainPtr<NSArray> AVCaptureDeviceManager::currentCameras()
 void AVCaptureDeviceManager::updateCachedAVCaptureDevices()
 {
 #if HAVE(AVCAPTUREDEVICE)
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_dispatchQueue);
     auto currentDevices = currentCameras();
     auto removedDevices = adoptNS([[NSMutableArray alloc] init]);
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDevice *cachedDevice in m_avCaptureDevices.get()) {
+    for (AVCaptureDevice *cachedDevice in m_avCaptureDevices.get()) {
         if (![currentDevices containsObject:cachedDevice])
             [removedDevices addObject:cachedDevice];
     }
 
     if ([removedDevices count]) {
-        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDevice *device in removedDevices.get())
+        for (AVCaptureDevice *device in removedDevices.get())
             [device removeObserver:m_objcObserver.get() forKeyPath:@"suspended"];
         [m_avCaptureDevices removeObjectsInArray:removedDevices.get()];
     }
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDevice *device in currentDevices.get()) {
+    for (AVCaptureDevice *device in currentDevices.get()) {
 
         if (![device hasMediaType:AVMediaTypeVideo] && ![device hasMediaType:AVMediaTypeMuxed])
             continue;
@@ -173,7 +170,7 @@ static inline bool isVideoDevice(AVCaptureDevice *device)
 
 Vector<CaptureDevice> AVCaptureDeviceManager::retrieveCaptureDevices()
 {
-    ASSERT(!isMainThread());
+    releaseAssertIsCurrent(m_dispatchQueue);
     if (!isAvailable())
         return { };
 
@@ -220,8 +217,7 @@ Vector<CaptureDevice> AVCaptureDeviceManager::retrieveCaptureDevices()
     if (defaultVideoDevice)
         deviceList.append(toCaptureDevice(defaultVideoDevice, true));
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDevice *platformDevice in currentDevices.get()) {
+    for (AVCaptureDevice *platformDevice in currentDevices.get()) {
         if (isVideoDevice(platformDevice) && platformDevice.uniqueID != defaultVideoDevice.uniqueID)
             deviceList.append(toCaptureDevice(platformDevice));
     }
@@ -232,7 +228,7 @@ Vector<CaptureDevice> AVCaptureDeviceManager::retrieveCaptureDevices()
 
 void AVCaptureDeviceManager::processRefreshedCaptureDevices(CompletionHandler<void()>&& callback, Vector<CaptureDevice>&& deviceList)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     bool deviceHasChanged = m_devices.size() != deviceList.size();
     if (!deviceHasChanged) {
@@ -285,8 +281,7 @@ AVCaptureDeviceManager::~AVCaptureDeviceManager()
 {
     [[NSNotificationCenter defaultCenter] removeObserver:m_objcObserver.get()];
     [m_objcObserver disconnect];
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL AVCaptureDevice *device in m_avCaptureDevices.get())
+    for (AVCaptureDevice *device in m_avCaptureDevices.get())
         [device removeObserver:m_objcObserver.get() forKeyPath:@"suspended"];
 #if HAVE(AVCAPTUREDEVICE)
     [PAL::getAVCaptureDeviceClassSingleton() removeObserver:m_objcObserver.get() forKeyPath:@"systemPreferredCamera"];

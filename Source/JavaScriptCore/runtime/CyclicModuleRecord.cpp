@@ -43,7 +43,6 @@
 #include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
-#include "SourceProfiler.h"
 #include "SymbolTableInlines.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "SyntheticModuleRecord.h"

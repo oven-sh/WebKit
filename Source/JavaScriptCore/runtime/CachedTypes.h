@@ -105,7 +105,7 @@ public:
     JS_EXPORT_PRIVATE Vector<uint8_t> serialize(std::span<const uint64_t> hotStringHashes = { }) const;
     static constexpr uint32_t maxOrdinal = (1u << 30) - 1;
 private:
-    UncheckedKeyHashMap<String, uint32_t> m_ordinals;
+    HashMap<String, uint32_t> m_ordinals;
     Vector<Ref<StringImpl>> m_strings;
 };
 
@@ -260,7 +260,7 @@ struct OrderFunctionKey {
 };
 // A table keyed by what an order file names something by reserves the top two values; names that come out of an order
 // file or from the embedder are checked (isValidOrderHash) before they go into one.
-using OrderHashSet = UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
+using OrderHashSet = HashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
 constexpr bool isValidOrderHash(uint64_t hash) { return hash <= std::numeric_limits<uint64_t>::max() - 2; }
 
 // What a BytecodeOrderRecorder saw decoded. It knows a source by the payload its code came out of, and where in it its
@@ -348,10 +348,10 @@ private:
     bool m_lookedUpExternalStrings { false }; // stringsToPrefetch asked the embedder (m_externalStrings may still be null)
     const void* m_activeRecord { nullptr };
     const void* m_activeTail { nullptr };
-    UncheckedKeyHashMap<ptrdiff_t, void*> m_offsetToPtrMap;
+    HashMap<ptrdiff_t, void*> m_offsetToPtrMap;
     Vector<std::function<void()>> m_finalizers;
-    UncheckedKeyHashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
-    RefPtr<SourceProvider> m_provider;
+    HashMap<CompactTDZEnvironment*, CompactTDZEnvironmentMap::Handle> m_environmentToHandleMap;
+    const RefPtr<SourceProvider> m_provider;
     bool m_canDeferIntoPayload { false };
     bool m_canBorrowPayload { false };
     uint16_t m_persistentPayloadIndex { 0 };

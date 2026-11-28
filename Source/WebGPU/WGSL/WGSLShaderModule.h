@@ -36,6 +36,7 @@
 #include "WGSL.h"
 #include "WGSLEnums.h"
 
+#include <wtf/Borrow.h>
 #include <wtf/HashSet.h>
 #include <wtf/OptionSet.h>
 #include <wtf/text/StringHash.h>
@@ -276,7 +277,7 @@ public:
         if (m_replacements.size() == limit)
             return;
         for (size_t i = m_replacements.size() - 1; i >= limit; --i)
-            m_replacements[i]();
+            borrow(m_replacements)[i]();
         m_replacements.shrinkCapacity(limit);
     }
 
@@ -364,7 +365,7 @@ private:
     AST::Builder m_astBuilder;
     std::optional<CallGraph> m_callGraph;
     Vector<std::function<void()>> m_replacements;
-    HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pipelineOverrideIds;
+    HashSet<uint32_t> m_pipelineOverrideIds;
     Vector<OverrideValidator> m_overrideValidations;
     HashMap<String, OverloadedDeclaration> m_overloadedOperations;
     Vector<AST::Variable*> m_overrides;

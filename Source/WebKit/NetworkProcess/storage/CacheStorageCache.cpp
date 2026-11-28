@@ -48,7 +48,7 @@ String CacheStorageCache::computeKeyURL(const URL& url)
     RELEASE_ASSERT(url.isValid());
     RELEASE_ASSERT(!url.isEmpty());
     auto keyURLString = url.string().left(url.pathEnd());
-    RELEASE_ASSERT(RecordsMap::isValidKey(keyURLString));
+    RELEASE_ASSERT(!keyURLString.isNull());
     return keyURLString;
 }
 
@@ -232,21 +232,21 @@ void CacheStorageCache::retrieveRecords(const Vector<CacheStorageRecordInformati
 
         // The cross-origin resource policy check of https://w3c.github.io/ServiceWorker/#cache-matchall. The caller reports.
         Vector<WebCore::DOMCacheEngine::CORPViolation> corpViolations;
-        for (auto& record : result) {
+        for (auto& record : borrow(result)) {
             if (record.response.type != WebCore::ResourceResponse::Type::Opaque)
                 continue;
 
             auto crossOriginResourcePolicy = record.response.httpHeaderFields.get(WebCore::HTTPHeaderName::CrossOriginResourcePolicy);
             auto isBlocked = [&](WebCore::CrossOriginEmbedderPolicyValue embedderPolicyValue, WebCore::DocumentIsolationPolicyValue documentIsolationPolicyValue) {
-                return !!WebCore::validateCrossOriginResourcePolicy(embedderPolicyValue, documentIsolationPolicyValue, options.sourceOrigin, record.request.url(), false, record.response.url, crossOriginResourcePolicy, WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton());
+                return !!WebCore::validateCrossOriginResourcePolicy(embedderPolicyValue, documentIsolationPolicyValue, options.sourceOrigin, record.request.url(), false, record.response.url, crossOriginResourcePolicy, record.response.requestIncludesCredentials, WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton());
             };
             if (isBlocked(WebCore::CrossOriginEmbedderPolicyValue::UnsafeNone, WebCore::DocumentIsolationPolicyValue::None))
                 return callback({ makeUnexpected(Error::CORP), WTF::move(corpViolations) });
 
-            bool isBlockedByPolicy = !!WebCore::performCrossOriginResourcePolicyCheck(options.crossOriginEmbedderPolicy, options.documentIsolationPolicy, options.sourceOrigin, record.request.url(), false, record.response.url, crossOriginResourcePolicy, WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton(), nullptr);
+            bool isBlockedByPolicy = !!WebCore::performCrossOriginResourcePolicyCheck(options.crossOriginEmbedderPolicy, options.documentIsolationPolicy, options.sourceOrigin, record.request.url(), false, record.response.url, crossOriginResourcePolicy, record.response.requestIncludesCredentials, WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton(), nullptr);
             if (isBlockedByPolicy || isBlocked(options.crossOriginEmbedderPolicy.reportOnlyValue, options.documentIsolationPolicy.reportOnlyValue)) {
                 // FIXME: For a redirected response put() under another request, this should be the response's first URL, which the cache doesn't store.
-                corpViolations.append({ record.response.isRedirected ? record.request.url() : record.response.url, record.response.url, crossOriginResourcePolicy });
+                corpViolations.append({ record.response.isRedirected ? record.request.url() : record.response.url, record.response.url, crossOriginResourcePolicy, record.response.requestIncludesCredentials });
             }
             if (isBlockedByPolicy)
                 return callback({ makeUnexpected(Error::CORP), WTF::move(corpViolations) });

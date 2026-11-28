@@ -37,13 +37,13 @@ class RenderMathMLMath final : public RenderMathMLRow {
     WTF_MAKE_TZONE_ALLOCATED(RenderMathMLMath);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderMathMLMath);
 public:
-    RenderMathMLMath(MathMLRowElement&, Style::ComputedStyle&&);
+    RenderMathMLMath(MathMLRowElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderMathMLMath();
 
 private:
     ASCIILiteral renderName() const final { return "RenderMathMLMath"_s; }
 
-    void centerChildren(LayoutUnit contentWidth);
+    void moveInFlowChildrenHorizontally(LayoutUnit);
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
 };
 

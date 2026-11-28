@@ -36,8 +36,7 @@
 #include "TextUtil.h"
 #include <ranges>
 
-namespace WebCore {
-namespace Layout {
+namespace WebCore::Layout {
 
 NODELETE static inline InlineLayoutUnit fullWidthAdvance(const Box& box)
 {
@@ -111,7 +110,7 @@ static bool annotationOverlapCheck(const InlineDisplay::Box& adjacentDisplayBox,
     // We are in the middle of a line, should not see any line breaks or ellipsis boxes here.
     ASSERT(!adjacentDisplayBox.isEllipsis() && !adjacentDisplayBox.isRootInlineBox());
     // Skip empty content like <span></span>
-    if (adjacentDisplayBox.visualRectIgnoringBlockDirection().isEmpty())
+    if (adjacentDisplayBox.blockStartRelativePhysicalRect().isEmpty())
         return false;
 
     if (adjacentDisplayBox.inkOverflow().intersects(overhangingRect))
@@ -374,8 +373,9 @@ void RubyFormattingContext::adjustLayoutBoundsAndStretchAncestorRubyBase(LineBox
                     ASSERT_NOT_REACHED();
                     break;
                 }
-                auto previousDescendantLayoutBounds = descendantRubySet.get(ancestorInlineBox);
-                descendantRubySet.set(ancestorInlineBox, InlineLevelBox::AscentAndDescent { std::max(previousDescendantLayoutBounds.ascent, layoutBounds.ascent), std::max(previousDescendantLayoutBounds.descent, layoutBounds.descent) });
+                auto& descendantLayoutBounds = descendantRubySet.add(ancestorInlineBox, InlineLevelBox::AscentAndDescent { }).iterator->value;
+                descendantLayoutBounds.ascent = std::max(descendantLayoutBounds.ascent, layoutBounds.ascent);
+                descendantLayoutBounds.descent = std::max(descendantLayoutBounds.descent, layoutBounds.descent);
                 break;
             }
         }
@@ -480,8 +480,8 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationBefore(const Box& r
     }
     // FIXME: Usually the first content box is visually the leftmost, but we should really look for content shifted to the left through negative margins on inline boxes.
     auto gapBetweenBaseAndContent = [&] {
-        auto contentVisualRect = boxes[baseContentStart].visualRectIgnoringBlockDirection();
-        auto baseVisualRect = boxes[rubyBaseStart].visualRectIgnoringBlockDirection();
+        auto contentVisualRect = boxes[baseContentStart].blockStartRelativePhysicalRect();
+        auto baseVisualRect = boxes[rubyBaseStart].blockStartRelativePhysicalRect();
         if (isHorizontalWritingMode)
             return std::max(0.f, contentVisualRect.x() - baseVisualRect.x());
         return std::max(0.f, contentVisualRect.y() - baseVisualRect.y());
@@ -528,8 +528,8 @@ InlineLayoutUnit RubyFormattingContext::overhangForAnnotationAfter(const Box& ru
     // FIXME: Currently justified content always expands producing 0 value for gapBetweenBaseEndAndContent.
     auto rubyBaseContentEnd = rubyBaseRange.end() - 1;
     auto gapBetweenBaseEndAndContent = [&] {
-        auto baseStartVisualRect = boxes[rubyBaseRange.begin()].visualRectIgnoringBlockDirection();
-        auto baseContentEndVisualRect = boxes[rubyBaseContentEnd].visualRectIgnoringBlockDirection();
+        auto baseStartVisualRect = boxes[rubyBaseRange.begin()].blockStartRelativePhysicalRect();
+        auto baseContentEndVisualRect = boxes[rubyBaseContentEnd].blockStartRelativePhysicalRect();
         if (isHorizontalWritingMode)
             return std::max(0.f, baseStartVisualRect.maxX() - baseContentEndVisualRect.maxX());
         return std::max(0.f, baseStartVisualRect.maxY() - baseContentEndVisualRect.maxY());
@@ -615,7 +615,7 @@ void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFor
                     parentFormattingContext.geometryForBox(layoutBox).moveHorizontally(LayoutUnit { -shiftValue });
 
                 if (layoutBox->isRubyBase() && layoutBox->associatedRubyAnnotationBox())
-                    parentFormattingContext.geometryForBox(*layoutBox->associatedRubyAnnotationBox()).moveHorizontally(LayoutUnit { -shiftValue });
+                    parentFormattingContext.geometryForBox(*protect(layoutBox->associatedRubyAnnotationBox())).moveHorizontally(LayoutUnit { -shiftValue });
             }
         };
         auto hasJustifiedAdjacentAfterContent = [&] {
@@ -651,5 +651,3 @@ void RubyFormattingContext::applyRubyOverhang(InlineFormattingContext& parentFor
 }
 
 }
-}
-

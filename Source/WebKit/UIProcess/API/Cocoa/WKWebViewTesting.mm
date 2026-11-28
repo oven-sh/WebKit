@@ -38,6 +38,7 @@
 #import "PlaybackSessionManagerProxy.h"
 #import "PrintInfo.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
+#import "RemoteLayerTreeNode.h"
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "SuspendedPageProxy.h"
 #import "UserMediaProcessManager.h"
@@ -61,6 +62,7 @@
 #import <WebCore/AttributedString.h>
 #import <WebCore/BoxSides.h>
 #import <WebCore/Color.h>
+#import <WebCore/HighlightVisibility.h>
 #import <WebCore/NowPlayingInfo.h>
 #import <WebCore/ScrollingNodeID.h>
 #import <WebCore/SharedBuffer.h>
@@ -68,9 +70,11 @@
 #import <WebCore/ValidationBubble.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/Box.h>
+#import <wtf/HexNumber.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/cocoa/VectorCocoa.h>
 #if USE(APPLE_INTERNAL_SDK)
 #import <wtf/cocoa/Entitlements.h>
@@ -80,6 +84,9 @@
 
 #if HAVE(LIBPROC)
 #include <libproc.h>
+#else
+extern "C" int proc_pidpath(int pid, void* buffer, uint32_t bufferSize);
+#define PROC_PIDPATHINFO_MAXSIZE (4 * MAXPATHLEN)
 #endif
 
 #if PLATFORM(MAC)
@@ -206,6 +213,24 @@ static RetainPtr<NSArray<NSDictionary<NSString *, NSString *> *>> devicesForTest
 #endif
 }
 
+- (BOOL)cameraMenuEnabled
+{
+#if ENABLE(MEDIA_STREAM)
+    return protect(_prompt)->cameraMenuEnabled();
+#else
+    return NO;
+#endif
+}
+
+- (BOOL)microphoneMenuEnabled
+{
+#if ENABLE(MEDIA_STREAM)
+    return protect(_prompt)->microphoneMenuEnabled();
+#else
+    return NO;
+#endif
+}
+
 - (NSString *)selectedMicrophoneID
 {
 #if ENABLE(MEDIA_STREAM)
@@ -325,12 +350,20 @@ static RetainPtr<NSArray<NSDictionary<NSString *, NSString *> *>> devicesForTest
 
 - (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer
 {
+    return [self _caLayerTreeAsTextForLayer:layer options:_WKCALayerTreeAsTextOptionsNone];
+}
+
+- (NSString *)_caLayerTreeAsTextForLayer:(CALayer *)layer options:(_WKCALayerTreeAsTextOptions)options
+{
     TextStream ts(TextStream::LineMode::MultipleLine);
 
     {
         TextStream::GroupScope scope(ts);
         ts << "CALayer tree root "_s;
-        dumpCALayer(ts, layer, true);
+        if (shouldDumpLayer(layer, options))
+            dumpCALayer(ts, layer, true, options);
+        else
+            dumpSublayers(ts, layer, options);
     }
 
     return ts.release().createNSString().autorelease();
@@ -338,14 +371,103 @@ static RetainPtr<NSArray<NSDictionary<NSString *, NSString *> *>> devicesForTest
 
 - (NSString *)_caLayerTreeAsText
 {
+    return [self _caLayerTreeAsTextWithOptions:_WKCALayerTreeAsTextOptionsNone];
+}
+
+- (NSString *)_caLayerTreeAsTextWithOptions:(_WKCALayerTreeAsTextOptions)options
+{
 #if PLATFORM(IOS_FAMILY)
-        return [self _caLayerTreeAsTextForLayer:[_contentView layer]];
+    return [self _caLayerTreeAsTextForLayer:[_contentView layer] options:options];
 #else
-        return [self _caLayerTreeAsTextForLayer:retainPtr(self.layer).get()];
+    return [self _caLayerTreeAsTextForLayer:retainPtr(self.layer).get() options:options];
 #endif
 }
 
-static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
+- (void)_enableMirrorLayerTreeForTesting:(void (^)(CALayer *))completionHandler
+{
+    RefPtr drawingArea = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->drawingArea());
+    if (!drawingArea) {
+        completionHandler(nil);
+        return;
+    }
+
+    drawingArea->enableMirrorLayerTree()->whenSettled(RunLoop::mainSingleton(), [completionHandler = makeBlockPtr(completionHandler)](auto&& result) {
+        completionHandler(result ? result->layer.get() : nil);
+    });
+}
+
+- (void)_disableMirrorLayerTreeForTesting
+{
+    if (RefPtr drawingArea = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->drawingArea()))
+        drawingArea->disableMirrorLayerTree();
+}
+
+static bool shouldDumpLayer(CALayer *layer, _WKCALayerTreeAsTextOptions options)
+{
+    return !(options & _WKCALayerTreeAsTextOptionsRemoteLayersOnly) || WebKit::RemoteLayerTreeNode::forCALayer(layer);
+}
+
+static void collectSublayersToDump(CALayer *layer, _WKCALayerTreeAsTextOptions options, Vector<RetainPtr<CALayer>>& sublayers)
+{
+    for (CALayer *sublayer in layer.sublayers) {
+        if (shouldDumpLayer(sublayer, options))
+            sublayers.append(sublayer);
+        else
+            collectSublayersToDump(sublayer, options, sublayers);
+    }
+}
+
+static void dumpSublayers(TextStream& ts, CALayer *layer, _WKCALayerTreeAsTextOptions options)
+{
+    const auto sublayers = [&] {
+        Vector<RetainPtr<CALayer>> sublayers;
+        collectSublayersToDump(layer, options, sublayers);
+        return sublayers;
+    }();
+    if (sublayers.isEmpty())
+        return;
+
+    TextStream::GroupScope scope(ts);
+    ts << "sublayers"_s;
+    for (auto& sublayer : sublayers) {
+        TextStream::GroupScope scope(ts);
+        dumpCALayer(ts, sublayer.get(), true, options);
+    }
+}
+
+// A hosting layer can be wrapped in layers that are skipped when only dumping remote layers, like for video.
+static std::optional<uint32_t> hostedContextID(CALayer *layer, _WKCALayerTreeAsTextOptions options)
+{
+    if ([layer isKindOfClass:CALayerHost.class])
+        return checked_objc_cast<CALayerHost>(layer).contextId;
+
+    if (!(options & _WKCALayerTreeAsTextOptionsRemoteLayersOnly))
+        return std::nullopt;
+
+    for (CALayer *sublayer in layer.sublayers) {
+        if (shouldDumpLayer(sublayer, options))
+            continue;
+        if (auto contextID = hostedContextID(sublayer, options))
+            return contextID;
+    }
+    return std::nullopt;
+}
+
+static String contentsDescription(id contents)
+{
+    // Identities are only meant to compare dumps from the same run.
+    return makeString(String(NSStringFromClass([contents class])), ' ', hex(reinterpret_cast<uintptr_t>((__bridge void*)contents)));
+}
+
+static String transformToString(const CATransform3D& transform)
+{
+    return makeString('[', transform.m11, ' ', transform.m12, ' ', transform.m13, ' ', transform.m14, "] ["_s,
+        transform.m21, ' ', transform.m22, ' ', transform.m23, ' ', transform.m24, "] ["_s,
+        transform.m31, ' ', transform.m32, ' ', transform.m33, ' ', transform.m34, "] ["_s,
+        transform.m41, ' ', transform.m42, ' ', transform.m43, ' ', transform.m44, ']');
+}
+
+static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse, _WKCALayerTreeAsTextOptions options = _WKCALayerTreeAsTextOptionsNone)
 {
     auto rectToString = [] (auto rect) {
         return makeString("[x: "_s, rect.origin.x, " y: "_s, rect.origin.y, " width: "_s, rect.size.width, " height: "_s, rect.size.height, ']');
@@ -401,16 +523,66 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     constexpr CACornerMask allCorners = kCALayerMinXMinYCorner | kCALayerMaxXMinYCorner | kCALayerMinXMaxYCorner | kCALayerMaxXMaxYCorner;
     if (layer.maskedCorners != allCorners)
         ts.dumpProperty("layer masked corners"_s, makeString(layer.maskedCorners));
-    
-    if (traverse && layer.sublayers.count > 0) {
-        TextStream::GroupScope scope(ts);
-        ts << "sublayers"_s;
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeLayerIdentifiers) {
+        if (auto layerID = WebKit::RemoteLayerTreeNode::layerID(layer))
+            ts.dumpProperty("layer identifier"_s, makeString(layerID->object().toUInt64(), '-', layerID->processIdentifier().toUInt64()));
+    }
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeLayerClasses)
+        ts.dumpProperty("layer class"_s, String(NSStringFromClass(layer.class)));
+
+    if ((options & _WKCALayerTreeAsTextOptionsIncludeNames) && layer.name.length)
+        ts.dumpProperty("layer name"_s, String(layer.name));
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeTransforms) {
+        if (!CATransform3DIsIdentity(layer.transform))
+            ts.dumpProperty("layer transform"_s, transformToString(layer.transform));
+        if (!CATransform3DIsIdentity(layer.sublayerTransform))
+            ts.dumpProperty("layer sublayer transform"_s, transformToString(layer.sublayerTransform));
+    }
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeVisibility) {
+        if (layer.hidden)
+            ts.dumpProperty("layer hidden"_s, true);
+        if (layer.masksToBounds)
+            ts.dumpProperty("layer masks to bounds"_s, true);
+        if (layer.geometryFlipped)
+            ts.dumpProperty("layer geometry flipped"_s, true);
+        if (!layer.doubleSided)
+            ts.dumpProperty("layer double sided"_s, false);
+    }
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeContents) {
+        if (RetainPtr<id> contents = layer.contents) {
+            ts.dumpProperty("layer contents"_s, contentsDescription(contents.get()));
+            if (!CGRectEqualToRect(layer.contentsRect, CGRectMake(0, 0, 1, 1)))
+                ts.dumpProperty("layer contents rect"_s, rectToString(layer.contentsRect));
+            if (layer.contentsScale != 1)
+                ts.dumpProperty("layer contents scale"_s, makeString(layer.contentsScale));
+        }
+        if (auto contextID = hostedContextID(layer, options))
+            ts.dumpProperty("layer hosted context"_s, *contextID);
+    }
+
+    if (options & _WKCALayerTreeAsTextOptionsIncludeAnimations) {
+        RetainPtr keys = [layer.animationKeys sortedArrayUsingSelector:@selector(compare:)];
         // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-        for (SUPPRESS_UNRETAINED_LOCAL CALayer *sublayer in layer.sublayers) {
+        for (SUPPRESS_UNRETAINED_LOCAL NSString *key in keys.get()) {
+            RetainPtr animation = [layer animationForKey:key];
             TextStream::GroupScope scope(ts);
-            dumpCALayer(ts, sublayer, true);
+            ts << "animation "_s << String(key);
+            ts.dumpProperty("class"_s, String(NSStringFromClass([animation class])));
+            if (RetainPtr propertyAnimation = dynamic_objc_cast<CAPropertyAnimation>(animation.get()))
+                ts.dumpProperty("key path"_s, String([propertyAnimation keyPath]));
+            ts.dumpProperty("duration"_s, makeString([animation duration]));
         }
     }
+
+    if (!traverse)
+        return;
+
+    dumpSublayers(ts, layer, options);
 }
 
 - (void)_addEventAttributionWithSourceID:(uint8_t)sourceID destinationURL:(NSURL *)destination sourceDescription:(NSString *)sourceDescription purchaser:(NSString *)purchaser reportEndpoint:(NSURL *)reportEndpoint optionalNonce:(NSString *)nonce applicationBundleID:(NSString *)bundleID ephemeral:(BOOL)ephemeral
@@ -470,6 +642,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 - (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance
 {
     _page->setUseDarkAppearanceForTesting(useDarkAppearance);
+}
+
+- (void)_setAppHighlightsVisibleForTesting:(BOOL)visible
+{
+#if ENABLE(APP_HIGHLIGHTS)
+    _page->setAppHighlightsVisibility(visible ? WebCore::HighlightVisibility::Visible : WebCore::HighlightVisibility::Hidden);
+#else
+    UNUSED_PARAM(visible);
+#endif
 }
 
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem
@@ -764,6 +945,19 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #endif
 }
 
+- (void)_setTabPickedForGetDisplayMediaForTesting:(WKWebView *)capturedWebView
+{
+#if ENABLE(MEDIA_STREAM)
+    if (!_page)
+        return;
+
+    if (RefPtr pageForTesting = _page->pageForTesting())
+        pageForTesting->setTabPickedForGetDisplayMediaForTesting(capturedWebView ? capturedWebView->_page.get() : nullptr);
+#else
+    UNUSED_PARAM(capturedWebView);
+#endif
+}
+
 - (double)_mediaCaptureReportingDelayForTesting
 {
     return _page->mediaCaptureReportingDelay().value();
@@ -1034,6 +1228,18 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     });
 }
 
+- (void)_isLayerTreeFrozenForFrame:(_WKFrameHandle *)frameHandle completionHandler:(void (^)(BOOL frozen))completionHandler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    auto frameID = frameHandle->_frameHandle->frameID();
+    if (!pageForTesting || !frameID)
+        return completionHandler(NO);
+
+    pageForTesting->isLayerTreeFrozen(*frameID, [completionHandler = makeBlockPtr(completionHandler)](bool isFrozen) {
+        completionHandler(isFrozen);
+    });
+}
+
 - (void)_numberOfLiveDocumentsForTesting:(void (^)(NSUInteger count))completionHandler
 {
     RefPtr pageForTesting = _page->pageForTesting();
@@ -1109,6 +1315,11 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 - (void)_setPrintProcessIdleTimeoutForTesting:(NSTimeInterval)timeout
 {
     protect(_page->configuration().processPool())->setPrintProcessIdleTimeoutForTesting(Seconds { timeout });
+}
+
+- (void)_setAlwaysUsePrintProcessForRemoteSnapshottingForTesting:(BOOL)alwaysUse
+{
+    _page->setAlwaysUsePrintProcessForRemoteSnapshottingForTesting(alwaysUse);
 }
 
 - (void)_printProcessDrawingCountsForTesting:(void(^)(NSUInteger, NSUInteger))completionHandler
@@ -1669,7 +1880,6 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 
     Ref connection = process->connection();
 
-#if HAVE(LIBPROC)
     // The connection's peer pid is unavailable for ExtensionKit processes.
     if (auto pid = process->processID()) {
         char path[PROC_PIDPATHINFO_MAXSIZE] = "\0";
@@ -1686,7 +1896,6 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
                 return @"standard";
         }
     }
-#endif // HAVE(LIBPROC)
 
 #if USE(APPLE_INTERNAL_SDK)
 
@@ -1791,6 +2000,11 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     object->setArray("timelines"_s, WTF::move(convertedTimelines));
     return object->toJSONString().createNSString().autorelease();
 }
+
+- (bool)_schedulesUpdatesForMonotonicAnimations
+{
+    return downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(protect(_page->drawingArea()))->schedulesUpdatesForMonotonicAnimationsForTesting();
+}
 #endif
 
 - (bool)_displayLinkWantsHighFrameRate
@@ -1803,6 +2017,34 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     auto completionHandlerCopy = makeBlockPtr(completionHandler);
     protect(protect(_page->websiteDataStore())->networkProcess())->lastPageLoadNetworkActivityCompletionCodeForTesting(_page->sessionID(), _page->webPageIDInMainFrameProcess(), [completionHandlerCopy = WTF::move(completionHandlerCopy)](std::optional<WebKit::NetworkActivityTracker::CompletionCode> code) {
         completionHandlerCopy(code ? @(static_cast<uint8_t>(*code)) : nil);
+    });
+}
+
+- (void)_setNavigationResponseProcessSwapReplyHandlerForTesting:(void (^)(_WKNavigationResponseProcessSwapDecision, void (^)(void)))handler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    if (!pageForTesting)
+        return;
+
+    if (!handler) {
+        pageForTesting->setNavigationResponseProcessSwapReplyHandler(nullptr);
+        return;
+    }
+
+    pageForTesting->setNavigationResponseProcessSwapReplyHandler([handler = makeBlockPtr(handler)](const WebKit::NavigationResponseProcessSwapResult& result, CompletionHandler<void()>&& sendReply) {
+        // Keeps the block alive if it clears the handler.
+        auto protectedHandler = handler;
+        auto decision = WTF::switchOn(result,
+            [](WebCore::ProcessIdentifier) {
+                return _WKNavigationResponseProcessSwapDecisionSwap;
+            }, [](WebKit::NavigationResponseWithoutProcessSwap withoutProcessSwap) {
+                return withoutProcessSwap == WebKit::NavigationResponseWithoutProcessSwap::ResumeLoad ? _WKNavigationResponseProcessSwapDecisionResumeLoad : _WKNavigationResponseProcessSwapDecisionCancelLoad;
+            }
+        );
+        protectedHandler(decision, makeBlockPtr([sendReply = WTF::move(sendReply)] mutable {
+            if (sendReply)
+                sendReply();
+        }).get());
     });
 }
 

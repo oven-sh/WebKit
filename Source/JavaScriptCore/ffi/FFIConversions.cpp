@@ -277,7 +277,7 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
 
     const UTF8CString* utf8 = context.cachedUTF8(*impl);
     if (!utf8) {
-        auto result = impl->tryGetUTF8();
+        auto result = tryMakeUTF8CString(*impl);
         if (!result) [[unlikely]] {
             if (result.error() == UTF8ConversionError::OutOfMemory)
                 throwOutOfMemoryError(globalObject, scope);

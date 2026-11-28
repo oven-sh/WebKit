@@ -22,6 +22,7 @@
 // THE POSSIBILITY OF SUCH DAMAGE.
 
 import Security
+private import TestWebKitAPILibrary.Helpers.cocoa.HTTPServer.TestCertificates
 
 import struct Swift.String
 
@@ -58,7 +59,7 @@ final class HTTPServerCore {
 
     private let listener: NWListener
     private let `protocol`: `Protocol`
-    private let customHandler: ((NWConnection) -> Void)?
+    private let customHandler: ((HTTPServerCore, NWConnection) -> Void)?
 
     private var connections: [ManagedConnection] = []
     private var responses: [String: HTTPResponseData] = [:]
@@ -67,6 +68,10 @@ final class HTTPServerCore {
     private(set) var receivedRequests: [(request: HTTPRequest, body: Data)] = []
     private(set) var lastRequestCookies = ""
     private(set) var sawAuthorizationHeader = false
+    private(set) var closedUnfinishedResponseCount = 0
+
+    /// The first error thrown by the connection handler of a server created with `HTTPServer(protocol:connectionHandler:)`.
+    var connectionHandlerError: (any Swift.Error)?
 
     var port: UInt16 { listener.port?.rawValue ?? 0 }
     var totalConnections: Int { connections.count }
@@ -75,7 +80,7 @@ final class HTTPServerCore {
     init(
         protocol: `Protocol`,
         responses: [String: HTTPResponseData] = [:],
-        customHandler: ((NWConnection) -> Void)? = nil,
+        customHandler: ((HTTPServerCore, NWConnection) -> Void)? = nil,
         port: UInt16? = nil,
         identity: SecIdentity? = nil,
         verifier: sec_protocol_verify_t? = nil
@@ -160,7 +165,7 @@ final class HTTPServerCore {
         }
     }
 
-    private func terminateIfNeeded(_ connection: NWConnection) async {
+    func terminateIfNeeded(_ connection: NWConnection) async {
         let index = connections.firstIndex { $0.connection === connection }
         guard let index, !connections[index].isTerminated else {
             return
@@ -189,22 +194,32 @@ final class HTTPServerCore {
         connection.start(queue: .main)
 
         if let customHandler {
-            customHandler(connection)
+            customHandler(self, connection)
         } else if `protocol` == .http2 || `protocol` == .http3 || `protocol` == .http2Proxy {
             #if HAVE_NETWORK_FRAMEWORK_HTTP_MESSAGING
             Task {
-                // FIXME: Handle errors better.
-                // swift-format-ignore: NeverUseForceTry
-                try! await respondToHTTPMessagingRequests(on: connection)
+                do {
+                    try await respondToHTTPMessagingRequests(on: connection)
+                } catch NWError.posix(.ECANCELED) {
+                    // `cancel()` cancels every connection when the server shuts down, including any still sending a response.
+                } catch {
+                    // FIXME: Handle errors better.
+                    fatalError("\(error)")
+                }
             }
             #else
             fatalError("HTTP messaging is not available in this configuration")
             #endif // HAVE_NETWORK_FRAMEWORK_HTTP_MESSAGING
         } else {
             Task {
-                // FIXME: Handle errors better.
-                // swift-format-ignore: NeverUseForceTry
-                try! await respondToRequests(on: connection)
+                do {
+                    try await respondToRequests(on: connection)
+                } catch NWError.posix(.ECANCELED) {
+                    // `cancel()` cancels every connection when the server shuts down, including any still sending a response.
+                } catch {
+                    // FIXME: Handle errors better.
+                    fatalError("\(error)")
+                }
             }
         }
     }
@@ -249,6 +264,19 @@ final class HTTPServerCore {
 
             case .neverSendResponse:
                 continue
+
+            case .neverFinishResponse:
+                let contentLength = (name: "Content-Length", value: "\(response.body.count + 1)")
+                let head = HTTPResponseData(
+                    statusCode: response.statusCode,
+                    headerFields: response.headerFields.filter { $0.name.lowercased() != "content-length" } + [contentLength],
+                    body: response.body
+                )
+                try await connection.send(head.serialize(includingContentLength: false))
+
+                while !(await connection.receiveBytes()).isEmpty {}
+                closedUnfinishedResponseCount += 1
+                return
             }
         }
     }
@@ -290,6 +318,9 @@ final class HTTPServerCore {
 
         case .neverSendResponse:
             break
+
+        case .neverFinishResponse:
+            preconditionFailure("HTTPServer rejects unfinished responses for this protocol")
         }
     }
 }
@@ -390,7 +421,7 @@ extension HTTPServerCore {
         sec_protocol_options_set_local_identity(securityOptions, sec_identity_create(identity)!)
 
         if let verifier {
-            sec_protocol_options_set_peer_authentication_required(securityOptions, true)
+            sec_protocol_options_set_peer_authentication_optional(securityOptions, true)
             sec_protocol_options_set_verify_block(securityOptions, verifier, .main)
         }
 
@@ -420,7 +451,7 @@ extension HTTPServerCore {
         }
 
         if let verifier {
-            sec_protocol_options_set_peer_authentication_required(securityOptions, true)
+            sec_protocol_options_set_peer_authentication_optional(securityOptions, true)
             sec_protocol_options_set_verify_block(securityOptions, verifier, .main)
         }
 

@@ -712,7 +712,7 @@ public:
     AtomStringImpl** ensureCachedBytecodeThreeCharacterAtoms();
     Vector<unsigned> stringSplitIndice;
     StringReplaceCache stringReplaceCache;
-    UncheckedKeyHashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
+    HashMap<JSCellButterfly*, JSString*> immutableButterflyToStringCache;
 
     bool mightBeExecutingTaintedCode() const { return m_mightBeExecutingTaintedCode; }
 #if USE(BUN_JSC_ADDITIONS)
@@ -845,7 +845,7 @@ public:
     SourceProviderCache* addSourceProviderCache(SourceProvider*);
     void pruneUnusedSourceProviderCaches();
 
-    typedef UncheckedKeyHashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
+    typedef HashMap<RefPtr<SourceProvider>, RefPtr<SourceProviderCache>> SourceProviderCacheMap;
     SourceProviderCacheMap sourceProviderCacheMap;
 #if ENABLE(JIT)
     std::unique_ptr<JITThunks> jitStubs;
@@ -1009,7 +1009,7 @@ public:
         return m_exceptionFuzzBuffer.get();
     }
 
-    void gatherScratchBufferRoots(ConservativeRoots&);
+    void gatherScratchBufferRoots(ConservativeRoots&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     void forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* end)>&);
 #if USE(BUN_JSC_ADDITIONS)
     void forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>&);
@@ -1020,14 +1020,14 @@ public:
     std::unique_ptr<CheckpointOSRExitSideState> popCheckpointOSRSideState(CallFrame* expectedFrame);
     void popAllCheckpointOSRSideStateUntil(CallFrame* targetFrame);
     bool hasCheckpointOSRSideState() const { return m_checkpointSideState.size(); }
-    void scanSideState(ConservativeRoots&) const;
+    void scanSideState(ConservativeRoots&) const WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
 
     Interpreter interpreter;
     VMEntryScope* entryScope { nullptr };
 
 #if USE(BUN_JSC_ADDITIONS)
     JSObject* stringRecursionCheckFirstObject { nullptr };
-    UncheckedKeyHashSet<JSObject*> stringRecursionCheckVisitedObjects;
+    HashSet<JSObject*> stringRecursionCheckVisitedObjects;
 #endif // USE(BUN_JSC_ADDITIONS)
 
     DateCache dateCache;
@@ -1226,21 +1226,25 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 #endif
-    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func)
+    void setMicrotaskTickCallback(WTF::Function<void(VM&)>&& func)
     {
-        m_onEachMicrotaskTick = WTF::move(func);
+        m_microtaskTickCallback = WTF::move(func);
 #if USE(BUN_JSC_ADDITIONS)
         updateHostObservesMicrotaskBoundaries();
 #endif
     }
+    CONCURRENT_SAFE void requestMicrotaskTickCallback() { m_isMicrotaskTickCallbackRequested.store(true, std::memory_order_release); }
+    bool isMicrotaskTickCallbackRequested() const { return m_isMicrotaskTickCallbackRequested.load(std::memory_order_relaxed); }
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE void updateHostObservesMicrotaskBoundaries();
     bool hostObservesMicrotaskBoundaries() const { return m_hostObservesMicrotaskBoundaries; }
 #endif
-    void callOnEachMicrotaskTick()
+    void callMicrotaskTickCallback()
     {
-        if (m_onEachMicrotaskTick)
-            m_onEachMicrotaskTick(*this);
+        if (!m_isMicrotaskTickCallbackRequested.exchange(false, std::memory_order_acquire))
+            return;
+        if (m_microtaskTickCallback)
+            m_microtaskTickCallback(*this);
     }
     void finalizeSynchronousJSExecution()
     {
@@ -1505,7 +1509,7 @@ private:
     std::unique_ptr<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>> m_cachedBytecodeThreeCharacterAtoms;
     std::unique_ptr<IntlCache> m_intlCache;
     std::unique_ptr<BuiltinExecutables> m_builtinExecutables;
-    UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
+    HashMap<RefPtr<UniquedStringImpl>, RefPtr<WatchpointSet>> m_impurePropertyWatchpointSets;
     std::unique_ptr<TypeProfiler> m_typeProfiler;
     std::unique_ptr<TypeProfilerLog> m_typeProfilerLog;
     unsigned m_typeProfilerEnabledCount { 0 };
@@ -1536,7 +1540,8 @@ private:
     // FIXME: We should remove handled promises from this list at GC flip. <https://webkit.org/b/201005>
     Vector<Strong<JSPromise>> m_aboutToBeNotifiedRejectedPromises;
 
-    WTF::Function<void(VM&)> m_onEachMicrotaskTick;
+    WTF::Function<void(VM&)> m_microtaskTickCallback;
+    std::atomic<bool> m_isMicrotaskTickCallbackRequested { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_hostObservesMicrotaskBoundaries { false };
     ErrorInfoFunction m_onComputeErrorInfo;
@@ -1645,7 +1650,7 @@ private:
 #endif
 
     Lock m_loopHintExecutionCountLock;
-    UncheckedKeyHashMap<const JSInstruction*, std::pair<unsigned, std::unique_ptr<uintptr_t>>> m_loopHintExecutionCounts;
+    HashMap<const JSInstruction*, std::pair<unsigned, std::unique_ptr<uintptr_t>>> m_loopHintExecutionCounts;
 
     const Ref<MicrotaskQueue> m_defaultMicrotaskQueue;
     const Ref<Waiter> m_syncWaiter;

@@ -29,9 +29,7 @@
 #include <wtf/Hasher.h>
 #include <wtf/Vector.h>
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 struct HashableActionList {
     enum DeletedValueTag { DeletedValue };
@@ -46,9 +44,7 @@ struct HashableActionList {
         , state(Valid)
     {
         std::ranges::sort(actions);
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        hash = SuperFastHash::computeHash(std::span { reinterpret_cast<const char16_t*>(actions.span().data()), actions.size() * sizeof(uint64_t) / sizeof(char16_t) });
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        hash = SuperFastHash::computeHash(spanReinterpretCast<const char16_t>(actions.span()));
     }
 
     bool isEmptyValue() const { return state == Empty; }
@@ -85,5 +81,4 @@ struct HashableActionListHashTraits : public WTF::CustomHashTraits<HashableActio
     static const bool emptyValueIsZero = false;
 };
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions

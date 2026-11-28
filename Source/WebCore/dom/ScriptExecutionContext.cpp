@@ -116,7 +116,7 @@ static Lock allScriptExecutionContextsMapLock;
 NODELETE static HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>& allScriptExecutionContextsMap() WTF_REQUIRES_LOCK(allScriptExecutionContextsMapLock)
 {
     static NeverDestroyed<HashMap<ScriptExecutionContextIdentifier, WeakRef<ScriptExecutionContext>>> contexts;
-    ASSERT(allScriptExecutionContextsMapLock.isLocked());
+    ASSERT_WITH_SECURITY_IMPLICATION(allScriptExecutionContextsMapLock.isLocked());
     return contexts;
 }
 
@@ -243,7 +243,7 @@ ScriptExecutionContext::~ScriptExecutionContext()
 
 void ScriptExecutionContext::resumeAllMessagePortsSoon()
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     m_dispatchAllPorts = true;
 
     if (m_willprocessMessageWithMessagePortsSoon)
@@ -257,7 +257,7 @@ void ScriptExecutionContext::resumeAllMessagePortsSoon()
 
 void ScriptExecutionContext::processMessageForPortSoon(const MessagePortIdentifier& portIdentifier, CompletionHandler<void()>&& completionHandler)
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     m_processMessageWithMessagePortsSoonHandlers.append(WTF::move(completionHandler));
     m_portsWithAvailableMessages.add(portIdentifier);
 
@@ -272,7 +272,7 @@ void ScriptExecutionContext::processMessageForPortSoon(const MessagePortIdentifi
 
 void ScriptExecutionContext::dispatchMessagePortEvents()
 {
-    ASSERT(isContextThread());
+    ASSERT_WITH_SECURITY_IMPLICATION(isContextThread());
     checkConsistency();
 
     Ref<ScriptExecutionContext> protectedThis(*this);
@@ -303,14 +303,14 @@ void ScriptExecutionContext::dispatchMessagePortEvents()
 
 void ScriptExecutionContext::createdMessagePort(MessagePort& messagePort)
 {
-    ASSERT(isContextThread());
+    RELEASE_ASSERT(isContextThread());
 
     m_messagePorts.add(messagePort);
 }
 
 void ScriptExecutionContext::destroyedMessagePort(MessagePort& messagePort)
 {
-    ASSERT(isContextThread());
+    RELEASE_ASSERT(isContextThread());
 
     m_messagePorts.remove(messagePort);
 }
@@ -324,7 +324,7 @@ CSSValuePool& ScriptExecutionContext::cssValuePool()
     return CSSValuePool::singleton();
 }
 
-RefPtr<FontLoadRequest> ScriptExecutionContext::fontLoadRequest(const String&, bool, bool, LoadedFromOpaqueSource)
+RefPtr<FontLoadRequest> ScriptExecutionContext::fontLoadRequest(const CSS::URL&, bool, bool)
 {
     return nullptr;
 }
@@ -491,7 +491,7 @@ void ScriptExecutionContext::suspendActiveDOMObjectIfNeeded(ActiveDOMObject& act
         activeDOMObject.stop();
 }
 
-void ScriptExecutionContext::didCreateActiveDOMObject(ActiveDOMObject& activeDOMObject)
+SUPPRESS_NODELETE void ScriptExecutionContext::didCreateActiveDOMObject(ActiveDOMObject& activeDOMObject)
 {
     // The m_activeDOMObjectAdditionForbidden check is a RELEASE_ASSERT because of the
     // consequences of having an ActiveDOMObject that is not correctly reflected in the set.
@@ -507,13 +507,13 @@ void ScriptExecutionContext::willDestroyActiveDOMObject(ActiveDOMObject& activeD
     m_activeDOMObjects.remove(activeDOMObject);
 }
 
-void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
+SUPPRESS_NODELETE void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObserver& observer)
 {
     ASSERT(!m_inScriptExecutionContextDestructor);
     m_destructionObservers.add(observer);
 }
 
-void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
+SUPPRESS_NODELETE void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
     m_destructionObservers.remove(observer);
 }
@@ -1093,7 +1093,7 @@ bool ScriptExecutionContext::requiresScriptTrackingPrivacyProtection(ScriptTrack
     if (!page)
         return true;
 
-    bool shouldApplyConsistently = (category == ScriptTrackingPrivacyCategory::QueryParameters && document->quirks().needsConsistentQueryParameterFilteringQuirk(taintedURL))
+    bool shouldApplyConsistently = (category == ScriptTrackingPrivacyCategory::QueryParameters && document->quirks().needsConsistentQueryParameterFilteringQuirkForScript(taintedURL))
         || document->quirks().mayBenefitFromFingerprintingProtectionQuirk(taintedURL);
     if (!shouldEnableScriptTrackingPrivacy(category, advancedPrivacyProtections(), shouldApplyConsistently))
         return false;
@@ -1107,7 +1107,7 @@ bool ScriptExecutionContext::requiresScriptTrackingPrivacyProtection(ScriptTrack
     if ((includeConsoleLog == IncludeConsoleLog::No || !page->reportScriptTrackingPrivacy(taintedURL, category)) && !shouldApplyConsistently)
         return true;
 
-    addConsoleMessage(MessageSource::JS, MessageLevel::Info, makeLogMessage(taintedURL, category));
+    addConsoleMessage(MessageSource::Security, MessageLevel::Info, makeLogMessage(taintedURL, category));
     return true;
 }
 

@@ -379,12 +379,16 @@ ifneq ($(SDKROOT),)
 endif
 
 ifeq ($(ENABLE_ADDRESS_SANITIZER),YES)
-	SANITIZE_FLAGS = -fsanitize=address
+	SANITIZE_FLAGS += -fsanitize=address
+endif
+
+ifeq ($(ENABLE_UNDEFINED_BEHAVIOR_SANITIZER),YES)
+	SANITIZE_FLAGS += -fsanitize=undefined
 endif
 
 # Track SANITIZE_FLAGS changes so .sb files are regenerated when switching
-# between ASan and non-ASan builds. Use $(shell ...) to update the stamp
-# file at Makefile parse time, avoiding .PHONY which would cause Make to
+# between sanitizer and non-sanitizer builds. Use $(shell ...) to update the
+# stamp file at Makefile parse time, avoiding .PHONY which would cause Make to
 # always consider the stamp (and its dependents) out of date.
 SANITIZE_FLAGS_STAMP = .sanitize-flags.stamp
 $(shell echo '$(SANITIZE_FLAGS)' | cmp -s - $(SANITIZE_FLAGS_STAMP) || echo '$(SANITIZE_FLAGS)' > $(SANITIZE_FLAGS_STAMP))
@@ -514,12 +518,19 @@ NOTIFICATION_ALLOW_LISTS = \
 	$(WebKit2)/Scripts/compile-sandbox.sh $@.tmp $* $(SDK_NAME) $(SANDBOX_IMPORT_DIR)
 	mv $@.tmp $@
 
-# Only these sandbox profiles use ASAN_ENABLED and need regeneration
-# when SANITIZE_FLAGS changes.
+# Only these sandbox profiles use ASAN_ENABLED or UBSAN_ENABLED and need
+# regeneration when SANITIZE_FLAGS changes.
 com.apple.WebKit.GPUProcess.sb : $(SANITIZE_FLAGS_STAMP)
 com.apple.WebKit.NetworkProcess.sb : $(SANITIZE_FLAGS_STAMP)
 com.apple.WebProcess.sb : $(SANITIZE_FLAGS_STAMP)
 com.apple.WebProcess.x86.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.GPU.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.GPU.Development.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.Model.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.Networking.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.Networking.Development.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.WebContent.sb : $(SANITIZE_FLAGS_STAMP)
+com.apple.WebKit.WebContent.Development.sb : $(SANITIZE_FLAGS_STAMP)
 
 JSON_RPC_GENERATOR_SCRIPTS = \
 	$(JavaScriptCore_SCRIPTS_DIR)/cpp_generator_templates.py \
@@ -571,6 +582,7 @@ WEBDRIVER_BIDI_PROTOCOL_INPUT_FILES = \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowser.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiBrowsingContext.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiDigitalCredentials.json \
+    $(WebKit2)/UIProcess/Automation/protocol/BidiEmulation.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiInput.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiLog.json \
     $(WebKit2)/UIProcess/Automation/protocol/BidiPermissions.json \
@@ -780,7 +792,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/KeyEventInterpretationContext.serialization.in \
 	Shared/Extensions/WebExtensionActionClickBehavior.serialization.in \
 	Shared/Extensions/WebExtensionAlarmParameters.serialization.in \
-	Shared/Extensions/WebExtensionBookmarksParameters.serialization.in \
+	Shared/Extensions/WebExtensionBookmarkParameters.serialization.in \
 	Shared/Extensions/WebExtensionCommandParameters.serialization.in \
 	Shared/Extensions/WebExtensionContentWorldType.serialization.in \
 	Shared/Extensions/WebExtensionContext.serialization.in \
@@ -813,6 +825,7 @@ SERIALIZATION_DESCRIPTION_FILES = \
 	Shared/GPUProcessMediaCodecCapabilities.serialization.in \
 	Shared/GoToBackForwardItemParameters.serialization.in \
 	Shared/ImageOptions.serialization.in \
+	Shared/ImmersiveElementDetails.serialization.in \
 	Shared/InspectorExtensionTypes.serialization.in \
 	Shared/InspectorNetworkTypes.serialization.in \
 	Shared/InspectorPageTypes.serialization.in \
@@ -1141,6 +1154,7 @@ SUPPLEMENTAL_DEPENDENCY_FILE = WebExtensionSupplementalDependencies.txt
 CPP_EXTENSION_INTERFACES = \
 	WebExtensionAPIAlarms \
     WebExtensionAPIEvent \
+    WebExtensionAPIExtensionTypes \
 	WebExtensionAPINamespace \
     WebExtensionAPIRuntime \
     WebExtensionAPIStorage \
@@ -1180,9 +1194,7 @@ all : JSWebExtensionAPIUnified.mm $(EXTENSION_INTERFACES:%=JS%.h) $(EXTENSION_IN
 
 ifeq ($(USE_INTERNAL_SDK),YES)
 WEBKIT_ADDITIONS_SWIFT_FILES = \
-	TestWebKitAPILibraryAdditions.swift \
 	UIWindowScene+Extras.swift \
-	AppKitGesturesExtras.swift \
 	WKWebView+SystemTextExtraction.swift \
 #
 
@@ -1199,4 +1211,11 @@ DigitalCredentialsExtras.swift : $(DIGITAL_CREDENTIALS_EXTRAS)
 	$(if $(DIGITAL_CREDENTIALS_EXTRAS),cp -f $< $@,: > $@)
 
 all : DigitalCredentialsExtras.swift
+
+PHONE_NUMBER_POSSESSION_EXTRAS = $(call find-webkitadditions-file,PhoneNumberPossessionExtras.swift.in)
+
+PhoneNumberPossessionExtras.swift : $(PHONE_NUMBER_POSSESSION_EXTRAS)
+	$(if $(PHONE_NUMBER_POSSESSION_EXTRAS),cp -f $< $@,: > $@)
+
+all : PhoneNumberPossessionExtras.swift
 endif

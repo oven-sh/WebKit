@@ -882,7 +882,7 @@ struct MallocFailingOnRequest : FastMalloc {
 
 static void checkTableIsUnchangedWhenGrowthFails()
 {
-    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, WTF::ShouldValidateKey::Yes, MallocFailingOnRequest>;
+    using Map = HashMap<unsigned, unsigned, DefaultHash<unsigned>, HashTraits<unsigned>, HashTraits<unsigned>, WTF::HashTableTraits, MallocFailingOnRequest>;
     Map map;
     auto holdsKeysUpTo = [&](unsigned last) {
         if (map.size() != last)

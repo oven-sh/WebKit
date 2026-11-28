@@ -12,7 +12,7 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  * Library General Public License for more details.
- *
+ *>
  * You should have received a copy of the GNU Library General Public License
  * along with this library; see the file COPYING.LIB.  If not, write to
  * the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor,
@@ -22,6 +22,7 @@
 #include "config.h"
 #include "StyleRuleImport.h"
 
+#include "CSSStyleResource.h"
 #include "CSSStyleSheet.h"
 #include "CachedCSSStyleSheet.h"
 #include "CachedResourceRequest.h"
@@ -29,6 +30,7 @@
 #include "DocumentPage.h"
 #include "DocumentResourceLoader.h"
 #include "MediaList.h"
+#include "NodeInlines.h"
 #include "SecurityOrigin.h"
 #include "StyleSheetContents.h"
 #include <wtf/StdLibExtras.h>
@@ -36,16 +38,16 @@
 namespace WebCore {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleRuleImport);
 
-Ref<StyleRuleImport> StyleRuleImport::create(const String& href, MQ::MediaQueryList&& mediaQueries, std::optional<CascadeLayerName>&& cascadeLayerName, SupportsCondition&& supportsCondition)
+Ref<StyleRuleImport> StyleRuleImport::create(CSS::URL&& url, MQ::MediaQueryList&& mediaQueries, std::optional<CascadeLayerName>&& cascadeLayerName, SupportsCondition&& supportsCondition)
 {
-    return adoptRef(*new StyleRuleImport(href, WTF::move(mediaQueries), WTF::move(cascadeLayerName), WTF::move(supportsCondition)));
+    return adoptRef(*new StyleRuleImport(WTF::move(url), WTF::move(mediaQueries), WTF::move(cascadeLayerName), WTF::move(supportsCondition)));
 }
 
-StyleRuleImport::StyleRuleImport(const String& href, MQ::MediaQueryList&& mediaQueries, std::optional<CascadeLayerName>&& cascadeLayerName, SupportsCondition&& supportsCondition)
+StyleRuleImport::StyleRuleImport(CSS::URL&& url, MQ::MediaQueryList&& mediaQueries, std::optional<CascadeLayerName>&& cascadeLayerName, SupportsCondition&& supportsCondition)
     : StyleRuleBase(StyleRuleType::Import)
     , m_styleSheetClient(*this)
-    , m_strHref(href)
-    , m_mediaQueries(WTF::move(mediaQueries))
+    , m_url(WTF::move(url))
+    , m_mediaQueries(MQ::makeShared(WTF::move(mediaQueries)))
     , m_cascadeLayerName(WTF::move(cascadeLayerName))
     , m_supportsCondition(WTF::move(supportsCondition))
 {
@@ -76,8 +78,11 @@ void StyleRuleImport::setCSSStyleSheet(const String& href, const URL& baseURL, A
 
     CSSParserContext context = m_parentStyleSheet ? m_parentStyleSheet->parserContext() : HTMLStandardMode;
     context.charset = charset;
-    if (!baseURL.isNull())
+    if (!baseURL.isNull()) {
         context.baseURL = baseURL;
+        context.isExternalStyleSheet = true;
+        context.referrerPolicy = cachedStyleSheet.referrerPolicy();
+    }
 
     CheckedPtr<Document> document = m_parentStyleSheet ? m_parentStyleSheet->singleOwnerDocument() : nullptr;
     m_styleSheet = StyleSheetContents::create(this, href, context);
@@ -107,6 +112,8 @@ void StyleRuleImport::requestStyleSheet()
 {
     if (!m_parentStyleSheet)
         return;
+    if (!supportsMatches())
+        return;
     CheckedPtr document = m_parentStyleSheet->singleOwnerDocument();
     if (!document)
         return;
@@ -116,12 +123,11 @@ void StyleRuleImport::requestStyleSheet()
 
     URL absURL;
     if (!m_parentStyleSheet->baseURL().isNull())
-        // use parent styleheet's URL as the base URL
-        absURL = URL(m_parentStyleSheet->baseURL(), m_strHref);
+        absURL = URL(m_parentStyleSheet->baseURL(), m_url.specified);
     else
-        absURL = document->encodingParseURL(m_strHref);
+        absURL = document->encodingParseURL(m_url.specified);
 
-    // Check for a cycle in our import chain.  If we encounter a stylesheet
+    // Check for a cycle in our import chain. If we encounter a stylesheet
     // in our parent chain with the same URL, then just bail.
     RefPtr rootSheet = m_parentStyleSheet;
     for (RefPtr sheet = m_parentStyleSheet; sheet; sheet = sheet->parentStyleSheet()) {
@@ -131,10 +137,6 @@ void StyleRuleImport::requestStyleSheet()
         rootSheet = sheet;
     }
 
-    // FIXME: Skip Content Security Policy check when stylesheet is in a user agent shadow tree.
-    // See <https://bugs.webkit.org/show_bug.cgi?id=146663>.
-    CachedResourceRequest request(WTF::move(absURL), CachedResourceLoader::defaultCachedResourceOptions(), std::nullopt, String(m_parentStyleSheet->charset()));
-    request.setInitiatorType(cachedResourceRequestInitiatorTypes().css);
     if (m_cachedSheet)
         protect(m_cachedSheet)->removeClient(protect(m_styleSheetClient));
     if (m_parentStyleSheet->isUserStyleSheet()) {
@@ -154,13 +156,14 @@ void StyleRuleImport::requestStyleSheet()
         };
         options.loadedFromOpaqueSource = m_parentStyleSheet->loadedFromOpaqueSource();
 
-        request.setOptions(WTF::move(options));
-
+        CachedResourceRequest request(WTF::move(absURL), options, std::nullopt, String(m_parentStyleSheet->charset()));
+        request.setInitiatorType(cachedResourceRequestInitiatorTypes().css);
         m_cachedSheet = protect(document->cachedResourceLoader())->requestUserCSSStyleSheet(*page, WTF::move(request));
     } else {
-        auto options = request.options();
-        options.loadedFromOpaqueSource = m_parentStyleSheet->loadedFromOpaqueSource();
-        request.setOptions(WTF::move(options));
+        RefPtr ownerNode = rootSheet->singleOwnerNode();
+        auto options = CSS::styleResourceLoaderOptions(ownerNode && ownerNode->isInUserAgentShadowTree());
+        auto request = CSS::createStyleResourceRequest(*document, absURL, m_url.modifiers, m_parentStyleSheet->parserContext().provenance(), FetchOptions::Mode::NoCors, options);
+        request.setCharset(m_parentStyleSheet->charset());
         if (auto result = protect(document->cachedResourceLoader())->requestCSSStyleSheet(WTF::move(request)))
             m_cachedSheet = WTF::move(result.value());
         else

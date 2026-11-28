@@ -50,7 +50,6 @@ class JSValue;
 namespace WebCore {
 
 class CustomElementRegistry;
-class LocalDOMWindow;
 class DeferredPromise;
 class Document;
 class Element;
@@ -60,7 +59,7 @@ class QualifiedName;
 
 class CustomElementRegistry : public RefCounted<CustomElementRegistry>, public ContextDestructionObserver {
 public:
-    NODELETE static Ref<CustomElementRegistry> create(ScriptExecutionContext&, LocalDOMWindow&);
+    NODELETE static Ref<CustomElementRegistry> createGlobal(Document&);
     NODELETE static Ref<CustomElementRegistry> create(ScriptExecutionContext&);
     ~CustomElementRegistry();
 
@@ -68,7 +67,7 @@ public:
     void ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
-    bool isScoped() const { return !m_window; }
+    bool isScoped() const { return m_isScoped; }
     NODELETE Document* document() const;
 
     static CustomElementRegistry* registryForElement(const Element& element)
@@ -77,6 +76,8 @@ public:
             return nullptr;
         if (element.usesScopedCustomElementRegistryMap()) [[unlikely]]
             return scopedCustomElementRegistryMap().get(element);
+        if (element.usesGlobalCustomElementRegistry()) [[unlikely]]
+            return effectiveGlobalCustomElementRegistry(element);
         return element.treeScope().customElementRegistry();
     }
 
@@ -88,11 +89,17 @@ public:
         }
         if (auto* element = dynamicDowncast<Element>(node); element && element->usesScopedCustomElementRegistryMap()) [[unlikely]]
             return scopedCustomElementRegistryMap().get(*element);
+        if (node.usesGlobalCustomElementRegistry()) [[unlikely]]
+            return effectiveGlobalCustomElementRegistry(node);
         return treeScope.customElementRegistry();
     }
 
     static void addToScopedCustomElementRegistryMap(Element&, CustomElementRegistry&);
     static void removeFromScopedCustomElementRegistryMap(Element&);
+
+    static CustomElementRegistry* activeCustomElementConstructorRegistry(JSC::JSObject* constructor);
+    static void addToActiveCustomElementConstructorMap(JSC::JSObject* constructor, CustomElementRegistry&);
+    static void removeFromActiveCustomElementConstructorMap(JSC::JSObject* constructor);
 
     void didAssociateWithDocument(Document&);
 
@@ -107,7 +114,7 @@ public:
     bool containsConstructor(const JSC::JSObject*) const;
 
     JSC::JSValue get(const AtomString&);
-    String getName(JSC::JSValue);
+    ExceptionOr<const AtomString&> getName(JSC::JSValue);
     void upgrade(Node& root);
     ExceptionOr<void> initialize(Node& root);
 
@@ -117,12 +124,13 @@ public:
     template<typename Visitor> void visitJSCustomElementInterfacesInGCThread(Visitor&) const;
 
 private:
-    CustomElementRegistry(ScriptExecutionContext&, LocalDOMWindow&);
-    CustomElementRegistry(ScriptExecutionContext&);
+    enum class IsScoped : bool { No, Yes };
+    CustomElementRegistry(ScriptExecutionContext&, IsScoped);
 
     NODELETE static WeakHashMap<Element, Ref<CustomElementRegistry>, WeakPtrImplWithEventTargetData>& scopedCustomElementRegistryMap();
+    NODELETE static CustomElementRegistry* effectiveGlobalCustomElementRegistry(const Node&);
+    NODELETE static HashMap<uintptr_t, RefPtr<CustomElementRegistry>>& activeCustomElementConstructorMap();
 
-    WeakPtr<LocalDOMWindow, WeakPtrImplWithEventTargetData> m_window;
     HashMap<AtomString, Ref<JSCustomElementInterface>> m_nameMap;
     HashMap<const JSC::JSObject*, JSCustomElementInterface*> m_constructorMap WTF_GUARDED_BY_LOCK(m_constructorMapLock);
     MemoryCompactRobinHoodHashMap<AtomString, Ref<DeferredPromise>> m_promiseMap;
@@ -130,6 +138,7 @@ private:
     WeakListHashSet<Document, WeakPtrImplWithEventTargetData> m_associatedDocuments;
 
     bool m_elementDefinitionIsRunning { false };
+    const bool m_isScoped;
     mutable Lock m_constructorMapLock;
 
     friend class ElementDefinitionIsRunningSetForScope;

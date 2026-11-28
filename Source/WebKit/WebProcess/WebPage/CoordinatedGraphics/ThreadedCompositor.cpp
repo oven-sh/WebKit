@@ -83,9 +83,6 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
 {
     ASSERT(RunLoop::isMain());
 
-    // Make sure rendering update is the highest priority task in worker loop.
-    m_renderTimer.setPriority(RunLoopSourcePriority::RunLoopTimer - 1);
-
     lazyInitialize(m_didCompositeRunLoopObserver, makeUnique<RunLoopObserver>(RunLoopObserver::WellKnownOrder::GraphicsCommit, [this] {
         this->didCompositeRunLoopObserverFired();
     }));
@@ -103,6 +100,9 @@ ThreadedCompositor::ThreadedCompositor(WebPage& webPage, LayerTreeHost& layerTre
     m_surface->didCreateCompositingRunLoop(m_workQueue->runLoop());
 
     m_workQueue->dispatchSync([this] {
+        // Make sure rendering update is the highest priority task in worker loop.
+        m_renderTimer.setPriority(RunLoopSourcePriority::RunLoopTimer - 1);
+
         // GLNativeWindowType depends on the EGL implementation: reinterpret_cast works
         // for pointers (only if they are 64-bit wide and not for other cases), and static_cast for
         // numeric types (and when needed they get extended to 64-bit) but not for pointers. Using
@@ -435,7 +435,7 @@ TargetContents ThreadedCompositor::paintToCurrentGLContext(const TransformationM
     return TargetContents::Valid;
 }
 
-#if HAVE(OS_SIGNPOST) || USE(SYSPROF_CAPTURE)
+#if HAVE(OS_SIGNPOST) || USE(SYSPROF_CAPTURE) || USE(ATRACE_CAPTURE)
 static String reasonsToString(const OptionSet<CompositionReason>& reasons)
 {
     StringBuilder builder;
@@ -494,8 +494,17 @@ void ThreadedCompositor::renderLayerTree()
         deviceScaleFactor = m_attributes.deviceScaleFactor;
     }
 
-    if (viewportSize.isEmpty())
+    if (viewportSize.isEmpty()) {
+        // Nothing can be painted while the viewport is empty, for example while the view has no height.
+        // Still commit the layer state and complete the rendering update, so that the next one, which
+        // applies the new size when the view gets one, can run. No frame is sent, so frameComplete() is
+        // not called for this composition: call it here to leave the InProgress state.
+        flushCompositingState(reasons);
+        if (shouldNotifiyDidComposite)
+            m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
+        frameComplete();
         return;
+    }
 
     TransformationMatrix viewportTransform;
     viewportTransform.scale(deviceScaleFactor);
@@ -520,7 +529,7 @@ void ThreadedCompositor::renderLayerTree()
     if (shouldNotifiyDidComposite)
         m_didCompositeRunLoopObserver->schedule(&RunLoop::mainSingleton());
 
-    WTFEmitSignpost(this, DidRenderFrame, "reasons: %s", reasonsToString(reasons).utf8());
+    WTFEmitSignpost(this, DidRenderFrame, "reasons: %s", makeUTF8CString(reasonsToString(reasons)));
 
     PlatformDisplay::sharedDisplay().skiaGLContext()->swapBuffers();
 
@@ -572,7 +581,7 @@ ASCIILiteral ThreadedCompositor::stateToString(ThreadedCompositor::State state)
 void ThreadedCompositor::scheduleUpdateLocked()
 {
     assertIsHeld(m_state.lock);
-    WTFEmitSignpost(this, ScheduleComposition, "reasons: %s, state: %s, waiting for tiles: %s, render timer active: %s", reasonsToString(m_state.reasons).utf8(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no", m_state.isRenderTimerActive ? "yes" : "no");
+    WTFEmitSignpost(this, ScheduleComposition, "reasons: %s, state: %s, waiting for tiles: %s, render timer active: %s", makeUTF8CString(reasonsToString(m_state.reasons)), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no", m_state.isRenderTimerActive ? "yes" : "no");
 
     switch (m_state.state) {
     case State::Idle:
@@ -598,7 +607,7 @@ void ThreadedCompositor::frameComplete()
     ASSERT(m_workQueue->runLoop().isCurrent());
 
     Locker locker { m_state.lock };
-    WTFEmitSignpost(this, FrameComplete, "reasons: %s, state: %s, waiting for tiles: %s", reasonsToString(m_state.reasons).utf8(), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no");
+    WTFEmitSignpost(this, FrameComplete, "reasons: %s, state: %s, waiting for tiles: %s", makeUTF8CString(reasonsToString(m_state.reasons)), stateToString(m_state.state).characters(), m_state.isWaitingForTiles ? "yes" : "no");
 
     switch (m_state.state) {
     case State::Idle:
@@ -670,6 +679,8 @@ void ThreadedCompositor::updateFPSCounter()
     if (!m_fpsCounter.exposesFPS
 #if USE(SYSPROF_CAPTURE)
         && !SysprofAnnotator::singletonIfCreated()
+#elif USE(ATRACE_CAPTURE)
+        && !ATraceAnnotator::isEnabled()
 #endif
     )
         return;

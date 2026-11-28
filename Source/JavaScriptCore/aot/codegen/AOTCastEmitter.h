@@ -77,11 +77,11 @@ private:
         uint32_t place;
     };
     Vector<ClosureChain> m_closureChains;
-    UncheckedKeyHashMap<uint32_t, ClosureChainPosition, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closureChainPositions;
+    HashMap<uint32_t, ClosureChainPosition, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_closureChainPositions;
 
-    UncheckedKeyHashMap<uint32_t, Operand, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersHandedOn;
-    UncheckedKeyHashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bitsHandedOn;
-    UncheckedKeyHashMap<uint32_t, Vector<DeferredNumberCheck, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberChecksOfSums;
+    HashMap<uint32_t, Operand, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersHandedOn;
+    HashMap<uint32_t, LValue, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_bitsHandedOn;
+    HashMap<uint32_t, Vector<DeferredNumberCheck, 2>, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberChecksOfSums;
 };
 
 } } } // namespace JSC::AOT::Typed

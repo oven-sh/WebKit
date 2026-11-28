@@ -386,7 +386,7 @@ Vector<TestFailure> runTestText(String&& text, Vector<RunOutput>* outputs, const
         g_jscConfig.options = optionsOfProcess;
     });
     for (const OptionWord& option : file.jscOptions) {
-        if (!Options::setOption(byteCast<char>(option.word.utf8().span().subspan(2).data()), false))
+        if (!Options::setOption(byteCast<char>(makeUTF8CString(option.word).span().subspan(2).data()), false))
             failures.append(TestFailure { option.line, makeString("unknown JSC option "_s, option.word) });
     }
     if (!failures.isEmpty())

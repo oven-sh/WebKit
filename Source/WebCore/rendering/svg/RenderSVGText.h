@@ -27,6 +27,8 @@
 #include "SVGBoundingBoxComputation.h"
 #include "SVGPaintServerCache.h"
 
+#include <wtf/UniqueRef.h>
+
 namespace WebCore {
 
 class RenderSVGInlineText;
@@ -36,8 +38,10 @@ class RenderSVGText final : public RenderSVGBlock {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGText);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGText);
 public:
-    RenderSVGText(SVGTextElement&, Style::ComputedStyle&&);
+    RenderSVGText(SVGTextElement&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGText();
+
+    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
     NODELETE SVGTextElement& textElement() const;
 
@@ -73,16 +77,16 @@ public:
 
     void updateCachedNominalTransform() final;
 
+    void paintInlineChildren(PaintInfo&, const LayoutPoint&);
+
 private:
     void graphicsElement() const = delete;
 
     ASCIILiteral renderName() const override { return "RenderSVGText"_s; }
 
     void paint(PaintInfo&, const LayoutPoint&) override;
-    void paintInlineChildren(PaintInfo&, const LayoutPoint&) override;
 
     bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
-    bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) override;
 
     void applyTransform(TransformationMatrix&, const Style::ComputedStyle&, const FloatRect& boundingBox, OptionSet<Style::TransformResolverOption>) const final;
     PositionWithAffinity positionForPoint(const LayoutPoint&, HitTestSource, const RenderFragmentContainer*) override;
@@ -107,7 +111,7 @@ private:
     float strokeInflation(float strokeWidth) const;
     void updateVisualOverflow();
 
-    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+    SVGPaintServerCache* svgPaintServerCache() const final { return m_svgPaintServerCache.ptr(); }
 
     bool m_needsPositioningValuesUpdate : 1 { false };
     bool m_needsTransformUpdate : 1 { true }; // FIXME: [LBSE] Only needed for legacy SVG engine.
@@ -117,7 +121,7 @@ private:
     std::optional<AffineTransform> m_cachedNominalTransform;
     FloatRect m_objectBoundingBox;
     mutable std::optional<LayoutRect> m_cachedVisualOverflowRect;
-    mutable SVGPaintServerCache m_svgPaintServerCache;
+    const UniqueRef<SVGPaintServerCache> m_svgPaintServerCache { makeUniqueRef<SVGPaintServerCache>() };
 };
 
 } // namespace WebCore

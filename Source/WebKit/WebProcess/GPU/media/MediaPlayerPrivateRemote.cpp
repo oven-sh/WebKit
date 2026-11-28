@@ -650,6 +650,7 @@ void MediaPlayerPrivateRemote::updateCachedState(RemoteMediaPlayerState&& state)
 
     m_cachedState.hasClosedCaptions = state.hasClosedCaptions;
     m_cachedState.hasAvailableVideoFrame = state.hasAvailableVideoFrame;
+    m_cachedState.videoFrameHasAlpha = state.videoFrameHasAlpha;
     m_cachedState.wirelessVideoPlaybackDisabled = state.wirelessVideoPlaybackDisabled;
     m_cachedState.didPassCORSAccessCheck = state.didPassCORSAccessCheck;
     m_cachedState.documentIsCrossOrigin = state.documentIsCrossOrigin;
@@ -1069,20 +1070,6 @@ NSArray* MediaPlayerPrivateRemote::timedMetadata() const
     notImplemented();
     return nullptr;
 }
-
-String MediaPlayerPrivateRemote::accessLog() const
-{
-    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::AccessLog(), m_id);
-    auto [log] = sendResult.takeReplyOr(emptyString());
-    return log;
-}
-
-String MediaPlayerPrivateRemote::errorLog() const
-{
-    auto sendResult = protect(connection())->sendSync(Messages::RemoteMediaPlayerProxy::ErrorLog(), m_id);
-    auto [log] = sendResult.takeReplyOr(emptyString());
-    return log;
-}
 #endif
 
 void MediaPlayerPrivateRemote::setBufferingPolicy(MediaPlayer::BufferingPolicy policy)
@@ -1230,6 +1217,11 @@ Ref<MediaPlayerPrivateRemote::BitmapImagePromise> MediaPlayerPrivateRemote::bitm
 bool MediaPlayerPrivateRemote::hasAvailableVideoFrame() const
 {
     return m_cachedState.hasAvailableVideoFrame;
+}
+
+bool MediaPlayerPrivateRemote::videoFrameHasAlpha() const
+{
+    return m_cachedState.videoFrameHasAlpha;
 }
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)

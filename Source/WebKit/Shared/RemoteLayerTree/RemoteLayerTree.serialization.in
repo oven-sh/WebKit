@@ -81,6 +81,10 @@ header: "RemoteLayerTreeTransaction.h"
 #endif
     ShadowPathChanged
     DisplayOnlyImageChanged
+    HidesFromScreenCaptureChanged
+#if ENABLE(THREADED_ANIMATIONS)
+    AnimationExtentChanged
+#endif
 };
 
 header: "RemoteLayerBackingStore.h"
@@ -104,7 +108,7 @@ header: "RemoteLayerBackingStore.h"
 #endif
 };
 
-[LegacyPopulateFromEmptyConstructor, DisableMissingMemberCheck] class WebKit::RemoteLayerTreeTransaction {
+[LegacyPopulateFromEmptyConstructor, DisableMissingMemberCheck, UniqueRef] class WebKit::RemoteLayerTreeTransaction {
 {
     Markable<WebCore::PlatformLayerIdentifier> m_rootLayerID;
     WebKit::ChangedLayers m_changedLayers;
@@ -246,6 +250,10 @@ headers: "LayerProperties.h" "PlatformCALayerRemote.h"
 #endif
     [OptionalTupleBit=WebKit::LayerChange::ShadowPathChanged] WebCore::Path shadowPath;
     [OptionalTupleBit=WebKit::LayerChange::DisplayOnlyImageChanged] Markable<WebKit::RemoteSnapshotIdentifier> displayOnlyImage;
+    [OptionalTupleBit=WebKit::LayerChange::HidesFromScreenCaptureChanged] bool hidesFromScreenCapture;
+#if ENABLE(THREADED_ANIMATIONS)
+    [OptionalTupleBit=WebKit::LayerChange::AnimationExtentChanged] std::optional<WebCore::FloatRect> animationExtent;
+#endif
 };
 
 using WebKit::LayerHostingContextID = uint32_t;
@@ -284,19 +292,19 @@ using WebKit::PageData::TransactionCallbackID = IPC::AsyncReplyID;
     OptionSet<WebCore::LayoutMilestone> newlyReachedPaintingMilestones;
     bool scaleWasSetByUIProcess;
     bool allowsUserScaling;
-    bool avoidsUnsafeArea;
     bool viewportMetaTagWidthWasExplicit;
     bool viewportMetaTagCameFromImageDocument;
     bool isInStableState;
     bool hasMainThreadScrollDrivenAnimations;
     WebCore::InteractiveWidgetValue viewportMetaTagInteractiveWidget;
+    WebCore::ViewportFitEdges viewportFitEdges;
 
 #if PLATFORM(IOS_FAMILY)
     std::optional<uint64_t> dynamicViewportSizeUpdateID;
 #endif
 };
 
-using WebKit::RemoteLayerTreeCommitBundle::RootFrameData = std::pair<WebKit::RemoteLayerTreeTransaction, WebKit::RemoteScrollingCoordinatorTransaction>;
+using WebKit::RemoteLayerTreeCommitBundle::RootFrameData = std::pair<UniqueRef<WebKit::RemoteLayerTreeTransaction>, WebKit::RemoteScrollingCoordinatorTransaction>;
 
 struct WebKit::RemoteLayerTreeCommitBundle {
     Vector<WebKit::RemoteLayerTreeCommitBundle::RootFrameData> transactions;

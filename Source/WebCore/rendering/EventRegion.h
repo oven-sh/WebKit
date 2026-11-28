@@ -37,15 +37,20 @@
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/TouchAction.h>
 #include <wtf/ArgumentCoder.h>
+#include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
 #include <wtf/Ref.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/UniqueRef.h>
 #include <wtf/Vector.h>
+#include <wtf/WeakHashSet.h>
 
 namespace WebCore {
 
+class Document;
 class EventRegion;
 class Path;
+class RenderElement;
 class RenderObject;
 enum class TrackingType : uint8_t;
 
@@ -58,13 +63,21 @@ class EventRegionContext final : public RegionContext {
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(EventRegionContext);
 public:
     WEBCORE_EXPORT explicit EventRegionContext(EventRegion&);
-    NODELETE WEBCORE_EXPORT virtual ~EventRegionContext();
+    WEBCORE_EXPORT virtual ~EventRegionContext();
 
     bool isEventRegionContext() const final { return true; }
 
     enum class ContributeToInteractionRegions : bool { No, Yes };
     WEBCORE_EXPORT void unite(const FloatRoundedRect&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false, ContributeToInteractionRegions = ContributeToInteractionRegions::Yes);
     bool contains(const IntRect&) const;
+    // True if unite() with any rect inside this one is a no-op. Callers must inflate for LayoutUnit
+    // precision.
+    bool uniteWouldNotChangeRegions(const FloatRect&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false) const;
+
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    bool mayHaveDescendantTouchEventTargets(const RenderElement&);
+    bool touchEventListenerRegionsContain(const IntRect&, OptionSet<EventListenerRegionType>) const;
+#endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     void uniteInteractionRegions(const RenderObject&, const FloatRect&, const FloatSize&, const std::optional<AffineTransform>&);
@@ -79,7 +92,13 @@ public:
 #endif
 
 private:
+    Region transformAndClip(Region&&) const;
+
     EventRegion& m_eventRegion;
+
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    HashMap<Ref<const Document>, std::optional<SingleThreadWeakHashSet<const RenderElement>>> m_knownTouchEventTargetAncestors;
+#endif
 
 #if ENABLE(INTERACTION_REGIONS_IN_EVENT_REGION)
     Vector<InteractionRegion> m_interactionRegions;
@@ -91,6 +110,7 @@ private:
     HashSet<NodeIdentifier> m_containersToRemove;
     HashMap<NodeIdentifier, Vector<InteractionRegion>> m_discoveredRegionsByElement;
     HashSet<NodeIdentifier> m_consolidatedElements;
+    HashSet<NodeIdentifier> m_guardContainersWithCompositedContent;
     bool m_hasRegionSharingRectWithContainer { false };
 #endif
 };
@@ -132,13 +152,18 @@ public:
 #endif
     );
 
-    EventRegionContext makeContext() { return EventRegionContext(*this); }
+    UniqueRef<EventRegionContext> makeContext() { return makeUniqueRef<EventRegionContext>(*this); }
 
     bool isEmpty() const { return m_region.isEmpty(); }
 
     friend bool operator==(const EventRegion&, const EventRegion&) = default;
 
     void unite(const Region&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false);
+#if ENABLE(TOUCH_EVENT_REGIONS)
+    bool touchEventListenerRegionsContain(const IntRect&, OptionSet<EventListenerRegionType>) const;
+#endif
+    // True if unite() with this region or any subset of it is a no-op.
+    bool uniteWouldNotChangeRegions(const Region&, const RenderObject&, const Style::ComputedStyle&, bool overrideUserModifyIsEditable = false) const;
     NODELETE void translate(const IntSize&);
 
     bool contains(const IntPoint& point) const { return m_region.contains(point); }

@@ -48,7 +48,7 @@ Ref<SharedBuffer> serializeTargetedElementSelectors(const TargetedElementSelecto
     rootObject->setArray("selectors"_s, WTF::move(selectorsArray));
 
     auto jsonString = rootObject->toJSONString();
-    return SharedBuffer::create(jsonString.utf8().span());
+    return SharedBuffer::create(makeUTF8CString(jsonString).span());
 }
 
 std::optional<TargetedElementSelectors> deserializeTargetedElementSelectors(std::span<const uint8_t> data)
@@ -92,6 +92,7 @@ std::optional<TargetedElementSelectors> deserializeTargetedElementSelectors(std:
 void mergeRemoteFrameContent(TargetedElementInfo& info, const TargetedFrameContent& content)
 {
     info.hasAudibleMedia |= content.hasAudibleMedia;
+    info.mediaAndLinkURLs.addAll(content.mediaAndLinkURLs);
 
     if (!info.hasLargeReplacedDescendant) {
         info.hasLargeReplacedDescendant = std::ranges::any_of(content.largestReplacedContentSizes, [&](auto& size) {

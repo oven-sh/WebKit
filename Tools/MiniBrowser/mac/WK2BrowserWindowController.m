@@ -254,6 +254,11 @@ static const int testFooterBannerHeight = 58;
     _windowFeatures = windowFeatures;
     _isPrivateBrowsingWindow = !_configuration.websiteDataStore.isPersistent;
 
+    // AppKit cascades a window after -windowDidLoad, which would offset each additional automation window
+    // from the fixed frame that -applyAutomationWindowFrame sets.
+    if (_configuration._controlledByAutomation)
+        self.shouldCascadeWindows = NO;
+
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(userAgentDidChange:) name:kUserAgentChangedNotificationName object:nil];
     return self;
 }
@@ -317,6 +322,26 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
     [window setFrame:frameForWindowFeatures(_windowFeatures, window) display:NO];
 }
 
+// WPT's WebDriver tests set this window rect before each test (webdriver/tests/support/defaults.py).
+// Starting with it makes those requests no-ops, so that tests don't wait for a resize and relayout.
+// In WebDriver's coordinates: the top left corner, relative to the top left of the main screen.
+static const NSRect automationWindowRect = { { 200, 100 }, { 800, 600 } };
+
+- (void)applyAutomationWindowFrame
+{
+    NSWindow *window = self.window;
+
+    // Ignore the frame saved by interactive use, so that test results don't depend on how
+    // MiniBrowser windows were last sized by hand, and don't save automation frames over it.
+    self.windowFrameAutosaveName = @"";
+    [window setFrameAutosaveName:@""];
+    window.restorable = NO;
+
+    NSRect frame = automationWindowRect;
+    frame.origin.y = NSMaxY(NSScreen.screens.firstObject.frame) - NSMinY(automationWindowRect) - NSHeight(automationWindowRect);
+    [window setFrame:[window constrainFrameRect:frame toScreen:window.screen] display:NO];
+}
+
 - (void)windowDidLoad
 {
     [super windowDidLoad];
@@ -324,6 +349,9 @@ static NSRect frameForWindowFeatures(WKWindowFeatures *features, NSWindow *windo
     // Private windows get separate identifier so they can't merge with regular windows
     if (_isPrivateBrowsingWindow)
         self.window.tabbingIdentifier = @"MiniBrowserPrivateWindow";
+
+    if (_configuration._controlledByAutomation)
+        [self applyAutomationWindowFrame];
 
     [self applyWindowFeatures];
 }
@@ -1056,6 +1084,27 @@ static BOOL areEssentiallyEqual(double a, double b)
     return WKDragDestinationActionAny;
 }
 
+- (void)_webView:(WKWebView *)webView setWindowFrame:(CGRect)frame
+{
+    if (!webView.configuration._isControlledByAutomation)
+        return;
+
+    NSRect screensFrame = NSZeroRect;
+    for (NSScreen *screen in NSScreen.screens)
+        screensFrame = NSUnionRect(screensFrame, screen.frame);
+
+    // AppKit only enforces minSize for user resizes. WebDriver accepts frames far larger than any screen, so keep the
+    // frame no larger than the screens' bounding box, and touching or overlapping it.
+    NSSize minSize = self.window.minSize;
+    NSRect newFrame = frame;
+    newFrame.size.width = MAX(MIN(NSWidth(frame), NSWidth(screensFrame)), minSize.width);
+    newFrame.size.height = MAX(MIN(NSHeight(frame), NSHeight(screensFrame)), minSize.height);
+    newFrame.origin.y = NSMaxY(frame) - NSHeight(newFrame);
+    newFrame.origin.x = MIN(MAX(NSMinX(newFrame), NSMinX(screensFrame) - NSWidth(newFrame)), NSMaxX(screensFrame));
+    newFrame.origin.y = MIN(MAX(NSMinY(newFrame), NSMinY(screensFrame) - NSHeight(newFrame)), NSMaxY(screensFrame));
+    [self.window setFrame:newFrame display:YES];
+}
+
 - (void)_webView:(WKWebView *)webView printFrame:(_WKFrameHandle *)frame pdfFirstPageSize:(CGSize)size completionHandler:(void (^)(void))completionHandler
 {
     [[_webView printOperationWithPrintInfo:[NSPrintInfo sharedPrintInfo]] runOperationModalForWindow:self.window delegate:nil didRunSelector:nil contextInfo:nil];
@@ -1395,7 +1444,8 @@ static BOOL responseIsAttachment(NSURLResponse *response)
 
 static NSURL *availableDownloadURLWithFilename(NSString *filename)
 {
-    NSURL *downloadsDirectory = [NSFileManager.defaultManager URLsForDirectory:NSDownloadsDirectory inDomains:NSUserDomainMask].firstObject;
+    // FIXME: Under automation, use the folder from browser.setDownloadBehavior when there is one. https://bugs.webkit.org/show_bug.cgi?id=303204
+    NSURL *downloadsDirectory = [[NSApplication sharedApplication] browserAppDelegate].downloadsDirectory;
     if (!downloadsDirectory)
         return nil;
 

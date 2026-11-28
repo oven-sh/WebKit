@@ -89,7 +89,7 @@ float FixedTableLayout::calcWidthArray()
     m_columnBorderPadding.fill(0, nEffCols);
 
     unsigned currentEffectiveColumn = 0;
-    for (RenderTableCol* col = m_table->firstColumn(); col; col = col->nextColumn()) {
+    for (CheckedPtr col = m_table->firstColumn(); col; col = col->nextColumn()) {
         // RenderTableCols don't have the concept of preferred logical width, but we need to clear their dirty bits
         // so that if we call setContentWidthsDirty(true) on a col or one of its descendants, we'll mark it's
         // ancestors as dirty.
@@ -138,21 +138,20 @@ float FixedTableLayout::calcWidthArray()
     }
 
     // Iterate over the first row in case some are unspecified.
-    RenderTableSection* section = m_table->topNonEmptySection();
+    CheckedPtr section = m_table->topNonEmptySection();
     if (!section)
         return usedWidth;
 
     unsigned currentColumn = 0;
 
-    RenderTableRow* firstRow = section->firstRow();
-    for (RenderTableCell* cell = firstRow->firstCell(); cell; cell = cell->nextCell()) {
+    for (CheckedPtr cell = protect(section->firstRow())->firstCell(); cell; cell = cell->nextCell()) {
         auto [ logicalWidth, usedZoom ] = cell->styleOrColLogicalWidth();
         unsigned span = cell->colSpan();
         float fixedBorderBoxLogicalWidth = 0;
         // FIXME: Support other length types. If the width is non-auto, it should probably just use
         // RenderBox::computeLogicalWidthInFragmentUsing to compute the width.
         if (auto fixedLogicalWidth = logicalWidth.tryFixed(); fixedLogicalWidth && fixedLogicalWidth->isPositive()) {
-            fixedBorderBoxLogicalWidth = cell->adjustBorderBoxLogicalWidthForBoxSizing(*fixedLogicalWidth);
+            fixedBorderBoxLogicalWidth = cell->adjustBorderBoxLogicalWidthForBoxSizing(logicalWidth, LayoutUnit { fixedLogicalWidth->resolveZoom(cell->style().usedZoomForLength()) }, 0_lu);
             logicalWidth = Style::PreferredSize::Fixed { fixedBorderBoxLogicalWidth };
         } else if (logicalWidth.isCalculated())
             logicalWidth = CSS::Keyword::Auto { };
@@ -201,8 +200,13 @@ std::pair<LayoutUnit, LayoutUnit> FixedTableLayout::computeIntrinsicLogicalWidth
 void FixedTableLayout::applyContentLogicalWidthQuirks(LayoutUnit& minWidth, LayoutUnit& maxWidth) const
 {
     auto& tableLogicalWidth = m_table->style().logicalWidth();
-    if (auto fixedTableLogicalWidth = tableLogicalWidth.tryFixed(); fixedTableLogicalWidth && fixedTableLogicalWidth->isPositive())
-        minWidth = maxWidth = std::max(minWidth, LayoutUnit(fixedTableLogicalWidth->resolveZoom(m_table->style().usedZoomForLength())) - m_table->bordersPaddingAndSpacingInRowDirection());
+    if (auto fixedTableLogicalWidth = tableLogicalWidth.tryFixed(); fixedTableLogicalWidth && fixedTableLogicalWidth->isPositive()) {
+        auto tableFixedWidth = LayoutUnit { fixedTableLogicalWidth->resolveZoom(m_table->style().usedZoomForLength()) };
+        // A stretch() takes its margins off, resolved against zero as the contributions resolve them.
+        if (tableLogicalWidth.isStretchFunction())
+            tableFixedWidth = m_table->adjustBorderBoxLogicalWidthForBoxSizing(tableLogicalWidth, tableFixedWidth, 0_lu);
+        minWidth = maxWidth = std::max(minWidth, tableFixedWidth - m_table->bordersPaddingAndSpacingInRowDirection());
+    }
 
     /*
         <table style="width:100%; background-color:red"><tr><td>
@@ -341,6 +345,20 @@ void FixedTableLayout::layout()
     auto colPositionsSize = m_table->columnPositions().size();
     if (colPositionsSize > 0)
         m_table->setColumnPosition(colPositionsSize - 1, LayoutUnit(pos));
+
+    if (!m_table->collapseBorders())
+        return;
+
+    float deviceScaleFactor = m_table->style().deviceScaleFactor();
+    bool isInlineFlipped = m_table->writingMode().isInlineFlipped();
+    LayoutUnit endPosition { pos };
+    for (unsigned i = 1; i < nEffCols; i++) {
+        LayoutUnit position = m_table->columnPositions()[i];
+        if (isInlineFlipped)
+            m_table->setColumnPosition(i, endPosition - LayoutUnit(floorToDevicePixel(endPosition - position, deviceScaleFactor)));
+        else
+            m_table->setColumnPosition(i, LayoutUnit(floorToDevicePixel(position, deviceScaleFactor)));
+    }
 }
 
 } // namespace WebCore

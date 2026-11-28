@@ -26,11 +26,11 @@
 #include "config.h"
 #include "CSSDeclarationValue.h"
 
+#include <wtf/Hasher.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/TextStream.h>
 
-namespace WebCore {
-namespace CSS {
+namespace WebCore::CSS {
 
 bool DeclarationValue::operator==(const DeclarationValue& other) const
 {
@@ -41,17 +41,21 @@ bool DeclarationValue::operator==(const DeclarationValue& other) const
 
 void Serialize<DeclarationValue>::operator()(StringBuilder& builder, const SerializationContext&, const DeclarationValue& declarationValue)
 {
-    Ref value = declarationValue.value;
-    builder.append(value->serialize());
+    builder.append(protect(declarationValue.value)->serialize());
+}
+
+// MARK: - Hashing
+
+void add(Hasher& hasher, const DeclarationValue& declarationValue)
+{
+    add(hasher, protect(declarationValue.value)->serialize());
 }
 
 // MARK: - Logging
 
 WTF::TextStream& operator<<(WTF::TextStream& ts, const DeclarationValue& declarationValue)
 {
-    Ref value = declarationValue.value;
-    return ts << value->serialize();
+    return ts << protect(declarationValue.value)->serialize();
 }
 
-} // namespace CSS
-} // namespace WebCore
+} // namespace WebCore::CSS

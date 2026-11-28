@@ -97,7 +97,7 @@ void BidiBrowserAgent::didCreatePage(WebPageProxy& page)
         return;
 
     ++it->value->pageCount;
-    page.closePage();
+    page.askClientToClose();
 }
 
 void BidiBrowserAgent::willClosePage(const WebPageProxy& page)
@@ -124,6 +124,14 @@ bool BidiBrowserAgent::isValidUserContext(const String& userContextID) const
         return true;
 
     return m_userContexts.contains(userContextID);
+}
+
+String BidiBrowserAgent::userContextForPage(const WebPageProxy& page) const
+{
+    String userContextID = toUserContextIDProtocolString(page.sessionID());
+    if (m_userContexts.contains(userContextID))
+        return userContextID;
+    return defaultUserContextID();
 }
 
 // MARK: Inspector::BidiBrowserDispatcherHandler methods.

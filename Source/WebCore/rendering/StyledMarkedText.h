@@ -26,9 +26,9 @@
 #pragma once
 
 #include "MarkedText.h"
+#include "PaintTextStyle.h"
 #include "StyleTextShadow.h"
 #include "TextDecorationPainter.h"
-#include "TextPaintStyle.h"
 
 namespace WebCore {
 
@@ -41,12 +41,11 @@ class ComputedStyle;
 
 struct StyledMarkedText final : MarkedText {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(StyledMarkedText);
-    WTF_STRUCT_OVERRIDE_DELETE_FOR_CHECKED_PTR(StyledMarkedText);
 
     struct Style {
         Color backgroundColor;
-        TextPaintStyle textStyles;
-        TextDecorationPainter::Styles textDecorationStyles;
+        Paint::TextStyle textStyles;
+        Paint::TextDecorationPainter::Styles textDecorationStyles;
         WebCore::Style::TextShadows textShadow { CSS::Keyword::None { } };
         float alpha { 1 };
     };

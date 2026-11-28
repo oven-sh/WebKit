@@ -63,53 +63,61 @@ void CoordinatedSceneState::setRootLayerChildren(Vector<Ref<CoordinatedPlatformL
 
 void CoordinatedSceneState::addLayer(CoordinatedPlatformLayer& layer)
 {
-    ASSERT(isMainRunLoop());
-    {
-        Locker locker { m_layersLock };
-        m_layers.add(layer);
-    }
+    assertIsMainThread();
+
+    m_layers.add(layer);
     m_didChangeLayers = true;
 }
 
 void CoordinatedSceneState::removeLayer(CoordinatedPlatformLayer& layer)
 {
-    ASSERT(isMainRunLoop());
-    {
-        Locker locker { m_layersLock };
-        m_layers.remove(layer);
-    }
+    assertIsMainThread();
+
+    m_layers.remove(layer);
     m_layersToRemove.add(layer);
     m_didChangeLayers = true;
 }
 
+void CoordinatedSceneState::didChangeLayerPendingScrollingPosition(CoordinatedPlatformLayer& layer)
+{
+    Locker locker { m_layersWithPendingScrollingPositionLock };
+    ASSERT(!m_layersWithPendingScrollingPosition.contains(Ref { layer }));
+    m_layersWithPendingScrollingPosition.append(layer);
+}
+
 bool CoordinatedSceneState::flush()
 {
-    ASSERT(isMainRunLoop());
+    assertIsMainThread();
 
     bool didChangeLayers = m_didChangeLayers.exchange(false);
     if (didChangeLayers) {
         Locker pendingLayersLock { m_pendingLayersLock };
-        {
-            Locker locker { m_layersLock };
-            m_pendingLayers = m_layers;
-        }
+        m_pendingLayers = m_layers;
+
         if (m_pendingLayersToRemove.isEmpty())
             m_pendingLayersToRemove = WTF::move(m_layersToRemove);
         else
             m_pendingLayersToRemove.addAll(std::exchange(m_layersToRemove, { }));
     }
 
-    flushPendingState();
-
-    return didChangeLayers;
+    bool didCommitProperties = m_rootLayer->commitPendingRenderingUpdateProperties();
+    for (Ref layer : m_layers)
+        didCommitProperties |= layer->commitPendingRenderingUpdateProperties();
+    return didChangeLayers || didCommitProperties;
 }
 
-void CoordinatedSceneState::flushPendingState()
+void CoordinatedSceneState::commitPendingScrollingPositions()
 {
     Locker stateLock { m_stateLock };
-    Locker layersLock { m_layersLock };
-    for (Ref layer : m_layers)
-        layer->flushPendingState();
+
+    Vector<Ref<CoordinatedPlatformLayer>> layers;
+    {
+        Locker pendingLayersLock { m_layersWithPendingScrollingPositionLock };
+        layers = WTF::move(m_layersWithPendingScrollingPosition);
+    }
+
+    for (Ref layer : layers)
+        layer->commitPendingScrollingPosition();
 }
 
 void CoordinatedSceneState::commitPendingLayers()
@@ -129,13 +137,6 @@ CoordinatedSceneState::ChangedPreRenderedTiles CoordinatedSceneState::flushCompo
 {
     commitPendingLayers();
 
-    {
-        Locker stateLock { m_stateLock };
-        m_rootLayer->flushPositionChanges(reasons);
-        for (auto& layer : m_committedLayers)
-            layer->flushPositionChanges(reasons);
-    }
-
     Vector<Ref<CoordinatedPlatformLayer>, 16> layersWithPendingTileUpdates;
     m_rootLayer->flushCompositingState(reasons);
     for (auto& layer : m_committedLayers) {
@@ -144,13 +145,19 @@ CoordinatedSceneState::ChangedPreRenderedTiles CoordinatedSceneState::flushCompo
             layersWithPendingTileUpdates.append(Ref { layer });
     }
 
+    {
+        Locker stateLock { m_stateLock };
+        m_rootLayer->flushScrollingPositionChanges(reasons);
+        for (auto& layer : m_committedLayers)
+            layer->flushScrollingPositionChanges(reasons);
+    }
+
     if (layersWithPendingTileUpdates.isEmpty())
         return ChangedPreRenderedTiles::No;
 
     for (auto& layer : layersWithPendingTileUpdates)
         layer->processPendingBackingStoreTileUpdates();
 
-#if USE(SKIA)
     Locker locker { m_layersWithPreRenderedTilesLock };
     bool wasEmpty = m_layersWithPreRenderedTiles.isEmpty();
     for (auto& layer : layersWithPendingTileUpdates) {
@@ -158,9 +165,6 @@ CoordinatedSceneState::ChangedPreRenderedTiles CoordinatedSceneState::flushCompo
             m_layersWithPreRenderedTiles.add(layer);
     }
     return wasEmpty && !m_layersWithPreRenderedTiles.isEmpty() ? ChangedPreRenderedTiles::Yes : ChangedPreRenderedTiles::No;
-#else
-    return ChangedPreRenderedTiles::No;
-#endif
 }
 
 void CoordinatedSceneState::invalidateCommittedLayers()
@@ -176,13 +180,10 @@ void CoordinatedSceneState::invalidateCommittedLayers()
 
 void CoordinatedSceneState::invalidate()
 {
-    ASSERT(isMainRunLoop());
+    assertIsMainThread();
+
     // Root layer doesn't have client nor backing stores to invalidate.
-    HashSet<Ref<CoordinatedPlatformLayer>> layers;
-    {
-        Locker locker { m_layersLock };
-        layers = WTF::move(m_layers);
-    }
+    auto layers = WTF::move(m_layers);
     for (Ref layer : layers)
         layer->invalidateClient();
 
@@ -192,12 +193,15 @@ void CoordinatedSceneState::invalidate()
         m_pendingLayersToRemove = { };
     }
 
-#if USE(SKIA)
+    {
+        Locker pendingLayersLock { m_layersWithPendingScrollingPositionLock };
+        m_layersWithPendingScrollingPosition = { };
+    }
+
     {
         Locker locker { m_layersWithPreRenderedTilesLock };
         m_layersWithPreRenderedTiles = { };
     }
-#endif
 }
 
 void CoordinatedSceneState::waitUntilPaintingFinished()
@@ -219,7 +223,6 @@ void CoordinatedSceneState::didPaintTile()
     m_pendingTiles--;
 }
 
-#if USE(SKIA)
 CoordinatedSceneState::ChangedPreRenderedTiles CoordinatedSceneState::didPaintPreRenderedTile(WebCore::CoordinatedPlatformLayer& layer)
 {
     Locker locker { m_layersWithPreRenderedTilesLock };
@@ -266,7 +269,6 @@ CoordinatedSceneState::ChangedPreRenderedTiles CoordinatedSceneState::processLay
     // otherwise they already scheduled a new task in the compositor.
     return wasEmpty ? ChangedPreRenderedTiles::Yes : ChangedPreRenderedTiles::No;
 }
-#endif
 
 } // namespace WebKit
 

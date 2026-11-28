@@ -30,8 +30,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 class ComputedStyle;
 class CustomProperty;
@@ -60,14 +59,13 @@ private:
     void invalidate(const AtomString&);
     void notifyAnimationsOfCustomPropertyRegistration(const AtomString&);
 
-    Scope& m_scope;
+    const CheckedRef<Scope> m_scope;
 
-    UncheckedKeyHashMap<AtomString, UniqueRef<CSSRegisteredCustomProperty>> m_propertiesFromAPI;
-    UncheckedKeyHashMap<AtomString, UniqueRef<CSSRegisteredCustomProperty>> m_propertiesFromStylesheet;
+    HashMap<AtomString, UniqueRef<CSSRegisteredCustomProperty>> m_propertiesFromAPI;
+    HashMap<AtomString, UniqueRef<CSSRegisteredCustomProperty>> m_propertiesFromStylesheet;
 
     mutable std::unique_ptr<Style::ComputedStyle> m_initialValuePrototypeStyle;
     mutable bool m_hasInvalidPrototypeStyle { false };
 };
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

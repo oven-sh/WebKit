@@ -80,7 +80,6 @@ public:
     // Consider removing these functions and having callers use size() and operator[] instead.
     unsigned length() const { return size(); }
     const CSSValue* item(unsigned index) const LIFETIME_BOUND { return index < size() ? &(*this)[index] : nullptr; }
-    const CSSValue* itemWithoutBoundsCheck(unsigned index) const LIFETIME_BOUND { return &(*this)[index]; }
 
     IterationStatus customVisitChildren(NOESCAPE const Function<IterationStatus(CSSValue&)>&) const;
 
@@ -148,7 +147,7 @@ inline const CSSValue& CSSValueContainingVector::operator[](unsigned index) cons
 {
     unsigned maxInlineSize = m_inlineStorage.size();
     if (index < maxInlineSize) {
-        ASSERT(index < m_size);
+        ASSERT_WITH_SECURITY_IMPLICATION(index < m_size);
         return *m_inlineStorage[index];
     }
     ASSERT(index < m_size);

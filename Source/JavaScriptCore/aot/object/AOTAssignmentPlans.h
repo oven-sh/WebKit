@@ -52,7 +52,7 @@ private:
     static constexpr size_t maxNumberOfNamesCompared = 8;
 
     Vector<UniquedStringImpl*> m_names;
-    UncheckedKeyHashSet<UniquedStringImpl*> m_longList;
+    HashSet<UniquedStringImpl*> m_longList;
     uint32_t m_runNumberPlusOne;
 };
 
@@ -349,9 +349,9 @@ private:
     unsigned m_shiftForMappedCopies { 0 };
     unsigned m_numberOfMappedCopiesTaken { 0 };
     unsigned m_nextMappedCopyReplaced { 0 };
-    UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<FieldMap>, 1>> m_fieldMaps;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<ExcludedNameList>> m_excludedListsByRun;
-    UncheckedKeyHashMap<UniquedStringImpl* const*, const ExcludedNameList*> m_excludedListsByAddress;
+    HashMap<uint64_t, Vector<std::unique_ptr<FieldMap>, 1>> m_fieldMaps;
+    HashMap<uint32_t, std::unique_ptr<ExcludedNameList>> m_excludedListsByRun;
+    HashMap<UniquedStringImpl* const*, const ExcludedNameList*> m_excludedListsByAddress;
     RememberedSlotSet m_writes;
     static constexpr unsigned maxNumberOfWrittenPlansListed = 1024;
     Vector<AssignmentPlan*, 16> m_writtenPlans;

@@ -82,6 +82,9 @@ public:
         return position() == ItemPosition::Stretch;
     }
 
+    // Must resolve Auto before calling. Resolves positional and baseline values to Start, Center or End of the container. Normal, stretch and legacy are returned as-is.
+    NODELETE static ItemPosition resolvePositionalAlignment(ItemPosition, LogicalBoxAxis containerAxis, WritingMode containerWritingMode, WritingMode selfWritingMode);
+
     // Must resolve Auto before calling. Normal treated as Start.
     // Returns position adjustment from container's start edge.
     NODELETE static LayoutUnit adjustmentFromStartEdge(LayoutUnit extraSpace, ItemPosition alignmentPosition, LogicalBoxAxis containerAxis, WritingMode containerWritingMode, WritingMode selfWritingMode);

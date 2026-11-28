@@ -42,7 +42,7 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LegacyRenderSVGResourcePattern);
 
-LegacyRenderSVGResourcePattern::LegacyRenderSVGResourcePattern(SVGPatternElement& element, Style::ComputedStyle&& style)
+LegacyRenderSVGResourcePattern::LegacyRenderSVGResourcePattern(SVGPatternElement& element, UniqueRef<Style::ComputedStyle>&& style)
     : LegacyRenderSVGResourceContainer(Type::LegacySVGResourcePattern, element, WTF::move(style))
 {
 }
@@ -180,28 +180,21 @@ auto LegacyRenderSVGResourcePattern::applyResource(RenderElement& renderer, cons
         context->setAlpha(Style::evaluate<float>(style.fillOpacity()));
         context->setFillPattern(*patternData->pattern);
         context->setFillRule(style.fillRule());
-    } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
-        if (style.vectorEffect() == VectorEffect::NonScalingStroke)
-            patternData->pattern->setPatternSpaceTransform(transformOnNonScalingStroke(&renderer, patternData->transform));
-        context->setAlpha(Style::evaluate<float>(style.strokeOpacity()));
-        context->setStrokePattern(*patternData->pattern);
-        SVGRenderSupport::applyStrokeStyleToContext(*context, style, renderer);
-    }
-
-    if (resourceMode.contains(RenderSVGResourceMode::ApplyToText)) {
-        if (resourceMode.contains(RenderSVGResourceMode::ApplyToFill)) {
+        if (resourceMode.contains(RenderSVGResourceMode::ApplyToText))
             context->setTextDrawingMode(TextDrawingMode::Fill);
-
-#if USE(CG)
-            context->applyFillPattern();
-#endif
-        } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
-            context->setTextDrawingMode(TextDrawingMode::Stroke);
-
-#if USE(CG)
-            context->applyStrokePattern();
-#endif
+    } else if (resourceMode.contains(RenderSVGResourceMode::ApplyToStroke)) {
+        RefPtr pattern = patternData->pattern;
+        if (style.vectorEffect() == VectorEffect::NonScalingStroke) {
+            auto strokeTransform = transformOnNonScalingStroke(&renderer, patternData->transform);
+            if (!patternData->nonScalingStrokePattern || patternData->nonScalingStrokePattern->patternSpaceTransform() != strokeTransform)
+                patternData->nonScalingStrokePattern = pattern->withPatternSpaceTransform(strokeTransform);
+            pattern = patternData->nonScalingStrokePattern;
         }
+        context->setAlpha(Style::evaluate<float>(style.strokeOpacity()));
+        context->setStrokePattern(pattern.releaseNonNull());
+        if (resourceMode.contains(RenderSVGResourceMode::ApplyToText))
+            context->setTextDrawingMode(TextDrawingMode::Stroke);
+        SVGRenderSupport::applyStrokeStyleToContext(*context, style, renderer);
     }
 
     return { ApplyResult::ResourceApplied };
@@ -271,11 +264,12 @@ RefPtr<ImageBuffer> LegacyRenderSVGResourcePattern::createTileImage(GraphicsCont
 
     // Draw the content into the ImageBuffer.
     for (Ref child : childrenOfType<SVGElement>(*attributes.patternContentElement())) {
-        if (!child->renderer())
+        CheckedPtr renderer = child->renderer();
+        if (!renderer)
             continue;
-        if (child->renderer()->needsLayout())
+        if (renderer->needsLayout())
             return nullptr;
-        SVGRenderingContext::renderSubtreeToContext(tileImageContext, *child->renderer(), contentTransformation);
+        SVGRenderingContext::renderSubtreeToContext(tileImageContext, *renderer, contentTransformation);
     }
 
     return tileImage;

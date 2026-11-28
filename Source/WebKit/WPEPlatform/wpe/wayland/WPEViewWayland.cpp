@@ -598,7 +598,8 @@ static gboolean wpeViewWaylandRenderBuffer(WPEView* view, WPEBuffer* buffer, con
     } else
         wl_surface_damage(wlSurface, 0, 0, INT32_MAX, INT32_MAX);
 
-    RELEASE_ASSERT(!priv->frameCallback);
+    // The previous buffer may not have been acknowledged yet; only the latest one is reported as rendered.
+    g_clear_pointer(&priv->frameCallback, wl_callback_destroy);
     priv->frameCallback = wl_surface_frame(wlSurface);
     wl_callback_add_listener(priv->frameCallback, &frameListener, view);
 
@@ -659,6 +660,9 @@ static gboolean wpeViewWaylandLockPointer(WPEView* view)
         return FALSE;
 
     WPE::WaylandSeat* seat = wpeDisplayWaylandGetSeat(display);
+    if (!seat)
+        return FALSE;
+
     priv->savedPointerModifiers = seat->pointerModifiers();
     priv->savedPointerCoords = seat->pointerCoords();
     struct wl_pointer* wlPointer = wl_seat_get_pointer(seat->seat());

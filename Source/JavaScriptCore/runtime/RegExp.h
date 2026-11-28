@@ -253,6 +253,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
     std::optional<Yarr::CharacterSetView> specificCharacterClass() const;
 
+    void setIsComingFromLiteral() { m_isComingFromLiteral = true; }
+
     const WTF::BitSet<256>* firstCharacterBitmap(FirstCharacterFilterPosition);
 
 private:
@@ -322,7 +324,7 @@ private:
         // This first element of the RHS vector is the subpatternId in the non-duplicate case.
         // For the duplicate case, the first element is the namedCaptureGroupId.
         // The remaining elements are the subpatternIds for each of the duplicate groups.
-        UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
+        HashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
 #if USE(BUN_JSC_ADDITIONS)
         // Weak: the VM's cache hands one RegExp to every realm that writes the same pattern, and a Structure keeps its whole realm alive.
         Weak<Structure> m_cachedGroupsStructure;
@@ -335,7 +337,10 @@ private:
     String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
-    Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
+    // Bun: upstream's two flags share the byte of m_specificPattern. Behind m_imageRecordNumber they began a ninth byte, and the cell took 96 bytes in place of 80.
+    Yarr::SpecificPattern m_specificPattern : 6 { Yarr::SpecificPattern::None };
+    bool m_isComingFromLiteral : 1 { false };
+    mutable bool m_sourceIsKnownToBePattern : 1 { false };
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
@@ -360,5 +365,9 @@ private:
     unsigned m_rtMatchFoundCount { 0 };
 #endif
 };
+
+#if CPU(ADDRESS64) && ENABLE(YARR_JIT) && !ENABLE(REGEXP_TRACING)
+static_assert(sizeof(RegExp) <= 80);
+#endif
 
 } // namespace JSC

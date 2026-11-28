@@ -115,7 +115,7 @@ std::optional<FrameTable> collectFrames(const LinkedFunctions& functions, BuildC
     const uint64_t unwindableRegisters = unwindableRegisterMask();
     FrameTable result;
     result.frameOf.reserveInitialCapacity(functions.size());
-    UncheckedKeyHashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbers;
+    HashMap<uint64_t, uint32_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbers;
     for (size_t position = 0; position < shapes.size(); ++position) {
         const FrameShape& shape = shapes[position];
         if (uint64_t unknownRegisters = shape.calleeSaveRegisters & ~unwindableRegisters) {
@@ -138,7 +138,7 @@ Vector<uint8_t> ImageFunctions::encode(std::span<const uint32_t> sideTables, std
     Vector<Number24> listedNumbers;
     Vector<uint16_t> steps;
     Vector<uint32_t> listedPlaces;
-    UncheckedKeyHashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOfPlace;
+    HashMap<uint32_t, uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> entryOfPlace;
     uint32_t firstPlaceAfter = 0;
     for (size_t index = 0; index < numbers.size(); ++index) {
         size_t entry = index % functionsInGroup;

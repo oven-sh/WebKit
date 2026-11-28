@@ -820,11 +820,11 @@ private:
     TypeID typeOfLiteralAndWhatIsCreatedBelow(FunctionID member);
     bool writesWhatIsExpected() const { return m_flow.reading() == WhatUnseenCodeDoes::OnlyReadsAndCalls; }
     Vector<LinkedGetterAtRead> m_gettersReadOffTables;
-    using LinkedLayouts = UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    using LinkedLayouts = HashMap<uint32_t, Vector<LayoutID, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
     LinkedLayouts m_layoutsAboveLayouts;
     LinkedLayouts m_layoutsBelowLayouts;
     static constexpr unsigned maxLinkedLayoutDepth = 4;
-    UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsStoredUnderKeys;
+    HashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_methodsStoredUnderKeys;
     bool holdsOnlyInstancesThatStayAsMade(const LinkType& type) const { return holdsOnlyPlainInstances(type) && holdsNothingUnder(type, SlotOfContents::mayHaveNumberNames()); }
     bool holdsOnlyPlainInstances(const LinkType& type) const
     {
@@ -900,7 +900,7 @@ private:
     LinkTables& m_tables;
     uint32_t m_numberOfFunctions;
     Vector<LayoutID> m_literalsThatMembersAreWrittenIn;
-    UncheckedKeyHashMap<uint32_t, Vector<LayoutID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_literalsWithWhatIsCreatedBelow;
+    HashMap<uint32_t, Vector<LayoutID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_literalsWithWhatIsCreatedBelow;
 
     BitVector m_functionsEnteredByHost;
     BitVector m_functionsThatNoSummaryNames;

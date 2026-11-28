@@ -147,7 +147,7 @@ static bool processHasActiveRunTimeLimitation()
 
 - (void)_notifyAssertionsOfImminentSuspension
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     // Note that we don't expect clients to register new assertions when getting notified that the UI assertion will expire imminently.
     // If clients were to do so, then those new assertions would not get notified of the imminent suspension.
@@ -188,7 +188,7 @@ static bool processHasActiveRunTimeLimitation()
 
 - (void)_updateBackgroundTask
 {
-    if (!_assertionsNeedingBackgroundTask.isEmptyIgnoringNullReferences() && (![self _hasBackgroundTask] || _backgroundTaskWasInvalidated)) {
+    if (!_assertionsNeedingBackgroundTask.computeIsEmpty() && (![self _hasBackgroundTask] || _backgroundTaskWasInvalidated)) {
         if (processHasActiveRunTimeLimitation()) {
             RELEASE_LOG(ProcessSuspension, "%p - WKProcessAssertionBackgroundTaskManager: Ignored request to start a new background task because RunningBoard has already started the expiration timer", self);
             return;
@@ -203,11 +203,11 @@ static bool processHasActiveRunTimeLimitation()
         _backgroundTaskWasInvalidated = false;
         [_backgroundTask acquireWithInvalidationHandler:nil];
         RELEASE_LOG(ProcessSuspension, "WKProcessAssertionBackgroundTaskManager: Took a FinishTaskInterruptable assertion for own process");
-    } else if (_assertionsNeedingBackgroundTask.isEmptyIgnoringNullReferences()) {
+    } else if (_assertionsNeedingBackgroundTask.computeIsEmpty()) {
         // Release the background task asynchronously because releasing the background task may destroy the ProcessThrottler and we don't
         // want it to get destroyed while in the middle of updating its assertion.
         RunLoop::mainSingleton().dispatch([self, strongSelf = retainPtr(self)] {
-            if (_assertionsNeedingBackgroundTask.isEmptyIgnoringNullReferences())
+            if (_assertionsNeedingBackgroundTask.computeIsEmpty())
                 [self _releaseBackgroundTask];
         });
     }
@@ -238,7 +238,7 @@ static bool processHasActiveRunTimeLimitation()
 
 - (void)_handleBackgroundTaskExpirationOnMainThread
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     auto remainingTime = [RBSProcessHandle currentProcess].activeLimitations.runTime;
     RELEASE_LOG(ProcessSuspension, "WKProcessAssertionBackgroundTaskManager: _handleBackgroundTaskExpirationOnMainThread (remainingTime=%g).", remainingTime);
@@ -437,7 +437,7 @@ void ProcessAssertion::init(const String& environmentIdentifier)
     ASCIILiteral runningBoardAssertionName = runningBoardNameForAssertionType(m_assertionType);
     ASSERT(!runningBoardAssertionName.isEmpty());
     if (m_pid <= 0) {
-        RELEASE_LOG_ERROR(ProcessSuspension, "%p - ProcessAssertion: Failed to acquire RBS %{public}s assertion '%{public}s' for process because PID %d is invalid", this, runningBoardAssertionName.characters(), m_reason.utf8(), m_pid);
+        RELEASE_LOG_ERROR(ProcessSuspension, "%p - ProcessAssertion: Failed to acquire RBS %{public}s assertion '%{public}s' for process because PID %d is invalid", this, runningBoardAssertionName.characters(), makeUTF8CString(m_reason), m_pid);
         m_wasInvalidated = true;
         return;
     }
@@ -494,7 +494,7 @@ void ProcessAssertion::acquireAsync(CompletionHandler<void()>&& completionHandle
 
 void ProcessAssertion::acquireSync()
 {
-    RELEASE_LOG(ProcessSuspension, "%p - ProcessAssertion::acquireSync Trying to take RBS assertion '%{public}s' for process with PID=%d", this, m_reason.utf8(), m_pid);
+    RELEASE_LOG(ProcessSuspension, "%p - ProcessAssertion::acquireSync Trying to take RBS assertion '%{public}s' for process with PID=%d", this, makeUTF8CString(m_reason), m_pid);
 #if USE(EXTENSIONKIT)
     if (m_process && m_capability && m_capability->hasPlatformCapability()) {
         Locker locker { s_capabilityLock };
@@ -510,18 +510,18 @@ void ProcessAssertion::acquireSync()
 #endif
     NSError *acquisitionError = nil;
     if (![m_rbsAssertion acquireWithError:&acquisitionError]) {
-        RELEASE_LOG_ERROR(ProcessSuspension, "%p - ProcessAssertion::acquireSync Failed to acquire RBS assertion '%{public}s' for process with PID=%d, error: %{public}@", this, m_reason.utf8(), m_pid, acquisitionError);
+        RELEASE_LOG_ERROR(ProcessSuspension, "%p - ProcessAssertion::acquireSync Failed to acquire RBS assertion '%{public}s' for process with PID=%d, error: %{public}@", this, makeUTF8CString(m_reason), m_pid, acquisitionError);
         RunLoop::mainSingleton().dispatch([weakThis = ThreadSafeWeakPtr { *this }] {
             if (auto protectedThis = weakThis.get())
                 protectedThis->processAssertionWasInvalidated();
         });
     } else
-        RELEASE_LOG(ProcessSuspension, "%p - ProcessAssertion::acquireSync Successfully took RBS assertion '%{public}s' for process with PID=%d", this, m_reason.utf8(), m_pid);
+        RELEASE_LOG(ProcessSuspension, "%p - ProcessAssertion::acquireSync Successfully took RBS assertion '%{public}s' for process with PID=%d", this, makeUTF8CString(m_reason), m_pid);
 }
 
 ProcessAssertion::~ProcessAssertion()
 {
-    RELEASE_LOG(ProcessSuspension, "%p - ~ProcessAssertion: Releasing process assertion '%{public}s' for process with PID=%d", this, m_reason.utf8(), m_pid);
+    RELEASE_LOG(ProcessSuspension, "%p - ~ProcessAssertion: Releasing process assertion '%{public}s' for process with PID=%d", this, makeUTF8CString(m_reason), m_pid);
 
     if (m_rbsAssertion) {
         m_delegate.get().invalidationCallback = nil;
@@ -548,7 +548,7 @@ void ProcessAssertion::processAssertionWillBeInvalidated()
 
 void ProcessAssertion::processAssertionWasInvalidated()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
     RELEASE_LOG(ProcessSuspension, "%p - ProcessAssertion::processAssertionWasInvalidated() PID=%d", this, m_pid);
 
     m_wasInvalidated = true;
@@ -616,7 +616,7 @@ void ProcessAndUIAssertion::uiAssertionWillExpireImminently()
 
 void ProcessAndUIAssertion::processAssertionWasInvalidated()
 {
-    ASSERT(RunLoop::isMain());
+    RELEASE_ASSERT(RunLoop::isMain());
 
     ThreadSafeWeakPtr weakThis { *this };
     ProcessAssertion::processAssertionWasInvalidated();

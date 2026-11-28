@@ -35,6 +35,8 @@
 #include "WebTransportSendStreamStats.h"
 #include "WritableStreamSink.h"
 
+#include <wtf/Borrow.h>
+
 namespace WebCore {
 
 Ref<WorkerWebTransportSession> WorkerWebTransportSession::create(ScriptExecutionContextIdentifier contextID, WebTransportSessionClient& client)
@@ -43,7 +45,10 @@ Ref<WorkerWebTransportSession> WorkerWebTransportSession::create(ScriptExecution
     return adoptRef(*new WorkerWebTransportSession(contextID, client));
 }
 
-WorkerWebTransportSession::~WorkerWebTransportSession() = default;
+WorkerWebTransportSession::~WorkerWebTransportSession()
+{
+    m_workerThread = anyThreadLike;
+}
 
 WorkerWebTransportSession::WorkerWebTransportSession(ScriptExecutionContextIdentifier contextID, WebTransportSessionClient& client)
     : m_contextID(contextID)
@@ -65,7 +70,7 @@ void WorkerWebTransportSession::receiveDatagram(std::span<const uint8_t> span, b
         RefPtr client = weakClient.get();
         if (!client)
             return;
-        client->receiveDatagram(vector.span(), withFin, WTF::move(exception));
+        client->receiveDatagram(borrow(vector)->span(), withFin, WTF::move(exception));
     });
 }
 
@@ -120,7 +125,7 @@ void WorkerWebTransportSession::streamReceiveBytes(WebTransportStreamIdentifier 
         RefPtr client = weakClient.get();
         if (!client)
             return;
-        client->streamReceiveBytes(identifier, data.span(), withFin, WTF::move(exception));
+        client->streamReceiveBytes(identifier, borrow(data)->span(), withFin, WTF::move(exception));
     });
 }
 
@@ -148,7 +153,7 @@ void WorkerWebTransportSession::streamSendError(WebTransportStreamIdentifier ide
 
 Ref<WebTransportSessionInitializationPromise> WorkerWebTransportSession::initialize(ScriptExecutionContext& context, const URL& url, const WebTransportOptions& options, const Vector<KeyValuePair<String, String>>& additionalHeaders, const ClientOrigin& origin)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->initialize(context, url, options, additionalHeaders, origin);
     return WebTransportSessionInitializationPromise::createAndReject();
@@ -156,7 +161,7 @@ Ref<WebTransportSessionInitializationPromise> WorkerWebTransportSession::initial
 
 Ref<WebTransportSendPromise> WorkerWebTransportSession::sendDatagram(std::optional<WebTransportSendGroupIdentifier> identifier, std::span<const uint8_t> datagram)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->sendDatagram(identifier, datagram);
     return WebTransportSendPromise::createAndReject();
@@ -164,7 +169,7 @@ Ref<WebTransportSendPromise> WorkerWebTransportSession::sendDatagram(std::option
 
 Ref<WebTransportStreamPromise> WorkerWebTransportSession::createOutgoingUnidirectionalStream()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->createOutgoingUnidirectionalStream();
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -173,7 +178,7 @@ Ref<WebTransportStreamPromise> WorkerWebTransportSession::createOutgoingUnidirec
 
 Ref<WebTransportStreamPromise> WorkerWebTransportSession::createBidirectionalStream()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->createBidirectionalStream();
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -182,7 +187,7 @@ Ref<WebTransportStreamPromise> WorkerWebTransportSession::createBidirectionalStr
 
 Ref<WebTransportSendPromise> WorkerWebTransportSession::streamSendBytes(WebTransportStreamIdentifier identifier, std::span<const uint8_t> bytes, bool withFin)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->streamSendBytes(identifier, bytes, withFin);
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -191,7 +196,7 @@ Ref<WebTransportSendPromise> WorkerWebTransportSession::streamSendBytes(WebTrans
 
 Ref<WebTransportConnectionStatsPromise> WorkerWebTransportSession::getStats()
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->getStats();
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -200,7 +205,7 @@ Ref<WebTransportConnectionStatsPromise> WorkerWebTransportSession::getStats()
 
 Ref<WebTransportSendStreamStatsPromise> WorkerWebTransportSession::getSendStreamStats(WebTransportStreamIdentifier identifier)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->getSendStreamStats(identifier);
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -209,7 +214,7 @@ Ref<WebTransportSendStreamStatsPromise> WorkerWebTransportSession::getSendStream
 
 Ref<WebTransportReceiveStreamStatsPromise> WorkerWebTransportSession::getReceiveStreamStats(WebTransportStreamIdentifier identifier)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->getReceiveStreamStats(identifier);
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -218,7 +223,7 @@ Ref<WebTransportReceiveStreamStatsPromise> WorkerWebTransportSession::getReceive
 
 Ref<WebTransportSendStreamStatsPromise> WorkerWebTransportSession::getSendGroupStats(WebTransportSendGroupIdentifier identifier)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->getSendGroupStats(identifier);
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -227,7 +232,7 @@ Ref<WebTransportSendStreamStatsPromise> WorkerWebTransportSession::getSendGroupS
 
 Ref<WebTransportExportKeyingMaterialPromise> WorkerWebTransportSession::exportKeyingMaterial(std::span<const uint8_t> label, std::span<const uint8_t> context, uint32_t outputLength)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         return session->exportKeyingMaterial(label, context, outputLength);
     ASSERT_NOT_REACHED_WITH_MESSAGE("Session should be set up before use then never removed.");
@@ -236,7 +241,7 @@ Ref<WebTransportExportKeyingMaterialPromise> WorkerWebTransportSession::exportKe
 
 void WorkerWebTransportSession::terminate(WebTransportSessionErrorCode code, UTF8CString&& reason)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->terminate(code, WTF::move(reason));
     else
@@ -245,7 +250,7 @@ void WorkerWebTransportSession::terminate(WebTransportSessionErrorCode code, UTF
 
 void WorkerWebTransportSession::cancelReceiveStream(WebTransportStreamIdentifier identifier, std::optional<WebTransportStreamErrorCode> errorCode)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->cancelReceiveStream(identifier, errorCode);
     else
@@ -254,7 +259,7 @@ void WorkerWebTransportSession::cancelReceiveStream(WebTransportStreamIdentifier
 
 void WorkerWebTransportSession::cancelSendStream(WebTransportStreamIdentifier identifier, std::optional<WebTransportStreamErrorCode> errorCode)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->cancelSendStream(identifier, errorCode);
     else
@@ -263,7 +268,7 @@ void WorkerWebTransportSession::cancelSendStream(WebTransportStreamIdentifier id
 
 void WorkerWebTransportSession::destroyStream(WebTransportStreamIdentifier identifier, std::optional<WebTransportStreamErrorCode> errorCode)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->destroyStream(identifier, errorCode);
     else
@@ -272,7 +277,7 @@ void WorkerWebTransportSession::destroyStream(WebTransportStreamIdentifier ident
 
 void WorkerWebTransportSession::datagramIncomingMaxAgeUpdated(std::optional<double> maxAge)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->datagramIncomingMaxAgeUpdated(maxAge);
     else
@@ -281,7 +286,7 @@ void WorkerWebTransportSession::datagramIncomingMaxAgeUpdated(std::optional<doub
 
 void WorkerWebTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<double> maxAge)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->datagramOutgoingMaxAgeUpdated(maxAge);
     else
@@ -290,7 +295,7 @@ void WorkerWebTransportSession::datagramOutgoingMaxAgeUpdated(std::optional<doub
 
 void WorkerWebTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->incomingMaxBufferedDatagramsUpdated(value);
     else
@@ -299,7 +304,7 @@ void WorkerWebTransportSession::incomingMaxBufferedDatagramsUpdated(uint32_t val
 
 void WorkerWebTransportSession::outgoingMaxBufferedDatagramsUpdated(uint32_t value)
 {
-    ASSERT(!RunLoop::isMain());
+    assertIsCurrent(m_workerThread);
     if (RefPtr session = m_session)
         session->outgoingMaxBufferedDatagramsUpdated(value);
     else

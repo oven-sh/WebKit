@@ -481,11 +481,6 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
         let webkitThreadMin = Infinity;
         let unknownThreadMin = Infinity;
 
-        let average = 0;
-        let mainThreadAverage = 0;
-        let webkitThreadAverage = 0;
-        let unknownThreadAverage = 0;
-
         for (let record of visibleRecords) {
             let time = record.timestamp;
             let {usage, mainThreadUsage, workerThreadUsage, webkitThreadUsage, unknownThreadUsage} = record;
@@ -525,13 +520,10 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
             webkitThreadMin = Math.min(webkitThreadMin, webkitThreadUsage);
             unknownThreadMin = Math.min(unknownThreadMin, unknownThreadUsage);
 
-            average += usage;
-            mainThreadAverage += mainThreadUsage;
-            webkitThreadAverage += webkitThreadUsage;
-            unknownThreadAverage += unknownThreadUsage;
-
             let workersSeenInLastRecord = workersSeenInCurrentRecord;
             workersSeenInCurrentRecord = new Set;
+
+            let timeInRange = Math.max(Math.min(record.endTime, visibleEndTime) - Math.max(record.startTime, graphStartTime), 0);
 
             if (record.workersData && record.workersData.length) {
                 for (let {targetId, usage} of record.workersData) {
@@ -541,6 +533,8 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
                         workerData = {
                             discontinuities: originalDiscontinuities.slice(),
                             recordsCount: 0,
+                            weightedSum: 0,
+                            totalTime: 0,
                             dataPoints: [],
                             min: Infinity,
                             max: -Infinity,
@@ -570,6 +564,8 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
 
                     workerData.dataPoints.push({time, usage});
                     workerData.recordsCount += 1;
+                    workerData.weightedSum += usage * timeInRange;
+                    workerData.totalTime += timeInRange;
                     workerData.max = Math.max(workerData.max, usage);
                     workerData.min = Math.min(workerData.min, usage);
                     workerData.average += usage;
@@ -587,13 +583,16 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
             }
         }
 
-        average /= visibleRecords.length;
-        mainThreadAverage /= visibleRecords.length;
-        webkitThreadAverage /= visibleRecords.length;
-        unknownThreadAverage /= visibleRecords.length;
+        // Weight each record by the time it overlaps the visible range, instead of a plain mean of
+        // records, so the records before the start and after the end don't count as if fully visible.
+        let average = WI.Timeline.timeWeightedAverage(visibleRecords, graphStartTime, visibleEndTime, (record) => record.usage);
+        let mainThreadAverage = WI.Timeline.timeWeightedAverage(visibleRecords, graphStartTime, visibleEndTime, (record) => record.mainThreadUsage);
+        let webkitThreadAverage = WI.Timeline.timeWeightedAverage(visibleRecords, graphStartTime, visibleEndTime, (record) => record.webkitThreadUsage);
+        let unknownThreadAverage = WI.Timeline.timeWeightedAverage(visibleRecords, graphStartTime, visibleEndTime, (record) => record.unknownThreadUsage);
 
         for (let workerData of workersDataMap.values()) {
-            workerData.average = workerData.average / workerData.recordsCount;
+            // Weight each record by the time it overlaps the visible range, like `WI.Timeline.timeWeightedAverage`.
+            workerData.average = workerData.totalTime ? workerData.weightedSum / workerData.totalTime : (workerData.recordsCount ? workerData.average / workerData.recordsCount : 0);
             if (workerData.max > workerMax)
                 workerMax = workerData.max;
         }
@@ -602,6 +601,14 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
         // only be extended to the start of the discontinuity.
         if (discontinuities.length)
             visibleEndTime = discontinuities[0].startTime;
+
+        // The last data point is extended to `visibleEndTime`, so don't let the graph
+        // show data past the end of the last received record, matching the overview graph.
+        let lastRecord = this.representedObject.records.lastValue;
+        if (lastRecord && lastRecord.endTime < visibleEndTime)
+            visibleEndTime = lastRecord.endTime;
+
+        this._visibleEndTimeInLayout = visibleEndTime;
 
         function bestThreadLayoutMax(value) {
             if (value > 100)
@@ -1181,7 +1188,7 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
         let possibleRepeatingTimers = new Set;
 
         let scriptTimeline = this._recording.timelineForRecordType(WI.TimelineRecord.Type.Script);
-        let scriptRecords = scriptTimeline ? scriptTimeline.recordsInTimeRange(startTime, endTime, {includeRecordBeforeStart: true}) : [];
+        let scriptRecords = scriptTimeline ? scriptTimeline.mainThreadRecordsInTimeRange(startTime, endTime, {includeRecordBeforeStart: true}) : [];
         scriptRecords = scriptRecords.filter((record) => {
             // Return true for event types that define script entries/exits.
             // Return false for events with no time ranges or if they are contained in other events.
@@ -1600,7 +1607,7 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
         }
 
         let scriptTimeline = this._recording.timelineForRecordType(WI.TimelineRecord.Type.Script);
-        let scriptRecords = scriptTimeline ? scriptTimeline.recordsInTimeRange(startTime, endTime, {includeRecordBeforeStart: true}) : [];
+        let scriptRecords = scriptTimeline ? scriptTimeline.mainThreadRecordsInTimeRange(startTime, endTime, {includeRecordBeforeStart: true}) : [];
         scriptRecords = scriptRecords.filter((record) => {
             switch (record.eventType) {
             case WI.ScriptTimelineRecord.EventType.ScriptEvaluated:
@@ -1703,8 +1710,9 @@ WI.CPUTimelineView = class CPUTimelineView extends WI.TimelineView
             }
         }
 
-        // Snap to end time if closer.
-        let visibleEndTime = Math.min(this.endTime, this.currentTime);
+        // Snap to end time if closer. Use the end time the graph was drawn with, so the
+        // overlay cannot snap past the clamped end of the graph.
+        let visibleEndTime = this._visibleEndTimeInLayout ?? (Math.min(this.endTime, this.currentTime) || this.endTime);
         let distance = Math.abs(time - visibleEndTime);
         if (distance < nearestDistance) {
             bestTime = visibleEndTime;

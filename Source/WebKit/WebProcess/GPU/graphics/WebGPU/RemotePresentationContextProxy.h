@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteGPUProxy.h"
+#include "RemoteTextureProxy.h"
 #include "WebGPUIdentifier.h"
 #include <WebCore/WebGPUCppAPI.h>
 #include <array>
@@ -39,26 +40,27 @@ class NativeImage;
 
 namespace WebKit::WebGPU {
 
-class ConvertToBackingContext;
 class RemoteTextureProxy;
 
 class RemotePresentationContextProxy final : public ::WebGPU::PresentationContext {
     WTF_MAKE_TZONE_ALLOCATED(RemotePresentationContextProxy);
 public:
-    static Ref<RemotePresentationContextProxy> create(RemoteGPUProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+    static Ref<RemotePresentationContextProxy> create(RemoteGPUProxy& parent, WebGPUPresentationContextIdentifier identifier)
     {
-        return adoptRef(*new RemotePresentationContextProxy(parent, convertToBackingContext, identifier));
+        return adoptRef(*new RemotePresentationContextProxy(parent, identifier));
     }
 
     virtual ~RemotePresentationContextProxy();
 
     RemoteGPUProxy& parent() const { return m_parent; }
     RemoteGPUProxy& root() { return m_parent->root(); }
+    WebGPUPresentationContextIdentifier backing() const { return m_backing; }
 
     void configure(const ::WebGPU::CanvasConfiguration&) final;
     void unconfigure() final;
     void present(uint32_t frameIndex) final;
     RefPtr<::WebGPU::Texture> getCurrentTexture(uint32_t) final;
+    void renderBufferWasReplaced(uint32_t frameIndex) final;
     Seconds lastFrameGPUCost() const final;
     Seconds lastFramePresentStall() const final;
 #if PLATFORM(COCOA)
@@ -68,16 +70,12 @@ public:
     bool isValid() const final;
 
 private:
-    friend class DowncastConvertToBackingContext;
-
-    RemotePresentationContextProxy(RemoteGPUProxy&, ConvertToBackingContext&, WebGPUIdentifier);
+    RemotePresentationContextProxy(RemoteGPUProxy&, WebGPUPresentationContextIdentifier);
 
     RemotePresentationContextProxy(const RemotePresentationContextProxy&) = delete;
     RemotePresentationContextProxy(RemotePresentationContextProxy&&) = delete;
     RemotePresentationContextProxy& operator=(const RemotePresentationContextProxy&) = delete;
     RemotePresentationContextProxy& operator=(RemotePresentationContextProxy&&) = delete;
-
-    WebGPUIdentifier backing() const { return m_backing; }
 
     template<typename T>
     [[nodiscard]] IPC::Error send(T&& message)
@@ -85,11 +83,15 @@ private:
         return protect(root().streamClientConnection())->send(std::forward<T>(message), backing());
     }
 
-    WebGPUIdentifier m_backing;
-    const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    WebGPUPresentationContextIdentifier m_backing;
     const Ref<RemoteGPUProxy> m_parent;
     static constexpr size_t textureCount = 3;
     std::array<RefPtr<RemoteTextureProxy>, textureCount> m_currentTexture;
+    // The properties of the textures of the current configuration, as configured: the GPU Process
+    // may clamp the size or replace an unsupported format.
+    RemoteTextureProxy::Properties m_textureProperties;
+    // The device of the current configuration, which the textures belong to.
+    RefPtr<RemoteDeviceProxy> m_configuredDevice;
 };
 
 } // namespace WebKit::WebGPU

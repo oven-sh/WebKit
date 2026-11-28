@@ -31,9 +31,7 @@
 
 #if ENABLE(CONTENT_EXTENSIONS)
 
-namespace WebCore {
-
-namespace ContentExtensions {
+namespace WebCore::ContentExtensions {
 
 // A ImmutableNFANodeBuilder let you build an NFA node by adding states and linking with other nodes.
 // When a builder is destructed, all its properties are finalized into the NFA. Using the NFA with a live
@@ -41,7 +39,7 @@ namespace ContentExtensions {
 template <typename CharacterType, typename ActionType>
 class ImmutableNFANodeBuilder {
     typedef ImmutableNFA<CharacterType, ActionType> TypedImmutableNFA;
-    typedef HashSet<uint32_t, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> TargetSet;
+    using TargetSet = HashSet<uint32_t>;
 public:
     ImmutableNFANodeBuilder() { }
 
@@ -222,12 +220,11 @@ private:
     TypedImmutableNFA* m_immutableNFA { nullptr };
     MutableRangeList<CharacterType, TargetSet> m_ranges;
     TargetSet m_epsilonTransitionTargets;
-    HashSet<ActionType, IntHash<ActionType>, WTF::UnsignedWithZeroKeyHashTraits<ActionType>> m_actions;
+    HashSet<ActionType> m_actions;
     uint32_t m_nodeId;
     bool m_finalized { true };
 };
 
-} // namespace ContentExtensions
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

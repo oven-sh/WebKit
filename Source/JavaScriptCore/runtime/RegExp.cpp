@@ -524,7 +524,7 @@ bool RegExp::takeCodeFromImage(VM& vm)
     const AOT::ImageRegExp* record = imageRecord();
     if (!record || record->form() != AOT::RegExpRecordForm::Code)
         return false;
-    if (!hasCode())
+    if (!hasCode() && !m_isComingFromLiteral)
         vm.regExpCache()->addToStrongCache(this);
     AOT::countEvent(vm, record->isLiteral ? AOT::RuntimeCounterID::RegExpLiteralsGivenCode : AOT::RuntimeCounterID::PredictedRegExpsGivenCode);
     auto entrypoints = AOT::regExpEntrypointsOf(vm, *record);
@@ -658,7 +658,8 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
-        vm->regExpCache()->addToStrongCache(this);
+        if (!m_isComingFromLiteral)
+            vm->regExpCache()->addToStrongCache(this);
         m_state = ByteCode;
     }
 
@@ -758,7 +759,8 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
     if (!hasCode()) {
         ASSERT(m_state == NotCompiled);
-        vm->regExpCache()->addToStrongCache(this);
+        if (!m_isComingFromLiteral)
+            vm->regExpCache()->addToStrongCache(this);
         m_state = ByteCode;
     }
 
@@ -902,7 +904,7 @@ void RegExp::matchCompareWithInterpreter(StringView s, int startOffset, int* off
         dataLog("RegExp Discrepency for ", toSourceString(), "\n    string input ");
         unsigned segmentLen = s.length() - static_cast<unsigned>(startOffset);
 
-        SAFE_DATALOGF((segmentLen < 150) ? "\"%s\"\n" : "\"%148s...\"\n", s.utf8() + startOffset);
+        SAFE_DATALOGF((segmentLen < 150) ? "\"%s\"\n" : "\"%148s...\"\n", makeUTF8CString(s) + startOffset);
 
         if (jitResult != interpreterResult) {
             dataLogF("    JIT result = %d, interpreted result = %d\n", jitResult, interpreterResult);
@@ -947,7 +949,7 @@ void RegExp::printTraceData()
     char rawPatternBuffer[SameLineFormatedRegExpnWidth + 1];
     String rawPattern;
 
-    auto patternCStr = pattern().utf8(); // Hold a reference so it doesn't get destroyed.
+    auto patternCStr = makeUTF8CString(pattern()); // Hold a reference so it doesn't get destroyed.
     auto patternStr = patternCStr.legacyCStringPointer();
     auto patternLength = pattern().length();
 
@@ -981,9 +983,9 @@ void RegExp::printTraceData()
     appendRawPatternBuffer(dstIdx);
 
     if (rawPattern.length() + Yarr::flagsString(flags()).span().size() + 2 <= SameLineFormatedRegExpnWidth)
-        formattedRegExp = makeString('/', rawPattern, '/', Yarr::flagsString(flags()).span()).utf8();
+        formattedRegExp = makeUTF8CString(makeString('/', rawPattern, '/', Yarr::flagsString(flags()).span()));
     else
-        SAFE_DATALOGF("/%s/%s\n", rawPattern.utf8(), Yarr::flagsString(flags()));
+        SAFE_DATALOGF("/%s/%s\n", makeUTF8CString(rawPattern), Yarr::flagsString(flags()));
 
     constexpr int addrWidth = 12;
 #if ENABLE(YARR_JIT)
@@ -1048,10 +1050,10 @@ void RegExp::printTraceData()
     unsigned averageMatchOnlyStringLen = (unsigned)(m_rtMatchOnlyTotalSubjectStringLen / m_rtMatchOnlyCallCount);
     unsigned averageMatchStringLen = (unsigned)(m_rtMatchTotalSubjectStringLen / m_rtMatchCallCount);
 
-    SAFE_DATALOGF("%-*.*s %*.*s %*.*s %10d %10d %10u\n", SameLineFormatedRegExpnWidth, SameLineFormatedRegExpnWidth, formattedRegExp, addrWidth, addrWidth, jit8BitMatchOnlyAddr.utf8(), addrWidth, addrWidth, jit16BitMatchOnlyAddr.utf8(), m_rtMatchOnlyCallCount, m_rtMatchOnlyFoundCount, averageMatchOnlyStringLen);
+    SAFE_DATALOGF("%-*.*s %*.*s %*.*s %10d %10d %10u\n", SameLineFormatedRegExpnWidth, SameLineFormatedRegExpnWidth, formattedRegExp, addrWidth, addrWidth, makeUTF8CString(jit8BitMatchOnlyAddr), addrWidth, addrWidth, makeUTF8CString(jit16BitMatchOnlyAddr), m_rtMatchOnlyCallCount, m_rtMatchOnlyFoundCount, averageMatchOnlyStringLen);
     for (unsigned i = 0; i < SameLineFormatedRegExpnWidth; ++i)
         dataLog(" ");
-    SAFE_DATALOGF(" %*.*s %*.*s %10d %10d %10u\n", addrWidth, addrWidth, jit8BitMatchAddr.utf8(), addrWidth, addrWidth, jit16BitMatchAddr.utf8(), m_rtMatchCallCount, m_rtMatchFoundCount, averageMatchStringLen);
+    SAFE_DATALOGF(" %*.*s %*.*s %10d %10d %10u\n", addrWidth, addrWidth, makeUTF8CString(jit8BitMatchAddr), addrWidth, addrWidth, makeUTF8CString(jit16BitMatchAddr), m_rtMatchCallCount, m_rtMatchFoundCount, averageMatchStringLen);
 }
 #endif
 
@@ -1182,11 +1184,16 @@ String RegExp::escapedPattern(const String& pattern)
 
 String RegExp::escapedPattern() const
 {
+    if (m_sourceIsKnownToBePattern)
+        return m_patternString;
 #if ENABLE(AOT)
     if (m_imageRecordNumber && imageRecord()->sourceIsPattern)
         return m_patternString;
 #endif
-    return escapedPattern(m_patternString);
+    String source = escapedPattern(m_patternString);
+    if (source.impl() == m_patternString.impl())
+        m_sourceIsKnownToBePattern = true;
+    return source;
 }
 
 String RegExp::toSourceString() const

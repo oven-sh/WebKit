@@ -32,6 +32,7 @@
 #include "Logging.h"
 #include "WebAutomationSession.h"
 #include "WebAutomationSessionMacros.h"
+#include "WebDriverBidiProcessor.h"
 #include "WebDriverBidiProtocolObjects.h"
 #include "WebPageProxy.h"
 #include <WebCore/FloatPoint.h>
@@ -172,15 +173,6 @@ static std::optional<double> numberValue(const JSON::Value& value)
     return value.asDouble();
 }
 
-static std::optional<double> integerValue(const JSON::Value& value, double min, double max)
-{
-    auto number = numberValue(value);
-    if (!number || std::trunc(*number) != *number || *number < min || *number > max)
-        return std::nullopt;
-
-    return number;
-}
-
 // Returns: nullopt = property absent; error string = invalid; value otherwise.
 template<typename T> using PropertyResult = std::expected<std::optional<T>, String>;
 
@@ -190,7 +182,7 @@ static PropertyResult<uint64_t> optionalUnsigned(const JSON::Object& object, con
     if (!value)
         return std::optional<uint64_t> { };
 
-    auto integer = integerValue(*value, 0, max);
+    auto integer = WebDriverBidiProcessor::integerValue(*value, 0, max);
     if (!integer)
         return makeUnexpected(makeString("'"_s, name, "' must be an integer between 0 and "_s, max));
 
@@ -216,7 +208,7 @@ static PropertyResult<int> optionalIntegerInRange(const JSON::Object& object, co
     if (!value)
         return std::optional<int> { };
 
-    auto integer = integerValue(*value, min, max);
+    auto integer = WebDriverBidiProcessor::integerValue(*value, min, max);
     if (!integer)
         return makeUnexpected(makeString("'"_s, name, "' must be an integer in range"_s));
 
@@ -252,15 +244,11 @@ static std::optional<String> elementOriginSharedId(const JSON::Value& origin)
     if (!element)
         return std::nullopt;
 
-    RefPtr sharedId = element->getValue("sharedId"_s);
-    if (!sharedId || sharedId->type() != JSON::Value::Type::String)
+    auto remoteReference = WebDriverBidiProcessor::parseRemoteReference(*element);
+    if (!remoteReference || remoteReference->sharedId.isNull())
         return std::nullopt;
 
-    RefPtr handle = element->getValue("handle"_s);
-    if (handle && handle->type() != JSON::Value::Type::String)
-        return std::nullopt;
-
-    return sharedId->asString();
+    return remoteReference->sharedId;
 }
 
 static std::expected<void, String> processOrigin(const JSON::Object& item, Action& action, bool allowPointerOrigin)
@@ -352,7 +340,7 @@ static std::expected<void, String> processPointerProperties(const JSON::Object& 
 static std::expected<void, String> processButton(const JSON::Object& item, Action& action)
 {
     RefPtr value = item.getValue("button"_s);
-    auto button = value ? integerValue(*value, 0, maxSafeInteger) : std::nullopt;
+    auto button = value ? WebDriverBidiProcessor::integerValue(*value, 0, maxSafeInteger) : std::nullopt;
     if (!button)
         return makeUnexpected("'button' must be an integer between 0 and 2^53-1"_s);
 
@@ -430,7 +418,7 @@ static std::expected<void, String> processWheelAction(const JSON::Object& item, 
 
     auto integerProperty = [&](ASCIILiteral name) -> std::optional<int64_t> {
         RefPtr value = item.getValue(String { name });
-        auto integer = value ? integerValue(*value, -maxSafeInteger, maxSafeInteger) : std::nullopt;
+        auto integer = value ? WebDriverBidiProcessor::integerValue(*value, -maxSafeInteger, maxSafeInteger) : std::nullopt;
         return integer ? std::optional<int64_t> { static_cast<int64_t>(*integer) } : std::nullopt;
     };
 
@@ -714,9 +702,11 @@ static Inspector::CommandResult<Vector<SimulatedInputKeyFrame>> translateTicksTo
 
         Vector<SimulatedInputKeyFrame::StateEntry> entries;
         for (auto& action : borrow(tick)) {
+// FIXME: Remove the platform-exclusive WEBDRIVER_*_INTERACTIONS guards and input source aliasing. <https://webkit.org/b/327296>
+#if !ENABLE(WEBDRIVER_WHEEL_INTERACTIONS)
             if (action.sourceType == SourceType::Wheel)
                 SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "Wheel input sources are not yet supported."_s);
-// FIXME: Remove the platform-exclusive WEBDRIVER_*_INTERACTIONS guards and input source aliasing. <https://webkit.org/b/327296>
+#endif
 #if !ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
             if (action.sourceType == SourceType::Key)
                 SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "Keyboard input sources are not yet supported."_s);
@@ -731,6 +721,12 @@ static Inspector::CommandResult<Vector<SimulatedInputKeyFrame>> translateTicksTo
                 sourceState.origin = std::nullopt;
                 sourceState.nodeHandle = std::nullopt;
                 sourceState.location = std::nullopt;
+            }
+            if (action.sourceType == SourceType::Wheel) {
+                sourceState.origin = std::nullopt;
+                sourceState.nodeHandle = std::nullopt;
+                sourceState.location = std::nullopt;
+                sourceState.scrollDelta = std::nullopt;
             }
             switch (action.type) {
             case ActionType::Pause:
@@ -797,17 +793,42 @@ static Inspector::CommandResult<Vector<SimulatedInputKeyFrame>> translateTicksTo
             }
             case ActionType::PointerMove:
                 // https://w3c.github.io/webdriver/#dfn-dispatch-a-pointermove-action
-                if (action.origin == OriginType::Element)
-                    SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "Element origin is not supported yet."_s);
                 sourceState.mouseInteraction = MouseInteraction::Move;
-                sourceState.origin = action.origin == OriginType::Pointer ? MouseMoveOrigin::Pointer : MouseMoveOrigin::Viewport;
+                switch (action.origin) {
+                case OriginType::Pointer:
+                    sourceState.origin = MouseMoveOrigin::Pointer;
+                    break;
+                case OriginType::Viewport:
+                    sourceState.origin = MouseMoveOrigin::Viewport;
+                    break;
+                case OriginType::Element:
+                    sourceState.origin = MouseMoveOrigin::Element;
+                    sourceState.nodeHandle = action.originSharedId;
+                    break;
+                }
                 sourceState.location = WebCore::flooredIntPoint(WebCore::FloatPoint(action.x, action.y));
+                break;
+            case ActionType::Scroll:
+                switch (action.origin) {
+                case OriginType::Viewport:
+                    sourceState.origin = MouseMoveOrigin::Viewport;
+                    break;
+                case OriginType::Element:
+                    sourceState.origin = MouseMoveOrigin::Element;
+                    sourceState.nodeHandle = action.originSharedId;
+                    break;
+                case OriginType::Pointer:
+                    ASSERT_NOT_REACHED();
+                    return makeUnexpected(STRING_FOR_PREDEFINED_ERROR_NAME_AND_DETAILS(InvalidParameter, "Invalid origin for a wheel source."_s));
+                }
+                sourceState.location = WebCore::flooredIntPoint(WebCore::FloatPoint(action.x, action.y));
+                sourceState.scrollDelta = WebCore::IntSize(clampTo<int>(action.deltaX), clampTo<int>(action.deltaY));
                 break;
             default:
                 SYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS(NotImplemented, "This input source type is not supported yet."_s);
             }
             auto duration = action.duration;
-            if (!duration && action.type == ActionType::PointerMove)
+            if (!duration && (action.type == ActionType::PointerMove || action.type == ActionType::Scroll))
                 duration = tickDuration;
             if (duration)
                 sourceState.duration = Seconds::fromMilliseconds(*duration);
@@ -871,6 +892,18 @@ Automation::BidiInputState& BidiInputAgent::inputStateForTopLevelContext(const S
 
 void BidiInputAgent::willClosePage(const String& pageHandle)
 {
+#if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
+    RefPtr session = m_session;
+    RefPtr inputState = m_inputStates.get(pageHandle);
+    if (session && inputState) {
+        for (auto& source : inputState->simulatedSources().values()) {
+            auto& sourceState = source->state;
+            if (sourceState.pressedMouseButton && sourceState.mouseInteraction != MouseInteraction::Up)
+                session->forgetPressedMouseButton(*sourceState.pressedMouseButton);
+        }
+    }
+#endif
+
     m_inputStates.remove(pageHandle);
 }
 
@@ -980,10 +1013,30 @@ void BidiInputAgent::releaseActions(const String& context, CommandCallback<void>
 #endif
 }
 
-void BidiInputAgent::setFiles(const String&, Ref<JSON::Object>&&, Ref<JSON::Array>&&, CommandCallback<void>&& callback)
+void BidiInputAgent::setFiles(const String& context, Ref<JSON::Object>&& element, Ref<JSON::Array>&& files, CommandCallback<void>&& callback)
 {
-    // FIXME: Implement input.setFiles (https://webkit.org/b/287926).
-    ASYNC_FAIL_WITH_PREDEFINED_ERROR(NotImplemented);
+    RefPtr session = m_session;
+    ASYNC_FAIL_WITH_PREDEFINED_ERROR_IF(!session, InternalError);
+
+    auto handles = session->extractBrowsingContextHandles(context);
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(handles);
+    auto& [pageHandle, frameHandle] = handles.value();
+
+    auto nodeHandle = session->nodeHandleForSharedReference(element.get());
+    ASYNC_FAIL_IF_UNEXPECTED_RESULT(nodeHandle);
+
+    Vector<String> paths;
+    for (auto& value : files.get()) {
+        ASYNC_FAIL_WITH_PREDEFINED_ERROR_AND_DETAILS_IF(value->type() != JSON::Value::Type::String, InvalidParameter, "'files' must be an array of strings"_s);
+        paths.append(value->asString());
+    }
+
+    session->setFilesForBidi(pageHandle, frameHandle, *nodeHandle, WTF::move(paths), [callback = WTF::move(callback)](std::optional<AutomationCommandError> error) mutable {
+        if (error)
+            callback(makeUnexpected(error->toProtocolString()));
+        else
+            callback({ });
+    });
 }
 
 } // namespace WebKit

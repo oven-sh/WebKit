@@ -1204,11 +1204,11 @@ static bool entryBlockStoresVariablesInFrontOfTheirFirstReaders(const WalkInputs
     std::span<const LinkedVariableStoredFirst> claims = inputs.facts.linked().variablesStoredFirstIn(unit.function);
     if (claims.empty())
         return true;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stored;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> stored;
     Vector<FunctionID, 4> used;
     bool isShown = true;
     bool isEntryBlock = true;
-    UncheckedKeyHashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsFoundShown;
+    HashSet<uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> functionsFoundShown;
     auto look = [&](VariableID storedByOperation) {
         for (FunctionID function : used) {
             if (!isShown || functionsFoundShown.contains(function.index()))

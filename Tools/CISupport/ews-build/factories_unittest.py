@@ -22,12 +22,14 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 from . import loadConfig
-from .steps import ResultsDatabase, ResultsDBReportMixin, RunAPITests, RunJavaScriptCoreTests
+from .steps import ResultsDatabase, ResultsDBReportMixin, RunAPITests, RunJavaScriptCoreTests, ValidateChange
 import os
 import unittest
 
 
 class TestExpectedBuildSteps(unittest.TestCase):
+
+    generic_branch_queues = ['Bindings-Tests-EWS', 'Style-EWS', 'Unsafe-Merge-Queue', 'WebKitPerl-Tests-EWS', 'WebKitPy-Tests-EWS']
 
     expected_steps = {
         'Style-EWS': [
@@ -47,6 +49,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'GTK-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -92,6 +95,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'iOS-26-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -110,6 +114,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'iOS-27-Simulator-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -123,6 +128,8 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'checkout-pull-request',
             'validate-change-content',
             'kill-old-processes',
+            'install-cmake',
+            'install-ninja',
             'validate-change',
             'compile-webkit'
         ],
@@ -223,6 +230,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'macOS-Golden-Gate-Debug-WebDriver-Tests-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -271,6 +279,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'macOS-Sequoia-Release-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -449,6 +458,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'visionOS-27-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -467,6 +477,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'visionOS-27-Simulator-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -511,6 +522,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'watchOS-27-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -529,6 +541,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'watchOS-27-Simulator-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -547,6 +560,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'tvOS-27-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -565,6 +579,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'tvOS-27-Simulator-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -583,6 +598,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'PlayStation-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -602,6 +618,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'Win-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -641,6 +658,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'WPE-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -661,6 +679,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
         ],
         'GTK-GTK3-GCC-Build-EWS': [
             'configure-build',
+            'check-change-relevance',
             'validate-change',
             'configuration',
             'clean-up-git-repo',
@@ -882,6 +901,8 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'kill-old-processes',
             'download-built-product',
             'extract-built-product',
+            'find-changed-api-tests',
+            'run-api-tests-in-stress-mode',
             'run-api-tests',
             'set-build-summary'
         ],
@@ -903,6 +924,8 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'kill-old-processes',
             'download-built-product',
             'extract-built-product',
+            'find-changed-api-tests',
+            'run-api-tests-in-stress-mode',
             'run-api-tests',
             'set-build-summary'
         ],
@@ -957,6 +980,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-change',
             'check-status-on-other-ewses',
             'layout-tests',
+            'acquire-landing-lock',
             'validate-change',
             'canonicalize-commit',
             'push-pull-request-branch',
@@ -986,6 +1010,7 @@ class TestExpectedBuildSteps(unittest.TestCase):
             'validate-squashed',
             'add-reviewer-to-commit-message',
             'validate-commit-message',
+            'acquire-landing-lock',
             'canonicalize-commit',
             'validate-change',
             'push-pull-request-branch',
@@ -1040,3 +1065,13 @@ class TestExpectedBuildSteps(unittest.TestCase):
             builders.add(builder['name'])
         for builder in self.expected_steps:
             self.assertTrue(builder in builders, "Builder %s doesn't exist, but has unnecessary expected steps" % builder)
+
+    def test_feature_branch_queues(self):
+        for builder in self.config['builders']:
+            expected = builder['name'] not in self.generic_branch_queues
+            for step in builder['factory'].steps:
+                if not issubclass(step.step_class, ValidateChange):
+                    continue
+                self.assertEqual(step.kwargs.get('excludeFeatureBranches', True), expected, msg='%s should %s feature branches' % (
+                    builder['name'], 'skip' if expected else 'test',
+                ))

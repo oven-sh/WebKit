@@ -35,6 +35,7 @@ messages -> WebPageProxy {
     RunJavaScriptConfirm(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, String message) -> (bool result) Synchronous
     RunJavaScriptPrompt(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, String message, String defaultValue) -> (String result) Synchronous
     MouseDidMoveOverElement(struct WebKit::WebHitTestResultData hitTestResultData, OptionSet<WebKit::WebEventModifier> modifiers)
+    [EnabledBy=SiteIsolationEnabled] DispatchFakeMouseMoveEventInRemoteFrame(WebCore::FrameIdentifier frameID, WebCore::DoublePoint eventPoint, WebCore::DoublePoint globalPoint)
 
     SetCursor(WebCore::Cursor cursor)
     SetCursorHiddenUntilMouseMoves(bool hiddenUntilMouseMoves)
@@ -45,6 +46,9 @@ messages -> WebPageProxy {
     SetRenderTreeSize(uint64_t treeSize)
     SetIsResizable(bool isResizable)
     SetWindowFrameIPC(WebCore::FloatRect windowFrame)
+#if ENABLE(DOCUMENT_PIP)
+    [EnabledBy=DocumentPictureInPictureAPIEnabled] StartDocumentPictureInPictureWindowDrag()
+#endif
     GetWindowFrame() -> (WebCore::FloatRect windowFrame) Synchronous
     ScreenToRootView(WebCore::IntPoint screenPoint) -> (WebCore::IntPoint windowPoint) Synchronous
     RootViewPointToScreen(WebCore::IntPoint rect) -> (WebCore::IntPoint viewPoint) Synchronous
@@ -85,6 +89,7 @@ messages -> WebPageProxy {
 #if ENABLE(WEB_AUTHN)
     [EnabledBy=DigitalCredentialsEnabled] ShowDigitalCredentialsChooser(std::optional<WebCore::FrameIdentifier> frameID, struct WebCore::DigitalCredentialsRequestData requestData) -> (std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData> response)
     [EnabledBy=DigitalCredentialsEnabled] DismissDigitalCredentialsChooser() -> (bool didDismiss)
+    [EnabledBy=DigitalCredentialsEnabled] HasVirtualWalletForDigitalCredentials(std::optional<WebCore::FrameIdentifier> frameID) -> (bool hasVirtualWallet)
 #endif
 
     PrintFrame(WebCore::FrameIdentifier frameID, String title, WebCore::FloatSize pdfFirstPageSize) -> () Synchronous
@@ -102,9 +107,9 @@ messages -> WebPageProxy {
     SetCanShortCircuitHorizontalWheelEvents(bool canShortCircuitHorizontalWheelEvents)
 
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    [EnabledBy=ModelElementImmersiveEnabled] AllowImmersiveElement() -> (bool allow)
-    [EnabledBy=ModelElementImmersiveEnabled] PresentImmersiveElement(WebCore::LayerHostingContextIdentifier contextID) -> (bool success)
-    [EnabledBy=ModelElementImmersiveEnabled] DismissImmersiveElement() -> ()
+    [EnabledBy=ModelElementImmersiveEnabled || ImageElementImmersiveEnabled] AllowImmersiveElement() -> (bool allow)
+    [EnabledBy=ModelElementImmersiveEnabled || ImageElementImmersiveEnabled] PresentImmersiveElement(WebKit::ImmersiveElementDetails details) -> (bool success)
+    [EnabledBy=ModelElementImmersiveEnabled || ImageElementImmersiveEnabled] DismissImmersiveElement() -> ()
 #endif
 
     DidChangeContentSize(WebCore::IntSize newSize)
@@ -148,7 +153,7 @@ messages -> WebPageProxy {
     DidCancelClientRedirectForFrame(WebCore::FrameIdentifier frameID)
     DidChangeProvisionalURLForFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, URL url)
     DidFailProvisionalLoadForFrame(struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String provisionalURL, WebCore::ResourceError error, enum:bool WebCore::WillContinueLoading willContinueLoading, WebKit::UserData userData, enum:bool WebCore::WillInternallyHandleFailure willInternallyHandleFailure)
-    DidCommitLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String mimeType, bool hasCustomContentProvider, enum:uint8_t WebCore::FrameLoadType loadType, bool hasCertificateInfo, bool usedLegacyTLS, bool wasPrivateRelayed, String proxyName, enum:uint8_t WebCore::ResourceResponseSource source, bool containsPluginDocument, enum:bool WebCore::HasInsecureContent hasInsecureContent, enum:uint8_t WebCore::MouseEventPolicy mouseEventPolicy, struct WebCore::DocumentSecurityPolicy documentSecurityPolicy, IPC::Untrusted<HashSet<WebCore::SecurityOriginData>> cspOriginsThatUpgradeInsecureNavigations, WebKit::UserData userData, enum:bool WebCore::RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<WebKit::FrameState> redirectReplaceFrameState)
+    DidCommitLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, IPC::Untrusted<std::optional<WebCore::SecurityOriginData>> untrustedReportedOrigin, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, String mimeType, bool hasCustomContentProvider, enum:uint8_t WebCore::FrameLoadType loadType, bool hasCertificateInfo, bool usedLegacyTLS, bool wasPrivateRelayed, String proxyName, enum:uint8_t WebCore::ResourceResponseSource source, bool containsPluginDocument, enum:bool WebCore::HasInsecureContent hasInsecureContent, enum:uint8_t WebCore::MouseEventPolicy mouseEventPolicy, struct WebCore::DocumentSecurityPolicy documentSecurityPolicy, IPC::Untrusted<HashSet<WebCore::SecurityOriginData>> cspOriginsThatUpgradeInsecureNavigations, WebKit::UserData userData, enum:bool WebCore::RestoredFromBackForwardCache restoredFromBackForwardCache, RefPtr<WebKit::FrameState> redirectReplaceFrameState)
     DidFailLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, WebCore::ResourceError error, WebKit::UserData userData)
     DidFinishDocumentLoadForFrame(WebCore::FrameIdentifier frameID, std::optional<WebCore::NavigationIdentifier> navigationID, WebKit::UserData userData, WallTime timestamp)
     DidFinishLoadForFrame(WebCore::FrameIdentifier frameID, struct WebKit::FrameInfoData frameInfo, WebCore::ResourceRequest request, std::optional<WebCore::NavigationIdentifier> navigationID, WebKit::UserData userData, WallTime timestamp)
@@ -465,6 +470,7 @@ messages -> WebPageProxy {
     SendMessageToInspectorFrontend(String targetId, String message)
     FrameDidPauseForDebugger(WebCore::FrameIdentifier frameID)
     FrameDidContinueForDebugger(WebCore::FrameIdentifier frameID)
+    DebuggerDidPause()
 
     # Search popup menus
     SaveRecentSearches(String name, Vector<WebCore::RecentSearch> searchItems)
@@ -568,7 +574,7 @@ messages -> WebPageProxy {
 #if PLATFORM(IOS_FAMILY)
     [EnabledBy=AttachmentElementEnabled] WritePromisedAttachmentToPasteboard(struct WebCore::PromisedAttachmentInfo info, String authorizationToken)
 #endif
-    [EnabledBy=AttachmentElementEnabled] RequestAttachmentIcon(String identifier, String contentType, String path, String title, WebCore::FloatSize size)
+    [EnabledBy=AttachmentElementEnabled] RequestAttachmentIcon(String identifier, String contentType, String fileExtension, String title, WebCore::FloatSize size)
 #endif
 
 #if ENABLE(SPEECH_SYNTHESIS)
@@ -579,6 +585,10 @@ messages -> WebPageProxy {
     [EnabledBy=SpeechSynthesisAPIEnabled] SpeechSynthesisPause() -> ()
     [EnabledBy=SpeechSynthesisAPIEnabled] SpeechSynthesisResume() -> ()
     [EnabledBy=SpeechSynthesisAPIEnabled] SpeechSynthesisResetState()
+#endif
+
+#if ENABLE(PDF_PLUGIN)
+    SetFrameHasPDFPlugin(WebCore::FrameIdentifier frameID, bool hasPDFPlugin)
 #endif
 
 #if ENABLE(PDF_PLUGIN) && PLATFORM(MAC)
@@ -706,5 +716,6 @@ messages -> WebPageProxy {
 
     DidCacheBackForwardItem(WebCore::BackForwardItemIdentifier itemID) -> (bool success)
     DidEvictBackForwardItem(WebCore::BackForwardItemIdentifier itemID)
+    DidEvictBackForwardFrameItem(WebCore::BackForwardFrameItemIdentifier frameItemID)
     DidTakeBackForwardItemForRestoration(WebCore::BackForwardItemIdentifier itemID)
 }

@@ -36,6 +36,7 @@
 #include <WebCore/AudioSession.h>
 #include <WebCore/CoreAudioCaptureSource.h>
 #include <WebCore/PlatformMediaSessionManager.h>
+#include <wtf/Borrow.h>
 #include <wtf/HashCountedSet.h>
 #include <wtf/RunLoop.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -87,9 +88,9 @@ void RemoteAudioSessionProxyManager::removeProxy(RemoteAudioSessionProxy& proxy)
 
 void RemoteAudioSessionProxyManager::updateCategory()
 {
-    HashCountedSet<AudioSession::CategoryType, WTF::IntHash<AudioSession::CategoryType>, WTF::StrongEnumHashTraits<AudioSession::CategoryType>> categoryCounts;
-    HashCountedSet<AudioSession::Mode, WTF::IntHash<AudioSession::Mode>, WTF::StrongEnumHashTraits<AudioSession::Mode>> modeCounts;
-    HashCountedSet<RouteSharingPolicy, WTF::IntHash<RouteSharingPolicy>, WTF::StrongEnumHashTraits<RouteSharingPolicy>> policyCounts;
+    HashCountedSet<AudioSession::CategoryType, WTF::IntHash<AudioSession::CategoryType>> categoryCounts;
+    HashCountedSet<AudioSession::Mode, WTF::IntHash<AudioSession::Mode>> modeCounts;
+    HashCountedSet<RouteSharingPolicy, WTF::IntHash<RouteSharingPolicy>> policyCounts;
 
     // A preview has no web process proxy, so count it here. Without it the session
     // stays in playback and on iOS BaseAudioCaptureUnit won't start.
@@ -328,7 +329,7 @@ void RemoteAudioSessionProxyManager::endCapturePreview()
     if (!hasActiveProxy())
         AudioSession::singleton().tryToSetActive(false)->whenSettled(RunLoop::mainSingleton(), [](auto&&) { });
 
-    for (auto& handler : activationHandlers)
+    for (auto& handler : borrow(activationHandlers))
         handler();
 }
 #endif

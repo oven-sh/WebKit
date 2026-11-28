@@ -11,4 +11,7 @@ PASS Cloning with scoped registry (null registry target)
 PASS Cloning including shadow tree with global registry (null registry target)
 PASS Cloning including shadow tree with explicit global registry (null registry target)
 PASS Cloning including shadow tree with scoped registry (null registry target)
+PASS Cloning with global registry (scoped registry target)
+PASS Cloning including shadow tree with global registry (scoped registry target)
+PASS Cloning including shadow tree with scoped registry (scoped registry target)
 

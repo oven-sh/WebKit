@@ -190,14 +190,15 @@ void GraphicsContextSkia::save(GraphicsContextState::Purpose purpose)
     m_canvas.save();
 }
 
-void GraphicsContextSkia::restore(GraphicsContextState::Purpose purpose)
+bool GraphicsContextSkia::restore(GraphicsContextState::Purpose purpose)
 {
-    if (!stackSize())
-        return;
+    if (!canRestore(purpose))
+        return false;
 
     GraphicsContext::restore(purpose);
     m_canvas.restore();
     popSkiaState();
+    return true;
 }
 
 // Draws a filled rectangle with a stroked border.
@@ -667,7 +668,7 @@ void GraphicsContextSkia::fillRect(const FloatRect& boundaries, const Color& fil
     drawSkiaRect(boundaries, paint);
 }
 
-void GraphicsContextSkia::fillRect(const FloatRect& boundaries, Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
+void GraphicsContextSkia::fillRect(const FloatRect& boundaries, const Gradient& gradient, const AffineTransform& gradientSpaceTransform, RequiresClipToRect)
 {
     if (!makeGLContextCurrentIfNeeded())
         return;
@@ -736,27 +737,27 @@ IntRect GraphicsContextSkia::clipBounds() const
     return enclosingIntRect(m_canvas.getLocalClipBounds());
 }
 
-void GraphicsContextSkia::clipToImageBuffer(ImageBuffer& buffer, const FloatRect& destRect)
+void GraphicsContextSkia::clipToNativeImage(const NativeImage& nativeImage, const FloatRect& destRect)
 {
-    if (auto nativeImage = nativeImageForDrawing(buffer)) {
-        auto image = nativeImage->platformImage();
-        if (m_threadSafeGrContext)
-            image = SkiaUtilities::createPromiseImageIfNeeded(image, m_threadSafeGrContext);
+    auto image = nativeImage.platformImage();
+    if (!image)
+        return;
+    if (m_threadSafeGrContext)
+        image = SkiaUtilities::createPromiseImageIfNeeded(image, m_threadSafeGrContext);
 
-        auto shader = image->makeShader(SkTileMode::kDecal, SkTileMode::kDecal, { }, SkMatrix::Translate(SkFloatToScalar(destRect.x()), SkFloatToScalar(destRect.y())));
+    auto shader = image->makeShader(SkTileMode::kDecal, SkTileMode::kDecal, { }, SkMatrix::Translate(SkFloatToScalar(destRect.x()), SkFloatToScalar(destRect.y())));
 
-        recordClipIfNeeded({
-            .type = ClipRecord::Type::Shader,
-            .matrix = m_canvas.getTotalMatrix(),
-            .op = SkClipOp::kIntersect,
-            .antialias = false,
-            .rect = { },
-            .path = { },
-            .shader = shader,
-        });
+    recordClipIfNeeded({
+        .type = ClipRecord::Type::Shader,
+        .matrix = m_canvas.getTotalMatrix(),
+        .op = SkClipOp::kIntersect,
+        .antialias = false,
+        .rect = { },
+        .path = { },
+        .shader = shader,
+    });
 
-        m_canvas.clipShader(WTF::move(shader));
-    }
+    m_canvas.clipShader(WTF::move(shader));
 }
 
 void GraphicsContextSkia::drawFocusRing(const Path& path, float, const Color& color, float)
@@ -865,10 +866,6 @@ void GraphicsContextSkia::drawDotsForDocumentMarker(const FloatRect& boundaries,
 void GraphicsContextSkia::translate(float x, float y)
 {
     m_canvas.translate(SkFloatToScalar(x), SkFloatToScalar(y));
-}
-
-void GraphicsContextSkia::didUpdateState(GraphicsContextState&)
-{
 }
 
 void GraphicsContextSkia::concatCTM(const AffineTransform& ctm)

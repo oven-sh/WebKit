@@ -73,6 +73,7 @@
 #include "WasmGlobal.h"
 #include "WasmTable.h"
 #include "WasmTypeDefinition.h"
+#include "WeakImpl.h"
 #include "WebAssemblyModuleRecord.h"
 #include <algorithm>
 #include <array>

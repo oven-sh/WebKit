@@ -38,6 +38,7 @@
 #include "SQLValue.h"
 #include "SQLiteDatabase.h"
 #include "SQLiteStatement.h"
+#include <wtf/Borrow.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 
@@ -117,7 +118,7 @@ bool SQLStatement::execute(Database& db)
 
     auto statement = database->prepareStatementSlow(m_statement);
     if (!statement) {
-        LOG(StorageAPI, "Unable to verify correctness of statement %s - error %i (%s)", m_statement.utf8(), database->lastError(), database->lastErrorMsg());
+        LOG(StorageAPI, "Unable to verify correctness of statement %s - error %i (%s)", makeUTF8CString(m_statement), database->lastError(), database->lastErrorMsg());
         if (database->lastError() == SQLITE_INTERRUPT)
             m_error = SQLError::create(SQLError::DATABASE_ERR, "could not prepare statement"_s, database->lastError(), "interrupted"_s);
         else
@@ -134,14 +135,14 @@ bool SQLStatement::execute(Database& db)
     }
 
     for (unsigned i = 0; i < m_arguments.size(); ++i) {
-        int result = statement->bindValue(i + 1, m_arguments[i]);
+        int result = statement->bindValue(i + 1, borrow(m_arguments)[i]);
         if (result == SQLITE_FULL) {
             setFailureDueToQuota();
             return false;
         }
 
         if (result != SQLITE_OK) {
-            LOG(StorageAPI, "Failed to bind value index %i to statement for query '%s'", i + 1, m_statement.utf8());
+            LOG(StorageAPI, "Failed to bind value index %i to statement for query '%s'", i + 1, makeUTF8CString(m_statement));
             m_error = SQLError::create(SQLError::DATABASE_ERR, "could not bind value"_s, result, database->lastErrorMsg());
             return false;
         }

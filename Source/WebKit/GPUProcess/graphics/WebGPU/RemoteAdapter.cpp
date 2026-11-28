@@ -32,6 +32,7 @@
 #include "RemoteDevice.h"
 #include "RemoteQueue.h"
 #include "StreamServerConnection.h"
+#include "WebGPUDescriptorDeserializers.h"
 #include "WebGPUDeviceDescriptor.h"
 #include "WebGPUObjectHeap.h"
 #include "WebGPUSupportedLimits.h"
@@ -43,7 +44,7 @@ namespace WebKit {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteAdapter);
 
-RemoteAdapter::RemoteAdapter(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, ::WebGPU::Adapter& adapter, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUIdentifier identifier)
+RemoteAdapter::RemoteAdapter(GPUConnectionToWebProcess& gpuConnectionToWebProcess, RemoteGPU& gpu, ::WebGPU::Adapter& adapter, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, WebGPUAdapterIdentifier identifier)
     : m_backing(adapter)
     , m_objectHeap(objectHeap)
     , m_streamConnection(WTF::move(streamConnection))
@@ -66,26 +67,32 @@ void RemoteAdapter::stopListeningForIPC()
     protect(m_streamConnection)->stopReceivingMessages(Messages::RemoteAdapter::messageReceiverName(), m_identifier.toUInt64());
 }
 
-void RemoteAdapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, WebGPUIdentifier identifier, WebGPUIdentifier queueIdentifier, CompletionHandler<void(Vector<::WebGPU::FeatureName>&&, WebGPU::SupportedLimits&&)>&& callback)
+void RemoteAdapter::requestDevice(const WebGPU::DeviceDescriptor& descriptor, WebGPUDeviceIdentifier identifier, WebGPUQueueIdentifier queueIdentifier, CompletionHandler<void(Vector<::WebGPU::FeatureName>&&, WebGPU::SupportedLimits&&, String&&)>&& callback)
 {
-    auto convertedDescriptor = m_objectHeap->convertFromBacking(descriptor);
+    Ref objectHeap = m_objectHeap;
+    auto convertedDescriptor = deserialize(objectHeap, descriptor);
     ASSERT(convertedDescriptor);
     if (!convertedDescriptor) {
-        callback({ }, { });
+        callback({ }, { }, "Device descriptor is invalid"_s);
         return;
     }
 
-    protect(m_backing)->requestDevice(*convertedDescriptor, [callback = WTF::move(callback), objectHeap = protect(m_objectHeap), streamConnection = protect(m_streamConnection), identifier, queueIdentifier, gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get(), gpu = protect(m_gpu)](RefPtr<::WebGPU::Device>&& devicePtr) mutable {
-        if (!devicePtr.get() || !gpuConnectionToWebProcess) {
-            callback({ }, { });
+    // A reply without a device has the error, and empty features and limits.
+    protect(m_backing)->requestDevice(*convertedDescriptor, [callback = WTF::move(callback), objectHeap = WTF::move(objectHeap), streamConnection = protect(m_streamConnection), identifier, queueIdentifier, gpuConnectionToWebProcess = m_gpuConnectionToWebProcess.get(), gpu = protect(m_gpu)](std::expected<Ref<::WebGPU::Device>, String>&& result) mutable {
+        if (!result) {
+            callback({ }, { }, WTF::move(result.error()));
+            return;
+        }
+        if (!gpuConnectionToWebProcess) {
+            callback({ }, { }, "Web Process connection is closed"_s);
             return;
         }
 
-        auto device = devicePtr.releaseNonNull();
+        Ref device = WTF::move(*result);
         auto remoteDevice = RemoteDevice::create(*gpuConnectionToWebProcess, gpu, device, objectHeap, WTF::move(streamConnection), identifier, queueIdentifier);
         objectHeap->addObject(identifier, remoteDevice);
         objectHeap->addObject(queueIdentifier, remoteDevice->queue());
-        callback(device->features(), ::WebGPU::Limits { device->limits() });
+        callback(device->features(), ::WebGPU::Limits { device->limits() }, { });
     });
 }
 

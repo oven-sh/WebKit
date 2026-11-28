@@ -279,7 +279,7 @@ public:
     }
     // How far the walks from one root have come, so that the next one goes on from there.
     struct PassedImports {
-        UncheckedKeyHashMap<AbstractModuleRecord*, unsigned> countByImporter;
+        HashMap<AbstractModuleRecord*, unsigned> countByImporter;
         bool includeModuleToEvaluate { false };
         bool areAllThatCanBePassed { false };
         uint64_t lastChange { 0 }; // See VM::ImportOrderState.

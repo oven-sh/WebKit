@@ -125,7 +125,7 @@ static void writeLocaleUseSection(const Typed::Program& program, const Typed::Fa
         if (canonical.isEmpty())
             uses.last().kind = Wire::LocaleUseKind::Unknown;
         else
-            uses.last().tag = Vector<uint8_t, 16>(byteCast<uint8_t>(canonical.utf8().span()));
+            uses.last().tag = Vector<uint8_t, 16>(byteCast<uint8_t>(makeUTF8CString(canonical).span()));
     }
 
     auto compareKindAndTag = [](const CanonicalUse& a, const CanonicalUse& b) -> std::strong_ordering {

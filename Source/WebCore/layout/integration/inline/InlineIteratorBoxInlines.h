@@ -28,8 +28,7 @@
 #include "InlineDisplayBoxInlines.h"
 #include "InlineIteratorBox.h"
 
-namespace WebCore {
-namespace InlineIterator {
+namespace WebCore::InlineIterator {
 
 inline float Box::logicalBottom() const { return logicalRectIgnoringInlineDirection().maxY(); }
 inline float Box::logicalHeight() const { return logicalRectIgnoringInlineDirection().height(); }
@@ -38,7 +37,7 @@ inline float Box::logicalRightIgnoringInlineDirection() const { return logicalRe
 inline float Box::logicalTop() const { return logicalRectIgnoringInlineDirection().y(); }
 inline float Box::logicalWidth() const { return logicalRectIgnoringInlineDirection().width(); }
 
-inline float Box::logicalLeft() const { return isHorizontal() ? visualRect().x() : visualRect().y(); }
+inline float Box::logicalLeft() const { return isHorizontal() ? physicalRect().x() : physicalRect().y(); }
 inline float Box::logicalRight() const { return logicalLeft() + logicalWidth(); }
 
 inline bool Box::isHorizontal() const
@@ -48,7 +47,7 @@ inline bool Box::isHorizontal() const
 
 inline FloatRect Box::logicalRectIgnoringInlineDirection() const
 {
-    auto rect = this->visualRectIgnoringBlockDirection();
+    auto rect = this->blockStartRelativePhysicalRect();
     return isHorizontal() ? rect : rect.transposedRect();
 }
 
@@ -77,5 +76,4 @@ inline LeafBoxIterator Box::nextLogicalLeftwardOnLineIgnoringLineBreak() const
         ? nextLineLeftwardOnLineIgnoringLineBreak() : nextLineRightwardOnLineIgnoringLineBreak();
 }
 
-}
 }

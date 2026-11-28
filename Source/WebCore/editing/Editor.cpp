@@ -30,6 +30,7 @@
 
 #include "AXObjectCache.h"
 #include "AlternativeTextController.h"
+#include "ApplyBlockPresentationIntentCommand.h"
 #include "ApplyStyleCommand.h"
 #include "AttachmentAssociatedElement.h"
 #include "BoundaryPointInlines.h"
@@ -1772,6 +1773,19 @@ void Editor::changeSelectionListType()
         ChangeListTypeCommand::create(WTF::move(document), *type)->apply();
 }
 
+void Editor::applyBlockPresentationIntent(const BlockPresentationIntent& intent)
+{
+    if (!canEditRichly())
+        return;
+
+    // fromPresentationIntent() makes a list item its list, but a message from the UI process could still carry one.
+    if (intent.kind == BlockPresentationIntent::Kind::ListItem)
+        return;
+
+    ApplyBlockPresentationIntentCommand::create(protect(document()), intent)->apply();
+    revealSelectionAfterEditingOperation();
+}
+
 void Editor::simplifyMarkup(Node* startNode, Node* endNode)
 {
     if (!startNode)
@@ -2290,12 +2304,13 @@ WritingDirection Editor::baseWritingDirectionForSelectionStart() const
     ScriptDisallowedScope::InMainThread scriptDisallowedScope;
 
     CheckedPtr renderer = node->renderer();
-    if (renderer && !is<RenderBlock>(*renderer))
+    // The base writing direction is the direction of the nearest block in the containing block chain.
+    while (renderer && !is<RenderBlock>(*renderer))
         renderer = renderer->containingBlock();
     if (!renderer)
         return result;
 
-    switch (downcast<RenderBlock>(*renderer).writingMode().bidiDirection()) {
+    switch (renderer->writingMode().bidiDirection()) {
     case TextDirection::LTR:
         return WritingDirection::LeftToRight;
     case TextDirection::RTL:
@@ -2466,9 +2481,12 @@ public:
     UserTypingGestureIndicator m_typingGestureIndicator;
 };
 
-void Editor::setComposition(const String& text, SetCompositionMode mode)
+void Editor::setComposition(const String& passedText, SetCompositionMode mode)
 {
     ASSERT(mode == ConfirmComposition || mode == CancelComposition);
+
+    auto text = passedText;
+
     Ref document = this->document();
     SetCompositionScope setCompositionScope(document.copyRef());
 

@@ -91,7 +91,7 @@ static void testPrintWireRejects()
     expectRejectedWith(runPrintWire(damagedProgram), InternalErrorKind::SchemaMismatch);
 
     String withoutEntry = makeStringByReplacingAll(sampleProgram, "entry\n"_s, ""_s);
-    CString withoutEntryText = withoutEntry.utf8();
+    CString withoutEntryText = makeUTF8CString(withoutEntry);
     TemporaryFile programWithoutEntry(".ir"_s, byteCast<uint8_t>(withoutEntryText.span()));
     expectRejectedWith(runPrintWire(programWithoutEntry), InternalErrorKind::NoEntryPoint);
 }

@@ -38,7 +38,7 @@ private:
         bool isFilled { false };
     };
 
-    UncheckedKeyHashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesOfLiteralsWithWhatIsCreatedBelow;
+    HashMap<uint32_t, TypeID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesOfLiteralsWithWhatIsCreatedBelow;
 
     static ALWAYS_INLINE size_t hashOf(const LinkType& type)
     {

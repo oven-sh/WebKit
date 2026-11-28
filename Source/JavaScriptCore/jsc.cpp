@@ -279,17 +279,9 @@ namespace {
 
 [[noreturn]] static void jscExit(int status)
 {
-#if ENABLE(DFG_JIT)
-    if (DFG::isCrashing()) {
-        for (;;) {
-#if OS(WINDOWS)
-            Sleep(1000);
-#else
-            pause();
-#endif
-        }
-    }
-#endif // ENABLE(DFG_JIT)
+    // Wait for the other thread's crash, so that tests see it instead of a normal exit.
+    if (WTF::isAnotherThreadCrashing())
+        sleep(Seconds::infinity());
     exitProcess(status);
 }
 
@@ -508,6 +500,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
 static JSC_DECLARE_HOST_FUNCTION(functionHeapSize);
 static JSC_DECLARE_HOST_FUNCTION(functionMemoryUsageStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);
+static JSC_DECLARE_HOST_FUNCTION(functionCreateWeakHolder);
+static JSC_DECLARE_HOST_FUNCTION(functionSetWeakHolderValue);
 static JSC_DECLARE_HOST_FUNCTION(functionResetMemoryPeak);
 static JSC_DECLARE_HOST_FUNCTION(functionAddressOf);
 static JSC_DECLARE_HOST_FUNCTION(functionVersion);
@@ -781,11 +775,11 @@ private:
         }
 
         bool contains(UniquedStringImpl* name) const { return m_names.contains(name); }
-        NODELETE const UncheckedKeyHashSet<UniquedStringImpl*>& names() const { return m_names; }
+        NODELETE const HashSet<UniquedStringImpl*>& names() const { return m_names; }
 
     private:
         Vector<AtomString> m_strings; // To keep the UniqueStringImpls alive.
-        UncheckedKeyHashSet<UniquedStringImpl*> m_names;
+        HashSet<UniquedStringImpl*> m_names;
     };
 
     void finishCreation(VM& vm, const Vector<String>& arguments)
@@ -877,6 +871,8 @@ private:
         addFunction(vm, "gcHeapSize"_s, functionHeapSize, 0);
         addFunction(vm, "memoryUsageStatistics"_s, functionMemoryUsageStatistics, 0);
         addFunction(vm, "MemoryFootprint"_s, functionCreateMemoryFootprint, 0);
+        addFunction(vm, "createWeakHolder"_s, functionCreateWeakHolder, 1);
+        addFunction(vm, "setWeakHolderValue"_s, functionSetWeakHolderValue, 2);
         addFunction(vm, "resetMemoryPeak"_s, functionResetMemoryPeak, 0);
         addFunction(vm, "addressOf"_s, functionAddressOf, 1);
         addFunction(vm, "version"_s, functionVersion, 1);
@@ -1467,9 +1463,9 @@ static RefPtr<Uint8Array> fillBufferWithContentsOfFile(FILE* file)
 
 static RefPtr<Uint8Array> fillBufferWithContentsOfFile(const String& fileName)
 {
-    FILE* f = posixFopen(fileName.utf8(), "rb"_s);
+    FILE* f = posixFopen(makeUTF8CString(fileName), "rb"_s);
     if (!f) {
-        SAFE_FPRINTF(stderr, "Could not open file: %s\n", fileName.utf8());
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", makeUTF8CString(fileName));
         return nullptr;
     }
 
@@ -1504,9 +1500,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static bool fillBufferWithContentsOfFile(const String& fileName, Vector<char>& buffer)
 {
     struct stat statBuf;
-    auto fileNameUTF = fileName.tryGetUTF8();
+    auto fileNameUTF = tryMakeUTF8CString(fileName);
     if (!fileNameUTF.has_value()) {
-        SAFE_FPRINTF(stderr, "Error when parsing file name: %s\n", fileName.utf8());
+        constexpr unsigned maxLength = 256;
+        SAFE_FPRINTF(stderr, "Error when parsing file name: %s%s\n", makeUTF8CString(StringView(fileName).left(maxLength)), fileName.length() > maxLength ? "..."_s : ""_s);
         return false;
     }
     if (FileSystem::statFile(fileNameUTF->spanIncludingNullTerminator(), statBuf) == -1) {
@@ -1697,7 +1694,7 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
 
     FILE* f = _wfopen(pathName.span().data(), L"rb");
 #else
-    auto pathName = fileName.utf8();
+    auto pathName = makeUTF8CString(fileName);
     struct stat status { };
     if (FileSystem::statFile(pathName.spanIncludingNullTerminator(), status))
         return false;
@@ -1707,7 +1704,7 @@ static bool fetchModuleFromLocalFileSystem(const URL& fileURL, Vector& buffer)
     FILE* f = posixFopen(pathName, "r"_s);
 #endif
     if (!f) {
-        SAFE_FPRINTF(stderr, "Could not open file: %s\n", fileName.utf8());
+        SAFE_FPRINTF(stderr, "Could not open file: %s\n", makeUTF8CString(fileName));
         return false;
     }
 
@@ -1851,7 +1848,7 @@ static UTF8CString toUTF8CString(JSGlobalObject* globalObject, ThrowScope& scope
 
 template<typename T> static UTF8CString toUTF8CString(JSGlobalObject* globalObject, ThrowScope& scope, T& string)
 {
-    return toUTF8CString(globalObject, scope, string.tryGetUTF8());
+    return toUTF8CString(globalObject, scope, tryMakeUTF8CString(string));
 }
 
 static EncodedJSValue printInternal(JSGlobalObject* globalObject, CallFrame* callFrame, FILE* out, bool pretty)
@@ -2408,7 +2405,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCStack, (JSGlobalObject* globalObject, CallFr
 
     FunctionJSCStackFunctor functor(trace);
     StackVisitor::visit(callFrame, vm, functor);
-    SAFE_FPRINTF(stderr, "%s", trace.toString().utf8());
+    SAFE_FPRINTF(stderr, "%s", makeUTF8CString(trace.toString()));
     return JSValue::encode(jsUndefined());
 }
 
@@ -2548,6 +2545,91 @@ private:
 };
 
 const ClassInfo JSCMemoryFootprint::s_info = { "MemoryFootprint"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCMemoryFootprint) };
+
+// Holds its value in a Weak<> but keeps it alive by visiting it, as WebCore's JSValueInWrappedObject
+// does. Concurrent markers read the Weak<> while the mutator may replace it.
+class JSCWeakHolder final : public JSDestructibleObject {
+    using Base = JSDestructibleObject;
+public:
+    template<typename CellType, SubspaceAccess>
+    NODELETE static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.destructibleObjectSpace();
+    }
+
+    static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+    {
+        return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags), info());
+    }
+
+    static JSCWeakHolder* create(VM& vm, JSGlobalObject* globalObject)
+    {
+        Structure* structure = createStructure(vm, globalObject, jsNull());
+        JSCWeakHolder* holder = new (NotNull, allocateCell<JSCWeakHolder>(vm)) JSCWeakHolder(vm, structure);
+        holder->finishCreation(vm);
+        return holder;
+    }
+
+    static void destroy(JSCell* cell)
+    {
+        static_cast<JSCWeakHolder*>(cell)->JSCWeakHolder::~JSCWeakHolder();
+    }
+
+    void setValue(VM& vm, JSValue value)
+    {
+        if (!value.isCell()) {
+            m_value.clear();
+            return;
+        }
+        Weak<JSCell> weak { value.asCell() };
+        WTF::storeStoreFence();
+        m_value = WTF::move(weak);
+        vm.writeBarrier(this, value);
+    }
+
+    DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+private:
+    JSCWeakHolder(VM& vm, Structure* structure)
+        : Base(vm, structure)
+    { }
+
+    Weak<JSCell> m_value;
+};
+
+const ClassInfo JSCWeakHolder::s_info = { "WeakHolder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSCWeakHolder) };
+
+template<typename Visitor>
+void JSCWeakHolder::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    auto* thisObject = uncheckedDowncast<JSCWeakHolder>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_value);
+}
+
+DEFINE_VISIT_CHILDREN(JSCWeakHolder);
+
+JSC_DEFINE_HOST_FUNCTION(functionCreateWeakHolder, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    JSCWeakHolder* holder = JSCWeakHolder::create(vm, globalObject);
+    holder->setValue(vm, callFrame->argument(0));
+    return JSValue::encode(holder);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetWeakHolderValue, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* holder = dynamicDowncast<JSCWeakHolder>(callFrame->argument(0));
+    if (!holder)
+        return throwVMTypeError(globalObject, scope, "Expected a WeakHolder"_s);
+    holder->setValue(vm, callFrame->argument(1));
+    return JSValue::encode(jsUndefined());
+}
 
 JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics, (JSGlobalObject* globalObject, CallFrame*))
 {
@@ -2792,7 +2874,7 @@ JSC_DEFINE_HOST_FUNCTION(functionWriteFile, (JSGlobalObject* globalObject, CallF
         return throwVMError(globalObject, scope, "Could not open file."_s);
 
     auto size = WTF::visit(WTF::makeVisitor([&](const String& string) {
-        return handle.write(byteCast<uint8_t>(string.utf8().span()));
+        return handle.write(byteCast<uint8_t>(makeUTF8CString(string).span()));
     }, [&] (const std::span<const uint8_t>& data) {
         return handle.write(data);
     }), data);
@@ -3624,7 +3706,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpBytecodeProfile, (JSGlobalObject* globalObj
     String path = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
-    bool ok = vm.m_perBytecodeProfiler->save(path.utf8());
+    bool ok = vm.m_perBytecodeProfiler->save(makeUTF8CString(path));
     return JSValue::encode(jsBoolean(ok));
 }
 
@@ -4335,7 +4417,7 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
 
     auto exceptionString = exception.toWTFString(globalObject);
     CHECK_EXCEPTION();
-    auto expectedCString = exceptionString.tryGetUTF8();
+    auto expectedCString = tryMakeUTF8CString(exceptionString);
     if (expectedCString)
         SAFE_PRINTF("Exception: %s\n", expectedCString.value());
     else
@@ -4367,14 +4449,14 @@ static void dumpException(GlobalObject* globalObject, JSValue exception)
         CHECK_EXCEPTION();
         auto lineNumberString = lineNumberValue.toWTFString(globalObject);
         CHECK_EXCEPTION();
-        SAFE_PRINTF("at %s:%s\n", fileNameString.utf8(), lineNumberString.utf8());
+        SAFE_PRINTF("at %s:%s\n", makeUTF8CString(fileNameString), makeUTF8CString(lineNumberString));
     }
     
     if (!stackValue.isUndefinedOrNull()) {
         auto stackString = stackValue.toWTFString(globalObject);
         CHECK_EXCEPTION();
         if (stackString.length()) {
-            auto expectedUtf8 = stackString.tryGetUTF8();
+            auto expectedUtf8 = tryMakeUTF8CString(stackString);
             if (expectedUtf8)
                 SAFE_PRINTF("%s\n", expectedUtf8.value());
         }
@@ -4390,19 +4472,19 @@ static bool checkUncaughtException(VM& vm, GlobalObject* globalObject, JSValue e
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     scope.clearException();
     if (!exception) {
-        SAFE_PRINTF("Expected uncaught exception with name '%s' but none was thrown\n", expectedExceptionName.utf8());
+        SAFE_PRINTF("Expected uncaught exception with name '%s' but none was thrown\n", makeUTF8CString(expectedExceptionName));
         return false;
     }
 
     JSValue exceptionClass = globalObject->get(globalObject, Identifier::fromString(vm, expectedExceptionName));
     if (!exceptionClass.isObject() || scope.exception()) {
-        SAFE_PRINTF("Expected uncaught exception with name '%s' but given exception class is not defined\n", expectedExceptionName.utf8());
+        SAFE_PRINTF("Expected uncaught exception with name '%s' but given exception class is not defined\n", makeUTF8CString(expectedExceptionName));
         return false;
     }
 
     bool isInstanceOfExpectedException = uncheckedDowncast<JSObject>(exceptionClass)->hasInstance(globalObject, exception);
     if (scope.exception()) {
-        SAFE_PRINTF("Expected uncaught exception with name '%s' but given exception class fails performing hasInstance\n", expectedExceptionName.utf8());
+        SAFE_PRINTF("Expected uncaught exception with name '%s' but given exception class fails performing hasInstance\n", makeUTF8CString(expectedExceptionName));
         return false;
     }
     if (isInstanceOfExpectedException) {
@@ -4411,7 +4493,7 @@ static bool checkUncaughtException(VM& vm, GlobalObject* globalObject, JSValue e
         return true;
     }
 
-    SAFE_PRINTF("Expected uncaught exception with name '%s' but exception value is not instance of this exception class\n", expectedExceptionName.utf8());
+    SAFE_PRINTF("Expected uncaught exception with name '%s' but exception value is not instance of this exception class\n", makeUTF8CString(expectedExceptionName));
     dumpException(globalObject, exception);
     return false;
 }
@@ -4588,7 +4670,7 @@ static void runInteractive(GlobalObject* globalObject)
         } while (error.syntaxErrorType() == ParserError::SyntaxErrorRecoverable);
         
         if (error.isValid()) {
-            SAFE_PRINTF("%s:%d\n", error.message().utf8(), error.line());
+            SAFE_PRINTF("%s:%d\n", makeUTF8CString(error.message()), error.line());
             continue;
         }
         
@@ -4617,9 +4699,9 @@ static void runInteractive(GlobalObject* globalObject)
         std::expected<UTF8CString, UTF8ConversionError> utf8;
         if (evaluationException) {
             fputs("Exception: ", stdout);
-            utf8 = evaluationException->value().toWTFString(globalObject).tryGetUTF8();
+            utf8 = tryMakeUTF8CString(evaluationException->value().toWTFString(globalObject));
         } else
-            utf8 = returnValue.toWTFStringForConsole(globalObject).tryGetUTF8();
+            utf8 = tryMakeUTF8CString(returnValue.toWTFStringForConsole(globalObject));
 
         UTF8CString result;
         if (utf8)
@@ -4960,7 +5042,7 @@ void CommandLine::parseArguments(int argc, char** argv, int start)
             // We just assume input is utf-8 (probably ascii)
             String subArgList = String::fromLatin1(arg + singleStringSubArgList.length());
             auto splitArgs = subArgList.split(" "_s).map([](const String& arg) {
-                return arg.impl()->utf8();
+                return makeUTF8CString(*arg.impl());
             });
             Vector<char*> buffer = splitArgs.map([](const UTF8CString& arg) {
                 return const_cast<char*>(arg.legacyCStringPointer());
@@ -5100,7 +5182,7 @@ int runJSC(const CommandLine& options, bool isWorker, NOESCAPE const Func& func)
 
         if (Options::useProfiler()) {
             JSLockHolder locker(vm);
-            if (!vm.m_perBytecodeProfiler->save(options.m_profilerOutput.utf8()))
+            if (!vm.m_perBytecodeProfiler->save(makeUTF8CString(options.m_profilerOutput)))
                 fprintf(stderr, "could not save profiler output.\n");
         }
 
@@ -5261,11 +5343,15 @@ int jscmain(int argc, char** argv)
         // We set these racily with respect to reading them from the JS execution thread.
         *memoryPressureCriticalState = critical;
         *memoryPressureSynchronousState = synchronous;
+        VMManager::forEachVM([](VM& vm) {
+            vm.requestMicrotaskTickCallback();
+            return IterationStatus::Continue;
+        });
     });
     memoryPressureHandler.setShouldLogMemoryMemoryPressureEvents(false);
     memoryPressureHandler.install();
 
-    auto onEachMicrotaskTick = [&] (VM& vm) {
+    auto onMicrotaskTick = [&](VM& vm) {
         if (*memoryPressureCriticalState == Critical::No)
             return;
 
@@ -5290,7 +5376,7 @@ int jscmain(int argc, char** argv)
         [&] (VM& vm, GlobalObject* globalObject, bool& success) {
             UNUSED_PARAM(vm);
 #if PLATFORM(COCOA)
-            vm.setOnEachMicrotaskTick(WTF::move(onEachMicrotaskTick));
+            vm.setMicrotaskTickCallback(WTF::move(onMicrotaskTick));
 #endif
             runWithOptions(globalObject, mainCommandLine.get(), success);
         });

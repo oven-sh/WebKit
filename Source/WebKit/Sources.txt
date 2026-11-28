@@ -76,6 +76,7 @@ GPUProcess/graphics/WebGPU/RemoteXRBinding.cpp
 GPUProcess/graphics/WebGPU/RemoteXRProjectionLayer.cpp
 GPUProcess/graphics/WebGPU/RemoteXRSubImage.cpp
 GPUProcess/graphics/WebGPU/RemoteXRView.cpp
+GPUProcess/graphics/WebGPU/WebGPUDescriptorDeserializers.cpp
 GPUProcess/graphics/WebGPU/WebGPUObjectHeap.cpp @cost:3
 GPUProcess/media/RemoteAudioHardwareListenerProxy.cpp
 GPUProcess/media/RemoteAudioSessionProxy.cpp
@@ -331,35 +332,6 @@ Shared/Gamepad/GamepadData.cpp
 
 Shared/graphics/DisplayListData.cpp
 
-Shared/WebGPU/WebGPUBindGroupDescriptor.cpp
-Shared/WebGPU/WebGPUBindGroupEntry.cpp
-Shared/WebGPU/WebGPUBindGroupLayoutDescriptor.cpp
-Shared/WebGPU/WebGPUBufferBinding.cpp
-Shared/WebGPU/WebGPUCanvasConfiguration.cpp
-Shared/WebGPU/WebGPUComputePassDescriptor.cpp
-Shared/WebGPU/WebGPUComputePipelineDescriptor.cpp
-Shared/WebGPU/WebGPUDeviceDescriptor.cpp
-Shared/WebGPU/WebGPUExternalTextureDescriptor.cpp
-Shared/WebGPU/WebGPUFragmentState.cpp
-Shared/WebGPU/WebGPUImageCopyBuffer.cpp
-Shared/WebGPU/WebGPUImageCopyExternalImage.cpp
-Shared/WebGPU/WebGPUImageCopyTexture.cpp
-Shared/WebGPU/WebGPUImageCopyTextureTagged.cpp
-Shared/WebGPU/WebGPUObjectDescriptorBase.cpp
-Shared/WebGPU/WebGPUPipelineLayoutDescriptor.cpp
-Shared/WebGPU/WebGPUPresentationContextDescriptor.cpp
-Shared/WebGPU/WebGPUProgrammableStage.cpp
-Shared/WebGPU/WebGPURenderBundleEncoderDescriptor.cpp
-Shared/WebGPU/WebGPURenderPassColorAttachment.cpp
-Shared/WebGPU/WebGPURenderPassDepthStencilAttachment.cpp
-Shared/WebGPU/WebGPURenderPassDescriptor.cpp
-Shared/WebGPU/WebGPURenderPassTimestampWrites.cpp
-Shared/WebGPU/WebGPURenderPipelineDescriptor.cpp
-Shared/WebGPU/WebGPUShaderModuleDescriptor.cpp
-Shared/WebGPU/WebGPUTextureDescriptor.cpp
-Shared/WebGPU/WebGPUVertexBufferLayout.cpp
-Shared/WebGPU/WebGPUVertexState.cpp
-
 Shared/WebsiteData/WebsiteData.cpp
 
 Shared/XR/XRDeviceProxy.cpp
@@ -560,6 +532,7 @@ UIProcess/Authentication/WebProtectionSpace.cpp
 UIProcess/Automation/BidiBrowserAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiBrowsingContextAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiDigitalCredentialsAgent.cpp @no-unify-when(bundle<=8)
+UIProcess/Automation/BidiEmulationAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiInputAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiPermissionsAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiScriptAgent.cpp @no-unify-when(bundle<=8)
@@ -687,6 +660,7 @@ WebProcess/Extensions/WebExtensionControllerProxy.cpp
 
 WebProcess/Extensions/API/WebExtensionAPIAlarms.cpp
 WebProcess/Extensions/API/WebExtensionAPIEvent.cpp
+WebProcess/Extensions/API/WebExtensionAPIExtensionTypes.cpp
 WebProcess/Extensions/API/WebExtensionAPIRuntime.cpp
 WebProcess/Extensions/API/WebExtensionAPINamespace.cpp
 WebProcess/Extensions/API/WebExtensionAPIStorage.cpp
@@ -795,12 +769,12 @@ WebProcess/GPU/graphics/WebGPU/RemoteSamplerProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteShaderModuleProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteTextureProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteTextureViewProxy.cpp
+WebProcess/GPU/graphics/WebGPU/RemoteWebGPUInstanceProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteXRBindingProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteXRProjectionLayerProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteXRSubImageProxy.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteXRViewProxy.cpp
-WebProcess/GPU/graphics/WebGPU/WebGPUDowncastConvertToBackingContext.cpp
-WebProcess/GPU/graphics/ImageBufferRemoteDisplayListBackend.cpp
+WebProcess/GPU/graphics/WebGPU/WebGPUDescriptorSerializers.cpp
 WebProcess/GPU/graphics/ImageBufferShareableBitmapBackend.cpp
 WebProcess/GPU/graphics/PrepareBackingStoreBuffersData.cpp
 WebProcess/GPU/graphics/RemoteDisplayListRecorderProxy.cpp
@@ -844,6 +818,7 @@ WebProcess/GPU/webrtc/SampleBufferDisplayLayerManager.cpp
 
 WebProcess/Network/NetworkProcessConnection.cpp @cost:4
 WebProcess/Network/WebLoaderStrategy.cpp @cost:4
+WebProcess/Network/NetworkInterceptionSink.cpp
 WebProcess/Network/WebResourceInterceptController.cpp
 WebProcess/Network/WebResourceLoader.cpp
 WebProcess/Network/WebSocketChannel.cpp @no-unify-when(bundle<=8)

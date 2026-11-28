@@ -33,7 +33,6 @@
 #include "RemoteXRBindingMessages.h"
 #include "RemoteXRProjectionLayerProxy.h"
 #include "RemoteXRSubImageProxy.h"
-#include "WebGPUConvertToBackingContext.h"
 #include <WebCore/ImageBuffer.h>
 #include <WebCore/WebGPUCppAPI.h>
 
@@ -41,9 +40,8 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteXRBindingProxy);
 
-RemoteXRBindingProxy::RemoteXRBindingProxy(RemoteDeviceProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+RemoteXRBindingProxy::RemoteXRBindingProxy(RemoteDeviceProxy& parent, WebGPUXRBindingIdentifier identifier)
     : m_backing(identifier)
-    , m_convertToBackingContext(convertToBackingContext)
     , m_parent(parent)
 {
 }
@@ -56,24 +54,24 @@ RemoteXRBindingProxy::~RemoteXRBindingProxy()
 
 RefPtr<::WebGPU::XRProjectionLayer> RemoteXRBindingProxy::createProjectionLayer(const ::WebGPU::XRProjectionLayerDescriptor& descriptor)
 {
-    auto identifier = WebGPUIdentifier::generate();
+    auto identifier = WebGPUXRProjectionLayerIdentifier::generate();
 
     auto sendResult = send(Messages::RemoteXRBinding::CreateProjectionLayer(descriptor.colorFormat, descriptor.depthStencilFormat, descriptor.textureUsage, descriptor.scaleFactor, identifier));
     if (sendResult != IPC::Error::NoError)
         return nullptr;
 
-    auto result = RemoteXRProjectionLayerProxy::create(protect(root()), m_convertToBackingContext, identifier);
+    auto result = RemoteXRProjectionLayerProxy::create(protect(root()), identifier);
     return result;
 }
 
 RefPtr<::WebGPU::XRSubImage> RemoteXRBindingProxy::getViewSubImage(::WebGPU::XRProjectionLayer& projectionLayer)
 {
-    auto identifier = WebGPUIdentifier::generate();
+    auto identifier = WebGPUXRSubImageIdentifier::generate();
     auto sendResult = send(Messages::RemoteXRBinding::GetViewSubImage(downcast<RemoteXRProjectionLayerProxy>(projectionLayer).backing(), identifier));
     if (sendResult != IPC::Error::NoError)
         return nullptr;
 
-    auto result = RemoteXRSubImageProxy::create(protect(root()), m_convertToBackingContext, identifier);
+    auto result = RemoteXRSubImageProxy::create(m_parent, identifier);
     return result;
 }
 

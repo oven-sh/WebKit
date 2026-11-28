@@ -24,6 +24,8 @@
 #include "RenderBoxModelObject.h"
 #include "SVGPaintServerCache.h"
 
+#include <wtf/UniqueRef.h>
+
 namespace WebCore {
 
 class SVGGraphicsElement;
@@ -32,8 +34,8 @@ class RenderSVGInline : public RenderBoxModelObject {
     WTF_MAKE_TZONE_ALLOCATED(RenderSVGInline);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RenderSVGInline);
 public:
-    RenderSVGInline(Type, SVGGraphicsElement&, Style::ComputedStyle&&);
-    RenderSVGInline(Type, Document&, Style::ComputedStyle&&);
+    RenderSVGInline(Type, SVGGraphicsElement&, UniqueRef<Style::ComputedStyle>&&);
+    RenderSVGInline(Type, Document&, UniqueRef<Style::ComputedStyle>&&);
     virtual ~RenderSVGInline();
 
     inline SVGGraphicsElement& graphicsElement() const;
@@ -81,9 +83,9 @@ private:
     void willBeDestroyed() final;
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
-    SVGPaintServerCache* svgPaintServerCache() const final { return &m_svgPaintServerCache; }
+    SVGPaintServerCache* svgPaintServerCache() const final { return m_svgPaintServerCache.ptr(); }
 
-    mutable SVGPaintServerCache m_svgPaintServerCache;
+    const UniqueRef<SVGPaintServerCache> m_svgPaintServerCache { makeUniqueRef<SVGPaintServerCache>() };
 };
 
 } // namespace WebCore

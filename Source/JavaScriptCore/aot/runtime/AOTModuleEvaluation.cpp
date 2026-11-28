@@ -3332,7 +3332,7 @@ uint32_t Modules::takeMarkOfSearch()
     return m_placesSeenByPlans.takeMark(m_table.size());
 }
 
-bool Modules::tryFindAliasedCompiledModules(ModuleID root, UncheckedKeyHashMap<ModuleID, ModuleID>& aliasedModules)
+bool Modules::tryFindAliasedCompiledModules(ModuleID root, HashMap<ModuleID, ModuleID>& aliasedModules)
 {
     VM& vm = *m_instance.vm;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -3381,7 +3381,7 @@ bool Modules::planLevelsOfLoad(ModuleID root)
     using Level = PlanOfLoad::Level;
     if (!m_queuedFetches.isEmpty())
         return false;
-    UncheckedKeyHashMap<ModuleID, ModuleID> aliasedModules;
+    HashMap<ModuleID, ModuleID> aliasedModules;
     if (data(root).reachesUncompiledCode() && !tryFindAliasedCompiledModules(root, aliasedModules))
         return false;
 
@@ -4143,7 +4143,7 @@ unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
         uint32_t firstRequester { 0 };
         unsigned level { 0 };
     };
-    UncheckedKeyHashMap<uint32_t, Request, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> requests;
+    HashMap<uint32_t, Request, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> requests;
     Vector<ModuleID, 32> inLevelOrder { root };
     requests.set(root.index(), Request { root.index(), 0 });
     for (size_t next = 0; next < inLevelOrder.size(); ++next) {
@@ -4157,7 +4157,7 @@ unsigned Modules::loaderStepsToMock(ModuleID root, ModuleID mock) const
                 inLevelOrder.append(requested);
         }
     }
-    UncheckedKeyHashMap<uint32_t, std::optional<unsigned>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> steps;
+    HashMap<uint32_t, std::optional<unsigned>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> steps;
     BitVector isOpen(m_table.size());
     auto visit = [&](auto& self, ModuleID module) -> std::optional<unsigned> {
         if (module == mock)

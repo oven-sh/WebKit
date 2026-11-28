@@ -27,6 +27,7 @@
 
 #include "Connection.h"
 #include "SharedPreferencesForWebProcess.h"
+#include "Untrusted.h"
 #include <WebCore/BroadcastChannelIdentifier.h>
 #include <WebCore/ClientOrigin.h>
 #include <wtf/HashMap.h>
@@ -44,24 +45,23 @@ class NetworkProcess;
 class NetworkBroadcastChannelRegistry : public RefCounted<NetworkBroadcastChannelRegistry> {
     WTF_MAKE_TZONE_ALLOCATED(NetworkBroadcastChannelRegistry);
 public:
-    static Ref<NetworkBroadcastChannelRegistry> create(NetworkProcess&);
+    static Ref<NetworkBroadcastChannelRegistry> create();
     ~NetworkBroadcastChannelRegistry();
 
     void removeConnection(IPC::Connection&);
 
     void didReceiveMessage(IPC::Connection&, IPC::Decoder&);
 
-    void registerChannel(IPC::Connection&, const WebCore::ClientOrigin&, const String& name);
-    void unregisterChannel(IPC::Connection&, const WebCore::ClientOrigin&, const String& name);
-    void postMessage(IPC::Connection&, const WebCore::ClientOrigin&, const String& name, WebCore::MessageWithMessagePorts&&, Vector<URL>&& blobURLs, CompletionHandler<void()>&&);
+    void registerChannel(IPC::Connection&, IPC::Untrusted<WebCore::ClientOrigin>&&, const String& name);
+    void unregisterChannel(IPC::Connection&, IPC::Untrusted<WebCore::ClientOrigin>&&, const String& name);
+    void postMessage(IPC::Connection&, IPC::Untrusted<WebCore::ClientOrigin>&&, const String& name, WebCore::MessageWithMessagePorts&&, Vector<URL>&& blobURLs, CompletionHandler<void()>&&);
 
     std::optional<SharedPreferencesForWebProcess> sharedPreferencesForWebProcess(const IPC::Connection&) const;
 private:
-    explicit NetworkBroadcastChannelRegistry(NetworkProcess&);
+    NetworkBroadcastChannelRegistry();
 
     bool isOriginAllowedForConnection(IPC::Connection&, const WebCore::ClientOrigin&) const;
 
-    const Ref<NetworkProcess> m_networkProcess;
     using NameToConnectionIdentifiersMap = HashMap<String, Vector<IPC::Connection::UniqueID>>;
     HashMap<WebCore::ClientOrigin, NameToConnectionIdentifiersMap> m_broadcastChannels;
 };

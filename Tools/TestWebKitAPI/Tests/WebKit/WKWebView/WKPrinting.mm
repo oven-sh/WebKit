@@ -28,6 +28,8 @@
 
 #import "Helpers/PlatformUtilities.h"
 #import "Helpers/Test.h"
+#import "Helpers/cocoa/PrintingTestUtilities.h"
+#import "Helpers/cocoa/TestCocoa.h"
 #import "Helpers/cocoa/TestNavigationDelegate.h"
 #import "Helpers/cocoa/TestPDFDocument.h"
 #import "Helpers/cocoa/TestWKWebView.h"
@@ -128,14 +130,7 @@ TEST(Printing, DrawPagesToPDFSynchronously)
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
     [webView synchronouslyLoadHTMLString:@"<body>Hello</body>"];
 
-    RetainPtr<_WKFrameHandle> mainFrame = [webView mainFrame].info._handle;
-    __block bool computedPages = false;
-    [webView _computePagesForPrinting:mainFrame.get() completionHandler:^{
-        computedPages = true;
-    }];
-    TestWebKitAPI::Util::run(&computedPages);
-
-    RetainPtr data = [webView _drawPagesToPDFSynchronouslyForTesting:mainFrame.get() pageCount:1];
+    RetainPtr data = TestWebKitAPI::drawPagesToPDF(webView.get(), [webView mainFrame].info._handle, 1);
     ASSERT_NOT_NULL(data.get());
     EXPECT_TRUE([data length]);
 }
@@ -150,13 +145,7 @@ TEST(Printing, DrawPagesToPDFSynchronouslyDuringDOMPrint)
     [webView evaluateJavaScript:@"window.print()" completionHandler:nil];
     RetainPtr<_WKFrameHandle> frame = [delegate waitForPrintFrame];
 
-    __block bool computedPages = false;
-    [webView _computePagesForPrinting:frame.get() completionHandler:^{
-        computedPages = true;
-    }];
-    TestWebKitAPI::Util::run(&computedPages);
-
-    RetainPtr data = [webView _drawPagesToPDFSynchronouslyForTesting:frame.get() pageCount:1];
+    RetainPtr data = TestWebKitAPI::drawPagesToPDF(webView.get(), frame.get(), 1);
     [delegate finishPrinting];
     ASSERT_NOT_NULL(data.get());
     EXPECT_TRUE([data length]);
@@ -221,64 +210,59 @@ TEST(Printing, PrintPageBorders)
     [webView _waitUntilPageBorderDrawn];
 }
 
-#if HAVE(PDFKIT)
-@interface PrintOperationObserver : NSObject
-- (void)waitForPrintOperation;
-@end
-
-@implementation PrintOperationObserver {
-    bool _didRun;
-}
-
-- (void)printOperationDidRun:(NSPrintOperation *)printOperation success:(BOOL)success contextInfo:(void *)contextInfo
+static NSRect firstPageInPreview(NSPrintOperation *operation, NSPaperOrientation orientation)
 {
-    EXPECT_TRUE(success);
-    _didRun = true;
+    RetainPtr view = [operation view];
+    [view endDocument];
+    [operation printInfo].orientation = orientation;
+    NSRange pageRange { 0, NSIntegerMax };
+    EXPECT_TRUE(TestWebKitAPI::Util::waitFor([&] {
+        [view knowsPageRange:&pageRange];
+        return pageRange.length != NSIntegerMax;
+    }));
+    NSRect page = [view rectForPage:1];
+    return { [view locationOfPrintRect:page], page.size };
 }
 
-- (void)waitForPrintOperation
-{
-    TestWebKitAPI::Util::run(&_didRun);
-}
-
-@end
-
-static RetainPtr<TestPDFDocument> printToPDF(NSString *styleSheet)
+TEST(Printing, PreviewPageDoesNotDependOnPreviousOrientation)
 {
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
-    [webView synchronouslyLoadHTMLString:[NSString stringWithFormat:@"<style>%@ body { margin: 0 }</style><div>Hello</div>", styleSheet]];
+    [webView synchronouslyLoadHTMLString:@"<style>@page { margin: 1in }</style>Hello"];
 
     RetainPtr printInfo = adoptNS([[NSPrintInfo alloc] init]);
-    [printInfo setPaperSize:NSMakeSize(612, 792)];
+    [printInfo setPaperSize:TestWebKitAPI::usLetterPaperSizeInPoints];
+    [printInfo setTopMargin:36];
+    [printInfo setBottomMargin:36];
+    [printInfo setLeftMargin:18];
+    [printInfo setRightMargin:18];
+    RetainPtr operation = [webView printOperationWithPrintInfo:printInfo];
+    [NSPrintOperation setCurrentOperation:operation];
 
-    RetainPtr pdfURL = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:[NSString stringWithFormat:@"%@.pdf", NSUUID.UUID.UUIDString]] isDirectory:NO];
-    [printInfo setJobDisposition:NSPrintSaveJob];
-    [printInfo dictionary][NSPrintJobSavingURL] = pdfURL.get();
+    auto portraitPage = firstPageInPreview(operation, NSPaperOrientationPortrait);
+    firstPageInPreview(operation, NSPaperOrientationLandscape);
+    auto portraitPageAfterLandscape = firstPageInPreview(operation, NSPaperOrientationPortrait);
+    [NSPrintOperation setCurrentOperation:nil];
 
-    RetainPtr operation = [webView printOperationWithPrintInfo:printInfo.get()];
-    [operation setShowsPrintPanel:NO];
-    [operation setShowsProgressPanel:NO];
-
-    RetainPtr observer = adoptNS([PrintOperationObserver new]);
-    [operation runOperationModalForWindow:[webView hostWindow] delegate:observer.get() didRunSelector:@selector(printOperationDidRun:success:contextInfo:) contextInfo:nullptr];
-    [observer waitForPrintOperation];
-
-    RetainPtr data = adoptNS([[NSData alloc] initWithContentsOfURL:pdfURL.get()]);
-    [NSFileManager.defaultManager removeItemAtURL:pdfURL.get() error:nil];
-    EXPECT_NOT_NULL(data.get());
-    if (!data)
-        return nil;
-    return adoptNS([[TestPDFDocument alloc] initFromData:data.get()]);
+    EXPECT_EQ(portraitPage, NSMakeRect(72, 72, 468, 648));
+    EXPECT_EQ(portraitPageAfterLandscape, portraitPage);
 }
 
-// Measured from the top left of the paper.
+#if HAVE(PDFKIT)
+static RetainPtr<TestPDFDocument> printToPDF(NSString *html, void (^configurePrintInfo)(NSPrintInfo *) = nil)
+{
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
+    [webView synchronouslyLoadHTMLString:html];
+
+    return TestWebKitAPI::printToPDF(^(NSPrintInfo *printInfo) {
+        if (configurePrintInfo)
+            configurePrintInfo(printInfo);
+        return [webView printOperationWithPrintInfo:printInfo];
+    }, [webView hostWindow]);
+}
+
 static CGPoint firstCharacterPosition(NSString *styleSheet)
 {
-    RetainPtr document = printToPDF(styleSheet);
-    EXPECT_EQ([document pageCount], 1);
-    RetainPtr page = [document pageAtIndex:0];
-    CGRect characterRect = [page rectForCharacterAtIndex:0];
-    return CGPointMake(CGRectGetMinX(characterRect), CGRectGetMaxY([page bounds]) - CGRectGetMaxY(characterRect));
+    return TestWebKitAPI::firstCharacterPosition(printToPDF([NSString stringWithFormat:@"<style>%@ body { margin: 0 }</style><div>Hello</div>", styleSheet]).get());
 }
 
 static void expectFirstCharacterOffset(NSString *styleSheet, NSString *referenceStyleSheet, CGFloat left, CGFloat top)
@@ -292,7 +276,22 @@ static void expectFirstCharacterOffset(NSString *styleSheet, NSString *reference
 TEST(Printing, PrintedContentUsesCSSUnits)
 {
     // 1in = 96px = 72pt.
-    expectFirstCharacterOffset(@"@page { margin: 0 } div { margin-left: 1in; padding-top: 1in }", @"@page { margin: 0 }", 72, 72);
+    auto oneInch = TestWebKitAPI::pointsFromCSSPixels(96);
+    expectFirstCharacterOffset(@"@page { margin: 0 } div { margin-left: 1in; padding-top: 1in }", @"@page { margin: 0 }", oneInch, oneInch);
+}
+
+TEST(Printing, ViewportUnitsUsePageArea)
+{
+    NSString *cases[] = {
+        @"<div style='width: 1000px'></div>",
+        @"<script>matchMedia('print').addEventListener('change', () => document.body.offsetHeight)</script>",
+    };
+    for (NSString *content : cases) {
+        RetainPtr document = printToPDF([NSString stringWithFormat:@"<body style='margin: 0'>%@<div style='height: 100vh'></div>Next page</body>", content]);
+        EXPECT_EQ([document pageCount], 2) << content.UTF8String;
+        if ([document pageCount] == 2)
+            EXPECT_TRUE([[[document pageAtIndex:1] text] containsString:@"Next page"]) << content.UTF8String;
+    }
 }
 
 static CGSize drawnPDFPageSize(NSString *html)
@@ -300,14 +299,7 @@ static CGSize drawnPDFPageSize(NSString *html)
     RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600)]);
     [webView synchronouslyLoadHTMLString:html];
 
-    RetainPtr<_WKFrameHandle> mainFrame = [webView mainFrame].info._handle;
-    __block bool computedPages = false;
-    [webView _computePagesForPrinting:mainFrame.get() completionHandler:^{
-        computedPages = true;
-    }];
-    TestWebKitAPI::Util::run(&computedPages);
-
-    RetainPtr data = [webView _drawPagesToPDFSynchronouslyForTesting:mainFrame.get() pageCount:1];
+    RetainPtr data = TestWebKitAPI::drawPagesToPDF(webView.get(), [webView mainFrame].info._handle, 1);
     EXPECT_NOT_NULL(data.get());
     if (!data)
         return CGSizeZero;
@@ -321,8 +313,53 @@ TEST(Printing, DrawnPDFPagesArePaperSized)
     // The testing SPI prints on US Letter paper. The wide page is shrunk to fit.
     for (NSString *html in @[ @"<body>Hello</body>", @"<body style='margin: 0'><div style='width: 1000px'>Hello</div></body>" ]) {
         auto size = drawnPDFPageSize(html);
-        EXPECT_NEAR(size.width, 612, 1);
-        EXPECT_NEAR(size.height, 792, 1);
+        EXPECT_NEAR(size.width, TestWebKitAPI::usLetterPaperSizeInPoints.width, 1);
+        EXPECT_NEAR(size.height, TestWebKitAPI::usLetterPaperSizeInPoints.height, 1);
+    }
+}
+
+// The print margins are 36pt at the top and bottom and 18pt on the sides.
+static Vector<CGPoint> printedFirstCharacterPositions(NSString *styleSheet, NSUInteger pageCount, NSPaperOrientation orientation)
+{
+    RetainPtr html = adoptNS([[NSMutableString alloc] initWithFormat:@"<style>%@ body { margin: 0 } div { break-after: page }</style>", styleSheet]);
+    for (NSUInteger i = 0; i < pageCount; ++i)
+        [html appendString:@"<div>Page</div>"];
+    RetainPtr document = printToPDF(html.get(), ^(NSPrintInfo *printInfo) {
+        printInfo.topMargin = 36;
+        printInfo.bottomMargin = 36;
+        printInfo.leftMargin = 18;
+        printInfo.rightMargin = 18;
+        printInfo.orientation = orientation;
+    });
+    return TestWebKitAPI::firstCharacterPositions(document.get());
+}
+
+TEST(Printing, PageMarginsReplacePrintInfoMargins)
+{
+    struct Case {
+        NSString *styleSheet;
+        CGFloat left;
+        CGFloat top;
+        NSUInteger pageCount { 1 };
+        NSPaperOrientation orientation { NSPaperOrientationPortrait };
+    } cases[] = {
+        { @"", 18, 36 },
+        { @"@page { margin: 1in }", 72, 72 },
+        { @"@page { margin: 4em }", 48, 48 },
+        { @"@page { margin: 1.5in 1in 0.5in 2in }", 144, 108 },
+        { @"@page { margin-top: 1in }", 18, 72 },
+        { @"@page { margin: 1in }", 72, 72, 3 },
+        { @"@page { margin: 1in 0.5in }", 36, 72, 1, NSPaperOrientationLandscape },
+    };
+    for (auto& [styleSheet, left, top, pageCount, orientation] : cases) {
+        auto positions = printedFirstCharacterPositions(styleSheet, pageCount, orientation);
+        auto zeroMarginPositions = printedFirstCharacterPositions([styleSheet stringByAppendingString:@" @page { margin: 0 }"], pageCount, orientation);
+        ASSERT_EQ(positions.size(), pageCount) << styleSheet.UTF8String;
+        ASSERT_EQ(zeroMarginPositions.size(), pageCount) << styleSheet.UTF8String;
+        for (size_t i = 0; i < pageCount; ++i) {
+            EXPECT_DOUBLE_EQ(positions[i].x - zeroMarginPositions[i].x, left) << styleSheet.UTF8String << " page " << i;
+            EXPECT_DOUBLE_EQ(positions[i].y - zeroMarginPositions[i].y, top) << styleSheet.UTF8String << " page " << i;
+        }
     }
 }
 #endif // HAVE(PDFKIT)

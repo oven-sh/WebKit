@@ -77,13 +77,7 @@
 #define _XSTRINGIFY(line) #line
 #define _STRINGIFY(line) _XSTRINGIFY(line)
 
-/* ASSERT_ENABLED and the *_DISABLED macros derived from it are defined in PlatformEnable.h. */
-
-#if ENABLE(RELEASE_LOG)
-#define RELEASE_LOG_DISABLED 0
-#else
-#define RELEASE_LOG_DISABLED !(USE(OS_LOG) || ENABLE(JOURNALD_LOG) || OS(ANDROID))
-#endif
+/* ASSERT_ENABLED, the *_DISABLED macros derived from it and RELEASE_LOG_DISABLED are defined in PlatformEnable.h. */
 
 #ifndef VERBOSE_RELEASE_LOG
 #define VERBOSE_RELEASE_LOG (ENABLE(JOURNALD_LOG) || OS(ANDROID))
@@ -378,6 +372,24 @@ class StringView;
 
 NODELETE WTF_EXPORT_PRIVATE WTFLogChannel* WTFLogChannelByName(WTFLogChannel*[], size_t count, WTF::StringView name);
 WTF_EXPORT_PRIVATE void WTFInitializeLogChannelStatesFromString(WTFLogChannel*[], size_t count, WTF::StringView logLevel);
+
+namespace WTF {
+
+// Notes that the current thread is about to crash, so that isAnotherThreadCrashing() is true on other threads.
+WTF_EXPORT_PRIVATE void notifyCurrentThreadIsCrashing();
+// Whether a thread other than the current one is about to crash.
+WTF_EXPORT_PRIVATE bool isAnotherThreadCrashing();
+
+#if LOG_DISABLED && RELEASE_LOG_DISABLED
+// Lets Swift code name channels when all logging is compiled out.
+inline WTFLogChannel& disabledLogChannel()
+{
+    static WTFLogChannel channel { };
+    return channel;
+}
+#endif
+
+} // namespace WTF
 #endif
 
 /* BACKTRACE
@@ -773,7 +785,7 @@ static constexpr bool unreachableForValue = false;
         if (LOG_CHANNEL(channel).state != logChannelStateOff) { \
             WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
             commands; \
-            LOG(channel, "%s", stream.release().utf8()); \
+            LOG(channel, "%s", makeUTF8CString(stream.release())); \
         } \
     } while (0)
 #endif
@@ -971,13 +983,13 @@ inline const char* wtfLogPriorityName(int priority)
 #define ALWAYS_LOG_WITH_STREAM(commands) do { \
         WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
         commands; \
-        SAFE_WTFLOGALWAYS("%s", stream.release().utf8()); \
+        SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release())); \
     } while (0)
 
 #define WTF_ALWAYS_LOG(commands) do { \
         WTF::TextStream stream(WTF::TextStream::LineMode::SingleLine); \
         stream << commands; \
-        SAFE_WTFLOGALWAYS("%s", stream.release().utf8()); \
+        SAFE_WTFLOGALWAYS("%s", makeUTF8CString(stream.release())); \
     } while (0)
 
 /* RELEASE_ASSERT */

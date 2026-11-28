@@ -65,6 +65,7 @@ GstDevice* webkitMockDeviceCreate(const CaptureDevice& captureDevice)
     case CaptureDevice::DeviceType::Canvas:
     case CaptureDevice::DeviceType::Screen:
     case CaptureDevice::DeviceType::Window:
+    case CaptureDevice::DeviceType::BrowserTab:
         deviceClass = "Video/Source"_s;
         caps = adoptGRef(gst_caps_new_empty_simple("video/x-raw"));
         break;
@@ -80,8 +81,8 @@ GstDevice* webkitMockDeviceCreate(const CaptureDevice& captureDevice)
 
     auto displayName = captureDevice.label();
     GUniquePtr<GstStructure> properties(gst_structure_new("webkit-mock-device", "persistent-id", G_TYPE_STRING, captureDevice.persistentId().ascii().data(), "is-default", G_TYPE_BOOLEAN, captureDevice.isDefault(), nullptr));
-    GST_DEBUG("Creating mock device with name %s and properties %" GST_PTR_FORMAT, displayName.utf8(), properties.get());
-    auto* device = WEBKIT_MOCK_DEVICE_CAST(gObjectNew(GST_TYPE_MOCK_DEVICE, "display-name", displayName.utf8(),
+    GST_DEBUG("Creating mock device with name %s and properties %" GST_PTR_FORMAT, makeUTF8CString(displayName), properties.get());
+    auto* device = WEBKIT_MOCK_DEVICE_CAST(gObjectNew(GST_TYPE_MOCK_DEVICE, "display-name", makeUTF8CString(displayName),
         "device-class", deviceClass.characters(), "caps", caps.get(), "properties", properties.get()));
     gst_object_ref_sink(device);
     return GST_DEVICE_CAST(device);

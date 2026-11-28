@@ -52,7 +52,7 @@ from webkitpy.style.checker import ProcessorBase
 from webkitpy.style.checker import StyleProcessor
 from webkitpy.style.checker import StyleProcessorConfiguration
 from webkitpy.style.checkers.basexcconfig import BaseXcconfigChecker
-from webkitpy.style.checkers.api_test_allowlist import APITestAllowlistChecker
+from webkitpy.style.checkers.api_test_blocklist import APITestBlocklistChecker
 from webkitpy.style.checkers.changelog import ChangeLogChecker
 from webkitpy.style.checkers.cpp import CppChecker
 from webkitpy.style.checkers.deprecated_js_test_includes import DeprecatedJSTestIncludesChecker
@@ -363,6 +363,8 @@ class CheckerDispatcherSkipTest(unittest.TestCase):
             os.path.join('LayoutTests', 'foo.txt'),
             os.path.join('LayoutTests', 'imported', 'foo.py'),
             os.path.join('WebDriverTests', 'foo.py'),
+            # Generated web extension bindings.
+            os.path.join('Source', 'WebKit', 'WebProcess', 'Extensions', 'Bindings', 'Scripts', 'Tests', 'Expected', 'JSWebExtensionAPITestCPP.h'),
             # Imported markup and non-markup LayoutTests files stay skipped.
             os.path.join('LayoutTests', 'imported', 'w3c', 'foo.html'),
             os.path.join('LayoutTests', 'fast', 'foo.js'),
@@ -471,8 +473,8 @@ class CheckerDispatcherDispatchTest(unittest.TestCase):
         """Assert that the dispatched checker is a XMLChecker."""
         self.assert_checker(file_path, XMLChecker)
 
-    def test_api_test_allowlist_paths(self):
-        self.assert_checker(os.path.join('Tools', 'Scripts', 'webkitpy', 'api_tests', 'allowlist.txt'), APITestAllowlistChecker)
+    def test_api_test_blocklist_paths(self):
+        self.assert_checker(os.path.join('Tools', 'Scripts', 'webkitpy', 'api_tests', 'blocklist.txt'), APITestBlocklistChecker)
 
     def test_basexcconfig_paths(self):
         """Test paths that should be checked as Base.xcconfig files."""

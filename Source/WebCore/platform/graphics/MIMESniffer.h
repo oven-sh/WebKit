@@ -28,13 +28,11 @@
 #include <span>
 #include <wtf/text/WTFString.h>
 
-namespace WebCore {
-
-namespace MIMESniffer {
+namespace WebCore::MIMESniffer {
 
 // from https://mimesniff.spec.whatwg.org/#matching-an-audio-or-video-type-pattern
 WEBCORE_EXPORT String getMIMETypeFromContent(std::span<const uint8_t>);
 
-} // namespace MIMESniffer
+WEBCORE_EXPORT String getModelMIMETypeFromContent(std::span<const uint8_t>);
 
-} // namespace WebCore
+} // namespace WebCore::MIMESniffer

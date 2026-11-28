@@ -83,9 +83,9 @@ public:
     size_t remainingByteCount() const
     {
         auto& decoder = borrowed();
-        auto span = decoder.span();
+        size_t size = decoder.span().size();
         size_t offset = decoder.currentBufferOffset();
-        return offset < span.size() ? span.size() - offset : 0;
+        return offset < size ? size - offset : 0;
     }
 
     bool isValid() const { return borrowed().isValid(); }
@@ -130,8 +130,8 @@ public:
 #ifdef __swift__
     // FIXME: rdar://165684636 means we have to define these at this level of the
     // type hierarchy.
-    void ref() const { ThreadSafeRefCounted<SwiftReplyEncoder>::ref(); }
-    void deref() const { ThreadSafeRefCounted<SwiftReplyEncoder>::deref(); }
+    SWIFT_UNSAFE void ref() const { ThreadSafeRefCounted<SwiftReplyEncoder>::ref(); }
+    SWIFT_UNSAFE void deref() const { ThreadSafeRefCounted<SwiftReplyEncoder>::deref(); }
 #endif
 
     void encode(bool value) { encodeValue(value); }

@@ -39,12 +39,12 @@
 #include "TreeResolutionState.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
+#include <wtf/UniqueRef.h>
 
 namespace WebCore {
 
 class Document;
 class Element;
-class Node;
 class ShadowRoot;
 
 namespace Style {
@@ -112,7 +112,7 @@ private:
 
     struct Scope : RefCounted<Scope> {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(Scope, TreeResolverScope);
-        Ref<Resolver> resolver;
+        const Ref<Resolver> resolver;
         SelectorMatchingState selectorMatchingState;
         RefPtr<ShadowRoot> shadowRoot;
         RefPtr<Scope> enclosingScope;
@@ -161,7 +161,7 @@ private:
     void popParent();
     void popParentsToDepth(unsigned depth);
 
-    void incrementNestedInlineFormattingContextCountIfNeeded(Parent&);
+    void incrementNestedInlineFormattingContextCountIfNeeded(Parent&, const Style::ComputedStyle&);
 
     DescendantsToResolve computeDescendantsToResolve(const ElementUpdate&, const Style::ComputedStyle* existingStyle, Validity) const;
     static std::optional<ResolutionType> determineResolutionType(const Element&, const Style::ComputedStyle*, DescendantsToResolve, OptionSet<Change> parentChange);
@@ -223,7 +223,7 @@ private:
     HashMap<Ref<Element>, QueryContainerState> m_queryContainerStates;
 
     // This state gets passes to the style builder and holds state for a single tree resolution, including over any interleaving.
-    TreeResolutionState m_treeResolutionState;
+    const UniqueRef<TreeResolutionState> m_treeResolutionState { makeUniqueRef<TreeResolutionState>() };
     HashMap<Ref<const Element>, std::unique_ptr<Style::ComputedStyle>> m_savedBeforeResolutionStylesForInterleaving;
 
     struct PositionOption {
@@ -239,7 +239,7 @@ private:
     };
 
     struct PositionOptions {
-        // Array of option styles. By convention, the original style is at index 0.
+        // Original style is included in optionStyles and sorted by position-try-order.
         Vector<PositionOption> optionStyles { };
         ResolvedStyle originalResolvedStyle;
         size_t index { 0 };
@@ -247,7 +247,6 @@ private:
         bool chosen { false };
         bool isFirstTry { true };
 
-        NODELETE const Style::ComputedStyle& originalStyle() const;
         std::unique_ptr<Style::ComputedStyle> currentOption() const;
     };
     HashMap<WeakStyleable, PositionOptions> m_positionOptions;

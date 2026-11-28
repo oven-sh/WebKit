@@ -971,6 +971,36 @@ static void testWebViewFullScreen(FullScreenClientTest* test, gconstpointer)
     test->leaveFullScreenAndWaitUntilLeftFullScreen();
     g_assert_cmpint(test->m_event, ==, FullScreenClientTest::Leave);
 }
+
+static void testWebViewFullScreenWebProcessTerminated(FullScreenClientTest* test, gconstpointer)
+{
+#if ENABLE(WPE_PLATFORM)
+    if (Test::s_useWPELegacyAPI) {
+        g_test_skip("Leaving fullscreen when the web process ends is not implemented for the legacy API");
+        return;
+    }
+#endif
+
+    test->showInWindow();
+    test->loadHtml("<html><body>FullScreen test</body></html>", nullptr);
+    test->waitUntilLoadFinished();
+    test->requestFullScreenAndWaitUntilEnteredFullScreen();
+    g_assert_cmpint(test->m_event, ==, FullScreenClientTest::Enter);
+
+    // The view leaves fullscreen when the web process ends.
+    test->m_event = FullScreenClientTest::None;
+    test->m_expectedWebProcessCrash = true;
+    webkit_web_view_terminate_web_process(test->webView());
+    g_assert_cmpint(test->m_event, ==, FullScreenClientTest::Leave);
+
+    // A page loaded in a new web process can go fullscreen again.
+    test->loadHtml("<html><body>FullScreen test</body></html>", nullptr);
+    test->waitUntilLoadFinished();
+    test->requestFullScreenAndWaitUntilEnteredFullScreen();
+    g_assert_cmpint(test->m_event, ==, FullScreenClientTest::Enter);
+    test->leaveFullScreenAndWaitUntilLeftFullScreen();
+    g_assert_cmpint(test->m_event, ==, FullScreenClientTest::Leave);
+}
 #endif
 
 static void testWebViewCanShowMIMEType(WebViewTest* test, gconstpointer)
@@ -1302,6 +1332,35 @@ static void testWebViewDocumentFocus(WebViewTest* test, gconstpointer)
     g_assert_nonnull(value);
     g_assert_no_error(error.get());
     g_assert_false(WebViewTest::javascriptResultToBoolean(value));
+}
+
+static bool waitForAnimationFrames(WebViewTest* test)
+{
+    // Two frames, so that the composition of the rendering update that ran the first callback is done
+    // when this returns. The timeout keeps the test from hanging when rendering updates no longer run.
+    GUniqueOutPtr<GError> error;
+    JSCValue* value = test->runAsyncJavaScriptFunctionInWorldAndWaitUntilFinished(
+        "return await Promise.race(["
+        "    new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve(true)))),"
+        "    new Promise(resolve => setTimeout(() => resolve(false), 2000))"
+        "]);", nullptr, nullptr, &error.outPtr());
+    g_assert_nonnull(value);
+    g_assert_no_error(error.get());
+    return WebViewTest::javascriptResultToBoolean(value);
+}
+
+static void testWebViewRenderingAfterEmptySize(WebViewTest* test, gconstpointer)
+{
+    test->showInWindow(800, 600);
+    test->loadHtml("<html><body><p>Rendering after the view had no height</p></body></html>", nullptr);
+    test->waitUntilLoadFinished();
+    g_assert_true(waitForAnimationFrames(test));
+
+    // Give the view no height, then its height back. Rendering updates must run again.
+    test->resizeView(800, 0);
+    test->wait(0.2);
+    test->resizeView(800, 600);
+    g_assert_true(waitForAnimationFrames(test));
 }
 
 #if PLATFORM(GTK) || ENABLE(2022_GLIB_API)
@@ -2034,14 +2093,14 @@ static void testWebViewNotification(NotificationWebViewTest* test, gconstpointer
 
 static void setInitialNotificationPermissionsAllowedCallback(WebKitWebContext* context, NotificationWebViewTest* test)
 {
-    GList* allowedOrigins = g_list_prepend(nullptr, webkit_security_origin_new_for_uri(gServer->baseURL().string().utf8().legacyCStringPointer()));
+    GList* allowedOrigins = g_list_prepend(nullptr, webkit_security_origin_new_for_uri(makeUTF8CString(gServer->baseURL().string()).legacyCStringPointer()));
     webkit_web_context_initialize_notification_permissions(test->m_webContext.get(), allowedOrigins, nullptr);
     g_list_free_full(allowedOrigins, reinterpret_cast<GDestroyNotify>(webkit_security_origin_unref));
 }
 
 static void setInitialNotificationPermissionsDisallowedCallback(WebKitWebContext* context, NotificationWebViewTest* test)
 {
-    GList* disallowedOrigins = g_list_prepend(nullptr, webkit_security_origin_new_for_uri(gServer->baseURL().string().utf8().legacyCStringPointer()));
+    GList* disallowedOrigins = g_list_prepend(nullptr, webkit_security_origin_new_for_uri(makeUTF8CString(gServer->baseURL().string()).legacyCStringPointer()));
     webkit_web_context_initialize_notification_permissions(test->m_webContext.get(), nullptr, disallowedOrigins);
     g_list_free_full(disallowedOrigins, reinterpret_cast<GDestroyNotify>(webkit_security_origin_unref));
 }
@@ -2781,6 +2840,7 @@ void beforeAll()
     WebViewTest::add("WebKitWebView", "run-async-js-functions", testWebViewRunAsyncFunctions);
 #if ENABLE(FULLSCREEN_API)
     FullScreenClientTest::add("WebKitWebView", "fullscreen", testWebViewFullScreen);
+    FullScreenClientTest::add("WebKitWebView", "fullscreen-web-process-terminated", testWebViewFullScreenWebProcessTerminated);
 #endif
     WebViewTest::add("WebKitWebView", "can-show-mime-type", testWebViewCanShowMIMEType);
     // FIXME: implement mouse clicks in WPE.
@@ -2804,6 +2864,7 @@ void beforeAll()
 #endif
     WebViewTest::add("WebKitWebView", "page-visibility", testWebViewPageVisibility);
     WebViewTest::add("WebKitWebView", "document-focus", testWebViewDocumentFocus);
+    WebViewTest::add("WebKitWebView", "rendering-after-empty-size", testWebViewRenderingAfterEmptySize);
 #if ENABLE(NOTIFICATIONS)
     NotificationWebViewTest::add("WebKitWebView", "notification", testWebViewNotification);
     NotificationWebViewTest::add("WebKitWebView", "notification-initial-permission-allowed", testWebViewNotificationInitialPermissionAllowed);

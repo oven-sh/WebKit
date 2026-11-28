@@ -24,6 +24,7 @@
 #include "CSSParserEnum.h"
 #include "MediaQuery.h"
 #include "RuleSet.h"
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
@@ -38,7 +39,7 @@ public:
     RuleSetBuilder(RuleSet&, const MQ::MediaQueryEvaluator&, Resolver* = nullptr, ShrinkToFit = ShrinkToFit::Enable);
     ~RuleSetBuilder();
 
-    void addRulesFromSheet(const StyleSheetContents&, const MQ::MediaQueryList& sheetQuery = { });
+    void addRulesFromSheet(const StyleSheetContents&, const Box<const MQ::MediaQueryList>& sheetQuery = { });
     void addStyleRule(const StyleRule&);
 
 private:
@@ -68,7 +69,7 @@ private:
         bool collectDynamic { false };
 
         struct DynamicContext {
-            const MQ::MediaQueryList& queries;
+            Box<const MQ::MediaQueryList> queries;
             Vector<size_t> affectedRulePositions { };
             HashSet<Ref<const StyleRule>> affectedRules { };
         };
@@ -77,14 +78,14 @@ private:
         Vector<RuleSet::DynamicMediaQueryRules> dynamicMediaQueryRules { };
         OptionSet<MQ::MediaQueryDynamicDependency> allDynamicDependencies { };
 
-        bool pushAndEvaluate(const MQ::MediaQueryList&);
-        void pop(const MQ::MediaQueryList&);
+        bool pushAndEvaluate(const Box<const MQ::MediaQueryList>&);
+        void pop(const Box<const MQ::MediaQueryList>&);
         void addRuleIfNeeded(const RuleData&);
     };
 
     const RefPtr<RuleSet> m_ruleSet;
     MediaQueryCollector m_mediaQueryCollector;
-    Resolver* m_resolver { nullptr };
+    const SingleThreadWeakPtr<Resolver> m_resolver;
     const ShrinkToFit m_shrinkToFit { ShrinkToFit::Enable };
 
     CascadeLayerName m_resolvedCascadeLayerName;

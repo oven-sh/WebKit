@@ -446,6 +446,9 @@ public:
     size_t allocationBudgetThisCycle() { return effectiveMaxEdenSize(); }
 #endif
     bool needCollectionEpilogue() const { return m_worldState.load() & needCollectionEpilogueBit; }
+    // Whether this heap's world is stopped: its mutator, unless it is the conductor, and the compiler threads. Only
+    // this heap's: while the conductor stops or resumes the heaps, others may still run. "WithWorldStopped" in this
+    // class's asserts means this heap's world.
     bool worldIsStopped() const { return m_worldIsStopped; }
 #if ASSERT_ENABLED
     // Asserts that the current thread has access to the heap and that the world is running. While the world is stopped,
@@ -458,6 +461,8 @@ public:
     // with access.
     JS_EXPORT_PRIVATE void assertIsExclusiveAccessHolder() const WTF_ASSERTS_ACQUIRED_CAPABILITY(m_accessHolderRole);
     JS_EXPORT_PRIVATE void assertIsExclusiveAccessHolderOrConductorWithWorldStopped() const;
+    // For asserts that thread-safety analysis cannot express.
+    inline bool currentThreadIsConductor() const;
 #else
     ALWAYS_INLINE void assertIsAccessHolder() const WTF_ASSERTS_ACQUIRED_SHARED_CAPABILITY(m_accessHolderRole) { }
     ALWAYS_INLINE void assertIsExclusiveAccessHolder() const WTF_ASSERTS_ACQUIRED_CAPABILITY(m_accessHolderRole) { }
@@ -562,7 +567,7 @@ public:
     JS_EXPORT_PRIVATE TypeCountSet objectTypeCounts();
     JS_EXPORT_PRIVATE size_t arrayBufferSize();
 
-    UncheckedKeyHashSet<MarkedVectorBase*>& markListSet() { return m_markListSet; }
+    HashSet<MarkedVectorBase*>& markListSet() { return m_markListSet; }
 
     template<typename Functor> inline void forEachProtectedCell(NOESCAPE const Functor&);
     template<typename Functor> inline void forEachCodeBlock(NOESCAPE const Functor&);
@@ -656,8 +661,11 @@ public:
 
     unsigned weakBlockCount() const { return m_weakBlockCount; }
 
-    // Guards changes to each WeakSet's m_blocks, so that WeakSet::finalizeDeadHandles() can walk a
-    // WeakSet off the mutator. Never hold it across a finalizer, since clear() may take it.
+    // Lets WeakSet::finalizeDeadHandles() and Weak::clearConcurrently() run off the mutator. A
+    // sweep running finalizeDeadHandles() off the mutator must finish before the next collection
+    // reaps. clearConcurrently() must run on a GC aware thread, one that stop-the-world pauses
+    // halt, so it never runs while the world is stopped, which is when marking and reaping walk the
+    // weak blocks. Never hold it across a finalizer, since clearing a handle may take it.
     Lock& weakBlockLock() WTF_RETURNS_LOCK(m_weakBlockLock) { return m_weakBlockLock; }
 
 #if ENABLE(RESOURCE_USAGE)
@@ -850,8 +858,8 @@ private:
     
     void willStartCollection(CollectionScope) WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
     
-    void gatherStackRoots(ConservativeRoots&);
-    void gatherVMRoots(ConservativeRoots&);
+    void gatherStackRoots(ConservativeRoots&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
+    void gatherVMRoots(ConservativeRoots&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     void beginMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
 #if ENABLE(WEBASSEMBLY)
     void beginMarkingWasmCallees() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
@@ -893,11 +901,14 @@ private:
     void sweepAndClearCachesInEpilogue();
     void sweepEagerlyInEpilogue() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
     
-    void addDetachedWeakBlock(WeakBlock*);
-    void releaseDetachedWeakBlock(WeakBlock*);
-    void returnWeakBlockToPool(WeakBlock*);
-    WeakBlock* takeWeakBlockFromPool();
-    void destroyAllPooledWeakBlocks();
+    void addDetachedWeakBlock(Locker<Lock>&, WeakBlock*) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void releaseDetachedWeakBlock(Locker<Lock>&, WeakBlock*, IsConcurrent) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void returnWeakBlockToPool(Locker<Lock>&, WeakBlock*, IsConcurrent) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void addWeakBlockToPool(Locker<Lock>&, WeakBlock*) WTF_REQUIRES_LOCK(m_weakBlockLock);
+    WeakBlock* takeWeakBlockFromPool() WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void trimWeakBlockPool() WTF_REQUIRES_LOCK(m_weakBlockLock);
+    void trimPooledWeakBlocksAfterMarking() WTF_REQUIRES_CAPABILITY(conductorWithWorldStoppedRole);
+    void destroyAllPooledWeakBlocks() WTF_REQUIRES_LOCK(m_weakBlockLock);
     unsigned maxPooledWeakBlocks();
 
     inline void incrementDeferralDepth();
@@ -928,10 +939,10 @@ private:
     void iterateExecutingAndCompilingCodeBlocks(Visitor&, NOESCAPE const Function<void(CodeBlock*)>&);
     
     template<typename Func, typename Visitor>
-    void iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(Visitor&, NOESCAPE const Func&);
+    void iterateExecutingAndCompilingCodeBlocksWithoutHoldingLocks(Visitor&, NOESCAPE const Func&) WTF_REQUIRES_SHARED_CAPABILITY(markerWithWorldStoppedRole);
     
     void dumpHeapStatisticsAtVMDestruction();
-    void lastChanceToFinalize();
+    void lastChanceToFinalize() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
 
     bool shouldSweepSynchronously() WTF_REQUIRES_SHARED_CAPABILITY(m_accessHolderRole);
 
@@ -1000,7 +1011,7 @@ private:
     size_t m_extraMemoryBytesSinceLastCollectionCheck { 0 };
 
     ProtectCountSet m_protectedValues;
-    UncheckedKeyHashSet<MarkedVectorBase*> m_markListSet;
+    HashSet<MarkedVectorBase*> m_markListSet;
 
     std::unique_ptr<MachineThreads> m_machineThreads;
     
@@ -1034,9 +1045,9 @@ private:
 #endif
 
     Lock m_weakBlockLock;
-    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks;
-    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks;
-    unsigned m_pooledWeakBlockCount { 0 };
+    DoublyLinkedList<WeakBlock> m_detachedWeakBlocks WTF_GUARDED_BY_LOCK(m_weakBlockLock);
+    DoublyLinkedList<WeakBlock> m_pooledWeakBlocks WTF_GUARDED_BY_LOCK(m_weakBlockLock);
+    unsigned m_pooledWeakBlockCount WTF_GUARDED_BY_LOCK(m_weakBlockLock) { 0 };
     unsigned m_weakBlockCount { 0 };
 
 #if ASSERT_ENABLED
@@ -1051,7 +1062,7 @@ private:
     // Since this list is walked once to deref all the strings
     // We don't need fast access.
     SegmentedVector<std::pair<const JSString*, String>, 256, 10, SegmentedVectorGrowthPolicy::Doubling> m_possiblyAccessedStringsFromConcurrentThreadsOrGCOwnedDataScope;
-    UncheckedKeyHashSet<const JSString*> m_stringsFoundOnStack;
+    HashSet<const JSString*> m_stringsFoundOnStack;
     
     RefPtr<GCActivityCallback> m_fullActivityCallback;
     RefPtr<GCActivityCallback> m_edenActivityCallback;
@@ -1074,17 +1085,17 @@ private:
 #endif
     unsigned m_deferralDepth { 0 };
 
-    UncheckedKeyHashSet<WeakGCHashTable*> m_weakGCHashTables;
+    HashSet<WeakGCHashTable*> m_weakGCHashTables;
     SentinelLinkedList<WeakGCHashTable, BasicRawSentinelNode<WeakGCHashTable>> m_dirtyWeakGCHashTables;
     
 #if ENABLE(WEBASSEMBLY)
-    UncheckedKeyHashSet<Ref<Wasm::Callee>> m_wasmCalleesPendingDestruction WTF_GUARDED_BY_LOCK(m_wasmCalleesPendingDestructionLock);
+    HashSet<Ref<Wasm::Callee>> m_wasmCalleesPendingDestruction WTF_GUARDED_BY_LOCK(m_wasmCalleesPendingDestructionLock);
     // We snapshot m_wasmCalleesPendingDestruction at the start of GC rather than consulting it
     // directly during scanning because new callees can be registered while we scan. Without the
     // snapshot, a callee could be added after we already passed its frame, never be recorded
     // as found on a stack, and be incorrectly destroyed.
-    UncheckedKeyHashSet<const Wasm::Callee*> m_wasmCalleesPendingDestructionSnapshot;
-    UncheckedKeyHashSet<const Wasm::Callee*> m_wasmCalleesFoundOnStacks;
+    HashSet<const Wasm::Callee*> m_wasmCalleesPendingDestructionSnapshot;
+    HashSet<const Wasm::Callee*> m_wasmCalleesFoundOnStacks;
     TinyBloomFilter<uintptr_t> m_boxedWasmCalleeFilter;
 #endif
 
@@ -1093,9 +1104,25 @@ private:
     size_t m_externalMemorySize { 0 };
 #endif
     
-    static constexpr unsigned mutatorHasConnBit = 1u << 0u; // Must also be protected by threadLock.
+    // Rules for mutatorHasConnBit, which says this heap's mutator has the conn: it conducts the Collector's phases at its
+    // own polls, instead of the collector thread.
+    // - A mutator takes the conn only while holding the Collector's m_threadLock, and only if no request is outstanding
+    //   and the collector thread is not working, so that the two never both start serving a request.
+    // - The collector thread hands the conn to a mutator without the lock. It does so while serving a request, and
+    //   therefore, by the first rule, no mutator can be taking the conn at the same time.
+    // - The collector thread checks this bit and starts sleeping without releasing the lock in between, so that the
+    //   wake-up in the next rule comes either before its check or after it is asleep, never in between.
+    // - A mutator gives the conn back without the lock, and only then wakes the collector thread under the lock.
+    static constexpr unsigned mutatorHasConnBit = 1u << 0u;
     static constexpr unsigned stoppedBit = 1u << 1u; // Only set when !hasAccessBit
     static constexpr unsigned hasAccessBit = 1u << 2u;
+    // Rules for needCollectionEpilogueBit, which says this heap's collection epilogue has yet to run:
+    // - Only End sets it, once per collection, while the mutator is stopped or conducting.
+    // - Only the mutator clears it, holding access, just before running the epilogue: at the resume edge after End if
+    //   it conducted, or else when it next takes access.
+    // - So the mutator never runs JS with it set, and it is clear before the heap's next collection begins: the
+    //   collector thread cannot run the epilogue, having no access, so it waits for the bit to clear before the stop
+    //   that begins a collection.
     static constexpr unsigned needCollectionEpilogueBit = 1u << 3u;
     static constexpr unsigned mutatorWaitingBit = 1u << 4u; // Allows the mutator to use this as a condition variable.
     Atomic<unsigned> m_worldState;
@@ -1108,7 +1135,7 @@ private:
 #endif
     bool m_worldIsStopped { false };
 
-    bool m_mutatorDidRun { true };
+    bool m_mutatorHadAccessSinceLastStop { true };
     bool m_didDeferGCWork { false };
 
     uint64_t m_mutatorExecutionVersion { 0 };

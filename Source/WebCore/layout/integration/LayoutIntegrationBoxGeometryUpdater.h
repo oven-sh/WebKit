@@ -37,8 +37,6 @@ class RenderBox;
 class RenderBlock;
 class RenderLineBreak;
 class RenderTable;
-class RenderListItem;
-class RenderListOutsideMarker;
 
 namespace LayoutIntegration {
 
@@ -51,10 +49,10 @@ public:
     void setFormattingContextRootGeometry(LayoutUnit availableLogicalWidth);
     void setFormattingContextContentGeometry(std::optional<LayoutUnit> availableLogicalWidth, std::optional<Layout::IntrinsicWidthMode>);
     void updateBoxGeometryAfterIntegrationLayout(const Layout::ElementBox&, LayoutUnit availableWidth);
+    void updateGridItemBoxGeometryAfterIntegrationLayout(const Layout::ElementBox&, LayoutUnit gridAreaInlineSize);
 
     Layout::ConstraintsForInlineContent formattingContextConstraints(LayoutUnit availableWidth);
 
-    HashMap<CheckedRef<const Layout::ElementBox>, LayoutUnit> takeNestedListMarkerOffsets() { return WTF::move(m_nestedListMarkerOffsets); }
 
 private:
     void updateBoxGeometry(const RenderElement&, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode>);
@@ -62,7 +60,6 @@ private:
     void updateLayoutBoxDimensions(const RenderBox&, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> = std::nullopt);
     void updateLineBreakBoxDimensions(const RenderLineBreak&);
     void updateInlineBoxDimensions(const RenderBoxModelObject&, std::optional<LayoutUnit> availableWidth, std::optional<Layout::IntrinsicWidthMode> = std::nullopt);
-    void setListMarkerOffsetForMarkerOutside(const RenderListOutsideMarker&);
 
     Layout::BoxGeometry::HorizontalEdges horizontalLogicalMargin(const RenderBoxModelObject&, std::optional<LayoutUnit> availableWidth, WritingMode);
     Layout::BoxGeometry::VerticalEdges verticalLogicalMargin(const RenderBoxModelObject&, std::optional<LayoutUnit> availableWidth, WritingMode);
@@ -78,7 +75,6 @@ private:
 private:
     WeakPtr<Layout::LayoutState> m_layoutState;
     CheckedPtr<const Layout::ElementBox> m_rootLayoutBox;
-    HashMap<CheckedRef<const Layout::ElementBox>, LayoutUnit> m_nestedListMarkerOffsets;
 };
 
 }

@@ -26,18 +26,17 @@
 
 #include <WebCore/StyleSizeOrKeyword.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
-// <'max-width'>/<'max-height'> = none | <length-percentage [0,∞]> | min-content | max-content | fit-content(<length-percentage [0,∞]>) | <calc-size()> | stretch | fit-content | contain
+// <'max-width'>/<'max-height'> = none | <length-percentage [0,∞]> | stretch | contain | min-content | max-content | fit-content | stretch(<length-percentage [0,∞]>) | fit-content(<length-percentage [0,∞]>) | <calc-size()>
 //
 // What is actually implemented is:
 //
-// <'max-width'>/<'max-height'> = none | <length-percentage [0,∞]> | min-content | max-content | fit-content | stretch | intrinsic | min-intrinsic
+// <'max-width'>/<'max-height'> = none | <length-percentage [0,∞]> | stretch | min-content | max-content | fit-content | stretch(<length-percentage [0,∞]>) | fit-content(<length-percentage [0,∞]>) | <calc-size()> | intrinsic | min-intrinsic
 //
 // MISSING:
+//    stretch(<length-percentage [0,∞]>)
 //    fit-content(<length-percentage [0,∞]>)
-//    <calc-size()>
 //    contain
 
 // NON-STANDARD:
@@ -75,7 +74,6 @@ struct MaximumSize : SizeOrKeyword<CSS::Keyword::None, CSS::Keyword::MinContent,
 
 using MaximumSizePair = SpaceSeparatedSize<MaximumSize>;
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style
 
 DEFINE_VARIANT_LIKE_CONFORMANCE(WebCore::Style::MaximumSize)

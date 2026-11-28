@@ -520,7 +520,7 @@ std::optional<uint32_t> onlyTargetOfWrittenConstants(Walker& walker, const BodyT
     if (!goesByOneOperand(terminator.kind()) || !terminator.operand(0) || walker.facts().summaries().at(walker.currentFunction()).blocksNeverEntered.span().empty())
         return std::nullopt;
     const BodyIndex& index = walker.currentBodyIndex();
-    UncheckedKeyHashMap<unsigned, PrimitiveKnownToFolding, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> found;
+    HashMap<unsigned, PrimitiveKnownToFolding, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> found;
     ValueID unvisited;
     auto findPrimitive = [&](ValueID value) -> PrimitiveKnownToFolding {
         if (index.isParameter(value) || !operationsThatConstantsMayDecide.contains(index.opcodeOf(value)))

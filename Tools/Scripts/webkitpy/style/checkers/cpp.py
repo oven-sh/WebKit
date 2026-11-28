@@ -50,6 +50,7 @@ from webkitcorepy import unicode, Version
 from webkitpy.style.checkers.common import match, search, sub, subn
 from webkitpy.style.checkers.computed_style_inline_includes import ComputedStyleInlineIncludesChecker
 from webkitpy.style.checkers.inclusive_language import InclusiveLanguageChecker
+from webkitpy.style.checkers.license import LicenseChecker
 from webkitpy.common.memoized import memoized
 from webkitpy.common.version_name_map import VersionNameMap
 
@@ -1165,6 +1166,48 @@ def check_for_unicode_replacement_characters(lines, error):
                   'Line contains invalid UTF-8 (or Unicode replacement character).')
 
 
+_RE_PATTERN_DIAGNOSTIC_PRAGMA_SCOPE = re.compile(
+    r'\b[A-Z0-9_]*(?:IGNORE|ALLOW)[A-Z0-9_]*_(BEGIN|END)\b'
+    r'|#\s*pragma\s+(?:clang|GCC)\s+diagnostic\s+(push|pop)\b')
+
+
+def check_for_unbalanced_diagnostic_pragmas(clean_lines, error):
+    """Logs an error for each diagnostic BEGIN / push without a matching END / pop in the
+    same file, and vice versa.
+
+    This covers macros such as IGNORE_WARNINGS_BEGIN / IGNORE_WARNINGS_END and
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN / WTF_ALLOW_UNSAFE_BUFFER_USAGE_END, as well as raw
+    '#pragma clang diagnostic push / pop'. Since the diagnostic state is a single stack, an
+    unmatched push in a header makes the END of any enclosing pair (e.g. in a header that
+    includes it) pop the wrong entry, leaking that pair's suppressions into the rest of the
+    translation unit.
+
+    Args:
+      clean_lines: A CleansedLines instance containing the file.
+      error: The function to call with any errors found.
+    """
+    unmatched_begin_line_numbers = []
+    in_macro_definition = False
+    for line_number in range(clean_lines.num_lines()):
+        line = clean_lines.elided[line_number]
+        # Macro definitions (e.g. the definition of IGNORE_WARNINGS_BEGIN itself) are not uses.
+        if in_macro_definition or match(r'\s*#\s*define\b', line):
+            in_macro_definition = line.rstrip().endswith('\\')
+            continue
+        for begin_or_end, push_or_pop in _RE_PATTERN_DIAGNOSTIC_PRAGMA_SCOPE.findall(line):
+            if begin_or_end == 'BEGIN' or push_or_pop == 'push':
+                unmatched_begin_line_numbers.append(line_number)
+            elif unmatched_begin_line_numbers:
+                unmatched_begin_line_numbers.pop()
+            else:
+                error(line_number, 'build/unbalanced_diagnostic_pragma', 5,
+                      'Diagnostic END / pop without a matching BEGIN / push in this file.')
+    for line_number in unmatched_begin_line_numbers:
+        error(line_number, 'build/unbalanced_diagnostic_pragma', 5,
+              'Diagnostic BEGIN / push without a matching END / pop in this file. This leaks '
+              'warning suppressions of enclosing BEGIN / END pairs into the rest of the translation unit.')
+
+
 def check_for_missing_new_line_at_eof(lines, error):
     """Logs an error if there is not a newline character at the end of the file.
 
@@ -1571,7 +1614,9 @@ class _EnumState(object):
 
 def regex_for_lambdas_and_blocks(line, line_number, file_state, error):
     cpp_result = search(r'\[.*?\]\s*[\(\{]', line)
-    objc_result = search(r'(\^(.*)?\(.*?\)|\^\s*\{)', line)
+    # Block type declarators like "void (^name)(int)" or "(void (^)(int))" are not block
+    # literals, so drop the "(^name)" part before looking for one.
+    objc_result = search(r'(\^(.*)?\(.*?\)|\^\s*\{)', sub(r'\(\s*\^[\w\s]*\)', '()', line))
     if cpp_result:
         group = cpp_result.group()
         targ_error = None
@@ -3734,7 +3779,8 @@ def check_posix_string_wrappers(clean_lines, line_number, file_state, error):
     _check_string_wrappers(clean_lines, line_number, file_state, error, _POSIX_STRING_WRAPPERS, '<wtf/posix/POSIXExtras.h>', 'runtime/posix_string_wrappers', {})
 
 
-_STRING_EXPRESSION = r'((?:[A-Za-z_]\w*(?:\(\s*\))?\s*(?:\.|->)\s*)*[A-Za-z_]\w*(?:\(\s*\))?)'
+_STRING_CHAIN = r'(?:[A-Za-z_]\w*(?:\(\s*\))?\s*(?:\.|->)\s*)*[A-Za-z_]\w*(?:\(\s*\))?'
+_STRING_EXPRESSION = r'(makeUTF8CString\(\s*' + _STRING_CHAIN + r'\s*\)|' + _STRING_CHAIN + r')'
 _LEGACY_CSTRING_POINTER_WITH_LENGTH_PATTERN = re.compile(
     r'\b' + _STRING_EXPRESSION + r'\s*\.\s*legacyCStringPointer\s*\(\s*\)\s*,\s*' + _STRING_EXPRESSION + r'\s*\.\s*(?:length|size)\s*\(\s*\)')
 
@@ -3863,7 +3909,7 @@ def check_log_string_conversions(clean_lines, line_number, file_state, error):
             continue
         if pointer_call.group(1):
             error(line_number, 'runtime/log_string_conversion', 4,
-                  "Pass '.utf8()' instead of '.%s().data()' to '%s()'. It converts typed strings itself, and %s loses non-ASCII characters."
+                  "Pass 'makeUTF8CString(string)' instead of 'string.%s().data()' to '%s()'. It converts typed strings itself, and %s loses non-ASCII characters."
                   % (pointer_call.group(1), macro, 'ASCII conversion' if pointer_call.group(1) == 'ascii' else 'a Latin-1 pointer'))
         else:
             error(line_number, 'runtime/log_string_conversion', 4,
@@ -6163,6 +6209,8 @@ def _process_lines(filename, file_extension, lines, error, min_confidence, line_
 
     check_for_include_what_you_use(filename, clean_lines, include_state, error, line_numbers)
 
+    check_for_unbalanced_diagnostic_pragmas(clean_lines, error)
+
     # We check here rather than inside process_line so that we see raw
     # lines rather than "cleaned" lines.
     check_for_unicode_replacement_characters(lines, error)
@@ -6198,6 +6246,7 @@ class CppChecker(object):
         'build/printf_format',
         'build/storage_class',
         'build/using_std',
+        'build/unbalanced_diagnostic_pragma',
         'build/using_namespace',
         'build/variant',
         'build/cpp_comment',
@@ -6363,6 +6412,7 @@ class CppChecker(object):
         self.handle_style_error = handle_style_error
         self.min_confidence = min_confidence
         self._inclusive_language_checker = InclusiveLanguageChecker(handle_style_error)
+        self._license_checker = LicenseChecker(handle_style_error)
         self._computed_style_inline_includes_checker = ComputedStyleInlineIncludesChecker(file_path, handle_style_error)
         _unit_test_config = unit_test_config
 
@@ -6399,4 +6449,5 @@ class CppChecker(object):
                        self.handle_style_error, self.min_confidence,
                        set(line_numbers) if line_numbers is not None else None)
         self._inclusive_language_checker.check(lines)
+        self._license_checker.check(lines, line_numbers)
         self._computed_style_inline_includes_checker.check(lines, line_numbers)

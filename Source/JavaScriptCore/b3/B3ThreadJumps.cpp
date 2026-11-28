@@ -1270,11 +1270,11 @@ private:
     BasicBlock* m_predecessor { nullptr };
     BasicBlock* m_blockLeftToPredecessor { nullptr };
     Vector<WordReadAgain, 2> m_wordsReadAgain;
-    UncheckedKeyHashMap<Value*, Variable*> m_variableOfEarlierLoad;
+    HashMap<Value*, Variable*> m_variableOfEarlierLoad;
     bool m_didCompareLoads { false };
     bool m_hasPassedWordReadAgain { false };
     IndexMap<BasicBlock*, std::optional<HeapRange>> m_boundsOfWrites;
-    UncheckedKeyHashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_isUnchangedAtEnd;
+    HashMap<uint64_t, bool, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_isUnchangedAtEnd;
     Vector<BasicBlock*, 16> m_walk;
     BitVector m_isOnWalk;
     Vector<UpsilonValue*, 16> m_upsilonsOnPath;

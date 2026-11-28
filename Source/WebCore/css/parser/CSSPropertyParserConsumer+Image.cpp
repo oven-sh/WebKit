@@ -25,14 +25,17 @@
 #include "config.h"
 #include "CSSPropertyParserConsumer+Image.h"
 
+#include "CSSAbsoluteColor.h"
 #include "CSSCalcSymbolTable.h"
 #include "CSSCanvasValue.h"
 #include "CSSColor.h"
 #include "CSSColorImageValue.h"
+#include "CSSColorInlines.h"
 #include "CSSColorInterpolationMethod.h"
 #include "CSSCrossfadeValue.h"
 #include "CSSCursorImageValue.h"
 #include "CSSFilterImageValue.h"
+#include "CSSFreeformGradientValue.h"
 #include "CSSGradientValue.h"
 #include "CSSImageSetOptionValue.h"
 #include "CSSImageSetValue.h"
@@ -73,8 +76,7 @@
 #include "CSSVariableData.h"
 #include <wtf/SortedArrayMap.h>
 
-namespace WebCore {
-namespace CSSPropertyParserHelpers {
+namespace WebCore::CSSPropertyParserHelpers {
 
 // Used by radial gradient consumers internally.
 enum class ShapeKeyword : bool { Circle, Ellipse };
@@ -334,9 +336,21 @@ template<SupportsColorHints supportsColorHints> static std::optional<CSS::Gradie
     });
 }
 
+// https://www.w3.org/TR/css-color-4/#color-interpolation-method
 static bool stopColorIs8Bit(const CSS::Color& color)
 {
-    return color.isKeyword() || color.absoluteColor().tryGetAsSRGBABytes();
+    return color.switchOn(
+        [](const CSS::ResolvedColor& resolved) { return !!resolved.value.tryGetAsSRGBABytes(); },
+        [](const CSS::KeywordColor&) { return true; },
+        [](const CSS::HexColor&) { return true; },
+        [](const CSS::AbsoluteColor<RGBFunctionLegacy<CSS::Number<>>>&) { return true; },
+        [](const CSS::AbsoluteColor<RGBFunctionLegacy<CSS::Percentage<>>>&) { return true; },
+        [](const CSS::AbsoluteColor<RGBFunctionModernAbsolute>&) { return true; },
+        [](const CSS::AbsoluteColor<HSLFunctionLegacy>&) { return true; },
+        [](const CSS::AbsoluteColor<HSLFunctionModern>&) { return true; },
+        [](const CSS::AbsoluteColor<HWBFunction>&) { return true; },
+        [](const auto&) { return false; }
+    );
 }
 
 static bool stopColorIs8Bit(const Markable<CSS::Color>& color)
@@ -1167,6 +1181,74 @@ static RefPtr<CSSValue> consumeMeshGradient(CSSParserTokenRange& range, CSS::Pro
     });
 }
 
+// MARK: <freeform-gradient()>
+// https://github.com/w3c/csswg-drafts/pull/14655
+
+static std::optional<CSS::FreeformGradientColorStop> consumeFreeformGradientColorStop(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <freeform-color-stop> = <color> <position> [ / <number> ]?
+
+    auto color = consumeUnresolvedColor(range, state);
+    if (!color)
+        return { };
+
+    auto position = consumePositionUnresolved(range, state);
+    if (!position)
+        return { };
+
+    std::optional<CSS::Number<>> weight;
+    if (consumeSlashIncludingWhitespace(range)) {
+        weight = MetaConsumer<CSS::Number<>>::consume(range, state);
+        if (!weight)
+            return { };
+    }
+
+    return CSS::FreeformGradientColorStop {
+        .color = WTF::move(*color),
+        .position = WTF::move(*position),
+        .weight = WTF::move(weight),
+    };
+}
+
+static RefPtr<CSSValue> consumeFreeformGradient(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // freeform-gradient( <color-interpolation-method>? , <freeform-color-stop># )
+    // <freeform-color-stop> = <color> <position> [ / <number> ]?
+
+    if (!state.context.cssFreeformGradientsEnabled)
+        return nullptr;
+
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod;
+    if (range.peek().id() == CSSValueID::In) {
+        colorInterpolationMethod = consumeColorInterpolationMethod(range, state);
+        if (!colorInterpolationMethod)
+            return nullptr;
+        if (!consumeCommaIncludingWhitespace(range))
+            return nullptr;
+    }
+
+    CSS::FreeformGradientColorStops::Container stops;
+    do {
+        auto stop = consumeFreeformGradientColorStop(range, state);
+        if (!stop)
+            return nullptr;
+        stops.append(WTF::move(*stop));
+    } while (consumeCommaIncludingWhitespace(range));
+
+    auto defaultColorInterpolationMethod = CSS::GradientColorInterpolationMethod::Default::SRGB;
+    for (auto& stop : stops) {
+        if (!stopColorIs8Bit(stop.color))
+            defaultColorInterpolationMethod = CSS::GradientColorInterpolationMethod::Default::OKLab;
+    }
+
+    return CSSFreeformGradientValue::create({
+        .parameters = {
+            .colorInterpolationMethod = computeGradientColorInterpolationMethod(colorInterpolationMethod, defaultColorInterpolationMethod),
+            .stops = { WTF::move(stops) },
+        }
+    });
+}
+
 // MARK: <-webkit-cross-fade()>
 
 static RefPtr<CSSValue> consumeWebkitCrossfade(CSSParserTokenRange& args, CSS::PropertyParserState& state)
@@ -1477,6 +1559,8 @@ RefPtr<CSSValue> consumeImage(CSSParserTokenRange& range, CSS::PropertyParserSta
             return consumeGeneratedImage([&](auto& args) { return consumeConicGradient<CSSValueID::RepeatingConicGradient>(args, state); });
         case CSSValueID::MeshGradient:
             return consumeGeneratedImage([&](auto& args) { return consumeMeshGradient(args, state); });
+        case CSSValueID::FreeformGradient:
+            return consumeGeneratedImage([&](auto& args) { return consumeFreeformGradient(args, state); });
         case CSSValueID::WebkitCrossFade:
             return consumeGeneratedImage([&](auto& args) { return consumeWebkitCrossfade(args, state); });
         case CSSValueID::CrossFade:
@@ -1503,7 +1587,7 @@ RefPtr<CSSValue> consumeImage(CSSParserTokenRange& range, CSS::PropertyParserSta
     }
 
     if (allowedImageTypes.contains(AllowedImageType::URLFunction)) {
-        if (auto imageURL = consumeURLRaw(range, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::ReferrerPolicy, AllowedURLModifiers::Param }))
+        if (auto imageURL = consumeURLRaw(range, state, { AllowedURLModifiers::CrossOrigin, AllowedURLModifiers::Integrity, AllowedURLModifiers::ReferrerPolicy, AllowedURLModifiers::Param }))
             return CSSImageValue::create(WTF::move(*imageURL));
     }
 
@@ -1531,5 +1615,4 @@ std::optional<CSS::ImageOrNone> consumeUnresolvedImageOrNone(CSSParserTokenRange
     return CSS::ImageOrNone { CSS::ImageWrapper { image.releaseNonNull() } };
 }
 
-} // namespace CSSPropertyParserHelpers
-} // namespace WebCore
+} // namespace WebCore::CSSPropertyParserHelpers

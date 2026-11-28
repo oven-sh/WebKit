@@ -63,7 +63,7 @@ private:
     struct Levels {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Levels);
         Vector<Level, 16> path;
-        UncheckedKeyHashSet<EncodedJSValue> holders;
+        HashSet<EncodedJSValue> holders;
     };
 
     uint32_t m_numberOfLevelsLeft { 0 };

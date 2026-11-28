@@ -123,7 +123,7 @@ void RuntimeCheckFailure::crashInHost(JSGlobalObject* realm) const
     auto* crashWithReason = realm ? moduleHostOf(realm).crashWithReason : nullptr;
     if (!crashWithReason)
         return;
-    UTF8CString reason = makeString("internal AOT error: "_s, m_failedCheck, ": "_s, m_detail.toString()).utf8();
+    UTF8CString reason = makeUTF8CString(makeString("internal AOT error: "_s, m_failedCheck, ": "_s, m_detail.toString()));
     crashWithReason(byteCast<char>(reason.span()));
 }
 

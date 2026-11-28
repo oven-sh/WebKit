@@ -586,7 +586,11 @@ protected:
         case VectorRelaxedMAdd:
         case VectorRelaxedNMAdd:
         case VectorRelaxedLaneSelect:
-        case MemoryFill:
+        case MemoryFill8:
+        case MemoryFill16:
+        case MemoryFill32:
+        case MemoryFill64:
+        case MemoryFill128:
         case MemoryMove:
         case VectorRelaxedDotI8x16I7x16Add:
             return 3 * sizeof(Value*);
@@ -851,7 +855,11 @@ private:
         case VectorRelaxedLaneSelect:
         case VectorRelaxedDotI8x16I7x16Add:
         case MemoryMove:
-        case MemoryFill:
+        case MemoryFill8:
+        case MemoryFill16:
+        case MemoryFill32:
+        case MemoryFill64:
+        case MemoryFill128:
             if (numArgs != 3) [[unlikely]]
                 badKind(kind, numArgs);
             return Three;

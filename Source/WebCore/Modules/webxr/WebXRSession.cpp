@@ -47,8 +47,13 @@
 #include "WebXRHitTestSource.h"
 #include "WebXRPlane.h"
 #include "WebXRTransientInputHitTestSource.h"
+#include "WebXRWebGLLayer.h"
 #include "XRCompositionLayer.h"
 #include "XRFrameRequestCallback.h"
+#if ENABLE(WEBXR_ANCHORS)
+#include "JSWebXRAnchor.h"
+#include "WebXRAnchor.h"
+#endif
 #include "XRGPUProjectionLayerInit.h"
 #include "XRHitTestOptionsInit.h"
 #include "XRRenderStateInit.h"
@@ -205,7 +210,7 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
                 return Exception { ExceptionCode::InvalidStateError, "Cannot set a destroyed layer in the layers list."_s };
         }
 
-        if (!m_requestedFeatures.contains(PlatformXR::SessionFeature::Layers) && newState.layers->size() > 1)
+        if (!areLayersEnabled() && newState.layers->size() > 1)
             return Exception { ExceptionCode::NotSupportedError, "Cannot set layers when the Layers feature is not enabled for this session."_s };
 
         auto maxLayers = maxRenderLayers();
@@ -221,7 +226,10 @@ ExceptionOr<void> WebXRSession::updateRenderState(const XRRenderStateInit& newSt
             if (i != newState.layers->reverseFind(layer))
                 return Exception { ExceptionCode::TypeError, "Cannot set the same XRLayer instance multiple times in the layers array."_s };
 
-            if (layer->isWebXRWebGLLayer() && downcast<WebXRWebGLLayer>(layer.get()).session() != this)
+            if (auto* compositionLayer = dynamicDowncast<XRCompositionLayer>(layer); compositionLayer && compositionLayer->session() != this)
+                return Exception { ExceptionCode::TypeError, "XRCompositionLayer's session does not match the XRSession."_s };
+
+            if (auto* webGLLayer = dynamicDowncast<WebXRWebGLLayer>(layer); webGLLayer && webGLLayer->session() != this)
                 return Exception { ExceptionCode::TypeError, "XRWebGLLayer's session does not match the XRSession."_s };
         }
 
@@ -430,6 +438,10 @@ void WebXRSession::shutdown(InitiatedBySystem initiatedBySystem)
     m_sessionListeners.clear();
 
     m_inputSources->clear();
+#if ENABLE(WEBXR_ANCHORS)
+    for (auto& anchor : copyToVector(m_activeAnchors.values()))
+        anchor->deleteAnchor();
+#endif
 #if ENABLE(WEBXR_PLANE_DETECTION)
     invalidateDetectedPlanes();
 #endif
@@ -675,7 +687,7 @@ bool WebXRSession::frameShouldBeRendered() const
 
 void WebXRSession::requestFrameIfNeeded()
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (m_ended)
         return;
@@ -735,7 +747,7 @@ void WebXRSession::updateDetectedPlanes(DOMHighResTimeStamp time)
     if (!m_frameData.detectedPlanes)
         return;
 
-    HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> currentIds;
+    HashSet<uint64_t> currentIds;
     for (auto& platformPlane : *m_frameData.detectedPlanes) {
         currentIds.add(platformPlane.id);
         auto it = m_detectedPlanes.find(platformPlane.id);
@@ -787,7 +799,7 @@ void WebXRSession::initiateRoomCapture(DOMPromiseDeferred<void>&& promise)
 
 void WebXRSession::onFrame(PlatformXR::FrameData&& frameData)
 {
-    ASSERT(isMainThread());
+    RELEASE_ASSERT(isMainThread());
 
     if (m_ended)
         return;
@@ -1074,8 +1086,16 @@ void WebXRSession::addSessionListener(const WebXRSessionListener& listener)
 }
 
 #if ENABLE(WEBXR_LAYERS)
+bool WebXRSession::areLayersEnabled() const
+{
+    return m_requestedFeatures.contains(PlatformXR::SessionFeature::Layers);
+}
+
 unsigned WebXRSession::maxRenderLayers() const
 {
+    if (!areLayersEnabled())
+        return 1;
+
     RefPtr device { m_device };
     return device ? device->maxRenderLayers() : 0;
 }
@@ -1110,6 +1130,31 @@ void WebXRSession::layerDestroyed(const XRCompositionLayer& layer)
     protect(m_pendingRenderState)->setLayers(layers);
 }
 #endif
+
+#if ENABLE(WEBXR_ANCHORS)
+
+void WebXRSession::addAnchor(Ref<WebXRAnchor>&& anchor)
+{
+    m_activeAnchors.set(anchor->identifier(), RefPtr<WebXRAnchor>(WTF::move(anchor)));
+}
+
+RefPtr<WebXRAnchor> WebXRSession::anchor(PlatformXR::AnchorIdentifier identifier) const
+{
+    auto it = m_activeAnchors.find(identifier);
+    if (it == m_activeAnchors.end())
+        return nullptr;
+    return it->value;
+}
+
+void WebXRSession::deleteAnchor(PlatformXR::AnchorIdentifier identifier)
+{
+    m_activeAnchors.remove(identifier);
+
+    if (RefPtr device = this->device())
+        device->deleteAnchor(identifier);
+}
+
+#endif // ENABLE(WEBXR_ANCHORS)
 
 WebCoreOpaqueRoot root(WebXRSession* session)
 {

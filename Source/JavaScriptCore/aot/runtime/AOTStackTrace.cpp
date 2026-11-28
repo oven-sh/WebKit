@@ -1504,7 +1504,7 @@ Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine)
     if (!coroutine)
         return promises;
     Vector<JSCell*, 4> work { coroutine };
-    UncheckedKeyHashSet<JSCell*> visited;
+    HashSet<JSCell*> visited;
     for (size_t i = 0; i < work.size(); ++i) {
         JSCell* current = work[i];
         if (!visited.add(current).isNewEntry)

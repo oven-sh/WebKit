@@ -69,10 +69,6 @@
 #include <wtf/RetainPtr.h>
 #endif
 
-namespace WTF {
-class MachSendRight;
-}
-
 namespace WebCore {
 class AudioTrackPrivate;
 struct MediaPlayerLoadOptions;
@@ -141,8 +137,6 @@ public:
     void setBufferingPolicy(WebCore::MediaPlayer::BufferingPolicy);
 
 #if PLATFORM(IOS_FAMILY)
-    void accessLog(CompletionHandler<void(String)>&&);
-    void errorLog(CompletionHandler<void(String)>&&);
     void setSceneIdentifier(String&&);
 #endif
 
@@ -368,7 +362,6 @@ private:
 
 #if PLATFORM(COCOA)
     WebCore::FloatSize mediaPlayerVideoLayerSize() const final;
-    void nativeImageForCurrentTime(CompletionHandler<void(std::optional<WTF::MachSendRight>&&, WebCore::ColorSpace)>&&);
     void colorSpace(CompletionHandler<void(WebCore::ColorSpace)>&&);
 #endif
     void videoFrameForCurrentTimeIfChanged(RemoteVideoFrameReference, CompletionHandler<void(std::optional<RemoteVideoFrameProxy::Properties>&&, bool)>&&);

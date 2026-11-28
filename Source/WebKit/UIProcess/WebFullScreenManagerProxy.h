@@ -76,6 +76,11 @@ public:
 
     virtual bool lockFullscreenOrientation(WebCore::ScreenOrientationType) { return false; }
     virtual void unlockFullscreenOrientation() { }
+
+#if PLATFORM(IOS_FAMILY)
+    virtual void beginRequestFullscreen() { }
+    virtual void endRequestFullscreen() { }
+#endif
 };
 
 class WebFullScreenManagerProxy : public IPC::MessageReceiver, public CanMakeCheckedPtr<WebFullScreenManagerProxy>, public RefCounted<WebFullScreenManagerProxy> {
@@ -97,6 +102,7 @@ public:
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
     bool isVideoElement() const { return m_isVideoElement; }
 #endif
+    bool isProjectedVideo() const { return m_isProjectedVideo; }
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     bool isImageElement() const { return m_mediaDetails && m_mediaDetails->type == FullScreenMediaDetails::Type::Image; }
     void prepareQuickLookImageURL(CompletionHandler<void(URL&&)>&&) const;
@@ -141,6 +147,10 @@ private:
     Awaitable<bool> beganEnterFullScreen(IPC::Connection&, WebCore::FrameIdentifier, WebCore::IntRect initialFrameInMainFrameCoordinates, WebCore::IntRect finalFrameInMainFrameCoordinates);
     Awaitable<void> beganExitFullScreen(WebCore::IntRect initialFrameInMainFrameCoordinates, WebCore::IntRect finalFrameInMainFrameCoordinates);
     void closeFullScreen(IPC::Connection&);
+#if PLATFORM(IOS_FAMILY)
+    void beginRequestFullscreen();
+    void endRequestFullscreen();
+#endif
     void callCloseCompletionHandlers();
     template<typename M> void sendToWebProcess(M&&);
 
@@ -163,6 +173,7 @@ private:
 #if ENABLE(VIDEO_USES_ELEMENT_FULLSCREEN)
     bool m_isVideoElement { false };
 #endif
+    bool m_isProjectedVideo { false };
 #if ENABLE(QUICKLOOK_FULLSCREEN)
     std::optional<FullScreenMediaDetails> m_mediaDetails;
     bool m_launchInImmersive { false };

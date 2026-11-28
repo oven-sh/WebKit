@@ -106,7 +106,7 @@ Ref<RemoteNativeImageProxy> RemoteResourceCacheProxy::createNativeImage(const In
     return nativeImage;
 }
 
-RemoteGradientIdentifier RemoteResourceCacheProxy::recordGradientUse(Gradient& gradient)
+RemoteGradientIdentifier RemoteResourceCacheProxy::recordGradientUse(const Gradient& gradient)
 {
     auto result = m_gradients.ensure(&gradient, [] {
         return RemoteGradientIdentifier::generate();
@@ -115,6 +115,19 @@ RemoteGradientIdentifier RemoteResourceCacheProxy::recordGradientUse(Gradient& g
     if (result.isNewEntry) {
         gradient.addObserver(m_resourceObserverWeakFactory.createWeakPtr(static_cast<RenderingResourceObserver&>(*this)).releaseNonNull());
         m_remoteRenderingBackendProxy->cacheGradient(gradient, identifier);
+    }
+    return identifier;
+}
+
+RemoteFreeformGradientIdentifier RemoteResourceCacheProxy::recordFreeformGradientUse(FreeformGradient& gradient)
+{
+    auto result = m_freeformGradients.ensure(&gradient, [] {
+        return RemoteFreeformGradientIdentifier::generate();
+    });
+    auto identifier = result.iterator->value;
+    if (result.isNewEntry) {
+        gradient.addObserver(m_resourceObserverWeakFactory.createWeakPtr(static_cast<RenderingResourceObserver&>(*this)).releaseNonNull());
+        m_remoteRenderingBackendProxy->cacheFreeformGradient(gradient, identifier);
     }
     return identifier;
 }
@@ -296,6 +309,13 @@ void RemoteResourceCacheProxy::willDestroyGradient(const Gradient& gradient)
     m_remoteRenderingBackendProxy->releaseGradient(*identifier);
 }
 
+void RemoteResourceCacheProxy::willDestroyFreeformGradient(const FreeformGradient& gradient)
+{
+    auto identifier = m_freeformGradients.take(&gradient);
+    RELEASE_ASSERT(identifier);
+    m_remoteRenderingBackendProxy->releaseFreeformGradient(*identifier);
+}
+
 void RemoteResourceCacheProxy::willDestroyMeshGradient(const MeshGradient& gradient)
 {
     auto identifier = m_meshGradients.take(&gradient);
@@ -395,6 +415,7 @@ void RemoteResourceCacheProxy::releaseMemory()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_freeformGradients.clear();
     m_meshGradients.clear();
     m_paths.clear();
     m_displayLists.clear();
@@ -407,6 +428,7 @@ void RemoteResourceCacheProxy::disconnect()
     m_resourceObserverWeakFactory.revokeAll();
     m_filters.clear();
     m_gradients.clear();
+    m_freeformGradients.clear();
     m_meshGradients.clear();
     m_paths.clear();
     m_displayLists.clear();

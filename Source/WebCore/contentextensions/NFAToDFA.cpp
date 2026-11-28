@@ -38,11 +38,9 @@
 #include <wtf/HashSet.h>
 #include <wtf/IndexedRange.h>
 
-namespace WebCore {
+namespace WebCore::ContentExtensions {
 
-namespace ContentExtensions {
-
-typedef HashSet<unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> NFANodeIndexSet;
+using NFANodeIndexSet = HashSet<unsigned>;
 typedef MutableRange<signed char, NFANodeIndexSet> NFANodeRange;
 typedef MutableRangeList<signed char, NFANodeIndexSet> NFANodeRangeList;
 typedef MutableRangeList<signed char, NFANodeIndexSet, 128> PreallocatedNFANodeRangeList;
@@ -242,7 +240,7 @@ struct NodeIdSetToUniqueNodeIdSetTranslator {
     {
         DFANode newDFANode;
 
-        HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> actions;
+        HashSet<uint64_t> actions;
 
         for (unsigned nfaNodeId : source.nodeIdSet) {
             const auto* nfaNode = source.nfa.nodes().pointerAt(nfaNodeId);
@@ -357,8 +355,6 @@ std::optional<DFA> NFAToDFA::convert(NFA&& nfa)
     return dfa;
 }
 
-} // namespace ContentExtensions
-
-} // namespace WebCore
+} // namespace WebCore::ContentExtensions
 
 #endif // ENABLE(CONTENT_EXTENSIONS)

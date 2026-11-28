@@ -105,7 +105,7 @@ private:
     Vector<Importer> m_path;
     // As in InnerModuleEvaluation. The indices start at 1.
     Vector<Module> m_stack;
-    UncheckedKeyHashMap<EncodedJSValue, unsigned, EncodedJSValueHash, EncodedJSValueHashTraits> m_indicesOnStack;
+    HashMap<EncodedJSValue, unsigned, EncodedJSValueHash, EncodedJSValueHashTraits> m_indicesOnStack;
     unsigned m_lastIndex { 0 };
     unsigned m_ancestorIndex { std::numeric_limits<unsigned>::max() };
 

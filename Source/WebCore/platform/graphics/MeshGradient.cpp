@@ -30,6 +30,7 @@
 #include "ColorConversion.h"
 #include "ColorInterpolation.h"
 #include "ColorNormalization.h"
+#include "ColorSpace.h"
 #include "ColorTypes.h"
 #include "ColorUtilities.h"
 #include "NativeImage.h"
@@ -70,47 +71,32 @@ static std::optional<HueInterpolationMethod> hueInterpolationMethod(const ColorI
 
 static ColorComponents<float, 4> toInterpolationComponents(const ColorInterpolationMethod& method, const Color& color)
 {
-    // FIXME: Interpolate missing components rather than treating them as zero.
-    // CSS Color Module Level 4, Interpolating with Missing Components
-    // https://drafts.csswg.org/css-color-4/#interpolation-missing
-
-    auto components = WTF::switchOn(method.colorSpace, [&]<typename MethodColorSpace>(const MethodColorSpace&) {
-        return asColorComponents(color.toColorTypeLossy<typename MethodColorSpace::ColorType>().resolved());
+    return WTF::switchOn(method.colorSpace, [&]<typename MethodColorSpace>(const MethodColorSpace&) {
+        return asColorComponents(color.toColorTypeLossyCarryingForwardMissing<typename MethodColorSpace::ColorType>().unresolved());
     });
-
-    if (method.alphaPremultiplication == AlphaPremultiplication::Premultiplied) {
-        auto hueIndex = hueComponentIndex(method);
-        for (size_t i = 0; i < 3; ++i) {
-            if (i != hueIndex)
-                components[i] *= components[3];
-        }
-    }
-
-    return components;
 }
 
-static ResolvedPremultiplied<SRGBA<float>> toPremultipliedSRGB(const ColorInterpolationMethod& method, ColorComponents<float, 4> components)
+static ResolvedPremultiplied<ColorComponents<float, 4>> premultipliedComponents(const ColorComponents<float, 4>& components, ColorSpaceName colorSpace)
+{
+    // Multiplying a hue by alpha would be wrong, but the renderers only convert to RGB color spaces.
+    ASSERT_UNUSED(colorSpace, callWithColorType<float>(colorSpace, []<typename ColorType> { return UsesRGBModel<ColorType>; }));
+
+    auto [red, green, blue, alpha] = components;
+    return Premultiplied { resolvedColor(ColorComponents<float, 4> { red * alpha, green * alpha, blue * alpha, alpha }) };
+}
+
+static ResolvedPremultiplied<ColorComponents<float, 4>> toPremultipliedColor(const ColorInterpolationMethod& method, ColorComponents<float, 4> components, ColorSpaceName colorSpace)
 {
     components[3] = clampedAlpha(components[3]);
 
-    auto hueIndex = hueComponentIndex(method);
-
-    if (method.alphaPremultiplication == AlphaPremultiplication::Premultiplied && components[3] > 0) {
-        for (size_t i = 0; i < 3; ++i) {
-            if (i != hueIndex)
-                components[i] /= components[3];
-        }
-    }
-
     // Hues were moved by whole turns before interpolating, so normalize them back.
-    if (hueIndex)
+    if (auto hueIndex = hueComponentIndex(method))
         components[*hueIndex] = normalizeHue(components[*hueIndex]);
 
-    auto srgb = WTF::switchOn(method.colorSpace, [&]<typename MethodColorSpace>(const MethodColorSpace&) {
-        return convertColor<SRGBA<float>>(makeColorTypeByNormalizingComponents<typename MethodColorSpace::ColorType>(components).resolved());
-    });
-
-    return premultiplied(srgb.resolved());
+    return premultipliedComponents(WTF::switchOn(method.colorSpace, [&]<typename MethodColorSpace>(const MethodColorSpace&) {
+        using ColorType = typename MethodColorSpace::ColorType;
+        return convertAndResolveColorComponents(ColorSpaceFor<ColorType>, asColorComponents(makeColorTypeByNormalizingComponents<ColorType>(components).resolved()), colorSpace);
+    }), colorSpace);
 }
 
 // MARK: - Bicubic Bézier patches
@@ -125,11 +111,6 @@ static std::array<float, 4> cubicBernsteinPolynomialsAt(float t)
 static FloatPoint weighted(const FloatPoint& value, float weight)
 {
     return value.scaled(weight);
-}
-
-static ColorComponents<float, 4> weighted(const ColorComponents<float, 4>& value, float weight)
-{
-    return value * weight;
 }
 
 template<typename T> T MeshGradient::BicubicBezierPatch<T>::evaluate(const std::array<float, 4>& basisU, const std::array<float, 4>& basisV) const
@@ -269,11 +250,8 @@ std::optional<Ref<MeshGradient>> MeshGradient::tryCreate(ColorInterpolationMetho
     if (!isValidGrid(rows, columns, points.size()))
         return std::nullopt;
 
-    auto isFinite = [](const FloatPoint& point) {
-        return std::isfinite(point.x()) && std::isfinite(point.y());
-    };
     for (auto& point : points) {
-        if (!isFinite(point.position) || !std::ranges::all_of(allBoxSides, [&](auto side) { return isFinite(point.controlPoints[side]); }))
+        if (!point.position.isFinite() || !std::ranges::all_of(allBoxSides, [&](auto side) { return point.controlPoints[side].isFinite(); }))
             return std::nullopt;
     }
 
@@ -296,26 +274,66 @@ MeshGradient::MeshGradient(ColorInterpolationMethod colorInterpolationMethod, un
     auto hueIndex = hueComponentIndex(m_colorInterpolationMethod);
 
     // Hues are angles, so moving one by whole turns doesn't change its color. Before interpolating, move each hue so
-    // that going from one point to the next takes the arc the hue interpolation method asks for.
-    // FIXME: In two dimensions, this cannot be done consistently for every pair of neighbors. For now we go down
-    // the first column and then along each row.
+    // that going from one point to the next takes the arc the hue interpolation method asks for. Missing hues are
+    // skipped, so each hue is moved relative to the last one that isn't missing.
+    // FIXME: In two dimensions, this cannot be done consistently for every pair of neighbors. For now each hue is
+    // moved relative to the one before it in its row, and the first in each row relative to the first in the row above.
     if (hueIndex) {
         auto method = *hueInterpolationMethod(m_colorInterpolationMethod);
+        std::optional<float> firstHueOfPreviousRow;
         for (unsigned row = 0; row < m_rows; ++row) {
+            auto referenceHue = firstHueOfPreviousRow;
+            std::optional<float> firstHueOfRow;
             for (unsigned column = 0; column < m_columns; ++column) {
-                if (!row && !column)
-                    continue;
-                float referenceHue = column ? colors[index(row, column - 1)][*hueIndex] : colors[index(row - 1, 0)][*hueIndex];
                 auto& hue = colors[index(row, column)][*hueIndex];
-                auto [fixedReferenceHue, fixedHue] = fixupHueComponentsPriorToInterpolation(method, referenceHue, hue);
-                hue = fixedHue - (fixedReferenceHue - referenceHue);
+                if (std::isnan(hue))
+                    continue;
+                if (referenceHue) {
+                    auto [fixedReferenceHue, fixedHue] = fixupHueComponentsPriorToInterpolation(method, *referenceHue, hue);
+                    hue = fixedHue - (fixedReferenceHue - *referenceHue);
+                }
+                if (!firstHueOfRow)
+                    firstHueOfRow = hue;
+                referenceHue = hue;
+            }
+            if (firstHueOfRow)
+                firstHueOfPreviousRow = firstHueOfRow;
+        }
+    }
+
+    bool isPremultiplied = m_colorInterpolationMethod.alphaPremultiplication == AlphaPremultiplication::Premultiplied;
+    bool hasPointsMissingAlpha = false;
+    Vector<WeightedColor> weightedColors(colors.size());
+    Vector<WeightedColor> weightedColorsMissingAlpha(colors.size());
+    for (size_t point = 0; point < colors.size(); ++point) {
+        auto& color = colors[point];
+        float alpha = color[3];
+        for (size_t component = 0; component < 4; ++component) {
+            float value = color[component];
+            if (std::isnan(value))
+                continue;
+
+            if (!isPremultiplied || component == 3 || component == hueIndex) {
+                weightedColors[point].weightedValues[component] = value;
+                weightedColors[point].weights[component] = 1;
+            } else if (!std::isnan(alpha)) {
+                weightedColors[point].weightedValues[component] = value * alpha;
+                weightedColors[point].weights[component] = alpha;
+            } else {
+                weightedColorsMissingAlpha[point].weightedValues[component] = value;
+                weightedColorsMissingAlpha[point].weights[component] = 1;
+                hasPointsMissingAlpha = true;
             }
         }
     }
 
     for (unsigned row = 0; row + 1 < m_rows; ++row) {
-        for (unsigned column = 0; column + 1 < m_columns; ++column)
-            m_patches.append({ makePositionPatch(row, column), makeColorPatch(row, column, colors) });
+        for (unsigned column = 0; column + 1 < m_columns; ++column) {
+            m_positionPatches.append(makePositionPatch(row, column));
+            m_colorPatches.append(makeColorPatch(row, column, weightedColors));
+            if (hasPointsMissingAlpha)
+                m_colorPatchesMissingAlpha.append(makeColorPatch(row, column, weightedColorsMissingAlpha));
+        }
     }
 }
 
@@ -339,7 +357,7 @@ auto MeshGradient::makePositionPatch(unsigned row, unsigned column) const -> Pos
     );
 }
 
-auto MeshGradient::makeColorPatch(unsigned row, unsigned column, const Vector<Components>& colors) const -> ColorPatch
+auto MeshGradient::makeColorPatch(unsigned row, unsigned column, const Vector<WeightedColor>& colors) const -> ColorPatch
 {
     // Each edge is a cubic curve through the colors along its row or column, and the interior is the Coons patch of
     // those edges. Past the edge of the grid the colors are mirrored, so column -1 is column 1. That makes the slope
@@ -352,18 +370,83 @@ auto MeshGradient::makeColorPatch(unsigned row, unsigned column, const Vector<Co
             return std::max(2 * last - index, 0);
         return index;
     };
-    auto color = [&](int row, int column) -> const Components& {
+    auto color = [&](int row, int column) -> const WeightedColor& {
         return colors[index(mirrored(row, m_rows), mirrored(column, m_columns))];
+    };
+
+    auto segment = [](const WeightedColor& color0, const WeightedColor& color1, const WeightedColor& color2, const WeightedColor& color3) {
+        auto weightedValues = monotoneSegment(color0.weightedValues, color1.weightedValues, color2.weightedValues, color3.weightedValues);
+        auto weights = monotoneSegment(color0.weights, color1.weights, color2.weights, color3.weights);
+
+        std::array<WeightedColor, 4> segment;
+        for (size_t i = 0; i < 4; ++i)
+            segment[i] = { weightedValues[i], weights[i] };
+        return segment;
     };
 
     int r = row;
     int c = column;
     return ColorPatch::coonsPatch(
-        monotoneSegment(color(r,     c - 1), color(r,     c    ), color(r,     c + 1), color(r,     c + 2)),
-        monotoneSegment(color(r - 1, c + 1), color(r,     c + 1), color(r + 1, c + 1), color(r + 2, c + 1)),
-        monotoneSegment(color(r + 1, c - 1), color(r + 1, c    ), color(r + 1, c + 1), color(r + 1, c + 2)),
-        monotoneSegment(color(r - 1, c    ), color(r,     c    ), color(r + 1, c    ), color(r + 2, c    ))
+        segment(color(r,     c - 1), color(r,     c    ), color(r,     c + 1), color(r,     c + 2)),
+        segment(color(r - 1, c + 1), color(r,     c + 1), color(r + 1, c + 1), color(r + 2, c + 1)),
+        segment(color(r + 1, c - 1), color(r + 1, c    ), color(r + 1, c + 1), color(r + 1, c + 2)),
+        segment(color(r - 1, c    ), color(r,     c    ), color(r + 1, c    ), color(r + 2, c    ))
     );
+}
+
+// The two sums of the weighted mean at (u, v), with the terms of the points missing their alpha added in.
+std::pair<MeshGradient::Components, MeshGradient::Components> MeshGradient::weightedMean(uint32_t patchIndex, float u, float v) const
+{
+    auto basisU = cubicBernsteinPolynomialsAt(u);
+    auto basisV = cubicBernsteinPolynomialsAt(v);
+    auto [weightedValues, weights] = m_colorPatches[patchIndex].evaluate(basisU, basisV);
+
+    // Like interpolateAlphaPremulitplied(), premultiply the points missing their alpha by the interpolated alpha. If
+    // every point is missing its alpha, they aren't premultiplied.
+    if (!m_colorPatchesMissingAlpha.isEmpty()) {
+        float alpha = weights[3] > 0 ? clampedAlpha(weightedValues[3] / weights[3]) : 1;
+        auto missingAlpha = m_colorPatchesMissingAlpha[patchIndex].evaluate(basisU, basisV);
+        weightedValues += missingAlpha.weightedValues * alpha;
+        weights += missingAlpha.weights * alpha;
+    }
+
+    return { weightedValues, weights };
+}
+
+// The color at (u, v), in the interpolation color space. Components missing from every point that contributes are 0.
+auto MeshGradient::interpolatedColor(uint32_t patchIndex, float u, float v) const -> Components
+{
+    auto [weightedValues, weights] = weightedMean(patchIndex, u, v);
+
+    Components color;
+    bool hasComponentWithoutWeight = false;
+    for (size_t component = 0; component < 4; ++component) {
+        if (weights[component] > 0)
+            color[component] = weightedValues[component] / weights[component];
+        else
+            hasComponentWithoutWeight = true;
+    }
+    if (!hasComponentWithoutWeight)
+        return color;
+
+    // At a point missing a component, the points that have it have no weight. The same goes along an edge between two
+    // such points. interpolateColorComponents() takes the other color's value in this case, even at either end. To
+    // match it, take the value just inside the patch, toward its center:
+    //
+    //     A x---------o B      A is missing red. At A, and along A-C if C is missing it too, no point has any
+    //       | \       |        weight for red, so it's evaluated a little way toward the center instead.
+    //       |  *      |
+    //       |         |
+    //     C o---------o D
+    static constexpr float nudge = 1.0f / 1024.0f;
+    auto [nudgedWeightedValues, nudgedWeights] = weightedMean(patchIndex, u + (0.5f - u) * nudge, v + (0.5f - v) * nudge);
+
+    for (size_t component = 0; component < 4; ++component) {
+        if (weights[component] > 0)
+            continue;
+        color[component] = nudgedWeights[component] > 0 ? nudgedWeightedValues[component] / nudgedWeights[component] : 0;
+    }
+    return color;
 }
 
 MeshGradient::~MeshGradient()
@@ -372,17 +455,43 @@ MeshGradient::~MeshGradient()
         observer->willDestroyMeshGradient(*this);
 }
 
-ResolvedPremultiplied<SRGBA<float>> MeshGradient::premultipliedSRGBBackgroundColor() const
+std::optional<ColorSpaceName> MeshGradient::renderingColorSpace(const ColorSpace& colorSpace)
 {
-    return premultiplied(m_backgroundColor.toColorTypeLossy<SRGBA<float>>().resolved());
+    if (colorSpace == ColorSpace::SRGB())
+        return ColorSpaceName::SRGB;
+    if (colorSpace == ColorSpace::LinearSRGB())
+        return ColorSpaceName::LinearSRGB;
+#if ENABLE(DESTINATION_COLOR_SPACE_EXTENDED_SRGB)
+    if (colorSpace == ColorSpace::ExtendedSRGB())
+        return ColorSpaceName::ExtendedSRGB;
+    if (colorSpace == ColorSpace::ExtendedLinearSRGB())
+        return ColorSpaceName::ExtendedLinearSRGB;
+#endif
+#if ENABLE(DESTINATION_COLOR_SPACE_DISPLAY_P3)
+    if (colorSpace == ColorSpace::DisplayP3())
+        return ColorSpaceName::DisplayP3;
+    if (colorSpace == ColorSpace::LinearDisplayP3())
+        return ColorSpaceName::LinearDisplayP3;
+    if (colorSpace == ColorSpace::ExtendedDisplayP3())
+        return ColorSpaceName::ExtendedDisplayP3;
+    if (colorSpace == ColorSpace::ExtendedLinearDisplayP3())
+        return ColorSpaceName::ExtendedLinearDisplayP3;
+#endif
+    return std::nullopt;
 }
 
-RefPtr<NativeImage> MeshGradient::renderedImage(const IntSize& pixelSize, float scale) const
+ResolvedPremultiplied<ColorComponents<float, 4>> MeshGradient::premultipliedBackgroundColor(ColorSpaceName colorSpace) const
+{
+    return premultipliedComponents(m_backgroundColor.toResolvedColorComponentsInColorSpace(colorSpace), colorSpace);
+}
+
+RefPtr<NativeImage> MeshGradient::renderedImage(const IntSize& pixelSize, float scale, const ColorSpace& colorSpace) const
 {
     Locker locker { m_renderedImageLock };
-    if (m_renderedImagePixelSize != pixelSize || m_renderedImageScale != scale)
+    RefPtr renderedImage = m_renderedImage;
+    if (!renderedImage || m_renderedImagePixelSize != pixelSize || m_renderedImageScale != scale || renderedImage->colorSpace() != colorSpace)
         return nullptr;
-    return m_renderedImage;
+    return renderedImage;
 }
 
 void MeshGradient::setRenderedImage(const IntSize& pixelSize, float scale, Ref<NativeImage>&& image) const
@@ -393,22 +502,48 @@ void MeshGradient::setRenderedImage(const IntSize& pixelSize, float scale, Ref<N
     m_renderedImage = WTF::move(image);
 }
 
-unsigned MeshGradient::subdivisions(const Patch& patch, float scale) const
+// The number of steps along each direction that keeps the triangles within a quarter of a pixel of the surface.
+//
+// With a step of h, triangles stay within h^2 / 8 * (|Puu| + 2 |Puv| + |Pvv|) of a surface P, using its second
+// derivatives. On a bicubic patch, |Puu| and |Pvv| are at most 6 times the largest second difference of the control
+// points, and |Puv| is at most 9 times the largest twist. A twist is how far four neighboring control points are from
+// being a parallelogram.
+//
+// D. Filip, R. Magedson and R. Markot, "Surface Algorithms Using Bounds on Derivatives" (1986)
+// https://doi.org/10.1016/0167-8396(86)90005-1
+unsigned MeshGradient::subdivisions(const PositionPatch& position, float scale) const
 {
-    static constexpr float targetTriangleSize = 8;
-    static constexpr unsigned maximumSubdivisions = 64;
+    static constexpr unsigned maximumSubdivisions = 256;
 
-    // A Bézier patch lies within the bounds of its control points.
-    auto [leftmost, rightmost] = std::ranges::minmax(patch.position.controlValues, { }, &FloatPoint::x);
-    auto [topmost, bottommost] = std::ranges::minmax(patch.position.controlValues, { }, &FloatPoint::y);
+    float alongU = 0;
+    float alongV = 0;
+    float twist = 0;
+    for (unsigned first = 0; first < 4; ++first) {
+        for (unsigned second = 0; second < 2; ++second) {
+            auto secondDifference = [](FloatPoint a, FloatPoint b, FloatPoint c) {
+                return std::hypot(a.x() - 2 * b.x() + c.x(), a.y() - 2 * b.y() + c.y());
+            };
+            alongU = std::max(alongU, secondDifference(position.controlValue(first, second), position.controlValue(first, second + 1), position.controlValue(first, second + 2)));
+            alongV = std::max(alongV, secondDifference(position.controlValue(second, first), position.controlValue(second + 1, first), position.controlValue(second + 2, first)));
+        }
+    }
+    for (unsigned row = 0; row < 3; ++row) {
+        for (unsigned column = 0; column < 3; ++column) {
+            auto a = position.controlValue(row, column);
+            auto b = position.controlValue(row, column + 1);
+            auto c = position.controlValue(row + 1, column);
+            auto d = position.controlValue(row + 1, column + 1);
+            twist = std::max(twist, std::hypot(d.x() - c.x() - b.x() + a.x(), d.y() - c.y() - b.y() + a.y()));
+        }
+    }
 
-    float size = std::max(rightmost.x() - leftmost.x(), bottommost.y() - topmost.y()) * scale;
+    float count = std::sqrt(3 * scale * (alongU + 3 * twist + alongV));
 
     // A position that isn't finite can't be drawn, so there is nothing to subdivide.
-    if (!std::isfinite(size))
+    if (!std::isfinite(count))
         return 1;
 
-    return static_cast<unsigned>(std::clamp(std::ceil(size / targetTriangleSize), 1.0f, static_cast<float>(maximumSubdivisions)));
+    return static_cast<unsigned>(std::clamp(std::ceil(count), 1.0f, static_cast<float>(maximumSubdivisions)));
 }
 
 auto MeshGradient::triangles(float scale) const -> Vector<Triangle>
@@ -423,7 +558,7 @@ auto MeshGradient::triangles(float scale) const -> Vector<Triangle>
     Vector<unsigned> subdivisionsAlongU(FillWith { }, patchColumns, 1u);
     for (unsigned row = 0; row < patchRows; ++row) {
         for (unsigned column = 0; column < patchColumns; ++column) {
-            unsigned subdivisions = this->subdivisions(m_patches[row * patchColumns + column], scale);
+            unsigned subdivisions = this->subdivisions(m_positionPatches[row * patchColumns + column], scale);
             subdivisionsAlongV[row] = std::max(subdivisionsAlongV[row], subdivisions);
             subdivisionsAlongU[column] = std::max(subdivisionsAlongU[column], subdivisions);
         }
@@ -431,9 +566,15 @@ auto MeshGradient::triangles(float scale) const -> Vector<Triangle>
 
     Vector<Triangle> triangles;
 
+    auto appendTriangle = [&](const Vertex& a, const Vertex& b, const Vertex& c) {
+        if (a.position.isFinite() && b.position.isFinite() && c.position.isFinite())
+            triangles.append({ a, b, c });
+    };
+
     for (unsigned row = 0; row < patchRows; ++row) {
         for (unsigned column = 0; column < patchColumns; ++column) {
-            auto& patch = m_patches[row * patchColumns + column];
+            uint32_t patchIndex = row * patchColumns + column;
+            auto& positionPatch = m_positionPatches[patchIndex];
 
             // Evaluate the patch on an evenly spaced grid of (u, v), then split each grid cell into two triangles.
             unsigned columnsInGrid = subdivisionsAlongU[column];
@@ -444,13 +585,8 @@ auto MeshGradient::triangles(float scale) const -> Vector<Triangle>
                 float v = static_cast<float>(j) / rowsInGrid;
                 for (unsigned i = 0; i <= columnsInGrid; ++i) {
                     float u = static_cast<float>(i) / columnsInGrid;
-
-                    auto basisU = cubicBernsteinPolynomialsAt(u);
-                    auto basisV = cubicBernsteinPolynomialsAt(v);
-                    auto position = patch.position.evaluate(basisU, basisV);
-                    auto color = patch.color.evaluate(basisU, basisV);
-
-                    grid.append({ position.scaled(scale), toPremultipliedSRGB(m_colorInterpolationMethod, color) });
+                    auto position = positionPatch.evaluate(cubicBernsteinPolynomialsAt(u), cubicBernsteinPolynomialsAt(v));
+                    grid.append({ position.scaled(scale), u, v, patchIndex });
                 }
             }
 
@@ -464,14 +600,19 @@ auto MeshGradient::triangles(float scale) const -> Vector<Triangle>
             // the top.
             for (unsigned j = 0; j < rowsInGrid; ++j) {
                 for (unsigned i = 0; i < columnsInGrid; ++i) {
-                    triangles.append(Triangle { gridVertex(i, j), gridVertex(i + 1, j), gridVertex(i, j + 1) });
-                    triangles.append(Triangle { gridVertex(i + 1, j), gridVertex(i + 1, j + 1), gridVertex(i, j + 1) });
+                    appendTriangle(gridVertex(i, j), gridVertex(i + 1, j), gridVertex(i, j + 1));
+                    appendTriangle(gridVertex(i + 1, j), gridVertex(i + 1, j + 1), gridVertex(i, j + 1));
                 }
             }
         }
     }
 
     return triangles;
+}
+
+ResolvedPremultiplied<ColorComponents<float, 4>> MeshGradient::premultipliedColor(uint32_t patchIndex, float u, float v, ColorSpaceName colorSpace) const
+{
+    return toPremultipliedColor(m_colorInterpolationMethod, interpolatedColor(patchIndex, u, v), colorSpace);
 }
 
 TextStream& operator<<(TextStream& ts, const MeshGradient::Point& point)

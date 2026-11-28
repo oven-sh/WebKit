@@ -55,14 +55,14 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderSVGModelObject);
 
-RenderSVGModelObject::RenderSVGModelObject(Type type, Document& document, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> typeFlags)
+RenderSVGModelObject::RenderSVGModelObject(Type type, Document& document, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> typeFlags)
     : RenderLayerModelObject(type, document, WTF::move(style), { }, typeFlags)
 {
     ASSERT(!isLegacyRenderSVGModelObject());
     ASSERT(isRenderSVGModelObject());
 }
 
-RenderSVGModelObject::RenderSVGModelObject(Type type, SVGElement& element, Style::ComputedStyle&& style, OptionSet<SVGModelObjectFlag> typeFlags)
+RenderSVGModelObject::RenderSVGModelObject(Type type, SVGElement& element, UniqueRef<Style::ComputedStyle>&& style, OptionSet<SVGModelObjectFlag> typeFlags)
     : RenderLayerModelObject(type, element, WTF::move(style), { }, typeFlags)
 {
     ASSERT(!isLegacyRenderSVGModelObject());
@@ -177,12 +177,10 @@ LayoutRect RenderSVGModelObject::outlineBoundsForRepaint(const RenderLayerModelO
 
     if (repaintContainer != this) {
         FloatQuad containerRelativeQuad;
-        if (geometryMap) {
+        if (geometryMap)
             containerRelativeQuad = geometryMap->mapToContainer(outlineBounds, repaintContainer);
-        } else {
-            // FIXME: Remove suppression once rdar://189998444 is fixed.
-            SUPPRESS_MEMORY_UNSAFE_CAST containerRelativeQuad = localToContainerQuad(FloatRect(outlineBounds), repaintContainer);
-        }
+        else
+            containerRelativeQuad = localToContainerQuad(FloatRect(outlineBounds), repaintContainer);
 
         outlineBounds = LayoutRect(containerRelativeQuad.boundingBox());
     }
@@ -394,20 +392,17 @@ bool RenderSVGModelObject::applyCachedClipAndScrollPosition(RepaintRects& rects,
     return intersects;
 }
 
-void RenderSVGModelObject::computeClipContentTransform(AffineTransform& transform) const
+AffineTransform RenderSVGModelObject::computeClipChildUserSpaceTransform() const
 {
-    if (isTransformed())
-        transform.multiply(computeRendererTransform());
+    auto transform = computeUserSpaceTransform();
 
     RefPtr useElement = dynamicDowncast<SVGUseElement>(protect(element()));
     if (!useElement)
-        return;
+        return transform;
 
-    if (CheckedPtr clipChildRenderer = useElement->rendererClipChild()) {
-        CheckedRef layerModelObject = downcast<RenderLayerModelObject>(*clipChildRenderer);
-        if (layerModelObject->isTransformed())
-            transform.multiply(layerModelObject->computeRendererTransform());
-    }
+    if (CheckedPtr clipChildRenderer = useElement->rendererClipChild())
+        transform.multiply(downcast<RenderLayerModelObject>(*clipChildRenderer).computeUserSpaceTransform());
+    return transform;
 }
 
 Path RenderSVGModelObject::computeClipPathGeometry() const

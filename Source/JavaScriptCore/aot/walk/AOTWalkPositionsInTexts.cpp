@@ -69,8 +69,8 @@ struct TestOfPositionInText {
 enum class BoundOfPositionInText : uint8_t { BelowLength, AtMostLength };
 
 struct TestsOfPositionsInTexts final : Walker::KeptForBuild {
-    UncheckedKeyHashMap<const BodyIndex*, Vector<TestOfPositionInText>> belowLengths;
-    UncheckedKeyHashMap<const BodyIndex*, Vector<TestOfPositionInText>> atMostLengths;
+    HashMap<const BodyIndex*, Vector<TestOfPositionInText>> belowLengths;
+    HashMap<const BodyIndex*, Vector<TestOfPositionInText>> atMostLengths;
 };
 
 } // anonymous namespace

@@ -84,7 +84,7 @@ public:
     JS_EXPORT_PRIVATE static String nameOfHostDefinedType(Type);
     const String& hostDefinedImportType() const { return m_hostDefinedImportType; }
 
-    using AttributesMap = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, String>;
+    using AttributesMap = HashMap<RefPtr<UniquedStringImpl>, String>;
     const AttributesMap& attributes() const { return m_attributes; }
     void setAttributes(AttributesMap&& attributes) { m_attributes = WTF::move(attributes); }
 #endif

@@ -38,12 +38,15 @@
 #import "_WKAutomationSession.h"
 #import <Carbon/Carbon.h>
 #import <Foundation/Foundation.h>
+#import <QuartzCore/QuartzCore.h>
 #import <WebCore/IntPoint.h>
 #import <WebCore/IntSize.h>
 #import <WebCore/PlatformEventFactoryMac.h>
 #import <WebCore/PlatformMouseEvent.h>
 #import <objc/runtime.h>
+#import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <pal/spi/mac/NSEventSPI.h>
+#import <wtf/RunLoop.h>
 #import <wtf/Scope.h>
 #import <wtf/cocoa/TypeCastsCocoa.h>
 
@@ -71,6 +74,31 @@ void WebAutomationSession::inspectBrowsingContext(const Inspector::Protocol::Aut
         if (enableAutoCapturing && *enableAutoCapturing)
             inspector->togglePageProfiling();
     }
+}
+
+#pragma mark Screenshot Support
+
+// The same as WebKitTestRunner's wait before its window snapshots.
+static constexpr Seconds windowServerDrawingTimeout = 250_ms;
+
+void WebAutomationSession::platformCallAfterWindowServerDrawsView(WebPageProxy& page, Function<void()>&& completionHandler)
+{
+    // Callers can be inside a layer tree commit (presentation update callbacks run there), and Core Animation
+    // only commits the layer changes after it, at the end of the run loop iteration. Leave the commit first,
+    // then commit the changes now.
+    RunLoop::mainSingleton().dispatch([page = Ref { page }, completionHandler = WTF::move(completionHandler)] mutable {
+        [CATransaction flush];
+
+        // A window server capture shows what the window server has drawn so far, which doesn't include
+        // committed changes that it hasn't rendered yet.
+        if (RetainPtr webView = page->cocoaView()) {
+            RetainPtr layerContext = [[webView layer] context];
+            if (layerContext && ![layerContext waitForRenderingWithTimeout:windowServerDrawingTimeout.seconds()])
+                RELEASE_LOG_ERROR(Automation, "platformCallAfterWindowServerDrawsView: timed out waiting for the window server to draw the web view");
+        }
+
+        completionHandler();
+    });
 }
 
 #pragma mark AppKit Event Simulation Support
@@ -103,8 +131,7 @@ void WebAutomationSession::sendSynthesizedEventsToPage(WebPageProxy& page, NSArr
         method_setImplementation(methodToSwizzle, originalImplementation);
     });
 
-    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
-    for (SUPPRESS_UNRETAINED_LOCAL NSEvent *event in eventsToSend) {
+    for (NSEvent *event in eventsToSend) {
         LOG(Automation, "Sending event[%p] to window[%p]: %@", event, window.get(), event);
 
         // Take focus back in case the Inspector became focused while the prior command or
@@ -950,6 +977,7 @@ void WebAutomationSession::platformSimulateWheelInteraction(WebPageProxy& page, 
 {
     static constexpr auto scrollWheelCount = 2;
     auto cgScrollEvent = adoptCF(CGEventCreateScrollWheelEvent(nullptr, kCGScrollEventUnitPixel, scrollWheelCount, -delta.height(), -delta.width()));
+    CGEventSetFlags(cgScrollEvent.get(), static_cast<CGEventFlags>(WebEventFactory::toNSEventModifierFlags(kit(WebCore::modifiersForModifierFlags(m_currentModifiers)))));
 
     auto locationInWindow = viewportLocationToWindowLocation(locationInViewport, page);
     RetainPtr window = page.platformWindow();

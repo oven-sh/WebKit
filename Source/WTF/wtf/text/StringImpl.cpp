@@ -122,7 +122,7 @@ StringImpl::StaticStringImpl StringImpl::s_emptyAtomString("", StringImpl::Strin
 
 StringImpl::~StringImpl()
 {
-    ASSERT(!isStatic());
+    ASSERT_WITH_SECURITY_IMPLICATION(!isStatic());
 
     StringView::invalidate(*this);
 
@@ -161,6 +161,14 @@ StringImpl::~StringImpl()
 
 NEVER_INLINE void StringImpl::destroy(StringImpl* stringImpl)
 {
+    // Pairs with the release decrement in deref() on other threads, so ~StringImpl() sees their final
+    // writes to the flags (e.g. isAtom) and they are done reading the characters before we free them.
+    // ThreadSanitizer does not model fences, so use an equivalent acquire load there.
+#if TSAN_ENABLED
+    [[maybe_unused]] auto refCount = stringImpl->m_refCount.load(std::memory_order_acquire);
+#else
+    std::atomic_thread_fence(std::memory_order_acquire);
+#endif
     stringImpl->~StringImpl();
     StringImplMalloc::free(stringImpl);
 }
@@ -199,8 +207,8 @@ Ref<StringImpl> StringImpl::createUninitialized(size_t length, std::span<char16_
 
 template<typename CharacterType> inline std::expected<Ref<StringImpl>, UTF8ConversionError> StringImpl::reallocateInternal(Ref<StringImpl>&& originalString, unsigned length, CharacterType*& data)
 {
-    ASSERT(originalString->hasOneRef());
-    ASSERT(originalString->bufferOwnership() == BufferInternal);
+    RELEASE_ASSERT(originalString->hasOneRef());
+    RELEASE_ASSERT(originalString->bufferOwnership() == BufferInternal);
 
     if (!length) {
         data = nullptr;
@@ -239,13 +247,13 @@ Ref<StringImpl> StringImpl::reallocate(Ref<StringImpl>&& originalString, unsigne
 
 std::expected<Ref<StringImpl>, UTF8ConversionError> StringImpl::tryReallocate(Ref<StringImpl>&& originalString, unsigned length, Latin1Character*& data)
 {
-    ASSERT(originalString->is8Bit());
+    ASSERT_WITH_SECURITY_IMPLICATION(originalString->is8Bit());
     return reallocateInternal(WTF::move(originalString), length, data);
 }
 
 std::expected<Ref<StringImpl>, UTF8ConversionError> StringImpl::tryReallocate(Ref<StringImpl>&& originalString, unsigned length, char16_t*& data)
 {
-    ASSERT(!originalString->is8Bit());
+    ASSERT_WITH_SECURITY_IMPLICATION(!originalString->is8Bit());
     return reallocateInternal(WTF::move(originalString), length, data);
 }
 
@@ -1162,7 +1170,7 @@ SUPPRESS_NODELETE size_t StringImpl::reverseFind(StringView matchString, size_t 
 ALWAYS_INLINE static bool equalInner(const StringImpl& string, unsigned start, std::span<const char> matchString)
 {
     ASSERT(matchString.size() <= string.length());
-    ASSERT(start + matchString.size() <= string.length());
+    ASSERT_WITH_SECURITY_IMPLICATION(start + matchString.size() <= string.length());
 
     if (string.is8Bit())
         return equal(string.span8().subspan(start).data(), byteCast<Latin1Character>(matchString));
@@ -1685,48 +1693,42 @@ ASCIICString StringImpl::asciiForCharacters(std::span<const char16_t> characters
     return asciiForCharactersInternal(characters);
 }
 
-std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const Latin1Character> source)
+std::expected<UTF8CString, UTF8ConversionError> tryMakeUTF8CString(std::span<const Latin1Character> source)
 {
-    return tryGetUTF8ForCharacters([] (std::span<const char8_t> converted) {
+    return tryGetUTF8([](std::span<const char8_t> converted) {
         return UTF8CString { converted };
     }, source);
 }
 
-std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const char16_t> characters, ConversionMode mode)
+std::expected<UTF8CString, UTF8ConversionError> tryMakeUTF8CString(std::span<const char16_t> characters, ConversionMode mode)
 {
-    return tryGetUTF8ForCharacters([] (std::span<const char8_t> converted) {
+    return tryGetUTF8([](std::span<const char8_t> converted) {
         return UTF8CString { converted };
     }, characters, mode);
 }
 
-std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuffer(std::span<const char16_t> span, ConversionMode mode, Vector<char8_t, 1024>& bufferVector)
+UTF8CString makeUTF8CString(std::span<const Latin1Character> characters)
 {
-    ASSERT(bufferVector.size() == span.size() * 3);
+    auto expectedString = tryMakeUTF8CString(characters);
+    RELEASE_ASSERT(expectedString);
+    return expectedString.value();
+}
 
-    auto conversionResult = simdutf::convert_utf16le_to_utf8_with_errors(span, bufferVector.mutableSpan());
-
-    if (conversionResult.error == simdutf::error_code::SUCCESS)
-        return conversionResult.count;
-
-    ConversionResult<char8_t> result;
-    switch (mode) {
-    case StrictConversion:
-        result = Unicode::convert(span, bufferVector.mutableSpan());
-        break;
-    // FIXME: Lenient is exactly the same as "replacing unpaired surrogates with FFFD"; we don't need both.
-    case StrictConversionReplacingUnpairedSurrogatesWithFFFD:
-    case LenientConversion:
-        result = Unicode::convertReplacingInvalidSequences(span, bufferVector.mutableSpan());
-        break;
-    }
-    if (result.code == ConversionResultCode::SourceInvalid)
-        return makeUnexpected(UTF8ConversionError::Invalid);
-    return result.buffer.size();
+UTF8CString makeUTF8CString(std::span<const char16_t> characters, ConversionMode mode)
+{
+    auto expectedString = tryMakeUTF8CString(characters, mode);
+    RELEASE_ASSERT(expectedString);
+    return expectedString.value();
 }
 
 size_t StringImpl::utf8LengthFromUTF16(std::span<const char16_t> characters)
 {
     return simdutf::utf8_length_from_utf16le(characters);
+}
+
+size_t StringImpl::utf8LengthFromUTF16ReplacingUnpairedSurrogates(std::span<const char16_t> characters)
+{
+    return simdutf::utf8_length_from_utf16le_with_replacement(characters).count;
 }
 
 size_t StringImpl::tryConvertUTF16ToUTF8(std::span<const char16_t> source, std::span<char8_t> destination)
@@ -1737,27 +1739,18 @@ size_t StringImpl::tryConvertUTF16ToUTF8(std::span<const char16_t> source, std::
     return notFound;
 }
 
-std::expected<UTF8CString, UTF8ConversionError> StringImpl::tryGetUTF8(ConversionMode mode) const
+void StringImpl::convertUTF16ToUTF8ReplacingUnpairedSurrogates(std::span<const char16_t> source, std::span<char8_t> destination)
 {
-    if (is8Bit())
-        return utf8ForCharacters(span8());
-    return utf8ForCharacters(span16(), mode);
-}
-
-UTF8CString StringImpl::utf8(ConversionMode mode) const
-{
-    auto expectedString = tryGetUTF8(mode);
-    RELEASE_ASSERT(expectedString);
-    return expectedString.value();
+    ASSERT_WITH_SECURITY_IMPLICATION(destination.size() == utf8LengthFromUTF16ReplacingUnpairedSurrogates(source));
+    auto written = simdutf::convert_utf16le_to_utf8_with_replacement(source, destination);
+    ASSERT_UNUSED(written, written == destination.size());
 }
 
 NEVER_INLINE unsigned StringImpl::hashSlowCase() const
 {
-    if (is8Bit())
-        setHash(StringHasher::computeHashAndMaskTop8Bits(span8()));
-    else
-        setHash(StringHasher::computeHashAndMaskTop8Bits(span16()));
-    return existingHash();
+    unsigned hash = is8Bit() ? StringHasher::computeHashAndMaskTop8Bits(span8()) : StringHasher::computeHashAndMaskTop8Bits(span16());
+    setHash(hash);
+    return hash;
 }
 
 unsigned StringImpl::concurrentHash() const

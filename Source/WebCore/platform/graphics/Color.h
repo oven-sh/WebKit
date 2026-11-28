@@ -308,8 +308,11 @@ bool outOfLineComponentsEqualIgnoringSemanticColor(const Color&, const Color&);
 #if USE(CG)
 WEBCORE_EXPORT RetainPtr<CGColorRef> cachedCGColor(const Color&);
 WEBCORE_EXPORT RetainPtr<CGColorRef> cachedCGColorInDestinationStandardRange(const Color&, const ColorSpace&);
-WEBCORE_EXPORT ColorComponents<float, 4> platformConvertColorComponents(ColorSpaceName, ColorComponents<float, 4>, const ColorSpace&);
 WEBCORE_EXPORT std::optional<SRGBA<uint8_t>> roundAndClampToSRGBALossy(CGColorRef);
+#endif
+
+#if ENABLE(DESTINATION_COLOR_SPACE_ARBITRARY_CONVERSION)
+WEBCORE_EXPORT ColorComponents<float, 4> platformConvertColorComponents(ColorSpaceName, ColorComponents<float, 4>, const ColorSpace&);
 #endif
 
 WEBCORE_EXPORT WTF::TextStream& operator<<(WTF::TextStream&, const Color&);
@@ -453,16 +456,16 @@ template<typename Functor> decltype(auto) Color::callOnUnderlyingType(NOESCAPE c
 
 template<typename ColorType> ColorType Color::toColorTypeLossy() const
 {
-    return callOnUnderlyingType([] (const auto& underlyingColor) {
-        return convertColor<ColorType>(underlyingColor);
-    });
+    if (isOutOfLine())
+        return convertColorComponents<ColorType>(colorSpace(), asOutOfLine().unresolvedComponents());
+    return convertColor<ColorType>(asInline());
 }
 
 template<typename ColorType> ColorType Color::toColorTypeLossyCarryingForwardMissing() const
 {
-    return callOnUnderlyingType([] (const auto& underlyingColor) {
-        return convertColorCarryingForwardMissing<ColorType>(underlyingColor);
-    });
+    if (isOutOfLine())
+        return convertColorComponentsCarryingForwardMissing<ColorType>(colorSpace(), asOutOfLine().unresolvedComponents());
+    return convertColorCarryingForwardMissing<ColorType>(asInline());
 }
 
 inline Color Color::invertedColorWithAlpha(std::optional<float> alpha) const
@@ -544,7 +547,7 @@ inline bool Color::isHashTableEmptyValue() const
 
 inline Color::OutOfLineComponents& Color::asOutOfLine() const
 {
-    ASSERT(isOutOfLine());
+    ASSERT_WITH_SECURITY_IMPLICATION(isOutOfLine());
     return decodedOutOfLineComponents(m_colorAndFlags);
 }
 

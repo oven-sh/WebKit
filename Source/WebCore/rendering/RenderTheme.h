@@ -125,7 +125,7 @@ public:
 
     virtual String extraDefaultStyleSheet() { return String(); }
 #if ENABLE(VIDEO)
-    virtual Vector<String, 2> mediaControlsStyleSheets(const HTMLMediaElement&) { return { }; }
+    virtual Vector<String, 4> mediaControlsStyleSheets(const HTMLMediaElement&) { return { }; }
     virtual Vector<String, 2> mediaControlsScripts() { return { }; }
     virtual RefPtr<FragmentedSharedBuffer> mediaControlsImageDataForIconNameAndType(const String&, const String&) { return nullptr; }
     virtual String mediaControlsBase64StringForIconNameAndType(const String&, const String&) { return String(); }
@@ -200,7 +200,7 @@ public:
 
     Color datePlaceholderTextColor(const Color& textColor, const Color& backgroundColor) const;
 
-    Color documentMarkerLineColor(const RenderText&, DocumentMarkerLineStyleMode) const;
+    WEBCORE_EXPORT Color documentMarkerLineColor(const RenderText&, DocumentMarkerLineStyleMode) const;
 
     WEBCORE_EXPORT Color focusRingColor(OptionSet<StyleColorOptions>) const;
     virtual Color platformFocusRingColor(OptionSet<StyleColorOptions>) const { return Color::black; }
@@ -329,6 +329,8 @@ protected:
 
     virtual bool supportsSelectionForegroundColors(OptionSet<StyleColorOptions>) const { return true; }
     virtual bool supportsListBoxSelectionForegroundColors(OptionSet<StyleColorOptions>) const { return true; }
+
+    virtual void adjustControlBorderRadius(Style::ComputedStyle&, const Element&) const;
 
     // Methods for each appearance value.
     virtual void adjustCheckboxStyle(Style::ComputedStyle&, const Element*) const;
@@ -502,12 +504,13 @@ protected:
 private:
     StyleAppearance autoAppearanceForElement(Style::ComputedStyle&, const Element*) const;
     StyleAppearance adjustAppearanceForElement(Style::ComputedStyle&, const Style::ComputedStyle& parentStyle, const Element*, StyleAppearance) const;
+    void adjustStyleForAppearance(Style::ComputedStyle&, StyleAppearance, const Element*) const;
 
     Color spellingMarkerColor(OptionSet<StyleColorOptions>) const;
     Color dictationAlternativesMarkerColor(OptionSet<StyleColorOptions>) const;
     Color grammarMarkerColor(OptionSet<StyleColorOptions>) const;
 
-    mutable HashMap<uint8_t, ColorCache, DefaultHash<uint8_t>, WTF::UnsignedWithZeroKeyHashTraits<uint8_t>> m_colorCacheMap;
+    mutable HashMap<uint8_t, ColorCache> m_colorCacheMap;
 
     bool m_useFormSemanticContext { false };
 };

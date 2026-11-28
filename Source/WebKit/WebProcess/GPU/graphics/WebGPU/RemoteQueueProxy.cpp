@@ -30,7 +30,8 @@
 
 #include "RemoteBufferProxy.h"
 #include "RemoteQueueMessages.h"
-#include "WebGPUConvertToBackingContext.h"
+#include "WebGPUDescriptorSerializers.h"
+#include "WebGPUProxyIdentifiers.h"
 #include "WebProcess.h"
 #include <WebCore/NativeImage.h>
 #include <WebCore/WebCodecsVideoFrame.h>
@@ -40,9 +41,8 @@ namespace WebKit::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteQueueProxy);
 
-RemoteQueueProxy::RemoteQueueProxy(RemoteAdapterProxy& parent, ConvertToBackingContext& convertToBackingContext, WebGPUIdentifier identifier)
+RemoteQueueProxy::RemoteQueueProxy(RemoteAdapterProxy& parent, WebGPUQueueIdentifier identifier)
     : m_backing(identifier)
-    , m_convertToBackingContext(convertToBackingContext)
     , m_parent(parent)
 {
 #if ENABLE(VIDEO) && PLATFORM(COCOA) && ENABLE(WEB_CODECS)
@@ -63,8 +63,8 @@ RemoteQueueProxy::~RemoteQueueProxy()
 
 void RemoteQueueProxy::submit(Vector<Ref<::WebGPU::CommandBuffer>>&& commandBuffers)
 {
-    auto convertedCommandBuffers = WTF::compactMap(commandBuffers, [&](auto& commandBuffer) -> std::optional<WebGPUIdentifier> {
-        auto convertedCommandBuffer = m_convertToBackingContext->convertToBacking(commandBuffer);
+    auto convertedCommandBuffers = WTF::compactMap(commandBuffers, [&](auto& commandBuffer) -> std::optional<WebGPUCommandBufferIdentifier> {
+        auto convertedCommandBuffer = identifier(commandBuffer);
         return convertedCommandBuffer;
     });
 
@@ -72,17 +72,18 @@ void RemoteQueueProxy::submit(Vector<Ref<::WebGPU::CommandBuffer>>&& commandBuff
     UNUSED_VARIABLE(sendResult);
 }
 
-void RemoteQueueProxy::onSubmittedWorkDone(CompletionHandler<void()>&& callback)
+void RemoteQueueProxy::onSubmittedWorkDone(CompletionHandler<void(bool)>&& callback)
 {
-    auto sendResult = sendWithAsyncReply(Messages::RemoteQueue::OnSubmittedWorkDone(), [callback = WTF::move(callback)]() mutable {
-        callback();
+    // A reply that does not arrive, because the GPU Process is gone, completes with false.
+    auto sendResult = sendWithAsyncReply(Messages::RemoteQueue::OnSubmittedWorkDone(), [callback = WTF::move(callback)](bool success) mutable {
+        callback(success);
     });
     UNUSED_PARAM(sendResult);
 }
 
 void RemoteQueueProxy::writeBuffer(::WebGPU::Buffer& buffer, uint64_t bufferOffset, std::span<const uint8_t> data)
 {
-    auto convertedBuffer = m_convertToBackingContext->convertToBacking(buffer);
+    auto convertedBuffer = identifier(buffer);
 
     if (data.size() > maxCrossProcessResourceCopySize) {
         auto handle = WebCore::SharedMemoryHandle::createCopy(data, WebCore::SharedMemoryProtection::ReadOnly);
@@ -97,7 +98,7 @@ void RemoteQueueProxy::writeBuffer(::WebGPU::Buffer& buffer, uint64_t bufferOffs
 
 void RemoteQueueProxy::writeTexture(const ::WebGPU::TexelCopyTextureInfo& destination, std::span<const uint8_t> data, const ::WebGPU::TexelCopyBufferLayout& dataLayout, const ::WebGPU::Extent3D& writeSize)
 {
-    auto convertedDestination = m_convertToBackingContext->convertToBacking(destination);
+    auto convertedDestination = serialize(destination);
     ASSERT(convertedDestination);
     if (!convertedDestination)
         return;
@@ -134,7 +135,6 @@ void RemoteQueueProxy::copyExternalImageToTexture(
     }
 #endif
 
-    Ref convertToBackingContext = m_convertToBackingContext;
 
     // The GPU process resolves the source by identifier through its RemoteRenderingBackend, so make
     // sure every drawing command recorded against the source buffer has been submitted first.
@@ -142,9 +142,9 @@ void RemoteQueueProxy::copyExternalImageToTexture(
     if (sourceImageBuffer)
         sourceImageBuffer->flushDrawingContext();
 
-    auto convertedSource = convertToBackingContext->convertToBacking(source);
+    auto convertedSource = serialize(source);
     ASSERT(convertedSource);
-    auto convertedDestination = convertToBackingContext->convertToBacking(destination);
+    auto convertedDestination = serialize(destination);
     ASSERT(convertedDestination);
     if (!convertedSource || !convertedDestination)
         return;
@@ -163,11 +163,10 @@ void RemoteQueueProxy::copyExternalImageFromVideoFrameToTexture(
     const WebCore::WebGPUImageCopyTextureTagged& destination,
     const ::WebGPU::Extent3D& copySize)
 {
-    Ref convertToBackingContext = m_convertToBackingContext;
 
-    auto convertedSource = convertToBackingContext->convertToBackingVideoSource(source);
+    auto convertedSource = serializeVideoSource(source);
     ASSERT(convertedSource);
-    auto convertedDestination = convertToBackingContext->convertToBacking(destination);
+    auto convertedDestination = serialize(destination);
     ASSERT(convertedDestination);
     if (!convertedSource || !convertedDestination)
         return;

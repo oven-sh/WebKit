@@ -114,7 +114,7 @@ public:
     }
 
 private:
-    using PredecessorIndices = UncheckedKeyHashMap<BasicBlock*, unsigned>;
+    using PredecessorIndices = HashMap<BasicBlock*, unsigned>;
     struct IndexedList {
         PredecessorIndices indices;
         bool hasDuplicatePredecessor { false };
@@ -137,7 +137,7 @@ private:
         return found->value.hasDuplicatePredecessor ? nullptr : &found->value.indices;
     }
 
-    UncheckedKeyHashMap<BasicBlock*, IndexedList> m_lists;
+    HashMap<BasicBlock*, IndexedList> m_lists;
 };
 
 template<typename BasicBlock>

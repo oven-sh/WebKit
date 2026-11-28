@@ -265,7 +265,7 @@ private:
         return false;
     }
 
-    using IncomingValues = UncheckedKeyHashMap<Value*, Vector<Value*, 2>>;
+    using IncomingValues = HashMap<Value*, Vector<Value*, 2>>;
 
     static void collectIncomingValuesAndStores(const NaturalLoop& loop, IncomingValues& incomingValues, Vector<MemoryValue*, 8>& stores)
     {
@@ -281,7 +281,7 @@ private:
 
     static bool isAnyComputedFrom(Vector<Value*, 16> worklist, const Vector<Value*, 4>& sources, NaturalLoops& loops, const NaturalLoop& loop, const IncomingValues& incomingValues)
     {
-        UncheckedKeyHashSet<Value*> seen;
+        HashSet<Value*> seen;
         while (!worklist.isEmpty()) {
             Value* value = worklist.takeLast();
             if (!loops.belongsTo(value->owner, loop) || !seen.add(value).isNewEntry)
@@ -365,7 +365,7 @@ private:
         Vector<MemoryValue*, 4> loads;
         Vector<Value*, 16> loadAddresses;
         Vector<Value*, 16> worklist { head->last()->child(0) };
-        UncheckedKeyHashSet<Value*> seen;
+        HashSet<Value*> seen;
         while (!worklist.isEmpty()) {
             Value* value = worklist.takeLast();
             if (value->opcode() == Phi || !loops.belongsTo(value->owner, *loop) || !seen.add(value).isNewEntry)

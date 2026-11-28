@@ -54,7 +54,7 @@ Ref<ScriptFetchParameters> ScriptFetchParameters::create(Type type)
 namespace ScriptFetchParametersInternal {
 
 struct HostDefinedTypes {
-    UncheckedKeyHashMap<String, ScriptFetchParameters::Type> byName;
+    HashMap<String, ScriptFetchParameters::Type> byName;
     Vector<String> names;
 };
 

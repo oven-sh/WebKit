@@ -120,6 +120,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case ArithMin:
     case ArithMax:
     case ArithAbs:
+    case ArithSign:
     case ArithPow:
     case ArithRandom:
     case ArithRound:
@@ -189,6 +190,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case GetTypedArrayByteOffset:
     case GetTypedArrayByteOffsetAsInt52:
     case GetPrototypeOf:
+    case GetTypedArrayBuffer:
     case GetWebAssemblyInstanceExports:
     case NotifyWrite:
     case StoreBarrier:

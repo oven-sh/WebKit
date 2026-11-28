@@ -138,7 +138,7 @@ private:
         static bool equal(const ChainDependent& a, const ChainDependent& b) { return a == b; }
         static constexpr bool safeToCompareToEmptyOrDeleted = true;
     };
-    using DependentSet = UncheckedKeyHashSet<ChainDependent, Hash, HashTraits>;
+    using DependentSet = HashSet<ChainDependent, Hash, HashTraits>;
     struct ObjectDependents {
         bool isEmpty() const { return onAnyName.isEmpty() && byName.isEmpty(); }
         size_t size() const;
@@ -146,7 +146,7 @@ private:
         void removeIf(const Invocable<bool(const ChainDependent&)> auto&);
 
         DependentSet onAnyName;
-        UncheckedKeyHashMap<UniquedStringImpl*, DependentSet> byName;
+        HashMap<UniquedStringImpl*, DependentSet> byName;
     };
 
     void dropDependentsOn(JSObject* changed, UniquedStringImpl* uidOrNull);
@@ -174,8 +174,8 @@ private:
     Vector<ChainDependentOwner*, 8> m_owners;
     StructuresThatPassStores m_structuresThatPassStores { *this };
     ChainDependentOwnerID m_idOfStructuresThatPassStores;
-    UncheckedKeyHashSet<StructureID> m_structuresWithState;
-    UncheckedKeyHashMap<JSObject*, ObjectDependents> m_dependentsByObject;
+    HashSet<StructureID> m_structuresWithState;
+    HashMap<JSObject*, ObjectDependents> m_dependentsByObject;
     ObjectsSeen m_objectsWithDependents;
     size_t m_numberOfDependentsAddedSinceOwnersWereAsked { 0 };
     size_t m_numberOfDependentsLeftWhenOwnersWereAsked { 0 };

@@ -32,8 +32,7 @@
 #include <WebCore/StyleComputedStyleProperties+GettersInlines.h>
 #undef COMPUTED_STYLE_PROPERTIES_GETTERS_INLINES_INCLUDE_TRAP
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 inline bool ComputedStyle::columnSpanEqual(const ComputedStyle& other) const
 {
@@ -218,6 +217,16 @@ inline bool ComputedStyle::hasBackground() const
 {
     return visitedDependentUsedBackgroundColor().isVisible()
         || Style::hasImageInAnyLayer(backgroundLayers());
+}
+
+inline bool ComputedStyle::hasBorderShape() const
+{
+    return !borderShape().isNone();
+}
+
+inline bool ComputedStyle::hasBorderRadiusOrBorderShape() const
+{
+    return border().hasBorderRadius() || hasBorderShape();
 }
 
 inline bool ComputedStyle::hasBorderImageOutsets() const
@@ -463,5 +472,4 @@ inline const Style::GridTemplateList& ComputedStyle::gridTemplateList(Style::Gri
     return direction == Style::GridTrackSizingDirection::Columns ? gridTemplateColumns() : gridTemplateRows();
 }
 
-} // namespace Style
-} // namespace WebCore
+} // namespace WebCore::Style

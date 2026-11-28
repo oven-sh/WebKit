@@ -133,6 +133,8 @@ list(APPEND WebKit_SOURCES
 
     Platform/IPC/cocoa/SharedFileHandleCocoa.cpp
 
+    Platform/cocoa/FloatRectCG.swift
+    Platform/cocoa/IntRectCG.swift
     Platform/cocoa/WKMaterialHostingSupport.swift
 
     Shared/API/Cocoa/WKMain.mm
@@ -163,16 +165,24 @@ list(APPEND WebKit_SOURCES
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/ObjectiveCBlockConversions.swift
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/WebKitSwiftOverlay.swift
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKContentWorld.swift
+    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKContextMenuElementInfoAdapter.swift
+    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKUserContentController.swift
+    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebsiteDataStore+SwiftOverlay.swift
+    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebView+RefreshControl.swift
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/_WKRectEdge+Extras.swift
+    ${WEBKIT_DIR}/UIProcess/API/Cocoa/_WKViewportFitEdges.swift
 
     UIProcess/Cocoa/PreferenceObserver.mm
     UIProcess/Cocoa/WKShareSheet.mm
     UIProcess/Cocoa/WKStorageAccessAlert.mm
     UIProcess/Cocoa/WebInspectorPreferenceObserver.mm
+    ${WEBKIT_DIR}/UIProcess/Cocoa/TextExtraction/WKWebView+TextExtraction.swift
     ${WEBKIT_DIR}/UIProcess/Cocoa/WKDeferringGestureRecognizer.swift
+    ${WEBKIT_DIR}/UIProcess/PhoneNumberPossession/Cocoa/CocoaPhoneNumberPossessionManager.swift
     ${WEBKIT_DIR}/UIProcess/PhoneNumberPossession/Cocoa/MockPhoneNumberPossessionManager.swift
     ${WEBKIT_DIR}/UIProcess/PhoneNumberPossession/Cocoa/PhoneNumberPossessionController.swift
     ${WEBKIT_DIR}/UIProcess/PhoneNumberPossession/Cocoa/PhoneNumberPossessionManaging.swift
+    ${WEBKIT_DIR}/UIProcess/WebPageProxy.swift
 
     UIProcess/PDF/WKPDFPageNumberIndicator.mm
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/_WKTextExtraction.swift
@@ -299,7 +309,6 @@ list(APPEND WebKit_PRIVATE_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/WebProcess/WebPage/ios"
     "${WEBKIT_DIR}/WebProcess/WebPage/mac"
     "${WEBKIT_DIR}/WebProcess/cocoa"
-    "${WEBKIT_DIR}/WebProcess/cocoa/IdentityDocumentServices"
     "${WEBKIT_DIR}/WebProcess/mac"
     "${WEBKIT_DIR}/webpushd"
     "${WEBKIT_DIR}/webpushd/webpushtool"
@@ -329,6 +338,8 @@ set(WebKit_SWIFT_INCLUDE_DIRECTORIES
     "${WEBKIT_DIR}/Platform/spi/Cocoa"
     "${WEBKIT_DIR}/Platform/spi/Cocoa/Modules"
     "${WEBKIT_DIR}/Platform/spi/ios"
+    # WTF's Swift module, which shadows the wtf Clang module.
+    "$<TARGET_PROPERTY:WTF,BINARY_DIR>"
 )
 
 set(WebKit_FORWARDING_HEADERS_FILES
@@ -417,25 +428,91 @@ set(_log_messages_generated
 
 list(APPEND WebKit_MESSAGES_IN_FILES LogStream)
 
-file(GLOB _webkit_cocoa_serialization_files RELATIVE "${WEBKIT_DIR}"
-    "${WEBKIT_DIR}/Platform/cocoa/*.serialization.in"
-    "${WEBKIT_DIR}/Shared/ApplePay/*.serialization.in"
-    "${WEBKIT_DIR}/Shared/Cocoa/*.serialization.in"
-    "${WEBKIT_DIR}/Shared/RemoteLayerTree/*.serialization.in"
-    "${WEBKIT_DIR}/Shared/cf/*.serialization.in"
-    "${WEBKIT_DIR}/Shared/mac/*.serialization.in"
-    "${WEBKIT_DIR}/WebProcess/WebPage/RemoteLayerTree/*.serialization.in"
-)
-list(APPEND WebKit_SERIALIZATION_IN_FILES ${_webkit_cocoa_serialization_files})
-unset(_webkit_cocoa_serialization_files)
-
 list(APPEND WebKit_SERIALIZATION_IN_FILES
+    Platform/cocoa/MediaPlaybackTargetContextSerialized.serialization.in
+
     Shared/AdditionalFonts.serialization.in
     Shared/AlternativeTextClient.serialization.in
     Shared/AppPrivacyReportTestingData.serialization.in
     Shared/PushMessageForTesting.serialization.in
     Shared/TextAnimationTypes.serialization.in
     Shared/ViewWindowCoordinates.serialization.in
+
+    Shared/ApplePay/ApplePayPaymentSetupFeatures.serialization.in
+    Shared/ApplePay/PaymentSetupConfiguration.serialization.in
+
+    Shared/Cocoa/CacheStoragePolicy.serialization.in
+    Shared/Cocoa/CoreIPCAVOutputContext.serialization.in
+    Shared/Cocoa/CoreIPCArray.serialization.in
+    Shared/Cocoa/CoreIPCAuditToken.serialization.in
+    Shared/Cocoa/CoreIPCCFCharacterSet.serialization.in
+    Shared/Cocoa/CoreIPCCFType.serialization.in
+    Shared/Cocoa/CoreIPCCFURL.serialization.in
+    Shared/Cocoa/CoreIPCCVPixelBufferRef.serialization.in
+    Shared/Cocoa/CoreIPCColor.serialization.in
+    Shared/Cocoa/CoreIPCContacts.serialization.in
+    Shared/Cocoa/CoreIPCDDScannerResult.serialization.in
+    Shared/Cocoa/CoreIPCData.serialization.in
+    Shared/Cocoa/CoreIPCDate.serialization.in
+    Shared/Cocoa/CoreIPCDateComponents.serialization.in
+    Shared/Cocoa/CoreIPCDictionary.serialization.in
+    Shared/Cocoa/CoreIPCError.serialization.in
+    Shared/Cocoa/CoreIPCLocale.serialization.in
+    Shared/Cocoa/CoreIPCNSCFObject.serialization.in
+    Shared/Cocoa/CoreIPCNSShadow.serialization.in
+    Shared/Cocoa/CoreIPCNSURLCredential.serialization.in
+    Shared/Cocoa/CoreIPCNSURLProtectionSpace.serialization.in
+    Shared/Cocoa/CoreIPCNSURLRequest.serialization.in
+    Shared/Cocoa/CoreIPCNSValue.serialization.in
+    Shared/Cocoa/CoreIPCNull.serialization.in
+    Shared/Cocoa/CoreIPCPKDateComponentsRange.serialization.in
+    Shared/Cocoa/CoreIPCPKPayment.serialization.in
+    Shared/Cocoa/CoreIPCPKPaymentMerchantSession.serialization.in
+    Shared/Cocoa/CoreIPCPKPaymentMethod.serialization.in
+    Shared/Cocoa/CoreIPCPKPaymentSetupFeature.serialization.in
+    Shared/Cocoa/CoreIPCPKPaymentToken.serialization.in
+    Shared/Cocoa/CoreIPCPKShippingMethod.serialization.in
+    Shared/Cocoa/CoreIPCPassKit.serialization.in
+    Shared/Cocoa/CoreIPCPersonNameComponents.serialization.in
+    Shared/Cocoa/CoreIPCPlist.serialization.in
+    Shared/Cocoa/CoreIPCPresentationIntent.serialization.in
+    Shared/Cocoa/CoreIPCString.serialization.in
+    Shared/Cocoa/CoreIPCStringSet.serialization.in
+    Shared/Cocoa/CoreIPCURL.serialization.in
+    Shared/Cocoa/CursorContext.serialization.in
+    Shared/Cocoa/DataDetectionResult.serialization.in
+    Shared/Cocoa/GestureTypes.serialization.in
+    Shared/Cocoa/InsertTextOptions.serialization.in
+    Shared/Cocoa/InteractionInformationAtPosition.serialization.in
+    Shared/Cocoa/InteractionInformationRequest.serialization.in
+    Shared/Cocoa/RemoteObjectInvocation.serialization.in
+    Shared/Cocoa/RevealItem.serialization.in
+    Shared/Cocoa/SecItemRequestData.serialization.in
+    Shared/Cocoa/SecItemResponseData.serialization.in
+    Shared/Cocoa/SharedCARingBuffer.serialization.in
+    Shared/Cocoa/WebCoreArgumentCodersCocoa.serialization.in
+
+    Shared/RemoteLayerTree/BufferAndBackendInfo.serialization.in
+    Shared/RemoteLayerTree/RemoteLayerTree.serialization.in
+    Shared/RemoteLayerTree/RemoteScrollingCoordinatorTransaction.serialization.in
+    Shared/RemoteLayerTree/RemoteScrollingUIState.serialization.in
+
+    Shared/cf/CFTypes.serialization.in
+    Shared/cf/CoreIPCBoolean.serialization.in
+    Shared/cf/CoreIPCCFArray.serialization.in
+    Shared/cf/CoreIPCCFDictionary.serialization.in
+    Shared/cf/CoreIPCCGColorSpace.serialization.in
+    Shared/cf/CoreIPCNumber.serialization.in
+    Shared/cf/CoreIPCSecAccessControl.serialization.in
+    Shared/cf/CoreIPCSecCertificate.serialization.in
+    Shared/cf/CoreIPCSecKeychainItem.serialization.in
+    Shared/cf/CoreIPCSecTrust.serialization.in
+
+    Shared/mac/CoreIPCDDSecureActionContext.serialization.in
+    Shared/mac/PDFContextMenuItem.serialization.in
+    Shared/mac/WebHitTestResultPlatformData.serialization.in
+
+    WebProcess/WebPage/RemoteLayerTree/PlatformCAAnimationRemoteProperties.serialization.in
 )
 
 
@@ -519,9 +596,6 @@ if (WEBKIT_SDK_IS_MACOS)
 list(APPEND WebKit_SOURCES
     NetworkProcess/mac/NetworkConnectionToWebProcessMac.mm
 
-    ${WEBKIT_DIR}/Platform/cocoa/FloatRectCG.swift
-    ${WEBKIT_DIR}/Platform/cocoa/IntRectCG.swift
-    ${WEBKIT_DIR}/UIProcess/WebPageProxy.swift
     ${WEBKIT_DIR}/UIProcess/mac/_WKCaptionStyleMenuControllerAVKitMac.mm
     ${WEBKIT_DIR}/UIProcess/mac/_WKCaptionStyleMenuControllerMac.mm
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKAppKitGestureController.swift
@@ -529,20 +603,18 @@ list(APPEND WebKit_SOURCES
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKDirectionalScrollLockTracker.swift
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKFastScrollTracker.swift
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKMouseTrackingGestureRecognizer.swift
+    ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKPanGestureRecognizer.swift
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKPointerTrackingGestureRecognizer.swift
     ${WEBKIT_DIR}/UIProcess/mac/AppKitGestures/WKPressGestureRecognizer.swift
     ${WEBKIT_DIR}/UIProcess/mac/SpatialShim.swift
+    ${WEBKIT_DIR}/UIProcess/mac/WKRevealItemPresenter.swift
     ${WEBKIT_DIR}/UIProcess/mac/WKTextSelectionController.swift
     ${WEBKIT_DIR}/UIProcess/PDF/WKAlternatePDFHUDView+Testing.swift
     ${WEBKIT_DIR}/UIProcess/PDF/WKAlternatePDFHUDView.swift
     ${WEBKIT_DIR}/UIProcess/PDF/WKDefaultPDFHUDView.swift
 
-    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKContextMenuElementInfoAdapter.swift
-    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKUserContentController.swift
-    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebView+RefreshControl.swift
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebViewConfiguration+Extras.swift
     ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebpagePreferences+Extras.swift
-    ${WEBKIT_DIR}/UIProcess/API/Cocoa/WKWebsiteDataStore+SwiftOverlay.swift
     ${WEBKIT_DIR}/UIProcess/API/Swift/URLSchemeHandler.swift
     ${WEBKIT_DIR}/UIProcess/API/Swift/WebPage.swift
     ${WEBKIT_DIR}/UIProcess/API/Swift/WebPage+BackForwardList.swift
@@ -556,7 +628,6 @@ list(APPEND WebKit_SOURCES
     ${WEBKIT_DIR}/UIProcess/API/Swift/WebPage+NavigationPreferences.swift
     ${WEBKIT_DIR}/UIProcess/API/Swift/WebPage+SPI.swift
     ${WEBKIT_DIR}/UIProcess/API/Swift/WebPage+Transferable.swift
-    ${WEBKIT_DIR}/UIProcess/Cocoa/TextExtraction/WKWebView+TextExtraction.swift
     ${WEBKIT_DIR}/UIProcess/Cocoa/WKNavigationDelegateAdapter.swift
     ${WEBKIT_DIR}/UIProcess/Cocoa/WKScrollGeometryAdapter.swift
     ${WEBKIT_DIR}/UIProcess/Cocoa/WKUIDelegateAdapter.swift
@@ -789,6 +860,7 @@ set(WebKitSwift_SOURCES
     ${_wks_dir}/StageMode/WKStageMode.swift
     ${_wks_dir}/TextAnimation/WKTextAnimationManagerIOS.swift
     ${_wks_dir}/WebXR/WKWebXRImmersiveSpaceHost.swift
+    ${_wks_dir}/WebXR/WKWebXRImmersiveSpaceHostVision.swift
     ${_wks_dir}/WritingTools/IntelligenceTextEffectChunk.swift
     ${_wks_dir}/WritingTools/IntelligenceTextEffectViewManager.swift
     ${_wks_dir}/WritingTools/PlatformIntelligenceTextEffectView.swift
@@ -808,7 +880,9 @@ set_target_properties(WebKitSwift PROPERTIES
     PREFIX "lib"
     SUFFIX ".dylib"
     Swift_MODULE_NAME WebKitSwift
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+    # Build into WebKit.framework/Versions/A/Frameworks. Only this exact path
+    # relative to WebKit.framework is allowed in the sandbox.
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/${WEBKIT_FRAMEWORK_VERSION_PATH}Frameworks"
     # INSTALL_NAME_DIR of Configurations/WebKitSwift.xcconfig.
     MACOSX_RPATH OFF
     BUILD_WITH_INSTALL_NAME_DIR ON
@@ -821,10 +895,9 @@ set_target_properties(WebKitSwift PROPERTIES
 # declarations they implement compile but have no implementation at runtime.
 if (USE_APPLE_INTERNAL_SDK)
     set(_additions_swift_sources
-        AppKitGesturesExtras
-        TestWebKitAPILibraryAdditions
         UIWindowScene+Extras
-        WKWebView+SystemTextExtraction)
+        WKWebView+SystemTextExtraction
+    )
 
     # WebKitAdditions may predate DigitalCredentialsExtras.swift.in; its call sites are behind
     # HAVE(DIGITAL_CREDENTIALS_OPENID4VP), which the same WebKitAdditions defines.
@@ -832,6 +905,12 @@ if (USE_APPLE_INTERNAL_SDK)
     if (EXISTS "${CMAKE_SOURCE_DIR}/../Internal/WebKit/WebKitAdditions/Additions/DigitalCredentialsExtras.swift.in")
         set(_digital_credentials_extras_available ON)
         list(APPEND _additions_swift_sources DigitalCredentialsExtras)
+    endif ()
+
+    set(_phone_number_possession_extras_available OFF)
+    if (EXISTS "${CMAKE_SOURCE_DIR}/../Internal/WebKit/WebKitAdditions/Additions/PhoneNumberPossessionExtras.swift.in")
+        set(_phone_number_possession_extras_available ON)
+        list(APPEND _additions_swift_sources PhoneNumberPossessionExtras)
     endif ()
 
     foreach (_additions_swift_source ${_additions_swift_sources})
@@ -850,13 +929,14 @@ if (USE_APPLE_INTERNAL_SDK)
     endforeach ()
 
     list(APPEND WebKit_SOURCES
-        ${WebKit_DERIVED_SOURCES_DIR}/AppKitGesturesExtras.swift
-        ${WebKit_DERIVED_SOURCES_DIR}/TestWebKitAPILibraryAdditions.swift
         ${WebKit_DERIVED_SOURCES_DIR}/UIWindowScene+Extras.swift
         ${WebKit_DERIVED_SOURCES_DIR}/WKWebView+SystemTextExtraction.swift
     )
     if (_digital_credentials_extras_available)
         target_sources(WebKitSwift PRIVATE ${WebKit_DERIVED_SOURCES_DIR}/DigitalCredentialsExtras.swift)
+    endif ()
+    if (_phone_number_possession_extras_available)
+        target_sources(WebKitSwift PRIVATE ${WebKit_DERIVED_SOURCES_DIR}/PhoneNumberPossessionExtras.swift)
     endif ()
 endif ()
 
@@ -886,22 +966,14 @@ target_include_directories(WebKitSwift PRIVATE
 webkit_target_add_swift_options(WebKitSwift
     -parse-as-library
     "-library-level other"
-    "@${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp"
     -I${WEBKIT_DIR}/Platform/spi/Cocoa
     -I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules
     -I${WEBKIT_DIR}/Platform/spi/ios
-    "-Xcc -DHAVE_CONFIG_H=1"
     "-Xcc -I${CMAKE_BINARY_DIR}"
     "-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}"
     "-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}"
 )
-
-# Without -clang-target, explicit module builds import Clang modules at the SDK
-# version rather than the deployment target, so headers would see different
-# HAVE()/ENABLE() values than the Swift compilation conditions.
-if (CMAKE_Swift_COMPILER_TARGET)
-    webkit_target_add_swift_options(WebKitSwift "-clang-target ${CMAKE_Swift_COMPILER_TARGET}")
-endif ()
+webkit_target_add_swift_objc_importer_options(WebKitSwift "${CMAKE_CURRENT_BINARY_DIR}/WebKit.platform-swift-args.resp")
 
 # WebKit's custom Swift @available macros, as a response file.
 set(_swift_tba_resp "${CMAKE_CURRENT_BINARY_DIR}/swift-tba-availability-macros.resp")
@@ -976,16 +1048,39 @@ target_link_libraries(WebKitSwift PRIVATE
     WebKit
     $<$<BOOL:${WRITINGTOOLSUI_LIBRARY}>:${WRITINGTOOLSUI_LIBRARY}>
 )
-add_dependencies(WebKitSwift WebKit)
 
-# WebKit.framework's own signature does not cover this file: the
-# Frameworks/libWebKitSwift.dylib inside the bundle is a symlink to it.
+add_dependencies(WebKitSwift WebKit WebKit::_WebKit_SwiftUI)
+
 WEBKIT_LIBRARY(WebKitSwift)
+
+# Re-sign WebKit.framework whenever the dylib inside it changes.
+list(APPEND WebKit_CODE_SIGN_INPUTS $<TARGET_FILE:WebKitSwift>)
 
 WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(WebKit)
 WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(WebKitSwift)
 
 unset(_wks_dir)
+
+# Xcode compiles the model into TextExtractionFilter.mlmodelc in the framework's
+# resources; <platform> is coremlc's --platform.
+function(WEBKIT_COMPILE_TEXT_EXTRACTION_FILTER_MODEL _resources_dir _platform)
+    set(_text_extraction_filter_model_outputs
+        ${_resources_dir}/TextExtractionFilter.mlmodelc/analytics/coremldata.bin
+        ${_resources_dir}/TextExtractionFilter.mlmodelc/coremldata.bin
+        ${_resources_dir}/TextExtractionFilter.mlmodelc/metadata.json
+    )
+    WEBKIT_XCRUN(_coremlc -f coremlc)
+    add_custom_command(OUTPUT ${_text_extraction_filter_model_outputs}
+        COMMAND ${_coremlc} compile ${WEBKIT_DIR}/Resources/TextExtractionFilter.mlmodel ${_resources_dir}
+            --deployment-target ${CMAKE_OSX_DEPLOYMENT_TARGET} --sdkroot ${CMAKE_OSX_SYSROOT} --platform ${_platform}
+            --container bundle-resources
+        DEPENDS ${WEBKIT_DIR}/Resources/TextExtractionFilter.mlmodel
+        COMMENT "Compiling TextExtractionFilter.mlmodel"
+        VERBATIM)
+    add_custom_target(WebKitTextExtractionFilterModel ALL DEPENDS
+        ${_text_extraction_filter_model_outputs})
+    add_dependencies(WebKit WebKitTextExtractionFilterModel)
+endfunction()
 
 # Defines the auxiliary process targets, along with the framework content that
 # only exists to support them.
@@ -1019,6 +1114,10 @@ function(WEBKIT_DEFINE_AUXILIARY_PROCESSES)
         WEBKIT_DEFINE_IOS_RESOURCES()
     endif ()
     WEBKIT_DEFINE_DAEMONS()
+
+    # libWebKitSwift.dylib is built into WebKit.framework, so like the XPC
+    # services it must finish signing before the framework bundle signs.
+    add_dependencies(WebKit_CodeSign WebKitSwift_CodeSign)
 endfunction()
 
 function(WEBKIT_DEFINE_XPC_SERVICES)
@@ -1117,6 +1216,8 @@ function(WEBKIT_DEFINE_XPC_SERVICES)
 
         # XPC services are part of WebKit.framework, so they must finish
         # signing before the framework bundle signs.
+        # FIXME: The framework isn't signed again when only an XPC service
+        # changes, so its seal over the service goes stale.
         add_dependencies(WebKit_CodeSign ${_target}_CodeSign)
     endfunction()
 
@@ -1256,26 +1357,6 @@ set_source_files_properties(${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy.h PROPERTIE
 
 set(WebKit_USE_PREFIX_HEADER ON)
 
-# WebKit's Swift compile loads `framework module WebKit_Private` via -fmodule-map-file
-# and resolves header paths relative to the modulemap's framework root (a parent of
-# Modules/). The build-tree layout is `WebKit/PrivateHeaders/WebKit/X.h` to support
-# `<WebKit/X.h>` includes, which doesn't match the framework's expected
-# `WebKit.framework/PrivateHeaders/X.h` (flat). Stage a real WebKit.framework
-# directory before the compile so the umbrella header lookup succeeds.
-# WebKit_CopyHeaders / WebKit_CopyPrivateHeaders are defined later in
-# CMakeLists.txt; defer the add_dependencies until those targets exist.
-add_custom_target(WebKit_StageFrameworkHeaders
-    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/Source/cmake/SymlinkHeaders.cmake
-        ${WebKit_FRAMEWORK_HEADERS_DIR}/WebKit
-        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Headers
-    COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/Source/cmake/SymlinkHeaders.cmake
-        ${WebKit_PRIVATE_FRAMEWORK_HEADERS_DIR}/WebKit
-        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/PrivateHeaders
-    COMMENT "Staging WebKit.framework Headers/, PrivateHeaders/"
-)
-add_dependencies(WebKit WebKit_StageFrameworkHeaders)
-cmake_language(DEFER CALL add_dependencies WebKit_StageFrameworkHeaders WebKit_CopyHeaders WebKit_CopyPrivateHeaders)
-
 endif ()
 
 if (WEBKIT_SDK_IS_IOS_FAMILY)
@@ -1359,9 +1440,6 @@ add_custom_target(WebKit_MigrateHeaders
     COMMENT "Migrating WebCore/WebKitLegacy headers into WebKit.framework/{Headers,PrivateHeaders}/"
 )
 add_dependencies(WebKit_MigrateHeaders WebCore_CopyPrivateHeaders WebKitLegacy_CopyHeaders)
-if (TARGET WebKit_StageFrameworkHeaders)
-    add_dependencies(WebKit_MigrateHeaders WebKit_StageFrameworkHeaders)
-endif ()
 add_dependencies(WebKit WebKit_MigrateHeaders)
 unset(_migrate_pairs_file)
 unset(_migrate_pairs_content)
@@ -1408,11 +1486,12 @@ webkit_target_add_swift_options(WebKit
     -I${WEBKIT_DIR}/Platform/spi/Cocoa
     -I${WEBKIT_DIR}/Platform/spi/Cocoa/Modules
     -I${WEBKIT_DIR}/Platform/spi/ios
+    # WTF's Swift module, which shadows the wtf Clang module.
+    "-I$<TARGET_PROPERTY:WTF,BINARY_DIR>"
     "-Xcc -I${WTF_FRAMEWORK_HEADERS_DIR}"
     "-Xcc -I${bmalloc_FRAMEWORK_HEADERS_DIR}"
     "-Xcc -I${PAL_FRAMEWORK_HEADERS_DIR}"
     "-Xcc -isystem${CMAKE_OSX_SYSROOT}/usr/local/include"
-    "-Xcc -fmodule-map-file=${CMAKE_OSX_SYSROOT}/usr/local/include/unicode_private.modulemap"
     # -Xcc paths precede WebKit's header maps. Clang does not map a header found
     # through a header map to its module, so a WebKit_Internal #import of
     # "_WKFormInputSession.h" or "_WKTapHandlingResult.h" is skipped once
@@ -1556,6 +1635,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     UIProcess/API/C/cocoa/WKPagePrivateMac.h
     UIProcess/API/C/cocoa/WKProtectionSpaceNS.h
     UIProcess/API/C/cocoa/WKWebsiteDataStoreRefPrivateMac.h
+
     UIProcess/API/C/mac/WKInspectorPrivateMac.h
 
     UIProcess/API/Cocoa/NSAttributedStringPrivate.h
@@ -1681,6 +1761,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
     UIProcess/API/Cocoa/_WKUserInitiatedAction.h
     UIProcess/API/Cocoa/_WKUserStyleSheet.h
     UIProcess/API/Cocoa/_WKUserVerificationRequirement.h
+    UIProcess/API/Cocoa/_WKViewportFitEdges.h
     UIProcess/API/Cocoa/_WKVisitedLinkStore.h
     UIProcess/API/Cocoa/_WKWebAuthenticationAssertionResponse.h
     UIProcess/API/Cocoa/_WKWebAuthenticationPanel.h
@@ -1732,6 +1813,7 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 # platform (no per-target exclusions), so the iOS WebKit.framework needs them
 # staged for the framework module's `header "X.h"` declarations to resolve.
 list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
+    Platform/cocoa/CocoaObjectForKeyHelpers.h
     Platform/cocoa/WKCrashReporter.h
 
     Platform/unix/EnvironmentUtilities.h
@@ -1762,27 +1844,166 @@ list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
 
     WebProcess/InjectedBundle/API/c/cocoa/WKBundleMac.h
     WebProcess/InjectedBundle/API/c/cocoa/WKBundlePageMac.h
+
     WebProcess/InjectedBundle/API/c/mac/WKBundlePageBannerMac.h
 )
 
-file(GLOB _webkit_api_headers RELATIVE "${WEBKIT_DIR}"
-    "${WEBKIT_DIR}/GPUProcess/graphics/Model/*.h"
-    "${WEBKIT_DIR}/Shared/API/Cocoa/*.h"
-    "${WEBKIT_DIR}/UIProcess/API/Cocoa/*.h"
-    "${WEBKIT_DIR}/UIProcess/API/ios/*.h"
-    "${WEBKIT_DIR}/UIProcess/DigitalCredentials/*.h"
-    "${WEBKIT_DIR}/UIProcess/ios/fullscreen/*.h"
-    "${WEBKIT_DIR}/WebKitSwift/IdentityDocumentServices/*.h"
-)
-# UIProcess/API/Cocoa/WebKitLegacy.h is not in pbxproj; Xcode stages
-# WebKit.framework/Headers/WebKitLegacy.h via the migrate phase by renaming
-# WebKitLegacy/PrivateHeaders/WebKit.h. Letting the glob pick it up here would
-# stage the full Mac-style WebKitLegacy umbrella into WebKit.framework/PrivateHeaders/,
+# UIProcess/API/Cocoa/WebKitLegacy.h is deliberately absent. It is not in pbxproj;
+# Xcode stages WebKit.framework/Headers/WebKitLegacy.h via the migrate phase by
+# renaming WebKitLegacy/PrivateHeaders/WebKit.h. Listing it here would stage the
+# full Mac-style WebKitLegacy umbrella into WebKit.framework/PrivateHeaders/,
 # auto-discovering a `WebKit_Private.WebKitLegacy` submodule that conflicts
 # with the WebKitLegacy framework module's `WebFrame` definition.
-list(FILTER _webkit_api_headers EXCLUDE REGEX "/WebKitLegacy\\.h$")
-list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS ${_webkit_api_headers})
-unset(_webkit_api_headers)
+list(APPEND WebKit_PRIVATE_FRAMEWORK_HEADERS
+    GPUProcess/graphics/Model/Float3.h
+    GPUProcess/graphics/Model/Float4x4.h
+    GPUProcess/graphics/Model/MeshImpl.h
+    GPUProcess/graphics/Model/ModelObjectHeap.h
+    GPUProcess/graphics/Model/ModelTypes.h
+    GPUProcess/graphics/Model/RemoteMesh.h
+    GPUProcess/graphics/Model/WebKitMesh.h
+
+    Shared/API/Cocoa/WKBrowsingContextHandleInternal.h
+    Shared/API/Cocoa/WKDataDetectorTypesInternal.h
+    Shared/API/Cocoa/_WKDragActionsInternal.h
+    Shared/API/Cocoa/_WKFrameHandleInternal.h
+    Shared/API/Cocoa/_WKHitTestResultInternal.h
+    Shared/API/Cocoa/_WKRemoteObjectInterfaceInternal.h
+    Shared/API/Cocoa/_WKRemoteObjectRegistryInternal.h
+    Shared/API/Cocoa/_WKRenderingProgressEventsInternal.h
+    Shared/API/Cocoa/_WKSameDocumentNavigationTypeInternal.h
+
+    UIProcess/API/Cocoa/WKBackForwardListInternal.h
+    UIProcess/API/Cocoa/WKBackForwardListItemInternal.h
+    UIProcess/API/Cocoa/WKContentRuleListInternal.h
+    UIProcess/API/Cocoa/WKContentRuleListStoreInternal.h
+    UIProcess/API/Cocoa/WKContentWorldConfigurationInternal.h
+    UIProcess/API/Cocoa/WKContentWorldInternal.h
+    UIProcess/API/Cocoa/WKContextMenuElementInfoInternal.h
+    UIProcess/API/Cocoa/WKDOMNodeSnapshotInternal.h
+    UIProcess/API/Cocoa/WKDownloadInternal.h
+    UIProcess/API/Cocoa/WKErrorInternal.h
+    UIProcess/API/Cocoa/WKFindResultInternal.h
+    UIProcess/API/Cocoa/WKFormInfoInternal.h
+    UIProcess/API/Cocoa/WKFrameInfoInternal.h
+    UIProcess/API/Cocoa/WKHTTPCookieStoreInternal.h
+    UIProcess/API/Cocoa/WKHitTestResultInternal.h
+    UIProcess/API/Cocoa/WKImmersiveEnvironmentInternal.h
+    UIProcess/API/Cocoa/WKJSHandleInternal.h
+    UIProcess/API/Cocoa/WKNavigationActionInternal.h
+    UIProcess/API/Cocoa/WKNavigationDataInternal.h
+    UIProcess/API/Cocoa/WKNavigationInternal.h
+    UIProcess/API/Cocoa/WKNavigationResponseInternal.h
+    UIProcess/API/Cocoa/WKOpenPanelParametersInternal.h
+    UIProcess/API/Cocoa/WKPreferencesInternal.h
+    UIProcess/API/Cocoa/WKPreviewActionItemInternal.h
+    UIProcess/API/Cocoa/WKPreviewElementInfoInternal.h
+    UIProcess/API/Cocoa/WKProcessPoolInternal.h
+    UIProcess/API/Cocoa/WKScriptMessageInternal.h
+    UIProcess/API/Cocoa/WKScrollGeometry.h
+    UIProcess/API/Cocoa/WKSecurityOriginInternal.h
+    UIProcess/API/Cocoa/WKUIDelegateInternal.h
+    UIProcess/API/Cocoa/WKURLSchemeTaskInternal.h
+    UIProcess/API/Cocoa/WKUserContentControllerInternal.h
+    UIProcess/API/Cocoa/WKUserScriptInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionActionInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionCommandInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionContextInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionControllerConfigurationInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionControllerInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionDataRecordInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionDataTypeInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionMatchPatternInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionMessagePortInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionTabConfigurationInternal.h
+    UIProcess/API/Cocoa/WKWebExtensionWindowConfigurationInternal.h
+    UIProcess/API/Cocoa/WKWebViewConfigurationInternal.h
+    UIProcess/API/Cocoa/WKWebViewInternal.h
+    UIProcess/API/Cocoa/WKWebpagePreferencesInternal.h
+    UIProcess/API/Cocoa/WKWebsiteDataRecordInternal.h
+    UIProcess/API/Cocoa/WKWebsiteDataStoreInternal.h
+    UIProcess/API/Cocoa/WKWindowFeaturesInternal.h
+    UIProcess/API/Cocoa/_WKActivatedElementInfoInternal.h
+    UIProcess/API/Cocoa/_WKAppHighlightInternal.h
+    UIProcess/API/Cocoa/_WKApplicationManifestInternal.h
+    UIProcess/API/Cocoa/_WKAttachmentInternal.h
+    UIProcess/API/Cocoa/_WKAuthenticationExtensionsClientOutputsInternal.h
+    UIProcess/API/Cocoa/_WKAuthenticatorAssertionResponseInternal.h
+    UIProcess/API/Cocoa/_WKAuthenticatorAttestationResponseInternal.h
+    UIProcess/API/Cocoa/_WKAuthenticatorResponseInternal.h
+    UIProcess/API/Cocoa/_WKAutomationSessionInternal.h
+    UIProcess/API/Cocoa/_WKContentRuleListActionInternal.h
+    UIProcess/API/Cocoa/_WKContextMenuElementInfoInternal.h
+    UIProcess/API/Cocoa/_WKCustomHeaderFieldsInternal.h
+    UIProcess/API/Cocoa/_WKDataTaskInternal.h
+    UIProcess/API/Cocoa/_WKDownloadInternal.h
+    UIProcess/API/Cocoa/_WKElementActionInternal.h
+    UIProcess/API/Cocoa/_WKFeatureInternal.h
+    UIProcess/API/Cocoa/_WKFrameTreeNodeInternal.h
+    UIProcess/API/Cocoa/_WKGeolocationPositionInternal.h
+    UIProcess/API/Cocoa/_WKInspectorConfigurationInternal.h
+    UIProcess/API/Cocoa/_WKInspectorDebuggableInfoInternal.h
+    UIProcess/API/Cocoa/_WKInspectorExtensionInternal.h
+    UIProcess/API/Cocoa/_WKInspectorInternal.h
+    UIProcess/API/Cocoa/_WKInspectorWindowInternal.h
+    UIProcess/API/Cocoa/_WKLinkIconParametersInternal.h
+    UIProcess/API/Cocoa/_WKMediaCapturePermissionPromptConfigurationInternal.h
+    UIProcess/API/Cocoa/_WKModalContainerInfoInternal.h
+    UIProcess/API/Cocoa/_WKNotificationDataInternal.h
+    UIProcess/API/Cocoa/_WKPageLoadTimingInternal.h
+    UIProcess/API/Cocoa/_WKProcessPoolConfigurationInternal.h
+    UIProcess/API/Cocoa/_WKRemoteWebInspectorViewControllerInternal.h
+    UIProcess/API/Cocoa/_WKResourceLoadInfoInternal.h
+    UIProcess/API/Cocoa/_WKResourceLoadStatisticsFirstPartyInternal.h
+    UIProcess/API/Cocoa/_WKResourceLoadStatisticsThirdPartyInternal.h
+    UIProcess/API/Cocoa/_WKSessionStateInternal.h
+    UIProcess/API/Cocoa/_WKSystemPreferencesInternal.h
+    UIProcess/API/Cocoa/_WKTargetedElementInfoInternal.h
+    UIProcess/API/Cocoa/_WKTargetedElementRequestInternal.h
+    UIProcess/API/Cocoa/_WKTextExtractionInternal.h
+    UIProcess/API/Cocoa/_WKTextInputContextInternal.h
+    UIProcess/API/Cocoa/_WKTextManipulationItemInternal.h
+    UIProcess/API/Cocoa/_WKTextRunInternal.h
+    UIProcess/API/Cocoa/_WKThumbnailViewInternal.h
+    UIProcess/API/Cocoa/_WKTouchEventGeneratorInternal.h
+    UIProcess/API/Cocoa/_WKUserContentExtensionStoreInternal.h
+    UIProcess/API/Cocoa/_WKUserContentFilterInternal.h
+    UIProcess/API/Cocoa/_WKUserContentWorldInternal.h
+    UIProcess/API/Cocoa/_WKUserInitiatedActionInternal.h
+    UIProcess/API/Cocoa/_WKUserStyleSheetInternal.h
+    UIProcess/API/Cocoa/_WKVisitedLinkStoreInternal.h
+    UIProcess/API/Cocoa/_WKWebAuthenticationAssertionResponseInternal.h
+    UIProcess/API/Cocoa/_WKWebAuthenticationPanelInternal.h
+    UIProcess/API/Cocoa/_WKWebExtensionBookmarkConfigurationInternal.h
+    UIProcess/API/Cocoa/_WKWebExtensionNotificationInternal.h
+    UIProcess/API/Cocoa/_WKWebExtensionSidebarInternal.h
+    UIProcess/API/Cocoa/_WKWebPushActionInternal.h
+    UIProcess/API/Cocoa/_WKWebPushDaemonConnectionInternal.h
+    UIProcess/API/Cocoa/_WKWebPushMessageInternal.h
+    UIProcess/API/Cocoa/_WKWebPushSubscriptionDataInternal.h
+    UIProcess/API/Cocoa/_WKWebsiteDataSizeInternal.h
+    UIProcess/API/Cocoa/_WKWebsiteDataStoreConfigurationInternal.h
+
+    UIProcess/API/ios/WKWebViewIOS.h
+
+    UIProcess/DigitalCredentials/WKDigitalCredentialsPicker.h
+
+    UIProcess/ios/fullscreen/WKFullScreenViewController.h
+    UIProcess/ios/fullscreen/WKFullScreenWindowControllerIOS.h
+    UIProcess/ios/fullscreen/WKFullscreenStackView.h
+
+    WebKitSwift/IdentityDocumentServices/WKISO18013Request.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentController.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentDelegate.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentError.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentMobileDocumentRequest.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentOpenID4VPRequest.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentRawRequest.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentRequest.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentResponse.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentRawRequestValidator.h
+)
 
 list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
     UIProcess/API/Cocoa/WKDOMNodeSnapshot.h
@@ -1824,6 +2045,9 @@ target_link_options(WebKit PRIVATE
     "LINKER:-weak_framework,CoreML"
     "LINKER:-weak_framework,CorePrediction"
     "LINKER:-weak_framework,NaturalLanguage"
+    # WK_RUNNINGBOARD_SERVICES_LDFLAGS. The internal SDK auto-links it through
+    # the framework's module; the public SDK's SPI declarations do not.
+    "LINKER:-framework,RunningBoardServices"
 )
 
 if (WEBKIT_SDK_IS_XROS)
@@ -1831,7 +2055,10 @@ if (WEBKIT_SDK_IS_XROS)
 endif ()
 
 if (CMAKE_OSX_SYSROOT MATCHES "[Ss]imulator")
-    target_link_options(WebKit PRIVATE "SHELL:-L${CMAKE_OSX_SYSROOT}/usr/local/lib/dyld" "LINKER:-hidden-lsandbox-static")
+    # libsandbox-static ships only in the internal simulator SDK.
+    if (USE_APPLE_INTERNAL_SDK)
+        target_link_options(WebKit PRIVATE "SHELL:-L${CMAKE_OSX_SYSROOT}/usr/local/lib/dyld" "LINKER:-hidden-lsandbox-static")
+    endif ()
 else ()
     target_link_options(WebKit PRIVATE -lsandbox)
 endif ()
@@ -1855,13 +2082,18 @@ else ()
     set(_actool_platform "iphoneos")
 endif ()
 WEBKIT_XCRUN(_actool -f actool)
+webkit_get_directory_depfile_command(_wk_xcassets_depfile_command
+    OUTPUT ${_wk_assets_staging}/Assets.car
+    DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/Assets.car.d
+    DIRECTORIES ${_wk_xcassets})
 add_custom_command(
     OUTPUT ${_wk_assets_staging}/Assets.car
     COMMAND ${CMAKE_COMMAND} -E make_directory ${_wk_assets_staging}
     COMMAND ${_actool} --compile ${_wk_assets_staging}
         --platform ${_actool_platform} --minimum-deployment-target ${CMAKE_OSX_DEPLOYMENT_TARGET}
         ${_wk_xcassets}
-    DEPENDS ${_wk_xcassets}
+    COMMAND ${_wk_xcassets_depfile_command}
+    DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/Assets.car.d
     COMMENT "Compiling WebKit asset catalogs"
     VERBATIM)
 add_custom_target(WebKit_Assets DEPENDS ${_wk_assets_staging}/Assets.car)
@@ -1938,20 +2170,17 @@ function(WEBKIT_DEFINE_IOS_RESOURCES)
         endforeach ()
     endif ()
 
+    WEBKIT_COMPILE_TEXT_EXTRACTION_FILTER_MODEL(${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework ${WEBKIT_SDK_MODULE_OS})
+
     add_custom_command(TARGET WebKit POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/en.lproj
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${WEBKIT_DIR}/en.lproj/InfoPlist.strings
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/en.lproj/InfoPlist.strings
-        # FIXME: Use the coremlc command to produce the compiled model, same as
-        # macOS.
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${WEBKIT_DIR}/Resources/ResourceLoadStatistics/corePrediction_model
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/corePrediction_model
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            ${WEBKIT_DIR}/Resources/TextExtractionFilter.mlmodel
-            ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/TextExtractionFilter.mlmodel
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             ${WEBKIT_DIR}/WebKitSwift/RealityKit/studio_lighting_objectmode_v3.reibl
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/studio_lighting_objectmode_v3.reibl
@@ -1968,20 +2197,14 @@ function(WEBKIT_DEFINE_IOS_RESOURCES)
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Resources
         COMMAND ${CMAKE_COMMAND} -E rm -rf
             ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Versions
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Frameworks
-        COMMAND ${CMAKE_COMMAND} -E make_directory
-            ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Frameworks
-        COMMAND ${CMAKE_COMMAND} -E create_symlink ../../libWebKitSwift.dylib
-            ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Frameworks/libWebKitSwift.dylib
         ${_xpc_service_symlinks}
         COMMAND codesign --force --sign - ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework
         COMMENT "Installing WebKit.framework resources and codesigning")
 
-    # Note: the XPC service and Frameworks/libWebKitSwift.dylib symlinks MUST be
-    # created in the same POST_BUILD chain as codesign above. A separate
-    # add_custom_command modifies the framework after the seal, which breaks
-    # codesign verification at sim runtime.
+    # Note: the XPC service symlinks MUST be created in the same POST_BUILD
+    # chain as codesign above. A separate add_custom_command modifies the
+    # framework after the seal, which breaks codesign verification at sim
+    # runtime.
 
     set(_sb_profiles_dir "${WEBKIT_DIR}/Resources/SandboxProfiles/ios")
     set(_sb_output_dir "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework")
@@ -2375,19 +2598,10 @@ function(WEBKIT_DEFINE_MACOS_RESOURCES)
     if (WEBKIT_SDK_IS_MACCATALYST)
         list(APPEND _sb_extra_includes "${WEBKIT_SDK_MIN_VERSION_FLAG}")
     endif ()
-    file(GLOB _sb_additions "${CMAKE_SOURCE_DIR}/WebKitLibraries/SDKs/macosx*-additions.sdk/usr/local/include")
-    list(SORT _sb_additions)
-    list(REVERSE _sb_additions)
-    foreach (_d IN LISTS _sb_additions)
-        if (EXISTS "${_d}/AvailabilityProhibitedInternal.h")
-            list(APPEND _sb_extra_includes "-isystem" "${_d}")
-            break ()
-        endif ()
-    endforeach ()
     if (EXISTS "${CMAKE_BINARY_DIR}/generated-stubs/AppleFeatures/AppleFeatures.h")
         list(APPEND _sb_extra_includes "-isystem" "${CMAKE_BINARY_DIR}/generated-stubs")
     endif ()
-    # Pass -fsanitize so sandbox preprocessor sees __has_feature(address_sanitizer).
+    # Pass -fsanitize so the sandbox preprocessor sees ASAN_ENABLED and UBSAN_ENABLED.
     if (ENABLE_SANITIZERS)
         foreach (_san IN LISTS ENABLE_SANITIZERS)
             list(APPEND _sb_extra_includes "-fsanitize=${_san}")
@@ -2429,6 +2643,8 @@ function(WEBKIT_DEFINE_MACOS_RESOURCES)
     add_custom_target(WebKitSandboxProfiles ALL DEPENDS ${WebKit_SB_FILES})
     add_dependencies(WebKit WebKitSandboxProfiles)
 
+    # FIXME: Compile the nib again when WebContentProcess.xib changes, and make it a LINK_DEPENDS of WebProcess, so that
+    # the .xpc is signed again then.
     add_custom_command(OUTPUT ${WebKit_XPC_SERVICE_DIR}/com.apple.WebKit.WebContent.xpc/Contents/Resources/WebContentProcess.nib COMMAND
         ibtool --compile ${WebKit_XPC_SERVICE_DIR}/com.apple.WebKit.WebContent.xpc/Contents/Resources/WebContentProcess.nib ${WEBKIT_DIR}/Resources/WebContentProcess.xib
         VERBATIM)
@@ -2440,41 +2656,28 @@ function(WEBKIT_DEFINE_MACOS_RESOURCES)
         ${WEBKIT_DIR}/Resources/SafeBrowsing.xcassets
         ${WEBKIT_DIR}/HTTPSBrowsingWarning.xcassets
     )
-    list(TRANSFORM _wk_xcassets APPEND "/*" OUTPUT_VARIABLE _wk_xcassets_globs)
-    # FIXME: GLOB isn't suitable for incremental builds (rdar://188725492)
-    file(GLOB_RECURSE _wk_xcassets_contents LIST_DIRECTORIES true ${_wk_xcassets_globs})
     WEBKIT_XCRUN(_actool -f actool)
     set(_actool_ui_framework_family)
     if (WEBKIT_SDK_IS_MACCATALYST)
         set(_actool_ui_framework_family --ui-framework-family uikit)
     endif ()
+    webkit_get_directory_depfile_command(_wk_xcassets_depfile_command
+        OUTPUT ${WebKit_RESOURCES_DIR}/Assets.car
+        DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/Assets.car.d
+        DIRECTORIES ${_wk_xcassets})
     add_custom_command(OUTPUT ${WebKit_RESOURCES_DIR}/Assets.car
         COMMAND ${_actool} --compile ${WebKit_RESOURCES_DIR} --output-format human-readable-text
             --platform macosx --target-device mac --minimum-deployment-target ${CMAKE_OSX_DEPLOYMENT_TARGET}
             ${_actool_ui_framework_family}
             ${_wk_xcassets}
-        DEPENDS ${_wk_xcassets} ${_wk_xcassets_contents}
+        COMMAND ${_wk_xcassets_depfile_command}
+        DEPFILE ${CMAKE_CURRENT_BINARY_DIR}/Assets.car.d
         COMMENT "Compiling WebKit asset catalogs"
         VERBATIM)
     add_custom_target(WebKit_Assets DEPENDS ${WebKit_RESOURCES_DIR}/Assets.car)
     add_dependencies(WebKit WebKit_Assets)
 
-    set(_text_extraction_filter_model_outputs
-        ${WebKit_RESOURCES_DIR}/TextExtractionFilter.mlmodelc/analytics/coremldata.bin
-        ${WebKit_RESOURCES_DIR}/TextExtractionFilter.mlmodelc/coremldata.bin
-        ${WebKit_RESOURCES_DIR}/TextExtractionFilter.mlmodelc/metadata.json
-    )
-    WEBKIT_XCRUN(_coremlc -f coremlc)
-    add_custom_command(OUTPUT ${_text_extraction_filter_model_outputs}
-        COMMAND ${_coremlc} compile ${WEBKIT_DIR}/Resources/TextExtractionFilter.mlmodel ${WebKit_RESOURCES_DIR}
-            --deployment-target ${CMAKE_OSX_DEPLOYMENT_TARGET} --sdkroot ${CMAKE_OSX_SYSROOT} --platform macos
-            --container bundle-resources
-        DEPENDS ${WEBKIT_DIR}/Resources/TextExtractionFilter.mlmodel
-        COMMENT "Compiling TextExtractionFilter.mlmodel"
-        VERBATIM)
-    add_custom_target(WebKitTextExtractionFilterModel ALL DEPENDS
-        ${_text_extraction_filter_model_outputs})
-    add_dependencies(WebKit WebKitTextExtractionFilterModel)
+    WEBKIT_COMPILE_TEXT_EXTRACTION_FILTER_MODEL(${WebKit_RESOURCES_DIR} macos)
 
     add_custom_command(OUTPUT ${WebKit_RESOURCES_DIR}/corePrediction_model COMMAND
         ${CMAKE_COMMAND} -E copy_if_different ${WEBKIT_DIR}/Resources/ResourceLoadStatistics/corePrediction_model ${WebKit_RESOURCES_DIR}/corePrediction_model
@@ -2490,8 +2693,6 @@ function(WEBKIT_DEFINE_MACOS_RESOURCES)
     add_dependencies(WebKit WebKit_CopyLocalizedResources)
 
     file(MAKE_DIRECTORY ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Versions/A/Frameworks)
-    file(CREATE_LINK ../../../../libWebKitSwift.dylib
-        ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Versions/A/Frameworks/libWebKitSwift.dylib SYMBOLIC)
     file(CREATE_LINK Versions/Current/Frameworks
         ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKit.framework/Frameworks SYMBOLIC)
 endfunction()

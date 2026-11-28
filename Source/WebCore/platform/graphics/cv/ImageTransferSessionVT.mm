@@ -123,15 +123,19 @@ bool ImageTransferSessionVT::setSize(const IntSize& size)
     return true;
 }
 
-RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBufferRef sourceBuffer, const IntSize& size)
+RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBufferRef buffer, const IntSize& size)
 {
-    if (!m_sourceCroppingDictionary && sourceBuffer && m_size == IntSize(CVPixelBufferGetWidth(sourceBuffer), CVPixelBufferGetHeight(sourceBuffer)) && m_pixelFormat == CVPixelBufferGetPixelFormatType(sourceBuffer))
-        return retainPtr(sourceBuffer);
+    RetainPtr sourceBuffer = pixelBufferForVideoToolbox(buffer);
+    if (!sourceBuffer)
+        return nullptr;
+
+    if (!m_sourceCroppingDictionary && m_size == IntSize(CVPixelBufferGetWidth(sourceBuffer), CVPixelBufferGetHeight(sourceBuffer)) && m_pixelFormat == CVPixelBufferGetPixelFormatType(sourceBuffer))
+        return sourceBuffer;
 
     if (m_sourceCroppingDictionary)
         CVBufferSetAttachment(sourceBuffer, kCVImageBufferCleanApertureKey, m_sourceCroppingDictionary.get(), kCVAttachmentMode_ShouldPropagate);
 
-    if (!sourceBuffer || !setSize(size))
+    if (!setSize(size))
         return nullptr;
 
     auto result = createCVPixelBufferFromPool(m_outputBufferPool.get(), m_maxBufferPoolSize);
@@ -386,10 +390,9 @@ RefPtr<VideoFrame> ImageTransferSessionVT::createVideoFrame(CMSampleBufferRef bu
     return VideoFrameCV::create(sampleBuffer.get(), mirrored, rotation);
 }
 
-RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, DestinationColorSpace colorSpace)
+static RetainPtr<CVPixelBufferRef> transferPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, ImageTransferSessionVT::DestinationColorSpace colorSpace)
 {
-    if (!source)
-        return nullptr;
+    using DestinationColorSpace = ImageTransferSessionVT::DestinationColorSpace;
 
     NSDictionary *targetOptions = nullptr;
     const bool shouldUseIOSurface = CVPixelBufferGetIOSurface(source);
@@ -418,6 +421,27 @@ RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBu
     RetainPtr target = adoptCF(rawTarget);
     status = VTPixelTransferSessionTransferImage(transferSession.get(), source, target.get());
     if (status != kCVReturnSuccess)
+        return nullptr;
+    return target;
+}
+
+RetainPtr<CVPixelBufferRef> ImageTransferSessionVT::convertPixelBuffer(CVPixelBufferRef source, uint32_t targetPixelFormat, DestinationColorSpace colorSpace)
+{
+    if (!source)
+        return nullptr;
+
+    if (!isPixelFormatWithAlphaPlane(CVPixelBufferGetPixelFormatType(source)))
+        return transferPixelBuffer(source, targetPixelFormat, colorSpace);
+
+    // VTPixelTransferSession miscolours 10-bit Y'CbCr with an alpha plane, and rounds alpha down (rdar://192541461).
+    RetainPtr colorSource = createPixelBufferWithoutAlphaPlane(source);
+    if (!colorSource)
+        return nullptr;
+    RetainPtr target = transferPixelBuffer(colorSource, targetPixelFormat, colorSpace);
+    if (!target)
+        return nullptr;
+    bool hasAlphaChannel = targetPixelFormat == kCVPixelFormatType_32BGRA || targetPixelFormat == kCVPixelFormatType_32ARGB;
+    if (hasAlphaChannel && !copyAlphaPlaneToAlphaChannel(source, target))
         return nullptr;
     return target;
 }

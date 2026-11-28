@@ -27,14 +27,13 @@
 
 #include <wtf/OptionSet.h>
 
-namespace WebCore {
-namespace Style {
+namespace WebCore::Style {
 
 enum class DeclarationOrigin : uint8_t {
     UserAgent,
     User,
-    Author
+    Author,
+    Quirk
 };
 
-}
 }

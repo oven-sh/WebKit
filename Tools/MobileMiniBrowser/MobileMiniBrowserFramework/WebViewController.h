@@ -34,7 +34,9 @@
 
 @property (strong, nonatomic) IBOutlet UIView *webViewContainer;
 @property (strong, nonatomic) IBOutlet UITextField *urlField;
+@property (strong, nonatomic) IBOutlet UIView *urlFieldContainer;
 @property (strong, nonatomic) IBOutlet UIProgressView *progressView;
+@property (strong, nonatomic) IBOutlet UIToolbar *toolbar;
 @property (strong, nonatomic) IBOutlet UIBarButtonItem *tabButton;
 @property (strong, nonatomic) IBOutlet UIBarButtonItem *settingsButton;
 @property (strong, nonatomic) IBOutlet TabViewController *tabViewController;
@@ -49,10 +51,12 @@
 - (IBAction)goBack:(id)sender;
 - (IBAction)goForward:(id)sender;
 - (IBAction)urlFieldEditingBegan:(id)sender;
+- (IBAction)urlFieldEditingEnded:(id)sender;
 - (IBAction)navigateTo:(id)sender;
 - (IBAction)showTabs:(id)sender;
 - (IBAction)showSettings:(id)sender;
 
+- (void)updateCapturePreviewPreference;
 - (void)selectWebViewAtIndex:(NSUInteger)index;
 - (void)removeWebViewAtIndex:(NSUInteger)index;
 - (void)addWebView;
