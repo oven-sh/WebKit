@@ -52,6 +52,7 @@ const attributeWords = new Map<string, WordMeaning>([
   ["CellProperty", { kind: "DataProperty", valueColumn: "Data", isAddedAtFirstRead: true }],
   ["ConstantInteger", { kind: "DataProperty", valueColumn: "Data" }],
   ["CustomAccessor", { kind: "Accessor", valueColumn: "Getter" }],
+  ["CustomValue", { kind: "DataProperty", valueColumn: "Getter" }],
   ["Accessor", { kind: "Accessor", valueColumn: "Getter" }],
   ["DOMJITAttribute", { kind: "Accessor", valueColumn: "Getter" }],
   ["DOMAttribute", {}],
