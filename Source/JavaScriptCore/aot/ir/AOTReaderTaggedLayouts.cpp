@@ -54,7 +54,7 @@ private:
     };
 
     std::span<const Wire::Field> fieldsOf(const Wire::Layout&) const;
-    std::span<const uint32_t> supertypesOf(const Wire::Layout& layout) const { return m_sections.words.subspan(layout.supertypes.start, layout.supertypes.count); }
+    std::span<const uint32_t> supertypesOf(const Wire::Layout& layout) const { return sliceOfRecords(m_sections.words, layout.supertypes); }
     std::span<const LiteralField> literalFieldsOf(uint32_t type) const { return m_literalFields.subspan(m_firstLiteralField[type], m_firstLiteralField[type + 1] - m_firstLiteralField[type]); }
     bool isMaker(const Wire::Layout&) const;
     std::optional<uint32_t> typeNamedByRecordOf(size_t function, uint32_t type) const;

@@ -39,7 +39,7 @@ static bool hasWireTypeFlag(const Wire::Type& type, TypeFlags flag)
 
 static std::span<const uint32_t> wordsListedByWireType(const Wire::Sections& checkedSections, Wire::Span list)
 {
-    return checkedSections.words.subspan(list.start, list.count);
+    return sliceOfRecords(checkedSections.words, list);
 }
 
 template<typename MemberID, typename SetID>
@@ -87,7 +87,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
         return { };
 
     Vector<ClassPart, 8> parts;
-    for (const Wire::ClassPart& wire : checkedSections.classParts.subspan(list.start, list.count)) {
+    for (const Wire::ClassPart& wire : sliceOfRecords(checkedSections.classParts, list)) {
         ClassPart part;
         part.builtinClass = BuiltinClassID(wire.builtinClass);
         std::span<const uint32_t> contents = wordsListedByWireType(checkedSections, wire.contents);
@@ -104,7 +104,7 @@ static ClassPartsID readClassPartsOfWireType(TypeArena& arena, const Wire::Secti
 static ALWAYS_INLINE uint32_t endOfTypesNamedByWireType(const Wire::Sections& checkedSections, uint32_t index)
 {
     Wire::Span list = checkedSections.types[index].classes;
-    std::span<const Wire::ClassPart> parts = checkedSections.classParts.subspan(list.start, list.count);
+    std::span<const Wire::ClassPart> parts = sliceOfRecords(checkedSections.classParts, list);
     uint32_t end = 0;
     for (size_t position = 0; position < parts.size(); ++position) {
         if (position && BuiltinClassID(parts[position - 1].builtinClass) >= BuiltinClassID(parts[position].builtinClass))
@@ -304,11 +304,11 @@ void WireTypeReader::findTypesOfRecordsMadeForFields(ArenasOfWorkers& arenas)
         const Wire::Layout& layout = m_sections.layouts[index];
         if (layout.kind != static_cast<uint32_t>(LayoutKind::Instance))
             return;
-        for (const Wire::Field& field : m_sections.fields.subspan(layout.fields.start, layout.fields.count)) {
-            if ((field.declared.flags & flagsOfInference) != flagsOfInference)
+        for (const Wire::Field& field : sliceOfRecords(m_sections.fields, layout.fields)) {
+            if ((field.declared.flags & flagsOfInference) != flagsOfInference || field.declared.type >= m_sections.types.size())
                 continue;
             std::span<const uint32_t> named = wordsListedByWireType(m_sections, m_sections.types[field.declared.type].layouts);
-            if (named.size() == 1 && m_sections.layouts[named[0]].kind == static_cast<uint32_t>(LayoutKind::Record) && m_declaredMembers[named[0]] != LayoutSets::of(LayoutID(named[0])))
+            if (named.size() == 1 && named[0] < m_sections.layouts.size() && m_sections.layouts[named[0]].kind == static_cast<uint32_t>(LayoutKind::Record) && m_declaredMembers[named[0]] != LayoutSets::of(LayoutID(named[0])))
                 found.append(field.declared.type);
         }
     });

@@ -26,6 +26,14 @@ namespace Typed {
 
 class Program;
 
+// The verifier sees records that have been read, so whoever reads a list of the wire checks where it lies.
+template<typename T>
+ALWAYS_INLINE std::span<const T> sliceOfRecords(std::span<const T> all, Wire::Span span)
+{
+    RELEASE_ASSERT(span.start <= all.size() && span.count <= all.size() - span.start);
+    return all.subspan(span.start, span.count);
+}
+
 class WireTypeReader {
     WTF_MAKE_NONCOPYABLE(WireTypeReader);
 public:

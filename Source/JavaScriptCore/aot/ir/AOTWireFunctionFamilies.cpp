@@ -36,7 +36,7 @@ static bool functionListLiesInWords(const Wire::Sections& sections, Wire::Span l
 
 static std::span<const uint32_t> wordsOfFunctionList(const Wire::Sections& checkedSections, Wire::Span list)
 {
-    return checkedSections.words.subspan(list.start, list.count);
+    return sliceOfRecords(checkedSections.words, list);
 }
 
 static std::optional<InternalErrorKind> findErrorInFamilyListsOfFunction(const Wire::Sections& sections, const BuiltinTable& builtins, const Wire::Function& function)
