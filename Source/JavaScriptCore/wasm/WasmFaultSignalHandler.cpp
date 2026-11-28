@@ -90,7 +90,7 @@ static SignalAction trapHandler(Signal signal, SigInfo& sigInfo, PlatformRegiste
 
             // Trapping null access for WasmGC Array / Struct.
 #if USE(BUN_JSC_ADDITIONS)
-            if (sigInfo.isAddressUnknown)
+            if (sigInfo.isSentByProcess || sigInfo.isAddressUnknown)
                 return SignalAction::NotHandled;
 #endif
             if (std::bit_cast<uintptr_t>(faultingAddress) < lowestAccessibleAddress())
